@@ -12,8 +12,28 @@ import PageHero from "../components/PageHero";
 import CsvImportRow from "../components/CsvImportRow";
 import EmailDesignerPanel from "../components/EmailDesignerPanel";
 import PaymentPlanSettingsPanel from "../components/PaymentPlanSettingsPanel";
+import PricingTiersPanel from "../components/PricingTiersPanel";
+import ReceiptSettingsPanel from "../components/ReceiptSettingsPanel";
 import DayToDayControls from "../components/DayToDayControls";
 import DataExportPanel from "../components/DataExportPanel";
+
+// Section 6 — Common Settings shortcuts. Each entry just points at an
+// existing subsection id (or, for Shop Categories, the external
+// Shop Organization tab) — no new settings panels are created here.
+const COMMON_SETTINGS_SHORTCUTS = [
+  { key: "hours", label: "Business Hours", icon: "fa-clock", id: "hours" },
+  { key: "services", label: "Services & Prices", icon: "fa-dollar-sign", id: "services" },
+  { key: "credit_packs", label: "Prepaid Packs", icon: "fa-coins", id: "credit_packs" },
+  { key: "shop_categories", label: "Shop Categories", icon: "fa-store", externalTab: "shop_organization" },
+  { key: "capacity", label: "Capacity", icon: "fa-warehouse", id: "capacity" },
+  { key: "vaccines", label: "Vaccine Requirements", icon: "fa-shield-virus", id: "vaccines" },
+  { key: "booking_flow", label: "Booking Rules & Approval", icon: "fa-calendar-check", id: "booking_flow_controls" },
+  { key: "payment_options", label: "Payment Methods", icon: "fa-money-bill-wave", id: "payment_options" },
+  { key: "receipts", label: "Receipt Settings", icon: "fa-receipt", id: "receipts" },
+  { key: "pricing_tiers", label: "Pricing Tiers", icon: "fa-users-viewfinder", id: "pricing_tiers" },
+  { key: "client_portal_controls", label: "Client Portal Controls", icon: "fa-mobile-screen-button", id: "client_portal_controls" },
+  { key: "automation", label: "Email Notifications", icon: "fa-paper-plane", id: "automation" },
+];
 
 const DAYS = ["monday","tuesday","wednesday","thursday","friday","saturday","sunday"];
 const VAX_OPTIONS = [
@@ -127,6 +147,12 @@ export default function Settings() {
           badges: ["Live", "Client-facing"] },
         { id: "payment_plans", label: "Payment Plans", icon: "fa-file-invoice-dollar",
           desc: "Big-ticket installments — terms, default thresholds, reversal flow.",
+          badges: ["Live", "Admin-only"] },
+        { id: "receipts", label: "Receipts", icon: "fa-receipt",
+          desc: "Business info shown on receipts, thank-you/policy messages, which optional details appear, and auto-email/auto-print.",
+          badges: ["Live", "Client-facing"] },
+        { id: "pricing_tiers", label: "Pricing Tiers", icon: "fa-users-viewfinder",
+          desc: "Grandfathered pricing groups (Founding Clients, Staff Pricing, etc.) — set a fixed price for a service, credit pack, or product across every client assigned to the tier at once.",
           badges: ["Live", "Admin-only"] },
         { id: "_d2d_money", label: "Money Rules", icon: "fa-dollar-sign",
           desc: "Tipping, late-pickup fees, cancellation tiers, deposits, no-show fee, rounding.",
@@ -327,6 +353,7 @@ export default function Settings() {
   const [category, setCategory] = useState(() => findCategoryOf(tab));
   const [search, setSearch] = useState("");
   const [mobileNavOpen, setMobileNavOpen] = useState(false);
+  const [showPlanned, setShowPlanned] = useState(false);
 
   const openSub = (sub) => {
     if (sub.comingSoon) return;
@@ -373,7 +400,7 @@ export default function Settings() {
   const q = search.trim().toLowerCase();
   const searchHits = q.length >= 2
     ? allSubs.filter(s =>
-        !s.comingSoon &&
+        (!s.comingSoon || showPlanned) &&
         (s.label.toLowerCase().includes(q) || (s.desc || "").toLowerCase().includes(q)),
       )
     : [];
@@ -443,6 +470,35 @@ export default function Settings() {
             </div>
           )}
         </div>
+        <label className="flex items-center gap-2 text-[12px] font-black uppercase tracking-widest text-shTextMuted shrink-0 cursor-pointer select-none" data-testid="settings-show-planned-toggle">
+          <input type="checkbox" checked={showPlanned} onChange={(e) => setShowPlanned(e.target.checked)} className="accent-shSecondary w-4 h-4" />
+          Show planned features
+        </label>
+      </div>
+
+      {/* Common Settings — quick jumps to the settings operators reach for
+          most often. Each button opens the exact existing settings section;
+          nothing here is a new panel or duplicated control. */}
+      <div className="bg-[var(--sh-card-base)] border border-shBorder rounded-xl p-3 md:p-4" data-testid="settings-common-shortcuts">
+        <p className="text-[12px] font-black uppercase tracking-widest text-shTextMuted mb-2.5">Common Settings</p>
+        <div className="flex flex-wrap gap-2">
+          {COMMON_SETTINGS_SHORTCUTS.map(sc => {
+            const sub = sc.externalTab ? sc : allSubs.find(s => s.id === sc.id);
+            if (!sub) return null;
+            return (
+              <button
+                key={sc.key}
+                type="button"
+                onClick={() => openSub(sub)}
+                data-testid={`settings-shortcut-${sc.key}`}
+                className="flex items-center gap-2 bg-shSurfaceRaised/40 hover:bg-shSurfaceRaised/70 border border-shBorder hover:border-shSecondary/50 rounded-lg px-3 py-2 text-[13px] font-black uppercase tracking-widest text-shText transition"
+              >
+                <i className={`fas ${sc.icon} text-shSecondary text-[12px]`}/>
+                {sc.label}
+              </button>
+            );
+          })}
+        </div>
       </div>
 
       <div className="flex flex-col md:flex-row gap-4 md:gap-6 relative">
@@ -478,7 +534,7 @@ export default function Settings() {
         {/* Main content */}
         <div className="flex-1 min-w-0 bg-[var(--sh-card-base)] border border-shBorder rounded-xl p-4 md:p-6 shadow-2xl overflow-x-auto">
           {isOverview ? (
-            <CategoryOverview category={activeCategory} onOpen={openSub} />
+            <CategoryOverview category={activeCategory} onOpen={openSub} showPlanned={showPlanned} />
           ) : (
             <>
               {/* Inline back link to the parent category overview */}
@@ -520,6 +576,8 @@ export default function Settings() {
               {tab === "automation" && <AutomationPanel />}
               {tab === "email_designer" && <EmailDesignerPanel />}
               {tab === "payment_plans" && <PaymentPlanSettingsPanel />}
+              {tab === "pricing_tiers" && <PricingTiersPanel />}
+              {tab === "receipts" && <ReceiptSettingsPanel />}
               {tab === "account" && (
                 <div className="space-y-5 max-w-md" data-testid="account-panel">
                   <div>
@@ -545,7 +603,8 @@ export default function Settings() {
 }
 
 // ─────────────── Category overview (card grid) ─────────────────
-function CategoryOverview({ category, onOpen }) {
+function CategoryOverview({ category, onOpen, showPlanned = false }) {
+  const subsections = showPlanned ? category.subsections : category.subsections.filter(s => !s.comingSoon);
   return (
     <div className="space-y-5" data-testid={`category-overview-${category.id}`}>
       <div>
@@ -553,7 +612,7 @@ function CategoryOverview({ category, onOpen }) {
         <p className="text-[14px] text-shTextMuted mt-1 normal-case">{category.blurb}</p>
       </div>
       <div className="grid grid-cols-1 lg:grid-cols-2 gap-3">
-        {category.subsections.map(sub => (
+        {subsections.map(sub => (
           <SubsectionCard key={sub.id} sub={sub} onOpen={() => onOpen(sub)} />
         ))}
       </div>
@@ -1607,6 +1666,18 @@ const PERM_META = [
   { key: "delete_records",   label: "Delete Records",      desc: "Hard-delete clients, dogs, bookings (rarely used)." },
   { key: "messages",         label: "Send Messages",       desc: "Reply in client message threads, broadcast announcements." },
   { key: "take_payments",    label: "Take Payments",       desc: "Collect payment at checkout and record top-up payments against an open invoice." },
+  { key: "view_shop_categories",   label: "View Shop Organization",   desc: "See how Shop products, prepaid-visit packs, and training programs are grouped into categories." },
+  { key: "manage_shop_categories", label: "Manage Shop Organization", desc: "Add, rename, and assign items to Shop categories and subcategories." },
+  { key: "reorder_shop_categories",label: "Reorder Shop Categories",  desc: "Change the display order of Shop categories, subcategories, and items." },
+  { key: "delete_shop_categories", label: "Remove Shop Categories",   desc: "Deactivate or remove Shop categories and subcategories." },
+  { key: "manage_receipt_settings", label: "Manage Receipt Settings", desc: "Edit receipt configuration, previews, and test-print tokens." },
+  { key: "audit_log",               label: "View Audit Log",          desc: "Read the filterable history of who did what." },
+  { key: "manage_communications",   label: "Manage Communications",   desc: "Announcements, bulk email, and email templates — sending, editing, and audience selection." },
+  { key: "manage_staff_scheduling", label: "Manage Staff Scheduling",  desc: "Admin-side tasks, shifts, shift templates, and time-off/punch-correction review (not an individual's own self-service views)." },
+  { key: "manage_training_content", label: "Manage Training Content", desc: "Training programs, homework templates, curriculum commands, and training tips." },
+  { key: "manage_engagement_content", label: "Manage Engagement Content", desc: "Trivia, dog facts, photography gallery, and trophy catalog administration." },
+  { key: "manage_shop_media",       label: "Manage Shop Media",       desc: "Upload and delete Shop product/credit-pack/program images." },
+  { key: "sell_credits",            label: "Sell Prepaid Visits",     desc: "Sell credit packs and training programs to a client — narrower than Finance/Reports, so front-desk staff can sell without seeing P&L." },
 ];
 
 // Dependencies: granting the dependent permission auto-suggests enabling the base.

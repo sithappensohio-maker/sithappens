@@ -67,6 +67,33 @@ api.interceptors.response.use(
         window.location.replace("/");
       }
     }
+    // A 403 here means the backend's must-change-password gate just
+    // rejected every endpoint except /auth/me and /auth/change-password.
+    // App.js's own gate only re-evaluates from whatever `user` object is
+    // already cached in React state, so if this flag flips true mid-session
+    // (e.g. an admin forces a password reset while the client's tab is
+    // still open), every subsequent request 403s with no way for the SPA
+    // to notice — the token itself is still valid, so the 401 handler
+    // above never fires. Force ONE reload so the app re-fetches the current
+    // user and App.js's existing gate renders ForcedPasswordChange instead
+    // of leaving the page stuck making doomed requests. The guard has to
+    // survive the reload itself (sessionStorage, not an in-memory flag) —
+    // ForcedPasswordChange's own screen still has other always-mounted
+    // hooks (polling, etc.) that keep hitting blocked endpoints after
+    // landing there, and each one is a fresh 403 that would otherwise
+    // re-trigger another reload forever.
+    if (
+      err?.response?.status === 403
+      && typeof err.response.data?.detail === "string"
+      && err.response.data.detail.toLowerCase().includes("must be changed")
+    ) {
+      let alreadyTriggered = true;
+      try { alreadyTriggered = sessionStorage.getItem("sh_password_reload_triggered") === "1"; } catch (e) { /* ignore */ }
+      if (!alreadyTriggered) {
+        try { sessionStorage.setItem("sh_password_reload_triggered", "1"); } catch (e) { /* ignore */ }
+        window.location.reload();
+      }
+    }
     const d = err?.response?.data?.detail;
     if (Array.isArray(d)) {
       err.response.data.detail = d.map((e) => {

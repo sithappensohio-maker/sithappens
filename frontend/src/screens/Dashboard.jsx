@@ -31,7 +31,7 @@ function fmtTime(iso) {
   } catch { return iso; }
 }
 
-export default function Dashboard({ onNavigate = () => {}, onJumpToDog = () => {}, onJumpToClient = () => {}, can = () => true }) {
+export default function Dashboard({ onNavigate = () => {}, onJumpToDog = () => {}, onJumpToClient = () => {}, can = () => false }) {
   // Sprint 110di-19 — Dashboard Widget Controls. Single source of truth via
   // /api/branding. `widgetOn(id)` defaults TRUE (current behavior preserved).
   const { branding: _br } = useTheme();
@@ -82,7 +82,7 @@ export default function Dashboard({ onNavigate = () => {}, onJumpToDog = () => {
           ? api.get("/trophies/leaderboard").catch(()=>({data:{top_dogs:[],top_clients:[]}}))
           : Promise.resolve({data:{top_dogs:[],top_clients:[]}}),
         api.get("/admin/quote-requests?status=open").catch(()=>({data:[]})),
-        widgetOn("pnl")
+        (widgetOn("pnl") && can("finance_reports"))
           ? api.get("/admin/today-pnl").catch(()=>({data:null}))
           : Promise.resolve({data:null}),
         widgetOn("register")
@@ -499,7 +499,7 @@ export default function Dashboard({ onNavigate = () => {}, onJumpToDog = () => {
       </div>
       )}
 
-      {todayPnl && widgetOn("pnl") && <TodayPnlTile data={todayPnl} expanded={pnlExpanded} onToggle={()=>setPnlExpanded(e=>!e)} onNavStaff={()=>onNavigate("staff")} onRefresh={refreshPnl} />}
+      {todayPnl && widgetOn("pnl") && can("finance_reports") && <TodayPnlTile data={todayPnl} expanded={pnlExpanded} onToggle={()=>setPnlExpanded(e=>!e)} onNavStaff={()=>onNavigate("staff")} onRefresh={refreshPnl} />}
 
       {/* Sprint 110bq — Daily mileage quick-log */}
       {widgetOn("mileage") && <MileageDashTile onNavTax={()=>onNavigate("staff")} />}

@@ -13,7 +13,7 @@ const COLOR_MAP = {
   shSecondary:   { ring: "ring-shSecondary/40 hover:ring-shSecondary",     text: "text-shSecondary",   bg: "bg-shSecondary/10"   },
 };
 
-export default function DashboardQuickLinks({ onNavigate = () => {}, can = () => true }) {
+export default function DashboardQuickLinks({ onNavigate = () => {}, can = () => false }) {
   // Permission gates mirror App.js navItems
   const PERM_GATES = {
     care: "care_complete",

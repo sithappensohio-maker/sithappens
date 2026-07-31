@@ -17,6 +17,7 @@
  * never double-collect — never regenerated inside the submit handler.
  */
 import { useEffect, useState } from "react";
+import { toast } from "sonner";
 import { api } from "../lib/api";
 import { printReceipt as posPrintReceipt, openDrawer as posOpenDrawer } from "../lib/posAgent";
 
@@ -44,6 +45,35 @@ export default function TakePaymentModal({ onClose, onSuccess, presetClientId })
   const [hwInvoiceId, setHwInvoiceId] = useState(null);
   const [hwLedgerId, setHwLedgerId] = useState(null);
   const [hwSuccessData, setHwSuccessData] = useState(null);
+  const [emailBusy, setEmailBusy] = useState(false);
+  const [receiptViewOpen, setReceiptViewOpen] = useState(null);
+
+  const receiptKindAndId = () => (hwInvoiceId ? ["invoice", hwInvoiceId] : hwLedgerId ? ["tab_payment", hwLedgerId] : [null, null]);
+
+  const emailReceipt = async () => {
+    const [kind, refId] = receiptKindAndId();
+    if (!kind) return;
+    setEmailBusy(true);
+    try {
+      const { data } = await api.post(`/receipts/${kind}/${refId}/email`, {});
+      if (data.ok) toast.success("Receipt emailed");
+      else toast.error(data.detail || "Could not email the receipt");
+    } catch (e) {
+      toast.error(e?.response?.data?.detail || "Could not email the receipt");
+    }
+    setEmailBusy(false);
+  };
+
+  const viewReceipt = async () => {
+    const [kind, refId] = receiptKindAndId();
+    if (!kind) return;
+    try {
+      const { data } = await api.get(`/receipts/${kind}/${refId}`);
+      setReceiptViewOpen(data);
+    } catch (e) {
+      toast.error(e?.response?.data?.detail || "Could not load the receipt");
+    }
+  };
 
   const runHardware = async (printToken, drawerToken) => {
     setHwBusy(true);
@@ -148,7 +178,11 @@ export default function TakePaymentModal({ onClose, onSuccess, presetClientId })
         setHwInvoiceId(data?.pos_invoice_id || null);
         setHwSuccessData(data);
         setBusy(false);
-        if (printToken || drawerToken) {
+        // Always show the post-payment status screen so staff has a manual
+        // View/Print/Email path even when auto-print is off and no cash was
+        // tendered — turning auto-print off must never leave staff with
+        // zero way to produce a receipt on request.
+        if (data?.pos_invoice_id) {
           await runHardware(printToken, drawerToken);
         } else {
           onSuccess?.(data);
@@ -166,7 +200,7 @@ export default function TakePaymentModal({ onClose, onSuccess, presetClientId })
         setHwLedgerId(data?.row?.id || null);
         setHwSuccessData(data);
         setBusy(false);
-        if (printToken || drawerToken) {
+        if (data?.row?.id) {
           await runHardware(printToken, drawerToken);
         } else {
           onSuccess?.(data);
@@ -219,10 +253,23 @@ export default function TakePaymentModal({ onClose, onSuccess, presetClientId })
                 <i className="fas fa-rotate mr-1"/>Retry Open Drawer
               </button>
             )}
-            {!hwBusy && hwResult?.printToken && (hwInvoiceId || hwLedgerId) && (
+            {!hwBusy && (hwInvoiceId || hwLedgerId) && (
               <button onClick={() => retryHardware("print_receipt")} data-testid="hw-reprint"
                       className="text-shSecondary font-black uppercase text-[12px] tracking-widest border border-shSecondary/40 rounded px-3 py-2">
-                <i className="fas fa-print mr-1"/>{hwResult.print?.ok ? "Reprint Receipt" : "Retry Print"}
+                <i className="fas fa-print mr-1"/>
+                {hwResult?.printToken ? (hwResult.print?.ok ? "Reprint Receipt" : "Retry Print") : "Print Receipt"}
+              </button>
+            )}
+            {!hwBusy && (hwInvoiceId || hwLedgerId) && (
+              <button onClick={viewReceipt} data-testid="take-payment-view-receipt"
+                      className="text-shSecondary font-black uppercase text-[12px] tracking-widest border border-shSecondary/40 rounded px-3 py-2">
+                <i className="fas fa-receipt mr-1"/>View Receipt
+              </button>
+            )}
+            {!hwBusy && (hwInvoiceId || hwLedgerId) && (
+              <button onClick={emailReceipt} disabled={emailBusy} data-testid="take-payment-email-receipt"
+                      className="text-shSecondary font-black uppercase text-[12px] tracking-widest border border-shSecondary/40 rounded px-3 py-2 disabled:opacity-50">
+                <i className="fas fa-envelope mr-1"/>{emailBusy ? "Sending…" : "Email Receipt"}
               </button>
             )}
             <button onClick={() => onSuccess?.(hwSuccessData)} disabled={hwBusy} data-testid="hw-done"
@@ -231,6 +278,25 @@ export default function TakePaymentModal({ onClose, onSuccess, presetClientId })
             </button>
           </div>
         </div>
+        {receiptViewOpen && (
+          <div className="fixed inset-0 bg-black/70 z-[90] grid place-items-center p-4" onClick={() => setReceiptViewOpen(null)}>
+            <div className="bg-white text-black rounded-lg p-5 max-w-sm w-full text-[13px]" onClick={(e) => e.stopPropagation()} data-testid="take-payment-receipt-view-modal">
+              {receiptViewOpen.test_receipt && (
+                <div className="bg-amber-200 text-amber-900 text-center font-black text-[10px] uppercase tracking-widest py-1 mb-2 rounded">{receiptViewOpen.test_label}</div>
+              )}
+              <p className="font-black text-base">{receiptViewOpen.business_name}</p>
+              <p className="text-gray-500 mt-1">Receipt #{receiptViewOpen.receipt_number}</p>
+              {receiptViewOpen.client_name && <p className="text-gray-500">Client: {receiptViewOpen.client_name}</p>}
+              <div className="border-t border-gray-200 my-2" />
+              {(receiptViewOpen.line_items || []).map((li, i) => (
+                <div key={i} className="flex justify-between gap-2"><span>{li.description}{li.qty > 1 ? ` × ${li.qty}` : ""}</span><span className="font-bold">{li.amount != null ? `$${Number(li.amount).toFixed(2)}` : ""}</span></div>
+              ))}
+              <div className="border-t border-gray-200 my-2" />
+              <div className="flex justify-between font-black text-base"><span>Total</span><span>${Number(receiptViewOpen.total ?? receiptViewOpen.invoice_total ?? receiptViewOpen.payment_amount ?? 0).toFixed(2)}</span></div>
+              <button onClick={() => setReceiptViewOpen(null)} className="mt-4 w-full bg-gray-100 text-gray-700 rounded py-2 font-black uppercase text-[12px] tracking-widest">Close</button>
+            </div>
+          </div>
+        )}
       </div>
     );
   }

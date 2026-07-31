@@ -20,7 +20,7 @@ const fmtDate = (iso) => {
 
 const emptyForm = () => ({ title: "", body: "", image: "", pinned: false, expires_on: "", published: true });
 
-export default function Announcements() {
+export default function Announcements({ openCreateOnMount = false, onCreateConsumed = () => {} }) {
   const [items, setItems] = useState([]);
   const [loading, setLoading] = useState(true);
   const [editing, setEditing] = useState(null);  // id of item being edited, or "new"
@@ -40,6 +40,11 @@ export default function Announcements() {
   useEffect(() => { load(); }, [load]);
 
   const startNew = () => { setEditing("new"); setForm(emptyForm()); setErr(""); };
+  // Phase 4 — global "+ New" menu reuses this exact same modal.
+  useEffect(() => {
+    if (openCreateOnMount) { startNew(); onCreateConsumed(); }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
   const startEdit = (a) => {
     setEditing(a.id);
     setForm({

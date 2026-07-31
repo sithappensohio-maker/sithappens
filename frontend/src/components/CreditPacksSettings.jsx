@@ -4,6 +4,7 @@ import { useConfirm } from "../lib/useConfirm";
 import IconPicker from "./IconPicker";
 import ColorSwatchRow from "./ColorSwatchRow";
 import ShopImageUpload from "./ShopImageUpload";
+import ShopCategoryFields from "./ShopCategoryFields";
 
 /**
  * Admin-managed catalog of credit packs (bulk daycare day discounts).
@@ -12,6 +13,7 @@ import ShopImageUpload from "./ShopImageUpload";
 const empty = {
   name: "", qty: 10, price: 300, service_type: "daycare", icon: "fa-tag", color: "", active: true, welcome_email_template_slug: null,
   available_online: false, online_description: "", image_id: null,
+  category_id: null, subcategory_id: null,
 };
 
 const DEFAULT_ICON_BY_POOL = { daycare: "fa-sun", training: "fa-graduation-cap", boarding: "fa-moon" };
@@ -43,6 +45,20 @@ export default function CreditPacksSettings() {
       .then(r => setEmailTemplates((r.data || []).filter(t => t.audience === "client")))
       .catch(() => setEmailTemplates([]));
   }, []);
+  // Shop Organization category/subcategory names, for the list rows only.
+  const [shopCategories, setShopCategories] = useState([]);
+  useEffect(() => {
+    api.get("/shop/categories", { params: { include_inactive: true } })
+      .then(({ data }) => setShopCategories(data.categories || []))
+      .catch(() => setShopCategories([]));
+  }, []);
+  const shopCategoryLabel = (p) => {
+    if (!p.category_id) return null;
+    const cat = shopCategories.find((c) => c.id === p.category_id);
+    if (!cat) return null;
+    const sub = (cat.subcategories || []).find((s) => s.id === p.subcategory_id);
+    return sub ? `${cat.name} / ${sub.name}` : cat.name;
+  };
 
   const openNew = () => { setEditing(null); setForm(empty); setOriginalImageId(null); setErr(""); setOpen(true); };
   const openEdit = (p) => { setEditing(p); setForm({ ...empty, ...p }); setOriginalImageId(p.image_id || null); setErr(""); setOpen(true); };
@@ -133,6 +149,9 @@ export default function CreditPacksSettings() {
                 <p className="text-[14px] font-black uppercase tracking-widest mt-0.5">
                   <span style={{ color: accent }}>{p.service_type}</span>
                   <span className="text-shTextMuted">{p.is_default ? " · default" : ""}{!p.active ? " · inactive" : ""}</span>
+                </p>
+                <p className="text-[11px] text-shTextMuted uppercase tracking-widest mt-0.5 truncate">
+                  {shopCategoryLabel(p) || "Uncategorized"}
                 </p>
               </div>
             </div>
@@ -234,6 +253,15 @@ export default function CreditPacksSettings() {
                   <i className="fas fa-paper-plane mr-1 text-shSecondary"/>Sends this template the moment a client buys this pack. Create new templates from Settings → Email Designer.
                 </p>
               </div>
+              {/* Shop Organization — purely organizational, independent of
+                  online visibility. A pack can be categorized whether or
+                  not it's available online. */}
+              <div className="mt-4 border-t border-shBorder pt-4">
+                <p className="text-[13px] font-black text-shTextMuted uppercase tracking-widest mb-2">Shop Category</p>
+                <ShopCategoryFields categoryId={form.category_id} subcategoryId={form.subcategory_id}
+                                    onChange={(patch) => setForm({ ...form, ...patch })} />
+              </div>
+
               {/* Client Shop Phase 1 — additive online-visibility controls. */}
               <div className="mt-4 border-t border-shBorder pt-4">
                 <p className="text-[13px] font-black text-shTextMuted uppercase tracking-widest mb-2">Client Shop</p>

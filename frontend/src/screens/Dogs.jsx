@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { api, formatErr } from "../lib/api";
 import { compressImage } from "../lib/imageCompress";
 import { useConfirm } from "../lib/useConfirm";
@@ -16,6 +16,8 @@ import CommunicationLog from "../components/CommunicationLog";
 import ReviewRequestButton from "../components/ReviewRequestButton";
 import LazyMount from "../components/LazyMount";
 import { scrollToCardAndFlash } from "../lib/scrollToCard";
+import { addRecent } from "../lib/recentlyOpened";
+import DogHub from "../components/DogHub";
 
 const empty = {
   owner_id: "", name: "", breed: "", age_y: 0, age_m: 0, birthday: "",
@@ -45,7 +47,7 @@ function vaccineStatus(d) {
   if (d < t) return { label: "Expired", color: "text-red-400", bg: "bg-red-500/15" };
   const in30 = new Date(); in30.setDate(in30.getDate()+30);
   const in30Iso = `${in30.getFullYear()}-${String(in30.getMonth()+1).padStart(2,"0")}-${String(in30.getDate()).padStart(2,"0")}`;
-  if (d < in30Iso) return { label: "Expiring soon", color: "text-shAccent", bg: "bg-shAccent/15" };
+  if (d < in30Iso) return { label: "Expiring Soon", color: "text-shAccent", bg: "bg-shAccent/15" };
   return { label: "Valid", color: "text-shPrimary", bg: "bg-shPrimary/15" };
 }
 function uid() { return Math.random().toString(36).slice(2, 10); }
@@ -98,7 +100,8 @@ const PROGRAM_TYPE_COLORS = {
   custom: { bg: "bg-pink-500/15", text: "text-pink-400", bar: "bg-pink-400" },
 };
 
-export default function Dogs({ focusId = null, focusMode = "scroll", onConsumed = () => {} }) {
+export default function Dogs({ focusId = null, focusMode = "scroll", onConsumed = () => {}, openCreateOnMount = false, onCreateConsumed = () => {}, userId = null,
+  hubTarget = null, can = () => false, onBookForDog = () => {}, onLogIncident = () => {}, onOpenCareBoard = () => {}, onOpenKennelBoard = () => {}, onOpenFrontDesk = () => {}, onMessageOwner = () => {} }) {
   const [dogs, setDogs] = useState([]);
   const [clients, setClients] = useState([]);
   const [enrollmentsByDog, setEnrollmentsByDog] = useState({});
@@ -168,6 +171,19 @@ export default function Dogs({ focusId = null, focusMode = "scroll", onConsumed 
     }
   }, [focusId, focusMode, dogs]);
 
+  // Phase 4 — global "+ New" menu. `openNew` needs `clients` loaded first
+  // (defaults owner_id to the first client), so this waits for that instead
+  // of firing on raw mount — reuses this exact same modal, no second form.
+  const autoOpenedRef = useRef(false);
+  useEffect(() => {
+    if (openCreateOnMount && !autoOpenedRef.current && clients.length > 0) {
+      autoOpenedRef.current = true;
+      openNew();
+      onCreateConsumed();
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [openCreateOnMount, clients]);
+
   const openNew = () => {
     if (clients.length === 0) { alert("Add a client first."); return; }
     setEditing(null);
@@ -176,6 +192,7 @@ export default function Dogs({ focusId = null, focusMode = "scroll", onConsumed 
   };
   const openEdit = async (d, initialTab = "basics") => {
     setEditing(d);
+    addRecent(userId, { kind: "dog", id: d.id, title: d.name, subtitle: d.breed ? `${d.breed}` : "" });
     // Hydrate the form with the list-view subset immediately so the modal
     // opens snappy, then fetch the full record (with gallery photos) and
     // patch it in once it lands.
@@ -210,6 +227,22 @@ export default function Dogs({ focusId = null, focusMode = "scroll", onConsumed 
       if (statsRes) setStats(statsRes.data);
     } catch { /* keep list-view fallback */ }
   };
+
+  const [hubOpen, setHubOpen] = useState(null); // dog object
+  const [hubInitialTab, setHubInitialTab] = useState("overview");
+  const [hubFocusId, setHubFocusId] = useState(null);
+  const openHub = (d, initialTab = "overview", focusRecordId = null) => {
+    setHubOpen(d); setHubInitialTab(initialTab); setHubFocusId(focusRecordId);
+    addRecent(userId, { kind: "dog", id: d.id, title: d.name, subtitle: d.breed ? `${d.breed}` : "" });
+  };
+
+  useEffect(() => {
+    if (!hubTarget || dogs.length === 0) return;
+    const d = dogs.find(x => x.id === hubTarget.dogId || x.id === hubTarget.id);
+    if (d) openHub(d, hubTarget.kind === "booking" ? "bookings" : "overview", hubTarget.id);
+    onConsumed();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [hubTarget, dogs]);
 
   const onFile = async (e) => {
     const file = e.target.files?.[0]; if (!file) return;
@@ -306,7 +339,9 @@ export default function Dogs({ focusId = null, focusMode = "scroll", onConsumed 
                     operator can deep-link instead of opening basics
                     every time. */}
                 <DogManageMenu dog={d} onOpen={openEdit} onDelete={()=>remove(d.id)} />
-                <h4 className="text-lg font-black text-shText uppercase tracking-tight">{d.name}</h4>
+                <button onClick={()=>openHub(d)} data-testid={`open-dog-hub-${d.id}`} className="text-left hover:text-shPrimary transition">
+                  <h4 className="text-lg font-black text-shText uppercase tracking-tight">{d.name}</h4>
+                </button>
                 <p className="text-[15px] text-shSecondary font-black uppercase tracking-widest">{d.breed || "Unknown breed"}</p>
                 <p className="text-[15px] text-shTextMuted mt-2">Owner: <span className="text-gray-200 font-bold">{ownerName(d.owner_id)}</span></p>
                 <div className="mt-3 flex items-center justify-between text-[14px] uppercase font-black tracking-widest">
@@ -668,6 +703,23 @@ export default function Dogs({ focusId = null, focusMode = "scroll", onConsumed 
         <Lightbox photos={lightbox.photos} index={lightbox.index}
                   onClose={()=>setLightbox({ open: false, photos: [], index: 0 })}
                   onIndex={(i)=>setLightbox(l => ({ ...l, index: i }))} />
+      )}
+
+      {hubOpen && (
+        <DogHub
+          dog={hubOpen}
+          onClose={()=>setHubOpen(null)}
+          can={can}
+          initialTab={hubInitialTab}
+          focusRecordId={hubFocusId}
+          onBook={(dogId, ownerId)=>{ setHubOpen(null); onBookForDog(dogId, ownerId); }}
+          onEditDog={(d, initialTab)=>{ setHubOpen(null); openEdit(d, initialTab); }}
+          onLogIncident={(dogId)=>{ setHubOpen(null); onLogIncident(dogId); }}
+          onOpenCareBoard={()=>{ setHubOpen(null); onOpenCareBoard(); }}
+          onOpenKennelBoard={()=>{ setHubOpen(null); onOpenKennelBoard(); }}
+          onOpenFrontDesk={()=>{ setHubOpen(null); onOpenFrontDesk(); }}
+          onMessageOwner={(d)=>{ setHubOpen(null); onMessageOwner(d); }}
+        />
       )}
     </div>
   );

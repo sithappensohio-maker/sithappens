@@ -5,6 +5,7 @@ import { toast } from "sonner";
 import NeonEdge from "./premium/NeonEdge";
 import PremiumButton from "./premium/PremiumButton";
 import { accentRgb } from "./premium/tokens";
+import { CLIENT_LABELS } from "../lib/clientLabels";
 
 /* Client Shop — Phase 1 gave read-only catalog browsing. Phase 2 adds a
  * real cart + checkout: physical products, credit packs, and training
@@ -23,7 +24,7 @@ const money = (n) => `$${Number(n || 0).toFixed(2)}`;
 const TABS = [
   { key: "all", label: "All" },
   { key: "product", label: "Merch & Gear" },
-  { key: "credit_pack", label: "Credit Packs" },
+  { key: "credit_pack", label: CLIENT_LABELS.creditPack },
   { key: "training_program", label: "Training" },
 ];
 
@@ -59,24 +60,59 @@ function ShopImage({ imageId, alt }) {
   );
 }
 
+// Shopify-linked merchandise is a display-only catalog link — Sit Happens
+// never processes its checkout, so "adding" it just sends the client to the
+// configured Shopify page. New tab on desktop (client stays in the Shop);
+// same-tab navigation on mobile, where a background new-tab is easy to miss
+// and the client needs to clearly land on Shopify. Click is logged (best-
+// effort, nonfinancial) before navigating — never blocks the navigation.
+function openShopifyListing(item) {
+  api.post("/shop/merch-click", { product_id: item.id }).catch(() => {});
+  const url = item.shopify_product_url;
+  if (!url) return;
+  const isMobile = typeof window !== "undefined" && window.matchMedia && window.matchMedia("(max-width: 640px)").matches;
+  if (isMobile) {
+    window.location.href = url;
+  } else {
+    window.open(url, "_blank", "noopener,noreferrer");
+  }
+}
+
 function ItemCard({ item, cartQty, onAdd }) {
-  const outOfStock = item.kind === "product" && item.track_inventory && !item.in_stock;
+  const isShopifyMerch = item.kind === "product" && item.sales_destination === "shopify_external";
+  const outOfStock = item.kind === "product" && !isShopifyMerch && item.track_inventory && !item.in_stock;
   return (
     <NeonEdge accentRgb={accentRgb("lime")} intensity="subtle" className="p-3 flex flex-col hover:-translate-y-0.5 transition duration-200" data-testid={`shop-card-${item.kind}-${item.id}`}>
-      <ShopImage imageId={item.image_id} alt={item.name} />
+      <div className="relative">
+        <ShopImage imageId={item.image_id} alt={item.name} />
+        {item.featured && (
+          <span className="absolute top-1.5 left-1.5 px-1.5 py-0.5 rounded text-[9px] font-black uppercase tracking-widest bg-shPrimary text-bgHeader">
+            Featured
+          </span>
+        )}
+      </div>
       <p className="text-shText font-bold text-[14px] mt-3 truncate">{item.name}</p>
+      {item.category_name && (
+        <p className="text-[11px] text-shSecondary font-bold mt-0.5 truncate">
+          {item.category_name}{item.subcategory_name ? ` → ${item.subcategory_name}` : ""}
+        </p>
+      )}
       {item.description && <p className="text-shTextMuted text-[12px] mt-1 line-clamp-2">{item.description}</p>}
 
-      {item.kind === "product" && (
+      {isShopifyMerch ? (
+        <p className="text-[11px] text-shSecondary uppercase tracking-widest font-bold mt-1" data-testid={`shop-merch-badge-${item.id}`}>
+          <i className="fas fa-arrow-up-right-from-square mr-1" />Fulfilled by Shopify
+        </p>
+      ) : item.kind === "product" ? (
         <p className="text-[11px] text-shTextMuted uppercase tracking-widest font-bold mt-1">
           {item.track_inventory
             ? (item.in_stock ? `${item.stock_on_hand} in stock` : "Out of stock")
             : "Available"}
         </p>
-      )}
+      ) : null}
       {item.kind === "credit_pack" && (
         <p className="text-[11px] text-shTextMuted uppercase tracking-widest font-bold mt-1">
-          {item.qty} {item.service_type} credits
+          {item.qty} {item.service_type} visits
         </p>
       )}
       {item.kind === "training_program" && (
@@ -86,8 +122,28 @@ function ItemCard({ item, cartQty, onAdd }) {
       )}
 
       <div className="mt-auto pt-3 space-y-2">
-        <p className="text-shPrimary font-black text-[18px]">{money(item.price)}</p>
-        {outOfStock ? (
+        {isShopifyMerch ? (
+          item.shopify_display_price != null && (
+            <p className="text-shPrimary font-black text-[18px]">
+              {item.shopify_from_price ? "From " : ""}{money(item.shopify_display_price)}
+            </p>
+          )
+        ) : (item.kind === "credit_pack" || item.kind === "product") && item.has_price_override ? (
+          <div data-testid={`shop-price-override-${item.id}`}>
+            <p className="text-shPrimary font-black text-[18px]">Your price: {money(item.effective_price)}</p>
+            <p className="text-[11px] text-shTextMuted font-bold uppercase tracking-widest">Client-specific price</p>
+            <p className="text-[12px] text-shTextMuted mt-0.5">
+              Standard price: <span className="line-through">{money(item.list_price)}</span>
+            </p>
+          </div>
+        ) : (
+          <p className="text-shPrimary font-black text-[18px]">{money(item.price)}</p>
+        )}
+        {isShopifyMerch ? (
+          <PremiumButton variant="primary" onClick={() => openShopifyListing(item)} data-testid={`shop-view-options-${item.id}`} className="w-full justify-center">
+            View Options <i className="fas fa-arrow-up-right-from-square ml-1 text-[11px]" />
+          </PremiumButton>
+        ) : outOfStock ? (
           <button disabled data-testid={`shop-buy-${item.kind}-${item.id}`}
                   className="w-full px-3 py-2 rounded-md text-[11px] font-black uppercase tracking-widest border border-shBorder text-shTextMuted cursor-not-allowed"
                   style={{ background: "var(--sh-card-base)" }}>
@@ -198,6 +254,14 @@ export default function PortalShop({ initialTab = "all", fullScreen = false, sho
   const [loading, setLoading] = useState(true);
   const [err, setErr] = useState("");
   const [tab, setTab] = useState(initialTab);
+  // Shop Organization (Phase 1) — category/subcategory browsing, additive to
+  // the existing kind tabs above. "" means no category filter (shows every
+  // item, categorized or not); a subcategory filter only applies once a
+  // category is chosen, and is cleared whenever the category changes.
+  const [categories, setCategories] = useState([]);
+  const [categoryFilter, setCategoryFilter] = useState("");
+  const [subcategoryFilter, setSubcategoryFilter] = useState("");
+  const [search, setSearch] = useState("");
   // Cart is controlled by the parent (Portal.jsx) when cart/onCartChange are
   // passed, so it survives leaving/returning to this view — still the ONE
   // cart, just lifted, not a second one. Falls back to local state so this
@@ -219,11 +283,30 @@ export default function PortalShop({ initialTab = "all", fullScreen = false, sho
       .finally(() => setLoading(false));
   };
   useEffect(() => { load(); }, []);
+  useEffect(() => {
+    api.get("/shop/catalog/taxonomy")
+      .then(({ data }) => setCategories(data.categories || []))
+      .catch(() => setCategories([]));
+  }, []);
+
+  const selectedCategory = categories.find((c) => c.id === categoryFilter);
+  const subcategoryOptions = selectedCategory?.subcategories || [];
 
   const filtered = useMemo(() => {
-    if (tab === "all") return items;
-    return items.filter((i) => i.kind === tab);
-  }, [items, tab]);
+    let list = tab === "all" ? items : items.filter((i) => i.kind === tab);
+    if (categoryFilter) list = list.filter((i) => i.category_id === categoryFilter);
+    if (subcategoryFilter) list = list.filter((i) => i.subcategory_id === subcategoryFilter);
+    const q = search.trim().toLowerCase();
+    if (q) {
+      list = list.filter((i) => (
+        (i.name || "").toLowerCase().includes(q)
+        || (i.description || "").toLowerCase().includes(q)
+        || (i.category_name || "").toLowerCase().includes(q)
+        || (i.subcategory_name || "").toLowerCase().includes(q)
+      ));
+    }
+    return list;
+  }, [items, tab, categoryFilter, subcategoryFilter, search]);
 
   const cartCount = cart.reduce((n, c) => n + c.quantity, 0);
 
@@ -345,7 +428,7 @@ export default function PortalShop({ initialTab = "all", fullScreen = false, sho
             <span className="text-gray-300"><i className="fas fa-circle-notch fa-spin mr-2" />Payment received — order processing…</span>
           ) : returning.status === "paid" && returning.fulfillmentStatus === "fulfilled" ? (
             !returning.hasPhysical ? (
-              <span className="text-shGreen font-black"><i className="fas fa-circle-check mr-2" />Order received! Your credits/sessions have been added.</span>
+              <span className="text-shGreen font-black"><i className="fas fa-circle-check mr-2" />Order received! Your visits/sessions have been added.</span>
             ) : returning.pickupStatus === "picked_up" ? (
               <span className="text-shGreen font-black"><i className="fas fa-circle-check mr-2" />Order completed. Thank you!</span>
             ) : returning.pickupStatus === "ready_for_pickup" ? (
@@ -371,6 +454,40 @@ export default function PortalShop({ initialTab = "all", fullScreen = false, sho
             {t.label}
           </button>
         ))}
+      </div>
+
+      {/* Shop Organization (Phase 1) — a dropdown rather than a long row of
+          category buttons, so this never overflows on mobile. Subcategory
+          only appears once a category is chosen and clears whenever the
+          category changes. */}
+      <div className="flex flex-col sm:flex-row gap-2 mb-4 max-w-2xl mx-auto">
+        <div className="relative flex-1">
+          <i className="fas fa-magnifying-glass absolute left-3 top-1/2 -translate-y-1/2 text-shTextMuted text-[13px]" />
+          <input value={search} onChange={(e) => setSearch(e.target.value)} placeholder="Search the shop…"
+                 data-testid="shop-search-input"
+                 className="w-full pl-9 pr-3 py-2 rounded-md border border-shBorder text-shText text-sm focus:outline-none focus:border-shPrimary/60"
+                 style={{ background: "var(--sh-card-base)" }} />
+        </div>
+        {categories.length > 0 && (
+          <>
+            <select value={categoryFilter} onChange={(e) => { setCategoryFilter(e.target.value); setSubcategoryFilter(""); }}
+                    data-testid="shop-category-select"
+                    className="rounded-md border border-shBorder text-shText text-sm px-3 py-2 focus:outline-none focus:border-shPrimary/60"
+                    style={{ background: "var(--sh-card-base)" }}>
+              <option value="">All Categories</option>
+              {categories.map((c) => <option key={c.id} value={c.id}>{c.name}</option>)}
+            </select>
+            {subcategoryOptions.length > 0 && (
+              <select value={subcategoryFilter} onChange={(e) => setSubcategoryFilter(e.target.value)}
+                      data-testid="shop-subcategory-select"
+                      className="rounded-md border border-shBorder text-shText text-sm px-3 py-2 focus:outline-none focus:border-shPrimary/60"
+                      style={{ background: "var(--sh-card-base)" }}>
+                <option value="">All of {selectedCategory.name}</option>
+                {subcategoryOptions.map((s) => <option key={s.id} value={s.id}>{s.name}</option>)}
+              </select>
+            )}
+          </>
+        )}
       </div>
 
       {loading && <p className="text-gray-500 text-sm text-center py-6">Loading the shop…</p>}

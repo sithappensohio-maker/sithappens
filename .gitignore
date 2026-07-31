@@ -1,6 +1,7 @@
 # ── IDE / editor metadata ───────────────────────────────────────────
 .idea/
 .vscode/
+.claude/
 .DS_Store
 
 # ── Dependencies ────────────────────────────────────────────────────
@@ -62,3 +63,6 @@ sit-happens-FULL-BACKUP-*.tar.gz
 memory/test_credentials.md
 test_reports/
 test_result.md
+
+# ── Incident evidence archives — raw data dumps, never source ───────
+backend/incident_reports/

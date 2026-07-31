@@ -237,7 +237,104 @@ def test_visible_credit_pack_shape(admin_headers, fresh_client):
         assert item["service_type"] == "daycare"
         assert item["description"] == "Bulk daycare!"
         assert "welcome_email_template_slug" not in item
+        # Standard client (no override) — new clearer fields agree with
+        # the legacy aliases and report no override at all.
+        assert item["list_price"] == 300.0
+        assert item["effective_price"] == 300.0
+        assert item["pricing_source"] == "standard"
+        assert item["price_override_id"] is None
+        assert item["has_price_override"] is False
+        assert item["legacy_price"] is None
+        assert item["has_legacy_override"] is False
     finally:
+        _delete_credit_pack(admin_headers, pack["id"])
+
+
+# ---------------------------------------------------------------------------
+# Client-specific (grandfathered) credit-pack pricing in the Shop catalog —
+# reuses the SAME price_overrides / resolve_client_price() source of truth
+# front-desk sell-pack and booking checkout already trust. See
+# test_price_overrides.py for the resolver's own CRUD/expiry/upsert coverage;
+# these tests are specifically about the Shop catalog surfacing it correctly.
+# ---------------------------------------------------------------------------
+
+def _create_price_override(admin_headers, client_id, target_kind, target_code, override_price, expires_on=None):
+    r = requests.post(f"{API}/clients/{client_id}/price-overrides", headers=admin_headers, json={
+        "target_kind": target_kind, "target_code": target_code,
+        "override_price": override_price, "expires_on": expires_on,
+    }, timeout=15)
+    assert r.status_code == 200, r.text
+    return r.json()
+
+
+def _delete_price_override(admin_headers, override_id):
+    requests.delete(f"{API}/price-overrides/{override_id}", headers=admin_headers, timeout=15)
+
+
+def test_credit_pack_override_shown_in_shop_catalog(admin_headers, fresh_client):
+    """A grandfathered client must see their locked rate as the effective/
+    primary price, with the current public price still surfaced separately
+    — never silently shown only the new catalog price."""
+    pack = _create_credit_pack(admin_headers, available_online=True, qty=10, price=400.0)
+    override = _create_price_override(admin_headers, fresh_client["id"], "credit_pack", pack["id"], 300.0)
+    try:
+        client_hdrs = _client_headers(fresh_client["id"], fresh_client["email"])
+        r = _catalog(client_hdrs)
+        item = next(i for i in r.json()["items"] if i["kind"] == "credit_pack" and i["id"] == pack["id"])
+        assert item["list_price"] == 400.0
+        assert item["effective_price"] == 300.0
+        assert item["pricing_source"] == "client_override"
+        assert item["price_override_id"] == override["id"]
+        assert item["has_price_override"] is True
+        # value_each must be derived from the EFFECTIVE price, never list.
+        assert item["value_each"] == 30.0
+        # Backward-compatible aliases agree with the clearer fields.
+        assert item["price"] == 300.0
+        assert item["legacy_price"] == 400.0
+        assert item["has_legacy_override"] is True
+        # Never leak the override's private note or the raw DB row.
+        assert "note" not in item
+        assert "override_row" not in item
+    finally:
+        _delete_price_override(admin_headers, override["id"])
+        _delete_credit_pack(admin_headers, pack["id"])
+
+
+def test_credit_pack_expired_override_ignored_in_shop_catalog(admin_headers, fresh_client):
+    from datetime import timedelta
+    pack = _create_credit_pack(admin_headers, available_online=True, qty=10, price=400.0)
+    past = (datetime.now(timezone.utc).date() - timedelta(days=1)).isoformat()
+    override = _create_price_override(admin_headers, fresh_client["id"], "credit_pack", pack["id"], 300.0, expires_on=past)
+    try:
+        client_hdrs = _client_headers(fresh_client["id"], fresh_client["email"])
+        r = _catalog(client_hdrs)
+        item = next(i for i in r.json()["items"] if i["kind"] == "credit_pack" and i["id"] == pack["id"])
+        assert item["effective_price"] == 400.0
+        assert item["pricing_source"] == "standard"
+        assert item["has_price_override"] is False
+    finally:
+        _delete_price_override(admin_headers, override["id"])
+        _delete_credit_pack(admin_headers, pack["id"])
+
+
+def test_service_override_does_not_affect_credit_pack_catalog(admin_headers, fresh_client):
+    """A service-kind override for this client must never leak into a
+    credit-pack's pricing — the two target_kinds are intentionally
+    independent resolutions."""
+    svcs = requests.get(f"{API}/services", headers=admin_headers, timeout=15).json()
+    service = next((s for s in svcs if s.get("active") and not s.get("is_addon")), None)
+    if not service:
+        pytest.skip("No active service in catalog")
+    pack = _create_credit_pack(admin_headers, available_online=True, qty=10, price=400.0)
+    override = _create_price_override(admin_headers, fresh_client["id"], "service", service["id"], 1.0)
+    try:
+        client_hdrs = _client_headers(fresh_client["id"], fresh_client["email"])
+        r = _catalog(client_hdrs)
+        item = next(i for i in r.json()["items"] if i["kind"] == "credit_pack" and i["id"] == pack["id"])
+        assert item["effective_price"] == 400.0
+        assert item["has_price_override"] is False
+    finally:
+        _delete_price_override(admin_headers, override["id"])
         _delete_credit_pack(admin_headers, pack["id"])
 
 

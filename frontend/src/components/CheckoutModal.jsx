@@ -1,4 +1,5 @@
 import { useEffect, useState } from "react";
+import { toast } from "sonner";
 import { api } from "../lib/api";
 import { useEditLock } from "../lib/useLiveRefresh";
 import { printReceipt as posPrintReceipt, openDrawer as posOpenDrawer } from "../lib/posAgent";
@@ -175,6 +176,8 @@ export function CheckoutModal({ booking, services, onClose, onRequestCancel }) {
   const [hwResult, setHwResult] = useState(null); // null until checkout succeeds and a pos token exists
   const [hwBusy, setHwBusy] = useState(false);
   const [hwInvoiceId, setHwInvoiceId] = useState(null);
+  const [emailBusy, setEmailBusy] = useState(false);
+  const [receiptViewOpen, setReceiptViewOpen] = useState(null);
 
   const runHardware = async (printToken, drawerToken) => {
     setHwBusy(true);
@@ -183,6 +186,29 @@ export function CheckoutModal({ booking, services, onClose, onRequestCancel }) {
     if (printToken) next.print = await posPrintReceipt(printToken);
     setHwResult(next);
     setHwBusy(false);
+  };
+
+  const emailReceipt = async () => {
+    if (!hwInvoiceId) return;
+    setEmailBusy(true);
+    try {
+      const { data } = await api.post(`/receipts/invoice/${hwInvoiceId}/email`, {});
+      if (data.ok) toast.success("Receipt emailed");
+      else toast.error(data.detail || "Could not email the receipt");
+    } catch (e) {
+      toast.error(e?.response?.data?.detail || "Could not email the receipt");
+    }
+    setEmailBusy(false);
+  };
+
+  const viewReceipt = async () => {
+    if (!hwInvoiceId) return;
+    try {
+      const { data } = await api.get(`/receipts/invoice/${hwInvoiceId}`);
+      setReceiptViewOpen(data);
+    } catch (e) {
+      toast.error(e?.response?.data?.detail || "Could not load the receipt");
+    }
   };
 
   // A hardware-action token is single-use — consumed the moment it's
@@ -442,7 +468,11 @@ export function CheckoutModal({ booking, services, onClose, onRequestCancel }) {
       const drawerToken = data?.pos_open_drawer_token;
       setHwInvoiceId(data?.pos_invoice_id || null);
       setBusy(false);
-      if (printToken || drawerToken) {
+      // Always show the post-checkout status screen (even with no tokens at
+      // all) so staff has a manual View/Print/Email path when auto-print is
+      // off and no cash was tendered — turning auto-print off must never
+      // leave staff with zero way to produce a receipt on request.
+      if (data?.pos_invoice_id) {
         await runHardware(printToken, drawerToken);
       } else {
         onClose();
@@ -494,10 +524,23 @@ export function CheckoutModal({ booking, services, onClose, onRequestCancel }) {
                 <i className="fas fa-rotate mr-1"/>Retry Open Drawer
               </button>
             )}
-            {!hwBusy && hwResult?.printToken && hwInvoiceId && (
+            {!hwBusy && hwInvoiceId && (
               <button onClick={() => retryHardware("print_receipt")} data-testid="hw-reprint"
                       className="text-shBlue font-black uppercase text-[12px] tracking-widest border border-shBlue/40 rounded px-3 py-2">
-                <i className="fas fa-print mr-1"/>{hwResult.print?.ok ? "Reprint Receipt" : "Retry Print"}
+                <i className="fas fa-print mr-1"/>
+                {hwResult?.printToken ? (hwResult.print?.ok ? "Reprint Receipt" : "Retry Print") : "Print Receipt"}
+              </button>
+            )}
+            {!hwBusy && hwInvoiceId && (
+              <button onClick={viewReceipt} data-testid="checkout-view-receipt"
+                      className="text-shBlue font-black uppercase text-[12px] tracking-widest border border-shBlue/40 rounded px-3 py-2">
+                <i className="fas fa-receipt mr-1"/>View Receipt
+              </button>
+            )}
+            {!hwBusy && hwInvoiceId && (
+              <button onClick={emailReceipt} disabled={emailBusy} data-testid="checkout-email-receipt"
+                      className="text-shBlue font-black uppercase text-[12px] tracking-widest border border-shBlue/40 rounded px-3 py-2 disabled:opacity-50">
+                <i className="fas fa-envelope mr-1"/>{emailBusy ? "Sending…" : "Email Receipt"}
               </button>
             )}
             <button onClick={onClose} disabled={hwBusy} data-testid="hw-done"
@@ -506,6 +549,25 @@ export function CheckoutModal({ booking, services, onClose, onRequestCancel }) {
             </button>
           </div>
         </div>
+        {receiptViewOpen && (
+          <div className="fixed inset-0 bg-black/70 z-[60] grid place-items-center p-4" onClick={() => setReceiptViewOpen(null)}>
+            <div className="bg-white text-black rounded-lg p-5 max-w-sm w-full text-[13px]" onClick={(e) => e.stopPropagation()} data-testid="checkout-receipt-view-modal">
+              {receiptViewOpen.test_receipt && (
+                <div className="bg-amber-200 text-amber-900 text-center font-black text-[10px] uppercase tracking-widest py-1 mb-2 rounded">{receiptViewOpen.test_label}</div>
+              )}
+              <p className="font-black text-base">{receiptViewOpen.business_name}</p>
+              <p className="text-gray-500 mt-1">Receipt #{receiptViewOpen.receipt_number}</p>
+              {receiptViewOpen.client_name && <p className="text-gray-500">Client: {receiptViewOpen.client_name}</p>}
+              <div className="border-t border-gray-200 my-2" />
+              {(receiptViewOpen.line_items || []).map((li, i) => (
+                <div key={i} className="flex justify-between gap-2"><span>{li.description}{li.qty > 1 ? ` × ${li.qty}` : ""}</span><span className="font-bold">{li.amount != null ? `$${Number(li.amount).toFixed(2)}` : ""}</span></div>
+              ))}
+              <div className="border-t border-gray-200 my-2" />
+              <div className="flex justify-between font-black text-base"><span>Total</span><span>${Number(receiptViewOpen.total ?? receiptViewOpen.invoice_total ?? receiptViewOpen.payment_amount ?? 0).toFixed(2)}</span></div>
+              <button onClick={() => setReceiptViewOpen(null)} className="mt-4 w-full bg-gray-100 text-gray-700 rounded py-2 font-black uppercase text-[12px] tracking-widest">Close</button>
+            </div>
+          </div>
+        )}
       </div>
     );
   }

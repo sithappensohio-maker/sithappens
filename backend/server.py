@@ -36,6 +36,7 @@ import stripe
 from email_service import (
     notify_admin_new_booking,
     queue_admin_new_shop_order,
+    queue_receipt_email,
     notify_admin_bulk_booking,
     notify_admin_new_client,
     notify_admin_homework_section_log,
@@ -475,6 +476,56 @@ async def require_employee_or_admin(user: dict = Depends(get_current_user)) -> d
     Sensitive endpoints (income, P&L, settings, billing) keep `require_admin`."""
     if user.get("role") not in ("admin", "employee"):
         raise HTTPException(status_code=403, detail="Staff access required")
+    return user
+
+
+def require_admin_and_permission(key: str):
+    """Security checkpoint — backend permission enforcement (following the
+    frontend can() fix). `require_admin` alone only proves the account's
+    broad `role` is "admin" — it says nothing about `staff_role`, so a
+    restricted front_desk/trainer/etc. account passed it exactly the same as
+    the owner. This composes require_admin (still the broad account-type
+    gate — keeps `role: employee` Staff Portal accounts out entirely) with a
+    specific permission check from the same matrix `/me/permissions` already
+    exposes, so the two can never drift apart.
+
+    Defined here (near the top of the file, before PERMISSION_KEYS/_perms_for
+    exist) because `Depends(require_admin_and_permission("key"))` calls this
+    factory immediately at import time, as each endpoint below is defined —
+    so the key-validity check has to live inside `_dep` (deferred to actual
+    request time, by which point the whole module has finished loading)
+    rather than in this outer function body."""
+    async def _dep(user: dict = Depends(require_admin)) -> dict:
+        if key not in PERMISSION_KEYS:
+            raise RuntimeError(f"Unknown permission key '{key}'")
+        perms = _perms_for(user)
+        if not perms.get(key):
+            raise HTTPException(status_code=403, detail=f"Missing permission: {key}")
+        return user
+    return _dep
+
+
+def _is_owner(user: Dict[str, Any]) -> bool:
+    """True owner per the exact same rule `_perms_for` uses for its
+    lockout-protection bypass: role=="admin" AND (no staff_role at all, or
+    staff_role=="owner"). Deliberately NOT derived from resolved permissions
+    — a role-matrix override that happens to grant a manager every key
+    (e.g. via the admin-editable overrides layer) must never be treated as
+    equivalent to being the actual owner, or a delegate could use that to
+    edit the matrix itself and escalate further."""
+    role = (user.get("role") or "").lower()
+    if role != "admin":
+        return False
+    sr = (user.get("staff_role") or "").lower()
+    return not sr or sr == "owner"
+
+
+async def require_owner(user: dict = Depends(get_current_user)) -> dict:
+    """For the handful of actions that must never be delegatable at all —
+    editing the permission matrix itself, reassigning staff_role, exporting
+    raw password hashes — regardless of what any override says."""
+    if not _is_owner(user):
+        raise HTTPException(status_code=403, detail="Owner access required")
     return user
 
 
@@ -1484,7 +1535,7 @@ async def list_clients(_: dict = Depends(require_admin), include_deleted: bool =
     return items
 
 @api.post("/clients", response_model=ClientOut)
-async def create_client(body: ClientIn, _: dict = Depends(require_admin)):
+async def create_client(body: ClientIn, _: dict = Depends(require_admin_and_permission("clients_edit"))):
     doc = body.model_dump()
     doc.update({"id": str(uuid.uuid4()), "waiver": False, "created_at": now_iso()})
     # Normalise referred_by_code: uppercase + strip, drop if invalid (no matching referrer)
@@ -1538,7 +1589,7 @@ async def set_client_status(client_id: str, body: ClientStatusIn, user: dict = D
     return existing
 
 @api.put("/clients/{client_id}", response_model=ClientOut)
-async def update_client(client_id: str, body: ClientIn, _: dict = Depends(require_admin)):
+async def update_client(client_id: str, body: ClientIn, _: dict = Depends(require_admin_and_permission("clients_edit"))):
     existing = await db.clients.find_one({"id": client_id}, {"_id": 0})
     if not existing:
         raise HTTPException(status_code=404, detail="Client not found")
@@ -2507,7 +2558,7 @@ async def get_dog(dog_id: str, user: dict = Depends(get_current_user)):
     return _normalize_dog_doc(dog)
 
 @api.post("/dogs", response_model=DogOut)
-async def create_dog(body: DogIn, _: dict = Depends(require_admin)):
+async def create_dog(body: DogIn, _: dict = Depends(require_admin_and_permission("dogs_edit"))):
     client = await db.clients.find_one({"id": body.owner_id}, {"_id": 0})
     if not client:
         raise HTTPException(status_code=404, detail="Owner not found")
@@ -2518,7 +2569,7 @@ async def create_dog(body: DogIn, _: dict = Depends(require_admin)):
     return doc
 
 @api.put("/dogs/{dog_id}", response_model=DogOut)
-async def update_dog(dog_id: str, body: DogIn, _: dict = Depends(require_admin)):
+async def update_dog(dog_id: str, body: DogIn, _: dict = Depends(require_admin_and_permission("dogs_edit"))):
     existing = await db.dogs.find_one({"id": dog_id}, {"_id": 0})
     if not existing:
         raise HTTPException(status_code=404, detail="Dog not found")
@@ -2821,18 +2872,34 @@ async def list_bookings(
     start_date: Optional[str] = None,
     end_date: Optional[str] = None,
     include_all: bool = False,
+    dog_id: Optional[str] = None,
+    client_id: Optional[str] = None,
 ):
     """Lists bookings. By default returns a tight rolling window (90 days
     back to 90 days forward) so admin screens stay snappy as historical
     bookings pile up. Pass `include_all=true` for the full table (CSV
-    exports, reconciliation) or `start_date` / `end_date` for a custom range."""
+    exports, reconciliation) or `start_date` / `end_date` for a custom range.
+
+    `dog_id` narrows to a single dog's bookings. Added after an incident
+    where a script assumed this filter already existed, got the unfiltered
+    default window instead (FastAPI silently drops unrecognized query
+    params), and bulk-cancelled ~1150 unrelated bookings. Now a real,
+    server-validated filter instead of a silent no-op.
+
+    `client_id` narrows to a single client's bookings (used by the admin
+    Client Hub's Bookings tab). Ignored for a client-role caller, who is
+    always scoped to their own client_id regardless."""
     q: Dict = {}
     if status_filter:
         q["status"] = status_filter
+    if dog_id:
+        q["dog_id"] = dog_id
     # Admins + employees see all bookings (employees need this to run the
     # facility). Clients see only their own.
     if user.get("role") == "client":
         q["client_id"] = user.get("client_id")
+    elif client_id:
+        q["client_id"] = client_id
     if not include_all:
         if not start_date:
             start_date = (business_today() - timedelta(days=90)).isoformat()
@@ -3566,6 +3633,7 @@ async def _crate_conflict(booking_id: str, date: str, end_date: Optional[str], c
 
 @api.post("/bookings", response_model=BookingOut)
 async def create_booking(body: BookingIn, user: dict = Depends(get_current_user)):
+    _require_booking_edit(user)
     dog = await db.dogs.find_one({"id": body.dog_id}, {"_id": 0})
     if not dog:
         raise HTTPException(status_code=404, detail="Dog not found")
@@ -4177,6 +4245,7 @@ async def create_recurring(body: RecurringBookingIn, user: dict = Depends(get_cu
 # ─────────────────────────────────────────────────────────────────────────────
 @api.post("/bookings/group")
 async def create_booking_group(body: BookingGroupIn, user: dict = Depends(get_current_user)):
+    _require_booking_edit(user)
     if not body.dogs:
         raise HTTPException(status_code=400, detail="At least one dog required")
     if len(body.dogs) > 12:
@@ -5277,7 +5346,7 @@ async def lookup_referral_code(code: str, _: dict = Depends(require_admin)):
 
 
 @api.post("/clients/{client_id}/credit-referral")
-async def credit_referral(client_id: str, body: dict, user: dict = Depends(require_admin)):
+async def credit_referral(client_id: str, body: dict, user: dict = Depends(require_admin_and_permission("finance_reports"))):
     """Admin helper: comp a daycare credit to {client_id} as a thank-you for referring
     {referred_client_id} (passed in body). Writes a `credit_adjustments` entry + a
     `referrals` collection entry for the audit trail."""
@@ -6951,13 +7020,18 @@ async def _issue_pos_token(
     return _sign_pos_token(claims)
 
 
-async def _verify_and_consume_pos_token(token: str, expected_action: str, workstation_id: Optional[str] = None) -> dict:
+async def _verify_and_consume_pos_token(token: str, expected_action, workstation_id: Optional[str] = None) -> dict:
     """Verify signature, expiry, action match, optional workstation match,
     then atomically consume (single-use). Raises HTTPException on any
     failure. This is the ONLY gate a hardware action goes through — it never
-    touches or re-validates the underlying financial record."""
+    touches or re-validates the underlying financial record.
+
+    `expected_action` accepts either a single action string or a tuple of
+    acceptable actions (used by the receipt-payload endpoint, which serves
+    both a real print_receipt token and a print_test_receipt token)."""
     claims = _unsign_pos_token(token)
-    if claims.get("action") != expected_action:
+    allowed_actions = (expected_action,) if isinstance(expected_action, str) else tuple(expected_action)
+    if claims.get("action") not in allowed_actions:
         raise HTTPException(status_code=403, detail="This token is not valid for the requested action")
     try:
         exp = datetime.fromisoformat(claims["exp"])
@@ -6974,6 +7048,138 @@ async def _verify_and_consume_pos_token(token: str, expected_action: str, workst
     if result is None:
         raise HTTPException(status_code=409, detail="This POS action token has already been used")
     return claims
+
+
+# ── Receipt customization (basic scope) ─────────────────────────────────────
+# One settings singleton (same isolated-collection pattern as
+# payment_plan_settings — never touches the giant global `settings` doc)
+# controls presentation only: business identity, thank-you/policy messages,
+# which OPTIONAL fields show on a receipt, and whether receipts auto-email/
+# auto-print. It never changes what a receipt actually reports — every
+# amount below still comes from _build_receipt_payload() and its siblings
+# reading the authoritative invoice/payment/pos_sale/shop_order records,
+# never recalculated here.
+DEFAULT_RECEIPT_SETTINGS = {
+    "business_logo_image_id": None,
+    "business_display_name": "Sit Happens Dog Training",
+    "address": "",
+    "phone": "",
+    "email": "",
+    "website": "",
+    "thank_you_message": "Thank you for choosing Sit Happens!",
+    "policy_footer_message": "",
+    "show_client_name": True,
+    "show_dog_names": True,
+    "show_service_dates": True,
+    "show_staff_name": True,
+    "show_booking_reference": True,
+    "show_remaining_prepaid_visits": True,
+    "show_public_price_when_override_used": True,
+    # auto_email_receipts defaults OFF — it's a brand-new capability with no
+    # prior equivalent behavior, so it's correctly opt-in. auto_print_receipts
+    # defaults ON: front-desk hardware printing was unconditional (always-on)
+    # at every checkout/POS-sale/payment surface before this setting existed
+    # to gate it — defaulting it off would silently stop printers working for
+    # every existing business that has never touched this screen.
+    "auto_email_receipts": False,
+    "auto_print_receipts": True,
+}
+
+
+class ReceiptSettingsUpdate(BaseModel):
+    business_logo_image_id: Optional[str] = None
+    business_display_name: Optional[str] = None
+    address: Optional[str] = None
+    phone: Optional[str] = None
+    email: Optional[str] = None
+    website: Optional[str] = None
+    thank_you_message: Optional[str] = None
+    policy_footer_message: Optional[str] = None
+    show_client_name: Optional[bool] = None
+    show_dog_names: Optional[bool] = None
+    show_service_dates: Optional[bool] = None
+    show_staff_name: Optional[bool] = None
+    show_booking_reference: Optional[bool] = None
+    show_remaining_prepaid_visits: Optional[bool] = None
+    show_public_price_when_override_used: Optional[bool] = None
+    auto_email_receipts: Optional[bool] = None
+    auto_print_receipts: Optional[bool] = None
+
+
+async def get_receipt_settings() -> dict:
+    doc = await db.receipt_settings.find_one({"_id": "singleton"}, {"_id": 0}) or {}
+    return {**DEFAULT_RECEIPT_SETTINGS, **doc}
+
+
+@api.get("/admin/receipt-settings")
+async def get_receipt_settings_endpoint(_: dict = Depends(require_admin_and_permission("manage_receipt_settings"))):
+    return await get_receipt_settings()
+
+
+@api.put("/admin/receipt-settings")
+async def update_receipt_settings_endpoint(body: ReceiptSettingsUpdate, user: dict = Depends(require_admin_and_permission("manage_receipt_settings"))):
+    update_doc = body.model_dump(exclude_unset=True)
+    update_doc["updated_at"] = now_iso()
+    update_doc["updated_by"] = user.get("name", "Admin")
+    await db.receipt_settings.update_one({"_id": "singleton"}, {"$set": update_doc}, upsert=True)
+    return await get_receipt_settings()
+
+
+def _apply_receipt_settings_branding(payload: dict, rs: dict) -> dict:
+    """Adds the presentation-only business-identity fields every receipt
+    format needs — never touches any financial field already on payload."""
+    payload["business_name"] = rs["business_display_name"]
+    payload["business_logo_image_id"] = rs["business_logo_image_id"]
+    payload["business_address"] = rs["address"]
+    payload["business_phone"] = rs["phone"]
+    payload["business_email"] = rs["email"]
+    payload["business_website"] = rs["website"]
+    payload["thank_you_message"] = rs["thank_you_message"]
+    payload["policy_footer_message"] = rs["policy_footer_message"]
+    return payload
+
+
+def _apply_receipt_settings_visibility(payload: dict, rs: dict) -> dict:
+    """Show/hide toggles — nulls out an optional field's VALUE when hidden
+    (rather than deleting the key) so a renderer can always safely check
+    `if payload.get("field")` without a KeyError either way."""
+    if not rs["show_client_name"]:
+        payload["client_name"] = None
+    if not rs["show_dog_names"]:
+        payload["dogs"] = None
+    if not rs["show_service_dates"]:
+        payload["service_dates"] = None
+    if not rs["show_staff_name"]:
+        payload["staff_name"] = None
+    if not rs["show_booking_reference"]:
+        payload["booking_reference"] = None
+    if not rs["show_remaining_prepaid_visits"]:
+        payload["remaining_prepaid_visits"] = None
+    if not rs["show_public_price_when_override_used"]:
+        payload["public_price_note"] = None
+    return payload
+
+
+async def _client_remaining_prepaid_visits(client_id: Optional[str], service_type: Optional[str] = None) -> Optional[dict]:
+    """Best-effort — the client's current credit balances, read straight off
+    the client document (the same authoritative pools checkout/sell-pack
+    already maintain). Returns None when there's no client to look up."""
+    if not client_id:
+        return None
+    client = await db.clients.find_one({"id": client_id}, {"_id": 0, "credits": 1, "training_credits": 1, "boarding_credits": 1})
+    if not client:
+        return None
+    if service_type == "daycare":
+        return {"daycare": client.get("credits") or 0}
+    if service_type == "training":
+        return {"training": client.get("training_credits") or 0}
+    if service_type == "boarding":
+        return {"boarding": client.get("boarding_credits") or 0}
+    return {
+        "daycare": client.get("credits") or 0,
+        "training": client.get("training_credits") or 0,
+        "boarding": client.get("boarding_credits") or 0,
+    }
 
 
 async def _build_receipt_payload(invoice_id: str, payment_ids: Optional[List[str]] = None) -> dict:
@@ -7012,9 +7218,30 @@ async def _build_receipt_payload(invoice_id: str, payment_ids: Optional[List[str
     receipt_number = (target_payments[-1]["id"] if target_payments else invoice_id)[:8].upper()
     when = (target_payments[-1].get("created_at") if target_payments else invoice.get("created_at"))
 
-    return {
+    # Best-effort extras sourced from the underlying booking(s) — never
+    # recomputed, only read. An invoice with no resolvable bookings (or a
+    # historical one predating a given field) simply omits that extra.
+    bookings = []
+    if invoice.get("booking_ids"):
+        bookings = await db.bookings.find({"id": {"$in": invoice["booking_ids"]}}, {"_id": 0}).to_list(50)
+    service_dates = [
+        {"date": b.get("date"), "end_date": b.get("end_date"), "dog_name": b.get("dog_name")}
+        for b in bookings if b.get("date")
+    ] or None
+    staff_name = next((b.get("checked_out_by_name") or b.get("checked_in_by_name") for b in bookings
+                        if b.get("checked_out_by_name") or b.get("checked_in_by_name")), None)
+    booking_reference = (invoice.get("booking_ids") or [None])[0]
+    if booking_reference:
+        booking_reference = booking_reference[:8].upper()
+    override_booking = next((b for b in bookings if b.get("preferred_rate_applied") and b.get("price_override_id")), None)
+    public_price_note = (
+        {"list_price": override_booking.get("list_unit_price"), "effective_price": override_booking.get("unit_price")}
+        if override_booking else None
+    )
+
+    rs = await get_receipt_settings()
+    payload = {
         "kind": "invoice",
-        "business_name": "Sit Happens Dog Training",
         "receipt_number": receipt_number,
         "invoice_id": invoice_id,
         "payment_id": target_payments[0]["id"] if len(target_payments) == 1 else None,
@@ -7022,6 +7249,9 @@ async def _build_receipt_payload(invoice_id: str, payment_ids: Optional[List[str
         "date_time": when,
         "client_name": invoice.get("client_name") or "",
         "dogs": invoice.get("dog_names") or [],
+        "service_dates": service_dates,
+        "staff_name": staff_name,
+        "booking_reference": booking_reference,
         "line_items": [
             {"description": li.get("description"), "qty": li.get("qty"), "amount": li.get("amount")}
             for li in (invoice.get("line_items") or [])
@@ -7033,7 +7263,12 @@ async def _build_receipt_payload(invoice_id: str, payment_ids: Optional[List[str
         "remaining_balance": invoice.get("balance"),
         "tendered_amount": tendered_amount,
         "change_given": change_given,
+        "remaining_prepaid_visits": await _client_remaining_prepaid_visits(invoice.get("client_id"), invoice.get("service_type")),
+        "public_price_note": public_price_note,
     }
+    payload = _apply_receipt_settings_branding(payload, rs)
+    payload = _apply_receipt_settings_visibility(payload, rs)
+    return payload
 
 
 async def _build_tab_payment_receipt_payload(ledger_id: str) -> dict:
@@ -7044,18 +7279,24 @@ async def _build_tab_payment_receipt_payload(ledger_id: str) -> dict:
         raise HTTPException(status_code=404, detail="Ledger row not found")
     client = await db.clients.find_one({"id": row.get("client_id")}, {"_id": 0, "name": 1})
     amount = round(abs(float(row.get("amount") or 0)), 2)
-    return {
+    rs = await get_receipt_settings()
+    payload = {
         "kind": "tab_payment",
-        "business_name": "Sit Happens Dog Training",
         "receipt_number": ledger_id[:8].upper(),
         "date_time": row.get("created_at"),
         "client_name": (client or {}).get("name") or "",
+        "staff_name": row.get("created_by"),
         "line_items": [{"description": row.get("notes") or "Account payment", "qty": 1, "amount": amount}],
         "payment_amount": amount,
         "payment_method": row.get("method"),
         "tendered_amount": row.get("tendered_amount"),
         "change_given": row.get("change_given"),
+        "remaining_prepaid_visits": await _client_remaining_prepaid_visits(row.get("client_id")),
+        "public_price_note": None,
     }
+    payload = _apply_receipt_settings_branding(payload, rs)
+    payload = _apply_receipt_settings_visibility(payload, rs)
+    return payload
 
 
 async def _build_pos_sale_receipt_payload(pos_sale_id: str) -> dict:
@@ -7078,13 +7319,14 @@ async def _build_pos_sale_receipt_payload(pos_sale_id: str) -> dict:
         change_given = None
     methods = sorted({t.get("method") for t in tenders if t.get("method")})
     payment_method = methods[0] if len(methods) == 1 else (", ".join(methods) if methods else None)
-    return {
+    rs = await get_receipt_settings()
+    payload = {
         "kind": "pos_sale",
-        "business_name": "Sit Happens Dog Training",
         "receipt_number": sale.get("receipt_number") or pos_sale_id[:8].upper(),
         "pos_sale_id": pos_sale_id,
         "date_time": sale.get("created_at"),
         "client_name": sale.get("client_name") or "",
+        "staff_name": sale.get("sold_by") or sale.get("created_by_name"),
         "line_items": [
             {"description": li.get("description"), "qty": li.get("qty"), "amount": li.get("amount")}
             for li in (sale.get("line_items") or [])
@@ -7096,7 +7338,217 @@ async def _build_pos_sale_receipt_payload(pos_sale_id: str) -> dict:
         "payment_method": payment_method,
         "tendered_amount": tendered_amount,
         "change_given": change_given,
+        "remaining_prepaid_visits": await _client_remaining_prepaid_visits(sale.get("client_id")),
+        "public_price_note": None,
     }
+    payload = _apply_receipt_settings_branding(payload, rs)
+    payload = _apply_receipt_settings_visibility(payload, rs)
+    return payload
+
+
+async def _build_credit_pack_receipt_payload(lot_id: str) -> dict:
+    """Canonical receipt builder for a prepaid-visit (credit pack) purchase.
+    Reads the credit_lots document only — never recomputes pricing. Covers
+    the single front-desk sell-pack flow; the bulk sell-packs flow builds
+    its own combined multi-line payload (see _build_bulk_credit_pack_receipt_payload)
+    since one bulk purchase can mint several lots in a single transaction."""
+    lot = await db.credit_lots.find_one({"id": lot_id}, {"_id": 0})
+    if not lot:
+        raise HTTPException(status_code=404, detail="Credit pack purchase not found")
+    client = await db.clients.find_one({"id": lot.get("client_id")}, {"_id": 0, "name": 1})
+    rs = await get_receipt_settings()
+    payload = {
+        "kind": "credit_pack",
+        "receipt_number": lot_id[:8].upper(),
+        "credit_lot_id": lot_id,
+        "date_time": lot.get("purchased_at"),
+        "client_name": (client or {}).get("name") or "",
+        "staff_name": lot.get("sold_by"),
+        "line_items": [{
+            "description": lot.get("pack_name"), "qty": lot.get("qty_total"), "amount": lot.get("price_paid"),
+        }],
+        "subtotal": lot.get("price_paid"),
+        "discount_amount": None,
+        "tax_amount": None,
+        "total": lot.get("price_paid"),
+        "payment_method": lot.get("payment_method"),
+        "tendered_amount": None,
+        "change_given": None,
+        "remaining_prepaid_visits": await _client_remaining_prepaid_visits(lot.get("client_id")),
+        "public_price_note": (
+            {"list_price": lot.get("list_price"), "effective_price": lot.get("price_paid")}
+            if lot.get("price_override_id") else None
+        ),
+    }
+    payload = _apply_receipt_settings_branding(payload, rs)
+    payload = _apply_receipt_settings_visibility(payload, rs)
+    return payload
+
+
+async def _build_bulk_credit_pack_receipt_payload(
+    *, client_id: str, client_name: str, lines: list, total_price: float,
+    payment_method: str, staff_name: str, sold_at: str,
+) -> dict:
+    """Combined receipt for a single bulk credit-pack sale (one purchase can
+    mint several lots at once) — same shape/settings as the single-lot
+    builder above, built from the caller's already-priced lines rather than
+    re-reading N separate credit_lots documents."""
+    rs = await get_receipt_settings()
+    payload = {
+        "kind": "credit_pack",
+        "receipt_number": None,
+        "date_time": sold_at,
+        "client_name": client_name,
+        "staff_name": staff_name,
+        "line_items": [
+            {"description": l["name"], "qty": l["qty"], "amount": l["line_total"]} for l in lines
+        ],
+        "subtotal": total_price,
+        "discount_amount": None,
+        "tax_amount": None,
+        "total": total_price,
+        "payment_method": payment_method,
+        "tendered_amount": None,
+        "change_given": None,
+        "remaining_prepaid_visits": await _client_remaining_prepaid_visits(client_id),
+        "public_price_note": None,
+    }
+    payload = _apply_receipt_settings_branding(payload, rs)
+    payload = _apply_receipt_settings_visibility(payload, rs)
+    return payload
+
+
+async def _build_shop_order_receipt_payload(order_id: str) -> dict:
+    """Canonical receipt builder for a paid client Shop order. Reads the
+    shop_orders document only — never recomputes cart pricing (that already
+    happened once, server-side, at checkout time in _price_shop_cart)."""
+    order = await db.shop_orders.find_one({"id": order_id}, {"_id": 0})
+    if not order:
+        raise HTTPException(status_code=404, detail="Shop order not found")
+    rs = await get_receipt_settings()
+    payload = {
+        "kind": "shop_order",
+        "receipt_number": order_id[:8].upper(),
+        "shop_order_id": order_id,
+        "date_time": order.get("created_at"),
+        "client_name": order.get("client_name") or "",
+        "staff_name": None,
+        "line_items": [
+            {"description": l.get("name"), "qty": l.get("quantity"), "amount": l.get("line_total")}
+            for l in (order.get("lines") or [])
+        ],
+        "subtotal": order.get("subtotal"),
+        "discount_amount": None,
+        "tax_amount": order.get("tax_amount"),
+        "total": order.get("total"),
+        "payment_method": "stripe_online",
+        "tendered_amount": None,
+        "change_given": None,
+        "remaining_prepaid_visits": await _client_remaining_prepaid_visits(order.get("client_id")),
+        "public_price_note": None,
+    }
+    payload = _apply_receipt_settings_branding(payload, rs)
+    payload = _apply_receipt_settings_visibility(payload, rs)
+    return payload
+
+
+async def _claim_auto_receipt_email_once(kind: str, ref_id: str) -> bool:
+    """Atomic claim-first guard so an automatic receipt email is sent AT
+    MOST ONCE, EVER, for a given (kind, ref_id) — independent of the
+    email_outbox row's own lifecycle. email_outbox rows are DELETED once
+    fully delivered (see process_email_outbox), so _queue_email's own
+    upsert-dedup only protects against a duplicate send while that row still
+    exists; after delivery+cleanup, re-inserting the same document_id would
+    otherwise queue (and send) a genuine second copy. A Mongo _id is always
+    uniquely enforced with no schema change required, so this insert is a
+    real atomic claim: of two concurrent/retried calls for the same
+    (kind, ref_id), exactly one ever proceeds to send."""
+    try:
+        await db.auto_receipt_email_claims.insert_one({
+            "_id": f"{kind}:{ref_id}", "kind": kind, "ref_id": ref_id, "claimed_at": now_iso(),
+        })
+        return True
+    except DuplicateKeyError:
+        return False
+
+
+async def _maybe_auto_email_receipt(
+    kind: str, ref_id: str, client_id: Optional[str], claim_key: Optional[str] = None,
+) -> None:
+    """Best-effort auto-send of the branded, settings-aware receipt right
+    after a transaction commits — gated by Settings -> Receipts ->
+    "Automatically email receipts". Fire-and-forget: a delivery failure (or
+    any error in this function) must never affect, delay, or appear to
+    reverse the transaction that already succeeded. Claimed exactly once via
+    _claim_auto_receipt_email_once so any retry/replay of the surrounding
+    endpoint (or a webhook redelivery) can never double-send, even after the
+    first email has already been fully delivered.
+
+    `claim_key` defaults to f"{kind}:{ref_id}" — correct for every kind whose
+    ref_id is freshly minted per transaction (pos_sale_id, ledger_id, lot_id,
+    shop order_id). It must be passed explicitly wherever the SAME ref_id can
+    legitimately recur across genuinely separate transactions — e.g. an
+    invoice_id, which stays the same across every subsequent top-up payment
+    on that invoice; each such payment is its own real event and deserves its
+    own receipt email, so its claim is keyed by payment_id instead."""
+    if not client_id:
+        return
+    try:
+        rs = await get_receipt_settings()
+        if not rs.get("auto_email_receipts"):
+            return
+        effective_key = claim_key or ref_id
+        if not await _claim_auto_receipt_email_once(kind, effective_key):
+            return
+        client = await db.clients.find_one({"id": client_id}, {"_id": 0, "email": 1})
+        to_email = (client or {}).get("email")
+        if not to_email:
+            return
+        if kind == "invoice":
+            payload = await _build_receipt_payload(ref_id)
+        elif kind == "pos_sale":
+            payload = await _build_pos_sale_receipt_payload(ref_id)
+        elif kind == "tab_payment":
+            payload = await _build_tab_payment_receipt_payload(ref_id)
+        elif kind == "credit_pack":
+            payload = await _build_credit_pack_receipt_payload(ref_id)
+        elif kind == "shop_order":
+            payload = await _build_shop_order_receipt_payload(ref_id)
+        else:
+            return
+        # Keyed by the SAME effective_key as the claim above — critical for
+        # the invoice-payment-topup case, where ref_id (the invoice) recurs
+        # across genuinely separate events: without this, a second event's
+        # outbox upsert would land on the SAME document as the first and
+        # could clobber or re-suppress it instead of queuing its own send.
+        await queue_receipt_email(payload, to_email, attempt_key=f"auto-receipt:{kind}:{effective_key}")
+    except Exception as exc:
+        logger.warning("auto-email receipt failed for %s %s: %s", kind, ref_id, exc)
+
+
+async def _maybe_auto_email_bulk_credit_pack_receipt(
+    *, client_id: str, client_name: str, client_email: Optional[str], lines: list, total_price: float,
+    payment_method: str, sold_by: str, sold_at: str, dedup_key: Optional[str],
+) -> None:
+    """Same gating/best-effort contract as _maybe_auto_email_receipt, for the
+    one case (bulk credit-pack sale) where a single purchase can mint
+    several lots at once and needs one combined receipt rather than one
+    lookup by a single ref_id."""
+    if not client_email or not dedup_key:
+        return
+    try:
+        rs = await get_receipt_settings()
+        if not rs.get("auto_email_receipts"):
+            return
+        if not await _claim_auto_receipt_email_once("credit_pack_bulk", dedup_key):
+            return
+        payload = await _build_bulk_credit_pack_receipt_payload(
+            client_id=client_id, client_name=client_name, lines=lines, total_price=total_price,
+            payment_method=payment_method, staff_name=sold_by, sold_at=sold_at,
+        )
+        await queue_receipt_email(payload, client_email, attempt_key=f"auto-receipt:credit_pack_bulk:{dedup_key}")
+    except Exception as exc:
+        logger.warning("auto-email bulk credit pack receipt failed: %s", exc)
 
 
 class TabPaymentIn(BaseModel):
@@ -7112,7 +7564,7 @@ class TabPaymentIn(BaseModel):
 
 
 @api.get("/clients/{client_id}/ledger")
-async def get_client_ledger(client_id: str, _: dict = Depends(require_admin)):
+async def get_client_ledger(client_id: str, _: dict = Depends(require_admin_and_permission("finance_reports"))):
     """Return the per-client payment ledger + current balance.
     Sorted newest-first so the UI can render a timeline."""
     client = await db.clients.find_one({"id": client_id}, {"_id": 0})
@@ -7134,7 +7586,7 @@ async def get_client_ledger(client_id: str, _: dict = Depends(require_admin)):
 async def apply_tab_payment(
     client_id: str,
     body: TabPaymentIn,
-    user: dict = Depends(require_admin),
+    user: dict = Depends(require_admin_and_permission("take_payments")),
 ):
     """Apply a payment against the running tab (or top up pre-paid credit).
     Reduces the client's account_balance by `amount` and writes a ledger row.
@@ -7232,6 +7684,10 @@ async def apply_tab_payment(
         ))
     except Exception as exc:
         logger.warning("tab-pay receipt spawn failed: %s", exc)
+    try:
+        asyncio.create_task(_maybe_auto_email_receipt("tab_payment", row["id"], client_id))
+    except Exception as exc:
+        logger.warning("auto-email receipt spawn failed for tab payment %s: %s", row["id"], exc)
 
     # Front-desk POS hardware integration — best-effort, additive, issued
     # only AFTER the AR/ledger mutation already committed above. A hardware
@@ -7239,9 +7695,11 @@ async def apply_tab_payment(
     pos_print_receipt_token = None
     pos_open_drawer_token = None
     try:
-        pos_print_receipt_token = await _issue_pos_token(
-            action="print_receipt", workstation_id=body.workstation_id, ledger_id=row["id"],
-        )
+        rs_for_print = await get_receipt_settings()
+        if rs_for_print.get("auto_print_receipts"):
+            pos_print_receipt_token = await _issue_pos_token(
+                action="print_receipt", workstation_id=body.workstation_id, ledger_id=row["id"],
+            )
         if body.method == "cash":
             pos_open_drawer_token = await _issue_pos_token(
                 action="open_drawer", workstation_id=body.workstation_id, ledger_id=row["id"],
@@ -7306,7 +7764,7 @@ class TabAdjustmentIn(BaseModel):
 async def apply_tab_adjustment(
     client_id: str,
     body: TabAdjustmentIn,
-    user: dict = Depends(require_admin),
+    user: dict = Depends(require_admin_and_permission("delete_records")),
 ):
     """Manual write-off / correction. Logged as type=adjustment in the ledger."""
     if round(body.amount, 2) == 0:
@@ -7332,7 +7790,7 @@ async def apply_tab_adjustment(
 
 
 @api.get("/admin/accounts-receivable")
-async def get_accounts_receivable(_: dict = Depends(require_admin)):
+async def get_accounts_receivable(_: dict = Depends(require_admin_and_permission("finance_reports"))):
     """Return every client with a non-zero account_balance, plus the totals.
     POSITIVE balance = receivable (client owes us). NEGATIVE = pre-paid credit."""
     clients = await db.clients.find(
@@ -7497,7 +7955,7 @@ async def _send_account_statement(client_id: str) -> dict:
 @api.post("/clients/{client_id}/send-statement")
 async def send_client_statement(
     client_id: str,
-    user: dict = Depends(require_admin),
+    user: dict = Depends(require_admin_and_permission("finance_reports")),
 ):
     """Sprint 110di-53 — Admin-triggered statement email. See `_send_account_statement`."""
     return await _send_account_statement(client_id)
@@ -7714,7 +8172,7 @@ async def check_out_group(
     body = body or CheckoutIn()
     # Payment rebuild Phase 2 — same additive, layered take_payments check
     # as single checkout (see check_out above).
-    if user.get("role") != "admin" and not _perms_for(user).get("take_payments"):
+    if not _perms_for(user).get("take_payments"):
         raise HTTPException(status_code=403, detail="You don't have permission to take payments.")
     anchor = await db.bookings.find_one({"id": booking_id}, {"_id": 0})
     if not anchor:
@@ -7902,15 +8360,22 @@ async def check_out_group(
             # issued only AFTER the group invoice already committed above.
             if group_invoice:
                 try:
-                    pos_print_receipt_token = await _issue_pos_token(
-                        action="print_receipt", workstation_id=body.workstation_id, invoice_id=group_invoice["id"],
-                    )
+                    rs_for_print = await get_receipt_settings()
+                    if rs_for_print.get("auto_print_receipts"):
+                        pos_print_receipt_token = await _issue_pos_token(
+                            action="print_receipt", workstation_id=body.workstation_id, invoice_id=group_invoice["id"],
+                        )
                     if resolved_group_tender == "cash" and combined_cash > 0:
                         pos_open_drawer_token = await _issue_pos_token(
                             action="open_drawer", workstation_id=body.workstation_id, invoice_id=group_invoice["id"],
                         )
                 except Exception as exc:
                     logger.warning("POS token issuance failed for checkout_group %s: %s", checkout_group_id, exc)
+                try:
+                    group_client_id = completed[0].get("client_id") if completed else None
+                    asyncio.create_task(_maybe_auto_email_receipt("invoice", group_invoice["id"], group_client_id))
+                except Exception as exc:
+                    logger.warning("auto-email receipt spawn failed for checkout_group %s: %s", checkout_group_id, exc)
         except Exception as exc:
             logger.warning("group invoice creation failed for checkout_group %s: %s", checkout_group_id, exc)
         return {
@@ -7986,13 +8451,13 @@ async def check_out(
     # which made the "pricing" permission toggle decorative for checkout.
     # Admins (and staff explicitly granted "pricing") can still override;
     # everyone else checks out at the normal computed price.
-    if body.base_price is not None and user.get("role") != "admin" and not _perms_for(user).get("pricing"):
+    if body.base_price is not None and not _perms_for(user).get("pricing"):
         raise HTTPException(status_code=403, detail="You don't have permission to override the checkout price.")
     # Payment rebuild Phase 2 — additive, layered on top of the existing
     # require_employee_or_admin gate (not a replacement for it), matching
     # the "pricing" check just above. Defaults True for every staff role,
     # so this is a no-op today until the owner explicitly disables it.
-    if user.get("role") != "admin" and not _perms_for(user).get("take_payments"):
+    if not _perms_for(user).get("take_payments"):
         raise HTTPException(status_code=403, detail="You don't have permission to take payments.")
     operation_id = str(uuid.uuid4())
     lock_ts = now_iso()
@@ -8876,15 +9341,21 @@ async def _check_out_locked(
             if invoice:
                 try:
                     booking["pos_invoice_id"] = invoice["id"]
-                    booking["pos_print_receipt_token"] = await _issue_pos_token(
-                        action="print_receipt", workstation_id=body.workstation_id, invoice_id=invoice["id"],
-                    )
+                    rs_for_print = await get_receipt_settings()
+                    if rs_for_print.get("auto_print_receipts"):
+                        booking["pos_print_receipt_token"] = await _issue_pos_token(
+                            action="print_receipt", workstation_id=body.workstation_id, invoice_id=invoice["id"],
+                        )
                     if resolved_tender == "cash" and amount_collected_now > 0:
                         booking["pos_open_drawer_token"] = await _issue_pos_token(
                             action="open_drawer", workstation_id=body.workstation_id, invoice_id=invoice["id"],
                         )
                 except Exception as exc:
                     logger.warning("POS token issuance failed for booking %s: %s", booking_id, exc)
+                try:
+                    asyncio.create_task(_maybe_auto_email_receipt("invoice", invoice["id"], booking.get("client_id")))
+                except Exception as exc:
+                    logger.warning("auto-email receipt spawn failed for booking %s: %s", booking_id, exc)
         except Exception as exc:
             logger.warning("invoice creation failed for booking %s: %s", booking_id, exc)
 
@@ -9879,7 +10350,7 @@ class SettingsIn(BaseModel):
     multi_dog_discount_by_service: Optional[Dict[str, Dict[str, Any]]] = None
 
 @api.get("/settings")
-async def fetch_settings(_: dict = Depends(require_admin)):
+async def fetch_settings(_: dict = Depends(require_admin_and_permission("settings"))):
     return await get_settings()
 
 @api.get("/branding")
@@ -10060,7 +10531,7 @@ async def fetch_public_settings():
     }
 
 @api.put("/settings")
-async def save_settings(body: SettingsIn, _: dict = Depends(require_admin)):
+async def save_settings(body: SettingsIn, _: dict = Depends(require_admin_and_permission("settings"))):
     update = {k: v for k, v in body.model_dump(exclude_unset=True).items() if v is not None}
     if not update:
         return await get_settings()
@@ -10191,7 +10662,7 @@ def _ann_visible_today(a: Dict[str, Any]) -> bool:
 
 
 @api.get("/admin/announcements")
-async def list_admin_announcements(_: dict = Depends(require_admin)):
+async def list_admin_announcements(_: dict = Depends(require_admin_and_permission("manage_communications"))):
     items = await db.announcements.find({}, {"_id": 0}).to_list(length=None)
     items.sort(key=lambda a: (not a.get("pinned"), a.get("created_at") or ""), reverse=False)
     # Newest first, with pinned floated to top.
@@ -10201,7 +10672,7 @@ async def list_admin_announcements(_: dict = Depends(require_admin)):
 
 
 @api.post("/admin/announcements")
-async def create_announcement(body: AnnouncementIn, admin: dict = Depends(require_admin)):
+async def create_announcement(body: AnnouncementIn, admin: dict = Depends(require_admin_and_permission("manage_communications"))):
     doc = body.model_dump()
     doc["id"] = uuid.uuid4().hex
     doc["created_at"] = now_iso()
@@ -10227,7 +10698,7 @@ async def create_announcement(body: AnnouncementIn, admin: dict = Depends(requir
 
 
 @api.put("/admin/announcements/{ann_id}")
-async def update_announcement(ann_id: str, body: AnnouncementIn, admin: dict = Depends(require_admin)):
+async def update_announcement(ann_id: str, body: AnnouncementIn, admin: dict = Depends(require_admin_and_permission("manage_communications"))):
     update = body.model_dump()
     update["updated_at"] = now_iso()
     update["updated_by"] = admin.get("name", "admin")
@@ -10239,7 +10710,7 @@ async def update_announcement(ann_id: str, body: AnnouncementIn, admin: dict = D
 
 
 @api.delete("/admin/announcements/{ann_id}")
-async def delete_announcement(ann_id: str, _: dict = Depends(require_admin)):
+async def delete_announcement(ann_id: str, _: dict = Depends(require_admin_and_permission("manage_communications"))):
     r = await db.announcements.delete_one({"id": ann_id})
     if r.deleted_count == 0:
         raise HTTPException(status_code=404, detail="Announcement not found")
@@ -10497,7 +10968,7 @@ async def list_incidents(_: dict = Depends(require_admin), dog_id: Optional[str]
     return items
 
 @api.post("/incidents", response_model=IncidentOut)
-async def create_incident(body: IncidentIn, user: dict = Depends(require_admin)):
+async def create_incident(body: IncidentIn, user: dict = Depends(require_admin_and_permission("incidents"))):
     if body.type not in INCIDENT_TYPES:
         raise HTTPException(status_code=400, detail=f"Unknown incident type '{body.type}'. Allowed: {list(INCIDENT_TYPES)}")
     if body.severity not in INCIDENT_SEVERITIES:
@@ -10520,7 +10991,7 @@ async def create_incident(body: IncidentIn, user: dict = Depends(require_admin))
     return doc
 
 @api.put("/incidents/{incident_id}", response_model=IncidentOut)
-async def update_incident(incident_id: str, body: IncidentUpdateIn, user: dict = Depends(require_admin)):
+async def update_incident(incident_id: str, body: IncidentUpdateIn, user: dict = Depends(require_admin_and_permission("incidents"))):
     existing = await db.incidents.find_one({"id": incident_id}, {"_id": 0})
     if not existing:
         raise HTTPException(status_code=404, detail="Incident not found")
@@ -10581,7 +11052,7 @@ async def restore_incident(incident_id: str, _: dict = Depends(require_admin)):
 
 @api.post("/bookings/{booking_id}/financial-adjustment", response_model=BookingOut)
 async def booking_financial_adjustment(
-    booking_id: str, body: BookingFinancialAdjustmentIn, user: dict = Depends(require_admin),
+    booking_id: str, body: BookingFinancialAdjustmentIn, user: dict = Depends(require_admin_and_permission("delete_records")),
 ):
     owner, keys, client_id, operation_id = await _acquire_booking_financial_correction_guard(booking_id)
     try:
@@ -10673,7 +11144,7 @@ async def _booking_financial_adjustment_locked(
 
 
 @api.post("/bookings/{booking_id}/refund", response_model=BookingOut)
-async def booking_refund(booking_id: str, body: BookingRefundIn, user: dict = Depends(require_admin)):
+async def booking_refund(booking_id: str, body: BookingRefundIn, user: dict = Depends(require_admin_and_permission("delete_records"))):
     owner, keys, client_id, operation_id = await _acquire_booking_financial_correction_guard(booking_id)
     try:
         return await _booking_refund_locked(booking_id, body, user)
@@ -10828,7 +11299,7 @@ async def _booking_refund_locked(booking_id: str, body: BookingRefundIn, user: d
 
 
 @api.post("/bookings/{booking_id}/reopen-checkout", response_model=BookingOut)
-async def reopen_booking_checkout(booking_id: str, body: BookingReopenCheckoutIn, user: dict = Depends(require_admin)):
+async def reopen_booking_checkout(booking_id: str, body: BookingReopenCheckoutIn, user: dict = Depends(require_admin_and_permission("delete_records"))):
     owner, keys, client_id, operation_id = await _acquire_booking_financial_correction_guard(booking_id)
     try:
         return await _reopen_booking_checkout_locked(booking_id, body, user)
@@ -10988,23 +11459,153 @@ async def dog_stats(dog_id: str, _: dict = Depends(require_admin)):
 
 
 # -------- Search --------
+def _search_re(q: str):
+    return {"$regex": re.escape(q), "$options": "i"}
+
+
 @api.get("/search")
-async def search(q: str, _: dict = Depends(require_admin)):
-    q = q.strip().lower()
+async def search(q: str, user: dict = Depends(require_admin)):
+    """Global search — clients, dogs, bookings, invoices, payments, shop
+    orders, and prepaid-visit purchases (credit lots). Each result kind is
+    independently gated by the same permission that governs viewing that
+    resource elsewhere in the app, so a role that can't see financial data
+    via its normal screens can't see it via search either. Uses indexed
+    Mongo regex queries with small per-kind limits rather than pulling
+    whole collections into memory — this used to load every client and
+    every dog on every keystroke."""
+    q = q.strip()
+    empty = {"clients": [], "dogs": [], "bookings": [], "invoices": [],
+              "payments": [], "shop_orders": [], "prepaid_purchases": []}
     if len(q) < 1:
-        return {"clients": [], "dogs": []}
-    clients = await db.clients.find({}, {"_id": 0}).to_list(2000)
-    dogs = await db.dogs.find({}, {"_id": 0}).to_list(2000)
-    client_hits = []
-    for c in clients:
-        if q in (c.get("name") or "").lower() or q in (c.get("email") or "").lower() or q in (c.get("phone") or "").lower():
-            client_hits.append({"id": c["id"], "name": c["name"], "email": c.get("email"), "phone": c.get("phone")})
-    dog_hits = []
-    owner_name = {c["id"]: c["name"] for c in clients}
-    for d in dogs:
-        if q in (d.get("name") or "").lower() or q in (d.get("breed") or "").lower():
-            dog_hits.append({"id": d["id"], "name": d["name"], "breed": d.get("breed"), "owner_name": owner_name.get(d.get("owner_id"), ""), "owner_id": d.get("owner_id")})
-    return {"clients": client_hits[:10], "dogs": dog_hits[:10]}
+        return empty
+    perms = _perms_for(user)
+    rx = _search_re(q)
+    ref_rx = {"$regex": f"^{re.escape(q)}", "$options": "i"}  # for id-prefix "reference number" lookups
+
+    out = dict(empty)
+
+    # ── Clients ──────────────────────────────────────────────────────────
+    matched_clients = []
+    if perms.get("clients_view"):
+        matched_clients = await db.clients.find(
+            {"$or": [{"name": rx}, {"email": rx}, {"phone": rx}]}, {"_id": 0},
+        ).limit(8).to_list(8)
+        out["clients"] = [
+            {"id": c["id"], "name": c["name"], "email": c.get("email"), "phone": c.get("phone")}
+            for c in matched_clients
+        ]
+    client_ids_by_search = {c["id"] for c in matched_clients}
+    client_name_by_id = {c["id"]: c["name"] for c in matched_clients}
+    # Resolve names for clients we'll reference below but didn't match directly
+    async def _client_names_for(ids):
+        missing = [i for i in ids if i and i not in client_name_by_id]
+        if not missing:
+            return
+        rows = await db.clients.find({"id": {"$in": missing}}, {"_id": 0, "id": 1, "name": 1}).to_list(len(missing))
+        for r in rows:
+            client_name_by_id[r["id"]] = r["name"]
+
+    # ── Dogs ─────────────────────────────────────────────────────────────
+    matched_dogs = []
+    if perms.get("dogs_view"):
+        matched_dogs = await db.dogs.find(
+            {"$or": [{"name": rx}, {"breed": rx}]}, {"_id": 0},
+        ).limit(8).to_list(8)
+        owner_ids = [d.get("owner_id") for d in matched_dogs if d.get("owner_id")]
+        await _client_names_for(owner_ids)
+        today = business_today().isoformat()
+        for d in matched_dogs:
+            nb = await db.bookings.find_one(
+                {"dog_id": d["id"], "date": {"$gte": today}, "status": {"$in": ["approved", "pending"]}},
+                {"_id": 0, "date": 1, "service_type": 1}, sort=[("date", 1)],
+            )
+            upcoming = f"{nb['service_type'].title()} {nb['date']}" if nb else None
+            out["dogs"].append({
+                "id": d["id"], "name": d["name"], "breed": d.get("breed"),
+                "owner_id": d.get("owner_id"), "owner_name": client_name_by_id.get(d.get("owner_id"), ""),
+                "upcoming": upcoming,
+            })
+
+    # ── Bookings — match by dog/client name (denormalized) or id prefix ──
+    booking_or = [{"dog_name": rx}, {"client_name": rx}]
+    if len(q) >= 3:
+        booking_or.append({"id": ref_rx})
+    matched_bookings = await db.bookings.find({"$or": booking_or}, {"_id": 0}).sort("date", -1).limit(8).to_list(8)
+    for b in matched_bookings:
+        out["bookings"].append({
+            "id": b["id"], "dog_id": b.get("dog_id"), "dog_name": b.get("dog_name"),
+            "client_id": b.get("client_id"), "client_name": b.get("client_name"),
+            "service_type": b.get("service_type"), "date": b.get("date"), "end_date": b.get("end_date"),
+            "status": b.get("status"), "reference": b["id"][:8].upper(),
+        })
+
+    # ── Invoices / Bills — financial, gated on finance_reports ──────────
+    if perms.get("finance_reports"):
+        inv_or = [{"client_name": rx}]
+        if len(q) >= 3:
+            inv_or.append({"id": ref_rx})
+        matched_invoices = await db.invoices.find(
+            {"$or": inv_or, "status": {"$ne": "VOID"}}, {"_id": 0},
+        ).sort("date", -1).limit(8).to_list(8)
+        for inv in matched_invoices:
+            out["invoices"].append({
+                "id": inv["id"], "client_id": inv.get("client_id"), "client_name": inv.get("client_name"),
+                "total": inv.get("total"), "balance": inv.get("balance"), "status": inv.get("status"),
+                "date": inv.get("date"), "reference": inv["id"][:8].upper(),
+            })
+
+        # ── Payments — no denormalized client_name, so resolve via matched clients ──
+        pay_or = []
+        if client_ids_by_search:
+            pay_or.append({"client_id": {"$in": list(client_ids_by_search)}})
+        if len(q) >= 3:
+            pay_or.append({"id": ref_rx})
+        if pay_or:
+            matched_payments = await db.payments.find({"$or": pay_or}, {"_id": 0}).sort("date", -1).limit(8).to_list(8)
+            payer_ids = [p.get("client_id") for p in matched_payments if p.get("client_id")]
+            await _client_names_for(payer_ids)
+            for p in matched_payments:
+                out["payments"].append({
+                    "id": p["id"], "client_id": p.get("client_id"),
+                    "client_name": client_name_by_id.get(p.get("client_id"), ""),
+                    "amount": p.get("amount"), "method": p.get("method"), "status": p.get("status"),
+                    "date": p.get("date"), "reference": p["id"][:8].upper(),
+                })
+
+    # ── Shop orders — gated on take_payments, matching the real fulfillment endpoint ──
+    if perms.get("take_payments"):
+        order_or = [{"client_name": rx}]
+        if len(q) >= 3:
+            order_or.append({"id": ref_rx})
+        matched_orders = await db.shop_orders.find({"$or": order_or}, {"_id": 0}).sort("created_at", -1).limit(8).to_list(8)
+        for o in matched_orders:
+            out["shop_orders"].append({
+                "id": o["id"], "client_id": o.get("client_id"), "client_name": o.get("client_name"),
+                "total": o.get("total"), "status": o.get("status"),
+                "fulfillment_status": o.get("fulfillment_status"), "pickup_status": o.get("pickup_status"),
+                "reference": o["id"][:8].upper(),
+            })
+
+    # ── Prepaid-visit purchases (credit lots) — financial, gated on finance_reports ──
+    if perms.get("finance_reports"):
+        lot_or = []
+        if client_ids_by_search:
+            lot_or.append({"client_id": {"$in": list(client_ids_by_search)}})
+        lot_or.append({"pack_name": rx})
+        lot_or.append({"program_name": rx})
+        matched_lots = await db.credit_lots.find({"$or": lot_or}, {"_id": 0}).sort("purchased_at", -1).limit(8).to_list(8)
+        lot_client_ids = [l.get("client_id") for l in matched_lots if l.get("client_id")]
+        await _client_names_for(lot_client_ids)
+        for lot in matched_lots:
+            out["prepaid_purchases"].append({
+                "id": lot["id"], "client_id": lot.get("client_id"),
+                "client_name": client_name_by_id.get(lot.get("client_id"), ""),
+                "pack_name": lot.get("pack_name") or lot.get("program_name"),
+                "qty_total": lot.get("qty_total"), "qty_remaining": lot.get("qty_remaining"),
+                "price_paid": lot.get("price_paid"),
+            })
+
+    return out
 
 
 # -------- Homework Assignments --------
@@ -11152,7 +11753,7 @@ async def list_homework_templates(_: dict = Depends(get_current_user)):
 
 
 @api.post("/homework-templates")
-async def create_homework_template(body: HomeworkTemplateIn, user: dict = Depends(require_admin)):
+async def create_homework_template(body: HomeworkTemplateIn, user: dict = Depends(require_admin_and_permission("manage_training_content"))):
     doc = body.model_dump()
     doc.update({
         "id": str(uuid.uuid4()),
@@ -11168,7 +11769,7 @@ async def create_homework_template(body: HomeworkTemplateIn, user: dict = Depend
 
 
 @api.put("/homework-templates/{template_id}")
-async def update_homework_template(template_id: str, body: HomeworkTemplateIn, _: dict = Depends(require_admin)):
+async def update_homework_template(template_id: str, body: HomeworkTemplateIn, _: dict = Depends(require_admin_and_permission("manage_training_content"))):
     tpl = await db.homework_templates.find_one({"id": template_id}, {"_id": 0})
     if not tpl:
         raise HTTPException(status_code=404, detail="Template not found")
@@ -11184,7 +11785,7 @@ async def update_homework_template(template_id: str, body: HomeworkTemplateIn, _
 
 
 @api.delete("/homework-templates/{template_id}")
-async def delete_homework_template(template_id: str, _: dict = Depends(require_admin)):
+async def delete_homework_template(template_id: str, _: dict = Depends(require_admin_and_permission("manage_training_content"))):
     tpl = await db.homework_templates.find_one({"id": template_id}, {"_id": 0})
     if not tpl:
         raise HTTPException(status_code=404, detail="Template not found")
@@ -11197,7 +11798,7 @@ async def delete_homework_template(template_id: str, _: dict = Depends(require_a
 
 
 @api.post("/homework-templates/seed-standard")
-async def seed_homework_templates(_: dict = Depends(require_admin)):
+async def seed_homework_templates(_: dict = Depends(require_admin_and_permission("manage_training_content"))):
     """Idempotent — upserts by slug. Re-running refreshes content for default
     templates that haven't been customized."""
     seeded = 0
@@ -13213,7 +13814,7 @@ async def list_commands(user: dict = Depends(get_current_user)):
 
 
 @api.post("/commands", response_model=CommandOut)
-async def create_command(body: CommandIn, _: dict = Depends(require_admin)):
+async def create_command(body: CommandIn, _: dict = Depends(require_admin_and_permission("manage_training_content"))):
     doc = {**body.model_dump(), "id": str(uuid.uuid4()), "is_default": False, "created_at": now_iso()}
     await db.commands.insert_one(doc)
     doc.pop("_id", None)
@@ -13221,7 +13822,7 @@ async def create_command(body: CommandIn, _: dict = Depends(require_admin)):
 
 
 @api.put("/commands/{command_id}", response_model=CommandOut)
-async def update_command(command_id: str, body: CommandIn, _: dict = Depends(require_admin)):
+async def update_command(command_id: str, body: CommandIn, _: dict = Depends(require_admin_and_permission("manage_training_content"))):
     existing = await db.commands.find_one({"id": command_id}, {"_id": 0})
     if not existing:
         raise HTTPException(status_code=404, detail="Command not found")
@@ -13232,7 +13833,7 @@ async def update_command(command_id: str, body: CommandIn, _: dict = Depends(req
 
 
 @api.delete("/commands/{command_id}")
-async def delete_command(command_id: str, _: dict = Depends(require_admin)):
+async def delete_command(command_id: str, _: dict = Depends(require_admin_and_permission("manage_training_content"))):
     # Soft-delete: mark inactive so historical references still resolve
     await db.commands.update_one({"id": command_id}, {"$set": {"active": False}})
     return {"ok": True}
@@ -13483,6 +14084,10 @@ class ProgramIn(BaseModel):
     available_online: bool = False
     online_description: Optional[str] = None
     image_id: Optional[str] = None
+    # Shop Organization (Phase 1) — purely organizational, never affects
+    # program pricing/format.
+    category_id: Optional[str] = None
+    subcategory_id: Optional[str] = None
 
 
 def _stamp_ids(modules: List[dict]) -> List[dict]:
@@ -13549,7 +14154,8 @@ async def list_programs(user: dict = Depends(get_current_user), include_custom: 
 
 
 @api.post("/programs")
-async def create_program(body: ProgramIn, _: dict = Depends(require_admin)):
+async def create_program(body: ProgramIn, _: dict = Depends(require_admin_and_permission("manage_training_content"))):
+    await _validate_category_subcategory_pair(body.category_id, body.subcategory_id)
     doc = body.model_dump()
     doc["id"] = _gid()
     doc["slug"] = doc.get("slug") or doc["name"].lower().replace(" ", "_")[:40]
@@ -13572,7 +14178,7 @@ async def program_active_enrollments_count(program_id: str, _: dict = Depends(re
 
 
 @api.put("/programs/{program_id}")
-async def update_program(program_id: str, body: ProgramIn, cascade: bool = False, _: dict = Depends(require_admin)):
+async def update_program(program_id: str, body: ProgramIn, cascade: bool = False, _: dict = Depends(require_admin_and_permission("manage_training_content"))):
     """Edit a program. When `cascade=true`, also pushes the updated snapshot to
     every **active** enrollment of this program:
       • Goals that still exist keep their score / notes / status.
@@ -13583,6 +14189,10 @@ async def update_program(program_id: str, body: ProgramIn, cascade: bool = False
     existing = await db.programs.find_one({"id": program_id}, {"_id": 0})
     if not existing:
         raise HTTPException(status_code=404, detail="Program not found")
+    await _validate_category_subcategory_pair(
+        body.category_id, body.subcategory_id,
+        existing_category_id=existing.get("category_id"), existing_subcategory_id=existing.get("subcategory_id"),
+    )
     update = body.model_dump()
     update["modules"] = _stamp_ids(update.get("modules") or [])
     await db.programs.update_one({"id": program_id}, {"$set": update})
@@ -13622,7 +14232,7 @@ async def update_program(program_id: str, body: ProgramIn, cascade: bool = False
 
 
 @api.delete("/programs/{program_id}")
-async def delete_program(program_id: str, _: dict = Depends(require_admin)):
+async def delete_program(program_id: str, _: dict = Depends(require_admin_and_permission("manage_training_content"))):
     # Soft delete — existing enrollments are unaffected
     await db.programs.update_one({"id": program_id}, {"$set": {"active": False}})
     return {"ok": True}
@@ -14358,7 +14968,7 @@ async def list_training_session_log(
 
 
 @api.get("/admin/training/trainer-scorecard")
-async def trainer_scorecard(days: int = 30, _: dict = Depends(require_admin)):
+async def trainer_scorecard(days: int = 30, _: dict = Depends(require_admin_and_permission("manage_training_content"))):
     """Sprint 110di-71 — Per-trainer 30-day rollup from training_session_log.
     Counts sessions logged, distinct dogs worked with, skills moved to mastered
     (status transitions to 'mastered' OR score crossing into 4-5), and module
@@ -14531,7 +15141,7 @@ async def create_custom_and_enroll(dog_id: str, body: CustomProgramIn, _: dict =
 
 # Idempotent re-seed (admin can also wipe and re-import standards from settings if desired)
 @api.post("/programs/seed-standard")
-async def seed_standard(_: dict = Depends(require_admin)):
+async def seed_standard(_: dict = Depends(require_admin_and_permission("manage_training_content"))):
     await _seed_programs_if_empty()
     count = await db.programs.count_documents({"is_default": True})
     return {"ok": True, "default_programs": count}
@@ -15700,7 +16310,7 @@ BACKUP_COLLECTIONS = [
     "awarded_trophies", "referrals", "rewards_ledger",
     # Financial state
     "expenses", "retail_sales", "credit_lots", "credit_adjustments",
-    "price_overrides", "payment_transactions", "checkout_groups",
+    "price_overrides", "pricing_tiers", "pricing_tier_prices", "payment_transactions", "checkout_groups",
     # Front-desk inbox + admin task state
     "quote_requests", "tasks", "task_dismissals",
     # Staff scheduling + actual clocked hours (drives payroll)
@@ -15966,7 +16576,7 @@ class ConfigRestoreIn(BaseModel):
 
 
 @api.post("/backup/restore-config")
-async def backup_restore_config(body: ConfigRestoreIn, _: dict = Depends(require_admin)):
+async def backup_restore_config(body: ConfigRestoreIn, _: dict = Depends(require_admin_and_permission("data_export"))):
     """Restore configuration from a config-only backup file. Always replaces
     the listed config collections with the snapshot contents. Collections
     NOT in the payload are left untouched. Anything outside the configured
@@ -16099,7 +16709,7 @@ def _disk_row(path: str, label: str, mounts: List[Dict[str, str]]) -> Optional[D
 
 
 @api.get("/admin/disk-usage")
-async def admin_disk_usage(_: dict = Depends(require_admin)):
+async def admin_disk_usage(_: dict = Depends(require_admin_and_permission("data_export"))):
     """Snapshot of disk usage for every meaningful path inside the container.
     Includes a `likely_ephemeral` flag so the operator knows when a path lives
     on the container overlay (i.e. will be lost on rebuild) vs a real host
@@ -16441,7 +17051,7 @@ class AutoBackupConfigIn(BaseModel):
 
 
 @api.get("/admin/auto-backup/config")
-async def get_auto_backup_config(_: dict = Depends(require_admin)):
+async def get_auto_backup_config(_: dict = Depends(require_admin_and_permission("settings"))):
     cfg = await _get_auto_backup_config()
     # Augment with current path state so the UI can warn about ephemeral mounts
     mounts = _read_mounts()
@@ -16455,7 +17065,7 @@ async def get_auto_backup_config(_: dict = Depends(require_admin)):
 
 
 @api.put("/admin/auto-backup/config")
-async def put_auto_backup_config(body: AutoBackupConfigIn, _: dict = Depends(require_admin)):
+async def put_auto_backup_config(body: AutoBackupConfigIn, _: dict = Depends(require_admin_and_permission("settings"))):
     patch = {k: v for k, v in body.model_dump(exclude_unset=True).items() if v is not None}
     if "path" in patch:
         try:
@@ -16474,13 +17084,13 @@ async def put_auto_backup_config(body: AutoBackupConfigIn, _: dict = Depends(req
 
 
 @api.post("/admin/auto-backup/run-now")
-async def run_auto_backup_now(_: dict = Depends(require_admin)):
+async def run_auto_backup_now(_: dict = Depends(require_admin_and_permission("data_export"))):
     """Trigger a backup immediately, regardless of the schedule."""
     return await _run_auto_backup_once(trigger="manual")
 
 
 @api.get("/admin/auto-backup/runs")
-async def list_auto_backup_runs(limit: int = 30, _: dict = Depends(require_admin)):
+async def list_auto_backup_runs(limit: int = 30, _: dict = Depends(require_admin_and_permission("data_export"))):
     rows = await db.auto_backup_runs.find({}, {"_id": 0}).sort("started_at", -1).to_list(limit)
     return rows
 
@@ -16533,7 +17143,7 @@ _CRITICAL_BACKUP_COLLECTIONS = [
 
 
 @api.get("/admin/backup-safety/report")
-async def admin_backup_safety_report(_: dict = Depends(require_admin)):
+async def admin_backup_safety_report(_: dict = Depends(require_admin_and_permission("data_export"))):
     """Pre-update safety report. Read-only.
 
     This does not replace the host-level ./backup-now.sh tarball, but it gives the
@@ -16641,7 +17251,7 @@ async def admin_backup_safety_report(_: dict = Depends(require_admin)):
 
 
 @api.post("/admin/backup-safety/validate-latest")
-async def admin_backup_safety_validate_latest(_: dict = Depends(require_admin)):
+async def admin_backup_safety_validate_latest(_: dict = Depends(require_admin_and_permission("data_export"))):
     """Open and parse the latest in-app backup without restoring it.
 
     This is a safe restore-drill-light: it proves the backup file is readable JSON,
@@ -16728,7 +17338,7 @@ async def admin_backup_safety_validate_latest(_: dict = Depends(require_admin)):
 
 
 @api.get("/admin/backup-safety/validations")
-async def admin_backup_safety_validations(limit: int = 10, _: dict = Depends(require_admin)):
+async def admin_backup_safety_validations(limit: int = 10, _: dict = Depends(require_admin_and_permission("data_export"))):
     rows = await db.backup_restore_drills.find({}, {"_id": 0}).sort("created_at", -1).to_list(limit)
     return rows
 
@@ -16800,7 +17410,7 @@ class DogFactIn(BaseModel):
 
 
 @api.post("/dog-facts")
-async def create_dog_fact(body: DogFactIn, user: dict = Depends(require_admin)):
+async def create_dog_fact(body: DogFactIn, user: dict = Depends(require_admin_and_permission("manage_engagement_content"))):
     # Push new ones to the end of the rotation so they get their turn
     max_sort = await db.dog_facts.find({}, {"_id": 0, "sort_order": 1}).sort("sort_order", -1).to_list(1)
     next_sort = (max_sort[0]["sort_order"] + 1) if max_sort else 0
@@ -16828,7 +17438,7 @@ class DogFactPatch(BaseModel):
 
 
 @api.patch("/dog-facts/{fact_id}")
-async def update_dog_fact(fact_id: str, body: DogFactPatch, _: dict = Depends(require_admin)):
+async def update_dog_fact(fact_id: str, body: DogFactPatch, _: dict = Depends(require_admin_and_permission("manage_engagement_content"))):
     existing = await db.dog_facts.find_one({"id": fact_id}, {"_id": 0})
     if not existing:
         raise HTTPException(status_code=404, detail="Fact not found")
@@ -16845,7 +17455,7 @@ async def update_dog_fact(fact_id: str, body: DogFactPatch, _: dict = Depends(re
 
 
 @api.delete("/dog-facts/{fact_id}")
-async def delete_dog_fact(fact_id: str, _: dict = Depends(require_admin)):
+async def delete_dog_fact(fact_id: str, _: dict = Depends(require_admin_and_permission("manage_engagement_content"))):
     res = await db.dog_facts.delete_one({"id": fact_id})
     if not res.deleted_count:
         raise HTTPException(status_code=404, detail="Fact not found")
@@ -16948,7 +17558,7 @@ async def my_training_tip_today(user: dict = Depends(get_current_user)):
 
 
 @api.get("/training-tips")
-async def list_training_tips(active_only: bool = False, _: dict = Depends(require_admin)):
+async def list_training_tips(active_only: bool = False, _: dict = Depends(require_admin_and_permission("manage_training_content"))):
     await _seed_training_tips_if_empty()
     q = {"active": True} if active_only else {}
     return await db.training_tips.find(q, {"_id": 0}).sort("sort_order", 1).to_list(5000)
@@ -16964,7 +17574,7 @@ class TrainingTipIn(BaseModel):
 
 
 @api.post("/training-tips")
-async def create_training_tip(body: TrainingTipIn, user: dict = Depends(require_admin)):
+async def create_training_tip(body: TrainingTipIn, user: dict = Depends(require_admin_and_permission("manage_training_content"))):
     last = await db.training_tips.find({}, {"_id": 0, "sort_order": 1}).sort("sort_order", -1).to_list(1)
     next_sort = (last[0]["sort_order"] + 1) if last else 0
     doc = {
@@ -16995,7 +17605,7 @@ class TrainingTipPatch(BaseModel):
 
 
 @api.patch("/training-tips/{tip_id}")
-async def update_training_tip(tip_id: str, body: TrainingTipPatch, _: dict = Depends(require_admin)):
+async def update_training_tip(tip_id: str, body: TrainingTipPatch, _: dict = Depends(require_admin_and_permission("manage_training_content"))):
     existing = await db.training_tips.find_one({"id": tip_id}, {"_id": 0})
     if not existing:
         raise HTTPException(status_code=404, detail="Tip not found")
@@ -17008,7 +17618,7 @@ async def update_training_tip(tip_id: str, body: TrainingTipPatch, _: dict = Dep
 
 
 @api.delete("/training-tips/{tip_id}")
-async def delete_training_tip(tip_id: str, _: dict = Depends(require_admin)):
+async def delete_training_tip(tip_id: str, _: dict = Depends(require_admin_and_permission("manage_training_content"))):
     r = await db.training_tips.delete_one({"id": tip_id})
     if not r.deleted_count:
         raise HTTPException(status_code=404, detail="Tip not found")
@@ -17021,7 +17631,7 @@ class TrainingTipsImportIn(BaseModel):
 
 
 @api.post("/training-tips/import")
-async def import_training_tips(body: TrainingTipsImportIn, _: dict = Depends(require_admin)):
+async def import_training_tips(body: TrainingTipsImportIn, _: dict = Depends(require_admin_and_permission("manage_training_content"))):
     """Bulk insert from CSV-parsed rows. Skips rows with empty `tip`."""
     last = await db.training_tips.find({}, {"_id": 0, "sort_order": 1}).sort("sort_order", -1).to_list(1)
     base = (last[0]["sort_order"] + 1) if last else 0
@@ -17053,7 +17663,7 @@ class DogFactGenerateIn(BaseModel):
 
 
 @api.post("/dog-facts/generate")
-async def generate_dog_facts(body: DogFactGenerateIn, _: dict = Depends(require_admin)):
+async def generate_dog_facts(body: DogFactGenerateIn, _: dict = Depends(require_admin_and_permission("manage_engagement_content"))):
     """Ask the Emergent LLM to generate fresh facts and stage them as inactive
     so the admin can review before publishing. Uses Claude Haiku — cheap +
     fast for this kind of bite-size text."""
@@ -17151,7 +17761,7 @@ async def dog_facts_import_csv_template(_: dict = Depends(require_admin)):
 @api.post("/admin/dog-facts/import-csv")
 async def dog_facts_import_csv(
     file: UploadFile = File(...),
-    _: dict = Depends(require_admin),
+    _: dict = Depends(require_admin_and_permission("manage_engagement_content")),
 ):
     """Bulk-import dog facts from a CSV file.
 
@@ -17897,7 +18507,7 @@ async def admin_rewards_grant_referral(referred_client_id: str, user: dict = Dep
 
 
 @api.get("/admin/rewards/credits-audit.csv")
-async def admin_rewards_credits_audit_csv(_: dict = Depends(require_admin)):
+async def admin_rewards_credits_audit_csv(_: dict = Depends(require_admin_and_permission("finance_reports"))):
     data = await admin_rewards_center(_)
     import csv, io
     out = io.StringIO()
@@ -17923,7 +18533,7 @@ class TriviaRewardsIn(BaseModel):
 
 @api.put("/admin/trivia/rewards")
 async def admin_trivia_rewards_put(
-    body: TriviaRewardsIn, _: dict = Depends(require_admin),
+    body: TriviaRewardsIn, _: dict = Depends(require_admin_and_permission("manage_engagement_content")),
 ):
     # Validate + normalize. Each milestone needs days (int) + label (str).
     cleaned: List[dict] = []
@@ -18209,7 +18819,7 @@ def _validate_trivia_in(body: TriviaQuestionIn) -> dict:
 
 @api.post("/admin/trivia/questions")
 async def admin_trivia_create(
-    body: TriviaQuestionIn, _: dict = Depends(require_admin),
+    body: TriviaQuestionIn, _: dict = Depends(require_admin_and_permission("manage_engagement_content")),
 ):
     """Operator-authored trivia question. Same shape as AI-generated, but
     marked `source: "manual"` so it's distinguishable in the admin list."""
@@ -18229,7 +18839,7 @@ async def admin_trivia_create(
 
 @api.put("/admin/trivia/questions/{qid}")
 async def admin_trivia_update(
-    qid: str, body: TriviaQuestionIn, _: dict = Depends(require_admin),
+    qid: str, body: TriviaQuestionIn, _: dict = Depends(require_admin_and_permission("manage_engagement_content")),
 ):
     """Full edit of an existing question (typo fixes, better distractors, etc.)."""
     payload = _validate_trivia_in(body)
@@ -18244,14 +18854,14 @@ async def admin_trivia_update(
 @api.post("/admin/trivia/generate")
 async def admin_trivia_generate(
     body: TriviaGenerateIn,
-    _: dict = Depends(require_admin),
+    _: dict = Depends(require_admin_and_permission("manage_engagement_content")),
 ):
     docs = await _trivia_ai_generate(body.count, body.difficulty_mix)
     return {"created": len(docs), "questions": docs}
 
 
 @api.delete("/admin/trivia/questions/{qid}")
-async def admin_trivia_delete(qid: str, _: dict = Depends(require_admin)):
+async def admin_trivia_delete(qid: str, _: dict = Depends(require_admin_and_permission("manage_engagement_content"))):
     res = await db.trivia_questions.delete_one({"id": qid})
     if not res.deleted_count:
         raise HTTPException(status_code=404, detail="Question not found")
@@ -18261,7 +18871,7 @@ async def admin_trivia_delete(qid: str, _: dict = Depends(require_admin)):
 @api.put("/admin/trivia/questions/{qid}/active")
 async def admin_trivia_toggle_active(
     qid: str, body: Dict[str, bool] = Body(...),
-    _: dict = Depends(require_admin),
+    _: dict = Depends(require_admin_and_permission("manage_engagement_content")),
 ):
     active = bool(body.get("active", True))
     res = await db.trivia_questions.update_one({"id": qid}, {"$set": {"active": active}})
@@ -18315,7 +18925,7 @@ async def trivia_import_csv_template(_: dict = Depends(require_admin)):
 @api.post("/admin/trivia/import-csv")
 async def trivia_import_csv(
     file: UploadFile = File(...),
-    _: dict = Depends(require_admin),
+    _: dict = Depends(require_admin_and_permission("manage_engagement_content")),
 ):
     """Bulk-import trivia questions from a CSV file.
 
@@ -18414,7 +19024,7 @@ async def trivia_import_csv(
 async def sales_tax_summary(
     start_date: Optional[str] = None,
     end_date: Optional[str] = None,
-    _: dict = Depends(require_admin),
+    _: dict = Depends(require_admin_and_permission("finance_reports")),
 ):
     """Return tax collected in the window. Defaults to current calendar year.
     Splits booking-tax vs retail-tax + breakdown by month."""
@@ -18480,7 +19090,7 @@ import csv
 async def payroll_year_end_csv(
     year: Optional[int] = None,
     detail: bool = False,
-    user: dict = Depends(require_admin),
+    user: dict = Depends(require_admin_and_permission("finance_reports")),
 ):
     """Year-end gross-wages CSV. Pass `?detail=true` to also dump every
     clocked-in/out entry for the year (handy for 1099/W2 reconciliation).
@@ -18667,7 +19277,7 @@ class UserImportIn(BaseModel):
 
 
 @api.get("/admin/users/export-with-hashes")
-async def admin_users_export_with_hashes(user: dict = Depends(require_admin)):
+async def admin_users_export_with_hashes(user: dict = Depends(require_owner)):
     """Export every user record INCLUDING password_hash. Admin-only.
     Use this to migrate logins between hosts so clients keep their passwords.
 
@@ -18686,7 +19296,7 @@ async def admin_users_export_with_hashes(user: dict = Depends(require_admin)):
 
 
 @api.post("/admin/users/import-with-hashes")
-async def admin_users_import_with_hashes(body: UserImportIn, current: dict = Depends(require_admin)):
+async def admin_users_import_with_hashes(body: UserImportIn, current: dict = Depends(require_owner)):
     """Import users (with hashes) from an export-with-hashes dump.
     Safety: never touches the calling admin's own user record. Existing users
     with the same email are updated in place (preserves their `id`). New users
@@ -18760,7 +19370,7 @@ async def admin_recent_errors_clear(_: dict = Depends(require_admin)):
 @api.get("/admin/income/export.csv")
 async def admin_income_csv(
     year: Optional[int] = None,
-    user: dict = Depends(require_admin),
+    user: dict = Depends(require_admin_and_permission("finance_reports")),
 ):
     """Year-end income export as CSV — what the accountant wants in January.
     Defaults to the current year. Rows are individual paid bookings + sold
@@ -19045,7 +19655,7 @@ class BackupRestoreIn(BaseModel):
 
 
 @api.post("/backup/restore")
-async def backup_restore(body: BackupRestoreIn, _: dict = Depends(require_admin)):
+async def backup_restore(body: BackupRestoreIn, _: dict = Depends(require_owner)):
     """Restore from a backup JSON. Two modes:
        - replace: drops each collection and bulk-inserts the backup contents
        - merge:   upserts each document by `id` (existing docs with same id are overwritten; new ones added)
@@ -19156,7 +19766,7 @@ async def list_trophy_catalog(_: dict = Depends(get_current_user)):
 
 
 @api.post("/trophies/catalog")
-async def create_custom_trophy(body: TrophyIn, _: dict = Depends(require_admin)):
+async def create_custom_trophy(body: TrophyIn, _: dict = Depends(require_admin_and_permission("manage_engagement_content"))):
     if await db.trophies.find_one({"code": body.code}):
         raise HTTPException(status_code=400, detail="A trophy with that code already exists")
     doc = body.model_dump()
@@ -19167,7 +19777,7 @@ async def create_custom_trophy(body: TrophyIn, _: dict = Depends(require_admin))
 
 
 @api.put("/trophies/catalog/{code}")
-async def update_trophy(code: str, body: TrophyPatch, _: dict = Depends(require_admin)):
+async def update_trophy(code: str, body: TrophyPatch, _: dict = Depends(require_admin_and_permission("manage_engagement_content"))):
     existing = await db.trophies.find_one({"code": code}, {"_id": 0})
     if not existing:
         raise HTTPException(status_code=404, detail="Trophy not found")
@@ -19208,7 +19818,7 @@ async def update_trophy(code: str, body: TrophyPatch, _: dict = Depends(require_
 
 
 @api.delete("/trophies/catalog/{code}")
-async def delete_trophy(code: str, _: dict = Depends(require_admin)):
+async def delete_trophy(code: str, _: dict = Depends(require_admin_and_permission("manage_engagement_content"))):
     existing = await db.trophies.find_one({"code": code}, {"_id": 0})
     if not existing:
         raise HTTPException(status_code=404, detail="Trophy not found")
@@ -19790,6 +20400,96 @@ async def _ensure_retail_sales_payment_id_unique_index() -> None:
                      RETAIL_SALES_PAYMENT_ID_UNIQUE_INDEX_NAME, active)
 
 
+PRICE_OVERRIDES_ACTIVE_UNIQUE_INDEX_NAME = "price_overrides_client_kind_code_active_unique"
+
+
+async def _ensure_price_overrides_active_unique_index() -> None:
+    """Never more than one ACTIVE client price override for the same
+    (client_id, target_kind, target_code) — enforced at the database level,
+    not just in application code. Follows the same safety idiom as
+    _ensure_retail_sales_payment_id_unique_index() (idempotent no-op if
+    already active, verify after creation) with one deliberate difference:
+    that function REFUSES to auto-fix duplicate financial history; a
+    duplicate price override is pricing CONFIGURATION, not a financial
+    record, so consolidating it automatically (keep the newest active,
+    revoke the rest with an audit reason — never delete) is safe and is
+    exactly what this feature calls for."""
+    existing = await db.price_overrides.index_information()
+    for spec in existing.values():
+        key = spec.get("key")
+        normalized = [(k, float(v)) for k, v in (key or [])]
+        if (normalized == [("client_id", 1.0), ("target_kind", 1.0), ("target_code", 1.0)]
+                and spec.get("unique") and spec.get("partialFilterExpression")):
+            logger.info("price_overrides active-unique index already active (%s) — skipping.", spec)
+            return
+
+    # Every row created before the revoke feature existed has no `status`
+    # field at all — back-fill it as "active" (its true prior meaning:
+    # _override_is_active() never consulted a status before now) so the
+    # partial index below actually covers it.
+    await db.price_overrides.update_many({"status": {"$exists": False}}, {"$set": {"status": "active"}})
+
+    # Consolidate pre-existing duplicates (more than one status="active" row
+    # for the same client+kind+code) BEFORE creating the index — index
+    # creation itself would simply fail against duplicate data. Keep the
+    # newest by updated_at/created_at; revoke the rest with a clear
+    # system-audit reason. Nothing is deleted — every revoked row remains in
+    # the collection with full history, exactly like an admin-initiated
+    # revoke.
+    groups = await db.price_overrides.aggregate([
+        {"$match": {"status": "active"}},
+        {"$group": {
+            "_id": {"client_id": "$client_id", "target_kind": "$target_kind", "target_code": "$target_code"},
+            "rows": {"$push": {"id": "$id", "ts": {"$ifNull": ["$updated_at", "$created_at"]}}},
+            "count": {"$sum": 1},
+        }},
+        {"$match": {"count": {"$gt": 1}}},
+    ]).to_list(1000)
+
+    consolidated_report = []
+    for g in groups:
+        rows = sorted(g["rows"], key=lambda r: r.get("ts") or "", reverse=True)
+        keep_id = rows[0]["id"]
+        revoke_ids = [r["id"] for r in rows[1:]]
+        ts = now_iso()
+        await db.price_overrides.update_many(
+            {"id": {"$in": revoke_ids}},
+            {"$set": {
+                "status": "revoked", "revoked_at": ts, "revoked_by": "system_migration",
+                "revocation_reason": "Consolidated duplicate active override before adding the uniqueness safeguard.",
+                "updated_at": ts,
+            }},
+        )
+        consolidated_report.append({"key": g["_id"], "kept": keep_id, "revoked": revoke_ids})
+    if consolidated_report:
+        logger.warning(
+            "price_overrides: consolidated %d duplicate-active group(s) before adding the uniqueness index: %s",
+            len(consolidated_report), consolidated_report,
+        )
+    else:
+        logger.info("price_overrides: no duplicate active overrides found — safe to add the uniqueness index.")
+
+    try:
+        await db.price_overrides.create_index(
+            [("client_id", 1), ("target_kind", 1), ("target_code", 1)],
+            unique=True,
+            partialFilterExpression={"status": "active"},
+            name=PRICE_OVERRIDES_ACTIVE_UNIQUE_INDEX_NAME,
+        )
+    except Exception as e:
+        logger.error("Failed to create price_overrides.%s: %s — active-override uniqueness is NOT enforced.",
+                     PRICE_OVERRIDES_ACTIVE_UNIQUE_INDEX_NAME, e)
+        return
+
+    verify = await db.price_overrides.index_information()
+    active = verify.get(PRICE_OVERRIDES_ACTIVE_UNIQUE_INDEX_NAME)
+    if active and active.get("unique") and active.get("partialFilterExpression"):
+        logger.info("price_overrides active-unique index CONFIRMED active: %s", active)
+    else:
+        logger.error("price_overrides.%s did not verify as unique-partial after creation: %s",
+                     PRICE_OVERRIDES_ACTIVE_UNIQUE_INDEX_NAME, active)
+
+
 # -------- Startup --------
 @app.on_event("startup")
 async def startup():
@@ -19947,6 +20647,7 @@ async def startup():
         except Exception as e:
             logger.warning(f"Could not create index {key} on {coll.name}: {e}")
     await _ensure_retail_sales_payment_id_unique_index()
+    await _ensure_price_overrides_active_unique_index()
     # Seed admin — Sprint 110di-46 (security hardening):
     #  - On FIRST run (no admin user yet) we seed with ADMIN_PASSWORD if set,
     #    falling back to the dev default "admin123" only when nothing is
@@ -20027,6 +20728,22 @@ async def shutdown():
             await _auto_backup_task
         except (asyncio.CancelledError, Exception):
             pass
+    # Give in-flight best-effort background writes (audit-log rows spawned
+    # via _spawn_background_db_write) a bounded window to finish before the
+    # Mongo connection closes underneath them — otherwise a request that
+    # already returned 200 to the browser could still lose its audit row on
+    # a shutdown that races the write. Any write still pending after the
+    # timeout is logged (not silently dropped) and left to be cancelled.
+    if _BACKGROUND_DB_TASKS:
+        pending = list(_BACKGROUND_DB_TASKS)
+        done, still_pending = await asyncio.wait(pending, timeout=5.0)
+        if still_pending:
+            logger.warning(
+                "shutdown: %d background DB write(s) still in flight after 5s, cancelling",
+                len(still_pending),
+            )
+            for task in still_pending:
+                task.cancel()
     mongo_client.close()
 
 
@@ -20175,10 +20892,21 @@ async def update_service(service_id: str, body: ServiceIn, _: dict = Depends(req
 
 
 @api.delete("/services/{service_id}")
-async def delete_service(service_id: str, _: dict = Depends(require_admin)):
+async def delete_service(service_id: str, force: bool = False, _: dict = Depends(require_admin)):
     existing = await db.services.find_one({"id": service_id}, {"_id": 0})
     if not existing:
         raise HTTPException(status_code=404, detail="Service not found")
+    if not force:
+        affected = await _count_active_overrides_for_target("service", service_id)
+        if affected > 0:
+            raise HTTPException(
+                status_code=409,
+                detail=(
+                    f"{affected} client{'s' if affected != 1 else ''} have an active client-specific price on "
+                    f"\"{existing.get('name')}\". Their override will NOT be changed or deleted, but it will no "
+                    "longer correspond to an item in your standard catalog. Pass force=true to proceed anyway."
+                ),
+            )
     if existing.get("is_default"):
         await db.services.update_one({"id": service_id}, {"$set": {"active": False}})
     else:
@@ -20201,7 +20929,7 @@ async def seed_services(_: dict = Depends(require_admin)):
 
 # ----- Transactions = bookings with service_id + actual_price -----
 @api.post("/transactions")
-async def log_service(body: LogServiceIn, user: dict = Depends(require_admin)):
+async def log_service(body: LogServiceIn, user: dict = Depends(require_admin_and_permission("finance_reports"))):
     """Creates a booking row tagged with service_id + price. Use this for
     walk-ins, one-off lessons, or any income event not started from the
     normal booking flow."""
@@ -20256,7 +20984,7 @@ async def log_service(body: LogServiceIn, user: dict = Depends(require_admin)):
 
 
 @api.put("/transactions/{transaction_id}")
-async def update_transaction(transaction_id: str, body: TransactionUpdateIn, _: dict = Depends(require_admin)):
+async def update_transaction(transaction_id: str, body: TransactionUpdateIn, _: dict = Depends(require_admin_and_permission("finance_reports"))):
     booking = await db.bookings.find_one({"id": transaction_id}, {"_id": 0})
     if not booking:
         raise HTTPException(status_code=404, detail="Transaction not found")
@@ -20301,7 +21029,7 @@ async def update_transaction(transaction_id: str, body: TransactionUpdateIn, _: 
 
 
 @api.delete("/transactions/{transaction_id}")
-async def delete_transaction(transaction_id: str, _: dict = Depends(require_admin)):
+async def delete_transaction(transaction_id: str, _: dict = Depends(require_admin_and_permission("delete_records"))):
     booking = await db.bookings.find_one({"id": transaction_id}, {"_id": 0})
     if not booking:
         raise HTTPException(status_code=404, detail="Transaction not found")
@@ -20334,7 +21062,7 @@ def _week_bounds(ref: Optional[date] = None) -> tuple:
 
 @api.get("/transactions")
 async def list_transactions(
-    _: dict = Depends(require_admin),
+    _: dict = Depends(require_admin_and_permission("finance_reports")),
     start_date: Optional[str] = None,
     end_date: Optional[str] = None,
     dog_id: Optional[str] = None,
@@ -20572,7 +21300,7 @@ def _is_program_credit_redemption(booking: dict, program_lot_ids: set) -> bool:
 
 
 @api.get("/transactions/weekly-summary")
-async def weekly_summary(_: dict = Depends(require_admin), ref_date: Optional[str] = None):
+async def weekly_summary(_: dict = Depends(require_admin_and_permission("finance_reports")), ref_date: Optional[str] = None):
     """Mon-Sun income tally. Default = current week. Pass ?ref_date=YYYY-MM-DD
     to inspect any other week. Returns cash + credits split so you can read
     real-money revenue separately from credit redemptions."""
@@ -20781,7 +21509,7 @@ async def weekly_summary(_: dict = Depends(require_admin), ref_date: Optional[st
 
 @api.get("/transactions/summary-range")
 async def summary_range(
-    _: dict = Depends(require_admin),
+    _: dict = Depends(require_admin_and_permission("finance_reports")),
     start_date: str = ...,
     end_date: str = ...,
 ):
@@ -20923,7 +21651,7 @@ async def summary_range(
 async def pl_report_json(
     start_date: str,
     end_date: str,
-    _: dict = Depends(require_admin),
+    _: dict = Depends(require_admin_and_permission("finance_reports")),
 ):
     """JSON snapshot of all P&L data (used by both UI preview and PDF render)."""
     import pl_report
@@ -20934,7 +21662,7 @@ async def pl_report_json(
 async def pl_report_pdf(
     start_date: str,
     end_date: str,
-    _: dict = Depends(require_admin),
+    _: dict = Depends(require_admin_and_permission("finance_reports")),
 ):
     """Download a printable Profit & Loss PDF for the given range."""
     import pl_report
@@ -20955,7 +21683,7 @@ async def pl_report_pdf(
 async def pl_report_email_now(
     start_date: str,
     end_date: str,
-    admin: dict = Depends(require_admin),
+    admin: dict = Depends(require_admin_and_permission("finance_reports")),
 ):
     """Generate the P&L PDF and email it to ADMIN_NOTIFICATION_EMAIL right now."""
     import pl_report
@@ -20979,7 +21707,7 @@ async def pl_report_email_now(
 # Resend / admin email env state so the UI badge can say "ON · last sent X"
 # vs "OFF · no admin email configured".
 @api.get("/admin/pl-monthly-status")
-async def pl_monthly_status(_: dict = Depends(require_admin)):
+async def pl_monthly_status(_: dict = Depends(require_admin_and_permission("finance_reports"))):
     last = await db.notification_log.find_one(
         {"key": {"$regex": r"^pl:\d{4}-\d{2}$"}, "job": "pl_monthly"},
         {"_id": 0},
@@ -21235,7 +21963,7 @@ async def _enforce_single_owner(new_owner_id: Optional[str]) -> None:
 
 
 @api.get("/admin/employees")
-async def list_employees(_: dict = Depends(require_admin)):
+async def list_employees(_: dict = Depends(require_admin_and_permission("payroll"))):
     rows = await db.users.find(
         {"role": "employee"}, {"_id": 0, "password_hash": 0}
     ).sort("name", 1).to_list(500)
@@ -21243,7 +21971,7 @@ async def list_employees(_: dict = Depends(require_admin)):
 
 
 @api.post("/admin/employees", response_model=EmployeeOut)
-async def create_employee(body: EmployeeCreateIn, _: dict = Depends(require_admin)):
+async def create_employee(body: EmployeeCreateIn, _: dict = Depends(require_admin_and_permission("payroll"))):
     existing = await db.users.find_one({"email": body.email.lower()}, {"_id": 0, "id": 1})
     if existing:
         raise HTTPException(status_code=400, detail="A user with this email already exists.")
@@ -21276,7 +22004,7 @@ async def create_employee(body: EmployeeCreateIn, _: dict = Depends(require_admi
 
 
 @api.put("/admin/employees/{user_id}", response_model=EmployeeOut)
-async def update_employee(user_id: str, body: EmployeeIn, _: dict = Depends(require_admin)):
+async def update_employee(user_id: str, body: EmployeeIn, _: dict = Depends(require_admin_and_permission("payroll"))):
     u = await db.users.find_one({"id": user_id, "role": "employee"}, {"_id": 0})
     if not u:
         raise HTTPException(status_code=404, detail="Employee not found")
@@ -21303,7 +22031,7 @@ async def update_employee(user_id: str, body: EmployeeIn, _: dict = Depends(requ
 
 
 @api.post("/admin/employees/{user_id}/reset-password")
-async def admin_reset_employee_password(user_id: str, body: dict, _: dict = Depends(require_admin)):
+async def admin_reset_employee_password(user_id: str, body: dict, _: dict = Depends(require_admin_and_permission("payroll"))):
     new_pw = (body or {}).get("password", "")
     if len(new_pw) < 8:
         raise HTTPException(status_code=400, detail="Password must be at least 8 characters")
@@ -21318,7 +22046,7 @@ async def admin_reset_employee_password(user_id: str, body: dict, _: dict = Depe
 
 
 @api.delete("/admin/employees/{user_id}")
-async def deactivate_employee(user_id: str, _: dict = Depends(require_admin)):
+async def deactivate_employee(user_id: str, _: dict = Depends(require_admin_and_permission("payroll"))):
     """Soft-deactivate (sets active=False). Never hard-delete so historical
     time-clock entries keep a referenceable owner."""
     res = await db.users.update_one(
@@ -21332,7 +22060,7 @@ async def deactivate_employee(user_id: str, _: dict = Depends(require_admin)):
 
 # ── Owner (sole-prop / self-pay) ──
 @api.get("/admin/owner")
-async def get_owner(_: dict = Depends(require_admin)):
+async def get_owner(_: dict = Depends(require_admin_and_permission("payroll"))):
     """Returns the single employee flagged as owner, or null."""
     row = await db.users.find_one(
         {"role": "employee", "is_owner": True},
@@ -21342,7 +22070,7 @@ async def get_owner(_: dict = Depends(require_admin)):
 
 
 @api.get("/admin/owner/draw-summary")
-async def owner_draw_summary(_: dict = Depends(require_admin)):
+async def owner_draw_summary(_: dict = Depends(require_admin_and_permission("finance_reports"))):
     """Today / MTD / YTD draw for the owner: hours × hourly_rate."""
     row = await db.users.find_one(
         {"role": "employee", "is_owner": True},
@@ -21769,7 +22497,7 @@ async def _staff_readiness_summary(day: Optional[str] = None) -> Dict[str, Any]:
 
 
 @api.get("/admin/staff/readiness")
-async def admin_staff_readiness(date: Optional[str] = None, _: dict = Depends(require_admin)):
+async def admin_staff_readiness(date: Optional[str] = None, _: dict = Depends(require_admin_and_permission("manage_staff_scheduling"))):
     d = date or business_today().isoformat()
     try:
         datetime.strptime(d, "%Y-%m-%d")
@@ -21782,7 +22510,7 @@ async def admin_staff_readiness(date: Optional[str] = None, _: dict = Depends(re
 # list. Same math as /time-clock/me but loops across all active employees in
 # a single round-trip so the admin can see labor pacing mid-week.
 @api.get("/admin/staff/pay-snapshot")
-async def staff_pay_snapshot(_: dict = Depends(require_admin)):
+async def staff_pay_snapshot(_: dict = Depends(require_admin_and_permission("finance_reports"))):
     employees = await db.users.find(
         {"role": "employee", "active": True},
         {"_id": 0, "id": 1, "name": 1, "display_name": 1, "email": 1, "hourly_rate": 1, "is_owner": 1},
@@ -21876,7 +22604,7 @@ async def staff_pay_snapshot(_: dict = Depends(require_admin)):
 async def admin_money_health(
     start_date: Optional[str] = None,
     end_date: Optional[str] = None,
-    _: dict = Depends(require_admin),
+    _: dict = Depends(require_admin_and_permission("finance_reports")),
 ):
     """Non-destructive accounting sanity check.
 
@@ -22731,7 +23459,7 @@ def _csv_response(rows: List[List[Any]], filename: str) -> Response:
 async def admin_register_range(
     start_date: Optional[str] = None,
     end_date: Optional[str] = None,
-    _: dict = Depends(require_admin),
+    _: dict = Depends(require_admin_and_permission("finance_reports")),
 ):
     return await _register_range_summary(start_date, end_date)
 
@@ -22740,7 +23468,7 @@ async def admin_register_range(
 async def admin_register_closeouts(
     start_date: Optional[str] = None,
     end_date: Optional[str] = None,
-    _: dict = Depends(require_admin),
+    _: dict = Depends(require_admin_and_permission("finance_reports")),
 ):
     sd, ed, _days = _date_range_for_register(start_date, end_date)
     rows = await db.daily_closeouts.find({"date": {"$gte": sd, "$lte": ed}}, {"_id": 0}).sort([("date", -1), ("created_at", -1)]).to_list(5000)
@@ -22821,7 +23549,7 @@ async def admin_register_export_csv(
 async def admin_register_tax_packet_zip(
     start_date: Optional[str] = None,
     end_date: Optional[str] = None,
-    user: dict = Depends(require_admin),
+    user: dict = Depends(require_admin_and_permission("finance_reports")),
 ):
     """One-click CPA/bookkeeper export packet.
 
@@ -22901,12 +23629,12 @@ async def admin_register_tax_packet_zip(
 
 
 @api.get("/admin/register/day")
-async def admin_register_day(date: Optional[str] = None, _: dict = Depends(require_admin)):
+async def admin_register_day(date: Optional[str] = None, _: dict = Depends(require_admin_and_permission("finance_reports"))):
     return await _register_day_summary(date)
 
 
 @api.post("/admin/register/open-drawer")
-async def admin_open_cash_drawer(body: CashDrawerOpenIn, user: dict = Depends(require_admin)):
+async def admin_open_cash_drawer(body: CashDrawerOpenIn, user: dict = Depends(require_admin_and_permission("finance_reports"))):
     d = _validated_register_date(body.date)
     await _require_register_day_open(d)
     opening_cash = round(float(body.opening_cash), 2)
@@ -22947,7 +23675,7 @@ async def admin_open_cash_drawer(body: CashDrawerOpenIn, user: dict = Depends(re
 
 
 @api.post("/admin/register/reopen-day")
-async def admin_reopen_register_day(body: ReopenRegisterDayIn, user: dict = Depends(require_admin)):
+async def admin_reopen_register_day(body: ReopenRegisterDayIn, user: dict = Depends(require_admin_and_permission("finance_reports"))):
     d = _validated_register_date(body.date)
     reason = body.reason.strip()
     closeout = await _active_register_closeout(d)
@@ -22978,7 +23706,7 @@ async def admin_reopen_register_day(body: ReopenRegisterDayIn, user: dict = Depe
 
 
 @api.post("/admin/register/till-adjustment")
-async def admin_register_till_adjustment(body: TillAdjustmentIn, user: dict = Depends(require_admin)):
+async def admin_register_till_adjustment(body: TillAdjustmentIn, user: dict = Depends(require_admin_and_permission("finance_reports"))):
     """Record physical cash added to or removed from the till without
     classifying it as income or an expense. The required reason provides an
     audit trail for owner draws, change funds, bank deposits, and corrections.
@@ -23008,7 +23736,7 @@ async def admin_register_till_adjustment(body: TillAdjustmentIn, user: dict = De
 
 
 @api.delete("/admin/register/till-adjustment/{adjustment_id}")
-async def delete_till_adjustment(adjustment_id: str, _: dict = Depends(require_admin)):
+async def delete_till_adjustment(adjustment_id: str, _: dict = Depends(require_admin_and_permission("delete_records"))):
     """Till adjustments (owner draws, change funds, corrections) had no way
     to remove a mistaken entry — unlike expenses and retail sales/refunds,
     which both already support delete. A typo'd amount used to have to be
@@ -23044,7 +23772,7 @@ class RegisterCashPayoutIn(BaseModel):
 
 
 @api.post("/admin/register/refund")
-async def admin_register_refund(body: RegisterRefundIn, user: dict = Depends(require_admin)):
+async def admin_register_refund(body: RegisterRefundIn, user: dict = Depends(require_admin_and_permission("delete_records"))):
     d = body.date or business_today().isoformat()
     await _require_register_day_open(d)
     client_name = ""
@@ -23073,7 +23801,7 @@ async def admin_register_refund(body: RegisterRefundIn, user: dict = Depends(req
 
 
 @api.post("/admin/register/cash-payout")
-async def admin_register_cash_payout(body: RegisterCashPayoutIn, user: dict = Depends(require_admin)):
+async def admin_register_cash_payout(body: RegisterCashPayoutIn, user: dict = Depends(require_admin_and_permission("finance_reports"))):
     d = body.date or business_today().isoformat()
     await _require_register_day_open(d)
     doc = {
@@ -23110,7 +23838,7 @@ class EndOfDayCloseoutIn(BaseModel):
 
 
 @api.post("/admin/end-of-day/closeout")
-async def admin_end_of_day_closeout(body: EndOfDayCloseoutIn, user: dict = Depends(require_admin)):
+async def admin_end_of_day_closeout(body: EndOfDayCloseoutIn, user: dict = Depends(require_admin_and_permission("finance_reports"))):
     """Persist an end-of-day closeout with an explicit next-day rollover.
 
     Cash counted is mandatory. The operator must confirm the exact amount that
@@ -23172,7 +23900,7 @@ async def admin_end_of_day_closeout(body: EndOfDayCloseoutIn, user: dict = Depen
 
 
 @api.get("/bookings/{booking_id}/history")
-async def booking_history(booking_id: str, _: dict = Depends(require_admin)):
+async def booking_history(booking_id: str, _: dict = Depends(require_admin_and_permission("finance_reports"))):
     """Booking change history from audit log + payment ledger. No writes."""
     audits = await db.audit_log.find({"record_id": booking_id}, {"_id": 0}).sort("ts", -1).to_list(200)
     ledger = await db.payment_ledger.find({"booking_id": booking_id}, {"_id": 0}).sort("created_at", -1).to_list(200)
@@ -23185,7 +23913,7 @@ async def booking_history(booking_id: str, _: dict = Depends(require_admin)):
 # refund hooks above. These exist purely to surface what was recorded.
 
 @api.get("/bookings/{booking_id}/invoice")
-async def get_booking_invoice(booking_id: str, _: dict = Depends(require_admin)):
+async def get_booking_invoice(booking_id: str, _: dict = Depends(require_admin_and_permission("finance_reports"))):
     """Resolves to the canonical invoice for this booking — since a group
     invoice's booking_ids array contains every dog in the group, this
     naturally resolves the same way regardless of which booking in the
@@ -23200,7 +23928,7 @@ async def get_booking_invoice(booking_id: str, _: dict = Depends(require_admin))
 
 
 @api.get("/invoices/{invoice_id}")
-async def get_invoice(invoice_id: str, _: dict = Depends(require_admin)):
+async def get_invoice(invoice_id: str, _: dict = Depends(require_admin_and_permission("finance_reports"))):
     invoice = await db.invoices.find_one({"id": invoice_id}, {"_id": 0})
     if not invoice:
         raise HTTPException(status_code=404, detail="Invoice not found")
@@ -23210,7 +23938,7 @@ async def get_invoice(invoice_id: str, _: dict = Depends(require_admin)):
 
 
 @api.get("/clients/{client_id}/invoices")
-async def list_client_invoices(client_id: str, _: dict = Depends(require_admin)):
+async def list_client_invoices(client_id: str, _: dict = Depends(require_admin_and_permission("finance_reports"))):
     invoices = await db.invoices.find({"client_id": client_id}, {"_id": 0}).sort("created_at", -1).to_list(500)
     return invoices
 
@@ -23223,7 +23951,7 @@ async def create_invoice_payment(invoice_id: str, body: InvoicePaymentIn, user: 
     an invoice that already has a balance. Never runs during checkout;
     Phase 1's checkout-time Payment row(s) (created by
     _create_invoice_for_bookings) are untouched by this endpoint."""
-    if user.get("role") != "admin" and not _perms_for(user).get("take_payments"):
+    if not _perms_for(user).get("take_payments"):
         raise HTTPException(status_code=403, detail="You don't have permission to take payments.")
 
     invoice = await db.invoices.find_one({"id": invoice_id}, {"_id": 0})
@@ -23399,16 +24127,24 @@ async def create_invoice_payment(invoice_id: str, body: InvoicePaymentIn, user: 
     pos_print_receipt_token = None
     pos_open_drawer_token = None
     try:
-        pos_print_receipt_token = await _issue_pos_token(
-            action="print_receipt", workstation_id=body.workstation_id,
-            invoice_id=invoice_id, payment_ids=[payment_id],
-        )
+        rs_for_print = await get_receipt_settings()
+        if rs_for_print.get("auto_print_receipts"):
+            pos_print_receipt_token = await _issue_pos_token(
+                action="print_receipt", workstation_id=body.workstation_id,
+                invoice_id=invoice_id, payment_ids=[payment_id],
+            )
         if method == "cash":
             pos_open_drawer_token = await _issue_pos_token(
                 action="open_drawer", workstation_id=body.workstation_id, invoice_id=invoice_id,
             )
     except Exception as exc:
         logger.warning("POS token issuance failed for invoice payment %s: %s", payment_id, exc)
+    try:
+        asyncio.create_task(_maybe_auto_email_receipt(
+            "invoice", invoice_id, invoice.get("client_id"), claim_key=f"invoice_payment:{payment_id}",
+        ))
+    except Exception as exc:
+        logger.warning("auto-email receipt spawn failed for invoice payment %s: %s", payment_id, exc)
 
     return {
         "ok": True, "payment": final_payment, "invoice": final_invoice,
@@ -23419,7 +24155,7 @@ async def create_invoice_payment(invoice_id: str, body: InvoicePaymentIn, user: 
 
 
 @api.post("/payments/{payment_id}/void")
-async def void_payment(payment_id: str, body: PaymentVoidIn, user: dict = Depends(require_admin)):
+async def void_payment(payment_id: str, body: PaymentVoidIn, user: dict = Depends(require_admin_and_permission("delete_records"))):
     """Reverses a manual top-up payment — exactly once, and only while its
     business day is still open. Never usable on checkout-time or refund
     Payment rows (scope-guarded to source.kind=='manual_topup'). This is
@@ -24206,7 +24942,7 @@ async def _handle_shop_checkout_session_expired_event(session_obj: dict) -> None
 # ── Stripe refunds — a separate, per-attempt lifecycle (multi-partial-safe) ──
 
 @api.post("/payments/{payment_id}/stripe-refund")
-async def create_stripe_refund(payment_id: str, body: StripeRefundIn, user: dict = Depends(require_admin)):
+async def create_stripe_refund(payment_id: str, body: StripeRefundIn, user: dict = Depends(require_admin_and_permission("delete_records"))):
     """Admin-only. Validates locally first, claims a dedicated refund
     attempt, then calls Stripe with a stable idempotency key. Local refund
     accounting is finalized ONLY when a status==succeeded is actually
@@ -24442,7 +25178,7 @@ async def _handle_refund_event(refund_obj: dict) -> None:
 
 
 @api.get("/admin/stripe-online-payments")
-async def list_stripe_online_payments(limit: int = 50, q: Optional[str] = None, _: dict = Depends(require_admin)):
+async def list_stripe_online_payments(limit: int = 50, q: Optional[str] = None, _: dict = Depends(require_admin_and_permission("finance_reports"))):
     """Staff-facing read model for the Front Desk 'Online Payments' panel —
     the ONLY place stripe_online booking Payment rows are listed for staff.
     Deliberately separate from Recent Sales (pos_sales, unrelated collection).
@@ -24520,7 +25256,7 @@ async def list_stripe_online_payments(limit: int = 50, q: Optional[str] = None, 
 
 
 @api.get("/admin/register/session")
-async def get_register_session(date: Optional[str] = None, _: dict = Depends(require_admin)):
+async def get_register_session(date: Optional[str] = None, _: dict = Depends(require_admin_and_permission("finance_reports"))):
     date_value = _validated_register_date(date, allow_future=False)
     return await _register_session_view(date_value)
 
@@ -24530,13 +25266,64 @@ async def get_register_session(date: Optional[str] = None, _: dict = Depends(req
 # except to relay an opaque token) or, for the manual drawer action, by the
 # authenticated Sit Happens session. No pricing/accounting logic lives here.
 
+async def _build_test_receipt_payload() -> dict:
+    """Sample data only — never reads or writes any real invoice/payment/
+    pos_sale/credit_lot/register record. Used by "Print Test Receipt" so an
+    admin can see their branding/toggle choices on real hardware without
+    creating a payment, income entry, receipt number, fulfillment event,
+    credit grant, or cash-drawer change."""
+    rs = await get_receipt_settings()
+    payload = {
+        "kind": "test",
+        "receipt_number": "TEST-0000",
+        "date_time": now_iso(),
+        "client_name": "Sample Client",
+        "dogs": ["Sample Dog"],
+        "service_dates": [{"date": business_today().isoformat(), "end_date": None, "dog_name": "Sample Dog"}],
+        "staff_name": "Sample Staff",
+        "booking_reference": "SAMPLE01",
+        "line_items": [
+            {"description": "Daycare (per day)", "qty": 1, "amount": 40.0},
+            {"description": "Nail Trim (add-on)", "qty": 1, "amount": 15.0},
+        ],
+        "invoice_total": 55.0,
+        "credits_applied": 0.0,
+        "payment_amount": 55.0,
+        "payment_method": "cash",
+        "remaining_balance": 0.0,
+        "tendered_amount": 60.0,
+        "change_given": 5.0,
+        "remaining_prepaid_visits": {"daycare": 3, "training": 0, "boarding": 0},
+        "public_price_note": {"list_price": 45.0, "effective_price": 40.0},
+    }
+    payload = _apply_receipt_settings_branding(payload, rs)
+    payload = _apply_receipt_settings_visibility(payload, rs)
+    # These two markers are never affected by any show/hide toggle.
+    payload["test_receipt"] = True
+    payload["test_label"] = "TEST RECEIPT — NOT A TRANSACTION"
+    return payload
+
+
+@api.post("/admin/receipts/test-print")
+async def issue_test_receipt_print_token(body: Optional[Dict[str, Any]] = None, user: dict = Depends(require_admin_and_permission("manage_receipt_settings"))):
+    """Issues a hardware print token carrying NO real invoice/pos_sale/
+    ledger reference at all — the same single-use POS token machinery, but
+    /pos/receipt-payload recognizes this action and returns sample data
+    only. Creates zero financial rows of any kind."""
+    body = body or {}
+    token = await _issue_pos_token(action="print_test_receipt", workstation_id=body.get("workstation_id"))
+    return {"print_receipt_token": token}
+
+
 @api.get("/pos/receipt-payload")
 async def get_pos_receipt_payload(token: str):
     """Called by the local POS agent to fetch the canonical receipt content
     for a print action. The token itself is the credential — this is a
     machine-to-machine call from the front-desk agent, not a logged-in
     browser session. Single-use: a second call with the same token fails."""
-    claims = await _verify_and_consume_pos_token(token, expected_action="print_receipt")
+    claims = await _verify_and_consume_pos_token(token, expected_action=("print_receipt", "print_test_receipt"))
+    if claims.get("action") == "print_test_receipt":
+        return await _build_test_receipt_payload()
     pos_sale_id = claims.get("pos_sale_id")
     if pos_sale_id:
         return await _build_pos_sale_receipt_payload(pos_sale_id)
@@ -24548,6 +25335,144 @@ async def get_pos_receipt_payload(token: str):
         raise HTTPException(status_code=400, detail="Token has no associated invoice, POS sale, or ledger row")
     payload = await _build_receipt_payload(invoice_id, payment_ids=claims.get("payment_ids") or None)
     return payload
+
+
+@api.get("/admin/receipts/preview")
+async def preview_receipt(_: dict = Depends(require_admin_and_permission("manage_receipt_settings"))):
+    """Thermal + digital preview payloads for the Receipt Designer screen —
+    identical sample data, identical builder as the real test-print path, so
+    what an admin previews is exactly what will print."""
+    payload = await _build_test_receipt_payload()
+    return {"thermal": payload, "digital": payload}
+
+
+class ReceiptEmailIn(BaseModel):
+    to_email: Optional[str] = None
+
+
+RECEIPT_EMAIL_RATE_LIMIT_SECONDS = 60
+
+
+async def _load_receipt_payload_and_client(kind: str, ref_id: str) -> tuple:
+    if kind == "invoice":
+        invoice = await db.invoices.find_one({"id": ref_id}, {"_id": 0, "client_id": 1})
+        if not invoice:
+            raise HTTPException(status_code=404, detail="Invoice not found")
+        payload = await _build_receipt_payload(ref_id)
+        client = await db.clients.find_one({"id": invoice.get("client_id")}, {"_id": 0, "email": 1})
+    elif kind == "pos_sale":
+        sale = await db.pos_sales.find_one({"id": ref_id}, {"_id": 0, "client_id": 1})
+        if not sale:
+            raise HTTPException(status_code=404, detail="POS sale not found")
+        payload = await _build_pos_sale_receipt_payload(ref_id)
+        client = await db.clients.find_one({"id": sale.get("client_id")}, {"_id": 0, "email": 1}) if sale.get("client_id") else None
+    elif kind == "tab_payment":
+        row = await db.payment_ledger.find_one({"id": ref_id}, {"_id": 0, "client_id": 1})
+        if not row:
+            raise HTTPException(status_code=404, detail="Ledger row not found")
+        payload = await _build_tab_payment_receipt_payload(ref_id)
+        client = await db.clients.find_one({"id": row.get("client_id")}, {"_id": 0, "email": 1})
+    elif kind == "credit_pack":
+        lot = await db.credit_lots.find_one({"id": ref_id}, {"_id": 0, "client_id": 1})
+        if not lot:
+            raise HTTPException(status_code=404, detail="Credit pack purchase not found")
+        payload = await _build_credit_pack_receipt_payload(ref_id)
+        client = await db.clients.find_one({"id": lot.get("client_id")}, {"_id": 0, "email": 1})
+    elif kind == "shop_order":
+        order = await db.shop_orders.find_one({"id": ref_id}, {"_id": 0, "client_id": 1})
+        if not order:
+            raise HTTPException(status_code=404, detail="Shop order not found")
+        payload = await _build_shop_order_receipt_payload(ref_id)
+        client = await db.clients.find_one({"id": order.get("client_id")}, {"_id": 0, "email": 1})
+    else:
+        raise HTTPException(status_code=400, detail="Unknown receipt kind")
+    return payload, client
+
+
+async def _receipt_owner_client_id(kind: str, ref_id: str) -> Optional[str]:
+    """Which client_id owns this receipt's underlying record, if any."""
+    if kind == "invoice":
+        doc = await db.invoices.find_one({"id": ref_id}, {"_id": 0, "client_id": 1})
+    elif kind == "pos_sale":
+        doc = await db.pos_sales.find_one({"id": ref_id}, {"_id": 0, "client_id": 1})
+    elif kind == "tab_payment":
+        doc = await db.payment_ledger.find_one({"id": ref_id}, {"_id": 0, "client_id": 1})
+    elif kind == "credit_pack":
+        doc = await db.credit_lots.find_one({"id": ref_id}, {"_id": 0, "client_id": 1})
+    elif kind == "shop_order":
+        doc = await db.shop_orders.find_one({"id": ref_id}, {"_id": 0, "client_id": 1})
+    else:
+        doc = None
+    return (doc or {}).get("client_id")
+
+
+RECEIPT_KIND = Literal["invoice", "pos_sale", "tab_payment", "credit_pack", "shop_order"]
+
+
+@api.get("/receipts/{kind}/{ref_id}")
+async def view_receipt(kind: RECEIPT_KIND, ref_id: str, user: dict = Depends(get_current_user)):
+    """Canonical JSON receipt view — reads the same authoritative builder a
+    print action uses. Staff can view any receipt; a client may only view
+    their own (matched by client_id on the underlying record)."""
+    payload, client = await _load_receipt_payload_and_client(kind, ref_id)
+    if user.get("role") == "client":
+        owner_id = await _receipt_owner_client_id(kind, ref_id)
+        if owner_id != user.get("client_id"):
+            raise HTTPException(status_code=403, detail="You can only view your own receipts.")
+    return payload
+
+
+@api.post("/receipts/{kind}/{ref_id}/email")
+async def email_receipt(kind: RECEIPT_KIND, ref_id: str,
+                         body: Optional[ReceiptEmailIn] = None, user: dict = Depends(get_current_user)):
+    """Resend/email a receipt. Never re-triggers the underlying payment,
+    never re-grants credits, never re-runs fulfillment, never touches the
+    register — this only ever queues an email for the SAME already-
+    authoritative payload a print action would show. Rate-limited per
+    receipt so a client/staff double-click can't spam delivery attempts.
+    Staff can email any receipt to any address (front-desk resending on a
+    client's behalf); a client may only email their OWN receipt, and only to
+    their own address on file — never an arbitrary address they type in."""
+    if user.get("role") == "client":
+        owner_id = await _receipt_owner_client_id(kind, ref_id)
+        if owner_id != user.get("client_id"):
+            raise HTTPException(status_code=403, detail="You can only email your own receipts.")
+    else:
+        if user.get("role") not in ("admin", "employee"):
+            raise HTTPException(status_code=403, detail="Staff access required")
+        _require_take_payments(user)
+    payload, client = await _load_receipt_payload_and_client(kind, ref_id)
+    if user.get("role") == "client":
+        to_email = (client or {}).get("email")
+    else:
+        to_email = (body.to_email if body else None) or (client or {}).get("email")
+    if not to_email:
+        raise HTTPException(status_code=400, detail="No email address on file for this receipt.")
+
+    recent = await db.receipt_email_log.find_one({"kind": kind, "ref_id": ref_id}, {"_id": 0}, sort=[("sent_at", -1)])
+    if recent:
+        try:
+            last_sent = datetime.fromisoformat(recent["sent_at"])
+            if (datetime.now(timezone.utc) - last_sent).total_seconds() < RECEIPT_EMAIL_RATE_LIMIT_SECONDS:
+                raise HTTPException(status_code=429, detail="A receipt email was just sent for this receipt — please wait a moment before resending.")
+        except HTTPException:
+            raise
+        except Exception:
+            pass
+
+    attempt_key = f"receipt:{kind}:{ref_id}:{uuid.uuid4().hex[:10]}"
+    sent_ok = False
+    try:
+        sent_ok = await queue_receipt_email(payload, to_email, attempt_key)
+    except Exception as exc:
+        logger.warning("Receipt email queue failed for %s/%s: %s", kind, ref_id, exc)
+    await db.receipt_email_log.insert_one({
+        "id": str(uuid.uuid4()), "kind": kind, "ref_id": ref_id, "to_email": to_email,
+        "sent_at": now_iso(), "sent_by": user.get("name", "Admin"), "queued_ok": bool(sent_ok),
+    })
+    if not sent_ok:
+        return {"ok": False, "detail": "The receipt itself is unaffected, but the email could not be queued for delivery."}
+    return {"ok": True}
 
 
 @api.post("/pos/verify-drawer-token")
@@ -24592,7 +25517,7 @@ async def issue_pos_tokens_for_invoice(invoice_id: str, body: Optional[Dict[str,
 
 
 @api.post("/admin/pos/open-drawer")
-async def admin_pos_open_drawer(body: POSOpenDrawerIn, user: dict = Depends(require_admin)):
+async def admin_pos_open_drawer(body: POSOpenDrawerIn, user: dict = Depends(require_admin_and_permission("finance_reports"))):
     """Manual, admin-authorized physical drawer open (making change,
     counting the drawer, etc.). Writes the audit record FIRST, then issues
     the token — never the other way around, so an audit trail always exists
@@ -24627,7 +25552,7 @@ class ShopMediaUploadIn(BaseModel):
 
 
 @api.post("/shop/media")
-async def upload_shop_media(body: ShopMediaUploadIn, user: dict = Depends(require_admin)):
+async def upload_shop_media(body: ShopMediaUploadIn, user: dict = Depends(require_admin_and_permission("manage_shop_media"))):
     """Admin-only image upload for Shop product/credit-pack/training-program
     photos. Images only (no PDF); 5 MB ceiling computed from actual base64
     byte length, never trusted from the client. Returns a media_id decoupled
@@ -24684,7 +25609,7 @@ async def _shop_media_referenced_by(media_id: str) -> Optional[str]:
 
 
 @api.delete("/shop/media/{media_id}")
-async def delete_shop_media(media_id: str, _: dict = Depends(require_admin)):
+async def delete_shop_media(media_id: str, _: dict = Depends(require_admin_and_permission("manage_shop_media"))):
     """Admin-only. Deletes a Shop image, but only once nothing still points
     at it — callers (the admin panels) are responsible for sequencing this
     AFTER their own parent save/removal succeeds, never before, so a failed
@@ -24734,7 +25659,7 @@ class PhotographyGalleryMoveIn(BaseModel):
 
 
 @api.post("/photography/gallery")
-async def upload_photography_photo(body: PhotographyGalleryUploadIn, user: dict = Depends(require_admin)):
+async def upload_photography_photo(body: PhotographyGalleryUploadIn, user: dict = Depends(require_admin_and_permission("manage_engagement_content"))):
     """Admin-only. Uploads one featured/showcase photography sample. New rows
     are appended to the end of the sort order (max existing sort_order + 1)."""
     raw = body.data
@@ -24803,7 +25728,7 @@ async def get_photography_photo(photo_id: str, _: dict = Depends(get_current_use
 
 
 @api.put("/photography/gallery/{photo_id}")
-async def update_photography_photo(photo_id: str, body: PhotographyGalleryUpdateIn, _: dict = Depends(require_admin)):
+async def update_photography_photo(photo_id: str, body: PhotographyGalleryUpdateIn, _: dict = Depends(require_admin_and_permission("manage_engagement_content"))):
     update = {k: v for k, v in body.model_dump(exclude_unset=True).items()}
     if "title" in update:
         update["title"] = (update["title"] or "").strip() or None
@@ -24824,7 +25749,7 @@ async def update_photography_photo(photo_id: str, body: PhotographyGalleryUpdate
 
 
 @api.post("/photography/gallery/{photo_id}/move")
-async def move_photography_photo(photo_id: str, body: PhotographyGalleryMoveIn, _: dict = Depends(require_admin)):
+async def move_photography_photo(photo_id: str, body: PhotographyGalleryMoveIn, _: dict = Depends(require_admin_and_permission("manage_engagement_content"))):
     """Swaps sort_order with the immediate neighbor in that direction —
     a simple, dependency-free reorder mechanism (no drag-and-drop needed)."""
     photo = await db.photography_gallery.find_one({"id": photo_id}, {"_id": 0})
@@ -24846,7 +25771,7 @@ async def move_photography_photo(photo_id: str, body: PhotographyGalleryMoveIn, 
 
 
 @api.delete("/photography/gallery/{photo_id}")
-async def delete_photography_photo(photo_id: str, _: dict = Depends(require_admin)):
+async def delete_photography_photo(photo_id: str, _: dict = Depends(require_admin_and_permission("manage_engagement_content"))):
     result = await db.photography_gallery.delete_one({"id": photo_id})
     return {"ok": True, "deleted": result.deleted_count}
 
@@ -24873,6 +25798,482 @@ async def delete_photography_photo(photo_id: str, _: dict = Depends(require_admi
 # quantity, so this specific rounding concern is scoped to physical product
 # lines only.
 
+# ─────────────────────────────────────────────────────────────────────────────
+# Shop Organization — category / subcategory taxonomy (Phase 1). Purely
+# organizational: it lets the admin group existing pos_products/credit_packs/
+# programs for display, it never replaces or recomputes the underlying item
+# `kind` (physical_product/credit_pack/training_program) or any pricing.
+# Exactly two levels — a subcategory always belongs to exactly one category;
+# no unlimited nesting. IDs are stable and never reused as identity; renaming
+# a category/subcategory never disconnects the items already assigned to it.
+# ─────────────────────────────────────────────────────────────────────────────
+
+SHOP_ITEM_KIND_COLLECTIONS = {
+    "physical_product": "pos_products",
+    "credit_pack": "credit_packs",
+    "training_program": "programs",
+}
+
+
+def _shop_org_perm_ok(user: dict, perm_key: str) -> bool:
+    # Security checkpoint fix — `role == "admin"` used to short-circuit this
+    # True regardless of `perm_key`, so ANY admin-role account (including a
+    # restricted front_desk with view_shop_categories=False) passed. A true
+    # owner already gets True here via `_perms_for` returning full perms;
+    # every other staff_role now genuinely has to hold the specific key.
+    return bool(_perms_for(user).get(perm_key))
+
+
+def _require_shop_org_perm(user: dict, perm_key: str) -> None:
+    if not _shop_org_perm_ok(user, perm_key):
+        raise HTTPException(status_code=403, detail="You don't have permission to manage Shop categories.")
+
+
+def _shop_org_slugify(name: str) -> str:
+    s = re.sub(r"[^a-z0-9]+", "-", (name or "").strip().lower()).strip("-")
+    return s or uuid.uuid4().hex[:8]
+
+
+async def _next_shop_category_sort_order() -> int:
+    top = await db.shop_categories.find_one({}, {"_id": 0, "sort_order": 1}, sort=[("sort_order", -1)])
+    return int((top or {}).get("sort_order") or 0) + 1
+
+
+async def _next_shop_subcategory_sort_order(category_id: str) -> int:
+    top = await db.shop_subcategories.find_one(
+        {"category_id": category_id}, {"_id": 0, "sort_order": 1}, sort=[("sort_order", -1)],
+    )
+    return int((top or {}).get("sort_order") or 0) + 1
+
+
+class ShopCategoryIn(BaseModel):
+    name: str = Field(min_length=1, max_length=100)
+    description: Optional[str] = Field(default=None, max_length=500)
+    icon: Optional[str] = None
+    image_id: Optional[str] = None
+    active: bool = True
+    sort_order: Optional[int] = None
+
+
+class ShopCategoryPatch(BaseModel):
+    name: Optional[str] = Field(default=None, min_length=1, max_length=100)
+    description: Optional[str] = Field(default=None, max_length=500)
+    icon: Optional[str] = None
+    image_id: Optional[str] = None
+    active: Optional[bool] = None
+
+
+class ShopSubcategoryIn(BaseModel):
+    category_id: str = Field(min_length=1)
+    name: str = Field(min_length=1, max_length=100)
+    description: Optional[str] = Field(default=None, max_length=500)
+    icon: Optional[str] = None
+    image_id: Optional[str] = None
+    active: bool = True
+    sort_order: Optional[int] = None
+
+
+class ShopSubcategoryPatch(BaseModel):
+    name: Optional[str] = Field(default=None, min_length=1, max_length=100)
+    description: Optional[str] = Field(default=None, max_length=500)
+    icon: Optional[str] = None
+    image_id: Optional[str] = None
+    active: Optional[bool] = None
+
+
+class ShopReorderIn(BaseModel):
+    ordered_ids: List[str] = Field(min_length=1)
+
+
+class ShopCategoryRemoveIn(BaseModel):
+    action: Literal["move_to_category", "move_to_uncategorized", "deactivate"]
+    target_category_id: Optional[str] = None
+
+
+class ShopSubcategoryRemoveIn(BaseModel):
+    action: Literal["move_to_subcategory", "move_to_category", "deactivate"]
+    target_subcategory_id: Optional[str] = None
+
+
+class ShopBulkAssignItem(BaseModel):
+    kind: Literal["physical_product", "credit_pack", "training_program"]
+    id: str
+
+
+class ShopBulkAssignIn(BaseModel):
+    items: List[ShopBulkAssignItem] = Field(min_length=1, max_length=200)
+    category_id: Optional[str] = None
+    subcategory_id: Optional[str] = None
+
+
+async def _shop_org_snapshot(category_id: Optional[str], subcategory_id: Optional[str]) -> Dict[str, Optional[str]]:
+    """Category/subcategory display snapshot to freeze onto a Shop order
+    line at order-creation time — looked up once, regardless of active
+    status, and never re-resolved later. A category renamed, deactivated,
+    or even removed after this order was placed can never change what the
+    order/receipt/report shows for it."""
+    cat = await db.shop_categories.find_one({"id": category_id}, {"_id": 0, "id": 1, "name": 1}) if category_id else None
+    sub = await db.shop_subcategories.find_one({"id": subcategory_id}, {"_id": 0, "id": 1, "name": 1}) if subcategory_id else None
+    return {
+        "category_id": cat["id"] if cat else None,
+        "category_name": cat["name"] if cat else None,
+        "subcategory_id": sub["id"] if sub else None,
+        "subcategory_name": sub["name"] if sub else None,
+    }
+
+
+async def _validate_category_subcategory_pair(
+    category_id: Optional[str],
+    subcategory_id: Optional[str],
+    *,
+    existing_category_id: Optional[str] = None,
+    existing_subcategory_id: Optional[str] = None,
+) -> None:
+    """A subcategory from one category can never be selected under another —
+    enforced here, the one place every write path (single-item edit, bulk
+    assign) funnels through.
+
+    An inactive category/subcategory can never be NEWLY selected — but an
+    item's own pre-existing assignment is exempt from that check (pass the
+    item's current `existing_category_id`/`existing_subcategory_id` from an
+    update path), so simply re-saving an item never fails just because its
+    category was deactivated after the fact. Create paths and bulk-assign
+    have no "existing" value, so any inactive id is always rejected there.
+    """
+    if subcategory_id:
+        sub = await db.shop_subcategories.find_one({"id": subcategory_id}, {"_id": 0})
+        if not sub:
+            raise HTTPException(status_code=400, detail="Unknown subcategory.")
+        if not category_id or sub.get("category_id") != category_id:
+            raise HTTPException(
+                status_code=400,
+                detail="That subcategory does not belong to the selected category.",
+            )
+        if not sub.get("active", True) and subcategory_id != existing_subcategory_id:
+            raise HTTPException(status_code=400, detail="That subcategory is inactive and cannot be newly assigned.")
+    if category_id:
+        cat = await db.shop_categories.find_one({"id": category_id}, {"_id": 0, "id": 1, "active": 1})
+        if not cat:
+            raise HTTPException(status_code=400, detail="Unknown category.")
+        if not cat.get("active", True) and category_id != existing_category_id:
+            raise HTTPException(status_code=400, detail="That category is inactive and cannot be newly assigned.")
+
+
+async def _shop_item_counts_by_category() -> Dict[str, Any]:
+    """One pass across all three Shop item kinds — counts per category_id
+    and per subcategory_id, plus the raw item list (used by uncategorized/
+    impact-summary endpoints so they never re-derive this differently)."""
+    products = await db.pos_products.find({}, {"_id": 0, "id": 1, "name": 1, "active": 1, "category_id": 1, "subcategory_id": 1, "sales_destination": 1}).to_list(5000)
+    packs = await db.credit_packs.find({}, {"_id": 0, "id": 1, "name": 1, "active": 1, "category_id": 1, "subcategory_id": 1}).to_list(2000)
+    programs = await db.programs.find({}, {"_id": 0, "id": 1, "name": 1, "active": 1, "category_id": 1, "subcategory_id": 1}).to_list(2000)
+    items = (
+        [{"kind": "physical_product", **p} for p in products]
+        + [{"kind": "credit_pack", **p} for p in packs]
+        + [{"kind": "training_program", **p} for p in programs]
+    )
+    by_category: Dict[str, int] = {}
+    by_subcategory: Dict[str, int] = {}
+    for it in items:
+        cid = it.get("category_id")
+        sid = it.get("subcategory_id")
+        if cid:
+            by_category[cid] = by_category.get(cid, 0) + 1
+        if sid:
+            by_subcategory[sid] = by_subcategory.get(sid, 0) + 1
+    return {"items": items, "by_category": by_category, "by_subcategory": by_subcategory}
+
+
+@api.get("/shop/categories")
+async def list_shop_categories(include_inactive: bool = True, user: dict = Depends(require_employee_or_admin)):
+    _require_shop_org_perm(user, "view_shop_categories")
+    cat_q: Dict[str, Any] = {} if include_inactive else {"active": True}
+    cats = await db.shop_categories.find(cat_q, {"_id": 0}).sort("sort_order", 1).to_list(500)
+    subs = await db.shop_subcategories.find(cat_q, {"_id": 0}).sort("sort_order", 1).to_list(2000)
+    subs_by_cat: Dict[str, List[dict]] = {}
+    for s in subs:
+        subs_by_cat.setdefault(s["category_id"], []).append(s)
+    counts = await _shop_item_counts_by_category()
+    for c in cats:
+        c["item_count"] = counts["by_category"].get(c["id"], 0)
+        c_subs = subs_by_cat.get(c["id"], [])
+        for s in c_subs:
+            s["item_count"] = counts["by_subcategory"].get(s["id"], 0)
+        c["subcategories"] = c_subs
+        c["active_subcategory_count"] = sum(1 for s in c_subs if s.get("active"))
+    return {"categories": cats}
+
+
+@api.get("/shop/uncategorized-items")
+async def list_shop_uncategorized_items(user: dict = Depends(require_employee_or_admin)):
+    _require_shop_org_perm(user, "view_shop_categories")
+    counts = await _shop_item_counts_by_category()
+    uncategorized = [it for it in counts["items"] if not it.get("category_id") and it.get("active", True)]
+    uncategorized.sort(key=lambda it: (it["kind"], it.get("name") or ""))
+    return {"items": uncategorized}
+
+
+@api.post("/shop/categories")
+async def create_shop_category(body: ShopCategoryIn, user: dict = Depends(require_employee_or_admin)):
+    _require_shop_org_perm(user, "manage_shop_categories")
+    name = body.name.strip()
+    if not name:
+        raise HTTPException(status_code=400, detail="Category name is required.")
+    slug = _shop_org_slugify(name)
+    if await db.shop_categories.find_one({"slug": slug, "active": True}, {"_id": 0, "id": 1}):
+        raise HTTPException(status_code=409, detail=f'An active category named "{name}" already exists.')
+    ts = now_iso()
+    doc = {
+        "id": str(uuid.uuid4()), "name": name, "slug": slug,
+        "description": (body.description or "").strip() or None,
+        "icon": body.icon, "image_id": body.image_id, "active": body.active,
+        "sort_order": body.sort_order if body.sort_order is not None else await _next_shop_category_sort_order(),
+        "created_at": ts, "updated_at": ts,
+        "created_by": user.get("name", "Admin"), "updated_by": user.get("name", "Admin"),
+    }
+    await db.shop_categories.insert_one(doc.copy())
+    doc.pop("_id", None)
+    return doc
+
+
+@api.put("/shop/categories/{category_id}")
+async def update_shop_category(category_id: str, body: ShopCategoryPatch, user: dict = Depends(require_employee_or_admin)):
+    _require_shop_org_perm(user, "manage_shop_categories")
+    existing = await db.shop_categories.find_one({"id": category_id}, {"_id": 0})
+    if not existing:
+        raise HTTPException(status_code=404, detail="Category not found.")
+    patch: Dict[str, Any] = {"updated_at": now_iso(), "updated_by": user.get("name", "Admin")}
+    if body.name is not None:
+        name = body.name.strip()
+        if not name:
+            raise HTTPException(status_code=400, detail="Category name is required.")
+        new_slug = _shop_org_slugify(name)
+        if new_slug != existing.get("slug"):
+            dupe = await db.shop_categories.find_one(
+                {"slug": new_slug, "active": True, "id": {"$ne": category_id}}, {"_id": 0, "id": 1},
+            )
+            if dupe:
+                raise HTTPException(status_code=409, detail=f'An active category named "{name}" already exists.')
+        patch["name"] = name
+        patch["slug"] = new_slug
+    if body.description is not None:
+        patch["description"] = body.description.strip() or None
+    if body.icon is not None:
+        patch["icon"] = body.icon
+    if body.image_id is not None:
+        patch["image_id"] = body.image_id
+    if body.active is not None:
+        patch["active"] = body.active
+    await db.shop_categories.update_one({"id": category_id}, {"$set": patch})
+    return {**existing, **patch}
+
+
+@api.post("/shop/categories/reorder")
+async def reorder_shop_categories(body: ShopReorderIn, user: dict = Depends(require_employee_or_admin)):
+    _require_shop_org_perm(user, "reorder_shop_categories")
+    for idx, cid in enumerate(body.ordered_ids):
+        await db.shop_categories.update_one({"id": cid}, {"$set": {"sort_order": idx, "updated_at": now_iso()}})
+    return {"ok": True, "count": len(body.ordered_ids)}
+
+
+@api.get("/shop/categories/{category_id}/impact")
+async def shop_category_impact(category_id: str, user: dict = Depends(require_employee_or_admin)):
+    _require_shop_org_perm(user, "view_shop_categories")
+    category = await db.shop_categories.find_one({"id": category_id}, {"_id": 0})
+    if not category:
+        raise HTTPException(status_code=404, detail="Category not found.")
+    subcategory_count = await db.shop_subcategories.count_documents({"category_id": category_id})
+    counts = await _shop_item_counts_by_category()
+    item_count = counts["by_category"].get(category_id, 0)
+    return {"category_id": category_id, "category_name": category["name"],
+            "subcategory_count": subcategory_count, "item_count": item_count}
+
+
+async def _reassign_items_off_category(category_id: str, new_category_id: Optional[str]) -> int:
+    updated = 0
+    for kind, coll_name in SHOP_ITEM_KIND_COLLECTIONS.items():
+        coll = getattr(db, coll_name)
+        res = await coll.update_many(
+            {"category_id": category_id},
+            {"$set": {"category_id": new_category_id, "subcategory_id": None, "updated_at": now_iso()}},
+        )
+        updated += res.modified_count
+    return updated
+
+
+@api.delete("/shop/categories/{category_id}")
+async def remove_shop_category(category_id: str, body: ShopCategoryRemoveIn, user: dict = Depends(require_employee_or_admin)):
+    _require_shop_org_perm(user, "delete_shop_categories")
+    category = await db.shop_categories.find_one({"id": category_id}, {"_id": 0})
+    if not category:
+        raise HTTPException(status_code=404, detail="Category not found.")
+
+    if body.action == "deactivate":
+        await db.shop_categories.update_one({"id": category_id}, {"$set": {
+            "active": False, "updated_at": now_iso(), "updated_by": user.get("name", "Admin"),
+        }})
+        await db.shop_subcategories.update_many({"category_id": category_id}, {"$set": {
+            "active": False, "updated_at": now_iso(), "updated_by": user.get("name", "Admin"),
+        }})
+        return {"ok": True, "action": "deactivated"}
+
+    if body.action == "move_to_category":
+        if not body.target_category_id or body.target_category_id == category_id:
+            raise HTTPException(status_code=400, detail="Pick a different destination category.")
+        target = await db.shop_categories.find_one({"id": body.target_category_id}, {"_id": 0, "id": 1})
+        if not target:
+            raise HTTPException(status_code=404, detail="Destination category not found.")
+        moved = await _reassign_items_off_category(category_id, body.target_category_id)
+        await db.shop_subcategories.update_many({"category_id": category_id}, {"$set": {
+            "active": False, "updated_at": now_iso(), "updated_by": user.get("name", "Admin"),
+        }})
+        await db.shop_categories.delete_one({"id": category_id})
+        return {"ok": True, "action": "moved", "items_moved": moved}
+
+    if body.action == "move_to_uncategorized":
+        moved = await _reassign_items_off_category(category_id, None)
+        await db.shop_subcategories.update_many({"category_id": category_id}, {"$set": {
+            "active": False, "updated_at": now_iso(), "updated_by": user.get("name", "Admin"),
+        }})
+        await db.shop_categories.delete_one({"id": category_id})
+        return {"ok": True, "action": "moved_to_uncategorized", "items_moved": moved}
+
+    raise HTTPException(status_code=400, detail="Unknown removal action.")
+
+
+@api.post("/shop/subcategories")
+async def create_shop_subcategory(body: ShopSubcategoryIn, user: dict = Depends(require_employee_or_admin)):
+    _require_shop_org_perm(user, "manage_shop_categories")
+    category = await db.shop_categories.find_one({"id": body.category_id}, {"_id": 0, "id": 1})
+    if not category:
+        raise HTTPException(status_code=400, detail="A subcategory must belong to a valid parent category.")
+    name = body.name.strip()
+    if not name:
+        raise HTTPException(status_code=400, detail="Subcategory name is required.")
+    slug = _shop_org_slugify(name)
+    if await db.shop_subcategories.find_one(
+        {"category_id": body.category_id, "slug": slug, "active": True}, {"_id": 0, "id": 1},
+    ):
+        raise HTTPException(status_code=409, detail=f'An active subcategory named "{name}" already exists in this category.')
+    ts = now_iso()
+    doc = {
+        "id": str(uuid.uuid4()), "category_id": body.category_id, "name": name, "slug": slug,
+        "description": (body.description or "").strip() or None,
+        "icon": body.icon, "image_id": body.image_id, "active": body.active,
+        "sort_order": body.sort_order if body.sort_order is not None else await _next_shop_subcategory_sort_order(body.category_id),
+        "created_at": ts, "updated_at": ts,
+        "created_by": user.get("name", "Admin"), "updated_by": user.get("name", "Admin"),
+    }
+    await db.shop_subcategories.insert_one(doc.copy())
+    doc.pop("_id", None)
+    return doc
+
+
+@api.put("/shop/subcategories/{subcategory_id}")
+async def update_shop_subcategory(subcategory_id: str, body: ShopSubcategoryPatch, user: dict = Depends(require_employee_or_admin)):
+    _require_shop_org_perm(user, "manage_shop_categories")
+    existing = await db.shop_subcategories.find_one({"id": subcategory_id}, {"_id": 0})
+    if not existing:
+        raise HTTPException(status_code=404, detail="Subcategory not found.")
+    patch: Dict[str, Any] = {"updated_at": now_iso(), "updated_by": user.get("name", "Admin")}
+    if body.name is not None:
+        name = body.name.strip()
+        if not name:
+            raise HTTPException(status_code=400, detail="Subcategory name is required.")
+        new_slug = _shop_org_slugify(name)
+        if new_slug != existing.get("slug"):
+            dupe = await db.shop_subcategories.find_one(
+                {"category_id": existing["category_id"], "slug": new_slug, "active": True, "id": {"$ne": subcategory_id}},
+                {"_id": 0, "id": 1},
+            )
+            if dupe:
+                raise HTTPException(status_code=409, detail=f'An active subcategory named "{name}" already exists in this category.')
+        patch["name"] = name
+        patch["slug"] = new_slug
+    if body.description is not None:
+        patch["description"] = body.description.strip() or None
+    if body.icon is not None:
+        patch["icon"] = body.icon
+    if body.image_id is not None:
+        patch["image_id"] = body.image_id
+    if body.active is not None:
+        patch["active"] = body.active
+    await db.shop_subcategories.update_one({"id": subcategory_id}, {"$set": patch})
+    return {**existing, **patch}
+
+
+@api.post("/shop/subcategories/reorder")
+async def reorder_shop_subcategories(body: ShopReorderIn, user: dict = Depends(require_employee_or_admin)):
+    _require_shop_org_perm(user, "reorder_shop_categories")
+    for idx, sid in enumerate(body.ordered_ids):
+        await db.shop_subcategories.update_one({"id": sid}, {"$set": {"sort_order": idx, "updated_at": now_iso()}})
+    return {"ok": True, "count": len(body.ordered_ids)}
+
+
+async def _reassign_items_off_subcategory(subcategory_id: str, new_subcategory_id: Optional[str], keep_category: bool) -> int:
+    updated = 0
+    patch: Dict[str, Any] = {"subcategory_id": new_subcategory_id, "updated_at": now_iso()}
+    if not keep_category:
+        patch["category_id"] = None
+    for kind, coll_name in SHOP_ITEM_KIND_COLLECTIONS.items():
+        coll = getattr(db, coll_name)
+        res = await coll.update_many({"subcategory_id": subcategory_id}, {"$set": patch})
+        updated += res.modified_count
+    return updated
+
+
+@api.delete("/shop/subcategories/{subcategory_id}")
+async def remove_shop_subcategory(subcategory_id: str, body: ShopSubcategoryRemoveIn, user: dict = Depends(require_employee_or_admin)):
+    _require_shop_org_perm(user, "delete_shop_categories")
+    subcategory = await db.shop_subcategories.find_one({"id": subcategory_id}, {"_id": 0})
+    if not subcategory:
+        raise HTTPException(status_code=404, detail="Subcategory not found.")
+
+    if body.action == "deactivate":
+        await db.shop_subcategories.update_one({"id": subcategory_id}, {"$set": {
+            "active": False, "updated_at": now_iso(), "updated_by": user.get("name", "Admin"),
+        }})
+        return {"ok": True, "action": "deactivated"}
+
+    if body.action == "move_to_category":
+        moved = await _reassign_items_off_subcategory(subcategory_id, None, keep_category=True)
+        await db.shop_subcategories.delete_one({"id": subcategory_id})
+        return {"ok": True, "action": "moved_to_category", "items_moved": moved}
+
+    if body.action == "move_to_subcategory":
+        if not body.target_subcategory_id or body.target_subcategory_id == subcategory_id:
+            raise HTTPException(status_code=400, detail="Pick a different destination subcategory.")
+        target = await db.shop_subcategories.find_one({"id": body.target_subcategory_id}, {"_id": 0})
+        if not target:
+            raise HTTPException(status_code=404, detail="Destination subcategory not found.")
+        if target["category_id"] != subcategory["category_id"]:
+            raise HTTPException(status_code=400, detail="Destination subcategory must belong to the same category.")
+        moved = await _reassign_items_off_subcategory(subcategory_id, body.target_subcategory_id, keep_category=True)
+        await db.shop_subcategories.delete_one({"id": subcategory_id})
+        return {"ok": True, "action": "moved", "items_moved": moved}
+
+    raise HTTPException(status_code=400, detail="Unknown removal action.")
+
+
+@api.post("/shop/items/bulk-assign")
+async def bulk_assign_shop_items(body: ShopBulkAssignIn, user: dict = Depends(require_employee_or_admin)):
+    _require_shop_org_perm(user, "manage_shop_categories")
+    await _validate_category_subcategory_pair(body.category_id, body.subcategory_id)
+    updated = 0
+    errors: List[Dict[str, str]] = []
+    for entry in body.items:
+        coll_name = SHOP_ITEM_KIND_COLLECTIONS.get(entry.kind)
+        coll = getattr(db, coll_name)
+        res = await coll.update_one(
+            {"id": entry.id},
+            {"$set": {"category_id": body.category_id, "subcategory_id": body.subcategory_id, "updated_at": now_iso()}},
+        )
+        if res.matched_count:
+            updated += 1
+        else:
+            errors.append({"kind": entry.kind, "id": entry.id, "detail": "Item not found"})
+    return {"updated": updated, "errors": errors}
+
+
 @api.get("/shop/catalog")
 async def get_shop_catalog(user: dict = Depends(get_current_user)):
     """Client Shop Phase 1 — read-only catalog aggregation. Does NOT create a
@@ -24885,35 +26286,122 @@ async def get_shop_catalog(user: dict = Depends(get_current_user)):
     frontend fetches GET /shop/media/{id} separately per image."""
     if user.get("role") != "client":
         raise HTTPException(status_code=403, detail="Client account required")
+    client_id = user.get("client_id")
+
+    # Shop Organization (Phase 1) — only ACTIVE categories/subcategories are
+    # ever attached to a client-facing item. An item assigned to a category
+    # or subcategory that's since gone inactive is hidden from the Shop
+    # entirely (it stays fully editable/active in admin — see
+    # _shop_org_visible below) rather than shown miscategorized or under a
+    # hidden section. Uncategorized items (category_id is None) are always
+    # shown — existing data never breaks because of this rollout.
+    active_cats = {c["id"]: c for c in await db.shop_categories.find({"active": True}, {"_id": 0}).to_list(500)}
+    active_subs = {s["id"]: s for s in await db.shop_subcategories.find({"active": True}, {"_id": 0}).to_list(2000)}
+
+    def _shop_org_visible(cat_id, sub_id):
+        if not cat_id:
+            return True
+        if cat_id not in active_cats:
+            return False
+        if sub_id and sub_id not in active_subs:
+            return False
+        return True
+
+    def _shop_org_fields(cat_id, sub_id):
+        cat = active_cats.get(cat_id) if cat_id else None
+        sub = active_subs.get(sub_id) if sub_id else None
+        return {
+            "category_id": cat["id"] if cat else None,
+            "category_name": cat["name"] if cat else None,
+            "subcategory_id": sub["id"] if sub else None,
+            "subcategory_name": sub["name"] if sub else None,
+        }
 
     items = []
 
     products = await db.pos_products.find(
-        {"show_online": True, "active": True}, {"_id": 0},
+        {"show_online": True, "active": True, "archived": {"$ne": True}}, {"_id": 0},
     ).sort("online_sort_order", 1).to_list(500)
     for p in products:
+        if not _shop_org_visible(p.get("category_id"), p.get("subcategory_id")):
+            continue
+        if p.get("sales_destination") == "shopify_external":
+            # Shopify-linked merchandise — a display-only catalog link.
+            # Shopify remains authoritative for price/inventory/checkout, so
+            # this is deliberately NEVER run through resolve_client_price()
+            # (client-specific/grandfathered pricing doesn't apply to it —
+            # see the pos_product guard in create_client_price_override /
+            # set_pricing_tier_price) and carries no cart-relevant fields.
+            items.append({
+                "kind": "product",
+                "id": p["id"],
+                "name": p.get("name"),
+                "description": p.get("online_description") or p.get("description") or "",
+                "category": p.get("category") or "",
+                "sales_destination": "shopify_external",
+                "shopify_product_url": p.get("shopify_product_url"),
+                "shopify_display_price": p.get("shopify_display_price"),
+                "shopify_from_price": bool(p.get("shopify_from_price")),
+                "featured": bool(p.get("featured")),
+                "image_id": p.get("image_id"),
+                "sort_order": p.get("online_sort_order"),
+                **_shop_org_fields(p.get("category_id"), p.get("subcategory_id")),
+            })
+            continue
         track = bool(p.get("track_inventory"))
         stock = float(p.get("stock_on_hand") or 0)
+        list_price = round(float(p.get("price") or 0), 2)
+        # Reuse the exact same resolver every other grandfathered-pricing
+        # path (Shop cart, front-desk sell, credit-pack catalog above)
+        # already trusts — an authenticated client must see (and later be
+        # charged) their locked individual or tier rate here too, never the
+        # raw catalog price. Unauthenticated visitors never reach this route
+        # at all (client account required, checked above), so they only
+        # ever see the public price via other surfaces.
+        pricing = await resolve_client_price(client_id, "pos_product", p["id"], list_price)
+        effective_price = round(float(pricing["effective_price"]), 2)
+        has_override = pricing["pricing_source"] != "standard"
         items.append({
             "kind": "product",
             "id": p["id"],
             "name": p.get("name"),
             "description": p.get("online_description") or p.get("description") or "",
             "category": p.get("category") or "",
-            "price": round(float(p.get("price") or 0), 2),
+            "sales_destination": "internal",
+            "featured": bool(p.get("featured")),
+            "list_price": list_price,
+            "effective_price": effective_price,
+            "pricing_source": pricing["pricing_source"],
+            "price_override_id": pricing["override_id"],
+            "has_price_override": has_override,
             "image_id": p.get("image_id"),
             "sort_order": p.get("online_sort_order"),
             "track_inventory": track,
             "in_stock": (not track) or (stock > 0.0005),
             "stock_on_hand": round(stock, 2) if track else None,
+            # Backward-compatible aliases for existing consumers — new code
+            # should read the clearer fields above instead.
+            "price": effective_price,
+            "legacy_price": list_price if has_override else None,
+            "has_legacy_override": has_override,
+            **_shop_org_fields(p.get("category_id"), p.get("subcategory_id")),
         })
 
     packs = await db.credit_packs.find(
         {"available_online": True, "active": True}, {"_id": 0},
     ).to_list(500)
     for pk in packs:
+        if not _shop_org_visible(pk.get("category_id"), pk.get("subcategory_id")):
+            continue
         qty = int(pk.get("qty") or 0)
-        price = round(float(pk.get("price") or 0), 2)
+        list_price = round(float(pk.get("price") or 0), 2)
+        # Reuse the exact same resolver every other credit-pack purchase path
+        # (front-desk sell-pack, booking checkout) already trusts — a
+        # grandfathered client must see and be charged their locked rate
+        # here too, never the raw catalog price.
+        pricing = await resolve_client_price(client_id, "credit_pack", pk["id"], list_price)
+        effective_price = round(float(pricing["effective_price"]), 2)
+        has_override = bool(pricing["override_id"])
         items.append({
             "kind": "credit_pack",
             "id": pk["id"],
@@ -24921,15 +26409,27 @@ async def get_shop_catalog(user: dict = Depends(get_current_user)):
             "description": pk.get("online_description") or "",
             "service_type": pk.get("service_type"),
             "qty": qty,
-            "price": price,
-            "value_each": round(price / max(qty, 1), 2),
+            "list_price": list_price,
+            "effective_price": effective_price,
+            "pricing_source": "client_override" if has_override else "standard",
+            "price_override_id": pricing["override_id"],
+            "has_price_override": has_override,
+            "value_each": round(effective_price / max(qty, 1), 2),
             "image_id": pk.get("image_id"),
+            # Backward-compatible aliases for existing consumers — new code
+            # should read the clearer fields above instead.
+            "price": effective_price,
+            "legacy_price": list_price if has_override else None,
+            "has_legacy_override": has_override,
+            **_shop_org_fields(pk.get("category_id"), pk.get("subcategory_id")),
         })
 
     programs = await db.programs.find(
         {"available_online": True, "active": True}, {"_id": 0},
     ).to_list(500)
     for prog in programs:
+        if not _shop_org_visible(prog.get("category_id"), prog.get("subcategory_id")):
+            continue
         fmt = prog.get("format") or {}
         items.append({
             "kind": "training_program",
@@ -24942,9 +26442,60 @@ async def get_shop_catalog(user: dict = Depends(get_current_user)):
             "format_unit": fmt.get("unit"),
             "price": round(float(prog.get("price") or 0), 2),
             "image_id": prog.get("image_id"),
+            **_shop_org_fields(prog.get("category_id"), prog.get("subcategory_id")),
         })
 
     return {"items": items}
+
+
+@api.get("/shop/catalog/taxonomy")
+async def get_shop_catalog_taxonomy(user: dict = Depends(get_current_user)):
+    """Public (client-facing) category/subcategory navigation — active only,
+    in configured order. Separate from GET /shop/categories (the admin
+    endpoint, which needs auth + inactive rows + counts for management)."""
+    if user.get("role") != "client":
+        raise HTTPException(status_code=403, detail="Client account required")
+    cats = await db.shop_categories.find({"active": True}, {"_id": 0}).sort("sort_order", 1).to_list(500)
+    subs = await db.shop_subcategories.find({"active": True}, {"_id": 0}).sort("sort_order", 1).to_list(2000)
+    subs_by_cat: Dict[str, List[dict]] = {}
+    for s in subs:
+        subs_by_cat.setdefault(s["category_id"], []).append(
+            {"id": s["id"], "name": s["name"], "description": s.get("description"), "icon": s.get("icon")}
+        )
+    return {"categories": [
+        {"id": c["id"], "name": c["name"], "description": c.get("description"), "icon": c.get("icon"),
+         "subcategories": subs_by_cat.get(c["id"], [])}
+        for c in cats
+    ]}
+
+
+class ShopMerchClickIn(BaseModel):
+    product_id: str = Field(min_length=1)
+
+
+@api.post("/shop/merch-click")
+async def record_shop_merch_click(body: ShopMerchClickIn, user: dict = Depends(get_current_user)):
+    """Lightweight, nonfinancial telemetry for Shopify-linked merchandise:
+    records only which listing was opened, by whom (if authenticated), when,
+    and which domain it sent the client to — never an order, never revenue,
+    never anything about the actual Shopify checkout/payment. destination
+    domain is derived from the product's OWN stored URL server-side, never
+    trusted from the request body, so this can't be used to log arbitrary
+    click data for an unrelated destination."""
+    if user.get("role") != "client":
+        raise HTTPException(status_code=403, detail="Client account required")
+    product = await db.pos_products.find_one({"id": body.product_id}, {"_id": 0, "sales_destination": 1, "shopify_product_url": 1})
+    if not product or product.get("sales_destination") != "shopify_external":
+        raise HTTPException(status_code=404, detail="Shopify listing not found")
+    destination_domain = urlsplit(product.get("shopify_product_url") or "").netloc or None
+    await db.shop_merch_clicks.insert_one({
+        "id": str(uuid.uuid4()),
+        "product_id": body.product_id,
+        "client_id": user.get("client_id"),
+        "timestamp": now_iso(),
+        "destination_domain": destination_domain,
+    })
+    return {"ok": True}
 
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -24981,7 +26532,7 @@ class ShopCheckoutIn(BaseModel):
     idempotency_key: str = Field(min_length=8, max_length=128)
 
 
-async def _price_shop_cart(items: List[ShopCartItemIn]) -> dict:
+async def _price_shop_cart(items: List[ShopCartItemIn], client_id: Optional[str] = None) -> dict:
     """Prices a Shop cart entirely server-side — never trusts a client-
     supplied price. Only `product` lines are physical/taxable; credit_pack
     and training_program lines are never taxed (confirmed: no tax
@@ -25005,21 +26556,44 @@ async def _price_shop_cart(items: List[ShopCartItemIn]) -> dict:
             product = product_cache.get(cart_item.ref_id)
             if product is None:
                 product = await db.pos_products.find_one(
-                    {"id": cart_item.ref_id, "show_online": True, "active": True}, {"_id": 0},
+                    {"id": cart_item.ref_id, "show_online": True, "active": True, "archived": {"$ne": True}}, {"_id": 0},
                 )
                 if not product:
                     raise HTTPException(status_code=400, detail="One of the products in this cart is no longer available.")
                 product_cache[cart_item.ref_id] = product
-            unit_price = round(float(product.get("price") or 0), 2)
+            if product.get("sales_destination") == "shopify_external":
+                # Shopify-linked merchandise is a display-only catalog link —
+                # Shopify is authoritative for its price and checkout, so it
+                # must never reach the Sit Happens cart/order/payment path.
+                raise HTTPException(
+                    status_code=400,
+                    detail="This item is Shopify merchandise and can't be added to the Sit Happens cart — use its Shopify link instead.",
+                )
+            # Never trust a client-supplied price — resolve_client_price() is
+            # the SAME source of truth credit_pack lines (below) and
+            # GET /shop/catalog already use, so a grandfathered/tier-priced
+            # client is CHARGED their locked rate here, not just shown it.
+            list_unit_price = round(float(product.get("price") or 0), 2)
+            product_pricing = await resolve_client_price(client_id, "pos_product", product["id"], list_unit_price)
+            unit_price = round(float(product_pricing["effective_price"]), 2)
             name = product.get("name") or "Product"
+            org_source = product
         elif cart_item.kind == "credit_pack":
             pack = await db.credit_packs.find_one(
                 {"id": cart_item.ref_id, "available_online": True, "active": True}, {"_id": 0},
             )
             if not pack:
                 raise HTTPException(status_code=400, detail="One of the credit packs in this cart is no longer available.")
-            unit_price = round(float(pack.get("price") or 0), 2)
+            # Never derive this from a service rate or a client-submitted
+            # amount — resolve_client_price() is the ONE source of truth a
+            # credit-pack override already uses everywhere else (front-desk
+            # sell-pack, GET /shop/catalog). A grandfathered client must be
+            # CHARGED their locked rate here, not just shown it.
+            list_unit_price = round(float(pack.get("price") or 0), 2)
+            pricing = await resolve_client_price(client_id, "credit_pack", pack["id"], list_unit_price)
+            unit_price = round(float(pricing["effective_price"]), 2)
             name = pack.get("name") or "Credit Pack"
+            org_source = pack
         else:
             program = await db.programs.find_one(
                 {"id": cart_item.ref_id, "available_online": True, "active": True}, {"_id": 0},
@@ -25031,14 +26605,46 @@ async def _price_shop_cart(items: List[ShopCartItemIn]) -> dict:
                 raise HTTPException(status_code=400, detail="This training program isn't set up for online purchase yet.")
             unit_price = round(float(program.get("price") or 0), 2)
             name = program.get("name") or "Training Program"
+            org_source = program
 
         line_subtotal = round(unit_price * qty, 2)
-        lines.append({
+        org_snapshot = await _shop_org_snapshot(org_source.get("category_id"), org_source.get("subcategory_id"))
+        line = {
             "item_id": str(uuid.uuid4()), "kind": cart_item.kind, "ref_id": cart_item.ref_id,
             "name": name, "unit_price": unit_price, "quantity": qty,
             "line_subtotal": line_subtotal, "allocated_tax": 0.0,
             "line_total": line_subtotal, "fulfillment_status": "pending",
-        })
+            **org_snapshot,
+        }
+        if cart_item.kind == "credit_pack":
+            # Immutable pricing snapshot — frozen at order-creation time so a
+            # later public-price change or override/tier edit or revocation
+            # can never alter what this order (or its eventual credit lot)
+            # charged. Editing a tier/override AFTER this point must never
+            # reach back and change a completed order.
+            has_override = bool(pricing["override_id"] or pricing["pricing_source"] != "standard")
+            line.update({
+                "list_unit_price": list_unit_price,
+                "pricing_source": pricing["pricing_source"],
+                "price_override_id": pricing["override_id"],
+                "has_price_override": has_override,
+                "pricing_tier_id": pricing.get("tier_id"),
+                "pricing_tier_name": pricing.get("tier_name"),
+            })
+        elif cart_item.kind == "product":
+            # Same immutable-snapshot contract as credit_pack lines above —
+            # the actual charged unit price, and which pricing rule produced
+            # it, are frozen onto the line at order-creation time.
+            has_override = product_pricing["pricing_source"] != "standard"
+            line.update({
+                "list_unit_price": list_unit_price,
+                "pricing_source": product_pricing["pricing_source"],
+                "price_override_id": product_pricing["override_id"],
+                "has_price_override": has_override,
+                "pricing_tier_id": product_pricing.get("tier_id"),
+                "pricing_tier_name": product_pricing.get("tier_name"),
+            })
+        lines.append(line)
 
     if not lines:
         raise HTTPException(status_code=400, detail="Cart is empty.")
@@ -25302,6 +26908,14 @@ async def _fulfill_shop_credit_pack_line(order: dict, line: dict) -> None:
     value_each = round(unit_price / max(qty_per_unit, 1), 2)
     svc_type = pack.get("service_type") or "daycare"
     pool_field = {"daycare": "credits", "training": "training_credits", "boarding": "boarding_credits"}.get(svc_type, "credits")
+    # Read the FROZEN snapshot the order line already carries — never the
+    # pack's current live price, which may have changed (or the client's
+    # override may have since been edited/revoked) since this order was
+    # placed. Orders created before these fields existed fall back to the
+    # pack's current price/no-override, matching this function's own
+    # pre-existing behavior for that legacy case.
+    list_price = float(line["list_unit_price"]) if line.get("list_unit_price") is not None else float(pack["price"])
+    price_override_id = line.get("price_override_id")
 
     for n in range(int(line["quantity"])):
         fulfillment_ref = f"{_shop_inventory_ref(order['id'], line['item_id'])}:unit:{n}"
@@ -25311,7 +26925,8 @@ async def _fulfill_shop_credit_pack_line(order: dict, line: dict) -> None:
                 "id": str(uuid.uuid4()), "client_id": client_id,
                 "pack_id": pack["id"], "pack_name": pack["name"], "service_type": svc_type,
                 "qty_total": qty_per_unit, "qty_remaining": qty_per_unit,
-                "price_paid": unit_price, "list_price": float(pack["price"]),
+                "price_paid": unit_price, "list_price": round(list_price, 2),
+                "price_override_id": price_override_id,
                 "value_each": value_each, "payment_method": "stripe_online",
                 "note": f"Online Shop order {order['id'][:8].upper()}",
                 "sold_by": "Online Shop", "purchased_at": now_iso(),
@@ -25516,6 +27131,14 @@ async def _apply_shop_payment(attempt: dict, session_obj: Optional[dict] = None)
             order = fresh
         else:
             order = result
+            # Fires exactly once per order — only the caller that actually won
+            # this status-transition race reaches here; a concurrent/retried
+            # call that finds the order already flipped takes the `fresh`
+            # branch above instead, so this can never double-send.
+            try:
+                asyncio.create_task(_maybe_auto_email_receipt("shop_order", order_id, order.get("client_id")))
+            except Exception as exc:
+                logger.warning("auto-email receipt spawn failed for shop order %s: %s", order_id, exc)
 
     # ── Step B1 — canonical Payment row, reusing the EXISTING check-before-
     # insert idempotency helper. invoice_id=None, shop_order_id set. ──
@@ -25571,7 +27194,7 @@ async def _apply_shop_payment(attempt: dict, session_obj: Optional[dict] = None)
     try:
         await _queue_new_shop_order_notification(order)
     except Exception:
-        pass
+        logger.exception("failed to queue admin new-shop-order notification for order %s", order_id)
 
     # ── Step B3 — per-line independent fulfillment. ──
     for line in order.get("lines") or []:
@@ -25690,7 +27313,7 @@ async def create_shop_checkout(body: ShopCheckoutIn, user: dict = Depends(get_cu
 
     order = await db.shop_orders.find_one({"id": order_id}, {"_id": 0})
     if not order:
-        priced = await _price_shop_cart(body.items)
+        priced = await _price_shop_cart(body.items, client_id=client_id)
         if priced["total"] <= 0.005:
             raise HTTPException(status_code=400, detail="Cart total must be greater than zero.")
         order_doc = {
@@ -25986,7 +27609,11 @@ class PosProductIn(BaseModel):
     sku: Optional[str] = Field(default=None, max_length=100)
     category: Optional[str] = Field(default="", max_length=100)
     description: Optional[str] = Field(default=None, max_length=1000)
-    price: float = Field(ge=0)
+    # Required for internal products; ignored for shopify_external listings
+    # (see _resolve_pos_product_destination_fields), which use
+    # shopify_display_price instead — so this defaults to 0 rather than
+    # being a hard requirement.
+    price: float = Field(default=0.0, ge=0)
     cost: Optional[float] = Field(default=None, ge=0)
     low_stock_threshold: Optional[float] = Field(default=None, ge=0)
     track_inventory: bool = False
@@ -25998,6 +27625,22 @@ class PosProductIn(BaseModel):
     online_description: Optional[str] = Field(default=None, max_length=1000)
     image_id: Optional[str] = None
     online_sort_order: Optional[int] = None
+    # Shop Organization (Phase 1) — purely organizational, additive to the
+    # legacy free-text `category` field above (which stays untouched, still
+    # used for POS register grouping). Never affects pricing or item kind.
+    category_id: Optional[str] = None
+    subcategory_id: Optional[str] = None
+    # Highlights this item in the client Shop. Purely organizational — never
+    # affects pricing, sort order, or availability.
+    featured: bool = False
+    # Shopify-linked merchandise (lightweight catalog link, not a second
+    # commerce system) — see _resolve_pos_product_destination_fields for how
+    # this reshapes the doc on create/update. "internal" is the default so
+    # every pre-existing product is completely unaffected.
+    sales_destination: Literal["internal", "shopify_external"] = "internal"
+    shopify_product_url: Optional[str] = Field(default=None, max_length=2000)
+    shopify_display_price: Optional[float] = Field(default=None, ge=0)
+    shopify_from_price: bool = False
 
 
 class PosProductCreateIn(PosProductIn):
@@ -26012,38 +27655,109 @@ class PosProductOut(PosProductIn):
 
 
 def _require_take_payments(user: dict):
-    if user.get("role") != "admin" and not _perms_for(user).get("take_payments"):
+    # Security checkpoint fix — the old `role != "admin"` guard short-
+    # circuited this to a no-op for ANY admin-role account regardless of
+    # staff_role, so a restricted staff_role with take_payments=False could
+    # still hit every POS endpoint. `_perms_for` already returns full perms
+    # for a true owner, so deferring to it alone is strictly correct.
+    if not _perms_for(user).get("take_payments"):
         raise HTTPException(status_code=403, detail="You don't have permission to take payments.")
 
 
 @api.get("/pos/products")
 async def list_pos_products(
     include_inactive: bool = False,
+    include_archived: bool = False,
     user: dict = Depends(require_employee_or_admin),
 ):
     """Product tiles for the register screen. Front desk only ever sees
     active products; the admin catalog-management view passes
-    include_inactive=true to also see (and reactivate) retired items."""
+    include_inactive=true to also see (and reactivate) retired items.
+
+    Archived products (see archive_pos_product) are DELIBERATELY excluded
+    from both of the above — an archived product is retired for a reason
+    (usually order/sale history), never something a normal "show inactive
+    too" toggle should surface. `include_archived=true` is a dedicated view
+    showing ONLY archived products (the Manage Products "Archived" filter),
+    so an admin never has to hunt for a retired item mixed in with ordinary
+    inactive ones."""
     _require_take_payments(user)
-    q: Dict[str, Any] = {} if include_inactive else {"active": True}
+    if include_archived:
+        q: Dict[str, Any] = {"archived": True}
+    else:
+        q = {"archived": {"$ne": True}}
+        if not include_inactive:
+            q["active"] = True
     cursor = db.pos_products.find(q, {"_id": 0}).sort([("category", 1), ("name", 1)])
     return await cursor.to_list(5000)
 
 
+def _validate_shopify_product_url(url: Optional[str]) -> Optional[str]:
+    """Only accepts a well-formed https:// URL. Rejects javascript:, data:,
+    plain http:, or scheme-less strings — a Shopify listing must never be
+    able to smuggle an unsafe navigation target into the client Shop."""
+    if not url or not url.strip():
+        return None
+    url = url.strip()
+    parsed = urlsplit(url)
+    if parsed.scheme != "https" or not parsed.netloc:
+        raise HTTPException(status_code=400, detail="Shopify product URL must be a valid https:// URL.")
+    return url
+
+
+def _resolve_pos_product_destination_fields(body: "PosProductIn") -> Dict[str, Any]:
+    """Single choke point deciding what a product doc actually stores for
+    its sales_destination. A shopify_external listing is a display-only
+    catalog link — Shopify remains authoritative for price, inventory, tax,
+    and checkout — so this forcibly disables every internal-only field
+    (track_inventory/cost/low_stock_threshold) server-side rather than
+    trusting the client not to submit them, and requires a validated https
+    URL. An internal product is completely unaffected (all pre-existing
+    products default to sales_destination="internal")."""
+    if body.sales_destination == "shopify_external":
+        url = _validate_shopify_product_url(body.shopify_product_url)
+        if not url:
+            raise HTTPException(status_code=400, detail="A Shopify product URL is required for a Shopify-linked listing.")
+        return {
+            "sales_destination": "shopify_external",
+            "shopify_product_url": url,
+            "shopify_display_price": round(float(body.shopify_display_price), 2) if body.shopify_display_price is not None else None,
+            "shopify_from_price": bool(body.shopify_from_price),
+            "featured": bool(body.featured),
+            "price": 0.0,
+            "cost": None,
+            "low_stock_threshold": None,
+            "track_inventory": False,
+        }
+    return {
+        "sales_destination": "internal",
+        "shopify_product_url": None,
+        "shopify_display_price": None,
+        "shopify_from_price": False,
+        "featured": bool(body.featured),
+        "price": round(float(body.price), 2),
+        "cost": round(float(body.cost), 2) if body.cost is not None else None,
+        "low_stock_threshold": body.low_stock_threshold,
+        "track_inventory": body.track_inventory,
+    }
+
+
 @api.post("/pos/products")
-async def create_pos_product(body: PosProductCreateIn, user: dict = Depends(require_admin)):
+async def create_pos_product(body: PosProductCreateIn, user: dict = Depends(require_admin_and_permission("pricing"))):
+    await _validate_category_subcategory_pair(body.category_id, body.subcategory_id)
+    destination_fields = _resolve_pos_product_destination_fields(body)
+    is_shopify = destination_fields["sales_destination"] == "shopify_external"
     doc = {
         "id": str(uuid.uuid4()),
         "name": body.name.strip(),
         "sku": (body.sku or "").strip() or None,
         "category": (body.category or "").strip(),
         "description": (body.description or "").strip() or None,
-        "price": round(float(body.price), 2),
-        "cost": round(float(body.cost), 2) if body.cost is not None else None,
-        "low_stock_threshold": body.low_stock_threshold,
-        "track_inventory": body.track_inventory,
         "active": body.active,
-        "stock_on_hand": round(float(body.starting_stock or 0), 3),
+        "archived": False,
+        # A Shopify-linked listing never tracks real stock — Shopify owns
+        # inventory entirely — so starting_stock is ignored for it.
+        "stock_on_hand": 0.0 if is_shopify else round(float(body.starting_stock or 0), 3),
         "stock_reserved": 0.0,
         "shop_reservations": [],
         "created_at": now_iso(),
@@ -26051,6 +27765,9 @@ async def create_pos_product(body: PosProductCreateIn, user: dict = Depends(requ
         "online_description": (body.online_description or "").strip() or None,
         "image_id": body.image_id,
         "online_sort_order": body.online_sort_order,
+        "category_id": body.category_id,
+        "subcategory_id": body.subcategory_id,
+        **destination_fields,
     }
     await db.pos_products.insert_one(doc)
     doc.pop("_id", None)
@@ -26058,43 +27775,175 @@ async def create_pos_product(body: PosProductCreateIn, user: dict = Depends(requ
 
 
 @api.put("/pos/products/{product_id}")
-async def update_pos_product(product_id: str, body: PosProductIn, user: dict = Depends(require_admin)):
+async def update_pos_product(product_id: str, body: PosProductIn, user: dict = Depends(require_admin_and_permission("pricing"))):
     """Edits product info only. stock_on_hand is deliberately never part of
     this patch — it can only change via a sale, a void, or the explicit
     adjust-stock endpoint below, each of which leaves an audit trail."""
     existing = await db.pos_products.find_one({"id": product_id}, {"_id": 0})
     if not existing:
         raise HTTPException(status_code=404, detail="Product not found")
+    await _validate_category_subcategory_pair(
+        body.category_id, body.subcategory_id,
+        existing_category_id=existing.get("category_id"), existing_subcategory_id=existing.get("subcategory_id"),
+    )
     patch = {
         "name": body.name.strip(),
         "sku": (body.sku or "").strip() or None,
         "category": (body.category or "").strip(),
         "description": (body.description or "").strip() or None,
-        "price": round(float(body.price), 2),
-        "cost": round(float(body.cost), 2) if body.cost is not None else None,
-        "low_stock_threshold": body.low_stock_threshold,
-        "track_inventory": body.track_inventory,
         "active": body.active,
         "updated_at": now_iso(),
         "show_online": body.show_online,
         "online_description": (body.online_description or "").strip() or None,
         "image_id": body.image_id,
         "online_sort_order": body.online_sort_order,
+        "category_id": body.category_id,
+        "subcategory_id": body.subcategory_id,
+        **_resolve_pos_product_destination_fields(body),
     }
     await db.pos_products.update_one({"id": product_id}, {"$set": patch})
     return {**existing, **patch}
 
 
-@api.delete("/pos/products/{product_id}")
-async def delete_pos_product(product_id: str, user: dict = Depends(require_admin)):
-    """Hard delete from the catalog. Safe at any time — completed pos_sales
-    line items snapshot their own description/price and never reference this
-    document live, so removing a discontinued product never alters a past
-    receipt or revenue record."""
-    res = await db.pos_products.delete_one({"id": product_id})
-    if res.deleted_count == 0:
+@api.post("/pos/products/{product_id}/duplicate")
+async def duplicate_pos_product(product_id: str, user: dict = Depends(require_admin_and_permission("pricing"))):
+    """Copies a listing (name, category, pricing/Shopify-link fields, etc.)
+    into a brand-new product row with its own id and zero history. Never
+    copies stock_on_hand/reservations (starts at 0 — a duplicate is not a
+    stock split) or show_online (starts hidden so an admin can review the
+    copy before it appears in the client Shop). Archiving/deleting a
+    duplicate never touches the original."""
+    existing = await db.pos_products.find_one({"id": product_id}, {"_id": 0})
+    if not existing:
         raise HTTPException(status_code=404, detail="Product not found")
-    return {"ok": True}
+    doc = {
+        **existing,
+        "id": str(uuid.uuid4()),
+        "name": f"{existing.get('name') or 'Product'} (Copy)",
+        "sku": None,
+        "stock_on_hand": 0.0,
+        "stock_reserved": 0.0,
+        "shop_reservations": [],
+        "show_online": False,
+        "active": True,
+        "archived": False,
+        "archived_at": None,
+        "archived_by": None,
+        "archived_from_active": None,
+        "archived_from_show_online": None,
+        "created_at": now_iso(),
+        "updated_at": None,
+    }
+    await db.pos_products.insert_one(doc)
+    doc.pop("_id", None)
+    return doc
+
+
+async def _pos_product_has_history(product_id: str) -> bool:
+    """Whether this product has ever been referenced by any financial or
+    fulfillment record. Checked against every collection that actually
+    stores a product reference in this schema:
+      - shop_orders.lines[] (kind="product", ref_id=<product_id>) — Shop
+        orders, and by extension their receipts/payments/refunds, which are
+        all keyed off the order/payment, never the product directly.
+      - pos_sales.line_items[] (kind="retail", product_id=<product_id>) —
+        Front Desk retail sales, and by extension their receipts/refunds
+        (retail_sales rows are aggregate revenue rows keyed by
+        payment_id/booking_id/invoice_id/shop_order_id — they never store a
+        product_id directly, so there is nothing further to check there).
+      - inventory_movements.product_id — stock adjustments/receiving.
+    Invoices/payments/register sessions never reference a product_id
+    directly in this schema (see the collections above), so checking them
+    independently would only ever find zero matches — this list is already
+    the complete, non-redundant set of true references."""
+    if await db.shop_orders.find_one(
+        {"lines": {"$elemMatch": {"kind": "product", "ref_id": product_id}}}, {"_id": 0, "id": 1},
+    ):
+        return True
+    if await db.pos_sales.find_one(
+        {"line_items": {"$elemMatch": {"kind": "retail", "product_id": product_id}}}, {"_id": 0, "id": 1},
+    ):
+        return True
+    if await db.inventory_movements.find_one({"product_id": product_id}, {"_id": 0, "id": 1}):
+        return True
+    return False
+
+
+@api.delete("/pos/products/{product_id}")
+async def delete_pos_product(product_id: str, user: dict = Depends(require_admin_and_permission("pricing"))):
+    """Permanently deletes a product ONLY when it has never been referenced
+    by any Shop order, POS sale, or inventory transaction (see
+    _pos_product_has_history). A referenced product is never hard-deleted —
+    that would silently rewrite historical order lines/receipts, which must
+    keep showing the product name/price exactly as charged. Instead this
+    returns 409 with a clear explanation so the admin UI can offer
+    `POST /pos/products/{id}/archive` instead."""
+    existing = await db.pos_products.find_one({"id": product_id}, {"_id": 0})
+    if not existing:
+        raise HTTPException(status_code=404, detail="Product not found")
+    if await _pos_product_has_history(product_id):
+        raise HTTPException(
+            status_code=409,
+            detail="This product has order, sale, or inventory history and can't be permanently deleted — "
+                   "archive it instead to keep past orders and receipts intact.",
+        )
+    await db.pos_products.delete_one({"id": product_id})
+    # Category/subcategory assignment lives ON the product document itself
+    # (category_id/subcategory_id fields) — deleting the document removes
+    # that assignment by construction, nothing else to clean up.
+    return {"ok": True, "action": "deleted"}
+
+
+@api.post("/pos/products/{product_id}/archive")
+async def archive_pos_product(product_id: str, user: dict = Depends(require_admin_and_permission("pricing"))):
+    """Retires a product that has history (or that an admin simply wants to
+    stop selling) WITHOUT touching its historical references. Snapshots the
+    prior active/show_online flags so Restore can put them back exactly as
+    they were — never guesses, never silently reactivates online visibility.
+    Inventory (stock_on_hand, the reservation array, and the inventory_movements
+    ledger) is left completely untouched: archiving is not a sale, a stock
+    adjustment, or a write-off, so creating one here would misrepresent real
+    inventory history."""
+    existing = await db.pos_products.find_one({"id": product_id}, {"_id": 0})
+    if not existing:
+        raise HTTPException(status_code=404, detail="Product not found")
+    if existing.get("archived"):
+        return {**existing, "already_archived": True}
+    patch = {
+        "archived": True,
+        "archived_at": now_iso(),
+        "archived_by": user.get("name") or user.get("email") or "Admin",
+        "archived_from_active": bool(existing.get("active", True)),
+        "archived_from_show_online": bool(existing.get("show_online", False)),
+        "active": False,
+        "show_online": False,
+        "updated_at": now_iso(),
+    }
+    await db.pos_products.update_one({"id": product_id}, {"$set": patch})
+    return {**existing, **patch}
+
+
+@api.post("/pos/products/{product_id}/restore")
+async def restore_pos_product(product_id: str, user: dict = Depends(require_admin_and_permission("pricing"))):
+    """Reverses archive_pos_product — restores the exact active/show_online
+    state captured at archive time (never a blanket "turn everything back
+    on", since online visibility is a deliberate admin decision). Stock
+    on hand and the inventory ledger are never touched here either."""
+    existing = await db.pos_products.find_one({"id": product_id}, {"_id": 0})
+    if not existing:
+        raise HTTPException(status_code=404, detail="Product not found")
+    if not existing.get("archived"):
+        return {**existing, "already_active": True}
+    patch = {
+        "archived": False,
+        "archived_at": None,
+        "archived_by": None,
+        "active": bool(existing.get("archived_from_active", True)),
+        "show_online": bool(existing.get("archived_from_show_online", False)),
+        "updated_at": now_iso(),
+    }
+    await db.pos_products.update_one({"id": product_id}, {"$set": patch})
+    return {**existing, **patch}
 
 
 @api.get("/pos/products/categories")
@@ -26166,7 +28015,7 @@ class InventoryAdjustIn(BaseModel):
 
 
 @api.post("/pos/products/{product_id}/adjust-stock")
-async def adjust_pos_product_stock(product_id: str, body: InventoryAdjustIn, user: dict = Depends(require_admin)):
+async def adjust_pos_product_stock(product_id: str, body: InventoryAdjustIn, user: dict = Depends(require_admin_and_permission("pricing"))):
     """Manual stock correction — receiving a shipment, damage, loss, an
     inventory-count correction, or an explicit refund-restock decision
     (source=RETURN). Never silently edits stock_on_hand; always leaves an
@@ -26183,7 +28032,7 @@ async def adjust_pos_product_stock(product_id: str, body: InventoryAdjustIn, use
 
 
 @api.get("/pos/products/{product_id}/movements")
-async def list_inventory_movements(product_id: str, limit: int = 100, user: dict = Depends(require_admin)):
+async def list_inventory_movements(product_id: str, limit: int = 100, user: dict = Depends(require_admin_and_permission("pricing"))):
     cursor = db.inventory_movements.find({"product_id": product_id}, {"_id": 0}).sort("created_at", -1)
     return await cursor.to_list(max(1, min(limit, 500)))
 
@@ -26241,10 +28090,17 @@ class PosSaleIn(PosSalePreviewIn):
     idempotency_key: str = Field(min_length=8, max_length=128)
 
 
-async def _price_pos_cart(lines: List[PosSaleLineIn], discount: Optional[PosSaleDiscountIn], *, is_admin: bool) -> tuple:
+async def _price_pos_cart(lines: List[PosSaleLineIn], discount: Optional[PosSaleDiscountIn], *, can_price: bool) -> tuple:
     """Prices a POS cart. Retail line prices are ALWAYS resolved server-side
     from the live product catalog (never trusted from the client) — only a
-    custom line's amount is caller-supplied, and only admins may include one.
+    custom line's amount is caller-supplied, and only staff holding the
+    "pricing" permission may include one or apply a discount.
+
+    Security checkpoint fix — this used to gate on `is_admin` (a blanket
+    `role == "admin"` check), so any restricted staff_role account (which
+    still has `role: "admin"`) could add custom-priced lines or discounts
+    regardless of the "pricing" permission the frontend already enforces.
+    `can_price` is the caller's actual `_perms_for(user).get("pricing")`.
     Raises HTTPException on any invalid input; never partially prices.
 
     Also enforces stock availability for track_inventory products, summed
@@ -26264,8 +28120,8 @@ async def _price_pos_cart(lines: List[PosSaleLineIn], discount: Optional[PosSale
     qty_by_product: Dict[str, float] = {}
     for line in lines:
         if line.kind == "custom":
-            if not is_admin:
-                raise HTTPException(status_code=403, detail="Only an admin can add a custom item.")
+            if not can_price:
+                raise HTTPException(status_code=403, detail="You don't have permission to add a custom item.")
             if line.custom_amount is None or line.custom_amount <= 0:
                 raise HTTPException(status_code=400, detail="Custom items require a positive amount.")
             if not (line.custom_reason or "").strip():
@@ -26312,8 +28168,8 @@ async def _price_pos_cart(lines: List[PosSaleLineIn], discount: Optional[PosSale
     discount_kind = None
     discount_reason = None
     if discount is not None:
-        if not is_admin:
-            raise HTTPException(status_code=403, detail="Only an admin can apply a discount.")
+        if not can_price:
+            raise HTTPException(status_code=403, detail="You don't have permission to apply a discount.")
         if discount.kind == "percent":
             if discount.value > 100:
                 raise HTTPException(status_code=400, detail="A percentage discount cannot exceed 100%.")
@@ -26352,7 +28208,7 @@ async def preview_pos_sale(body: PosSalePreviewIn, user: dict = Depends(require_
     """Prices a cart without creating anything — pure read, safe to call on
     every cart edit for live cart totals."""
     _require_take_payments(user)
-    priced, _product_cache = await _price_pos_cart(body.lines, body.discount, is_admin=(user.get("role") == "admin"))
+    priced, _product_cache = await _price_pos_cart(body.lines, body.discount, can_price=bool(_perms_for(user).get("pricing")))
     return priced
 
 
@@ -26366,9 +28222,9 @@ async def create_pos_sale(body: PosSaleIn, user: dict = Depends(require_employee
     (post-commit, best-effort) issues hardware tokens — a drawer token only
     when real cash was actually part of the tender mix."""
     _require_take_payments(user)
-    is_admin = user.get("role") == "admin"
+    can_price = bool(_perms_for(user).get("pricing"))
 
-    priced, product_cache = await _price_pos_cart(body.lines, body.discount, is_admin=is_admin)
+    priced, product_cache = await _price_pos_cart(body.lines, body.discount, can_price=can_price)
     total = priced["total"]
 
     client_name = ""
@@ -26524,15 +28380,21 @@ async def create_pos_sale(body: PosSaleIn, user: dict = Depends(require_employee
     pos_print_receipt_token = None
     pos_open_drawer_token = None
     try:
-        pos_print_receipt_token = await _issue_pos_token(
-            action="print_receipt", workstation_id=body.workstation_id, pos_sale_id=sale_id,
-        )
+        rs_for_print = await get_receipt_settings()
+        if rs_for_print.get("auto_print_receipts"):
+            pos_print_receipt_token = await _issue_pos_token(
+                action="print_receipt", workstation_id=body.workstation_id, pos_sale_id=sale_id,
+            )
         if cash_component > 0:
             pos_open_drawer_token = await _issue_pos_token(
                 action="open_drawer", workstation_id=body.workstation_id, pos_sale_id=sale_id,
             )
     except Exception as exc:
         logger.warning("POS token issuance failed for pos_sale %s: %s", sale_id, exc)
+    try:
+        asyncio.create_task(_maybe_auto_email_receipt("pos_sale", sale_id, body.client_id))
+    except Exception as exc:
+        logger.warning("auto-email receipt spawn failed for pos_sale %s: %s", sale_id, exc)
 
     final_sale = await db.pos_sales.find_one({"id": sale_id}, {"_id": 0})
     return {
@@ -26626,7 +28488,7 @@ class PosSaleVoidIn(BaseModel):
 
 
 @api.post("/pos/sales/{sale_id}/void")
-async def void_pos_sale(sale_id: str, body: PosSaleVoidIn, user: dict = Depends(require_admin)):
+async def void_pos_sale(sale_id: str, body: PosSaleVoidIn, user: dict = Depends(require_admin_and_permission("delete_records"))):
     """Reverses a completed retail POS sale — exactly once, and only while
     its business day is still open. Mirrors void_payment's exact discipline:
     structural one-void-per-sale invariant (pos_sale_id is UNIQUE in
@@ -26792,7 +28654,7 @@ def _quarter_due_dates(year: int) -> List[Dict[str, str]]:
 
 @api.get("/admin/quarterly-tax")
 async def admin_quarterly_tax(
-    _: dict = Depends(require_admin),
+    _: dict = Depends(require_admin_and_permission("finance_reports")),
     year: Optional[int] = None,
 ):
     """YTD sole-proprietor tax estimate.
@@ -27011,7 +28873,7 @@ async def admin_quarterly_tax(
 @api.put("/admin/quarterly-tax/settings")
 async def admin_quarterly_tax_settings(
     body: Dict[str, Any] = Body(...),
-    _: dict = Depends(require_admin),
+    _: dict = Depends(require_admin_and_permission("finance_reports")),
 ):
     """Save the configurable quarterly-tax rates (federal %, state %, local %,
     SS wage base, estimated payments already made, etc.). Only known keys are
@@ -27037,7 +28899,7 @@ async def admin_quarterly_tax_settings(
 
 
 @api.get("/admin/quarterly-tax/settings")
-async def admin_quarterly_tax_settings_get(_: dict = Depends(require_admin)):
+async def admin_quarterly_tax_settings_get(_: dict = Depends(require_admin_and_permission("finance_reports"))):
     return {
         "current": await _get_quarterly_tax_settings(),
         "defaults": dict(QUARTERLY_TAX_DEFAULTS),
@@ -27056,7 +28918,7 @@ class TaxPaymentIn(BaseModel):
 
 @api.get("/admin/quarterly-tax/payments")
 async def list_tax_payments(
-    _: dict = Depends(require_admin),
+    _: dict = Depends(require_admin_and_permission("finance_reports")),
     year: Optional[int] = None,
 ):
     q: Dict[str, Any] = {}
@@ -27070,7 +28932,7 @@ async def list_tax_payments(
 @api.post("/admin/quarterly-tax/payments")
 async def add_tax_payment(
     body: TaxPaymentIn,
-    _: dict = Depends(require_admin),
+    _: dict = Depends(require_admin_and_permission("finance_reports")),
 ):
     if body.quarter not in (1, 2, 3, 4):
         raise HTTPException(400, "quarter must be 1-4")
@@ -27092,7 +28954,7 @@ async def add_tax_payment(
 
 
 @api.delete("/admin/quarterly-tax/payments/{pid}")
-async def delete_tax_payment(pid: str, _: dict = Depends(require_admin)):
+async def delete_tax_payment(pid: str, _: dict = Depends(require_admin_and_permission("delete_records"))):
     res = await db.tax_payments.delete_one({"id": pid})
     if not res.deleted_count:
         raise HTTPException(404, "Payment not found")
@@ -27114,7 +28976,7 @@ class MileageIn(BaseModel):
 async def list_mileage(
     start_date: Optional[str] = None,
     end_date: Optional[str] = None,
-    _: dict = Depends(require_admin),
+    _: dict = Depends(require_admin_and_permission("finance_reports")),
 ):
     """Return mileage rows in the window. Defaults to current calendar year."""
     today = business_today()
@@ -27126,7 +28988,7 @@ async def list_mileage(
 
 
 @api.get("/admin/mileage/recent-trips")
-async def mileage_recent_trips(_: dict = Depends(require_admin)):
+async def mileage_recent_trips(_: dict = Depends(require_admin_and_permission("finance_reports"))):
     """Return the most-recent unique (purpose, destination) pairs across all
     history. Used by the Dashboard widget to one-tap-fill repeat trips."""
     # Pull most-recent 500 entries (more than enough to dedupe down to 10 unique)
@@ -27158,7 +29020,7 @@ async def mileage_recent_trips(_: dict = Depends(require_admin)):
 @api.get("/admin/mileage/summary")
 async def mileage_summary(
     year: Optional[int] = None,
-    _: dict = Depends(require_admin),
+    _: dict = Depends(require_admin_and_permission("finance_reports")),
 ):
     """Quick tiles for the Dashboard: today / month-to-date / YTD totals."""
     today = business_today()
@@ -27215,7 +29077,7 @@ async def mileage_summary(
 
 
 @api.post("/admin/mileage")
-async def create_mileage(body: MileageIn, user: dict = Depends(require_admin)):
+async def create_mileage(body: MileageIn, user: dict = Depends(require_admin_and_permission("finance_reports"))):
     today_iso = business_today().isoformat()
     date_str = (body.date or today_iso).strip()
     # Sanity: only accept YYYY-MM-DD
@@ -27245,7 +29107,7 @@ class MileagePatch(BaseModel):
 
 
 @api.put("/admin/mileage/{mid}")
-async def update_mileage(mid: str, body: MileagePatch, _: dict = Depends(require_admin)):
+async def update_mileage(mid: str, body: MileagePatch, _: dict = Depends(require_admin_and_permission("finance_reports"))):
     existing = await db.mileage_log.find_one({"id": mid}, {"_id": 0})
     if not existing:
         raise HTTPException(404, "Mileage entry not found")
@@ -27271,7 +29133,7 @@ async def update_mileage(mid: str, body: MileagePatch, _: dict = Depends(require
 
 
 @api.delete("/admin/mileage/{mid}")
-async def delete_mileage(mid: str, _: dict = Depends(require_admin)):
+async def delete_mileage(mid: str, _: dict = Depends(require_admin_and_permission("delete_records"))):
     res = await db.mileage_log.delete_one({"id": mid})
     if not res.deleted_count:
         raise HTTPException(404, "Mileage entry not found")
@@ -27281,7 +29143,7 @@ async def delete_mileage(mid: str, _: dict = Depends(require_admin)):
 @api.get("/admin/quarterly-tax/cpa.pdf")
 async def quarterly_tax_cpa_pdf(
     year: Optional[int] = None,
-    _: dict = Depends(require_admin),
+    _: dict = Depends(require_admin_and_permission("finance_reports")),
 ):
     """One-page Schedule C summary PDF for the operator's CPA. Pulls the
     same numbers as the Quarterly Tax tab plus expense-by-category and the
@@ -27403,7 +29265,7 @@ async def employee_cancel_time_off(
 
 @api.get("/admin/time-off")
 async def admin_list_time_off(
-    _: dict = Depends(require_admin),
+    _: dict = Depends(require_admin_and_permission("manage_staff_scheduling")),
     status: Optional[str] = None,
 ):
     q: Dict[str, Any] = {}
@@ -27422,7 +29284,7 @@ async def admin_list_time_off(
 async def admin_review_time_off(
     rid: str,
     body: TimeOffReview,
-    admin: dict = Depends(require_admin),
+    admin: dict = Depends(require_admin_and_permission("manage_staff_scheduling")),
 ):
     if body.status not in ("approved", "rejected"):
         raise HTTPException(400, "status must be 'approved' or 'rejected'")
@@ -27722,13 +29584,13 @@ class ShiftIn(BaseModel):
 
 
 @api.get("/admin/shift-templates")
-async def list_shift_templates(_: dict = Depends(require_admin)):
+async def list_shift_templates(_: dict = Depends(require_admin_and_permission("manage_staff_scheduling"))):
     rows = await db.shift_templates.find({}, {"_id": 0}).sort([("user_id", 1), ("day_of_week", 1)]).to_list(500)
     return rows
 
 
 @api.post("/admin/shift-templates")
-async def create_shift_template(body: ShiftTemplateIn, _: dict = Depends(require_admin)):
+async def create_shift_template(body: ShiftTemplateIn, _: dict = Depends(require_admin_and_permission("manage_staff_scheduling"))):
     doc = body.model_dump()
     doc["id"] = str(uuid.uuid4())
     doc["created_at"] = now_iso()
@@ -27738,7 +29600,7 @@ async def create_shift_template(body: ShiftTemplateIn, _: dict = Depends(require
 
 
 @api.put("/admin/shift-templates/{tid}")
-async def update_shift_template(tid: str, body: ShiftTemplateIn, _: dict = Depends(require_admin)):
+async def update_shift_template(tid: str, body: ShiftTemplateIn, _: dict = Depends(require_admin_and_permission("manage_staff_scheduling"))):
     res = await db.shift_templates.update_one({"id": tid}, {"$set": body.model_dump()})
     if res.matched_count == 0:
         raise HTTPException(status_code=404, detail="Template not found")
@@ -27746,7 +29608,7 @@ async def update_shift_template(tid: str, body: ShiftTemplateIn, _: dict = Depen
 
 
 @api.delete("/admin/shift-templates/{tid}")
-async def delete_shift_template(tid: str, _: dict = Depends(require_admin)):
+async def delete_shift_template(tid: str, _: dict = Depends(require_admin_and_permission("manage_staff_scheduling"))):
     await db.shift_templates.delete_one({"id": tid})
     return {"ok": True}
 
@@ -27756,7 +29618,7 @@ async def list_shifts(
     start_date: str,
     end_date: str,
     user_id: Optional[str] = None,
-    _: dict = Depends(require_admin),
+    _: dict = Depends(require_admin_and_permission("manage_staff_scheduling")),
 ):
     q: Dict[str, Any] = {"date": {"$gte": start_date, "$lte": end_date}}
     if user_id:
@@ -27766,7 +29628,7 @@ async def list_shifts(
 
 
 @api.post("/admin/shifts")
-async def create_shift(body: ShiftIn, admin: dict = Depends(require_admin)):
+async def create_shift(body: ShiftIn, admin: dict = Depends(require_admin_and_permission("manage_staff_scheduling"))):
     doc = body.model_dump()
     doc["id"] = str(uuid.uuid4())
     doc["source"] = "manual"
@@ -27780,7 +29642,7 @@ async def create_shift(body: ShiftIn, admin: dict = Depends(require_admin)):
 
 
 @api.put("/admin/shifts/{sid}")
-async def update_shift(sid: str, body: ShiftIn, _: dict = Depends(require_admin)):
+async def update_shift(sid: str, body: ShiftIn, _: dict = Depends(require_admin_and_permission("manage_staff_scheduling"))):
     res = await db.shifts.update_one({"id": sid}, {"$set": body.model_dump()})
     if res.matched_count == 0:
         raise HTTPException(status_code=404, detail="Shift not found")
@@ -27788,13 +29650,13 @@ async def update_shift(sid: str, body: ShiftIn, _: dict = Depends(require_admin)
 
 
 @api.delete("/admin/shifts/{sid}")
-async def delete_shift(sid: str, _: dict = Depends(require_admin)):
+async def delete_shift(sid: str, _: dict = Depends(require_admin_and_permission("manage_staff_scheduling"))):
     await db.shifts.delete_one({"id": sid})
     return {"ok": True}
 
 
 @api.post("/admin/shifts/generate")
-async def generate_shifts_from_templates(body: dict, _: dict = Depends(require_admin)):
+async def generate_shifts_from_templates(body: dict, _: dict = Depends(require_admin_and_permission("manage_staff_scheduling"))):
     """Apply all active shift_templates to every weekday in [start_date, end_date].
     Idempotent: skips dates where the same user already has a shift covering the same
     start_time (so re-running won't duplicate)."""
@@ -27846,7 +29708,7 @@ async def generate_shifts_from_templates(body: dict, _: dict = Depends(require_a
 async def shifts_scheduled_vs_actual(
     start_date: str, end_date: str,
     user_id: Optional[str] = None,
-    _: dict = Depends(require_admin),
+    _: dict = Depends(require_admin_and_permission("manage_staff_scheduling")),
 ):
     """For each scheduled shift in the range, find the matching clock entry (same
     user, same date) and compute variance. Flags shifts where |sched - actual|
@@ -27946,13 +29808,13 @@ async def _get_payroll_tax_settings() -> Dict[str, float]:
 
 
 @api.get("/admin/payroll-tax-settings")
-async def get_payroll_tax_settings(_: dict = Depends(require_admin)):
+async def get_payroll_tax_settings(_: dict = Depends(require_admin_and_permission("finance_reports"))):
     settings = await _get_payroll_tax_settings()
     return {"defaults": DEFAULT_PAYROLL_TAX_SETTINGS, "current": settings}
 
 
 @api.put("/admin/payroll-tax-settings")
-async def update_payroll_tax_settings(body: dict, _: dict = Depends(require_admin)):
+async def update_payroll_tax_settings(body: dict, _: dict = Depends(require_admin_and_permission("finance_reports"))):
     # Whitelist only known keys
     update: Dict[str, Any] = {}
     for k in DEFAULT_PAYROLL_TAX_SETTINGS.keys():
@@ -28021,7 +29883,7 @@ def _compute_payroll_tax(hours: float, rate: float, ytd_gross: float, tax: Dict[
 
 @api.get("/admin/payroll/estimate")
 async def payroll_estimate(
-    start_date: str, end_date: str, _: dict = Depends(require_admin),
+    start_date: str, end_date: str, _: dict = Depends(require_admin_and_permission("finance_reports")),
 ):
     """Estimate per-employee employer cost (gross + taxes + workers comp) and
     employee take-home pay for the given pay period. Uses YTD gross from
@@ -28112,7 +29974,7 @@ async def payroll_estimate(
 
 @api.get("/admin/payroll/csv")
 async def payroll_csv(
-    start_date: str, end_date: str, _: dict = Depends(require_admin),
+    start_date: str, end_date: str, _: dict = Depends(require_admin_and_permission("finance_reports")),
 ):
     """Export a payroll-ready CSV for the given pay period.
     Columns: Employee · Email · Pay period start · Pay period end · Hours ·
@@ -28218,7 +30080,7 @@ class TaskIn(BaseModel):
 async def list_tasks(
     status: Optional[str] = None,
     assigned_to: Optional[str] = None,
-    _: dict = Depends(require_admin),
+    _: dict = Depends(require_admin_and_permission("manage_staff_scheduling")),
 ):
     q: Dict[str, Any] = {}
     if status:
@@ -28230,7 +30092,7 @@ async def list_tasks(
 
 
 @api.post("/admin/tasks")
-async def create_task(body: TaskIn, admin: dict = Depends(require_admin)):
+async def create_task(body: TaskIn, admin: dict = Depends(require_admin_and_permission("manage_staff_scheduling"))):
     doc = body.model_dump()
     doc["id"] = str(uuid.uuid4())
     doc["status"] = "open"
@@ -28245,7 +30107,7 @@ async def create_task(body: TaskIn, admin: dict = Depends(require_admin)):
 
 
 @api.put("/admin/tasks/{tid}")
-async def update_task(tid: str, body: TaskIn, _: dict = Depends(require_admin)):
+async def update_task(tid: str, body: TaskIn, _: dict = Depends(require_admin_and_permission("manage_staff_scheduling"))):
     res = await db.tasks.update_one({"id": tid}, {"$set": body.model_dump()})
     if res.matched_count == 0:
         raise HTTPException(status_code=404, detail="Task not found")
@@ -28253,7 +30115,7 @@ async def update_task(tid: str, body: TaskIn, _: dict = Depends(require_admin)):
 
 
 @api.delete("/admin/tasks/{tid}")
-async def delete_task(tid: str, _: dict = Depends(require_admin)):
+async def delete_task(tid: str, _: dict = Depends(require_admin_and_permission("manage_staff_scheduling"))):
     await db.tasks.delete_one({"id": tid})
     return {"ok": True}
 
@@ -28479,7 +30341,7 @@ async def _admin_end_of_day_snapshot(day: Optional[str] = None) -> Dict[str, Any
 @api.get("/admin/end-of-day")
 async def admin_end_of_day(
     date: Optional[str] = None,
-    _: dict = Depends(require_admin),
+    _: dict = Depends(require_admin_and_permission("finance_reports")),
 ):
     return await _admin_end_of_day_snapshot(date)
 
@@ -28487,7 +30349,7 @@ async def admin_end_of_day(
 
 
 @api.get("/admin/today-pnl")
-async def today_pnl(_: dict = Depends(require_admin)):
+async def today_pnl(_: dict = Depends(require_admin_and_permission("finance_reports"))):
     """Live 'am I profitable today?' gauge — expected revenue minus labor cost
     for today. Bookings count if approved or completed; price falls back to the
     service catalog `base_price` when actual_price isn't set yet. Labor uses
@@ -29001,7 +30863,7 @@ class PunchCorrectionDecisionIn(BaseModel):
 
 @api.post("/employee/punch-corrections/{cid}/decision")
 async def employee_decide_punch_correction(
-    cid: str, body: PunchCorrectionDecisionIn, user: dict = Depends(require_admin),
+    cid: str, body: PunchCorrectionDecisionIn, user: dict = Depends(require_admin_and_permission("manage_staff_scheduling")),
 ):
     """Admin approves/denies a correction. On approve, the requested
     clock_in/clock_out get applied to the time_clock_entries row (or a new
@@ -29143,7 +31005,7 @@ class ExpenseIn(BaseModel):
 
 @api.get("/expenses")
 async def list_expenses(
-    _: dict = Depends(require_admin),
+    _: dict = Depends(require_admin_and_permission("finance_reports")),
     start_date: Optional[str] = None,
     end_date: Optional[str] = None,
 ):
@@ -29160,7 +31022,7 @@ async def list_expenses(
 
 
 @api.post("/expenses")
-async def create_expense(body: ExpenseIn, user: dict = Depends(require_admin)):
+async def create_expense(body: ExpenseIn, user: dict = Depends(require_admin_and_permission("finance_reports"))):
     """Log an out-of-pocket business expense (food, supplies, utilities, etc.).
     These flow into the Income screen's monthly/range view so you can see NET
     instead of just gross income."""
@@ -29194,7 +31056,7 @@ async def create_expense(body: ExpenseIn, user: dict = Depends(require_admin)):
 
 
 @api.put("/expenses/{expense_id}")
-async def update_expense(expense_id: str, body: ExpenseIn, _: dict = Depends(require_admin)):
+async def update_expense(expense_id: str, body: ExpenseIn, _: dict = Depends(require_admin_and_permission("finance_reports"))):
     existing = await db.expenses.find_one({"id": expense_id}, {"_id": 0})
     if not existing:
         raise HTTPException(status_code=404, detail="Expense not found")
@@ -29237,7 +31099,7 @@ async def update_expense(expense_id: str, body: ExpenseIn, _: dict = Depends(req
 
 
 @api.delete("/expenses/{expense_id}")
-async def delete_expense(expense_id: str, _: dict = Depends(require_admin)):
+async def delete_expense(expense_id: str, _: dict = Depends(require_admin_and_permission("delete_records"))):
     existing = await db.expenses.find_one({"id": expense_id}, {"_id": 0})
     if not existing:
         raise HTTPException(status_code=404, detail="Expense not found")
@@ -29249,7 +31111,7 @@ async def delete_expense(expense_id: str, _: dict = Depends(require_admin)):
 
 
 @api.get("/expenses/categories")
-async def expense_categories(_: dict = Depends(require_admin)):
+async def expense_categories(_: dict = Depends(require_admin_and_permission("finance_reports"))):
     """Default + previously used expense categories for consistent tax cleanup."""
     cats = await db.expenses.distinct("category")
     merged = sorted(set(EXPENSE_CATEGORY_DEFAULTS + [c for c in cats if c]))
@@ -29287,7 +31149,7 @@ class RetailSaleIn(BaseModel):
 
 @api.get("/retail-sales")
 async def list_retail_sales(
-    _: dict = Depends(require_admin),
+    _: dict = Depends(require_admin_and_permission("finance_reports")),
     start_date: Optional[str] = None,
     end_date: Optional[str] = None,
 ):
@@ -29366,7 +31228,7 @@ async def _build_retail_sale_doc(
 
 
 @api.post("/retail-sales")
-async def create_retail_sale(body: RetailSaleIn, user: dict = Depends(require_admin)):
+async def create_retail_sale(body: RetailSaleIn, user: dict = Depends(require_admin_and_permission("finance_reports"))):
     """Log a retail sale (treats, leash, food bag, etc.) from your external POS.
     Flows into the Income screen + P&L PDF alongside service revenue."""
     await _require_register_day_open(body.date)
@@ -29421,7 +31283,7 @@ async def create_retail_sale(body: RetailSaleIn, user: dict = Depends(require_ad
 
 
 @api.put("/retail-sales/{sale_id}")
-async def update_retail_sale(sale_id: str, body: RetailSaleIn, _: dict = Depends(require_admin)):
+async def update_retail_sale(sale_id: str, body: RetailSaleIn, _: dict = Depends(require_admin_and_permission("finance_reports"))):
     existing = await db.retail_sales.find_one({"id": sale_id}, {"_id": 0})
     if not existing:
         raise HTTPException(status_code=404, detail="Retail sale not found")
@@ -29452,7 +31314,7 @@ async def update_retail_sale(sale_id: str, body: RetailSaleIn, _: dict = Depends
 
 
 @api.delete("/retail-sales/{sale_id}")
-async def delete_retail_sale(sale_id: str, _: dict = Depends(require_admin)):
+async def delete_retail_sale(sale_id: str, _: dict = Depends(require_admin_and_permission("delete_records"))):
     existing = await db.retail_sales.find_one({"id": sale_id}, {"_id": 0})
     if not existing:
         raise HTTPException(status_code=404, detail="Retail sale not found")
@@ -29464,7 +31326,7 @@ async def delete_retail_sale(sale_id: str, _: dict = Depends(require_admin)):
 
 
 @api.get("/retail-sales/categories")
-async def retail_sale_categories(_: dict = Depends(require_admin)):
+async def retail_sale_categories(_: dict = Depends(require_admin_and_permission("finance_reports"))):
     """Unique category strings seen so far — used to power autocomplete."""
     cats = await db.retail_sales.distinct("category")
     cats = sorted([c for c in cats if c])
@@ -29482,11 +31344,13 @@ async def retail_sale_categories(_: dict = Depends(require_admin)):
 
 
 class PriceOverrideIn(BaseModel):
-    target_kind: Literal["service", "credit_pack"]
+    target_kind: Literal["service", "credit_pack", "pos_product"]
     # The catalog row's `id` (uuid). Stable across rename and price edits, so
     # an override survives even if the admin renames "Daycare" later.
     target_code: str = Field(min_length=1)
     override_price: float = Field(ge=0)
+    # ISO date `YYYY-MM-DD`. Empty / null = applies immediately.
+    starts_on: Optional[str] = None
     # ISO date `YYYY-MM-DD`. Empty / null = grandfathered forever.
     expires_on: Optional[str] = None
     note: Optional[str] = ""
@@ -29494,20 +31358,70 @@ class PriceOverrideIn(BaseModel):
 
 class PriceOverridePatch(BaseModel):
     override_price: Optional[float] = Field(default=None, ge=0)
+    starts_on: Optional[str] = None
     expires_on: Optional[str] = None
     note: Optional[str] = None
 
 
+class PriceOverrideRevokeIn(BaseModel):
+    reason: Optional[str] = ""
+
+
 def _override_is_active(row: dict, today: Optional[date] = None) -> bool:
-    """An override is active when expires_on is empty OR ≥ today."""
-    exp = (row or {}).get("expires_on")
+    """An override is active when it hasn't been explicitly revoked AND
+    starts_on is empty OR <= today AND expires_on is empty OR >= today.
+    `status`/`starts_on` are missing on every override created before those
+    fields existed — treated as "not revoked" / "no start restriction",
+    identical to their pre-existing (start-less, revoke-less) behavior."""
+    row = row or {}
+    if row.get("status") == "revoked":
+        return False
+    today = today or business_today()
+    starts = row.get("starts_on")
+    if starts:
+        try:
+            if date.fromisoformat(starts) > today:
+                return False
+        except Exception:
+            pass  # malformed date — assume no start restriction rather than silently dropping rate
+    exp = row.get("expires_on")
     if not exp:
         return True
-    today = today or business_today()
     try:
         return date.fromisoformat(exp) >= today
     except Exception:
         return True  # malformed date — assume still active rather than silently dropping rate
+
+
+async def _count_active_overrides_for_target(target_kind: str, target_code: str) -> int:
+    """How many clients currently have an ACTIVE (not expired, not revoked)
+    price override attached to this exact catalog item — used to warn an
+    admin before deleting/deactivating it, never to block silently."""
+    rows = await db.price_overrides.find(
+        {"target_kind": target_kind, "target_code": target_code}, {"_id": 0},
+    ).to_list(1000)
+    return sum(1 for r in rows if _override_is_active(r))
+
+
+def _override_status_label(row: dict) -> str:
+    """Plain-language status for the admin UI — never just a raw boolean."""
+    row = row or {}
+    if row.get("status") == "revoked":
+        return "Revoked"
+    today = business_today()
+    starts = row.get("starts_on")
+    if starts:
+        try:
+            if date.fromisoformat(starts) > today:
+                return f"Starts {starts}"
+        except Exception:
+            pass
+    exp = row.get("expires_on")
+    if exp:
+        if _override_is_active(row):
+            return f"Expires on {exp}"
+        return "Expired"
+    return "Active"
 
 
 
@@ -29560,15 +31474,29 @@ async def resolve_client_price(
     target_code: str,
     list_price: float,
 ) -> dict:
-    """Return `{effective_price, list_price, override_id, override_row}` for the
-    given client + catalog item. When no active override exists, effective ==
-    list. Used by booking-create + credit-pack-sell so the same source of
-    truth covers both."""
+    """Return `{effective_price, list_price, override_id, override_row,
+    pricing_source, tier_id, tier_name}` for the given client + catalog item.
+
+    Precedence (highest first), matching the "grandfathered pricing"
+    requirement exactly:
+      1. An active INDIVIDUAL client override for this exact item.
+      2. An active PRICING-TIER override for this exact item, if the client
+         is assigned to an active tier (see `clients.pricing_tier_id`) —
+         only consulted when no individual override applies.
+      3. The standard list price.
+
+    When no active override/tier price exists, effective == list. Used by
+    booking-create, credit-pack-sell, and Shop cart pricing so every one of
+    these paths shares the exact same source of truth — never a second,
+    competing pricing formula."""
     out = {
         "effective_price": float(list_price or 0),
         "list_price": float(list_price or 0),
         "override_id": None,
         "override_row": None,
+        "pricing_source": "standard",
+        "tier_id": None,
+        "tier_name": None,
     }
     if not client_id or not target_code:
         return out
@@ -29580,6 +31508,23 @@ async def resolve_client_price(
         out["effective_price"] = float(row.get("override_price") or 0)
         out["override_id"] = row.get("id")
         out["override_row"] = row
+        out["pricing_source"] = "client_override"
+        return out
+    # No individual override — fall through to the client's pricing tier, if any.
+    client = await db.clients.find_one({"id": client_id}, {"_id": 0, "pricing_tier_id": 1})
+    tier_id = (client or {}).get("pricing_tier_id")
+    if tier_id:
+        tier = await db.pricing_tiers.find_one({"id": tier_id, "active": True}, {"_id": 0, "name": 1})
+        if tier:
+            tier_row = await db.pricing_tier_prices.find_one(
+                {"tier_id": tier_id, "target_kind": target_kind, "target_code": target_code},
+                {"_id": 0},
+            )
+            if tier_row:
+                out["effective_price"] = float(tier_row.get("override_price") or 0)
+                out["pricing_source"] = "tier"
+                out["tier_id"] = tier_id
+                out["tier_name"] = tier.get("name")
     return out
 
 
@@ -29633,7 +31578,7 @@ async def resolve_addon_snapshots(
 
 
 @api.get("/clients/{client_id}/price-overrides")
-async def list_client_price_overrides(client_id: str, _: dict = Depends(require_admin), include_expired: bool = False):
+async def list_client_price_overrides(client_id: str, _: dict = Depends(require_admin_and_permission("pricing")), include_expired: bool = False):
     client = await db.clients.find_one({"id": client_id}, {"_id": 0, "id": 1})
     if not client:
         raise HTTPException(status_code=404, detail="Client not found")
@@ -29643,76 +31588,178 @@ async def list_client_price_overrides(client_id: str, _: dict = Depends(require_
     # Enrich with the catalog row so the UI can show "Daycare · was $35 → now $30"
     svc_codes = [r["target_code"] for r in rows if r["target_kind"] == "service"]
     pack_ids = [r["target_code"] for r in rows if r["target_kind"] == "credit_pack"]
+    product_ids = [r["target_code"] for r in rows if r["target_kind"] == "pos_product"]
     svcs = {s["id"]: s for s in await db.services.find({"id": {"$in": svc_codes}}, {"_id": 0}).to_list(500)} if svc_codes else {}
     packs = {p["id"]: p for p in await db.credit_packs.find({"id": {"$in": pack_ids}}, {"_id": 0}).to_list(500)} if pack_ids else {}
+    products = {p["id"]: p for p in await db.pos_products.find({"id": {"$in": product_ids}}, {"_id": 0}).to_list(500)} if product_ids else {}
     for r in rows:
         if r["target_kind"] == "service":
             s = svcs.get(r["target_code"])
             r["target_name"] = (s or {}).get("name") or r["target_code"]
             r["list_price"] = float((s or {}).get("base_price") or 0)
-        else:
+        elif r["target_kind"] == "credit_pack":
             p = packs.get(r["target_code"])
             r["target_name"] = (p or {}).get("name") or r["target_code"]
             r["list_price"] = float((p or {}).get("price") or 0)
+        else:
+            pr = products.get(r["target_code"])
+            r["target_name"] = (pr or {}).get("name") or r["target_code"]
+            r["list_price"] = float((pr or {}).get("price") or 0)
         r["active"] = _override_is_active(r)
         r["savings"] = round(r["list_price"] - float(r["override_price"]), 2)
+        r["status_label"] = _override_status_label(r)
+        r.setdefault("status", "active")
+        r.setdefault("revoked_at", None)
+        r.setdefault("revoked_by", None)
+        r.setdefault("revocation_reason", None)
     rows.sort(key=lambda r: (not r["active"], r["target_kind"], r["target_name"]))
     return {"overrides": rows}
 
 
 @api.post("/clients/{client_id}/price-overrides")
-async def create_client_price_override(client_id: str, body: PriceOverrideIn, user: dict = Depends(require_admin)):
+async def create_client_price_override(client_id: str, body: PriceOverrideIn, user: dict = Depends(require_admin_and_permission("pricing"))):
     client = await db.clients.find_one({"id": client_id}, {"_id": 0, "id": 1, "name": 1})
     if not client:
         raise HTTPException(status_code=404, detail="Client not found")
     # Validate the catalog item exists so we don't accumulate orphan overrides
     if body.target_kind == "service":
         target = await db.services.find_one({"id": body.target_code}, {"_id": 0, "name": 1, "base_price": 1})
-    else:
+    elif body.target_kind == "credit_pack":
         target = await db.credit_packs.find_one({"id": body.target_code}, {"_id": 0, "name": 1, "price": 1})
+    else:
+        target = await db.pos_products.find_one({"id": body.target_code}, {"_id": 0, "name": 1, "price": 1, "sales_destination": 1})
     if not target:
         raise HTTPException(status_code=404, detail=f"Unknown {body.target_kind} `{body.target_code}`")
+    if body.target_kind == "pos_product" and target.get("sales_destination") == "shopify_external":
+        raise HTTPException(
+            status_code=400,
+            detail="Client-specific pricing can't be applied to Shopify-linked merchandise — Shopify controls that price.",
+        )
     # Light date validation
+    if body.starts_on:
+        try:
+            date.fromisoformat(body.starts_on)
+        except Exception:
+            raise HTTPException(status_code=422, detail="starts_on must be YYYY-MM-DD or empty")
     if body.expires_on:
         try:
             date.fromisoformat(body.expires_on)
         except Exception:
             raise HTTPException(status_code=422, detail="expires_on must be YYYY-MM-DD or empty")
-    # Upsert — one override per (client, kind, code). New value wins.
+    if body.starts_on and body.expires_on and body.starts_on > body.expires_on:
+        raise HTTPException(status_code=422, detail="starts_on must be on or before expires_on")
+    # One ACTIVE override per (client, kind, code) — enforced both here and
+    # by _ensure_price_overrides_active_unique_index()'s partial unique
+    # index. If the only existing row for this key was explicitly revoked,
+    # that row's audit trail (revoked_at/revoked_by/revocation_reason) is
+    # preserved as history and a FRESH row is inserted for the new price —
+    # never resurrected in place, which would erase why the old one ended.
+    # If the existing row is still active (or predates the revoke feature
+    # and has no status at all), this remains the original upsert-in-place
+    # behavior: editing an active override's price is just an edit, not a
+    # new lifecycle.
     existing = await db.price_overrides.find_one(
         {"client_id": client_id, "target_kind": body.target_kind, "target_code": body.target_code},
-        {"_id": 0, "id": 1},
+        {"_id": 0},
     )
+    ts = now_iso()
+    reuse_existing_row = bool(existing) and existing.get("status") != "revoked"
     doc = {
-        "id": existing["id"] if existing else str(uuid.uuid4()),
+        "id": existing["id"] if reuse_existing_row else str(uuid.uuid4()),
         "client_id": client_id,
         "target_kind": body.target_kind,
         "target_code": body.target_code,
         "override_price": float(body.override_price),
+        "starts_on": body.starts_on or None,
         "expires_on": body.expires_on or None,
         "note": (body.note or "").strip(),
+        "status": "active",
+        "revoked_at": None,
+        "revoked_by": None,
+        "revocation_reason": None,
         "created_by": user.get("name", "Admin"),
-        "created_at": now_iso() if not existing else None,
-        "updated_at": now_iso(),
+        "created_at": existing.get("created_at") if reuse_existing_row and existing.get("created_at") else ts,
+        "updated_at": ts,
     }
-    doc = {k: v for k, v in doc.items() if v is not None}
-    await db.price_overrides.update_one(
-        {"client_id": client_id, "target_kind": body.target_kind, "target_code": body.target_code},
-        {"$set": doc},
-        upsert=True,
-    )
+    if reuse_existing_row:
+        await db.price_overrides.update_one(
+            {"client_id": client_id, "target_kind": body.target_kind, "target_code": body.target_code,
+             "id": existing["id"]},
+            {"$set": doc},
+        )
+    else:
+        try:
+            await db.price_overrides.insert_one(doc.copy())
+        except DuplicateKeyError:
+            raise HTTPException(
+                status_code=409,
+                detail="This client already has an active price for this item — edit the existing override or return it to standard price first.",
+            )
     doc.pop("_id", None)
     return doc
 
 
+class BulkPriceOverrideEntry(BaseModel):
+    target_kind: Literal["service", "credit_pack", "pos_product"]
+    target_code: str = Field(min_length=1)
+    override_price: float = Field(ge=0)
+    expires_on: Optional[str] = None
+
+
+class BulkPriceOverrideIn(BaseModel):
+    entries: List[BulkPriceOverrideEntry] = Field(min_length=1, max_length=100)
+    note: Optional[str] = ""
+
+
+@api.post("/clients/{client_id}/price-overrides/bulk-apply")
+async def bulk_apply_client_price_overrides(client_id: str, body: BulkPriceOverrideIn, user: dict = Depends(require_admin_and_permission("pricing"))):
+    """"Apply pricing set" — an admin convenience for setting several exact
+    final prices for one client in one action. Deliberately reuses
+    create_client_price_override() per entry rather than a new bulk-write
+    path, so every safety check it already performs (item exists, date
+    validation, active-override upsert-vs-insert-new-row semantics, the
+    active-unique-index guard) applies identically here — no second pricing
+    formula, no shortcut. Never partially-transactional (this codebase uses
+    no Mongo transactions anywhere): each entry either succeeds or is
+    reported as an individual error, so one bad row in a large set never
+    silently discards the rest."""
+    client = await db.clients.find_one({"id": client_id}, {"_id": 0, "id": 1})
+    if not client:
+        raise HTTPException(status_code=404, detail="Client not found")
+    applied: List[Dict[str, Any]] = []
+    errors: List[Dict[str, Any]] = []
+    for entry in body.entries:
+        try:
+            single = PriceOverrideIn(
+                target_kind=entry.target_kind, target_code=entry.target_code,
+                override_price=entry.override_price, expires_on=entry.expires_on, note=body.note or "",
+            )
+            result = await create_client_price_override(client_id, single, user)
+            applied.append(result)
+        except HTTPException as exc:
+            errors.append({"target_kind": entry.target_kind, "target_code": entry.target_code, "detail": exc.detail})
+    return {"applied": len(applied), "overrides": applied, "errors": errors}
+
+
 @api.put("/price-overrides/{override_id}")
-async def update_price_override(override_id: str, body: PriceOverridePatch, _: dict = Depends(require_admin)):
+async def update_price_override(override_id: str, body: PriceOverridePatch, _: dict = Depends(require_admin_and_permission("pricing"))):
     row = await db.price_overrides.find_one({"id": override_id}, {"_id": 0})
     if not row:
         raise HTTPException(status_code=404, detail="Override not found")
+    if row.get("status") == "revoked":
+        raise HTTPException(status_code=409, detail="This override has been revoked — create a new one instead of editing it.")
     patch: Dict[str, Any] = {"updated_at": now_iso()}
     if body.override_price is not None:
         patch["override_price"] = float(body.override_price)
+    if body.starts_on is not None:
+        if body.starts_on == "":
+            patch["starts_on"] = None
+        else:
+            try:
+                date.fromisoformat(body.starts_on)
+            except Exception:
+                raise HTTPException(status_code=422, detail="starts_on must be YYYY-MM-DD or empty")
+            patch["starts_on"] = body.starts_on
     if body.expires_on is not None:
         if body.expires_on == "":
             patch["expires_on"] = None
@@ -29729,11 +31776,213 @@ async def update_price_override(override_id: str, body: PriceOverridePatch, _: d
 
 
 @api.delete("/price-overrides/{override_id}")
-async def delete_price_override(override_id: str, _: dict = Depends(require_admin)):
-    res = await db.price_overrides.delete_one({"id": override_id})
-    if res.deleted_count == 0:
+async def delete_price_override(override_id: str, body: Optional[PriceOverrideRevokeIn] = None, user: dict = Depends(require_admin_and_permission("pricing"))):
+    """"Return to standard price" — NEVER a hard delete. The override row
+    (and its history) is preserved; only its status flips to revoked, so
+    every booking/order/payment/receipt/credit lot that already used this
+    price is completely unaffected, and future purchases immediately fall
+    back to the current public price."""
+    row = await db.price_overrides.find_one({"id": override_id}, {"_id": 0})
+    if not row:
         raise HTTPException(status_code=404, detail="Override not found")
-    return {"ok": True, "deleted": 1}
+    if row.get("status") == "revoked":
+        return {"ok": True, "deleted": 0, "already_revoked": True}
+    await db.price_overrides.update_one({"id": override_id}, {"$set": {
+        "status": "revoked",
+        "revoked_at": now_iso(),
+        "revoked_by": user.get("name", "Admin"),
+        "revocation_reason": ((body.reason if body else "") or "").strip(),
+        "updated_at": now_iso(),
+    }})
+    return {"ok": True, "deleted": 1, "revoked": True}
+
+
+# ──────────────────────────── Pricing Tiers ────────────────────────────────
+# Grandfathered pricing groups (e.g. "Founding Clients") — a lightweight
+# reusable alternative to entering the SAME override on every client
+# individually. Reuses the exact same resolve_client_price() precedence
+# every other special-pricing path already goes through (see that
+# function's docstring): individual override > tier price > standard.
+# Deliberately no hard-delete for a tier — only deactivate — so a past
+# order's `pricing_tier_name` snapshot always has something real behind it.
+
+
+class PricingTierIn(BaseModel):
+    name: str = Field(min_length=1, max_length=80)
+
+
+class PricingTierPatch(BaseModel):
+    name: Optional[str] = Field(default=None, min_length=1, max_length=80)
+    active: Optional[bool] = None
+
+
+class PricingTierPriceIn(BaseModel):
+    target_kind: Literal["service", "credit_pack", "pos_product"]
+    target_code: str = Field(min_length=1)
+    override_price: float = Field(ge=0)
+
+
+async def _pricing_tier_target_name(target_kind: str, target_code: str) -> Optional[str]:
+    if target_kind == "service":
+        t = await db.services.find_one({"id": target_code}, {"_id": 0, "name": 1})
+    elif target_kind == "credit_pack":
+        t = await db.credit_packs.find_one({"id": target_code}, {"_id": 0, "name": 1})
+    else:
+        t = await db.pos_products.find_one({"id": target_code}, {"_id": 0, "name": 1})
+    return (t or {}).get("name")
+
+
+@api.get("/pricing-tiers")
+async def list_pricing_tiers(_: dict = Depends(require_admin_and_permission("pricing")), include_inactive: bool = True):
+    q: Dict[str, Any] = {} if include_inactive else {"active": True}
+    tiers = await db.pricing_tiers.find(q, {"_id": 0}).sort("name", 1).to_list(200)
+    tier_ids = [t["id"] for t in tiers]
+    client_counts: Dict[str, int] = {}
+    if tier_ids:
+        async for row in db.clients.aggregate([
+            {"$match": {"pricing_tier_id": {"$in": tier_ids}}},
+            {"$group": {"_id": "$pricing_tier_id", "n": {"$sum": 1}}},
+        ]):
+            client_counts[row["_id"]] = row["n"]
+    price_counts: Dict[str, int] = {}
+    if tier_ids:
+        async for row in db.pricing_tier_prices.aggregate([
+            {"$match": {"tier_id": {"$in": tier_ids}}},
+            {"$group": {"_id": "$tier_id", "n": {"$sum": 1}}},
+        ]):
+            price_counts[row["_id"]] = row["n"]
+    for t in tiers:
+        t["client_count"] = client_counts.get(t["id"], 0)
+        t["priced_item_count"] = price_counts.get(t["id"], 0)
+    return {"tiers": tiers}
+
+
+@api.post("/pricing-tiers")
+async def create_pricing_tier(body: PricingTierIn, user: dict = Depends(require_admin_and_permission("pricing"))):
+    doc = {
+        "id": str(uuid.uuid4()),
+        "name": body.name.strip(),
+        "active": True,
+        "created_at": now_iso(),
+        "created_by": user.get("name") or user.get("email") or "Admin",
+        "updated_at": now_iso(),
+    }
+    await db.pricing_tiers.insert_one(doc.copy())
+    doc.pop("_id", None)
+    return doc
+
+
+@api.get("/pricing-tiers/{tier_id}")
+async def get_pricing_tier(tier_id: str, _: dict = Depends(require_admin_and_permission("pricing"))):
+    tier = await db.pricing_tiers.find_one({"id": tier_id}, {"_id": 0})
+    if not tier:
+        raise HTTPException(status_code=404, detail="Pricing tier not found")
+    clients = await db.clients.find(
+        {"pricing_tier_id": tier_id}, {"_id": 0, "id": 1, "name": 1, "email": 1},
+    ).sort("name", 1).to_list(2000)
+    prices = await db.pricing_tier_prices.find({"tier_id": tier_id}, {"_id": 0}).to_list(1000)
+    for p in prices:
+        p["target_name"] = await _pricing_tier_target_name(p["target_kind"], p["target_code"])
+    tier["clients"] = clients
+    tier["client_count"] = len(clients)
+    tier["prices"] = prices
+    return tier
+
+
+@api.put("/pricing-tiers/{tier_id}")
+async def update_pricing_tier(tier_id: str, body: PricingTierPatch, user: dict = Depends(require_admin_and_permission("pricing"))):
+    """Rename and/or activate/deactivate. Deactivating a tier stops it from
+    applying to ANY client assigned to it (resolve_client_price checks
+    `pricing_tiers.active`) without unassigning anyone or deleting its
+    priced items — flip it back on and everything resumes exactly as it
+    was, with zero re-entry."""
+    tier = await db.pricing_tiers.find_one({"id": tier_id}, {"_id": 0})
+    if not tier:
+        raise HTTPException(status_code=404, detail="Pricing tier not found")
+    patch: Dict[str, Any] = {"updated_at": now_iso()}
+    if body.name is not None:
+        patch["name"] = body.name.strip()
+    if body.active is not None:
+        patch["active"] = body.active
+    await db.pricing_tiers.update_one({"id": tier_id}, {"$set": patch})
+    return {**tier, **patch}
+
+
+@api.post("/pricing-tiers/{tier_id}/clients/{client_id}")
+async def assign_client_to_pricing_tier(tier_id: str, client_id: str, user: dict = Depends(require_admin_and_permission("pricing"))):
+    """Intentional, one-at-a-time assignment only — clients are never
+    auto-enrolled into a tier. Overwrites any PREVIOUS tier assignment
+    (a client has at most one normal pricing tier at a time), which is a
+    deliberate admin action here, never an accidental side effect of
+    anything else."""
+    tier = await db.pricing_tiers.find_one({"id": tier_id}, {"_id": 0, "id": 1})
+    if not tier:
+        raise HTTPException(status_code=404, detail="Pricing tier not found")
+    client = await db.clients.find_one({"id": client_id}, {"_id": 0, "id": 1, "pricing_tier_id": 1})
+    if not client:
+        raise HTTPException(status_code=404, detail="Client not found")
+    previous_tier_id = client.get("pricing_tier_id")
+    await db.clients.update_one({"id": client_id}, {"$set": {"pricing_tier_id": tier_id, "updated_at": now_iso()}})
+    return {"ok": True, "client_id": client_id, "tier_id": tier_id, "previous_tier_id": previous_tier_id}
+
+
+@api.delete("/pricing-tiers/{tier_id}/clients/{client_id}")
+async def unassign_client_from_pricing_tier(tier_id: str, client_id: str, user: dict = Depends(require_admin_and_permission("pricing"))):
+    """Only clears the assignment if the client is CURRENTLY on this exact
+    tier — refuses to silently clear a different tier a stale UI might be
+    pointed at."""
+    client = await db.clients.find_one({"id": client_id}, {"_id": 0, "id": 1, "pricing_tier_id": 1})
+    if not client:
+        raise HTTPException(status_code=404, detail="Client not found")
+    if client.get("pricing_tier_id") != tier_id:
+        raise HTTPException(status_code=409, detail="This client is not currently assigned to this pricing tier.")
+    await db.clients.update_one({"id": client_id}, {"$set": {"pricing_tier_id": None, "updated_at": now_iso()}})
+    return {"ok": True}
+
+
+@api.post("/pricing-tiers/{tier_id}/prices")
+async def set_pricing_tier_price(tier_id: str, body: PricingTierPriceIn, user: dict = Depends(require_admin_and_permission("pricing"))):
+    tier = await db.pricing_tiers.find_one({"id": tier_id}, {"_id": 0, "id": 1})
+    if not tier:
+        raise HTTPException(status_code=404, detail="Pricing tier not found")
+    target_name = await _pricing_tier_target_name(body.target_kind, body.target_code)
+    if not target_name:
+        raise HTTPException(status_code=404, detail=f"Unknown {body.target_kind} `{body.target_code}`")
+    if body.target_kind == "pos_product":
+        product = await db.pos_products.find_one({"id": body.target_code}, {"_id": 0, "sales_destination": 1})
+        if product and product.get("sales_destination") == "shopify_external":
+            raise HTTPException(
+                status_code=400,
+                detail="Pricing tiers can't be applied to Shopify-linked merchandise — Shopify controls that price.",
+            )
+    existing = await db.pricing_tier_prices.find_one(
+        {"tier_id": tier_id, "target_kind": body.target_kind, "target_code": body.target_code}, {"_id": 0},
+    )
+    ts = now_iso()
+    doc = {
+        "id": existing["id"] if existing else str(uuid.uuid4()),
+        "tier_id": tier_id,
+        "target_kind": body.target_kind,
+        "target_code": body.target_code,
+        "override_price": float(body.override_price),
+        "created_by": user.get("name") or user.get("email") or "Admin",
+        "created_at": existing.get("created_at") if existing else ts,
+        "updated_at": ts,
+    }
+    await db.pricing_tier_prices.update_one(
+        {"tier_id": tier_id, "target_kind": body.target_kind, "target_code": body.target_code},
+        {"$set": doc}, upsert=True,
+    )
+    doc["target_name"] = target_name
+    return doc
+
+
+@api.delete("/pricing-tiers/{tier_id}/prices/{price_id}")
+async def remove_pricing_tier_price(tier_id: str, price_id: str, user: dict = Depends(require_admin_and_permission("pricing"))):
+    res = await db.pricing_tier_prices.delete_one({"id": price_id, "tier_id": tier_id})
+    if res.deleted_count == 0:
+        raise HTTPException(status_code=404, detail="Tier price not found")
+    return {"ok": True}
 
 
 # ────────────────────────── Credit Packs + FIFO Lots ──────────────────────────
@@ -29757,6 +32006,10 @@ class CreditPackIn(BaseModel):
     available_online: bool = False
     online_description: Optional[str] = None
     image_id: Optional[str] = None
+    # Shop Organization (Phase 1) — purely organizational, never affects
+    # pricing, credit quantity, or the pack's own resolver-driven price.
+    category_id: Optional[str] = None
+    subcategory_id: Optional[str] = None
 
 
 class SellCreditPackIn(BaseModel):
@@ -29795,7 +32048,8 @@ async def list_credit_packs(user: dict = Depends(get_current_user), include_inac
 
 
 @api.post("/credit-packs")
-async def create_credit_pack(body: CreditPackIn, _: dict = Depends(require_admin)):
+async def create_credit_pack(body: CreditPackIn, _: dict = Depends(require_admin_and_permission("pricing"))):
+    await _validate_category_subcategory_pair(body.category_id, body.subcategory_id)
     doc = body.model_dump()
     doc["id"] = str(uuid.uuid4())
     doc["slug"] = doc.get("slug") or doc["name"].lower().replace(" ", "_")[:40]
@@ -29808,10 +32062,14 @@ async def create_credit_pack(body: CreditPackIn, _: dict = Depends(require_admin
 
 
 @api.put("/credit-packs/{pack_id}")
-async def update_credit_pack(pack_id: str, body: CreditPackIn, _: dict = Depends(require_admin)):
+async def update_credit_pack(pack_id: str, body: CreditPackIn, _: dict = Depends(require_admin_and_permission("pricing"))):
     existing = await db.credit_packs.find_one({"id": pack_id}, {"_id": 0})
     if not existing:
         raise HTTPException(status_code=404, detail="Pack not found")
+    await _validate_category_subcategory_pair(
+        body.category_id, body.subcategory_id,
+        existing_category_id=existing.get("category_id"), existing_subcategory_id=existing.get("subcategory_id"),
+    )
     update = body.model_dump()
     update.pop("slug", None)
     update.pop("is_default", None)
@@ -29822,10 +32080,21 @@ async def update_credit_pack(pack_id: str, body: CreditPackIn, _: dict = Depends
 
 
 @api.delete("/credit-packs/{pack_id}")
-async def delete_credit_pack(pack_id: str, _: dict = Depends(require_admin)):
+async def delete_credit_pack(pack_id: str, force: bool = False, _: dict = Depends(require_admin_and_permission("pricing"))):
     existing = await db.credit_packs.find_one({"id": pack_id}, {"_id": 0})
     if not existing:
         raise HTTPException(status_code=404, detail="Pack not found")
+    if not force:
+        affected = await _count_active_overrides_for_target("credit_pack", pack_id)
+        if affected > 0:
+            raise HTTPException(
+                status_code=409,
+                detail=(
+                    f"{affected} client{'s' if affected != 1 else ''} have an active client-specific price on "
+                    f"\"{existing.get('name')}\". Their override will NOT be changed or deleted, but it will no "
+                    "longer correspond to an item in your standard catalog. Pass force=true to proceed anyway."
+                ),
+            )
     if existing.get("is_default"):
         await db.credit_packs.update_one({"id": pack_id}, {"$set": {"active": False}})
     else:
@@ -29841,7 +32110,7 @@ class CreditAdjustIn(BaseModel):
 
 
 @api.post("/clients/{client_id}/adjust-credits")
-async def adjust_client_credits(client_id: str, body: CreditAdjustIn, user: dict = Depends(require_admin)):
+async def adjust_client_credits(client_id: str, body: CreditAdjustIn, user: dict = Depends(require_admin_and_permission("finance_reports"))):
     """Manual +/- credit adjustment for fixing mistakes or comping a client.
     Does NOT touch credit_lots (no revenue change). Writes a `credit_adjustments`
     entry so you have an audit trail. Refuses to take a balance below zero."""
@@ -29905,7 +32174,7 @@ async def adjust_client_credits(client_id: str, body: CreditAdjustIn, user: dict
 
 
 @api.get("/clients/{client_id}/credit-adjustments")
-async def list_credit_adjustments(client_id: str, _: dict = Depends(require_admin)):
+async def list_credit_adjustments(client_id: str, _: dict = Depends(require_admin_and_permission("finance_reports"))):
     items = await db.credit_adjustments.find(
         {"client_id": client_id}, {"_id": 0}
     ).sort("adjusted_at", -1).to_list(100)
@@ -30116,13 +32385,13 @@ async def _credit_reconciliation_report(include_archived: bool = False) -> Dict[
 @api.get("/admin/credits/reconciliation")
 async def credit_reconciliation_report(
     include_archived: bool = Query(False),
-    _: dict = Depends(require_admin),
+    _: dict = Depends(require_admin_and_permission("finance_reports")),
 ):
     return await _credit_reconciliation_report(include_archived=include_archived)
 
 
 @api.get("/admin/credits/reconciliation/{client_id}")
-async def credit_reconciliation_detail(client_id: str, _: dict = Depends(require_admin)):
+async def credit_reconciliation_detail(client_id: str, _: dict = Depends(require_admin_and_permission("finance_reports"))):
     client = await db.clients.find_one({"id": client_id}, {"_id": 0})
     if not client:
         raise HTTPException(status_code=404, detail="Client not found")
@@ -30162,7 +32431,7 @@ async def credit_reconciliation_detail(client_id: str, _: dict = Depends(require
 
 
 @api.post("/credit-packs/seed-standard")
-async def seed_credit_packs(_: dict = Depends(require_admin)):
+async def seed_credit_packs(_: dict = Depends(require_admin_and_permission("pricing"))):
     seeded = 0
     backfilled = 0
     for pack in SEED_CREDIT_PACKS:
@@ -30214,7 +32483,7 @@ class SellProgramIn(BaseModel):
 async def sell_training_program(
     client_id: str,
     body: SellProgramIn,
-    user: dict = Depends(require_admin),
+    user: dict = Depends(require_admin_and_permission("sell_credits")),
 ):
     """Sell a training program — issues N training_credits where N = program
     session count, creates a per-program credit_lot for ledger/audit, and
@@ -30789,7 +33058,7 @@ async def decline_reschedule_request(
 @api.get("/admin/clients/{client_id}/training-credits")
 async def client_training_credits_breakdown(
     client_id: str,
-    _: dict = Depends(require_admin),
+    _: dict = Depends(require_admin_and_permission("finance_reports")),
 ):
     """Per-program breakdown of a client's outstanding training credits.
 
@@ -30837,7 +33106,7 @@ async def client_training_credits_breakdown(
 
 
 @api.post("/clients/{client_id}/sell-pack")
-async def sell_credit_pack(client_id: str, body: SellCreditPackIn, user: dict = Depends(require_admin)):
+async def sell_credit_pack(client_id: str, body: SellCreditPackIn, user: dict = Depends(require_admin_and_permission("sell_credits"))):
     """Sell a pack to a client — increments their credit balance AND creates a
     FIFO credit_lot tagged with the per-credit value. Does NOT generate a
     revenue event (income is recognized when each credit is redeemed at
@@ -30934,11 +33203,15 @@ async def sell_credit_pack(client_id: str, body: SellCreditPackIn, user: dict = 
             ))
         except Exception as exc:
             logger.warning("pack welcome email spawn failed: %s", exc)
+    try:
+        asyncio.create_task(_maybe_auto_email_receipt("credit_pack", lot["id"], client_id))
+    except Exception as exc:
+        logger.warning("auto-email receipt spawn failed for credit pack %s: %s", lot["id"], exc)
     return lot
 
 
 @api.post("/clients/{client_id}/sell-packs")
-async def sell_credit_packs_bulk(client_id: str, body: SellCreditPacksBulkIn, user: dict = Depends(require_admin)):
+async def sell_credit_packs_bulk(client_id: str, body: SellCreditPacksBulkIn, user: dict = Depends(require_admin_and_permission("sell_credits"))):
     """Sell multiple credit packs to a client in a single transaction.
     Each {pack_id, quantity} pair mints `quantity` separate FIFO lots so
     accounting + redemption logic stays unchanged. Returns the list of new
@@ -31119,6 +33392,16 @@ async def sell_credit_packs_bulk(client_id: str, body: SellCreditPacksBulkIn, us
         )
     except Exception:
         pass
+    try:
+        asyncio.create_task(_maybe_auto_email_bulk_credit_pack_receipt(
+            client_id=client_id, client_name=client.get("name", ""), client_email=client.get("email"),
+            lines=receipt_lines, total_price=grand_total,
+            payment_method=_normalize_payment_method(body.payment_method, store=True),
+            sold_by=user.get("name", "Admin"), sold_at=now,
+            dedup_key=new_lots[0]["id"] if new_lots else None,
+        ))
+    except Exception as exc:
+        logger.warning("auto-email receipt spawn failed for bulk credit packs: %s", exc)
 
     # Sprint 110di-62 — Fire each pack's bound welcome email if set. Dedupe
     # by slug so buying 3× of the same pack only sends ONE welcome email.
@@ -31147,7 +33430,7 @@ async def sell_credit_packs_bulk(client_id: str, body: SellCreditPacksBulkIn, us
 
 
 @api.get("/clients/{client_id}/credit-lots")
-async def list_client_lots(client_id: str, _: dict = Depends(require_admin)):
+async def list_client_lots(client_id: str, _: dict = Depends(require_admin_and_permission("finance_reports"))):
     lots = await db.credit_lots.find({"client_id": client_id}, {"_id": 0}).sort("purchased_at", -1).to_list(200)
     return lots
 
@@ -31160,7 +33443,7 @@ class LotRecognitionIn(BaseModel):
 async def patch_lot_recognition(
     lot_id: str,
     body: LotRecognitionIn,
-    admin: dict = Depends(require_admin),
+    admin: dict = Depends(require_admin_and_permission("finance_reports")),
 ):
     """Sprint 110db — Manually flip a lot's `recognize_at_sale` flag during
     the transitional period. Use cases:
@@ -31199,7 +33482,7 @@ async def patch_lot_recognition(
 
 
 @api.get("/admin/credit-lots/legacy-migration-preview")
-async def preview_legacy_migration(_: dict = Depends(require_admin)):
+async def preview_legacy_migration(_: dict = Depends(require_admin_and_permission("finance_reports"))):
     """Sprint 110dc — Tell the operator how many lots would be touched if
     they ran the one-shot "mark all current lots as Legacy" migration.
     Excludes training-program lots (always paid-at-sale by design)."""
@@ -31224,7 +33507,7 @@ async def preview_legacy_migration(_: dict = Depends(require_admin)):
 
 
 @api.post("/admin/credit-lots/migrate-existing-to-legacy")
-async def migrate_existing_lots_to_legacy(admin: dict = Depends(require_admin)):
+async def migrate_existing_lots_to_legacy(admin: dict = Depends(require_admin_and_permission("finance_reports"))):
     """Sprint 110dc — One-shot transitional migration: stamps every CURRENT
     credit lot as Legacy (`recognize_at_sale: False`) so the operator
     continues to enter $ at checkout for those packs. Any NEW packs sold
@@ -31254,7 +33537,7 @@ async def migrate_existing_lots_to_legacy(admin: dict = Depends(require_admin)):
 
 
 @api.get("/clients/{client_id}/receipts")
-async def list_client_receipts(client_id: str, _: dict = Depends(require_admin)):
+async def list_client_receipts(client_id: str, _: dict = Depends(require_admin_and_permission("finance_reports"))):
     """Group credit_lots into receipts (one per bulk-sale transaction). All
     lots created in the same `POST /sell-packs` call share an identical
     `purchased_at` timestamp + payment_method + sold_by, so we group on that.
@@ -31449,7 +33732,7 @@ class EmailSettingsUpdate(BaseModel):
 
 
 @api.get("/admin/email-templates")
-async def list_email_templates(_: dict = Depends(require_admin)):
+async def list_email_templates(_: dict = Depends(require_admin_and_permission("manage_communications"))):
     """List every email Sit Happens sends along with the operator's custom
     overrides (if any). Sprint 110di-62: also includes admin-created CUSTOM
     templates (kind='custom') so they can be bound to product sales."""
@@ -31512,7 +33795,7 @@ class EmailTemplateCreate(BaseModel):
 
 
 @api.post("/admin/email-templates/custom")
-async def create_custom_email_template(body: EmailTemplateCreate, _: dict = Depends(require_admin)):
+async def create_custom_email_template(body: EmailTemplateCreate, _: dict = Depends(require_admin_and_permission("manage_communications"))):
     """Create a new admin-defined template that can be bound to a product
     (training program / credit pack) so it auto-fires on sale."""
     import re
@@ -31539,7 +33822,7 @@ async def create_custom_email_template(body: EmailTemplateCreate, _: dict = Depe
 
 
 @api.delete("/admin/email-templates/custom/{slug}")
-async def delete_custom_email_template(slug: str, _: dict = Depends(require_admin)):
+async def delete_custom_email_template(slug: str, _: dict = Depends(require_admin_and_permission("manage_communications"))):
     """Delete a CUSTOM template. System templates can only be reset, not deleted."""
     if slug in {t["slug"] for t in _EMAIL_REGISTRY}:
         raise HTTPException(status_code=400, detail="System templates cannot be deleted, only reset")
@@ -31565,7 +33848,7 @@ class EmailTemplatePreviewRequest(BaseModel):
 
 
 @api.post("/admin/email-templates/test-preview")
-async def preview_custom_email_draft(body: EmailTemplatePreviewRequest, current: dict = Depends(require_admin)):
+async def preview_custom_email_draft(body: EmailTemplatePreviewRequest, current: dict = Depends(require_admin_and_permission("manage_communications"))):
     """Render (and optionally send) a draft custom template using sample
     merge values so operators can iterate inside the Create modal before
     saving. Does NOT persist anything."""
@@ -31641,7 +33924,7 @@ async def _fire_product_welcome_email(*, client: dict, slug: str, ctx: dict) -> 
 
 
 @api.get("/admin/email-templates/{slug}")
-async def get_email_template(slug: str, _: dict = Depends(require_admin)):
+async def get_email_template(slug: str, _: dict = Depends(require_admin_and_permission("manage_communications"))):
     tpl = _email_get_template(slug)
     if not tpl:
         raise HTTPException(status_code=404, detail="Unknown template")
@@ -31665,7 +33948,7 @@ async def get_email_template(slug: str, _: dict = Depends(require_admin)):
 
 
 @api.put("/admin/email-templates/{slug}")
-async def update_email_template(slug: str, body: EmailTemplateUpdate, _: dict = Depends(require_admin)):
+async def update_email_template(slug: str, body: EmailTemplateUpdate, _: dict = Depends(require_admin_and_permission("manage_communications"))):
     if not _email_get_template(slug):
         raise HTTPException(status_code=404, detail="Unknown template")
     update_doc = {k: v for k, v in body.model_dump().items() if v is not None}
@@ -31677,7 +33960,7 @@ async def update_email_template(slug: str, body: EmailTemplateUpdate, _: dict = 
 
 
 @api.post("/admin/email-templates/{slug}/reset")
-async def reset_email_template(slug: str, _: dict = Depends(require_admin)):
+async def reset_email_template(slug: str, _: dict = Depends(require_admin_and_permission("manage_communications"))):
     if not _email_get_template(slug):
         raise HTTPException(status_code=404, detail="Unknown template")
     await db.email_templates.delete_one({"slug": slug})
@@ -31690,7 +33973,7 @@ class EmailTestRequest(BaseModel):
 
 
 @api.post("/admin/email-templates/{slug}/test")
-async def test_email_template(slug: str, body: EmailTestRequest, current: dict = Depends(require_admin)):
+async def test_email_template(slug: str, body: EmailTestRequest, current: dict = Depends(require_admin_and_permission("manage_communications"))):
     """Send a test email using sample data so the operator can preview their
     customizations.
 
@@ -31795,7 +34078,7 @@ async def test_email_template(slug: str, body: EmailTestRequest, current: dict =
 
 
 @api.get("/admin/email-settings")
-async def get_email_settings(_: dict = Depends(require_admin)):
+async def get_email_settings(_: dict = Depends(require_admin_and_permission("settings"))):
     """Singleton branding doc with sensible defaults filled in."""
     doc = await db.email_settings.find_one({"_id": "singleton"}, {"_id": 0}) or {}
     merged = {**_email_settings_defaults(), **doc}
@@ -31803,7 +34086,7 @@ async def get_email_settings(_: dict = Depends(require_admin)):
 
 
 @api.put("/admin/email-settings")
-async def update_email_settings(body: EmailSettingsUpdate, _: dict = Depends(require_admin)):
+async def update_email_settings(body: EmailSettingsUpdate, _: dict = Depends(require_admin_and_permission("settings"))):
     update_doc = {k: v for k, v in body.model_dump().items() if v is not None}
     update_doc["updated_at"] = now_iso()
     await db.email_settings.update_one(
@@ -31919,7 +34202,7 @@ class PaymentPlanSettingsUpdate(BaseModel):
 
 
 @api.get("/admin/payment-plans/settings")
-async def get_payment_plan_settings(_: dict = Depends(require_admin)):
+async def get_payment_plan_settings(_: dict = Depends(require_admin_and_permission("finance_reports"))):
     doc = await db.payment_plan_settings.find_one({"_id": "singleton"}, {"_id": 0}) or {}
     return {**DEFAULT_PAYMENT_PLAN_SETTINGS, **doc}
 
@@ -31927,7 +34210,7 @@ async def get_payment_plan_settings(_: dict = Depends(require_admin)):
 @api.put("/admin/payment-plans/settings")
 async def update_payment_plan_settings(
     body: PaymentPlanSettingsUpdate,
-    _: dict = Depends(require_admin),
+    _: dict = Depends(require_admin_and_permission("finance_reports")),
 ):
     update_doc = {k: v for k, v in body.model_dump().items() if v is not None}
     update_doc["updated_at"] = now_iso()
@@ -31979,7 +34262,7 @@ def _render_agreement(plan: dict, settings: dict) -> str:
 
 
 @api.post("/admin/payment-plans")
-async def create_payment_plan(body: PaymentPlanCreate, current: dict = Depends(require_admin)):
+async def create_payment_plan(body: PaymentPlanCreate, current: dict = Depends(require_admin_and_permission("finance_reports"))):
     client = await db.clients.find_one({"id": body.client_id}, {"_id": 0})
     if not client:
         raise HTTPException(404, "Client not found")
@@ -32059,7 +34342,7 @@ async def create_payment_plan(body: PaymentPlanCreate, current: dict = Depends(r
 async def list_payment_plans(
     status: Optional[str] = None,
     client_id: Optional[str] = None,
-    _: dict = Depends(require_admin),
+    _: dict = Depends(require_admin_and_permission("finance_reports")),
 ):
     q: dict = {}
     if status:
@@ -32082,7 +34365,7 @@ async def list_payment_plans(
 
 
 @api.get("/admin/payment-plans/{plan_id}")
-async def get_payment_plan(plan_id: str, _: dict = Depends(require_admin)):
+async def get_payment_plan(plan_id: str, _: dict = Depends(require_admin_and_permission("finance_reports"))):
     p = await db.payment_plans.find_one({"id": plan_id}, {"_id": 0})
     if not p:
         raise HTTPException(404, "Plan not found")
@@ -32096,7 +34379,7 @@ class MarkPaidIn(BaseModel):
 
 @api.post("/admin/payment-plans/{plan_id}/installments/{inst_id}/mark-paid")
 async def mark_installment_paid(
-    plan_id: str, inst_id: str, body: MarkPaidIn, current: dict = Depends(require_admin),
+    plan_id: str, inst_id: str, body: MarkPaidIn, current: dict = Depends(require_admin_and_permission("finance_reports")),
 ):
     await _require_register_day_open(business_today().isoformat())
     p = await db.payment_plans.find_one({"id": plan_id}, {"_id": 0})
@@ -32193,7 +34476,7 @@ async def mark_installment_paid(
 async def reverse_installment_payment(
     plan_id: str, inst_id: str,
     body: Optional[MarkPaidIn] = None,
-    current: dict = Depends(require_admin),
+    current: dict = Depends(require_admin_and_permission("delete_records")),
 ):
     """Sprint 110do — Cash-register-style refund for a paid installment.
     Flips the installment back to "due", deletes the income row that was
@@ -32261,7 +34544,7 @@ async def reverse_installment_payment(
 
 
 @api.post("/admin/payment-plans/{plan_id}/cancel")
-async def cancel_payment_plan(plan_id: str, _: dict = Depends(require_admin)):
+async def cancel_payment_plan(plan_id: str, _: dict = Depends(require_admin_and_permission("finance_reports"))):
     p = await db.payment_plans.find_one({"id": plan_id}, {"_id": 0})
     if not p:
         raise HTTPException(404, "Plan not found")
@@ -32277,7 +34560,7 @@ async def cancel_payment_plan(plan_id: str, _: dict = Depends(require_admin)):
 # three time buckets: overdue, due today, due in the next 7 days. Returns
 # top 5 upcoming installments for the tile drill-down.
 @api.get("/admin/payment-plans/receivables/this-week")
-async def receivables_this_week(_: dict = Depends(require_admin)):
+async def receivables_this_week(_: dict = Depends(require_admin_and_permission("finance_reports"))):
     today_iso = business_today().isoformat()
     week_iso  = (business_today() + timedelta(days=7)).isoformat()
 
@@ -32681,7 +34964,7 @@ async def _seed_intake_templates_if_empty():
 async def list_intake_templates(
     form_type: Optional[str] = None,
     active: Optional[bool] = None,
-    user: dict = Depends(require_admin),
+    user: dict = Depends(require_admin_and_permission("clients_edit")),
 ):
     await _seed_intake_templates_if_empty()
     q: Dict[str, Any] = {}
@@ -32713,7 +34996,7 @@ async def get_intake_template(template_id: str, user: dict = Depends(get_current
 
 
 @api.post("/intake/templates")
-async def create_intake_template(body: IntakeTemplateIn, _: dict = Depends(require_admin)):
+async def create_intake_template(body: IntakeTemplateIn, _: dict = Depends(require_admin_and_permission("clients_edit"))):
     if body.form_type not in INTAKE_FORM_TYPES:
         raise HTTPException(
             status_code=400,
@@ -32737,7 +35020,7 @@ async def create_intake_template(body: IntakeTemplateIn, _: dict = Depends(requi
 
 
 @api.put("/intake/templates/{template_id}")
-async def update_intake_template(template_id: str, body: IntakeTemplateIn, _: dict = Depends(require_admin)):
+async def update_intake_template(template_id: str, body: IntakeTemplateIn, _: dict = Depends(require_admin_and_permission("clients_edit"))):
     existing = await db.intake_form_templates.find_one({"id": template_id}, {"_id": 0})
     if not existing:
         raise HTTPException(status_code=404, detail="Template not found")
@@ -32759,7 +35042,7 @@ async def update_intake_template(template_id: str, body: IntakeTemplateIn, _: di
 
 
 @api.delete("/intake/templates/{template_id}")
-async def delete_intake_template(template_id: str, _: dict = Depends(require_admin)):
+async def delete_intake_template(template_id: str, _: dict = Depends(require_admin_and_permission("clients_edit"))):
     # If there are submissions, soft-archive instead of hard-delete (preserves
     # history). Otherwise we can safely remove.
     sub_count = await db.intake_submissions.count_documents({"template_id": template_id})
@@ -32776,7 +35059,7 @@ async def delete_intake_template(template_id: str, _: dict = Depends(require_adm
 
 
 @api.post("/intake/templates/{template_id}/duplicate")
-async def duplicate_intake_template(template_id: str, _: dict = Depends(require_admin)):
+async def duplicate_intake_template(template_id: str, _: dict = Depends(require_admin_and_permission("clients_edit"))):
     existing = await db.intake_form_templates.find_one({"id": template_id}, {"_id": 0})
     if not existing:
         raise HTTPException(status_code=404, detail="Template not found")
@@ -32803,7 +35086,7 @@ async def duplicate_intake_template(template_id: str, _: dict = Depends(require_
 
 
 @api.post("/intake/templates/{template_id}/toggle-active")
-async def toggle_intake_template_active(template_id: str, _: dict = Depends(require_admin)):
+async def toggle_intake_template_active(template_id: str, _: dict = Depends(require_admin_and_permission("clients_edit"))):
     doc = await db.intake_form_templates.find_one({"id": template_id}, {"_id": 0})
     if not doc:
         raise HTTPException(status_code=404, detail="Template not found")
@@ -32822,7 +35105,7 @@ async def list_intake_submissions(
     dog_id: Optional[str] = None,
     template_id: Optional[str] = None,
     status: Optional[str] = None,
-    _: dict = Depends(require_admin),
+    _: dict = Depends(require_admin_and_permission("clients_edit")),
 ):
     q: Dict[str, Any] = {}
     if client_id:
@@ -32838,7 +35121,7 @@ async def list_intake_submissions(
 
 
 @api.post("/intake/submissions")
-async def create_intake_submission(body: IntakeSubmissionIn, user: dict = Depends(require_admin)):
+async def create_intake_submission(body: IntakeSubmissionIn, user: dict = Depends(require_admin_and_permission("clients_edit"))):
     tpl = await db.intake_form_templates.find_one({"id": body.template_id}, {"_id": 0})
     if not tpl:
         raise HTTPException(status_code=404, detail="Template not found")
@@ -32878,7 +35161,7 @@ async def create_intake_submission(body: IntakeSubmissionIn, user: dict = Depend
 
 
 @api.get("/intake/submissions/{submission_id}")
-async def get_intake_submission(submission_id: str, _: dict = Depends(require_admin)):
+async def get_intake_submission(submission_id: str, _: dict = Depends(require_admin_and_permission("clients_edit"))):
     doc = await db.intake_submissions.find_one({"id": submission_id}, {"_id": 0})
     if not doc:
         raise HTTPException(status_code=404, detail="Submission not found")
@@ -32886,7 +35169,7 @@ async def get_intake_submission(submission_id: str, _: dict = Depends(require_ad
 
 
 @api.put("/intake/submissions/{submission_id}")
-async def update_intake_submission(submission_id: str, body: IntakeSubmissionPatch, user: dict = Depends(require_admin)):
+async def update_intake_submission(submission_id: str, body: IntakeSubmissionPatch, user: dict = Depends(require_admin_and_permission("clients_edit"))):
     existing = await db.intake_submissions.find_one({"id": submission_id}, {"_id": 0})
     if not existing:
         raise HTTPException(status_code=404, detail="Submission not found")
@@ -32920,7 +35203,7 @@ async def update_intake_submission(submission_id: str, body: IntakeSubmissionPat
 
 
 @api.delete("/intake/submissions/{submission_id}")
-async def delete_intake_submission(submission_id: str, _: dict = Depends(require_admin)):
+async def delete_intake_submission(submission_id: str, _: dict = Depends(require_admin_and_permission("clients_edit"))):
     res = await db.intake_submissions.delete_one({"id": submission_id})
     if res.deleted_count == 0:
         raise HTTPException(status_code=404, detail="Submission not found")
@@ -34094,21 +36377,40 @@ def _audit_record_id_from_path(path: str) -> Optional[str]:
 _BACKGROUND_DB_TASKS: set = set()
 
 
-def _spawn_background_db_write(coro) -> None:
-    """Run best-effort audit persistence after the response is ready.
+def _spawn_background_db_write(awaitable) -> None:
+    """Run a best-effort, fire-and-forget DB write after the response is
+    ready (currently: audit-log rows). This is NOT for anything the caller
+    needs to be durable before returning — required/transactional writes
+    (outbox rows, payment/ledger rows, etc.) must always be `await`ed
+    directly in the request path, never routed through here.
 
-    Audit rows remain enabled, but normal form saves no longer wait for a
-    separate Mongo round trip before the browser receives success.
+    `awaitable` must be exactly one of:
+      - a coroutine (e.g. `db.audit_log.insert_one(...)` in most Motor
+        versions), or
+      - an already-scheduled Future/Task (some Motor/pymongo combinations —
+        notably Motor 3.3.1 on Python 3.12 — return an `asyncio.Future` from
+        collection methods instead of a plain coroutine).
+
+    `asyncio.create_task()` only accepts the first shape and raises
+    `TypeError: a coroutine was expected, got <Future ...>` on the second,
+    which is exactly what silently broke every call site here before this
+    fix. `asyncio.ensure_future()` accepts both without double-wrapping: a
+    coroutine gets wrapped in a new Task exactly as create_task did; a Future
+    is returned as-is (Future.add_done_callback works unchanged). Either way
+    the resulting object is a real Future the caller could `await`, so it is
+    never left as an un-awaited coroutine.
     """
-    task = asyncio.create_task(coro)
+    task = asyncio.ensure_future(awaitable)
     _BACKGROUND_DB_TASKS.add(task)
 
-    def _finished(done: asyncio.Task) -> None:
+    def _finished(done: "asyncio.Future") -> None:
         _BACKGROUND_DB_TASKS.discard(done)
         try:
             done.result()
+        except asyncio.CancelledError:
+            pass
         except Exception:
-            logger.exception("background audit write failed")
+            logger.exception("background best-effort DB write failed")
 
     task.add_done_callback(_finished)
 
@@ -34229,7 +36531,7 @@ async def list_audit_log(
     group: Optional[str] = None,
     record_id: Optional[str] = None,
     since: Optional[str] = None,
-    _: dict = Depends(require_admin),
+    _: dict = Depends(require_admin_and_permission("audit_log")),
 ):
     q: Dict[str, Any] = {}
     if user_id: q["user_id"] = user_id
@@ -34302,6 +36604,40 @@ PERMISSION_KEYS = (
                        # a zero-behavior-change rollout matching today's
                        # de-facto "any employee can already take checkout
                        # money," while giving the owner a real toggle.
+    # Shop Organization (category/subcategory taxonomy) — owner/manager only
+    # by default, same posture as "settings"/"pricing". Front-line staff
+    # roles don't get these; _empty_perms() already defaults them False.
+    "view_shop_categories", "manage_shop_categories",
+    "reorder_shop_categories", "delete_shop_categories",
+    # Security checkpoint — backend permission enforcement. No existing key
+    # covered "can configure receipt behavior" or "can view the audit log",
+    # so these two are new. Same owner/manager-only posture as settings/
+    # pricing/shop-org above — _empty_perms() already defaults them False.
+    "manage_receipt_settings", "audit_log",
+    # Final backend-authorization cleanup — bulk/mass communications
+    # (announcements, bulk email, email templates), admin-side staff
+    # scheduling (shifts/tasks/time-off review, distinct from an
+    # individual's own self-service views), and Shop media uploads. Same
+    # owner/manager-only posture; _empty_perms() defaults them False.
+    "manage_communications", "manage_staff_scheduling", "manage_shop_media",
+    # Training curriculum/programs/homework templates — owner/manager AND
+    # trainer by default (see the explicit override on the "trainer" role
+    # below), since building training content is genuinely a trainer's job,
+    # unlike the owner/manager-only keys above.
+    "manage_training_content",
+    # Trivia, dog-facts, and photography-gallery ADMINISTRATION (creating/
+    # editing/deleting the content itself). Deliberately does not cover
+    # reading it (staff/clients keep existing read access) or day-to-day
+    # operational actions like redeeming a milestone or awarding a trophy.
+    "manage_engagement_content",
+    # Phase 4 gap closure — selling a prepaid credit pack or training program
+    # was gated by `finance_reports`, which also unlocks the P&L/finance
+    # dashboards — far broader than "can sell a pack at the front desk."
+    # Narrower key so front_desk can sell prepaid visits without gaining
+    # financial-report access. Defaults True for owner/manager/front_desk
+    # only (see front_desk override below); _empty_perms() defaults every
+    # other role False.
+    "sell_credits",
 )
 
 
@@ -34350,6 +36686,11 @@ ROLE_PERMISSIONS: Dict[str, Dict[str, bool]] = {
         "booking_edit": True,
         "messages": True,
         "take_payments": True,
+        # Final backend-authorization cleanup — building/editing training
+        # programs, homework templates, and curriculum commands is a
+        # trainer's actual job, unlike the other owner/manager-only
+        # management keys.
+        "manage_training_content": True,
     },
     "daycare_staff": {
         **_empty_perms(),
@@ -34376,6 +36717,7 @@ ROLE_PERMISSIONS: Dict[str, Dict[str, bool]] = {
         "booking_edit": True,
         "messages": True,
         "take_payments": True,
+        "sell_credits": True,
     },
     "read_only": {
         **_empty_perms(),
@@ -34422,6 +36764,15 @@ def _perms_for(user: Dict[str, Any]) -> Dict[str, bool]:
     return _apply_role_overrides(base, sr)
 
 
+def _require_booking_edit(user: Dict[str, Any]) -> None:
+    """Booking creation is shared by the client self-booking flow AND staff —
+    only staff (role == 'admin') are gated by the booking_edit permission;
+    a client booking their own dog is governed entirely by the existing
+    ownership check, never by this matrix."""
+    if user.get("role") == "admin" and not _perms_for(user).get("booking_edit"):
+        raise HTTPException(status_code=403, detail="Missing permission: booking_edit")
+
+
 def require_permission(key: str):
     """Dependency factory for endpoints that should gate beyond just role.
     Existing endpoints continue to use require_admin/require_employee_or_admin
@@ -34436,6 +36787,8 @@ def require_permission(key: str):
     return _dep
 
 
+
+
 @api.get("/me/permissions")
 async def my_permissions(user: dict = Depends(get_current_user)):
     return {
@@ -34446,7 +36799,7 @@ async def my_permissions(user: dict = Depends(get_current_user)):
 
 
 @api.get("/staff/roles")
-async def get_staff_roles_matrix(_: dict = Depends(require_admin)):
+async def get_staff_roles_matrix(_: dict = Depends(require_owner)):
     # Sprint 110di-20 — refresh overrides on read so the admin UI always
     # sees the latest values without a restart.
     await _load_role_overrides_from_settings()
@@ -34484,7 +36837,7 @@ class RolePermissionsIn(BaseModel):
 
 
 @api.put("/staff/roles/{role}/permissions")
-async def update_role_permissions(role: str, body: RolePermissionsIn, user: dict = Depends(require_admin)):
+async def update_role_permissions(role: str, body: RolePermissionsIn, user: dict = Depends(require_owner)):
     """Admin-edit a role's permission map. Saved under
     settings.staff_role_permissions[role] and used by `_perms_for()` from
     the next API call onward.
@@ -34520,7 +36873,7 @@ class StaffRoleIn(BaseModel):
 
 
 @api.put("/staff/{user_id}/role")
-async def set_staff_role(user_id: str, body: StaffRoleIn, _: dict = Depends(require_admin)):
+async def set_staff_role(user_id: str, body: StaffRoleIn, _: dict = Depends(require_owner)):
     sr = (body.staff_role or "").lower()
     if sr not in STAFF_ROLES:
         raise HTTPException(status_code=400, detail=f"Unknown role '{body.staff_role}'. Allowed: {list(STAFF_ROLES)}")
@@ -34677,7 +37030,7 @@ async def resolve_followup(entry_id: str, user: dict = Depends(require_employee_
 
 
 @api.delete("/communications/{entry_id}")
-async def delete_communication(entry_id: str, _: dict = Depends(require_admin)):
+async def delete_communication(entry_id: str, _: dict = Depends(require_admin_and_permission("manage_communications"))):
     res = await db.client_communications.delete_one({"id": entry_id})
     if res.deleted_count == 0:
         raise HTTPException(status_code=404, detail="Entry not found")
@@ -34727,7 +37080,7 @@ async def get_review_links(_: dict = Depends(require_employee_or_admin)):
 
 
 @api.put("/settings/review-links")
-async def set_review_links(body: ReviewLinksIn, _: dict = Depends(require_admin)):
+async def set_review_links(body: ReviewLinksIn, _: dict = Depends(require_admin_and_permission("settings"))):
     patch = {k: v.strip() for k, v in body.model_dump(exclude_unset=True).items() if v is not None}
     s = await get_settings()
     current = s.get("review_links") or {}
@@ -34822,7 +37175,7 @@ async def create_review_request(body: ReviewRequestIn, user: dict = Depends(requ
 
 
 @api.delete("/review-requests/{entry_id}")
-async def delete_review_request(entry_id: str, _: dict = Depends(require_admin)):
+async def delete_review_request(entry_id: str, _: dict = Depends(require_admin_and_permission("manage_communications"))):
     res = await db.review_requests.delete_one({"id": entry_id})
     if res.deleted_count == 0:
         raise HTTPException(status_code=404, detail="Request not found")
@@ -34850,7 +37203,7 @@ EXPORT_ENTITIES = {
 
 
 @api.get("/export/{entity}")
-async def export_csv(entity: str, _: dict = Depends(require_admin)):
+async def export_csv(entity: str, _: dict = Depends(require_admin_and_permission("data_export"))):
     import csv as _csv
     import io as _io
     import json as __json
@@ -34878,7 +37231,7 @@ async def export_csv(entity: str, _: dict = Depends(require_admin)):
 
 
 @api.get("/export-index")
-async def export_index(_: dict = Depends(require_admin)):
+async def export_index(_: dict = Depends(require_admin_and_permission("data_export"))):
     """Counts per entity so the UI can show empty-state badges."""
     out = {}
     for k, (coll, _cols) in EXPORT_ENTITIES.items():
@@ -35174,7 +37527,7 @@ class BulkEmailTemplateIn(BaseModel):
 
 
 @api.get("/admin/bulk-email/filters")
-async def bulk_email_filters_meta(_: dict = Depends(require_admin)):
+async def bulk_email_filters_meta(_: dict = Depends(require_admin_and_permission("manage_communications"))):
     return {
         "available": [
             {"id": "active",            "label": "Active clients only"},
@@ -35189,7 +37542,7 @@ async def bulk_email_filters_meta(_: dict = Depends(require_admin)):
 
 
 @api.post("/admin/bulk-email/recipients")
-async def bulk_email_recipients(body: BulkEmailFiltersIn, _: dict = Depends(require_admin)):
+async def bulk_email_recipients(body: BulkEmailFiltersIn, _: dict = Depends(require_admin_and_permission("manage_communications"))):
     if body.client_ids is not None:
         ids = [c for c in (body.client_ids or []) if c]
         if not ids:
@@ -35218,7 +37571,7 @@ def _bulk_email_render(body: str, ctx: Dict[str, str]) -> str:
 
 
 @api.post("/admin/bulk-email/send")
-async def bulk_email_send(body: BulkEmailSendIn, user: dict = Depends(require_admin)):
+async def bulk_email_send(body: BulkEmailSendIn, user: dict = Depends(require_admin_and_permission("manage_communications"))):
     subj = (body.subject or "").strip()
     if not subj:
         raise HTTPException(status_code=400, detail="Subject is required")
@@ -35332,13 +37685,13 @@ async def bulk_email_send(body: BulkEmailSendIn, user: dict = Depends(require_ad
 
 
 @api.get("/admin/bulk-email/history")
-async def bulk_email_history(limit: int = 50, _: dict = Depends(require_admin)):
+async def bulk_email_history(limit: int = 50, _: dict = Depends(require_admin_and_permission("manage_communications"))):
     rows = await db.bulk_email_history.find({}, {"_id": 0}).sort("started_at", -1).to_list(min(max(limit, 1), 200))
     return rows
 
 
 @api.get("/admin/bulk-email/templates")
-async def bulk_email_templates_list(_: dict = Depends(require_admin)):
+async def bulk_email_templates_list(_: dict = Depends(require_admin_and_permission("manage_communications"))):
     await _seed_bulk_email_templates_once()
     rows = await db.bulk_email_templates.find({}, {"_id": 0}).sort("created_at", 1).to_list(500)
     # system first, then custom
@@ -35347,7 +37700,7 @@ async def bulk_email_templates_list(_: dict = Depends(require_admin)):
 
 
 @api.post("/admin/bulk-email/templates")
-async def bulk_email_templates_create(body: BulkEmailTemplateIn, user: dict = Depends(require_admin)):
+async def bulk_email_templates_create(body: BulkEmailTemplateIn, user: dict = Depends(require_admin_and_permission("manage_communications"))):
     name = (body.name or "").strip()
     if not name:
         raise HTTPException(status_code=400, detail="Template name is required")
@@ -35367,7 +37720,7 @@ async def bulk_email_templates_create(body: BulkEmailTemplateIn, user: dict = De
 
 
 @api.delete("/admin/bulk-email/templates/{template_id}")
-async def bulk_email_templates_delete(template_id: str, _: dict = Depends(require_admin)):
+async def bulk_email_templates_delete(template_id: str, _: dict = Depends(require_admin_and_permission("manage_communications"))):
     tpl = await db.bulk_email_templates.find_one({"id": template_id}, {"_id": 0})
     if not tpl:
         raise HTTPException(status_code=404, detail="Template not found")

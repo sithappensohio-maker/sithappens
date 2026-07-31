@@ -31,6 +31,16 @@ export function AuthProvider({ children }) {
 
   useEffect(() => { loadMe(); }, [loadMe]);
 
+  // Permission-bug checkpoint — keep `permissions` (and `user.staff_role`)
+  // fresh while a session stays open, so a live permission change (an owner
+  // editing the role matrix, or reassigning someone's staff_role) reaches
+  // the UI without requiring the affected user to log out and back in.
+  useEffect(() => {
+    if (!user) return;
+    const h = setInterval(loadMe, 60000);
+    return () => clearInterval(h);
+  }, [user, loadMe]);
+
   const login = async (email, password) => {
     setError("");
     try {
@@ -72,17 +82,30 @@ export function AuthProvider({ children }) {
   };
 
   // Sprint 110ex — Phase 7: easy "can()" predicate for UI gating.
-  // Admins (role=admin) and missing-permission-dict scenarios default to allow
-  // so existing flows keep working while staff role assignments are rolled out.
+  // Mirrors backend `_perms_for()` exactly (server.py): the ONLY accounts that
+  // bypass the permission matrix are a true owner — either an `admin`-role user
+  // with no `staff_role` at all (legacy implicit owner, e.g. the originally
+  // seeded admin@sithappens.com) or one explicitly tagged `staff_role: "owner"`.
+  // Every other staff_role (manager, trainer, daycare_staff, boarding_staff,
+  // front_desk, read_only) must defer to the `/me/permissions` response — the
+  // backend is the sole source of truth for what those roles can do. If the
+  // permissions dict hasn't loaded yet (or failed to load), this fails closed
+  // (false) rather than granting temporary access.
+  const isOwner = (u) => {
+    if (!u || (u.role || "").toLowerCase() !== "admin") return false;
+    const sr = (u.staff_role || "").toLowerCase();
+    return !sr || sr === "owner";
+  };
+
   const can = (key) => {
     if (!user) return false;
-    if ((user.role || "").toLowerCase() === "admin") return true;
-    if (!permissions) return true;        // not yet loaded — let UI render
+    if (isOwner(user)) return true;
+    if (!permissions) return false;       // not yet loaded / restricted staff — fail closed
     return !!permissions[key];
   };
 
   return (
-    <AuthCtx.Provider value={{ user, permissions, can, login, register, logout, error, setError, reloadUser: loadMe }}>
+    <AuthCtx.Provider value={{ user, permissions, can, isOwner: () => isOwner(user), login, register, logout, error, setError, reloadUser: loadMe }}>
       {children}
     </AuthCtx.Provider>
   );
