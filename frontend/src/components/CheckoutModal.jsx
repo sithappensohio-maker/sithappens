@@ -37,7 +37,12 @@ export function CheckoutModal({ booking, services, onClose, onRequestCancel }) {
           b.client_id === booking.client_id &&
           b.service_type === booking.service_type &&
           b.date === booking.date &&
-          b.status !== "completed" && !b.checked_out_at
+          b.status !== "completed" && !b.checked_out_at &&
+          // A booked-but-never-arrived household dog (e.g. Bolt never
+          // showed up while Lexi did) must never ride along on Lexi's
+          // combined checkout — the backend already excludes it from
+          // checkout-group-preview, this is defense-in-depth.
+          !!b.checked_in_at
         );
         setGroupBookings(active.length ? active : [booking]);
       } catch {

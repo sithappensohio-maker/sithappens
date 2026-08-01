@@ -7,6 +7,11 @@ import { ProductEditor } from "../components/ManageProductsPanel";
 import { PackEditor } from "../components/CreditPacksSettings";
 import { ProgramEditor } from "../components/Programs";
 import ItemThumbnail from "../components/ItemThumbnail";
+import { sortShopItems, singularUnit, isInternalPhysical } from "../lib/shopPolish";
+import {
+  inventoryStatus, itemWarnings, marginDisplay, filterItemsByView,
+  orderRef, orderComputedStatus, filterOrdersByView, searchOrders,
+} from "../lib/shopManagerPolish";
 
 /* ============================================================================
  * Shop Manager — the ONE place to create, edit, organize, price, display,
@@ -24,6 +29,12 @@ import ItemThumbnail from "../components/ItemThumbnail";
  * ========================================================================== */
 
 const money = (n) => `$${Number(n || 0).toFixed(2)}`;
+
+const WARNING_TONE_CLASS = {
+  bad: "bg-red-500/10 text-red-400",
+  warn: "bg-shOrange/10 text-shOrange",
+  muted: "bg-shBorder/40 text-shTextMuted",
+};
 
 const SECTION_TABS = [
   { key: "all", label: "All" },
@@ -78,12 +89,16 @@ function ItemsTab({ onEditItem, onAddShopItem }) {
   const [items, setItems] = useState([]);
   const [loading, setLoading] = useState(true);
   const [section, setSection] = useState("all");
-  const [view, setView] = useState("all"); // all | uncategorized | hidden
+  // all | missing_details | uncategorized | low_stock | out_of_stock | hidden | inactive | archived
+  const [view, setView] = useState("all");
   const [search, setSearch] = useState("");
   const [busyId, setBusyId] = useState(null);
-  const [stockModal, setStockModal] = useState(null);
+  const [stockModal, setStockModal] = useState(null); // { item, mode: "receive" | "adjust" }
   const [stockQty, setStockQty] = useState("");
   const [stockReason, setStockReason] = useState("");
+  const [historyItem, setHistoryItem] = useState(null);
+  const [historyRows, setHistoryRows] = useState([]);
+  const [historyLoading, setHistoryLoading] = useState(false);
   const [deleteTarget, setDeleteTarget] = useState(null); // product only, mirrors ManageProductsPanel's safe-delete flow
   const [hasHistory, setHasHistory] = useState(false);
   const [forbidden, setForbidden] = useState(false);
@@ -95,6 +110,9 @@ function ItemsTab({ onEditItem, onAddShopItem }) {
     if (section !== "all") params.section = section;
     if (view === "uncategorized") params.category_id = "uncategorized";
     if (view === "hidden") params.hidden_only = true;
+    // Archived products are excluded from the normal response by design —
+    // this is the one view that deliberately asks for them instead.
+    if (view === "archived") params.include_archived = true;
     api.get("/shop-manager/items", { params })
       .then(({ data }) => setItems(data.items || []))
       .catch((e) => {
@@ -106,10 +124,11 @@ function ItemsTab({ onEditItem, onAddShopItem }) {
   useEffect(() => { load(); /* eslint-disable-next-line react-hooks/exhaustive-deps */ }, [section, view]);
 
   const filtered = useMemo(() => {
+    const list = filterItemsByView(items, view);
     const q = search.trim().toLowerCase();
-    if (!q) return items;
-    return items.filter((it) => (it.name || "").toLowerCase().includes(q));
-  }, [items, search]);
+    if (!q) return list;
+    return list.filter((it) => (it.name || "").toLowerCase().includes(q));
+  }, [items, view, search]);
 
   const priceDisplay = (it) => {
     if (it.kind === "physical_product" && it.sales_destination === "shopify_external") {
@@ -205,20 +224,34 @@ function ItemsTab({ onEditItem, onAddShopItem }) {
     setBusyId(null);
   };
 
+  const openReceiveStock = (it) => { setStockModal({ item: it, mode: "receive" }); setStockQty(""); setStockReason("Shipment received"); };
+  const openAdjustStock = (it) => { setStockModal({ item: it, mode: "adjust" }); setStockQty(""); setStockReason(""); };
+
   const submitStock = async () => {
     const qty = Number(stockQty);
     if (!qty) { toast.error("Enter a non-zero quantity"); return; }
+    if (stockModal.mode === "receive" && qty <= 0) { toast.error("Receive Stock only accepts a positive quantity"); return; }
     if (stockReason.trim().length < 3) { toast.error("Enter a reason (3+ characters)"); return; }
     const delta = stockModal.mode === "receive" ? Math.abs(qty) : qty;
     const source = stockModal.mode === "receive" ? "RESTOCK" : "MANUAL_ADJUSTMENT";
     try {
-      await api.post(`/pos/products/${stockModal.item.id}/adjust-stock`, { quantity_delta: delta, reason: stockReason.trim(), source });
-      toast.success("Stock updated");
+      const { data } = await api.post(`/pos/products/${stockModal.item.id}/adjust-stock`, { quantity_delta: delta, reason: stockReason.trim(), source });
+      toast.success(`Stock updated — now ${data.stock_on_hand}`);
       setStockModal(null);
       load();
     } catch (e) {
       toast.error(e?.response?.data?.detail || "Could not adjust stock");
     }
+  };
+
+  const openStockHistory = (it) => {
+    setHistoryItem(it);
+    setHistoryLoading(true);
+    setHistoryRows([]);
+    api.get(`/pos/products/${it.id}/movements`)
+      .then(({ data }) => setHistoryRows(data || []))
+      .catch(() => toast.error("Could not load stock history"))
+      .finally(() => setHistoryLoading(false));
   };
 
   return (
@@ -234,8 +267,12 @@ function ItemsTab({ onEditItem, onAddShopItem }) {
       <div className="flex flex-wrap items-center gap-2">
         <input value={search} onChange={(e) => setSearch(e.target.value)} placeholder="Search items"
                className="flex-1 min-w-[160px] bg-[var(--sh-card-base)] border border-shBorder rounded p-2 text-shText text-sm" />
-        {[["all", "All"], ["uncategorized", "Uncategorized"], ["hidden", "Hidden"]].map(([k, label]) => (
-          <button key={k} onClick={() => setView(k)}
+        {[
+          ["all", "All"], ["missing_details", "Missing Details"], ["uncategorized", "Uncategorized"],
+          ["low_stock", "Low Stock"], ["out_of_stock", "Out of Stock"], ["hidden", "Hidden"],
+          ["inactive", "Inactive"], ["archived", "Archived"],
+        ].map(([k, label]) => (
+          <button key={k} onClick={() => setView(k)} data-testid={`sm-view-${k}`}
                   className={`px-3 py-2 rounded text-[11px] font-black uppercase tracking-widest ${view === k ? "bg-shSecondary text-bgHeader" : "bg-[var(--sh-card-base)] text-shTextMuted"}`}>
             {label}
           </button>
@@ -261,6 +298,8 @@ function ItemsTab({ onEditItem, onAddShopItem }) {
               <th className="py-2 pr-2">Section</th>
               <th className="py-2 pr-2">Category</th>
               <th className="py-2 pr-2 text-right">Price</th>
+              <th className="py-2 pr-2 text-right">Cost</th>
+              <th className="py-2 pr-2 text-right">Margin</th>
               <th className="py-2 pr-2">Inventory</th>
               <th className="py-2 pr-2">Shop</th>
               <th className="py-2 pr-2">Register</th>
@@ -269,9 +308,13 @@ function ItemsTab({ onEditItem, onAddShopItem }) {
             </tr>
           </thead>
           <tbody>
-            {loading && <tr><td colSpan={10} className="py-6 text-center text-shTextMuted">Loading…</td></tr>}
-            {!loading && filtered.length === 0 && <tr><td colSpan={10} className="py-6 text-center text-shTextMuted">No items found.</td></tr>}
-            {filtered.map((it) => (
+            {loading && <tr><td colSpan={12} className="py-6 text-center text-shTextMuted">Loading…</td></tr>}
+            {!loading && filtered.length === 0 && <tr><td colSpan={12} className="py-6 text-center text-shTextMuted">No items found.</td></tr>}
+            {filtered.map((it) => {
+              const margin = marginDisplay(it);
+              const inv = inventoryStatus(it);
+              const warnings = itemWarnings(it);
+              return (
               <tr key={`${it.kind}:${it.id}`} className="border-b border-shBorder/60" data-testid={`sm-item-row-${it.id}`}>
                 <td className="py-2 pr-2 text-shText font-bold cursor-pointer" onClick={() => onEditItem(it)}>
                   <div className="flex items-center gap-2">
@@ -279,11 +322,11 @@ function ItemsTab({ onEditItem, onAddShopItem }) {
                     <span>
                       {it.name}
                       {it.featured && <span className="ml-2 px-1.5 py-0.5 rounded text-[9px] font-black uppercase tracking-widest bg-shPrimary/10 text-shPrimary align-middle">Featured</span>}
-                      {it.active && it.show_online && it.missing_description && (
-                        <span className="ml-2 px-1.5 py-0.5 rounded text-[9px] font-black uppercase tracking-widest bg-shOrange/10 text-shOrange align-middle" title="This item is visible in the client Shop but has no client-facing description">
-                          Missing description
+                      {warnings.map((w, wi) => (
+                        <span key={wi} className={`ml-2 px-1.5 py-0.5 rounded text-[9px] font-black uppercase tracking-widest align-middle ${WARNING_TONE_CLASS[w.tone]}`} data-testid={`sm-warning-${it.id}`}>
+                          {w.label}
                         </span>
-                      )}
+                      ))}
                     </span>
                   </div>
                 </td>
@@ -294,8 +337,18 @@ function ItemsTab({ onEditItem, onAddShopItem }) {
                   {priceDisplay(it)}
                   {it.pricing_variable && <span className="ml-1 text-[10px] text-shSecondary" title="Client-specific/grandfathered pricing may apply">*</span>}
                 </td>
+                <td className="py-2 pr-2 text-right text-shTextMuted" data-testid={`sm-cost-${it.id}`}>
+                  {margin ? margin.cost : "—"}
+                </td>
+                <td className="py-2 pr-2 text-right text-shTextMuted" data-testid={`sm-margin-${it.id}`}>
+                  {margin && margin.gm ? margin.gm : "—"}
+                </td>
                 <td className="py-2 pr-2 text-shTextMuted">
-                  {it.kind === "physical_product" ? (it.track_inventory ? it.stock_on_hand : "Not tracked") : "—"}
+                  {inv ? (
+                    <span className={inv.tone === "bad" ? "text-red-400" : inv.tone === "warn" ? "text-shOrange" : inv.tone === "ok" ? "text-shPrimary" : "text-shTextMuted"}>
+                      {inv.label}
+                    </span>
+                  ) : "—"}
                 </td>
                 <td className="py-2 pr-2"><StatusPill active={it.show_online} label={it.show_online ? "Shown" : "Hidden"} /></td>
                 <td className="py-2 pr-2"><StatusPill active={it.show_at_register} label={it.show_at_register ? "Shown" : "Hidden"} /></td>
@@ -315,8 +368,14 @@ function ItemsTab({ onEditItem, onAddShopItem }) {
                         <button onClick={() => duplicateItem(it)} disabled={busyId === it.id} data-testid={`sm-duplicate-${it.id}`}
                                 className="text-shTextMuted text-[11px] font-black uppercase tracking-widest disabled:opacity-40">Duplicate</button>
                         {it.kind === "physical_product" && it.track_inventory && (
-                          <button onClick={() => { setStockModal({ item: it, mode: "adjust" }); setStockQty(""); setStockReason(""); }}
-                                  className="text-shTextMuted text-[11px] font-black uppercase tracking-widest">Adjust Stock</button>
+                          <>
+                            <button onClick={() => openReceiveStock(it)} data-testid={`sm-receive-stock-${it.id}`}
+                                    className="text-shTextMuted text-[11px] font-black uppercase tracking-widest">Receive Stock</button>
+                            <button onClick={() => openAdjustStock(it)} data-testid={`sm-adjust-stock-${it.id}`}
+                                    className="text-shTextMuted text-[11px] font-black uppercase tracking-widest">Adjust Stock</button>
+                            <button onClick={() => openStockHistory(it)} data-testid={`sm-stock-history-${it.id}`}
+                                    className="text-shTextMuted text-[11px] font-black uppercase tracking-widest">Stock History</button>
+                          </>
                         )}
                         {it.kind === "physical_product" ? (
                           <button onClick={() => openDeleteProduct(it)} data-testid={`sm-delete-${it.id}`}
@@ -333,31 +392,93 @@ function ItemsTab({ onEditItem, onAddShopItem }) {
                   </div>
                 </td>
               </tr>
-            ))}
+              );
+            })}
           </tbody>
         </table>
       </div>
       )}
 
-      {stockModal && (
-        <div className="fixed inset-0 bg-black/70 flex items-center justify-center z-[60] p-4">
+      {stockModal && (() => {
+        const isReceive = stockModal.mode === "receive";
+        const parsedQty = Number(stockQty);
+        const delta = isReceive ? Math.abs(parsedQty || 0) : (parsedQty || 0);
+        const resulting = (stockModal.item.stock_on_hand ?? 0) + delta;
+        return (
+        <div className="fixed inset-0 bg-black/70 flex items-center justify-center z-[60] p-4" data-testid="sm-stock-modal">
           <div className="bg-[var(--sh-card-base)] border border-shBorder rounded-2xl w-full max-w-sm p-5 space-y-3">
-            <p className="text-shText font-black uppercase tracking-widest">Adjust Stock — {stockModal.item.name}</p>
-            <p className="text-shTextMuted text-sm">Current: {stockModal.item.stock_on_hand}</p>
+            <p className="text-shText font-black uppercase tracking-widest">{isReceive ? "Receive Stock" : "Adjust Stock"} — {stockModal.item.name}</p>
+            <p className="text-shTextMuted text-sm">Current stock: {stockModal.item.stock_on_hand}</p>
             <div>
-              <label className="text-[11px] text-shTextMuted uppercase tracking-widest">Quantity adjustment (+/-)</label>
-              <input type="number" value={stockQty} onChange={(e) => setStockQty(e.target.value)}
+              <label className="text-[11px] text-shTextMuted uppercase tracking-widest">
+                {isReceive ? "Quantity received" : "Quantity adjustment (+/-)"}
+              </label>
+              <input type="number" min={isReceive ? 0 : undefined} value={stockQty} onChange={(e) => setStockQty(e.target.value)}
+                     data-testid="sm-stock-qty-input"
                      className="w-full bg-[var(--sh-card-base)] border border-shBorder rounded p-2 text-shText" />
             </div>
             <div>
               <label className="text-[11px] text-shTextMuted uppercase tracking-widest">Reason</label>
-              <input value={stockReason} onChange={(e) => setStockReason(e.target.value)} placeholder="e.g. Damaged, Lost, count correction"
+              <input value={stockReason} onChange={(e) => setStockReason(e.target.value)}
+                     placeholder={isReceive ? "e.g. Shipment received" : "e.g. Damaged, Lost, count correction"}
+                     data-testid="sm-stock-reason-input"
                      className="w-full bg-[var(--sh-card-base)] border border-shBorder rounded p-2 text-shText" />
             </div>
+            {parsedQty !== 0 && !Number.isNaN(parsedQty) && (
+              <p className="text-shTextMuted text-sm" data-testid="sm-stock-resulting">
+                Resulting stock: <span className="text-shText font-bold">{resulting}</span>
+              </p>
+            )}
             <div className="flex gap-3 pt-1">
               <button onClick={() => setStockModal(null)} className="flex-1 text-shTextMuted font-black uppercase text-sm tracking-widest py-3">Cancel</button>
-              <button onClick={submitStock} className="flex-1 bg-shPrimary text-bgHeader rounded-xl py-3 font-black uppercase tracking-widest">Save</button>
+              <button onClick={submitStock} data-testid="sm-stock-save" className="flex-1 bg-shPrimary text-bgHeader rounded-xl py-3 font-black uppercase tracking-widest">Save</button>
             </div>
+          </div>
+        </div>
+        );
+      })()}
+
+      {historyItem && (
+        <div className="fixed inset-0 bg-black/70 flex items-center justify-center z-[60] p-4" data-testid="sm-stock-history-modal">
+          <div className="bg-[var(--sh-card-base)] border border-shBorder rounded-2xl w-full max-w-lg p-5 space-y-3 max-h-[85vh] overflow-y-auto">
+            <div className="flex items-center justify-between">
+              <p className="text-shText font-black uppercase tracking-widest">Stock History — {historyItem.name}</p>
+              <button onClick={() => setHistoryItem(null)} className="text-shTextMuted hover:text-shText"><i className="fas fa-xmark" /></button>
+            </div>
+            {historyLoading ? (
+              <p className="text-shTextMuted text-sm py-6 text-center">Loading…</p>
+            ) : historyRows.length === 0 ? (
+              <p className="text-shTextMuted text-sm py-6 text-center">No stock movements recorded yet.</p>
+            ) : (
+              <div className="overflow-x-auto">
+                <table className="w-full text-sm">
+                  <thead>
+                    <tr className="text-shTextMuted text-[11px] uppercase tracking-widest text-left border-b border-shBorder">
+                      <th className="py-2 pr-2">Date</th>
+                      <th className="py-2 pr-2">Type</th>
+                      <th className="py-2 pr-2">Reason</th>
+                      <th className="py-2 pr-2 text-right">Change</th>
+                      <th className="py-2 pr-2 text-right">Before</th>
+                      <th className="py-2 pr-2 text-right">After</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {historyRows.map((m) => (
+                      <tr key={m.id} className="border-b border-shBorder/60" data-testid={`sm-movement-${m.id}`}>
+                        <td className="py-2 pr-2 text-shTextMuted whitespace-nowrap">{m.created_at ? new Date(m.created_at).toLocaleString() : "—"}</td>
+                        <td className="py-2 pr-2 text-shText">{m.type}</td>
+                        <td className="py-2 pr-2 text-shTextMuted">{m.reason}</td>
+                        <td className={`py-2 pr-2 text-right font-bold ${m.quantity_delta > 0 ? "text-shPrimary" : "text-red-400"}`}>
+                          {m.quantity_delta > 0 ? `+${m.quantity_delta}` : m.quantity_delta}
+                        </td>
+                        <td className="py-2 pr-2 text-right text-shTextMuted">{m.stock_before}</td>
+                        <td className="py-2 pr-2 text-right text-shText">{m.stock_after}</td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+            )}
           </div>
         </div>
       )}
@@ -754,9 +875,17 @@ function PreviewCard({ item }) {
   return (
     <div className="bg-[var(--sh-card-base)] border border-shBorder rounded-xl p-3" data-testid={`sm-preview-card-${item.kind}-${item.id}`}>
       <ItemThumbnail imageId={item.image_id} alt={item.name} variant="banner" size={112} className="mb-2" />
-      <p className="text-shText font-bold text-sm truncate">{item.name}{item.featured && <span className="ml-1 text-[10px] text-shPrimary">★</span>}</p>
+      <p className="text-shText font-bold text-sm line-clamp-2 min-h-[2.25em]">{item.name}{item.featured && <span className="ml-1 text-[10px] text-shPrimary">★</span>}</p>
       {item.category_name && <p className="text-[11px] text-shSecondary">{item.category_name}{item.subcategory_name ? ` → ${item.subcategory_name}` : ""}</p>}
       <p className="text-shTextMuted text-[12px] line-clamp-2 mt-0.5">{item.description}</p>
+      {item.kind === "credit_pack" && item.value_each != null && (
+        <p className="text-[11px] text-shTextMuted mt-0.5">{item.qty} {item.service_type} visits · ${Number(item.value_each).toFixed(2)} per visit</p>
+      )}
+      {item.kind === "training_program" && item.format_count > 0 && item.price != null && (
+        <p className="text-[11px] text-shTextMuted mt-0.5">
+          {item.format_count} {item.format_unit} · ${(item.price / item.format_count).toFixed(2)} per {singularUnit(item.format_unit)}
+        </p>
+      )}
       <div className="mt-2">
         {isShopify ? (
           <p className="text-shPrimary font-black text-sm">{item.shopify_display_price != null ? `${item.shopify_from_price ? "From " : ""}$${Number(item.shopify_display_price).toFixed(2)}` : "See Shopify"}</p>
@@ -769,6 +898,9 @@ function PreviewCard({ item }) {
           <p className="text-shPrimary font-black text-sm">${Number(item.price ?? item.effective_price ?? 0).toFixed(2)}</p>
         )}
       </div>
+      {isInternalPhysical(item) && (
+        <p className="text-[10px] text-shOrange mt-1"><i className="fas fa-store mr-1" />Local pickup — no shipping</p>
+      )}
       <p className="text-[10px] text-shTextMuted uppercase tracking-widest mt-1">{isShopify ? "Fulfilled by Shopify" : item.kind === "credit_pack" ? "Prepaid Pack" : item.kind === "training_program" ? "Training" : "Product"}</p>
     </div>
   );
@@ -811,6 +943,10 @@ function ClientPreviewTab() {
       bySection[key] = bySection[key] || [];
       bySection[key].push(it);
     }
+    // Same featured-first / sort_order / name ordering the real client Shop
+    // uses (see ../lib/shopPolish.js) — the preview should sort exactly like
+    // what the client actually sees, not a fresh/independent order.
+    for (const key of Object.keys(bySection)) bySection[key] = sortShopItems(bySection[key]);
     return bySection;
   }, [items]);
 
@@ -860,6 +996,168 @@ function ClientPreviewTab() {
             )}
           </div>
         ))
+      )}
+    </div>
+  );
+}
+
+/* ============================================================================
+ * ONLINE ORDERS TAB — reuses the exact same admin order/fulfillment
+ * endpoints Front Desk's Online Orders panel already uses (Pos.jsx is left
+ * completely untouched; Front Desk still needs its own quick pickup
+ * actions). Never a second order model or fulfillment workflow — this is
+ * only a second admin SURFACE onto the same shop_orders data.
+ * ========================================================================== */
+const ORDER_FILTERS = [
+  ["all", "All"], ["open", "Open"], ["new", "New"], ["preparing", "Preparing"],
+  ["ready_for_pickup", "Ready for Pickup"], ["completed", "Completed"], ["needs_attention", "Needs Attention"],
+];
+
+const ORDER_STATUS_LABEL = {
+  needs_attention: "Needs Attention", picked_up: "Picked Up", ready_for_pickup: "Ready for Pickup",
+  preparing: "Preparing", processing: "Processing", completed: "Completed",
+};
+
+function OnlineOrdersTab() {
+  const [orders, setOrders] = useState([]);
+  const [loading, setLoading] = useState(true);
+  const [filter, setFilter] = useState("open");
+  const [search, setSearch] = useState("");
+  const [busyId, setBusyId] = useState(null);
+  const [forbidden, setForbidden] = useState(false);
+
+  const load = () => {
+    setLoading(true);
+    setForbidden(false);
+    api.get("/admin/shop-orders")
+      .then(({ data }) => {
+        const rows = data.orders || [];
+        setOrders(rows);
+        // Same "mark seen once actually shown" contract as Front Desk's own
+        // Online Orders panel — only after a successful fetch, only the
+        // orders that came back genuinely unseen.
+        const newlyUnseenIds = rows.filter((o) => o.admin_unseen === true).map((o) => o.id);
+        if (newlyUnseenIds.length > 0) {
+          api.post("/admin/shop-orders/mark-seen", { order_ids: newlyUnseenIds })
+            .then(() => {
+              setOrders((prev) => prev.map((o) => (newlyUnseenIds.includes(o.id) ? { ...o, admin_unseen: false } : o)));
+              window.dispatchEvent(new CustomEvent("sh:shop-orders-seen"));
+            })
+            .catch(() => {});
+        }
+      })
+      .catch((e) => {
+        if (e?.response?.status === 403) setForbidden(true);
+        else toast.error("Could not load online orders");
+      })
+      .finally(() => setLoading(false));
+  };
+  useEffect(() => { load(); }, []);
+
+  const filtered = useMemo(
+    () => searchOrders(filterOrdersByView(orders, filter), search),
+    [orders, filter, search],
+  );
+
+  const runAction = async (orderId, action) => {
+    setBusyId(orderId);
+    try {
+      await api.post(`/admin/shop-orders/${orderId}/fulfillment`, { action });
+      load();
+      toast.success(action === "retry_fulfillment" ? "Fulfillment retried" : "Order updated");
+    } catch (e) {
+      toast.error(e?.response?.data?.detail || "Could not update this order");
+    }
+    setBusyId(null);
+  };
+
+  if (forbidden) {
+    return (
+      <div className="text-center text-shTextMuted py-10 text-sm" data-testid="sm-orders-forbidden">
+        You don't have permission to view or update online orders. Ask an owner/admin to grant the payments permission.
+      </div>
+    );
+  }
+
+  return (
+    <div className="space-y-3">
+      <div className="flex flex-wrap items-center gap-2">
+        {ORDER_FILTERS.map(([k, label]) => (
+          <button key={k} onClick={() => setFilter(k)} data-testid={`sm-order-filter-${k}`}
+                  className={`px-3 py-1.5 rounded text-[11px] font-black uppercase tracking-widest ${filter === k ? "bg-shPrimary text-bgHeader" : "bg-[var(--sh-card-base)] border border-shBorder text-shTextMuted"}`}>
+            {label}
+          </button>
+        ))}
+        <button onClick={load} className="ml-auto text-[11px] uppercase tracking-widest font-black text-shTextMuted hover:text-shPrimary">
+          <i className="fas fa-rotate-right mr-1" />Refresh
+        </button>
+      </div>
+      <input value={search} onChange={(e) => setSearch(e.target.value)} placeholder="Search by client, order reference, or item"
+             data-testid="sm-order-search"
+             className="w-full bg-[var(--sh-card-base)] border border-shBorder rounded p-2 text-shText text-sm" />
+
+      {loading ? (
+        <div className="text-center text-shTextMuted py-10 text-sm">Loading…</div>
+      ) : filtered.length === 0 ? (
+        <p className="text-shTextMuted text-sm py-6 text-center">No orders match this filter.</p>
+      ) : (
+        <div className="space-y-2">
+          {filtered.map((o) => {
+            const busy = busyId === o.id;
+            const status = orderComputedStatus(o);
+            const hasPhysical = (o.lines || []).some((l) => l.kind === "product");
+            return (
+              <div key={o.id} className="border border-shBorder rounded-xl p-3" data-testid={`sm-order-${o.id}`}>
+                <div className="flex items-start justify-between flex-wrap gap-2">
+                  <div>
+                    <p className="text-shText font-bold text-sm">
+                      Order #{orderRef(o)} · {o.client_name || "Unknown client"}
+                      {o.admin_unseen === true && (
+                        <span className="ml-2 inline-block bg-shAccent text-bgHeader text-[10px] font-black px-1.5 py-0.5 rounded-full align-middle" data-testid={`sm-order-new-${o.id}`}>NEW</span>
+                      )}
+                    </p>
+                    <p className="text-shTextMuted text-[12px]">
+                      {o.created_at ? new Date(o.created_at).toLocaleString() : "—"} · {money(o.total)}
+                    </p>
+                    <p className="text-[11px] text-shTextMuted mt-1">
+                      {(o.lines || []).map((l) => `${l.quantity}× ${l.name}`).join(", ")}
+                    </p>
+                  </div>
+                  <div className="text-right">
+                    <p className={`text-[11px] font-black uppercase tracking-widest ${
+                      status === "needs_attention" ? "text-shOrange" : ["picked_up", "completed"].includes(status) ? "text-shPrimary" : "text-shTextMuted"
+                    }`}>
+                      {ORDER_STATUS_LABEL[status]}
+                    </p>
+                    <p className="text-[10px] text-shTextMuted mt-1">
+                      Payment: Paid{hasPhysical ? ` · Pickup: ${ORDER_STATUS_LABEL[status]}` : ""}
+                    </p>
+                  </div>
+                </div>
+                <div className="flex items-center gap-2 mt-2 flex-wrap">
+                  {status === "needs_attention" && (
+                    <button onClick={() => runAction(o.id, "retry_fulfillment")} disabled={busy} data-testid={`sm-order-retry-${o.id}`}
+                            className="bg-shAccent/15 border border-shAccent/40 text-shAccent px-3 py-1.5 rounded text-[11px] font-black uppercase tracking-widest hover:bg-shAccent/25 transition disabled:opacity-50">
+                      {busy ? "Retrying…" : "Retry Fulfillment"}
+                    </button>
+                  )}
+                  {o.pickup_status === "preparing" && (
+                    <button onClick={() => runAction(o.id, "mark_ready")} disabled={busy} data-testid={`sm-order-mark-ready-${o.id}`}
+                            className="bg-[var(--sh-card-base)] border border-shBorder hover:border-shPrimary/50 text-shText px-3 py-1.5 rounded text-[11px] font-black uppercase tracking-widest disabled:opacity-50">
+                      Mark Ready
+                    </button>
+                  )}
+                  {o.pickup_status === "ready_for_pickup" && (
+                    <button onClick={() => runAction(o.id, "mark_picked_up")} disabled={busy} data-testid={`sm-order-mark-picked-up-${o.id}`}
+                            className="bg-[var(--sh-card-base)] border border-shBorder hover:border-shPrimary/50 text-shText px-3 py-1.5 rounded text-[11px] font-black uppercase tracking-widest disabled:opacity-50">
+                      Mark Picked Up
+                    </button>
+                  )}
+                </div>
+              </div>
+            );
+          })}
+        </div>
       )}
     </div>
   );
@@ -1100,7 +1398,7 @@ export default function ShopManager({ openCreateOnMount = false, onCreateConsume
       />
 
       <div className="flex gap-2 border-b border-shBorder">
-        {[["items", "Items"], ["categories", "Categories & Layout"], ["preview", "Client Preview"]].map(([key, label]) => (
+        {[["items", "Items"], ["categories", "Categories & Layout"], ["orders", "Online Orders"], ["preview", "Client Preview"]].map(([key, label]) => (
           <button key={key} onClick={() => setTab(key)} data-testid={`sm-tab-${key}`}
                   className={`px-3 py-2 text-[12px] font-black uppercase tracking-widest border-b-2 -mb-px ${
                     tab === key ? "border-shPrimary text-shPrimary" : "border-transparent text-shTextMuted hover:text-shText"
@@ -1112,6 +1410,7 @@ export default function ShopManager({ openCreateOnMount = false, onCreateConsume
 
       {tab === "items" && <ItemsTab key={refreshKey} onEditItem={editItem} onAddShopItem={() => setPickerOpen(true)} />}
       {tab === "categories" && <CategoriesTab key={`cat-${refreshKey}`} />}
+      {tab === "orders" && <OnlineOrdersTab key={`orders-${refreshKey}`} />}
       {tab === "preview" && <ClientPreviewTab key={`prev-${refreshKey}`} />}
 
       {pickerOpen && <TypePickerModal onClose={() => setPickerOpen(false)} onPick={pickType} />}

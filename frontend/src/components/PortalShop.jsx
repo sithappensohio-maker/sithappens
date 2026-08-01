@@ -5,9 +5,12 @@ import { toast } from "sonner";
 import NeonEdge from "./premium/NeonEdge";
 import PremiumButton from "./premium/PremiumButton";
 import { accentRgb } from "./premium/tokens";
-import { CLIENT_LABELS } from "../lib/clientLabels";
 import ItemThumbnail from "./ItemThumbnail";
 import ShopItemDetail from "./ShopItemDetail";
+import {
+  categoryOptionsForTab, subcategoryOptionsForTab, nextFiltersForTab,
+  sortShopItems, singularUnit, stockCeiling, isInternalPhysical, orderStatusLabel,
+} from "../lib/shopPolish";
 
 /* Client Shop — Phase 1 gave read-only catalog browsing. Phase 2 adds a
  * real cart + checkout: physical products, credit packs, and training
@@ -26,7 +29,7 @@ const money = (n) => `$${Number(n || 0).toFixed(2)}`;
 const TABS = [
   { key: "all", label: "All" },
   { key: "product", label: "Merch & Gear" },
-  { key: "credit_pack", label: CLIENT_LABELS.creditPack },
+  { key: "credit_pack", label: "Prepaid Visits" },
   { key: "training_program", label: "Training" },
 ];
 
@@ -78,6 +81,8 @@ const purchaseLabel = (kind) => PURCHASE_LABELS[kind] || "Add to Cart";
 function ItemCard({ item, cartQty, onAdd, onOpenDetail }) {
   const isShopifyMerch = item.kind === "product" && item.sales_destination === "shopify_external";
   const outOfStock = item.kind === "product" && !isShopifyMerch && item.track_inventory && !item.in_stock;
+  const ceiling = stockCeiling(item);
+  const atMax = ceiling != null && cartQty >= ceiling;
   return (
     <NeonEdge accentRgb={accentRgb("lime")} intensity="subtle" onClick={() => onOpenDetail(item)}
               className="p-3 flex flex-col hover:-translate-y-0.5 transition duration-200 text-left cursor-pointer" data-testid={`shop-card-${item.kind}-${item.id}`}>
@@ -89,7 +94,7 @@ function ItemCard({ item, cartQty, onAdd, onOpenDetail }) {
           </span>
         )}
       </div>
-      <p className="text-shText font-bold text-[14px] mt-3 truncate">{item.name}</p>
+      <p className="text-shText font-bold text-[14px] mt-3 line-clamp-2 min-h-[2.25em]">{item.name}</p>
       {item.category_name && (
         <p className="text-[11px] text-shSecondary font-bold mt-0.5 truncate">
           {item.category_name}{item.subcategory_name ? ` → ${item.subcategory_name}` : ""}
@@ -110,12 +115,15 @@ function ItemCard({ item, cartQty, onAdd, onOpenDetail }) {
       ) : null}
       {item.kind === "credit_pack" && (
         <p className="text-[11px] text-shTextMuted uppercase tracking-widest font-bold mt-1">
-          {item.qty} {item.service_type} visits
+          {item.qty} {item.service_type} visits{item.value_each != null ? ` · ${money(item.value_each)} per visit` : ""}
         </p>
       )}
       {item.kind === "training_program" && (
         <p className="text-[11px] text-shTextMuted uppercase tracking-widest font-bold mt-1">
           {item.format_count} {item.format_unit}
+          {item.format_count > 0 && item.price != null
+            ? ` · ${money(item.price / item.format_count)} per ${singularUnit(item.format_unit)}`
+            : ""}
         </p>
       )}
 
@@ -147,6 +155,12 @@ function ItemCard({ item, cartQty, onAdd, onOpenDetail }) {
                   style={{ background: "var(--sh-card-base)" }} title="This item is currently out of stock">
             Out of Stock
           </button>
+        ) : atMax ? (
+          <button disabled onClick={(e) => e.stopPropagation()} data-testid={`shop-buy-${item.kind}-${item.id}`}
+                  className="w-full px-3 py-2 rounded-md text-[11px] font-black uppercase tracking-widest border border-shBorder text-shTextMuted cursor-not-allowed"
+                  style={{ background: "var(--sh-card-base)" }} title="You already have the maximum available quantity in your cart">
+            Max in Cart ({cartQty})
+          </button>
         ) : (
           <PremiumButton variant="primary" onClick={(e) => { e.stopPropagation(); onAdd(item); }} data-testid={`shop-buy-${item.kind}-${item.id}`} className="w-full justify-center">
             {cartQty > 0 ? `In Cart (${cartQty})` : purchaseLabel(item.kind)}
@@ -156,6 +170,15 @@ function ItemCard({ item, cartQty, onAdd, onOpenDetail }) {
     </NeonEdge>
   );
 }
+
+// Tone classes for orderStatusLabel's output (see ../lib/shopPolish.js).
+const ORDER_STATUS_TONE = {
+  "Needs Attention": "text-shOrange",
+  "Not Completed": "text-shDanger",
+  "Completed": "text-shGreen",
+  "Picked Up": "text-shGreen",
+  "Ready for Pickup": "text-shGreen",
+};
 
 const cartKey = (kind, refId) => `${kind}:${refId}`;
 
@@ -190,37 +213,47 @@ function CartPanel({ lines, subtotal, onQtyChange, onRemove, onCheckout, busy, o
         {lines.length === 0 && <p className="text-shTextMuted text-sm py-6 text-center">Your cart is empty.</p>}
 
         <div className="space-y-2">
-          {lines.map((l) => (
-            <div key={cartKey(l.kind, l.ref_id)} className="border border-shBorder rounded-lg p-3 flex items-center justify-between gap-2"
-                 style={{ background: "var(--sh-card-base)" }}
-                 data-testid={`shop-cart-line-${l.kind}-${l.ref_id}`}>
-              <div className="min-w-0">
-                <p className="text-shText font-bold text-sm truncate">{l.item.name}</p>
-                <p className="text-[11px] text-shTextMuted">{money(l.item.price)} each</p>
+          {lines.map((l) => {
+            const ceiling = stockCeiling(l.item);
+            const atMax = ceiling != null && l.quantity >= ceiling;
+            return (
+              <div key={cartKey(l.kind, l.ref_id)} className="border border-shBorder rounded-lg p-3 flex items-center justify-between gap-2"
+                   style={{ background: "var(--sh-card-base)" }}
+                   data-testid={`shop-cart-line-${l.kind}-${l.ref_id}`}>
+                <div className="min-w-0">
+                  <p className="text-shText font-bold text-sm truncate">{l.item.name}</p>
+                  <p className="text-[11px] text-shTextMuted">{money(l.item.price)} each · {money(l.item.price * l.quantity)} total</p>
+                </div>
+                <div className="flex items-center gap-2 shrink-0">
+                  <button onClick={() => onQtyChange(l.kind, l.ref_id, l.quantity - 1)}
+                          className="w-7 h-7 rounded border border-shBorder text-shTextMuted hover:text-shText transition bg-[var(--sh-card-base)]">−</button>
+                  <span className="text-shText font-bold w-5 text-center">{l.quantity}</span>
+                  <button onClick={() => onQtyChange(l.kind, l.ref_id, l.quantity + 1)} disabled={atMax}
+                          title={atMax ? "Maximum available quantity is already in your cart" : undefined}
+                          className="w-7 h-7 rounded border border-shBorder text-shTextMuted hover:text-shText transition bg-[var(--sh-card-base)] disabled:opacity-30 disabled:cursor-not-allowed disabled:hover:text-shTextMuted">+</button>
+                  <button onClick={() => onRemove(l.kind, l.ref_id)} className="text-shTextMuted hover:text-shDanger ml-1">
+                    <i className="fas fa-trash-can text-xs" />
+                  </button>
+                </div>
               </div>
-              <div className="flex items-center gap-2 shrink-0">
-                <button onClick={() => onQtyChange(l.kind, l.ref_id, l.quantity - 1)}
-                        className="w-7 h-7 rounded border border-shBorder text-shTextMuted hover:text-shText transition bg-[var(--sh-card-base)]">−</button>
-                <span className="text-shText font-bold w-5 text-center">{l.quantity}</span>
-                <button onClick={() => onQtyChange(l.kind, l.ref_id, l.quantity + 1)}
-                        className="w-7 h-7 rounded border border-shBorder text-shTextMuted hover:text-shText transition bg-[var(--sh-card-base)]">+</button>
-                <button onClick={() => onRemove(l.kind, l.ref_id)} className="text-shTextMuted hover:text-shDanger ml-1">
-                  <i className="fas fa-trash-can text-xs" />
-                </button>
-              </div>
-            </div>
-          ))}
+            );
+          })}
         </div>
 
         {lines.length > 0 && (
           <>
+            {lines.some((l) => isInternalPhysical(l.item)) && (
+              <p className="text-[11px] text-shOrange bg-shOrange/10 border border-shOrange/30 rounded p-2" data-testid="shop-cart-pickup-notice">
+                <i className="fas fa-store mr-1" />Local pickup at Sit Happens — shipping is not available for this item.
+              </p>
+            )}
             <div className="flex items-center justify-between pt-2 border-t border-shBorder">
               <p className="text-shTextMuted text-sm">Subtotal</p>
               <p className="text-shText font-black">{money(subtotal)}</p>
             </div>
             <p className="text-[11px] text-shTextMuted">Tax (if applicable) is calculated on the next step. You&apos;ll be taken to Stripe&apos;s secure checkout — Sit Happens never sees or stores your card details.</p>
             <PremiumButton variant="primary" onClick={onCheckout} disabled={busy} data-testid="shop-checkout-button" className="w-full justify-center py-3">
-              {busy ? "Redirecting…" : "Checkout"}
+              {busy ? "Redirecting…" : "Continue to Secure Checkout"}
             </PremiumButton>
           </>
         )}
@@ -403,8 +436,31 @@ export default function PortalShop({ initialTab = "all", fullScreen = false, sho
       .catch(() => setCategories([]));
   }, []);
 
-  const selectedCategory = categories.find((c) => c.id === categoryFilter);
-  const subcategoryOptions = selectedCategory?.subcategories || [];
+  // Category/subcategory choices are scoped to the selected tab — a category
+  // with no matching item in this tab should never appear as an option here,
+  // even though the full taxonomy (loaded above) still lists it for other
+  // tabs. Derived from the already-loaded catalog items, never a second
+  // taxonomy fetch/filter system (see ../lib/shopPolish.js).
+  const categoryOptions = useMemo(
+    () => categoryOptionsForTab(categories, items, tab),
+    [categories, items, tab],
+  );
+  const selectedCategory = categoryOptions.find((c) => c.id === categoryFilter);
+  const subcategoryOptions = useMemo(
+    () => subcategoryOptionsForTab(categories, items, tab, categoryFilter),
+    [categories, items, tab, categoryFilter],
+  );
+
+  // Selecting a tab can invalidate the current category/subcategory choice
+  // (e.g. a category that only ever contained Training items, while
+  // switching to the Merch & Gear tab) — clear whatever no longer applies
+  // rather than silently showing a filter that can never match anything.
+  const selectTab = (key) => {
+    setTab(key);
+    const next = nextFiltersForTab(items, key, categoryFilter, subcategoryFilter);
+    if (next.categoryFilter !== categoryFilter) setCategoryFilter(next.categoryFilter);
+    if (next.subcategoryFilter !== subcategoryFilter) setSubcategoryFilter(next.subcategoryFilter);
+  };
 
   const filtered = useMemo(() => {
     let list = tab === "all" ? items : items.filter((i) => i.kind === tab);
@@ -419,7 +475,7 @@ export default function PortalShop({ initialTab = "all", fullScreen = false, sho
         || (i.subcategory_name || "").toLowerCase().includes(q)
       ));
     }
-    return list;
+    return sortShopItems(list);
   }, [items, tab, categoryFilter, subcategoryFilter, search]);
 
   const cartCount = cart.reduce((n, c) => n + c.quantity, 0);
@@ -437,12 +493,23 @@ export default function PortalShop({ initialTab = "all", fullScreen = false, sho
   useEffect(() => () => clearTimeout(justAddedTimerRef.current), []);
 
   const addToCart = (item, qty = 1) => {
+    const ceiling = stockCeiling(item);
+    const existingQty = cart.find((c) => c.kind === item.kind && c.ref_id === item.id)?.quantity || 0;
+    if (ceiling != null && existingQty >= ceiling) {
+      toast.error(`Only ${ceiling} are currently available`);
+      return;
+    }
+    let nextQty = existingQty + qty;
+    if (ceiling != null && nextQty > ceiling) {
+      nextQty = ceiling;
+      toast.error(`Only ${ceiling} are currently available`);
+    }
     setCart((prev) => {
       const existing = prev.find((c) => c.kind === item.kind && c.ref_id === item.id);
       if (existing) {
-        return prev.map((c) => (c === existing ? { ...c, quantity: c.quantity + qty } : c));
+        return prev.map((c) => (c === existing ? { ...c, quantity: nextQty } : c));
       }
-      return [...prev, { kind: item.kind, ref_id: item.id, quantity: qty }];
+      return [...prev, { kind: item.kind, ref_id: item.id, quantity: nextQty }];
     });
     idemKeyRef.current = null; // cart changed — a fresh checkout attempt needs a fresh key
     pulseTray();
@@ -454,6 +521,12 @@ export default function PortalShop({ initialTab = "all", fullScreen = false, sho
       setCart((prev) => prev.filter((c) => !(c.kind === kind && c.ref_id === refId)));
       return;
     }
+    const item = items.find((i) => i.kind === kind && i.id === refId);
+    const ceiling = stockCeiling(item);
+    if (ceiling != null && qty > ceiling) {
+      toast.error(`Only ${ceiling} are currently available`);
+      qty = ceiling;
+    }
     setCart((prev) => prev.map((c) => (c.kind === kind && c.ref_id === refId ? { ...c, quantity: qty } : c)));
   };
 
@@ -461,6 +534,26 @@ export default function PortalShop({ initialTab = "all", fullScreen = false, sho
     idemKeyRef.current = null;
     setCart((prev) => prev.filter((c) => !(c.kind === kind && c.ref_id === refId)));
   };
+
+  // My Orders — a compact panel over the client's own existing order history
+  // (GET /portal/shop-orders, already hand-picked to safe fields only: no
+  // Stripe ids, payment-attempt ids, or reservation internals). Lazy-loaded
+  // on first open, and explicitly refreshed once a checkout actually
+  // finishes (see the Stripe-return poll below) so a just-completed order
+  // shows up without the client needing to manually refresh.
+  const [orders, setOrders] = useState([]);
+  const [ordersLoaded, setOrdersLoaded] = useState(false);
+  const [ordersOpen, setOrdersOpen] = useState(false);
+  const [ordersExpanded, setOrdersExpanded] = useState(false);
+  const loadOrders = () => {
+    api.get("/portal/shop-orders")
+      .then(({ data }) => { setOrders(data.orders || []); setOrdersLoaded(true); })
+      .catch(() => {});
+  };
+  useEffect(() => {
+    if (ordersOpen && !ordersLoaded) loadOrders();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [ordersOpen]);
 
   const submitCheckout = async () => {
     if (cart.length === 0) return;
@@ -505,6 +598,7 @@ export default function PortalShop({ initialTab = "all", fullScreen = false, sho
           if (data.status === "paid") {
             setCart([]);
             idemKeyRef.current = null; // purchase completed — any future checkout is a new attempt
+            loadOrders(); // so the newly completed order shows up in My Orders right away
             if (data.fulfillment_status === "fulfilled") {
               clearInterval(pollRef.current);
             }
@@ -535,22 +629,75 @@ export default function PortalShop({ initialTab = "all", fullScreen = false, sho
     <div id="portal-shop-anchor" data-testid="portal-shop"
          className={fullScreen ? "w-full max-w-6xl mx-auto" : "p-6 rounded-2xl border border-shBorder shadow-sh"}
          style={fullScreen ? undefined : { background: "var(--sh-card-base)" }}>
-      <div className="flex items-center justify-between mb-4">
+      <div className="flex items-center justify-between mb-4 gap-2">
         <p className="text-[12px] font-black uppercase tracking-[0.3em] text-shPrimary">
           <i className="fas fa-bag-shopping mr-1" />Shop
         </p>
-        <button onClick={() => setCartOpen(true)} data-testid="shop-cart-open"
-                aria-label={cartCount > 0 ? `Open cart, ${cartCount} item${cartCount !== 1 ? "s" : ""}, ${money(cartSubtotal)}` : "Open cart"}
-                className="relative border border-shBorder text-shTextMuted hover:text-shText px-3 py-2 rounded-md text-[11px] font-bold uppercase tracking-widest hover:border-shPrimary/50 transition"
-                style={{ background: "var(--sh-card-base)" }}>
-          <i className="fas fa-cart-shopping mr-1" />Cart{cartCount > 0 && <span className="hidden sm:inline"> ({cartCount}) · {money(cartSubtotal)}</span>}
-          {cartCount > 0 && (
-            <span style={{ position: "absolute" }} className="-top-2 -right-2 bg-shAccent text-white rounded-full w-5 h-5 text-[10px] grid place-items-center font-black" data-testid="shop-cart-count">
-              {cartCount}
-            </span>
-          )}
-        </button>
+        <div className="flex items-center gap-2">
+          <button onClick={() => setOrdersOpen((o) => !o)} data-testid="shop-my-orders-toggle"
+                  className="border border-shBorder text-shTextMuted hover:text-shText px-3 py-2 rounded-md text-[11px] font-bold uppercase tracking-widest hover:border-shPrimary/50 transition"
+                  style={{ background: "var(--sh-card-base)" }}>
+            <i className="fas fa-receipt mr-1" />My Orders
+          </button>
+          <button onClick={() => setCartOpen(true)} data-testid="shop-cart-open"
+                  aria-label={cartCount > 0 ? `Open cart, ${cartCount} item${cartCount !== 1 ? "s" : ""}, ${money(cartSubtotal)}` : "Open cart"}
+                  className="relative border border-shBorder text-shTextMuted hover:text-shText px-3 py-2 rounded-md text-[11px] font-bold uppercase tracking-widest hover:border-shPrimary/50 transition"
+                  style={{ background: "var(--sh-card-base)" }}>
+            <i className="fas fa-cart-shopping mr-1" />Cart{cartCount > 0 && <span className="hidden sm:inline"> ({cartCount}) · {money(cartSubtotal)}</span>}
+            {cartCount > 0 && (
+              <span style={{ position: "absolute" }} className="-top-2 -right-2 bg-shAccent text-white rounded-full w-5 h-5 text-[10px] grid place-items-center font-black" data-testid="shop-cart-count">
+                {cartCount}
+              </span>
+            )}
+          </button>
+        </div>
       </div>
+
+      {ordersOpen && (
+        <div className="mb-4 border border-shBorder rounded-xl p-4" style={{ background: "var(--sh-card-base)" }} data-testid="shop-my-orders-panel">
+          <div className="flex items-center justify-between mb-2">
+            <p className="text-shText font-bold uppercase tracking-widest text-sm">My Orders</p>
+            <button onClick={loadOrders} className="text-[11px] uppercase tracking-widest font-black text-shTextMuted hover:text-shPrimary">
+              <i className="fas fa-rotate-right mr-1" />Refresh
+            </button>
+          </div>
+          {orders.length === 0 ? (
+            <p className="text-shTextMuted text-sm py-2">No orders yet.</p>
+          ) : (
+            <>
+              <div className="space-y-2">
+                {(ordersExpanded ? orders : orders.slice(0, 3)).map((o) => {
+                  const label = orderStatusLabel(o);
+                  return (
+                    <div key={o.order_id} className="border border-shBorder rounded-lg p-3" data-testid={`shop-order-${o.order_id}`}>
+                      <div className="flex items-start justify-between gap-2 flex-wrap">
+                        <div className="min-w-0">
+                          <p className="text-shText font-bold text-sm">Order #{o.order_id.slice(0, 8).toUpperCase()}</p>
+                          <p className="text-shTextMuted text-[12px]">
+                            {o.created_at ? new Date(o.created_at).toLocaleDateString() : "—"} · {money(o.total)}
+                          </p>
+                          <p className="text-[11px] text-shTextMuted mt-1 line-clamp-1">
+                            {(o.lines || []).map((l) => `${l.quantity}× ${l.name}`).join(", ")}
+                          </p>
+                        </div>
+                        <span className={`shrink-0 text-[11px] font-black uppercase tracking-widest ${ORDER_STATUS_TONE[label] || "text-shTextMuted"}`}>
+                          {label}
+                        </span>
+                      </div>
+                    </div>
+                  );
+                })}
+              </div>
+              {orders.length > 3 && (
+                <button onClick={() => setOrdersExpanded((v) => !v)} data-testid="shop-my-orders-expand"
+                        className="mt-2 text-[11px] font-black uppercase tracking-widest text-shPrimary">
+                  {ordersExpanded ? "Show fewer" : `Show ${orders.length - 3} more`}
+                </button>
+              )}
+            </>
+          )}
+        </div>
+      )}
 
       {detail ? (
         <ShopItemDetail
@@ -592,7 +739,7 @@ export default function PortalShop({ initialTab = "all", fullScreen = false, sho
 
       <div className="flex flex-wrap gap-2 justify-center mb-4">
         {TABS.map((t) => (
-          <button key={t.key} onClick={() => setTab(t.key)} data-testid={`shop-tab-${t.key}`}
+          <button key={t.key} onClick={() => selectTab(t.key)} data-testid={`shop-tab-${t.key}`}
                   className={`px-3 py-1.5 rounded-md text-[11px] font-bold uppercase tracking-widest transition border ${
                     tab === t.key ? "bg-shPrimary text-bgHeader border-shPrimary" : "border-shBorder text-shTextMuted hover:border-shPrimary/50 hover:text-shText"
                   }`}
@@ -614,14 +761,14 @@ export default function PortalShop({ initialTab = "all", fullScreen = false, sho
                  className="w-full pl-9 pr-3 py-2 rounded-md border border-shBorder text-shText text-sm focus:outline-none focus:border-shPrimary/60"
                  style={{ background: "var(--sh-card-base)" }} />
         </div>
-        {categories.length > 0 && (
+        {categoryOptions.length > 0 && (
           <>
             <select value={categoryFilter} onChange={(e) => { setCategoryFilter(e.target.value); setSubcategoryFilter(""); }}
                     data-testid="shop-category-select"
                     className="rounded-md border border-shBorder text-shText text-sm px-3 py-2 focus:outline-none focus:border-shPrimary/60"
                     style={{ background: "var(--sh-card-base)" }}>
               <option value="">All Categories</option>
-              {categories.map((c) => <option key={c.id} value={c.id}>{c.name}</option>)}
+              {categoryOptions.map((c) => <option key={c.id} value={c.id}>{c.name}</option>)}
             </select>
             {subcategoryOptions.length > 0 && (
               <select value={subcategoryFilter} onChange={(e) => setSubcategoryFilter(e.target.value)}

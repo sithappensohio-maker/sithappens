@@ -5946,6 +5946,17 @@ async def check_in(
     booking = await db.bookings.find_one({"id": booking_id}, {"_id": 0})
     if not booking:
         raise HTTPException(status_code=404, detail="Booking not found")
+    # Front Desk check-in safety — a repeat click/retry on an already-
+    # checked-in booking is a deliberate no-op, never a second arrival
+    # event. Return the existing record completely unchanged: never re-runs
+    # the vaccine check or resolves add-ons again for an arrival that
+    # already happened (the actual anti-corruption guarantee — that
+    # checked_in_at/checked_in_by can never be overwritten by a later call —
+    # is enforced atomically below regardless of this early return).
+    if booking.get("checked_in_at") and not booking.get("checked_out_at") and booking.get("status") == "approved":
+        return booking
+    if booking.get("status") != "approved":
+        raise HTTPException(status_code=409, detail="Only an approved booking can be checked in.")
     if _booking_is_financially_locked(booking):
         raise HTTPException(status_code=409, detail="This booking is already financially closed and cannot be checked in again.")
     body = body or CheckInIn()
@@ -5979,9 +5990,33 @@ async def check_in(
             booking.get("service_type") or "",
         )
         update["add_ons"] = list(booking.get("add_ons") or []) + new_addons
-    await db.bookings.update_one({"id": booking_id}, {"$set": update})
-    booking.update(update)
-    return booking
+    # Atomic conditional write — the filter re-asserts checked_in_at is
+    # still unset at write time, so a double-click or a network-retry racing
+    # the first attempt can never both win: only the first to land actually
+    # stamps the arrival timestamp/staff identity; the loser's filter
+    # matches nothing and falls through to returning whatever the winner
+    # just wrote, unchanged. This replaces the old read-then-blind-write,
+    # which let a repeat click silently replace checked_in_at with a later
+    # timestamp — corrupting actual-duration daycare pricing.
+    result = await db.bookings.find_one_and_update(
+        {
+            "$and": [
+                {"id": booking_id},
+                {"status": "approved"},
+                {"$or": [{"checked_in_at": {"$exists": False}}, {"checked_in_at": None}, {"checked_in_at": ""}]},
+                {"$or": [{"checked_out_at": {"$exists": False}}, {"checked_out_at": None}, {"checked_out_at": ""}]},
+            ]
+        },
+        {"$set": update},
+        projection={"_id": 0},
+        return_document=ReturnDocument.AFTER,
+    )
+    if result is None:
+        current = await db.bookings.find_one({"id": booking_id}, {"_id": 0})
+        if current and current.get("checked_in_at"):
+            return current  # lost the race to a concurrent check-in — safe no-op, not an error
+        raise HTTPException(status_code=409, detail="This booking can no longer be checked in.")
+    return result
 
 
 @api.post("/bookings/{booking_id}/add-ons", response_model=BookingOut)
@@ -8121,6 +8156,13 @@ async def _active_household_checkout_rows(anchor: Dict[str, Any]) -> List[Dict[s
         "date": anchor.get("date"),
         "status": {"$nin": ["completed", "cancelled", "rejected"]},
         "$or": [{"checked_out_at": {"$exists": False}}, {"checked_out_at": None}],
+        # Front Desk household-checkout fix — a booked-but-never-arrived
+        # dog in the same household (e.g. Bolt never showed up while Lexi
+        # did) must never be swept into Lexi's checkout: completed, charged,
+        # credit-deducted, or financially locked purely for being in the
+        # same reservation group. Only dogs that actually checked in belong
+        # on one combined household ticket.
+        "checked_in_at": {"$exists": True, "$nin": [None, ""]},
     }
     if service_type == "boarding":
         q["end_date"] = anchor.get("end_date")
@@ -8248,6 +8290,13 @@ async def check_out_group(
                         {"id": target["id"]},
                         {"status": {"$ne": "completed"}},
                         {"$or": [{"checked_out_at": {"$exists": False}}, {"checked_out_at": None}]},
+                        # Same check-in requirement as single checkout — targets
+                        # already come from _active_household_checkout_rows
+                        # (which itself now requires checked_in_at), but this
+                        # atomic re-assertion is what actually protects a
+                        # direct API request from a race, not just the query
+                        # that built the target list a moment earlier.
+                        {"checked_in_at": {"$exists": True, "$nin": [None, ""]}},
                         {"$or": [
                             {"checkout_in_progress": {"$exists": False}},
                             {"checkout_in_progress": False},
@@ -8508,6 +8557,10 @@ async def check_out(
                 {"id": booking_id},
                 {"status": {"$ne": "completed"}},
                 {"$or": [{"checked_out_at": {"$exists": False}}, {"checked_out_at": None}]},
+                # Front Desk check-in safety — checkout must never run ahead
+                # of an actual arrival. This protects the direct API call
+                # too, not just the frontend button's visibility rule.
+                {"checked_in_at": {"$exists": True, "$nin": [None, ""]}},
                 {"$or": [
                     {"checkout_in_progress": {"$exists": False}},
                     {"checkout_in_progress": False},
@@ -8529,6 +8582,8 @@ async def check_out(
             raise HTTPException(status_code=404, detail="Booking not found")
         if current.get("checked_out_at") or current.get("status") == "completed":
             raise HTTPException(status_code=409, detail="This booking has already been checked out.")
+        if not current.get("checked_in_at"):
+            raise HTTPException(status_code=409, detail="Check the dog in before completing checkout.")
         raise HTTPException(status_code=409, detail="Checkout is already in progress. Wait a moment and refresh.")
 
     # Operational lock fields are never part of the business record snapshot.
@@ -26515,6 +26570,7 @@ def _shop_manager_item_view(doc: dict, kind: str) -> dict:
         "section_label": SHOP_SECTION_LABELS[section],
         "name": doc.get("name"),
         "image_id": doc.get("image_id"),
+        "missing_image": not doc.get("image_id"),
         "category_id": doc.get("category_id"),
         "subcategory_id": doc.get("subcategory_id"),
         "active": bool(doc.get("active", True)),
@@ -26537,6 +26593,10 @@ def _shop_manager_item_view(doc: dict, kind: str) -> dict:
             "stock_on_hand": round(float(doc.get("stock_on_hand") or 0), 2) if doc.get("track_inventory") else None,
             "low_stock_threshold": doc.get("low_stock_threshold"),
             "missing_description": not (doc.get("online_description") or doc.get("description") or "").strip(),
+            # Admin-only (this whole endpoint is gated on the pricing
+            # permission) — never surfaced through _build_shop_catalog, so
+            # Client Preview/the client Shop never see a product's cost.
+            "cost": None if is_shopify else doc.get("cost"),
         })
     elif kind == "credit_pack":
         base.update({
@@ -26622,6 +26682,10 @@ async def shop_manager_list_items(
         sub = subs.get(it.get("subcategory_id"))
         it["category_name"] = cat["name"] if cat else None
         it["subcategory_name"] = sub["name"] if sub else None
+        # "Category Hidden" admin warning — an item can stay assigned to a
+        # category an admin later deactivated; this is display-only and
+        # never changes the assignment or the item's own visibility.
+        it["category_hidden"] = bool(cat) and not cat.get("active", True)
 
     items.sort(key=lambda it: (it["section"], (it.get("category_name") or "￿"), it.get("name") or ""))
     return {"items": items}
@@ -31603,10 +31667,25 @@ async def today_pnl(_: dict = Depends(require_admin_and_permission("finance_repo
 @api.get("/employee/roster-today")
 async def employee_roster_today(user: dict = Depends(require_employee_or_admin)):
     """Today's run-sheet roster — dogs on-site + emergency contact phone for each.
-    Strips financial/credit/owner-PII fields the employee doesn't need."""
+    Strips financial/credit/owner-PII fields the employee doesn't need.
+
+    A plain `date == today` match misses real operational cases: a boarding
+    stay that began before today (date < today <= end_date), and a booking
+    that's still checked in past its scheduled date because someone forgot
+    to check it out (must stay visible/flagged regardless of date, or it
+    silently vanishes from the roster while the dog is still on-site). Uses
+    business_today() (America/New_York), never the browser's UTC date.
+    """
     today = business_today().isoformat()
     bookings = await db.bookings.find(
-        {"date": today, "status": {"$in": ["approved", "completed"]}},
+        {
+            "status": {"$in": ["approved", "completed"]},
+            "$or": [
+                {"date": today},
+                {"date": {"$lte": today}, "end_date": {"$gte": today}},
+                {"checked_in_at": {"$exists": True, "$nin": [None, ""]}, "checked_out_at": {"$in": [None, ""]}},
+            ],
+        },
         {"_id": 0},
     ).sort("dropoff_time", 1).to_list(500)
     # Pull dog + client info for each booking
@@ -31628,17 +31707,37 @@ async def employee_roster_today(user: dict = Depends(require_employee_or_admin))
     for b in bookings:
         d = dog_map.get(b.get("dog_id"), {})
         c = client_map.get(b.get("client_id"), {})
+        checked_in_at = b.get("checked_in_at")
+        checked_out_at = b.get("checked_out_at")
+        # A stay is "missed" when it's still open (checked in, never checked
+        # out) past its own scheduled end — the daycare-forgot-to-check-out-
+        # yesterday and stale-multi-day-boarding cases from the roster query
+        # above. Purely a display flag; never changes status or timestamps.
+        relevant_end = b.get("end_date") or b.get("date")
+        is_missed_checkout = bool(checked_in_at) and not checked_out_at and bool(relevant_end) and relevant_end < today
         roster.append({
             "booking_id": b["id"],
+            "client_id": b.get("client_id"),
             "dog_id": b.get("dog_id"),
             "dog_name": b.get("dog_name") or d.get("name"),
             "breed": d.get("breed"),
             "service_type": b.get("service_type"),
+            "service_id": b.get("service_id"),
+            "date": b.get("date"),
+            "end_date": b.get("end_date"),
+            "time": b.get("time"),
             "kennel": b.get("kennel"),
+            "room": b.get("room"),
+            "crate": b.get("crate"),
+            "yard_group": b.get("yard_group"),
+            "training_group": b.get("training_group"),
             "dropoff_time": b.get("dropoff_time"),
             "pickup_time": b.get("pickup_time"),
-            "checked_in_at": b.get("checked_in_at"),
-            "checked_out_at": b.get("checked_out_at"),
+            "checked_in_at": checked_in_at,
+            "checked_out_at": checked_out_at,
+            "checked_in_by_name": b.get("checked_in_by_name"),
+            "checked_out_by_name": b.get("checked_out_by_name"),
+            "is_missed_checkout": is_missed_checkout,
             "status": b.get("status"),
             "notes": b.get("notes"),
             "feeding_schedule": d.get("feeding_schedule") or [],

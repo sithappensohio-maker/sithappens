@@ -175,9 +175,17 @@ export default function ShopItemDetail({ kind, itemId, cart, onAddToCart, onBack
 
   const isShopifyMerch = item.kind === "product" && item.sales_destination === "shopify_external";
   const outOfStock = item.kind === "product" && !isShopifyMerch && item.track_inventory && !item.in_stock;
+  const isInternalPhysical = item.kind === "product" && !isShopifyMerch;
   const avail = availabilityText(item);
   const cartQty = (cart || []).find((c) => c.kind === item.kind && c.ref_id === item.id)?.quantity || 0;
-  const maxQty = item.kind === "product" && item.track_inventory ? Math.max(1, Math.floor(item.stock_on_hand)) : 99;
+  // Stock-safe quantity — `qty` here is "how many more to add", so the real
+  // ceiling is what's left after subtracting what's already sitting in the
+  // cart, not just the raw stock_on_hand (which the old maxQty ignored).
+  const remainingStock = item.kind === "product" && item.track_inventory
+    ? Math.max(0, Math.floor(item.stock_on_hand ?? 0) - cartQty)
+    : null;
+  const maxQty = remainingStock != null ? Math.max(1, remainingStock) : 99;
+  const atMaxInCart = remainingStock === 0;
 
   const handleShopifyClick = () => {
     api.post("/shop/merch-click", { product_id: item.id }).catch(() => {});
@@ -223,6 +231,12 @@ export default function ShopItemDetail({ kind, itemId, cart, onAddToCart, onBack
             </p>
           )}
 
+          {isInternalPhysical && (
+            <p className="mt-2 text-[12px] text-shOrange bg-shOrange/10 border border-shOrange/30 rounded p-2" data-testid="shop-detail-pickup-notice">
+              <i className="fas fa-store mr-1" />Local pickup at Sit Happens — shipping is not available for this item.
+            </p>
+          )}
+
           {item.kind === "credit_pack" && (
             <p className="text-shTextMuted text-[13px] mt-2" data-testid="shop-detail-pack-summary">
               Includes {item.qty} {item.service_type} {CLIENT_LABELS.creditPack.toLowerCase()}. Credits are added to your account after successful payment and may be used for eligible {item.service_type} bookings.
@@ -246,11 +260,13 @@ export default function ShopItemDetail({ kind, itemId, cart, onAddToCart, onBack
           </div>
 
           <div className="mt-auto pt-6 space-y-3">
-            {item.kind === "product" && !isShopifyMerch && !outOfStock && (
+            {item.kind === "product" && !isShopifyMerch && !outOfStock && !atMaxInCart && (
               <div className="flex items-center gap-2" data-testid="shop-detail-qty">
                 <button onClick={() => setQty((q) => Math.max(1, q - 1))} className="w-9 h-9 rounded border border-shBorder text-shTextMuted hover:text-shText" style={{ background: "var(--sh-card-base)" }}>−</button>
                 <span className="w-8 text-center text-shText font-bold">{qty}</span>
-                <button onClick={() => setQty((q) => Math.min(maxQty, q + 1))} className="w-9 h-9 rounded border border-shBorder text-shTextMuted hover:text-shText" style={{ background: "var(--sh-card-base)" }}>+</button>
+                <button onClick={() => setQty((q) => Math.min(maxQty, q + 1))} disabled={qty >= maxQty}
+                        className="w-9 h-9 rounded border border-shBorder text-shTextMuted hover:text-shText disabled:opacity-30 disabled:cursor-not-allowed"
+                        style={{ background: "var(--sh-card-base)" }}>+</button>
               </div>
             )}
 
@@ -266,6 +282,15 @@ export default function ShopItemDetail({ kind, itemId, cart, onAddToCart, onBack
                   Sold Out
                 </button>
                 <p className="text-[12px] text-shTextMuted mt-1">This item is currently out of stock.</p>
+              </div>
+            ) : atMaxInCart ? (
+              <div>
+                <button disabled data-testid="shop-detail-purchase-disabled"
+                        className="w-full px-3 py-3 rounded-md text-[13px] font-black uppercase tracking-widest border border-shBorder text-shTextMuted cursor-not-allowed"
+                        style={{ background: "var(--sh-card-base)" }}>
+                  Max in Cart
+                </button>
+                <p className="text-[12px] text-shTextMuted mt-1">You already have the maximum available quantity ({cartQty}) in your cart.</p>
               </div>
             ) : (
               <PremiumButton variant="primary" onClick={handlePurchase} data-testid="shop-detail-purchase" className="w-full justify-center py-3">

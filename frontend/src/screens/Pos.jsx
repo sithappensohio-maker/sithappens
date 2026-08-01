@@ -17,7 +17,7 @@
  * inside those embedded, unmodified components.
  */
 import { useEffect, useMemo, useState } from "react";
-import { api } from "../lib/api";
+import { api, formatErr } from "../lib/api";
 import { useAuth } from "../lib/auth";
 import { toast } from "sonner";
 import PageHero from "../components/PageHero";
@@ -25,18 +25,24 @@ import { CheckoutModal } from "../components/CheckoutModal";
 import TakePaymentModal from "../components/TakePaymentModal";
 import StripeRefundModal from "../components/StripeRefundModal";
 import ItemThumbnail from "../components/ItemThumbnail";
+import AdminBookingModal from "../components/AdminBookingModal";
 import { RegisterTab } from "./Staff";
 import {
   checkPosHealth,
   printReceipt as posPrintReceipt,
   openDrawer as posOpenDrawer,
 } from "../lib/posAgent";
+import { useLiveRefresh } from "../lib/useLiveRefresh";
+import { useConfirm } from "../lib/useConfirm";
+import { classifyVisit, visitStatusLabel, visitCounts, filterVisits, sortVisits, isMissedCheckout } from "../lib/frontDeskVisits";
 
 const TENDER_LABELS = { cash: "Cash", check: "Check", venmo: "Venmo", paypal: "PayPal", other: "Other" };
 const money = (n) => `$${Number(n || 0).toFixed(2)}`;
 
 export default function Pos({ onOpenShopManager } = {}) {
   const { can } = useAuth();
+  const confirm = useConfirm();
+  const canBookingEdit = can("booking_edit");
   // Permission-bug checkpoint: these used to gate on a blanket `role ===
   // "admin"` check, which — since every account that can even open Front
   // Desk has `role: "admin"` regardless of its restricted `staff_role` — showed
@@ -101,6 +107,47 @@ export default function Pos({ onOpenShopManager } = {}) {
   };
 
   const registerOpen = registerStatus?.status === "OPEN";
+
+  // ── Today's Visits — the operational arrival/pickup roster ───────────────
+  // A thin front-end over the EXISTING operational roster (GET
+  // /employee/roster-today) and the EXISTING check-in/check-out endpoints —
+  // checked_in_at/checked_out_at/status on the booking document remain the
+  // only source of truth. Never a second attendance collection.
+  const [roster, setRoster] = useState([]);
+  const [rosterLoading, setRosterLoading] = useState(true);
+  const [visitsTab, setVisitsTab] = useState("expected");
+  const [visitsSearch, setVisitsSearch] = useState("");
+  const [visitsExpanded, setVisitsExpanded] = useState(false);
+  const VISITS_COLLAPSED_LIMIT = 5;
+  const [checkInBusyId, setCheckInBusyId] = useState(null);
+  const [quickCheckinOpen, setQuickCheckinOpen] = useState(false);
+
+  const loadRoster = () => api.get("/employee/roster-today")
+    .then(({ data }) => { const rows = data.roster || []; setRoster(rows); return rows; })
+    .catch(() => { setRoster([]); return []; })
+    .finally(() => setRosterLoading(false));
+  useEffect(() => { loadRoster(); }, []);
+  // 45s cadence — a lean single-endpoint roster poll, not a dashboard-style
+  // reload. Auto-pauses while CheckoutModal/AdminBookingModal hold the
+  // shared edit lock (see useEditLock in those components).
+  useLiveRefresh(loadRoster, { intervalMs: 45_000 });
+
+  const rosterCounts = useMemo(() => visitCounts(roster), [roster]);
+  const visitsFiltered = useMemo(
+    () => sortVisits(filterVisits(roster, visitsTab, visitsSearch), visitsTab),
+    [roster, visitsTab, visitsSearch],
+  );
+  const visitsVisible = visitsExpanded ? visitsFiltered : visitsFiltered.slice(0, VISITS_COLLAPSED_LIMIT);
+
+  const captureGeo = () => new Promise((resolve) => {
+    if (!navigator.geolocation) return resolve({});
+    navigator.geolocation.getCurrentPosition(
+      (pos) => resolve({ lat: pos.coords.latitude, lng: pos.coords.longitude, accuracy_m: pos.coords.accuracy }),
+      () => resolve({}),
+      { enableHighAccuracy: true, timeout: 5000, maximumAge: 30000 },
+    );
+  });
+  const [checkoutLoadingId, setCheckoutLoadingId] = useState(null);
 
   // ── Product catalog ──────────────────────────────────────────────────────
   // Front Desk product/register-integration fix — this used to call
@@ -283,27 +330,33 @@ export default function Pos({ onOpenShopManager } = {}) {
     const q = clientQuery.toLowerCase();
     return allClients.filter((c) => (c.name || "").toLowerCase().includes(q) || (c.email || "").toLowerCase().includes(q)).slice(0, 8);
   }, [clientQuery, allClients]);
-  const [clientBookings, setClientBookings] = useState([]);
+  // Sourced from the SAME roster Today's Visits reads (never a second,
+  // independently-fetched definition of "this client's bookings today") —
+  // this is also how ongoing boarding stays that began before today stay
+  // visible here, since the roster query itself now covers that range.
+  const clientBookings = useMemo(
+    () => (selectedClient ? roster.filter((r) => r.client_id === selectedClient.id) : []),
+    [roster, selectedClient],
+  );
   const [clientInvoice, setClientInvoice] = useState(null);
+  const refreshClientInvoice = (clientId) => {
+    api.get(`/clients/${clientId}/invoices`)
+      .then(({ data }) => {
+        const invoices = Array.isArray(data) ? data : [];
+        setClientInvoice(invoices.find((i) => i.balance > 0.005) || null);
+      })
+      .catch(() => {});
+  };
 
-  const pickClient = async (c) => {
+  const pickClient = (c) => {
     setSelectedClient(c); setClientQuery("");
     // Re-resolve grandfathered/client-specific pricing for this client, and
     // re-price any lines already in the cart to match (see resyncCartPricing).
     loadProducts(c.id).then(resyncCartPricing);
-    try {
-      const today = new Date().toISOString().slice(0, 10);
-      const [bk, inv] = await Promise.all([
-        api.get("/bookings", { params: { status_filter: "approved", start_date: today, end_date: today } }),
-        api.get(`/clients/${c.id}/invoices`).catch(() => ({ data: [] })),
-      ]);
-      setClientBookings((bk.data || []).filter((b) => b.client_id === c.id));
-      const invoices = Array.isArray(inv.data) ? inv.data : [];
-      setClientInvoice(invoices.find((i) => i.balance > 0.005) || null);
-    } catch { /* non-fatal — client panel just shows less */ }
+    refreshClientInvoice(c.id);
   };
   const clearClient = () => {
-    setSelectedClient(null); setClientBookings([]); setClientInvoice(null);
+    setSelectedClient(null); setClientInvoice(null);
     // Credit packs/training programs are always tied to a client account —
     // dropping to Walk-in means any such lines can no longer be sold.
     setCartLines((lines) => {
@@ -319,6 +372,48 @@ export default function Pos({ onOpenShopManager } = {}) {
   const [services, setServices] = useState([]);
   useEffect(() => { api.get("/services").then(({ data }) => setServices(data || [])).catch(() => {}); }, []);
   const [showTakePayment, setShowTakePayment] = useState(false);
+
+  // Shared by both Today's Visits' "Check Out" button and the client
+  // panel's — fetches the full booking (credit_value/actual_price/add_ons/
+  // etc., none of which the lean roster row carries) before opening the
+  // existing CheckoutModal, so pricing/credits/discounts all resolve
+  // exactly as they do everywhere else that opens this same modal.
+  const openCheckoutFor = async (bookingId) => {
+    setCheckoutLoadingId(bookingId);
+    try {
+      const { data } = await api.get(`/bookings/${bookingId}`);
+      setCheckoutBooking(data);
+    } catch (e) {
+      toast.error(formatErr(e.response?.data?.detail) || "Could not open checkout");
+    }
+    setCheckoutLoadingId(null);
+  };
+
+  const doCheckIn = async (row, vaccineAck = false) => {
+    setCheckInBusyId(row.booking_id);
+    try {
+      const geo = await captureGeo();
+      await api.post(`/bookings/${row.booking_id}/check-in`, { ...geo, vaccine_ack: vaccineAck });
+      toast.success(`${row.dog_name} checked in`);
+      loadRoster();
+      if (selectedClient?.id === row.client_id) refreshClientInvoice(selectedClient.id);
+    } catch (e) {
+      const detail = e.response?.data?.detail;
+      if (detail?.code === "vaccine_warning") {
+        const ok = await confirm({
+          title: `Vaccine warning · ${detail.dog_name || row.dog_name}`,
+          body: `${detail.message} Do not check in unless you have a verbal/written OK from the owner. Continue?`,
+          confirmText: "Check in anyway",
+          destructive: true,
+        });
+        if (ok) { await doCheckIn(row, true); return; }
+        setCheckInBusyId(null);
+        return;
+      }
+      toast.error(formatErr(detail) || "Check-in failed");
+    }
+    setCheckInBusyId(null);
+  };
 
   // ── Tender / sale completion ─────────────────────────────────────────────
   const [tenderOpen, setTenderOpen] = useState(false);
@@ -773,6 +868,114 @@ export default function Pos({ onOpenShopManager } = {}) {
         </div>
       </div>
 
+      {/* Today's Visits — arrival/pickup roster. A focused list, not a
+          second dashboard: three status tabs with counts, search, and just
+          enough per-row detail to act (check in / check out) without
+          leaving Front Desk. */}
+      <div className="bg-[var(--sh-card-base)] border border-shBorder rounded-2xl p-4" data-testid="pos-todays-visits">
+        <div className="flex items-center justify-between flex-wrap gap-2 mb-3">
+          <p className="text-shText font-black uppercase tracking-widest text-sm">
+            <i className="fas fa-paw mr-2 text-shPrimary" />Today&apos;s Visits
+          </p>
+          <div className="flex items-center gap-2">
+            {canBookingEdit && (
+              <button onClick={() => setQuickCheckinOpen(true)} data-testid="pos-quick-checkin-button"
+                      className="bg-shPrimary text-bgHeader rounded px-3 py-2 text-[11px] font-black uppercase tracking-widest">
+                <i className="fas fa-bolt mr-1" />Quick Check-In / Walk-In
+              </button>
+            )}
+            <button onClick={loadRoster} className="text-[11px] uppercase tracking-widest font-black text-shTextMuted hover:text-shPrimary">
+              <i className="fas fa-rotate-right mr-1" />Refresh
+            </button>
+          </div>
+        </div>
+
+        <div className="flex flex-wrap gap-2 mb-3">
+          {[
+            ["expected", `Expected (${rosterCounts.expected})`],
+            ["on_site", `On-Site (${rosterCounts.on_site})`],
+            ["checked_out", `Checked Out (${rosterCounts.checked_out})`],
+            ["all", `All (${roster.length})`],
+          ].map(([k, label]) => (
+            <button key={k} onClick={() => { setVisitsTab(k); setVisitsExpanded(false); }} data-testid={`pos-visits-tab-${k}`}
+                    className={`px-3 py-1.5 rounded text-[11px] font-black uppercase tracking-widest ${visitsTab === k ? "bg-shPrimary text-bgHeader" : "bg-[var(--sh-card-base)] border border-shBorder text-shTextMuted"}`}>
+              {label}
+            </button>
+          ))}
+        </div>
+        <input value={visitsSearch} onChange={(e) => setVisitsSearch(e.target.value)} placeholder="Search by dog or client name"
+               data-testid="pos-visits-search"
+               className="w-full bg-[var(--sh-card-base)] border border-shBorder rounded p-2 text-shText text-sm mb-3" />
+
+        {rosterLoading ? (
+          <p className="text-shTextMuted text-sm py-4 text-center">Loading…</p>
+        ) : visitsFiltered.length === 0 ? (
+          <p className="text-shTextMuted text-sm py-4 text-center">No visits match this filter.</p>
+        ) : (
+          <div className="space-y-2">
+            {visitsVisible.map((row) => {
+              const bucket = classifyVisit(row);
+              const label = visitStatusLabel(row);
+              const missed = isMissedCheckout(row);
+              return (
+                <div key={row.booking_id} className={`border rounded-lg p-3 ${missed ? "border-shAccent/50" : "border-shBorder"}`}
+                     data-testid={`pos-visit-row-${row.booking_id}`}>
+                  <div className="flex items-center justify-between flex-wrap gap-2">
+                    <div className="min-w-0">
+                      <p className="text-shText font-bold text-sm">
+                        {row.dog_name} <span className="text-shTextMuted font-normal">· {row.client_name}</span>
+                      </p>
+                      <p className="text-shTextMuted text-[12px]">
+                        {row.service_type}
+                        {bucket === "expected" && (row.dropoff_time || row.time) && (
+                          <> · Drop-off {row.dropoff_time || row.time}{row.pickup_time ? ` · Pickup ${row.pickup_time}` : ""}</>
+                        )}
+                        {bucket === "on_site" && (
+                          <> · Arrived {row.checked_in_at ? new Date(row.checked_in_at).toLocaleTimeString([], { hour: "numeric", minute: "2-digit" }) : "—"}
+                            {row.pickup_time ? ` · Pickup ${row.pickup_time}` : ""}</>
+                        )}
+                        {bucket === "checked_out" && (
+                          <> · In {row.checked_in_at ? new Date(row.checked_in_at).toLocaleTimeString([], { hour: "numeric", minute: "2-digit" }) : "—"}
+                            {" "}· Out {row.checked_out_at ? new Date(row.checked_out_at).toLocaleTimeString([], { hour: "numeric", minute: "2-digit" }) : "—"}</>
+                        )}
+                        {(row.kennel || row.room || row.crate || row.yard_group || row.training_group) && (
+                          <> · {[row.kennel, row.room, row.crate, row.yard_group, row.training_group].filter(Boolean).join(" / ")}</>
+                        )}
+                      </p>
+                    </div>
+                    <div className="flex items-center gap-2 shrink-0">
+                      <span className={`text-[11px] font-black uppercase tracking-widest ${
+                        missed ? "text-shAccent" : bucket === "checked_out" ? "text-shTextMuted" : bucket === "on_site" ? "text-shPrimary" : "text-shSecondary"
+                      }`}>
+                        {label}
+                      </span>
+                      {bucket === "expected" && (
+                        <button onClick={() => doCheckIn(row)} disabled={checkInBusyId === row.booking_id} data-testid={`pos-visit-checkin-${row.booking_id}`}
+                                className="bg-shPrimary text-bgHeader rounded-lg px-4 py-2.5 text-[12px] font-black uppercase tracking-widest disabled:opacity-50">
+                          {checkInBusyId === row.booking_id ? "Checking In…" : "Check In"}
+                        </button>
+                      )}
+                      {bucket === "on_site" && (
+                        <button onClick={() => openCheckoutFor(row.booking_id)} disabled={checkoutLoadingId === row.booking_id} data-testid={`pos-visit-checkout-${row.booking_id}`}
+                                className="bg-[var(--sh-card-base)] border border-shPrimary text-shPrimary rounded-lg px-4 py-2.5 text-[12px] font-black uppercase tracking-widest disabled:opacity-50">
+                          {checkoutLoadingId === row.booking_id ? "Loading…" : "Check Out"}
+                        </button>
+                      )}
+                    </div>
+                  </div>
+                </div>
+              );
+            })}
+          </div>
+        )}
+        {!rosterLoading && visitsFiltered.length > VISITS_COLLAPSED_LIMIT && (
+          <button onClick={() => setVisitsExpanded((v) => !v)} data-testid="pos-visits-expand"
+                  className="mt-3 text-[11px] font-black uppercase tracking-widest text-shPrimary">
+            {visitsExpanded ? "Show fewer" : `Show all ${visitsFiltered.length}`}
+          </button>
+        )}
+      </div>
+
       {!registerOpen && (
         <div className="bg-[var(--sh-card-base)] border border-shAccent/40 rounded-2xl p-4 flex items-center gap-3 flex-wrap">
           <span className="text-shAccent font-black uppercase text-sm tracking-widest">Register Closed</span>
@@ -1051,12 +1254,40 @@ export default function Pos({ onOpenShopManager } = {}) {
                       Pay Account / Tab
                     </button>
                   )}
-                  {clientBookings.map((b) => (
-                    <button key={b.id} onClick={() => setCheckoutBooking(b)}
-                            className="w-full bg-[var(--sh-card-base)] border border-shBorder hover:border-shPrimary/50 rounded-xl py-3 font-black uppercase tracking-widest text-sm text-shText">
-                      Check Out {b.dog_name} ({b.service_type})
-                    </button>
-                  ))}
+                  {/* Status-aware — never a blanket "Check Out {dog}" label
+                      regardless of whether the dog has even arrived yet.
+                      Reads the same roster rows as Today's Visits, so this
+                      panel can never disagree with it about who's expected/
+                      on-site (also naturally covers ongoing boarding stays
+                      that began before today). */}
+                  {clientBookings.map((b) => {
+                    const bucket = classifyVisit(b);
+                    if (bucket === "checked_out") {
+                      return (
+                        <div key={b.booking_id}
+                             className="w-full bg-[var(--sh-card-base)] border border-shBorder rounded-xl py-3 font-black uppercase tracking-widest text-sm text-shTextMuted text-center">
+                          Checked Out · {b.dog_name} ({b.service_type}) · {new Date(b.checked_out_at).toLocaleTimeString([], { hour: "numeric", minute: "2-digit" })}
+                        </div>
+                      );
+                    }
+                    if (bucket === "on_site") {
+                      return (
+                        <button key={b.booking_id} onClick={() => openCheckoutFor(b.booking_id)} disabled={checkoutLoadingId === b.booking_id}
+                                data-testid={`pos-client-checkout-${b.booking_id}`}
+                                className="w-full bg-[var(--sh-card-base)] border border-shBorder hover:border-shPrimary/50 rounded-xl py-3 font-black uppercase tracking-widest text-sm text-shText disabled:opacity-50">
+                          {checkoutLoadingId === b.booking_id ? "Loading…" : `Check Out ${b.dog_name} (${b.service_type})`}
+                          {isMissedCheckout(b) && <span className="ml-2 text-shAccent">· Missed Checkout</span>}
+                        </button>
+                      );
+                    }
+                    return (
+                      <button key={b.booking_id} onClick={() => doCheckIn(b)} disabled={checkInBusyId === b.booking_id}
+                              data-testid={`pos-client-checkin-${b.booking_id}`}
+                              className="w-full bg-shPrimary/10 border border-shPrimary/40 hover:border-shPrimary rounded-xl py-3 font-black uppercase tracking-widest text-sm text-shPrimary disabled:opacity-50">
+                        {checkInBusyId === b.booking_id ? "Checking In…" : `Check In ${b.dog_name} (${b.service_type})`}
+                      </button>
+                    );
+                  })}
                 </div>
               </div>
             )}
@@ -1233,7 +1464,25 @@ export default function Pos({ onOpenShopManager } = {}) {
         <CheckoutModal
           booking={checkoutBooking}
           services={services}
-          onClose={() => { setCheckoutBooking(null); clearClient(); }}
+          // Refreshes Today's Visits + the selected client's invoice either
+          // way (cancel or confirm) — closing without confirming never
+          // stamps anything, so a refresh after a cancel just shows the
+          // dog exactly where it already was (still On-Site). No longer
+          // force-clears the selected client: "Refresh the selected
+          // client"/"invoice information" implies staying on them, e.g. to
+          // take payment on their tab right after.
+          onClose={() => {
+            setCheckoutBooking(null);
+            loadRoster();
+            if (selectedClient) refreshClientInvoice(selectedClient.id);
+          }}
+        />
+      )}
+      {quickCheckinOpen && (
+        <AdminBookingModal
+          defaultCheckIn={true}
+          onClose={() => setQuickCheckinOpen(false)}
+          onCreated={() => { setQuickCheckinOpen(false); loadRoster(); }}
         />
       )}
       {showTakePayment && selectedClient && (
