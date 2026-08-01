@@ -34,7 +34,18 @@ def staff_headers(admin_headers):
                   json={"name": f"Care {suffix}", "email": email, "password": pw, "hourly_rate": 18.0},
                   timeout=15).raise_for_status()
     login = requests.post(f"{API}/auth/login", json={"email": email, "password": pw}, timeout=15).json()
-    return {"Authorization": f"Bearer {login['token']}"}
+    # A freshly created employee always has must_change_password=True (a
+    # real, intentional security gate — see POST /admin/employees in
+    # server.py), which blocks every endpoint except /auth/me and
+    # /auth/change-password. Complete that forced change for real, the same
+    # way a real employee's first login would.
+    changed = requests.post(
+        f"{API}/auth/change-password",
+        json={"current_password": pw, "new_password": f"{pw}New1"},
+        headers={"Authorization": f"Bearer {login['token']}"},
+        timeout=15,
+    ).json()
+    return {"Authorization": f"Bearer {changed['token']}"}
 
 
 @pytest.fixture

@@ -17,6 +17,7 @@ disposable rows, tagged "TEST_POS_CHECKOUT", and deletes them in a
 import uuid
 from unittest.mock import patch
 
+import _test_env  # noqa: F401 — must run before `import server`, see its docstring
 import server
 from _test_loop import run  # shared across every test_*.py file — see its docstring
 

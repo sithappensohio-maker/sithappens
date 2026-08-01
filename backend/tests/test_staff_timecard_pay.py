@@ -51,8 +51,23 @@ def _seed_employee_with_rate(headers, rate=18.50):
     )
     if login.status_code != 200:
         pytest.skip(f"could not log in as employee: {login.text}")
+    # Both the create and the admin-reset-password path always set
+    # must_change_password=True (a real, intentional security gate — see
+    # POST /admin/employees/{id}/reset-password in server.py), which blocks
+    # every endpoint except /auth/me and /auth/change-password. Complete
+    # that forced change for real, the same way a real employee's first
+    # login after a reset would, instead of working around the gate.
+    final_pw = f"{new_pw}Chg1"
+    changed = requests.post(
+        f"{BASE}/api/auth/change-password",
+        json={"current_password": new_pw, "new_password": final_pw},
+        headers={"Authorization": f"Bearer {login.json()['token']}"},
+        timeout=15,
+    )
+    if changed.status_code != 200:
+        pytest.skip(f"could not complete forced password change: {changed.text}")
     return {
-        "token": login.json()["token"],
+        "token": changed.json()["token"],
         "user_id": emp["id"],
         "email": emp["email"],
         "rate": rate,

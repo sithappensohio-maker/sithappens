@@ -134,12 +134,20 @@ def test_waitlist_full_lifecycle(admin_headers):
         assert final["status"] == "booked"
         assert final["booking_id"] == booking_id
 
-        # ── Can't convert a booked entry again
+        # ── Can't convert a booked entry again. convert_waitlist_to_booking
+        # uses an atomic find_one_and_update claim (status must still be
+        # waiting/offered) — a second attempt against an already-booked
+        # entry fails that claim and correctly returns 409 Conflict (the
+        # entry exists and the request is well-formed, it's just in a
+        # conflicting state), matching every other atomic-claim endpoint in
+        # this codebase (e.g. pos_sale_claims, payment_void_claims). Was
+        # previously asserted as 400 here — that was stale, not a
+        # regression; production behavior is unchanged and intentional.
         again = requests.post(
             f"{BASE}/api/waitlist/{eid}/convert-to-booking",
             headers=admin_headers, timeout=15,
         )
-        assert again.status_code == 400
+        assert again.status_code == 409
 
         # cleanup booking
         requests.delete(f"{BASE}/api/bookings/{booking_id}", headers=admin_headers, timeout=15)

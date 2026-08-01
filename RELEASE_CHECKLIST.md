@@ -33,16 +33,136 @@ until it's removed from tracking (`git rm --cached <path>` + add it to
 - Confirm the new backup file actually landed and has a non-trivial size —
   don't trust a job that "ran" silently.
 
-**Backend test suite**
+**Backend test suite — focused/ad hoc tests (isolated test database)**
 ```bash
 cd backend
-"./.venv_local_test/Scripts/python.exe" -m pytest -v
+"./.venv_local_test/Scripts/python.exe" -m pytest test_pos_catalog.py test_pos_checkout_integrity.py test_front_desk_checkin.py test_shop_manager_polish.py -v
 cd ..
 ```
-All tests should pass. If any fail, do not deploy — fix or explicitly
-document the failure and its cause first (see the release report format for
-what "explicitly document" means: reproduce it, name the file responsible,
-never wave it off as "unrelated" without doing that).
+These four files run against a dedicated, disposable database
+(`sit_happens_test_disposable`, or `$SIT_HAPPENS_TEST_DB_NAME` if set) —
+never the real local dev database (`sit_happens_local_test`). Every file
+starts with `import _test_env` before `import server`; that import claims
+`DB_NAME` before `server.py`'s own `load_dotenv()` call can set it from
+`.env`, then synchronously drops the disposable database so every run
+starts from a guaranteed-empty state — no manual clearing, no dependency on
+leftover data or run order. `_test_env.assert_safe_test_db_name()` refuses
+to treat any name without `test` in it (and a short list of real/reserved
+names) as disposable, so a misconfiguration can never point destructive
+cleanup at real data. `_test_loop.py` then replicates the production
+`startup()` index creation (including the unique indexes several
+idempotency guards depend on) against the fresh database, since calling
+`server`'s functions directly never goes through FastAPI's lifespan.
+All 41 tests must pass.
+
+**Backend test suite — full suite (includes the legacy `tests/` directory)**
+
+Unlike the four ad hoc files above, `backend/tests/*.py` are HTTP-based —
+they call a real, separately running `uvicorn` server rather than importing
+`server.py` in-process, so they need that server up first, pointed at a
+test database, with `BACKUP_ROOT` set to a disposable directory (never the
+real local dev database or the real backup folder):
+```bash
+cd backend
+export MONGO_URL="mongodb://127.0.0.1:27017"
+export DB_NAME="sit_happens_test_disposable"        # never sit_happens_local_test
+export JWT_SECRET="$(grep -E '^JWT_SECRET=' .env | cut -d= -f2-)"
+export BACKUP_ROOT="$(pwd)/_local_test_backups"      # isolated test dir, not /app/backups
+export TEST_BACKEND_URL="http://127.0.0.1:8010"      # a port not used by your normal dev server
+nohup "./.venv_local_test/Scripts/python.exe" -m uvicorn server:app --host 0.0.0.0 --port 8010 > /tmp/test_server.log 2>&1 &
+"./.venv_local_test/Scripts/python.exe" -m pytest -v
+kill %1   # stop the test-only server when done
+cd ..
+```
+`tests/test_sprint_110di_25.py`'s backup-snapshot check reads `BACKUP_ROOT`
+from the environment the same way `server.py` does — it will look in
+whatever directory the server above was actually started with, so the two
+must agree. All tests should pass. If any fail, do not deploy — fix or
+explicitly document the failure and its cause first (see the release report
+format for what "explicitly document" means: reproduce it, name the file
+responsible, never wave it off as "unrelated" without doing that).
+
+**Backend test suite — release-critical gate**
+
+The full legacy `tests/` suite (previous section) has ~150 files, many of
+which assume a long-lived, already-onboarded dev database (specific
+settings, specific named employees, historical seed content) that a
+genuinely clean database doesn't have — that's real, separate technical
+debt, not something this phase attempts to fix wholesale. The
+release-critical gate is a curated subset: every file in it is verified to
+pass 100% clean from a byte-fresh, isolated database, so it's the command
+to actually trust before shipping.
+
+```bash
+cd backend
+mkdir -p _test_release_critical_backups
+export MONGO_URL="mongodb://127.0.0.1:27017"
+export DB_NAME="sit_happens_test_release_critical"     # never sit_happens_local_test
+export JWT_SECRET="$(grep -E '^JWT_SECRET=' .env | cut -d= -f2-)"
+export STRIPE_WEBHOOK_SECRET="$(grep -E '^STRIPE_WEBHOOK_SECRET=' .env | cut -d= -f2-)"
+export ADMIN_EMAIL="admin@sithappens.com"
+export ADMIN_PASSWORD="admin123"                        # legacy suite hardcodes this
+export BACKUP_ROOT="$(pwd)/_test_release_critical_backups"
+export TEST_BACKEND_URL="http://127.0.0.1:8011"          # a port not used by your normal dev server
+nohup "./.venv_local_test/Scripts/python.exe" -m uvicorn server:app --host 127.0.0.1 --port 8011 > /tmp/rc_server.log 2>&1 &
+sleep 4
+
+# The four ad hoc files (see above) — always run these too, they're the
+# other half of release-critical coverage (checkout atomicity/idempotency,
+# multi-dog household checkout, cash-register-day enforcement, stock
+# movements) and don't need this server.
+"./.venv_local_test/Scripts/python.exe" -m pytest test_pos_catalog.py test_pos_checkout_integrity.py test_front_desk_checkin.py test_shop_manager_polish.py -v
+
+# The 16-file curated legacy set — a single command, resets the database
+# (including rebuilding indexes) before every file:
+"./.venv_local_test/Scripts/python.exe" tests/run_release_critical.py
+
+kill %1   # stop the test-only server when done
+cd ..
+```
+
+`tests/release_critical_reset.py` rebuilds indexes after every reset
+because dropping the database also drops the unique `idempotency_key`
+indexes several checkout/payment tests rely on to detect a duplicate
+request — those indexes only get created by a real app's FastAPI startup
+lifespan, which the HTTP-based legacy suite's server process runs exactly
+once, not once per test file. Skipping this step causes false idempotency
+failures that look like real bugs but aren't (found and fixed during this
+gate's construction — `test_pos_register.py`, `test_shop_checkout.py`, and
+`test_pos_inventory.py` all went from failing to 100% clean once this was
+corrected).
+
+Current release-critical coverage, all passing clean (232 legacy tests
+across 16 files + 41 ad hoc tests — see `tests/run_release_critical.py`
+for the exact file list):
+- Authentication and permissions
+- Client and dog records (partial — `test_dogs_endpoint_coercion.py`)
+- Check-in and checkout, multi-dog household checkout (ad hoc suite)
+- Cash register enforcement
+- Credits and credit lots
+- Shop catalog and checkout, online-order fulfillment
+- Inventory reservations
+- Backups and restore validation
+- Data export
+
+**Known gap — not covered by a clean-database run today** (tracked as a
+separate test-infrastructure follow-up, not silently skipped or hidden):
+booking creation/approval (`test_sithappens.py::TestBookings`,
+`test_sprint3.py`'s auto-approve/cutoff/training-booking tests),
+invoices and payments (`test_invoice_foundation.py`,
+`test_invoice_topup_payments.py`, `test_partial_payment.py`,
+`test_payment_plans.py`), Stripe/webhook integrity
+(`test_stripe_online_payments.py` — 39/45 tests need Stripe-specific
+fixtures a clean database doesn't provide), boarding/daycare pricing edge
+cases and shop category management (`test_stay_pricing.py`,
+`test_shop_categories.py`), and a few permission-matrix-shape assertions
+(`test_permission_matrix.py`, `test_roles_permissions.py`). All of these
+were spot-checked to fail even in complete single-file isolation with a
+correctly-indexed database — they're not cross-file pollution, they
+genuinely assume pre-existing settings/services/data that only exist on a
+long-lived, manually-onboarded database. Closing this gap means building
+proper seed fixtures for these areas — real, worthwhile work, but a
+separate effort from this release-readiness pass.
 
 **Frontend test suite**
 ```bash

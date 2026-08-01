@@ -7,6 +7,15 @@ BASE_URL = os.environ.get("REACT_APP_BACKEND_URL", os.environ.get("TEST_BACKEND_
 ADMIN_EMAIL = "admin@sithappens.com"
 ADMIN_PASS = "admin123"
 
+# Mirrors server.py's own BACKUP_ROOT resolution exactly (env override,
+# `/app/backups` fallback for a real Docker/Linux deployment) instead of
+# hardcoding the Linux path — this test process must check the same
+# location the server it's calling actually writes to. On this local
+# Windows dev setup that's an isolated test directory pointed to by
+# BACKUP_ROOT in backend/.env (see RELEASE_CHECKLIST.md), never the real
+# production default, which stays untouched here.
+BACKUP_ROOT = os.path.realpath(os.environ.get("BACKUP_ROOT", "/app/backups"))
+
 
 @pytest.fixture(scope="module")
 def admin_token():
@@ -61,10 +70,16 @@ class TestConfigBackupPreRestoreSnapshot:
         assert snap.get("ok") is True, f"pre_restore_snapshot.ok != true: {snap}"
         fn = snap.get("filename", "")
         assert fn.startswith("pre-restore-config-"), f"snapshot filename bad prefix: {fn!r}"
-        # Verify it is reachable on disk
-        path = f"/app/backups/{fn}"
-        assert os.path.exists(path), f"snapshot file missing on disk: {path}"
-        print(f"pre_restore_snapshot OK: {fn} ({os.path.getsize(path)} bytes)")
+        # Verify it is reachable on disk, then clean up the disposable
+        # snapshot this test itself triggered — a single named file, never
+        # anything else in the backup directory.
+        path = os.path.join(BACKUP_ROOT, fn)
+        try:
+            assert os.path.exists(path), f"snapshot file missing on disk: {path}"
+            print(f"pre_restore_snapshot OK: {fn} ({os.path.getsize(path)} bytes)")
+        finally:
+            if os.path.exists(path):
+                os.remove(path)
 
 
 # === Client Portal Controls toggle smoke ===
