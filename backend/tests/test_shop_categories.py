@@ -68,7 +68,13 @@ def _client_headers(client_id, email):
 
 
 def _make_category(admin_headers, **overrides):
-    body = {"name": f"Category {uuid.uuid4().hex[:8]}"}
+    # Shop Manager unification (a later phase than this file) made `section`
+    # a required, immutable field — the permanent top-level section
+    # (merch/prepaid_visits/training) a category lives inside, derived from
+    # whichever item kind it's meant to hold (see SHOP_SECTION_FOR_KIND).
+    # Default to "merch" since most scenarios here only ever assign
+    # physical products; tests exercising a different kind pass their own.
+    body = {"name": f"Category {uuid.uuid4().hex[:8]}", "section": "merch"}
     body.update(overrides)
     r = requests.post(f"{API}/shop/categories", headers=admin_headers, json=body, timeout=15)
     assert r.status_code == 200, r.text
@@ -190,7 +196,7 @@ def test_assign_physical_product(admin_headers):
 
 
 def test_assign_credit_pack(admin_headers):
-    cat = _make_category(admin_headers)
+    cat = _make_category(admin_headers, section="prepaid_visits")
     try:
         pack = _make_pack(admin_headers, category_id=cat["id"])
         assert pack["category_id"] == cat["id"]
@@ -200,7 +206,7 @@ def test_assign_credit_pack(admin_headers):
 
 
 def test_assign_training_program(admin_headers):
-    cat = _make_category(admin_headers)
+    cat = _make_category(admin_headers, section="training")
     try:
         program = _make_program(admin_headers, category_id=cat["id"])
         assert program["category_id"] == cat["id"]
@@ -493,7 +499,7 @@ def test_permission_enforcement_requires_manage_permission():
     token = jwt.encode({"sub": user_id, "type": "access", "ver": 0}, JWT_SECRET, algorithm="HS256")
     headers = {"Authorization": f"Bearer {token}"}
 
-    r = requests.post(f"{API}/shop/categories", headers=headers, json={"name": "Should Fail Too"}, timeout=15)
+    r = requests.post(f"{API}/shop/categories", headers=headers, json={"name": "Should Fail Too", "section": "merch"}, timeout=15)
     assert r.status_code == 403
 
 
@@ -547,7 +553,7 @@ def test_catalog_item_carries_category_context_for_search(admin_headers, fresh_c
 def test_duplicate_active_category_name_rejected(admin_headers):
     cat = _make_category(admin_headers, name="Dupe Name Category")
     try:
-        r = requests.post(f"{API}/shop/categories", headers=admin_headers, json={"name": "Dupe Name Category"}, timeout=15)
+        r = requests.post(f"{API}/shop/categories", headers=admin_headers, json={"name": "Dupe Name Category", "section": "merch"}, timeout=15)
         assert r.status_code == 409
     finally:
         _delete_category(admin_headers, cat["id"])
@@ -664,55 +670,71 @@ def test_bulk_assign_rejects_inactive_category(admin_headers):
 
 
 def test_bulk_assign_across_all_three_item_kinds(admin_headers):
-    cat = _make_category(admin_headers)
+    """Shop Manager unification (a later phase than this file) scopes every
+    category to exactly one permanent section, derived from the item kind
+    it holds (merch/prepaid_visits/training — see SHOP_SECTION_FOR_KIND).
+    One shared category across all three kinds is no longer possible by
+    design; bulk-assign each kind to its own section-matched category
+    instead, in three separate calls (bulk-assign takes one category_id
+    per request)."""
+    cat_merch = _make_category(admin_headers, section="merch")
+    cat_prepaid = _make_category(admin_headers, section="prepaid_visits")
+    cat_training = _make_category(admin_headers, section="training")
     product = _make_product(admin_headers)
     pack = _make_pack(admin_headers)
     program = _make_program(admin_headers)
     try:
-        r = requests.post(f"{API}/shop/items/bulk-assign", headers=admin_headers, json={
-            "items": [
-                {"kind": "physical_product", "id": product["id"]},
-                {"kind": "credit_pack", "id": pack["id"]},
-                {"kind": "training_program", "id": program["id"]},
-            ],
-            "category_id": cat["id"], "subcategory_id": None,
-        }, timeout=15)
-        assert r.status_code == 200, r.text
-        assert r.json()["updated"] == 3
-        assert r.json()["errors"] == []
+        for kind, item_id, cat in (
+            ("physical_product", product["id"], cat_merch),
+            ("credit_pack", pack["id"], cat_prepaid),
+            ("training_program", program["id"], cat_training),
+        ):
+            r = requests.post(f"{API}/shop/items/bulk-assign", headers=admin_headers, json={
+                "items": [{"kind": kind, "id": item_id}],
+                "category_id": cat["id"], "subcategory_id": None,
+            }, timeout=15)
+            assert r.status_code == 200, r.text
+            assert r.json()["updated"] == 1
+            assert r.json()["errors"] == []
 
         p = requests.get(f"{API}/pos/products", headers=admin_headers, params={"include_inactive": "true"}, timeout=15).json()
-        assert next(x for x in p if x["id"] == product["id"])["category_id"] == cat["id"]
+        assert next(x for x in p if x["id"] == product["id"])["category_id"] == cat_merch["id"]
         packs = requests.get(f"{API}/credit-packs", headers=admin_headers, params={"include_inactive": "true"}, timeout=15).json()
-        assert next(x for x in packs if x["id"] == pack["id"])["category_id"] == cat["id"]
+        assert next(x for x in packs if x["id"] == pack["id"])["category_id"] == cat_prepaid["id"]
         programs = requests.get(f"{API}/programs", headers=admin_headers, timeout=15).json()
-        assert next(x for x in programs if x["id"] == program["id"])["category_id"] == cat["id"]
+        assert next(x for x in programs if x["id"] == program["id"])["category_id"] == cat_training["id"]
     finally:
         requests.delete(f"{API}/pos/products/{product['id']}", headers=admin_headers, timeout=15)
         requests.delete(f"{API}/credit-packs/{pack['id']}", headers=admin_headers, params={"force": "true"}, timeout=15)
         requests.delete(f"{API}/programs/{program['id']}", headers=admin_headers, timeout=15)
-        _delete_category(admin_headers, cat["id"])
+        _delete_category(admin_headers, cat_merch["id"])
+        _delete_category(admin_headers, cat_prepaid["id"])
+        _delete_category(admin_headers, cat_training["id"])
 
 
 def test_catalog_carries_category_context_for_all_three_kinds(admin_headers, fresh_client):
     """Client Shop filtering runs client-side over GET /shop/catalog's unified
     item list — this proves that list carries category/subcategory context
     identically for products, credit packs, AND training programs, not just
-    products."""
-    cat = _make_category(admin_headers, name=f"Tri-Kind Category {uuid.uuid4().hex[:6]}")
-    product = _make_product(admin_headers, category_id=cat["id"])
-    pack = _make_pack(admin_headers, category_id=cat["id"])
-    program = _make_program(admin_headers, category_id=cat["id"])
+    products. Each kind gets its own section-matched category (Shop Manager
+    unification, a later phase than this file, makes one shared category
+    across kinds structurally impossible — see SHOP_SECTION_FOR_KIND)."""
+    cat_merch = _make_category(admin_headers, name=f"Tri-Kind Merch {uuid.uuid4().hex[:6]}", section="merch")
+    cat_prepaid = _make_category(admin_headers, name=f"Tri-Kind Prepaid {uuid.uuid4().hex[:6]}", section="prepaid_visits")
+    cat_training = _make_category(admin_headers, name=f"Tri-Kind Training {uuid.uuid4().hex[:6]}", section="training")
+    product = _make_product(admin_headers, category_id=cat_merch["id"])
+    pack = _make_pack(admin_headers, category_id=cat_prepaid["id"])
+    program = _make_program(admin_headers, category_id=cat_training["id"])
     try:
         client_hdrs = _client_headers(fresh_client["id"], fresh_client["email"])
         r = requests.get(f"{API}/shop/catalog", headers=client_hdrs, timeout=15)
         assert r.status_code == 200, r.text
         items = r.json()["items"]
         by_id = {i["id"]: i for i in items}
-        for expected_kind, item_id in (
-            ("product", product["id"]),
-            ("credit_pack", pack["id"]),
-            ("training_program", program["id"]),
+        for expected_kind, item_id, cat in (
+            ("product", product["id"], cat_merch),
+            ("credit_pack", pack["id"], cat_prepaid),
+            ("training_program", program["id"], cat_training),
         ):
             item = by_id.get(item_id)
             assert item is not None, f"{expected_kind} missing from catalog"
@@ -723,4 +745,6 @@ def test_catalog_carries_category_context_for_all_three_kinds(admin_headers, fre
         requests.delete(f"{API}/pos/products/{product['id']}", headers=admin_headers, timeout=15)
         requests.delete(f"{API}/credit-packs/{pack['id']}", headers=admin_headers, params={"force": "true"}, timeout=15)
         requests.delete(f"{API}/programs/{program['id']}", headers=admin_headers, timeout=15)
-        _delete_category(admin_headers, cat["id"])
+        _delete_category(admin_headers, cat_merch["id"])
+        _delete_category(admin_headers, cat_prepaid["id"])
+        _delete_category(admin_headers, cat_training["id"])

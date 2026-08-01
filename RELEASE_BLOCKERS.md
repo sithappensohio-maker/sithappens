@@ -132,6 +132,20 @@ production defects; the extensive webhook idempotency, replay,
 concurrent-resume, and refund-reversal logic all held up correctly once
 the fixture could actually reach checkout.
 
-## Remaining clusters
+### Cluster 6 — Shop category/schema compatibility
 
-Not yet started: shop category/schema compatibility.
+| Test file | Failing scenario | Classification | Production affected? | Fix | Current isolated result |
+|---|---|---|---|---|---|
+| `test_shop_categories.py` (30 of 33 tests) | `422 "section: Field required"` on every category creation | Stale fixture | No — Shop Manager unification (a later, documented phase than this file — see `SHOP_SECTION_FOR_KIND`/`ShopCategoryIn.section`) made `section` (`merch`/`prepaid_visits`/`training`) a required, immutable field so a category is scoped to exactly one permanent top-level section derived from the item kind it holds | `_make_category` test helper now defaults `section="merch"`; the one direct (non-helper) category-creation call got the same field | — |
+| `test_shop_categories.py::test_assign_credit_pack`, `test_assign_training_program` | Same `422`, plus these specifically need a category matching their item's kind | Stale fixture | No — same reason | Pass `section="prepaid_visits"` / `section="training"` respectively | — |
+| `test_shop_categories.py::test_bulk_assign_across_all_three_item_kinds`, `test_catalog_carries_category_context_for_all_three_kinds` | Originally assumed ONE shared category could hold a physical product, a credit pack, AND a training program | Stale test premise | No — `SHOP_SECTION_FOR_KIND` now makes that structurally impossible by design (each kind belongs to exactly one section) | Rewrote both to create one section-matched category per kind (3 categories) instead of one shared category, and assign/verify each item against its own matching category | 33/33 clean |
+| `test_shop_categories.py::test_permission_enforcement_requires_manage_permission` | Same `422` masking the intended `403` — FastAPI validates the request body before the endpoint's own `_require_shop_org_perm` permission check runs, so a body missing the now-required `section` field never reaches the permission-denial code path at all | Stale fixture | No | Added `section: "merch"` to the request body so the test actually exercises the permission gate it's named for | — |
+| `test_backend_permission_checkpoint.py::test_front_desk_cannot_create_shop_category` (Cluster 1 file, same root cause) | Identical `422`-masks-`403` issue | Stale fixture | No | Same fix: added `section: "merch"` to the request body | 36/36 clean (1 pre-existing unrelated skip) |
+
+Both files verified together against one freshly reset DB: **69/69
+passing**. Zero production defects — the `section` requirement and its
+kind-scoping enforcement are correct, deliberate, already-shipped
+behavior from the Shop Manager unification project; every failure here
+was this test suite predating that schema change.
+
+## All six critical clusters complete.

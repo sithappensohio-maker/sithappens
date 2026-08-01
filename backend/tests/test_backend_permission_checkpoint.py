@@ -239,8 +239,12 @@ def test_front_desk_cannot_view_shop_categories(staff_tokens):
 
 
 def test_front_desk_cannot_create_shop_category(staff_tokens):
+    # Shop Manager unification (a later phase than this test) made `section`
+    # a required field on category creation — must be present so the
+    # request actually reaches the permission check instead of 422ing on
+    # body validation first.
     r = requests.post(f"{API}/shop/categories", headers=staff_tokens["front_desk"],
-                       json={"name": "should not be created"}, timeout=15)
+                       json={"name": "should not be created", "section": "merch"}, timeout=15)
     assert r.status_code == 403, r.text
 
 
