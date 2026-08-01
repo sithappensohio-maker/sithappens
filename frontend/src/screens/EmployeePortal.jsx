@@ -8,7 +8,7 @@
 //   4. Profile — view own info, change password
 //
 // Sensitive admin data (income, P&L, settings, billing) is NOT reachable.
-import { useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useState } from "react";
 import { api, formatErr } from "../lib/api";
 import { useAuth } from "../lib/auth";
 import BrandFooter from "../components/BrandFooter";
@@ -474,11 +474,11 @@ function TimecardTab() {
   // {date: ""} = blank "I forgot entirely" form.
   const [correctionFor, setCorrectionFor] = useState(null);
   const [showHistory, setShowHistory] = useState(false);
-  const load = async () => {
+  const load = useCallback(async () => {
     try { const r = await api.get("/time-clock/me", { params: { days } }); setData(r.data); }
     catch (e) { setErr(formatErr(e.response?.data?.detail)); }
-  };
-  useEffect(() => { load(); /* eslint-disable-next-line */ }, [days]);
+  }, [days]);
+  useEffect(() => { load(); }, [load]);
   // Sprint 110ba — tick the running-pay clock every 30s if currently clocked in
   useEffect(() => {
     if (!data?.live) return;

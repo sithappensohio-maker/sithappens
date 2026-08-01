@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { useCallback, useEffect, useState } from "react";
 import { api } from "../lib/api";
 import { toast } from "sonner";
 
@@ -25,12 +25,12 @@ export default function ShopCategoryFields({ categoryId, subcategoryId, section,
   const [newCategoryName, setNewCategoryName] = useState("");
   const [savingNew, setSavingNew] = useState(false);
 
-  const load = () => {
+  const load = useCallback(() => {
     api.get("/shop/categories", { params: { include_inactive: true, ...(section ? { section } : {}) } })
       .then(({ data }) => setCategories(data.categories || []))
       .catch(() => setCategories([]));
-  };
-  useEffect(() => { load(); /* eslint-disable-next-line react-hooks/exhaustive-deps */ }, [section]);
+  }, [section]);
+  useEffect(() => { load(); }, [load]);
 
   const selectedCategory = categories.find((c) => c.id === categoryId);
   const categoryIsInactive = !!selectedCategory && !selectedCategory.active;

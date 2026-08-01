@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useState } from "react";
 import { api, formatErr } from "../lib/api";
 import { useEditLock } from "../lib/useLiveRefresh";
 
@@ -317,7 +317,7 @@ export default function LegacyPricingModal({ client, onClose }) {
   const [err, setErr] = useState("");
   const [draft, setDraft] = useState({ target_kind: "service", target_code: "", override_price: "", starts_on: "", expires_on: "" });
 
-  const load = async () => {
+  const load = useCallback(async () => {
     setLoading(true);
     try {
       const [over, svcs, pcks, prods] = await Promise.all([
@@ -338,8 +338,8 @@ export default function LegacyPricingModal({ client, onClose }) {
     } finally {
       setLoading(false);
     }
-  };
-  useEffect(() => { load(); /* eslint-disable-next-line */ }, [showExpired]);
+  }, [client.id, showExpired]);
+  useEffect(() => { load(); }, [load]);
 
   const catalogFor = (kind) => (kind === "service" ? services : kind === "credit_pack" ? packs : products);
 

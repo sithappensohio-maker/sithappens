@@ -1,4 +1,4 @@
-import { useEffect, useState, useRef } from "react";
+import { useCallback, useEffect, useState, useRef } from "react";
 import { api } from "../lib/api";
 
 const MOOD_EMOJI = ["", "😞", "😅", "😐", "💪", "😄"];
@@ -43,8 +43,13 @@ export default function DailyCheckInCard({ homeworkId, onChanged, hideActionable
   const [remindersOpen, setRemindersOpen] = useState(false);
   const photoRef = useRef(null);
   const videoRef = useRef(null);
+  // Read openDay's latest value inside `load` without making it a reactive
+  // dependency — `load` must only re-run (and re-fetch) when `homeworkId`
+  // changes, never merely because the user opened/closed a day row.
+  const openDayRef = useRef(openDay);
+  openDayRef.current = openDay;
 
-  const load = async () => {
+  const load = useCallback(async () => {
     setLoading(true);
     try {
       const { data } = await api.get(`/homework/${homeworkId}`);
@@ -52,7 +57,7 @@ export default function DailyCheckInCard({ homeworkId, onChanged, hideActionable
       const next = (data.daily_progress || []).find(p => p.status === "available" || p.status === "needs_redo");
       // Sprint 109 — when Today's Plan card now hosts the actionable day's form,
       // don't auto-open it here too (would render the same form twice).
-      if (next && openDay === null && !hideActionableForm) {
+      if (next && openDayRef.current === null && !hideActionableForm) {
         setOpenDay(next.day_number);
         if (next.log) {
           const fv = { ...(next.log.field_values || {}) };
@@ -66,8 +71,8 @@ export default function DailyCheckInCard({ homeworkId, onChanged, hideActionable
       }
     } catch (e) { setErr(e.response?.data?.detail || "Failed to load"); }
     finally { setLoading(false); }
-  };
-  useEffect(() => { load(); /* eslint-disable-next-line */ }, [homeworkId]);
+  }, [homeworkId, hideActionableForm]);
+  useEffect(() => { load(); }, [load]);
 
   const openDayCard = (day) => {
     setOpenDay(day.day_number);

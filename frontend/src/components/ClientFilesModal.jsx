@@ -4,7 +4,7 @@
 // note, and download/delete actions. Clients see the same files in their
 // portal automatically.
 
-import { useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { api, formatErr } from "../lib/api";
 
 const MAX_BYTES = 10 * 1024 * 1024;
@@ -19,7 +19,7 @@ export default function ClientFilesModal({ client, onClose }) {
   const [dogId, setDogId] = useState("");
   const inputRef = useRef(null);
 
-  const reload = async () => {
+  const reload = useCallback(async () => {
     setLoading(true);
     try {
       const [{ data: f }, { data: d }] = await Promise.all([
@@ -32,9 +32,9 @@ export default function ClientFilesModal({ client, onClose }) {
       setErr(formatErr(e.response?.data?.detail) || "Couldn't load files");
     }
     setLoading(false);
-  };
+  }, [client.id]);
 
-  useEffect(() => { reload(); /* eslint-disable-next-line */ }, [client.id]);
+  useEffect(() => { reload(); }, [reload]);
 
   const upload = async (file) => {
     if (!file) return;

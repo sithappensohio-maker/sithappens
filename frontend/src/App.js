@@ -1,5 +1,5 @@
 import { Toaster, toast } from "sonner";
-import { useEffect, useState } from "react";
+import { useCallback, useEffect, useState } from "react";
 import { AuthProvider, useAuth } from "./lib/auth";
 import { ThemeProvider, useTheme } from "./lib/theme";
 import { addRecent } from "./lib/recentlyOpened";
@@ -76,6 +76,10 @@ function AdminShell() {
   };
   const [searchOpen, setSearchOpen] = useState(false);
   const [searchTarget, setSearchTarget] = useState(null);
+  // Stable identity (not a fresh `() => setSearchTarget(null)` every render) so
+  // Clients.jsx / Dogs.jsx can safely list this in a useEffect dependency array
+  // without that effect re-firing on every unrelated App re-render.
+  const clearSearchTarget = useCallback(() => setSearchTarget(null), []);
   const [messagesUnread, setMessagesUnread] = useState(0);
   const [shopOrdersUnseen, setShopOrdersUnseen] = useState(0);
 
@@ -732,11 +736,11 @@ function AdminShell() {
           {tab === "recurring" && navAllowed("recurring") && <RecurringTemplates />}
           {tab === "clients" && navAllowed("clients") && <Clients focusId={searchTarget?.kind==="client"?searchTarget.id:null} focusMode={searchTarget?.mode || "scroll"}
             hubTarget={["booking","invoice","messages"].includes(searchTarget?.kind) ? searchTarget : null}
-            onConsumed={()=>setSearchTarget(null)} onJumpToDog={(id)=>{ setSearchTarget({kind:"dog", id, mode:"open"}); setTab("dogs"); }}
+            onConsumed={clearSearchTarget} onJumpToDog={(id)=>{ setSearchTarget({kind:"dog", id, mode:"open"}); setTab("dogs"); }}
             onAddDog={()=>goCreate("dogs")}
             onBookForClient={(clientId)=>{ setPendingBookingPreset({ clientId, dogId: null }); setGlobalModal("new_booking"); }}
             openCreateOnMount={pendingCreateTab === "clients"} onCreateConsumed={()=>setPendingCreateTab(null)} userId={user?.id} can={can} />}
-          {tab === "dogs" && navAllowed("dogs") && <Dogs focusId={searchTarget?.kind==="dog"?searchTarget.id:null} focusMode={searchTarget?.mode || "scroll"} onConsumed={()=>setSearchTarget(null)} openCreateOnMount={pendingCreateTab === "dogs"} onCreateConsumed={()=>setPendingCreateTab(null)} userId={user?.id}
+          {tab === "dogs" && navAllowed("dogs") && <Dogs focusId={searchTarget?.kind==="dog"?searchTarget.id:null} focusMode={searchTarget?.mode || "scroll"} onConsumed={clearSearchTarget} openCreateOnMount={pendingCreateTab === "dogs"} onCreateConsumed={()=>setPendingCreateTab(null)} userId={user?.id}
             can={can}
             onBookForDog={(dogId, ownerId)=>{ setPendingBookingPreset({ clientId: ownerId || null, dogId }); setGlobalModal("new_booking"); }}
             onLogIncident={(dogId)=>{ setPendingIncidentPresetDogId(dogId); setPendingCreateTab("incidents"); setTab("incidents"); }}

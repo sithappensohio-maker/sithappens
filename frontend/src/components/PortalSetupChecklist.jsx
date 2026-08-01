@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { useCallback, useEffect, useState } from "react";
 import { api } from "../lib/api";
 import PremiumButton from "./premium/PremiumButton";
 
@@ -63,7 +63,7 @@ export default function PortalSetupChecklist({ onAction = () => {}, onHelp = nul
   const [data, setData] = useState(null);
   const [loading, setLoading] = useState(true);
 
-  const load = async () => {
+  const load = useCallback(async () => {
     try {
       const { data } = await api.get("/portal/setup-status");
       setData(data);
@@ -71,7 +71,7 @@ export default function PortalSetupChecklist({ onAction = () => {}, onHelp = nul
     } catch {
       setData(null);
     } finally { setLoading(false); }
-  };
+  }, [onStatusChange]);
   // Re-fetch when refreshKey bumps (parent triggers after dog/vaccine/waiver
   // save) so step states catch up immediately without waiting for the 60s poll.
   // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -82,7 +82,7 @@ export default function PortalSetupChecklist({ onAction = () => {}, onHelp = nul
   useEffect(() => {
     const h = setInterval(() => { load(); }, 60000);
     return () => clearInterval(h);
-  }, []);
+  }, [load]);
 
   if (loading || !data) return null;
   const { steps, completed_count, total_count, booking_locked, ready_to_book, overall } = data;

@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { api } from "../lib/api";
 import { toast } from "sonner";
 
@@ -35,15 +35,24 @@ export default function ClientMessages() {
   const [emailNotify, setEmailNotify] = useState(true);
   const [busy, setBusy] = useState(false);
 
-  const load = async () => {
+  // `search` and `activeId` are read via ref so typing in the search box (only
+  // submitted explicitly on Enter, see below) and switching the active thread
+  // never trigger this callback's identity to change / this effect to re-fire —
+  // only statusFilter/unreadOnly should do that, matching prior behavior.
+  const searchRef = useRef(search);
+  searchRef.current = search;
+  const activeIdRef = useRef(activeId);
+  activeIdRef.current = activeId;
+
+  const load = useCallback(async () => {
     const params = new URLSearchParams();
     if (statusFilter) params.set("status", statusFilter);
     if (unreadOnly) params.set("unread_only", "true");
-    if (search.trim()) params.set("search", search.trim());
+    if (searchRef.current.trim()) params.set("search", searchRef.current.trim());
     const { data } = await api.get(`/admin/messages?${params.toString()}`);
     setThreads(data || []);
-    if (data?.length && !activeId) setActiveId(data[0].id);
-  };
+    if (data?.length && !activeIdRef.current) setActiveId(data[0].id);
+  }, [statusFilter, unreadOnly]);
 
   const loadActive = async (id) => {
     if (!id) { setActive(null); return; }
@@ -54,7 +63,7 @@ export default function ClientMessages() {
     }
   };
 
-  useEffect(() => { load(); }, [statusFilter, unreadOnly]);
+  useEffect(() => { load(); }, [load]);
   useEffect(() => { loadActive(activeId); }, [activeId]);
 
   const sendReply = async () => {

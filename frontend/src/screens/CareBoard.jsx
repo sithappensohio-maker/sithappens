@@ -42,12 +42,11 @@ export default function CareBoard() {
     setLoading(false);
   }, []);
 
-  // eslint-disable-next-line react-hooks/exhaustive-deps
   useEffect(() => {
     load();
     const t = setInterval(load, 60000);
     return () => clearInterval(t);
-  }, []);
+  }, [load]);
 
   const summary = data?.summary || { not_due: 0, due_now: 0, completed: 0, missed: 0, skipped: 0 };
 

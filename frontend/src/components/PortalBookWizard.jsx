@@ -96,8 +96,13 @@ export default function PortalBookWizard({ dogs, seed, onClose, onBooked }) {
   const featTraining     = useFeature("training");
   const featGrooming     = useFeature("grooming");
   const featPhotography  = useFeature("photography");
-  const FEATURE_BY_SERVICE = { daycare: featDaycare, boarding: featBoarding, training: featTraining, grooming: featGrooming, photography: featPhotography };
-  const VISIBLE_SERVICES = SERVICE_OPTIONS.filter(o => FEATURE_BY_SERVICE[o.key] !== false);
+  const FEATURE_BY_SERVICE = useMemo(() => (
+    { daycare: featDaycare, boarding: featBoarding, training: featTraining, grooming: featGrooming, photography: featPhotography }
+  ), [featDaycare, featBoarding, featTraining, featGrooming, featPhotography]);
+  const VISIBLE_SERVICES = useMemo(
+    () => SERVICE_OPTIONS.filter(o => FEATURE_BY_SERVICE[o.key] !== false),
+    [FEATURE_BY_SERVICE]
+  );
   const [step, setStep] = useState(1);
   const [dogId, setDogId] = useState(seed?.dog_id || dogs?.[0]?.id || "");
   const [serviceType, setServiceType] = useState(seed?.service_type || "");
@@ -163,18 +168,22 @@ export default function PortalBookWizard({ dogs, seed, onClose, onBooked }) {
         if (cancelled) return;
         const rows = (Array.isArray(data) ? data : []).filter(s => s.active !== false && !s.is_addon);
         setCatalogServices(rows);
-        if (serviceId) {
-          const selected = rows.find(s => s.id === serviceId);
+        // Runs once at mount (deps: []) — decide the initial selection purely
+        // from the seed props, mirroring the state's own initial values
+        // (serviceId/serviceType are seeded from `seed` and nothing else sets
+        // them before this effect fires).
+        if (seed?.service_id) {
+          const selected = rows.find(s => s.id === seed.service_id);
           if (selected) setServiceType(selected.service_type);
-        } else if (serviceType) {
-          const selected = rows.find(s => s.service_type === serviceType && s.is_default)
-            || rows.find(s => s.service_type === serviceType);
+        } else if (seed?.service_type) {
+          const selected = rows.find(s => s.service_type === seed.service_type && s.is_default)
+            || rows.find(s => s.service_type === seed.service_type);
           if (selected) setServiceId(selected.id);
         }
       })
       .catch(() => { if (!cancelled) setCatalogServices([]); });
     return () => { cancelled = true; };
-  }, []);
+  }, [seed]);
 
   const exactRuleMap = branding?.booking_flow_controls?.per_catalog_service || {};
   const bookableCatalogServices = catalogServices.filter(s => {
@@ -194,7 +203,7 @@ export default function PortalBookWizard({ dogs, seed, onClose, onBooked }) {
       featureByType: FEATURE_BY_SERVICE,
       fallbackTiles: catalogServices.length === 0 ? VISIBLE_SERVICES : [],
     })
-  ), [bookableCatalogServices, FEATURE_BY_SERVICE, catalogServices.length]);
+  ), [bookableCatalogServices, FEATURE_BY_SERVICE, catalogServices.length, VISIBLE_SERVICES]);
 
   // Category-grid navigation. null = show the category cards; a key = show
   // only that category's services (with a back-to-categories control).

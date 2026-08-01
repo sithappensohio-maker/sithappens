@@ -5,7 +5,7 @@
      • EndOfDayPanel — single-button "wrap up the day" review modal: who's
        still on-site, unpaid completed bookings, missing report cards,
        cash collected, care-log roll-up. Designed to take 30s. */
-import { useEffect, useState } from "react";
+import { useCallback, useEffect, useState } from "react";
 import { api, formatErr } from "../lib/api";
 import { toast } from "sonner";
 
@@ -126,7 +126,7 @@ export function EndOfDayPanel({ onJump = () => {} }) {
   const [reopenReason, setReopenReason] = useState("");
   const [reopening, setReopening] = useState(false);
 
-  const hydrateStartDay = (payload) => {
+  const hydrateStartDay = useCallback((payload) => {
     const register = payload?.register || {};
     const opening = register?.drawer_session?.opening_cash
       ?? register?.opening_rollover?.suggested_cash
@@ -138,9 +138,9 @@ export function EndOfDayPanel({ onJump = () => {} }) {
         ? (register?.opening_rollover?.override_reason || "")
         : "",
     });
-  };
+  }, []);
 
-  const loadStatus = async () => {
+  const loadStatus = useCallback(async () => {
     try {
       const r = await api.get("/admin/end-of-day");
       setData(r.data);
@@ -149,8 +149,8 @@ export function EndOfDayPanel({ onJump = () => {} }) {
       // opening amount (commonly $15) could overwrite today's rollover.
       hydrateStartDay(r.data);
     } catch { /* dashboard card should not be noisy */ }
-  };
-  useEffect(() => { loadStatus(); }, []);
+  }, [hydrateStartDay]);
+  useEffect(() => { loadStatus(); }, [loadStatus]);
   const openPanel = async () => {
     setOpen(true);
     setLoading(true);

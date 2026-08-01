@@ -1,6 +1,6 @@
 // Admin → Staff screen.
 // Manage employees (CRUD), view all timecards, override clock entries.
-import { useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { api, formatErr } from "../lib/api";
 import { useConfirm } from "../lib/useConfirm";
 import PageHero from "../components/PageHero";
@@ -71,16 +71,16 @@ export default function Staff() {
     try { const r = await api.get("/admin/staff/pay-snapshot"); setPaySnap(r.data); }
     catch {}
   };
-  const loadTimecards = async () => {
+  const loadTimecards = useCallback(async () => {
     try {
       const params = { start_date: start, end_date: end };
       if (userFilter) params.user_id = userFilter;
       const r = await api.get("/admin/time-clock", { params });
       setTcData(r.data);
     } catch (e) { setErr(formatErr(e.response?.data?.detail)); }
-  };
+  }, [start, end, userFilter]);
   useEffect(() => { loadEmployees(); loadPaySnap(); }, []);
-  useEffect(() => { loadTimecards(); /* eslint-disable-next-line */ }, [start, end, userFilter]);
+  useEffect(() => { loadTimecards(); }, [loadTimecards]);
 
   const deactivate = async (emp) => {
     if (!(await confirm({ title: `Deactivate ${emp.name}?`, body: "They won't be able to log in. Past time entries are preserved.", confirmText: "Deactivate", tone: "danger" }))) return;
@@ -706,7 +706,7 @@ function ScheduleTab({ employees }) {
   const [genBusy, setGenBusy] = useState(false);
   const [err, setErr] = useState("");
 
-  const load = async () => {
+  const load = useCallback(async () => {
     try {
       const [t, s] = await Promise.all([
         api.get("/admin/shift-templates"),
@@ -714,8 +714,8 @@ function ScheduleTab({ employees }) {
       ]);
       setTemplates(t.data); setShifts(s.data);
     } catch (e) { setErr(formatErr(e.response?.data?.detail)); }
-  };
-  useEffect(() => { load(); /* eslint-disable-next-line */ }, [start, end]);
+  }, [start, end]);
+  useEffect(() => { load(); }, [load]);
 
   const generate = async () => {
     setGenBusy(true); setErr("");
@@ -967,14 +967,14 @@ function TasksTab({ employees }) {
   const [filter, setFilter] = useState("open");
   const [modal, setModal] = useState(null);
   const [err, setErr] = useState("");
-  const load = async () => {
+  const load = useCallback(async () => {
     try {
       const params = filter === "all" ? {} : { status: filter };
       const r = await api.get("/admin/tasks", { params });
       setTasks(r.data);
     } catch (e) { setErr(formatErr(e.response?.data?.detail)); }
-  };
-  useEffect(() => { load(); /* eslint-disable-next-line */ }, [filter]);
+  }, [filter]);
+  useEffect(() => { load(); }, [load]);
   const empName = (uid) => uid ? (employees.find(e => e.id === uid)?.display_name || employees.find(e => e.id === uid)?.name || "?") : "Unassigned";
 
   return (
@@ -1145,13 +1145,13 @@ function TaxEstimatorTab() {
   const [err, setErr] = useState("");
   const [saving, setSaving] = useState(false);
 
-  const loadEstimate = async () => {
+  const loadEstimate = useCallback(async () => {
     setErr("");
     try {
       const r = await api.get("/admin/payroll/estimate", { params: { start_date: start, end_date: end } });
       setData(r.data);
     } catch (e) { setErr(formatErr(e.response?.data?.detail)); }
-  };
+  }, [start, end]);
   const loadTax = async () => {
     try {
       const r = await api.get("/admin/payroll-tax-settings");
@@ -1160,7 +1160,7 @@ function TaxEstimatorTab() {
     } catch (e) { setErr(formatErr(e.response?.data?.detail)); }
   };
   useEffect(() => { loadTax(); }, []);
-  useEffect(() => { loadEstimate(); /* eslint-disable-next-line */ }, [start, end]);
+  useEffect(() => { loadEstimate(); }, [loadEstimate]);
 
   const saveTax = async () => {
     setSaving(true);
@@ -1324,7 +1324,7 @@ function QuarterlyTaxTab() {
   const [err, setErr] = useState("");
   const confirm = useConfirm();
 
-  const load = async () => {
+  const load = useCallback(async () => {
     setErr("");
     try {
       const [est, s, p] = await Promise.all([
@@ -1337,8 +1337,8 @@ function QuarterlyTaxTab() {
       setDefaults(s.data.defaults);
       setPayments(p.data.payments || []);
     } catch (e) { setErr(formatErr(e.response?.data?.detail)); }
-  };
-  useEffect(() => { load(); /* eslint-disable-next-line */ }, [year]);
+  }, [year]);
+  useEffect(() => { load(); }, [load]);
 
   const save = async () => {
     setSaving(true);
@@ -1682,15 +1682,15 @@ function TimeOffAdminTab() {
   const [err, setErr] = useState("");
   const [reviewModal, setReviewModal] = useState(null); // {req, status}
 
-  const load = async () => {
+  const load = useCallback(async () => {
     setErr("");
     try {
       const params = filter === "all" ? {} : { status: filter };
       const r = await api.get("/admin/time-off", { params });
       setData(r.data);
     } catch (e) { setErr(formatErr(e.response?.data?.detail)); }
-  };
-  useEffect(() => { load(); /* eslint-disable-next-line */ }, [filter]);
+  }, [filter]);
+  useEffect(() => { load(); }, [load]);
 
   const review = async (req, status, notes) => {
     try { await api.put(`/admin/time-off/${req.id}`, { status, admin_notes: notes || "" }); await load(); }
@@ -1812,14 +1812,22 @@ function MoneyAuditTab() {
   const [err, setErr] = useState("");
   const [start, setStart] = useState(`${new Date().getFullYear()}-01-01`);
   const [end, setEnd] = useState(todayISO());
-  const load = async () => {
+  // Picking a new start/end date does NOT auto-refetch — the explicit
+  // "Refresh" button below does. Read the dates via ref so `load` stays a
+  // single stable callback (safe on the mount-only effect's deps array)
+  // instead of re-triggering that effect on every date edit.
+  const startRef = useRef(start);
+  startRef.current = start;
+  const endRef = useRef(end);
+  endRef.current = end;
+  const load = useCallback(async () => {
     setErr("");
     try {
-      const r = await api.get("/admin/money-health", { params: { start_date: start, end_date: end } });
+      const r = await api.get("/admin/money-health", { params: { start_date: startRef.current, end_date: endRef.current } });
       setData(r.data);
     } catch (e) { setErr(formatErr(e.response?.data?.detail) || "Failed to load money audit"); }
-  };
-  useEffect(() => { load(); /* eslint-disable-next-line */ }, []);
+  }, []);
+  useEffect(() => { load(); }, [load]);
   if (!data) return <div className="bg-[var(--sh-card-base)] border border-shBorder rounded-xl p-6 text-center text-shTextMuted" data-testid="money-audit-loading">Loading money audit…</div>;
   const c = data.cash || {};
   const ar = data.receivables || {};
@@ -1951,7 +1959,7 @@ export function RegisterTab({ excludeTabs = [] } = {}) {
   const methodLabelMap = Object.fromEntries(methodOptions);
   const _prettyMethod = (m) => methodLabelMap[m] || m || "Other";
 
-  const load = async () => {
+  const load = useCallback(async () => {
     setErr("");
     try {
       const r = await api.get("/admin/register/day", { params: { date } });
@@ -1960,7 +1968,7 @@ export function RegisterTab({ excludeTabs = [] } = {}) {
       else if (r.data?.totals?.opening_cash != null) setOpeningCash(String(r.data.totals.opening_cash));
       setOpeningOverrideReason(r.data?.opening_rollover?.is_override ? (r.data?.opening_rollover?.override_reason || "") : "");
     } catch (e) { setErr(formatErr(e.response?.data?.detail) || "Failed to load register"); }
-  };
+  }, [date]);
   const loadChoices = async () => {
     try {
       const [c, p] = await Promise.all([
@@ -1977,14 +1985,14 @@ export function RegisterTab({ excludeTabs = [] } = {}) {
       setExpenseCategories(r.data?.categories || []);
     } catch {}
   };
-  const loadExpenses = async () => {
+  const loadExpenses = useCallback(async () => {
     try {
       const r = await api.get("/expenses", { params: { start_date: date, end_date: date } });
       setExpenseRows(r.data || []);
     } catch {}
-  };
+  }, [date]);
   useEffect(() => { loadChoices(); loadExpenseChoices(); }, []);
-  useEffect(() => { load(); loadExpenses(); /* eslint-disable-next-line */ }, [date]);
+  useEffect(() => { load(); loadExpenses(); }, [load, loadExpenses]);
   useEffect(() => {
     const syncBusinessDay = () => {
       const nowDay = todayISO();

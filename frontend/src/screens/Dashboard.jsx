@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { api, formatErr } from "../lib/api";
 import { compressImage } from "../lib/imageCompress";
 import AdminBookingModal from "../components/AdminBookingModal";
@@ -68,9 +68,21 @@ export default function Dashboard({ onNavigate = () => {}, onJumpToDog = () => {
   const seenQuoteIdsRef = useRef(null);
   const seenVaxIdsRef = useRef(null);
   const seededRef = useRef(false);
+  // `_br` (branding) and `can` are read via ref so `load` can stay a single
+  // stable callback (safe to list as a dependency on the mount-only effect
+  // below) while still always seeing the CURRENT branding/permission values
+  // at the moment it actually runs — `can` in particular is a brand-new
+  // function on every AuthProvider render, so depending on it directly would
+  // re-trigger the full dashboard load constantly.
+  const brRef = useRef(_br);
+  brRef.current = _br;
+  const canRef = useRef(can);
+  canRef.current = can;
 
-  const load = async () => {
+  const load = useCallback(async () => {
     try {
+      const br = brRef.current;
+      const widgetOnNow = (id) => (br?.dashboard_widgets || {})[id] !== false;
       const [s, st, pg, sv, vx, hw, lb, qr, pnl, reg] = await Promise.all([
         api.get("/dashboard/stats"),
         api.get("/settings"),
@@ -78,14 +90,14 @@ export default function Dashboard({ onNavigate = () => {}, onJumpToDog = () => {
         api.get("/services").catch(()=>({data:[]})),
         api.get("/admin/vaccine-cert-uploads").catch(()=>({data:[]})),
         api.get("/admin/homework/pending-reviews").catch(()=>({data:[]})),
-        (_br?.feature_visibility?.rewards !== false)
+        (br?.feature_visibility?.rewards !== false)
           ? api.get("/trophies/leaderboard").catch(()=>({data:{top_dogs:[],top_clients:[]}}))
           : Promise.resolve({data:{top_dogs:[],top_clients:[]}}),
         api.get("/admin/quote-requests?status=open").catch(()=>({data:[]})),
-        (widgetOn("pnl") && can("finance_reports"))
+        (widgetOnNow("pnl") && canRef.current("finance_reports"))
           ? api.get("/admin/today-pnl").catch(()=>({data:null}))
           : Promise.resolve({data:null}),
-        widgetOn("register")
+        widgetOnNow("register")
           ? api.get("/admin/register/day").catch(()=>({data:null}))
           : Promise.resolve({data:null}),
       ]);
@@ -133,8 +145,8 @@ export default function Dashboard({ onNavigate = () => {}, onJumpToDog = () => {
       seenVaxIdsRef.current = vaxIds;
       seededRef.current = true;
     } catch {}
-  };
-  useEffect(() => { load(); }, []);
+  }, []);
+  useEffect(() => { load(); }, [load]);
   // Sprint 110ao — Live refresh every 30 s. Auto-pauses while a modal is
   // open (CheckoutModal / ReportCardModal acquire the edit lock).
   // A full dashboard refresh is intentionally limited to once per minute.

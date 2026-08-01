@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { api, formatErr } from "../lib/api";
 import { compressImage } from "../lib/imageCompress";
 import { useConfirm } from "../lib/useConfirm";
@@ -118,7 +118,7 @@ export default function Dogs({ focusId = null, focusMode = "scroll", onConsumed 
   const [awardPicker, setAwardPicker] = useState(null); // dog object
   const [requiredVaccines, setRequiredVaccines] = useState(["rabies"]);
 
-  const loadTrophies = async (dogList) => {
+  const loadTrophies = useCallback(async (dogList) => {
     // Sprint 110ef — Single batch call instead of N parallel `/dogs/{id}/trophies`
     // calls. With 500+ dogs the burst was hitting infra rate limits (429) and
     // surfacing as the dev-server runtime-error overlay.
@@ -128,9 +128,9 @@ export default function Dogs({ focusId = null, focusMode = "scroll", onConsumed 
       dogList.forEach(d => { map[d.id] = data?.[d.id] || []; });
       setDogTrophies(map);
     } catch (e) { console.warn("Dogs trophy load failed:", e); }
-  };
+  }, []);
 
-  const load = async () => {
+  const load = useCallback(async () => {
     const [d, c, p] = await Promise.all([
       api.get("/dogs"),
       api.get("/clients"),
@@ -145,8 +145,8 @@ export default function Dogs({ focusId = null, focusMode = "scroll", onConsumed 
     });
     setEnrollmentsByDog(map);
     loadTrophies(d.data);
-  };
-  useEffect(() => { load(); }, []);
+  }, [loadTrophies]);
+  useEffect(() => { load(); }, [load]);
   // Sprint 110ff — the dog card used to hardcode "Rabies" as the only
   // vaccine shown, so a dog could show "Rabies: Valid" while missing or
   // expired on Bordetella/DHPP with zero indication on this screen. Read
@@ -158,39 +158,13 @@ export default function Dogs({ focusId = null, focusMode = "scroll", onConsumed 
     }).catch(() => {});
   }, []);
 
-  // Sprint 110cm — Search result clicked → scroll-and-flash. Explicit
-  // "Open dog profile" buttons (Pipeline/Dashboard/BookingDetail) pass
-  // mode="open" so they keep their direct-into-modal behavior.
-  useEffect(() => {
-    if (!focusId || dogs.length === 0) return;
-    if (focusMode === "open") {
-      const d = dogs.find(x => x.id === focusId);
-      if (d) { openEdit(d); onConsumed(); }
-    } else {
-      scrollToCardAndFlash(`dog-card-${focusId}`).then(onConsumed);
-    }
-  }, [focusId, focusMode, dogs]);
-
-  // Phase 4 — global "+ New" menu. `openNew` needs `clients` loaded first
-  // (defaults owner_id to the first client), so this waits for that instead
-  // of firing on raw mount — reuses this exact same modal, no second form.
-  const autoOpenedRef = useRef(false);
-  useEffect(() => {
-    if (openCreateOnMount && !autoOpenedRef.current && clients.length > 0) {
-      autoOpenedRef.current = true;
-      openNew();
-      onCreateConsumed();
-    }
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [openCreateOnMount, clients]);
-
   const openNew = () => {
     if (clients.length === 0) { alert("Add a client first."); return; }
     setEditing(null);
     setForm({ ...empty, owner_id: clients[0].id });
     setTab("timeline"); setOpen(true); setErr("");
   };
-  const openEdit = async (d, initialTab = "basics") => {
+  const openEdit = useCallback(async (d, initialTab = "basics") => {
     setEditing(d);
     addRecent(userId, { kind: "dog", id: d.id, title: d.name, subtitle: d.breed ? `${d.breed}` : "" });
     // Hydrate the form with the list-view subset immediately so the modal
@@ -226,7 +200,33 @@ export default function Dogs({ focusId = null, focusMode = "scroll", onConsumed 
       }));
       if (statsRes) setStats(statsRes.data);
     } catch { /* keep list-view fallback */ }
-  };
+  }, [userId]);
+
+  // Sprint 110cm — Search result clicked → scroll-and-flash. Explicit
+  // "Open dog profile" buttons (Pipeline/Dashboard/BookingDetail) pass
+  // mode="open" so they keep their direct-into-modal behavior.
+  useEffect(() => {
+    if (!focusId || dogs.length === 0) return;
+    if (focusMode === "open") {
+      const d = dogs.find(x => x.id === focusId);
+      if (d) { openEdit(d); onConsumed(); }
+    } else {
+      scrollToCardAndFlash(`dog-card-${focusId}`).then(onConsumed);
+    }
+  }, [focusId, focusMode, dogs, onConsumed, openEdit]);
+
+  // Phase 4 — global "+ New" menu. `openNew` needs `clients` loaded first
+  // (defaults owner_id to the first client), so this waits for that instead
+  // of firing on raw mount — reuses this exact same modal, no second form.
+  const autoOpenedRef = useRef(false);
+  useEffect(() => {
+    if (openCreateOnMount && !autoOpenedRef.current && clients.length > 0) {
+      autoOpenedRef.current = true;
+      openNew();
+      onCreateConsumed();
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [openCreateOnMount, clients]);
 
   const [hubOpen, setHubOpen] = useState(null); // dog object
   const [hubInitialTab, setHubInitialTab] = useState("overview");

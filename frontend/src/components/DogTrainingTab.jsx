@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { useCallback, useEffect, useState } from "react";
 import { api, formatErr } from "../lib/api";
 import { useConfirm } from "../lib/useConfirm";
 import ProgressRing from "./ProgressRing";
@@ -24,7 +24,7 @@ export default function DogTrainingTab({ dogId, dogName, dogAgeMonths = 0 }) {
   // so every session writes to training_session_log and the scorecard / timeline stay accurate.
   const [trackerFor, setTrackerFor] = useState(null);
 
-  const load = async () => {
+  const load = useCallback(async () => {
     try {
       const [m, e, p] = await Promise.all([
         api.get("/programs/meta"),
@@ -33,8 +33,8 @@ export default function DogTrainingTab({ dogId, dogName, dogAgeMonths = 0 }) {
       ]);
       setMeta(m.data); setEnrollments(e.data); setPrograms(p.data);
     } catch (er) { setErr(formatErr(er.response?.data?.detail) || "Load failed"); }
-  };
-  useEffect(() => { if (dogId) load(); }, [dogId]);
+  }, [dogId]);
+  useEffect(() => { if (dogId) load(); }, [dogId, load]);
 
   if (!meta) return <p className="text-shTextMuted text-sm py-6 text-center"><i className="fas fa-spinner fa-spin mr-2"/>Loading…</p>;
 

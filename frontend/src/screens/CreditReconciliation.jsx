@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useState } from "react";
 import PageHero from "../components/PageHero";
 import { api } from "../lib/api";
 
@@ -140,7 +140,7 @@ export default function CreditReconciliation() {
   const [search, setSearch] = useState("");
   const [detailClient, setDetailClient] = useState(null);
 
-  const load = async () => {
+  const load = useCallback(async () => {
     setLoading(true); setError("");
     try {
       const r = await api.get(`/admin/credits/reconciliation?include_archived=${includeArchived ? "true" : "false"}`);
@@ -148,9 +148,9 @@ export default function CreditReconciliation() {
     } catch (e) {
       setError(e.response?.data?.detail || "Could not run credit reconciliation");
     } finally { setLoading(false); }
-  };
+  }, [includeArchived]);
 
-  useEffect(() => { load(); /* eslint-disable-next-line react-hooks/exhaustive-deps */ }, [includeArchived]);
+  useEffect(() => { load(); }, [load]);
 
   const rows = useMemo(() => {
     const q = search.trim().toLowerCase();

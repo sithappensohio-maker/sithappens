@@ -16,7 +16,7 @@
  * rules — see the pos_sales trace notes) and are only ever shown/consumed
  * inside those embedded, unmodified components.
  */
-import { useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useState } from "react";
 import { api, formatErr } from "../lib/api";
 import { useAuth } from "../lib/auth";
 import { toast } from "sonner";
@@ -571,14 +571,14 @@ export default function Pos({ onOpenShopManager } = {}) {
   const [orderActionBusyId, setOrderActionBusyId] = useState(null);
   const [onlineOrdersUnseenCount, setOnlineOrdersUnseenCount] = useState(0);
 
-  const refreshUnseenCount = () => api.get("/admin/shop-orders/unseen-count")
-    .then(({ data }) => setOnlineOrdersUnseenCount(data.unseen || 0)).catch(() => {});
-  useEffect(() => { refreshUnseenCount(); }, []);
+  const refreshUnseenCount = useCallback(() => api.get("/admin/shop-orders/unseen-count")
+    .then(({ data }) => setOnlineOrdersUnseenCount(data.unseen || 0)).catch(() => {}), []);
+  useEffect(() => { refreshUnseenCount(); }, [refreshUnseenCount]);
 
   // Never clear the badge before the order list has actually loaded — the
   // mark-seen call only fires inside this .then(), after a successful fetch,
   // for exactly the paid orders that came back with admin_unseen === true.
-  const loadOnlineOrders = () => api.get("/admin/shop-orders")
+  const loadOnlineOrders = useCallback(() => api.get("/admin/shop-orders")
     .then(({ data }) => {
       const orders = data.orders || [];
       setOnlineOrders(orders);
@@ -592,8 +592,8 @@ export default function Pos({ onOpenShopManager } = {}) {
           })
           .catch(() => {});
       }
-    }).catch(() => {});
-  useEffect(() => { if (onlineOrdersOpen) loadOnlineOrders(); }, [onlineOrdersOpen]);
+    }).catch(() => {}), [refreshUnseenCount]);
+  useEffect(() => { if (onlineOrdersOpen) loadOnlineOrders(); }, [onlineOrdersOpen, loadOnlineOrders]);
 
   const runOrderAction = async (orderId, action) => {
     setOrderActionBusyId(orderId);

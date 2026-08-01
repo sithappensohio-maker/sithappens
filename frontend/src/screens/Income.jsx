@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useState } from "react";
 import { api } from "../lib/api";
 import { useConfirm } from "../lib/useConfirm";
 import CollapsibleDateGroups from "../components/CollapsibleDateGroups";
@@ -72,7 +72,7 @@ export default function Income({ openCreateExpenseOnMount = false, onCreateConsu
   const [retailEditing, setRetailEditing] = useState(null);
   const [clients, setClients] = useState([]);
 
-  const loadExpenses = async () => {
+  const loadExpenses = useCallback(async () => {
     if (!rangeStart || !rangeEnd) return;
     try {
       const [{ data }, { data: cats }] = await Promise.all([
@@ -82,10 +82,10 @@ export default function Income({ openCreateExpenseOnMount = false, onCreateConsu
       setExpenses(data || []);
       setExpCategories(cats?.categories || []);
     } catch (e) { console.warn("expenses load failed", e); }
-  };
-  useEffect(() => { loadExpenses(); /* eslint-disable-next-line */ }, [rangeStart, rangeEnd]);
+  }, [rangeStart, rangeEnd]);
+  useEffect(() => { loadExpenses(); }, [loadExpenses]);
 
-  const loadRetail = async () => {
+  const loadRetail = useCallback(async () => {
     if (!rangeStart || !rangeEnd) return;
     try {
       const [{ data }, { data: cats }] = await Promise.all([
@@ -95,8 +95,8 @@ export default function Income({ openCreateExpenseOnMount = false, onCreateConsu
       setRetailSales(data || []);
       setRetailCategories(cats?.categories || []);
     } catch (e) { console.warn("retail load failed", e); }
-  };
-  useEffect(() => { loadRetail(); /* eslint-disable-next-line */ }, [rangeStart, rangeEnd]);
+  }, [rangeStart, rangeEnd]);
+  useEffect(() => { loadRetail(); }, [loadRetail]);
 
   // Clients list (loaded once) — used by the retail-sale modal to optionally tag a sale to a client
   useEffect(() => {
@@ -149,7 +149,7 @@ export default function Income({ openCreateExpenseOnMount = false, onCreateConsu
     } catch (err) { setEditErr(`Delete failed: ${err.response?.data?.detail || err.message}`); }
   };
 
-  const load = async () => {
+  const load = useCallback(async () => {
     const [s, sum, svcs, ds] = await Promise.all([
       api.get("/transactions", { params: { revenue_only: !showLegacy } }),
       api.get("/transactions/weekly-summary", { params: { ref_date: refDate } }),
@@ -157,8 +157,8 @@ export default function Income({ openCreateExpenseOnMount = false, onCreateConsu
       api.get("/dogs"),
     ]);
     setRows(s.data); setSummary(sum.data); setServices(svcs.data); setDogs(ds.data);
-  };
-  useEffect(() => { load(); /* eslint-disable-next-line */ }, [refDate, showLegacy]);
+  }, [refDate, showLegacy]);
+  useEffect(() => { load(); }, [load]);
 
   // Compute preset range start/end (Month / Quarter / YTD anchored to refDate)
   useEffect(() => {

@@ -162,7 +162,7 @@ export default function AdminBookingModal({ defaultCheckIn = false, defaultDate 
         if (existing?.service_id) {
           const chosen = activeBaseServices.find(s => s.id === existing.service_id);
           if (chosen) { setServiceId(chosen.id); setServiceType(chosen.service_type); }
-        } else if (!serviceId) {
+        } else if (!existing?.service_id) {
           const chosen = activeBaseServices.find(s => s.service_type === (existing?.service_type || "daycare") && s.is_default)
             || activeBaseServices.find(s => s.service_type === (existing?.service_type || "daycare"));
           if (chosen) { setServiceId(chosen.id); setServiceType(chosen.service_type); }
@@ -365,9 +365,9 @@ export default function AdminBookingModal({ defaultCheckIn = false, defaultDate 
     dropoffTime,
     pickupTime,
     isMultiDate,
-    JSON.stringify(multiDates),
-    JSON.stringify(selectedAddonIds),
-    JSON.stringify(extraDogs),
+    multiDates,
+    selectedAddonIds,
+    extraDogs,
     dogs,
   ]);
 
@@ -434,7 +434,7 @@ export default function AdminBookingModal({ defaultCheckIn = false, defaultDate 
       multiDogDiscountAmount,
       multiDogDiscountLabel: mdCfg?.label || "Additional dog discount",
     };
-  }, [quoteLines, serviceType, selectedClient, dogId, multiDogDiscountSettings]);
+  }, [quoteLines, serviceType, selectedClient, multiDogDiscountSettings]);
 
   const submit = async () => {
     setErr("");

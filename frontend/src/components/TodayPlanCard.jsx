@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { createPortal } from "react-dom";
 import { api } from "../lib/api";
 
@@ -54,7 +54,14 @@ export default function TodayPlanCard({ onChanged, homeworkId = null, unwrapped 
     return () => clearTimeout(t);
   }, [celebration]);
 
-  const load = async () => {
+  // Read the latest in-progress form state inside `load` without making it a
+  // reactive dependency — `load` must stay stable across renders (it's only
+  // meant to run once at mount here) even though it needs the CURRENT
+  // `forms` at fetch time to avoid wiping what the client already typed.
+  const formsRef = useRef(forms);
+  formsRef.current = forms;
+
+  const load = useCallback(async () => {
     try {
       const r = await api.get("/portal/today-plan");
       setData(r.data);
@@ -62,7 +69,7 @@ export default function TodayPlanCard({ onChanged, homeworkId = null, unwrapped 
       // doesn't wipe what they typed.
       const next = {};
       for (const it of r.data.items || []) {
-        const prev = forms[it.homework_id] || {};
+        const prev = formsRef.current[it.homework_id] || {};
         next[it.homework_id] = {
           values: prev.values || {},
           mood: prev.mood ?? 0,
@@ -81,8 +88,8 @@ export default function TodayPlanCard({ onChanged, homeworkId = null, unwrapped 
       });
       setErr("");
     } catch (e) { setErr(e.response?.data?.detail || "Couldn't load today's plan"); }
-  };
-  useEffect(() => { load(); /* eslint-disable-next-line */ }, []);
+  }, []);
+  useEffect(() => { load(); }, [load]);
 
   // Sprint 110k — Escape key closes the fullscreen modal.
   useEffect(() => {

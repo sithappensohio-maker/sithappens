@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { useCallback, useEffect, useState } from "react";
 import { api, formatErr } from "../lib/api";
 import { toast } from "sonner";
 
@@ -127,10 +127,10 @@ function TierDetail({ tier, onBack, onRefresh }) {
   const [catalogs, setCatalogs] = useState({ service: [], credit_pack: [], pos_product: [] });
   const [busy, setBusy] = useState(false);
 
-  const load = () => {
+  const load = useCallback(() => {
     api.get(`/pricing-tiers/${tier.id}`).then(({ data }) => setDetail(data)).catch(() => toast.error("Could not load tier"));
-  };
-  useEffect(() => { load(); /* eslint-disable-next-line */ }, [tier.id]);
+  }, [tier.id]);
+  useEffect(() => { load(); }, [load]);
 
   useEffect(() => {
     Promise.all([

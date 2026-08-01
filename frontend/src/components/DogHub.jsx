@@ -45,7 +45,7 @@ export default function DogHub({
   useEffect(() => {
     api.get(`/dogs/${dog.id}/stats`).then(({ data }) => setStats(data)).catch(() => setStats({}));
     api.get(`/dogs/${dog.id}`).then(({ data }) => setFull(data)).catch(() => setFull(dog));
-  }, [dog.id]);
+  }, [dog]);
 
   useEffect(() => {
     if (tab === "bookings" && bookings === null) {

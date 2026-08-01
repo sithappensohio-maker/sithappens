@@ -38,12 +38,11 @@ export default function KennelBoard() {
     setLoading(false);
   }, []);
 
-  // eslint-disable-next-line react-hooks/exhaustive-deps
   useEffect(() => {
     load();
     const t = setInterval(load, 60000);
     return () => clearInterval(t);
-  }, []);
+  }, [load]);
 
   const saveAssignment = async (card, patch) => {
     try {

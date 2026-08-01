@@ -4,7 +4,7 @@
 // (trainer's discretion — no gating). All updates flow through the existing
 // goal_progress + current_module_id machinery — no duplicate progress store.
 
-import { useEffect, useState } from "react";
+import { useCallback, useEffect, useState } from "react";
 import { api, formatErr } from "../lib/api";
 import { toast } from "sonner";
 
@@ -31,7 +31,7 @@ export default function TrainingTrackerModal({ bookingId, dogId, enrollmentId, o
   const [drafts, setDrafts] = useState({}); // { goalId: { status, score, notes } }
   const [saving, setSaving] = useState(false);
 
-  const load = async () => {
+  const load = useCallback(async () => {
     setLoading(true); setErr("");
     try {
       const url = bookingId
@@ -49,8 +49,8 @@ export default function TrainingTrackerModal({ bookingId, dogId, enrollmentId, o
       setErr(formatErr(e?.response?.data?.detail) || "Failed to load training context");
     }
     setLoading(false);
-  };
-  useEffect(() => { load(); /* eslint-disable-next-line react-hooks/exhaustive-deps */ }, [bookingId, dogId, enrollmentId]);
+  }, [bookingId, dogId, enrollmentId]);
+  useEffect(() => { load(); }, [load]);
 
   if (loading) {
     return (

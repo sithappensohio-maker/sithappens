@@ -22,7 +22,7 @@ export default function ActionCenter({ onNavigate = () => {}, onJumpToDog = () =
   };
   useEffect(() => { load(); }, []);
 
-  const items = data?.items || [];
+  const items = useMemo(() => data?.items || [], [data]);
   const counts = data?.counts || { urgent: 0, warn: 0, info: 0, total: 0 };
   const filtered = useMemo(() => filter === "all" ? items : items.filter((it) => it.priority === filter), [items, filter]);
 

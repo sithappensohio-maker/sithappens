@@ -1,4 +1,4 @@
-import { useEffect, useState, useMemo, useRef } from "react";
+import { useCallback, useEffect, useState, useMemo, useRef } from "react";
 import { createPortal } from "react-dom";
 import { api, formatErr } from "../lib/api";
 import { useConfirm } from "../lib/useConfirm";
@@ -69,7 +69,7 @@ export default function Clients({ focusId = null, focusMode = "scroll", onConsum
   const [awardPicker, setAwardPicker] = useState(null);  // client object
   const [plansByClient, setPlansByClient] = useState({});  // client_id -> plans[]
 
-  const loadTrophies = async (clientList) => {
+  const loadTrophies = useCallback(async (clientList) => {
     // Sprint 110ef — Single batch call to avoid the N-parallel 429 storm
     // (see also Dogs.jsx + /admin/dog-trophies-summary).
     try {
@@ -78,9 +78,9 @@ export default function Clients({ focusId = null, focusMode = "scroll", onConsum
       clientList.forEach(c => { map[c.id] = data?.[c.id] || []; });
       setTrophyMap(map);
     } catch (e) { console.warn("Clients trophy load failed:", e); }
-  };
+  }, []);
 
-  const load = async () => {
+  const load = useCallback(async () => {
     const [c, p, pp] = await Promise.all([
       api.get("/clients"),
       api.get("/credit-packs", { params: { register_only: true } }).catch(()=>({data:[]})),
@@ -100,8 +100,8 @@ export default function Clients({ focusId = null, focusMode = "scroll", onConsum
     });
     setPlansByClient(byClient);
     loadTrophies(c.data);
-  };
-  useEffect(() => { load(); }, []);
+  }, [loadTrophies]);
+  useEffect(() => { load(); }, [load]);
 
   const openNewClient = () => {
     setEditing(null); setForm(empty); setDog(emptyDog); setAddDog(true); setOpen(true); setErr("");
@@ -112,10 +112,10 @@ export default function Clients({ focusId = null, focusMode = "scroll", onConsum
     if (openCreateOnMount) { openNewClient(); onCreateConsumed(); }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
-  const openEditClient = (c) => {
+  const openEditClient = useCallback((c) => {
     setEditing(c); setForm({...empty, ...c}); setAddDog(false); setOpen(true); setErr("");
     addRecent(userId, { kind: "client", id: c.id, title: c.name, subtitle: c.email || c.phone || "" });
-  };
+  }, [userId]);
 
   // Section 3 — Client Record Hub. A tabbed reorganization of this exact
   // card's data, opened via the client's name or a search/recent-item hit.
@@ -150,7 +150,7 @@ export default function Clients({ focusId = null, focusMode = "scroll", onConsum
     } else {
       scrollToCardAndFlash(`client-card-${focusId}`).then(onConsumed);
     }
-  }, [focusId, focusMode, clients]);
+  }, [focusId, focusMode, clients, onConsumed, openEditClient]);
 
   const submitClient = async () => {
     setErr("");

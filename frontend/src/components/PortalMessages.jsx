@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { api } from "../lib/api";
 import { toast } from "sonner";
 import PremiumButton from "./premium/PremiumButton";
@@ -45,19 +45,25 @@ export default function PortalMessages({ dogs = [], open = false, onClose = () =
   // dismisses it, without changing the send/reply logic itself.
   const [justSent, setJustSent] = useState(null); // { subject, dogName } | null
 
-  const load = async () => {
+  // Read activeId's latest value inside `load` without making it a reactive
+  // dependency — `load` (and the effect that calls it) must only re-run when
+  // the panel opens, never merely because the selected thread changed.
+  const activeIdRef = useRef(activeId);
+  activeIdRef.current = activeId;
+
+  const load = useCallback(async () => {
     try {
       const { data } = await api.get("/me/messages");
       setThreads(data || []);
       const unread = (data || []).filter(t => t.unread_client).length;
       onUnreadChange(unread);
-      if (data?.length && !activeId) setActiveId(data[0].id);
+      if (data?.length && !activeIdRef.current) setActiveId(data[0].id);
     } catch (e) {
       toast.error(e?.response?.data?.detail || "Could not load your messages");
     }
-  };
+  }, [onUnreadChange]);
 
-  const loadActive = async (id) => {
+  const loadActive = useCallback(async (id) => {
     if (!id) { setActive(null); return; }
     try {
       const { data } = await api.get(`/me/messages/${id}`);
@@ -68,10 +74,10 @@ export default function PortalMessages({ dogs = [], open = false, onClose = () =
     } catch (e) {
       toast.error(e?.response?.data?.detail || "Could not load this conversation");
     }
-  };
+  }, [load]);
 
-  useEffect(() => { if (open) load(); /* refresh whenever opened */ }, [open]);
-  useEffect(() => { if (open) loadActive(activeId); }, [activeId, open]);
+  useEffect(() => { if (open) load(); /* refresh whenever opened */ }, [open, load]);
+  useEffect(() => { if (open) loadActive(activeId); }, [activeId, open, loadActive]);
 
   const startNewThread = async () => {
     if (!bodyTxt.trim()) { toast.error("Type your message first"); return; }

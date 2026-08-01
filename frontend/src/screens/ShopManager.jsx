@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useState } from "react";
 import { api, formatErr } from "../lib/api";
 import { toast } from "sonner";
 import PageHero from "../components/PageHero";
@@ -103,7 +103,7 @@ function ItemsTab({ onEditItem, onAddShopItem }) {
   const [hasHistory, setHasHistory] = useState(false);
   const [forbidden, setForbidden] = useState(false);
 
-  const load = () => {
+  const load = useCallback(() => {
     setLoading(true);
     setForbidden(false);
     const params = {};
@@ -120,8 +120,8 @@ function ItemsTab({ onEditItem, onAddShopItem }) {
         else toast.error("Could not load Shop Manager items");
       })
       .finally(() => setLoading(false));
-  };
-  useEffect(() => { load(); /* eslint-disable-next-line react-hooks/exhaustive-deps */ }, [section, view]);
+  }, [section, view]);
+  useEffect(() => { load(); }, [load]);
 
   const filtered = useMemo(() => {
     const list = filterItemsByView(items, view);
@@ -568,7 +568,7 @@ function CategoriesTab() {
   const [bulkCategoryId, setBulkCategoryId] = useState("");
   const [bulkSubcategoryId, setBulkSubcategoryId] = useState("");
 
-  const load = async () => {
+  const load = useCallback(async () => {
     setLoading(true);
     try {
       const [catRes, uncatRes] = await Promise.all([
@@ -582,8 +582,8 @@ function CategoriesTab() {
     } finally {
       setLoading(false);
     }
-  };
-  useEffect(() => { load(); /* eslint-disable-next-line react-hooks/exhaustive-deps */ }, [section]);
+  }, [section]);
+  useEffect(() => { load(); }, [load]);
 
   const toggleExpand = (id) => setExpanded((e) => ({ ...e, [id]: !e[id] }));
 

@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { api, formatErr } from "../lib/api";
 import { toast } from "sonner";
 import { useAuth } from "../lib/auth";
@@ -3203,10 +3203,19 @@ function MarketingQRPanel() {
     return `/admin/marketing-qr?${params.toString()}`;
   };
 
-  const loadPreview = async () => {
+  // Read the latest `ref` via a mirrored ref object so `loadPreview` can stay
+  // a single stable callback (used by the mount-once effect below) without
+  // ever going stale — the SEPARATE debounced effect further down already
+  // handles reloading when `ref` actually changes; this one must only run once.
+  const refValueRef = useRef(ref);
+  refValueRef.current = ref;
+
+  const loadPreview = useCallback(async (size = 512) => {
     setLoading(true); setErr("");
     try {
-      const r = await api.get(buildUrl(512), { responseType: "blob" });
+      const params = new URLSearchParams({ size: String(size) });
+      if (refValueRef.current.trim()) params.set("ref", refValueRef.current.trim());
+      const r = await api.get(`/admin/marketing-qr?${params.toString()}`, { responseType: "blob" });
       const blob = new Blob([r.data], { type: "image/png" });
       setPreviewUrl(URL.createObjectURL(blob));
       setTargetUrl(r.headers["x-qr-target-url"] || "");
@@ -3215,9 +3224,9 @@ function MarketingQRPanel() {
     } finally {
       setLoading(false);
     }
-  };
+  }, []);
 
-  useEffect(() => { loadPreview(); /* eslint-disable-next-line */ }, []);
+  useEffect(() => { loadPreview(); }, [loadPreview]);
   // Regenerate preview when ref changes (debounced).
   useEffect(() => {
     const id = setTimeout(loadPreview, 400);

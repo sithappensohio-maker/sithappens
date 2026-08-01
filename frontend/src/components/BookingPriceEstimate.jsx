@@ -23,7 +23,7 @@ wizard Step 3, just above the Confirm button. STRICT GUARANTEES:
   • Gated by the new `show_price_estimate` toggle under Booking Flow
     Controls — parent should render this component only when the toggle
     is on. */
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { api } from "../lib/api";
 
 const DISCLAIMER =
@@ -115,9 +115,22 @@ export default function BookingPriceEstimate({
 
   // Backend quote is the real source of truth. Keep the legacy client-side
   // calculator as a fallback for multi-date / multi-dog estimate edge cases.
+  // Sprint 110di-26 — `addons` arrives as a freshly-built array from the
+  // parent on every render (it's assembled inline from selectedAddonIds +
+  // extraDogs), so its reference is never stable even when the actual add-on
+  // selection hasn't changed. Compare by content (sorted id list) so this
+  // effect only re-fires — and re-hits /pricing/quote — when the selection
+  // itself actually changes, not on every parent re-render.
+  const addonIds = (addons || []).map(a => a?.id).filter(Boolean);
+  const addonIdsKey = JSON.stringify(addonIds);
+  const stableAddonIdsRef = useRef(addonIds);
+  if (JSON.stringify(stableAddonIdsRef.current) !== addonIdsKey) {
+    stableAddonIdsRef.current = addonIds;
+  }
+  const stableAddonIds = stableAddonIdsRef.current;
+
   useEffect(() => {
     let cancelled = false;
-    const addonIds = (addons || []).map(a => a?.id).filter(Boolean);
     const canUseBackendQuote = !!serviceType && !!date && !isMultiDate && !addonsPerDog;
     if (!canUseBackendQuote) { setServerQuote(null); return () => { cancelled = true; }; }
     api.post("/pricing/quote", {
@@ -128,13 +141,13 @@ export default function BookingPriceEstimate({
       dog_id: primaryDogId || undefined,
       dropoff_time: dropoffTime || undefined,
       pickup_time: pickupTime || undefined,
-      addon_service_ids: addonIds,
+      addon_service_ids: stableAddonIds,
       dog_count: Math.max(1, Number(dogCount || 1)),
     })
       .then(({ data }) => { if (!cancelled) setServerQuote(data || null); })
       .catch(() => { if (!cancelled) setServerQuote(null); });
     return () => { cancelled = true; };
-  }, [serviceType, serviceId, date, endDate, dropoffTime, pickupTime, primaryDogId, isMultiDate, addonsPerDog, dogCount, JSON.stringify((addons || []).map(a => a?.id).filter(Boolean))]);
+  }, [serviceType, serviceId, date, endDate, dropoffTime, pickupTime, primaryDogId, isMultiDate, addonsPerDog, dogCount, stableAddonIds]);
 
   // Use the configured default service matching this service_type. If there is
   // no explicit default, fall back to the first active service. We intentionally
@@ -278,7 +291,7 @@ export default function BookingPriceEstimate({
       md_discount_label: mdSvc?.label || mdDiscount?.label || "Additional dog discount",
       md_discount_applied: applyMd,
     };
-  }, [headlineService, serviceType, dogCount, date, endDate, multiDates, isMultiDate, credits, addons, addonsPerDog, dropoffTime, pickupTime, rules, mdDiscount]);
+  }, [headlineService, serviceType, dogCount, date, endDate, multiDates, isMultiDate, credits, addons, addonsPerDog, pickupTime, rules, mdDiscount]);
 
   const calc = useMemo(() => {
     if (!serverQuote || !legacyCalc) return legacyCalc;
