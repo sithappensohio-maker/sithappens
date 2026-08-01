@@ -121,6 +121,17 @@ DB): **75/75 passing** (1 pre-existing skip). Zero production defects —
 every failure was a missing fixture already established elsewhere in the
 suite.
 
+### Cluster 5 — Stripe online payments and webhook handling
+
+| Test file | Failing scenario | Classification | Production affected? | Fix | Current isolated result |
+|---|---|---|---|---|---|
+| `test_stripe_online_payments.py` (39 of 45 tests) | `400 "Open the register before taking cash payments."` | Missing fixture | No | `admin_headers` fixture switched to `opening_cash: 0.0` (matching a byte-fresh day's $0.00 rollover baseline) plus the established 409-reopen-retry pattern | 45/45 clean |
+
+Single fix resolved the entire file — no other issues found. Zero
+production defects; the extensive webhook idempotency, replay,
+concurrent-resume, and refund-reversal logic all held up correctly once
+the fixture could actually reach checkout.
+
 ## Remaining clusters
 
-Not yet started: Stripe/webhooks, shop category/schema compatibility.
+Not yet started: shop category/schema compatibility.

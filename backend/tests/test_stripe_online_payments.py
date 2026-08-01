@@ -55,8 +55,16 @@ def admin_headers():
                        json={"email": "admin@sithappens.com", "password": "admin123"}, timeout=15)
     r.raise_for_status()
     headers = {"Authorization": f"Bearer {r.json()['token']}"}
-    requests.post(f"{API}/admin/register/open-drawer", headers=headers,
-                  json={"opening_cash": 100.0}, timeout=15)
+    # This shared test DB's register day may already be closed by another
+    # file that ran first (409), and a byte-fresh day's expected rollover
+    # baseline is $0.00 — anything else 400s requiring an override reason.
+    opened = requests.post(f"{API}/admin/register/open-drawer", headers=headers,
+                            json={"opening_cash": 0.0}, timeout=15)
+    if opened.status_code == 409:
+        requests.post(f"{API}/admin/register/reopen-day", headers=headers,
+                      json={"reason": "test_stripe_online_payments.py setup"}, timeout=15)
+        requests.post(f"{API}/admin/register/open-drawer", headers=headers,
+                      json={"opening_cash": 0.0}, timeout=15)
     return headers
 
 
