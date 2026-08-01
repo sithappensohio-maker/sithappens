@@ -35,9 +35,12 @@ def _backdate_checkin(booking_id, hours_ago):
     db_name = os.environ.get("DB_NAME", "sit_happens")
     client = MongoClient(mongo_url)
     try:
+        # The real check-in endpoint never changes `status` away from
+        # "approved" — only `checked_in_at` gets stamped (see server.py's
+        # check_in()). "checked_in" is not a valid BookingOut status value.
         client[db_name].bookings.update_one(
             {"id": booking_id},
-            {"$set": {"status": "checked_in", "checked_in_at": ci_ts}},
+            {"$set": {"checked_in_at": ci_ts}},
         )
     finally:
         client.close()
@@ -226,6 +229,29 @@ def test_daycare_full_day(admin_headers):
     _checkout(admin_headers, bid)
     bk = _get_booking(admin_headers, bid)
     assert bk.get("actual_price") == 40.0, f"got {bk.get('actual_price')}"
+
+
+def test_get_booking_exposes_pricing_snapshot(admin_headers):
+    """Regression: BookingOut (server.py) omitted the `pricing_snapshot`
+    field entirely, so FastAPI's response_model silently stripped it from
+    every GET /bookings response even though it was correctly written to
+    the database at booking creation. CheckoutModal.jsx reads
+    `booking.pricing_snapshot?.unit_price` and `?.group_dog_index` directly
+    off the API response for grandfathered per-booking pricing and
+    additional-dog-row detection in the live checkout UI — with the field
+    missing, both silently always evaluated as unset."""
+    _set_rules(admin_headers)
+    _seed_default_service(admin_headers, "boarding", 50.0)
+    client = _make_client(admin_headers)
+    dog = _make_dog(admin_headers, client["id"])
+    bid = _make_booking_then_checkin(
+        admin_headers, client["id"], dog["id"], "boarding", hours_ago=1, end_days=2, pickup_time="16:00",
+    )
+    bk = _get_booking(admin_headers, bid)
+    snap = bk.get("pricing_snapshot")
+    assert snap, "pricing_snapshot must survive the BookingOut response_model"
+    assert snap.get("unit_price") == 50.0
+    assert snap.get("pickup_cutoff_time") == "17:00"
 
 
 def test_manual_base_price_override_wins(admin_headers):

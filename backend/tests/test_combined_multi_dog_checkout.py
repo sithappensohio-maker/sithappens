@@ -67,6 +67,12 @@ def test_same_owner_same_service_checks_out_as_one_ticket(admin_headers):
         bookings = r.json()["bookings"]
         for booking in bookings:
             requests.post(f"{BASE}/api/bookings/{booking['id']}/approve", headers=admin_headers, timeout=15)
+            # Front Desk household-checkout fix (see server.py's
+            # _active_household_checkout_rows): only dogs that actually
+            # checked in belong on one combined household ticket, so a
+            # booked-but-never-arrived dog can't be swept into someone
+            # else's checkout. Both dogs must check in to be eligible.
+            requests.post(f"{BASE}/api/bookings/{booking['id']}/check-in", headers=admin_headers, json={}, timeout=15)
 
         preview = requests.get(
             f"{BASE}/api/bookings/{bookings[1]['id']}/checkout-group-preview",

@@ -32,7 +32,13 @@ def admin_token():
 
 @pytest.fixture(scope="session")
 def admin_h(admin_token):
-    return {"Authorization": f"Bearer {admin_token}"}
+    headers = {"Authorization": f"Bearer {admin_token}"}
+    # _resolve_base_service_for_booking (server.py) requires at least one
+    # active, non-addon service of the requested type for a CLIENT online
+    # booking with no explicit service_id — a byte-fresh test DB has none.
+    # Seed the standard catalog (idempotent) so daycare/boarding exist.
+    requests.post(f"{BASE_URL}/api/services/seed-standard", headers=headers, timeout=15)
+    return headers
 
 
 @pytest.fixture(scope="session")

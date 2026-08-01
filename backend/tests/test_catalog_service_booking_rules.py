@@ -36,6 +36,10 @@ def test_exact_service_rules_round_trip_and_partial_category_put_preserves_them(
     settings = requests.get(f"{BASE_URL}/api/settings", headers=h, timeout=15).json()
     original = settings.get("booking_flow_controls") or {}
 
+    # A byte-fresh test database has no services at all — seed the standard
+    # catalog (idempotent) so there's a real active, non-addon service to
+    # attach an exact per-service rule to.
+    requests.post(f"{BASE_URL}/api/services/seed-standard", headers=h, timeout=15)
     services = requests.get(
         f"{BASE_URL}/api/services",
         headers=h,

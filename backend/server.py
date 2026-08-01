@@ -865,6 +865,10 @@ class BookingOut(BaseModel):
     extra_nights: Optional[Dict[str, Any]] = None
     # Sprint 110 — multi-dog household discount applied at check-out.
     multi_dog_discount: Optional[Dict[str, Any]] = None
+    # Booking-time price lock (unit_price, pickup_cutoff_time, group_dog_index,
+    # etc.) — CheckoutModal.jsx reads this directly for grandfathered pricing
+    # and additional-dog-row detection, so it must survive the response_model.
+    pricing_snapshot: Optional[Dict[str, Any]] = None
     # Sprint 94 — silent audit: who/where the check-in / check-out happened.
     checked_in_by: Optional[str] = None
     checked_in_by_name: Optional[str] = None
@@ -6142,16 +6146,31 @@ def _multi_dog_discount_config_for(settings: dict, service_type: str) -> Optiona
     # they do not receive the Sit Happens default sibling discount.
     per_service = settings.get("multi_dog_discount_by_service") or {}
     cfg = per_service.get(service_type)
-    if not cfg:
+    if cfg:
+        if not cfg.get("enabled"):
+            return None
+        return {
+            "enabled": True,
+            "mode": cfg.get("mode") or "percent",
+            "value": float(cfg.get("value") or 0),
+            "label": cfg.get("label") or "Additional dog discount",
+            "source": "settings",
+        }
+    # No per-service entry for this service type — fall back to the older,
+    # single flat config (multi_dog_discount_enabled/mode/value/label) so
+    # installs that never migrated to the granular per-service schema keep
+    # working for non-core services, exactly as documented above.
+    if not settings.get("multi_dog_discount_enabled"):
         return None
-    if not cfg.get("enabled"):
+    legacy_value = float(settings.get("multi_dog_discount_value") or 0)
+    if legacy_value <= 0:
         return None
     return {
         "enabled": True,
-        "mode": cfg.get("mode") or "percent",
-        "value": float(cfg.get("value") or 0),
-        "label": cfg.get("label") or "Additional dog discount",
-        "source": "settings",
+        "mode": settings.get("multi_dog_discount_mode") or "percent",
+        "value": legacy_value,
+        "label": settings.get("multi_dog_discount_label") or "Additional dog discount",
+        "source": "settings_legacy",
     }
 
 def _discount_amount_for_extra_dogs(raw_additional_dog_base: float, cfg: Optional[Dict[str, Any]], additional_dogs: int = 1) -> float:

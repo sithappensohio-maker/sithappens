@@ -26,7 +26,13 @@ def admin_h():
     r = requests.post(f"{BASE_URL}/api/auth/login",
                       json={"email": ADMIN_EMAIL, "password": ADMIN_PASSWORD}, timeout=15)
     assert r.status_code == 200, r.text
-    return {"Authorization": f"Bearer {r.json()['token']}"}
+    headers = {"Authorization": f"Bearer {r.json()['token']}"}
+    # _resolve_base_service_for_booking (server.py) requires at least one
+    # active, non-addon service of the requested type for a CLIENT online
+    # booking with no explicit service_id — a byte-fresh test DB has none.
+    # Seed the standard catalog (idempotent) so daycare/boarding exist.
+    requests.post(f"{BASE_URL}/api/services/seed-standard", headers=headers, timeout=15)
+    return headers
 
 
 @pytest.fixture(scope="module")

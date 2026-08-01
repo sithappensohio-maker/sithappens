@@ -25,7 +25,26 @@ ADMIN = {"email": "admin@sithappens.com", "password": "admin123"}
 def admin_headers():
     r = requests.post(f"{BASE}/api/auth/login", json=ADMIN, timeout=15)
     assert r.status_code == 200
-    return {"Authorization": f"Bearer {r.json()['token']}"}
+    headers = {"Authorization": f"Bearer {r.json()['token']}"}
+    # Every checkout in this file uses payment_method=cash, which requires
+    # an open register day (see server.py's cash-tender gate). This file
+    # never opened one itself — it always relied on ambient state left by
+    # other tests/an operator on the old shared dev database.
+    opened = requests.post(f"{BASE}/api/admin/register/open-drawer", headers=headers,
+                            json={"opening_cash": 0.0}, timeout=15)
+    if opened.status_code == 409:
+        requests.post(f"{BASE}/api/admin/register/reopen-day", headers=headers,
+                      json={"reason": "test_multi_dog_discount.py setup"}, timeout=15)
+        opened = requests.post(f"{BASE}/api/admin/register/open-drawer", headers=headers,
+                                json={"opening_cash": 0.0}, timeout=15)
+    if opened.status_code not in (200, 400):
+        opened.raise_for_status()
+    # discount-preview resolves a tentative price from the default active
+    # service for non-training types when the booking has no actual_price
+    # yet — seed the standard service catalog (idempotent) so grooming has
+    # one on a byte-fresh database.
+    requests.post(f"{BASE}/api/services/seed-standard", headers=headers, timeout=15)
+    return headers
 
 
 @pytest.fixture
@@ -49,7 +68,20 @@ def discount_enabled(admin_headers):
 
 @pytest.fixture
 def two_dog_client(admin_headers):
-    """Create a fresh client with 2 dogs and 2 daycare bookings for today."""
+    """Create a fresh client with 2 dogs and 2 grooming bookings for today.
+
+    service_type=grooming, not daycare: _multi_dog_discount_config_for (a
+    later, documented "Sit Happens fixed business rule" than this test)
+    hardcodes daycare/boarding's additional-dog discount at a fixed 50%,
+    explicitly ignoring the settings this whole file exists to exercise
+    ("Those legacy settings must NOT affect daycare/boarding... checkout
+    math."). Non-core service types like grooming deliberately keep the
+    older, fully settings-configurable behavior this file is testing.
+    Grooming specifically (not training): discount_preview intentionally
+    never auto-suggests a price for training ("package-paid" — Sprint
+    110ar), which would always show ineligible pre-checkout regardless of
+    the multi-dog setting under test.
+    """
     suffix = uuid.uuid4().hex[:6]
     # Client
     c = requests.post(f"{BASE}/api/clients", headers=admin_headers, json={
@@ -69,17 +101,23 @@ def two_dog_client(admin_headers):
             "vaccines": {"rabies": "2030-01-01"},
         }, timeout=15).json()
         dog_ids.append(d["id"])
-    # 2 daycare bookings for today, both approved (so they reach check-out)
+    # 2 grooming bookings for today, both approved (so they reach check-out)
     booking_ids = []
-    for did in dog_ids:
+    for i, did in enumerate(dog_ids):
         b = requests.post(f"{BASE}/api/bookings", headers=admin_headers, json={
             "client_id": c["id"],
             "dog_id": did,
-            "service_type": "daycare",
+            "service_type": "grooming",
             "date": today,
+            "time": f"{10 + i}:00",  # grooming is time-slotted — required; stagger to avoid a same-slot conflict between the two dogs
+            "override_capacity": True,  # this shared long-lived test DB accumulates real grooming bookings at common slots from other files
         }, timeout=15).json()
-        # Approve
+        # Approve, then check in — checkout now requires a checked-in
+        # booking (see server.py's check_out "must be checked in first"
+        # guard, added after this test was written), matching a real
+        # front-desk arrival before departure.
         requests.post(f"{BASE}/api/bookings/{b['id']}/approve", headers=admin_headers, timeout=15)
+        requests.post(f"{BASE}/api/bookings/{b['id']}/check-in", headers=admin_headers, json={}, timeout=15)
         booking_ids.append(b["id"])
     yield {"client_id": c["id"], "dog_ids": dog_ids, "booking_ids": booking_ids}
     # Cleanup: cancel bookings + delete dogs + delete client
@@ -176,18 +214,27 @@ def test_flat_mode_discount(admin_headers, two_dog_client):
 
 
 def test_per_service_discount_config(admin_headers, two_dog_client):
-    """Sprint 110h — daycare and boarding have separate tiers. Daycare 25% off,
-    boarding off entirely → only daycare bookings get the discount."""
+    """Sprint 110h — separate tiers per service type. Grooming 25% off,
+    training off entirely → only grooming bookings get the discount.
+
+    Originally written against daycare/boarding tiers, but
+    _multi_dog_discount_config_for (a later, documented "Sit Happens fixed
+    business rule") hardcodes daycare/boarding at a fixed 50% unconditionally,
+    before ever consulting multi_dog_discount_by_service — per-service
+    config for those two is now structurally unreachable, by design.
+    Training/grooming are non-core services where granular per-service
+    config is still the real, live code path.
+    """
     requests.put(f"{BASE}/api/settings", headers=admin_headers, json={
         "multi_dog_discount_enabled": True,
         "multi_dog_discount_by_service": {
-            "daycare":  {"enabled": True,  "mode": "percent", "value": 25, "label": "Daycare 25%"},
-            "boarding": {"enabled": False, "mode": "flat",    "value": 20, "label": "Boarding"},
+            "grooming": {"enabled": True,  "mode": "percent", "value": 25, "label": "Grooming 25%"},
+            "training": {"enabled": False, "mode": "flat",    "value": 20, "label": "Training"},
         },
     }, timeout=15)
     try:
         bid1, bid2 = two_dog_client["booking_ids"]
-        # Both are daycare bookings (per the fixture) → daycare rule applies
+        # Both are grooming bookings (per the fixture) → grooming rule applies
         requests.post(f"{BASE}/api/bookings/{bid1}/check-out", headers=admin_headers, json={
             "base_price": 40.0, "payment_method": "cash", "payment_status": "paid",
         }, timeout=15)
@@ -195,11 +242,11 @@ def test_per_service_discount_config(admin_headers, two_dog_client):
             "base_price": 40.0, "payment_method": "cash", "payment_status": "paid",
         }, timeout=15).json()
         # 25% off $40 → $30 net
-        assert r["actual_price"] == 30.0, f"expected $30 after 25% daycare off, got {r['actual_price']}"
+        assert r["actual_price"] == 30.0, f"expected $30 after 25% grooming off, got {r['actual_price']}"
         md = r["multi_dog_discount"]
         assert md["amount"] == 10.0
-        assert md["service_type"] == "daycare"
-        assert md["label"] == "Daycare 25%"
+        assert md["service_type"] == "grooming"
+        assert md["label"] == "Grooming 25%"
     finally:
         requests.put(f"{BASE}/api/settings", headers=admin_headers, json={
             "multi_dog_discount_enabled": False,
@@ -234,6 +281,47 @@ def test_legacy_flat_config_still_works_when_per_service_empty(admin_headers, tw
             "multi_dog_discount_enabled": False,
         }, timeout=15)
 
+
+
+def test_legacy_flat_config_still_works_when_service_missing_from_by_service(admin_headers, two_dog_client):
+    """Regression: _multi_dog_discount_config_for must fall back to the
+    legacy flat config when multi_dog_discount_by_service is non-empty but
+    simply has no entry for THIS service type (grooming) — not just when
+    it's totally empty. The fixed code previously stopped and returned
+    None the moment `per_service.get(service_type)` came back falsy,
+    ignoring the legacy fields entirely for any service that hadn't been
+    migrated to the granular per-service schema yet, even though its own
+    docstring promised "preserve the older configurable behavior" for
+    non-core services."""
+    requests.put(f"{BASE}/api/settings", headers=admin_headers, json={
+        "multi_dog_discount_enabled": True,
+        "multi_dog_discount_mode": "percent",
+        "multi_dog_discount_value": 15,
+        "multi_dog_discount_label": "Legacy fallback",
+        # Populated for a different service type only — grooming has no
+        # entry here, so it must fall back to the legacy flat fields above.
+        "multi_dog_discount_by_service": {
+            "boarding": {"enabled": True, "mode": "percent", "value": 50, "label": "Boarding"},
+        },
+    }, timeout=15)
+    try:
+        bid1, bid2 = two_dog_client["booking_ids"]
+        requests.post(f"{BASE}/api/bookings/{bid1}/check-out", headers=admin_headers, json={
+            "base_price": 40.0, "payment_method": "cash", "payment_status": "paid",
+        }, timeout=15)
+        r = requests.post(f"{BASE}/api/bookings/{bid2}/check-out", headers=admin_headers, json={
+            "base_price": 40.0, "payment_method": "cash", "payment_status": "paid",
+        }, timeout=15).json()
+        # 15% off $40 = $6 → $34 net
+        assert r["actual_price"] == 34.0, f"expected $34 after legacy 15% off, got {r['actual_price']}"
+        md = r["multi_dog_discount"]
+        assert md["amount"] == 6.0
+        assert md["label"] == "Legacy fallback"
+    finally:
+        requests.put(f"{BASE}/api/settings", headers=admin_headers, json={
+            "multi_dog_discount_enabled": False,
+            "multi_dog_discount_by_service": {},
+        }, timeout=15)
 
 
 def test_disabled_setting_skips_discount(admin_headers, two_dog_client):

@@ -69,7 +69,36 @@ A further recount is pending after the cluster fixes below land.
 | `test_sprint3.py::test_daycare_capacity_enforced` | Capacity-full rejection returns `409` not `400` | Stale assertion | No — `_capacity_error` deliberately returns 409 Conflict with a structured `{code, message, display_message, resource, waitlist_allowed}` body; a state conflict, not a malformed request | Updated the assertion to `409` | 18/18 clean |
 | `test_sprint3.py::test_auto_approve_for_clients` | `400 "Daycare is closed on that day."` at `+8 days` | Stale fixture | No — same Sunday-default-closed issue | Same walk-forward-past-Sunday fix | — |
 
+### Cluster 2 correction (found during Cluster 3 cross-verification)
+
+While sanity-checking that Cluster 3's fixes didn't disturb Clusters 1/2,
+running `test_sithappens.py` and `test_sprint3.py` alone against a truly
+fresh reset (not combined with other files) showed both had silently
+regressed to failing even in isolation — the previously-recorded "clean"
+result no longer reproduced. Root cause and fix:
+
+| Test file | Failing scenario | Classification | Production affected? | Fix | Current isolated result |
+|---|---|---|---|---|---|
+| `test_sithappens.py::TestBookings` (3 tests: `test_rabies_expired`, `test_insufficient_credits`, `test_client_create_and_admin_approve`), `test_sprint3.py::test_auto_approve_for_clients` | `400 "No active {service_type} service is available for online booking."` | Undocumented seed dependency | No — `_resolve_base_service_for_booking` (server.py ~3360) correctly requires at least one active, non-addon service of the requested type before a CLIENT can book online with no explicit `service_id`; a byte-fresh test DB has zero services | Both files' `admin_h` fixture now calls `POST /services/seed-standard` (idempotent) right after login, same pattern used in `test_multi_dog_discount.py` and `test_catalog_service_booking_rules.py` | `test_sithappens.py`: 20/20 clean. `test_sprint3.py`: 18/18 clean |
+
+### Cluster 3 — Multi-dog pricing and combined checkout
+
+| Test file | Failing scenario | Classification | Production affected? | Fix | Current isolated result |
+|---|---|---|---|---|---|
+| `test_multi_dog_discount.py` (whole file) | `KeyError: 'actual_price'` on every checkout | Missing fixture | No | `admin_headers` now opens the register day (with 409-reopen-retry), matching the pattern established in `test_pos_hardware_authorization.py` | — |
+| `test_multi_dog_discount.py` (whole file) | Still `KeyError: 'actual_price'` after opening the register | Missing fixture | No — checkout correctly rejects an un-arrived dog (`check_out`'s "check the dog in first" guard, added after this test was written) | `two_dog_client` fixture now calls `POST /bookings/{id}/check-in` after approving each booking | — |
+| `test_multi_dog_discount.py::test_second_dog_gets_discount_percent` (and the whole `two_dog_client` fixture) | Discount always exactly 50% no matter what the test's own settings say | Stale test premise | No — `_multi_dog_discount_config_for` hardcodes daycare/boarding's additional-dog discount at a fixed 50%, deliberately ignoring settings (a later, documented "Sit Happens fixed business rule") | Switched the fixture's bookings from `daycare` to `grooming`, a non-core service type where the settings-driven discount is still the real, live code path | — |
+| `test_multi_dog_discount.py::test_second_dog_gets_discount_percent` | `discount-preview` → `eligible: False` after switching to `training` | Stale test premise | No — Sprint 110ar deliberately never auto-suggests a catalog price for training in the preview ("package-paid") | Switched from `training` to `grooming` instead (no such exclusion); seeded the standard service catalog via `POST /services/seed-standard` so grooming has a resolvable default price on a byte-fresh DB | 9/9 clean (incl. new regression test below) |
+| `test_multi_dog_discount.py::test_per_service_discount_config` | Configured impossible daycare/boarding per-service tiers | Stale test premise | No — per-service config for daycare/boarding is structurally unreachable now (see above) | Rewrote to configure grooming (enabled) vs. training (disabled) tiers, matching the fixture's actual service type | — |
+| `_multi_dog_discount_config_for` (server.py ~6119) | Non-core service types with a non-empty `multi_dog_discount_by_service` that simply has no entry for the current service type got **no discount at all**, instead of falling back to the legacy flat fields | **Production defect** | **Yes** | Added the missing legacy-flat-config fallback branch (was returning `None` the moment `per_service.get(service_type)` came back falsy, even though the function's own docstring promised to "preserve the older configurable behavior" for non-core services) | Fixed; new regression test `test_legacy_flat_config_still_works_when_service_missing_from_by_service` added and passing |
+| `test_combined_multi_dog_checkout.py::test_same_owner_same_service_checks_out_as_one_ticket` | `checkout-group-preview` → `count: 0` | Missing fixture | No — `_active_household_checkout_rows` deliberately requires `checked_in_at` (Front Desk household-checkout fix, task #192): a booked-but-never-arrived dog must never be swept into another dog's combined ticket | Added a `POST /bookings/{id}/check-in` call for each dog after approval | 1/1 clean |
+| `test_stay_pricing.py::test_boarding_cutoff_can_be_changed` | `pricing_snapshot` came back `None` entirely from `GET /bookings/{id}` | **Production defect** | **Yes** — `BookingOut` (server.py ~785) never declared a `pricing_snapshot` field, so FastAPI's `response_model` silently stripped it from every booking API response, even though it's written correctly to the database at booking creation. `CheckoutModal.jsx` (lines 155, 333, 335) reads `booking.pricing_snapshot?.unit_price` and `?.group_dog_index` directly off the API response for grandfathered per-booking pricing and additional-dog-row detection in the live checkout UI — both silently always evaluated as unset | Added `pricing_snapshot: Optional[Dict[str, Any]] = None` to `BookingOut` | Fixed; new regression test `test_get_booking_exposes_pricing_snapshot` added and passing |
+| `test_stay_pricing.py::_backdate_checkin` (shared test helper) | New regression test above initially hit a `500` — `ResponseValidationError` on `status` | Missing fixture (stale test helper) | No — the real check-in endpoint never changes `status` away from `"approved"`; the helper's own direct-Mongo write of `status: "checked_in"` is a value that has never existed in production and isn't in `BookingOut`'s status enum | Removed the incorrect `status` write from `_backdate_checkin`, leaving only `checked_in_at` | — |
+| `test_catalog_service_booking_rules.py::test_exact_service_rules_round_trip_and_partial_category_put_preserves_them` | `StopIteration` — no active, non-addon service exists | Undocumented seed dependency | No | Seeded the standard service catalog via `POST /services/seed-standard` before looking up a base service | 2/2 clean |
+
+Combined Cluster 3 result (4 files run together against one freshly reset DB): **20/20 passing.**
+
 ## Remaining clusters
 
-Not yet started: multi-dog pricing/combined checkout, invoices/payments,
-Stripe/webhooks, shop category/schema compatibility.
+Not yet started: invoices/payments, Stripe/webhooks, shop category/schema
+compatibility.
