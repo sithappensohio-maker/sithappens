@@ -46,6 +46,16 @@ def staff_headers(admin_headers):
         timeout=15,
     )
     r.raise_for_status()
+    # A freshly created employee defaults to staff_role="read_only" (see
+    # POST /admin/employees) — intentionally excludes incidents/
+    # care_complete so a brand-new account can't do anything destructive.
+    # This fixture represents a real floor worker, so assign the role that
+    # actually carries those permissions, exactly as an admin onboarding a
+    # new daycare staffer would.
+    requests.put(
+        f"{API}/staff/{r.json()['id']}/role", headers=admin_headers,
+        json={"staff_role": "daycare_staff"}, timeout=15,
+    ).raise_for_status()
     login = requests.post(f"{API}/auth/login",
                           json={"email": email, "password": password}, timeout=15)
     login.raise_for_status()
@@ -90,7 +100,14 @@ def floor_dog_and_booking(admin_headers):
                             json={"dog_id": dog["id"], "service_type": "grooming",
                                   "grooming_type": "bath",
                                   "date": date.today().isoformat(),
-                                  "status": "approved"},
+                                  "time": "10:00",  # grooming is a time-slotted service — required
+                                  "status": "approved",
+                                  # This shared long-lived test DB accumulates real
+                                  # grooming bookings from other files using the
+                                  # same "today at 10:00" slot — a test-isolation
+                                  # fix (the existing admin-only bypass), not a
+                                  # production capacity rule change.
+                                  "override_capacity": True},
                             timeout=15)
     if booking_resp.status_code >= 400:
         raise AssertionError(f"Booking creation failed: {booking_resp.status_code} {booking_resp.text}")

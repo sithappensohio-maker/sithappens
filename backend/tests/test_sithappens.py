@@ -55,7 +55,17 @@ def portal_user(admin_h, created_client):
     # login
     lr = requests.post(f"{BASE_URL}/api/auth/login", json={"email": email, "password": pw}, timeout=15)
     assert lr.status_code == 200, lr.text
-    return {"email": email, "password": pw, "token": lr.json()["token"], "user": lr.json()["user"]}
+    # A freshly created portal account always has must_change_password=True
+    # (see POST /clients/{id}/portal-account), which blocks every endpoint
+    # except /auth/me and /auth/change-password. Complete that forced
+    # change for real before handing back a token meant to be usable.
+    changed = requests.post(
+        f"{BASE_URL}/api/auth/change-password",
+        json={"current_password": pw, "new_password": pw},
+        headers={"Authorization": f"Bearer {lr.json()['token']}"}, timeout=15,
+    )
+    assert changed.status_code == 200, changed.text
+    return {"email": email, "password": pw, "token": changed.json()["token"], "user": lr.json()["user"]}
 
 
 @pytest.fixture(scope="session")
@@ -171,7 +181,12 @@ class TestBookings:
                                 "service_type": "daycare"}, headers=client_h, timeout=15)
         assert r.status_code == 200, r.text
         b = r.json()
-        assert b["status"] == "pending"
+        # catalog_service_booking_rules (a later phase than this test)
+        # makes daycare instant-book by design (require_approval=False) —
+        # this test's actual point (per the comment above) is that a 0-
+        # credit client can still book daycare at all, not the status
+        # value itself, so assert the current correct status instead.
+        assert b["status"] == "approved"
         assert b["cost"] == 1  # daycare still has a cost (charged on day)
         # Boarding & training should be cost 0 (pay-on-the-day, not credit-based)
         rb = requests.post(f"{BASE_URL}/api/bookings",
@@ -186,8 +201,15 @@ class TestBookings:
         requests.put(f"{BASE_URL}/api/clients/{created_client['id']}",
                      json={"name": created_client["name"], "credits": 3, "email": "tc@x.com"}, headers=admin_h, timeout=15)
         target = _future_date(5)
+        # service_type=boarding, not daycare: catalog_service_booking_rules
+        # (added in a later phase than this test) makes daycare
+        # instant-book by design (require_approval=False) while boarding
+        # correctly still requires approval — this test is specifically
+        # about the pending -> admin-approve workflow, so it needs a
+        # service type that actually goes through that workflow.
         r = requests.post(f"{BASE_URL}/api/bookings",
-                          json={"dog_id": created_dog["id"], "date": target, "service_type": "daycare"},
+                          json={"dog_id": created_dog["id"], "date": target,
+                                "end_date": _future_date(6), "service_type": "boarding"},
                           headers=client_h, timeout=15)
         assert r.status_code == 200, r.text
         b = r.json()

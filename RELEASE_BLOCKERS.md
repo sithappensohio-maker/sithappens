@@ -1,0 +1,75 @@
+# Release Blockers
+
+Tracks every legacy backend test failure investigated during the Critical
+Backend Repair phase: what fails, why (classified), whether production is
+affected, what was done about it, and the current isolated result. Every
+row was verified by running that file alone against a freshly reset,
+index-correct test database (see `backend/tests/release_critical_reset.py`)
+— never against accumulated/shared state.
+
+Classification legend:
+- **Production defect** — real code fixed, regression test added.
+- **Stale assertion** — test updated to match confirmed-intentional current behavior.
+- **Missing fixture** — test's own setup was incomplete (e.g. missing a required field, missing an `override_capacity` flag already used elsewhere in the suite).
+- **Undocumented seed dependency** — test assumes a specific pre-existing account/record/external-service credential that only ever existed on a long-lived, manually-onboarded database.
+- **Test-order/cross-file pollution** — fails only because many files share one server process/IP in a single run; passes standalone.
+- **Platform-specific** — correct behavior on the real deployment target (Linux/Docker), not reproducible off it.
+
+## Mechanical infrastructure fixes (Phase 1)
+
+| Test file | Failing scenario | Classification | Production affected? | Fix / fixture required | Current isolated result |
+|---|---|---|---|---|---|
+| 14+ files (`test_claim_passwordless_login.py`, `test_iter15/16/17_*.py`, `test_pipeline_multi_enroll.py`, `test_homework_*.py`, `test_meet_greet_request.py`, `test_backend_permission_checkpoint.py`, etc.) | `429 "Too many attempts. Please wait and try again."` at fixture setup | Test-order/cross-file pollution | No — the rate limiter itself is correct and untouched | `backend/tests/conftest.py`: new `_reset_auth_rate_limits` fixture (module-scoped, autouse) clears `db.auth_rate_limits` between files when `MONGO_URL`/`DB_NAME` are set. Never touches `_enforce_rate_limit`'s logic, limits, or windows. | Pending full-suite recount |
+| `test_pos_hardware_authorization.py` | `400 "Open the register before taking cash payments."` | Missing fixture | No — register enforcement correctly rejected a test that never opened one | `admin_headers` fixture now detects a `409` (day already closed by another file) and calls `POST /admin/register/reopen-day` before retrying open-drawer | 21/23 passing (was 9/23). Remaining 2 (`test_group_checkout_real_cash_component_yields_drawer_token`, `test_group_receipt_never_invents_tendered_or_change`) fail on `cash_total == 0` — separate issue, likely missing default daycare pricing seed; not yet investigated further |
+| `test_staff_portal_p0.py`, `test_care_log_on_booking.py` | `400 "Please select a time for this grooming service."` | Missing fixture | No — grooming is a genuinely time-slotted service; validation is correct | Added `"time": "10:00"` to both files' grooming-booking fixtures, plus `"override_capacity": True` (same-time-slot collision between the two files, same pattern already used elsewhere in the suite) | `test_care_log_on_booking.py`: 5/5 clean. `test_staff_portal_p0.py`: 9/12 (3 remaining failures below, different causes) |
+| `test_disk_and_auto_backup.py::test_disk_usage_returns_mountpoints` | `mountpoints: []` | Platform-specific | No — `GET /admin/disk-usage` intentionally probes a curated Linux/Docker path list (`/app`, `/data`, `/proc/mounts`); correctly empty off that platform | Added `@pytest.mark.skipif(sys.platform != "linux", ...)` with an explanatory reason | Skipped on Windows; 2/2 other tests in the file pass |
+| ~20 files hardcoding `testclient@sithappens.com`/`test1234` (`test_dog_trivia.py`, `test_multi_date_bookings.py`, `test_homework_*.py`, `test_iter15/16/17_*.py`, etc.) | Login fails outright, or every subsequent call 403s (`must_change_password`) | Undocumented seed dependency | No | `tests/conftest.py`: new `_seed_legacy_named_fixtures` session fixture creates the portal client account through the real `POST /clients` + `POST /clients/{id}/portal-account` endpoints if missing, then completes the real forced-password-change round trip so the final credential genuinely works | Verified via `test_dog_trivia.py`, `test_owner_self_pay.py`, `test_owner_csv_exclusion.py` |
+| `test_owner_csv_exclusion.py`, `test_owner_self_pay.py` | `StopIteration` — no employee `alex@sithappens.com` | Undocumented seed dependency | No | Same fixture seeds `alex@sithappens.com` via the real `POST /admin/employees` if missing (never logged in as, so `must_change_password` is irrelevant) | Both files 100% clean |
+| `test_dog_trivia.py` (question-generation tests), `test_backup_coverage.py::test_backup_v3_contains_today_data` | `400 "EMERGENT_LLM_KEY not configured"` / `Expected ≥21 trivia questions, got 0` | Undocumented seed dependency | No | Same fixture runs `backend/seed_curated_trivia.py`'s existing idempotent 21-question seed (already in the repo, just never invoked automatically) when DB access is available | `test_dog_trivia.py`, `test_backup_coverage.py`, `test_owner_self_pay.py`, `test_owner_csv_exclusion.py` together: 38/38 clean |
+
+## Full-suite recount
+
+After the mechanical fixes above (rate-limiter isolation, register reopen,
+grooming-time fixtures, disk-usage skip, legacy-account seeding), before
+any cluster-specific fixes below:
+
+| | Before | After mechanical fixes |
+|---|---|---|
+| Passed | 975 | 1105 |
+| Failed | 232 | 160 |
+| Skipped | 64 | 52 |
+| Errors | 101 | 55 |
+| Duration | 482.59s | 526.44s |
+
+A further recount is pending after the cluster fixes below land.
+
+## Critical-cluster repair (Phase 2)
+
+### Cluster 1 — Authentication and permissions
+
+| Test file | Failing scenario | Classification | Production affected? | Fix | Current isolated result |
+|---|---|---|---|---|---|
+| `test_permission_matrix.py::test_get_staff_roles_returns_full_matrix` | `assert len(permission_keys) == 14` fails (actual: 27) | Stale assertion | No — 13 additional permission keys (`manage_receipt_settings`, `audit_log`, `sell_credits`, shop-category tiers, training/engagement content, staff scheduling, communications) were deliberately added across this project's own earlier permission-matrix rollout phases | Assert `>= 14` plus presence of representative old+new keys instead of an exact count that needs bumping on every future addition | 6/6 clean |
+| `test_roles_permissions.py::test_roles_matrix_endpoint` | Same `== 14` stale count | Stale assertion | No | Same fix pattern | — |
+| `test_roles_permissions.py::test_assign_role_and_permission_endpoint` | `/me/permissions` → `KeyError: 'staff_role'` (actually a 403 body — must_change_password gate) | Missing fixture | No | Complete the real forced-password-change round trip before using the employee's token | 3/3 clean |
+| `test_backend_permission_checkpoint.py::*` (2 tests) | `429` at fixture setup | Test-order/cross-file pollution | No | Fixed by the shared `_reset_auth_rate_limits` fixture (Phase 1) | — |
+| `test_staff_portal_p0.py::test_staff_can_log_incident`, `test_staff_incident_rejects_unknown_dog` | `403 "Missing permission: incidents"` | Missing fixture | No — a freshly created employee correctly defaults to `staff_role="read_only"` (excludes `incidents` by design) | `staff_headers` fixture now calls `PUT /staff/{id}/role` to assign `daycare_staff` before login, matching how a real floor worker would actually be onboarded | 10/10 clean |
+
+### Cluster 2 — Booking creation and approval
+
+| Test file | Failing scenario | Classification | Production affected? | Fix | Current isolated result |
+|---|---|---|---|---|---|
+| `test_sithappens.py` (5 tests: `test_rabies_expired`, `test_insufficient_credits`, `test_client_create_and_admin_approve`, `test_availability`, `test_portal_me_client`) | `403` on every `client_h`-authenticated call | Missing fixture | No | `portal_user` fixture now completes the real forced-password-change round trip | — |
+| `test_sithappens.py::test_client_create_and_admin_approve` | Booking created via portal client comes back `"approved"` not `"pending"` | Stale assertion | No — `catalog_service_booking_rules` (a later phase) makes daycare specifically instant-book by design (`require_approval: False`); every other service type still requires approval | Switched the test's service_type from `daycare` to `boarding` (still correctly demonstrates the pending→approve workflow this test is named for) | — |
+| `test_sithappens.py::test_insufficient_credits` | Same instant-book daycare mismatch | Stale assertion | No | Test's real point (per its own comment) is "0-credit client can still book," not the status value — updated the assertion to `"approved"` | 20/20 clean |
+| `test_sprint3.py::test_auto_approve_for_clients`, `test_cancellation_cutoff_for_client` | `403` must_change_password | Missing fixture | No | `s3_portal` fixture completes the real forced-password-change round trip | — |
+| `test_sprint3.py::test_create_training_booking`, `test_dashboard_training_today` | `400 "Please select a time for this training service."` | Missing fixture | No — training is genuinely time-slotted | Added `"time": "10:00"` | — |
+| `test_sprint3.py::test_dashboard_training_today` | `409` time-slot conflict with another file's grooming booking at the same "10:00" slot | Test-order/cross-file pollution (self-inflicted by adding a shared literal time across files) | No | Added `override_capacity: True`, same established pattern used elsewhere | — |
+| `test_sprint3.py::test_daycare_capacity_enforced` | `400 "Daycare is closed on that day."` | Stale fixture | No — `business_hours` (a later feature) closes daycare on Sundays by default; the fixed `+15 days` offset happened to land on a Sunday | Walk the target date forward past Sunday instead of using a fixed offset | — |
+| `test_sprint3.py::test_daycare_capacity_enforced` | Capacity-full rejection returns `409` not `400` | Stale assertion | No — `_capacity_error` deliberately returns 409 Conflict with a structured `{code, message, display_message, resource, waitlist_allowed}` body; a state conflict, not a malformed request | Updated the assertion to `409` | 18/18 clean |
+| `test_sprint3.py::test_auto_approve_for_clients` | `400 "Daycare is closed on that day."` at `+8 days` | Stale fixture | No — same Sunday-default-closed issue | Same walk-forward-past-Sunday fix | — |
+
+## Remaining clusters
+
+Not yet started: multi-dog pricing/combined checkout, invoices/payments,
+Stripe/webhooks, shop category/schema compatibility.

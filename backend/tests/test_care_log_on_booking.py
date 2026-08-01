@@ -67,7 +67,14 @@ def visit(admin_headers):
                             json={"dog_id": dog["id"], "service_type": "grooming",
                                   "grooming_type": "bath",
                                   "date": date.today().isoformat(),
-                                  "status": "approved"},
+                                  "time": "10:00",  # grooming is a time-slotted service — required
+                                  "status": "approved",
+                                  # This shared long-lived test DB accumulates real
+                                  # grooming bookings from other files using the
+                                  # same "today at 10:00" slot — a test-isolation
+                                  # fix (the existing admin-only bypass), not a
+                                  # production capacity rule change.
+                                  "override_capacity": True},
                             timeout=15).json()
     return {"client": client, "dog": dog, "booking": booking}
 

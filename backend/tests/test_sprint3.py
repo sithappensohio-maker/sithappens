@@ -60,7 +60,17 @@ def s3_portal(admin_h, s3_client):
     lr = requests.post(f"{BASE_URL}/api/auth/login",
                        json={"email": email, "password": pw}, timeout=15)
     assert lr.status_code == 200
-    return {"Authorization": f"Bearer {lr.json()['token']}", "_email": email, "_pw": pw}
+    # A freshly created portal account always has must_change_password=True
+    # (see POST /clients/{id}/portal-account), which blocks every endpoint
+    # except /auth/me and /auth/change-password. Complete that forced
+    # change for real before handing back a token meant to be usable.
+    changed = requests.post(
+        f"{BASE_URL}/api/auth/change-password",
+        json={"current_password": pw, "new_password": pw},
+        headers={"Authorization": f"Bearer {lr.json()['token']}"}, timeout=15,
+    )
+    assert changed.status_code == 200, changed.text
+    return {"Authorization": f"Bearer {changed.json()['token']}", "_email": email, "_pw": pw}
 
 
 def _get_settings(admin_h):
@@ -203,8 +213,14 @@ class TestAutoApproveAndCutoff:
         patch = deepcopy(rules_orig); patch["auto_approve"] = True; patch["cancellation_cutoff_hours"] = 0
         _put_settings(admin_h, {"booking_rules": patch})
         try:
-            # use a date >7 days in future to bypass cutoff concerns
-            target = (date.today() + timedelta(days=8)).isoformat()
+            # use a date >7 days in future to bypass cutoff concerns.
+            # business_hours (a later feature than this test) closes
+            # daycare on Sundays by default — walk forward to the next
+            # non-Sunday so this never depends on which day it runs.
+            target_date = date.today() + timedelta(days=8)
+            while target_date.weekday() == 6:  # Sunday
+                target_date += timedelta(days=1)
+            target = target_date.isoformat()
             h = {"Authorization": s3_portal["Authorization"]}
             r = requests.post(f"{BASE_URL}/api/bookings",
                               json={"dog_id": s3_dog["id"], "date": target, "service_type": "daycare"},
@@ -333,7 +349,8 @@ class TestTrainingServiceType:
     def test_create_training_booking(self, admin_h, s3_dog):
         target = (date.today() + timedelta(days=2)).isoformat()
         r = requests.post(f"{BASE_URL}/api/bookings",
-                          json={"dog_id": s3_dog["id"], "date": target, "service_type": "training"},
+                          json={"dog_id": s3_dog["id"], "date": target, "service_type": "training",
+                                "time": "10:00"},  # training is a time-slotted service — required
                           headers=admin_h, timeout=15)
         assert r.status_code == 200, r.text
         b = r.json()
@@ -359,7 +376,14 @@ class TestTrainingServiceType:
     def test_dashboard_training_today(self, admin_h, s3_dog):
         today = date.today().isoformat()
         cr = requests.post(f"{BASE_URL}/api/bookings",
-                           json={"dog_id": s3_dog["id"], "date": today, "service_type": "training"},
+                           json={"dog_id": s3_dog["id"], "date": today, "service_type": "training",
+                                 "time": "10:00",  # training is a time-slotted service — required
+                                 # This shared long-lived test DB accumulates real
+                                 # appointments from other files at the same
+                                 # common "10:00" slot — a test-isolation fix
+                                 # (the existing admin-only bypass), not a
+                                 # production time-slot rule change.
+                                 "override_capacity": True},
                            headers=admin_h, timeout=15)
         assert cr.status_code == 200, cr.text
         bid = cr.json()["id"]
@@ -375,7 +399,14 @@ class TestCapacityFromSettings:
     def test_daycare_capacity_enforced(self, admin_h, s3_client, s3_dog):
         rules_orig = _get_settings(admin_h)
         _put_settings(admin_h, {"daycare_capacity": 1})
-        target = (date.today() + timedelta(days=15)).isoformat()
+        # business_hours (a later feature than this test) closes daycare on
+        # Sundays by default — walk forward from the fixed +15-day offset
+        # to the next non-Sunday so this test never depends on which day
+        # of the week it happens to run.
+        target_date = date.today() + timedelta(days=15)
+        while target_date.weekday() == 6:  # Sunday
+            target_date += timedelta(days=1)
+        target = target_date.isoformat()
         created_ids = []
         try:
             # first booking succeeds
@@ -394,7 +425,11 @@ class TestCapacityFromSettings:
             r2 = requests.post(f"{BASE_URL}/api/bookings",
                                json={"dog_id": d2["id"], "date": target, "service_type": "daycare"},
                                headers=admin_h, timeout=15)
-            assert r2.status_code == 400
+            # _capacity_error (a later, more structured error shape than
+            # this test) deliberately returns 409 Conflict with a
+            # {code, message, display_message, resource, ...} body — a
+            # capacity-full state conflict, not a malformed request.
+            assert r2.status_code == 409
             assert "fully booked" in r2.text.lower() or "capacity" in r2.text.lower()
         finally:
             for bid in created_ids:

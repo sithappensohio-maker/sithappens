@@ -71,6 +71,41 @@ ADMIN_EMAIL = "admin@sithappens.com"
 ADMIN_PASSWORD = "admin123"
 
 
+def _rate_limit_collection():
+    """Direct Mongo handle to auth_rate_limits, if this run has DB access.
+
+    Only set up when MONGO_URL/DB_NAME are exported (see
+    RELEASE_CHECKLIST.md) — falls back to doing nothing so a plain
+    single-file `pytest tests/test_x.py` run without those exported still
+    works exactly as before.
+    """
+    mongo_url = os.environ.get("MONGO_URL")
+    db_name = os.environ.get("DB_NAME")
+    if not mongo_url or not db_name:
+        return None
+    import pymongo
+    return pymongo.MongoClient(mongo_url)[db_name]["auth_rate_limits"]
+
+
+@pytest.fixture(scope="module", autouse=True)
+def _reset_auth_rate_limits():
+    """Every file in this suite runs from the same IP (127.0.0.1) against
+    the same long-lived server process. _enforce_rate_limit in server.py
+    keys its fixed-window limiter by IP — correct, intentional behavior
+    for real distinct users, but across ~150 test files sharing one IP it
+    trips well before any single file has done anything wrong, producing
+    429s that look like test failures. Clearing the rate-limit ledger
+    between files (never touching _enforce_rate_limit's logic, limits, or
+    window sizes) removes that single-IP artifact without weakening the
+    real limiter at all — a production deployment never has this problem
+    because real traffic comes from many distinct IPs.
+    """
+    coll = _rate_limit_collection()
+    if coll is not None:
+        coll.delete_many({})
+    yield
+
+
 @pytest.fixture(scope="session", autouse=True)
 def _legacy_settings_compat():
     """Loosen settings to single-vaccine + no auto-approve so legacy tests pass.
@@ -110,3 +145,79 @@ def _legacy_settings_compat():
     orig.pop("_id", None)
     orig.pop("id", None)
     requests.put(f"{BASE_URL}/api/settings", json=orig, headers=h, timeout=15)
+
+
+@pytest.fixture(scope="session", autouse=True)
+def _seed_legacy_named_fixtures():
+    """Two specific hardcoded accounts — testclient@sithappens.com/test1234
+    (a portal client, ~20 files log in as it directly: test_dog_trivia.py,
+    test_multi_date_bookings.py, test_homework_*.py, test_iter15/16/17_*.py,
+    etc.) and alex@sithappens.com (an employee, fetched via GET /admin/
+    employees by test_owner_csv_exclusion.py / test_owner_self_pay.py to
+    exercise the is_owner toggle) — predate this suite's current
+    create-your-own-fixture convention. No test creates them; they were
+    always expected to already exist. Seed both here, once per session,
+    only if missing, through the real account-creation endpoints so they
+    end up in exactly the shape production code would create — and
+    complete the real forced-password-change flow for the portal client
+    (POST /clients/.../portal-account always sets must_change_password,
+    same as employee creation) so its test1234 login actually works
+    end-to-end, not just at the login call itself.
+    """
+    r = requests.post(f"{BASE_URL}/api/auth/login",
+                       json={"email": ADMIN_EMAIL, "password": ADMIN_PASSWORD}, timeout=15)
+    if r.status_code != 200:
+        yield
+        return
+    admin_headers = {"Authorization": f"Bearer {r.json()['token']}"}
+
+    # alex@sithappens.com — employee, admin-only usage, must_change_password
+    # is irrelevant since nothing ever logs in as alex.
+    emps = requests.get(f"{BASE_URL}/api/admin/employees", headers=admin_headers, timeout=15).json()
+    if not any(e.get("email") == "alex@sithappens.com" for e in emps):
+        requests.post(f"{BASE_URL}/api/admin/employees", headers=admin_headers, json={
+            "name": "Alex Legacy", "email": "alex@sithappens.com",
+            "password": "AlexLegacy123!", "hourly_rate": 20.0,
+        }, timeout=15)
+
+    # testclient@sithappens.com / test1234 — portal client, must actually
+    # be able to log in with this exact password.
+    login = requests.post(f"{BASE_URL}/api/auth/login",
+                           json={"email": "testclient@sithappens.com", "password": "test1234"}, timeout=15)
+    if login.status_code != 200:
+        client = requests.post(f"{BASE_URL}/api/clients", headers=admin_headers, json={
+            "name": "Legacy Test Client", "email": "testclient@sithappens.com",
+        }, timeout=15).json()
+        created = requests.post(
+            f"{BASE_URL}/api/clients/{client['id']}/portal-account", headers=admin_headers,
+            json={"email": "testclient@sithappens.com", "password": "test1234"}, timeout=15,
+        )
+        if created.status_code == 200:
+            first_login = requests.post(f"{BASE_URL}/api/auth/login",
+                                         json={"email": "testclient@sithappens.com", "password": "test1234"}, timeout=15)
+            if first_login.status_code == 200:
+                requests.post(
+                    f"{BASE_URL}/api/auth/change-password",
+                    json={"current_password": "test1234", "new_password": "test1234"},
+                    headers={"Authorization": f"Bearer {first_login.json()['token']}"}, timeout=15,
+                )
+        # If created.status_code == 400 ("Email already used"), a client
+        # with this exact email already owns the account under a password
+        # we don't know — leave it alone rather than guess; the handful of
+        # tests relying on it will surface that separately, same as any
+        # other real fixture gap.
+
+    # 21 curated trivia questions — test_dog_trivia.py's admin-generate flow
+    # falls back to live LLM generation when the library is thin, which
+    # needs EMERGENT_LLM_KEY (unavailable in this test environment) and
+    # test_backup_coverage.py separately asserts >=21 trivia_questions
+    # exist. seed_curated_trivia.py is this repo's own idempotent seed
+    # script for exactly this — only run it here (direct DB access) when
+    # this run has MONGO_URL/DB_NAME exported (see RELEASE_CHECKLIST.md).
+    if os.environ.get("MONGO_URL") and os.environ.get("DB_NAME"):
+        import asyncio
+        import sys
+        sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+        import seed_curated_trivia
+        asyncio.run(seed_curated_trivia.seed())
+    yield

@@ -34,9 +34,16 @@ def test_roles_matrix_endpoint(admin_headers):
     r = requests.get(f"{BASE}/api/staff/roles", headers=admin_headers, timeout=15).json()
     assert set(r["roles"]) == {"owner", "manager", "trainer", "daycare_staff",
                                 "boarding_staff", "front_desk", "read_only"}
-    # 14 permission keys as documented (added `messages` in Sprint 110dh)
-    assert len(r["permission_keys"]) == 14
+    # 14 permission keys when this was written (Sprint 110dh); many more
+    # were deliberately added in later permission-matrix rollout phases
+    # (manage_receipt_settings, audit_log, shop-category management tiers,
+    # training/engagement content, staff scheduling, communications,
+    # sell_credits) — assert the floor plus representative old/new keys
+    # instead of an exact count that would need bumping every addition.
+    assert len(r["permission_keys"]) >= 14
     assert "messages" in r["permission_keys"]
+    assert "manage_receipt_settings" in r["permission_keys"]
+    assert "sell_credits" in r["permission_keys"]
     # Owner gets everything; read_only is locked down
     assert all(r["matrix"]["owner"].values())
     assert r["matrix"]["read_only"]["delete_records"] is False
@@ -96,12 +103,21 @@ def test_assign_role_and_permission_endpoint(admin_headers):
         assert bad.status_code == 400
 
         # The employee should now see those permissions via /me/permissions
-        token = requests.post(
+        login = requests.post(
             f"{BASE}/api/auth/login",
             json={"email": f"role-{suffix}@e.com", "password": "RoleTest1234"},
             timeout=15,
-        ).json()["token"]
-        emp_headers = {"Authorization": f"Bearer {token}"}
+        )
+        # A freshly created employee always has must_change_password=True
+        # (see POST /admin/employees), which blocks every endpoint except
+        # /auth/me and /auth/change-password — including /me/permissions.
+        # Complete that forced change for real before using this token.
+        changed = requests.post(
+            f"{BASE}/api/auth/change-password",
+            json={"current_password": "RoleTest1234", "new_password": "RoleTest1234New1"},
+            headers={"Authorization": f"Bearer {login.json()['token']}"}, timeout=15,
+        )
+        emp_headers = {"Authorization": f"Bearer {changed.json()['token']}"}
         me = requests.get(f"{BASE}/api/me/permissions", headers=emp_headers, timeout=15).json()
         assert me["staff_role"] == "front_desk"
         assert me["permissions"]["clients_edit"] is True

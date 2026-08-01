@@ -54,8 +54,19 @@ def admin_headers():
                        json={"email": "admin@sithappens.com", "password": "admin123"}, timeout=15)
     r.raise_for_status()
     headers = {"Authorization": f"Bearer {r.json()['token']}"}
-    requests.post(f"{API}/admin/register/open-drawer", headers=headers,
-                  json={"opening_cash": 100.0}, timeout=15)
+    opened = requests.post(f"{API}/admin/register/open-drawer", headers=headers,
+                            json={"opening_cash": 100.0}, timeout=15)
+    if opened.status_code == 409:
+        # Today's register day was already closed out by another test file
+        # sharing this same server process — reopen it for real (the same
+        # action an operator would take) rather than silently proceeding
+        # with cash-payment tests against a closed day.
+        requests.post(f"{API}/admin/register/reopen-day", headers=headers,
+                      json={"reason": "test_pos_hardware_authorization.py setup"}, timeout=15)
+        opened = requests.post(f"{API}/admin/register/open-drawer", headers=headers,
+                                json={"opening_cash": 100.0}, timeout=15)
+    if opened.status_code not in (200, 400):
+        opened.raise_for_status()
     return headers
 
 

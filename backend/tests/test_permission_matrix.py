@@ -32,10 +32,20 @@ def test_get_staff_roles_returns_full_matrix():
     body = r.json()
     for k in ("roles", "permission_keys", "matrix", "defaults", "overrides"):
         assert k in body, f"missing {k}"
-    # Spec: 7 roles, 14 keys
+    # Spec: 7 roles. The permission-key count was fixed at 14 when this test
+    # was written (Sprint 110di-20); many more granular keys (receipt
+    # settings, audit log, shop-category management, training/engagement
+    # content, staff scheduling, communications, sell_credits, etc.) were
+    # deliberately added in later phases of this same permission-matrix
+    # rollout, so an exact count would need bumping every time a new
+    # permission is introduced — assert the floor and a representative
+    # sample of both original and later keys instead.
     assert "owner" in body["roles"]
     assert "trainer" in body["roles"]
-    assert len(body["permission_keys"]) == 14
+    assert len(body["permission_keys"]) >= 14
+    for key in ("clients_view", "finance_reports", "payroll",  # original 14
+                "manage_receipt_settings", "audit_log", "sell_credits"):  # later additions
+        assert key in body["permission_keys"]
     # Owner always has all perms in the matrix
     for k in body["permission_keys"]:
         assert body["matrix"]["owner"][k] is True
