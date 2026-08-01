@@ -31,9 +31,18 @@ def admin_headers():
     assert r.status_code == 200, r.text
     headers = {"Authorization": f"Bearer {r.json()['token']}", "Content-Type": "application/json"}
     # Payment rebuild Phase 2 — cash checkout/top-ups now require today's
-    # cash drawer to actually be open. Idempotent to call even if already open.
-    requests.post(f"{BASE}/api/admin/register/open-drawer", headers=headers,
-                  json={"opening_cash": 100.0}, timeout=15)
+    # cash drawer to actually be open. Idempotent to call even if already
+    # open. This shared test DB's register day may already be closed by
+    # another file that ran first (409), and a byte-fresh day's expected
+    # rollover baseline is $0.00 — anything else 400s requiring an
+    # override reason.
+    opened = requests.post(f"{BASE}/api/admin/register/open-drawer", headers=headers,
+                            json={"opening_cash": 0.0}, timeout=15)
+    if opened.status_code == 409:
+        requests.post(f"{BASE}/api/admin/register/reopen-day", headers=headers,
+                      json={"reason": "test_partial_payment.py setup"}, timeout=15)
+        requests.post(f"{BASE}/api/admin/register/open-drawer", headers=headers,
+                      json={"opening_cash": 0.0}, timeout=15)
     return headers
 
 

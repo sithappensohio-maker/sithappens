@@ -48,9 +48,25 @@ def admin_headers():
     # Payment rebuild Phase 2 — checkout's cash component now requires
     # today's cash drawer to actually be open (register-day-open alone is
     # not enough — see the Phase 2 plan). Open it once for this module's
-    # tests; idempotent to call even if already open today.
-    requests.post(f"{API}/admin/register/open-drawer", headers=headers,
-                  json={"opening_cash": 100.0}, timeout=15)
+    # tests; idempotent to call even if already open today. This shared
+    # test DB's register day may already be closed by another file that
+    # ran first, so detect that (409) and reopen before retrying. Use
+    # opening_cash=0.0 — a byte-fresh DB's expected rollover baseline is
+    # $0.00, and anything else 400s requiring an override reason.
+    opened = requests.post(f"{API}/admin/register/open-drawer", headers=headers,
+                            json={"opening_cash": 0.0}, timeout=15)
+    if opened.status_code == 409:
+        requests.post(f"{API}/admin/register/reopen-day", headers=headers,
+                      json={"reason": "test_invoice_foundation.py setup"}, timeout=15)
+        requests.post(f"{API}/admin/register/open-drawer", headers=headers,
+                      json={"opening_cash": 0.0}, timeout=15)
+    # Group checkout with an empty body (no explicit base_price) falls back
+    # to the default active service's catalog price — a byte-fresh DB has
+    # no services at all, which would silently price the visit at $0 and
+    # skip invoice creation entirely (same "$0 visit -> no invoice" rule
+    # exercised deliberately in test_zero_dollar_visit_creates_no_invoice).
+    # Seed the standard catalog (idempotent) so daycare has a real price.
+    requests.post(f"{API}/services/seed-standard", headers=headers, timeout=15)
     return headers
 
 

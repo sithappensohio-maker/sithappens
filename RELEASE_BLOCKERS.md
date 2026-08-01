@@ -98,7 +98,29 @@ result no longer reproduced. Root cause and fix:
 
 Combined Cluster 3 result (4 files run together against one freshly reset DB): **20/20 passing.**
 
+### Cluster 4 — Invoices, partial payments, top-ups, payment plans
+
+| Test file | Failing scenario | Classification | Production affected? | Fix | Current isolated result |
+|---|---|---|---|---|---|
+| `test_invoice_foundation.py` (most tests) | `400 "Open the register before taking cash payments."` | Missing fixture | No | `admin_headers` fixture now detects a `409` (day already closed by another file) and reopens before retrying, same established pattern | — |
+| `test_invoice_foundation.py::test_group_checkout_produces_one_canonical_invoice_with_discount`, `test_multi_dog_discount_line_item_present` | Group checkout with an empty body (no explicit price) silently priced the visit at $0, so no invoice was created — same rule `test_zero_dollar_visit_creates_no_invoice` deliberately exercises | Missing fixture | No — a byte-fresh DB has no services at all, so the default-price fallback correctly found nothing | Seeded the standard catalog via `POST /services/seed-standard` in `admin_headers` | 13/13 clean |
+| `test_invoice_topup_payments.py` (majority) | Same `400 "Open the register..."` plus the same $0-default-price gap | Missing fixture | No | Same two fixes: 409-reopen-retry register open (with `opening_cash: 0.0` matching the fresh-DB rollover baseline) + `POST /services/seed-standard` | 35/35 clean |
+| `test_partial_payment.py` (majority) | Same `400 "Open the register..."` | Missing fixture | No | Same register-open fix (`opening_cash: 0.0` + 409-reopen-retry) | 16/16 clean (1 pre-existing unrelated skip) |
+| `test_payment_plans.py::test_client_sign_activates_plan`, `test_cant_re_sign_active_plan`, `test_mark_paid_updates_status_and_auto_completes`, `test_client_can_only_see_own_plans` | `403 "Temporary password must be changed before continuing."` (the last one surfaced as a confusing `TypeError` because the test blindly indexed the 403 error body as if it were a list of plans) | Missing fixture | No | `fx` fixture now completes the real forced-password-change round trip before returning client headers, same established pattern | 11/11 clean |
+
+Root cause note: every register-open failure in this cluster was actually
+TWO overlapping issues — (1) the register day being left closed by another
+file in this shared test DB (fixed by detecting `409` and reopening), and
+(2) `opening_cash: 100.0` no longer matching a byte-fresh day's $0.00
+expected rollover baseline, which 400s asking for an override reason
+unless `opening_cash` is 0.0 or a reason is supplied. All four fixtures
+now use `opening_cash: 0.0`.
+
+Combined Cluster 4 result (4 files run together against one freshly reset
+DB): **75/75 passing** (1 pre-existing skip). Zero production defects —
+every failure was a missing fixture already established elsewhere in the
+suite.
+
 ## Remaining clusters
 
-Not yet started: invoices/payments, Stripe/webhooks, shop category/schema
-compatibility.
+Not yet started: Stripe/webhooks, shop category/schema compatibility.

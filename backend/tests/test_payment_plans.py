@@ -27,6 +27,15 @@ def fx(admin_headers):
                   headers=admin_headers, json={"email": email, "password": pw}, timeout=15)
     tok = requests.post(f"{API}/auth/login",
                         json={"email": email, "password": pw}, timeout=15).json()["token"]
+    # A freshly created portal account always has must_change_password=True
+    # (see POST /clients/{id}/portal-account), which blocks every endpoint
+    # except /auth/me and /auth/change-password. Complete that forced
+    # change for real before handing back a token meant to be usable.
+    changed = requests.post(f"{API}/auth/change-password",
+                            json={"current_password": pw, "new_password": pw},
+                            headers={"Authorization": f"Bearer {tok}"}, timeout=15)
+    assert changed.status_code == 200, changed.text
+    tok = changed.json()["token"]
     ch = {"Authorization": f"Bearer {tok}"}
     yield {"client_id": c["id"], "client_email": email, "client_headers": ch}
     try:
