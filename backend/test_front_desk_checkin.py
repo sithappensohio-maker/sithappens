@@ -12,6 +12,7 @@ tagged "TEST_FRONT_DESK_CI", and deletes them in a `finally` block.
 import uuid
 from datetime import timedelta
 
+import _test_env  # noqa: F401 — must run before `import server`, see its docstring
 import server
 from _test_loop import run
 
@@ -327,6 +328,48 @@ def test_household_checkout_includes_two_dogs_both_checked_in():
         run(server.db.bookings.delete_many({"id": {"$in": [lexi_booking["id"], bolt_booking["id"]]}}))
         run(server.db.dogs.delete_many({"id": {"$in": [lexi["id"], bolt["id"]]}}))
         run(server.db.clients.delete_one({"id": client["id"]}))
+
+
+def test_roster_returns_every_matching_row_beyond_500_records():
+    """Regression for the removed .to_list(500) cap in employee_roster_today:
+    with far more than 500 rows matching the roster's own operational query
+    (checked-in and not checked-out), a genuinely on-site dog must still
+    appear — never silently dropped because an arbitrary page boundary was
+    reached first."""
+    client = _client_doc()
+    target_dog = _dog_doc(client["id"], name=f"{TAG} must-appear dog")
+    today = server.business_today().isoformat()
+    target_booking = _booking_doc(
+        client, target_dog, dog_name=target_dog["name"], date=today, end_date=today,
+        checked_in_at=server.now_iso(), checked_out_at=None,
+    )
+    bulk_rows = []
+    for i in range(520):
+        c = _client_doc(name=f"{TAG}_BULK500 client {i}")
+        d = _dog_doc(c["id"], name=f"{TAG}_BULK500 dog {i}")
+        b = _booking_doc(
+            c, d, dog_name=d["name"], date="2020-01-01", end_date="2020-01-01",
+            checked_in_at=server.now_iso(), checked_out_at=None,
+        )
+        bulk_rows.append((c, d, b))
+    run(_insert(client, target_dog, target_booking))
+    run(server.db.clients.insert_many([dict(c) for c, d, b in bulk_rows]))
+    run(server.db.dogs.insert_many([dict(d) for c, d, b in bulk_rows]))
+    run(server.db.bookings.insert_many([dict(b) for c, d, b in bulk_rows]))
+    try:
+        roster = run(server.employee_roster_today(user=_staff_user()))
+        booking_ids = {r["booking_id"] for r in roster["roster"]}
+        assert target_booking["id"] in booking_ids
+        assert len(roster["roster"]) >= 521
+
+        # Deterministic: an identical call returns the exact same order.
+        again = run(server.employee_roster_today(user=_staff_user()))
+        assert [r["booking_id"] for r in again["roster"]] == [r["booking_id"] for r in roster["roster"]]
+    finally:
+        run(_cleanup(client, target_dog, target_booking))
+        run(server.db.bookings.delete_many({"id": {"$in": [b["id"] for c, d, b in bulk_rows]}}))
+        run(server.db.dogs.delete_many({"id": {"$in": [d["id"] for c, d, b in bulk_rows]}}))
+        run(server.db.clients.delete_many({"id": {"$in": [c["id"] for c, d, b in bulk_rows]}}))
 
 
 def test_check_out_group_rejects_a_target_never_checked_in():

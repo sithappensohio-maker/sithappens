@@ -14,6 +14,7 @@ test_pos_catalog.py.
 """
 import uuid
 
+import _test_env  # noqa: F401 — must run before `import server`, see its docstring
 import server
 from _test_loop import run
 
@@ -91,6 +92,25 @@ def test_build_shop_catalog_never_exposes_cost_to_client_facing_endpoint():
         assert "cost" not in item
     finally:
         run(server.db.pos_products.delete_one({"id": product["id"]}))
+
+
+def test_shop_catalog_returns_every_eligible_item_beyond_500_records():
+    """Regression for the removed .to_list(500) cap in _build_shop_catalog:
+    with far more than 500 online-visible products, a freshly created,
+    distinctly-named product must still appear in the client Shop catalog —
+    never silently dropped because an arbitrary page boundary was reached
+    first."""
+    bulk = [_product(name=f"{TAG}_BULK500 filler {i}", show_online=True) for i in range(520)]
+    target = _product(name=f"{TAG} the one that must not vanish", sku="MUST-APPEAR-SHOP", show_online=True)
+    run(server.db.pos_products.insert_many([dict(p) for p in bulk]))
+    run(server.db.pos_products.insert_one(dict(target)))
+    try:
+        catalog = run(server._build_shop_catalog(None))
+        ids = {i["id"] for i in catalog["items"]}
+        assert target["id"] in ids
+        assert len(catalog["items"]) >= 521
+    finally:
+        run(server.db.pos_products.delete_many({"id": {"$in": [p["id"] for p in bulk] + [target["id"]]}}))
 
 
 def test_shop_manager_items_include_archived_returns_archived_rows():

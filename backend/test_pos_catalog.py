@@ -17,6 +17,7 @@ real MongoDB. Every test creates its own disposable rows, tagged
 """
 import uuid
 
+import _test_env  # noqa: F401 — must run before `import server`, see its docstring
 import server
 from _test_loop import run  # shared across every test_*.py file — see its docstring
 
@@ -92,6 +93,28 @@ def test_register_only_visible_when_show_at_register_true():
         assert product["id"] in ids
     finally:
         run(server.db.pos_products.delete_one({"id": product["id"]}))
+
+
+def test_register_catalog_returns_every_eligible_item_beyond_500_records():
+    """Regression for the removed .to_list(500) cap in _build_register_catalog:
+    with far more than 500 eligible products in the collection, a freshly
+    created, distinctly-named product must still appear — never silently
+    dropped because an arbitrary page boundary was reached first."""
+    bulk = [_product(name=f"{TAG}_BULK500 filler {i}") for i in range(520)]
+    target = _product(name=f"{TAG} the one that must not vanish", sku="MUST-APPEAR")
+    run(server.db.pos_products.insert_many([dict(p) for p in bulk]))
+    run(server.db.pos_products.insert_one(dict(target)))
+    try:
+        catalog = run(server._build_register_catalog(None))
+        ids = {i["id"] for i in catalog["items"]}
+        assert target["id"] in ids
+        assert len(catalog["items"]) >= 521
+
+        # Deterministic: an identical call returns the exact same order.
+        again = run(server._build_register_catalog(None))
+        assert [i["id"] for i in again["items"]] == [i["id"] for i in catalog["items"]]
+    finally:
+        run(server.db.pos_products.delete_many({"id": {"$in": [p["id"] for p in bulk] + [target["id"]]}}))
 
 
 def test_register_hidden_when_show_at_register_false():

@@ -26736,7 +26736,7 @@ async def _build_shop_catalog(client_id: Optional[str]) -> dict:
 
     products = await db.pos_products.find(
         {"show_online": True, "active": True, "archived": {"$ne": True}}, {"_id": 0},
-    ).sort("online_sort_order", 1).to_list(500)
+    ).sort([("online_sort_order", 1), ("id", 1)]).to_list(length=None)
     for p in products:
         if not _shop_org_visible(p.get("category_id"), p.get("subcategory_id")):
             continue
@@ -26805,7 +26805,7 @@ async def _build_shop_catalog(client_id: Optional[str]) -> dict:
 
     packs = await db.credit_packs.find(
         {"available_online": True, "active": True}, {"_id": 0},
-    ).to_list(500)
+    ).sort([("name", 1), ("id", 1)]).to_list(length=None)
     for pk in packs:
         if not _shop_org_visible(pk.get("category_id"), pk.get("subcategory_id")):
             continue
@@ -26843,7 +26843,7 @@ async def _build_shop_catalog(client_id: Optional[str]) -> dict:
 
     programs = await db.programs.find(
         {"available_online": True, "active": True}, {"_id": 0},
-    ).to_list(500)
+    ).sort([("name", 1), ("id", 1)]).to_list(length=None)
     for prog in programs:
         if not _shop_org_visible(prog.get("category_id"), prog.get("subcategory_id")):
             continue
@@ -26910,7 +26910,7 @@ async def _build_register_catalog(client_id: Optional[str]) -> dict:
 
     products = await db.pos_products.find(
         {"active": True, "archived": {"$ne": True}, "show_at_register": {"$ne": False}}, {"_id": 0},
-    ).sort([("category", 1), ("name", 1)]).to_list(500)
+    ).sort([("category", 1), ("name", 1), ("id", 1)]).to_list(length=None)
     for p in products:
         if p.get("sales_destination") == "shopify_external":
             continue
@@ -26947,7 +26947,7 @@ async def _build_register_catalog(client_id: Optional[str]) -> dict:
 
     packs = await db.credit_packs.find(
         {"active": True, "show_at_register": {"$ne": False}}, {"_id": 0},
-    ).to_list(500)
+    ).sort([("name", 1), ("id", 1)]).to_list(length=None)
     for pk in packs:
         if not _shop_org_visible(pk.get("category_id"), pk.get("subcategory_id")):
             continue
@@ -26980,7 +26980,7 @@ async def _build_register_catalog(client_id: Optional[str]) -> dict:
 
     programs = await db.programs.find(
         {"active": True, "show_at_register": {"$ne": False}}, {"_id": 0},
-    ).to_list(500)
+    ).sort([("name", 1), ("id", 1)]).to_list(length=None)
     for prog in programs:
         if not _shop_org_visible(prog.get("category_id"), prog.get("subcategory_id")):
             continue
@@ -31687,8 +31687,9 @@ async def employee_roster_today(user: dict = Depends(require_employee_or_admin))
             ],
         },
         {"_id": 0},
-    ).sort("dropoff_time", 1).to_list(500)
-    # Pull dog + client info for each booking
+    ).sort([("dropoff_time", 1), ("id", 1)]).to_list(length=None)
+    # Pull dog + client info for each booking — bounded by the roster's own
+    # unique dog/client count above, never an independent cap of its own.
     dog_ids = list({b["dog_id"] for b in bookings if b.get("dog_id")})
     client_ids = list({b["client_id"] for b in bookings if b.get("client_id")})
     dogs = await db.dogs.find(
@@ -31696,11 +31697,11 @@ async def employee_roster_today(user: dict = Depends(require_employee_or_admin))
         # Sprint 110cn — surface `vaccines` so the roster card can flag
         # missing/expiring rabies/dhpp/bordetella before staff lets the dog in.
         {"_id": 0, "photo": 0, "photos": 0, "training_logs": 0},
-    ).to_list(1000) if dog_ids else []
+    ).to_list(length=None) if dog_ids else []
     clients = await db.clients.find(
         {"id": {"$in": client_ids}},
         {"_id": 0, "id": 1, "name": 1, "phone": 1, "emerg": 1, "address": 1},
-    ).to_list(1000) if client_ids else []
+    ).to_list(length=None) if client_ids else []
     dog_map = {d["id"]: d for d in dogs}
     client_map = {c["id"]: c for c in clients}
     roster = []
