@@ -3,13 +3,19 @@ import { buildPortalActivity, buildPortalPriority, getDogPortalSnapshot, isActiv
 const dog = { id: "dog-1", name: "Lexi", vaccines: { rabies: "2099-01-01", bordetella: "2099-01-01", dhpp: "2099-01-01" } };
 const today = new Date().toISOString().slice(0, 10);
 
-test("setup lock always wins the priority card", () => {
+test("setup lock never duplicates a card here — the separate Action Needed banner owns that message", () => {
+  // buildPortalPriority intentionally ignores setupStatus entirely (see its
+  // own comment): PortalNeedsAttentionCard's buildNeedsAttention is the real
+  // component that shows "Finish your setup" first when setup is locked
+  // (see PortalNeedsAttentionCard.test.js). This card falls through to its
+  // own normal priority order regardless of booking_locked, so the two
+  // never show the same "finish setup" copy twice on Home.
   const priority = buildPortalPriority({
     dogs: [dog],
     messagesUnread: 3,
     setupStatus: { booking_locked: true },
   });
-  expect(priority.kind).toBe("setup");
+  expect(priority.kind).toBe("messages");
 });
 
 test("checked-in visit is prioritized before homework and upcoming visits", () => {

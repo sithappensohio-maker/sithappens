@@ -68,16 +68,65 @@ def _client(**overrides):
     return doc
 
 
-def _register_open():
-    """The real _require_register_day_open needs a live cash_drawer_sessions
-    row for today; tests don't care about that concern, so it's patched out
-    everywhere below (matches how other endpoints' tests in this codebase
-    isolate unrelated preconditions)."""
-    return patch.object(server, "_require_register_day_open", new=_noop)
-
-
 async def _noop(*args, **kwargs):
     return None
+
+
+class _OpenRegisterDay:
+    """Guarantees a REAL, open `cash_drawer_sessions` row exists for
+    whatever business date `business_today()` itself resolves to right now
+    — the exact same precondition `create_pos_sale`/`check_out`/etc. check
+    in production. Never patches or bypasses `_require_register_day_open`
+    (that still runs for real and would still reject a genuinely closed-out
+    day); this only satisfies the separate, real "is there an open drawer
+    session" lookup those endpoints also make for cash tenders.
+
+    Race-safe and non-destructive: `find_one_and_update(..., upsert=True)`
+    with `$setOnInsert` either creates the row atomically or discovers one
+    already exists — a local admin's real, already-open register for today
+    is never touched or claimed, and `__exit__` only ever deletes the exact
+    disposable row this instance created (matched by its own unique
+    `opened_by` marker), never a blanket delete-by-date.
+    """
+
+    def __init__(self, tag: str):
+        self.tag = tag
+        self.date = None
+        self.marker = None
+        self.created = False
+
+    def __enter__(self):
+        self.date = server.business_today().isoformat()
+        self.marker = f"{self.tag}-register-{uuid.uuid4()}"
+        before = run(server.db.cash_drawer_sessions.find_one_and_update(
+            {"date": self.date},
+            {"$setOnInsert": {
+                "date": self.date,
+                "opening_cash": 0.0,
+                "notes": f"{self.tag} disposable test register day",
+                "suggested_opening_cash": None,
+                "suggested_opening_from_date": None,
+                "suggested_opening_from_closeout_id": None,
+                "opening_override_reason": "",
+                "opening_was_overridden": False,
+                "opened_at": server.now_iso(),
+                "opened_by": self.marker,
+                "opened_by_name": f"{self.tag} fixture",
+            }},
+            upsert=True,
+            projection={"_id": 0},
+        ))
+        self.created = before is None  # None = we just inserted it; a doc = one already existed
+        return self
+
+    def __exit__(self, exc_type, exc, tb):
+        if self.created:
+            run(server.db.cash_drawer_sessions.delete_one({"date": self.date, "opened_by": self.marker}))
+        return False
+
+
+def _open_register_day():
+    return _OpenRegisterDay(TAG)
 
 
 def _cleanup(*, products=(), packs=(), programs=(), clients=(), sale_ids=()):
@@ -124,7 +173,7 @@ def test_mixed_cart_produces_exactly_one_sale_one_entitlement_set():
     )
     sale_id = None
     try:
-        with _register_open(), patch.object(server, "_issue_pos_token", new=_noop):
+        with _open_register_day(), patch.object(server, "_issue_pos_token", new=_noop):
             result = run(server.create_pos_sale(body, FAKE_USER))
         sale_id = result["pos_sale_id"]
         assert result["sale"]["total"] == 420.0
@@ -172,7 +221,7 @@ def test_retry_with_same_idempotency_key_never_duplicates():
     )
     sale_id = None
     try:
-        with _register_open(), patch.object(server, "_issue_pos_token", new=_noop):
+        with _open_register_day(), patch.object(server, "_issue_pos_token", new=_noop):
             first = run(server.create_pos_sale(body, FAKE_USER))
             sale_id = first["pos_sale_id"]
             second = run(server.create_pos_sale(body, FAKE_USER))  # exact same request replayed
@@ -214,7 +263,7 @@ def test_mismatched_tender_total_rejects_before_any_write():
         idempotency_key=f"test-{uuid.uuid4()}",
     )
     try:
-        with _register_open():
+        with _open_register_day():
             try:
                 run(server.create_pos_sale(body, FAKE_USER))
                 assert False, "expected HTTPException for mismatched tender total"
@@ -275,7 +324,7 @@ def test_rollback_on_mid_commit_failure_leaves_no_partial_state():
         idempotency_key=f"test-{uuid.uuid4()}",
     )
     try:
-        with _register_open(), patch.object(server, "_mutate_product_stock", side_effect=RuntimeError("simulated failure")):
+        with _open_register_day(), patch.object(server, "_mutate_product_stock", side_effect=RuntimeError("simulated failure")):
             try:
                 run(server.create_pos_sale(body, FAKE_USER))
                 assert False, "expected the simulated failure to propagate"
@@ -320,7 +369,7 @@ def test_void_reverses_retail_and_entitlement_lines_together():
     )
     sale_id = None
     try:
-        with _register_open(), patch.object(server, "_issue_pos_token", new=_noop):
+        with _open_register_day(), patch.object(server, "_issue_pos_token", new=_noop):
             result = run(server.create_pos_sale(body, FAKE_USER))
         sale_id = result["pos_sale_id"]
         client_mid = run(server.db.clients.find_one({"id": client["id"]}, {"_id": 0}))
