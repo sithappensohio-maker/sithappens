@@ -38,6 +38,7 @@ import ClientMessages from "./screens/ClientMessages";
 import Announcements from "./screens/Announcements";
 import Claim from "./screens/Claim";
 import ShareCertificate from "./screens/ShareCertificate";
+import PublicShop from "./screens/PublicShop";
 import GlobalSearch from "./components/GlobalSearch";
 import AdminBookingModal from "./components/AdminBookingModal";
 import TakePaymentModal from "./components/TakePaymentModal";
@@ -807,6 +808,26 @@ function Gate() {
   return <Portal />;
 }
 
+// Public no-account storefront — /shop and /shop/item/:kind/:id resolve
+// through AuthProvider's OWN token-validation loadMe() (GET /auth/me,
+// clearing sh_token on failure — see lib/auth.js) rather than a second,
+// parallel validation implementation. `user === false` (loadMe ran and
+// found no valid session, whether because there never was a token or
+// because a stale/expired one just got cleared) falls back to the guest
+// storefront at the SAME URL; every other outcome renders the exact same
+// Gate() the rest of the app uses, so an authenticated visitor on /shop
+// gets the real client Shop (via Portal.jsx's widened shopOpen match),
+// an admin/employee gets their normal shell, exactly as if they had
+// navigated here from inside the app.
+function ShopGate() {
+  const { user } = useAuth();
+  if (user === null) {
+    return <div className="h-screen w-screen flex items-center justify-center text-shTextMuted text-sm font-bold uppercase tracking-widest" style={{ background: "var(--sh-card-base)" }}>Loading…</div>;
+  }
+  if (!user) return <PublicShop />;
+  return <Gate />;
+}
+
 export default function App() {
   // Public claim/reset link — handled before auth so unauthenticated visitors can land here.
   const claimMatch = typeof window !== "undefined" && window.location.pathname.match(/^\/claim\/([^/?#]+)/);
@@ -823,6 +844,29 @@ export default function App() {
     return (
       <ErrorBoundary>
         <ShareCertificate token={decodeURIComponent(shareMatch[1])} />
+      </ErrorBoundary>
+    );
+  }
+  // Public no-account storefront — /shop and /shop/item/:kind/:id share the
+  // normal provider tree (AuthProvider/ThemeProvider/ConfirmProvider) since
+  // an authenticated visitor here renders the real Portal.jsx Shop, which
+  // depends on all three; ShopGate is the only difference from the default
+  // return below (it swaps Login for PublicShop when signed out).
+  const shopMatch = typeof window !== "undefined" && /^\/shop(\/.*)?$/.test(window.location.pathname);
+  if (shopMatch) {
+    return (
+      <ErrorBoundary>
+        <AuthProvider>
+          <ThemeProvider>
+            <ConfirmProvider>
+              <ImpersonationBanner />
+              <ShopGate />
+              <InstallPrompt />
+              <BrandFooter />
+              <Toaster theme="dark" position="top-right" richColors closeButton expand />
+            </ConfirmProvider>
+          </ThemeProvider>
+        </AuthProvider>
       </ErrorBoundary>
     );
   }

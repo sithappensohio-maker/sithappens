@@ -8,16 +8,17 @@ import { api } from "../lib/api";
  * and by the client Shop's item-detail hero image/lightbox, so there is
  * never a second copy of this fetch-by-id logic.
  */
-export function useShopMediaSrc(imageId) {
+export function useShopMediaSrc(imageId, { public: isPublic = false } = {}) {
   const [src, setSrc] = useState(null);
   useEffect(() => {
     if (!imageId) { setSrc(null); return; }
     let cancelled = false;
-    api.get(`/shop/media/${imageId}`)
+    const url = isPublic ? `/public/shop/media/${imageId}` : `/shop/media/${imageId}`;
+    api.get(url)
       .then(({ data }) => { if (!cancelled) setSrc(data.data); })
       .catch(() => { if (!cancelled) setSrc(null); });
     return () => { cancelled = true; };
-  }, [imageId]);
+  }, [imageId, isPublic]);
   return src;
 }
 
@@ -35,8 +36,8 @@ export function useShopMediaSrc(imageId) {
  * nothing shifts layout while the image is still loading or if it's
  * missing entirely.
  */
-export default function ItemThumbnail({ imageId, alt, size = 44, variant = "square", className = "" }) {
-  const src = useShopMediaSrc(imageId);
+export default function ItemThumbnail({ imageId, alt, size = 44, variant = "square", className = "", public: isPublic = false }) {
+  const src = useShopMediaSrc(imageId, { public: isPublic });
   const isBanner = variant === "banner";
   const boxStyle = isBanner
     ? { height: size, width: "100%" }

@@ -163,6 +163,111 @@ export function isInternalPhysical(item) {
   return !!item && item.kind === "product" && item.sales_destination !== "shopify_external";
 }
 
+// Shop Appearance & Organization — hardcoded fallback metadata for the 3
+// permanent section keys, used whenever shop_page settings are absent or
+// incomplete so the Shop always renders something sensible on a fresh
+// install. Never let admin config touch these KEYS, only the values below.
+const DEFAULT_SECTION_META = {
+  merch: { label: "Merch & Gear", description: "", image_id: null, visible: true, order: 0 },
+  prepaid_visits: { label: "Prepaid Visits", description: "", image_id: null, visible: true, order: 1 },
+  training: { label: "Training", description: "", image_id: null, visible: true, order: 2 },
+};
+
+// Resolved display metadata for one permanent section key — configured
+// shop_page.sections[key] values win, falling back to the hardcoded
+// defaults above for anything missing/incomplete. Never reads or returns
+// the section's own internal key from settings — callers already know it.
+export function sectionMetaFor(sectionKey, shopPage) {
+  const fallback = DEFAULT_SECTION_META[sectionKey] || { label: sectionKey, description: "", image_id: null, visible: true, order: 0 };
+  const configured = (shopPage && shopPage.sections && shopPage.sections[sectionKey]) || {};
+  return {
+    label: configured.label || fallback.label,
+    description: configured.description ?? fallback.description,
+    image_id: configured.image_id ?? fallback.image_id,
+    visible: configured.visible !== false,
+    order: configured.order ?? fallback.order,
+  };
+}
+
+// The 3 permanent section keys, filtered to visible and sorted by
+// configured order — drives TABS/SectionIndex display order/labels without
+// ever touching the permanent key values themselves.
+export function visibleSectionsInOrder(shopPage) {
+  return Object.keys(DEFAULT_SECTION_META)
+    .map((key) => ({ key, ...sectionMetaFor(key, shopPage) }))
+    .filter((s) => s.visible)
+    .sort((a, b) => a.order - b.order);
+}
+
+// Category (or section — see PortalShop.jsx's sectionGroups, which attaches
+// a synthetic `category: {image_id}` so this same function covers both)
+// cover-image resolution. Wraps, never edits, categoryCoverItem below — its
+// existing tests/contract stay unchanged; a configured image always wins
+// over any item-based fallback.
+export function categoryCoverImageId(group, { preferMobile = false } = {}) {
+  const cat = group && group.category;
+  if (cat) {
+    if (preferMobile && cat.mobile_image_id) return cat.mobile_image_id;
+    if (cat.image_id) return cat.image_id;
+  }
+  const item = categoryCoverItem(group);
+  return item ? item.image_id : null;
+}
+
+// Whether a category-index card should be hidden because it currently has
+// zero matching items — category.hide_when_empty (true/false) overrides the
+// global shop_page.hide_empty_categories default; null/undefined defers to
+// it. A non-empty group is never hidden regardless of either flag.
+export function shouldHideEmptyCategory(group, shopPage) {
+  if (!group || group.count > 0) return false;
+  const override = (group.category || {}).hide_when_empty;
+  if (override === true) return true;
+  if (override === false) return false;
+  return (shopPage && shopPage.hide_empty_categories) !== false;
+}
+
+// Stable partition — featured categories first (preserving their existing
+// relative configured order), then the rest (preserving theirs). Never a
+// full re-sort, and never changes categoryGroupsForTab's own output order.
+export function orderCategoryGroupsFeaturedFirst(groups) {
+  const featured = groups.filter((g) => g.category && g.category.is_featured);
+  const rest = groups.filter((g) => !(g.category && g.category.is_featured));
+  return [...featured, ...rest];
+}
+
+// Items flagged featured — backs the "featured_items" shop_page.landing_mode.
+// Reuses the exact same `featured` field sortShopItems/categoryCoverItem
+// already read, never a second featured-item concept.
+export function filterFeaturedItems(items) {
+  return items.filter((i) => i.featured);
+}
+
+// Public no-account storefront — guest-mode CTA priority for one item, in
+// this exact order (per the approved plan): Shopify View Options always
+// wins first (it bypasses every other check, including pricing); a
+// price-hidden item shows its pricing message next, even if it ALSO
+// requires approval/a dog, so the visitor never sees a generic "sign in"
+// message that omits why; approval/dog are online-checkout hard-blockers
+// framed as "contact us", never "just sign in and you're fine"; any other
+// account-required item (credit packs/programs always are) shows sign-in/
+// create-account; only then does a normal Add to Cart apply. Reads only
+// fields the public catalog/item-detail endpoints already compute
+// server-side (account_required, guest_cart_allowed, requires_approval,
+// requires_dog) — never re-derives eligibility client-side.
+export function guestItemCta(item) {
+  if (item.kind === "product" && item.sales_destination === "shopify_external") {
+    return { type: "shopify" };
+  }
+  const hasPrice = item.price != null || item.effective_price != null
+    || item.list_price != null || item.shopify_display_price != null;
+  if (!hasPrice) return { type: "hidden_price" };
+  if (item.requires_approval) return { type: "contact_required", reason: "approval" };
+  if (item.requires_dog) return { type: "contact_required", reason: "dog" };
+  if (item.account_required) return { type: "sign_in" };
+  if (item.kind === "product" && item.guest_cart_allowed) return { type: "add_to_cart" };
+  return { type: "sign_in" };
+}
+
 // My Orders — exact customer-facing status label mapping. Reads only the
 // safe fields GET /portal/shop-orders already returns (status,
 // fulfillment_status, pickup_status, lines[].kind) — never anything that

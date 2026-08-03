@@ -7,7 +7,8 @@ import { ProductEditor } from "../components/ManageProductsPanel";
 import { PackEditor } from "../components/CreditPacksSettings";
 import { ProgramEditor } from "../components/Programs";
 import ItemThumbnail from "../components/ItemThumbnail";
-import { sortShopItems, singularUnit, isInternalPhysical } from "../lib/shopPolish";
+import ShopImageUpload from "../components/ShopImageUpload";
+import PortalShop from "../components/PortalShop";
 import {
   inventoryStatus, itemWarnings, marginDisplay, filterItemsByView,
   orderRef, orderComputedStatus, filterOrdersByView, searchOrders,
@@ -51,12 +52,15 @@ const BLANK_PRODUCT_FORM = {
   show_online: false, online_description: "", image_id: null, online_sort_order: "",
   category_id: null, subcategory_id: null, featured: false, show_at_register: true,
   sales_destination: "internal", shopify_product_url: "", shopify_display_price: "", shopify_from_price: false,
+  publicly_visible: false, guest_cart_allowed: false, show_public_price: true,
+  requires_approval: false, requires_completed_onboarding: false,
 };
 
 const BLANK_PACK_FORM = {
   name: "", qty: 10, price: 300, service_type: "daycare", icon: "fa-tag", color: "", active: true, welcome_email_template_slug: null,
   available_online: false, online_description: "", image_id: null,
   category_id: null, subcategory_id: null, show_at_register: true, featured: false,
+  publicly_visible: false, show_public_price: true, requires_completed_onboarding: false,
 };
 
 const blankProgramForm = (type = "private_lessons") => ({
@@ -65,6 +69,8 @@ const blankProgramForm = (type = "private_lessons") => ({
   prereq_slugs: [], modules: [], price: 0, active: true,
   available_online: false, online_description: "", image_id: null,
   category_id: null, subcategory_id: null, show_at_register: true, featured: false,
+  publicly_visible: false, show_public_price: true,
+  requires_dog: false, requires_approval: false, requires_completed_onboarding: false,
 });
 
 function itemKindLabel(it) {
@@ -555,8 +561,12 @@ function CategoriesTab() {
   const [loading, setLoading] = useState(true);
   const [err, setErr] = useState("");
 
+  const BLANK_CATEGORY_DRAFT = { name: "", description: "", image_id: null, mobile_image_id: null, is_featured: false, hide_when_empty: null };
   const [addingCategory, setAddingCategory] = useState(false);
-  const [categoryDraft, setCategoryDraft] = useState({ name: "", description: "" });
+  const [editingCategoryId, setEditingCategoryId] = useState(null); // null = adding new; category.id = editing
+  const [categoryDraft, setCategoryDraft] = useState(BLANK_CATEGORY_DRAFT);
+  const [categoryOriginalImageId, setCategoryOriginalImageId] = useState(null);
+  const [categoryOriginalMobileImageId, setCategoryOriginalMobileImageId] = useState(null);
   const [addingSubFor, setAddingSubFor] = useState(null);
   const [subDraft, setSubDraft] = useState({ name: "", description: "" });
 
@@ -587,13 +597,65 @@ function CategoriesTab() {
 
   const toggleExpand = (id) => setExpanded((e) => ({ ...e, [id]: !e[id] }));
 
+  const openAddCategory = () => {
+    setEditingCategoryId(null);
+    setCategoryDraft(BLANK_CATEGORY_DRAFT);
+    setCategoryOriginalImageId(null);
+    setCategoryOriginalMobileImageId(null);
+    setAddingCategory(true);
+  };
+  const openEditCategory = (cat) => {
+    setEditingCategoryId(cat.id);
+    setCategoryDraft({
+      name: cat.name || "", description: cat.description || "",
+      image_id: cat.image_id || null, mobile_image_id: cat.mobile_image_id || null,
+      is_featured: !!cat.is_featured, hide_when_empty: cat.hide_when_empty ?? null,
+    });
+    setCategoryOriginalImageId(cat.image_id || null);
+    setCategoryOriginalMobileImageId(cat.mobile_image_id || null);
+    setAddingCategory(true);
+  };
+  const cancelCategoryForm = () => {
+    // Closing without saving — drop any not-yet-saved uploads from this session.
+    if (categoryDraft.image_id && categoryDraft.image_id !== categoryOriginalImageId) {
+      api.delete(`/shop/media/${categoryDraft.image_id}`).catch(() => {});
+    }
+    if (categoryDraft.mobile_image_id && categoryDraft.mobile_image_id !== categoryOriginalMobileImageId) {
+      api.delete(`/shop/media/${categoryDraft.mobile_image_id}`).catch(() => {});
+    }
+    setAddingCategory(false);
+    setEditingCategoryId(null);
+    setCategoryDraft(BLANK_CATEGORY_DRAFT);
+  };
+
   const saveCategory = async () => {
     setErr("");
     if (!categoryDraft.name.trim()) return setErr("Category name is required.");
+    const body = {
+      name: categoryDraft.name.trim(), description: categoryDraft.description || null,
+      // PUT is a patch — the backend treats `null` as "field omitted, leave
+      // unchanged" and only clears on an explicit "" (see update_shop_category).
+      // POST (create) has no such ambiguity, so it keeps sending null.
+      image_id: categoryDraft.image_id || (editingCategoryId ? "" : null),
+      mobile_image_id: categoryDraft.mobile_image_id || (editingCategoryId ? "" : null),
+      is_featured: categoryDraft.is_featured, hide_when_empty: categoryDraft.hide_when_empty,
+    };
     try {
-      await api.post("/shop/categories", { name: categoryDraft.name.trim(), description: categoryDraft.description || null, section });
+      if (editingCategoryId) {
+        await api.put(`/shop/categories/${editingCategoryId}`, body);
+        // Save succeeded — now safe to drop old images, if replaced/removed.
+        if (categoryOriginalImageId && categoryOriginalImageId !== categoryDraft.image_id) {
+          api.delete(`/shop/media/${categoryOriginalImageId}`).catch(() => {});
+        }
+        if (categoryOriginalMobileImageId && categoryOriginalMobileImageId !== categoryDraft.mobile_image_id) {
+          api.delete(`/shop/media/${categoryOriginalMobileImageId}`).catch(() => {});
+        }
+      } else {
+        await api.post("/shop/categories", { ...body, section });
+      }
       setAddingCategory(false);
-      setCategoryDraft({ name: "", description: "" });
+      setEditingCategoryId(null);
+      setCategoryDraft(BLANK_CATEGORY_DRAFT);
       load();
     } catch (e) { setErr(formatErr(e)); }
   };
@@ -708,22 +770,54 @@ function CategoriesTab() {
       ) : (
         <div className="space-y-3">
           <div className="flex justify-end">
-            <button onClick={() => setAddingCategory(true)} data-testid="sm-add-category"
+            <button onClick={openAddCategory} data-testid="sm-add-category"
                     className="bg-shPrimary text-bgBase px-4 py-2 rounded text-[13px] font-black uppercase tracking-widest hover:bg-shPrimary/90">
               <i className="fas fa-plus mr-1" />Add Category to {SECTION_TABS.find((s) => s.key === section)?.label}
             </button>
           </div>
 
           {addingCategory && (
-            <div className="bg-[var(--sh-card-base)] border border-shBorder rounded-xl p-4 space-y-2">
+            <div className="bg-[var(--sh-card-base)] border border-shBorder rounded-xl p-4 space-y-3" data-testid="sm-category-form">
+              <p className="text-[11px] font-black uppercase tracking-widest text-shTextMuted">{editingCategoryId ? "Edit Category" : "New Category"}</p>
               <input value={categoryDraft.name} onChange={(e) => setCategoryDraft((d) => ({ ...d, name: e.target.value }))}
                      placeholder="Category name" data-testid="sm-category-name-input"
                      className="w-full bg-[var(--sh-card-base)] border border-shBorder rounded p-2 text-shText text-sm" />
               <input value={categoryDraft.description} onChange={(e) => setCategoryDraft((d) => ({ ...d, description: e.target.value }))}
                      placeholder="Optional description"
                      className="w-full bg-[var(--sh-card-base)] border border-shBorder rounded p-2 text-shText text-sm" />
+              <div className="grid grid-cols-2 gap-3">
+                <div>
+                  <label className="text-[11px] text-shTextMuted uppercase tracking-widest mb-1 block">Cover Image</label>
+                  <ShopImageUpload imageId={categoryDraft.image_id} originalImageId={categoryOriginalImageId}
+                                   onChange={(id) => setCategoryDraft((d) => ({ ...d, image_id: id }))} />
+                </div>
+                <div>
+                  <label className="text-[11px] text-shTextMuted uppercase tracking-widest mb-1 block">Mobile Cover Image (optional — falls back to Cover Image)</label>
+                  <ShopImageUpload imageId={categoryDraft.mobile_image_id} originalImageId={categoryOriginalMobileImageId}
+                                   onChange={(id) => setCategoryDraft((d) => ({ ...d, mobile_image_id: id }))} />
+                </div>
+              </div>
+              <div className="flex flex-wrap items-center gap-4">
+                <label className="flex items-center gap-2">
+                  <input type="checkbox" checked={categoryDraft.is_featured}
+                         onChange={(e) => setCategoryDraft((d) => ({ ...d, is_featured: e.target.checked }))}
+                         data-testid="sm-category-featured" />
+                  <span className="text-shText text-sm">Featured (shown first, before non-featured categories)</span>
+                </label>
+                <label className="flex items-center gap-2 text-sm text-shText">
+                  Hide when empty:
+                  <select value={categoryDraft.hide_when_empty === null ? "" : categoryDraft.hide_when_empty ? "true" : "false"}
+                          onChange={(e) => setCategoryDraft((d) => ({ ...d, hide_when_empty: e.target.value === "" ? null : e.target.value === "true" }))}
+                          data-testid="sm-category-hide-when-empty"
+                          className="bg-[var(--sh-card-base)] border border-shBorder rounded p-1.5 text-shText text-sm">
+                    <option value="">Default (use global setting)</option>
+                    <option value="true">Always</option>
+                    <option value="false">Never</option>
+                  </select>
+                </label>
+              </div>
               <div className="flex gap-2 justify-end">
-                <button onClick={() => setAddingCategory(false)} className="text-shTextMuted font-black uppercase text-[12px] tracking-widest px-3 py-2">Cancel</button>
+                <button onClick={cancelCategoryForm} className="text-shTextMuted font-black uppercase text-[12px] tracking-widest px-3 py-2">Cancel</button>
                 <button onClick={saveCategory} data-testid="sm-save-category"
                         className="bg-shPrimary text-bgBase px-4 py-2 rounded font-black uppercase text-[12px] tracking-widest">Save Category</button>
               </div>
@@ -740,14 +834,19 @@ function CategoriesTab() {
                 <button onClick={() => toggleExpand(cat.id)} className="text-shTextMuted hover:text-shText">
                   <i className={`fas fa-chevron-${expanded[cat.id] ? "down" : "right"} text-[12px]`} />
                 </button>
+                <ItemThumbnail imageId={cat.image_id} alt={cat.name} size={36} />
                 <div className="min-w-0 flex-1">
-                  <p className="text-shText font-bold text-sm truncate">{cat.name} <span className="text-shTextMuted font-normal">· {cat.item_count} item{cat.item_count === 1 ? "" : "s"}</span></p>
+                  <p className="text-shText font-bold text-sm truncate">
+                    {cat.name} <span className="text-shTextMuted font-normal">· {cat.item_count} item{cat.item_count === 1 ? "" : "s"}</span>
+                    {cat.is_featured && <span className="ml-2 px-1.5 py-0.5 rounded text-[9px] font-black uppercase tracking-widest bg-shPrimary/10 text-shPrimary align-middle">Featured</span>}
+                  </p>
                 </div>
                 <StatusPill active={cat.active} />
                 <div className="flex items-center gap-1">
                   <button onClick={() => moveCategory(idx, idx - 1)} disabled={idx === 0} className="w-7 h-7 rounded border border-shBorder text-shTextMuted disabled:opacity-30"><i className="fas fa-chevron-up text-[11px]" /></button>
                   <button onClick={() => moveCategory(idx, idx + 1)} disabled={idx === categories.length - 1} className="w-7 h-7 rounded border border-shBorder text-shTextMuted disabled:opacity-30"><i className="fas fa-chevron-down text-[11px]" /></button>
                 </div>
+                <button onClick={() => openEditCategory(cat)} data-testid={`sm-edit-category-${cat.id}`} className="text-shTextMuted text-[11px] font-black uppercase tracking-widest">Edit</button>
                 <button onClick={() => toggleCategoryActive(cat)} className="text-shTextMuted text-[11px] font-black uppercase tracking-widest">{cat.active ? "Hide" : "Show"}</button>
                 <button onClick={() => openRemoveCategory(cat)} className="text-red-400 text-[11px] font-black uppercase tracking-widest">Remove</button>
               </div>
@@ -868,59 +967,16 @@ function CategoriesTab() {
 }
 
 /* ============================================================================
- * CLIENT PREVIEW TAB — reuses the REAL catalog builder + pricing resolver.
+ * CLIENT PREVIEW TAB — mounts the REAL PortalShop presentation in
+ * mode="preview" (see PortalShop.jsx), which itself reuses the exact same
+ * catalog builder + pricing resolver + category-card navigation a real
+ * client sees. Never a second, bespoke storefront implementation to keep
+ * in sync — the client-picker below only decides `previewClientId`.
  * ========================================================================== */
-function PreviewCard({ item }) {
-  const isShopify = item.kind === "product" && item.sales_destination === "shopify_external";
-  return (
-    <div className="bg-[var(--sh-card-base)] border border-shBorder rounded-xl p-3" data-testid={`sm-preview-card-${item.kind}-${item.id}`}>
-      <ItemThumbnail imageId={item.image_id} alt={item.name} variant="banner" size={112} className="mb-2" />
-      <p className="text-shText font-bold text-sm line-clamp-2 min-h-[2.25em]">{item.name}{item.featured && <span className="ml-1 text-[10px] text-shPrimary">★</span>}</p>
-      {item.category_name && <p className="text-[11px] text-shSecondary">{item.category_name}{item.subcategory_name ? ` → ${item.subcategory_name}` : ""}</p>}
-      <p className="text-shTextMuted text-[12px] line-clamp-2 mt-0.5">{item.description}</p>
-      {item.kind === "credit_pack" && item.value_each != null && (
-        <p className="text-[11px] text-shTextMuted mt-0.5">{item.qty} {item.service_type} visits · ${Number(item.value_each).toFixed(2)} per visit</p>
-      )}
-      {item.kind === "training_program" && item.format_count > 0 && item.price != null && (
-        <p className="text-[11px] text-shTextMuted mt-0.5">
-          {item.format_count} {item.format_unit} · ${(item.price / item.format_count).toFixed(2)} per {singularUnit(item.format_unit)}
-        </p>
-      )}
-      <div className="mt-2">
-        {isShopify ? (
-          <p className="text-shPrimary font-black text-sm">{item.shopify_display_price != null ? `${item.shopify_from_price ? "From " : ""}$${Number(item.shopify_display_price).toFixed(2)}` : "See Shopify"}</p>
-        ) : item.has_price_override ? (
-          <div>
-            <p className="text-shPrimary font-black text-sm">Your price: ${Number(item.effective_price).toFixed(2)}</p>
-            <p className="text-[11px] text-shTextMuted">Standard: <span className="line-through">${Number(item.list_price).toFixed(2)}</span></p>
-          </div>
-        ) : (
-          <p className="text-shPrimary font-black text-sm">${Number(item.price ?? item.effective_price ?? 0).toFixed(2)}</p>
-        )}
-      </div>
-      {isInternalPhysical(item) && (
-        <p className="text-[10px] text-shOrange mt-1"><i className="fas fa-store mr-1" />Local pickup — no shipping</p>
-      )}
-      <p className="text-[10px] text-shTextMuted uppercase tracking-widest mt-1">{isShopify ? "Fulfilled by Shopify" : item.kind === "credit_pack" ? "Prepaid Pack" : item.kind === "training_program" ? "Training" : "Product"}</p>
-    </div>
-  );
-}
-
 function ClientPreviewTab() {
-  const [items, setItems] = useState([]);
-  const [loading, setLoading] = useState(true);
   const [clientQuery, setClientQuery] = useState("");
   const [clientResults, setClientResults] = useState([]);
   const [previewClient, setPreviewClient] = useState(null);
-
-  const load = (clientId) => {
-    setLoading(true);
-    api.get("/shop-manager/catalog-preview", { params: clientId ? { preview_client_id: clientId } : {} })
-      .then(({ data }) => setItems(data.items || []))
-      .catch(() => toast.error("Could not load preview"))
-      .finally(() => setLoading(false));
-  };
-  useEffect(() => { load(previewClient?.id); /* eslint-disable-next-line react-hooks/exhaustive-deps */ }, [previewClient]);
 
   useEffect(() => {
     if (clientQuery.trim().length < 2) { setClientResults([]); return; }
@@ -935,20 +991,6 @@ function ClientPreviewTab() {
     }).catch(() => {});
     return () => { cancelled = true; };
   }, [clientQuery]);
-
-  const grouped = useMemo(() => {
-    const bySection = {};
-    for (const it of items) {
-      const key = it.kind === "credit_pack" ? "prepaid_visits" : it.kind === "training_program" ? "training" : "merch";
-      bySection[key] = bySection[key] || [];
-      bySection[key].push(it);
-    }
-    // Same featured-first / sort_order / name ordering the real client Shop
-    // uses (see ../lib/shopPolish.js) — the preview should sort exactly like
-    // what the client actually sees, not a fresh/independent order.
-    for (const key of Object.keys(bySection)) bySection[key] = sortShopItems(bySection[key]);
-    return bySection;
-  }, [items]);
 
   return (
     <div className="space-y-4">
@@ -981,22 +1023,7 @@ function ClientPreviewTab() {
         </div>
       </div>
 
-      {loading ? (
-        <div className="text-center text-shTextMuted py-10 text-sm">Loading…</div>
-      ) : (
-        SECTION_TABS.filter((s) => s.key !== "all").map((s) => (
-          <div key={s.key}>
-            <p className="text-shText font-black uppercase tracking-widest text-sm mb-2">{s.label}</p>
-            {(grouped[s.key] || []).length === 0 ? (
-              <p className="text-shTextMuted text-sm italic mb-4">Nothing visible here yet.</p>
-            ) : (
-              <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 gap-3 mb-4">
-                {(grouped[s.key] || []).map((it) => <PreviewCard key={`${it.kind}-${it.id}`} item={it} />)}
-              </div>
-            )}
-          </div>
-        ))
-      )}
+      <PortalShop key={previewClient?.id || "standard"} mode="preview" previewClientId={previewClient?.id || null} fullScreen />
     </div>
   );
 }
@@ -1164,6 +1191,239 @@ function OnlineOrdersTab() {
 }
 
 /* ============================================================================
+ * SHOP SETTINGS TAB — global shop appearance/organization settings + the
+ * public no-account storefront toggles, all living on the same shop_page
+ * sub-object of the one settings singleton (GET/PUT /settings). Reuses
+ * ShopImageUpload for the banner/section cover images, same delete-old-
+ * image-after-save sequencing as every other editor in this file.
+ * ========================================================================== */
+const SHOP_SETTINGS_SECTION_KEYS = ["merch", "prepaid_visits", "training"];
+
+function ShopSettingsTab() {
+  const [loading, setLoading] = useState(true);
+  const [saving, setSaving] = useState(false);
+  const [err, setErr] = useState("");
+  const [sp, setSp] = useState(null); // shop_page draft
+  const [originalBannerImageId, setOriginalBannerImageId] = useState(null);
+  const [originalSectionImageIds, setOriginalSectionImageIds] = useState({});
+
+  const load = () => {
+    setLoading(true);
+    api.get("/settings")
+      .then(({ data }) => {
+        const shopPage = data.shop_page || {};
+        setSp(shopPage);
+        setOriginalBannerImageId(shopPage.banner_image_id || null);
+        const orig = {};
+        for (const key of SHOP_SETTINGS_SECTION_KEYS) orig[key] = (shopPage.sections || {})[key]?.image_id || null;
+        setOriginalSectionImageIds(orig);
+      })
+      .catch(() => toast.error("Could not load shop settings"))
+      .finally(() => setLoading(false));
+  };
+  useEffect(() => { load(); }, []);
+
+  const setField = (patch) => setSp((s) => ({ ...s, ...patch }));
+  const setSection = (key, patch) => setSp((s) => ({ ...s, sections: { ...(s.sections || {}), [key]: { ...((s.sections || {})[key] || {}), ...patch } } }));
+
+  const save = async () => {
+    setErr("");
+    if (sp.banner_cta_url && !(/^\/(?!\/)/.test(sp.banner_cta_url) || /^https:\/\//.test(sp.banner_cta_url))) {
+      setErr("Banner link must be an internal path (starting with /) or an https:// URL.");
+      return;
+    }
+    setSaving(true);
+    try {
+      await api.put("/settings", { shop_page: sp });
+      // Save succeeded — now safe to drop any replaced/removed images.
+      if (originalBannerImageId && originalBannerImageId !== sp.banner_image_id) {
+        api.delete(`/shop/media/${originalBannerImageId}`).catch(() => {});
+      }
+      for (const key of SHOP_SETTINGS_SECTION_KEYS) {
+        const origId = originalSectionImageIds[key];
+        const nextId = sp.sections?.[key]?.image_id || null;
+        if (origId && origId !== nextId) api.delete(`/shop/media/${origId}`).catch(() => {});
+      }
+      toast.success("Shop settings saved");
+      load();
+    } catch (e) {
+      setErr(formatErr(e?.response?.data?.detail) || "Could not save shop settings");
+    }
+    setSaving(false);
+  };
+
+  if (loading || !sp) return <div className="text-center text-shTextMuted py-10 text-sm">Loading…</div>;
+
+  return (
+    <div className="space-y-5 max-w-3xl" data-testid="sm-shop-settings">
+      {err && <div className="bg-red-500/10 border border-red-500/30 text-red-300 text-sm p-3 rounded" data-testid="sm-shop-settings-error">{err}</div>}
+
+      <div className="bg-[var(--sh-card-base)] border border-shBorder rounded-xl p-4 space-y-3">
+        <p className="text-[12px] font-black uppercase tracking-widest text-shTextMuted">Global</p>
+        <div className="grid grid-cols-2 gap-3">
+          <div>
+            <label className="text-[11px] text-shTextMuted uppercase tracking-widest">Shop Title</label>
+            <input value={sp.title || ""} onChange={(e) => setField({ title: e.target.value })} data-testid="sm-shop-title"
+                   className="w-full bg-[var(--sh-card-base)] border border-shBorder rounded p-2 text-shText text-sm" />
+          </div>
+          <div>
+            <label className="text-[11px] text-shTextMuted uppercase tracking-widest">Subtitle</label>
+            <input value={sp.subtitle || ""} onChange={(e) => setField({ subtitle: e.target.value })} data-testid="sm-shop-subtitle"
+                   className="w-full bg-[var(--sh-card-base)] border border-shBorder rounded p-2 text-shText text-sm" />
+          </div>
+        </div>
+        <div>
+          <label className="text-[11px] text-shTextMuted uppercase tracking-widest">Default Landing View</label>
+          <select value={sp.landing_mode || "section_cards"} onChange={(e) => setField({ landing_mode: e.target.value })} data-testid="sm-shop-landing-mode"
+                  className="w-full bg-[var(--sh-card-base)] border border-shBorder rounded p-2 text-shText text-sm">
+            <option value="section_cards">Section Cards (default)</option>
+            <option value="featured_items">Featured Items</option>
+            <option value="all_items">All Items</option>
+          </select>
+        </div>
+        <div className="flex flex-wrap gap-4">
+          <label className="flex items-center gap-2">
+            <input type="checkbox" checked={sp.show_search !== false} onChange={(e) => setField({ show_search: e.target.checked })} data-testid="sm-shop-show-search" />
+            <span className="text-shText text-sm">Show Search</span>
+          </label>
+          <label className="flex items-center gap-2">
+            <input type="checkbox" checked={sp.show_item_counts !== false} onChange={(e) => setField({ show_item_counts: e.target.checked })} data-testid="sm-shop-show-counts" />
+            <span className="text-shText text-sm">Show Category Item Counts</span>
+          </label>
+          <label className="flex items-center gap-2">
+            <input type="checkbox" checked={sp.show_out_of_stock !== false} onChange={(e) => setField({ show_out_of_stock: e.target.checked })} data-testid="sm-shop-show-oos" />
+            <span className="text-shText text-sm">Show Out-of-Stock Products</span>
+          </label>
+          <label className="flex items-center gap-2">
+            <input type="checkbox" checked={sp.hide_empty_categories !== false} onChange={(e) => setField({ hide_empty_categories: e.target.checked })} data-testid="sm-shop-hide-empty" />
+            <span className="text-shText text-sm">Hide Empty Categories (default)</span>
+          </label>
+        </div>
+      </div>
+
+      <div className="bg-[var(--sh-card-base)] border border-shBorder rounded-xl p-4 space-y-3">
+        <p className="text-[12px] font-black uppercase tracking-widest text-shTextMuted">Banner</p>
+        <div className="grid grid-cols-2 gap-3">
+          <div>
+            <label className="text-[11px] text-shTextMuted uppercase tracking-widest">Banner Heading</label>
+            <input value={sp.banner_heading || ""} onChange={(e) => setField({ banner_heading: e.target.value })} data-testid="sm-banner-heading"
+                   className="w-full bg-[var(--sh-card-base)] border border-shBorder rounded p-2 text-shText text-sm" />
+          </div>
+          <div>
+            <label className="text-[11px] text-shTextMuted uppercase tracking-widest">Banner Image</label>
+            <ShopImageUpload imageId={sp.banner_image_id} originalImageId={originalBannerImageId}
+                             onChange={(id) => setField({ banner_image_id: id })} />
+          </div>
+          <div>
+            <label className="text-[11px] text-shTextMuted uppercase tracking-widest">Banner CTA Text (optional)</label>
+            <input value={sp.banner_cta_text || ""} onChange={(e) => setField({ banner_cta_text: e.target.value })} data-testid="sm-banner-cta-text"
+                   className="w-full bg-[var(--sh-card-base)] border border-shBorder rounded p-2 text-shText text-sm" />
+          </div>
+          <div>
+            <label className="text-[11px] text-shTextMuted uppercase tracking-widest">Banner Link (internal path or https:// URL)</label>
+            <input value={sp.banner_cta_url || ""} onChange={(e) => setField({ banner_cta_url: e.target.value })} placeholder="/shop or https://…" data-testid="sm-banner-cta-url"
+                   className="w-full bg-[var(--sh-card-base)] border border-shBorder rounded p-2 text-shText text-sm" />
+          </div>
+        </div>
+      </div>
+
+      <div className="bg-[var(--sh-card-base)] border border-shBorder rounded-xl p-4 space-y-4">
+        <p className="text-[12px] font-black uppercase tracking-widest text-shTextMuted">Sections</p>
+        {SHOP_SETTINGS_SECTION_KEYS.map((key) => {
+          const row = sp.sections?.[key] || {};
+          return (
+            <div key={key} className="border-t border-shBorder pt-3 first:border-t-0 first:pt-0 space-y-2" data-testid={`sm-section-row-${key}`}>
+              <p className="text-[11px] text-shTextMuted uppercase tracking-widest">Permanent key: <span className="text-shText font-bold">{key}</span></p>
+              <div className="grid grid-cols-2 gap-3">
+                <div>
+                  <label className="text-[11px] text-shTextMuted uppercase tracking-widest">Customer-Facing Name</label>
+                  <input value={row.label || ""} onChange={(e) => setSection(key, { label: e.target.value })} data-testid={`sm-section-label-${key}`}
+                         className="w-full bg-[var(--sh-card-base)] border border-shBorder rounded p-2 text-shText text-sm" />
+                </div>
+                <div>
+                  <label className="text-[11px] text-shTextMuted uppercase tracking-widest">Order</label>
+                  <input type="number" value={row.order ?? 0} onChange={(e) => setSection(key, { order: parseInt(e.target.value, 10) || 0 })} data-testid={`sm-section-order-${key}`}
+                         className="w-full bg-[var(--sh-card-base)] border border-shBorder rounded p-2 text-shText text-sm" />
+                </div>
+                <div className="col-span-2">
+                  <label className="text-[11px] text-shTextMuted uppercase tracking-widest">Short Description</label>
+                  <input value={row.description || ""} onChange={(e) => setSection(key, { description: e.target.value })} data-testid={`sm-section-description-${key}`}
+                         className="w-full bg-[var(--sh-card-base)] border border-shBorder rounded p-2 text-shText text-sm" />
+                </div>
+                <div>
+                  <label className="text-[11px] text-shTextMuted uppercase tracking-widest mb-1 block">Cover Image</label>
+                  <ShopImageUpload imageId={row.image_id} originalImageId={originalSectionImageIds[key]}
+                                   onChange={(id) => setSection(key, { image_id: id })} />
+                </div>
+                <label className="flex items-center gap-2 self-end pb-2">
+                  <input type="checkbox" checked={row.visible !== false} onChange={(e) => setSection(key, { visible: e.target.checked })} data-testid={`sm-section-visible-${key}`} />
+                  <span className="text-shText text-sm">Visible</span>
+                </label>
+              </div>
+            </div>
+          );
+        })}
+      </div>
+
+      <div className="bg-[var(--sh-card-base)] border border-shBorder rounded-xl p-4 space-y-3">
+        <p className="text-[12px] font-black uppercase tracking-widest text-shTextMuted">Public Storefront (signed-out visitors)</p>
+        <label className="flex items-center gap-2">
+          <input type="checkbox" checked={!!sp.public_shop_enabled} onChange={(e) => setField({ public_shop_enabled: e.target.checked })} data-testid="sm-public-shop-enabled" />
+          <span className="text-shText text-sm">Enable Public Shop (/shop, no account required)</span>
+        </label>
+        <label className="flex items-center gap-2">
+          <input type="checkbox" checked={!!sp.public_browsing_enabled} onChange={(e) => setField({ public_browsing_enabled: e.target.checked })} data-testid="sm-public-browsing-enabled" />
+          <span className="text-shText text-sm">Allow Public Browsing</span>
+        </label>
+        {sp.public_shop_enabled && sp.public_browsing_enabled && (
+          <>
+            <div className="flex flex-wrap gap-4">
+              <label className="flex items-center gap-2">
+                <input type="checkbox" checked={sp.show_public_prices !== false} onChange={(e) => setField({ show_public_prices: e.target.checked })} data-testid="sm-show-public-prices" />
+                <span className="text-shText text-sm">Show Prices to Guests</span>
+              </label>
+              <label className="flex items-center gap-2">
+                <input type="checkbox" checked={sp.show_public_merch !== false} onChange={(e) => setField({ show_public_merch: e.target.checked })} data-testid="sm-show-public-merch" />
+                <span className="text-shText text-sm">Merch & Gear Publicly Browsable</span>
+              </label>
+              <label className="flex items-center gap-2">
+                <input type="checkbox" checked={sp.show_public_prepaid !== false} onChange={(e) => setField({ show_public_prepaid: e.target.checked })} data-testid="sm-show-public-prepaid" />
+                <span className="text-shText text-sm">Prepaid Visits Publicly Browsable</span>
+              </label>
+              <label className="flex items-center gap-2">
+                <input type="checkbox" checked={sp.show_public_training !== false} onChange={(e) => setField({ show_public_training: e.target.checked })} data-testid="sm-show-public-training" />
+                <span className="text-shText text-sm">Training Publicly Browsable</span>
+              </label>
+            </div>
+            <label className="flex items-center gap-2 opacity-60" title="Credit packs and training programs always require an account regardless of this setting.">
+              <input type="checkbox" checked disabled />
+              <span className="text-shText text-sm">Require Account for Credit Packs &amp; Training (always on)</span>
+            </label>
+            <div>
+              <label className="text-[11px] text-shTextMuted uppercase tracking-widest">"Existing Client Pricing" Message</label>
+              <input value={sp.existing_client_pricing_message || ""} onChange={(e) => setField({ existing_client_pricing_message: e.target.value })} data-testid="sm-existing-client-pricing-message"
+                     className="w-full bg-[var(--sh-card-base)] border border-shBorder rounded p-2 text-shText text-sm" />
+            </div>
+            <div>
+              <label className="text-[11px] text-shTextMuted uppercase tracking-widest">Guest Sign-In Prompt Message</label>
+              <input value={sp.guest_sign_in_message || ""} onChange={(e) => setField({ guest_sign_in_message: e.target.value })} data-testid="sm-guest-sign-in-message"
+                     className="w-full bg-[var(--sh-card-base)] border border-shBorder rounded p-2 text-shText text-sm" />
+            </div>
+          </>
+        )}
+      </div>
+
+      <div className="flex justify-end">
+        <button onClick={save} disabled={saving} data-testid="sm-save-shop-settings"
+                className="bg-shPrimary text-bgBase px-6 py-2.5 rounded font-black uppercase text-[13px] tracking-widest disabled:opacity-40">
+          {saving ? "Saving…" : "Save Shop Settings"}
+        </button>
+      </div>
+    </div>
+  );
+}
+
+/* ============================================================================
  * MAIN SHELL
  * ========================================================================== */
 export default function ShopManager({ openCreateOnMount = false, onCreateConsumed = () => {} }) {
@@ -1257,6 +1517,9 @@ export default function ShopManager({ openCreateOnMount = false, onCreateConsume
         shopify_product_url: raw.shopify_product_url || "",
         shopify_display_price: raw.shopify_display_price != null ? String(raw.shopify_display_price) : "",
         shopify_from_price: !!raw.shopify_from_price,
+        publicly_visible: !!raw.publicly_visible, guest_cart_allowed: !!raw.guest_cart_allowed,
+        show_public_price: raw.show_public_price !== false,
+        requires_approval: !!raw.requires_approval, requires_completed_onboarding: !!raw.requires_completed_onboarding,
       });
     } else if (item.kind === "credit_pack") {
       const { data } = await api.get("/credit-packs", { params: { include_inactive: true } });
@@ -1294,6 +1557,11 @@ export default function ShopManager({ openCreateOnMount = false, onCreateConsume
       shopify_product_url: isShopify ? productForm.shopify_product_url.trim() : null,
       shopify_display_price: (isShopify && productForm.shopify_display_price !== "") ? Number(productForm.shopify_display_price) : null,
       shopify_from_price: isShopify && productForm.shopify_from_price,
+      publicly_visible: !isShopify && productForm.publicly_visible,
+      guest_cart_allowed: !isShopify && productForm.publicly_visible && productForm.guest_cart_allowed,
+      show_public_price: productForm.show_public_price,
+      requires_approval: !isShopify && productForm.publicly_visible && productForm.requires_approval,
+      requires_completed_onboarding: !isShopify && productForm.publicly_visible && productForm.requires_completed_onboarding,
     };
     setProductSaving(true);
     try {
@@ -1398,7 +1666,7 @@ export default function ShopManager({ openCreateOnMount = false, onCreateConsume
       />
 
       <div className="flex gap-2 border-b border-shBorder">
-        {[["items", "Items"], ["categories", "Categories & Layout"], ["orders", "Online Orders"], ["preview", "Client Preview"]].map(([key, label]) => (
+        {[["items", "Items"], ["categories", "Categories & Layout"], ["shop_settings", "Shop Settings"], ["orders", "Online Orders"], ["preview", "Client Preview"]].map(([key, label]) => (
           <button key={key} onClick={() => setTab(key)} data-testid={`sm-tab-${key}`}
                   className={`px-3 py-2 text-[12px] font-black uppercase tracking-widest border-b-2 -mb-px ${
                     tab === key ? "border-shPrimary text-shPrimary" : "border-transparent text-shTextMuted hover:text-shText"
@@ -1410,6 +1678,7 @@ export default function ShopManager({ openCreateOnMount = false, onCreateConsume
 
       {tab === "items" && <ItemsTab key={refreshKey} onEditItem={editItem} onAddShopItem={() => setPickerOpen(true)} />}
       {tab === "categories" && <CategoriesTab key={`cat-${refreshKey}`} />}
+      {tab === "shop_settings" && <ShopSettingsTab key={`shop-settings-${refreshKey}`} />}
       {tab === "orders" && <OnlineOrdersTab key={`orders-${refreshKey}`} />}
       {tab === "preview" && <ClientPreviewTab key={`prev-${refreshKey}`} />}
 

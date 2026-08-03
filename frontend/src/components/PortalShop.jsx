@@ -10,7 +10,9 @@ import ShopItemDetail from "./ShopItemDetail";
 import {
   itemsForTab, subcategoryOptionsForTab, nextFiltersForTab,
   sortShopItems, singularUnit, stockCeiling, isInternalPhysical, orderStatusLabel,
-  categoryGroupsForTab, categoryCoverItem, matchesSearchQuery, OTHER_CATEGORY_ID,
+  categoryGroupsForTab, matchesSearchQuery, OTHER_CATEGORY_ID,
+  sectionMetaFor, visibleSectionsInOrder, categoryCoverImageId, shouldHideEmptyCategory,
+  orderCategoryGroupsFeaturedFirst, filterFeaturedItems, guestItemCta,
 } from "../lib/shopPolish";
 
 /* Client Shop — Phase 1 gave read-only catalog browsing. Phase 2 adds a
@@ -27,12 +29,39 @@ import {
 
 const money = (n) => `$${Number(n || 0).toFixed(2)}`;
 
+// PERMANENT — the cart/catalog kind discriminator strings. Never
+// admin-editable; only the display label/description/image/order for each
+// comes from shop_page settings (see shopPolish.js's sectionMetaFor), with
+// these exact strings as the hardcoded fallback on a fresh install.
 const TABS = [
   { key: "all", label: "All" },
   { key: "product", label: "Merch & Gear" },
   { key: "credit_pack", label: "Prepaid Visits" },
   { key: "training_program", label: "Training" },
 ];
+
+// Bridges the cart/catalog kind vocabulary above ("product"/"credit_pack"/
+// "training_program") to shop_page.sections' permanent BACKEND section
+// vocabulary ("merch"/"prepaid_visits"/"training", matching
+// SHOP_SECTION_FOR_KIND server-side) — the one place this mapping lives.
+const SECTION_KEY_FOR_TAB = { product: "merch", credit_pack: "prepaid_visits", training_program: "training" };
+const TAB_KEY_FOR_SECTION = { merch: "product", prepaid_visits: "credit_pack", training: "training_program" };
+
+function useIsMobileViewport() {
+  const [isMobile, setIsMobile] = useState(
+    () => typeof window !== "undefined" && !!window.matchMedia && window.matchMedia("(max-width: 640px)").matches,
+  );
+  useEffect(() => {
+    if (typeof window === "undefined" || !window.matchMedia) return;
+    const mq = window.matchMedia("(max-width: 640px)");
+    const handler = () => setIsMobile(mq.matches);
+    if (mq.addEventListener) mq.addEventListener("change", handler); else mq.addListener(handler);
+    return () => {
+      if (mq.removeEventListener) mq.removeEventListener("change", handler); else mq.removeListener(handler);
+    };
+  }, []);
+  return isMobile;
+}
 
 // Client Shop Item Detail — a real route (/shop/item/:kind/:id) so the
 // browser back button, refresh, and direct links all behave normally. `kind`
@@ -79,16 +108,29 @@ function openShopifyListing(item) {
 const PURCHASE_LABELS = { credit_pack: "Purchase Pack", training_program: "Purchase Program" };
 const purchaseLabel = (kind) => PURCHASE_LABELS[kind] || "Add to Cart";
 
-function ItemCard({ item, cartQty, onAdd, onOpenDetail }) {
+function ItemCard({ item, cartQty, onAdd, onOpenDetail, mode = "authenticated", onRequireAccount }) {
+  const isGuest = mode === "guest";
   const isShopifyMerch = item.kind === "product" && item.sales_destination === "shopify_external";
-  const outOfStock = item.kind === "product" && !isShopifyMerch && item.track_inventory && !item.in_stock;
+  // Public no-account storefront — the public item shape has no
+  // track_inventory/in_stock/stock_on_hand (see availabilityText's comment
+  // in ShopItemDetail.jsx for why), only the computed `availability`
+  // string, so out-of-stock detection is derived from that instead in
+  // guest mode. stockCeiling itself already returns null (no ceiling) for
+  // an item missing track_inventory — real stock enforcement for a guest's
+  // locally-held cart line happens at the post-login merge-review step
+  // against the authenticated catalog, never client-side here.
+  const outOfStock = isGuest
+    ? item.kind === "product" && !isShopifyMerch && item.availability === "out_of_stock"
+    : item.kind === "product" && !isShopifyMerch && item.track_inventory && !item.in_stock;
   const ceiling = stockCeiling(item);
   const atMax = ceiling != null && cartQty >= ceiling;
+  const cta = isGuest ? guestItemCta(item) : null;
+  const guestBlocked = isGuest && cta && cta.type !== "add_to_cart" && cta.type !== "shopify";
   return (
     <NeonEdge accentRgb={accentRgb("lime")} intensity="subtle" onClick={() => onOpenDetail(item)}
               className="p-3 flex flex-col hover:-translate-y-0.5 transition duration-200 text-left cursor-pointer" data-testid={`shop-card-${item.kind}-${item.id}`}>
       <div className="relative">
-        <ItemThumbnail imageId={item.image_id} alt={item.name} variant="banner" size={128} className="rounded-lg" />
+        <ItemThumbnail imageId={item.image_id} alt={item.name} variant="banner" size={128} className="rounded-lg" public={isGuest} />
         {item.featured && (
           <span className="absolute top-1.5 left-1.5 px-1.5 py-0.5 rounded text-[9px] font-black uppercase tracking-widest bg-shPrimary text-bgHeader">
             Featured
@@ -109,9 +151,11 @@ function ItemCard({ item, cartQty, onAdd, onOpenDetail }) {
         </p>
       ) : item.kind === "product" ? (
         <p className="text-[11px] text-shTextMuted uppercase tracking-widest font-bold mt-1">
-          {item.track_inventory
-            ? (item.in_stock ? `${item.stock_on_hand} in stock` : "Out of stock")
-            : "Available"}
+          {isGuest
+            ? (item.availability === "out_of_stock" ? "Out of stock" : item.availability === "low_stock" ? "Low stock" : "Available")
+            : item.track_inventory
+              ? (item.in_stock ? `${item.stock_on_hand} in stock` : "Out of stock")
+              : "Available"}
         </p>
       ) : null}
       {item.kind === "credit_pack" && (
@@ -135,7 +179,8 @@ function ItemCard({ item, cartQty, onAdd, onOpenDetail }) {
               {item.shopify_from_price ? "From " : ""}{money(item.shopify_display_price)}
             </p>
           )
-        ) : (item.kind === "credit_pack" || item.kind === "product") && item.has_price_override ? (
+        ) : guestBlocked && cta.type === "hidden_price" ? null
+        : (item.kind === "credit_pack" || item.kind === "product") && item.has_price_override ? (
           <div data-testid={`shop-price-override-${item.id}`}>
             <p className="text-shPrimary font-black text-[18px]">Your price: {money(item.effective_price)}</p>
             <p className="text-[11px] text-shTextMuted font-bold uppercase tracking-widest">Client-specific price</p>
@@ -150,6 +195,20 @@ function ItemCard({ item, cartQty, onAdd, onOpenDetail }) {
           <PremiumButton variant="primary" onClick={(e) => { e.stopPropagation(); openShopifyListing(item); }} data-testid={`shop-view-options-${item.id}`} className="w-full justify-center">
             View Options <i className="fas fa-arrow-up-right-from-square ml-1 text-[11px]" />
           </PremiumButton>
+        ) : guestBlocked ? (
+          cta.type === "hidden_price" ? (
+            <PremiumButton variant="primary" onClick={(e) => { e.stopPropagation(); onRequireAccount?.(item, "hidden_price"); }} data-testid={`shop-buy-${item.kind}-${item.id}`} className="w-full justify-center">
+              Sign In for Pricing
+            </PremiumButton>
+          ) : cta.type === "contact_required" ? (
+            <PremiumButton variant="secondary" onClick={(e) => { e.stopPropagation(); onRequireAccount?.(item, cta.reason); }} data-testid={`shop-buy-${item.kind}-${item.id}`} className="w-full justify-center">
+              {cta.reason === "dog" ? "Contact Us — Dog Required" : "Contact Us — Approval Required"}
+            </PremiumButton>
+          ) : (
+            <PremiumButton variant="primary" onClick={(e) => { e.stopPropagation(); onRequireAccount?.(item, null); }} data-testid={`shop-buy-${item.kind}-${item.id}`} className="w-full justify-center">
+              Sign In to Purchase
+            </PremiumButton>
+          )
         ) : outOfStock ? (
           <button disabled onClick={(e) => e.stopPropagation()} data-testid={`shop-buy-${item.kind}-${item.id}`}
                   className="w-full px-3 py-2 rounded-md text-[11px] font-black uppercase tracking-widest border border-shBorder text-shTextMuted cursor-not-allowed"
@@ -176,15 +235,19 @@ function ItemCard({ item, cartQty, onAdd, onOpenDetail }) {
 // top-level landing screen when the "All" tab is active and nothing else
 // (search/category) is selected. Clicking one just switches the active tab;
 // it never sets a category filter itself.
-function SectionCard({ tabKey, label, count, cover, onClick }) {
+function SectionCard({ tabKey, label, count, group, showCount, onClick, mode = "authenticated" }) {
+  const isMobile = useIsMobileViewport();
+  const coverImageId = categoryCoverImageId(group, { preferMobile: isMobile });
   return (
     <NeonEdge accentRgb={accentRgb("lime")} intensity="subtle" onClick={onClick}
               className="p-5 flex flex-col items-center text-center gap-3 hover:-translate-y-0.5 transition duration-200 cursor-pointer"
               data-testid={`shop-section-card-${tabKey}`}>
-      <ItemThumbnail imageId={cover?.image_id} alt={label} variant="banner" size={140} className="rounded-lg" />
+      <ItemThumbnail imageId={coverImageId} alt={label} variant="banner" size={140} className="rounded-lg" public={mode === "guest"} />
       <div>
         <p className="text-shText font-black text-[16px]">{label}</p>
-        <p className="text-shTextMuted text-[11px] font-bold uppercase tracking-widest mt-1">{count} item{count !== 1 ? "s" : ""}</p>
+        {showCount !== false && (
+          <p className="text-shTextMuted text-[11px] font-bold uppercase tracking-widest mt-1">{count} item{count !== 1 ? "s" : ""}</p>
+        )}
       </div>
     </NeonEdge>
   );
@@ -194,24 +257,30 @@ function SectionCard({ tabKey, label, count, cover, onClick }) {
 // immediate flat item grid so "Merch & Gear" doesn't dump tags, shirts, and
 // mugs into one scattered pile. `group` comes from categoryGroupsForTab (see
 // ../lib/shopPolish.js) and already carries the matching items/count; the
-// cover image is resolved via categoryCoverItem, never a second API call.
-function CategoryCard({ group, onClick }) {
+// cover image is resolved via categoryCoverImageId, never a second API call.
+function CategoryCard({ group, showCount, onClick, mode = "authenticated" }) {
   const { category, count } = group;
-  const cover = categoryCoverItem(group);
+  const isMobile = useIsMobileViewport();
+  const coverImageId = categoryCoverImageId(group, { preferMobile: isMobile });
   return (
     <NeonEdge accentRgb={accentRgb("lime")} intensity="subtle" onClick={onClick}
               className="p-4 flex flex-col text-left gap-1.5 hover:-translate-y-0.5 transition duration-200 cursor-pointer"
               data-testid={`shop-category-card-${category.id}`}>
-      <ItemThumbnail imageId={cover?.image_id} alt={category.name} variant="banner" size={120} className="rounded-lg" />
-      <p className="text-shText font-bold text-[15px] mt-1.5 line-clamp-1">{category.name}</p>
+      <ItemThumbnail imageId={coverImageId} alt={category.name} variant="banner" size={120} className="rounded-lg" public={mode === "guest"} />
+      <p className="text-shText font-bold text-[15px] mt-1.5 line-clamp-1">
+        {category.name}
+        {category.is_featured && <span className="ml-1.5 text-[10px] text-shPrimary align-middle">★</span>}
+      </p>
       {category.description && <p className="text-shTextMuted text-[12px] line-clamp-2">{category.description}</p>}
-      <p className="text-shSecondary text-[11px] font-bold uppercase tracking-widest mt-auto pt-1">{count} item{count !== 1 ? "s" : ""}</p>
+      {showCount !== false && (
+        <p className="text-shSecondary text-[11px] font-bold uppercase tracking-widest mt-auto pt-1">{count} item{count !== 1 ? "s" : ""}</p>
+      )}
     </NeonEdge>
   );
 }
 
 // Section-index screen ("All" tab, nothing selected) — one card per kind.
-function SectionIndex({ sections, onSelect, onViewAll }) {
+function SectionIndex({ sections, showCount, onSelect, onViewAll, mode = "authenticated" }) {
   if (sections.length === 0) {
     return <p className="text-gray-500 text-sm text-center py-6">Nothing here yet — check back soon.</p>;
   }
@@ -219,7 +288,7 @@ function SectionIndex({ sections, onSelect, onViewAll }) {
     <div data-testid="shop-section-index">
       <div className="grid grid-cols-2 md:grid-cols-3 gap-3 max-w-2xl mx-auto">
         {sections.map((s) => (
-          <SectionCard key={s.key} tabKey={s.key} label={s.label} count={s.count} cover={categoryCoverItem(s)} onClick={() => onSelect(s.key)} />
+          <SectionCard key={s.key} tabKey={s.key} label={s.label} count={s.count} group={s} showCount={showCount} onClick={() => onSelect(s.key)} mode={mode} />
         ))}
       </div>
       <div className="text-center mt-4">
@@ -232,8 +301,9 @@ function SectionIndex({ sections, onSelect, onViewAll }) {
   );
 }
 
-// Category-index screen (a specific tab, no category selected yet).
-function CategoryIndex({ groups, onSelectCategory, onViewAll, sectionLabel }) {
+// Category-index screen (a specific tab, no category selected yet). Groups
+// are already ordered featured-first by the caller (orderCategoryGroupsFeaturedFirst).
+function CategoryIndex({ groups, showCount, onSelectCategory, onViewAll, sectionLabel, mode = "authenticated" }) {
   if (groups.length === 0) {
     return <p className="text-gray-500 text-sm text-center py-6">Nothing here yet — check back soon.</p>;
   }
@@ -241,7 +311,7 @@ function CategoryIndex({ groups, onSelectCategory, onViewAll, sectionLabel }) {
     <div data-testid="shop-category-index">
       <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-4 gap-3">
         {groups.map((g) => (
-          <CategoryCard key={g.category.id} group={g} onClick={() => onSelectCategory(g.category.id)} />
+          <CategoryCard key={g.category.id} group={g} showCount={showCount} onClick={() => onSelectCategory(g.category.id)} mode={mode} />
         ))}
       </div>
       <div className="text-center mt-4">
@@ -258,7 +328,7 @@ function CategoryIndex({ groups, onSelectCategory, onViewAll, sectionLabel }) {
 // grid whenever a category is selected (or the "View All Products" escape
 // hatch from a category-index screen is active) — never shown on the index
 // screens themselves.
-function CategoryGridHeader({ eyebrow, title, description, count, onBack, backLabel }) {
+function CategoryGridHeader({ eyebrow, title, description, count, showCount, onBack, backLabel }) {
   return (
     <div className="mb-4" data-testid="shop-category-grid-header">
       <button onClick={onBack} data-testid="shop-back-to-categories"
@@ -271,9 +341,11 @@ function CategoryGridHeader({ eyebrow, title, description, count, onBack, backLa
           <p className="text-shText font-black text-lg">{title}</p>
           {description && <p className="text-shTextMuted text-sm mt-0.5 max-w-xl">{description}</p>}
         </div>
-        <p className="text-[11px] font-bold uppercase tracking-widest text-shTextMuted shrink-0 pt-1" data-testid="shop-item-count">
-          {count} item{count !== 1 ? "s" : ""}
-        </p>
+        {showCount !== false && (
+          <p className="text-[11px] font-bold uppercase tracking-widest text-shTextMuted shrink-0 pt-1" data-testid="shop-item-count">
+            {count} item{count !== 1 ? "s" : ""}
+          </p>
+        )}
       </div>
     </div>
   );
@@ -304,7 +376,7 @@ function useCartLines(cart, items) {
   }, [cart, items]);
 }
 
-function CartPanel({ lines, subtotal, onQtyChange, onRemove, onCheckout, busy, onClose }) {
+function CartPanel({ lines, subtotal, onQtyChange, onRemove, onCheckout, busy, previewMode, onClose, guestMode, onSignIn }) {
   // Portaled to document.body — this panel must NEVER be a direct child of
   // a .bg-bgPanel.rounded-2xl/.rounded-xl container (index.css's `> *`
   // dialog-content rule forces position:relative on direct children of
@@ -360,9 +432,15 @@ function CartPanel({ lines, subtotal, onQtyChange, onRemove, onCheckout, busy, o
               <p className="text-shText font-black">{money(subtotal)}</p>
             </div>
             <p className="text-[11px] text-shTextMuted">Tax (if applicable) is calculated on the next step. You&apos;ll be taken to Stripe&apos;s secure checkout — Sit Happens never sees or stores your card details.</p>
-            <PremiumButton variant="primary" onClick={onCheckout} disabled={busy} data-testid="shop-checkout-button" className="w-full justify-center py-3">
-              {busy ? "Redirecting…" : "Continue to Secure Checkout"}
-            </PremiumButton>
+            {guestMode ? (
+              <PremiumButton variant="primary" onClick={onSignIn} data-testid="shop-checkout-button" className="w-full justify-center py-3">
+                Sign In to Checkout
+              </PremiumButton>
+            ) : (
+              <PremiumButton variant="primary" onClick={onCheckout} disabled={busy || previewMode} data-testid="shop-checkout-button" className="w-full justify-center py-3">
+                {previewMode ? "Preview Only — No Real Orders" : busy ? "Redirecting…" : "Continue to Secure Checkout"}
+              </PremiumButton>
+            )}
           </>
         )}
       </div>
@@ -377,7 +455,7 @@ function CartPanel({ lines, subtotal, onQtyChange, onRemove, onCheckout, busy, o
 // as the header button and CartPanel (see useCartLines above) — never a
 // second total. Portaled to document.body for the same z-index/positioning
 // reasons as CartPanel (see its comment).
-function CheckoutTray({ cartCount, subtotal, onViewCart, onCheckout, busy, justAdded }) {
+function CheckoutTray({ cartCount, subtotal, onViewCart, onCheckout, busy, justAdded, previewMode, guestMode, onSignIn }) {
   const [mobileNavH, setMobileNavH] = useState(0);
   useEffect(() => {
     const measure = () => {
@@ -412,8 +490,8 @@ function CheckoutTray({ cartCount, subtotal, onViewCart, onCheckout, busy, justA
           <PremiumButton variant="secondary" onClick={onViewCart} data-testid="shop-tray-view-cart" className="py-2.5 px-4">
             View Cart
           </PremiumButton>
-          <PremiumButton variant="primary" onClick={onCheckout} disabled={busy} data-testid="shop-tray-checkout" className="py-2.5 px-6">
-            {busy ? "Redirecting…" : "Checkout"}
+          <PremiumButton variant="primary" onClick={guestMode ? onSignIn : onCheckout} disabled={!guestMode && (busy || previewMode)} data-testid="shop-tray-checkout" className="py-2.5 px-6">
+            {guestMode ? "Sign In to Checkout" : previewMode ? "Preview Only" : busy ? "Redirecting…" : "Checkout"}
           </PremiumButton>
         </div>
       </div>
@@ -430,8 +508,8 @@ function CheckoutTray({ cartCount, subtotal, onViewCart, onCheckout, busy, justA
             <i className="fas fa-cart-shopping text-shPrimary text-lg shrink-0" aria-hidden="true" />
             <span className="text-shText font-bold text-sm truncate">{cartCount} · {money(subtotal)}</span>
           </button>
-          <PremiumButton variant="primary" onClick={onCheckout} disabled={busy} data-testid="shop-tray-checkout-mobile" className="py-2.5 px-5 shrink-0">
-            {busy ? "…" : "Checkout"}
+          <PremiumButton variant="primary" onClick={guestMode ? onSignIn : onCheckout} disabled={!guestMode && (busy || previewMode)} data-testid="shop-tray-checkout-mobile" className="py-2.5 px-5 shrink-0">
+            {guestMode ? "Sign In" : previewMode ? "Preview" : busy ? "…" : "Checkout"}
           </PremiumButton>
         </div>
       </div>
@@ -465,11 +543,32 @@ function ApparelSection({ storeUrl }) {
   );
 }
 
-export default function PortalShop({ initialTab = "all", fullScreen = false, shopifyStoreUrl = "", cart: cartProp, onCartChange }) {
+export default function PortalShop({
+  initialTab = "all", fullScreen = false, shopifyStoreUrl = "", cart: cartProp, onCartChange,
+  // mode: "authenticated" (default, real client) | "preview" (admin Shop
+  // Manager Client Preview — reuses this exact same presentation instead of
+  // a second fake storefront) | "guest" (public no-account storefront).
+  mode = "authenticated", previewClientId = null,
+  // guest mode only — called whenever a guest clicks a CTA that requires an
+  // account (sign-in, hidden-price, or an approval/dog contact-required
+  // blocker). `(item, reason)` — reason is "hidden_price"|"approval"|"dog"|null.
+  onRequireAccount,
+}) {
   const [items, setItems] = useState([]);
   const [loading, setLoading] = useState(true);
   const [err, setErr] = useState("");
   const [tab, setTab] = useState(initialTab);
+  // Shop Appearance & Organization settings — read via the public/no-auth
+  // /settings/public endpoint (works in every mode, including guest) so
+  // title/subtitle/banner/landing-mode/section labels/order/visibility all
+  // apply consistently everywhere this component is mounted. Defaults to
+  // {} until loaded so every `!== false` check below defaults sensibly true.
+  const [shopPage, setShopPage] = useState({});
+  useEffect(() => {
+    api.get("/settings/public")
+      .then(({ data }) => setShopPage(data.shop_page || {}))
+      .catch(() => setShopPage({}));
+  }, []);
   // Shop category/subcategory navigation, additive to the existing kind tabs
   // above. categoryFilter === "" means no category is selected — whether
   // that shows category cards to click through or a flat grid of every item
@@ -532,44 +631,99 @@ export default function PortalShop({ initialTab = "all", fullScreen = false, sho
 
   useEffect(() => { setTab(initialTab); }, [initialTab]);
 
+  // preview mode reuses the exact same admin-only catalog-preview/taxonomy-
+  // preview endpoints Shop Manager's Client Preview tab already used — same
+  // _build_shop_catalog/_shop_taxonomy_payload the real client hits, so this
+  // is never a fake approximation. guest mode fetches ONLY the allowlisted
+  // public endpoints (Phase 2a) — never the authenticated /shop/* routes,
+  // which 403 without a client session anyway.
+  const catalogUrl = mode === "preview" ? "/shop-manager/catalog-preview" : mode === "guest" ? "/public/shop/catalog" : "/shop/catalog";
+  const catalogParams = mode === "preview" && previewClientId ? { preview_client_id: previewClientId } : {};
+  const taxonomyUrl = mode === "preview" ? "/shop-manager/catalog-preview-taxonomy" : mode === "guest" ? "/public/shop/taxonomy" : "/shop/catalog/taxonomy";
+
   const load = () => {
     setLoading(true);
-    api.get("/shop/catalog")
+    api.get(catalogUrl, { params: catalogParams })
       .then(({ data }) => setItems(data.items || []))
       .catch((e) => setErr(e?.response?.data?.detail || "Could not load the shop"))
       .finally(() => setLoading(false));
   };
-  useEffect(() => { load(); }, []);
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  useEffect(() => { load(); }, [mode, previewClientId]);
   useEffect(() => {
-    api.get("/shop/catalog/taxonomy")
+    api.get(taxonomyUrl)
       .then(({ data }) => setCategories(data.categories || []))
       .catch(() => setCategories([]));
-  }, []);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [mode]);
+
+  // show_out_of_stock=false hides tracked-inventory out-of-stock products
+  // from browse grids/cards/counts ONLY — never from a direct item-detail
+  // link (that uses the full `items` list untouched, see ShopItemDetail),
+  // and never from cart resolution (a client with one already in their cart
+  // must still be able to see/manage that line).
+  const browsableItems = useMemo(() => {
+    if (shopPage.show_out_of_stock !== false) return items;
+    // Guest items carry no track_inventory/in_stock (see Phase 2a's public
+    // allowlist) — only the computed `availability` string.
+    if (mode === "guest") return items.filter((i) => !(i.kind === "product" && i.availability === "out_of_stock"));
+    return items.filter((i) => !(i.kind === "product" && i.track_inventory && !i.in_stock));
+  }, [items, shopPage.show_out_of_stock, mode]);
 
   // Category-card groups for the active tab (configured categories in their
   // configured order, plus a generated "Other" bucket for uncategorized
   // visible items — see categoryGroupsForTab in ../lib/shopPolish.js).
-  // Powers both the category-index screen's cards and the selected
-  // category's breadcrumb/heading below; never a second API request.
-  const categoryGroups = useMemo(
-    () => categoryGroupsForTab(categories, items, tab),
-    [categories, items, tab],
-  );
+  // Additionally re-includes any configured category categoryGroupsForTab
+  // dropped for having zero matching items, IF that category's effective
+  // hide_when_empty rule says "never hide" — categoryGroupsForTab's own
+  // tested contract (drop empty categories) stays unchanged; this is a
+  // composed wrapper, not an edit to it. Powers both the category-index
+  // screen's cards and the selected category's breadcrumb/heading below;
+  // never a second API request.
+  const categoryGroups = useMemo(() => {
+    const base = categoryGroupsForTab(categories, browsableItems, tab);
+    const baseById = new Map(base.map((g) => [g.category.id, g]));
+    const other = base.find((g) => g.category.id === OTHER_CATEGORY_ID);
+    const ordered = categories.map((c) => {
+      const existing = baseById.get(c.id);
+      if (existing) return existing;
+      const emptyGroup = { category: c, items: [], count: 0 };
+      return shouldHideEmptyCategory(emptyGroup, shopPage) ? null : emptyGroup;
+    }).filter(Boolean);
+    return other ? [...ordered, other] : ordered;
+  }, [categories, browsableItems, tab, shopPage]);
   const selectedGroup = categoryGroups.find((g) => g.category.id === categoryFilter);
   const subcategoryOptions = useMemo(
-    () => subcategoryOptionsForTab(categories, items, tab, categoryFilter),
-    [categories, items, tab, categoryFilter],
+    () => subcategoryOptionsForTab(categories, browsableItems, tab, categoryFilter),
+    [categories, browsableItems, tab, categoryFilter],
   );
 
-  // Section-card groups for the "All" tab's landing screen — one per kind,
-  // reusing the same categoryCoverItem cover-resolution logic as category
-  // cards (just against itemsForTab instead of a category's own items).
+  // Section-card groups for the "All" tab's landing screen — one per
+  // permanent section, ordered/labeled per shop_page settings
+  // (visibleSectionsInOrder/sectionMetaFor), reusing the same
+  // categoryCoverImageId cover-resolution logic as category cards via a
+  // synthetic `category: {image_id}` so a configured section cover image
+  // always wins over any item-based fallback.
   const sectionGroups = useMemo(() => (
-    TABS.filter((t) => t.key !== "all").map((t) => {
-      const kindItems = itemsForTab(items, t.key);
-      return { key: t.key, label: t.label, items: kindItems, count: kindItems.length };
+    visibleSectionsInOrder(shopPage).map((sec) => {
+      const tabKey = TAB_KEY_FOR_SECTION[sec.key];
+      const kindItems = itemsForTab(browsableItems, tabKey);
+      return {
+        key: tabKey, label: sec.label, description: sec.description,
+        items: kindItems, count: kindItems.length,
+        category: { image_id: sec.image_id },
+      };
     }).filter((s) => s.count > 0)
-  ), [items]);
+  ), [browsableItems, shopPage]);
+
+  // Tab-button row + breadcrumb labels — permanent `key`s from TABS, but
+  // the displayed label/order come from settings (sectionMetaFor), falling
+  // back to TABS' own hardcoded strings when unconfigured.
+  const visibleTabs = useMemo(() => {
+    const configured = visibleSectionsInOrder(shopPage).map((sec) => ({ key: TAB_KEY_FOR_SECTION[sec.key], label: sec.label }));
+    return [{ key: "all", label: "All" }, ...configured];
+  }, [shopPage]);
+  const tabLabel = (key) => visibleTabs.find((t) => t.key === key)?.label || TABS.find((t) => t.key === key)?.label || "";
 
   // "" means no category filter is set. Whether that renders the
   // category/section index (cards to click through) or a flat grid of every
@@ -586,7 +740,7 @@ export default function PortalShop({ initialTab = "all", fullScreen = false, sho
   const selectTab = (key) => {
     setTab(key);
     setShowAllItems(false);
-    const next = nextFiltersForTab(items, key, categoryFilter, subcategoryFilter);
+    const next = nextFiltersForTab(browsableItems, key, categoryFilter, subcategoryFilter);
     if (next.categoryFilter !== categoryFilter) setCategoryFilter(next.categoryFilter);
     if (next.subcategoryFilter !== subcategoryFilter) setSubcategoryFilter(next.subcategoryFilter);
   };
@@ -620,7 +774,7 @@ export default function PortalShop({ initialTab = "all", fullScreen = false, sho
   const showGridHeader = !!categoryFilter || (showAllItems && !searching);
 
   const filtered = useMemo(() => {
-    let list = itemsForTab(items, tab);
+    let list = itemsForTab(browsableItems, tab);
     // A search always scopes to the whole active tab, ignoring whatever
     // category/subcategory was selected before typing — see the search
     // input's comment above for why.
@@ -634,7 +788,7 @@ export default function PortalShop({ initialTab = "all", fullScreen = false, sho
     }
     list = list.filter((i) => matchesSearchQuery(i, search));
     return sortShopItems(list);
-  }, [items, tab, categoryFilter, subcategoryFilter, search, searching]);
+  }, [browsableItems, tab, categoryFilter, subcategoryFilter, search, searching]);
 
   const cartCount = cart.reduce((n, c) => n + c.quantity, 0);
   const { lines: cartLines, subtotal: cartSubtotal } = useCartLines(cart, items);
@@ -714,6 +868,10 @@ export default function PortalShop({ initialTab = "all", fullScreen = false, sho
   }, [ordersOpen]);
 
   const submitCheckout = async () => {
+    // Preview/guest modes never call the real checkout endpoint — preview
+    // has no real client session to charge, and guest checkout isn't built
+    // (see Phase 4/the shop_page.allow_guest_merch_checkout note).
+    if (mode !== "authenticated") return;
     if (cart.length === 0) return;
     if (!idemKeyRef.current) idemKeyRef.current = crypto.randomUUID();
     setCheckoutBusy(true);
@@ -787,10 +945,21 @@ export default function PortalShop({ initialTab = "all", fullScreen = false, sho
     <div id="portal-shop-anchor" data-testid="portal-shop"
          className={fullScreen ? "w-full max-w-6xl mx-auto" : "p-6 rounded-2xl border border-shBorder shadow-sh"}
          style={fullScreen ? undefined : { background: "var(--sh-card-base)" }}>
-      <div className="flex items-center justify-between mb-4 gap-2">
-        <p className="text-[12px] font-black uppercase tracking-[0.3em] text-shPrimary">
-          <i className="fas fa-bag-shopping mr-1" />Shop
-        </p>
+      {mode === "preview" && (
+        <div className="mb-4 border border-shSecondary/40 bg-shSecondary/10 rounded-lg p-3 text-center" data-testid="shop-preview-banner">
+          <p className="text-shSecondary text-[11px] font-black uppercase tracking-widest">
+            <i className="fas fa-eye mr-1.5" />Preview Only — no real orders will be created
+          </p>
+        </div>
+      )}
+
+      <div className="flex items-center justify-between mb-1 gap-2">
+        <div>
+          <p className="text-[12px] font-black uppercase tracking-[0.3em] text-shPrimary">
+            <i className="fas fa-bag-shopping mr-1" />{shopPage.title || "Shop"}
+          </p>
+          {shopPage.subtitle && <p className="text-shTextMuted text-[12px] mt-0.5">{shopPage.subtitle}</p>}
+        </div>
         <div className="flex items-center gap-2">
           <button onClick={() => setOrdersOpen((o) => !o)} data-testid="shop-my-orders-toggle"
                   className="border border-shBorder text-shTextMuted hover:text-shText px-3 py-2 rounded-md text-[11px] font-bold uppercase tracking-widest hover:border-shPrimary/50 transition"
@@ -810,6 +979,32 @@ export default function PortalShop({ initialTab = "all", fullScreen = false, sho
           </button>
         </div>
       </div>
+
+      {/* Shop banner — heading/image/CTA, all admin-configured via
+          shop_page.banner_*. Rendered only when there's something to show. */}
+      {(shopPage.banner_image_id || shopPage.banner_heading) && (
+        <div className="mb-4 rounded-2xl border border-shBorder overflow-hidden relative" data-testid="shop-banner">
+          <ItemThumbnail imageId={shopPage.banner_image_id} alt={shopPage.banner_heading || "Shop banner"} variant="banner" size={220} className="w-full" public={mode === "guest"} />
+          {(shopPage.banner_heading || (shopPage.banner_cta_text && shopPage.banner_cta_url)) && (
+            <div className="p-4 flex items-center justify-between gap-3 flex-wrap">
+              {shopPage.banner_heading && <p className="text-shText font-black text-lg">{shopPage.banner_heading}</p>}
+              {shopPage.banner_cta_text && shopPage.banner_cta_url && (
+                shopPage.banner_cta_url.startsWith("https://") ? (
+                  <a href={shopPage.banner_cta_url} target="_blank" rel="noopener noreferrer" data-testid="shop-banner-cta"
+                     className="bg-shPrimary text-bgHeader px-4 py-2 rounded text-[11px] font-black uppercase tracking-widest">
+                    {shopPage.banner_cta_text}
+                  </a>
+                ) : shopPage.banner_cta_url.startsWith("/") && !shopPage.banner_cta_url.startsWith("//") ? (
+                  <a href={shopPage.banner_cta_url} data-testid="shop-banner-cta"
+                     className="bg-shPrimary text-bgHeader px-4 py-2 rounded text-[11px] font-black uppercase tracking-widest">
+                    {shopPage.banner_cta_text}
+                  </a>
+                ) : null
+              )}
+            </div>
+          )}
+        </div>
+      )}
 
       {ordersOpen && (
         <div className="mb-4 border border-shBorder rounded-xl p-4" style={{ background: "var(--sh-card-base)" }} data-testid="shop-my-orders-panel">
@@ -866,6 +1061,8 @@ export default function PortalShop({ initialTab = "all", fullScreen = false, sho
           onBack={closeDetail}
           allItems={items}
           onOpenItem={openDetail}
+          mode={mode}
+          onRequireAccount={onRequireAccount}
         />
       ) : (
       <>
@@ -896,7 +1093,7 @@ export default function PortalShop({ initialTab = "all", fullScreen = false, sho
       )}
 
       <div className="flex flex-wrap gap-2 justify-center mb-4">
-        {TABS.map((t) => (
+        {visibleTabs.map((t) => (
           <button key={t.key} onClick={() => selectTab(t.key)} data-testid={`shop-tab-${t.key}`}
                   className={`px-3 py-1.5 rounded-md text-[11px] font-bold uppercase tracking-widest transition border ${
                     tab === t.key ? "bg-shPrimary text-bgHeader border-shPrimary" : "border-shBorder text-shTextMuted hover:border-shPrimary/50 hover:text-shText"
@@ -912,28 +1109,58 @@ export default function PortalShop({ initialTab = "all", fullScreen = false, sho
           clickable section/category cards and subcategory pills below. A
           non-empty search always forces the flat item grid immediately,
           regardless of which index/category screen was showing. */}
-      <div className="max-w-2xl mx-auto mb-4">
-        <div className="relative">
-          <i className="fas fa-magnifying-glass absolute left-3 top-1/2 -translate-y-1/2 text-shTextMuted text-[13px]" />
-          <input value={search} onChange={(e) => setSearch(e.target.value)} placeholder="Search the shop…"
-                 data-testid="shop-search-input"
-                 className="w-full pl-9 pr-3 py-2 rounded-md border border-shBorder text-shText text-sm focus:outline-none focus:border-shPrimary/60"
-                 style={{ background: "var(--sh-card-base)" }} />
+      {shopPage.show_search !== false && (
+        <div className="max-w-2xl mx-auto mb-4">
+          <div className="relative">
+            <i className="fas fa-magnifying-glass absolute left-3 top-1/2 -translate-y-1/2 text-shTextMuted text-[13px]" />
+            <input value={search} onChange={(e) => setSearch(e.target.value)} placeholder="Search the shop…"
+                   data-testid="shop-search-input"
+                   className="w-full pl-9 pr-3 py-2 rounded-md border border-shBorder text-shText text-sm focus:outline-none focus:border-shPrimary/60"
+                   style={{ background: "var(--sh-card-base)" }} />
+          </div>
         </div>
-      </div>
+      )}
 
       {loading && <p className="text-gray-500 text-sm text-center py-6">Loading the shop…</p>}
       {!loading && err && <p className="text-red-400 text-sm text-center py-6">{err}</p>}
 
       {!loading && !err && showIndexScreen && (
-        tab === "all" ? (
-          <SectionIndex sections={sectionGroups} onSelect={selectTab} onViewAll={viewAllInTab} />
+        tab === "all" && shopPage.landing_mode === "featured_items" ? (
+          // Featured Items landing mode — flat grid of catalog items flagged
+          // featured, reusing the exact same item.featured field sortShopItems
+          // already reads. Only shapes the very first "all tab" screen.
+          (() => {
+            const featured = sortShopItems(filterFeaturedItems(itemsForTab(browsableItems, "all")));
+            return featured.length === 0
+              ? <p className="text-gray-500 text-sm text-center py-6">Nothing here yet — check back soon.</p>
+              : (
+                <div className={`grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 ${fullScreen ? "lg:grid-cols-4" : ""} gap-3`}>
+                  {featured.map((item) => {
+                    const inCart = cart.find((c) => c.kind === item.kind && c.ref_id === item.id);
+                    return <ItemCard key={`${item.kind}-${item.id}`} item={item} cartQty={inCart ? inCart.quantity : 0} onAdd={addToCart} onOpenDetail={openDetail} mode={mode} onRequireAccount={onRequireAccount} />;
+                  })}
+                </div>
+              );
+          })()
+        ) : tab === "all" && shopPage.landing_mode === "all_items" ? (
+          // All Items landing mode — flat grid of everything, equivalent to
+          // the existing "View All Products" escape hatch being the default.
+          <div className={`grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 ${fullScreen ? "lg:grid-cols-4" : ""} gap-3`}>
+            {sortShopItems(itemsForTab(browsableItems, "all")).map((item) => {
+              const inCart = cart.find((c) => c.kind === item.kind && c.ref_id === item.id);
+              return <ItemCard key={`${item.kind}-${item.id}`} item={item} cartQty={inCart ? inCart.quantity : 0} onAdd={addToCart} onOpenDetail={openDetail} mode={mode} onRequireAccount={onRequireAccount} />;
+            })}
+          </div>
+        ) : tab === "all" ? (
+          <SectionIndex sections={sectionGroups} showCount={shopPage.show_item_counts} onSelect={selectTab} onViewAll={viewAllInTab} mode={mode} />
         ) : (
           <CategoryIndex
-            groups={categoryGroups}
+            groups={orderCategoryGroupsFeaturedFirst(categoryGroups)}
+            showCount={shopPage.show_item_counts}
             onSelectCategory={openCategory}
             onViewAll={viewAllInTab}
-            sectionLabel={TABS.find((t) => t.key === tab)?.label || ""}
+            mode={mode}
+            sectionLabel={tabLabel(tab)}
           />
         )
       )}
@@ -942,10 +1169,11 @@ export default function PortalShop({ initialTab = "all", fullScreen = false, sho
         <>
           {showGridHeader && (
             <CategoryGridHeader
-              eyebrow={tab !== "all" ? TABS.find((t) => t.key === tab)?.label : undefined}
-              title={categoryFilter && !searching ? (selectedGroup?.category?.name || "") : `All ${TABS.find((t) => t.key === tab)?.label || "Products"}`}
+              eyebrow={tab !== "all" ? tabLabel(tab) : undefined}
+              title={categoryFilter && !searching ? (selectedGroup?.category?.name || "") : `All ${tabLabel(tab) || "Products"}`}
               description={categoryFilter && !searching ? selectedGroup?.category?.description : undefined}
               count={filtered.length}
+              showCount={shopPage.show_item_counts}
               onBack={backToCategories}
               backLabel={tab === "all" ? "Back to Sections" : "Back to Categories"}
             />
@@ -980,7 +1208,7 @@ export default function PortalShop({ initialTab = "all", fullScreen = false, sho
               {filtered.map((item) => {
                 const inCart = cart.find((c) => c.kind === item.kind && c.ref_id === item.id);
                 return (
-                  <ItemCard key={`${item.kind}-${item.id}`} item={item} cartQty={inCart ? inCart.quantity : 0} onAdd={addToCart} onOpenDetail={openDetail} />
+                  <ItemCard key={`${item.kind}-${item.id}`} item={item} cartQty={inCart ? inCart.quantity : 0} onAdd={addToCart} onOpenDetail={openDetail} mode={mode} onRequireAccount={onRequireAccount} />
                 );
               })}
             </div>
@@ -1003,6 +1231,9 @@ export default function PortalShop({ initialTab = "all", fullScreen = false, sho
           onRemove={removeFromCart}
           onCheckout={submitCheckout}
           busy={checkoutBusy}
+          previewMode={mode === "preview"}
+          guestMode={mode === "guest"}
+          onSignIn={() => onRequireAccount?.(null, null)}
           onClose={() => setCartOpen(false)}
         />
       )}
@@ -1015,6 +1246,9 @@ export default function PortalShop({ initialTab = "all", fullScreen = false, sho
           onCheckout={submitCheckout}
           busy={checkoutBusy}
           justAdded={justAdded}
+          previewMode={mode === "preview"}
+          guestMode={mode === "guest"}
+          onSignIn={() => onRequireAccount?.(null, null)}
         />
       )}
     </div>

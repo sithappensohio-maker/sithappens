@@ -182,7 +182,7 @@ def test_3b_missing_url_is_rejected(admin_headers):
 # ═══════════════════════════════════════════════════════════════════════
 
 def test_4_shopify_listing_appears_in_its_category_and_subcategory(admin_headers, shopify_product, fresh_client):
-    cat = requests.post(f"{API}/shop/categories", headers=admin_headers, json={"name": f"Merch Cat {uuid.uuid4().hex[:6]}"}, timeout=15).json()
+    cat = requests.post(f"{API}/shop/categories", headers=admin_headers, json={"name": f"Merch Cat {uuid.uuid4().hex[:6]}", "section": "merch"}, timeout=15).json()
     sub = requests.post(f"{API}/shop/subcategories", headers=admin_headers,
                          json={"category_id": cat["id"], "name": f"Merch Sub {uuid.uuid4().hex[:6]}"}, timeout=15).json()
     try:

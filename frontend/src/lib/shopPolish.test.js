@@ -3,6 +3,8 @@ import {
   sortShopItems, singularUnit, stockCeiling, isInternalPhysical, orderStatusLabel,
   categoryGroupsForTab, uncategorizedItemsForTab, categoryCoverItem, matchesSearchQuery,
   OTHER_CATEGORY_ID,
+  sectionMetaFor, visibleSectionsInOrder, categoryCoverImageId, shouldHideEmptyCategory,
+  orderCategoryGroupsFeaturedFirst, filterFeaturedItems, guestItemCta,
 } from "./shopPolish";
 
 const categories = [
@@ -202,6 +204,103 @@ test("matchesSearchQuery treats a blank/empty query as matching everything", () 
   expect(matchesSearchQuery(item, undefined)).toBe(true);
 });
 
+// ---------------------------------------------------------------------------
+// Shop Appearance & Organization — section metadata, category cover-image
+// priority, hide-when-empty, featured-category ordering, and the
+// featured_items landing mode.
+// ---------------------------------------------------------------------------
+
+test("sectionMetaFor returns hardcoded fallback when shop_page is undefined/missing keys", () => {
+  expect(sectionMetaFor("merch", undefined)).toEqual({ label: "Merch & Gear", description: "", image_id: null, visible: true, order: 0 });
+  expect(sectionMetaFor("training", {})).toEqual({ label: "Training", description: "", image_id: null, visible: true, order: 2 });
+  // Partially-configured section — missing fields fall back individually.
+  expect(sectionMetaFor("prepaid_visits", { sections: { prepaid_visits: { label: "Visit Passes" } } }))
+    .toEqual({ label: "Visit Passes", description: "", image_id: null, visible: true, order: 1 });
+});
+
+test("sectionMetaFor returns admin-configured label/description/image when present", () => {
+  const shopPage = { sections: { merch: { label: "Store", description: "Gear & goods", image_id: "img-merch", visible: false, order: 5 } } };
+  expect(sectionMetaFor("merch", shopPage)).toEqual({ label: "Store", description: "Gear & goods", image_id: "img-merch", visible: false, order: 5 });
+});
+
+test("visibleSectionsInOrder excludes a section with visible:false and sorts by order", () => {
+  const shopPage = {
+    sections: {
+      merch: { order: 2, visible: true },
+      prepaid_visits: { order: 0, visible: true },
+      training: { order: 1, visible: false },
+    },
+  };
+  expect(visibleSectionsInOrder(shopPage).map((s) => s.key)).toEqual(["prepaid_visits", "merch"]);
+});
+
+test("categoryCoverImageId prefers the category's own configured image over any item cover", () => {
+  const group = {
+    category: { image_id: "cat-img" },
+    items: [{ id: "a", featured: true, image_id: "item-img" }],
+  };
+  expect(categoryCoverImageId(group)).toBe("cat-img");
+});
+
+test("categoryCoverImageId prefers the mobile image when preferMobile is set and available", () => {
+  const group = { category: { image_id: "cat-img", mobile_image_id: "cat-img-mobile" }, items: [] };
+  expect(categoryCoverImageId(group, { preferMobile: true })).toBe("cat-img-mobile");
+  expect(categoryCoverImageId(group, { preferMobile: false })).toBe("cat-img");
+});
+
+test("categoryCoverImageId falls back to categoryCoverItem's unmodified behavior when no category image is set", () => {
+  const group = { category: { image_id: null }, items: [{ id: "a", featured: false, image_id: "item-img" }] };
+  expect(categoryCoverImageId(group)).toBe("item-img");
+  expect(categoryCoverImageId({ category: null, items: [] })).toBeNull();
+});
+
+test("shouldHideEmptyCategory: category override true hides even when global is false", () => {
+  expect(shouldHideEmptyCategory({ count: 0, category: { hide_when_empty: true } }, { hide_empty_categories: false })).toBe(true);
+});
+
+test("shouldHideEmptyCategory: category override false shows even when global is true", () => {
+  expect(shouldHideEmptyCategory({ count: 0, category: { hide_when_empty: false } }, { hide_empty_categories: true })).toBe(false);
+});
+
+test("shouldHideEmptyCategory: null/undefined override defers to the global setting", () => {
+  expect(shouldHideEmptyCategory({ count: 0, category: {} }, { hide_empty_categories: true })).toBe(true);
+  expect(shouldHideEmptyCategory({ count: 0, category: {} }, { hide_empty_categories: false })).toBe(false);
+  // Missing shop_page entirely -> defaults to hiding (today's implicit behavior)
+  expect(shouldHideEmptyCategory({ count: 0, category: {} }, undefined)).toBe(true);
+});
+
+test("shouldHideEmptyCategory never hides a non-empty group regardless of flags", () => {
+  expect(shouldHideEmptyCategory({ count: 3, category: { hide_when_empty: true } }, { hide_empty_categories: true })).toBe(false);
+});
+
+test("orderCategoryGroupsFeaturedFirst puts featured groups first while preserving relative order within each group", () => {
+  const groups = [
+    { category: { id: "a", is_featured: false } },
+    { category: { id: "b", is_featured: true } },
+    { category: { id: "c", is_featured: false } },
+    { category: { id: "d", is_featured: true } },
+  ];
+  expect(orderCategoryGroupsFeaturedFirst(groups).map((g) => g.category.id)).toEqual(["b", "d", "a", "c"]);
+});
+
+test("filterFeaturedItems returns only items with featured:true", () => {
+  const list = [{ id: "a", featured: true }, { id: "b", featured: false }, { id: "c", featured: true }];
+  expect(filterFeaturedItems(list).map((i) => i.id)).toEqual(["a", "c"]);
+});
+
+test("uncategorizedItemsForTab never buckets an item whose category_id points to a category absent from the given list (never leaks into Other)", () => {
+  // p-orphan's category_id ("cat-gone") doesn't match any category in
+  // navCategories — it must NOT appear in the generated Other bucket
+  // (which is reserved for items with a genuinely null category_id), and
+  // it must not appear under any other group either.
+  const itemsWithOrphan = [...navItems, { kind: "product", id: "p-orphan", name: "Orphaned", category_id: "cat-gone" }];
+  const groups = categoryGroupsForTab(navCategories, itemsWithOrphan, "product");
+  const allGroupedIds = groups.flatMap((g) => g.items.map((i) => i.id));
+  expect(allGroupedIds).not.toContain("p-orphan");
+  const other = groups.find((g) => g.category.id === OTHER_CATEGORY_ID);
+  expect(other.items.map((i) => i.id)).toEqual(["p4"]); // unchanged — only the genuinely uncategorized item
+});
+
 test("orderStatusLabel maps every required status combination to its exact customer-facing label", () => {
   expect(orderStatusLabel({ status: "pending_payment" })).toBe("Payment Processing");
   expect(orderStatusLabel({ status: "payment_failed" })).toBe("Not Completed");
@@ -213,4 +312,36 @@ test("orderStatusLabel maps every required status combination to its exact custo
   expect(orderStatusLabel({ status: "paid", pickup_status: "preparing", lines: [{ kind: "product" }] })).toBe("Preparing for Pickup");
   expect(orderStatusLabel({ status: "paid", pickup_status: "ready_for_pickup", lines: [{ kind: "product" }] })).toBe("Ready for Pickup");
   expect(orderStatusLabel({ status: "paid", pickup_status: "picked_up", lines: [{ kind: "product" }] })).toBe("Picked Up");
+});
+
+describe("guestItemCta", () => {
+  test("Shopify external product always wins, regardless of any other flag", () => {
+    expect(guestItemCta({
+      kind: "product", sales_destination: "shopify_external",
+      requires_approval: true, account_required: true,
+    })).toEqual({ type: "shopify" });
+  });
+
+  test("price-hidden wins over account_required/approval/dog — no price fields present", () => {
+    expect(guestItemCta({ kind: "product", account_required: true })).toEqual({ type: "hidden_price" });
+    expect(guestItemCta({ kind: "product", requires_approval: true })).toEqual({ type: "hidden_price" });
+    expect(guestItemCta({ kind: "training_program", requires_dog: true })).toEqual({ type: "hidden_price" });
+  });
+
+  test("approval/dog blockers win over a plain sign-in message when price is visible", () => {
+    expect(guestItemCta({ kind: "product", price: 10, requires_approval: true, account_required: true }))
+      .toEqual({ type: "contact_required", reason: "approval" });
+    expect(guestItemCta({ kind: "product", price: 10, requires_dog: true, account_required: true }))
+      .toEqual({ type: "contact_required", reason: "dog" });
+  });
+
+  test("account_required (credit packs/programs always) shows sign-in when price is visible and no approval/dog block", () => {
+    expect(guestItemCta({ kind: "credit_pack", price: 50, account_required: true })).toEqual({ type: "sign_in" });
+    expect(guestItemCta({ kind: "training_program", price: 200, account_required: true })).toEqual({ type: "sign_in" });
+  });
+
+  test("eligible product with guest_cart_allowed and a visible price adds to cart", () => {
+    expect(guestItemCta({ kind: "product", price: 10, account_required: false, guest_cart_allowed: true }))
+      .toEqual({ type: "add_to_cart" });
+  });
 });

@@ -22,6 +22,11 @@ const BLANK_FORM = {
   show_online: false, online_description: "", image_id: null, online_sort_order: "",
   category_id: null, subcategory_id: null, featured: false, show_at_register: true,
   sales_destination: "internal", shopify_product_url: "", shopify_display_price: "", shopify_from_price: false,
+  // Public no-account storefront — see the "Public Storefront" section of
+  // the editor below. guest_cart_allowed never permits guest checkout, only
+  // temporary local cart placement.
+  publicly_visible: false, guest_cart_allowed: false, show_public_price: true,
+  requires_approval: false, requires_completed_onboarding: false,
 };
 
 // Shared product add/edit form — used by this panel AND the unified Shop
@@ -194,6 +199,54 @@ export function ProductEditor({ form, setForm, editingId, originalImageId, savin
           </div>
         )}
       </div>
+
+      {/* Public no-account storefront — only meaningful for internally-
+          fulfilled, online-shown products. Shopify listings always bypass
+          these fields entirely (Shopify governs its own guest browsing). */}
+      {form.show_online && form.sales_destination === "internal" && (
+        <div className="border-t border-shBorder pt-3 mt-1 space-y-3">
+          <p className="text-[11px] text-shTextMuted uppercase tracking-widest font-black">Public Storefront (signed-out visitors)</p>
+          <div className="flex items-center gap-2">
+            <input type="checkbox" id="publicly-visible" checked={form.publicly_visible}
+                   onChange={(e) => setForm((f) => ({ ...f, publicly_visible: e.target.checked }))}
+                   data-testid="product-publicly-visible" />
+            <label htmlFor="publicly-visible" className="text-shText text-sm">Publicly Visible (shown to signed-out visitors)</label>
+          </div>
+          {form.publicly_visible && (
+            <>
+              <div className="flex items-center gap-2">
+                <input type="checkbox" id="guest-cart-allowed" checked={form.guest_cart_allowed}
+                       onChange={(e) => setForm((f) => ({ ...f, guest_cart_allowed: e.target.checked }))}
+                       data-testid="product-guest-cart-allowed" />
+                <label htmlFor="guest-cart-allowed" className="text-shText text-sm">Allow guests to add to cart — never allows guest checkout</label>
+              </div>
+              <div className="flex items-center gap-2">
+                <input type="checkbox" id="show-public-price" checked={form.show_public_price}
+                       onChange={(e) => setForm((f) => ({ ...f, show_public_price: e.target.checked }))}
+                       data-testid="product-show-public-price" />
+                <label htmlFor="show-public-price" className="text-shText text-sm">Show Price to Guests</label>
+              </div>
+              <div className="flex items-center gap-2">
+                <input type="checkbox" id="requires-approval" checked={form.requires_approval}
+                       onChange={(e) => setForm((f) => ({ ...f, requires_approval: e.target.checked }))}
+                       data-testid="product-requires-approval" />
+                <label htmlFor="requires-approval" className="text-shText text-sm">Requires Approval</label>
+              </div>
+              {form.requires_approval && (
+                <p className="text-[11px] text-shOrange" data-testid="product-requires-approval-warning">
+                  Enabling this blocks online checkout entirely until approval support is built — customers will be directed to contact staff instead.
+                </p>
+              )}
+              <div className="flex items-center gap-2">
+                <input type="checkbox" id="requires-onboarding" checked={form.requires_completed_onboarding}
+                       onChange={(e) => setForm((f) => ({ ...f, requires_completed_onboarding: e.target.checked }))}
+                       data-testid="product-requires-onboarding" />
+                <label htmlFor="requires-onboarding" className="text-shText text-sm">Requires Completed Account Setup</label>
+              </div>
+            </>
+          )}
+        </div>
+      )}
       <div className="flex gap-3 pt-2">
         <button onClick={onClose} className="flex-1 text-shTextMuted font-black uppercase text-sm tracking-widest py-3">
           Cancel
@@ -305,6 +358,9 @@ export default function ManageProductsPanel({ onClose, onChanged }) {
       shopify_product_url: p.shopify_product_url || "",
       shopify_display_price: p.shopify_display_price != null ? String(p.shopify_display_price) : "",
       shopify_from_price: !!p.shopify_from_price,
+      publicly_visible: !!p.publicly_visible, guest_cart_allowed: !!p.guest_cart_allowed,
+      show_public_price: p.show_public_price !== false,
+      requires_approval: !!p.requires_approval, requires_completed_onboarding: !!p.requires_completed_onboarding,
     });
     setFormOpen(true);
   };
@@ -351,6 +407,11 @@ export default function ManageProductsPanel({ onClose, onChanged }) {
       shopify_product_url: isShopify ? form.shopify_product_url.trim() : null,
       shopify_display_price: (isShopify && form.shopify_display_price !== "") ? Number(form.shopify_display_price) : null,
       shopify_from_price: isShopify && form.shopify_from_price,
+      publicly_visible: !isShopify && form.publicly_visible,
+      guest_cart_allowed: !isShopify && form.publicly_visible && form.guest_cart_allowed,
+      show_public_price: form.show_public_price,
+      requires_approval: !isShopify && form.publicly_visible && form.requires_approval,
+      requires_completed_onboarding: !isShopify && form.publicly_visible && form.requires_completed_onboarding,
     };
     setSaving(true);
     try {

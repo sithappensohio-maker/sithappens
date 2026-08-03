@@ -14,6 +14,10 @@ const empty = {
   name: "", qty: 10, price: 300, service_type: "daycare", icon: "fa-tag", color: "", active: true, welcome_email_template_slug: null,
   available_online: false, online_description: "", image_id: null,
   category_id: null, subcategory_id: null, show_at_register: true, featured: false,
+  // Public no-account storefront — credit packs are ALWAYS account-required
+  // (kind-based hard rule, never a stored flag) — these only affect
+  // BROWSING, never whether a guest can complete a purchase.
+  publicly_visible: false, show_public_price: true, requires_completed_onboarding: false,
 };
 
 const DEFAULT_ICON_BY_POOL = { daycare: "fa-sun", training: "fa-graduation-cap", boarding: "fa-moon" };
@@ -140,6 +144,36 @@ export function PackEditor({ form, setForm, editing, originalImageId, emailTempl
           </div>
         )}
       </div>
+
+      {/* Public no-account storefront — credit packs always require signing
+          in to buy, regardless of these toggles; they only affect browsing. */}
+      {form.available_online && (
+        <div className="mt-4 border-t border-shBorder pt-4">
+          <p className="text-[13px] font-black text-shTextMuted uppercase tracking-widest mb-2">Public Storefront (signed-out visitors)</p>
+          <label className="flex items-center gap-2">
+            <input type="checkbox" checked={form.publicly_visible}
+                   onChange={(e)=>setForm({...form, publicly_visible: e.target.checked})}
+                   data-testid="pack-publicly-visible" />
+            <span className="text-shText text-sm">Publicly Visible (shown to signed-out visitors — always requires sign-in to buy)</span>
+          </label>
+          {form.publicly_visible && (
+            <div className="mt-3 space-y-3">
+              <label className="flex items-center gap-2">
+                <input type="checkbox" checked={form.show_public_price}
+                       onChange={(e)=>setForm({...form, show_public_price: e.target.checked})}
+                       data-testid="pack-show-public-price" />
+                <span className="text-shText text-sm">Show Price to Guests</span>
+              </label>
+              <label className="flex items-center gap-2">
+                <input type="checkbox" checked={form.requires_completed_onboarding}
+                       onChange={(e)=>setForm({...form, requires_completed_onboarding: e.target.checked})}
+                       data-testid="pack-requires-onboarding" />
+                <span className="text-shText text-sm">Requires Completed Account Setup</span>
+              </label>
+            </div>
+          )}
+        </div>
+      )}
 
       {/* Live preview — exactly how this pack will render in the catalog list. */}
       <div className="mt-4">

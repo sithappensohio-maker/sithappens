@@ -4,6 +4,7 @@ import { toast } from "sonner";
 import PremiumButton from "./premium/PremiumButton";
 import { useShopMediaSrc } from "./ItemThumbnail";
 import { CLIENT_LABELS } from "../lib/clientLabels";
+import { guestItemCta } from "../lib/shopPolish";
 
 const money = (n) => `$${Number(n || 0).toFixed(2)}`;
 
@@ -39,12 +40,23 @@ function FormattedDescription({ text }) {
   );
 }
 
-function PriceBlock({ item }) {
+function PriceBlock({ item, hiddenPriceMessage }) {
   const isShopify = item.kind === "product" && item.sales_destination === "shopify_external";
   if (isShopify) {
     return item.shopify_display_price != null ? (
       <p className="text-shPrimary font-black text-[26px]">
         {item.shopify_from_price ? "From " : ""}{money(item.shopify_display_price)}
+      </p>
+    ) : null;
+  }
+  // Public no-account storefront — price fields are simply ABSENT from the
+  // response when hidden (never a zero/malformed value), so this must be
+  // checked before falling through to money(undefined) → "$0.00".
+  const hasPrice = item.price != null || item.effective_price != null;
+  if (!hasPrice) {
+    return hiddenPriceMessage ? (
+      <p className="text-shTextMuted font-black text-[16px] uppercase tracking-widest" data-testid="shop-detail-hidden-price">
+        <i className="fas fa-lock mr-1.5" />{hiddenPriceMessage}
       </p>
     ) : null;
   }
@@ -62,8 +74,18 @@ function PriceBlock({ item }) {
   return <p className="text-shPrimary font-black text-[26px]">{money(item.price ?? item.effective_price)}</p>;
 }
 
-function availabilityText(item) {
+function availabilityText(item, isGuest) {
   if (item.kind !== "product" || item.sales_destination === "shopify_external") return null;
+  // Public no-account storefront — the public item response never carries
+  // track_inventory/in_stock/stock_on_hand (no exact counts leak to
+  // guests), only the computed `availability` string. Guest state is
+  // derived from that alone; everything below is unchanged for the
+  // authenticated/preview response shape.
+  if (isGuest) {
+    if (item.availability === "out_of_stock") return { label: "Sold Out", tone: "bad" };
+    if (item.availability === "low_stock") return { label: "Low Stock", tone: "warn" };
+    return { label: "In Stock", tone: "ok" };
+  }
   if (!item.track_inventory) return { label: "Available", tone: "ok" };
   if (!item.in_stock) return { label: "Sold Out", tone: "bad" };
   if (item.low_stock_threshold != null && item.stock_on_hand <= item.low_stock_threshold) {
@@ -81,7 +103,7 @@ function purchaseButtonLabel(kind) {
 /* Related items reuse the already-loaded, already-priced catalog array —
  * no second backend call, guaranteed to already be visibility-filtered and
  * resolver-priced exactly like the grid. */
-function RelatedItems({ item, allItems, onOpenItem }) {
+function RelatedItems({ item, allItems, onOpenItem, isPublic }) {
   if (!allItems || allItems.length === 0) return null;
   let related = allItems.filter((i) => !(i.kind === item.kind && i.id === item.id) && i.kind === item.kind && i.category_id === item.category_id);
   if (related.length < 2) {
@@ -96,9 +118,11 @@ function RelatedItems({ item, allItems, onOpenItem }) {
         {related.map((r) => (
           <button key={`${r.kind}-${r.id}`} onClick={() => onOpenItem(r)} data-testid={`shop-related-${r.kind}-${r.id}`}
                   className="text-left border border-shBorder rounded-lg p-2 hover:border-shPrimary/50 transition" style={{ background: "var(--sh-card-base)" }}>
-            <ImgOrPlaceholder imageId={r.image_id} alt={r.name} />
+            <ImgOrPlaceholder imageId={r.image_id} alt={r.name} isPublic={isPublic} />
             <p className="text-shText font-bold text-[12px] mt-1.5 truncate">{r.name}</p>
-            <p className="text-shPrimary font-black text-[13px]">{money(r.price ?? r.effective_price)}</p>
+            {(r.price ?? r.effective_price) != null && (
+              <p className="text-shPrimary font-black text-[13px]">{money(r.price ?? r.effective_price)}</p>
+            )}
           </button>
         ))}
       </div>
@@ -106,8 +130,8 @@ function RelatedItems({ item, allItems, onOpenItem }) {
   );
 }
 
-function ImgOrPlaceholder({ imageId, alt }) {
-  const src = useShopMediaSrc(imageId);
+function ImgOrPlaceholder({ imageId, alt, isPublic }) {
+  const src = useShopMediaSrc(imageId, { public: isPublic });
   if (src) return <img src={src} alt={alt || ""} style={{ height: 80 }} className="w-full object-cover rounded" />;
   return (
     <div style={{ height: 80 }} className="w-full rounded border border-shBorder grid place-items-center text-shTextMuted">
@@ -116,8 +140,8 @@ function ImgOrPlaceholder({ imageId, alt }) {
   );
 }
 
-function HeroImage({ imageId, alt }) {
-  const src = useShopMediaSrc(imageId);
+function HeroImage({ imageId, alt, isPublic }) {
+  const src = useShopMediaSrc(imageId, { public: isPublic });
   const [enlarged, setEnlarged] = useState(false);
   return (
     <>
@@ -140,21 +164,26 @@ function HeroImage({ imageId, alt }) {
   );
 }
 
-export default function ShopItemDetail({ kind, itemId, cart, onAddToCart, onBack, allItems, onOpenItem }) {
+export default function ShopItemDetail({ kind, itemId, cart, onAddToCart, onBack, allItems, onOpenItem, mode = "authenticated", onRequireAccount }) {
   const [item, setItem] = useState(null);
   const [loading, setLoading] = useState(true);
   const [notFound, setNotFound] = useState(false);
   const [qty, setQty] = useState(1);
+  const isGuest = mode === "guest";
 
   useEffect(() => {
     let cancelled = false;
     setLoading(true); setNotFound(false); setItem(null); setQty(1);
-    api.get(`/shop/item/${encodeURIComponent(kind)}/${encodeURIComponent(itemId)}`)
+    const url = isGuest
+      ? `/public/shop/item/${encodeURIComponent(kind)}/${encodeURIComponent(itemId)}`
+      : `/shop/item/${encodeURIComponent(kind)}/${encodeURIComponent(itemId)}`;
+    api.get(url)
       .then(({ data }) => { if (!cancelled) setItem(data); })
       .catch(() => { if (!cancelled) setNotFound(true); })
       .finally(() => { if (!cancelled) setLoading(false); });
     return () => { cancelled = true; };
-  }, [kind, itemId]);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [kind, itemId, isGuest]);
 
   if (loading) {
     return <p className="text-shTextMuted text-sm text-center py-16" data-testid="shop-detail-loading">Loading…</p>;
@@ -174,9 +203,18 @@ export default function ShopItemDetail({ kind, itemId, cart, onAddToCart, onBack
   }
 
   const isShopifyMerch = item.kind === "product" && item.sales_destination === "shopify_external";
-  const outOfStock = item.kind === "product" && !isShopifyMerch && item.track_inventory && !item.in_stock;
+  const outOfStock = isGuest
+    ? item.kind === "product" && !isShopifyMerch && item.availability === "out_of_stock"
+    : item.kind === "product" && !isShopifyMerch && item.track_inventory && !item.in_stock;
   const isInternalPhysical = item.kind === "product" && !isShopifyMerch;
-  const avail = availabilityText(item);
+  const avail = availabilityText(item, isGuest);
+  // Guest CTA priority — Shopify (isShopifyMerch, handled unconditionally
+  // below) always wins first; anything else that isn't a plain eligible
+  // Add to Cart blocks the normal qty-selector/purchase button and shows
+  // the matching CTA instead. See guestItemCta's own doc comment for the
+  // exact priority order.
+  const cta = isGuest ? guestItemCta(item) : null;
+  const guestBlocked = isGuest && cta && cta.type !== "add_to_cart" && cta.type !== "shopify";
   const cartQty = (cart || []).find((c) => c.kind === item.kind && c.ref_id === item.id)?.quantity || 0;
   // Stock-safe quantity — `qty` here is "how many more to add", so the real
   // ceiling is what's left after subtracting what's already sitting in the
@@ -208,7 +246,7 @@ export default function ShopItemDetail({ kind, itemId, cart, onAddToCart, onBack
 
       <div className="grid grid-cols-1 lg:grid-cols-2 gap-6 lg:gap-10">
         <div>
-          <HeroImage imageId={item.image_id} alt={item.name} />
+          <HeroImage imageId={item.image_id} alt={item.name} isPublic={isGuest} />
         </div>
 
         <div className="flex flex-col">
@@ -221,7 +259,7 @@ export default function ShopItemDetail({ kind, itemId, cart, onAddToCart, onBack
           <h1 className="text-2xl font-bold text-shText mt-1">{item.name}</h1>
 
           <div className="mt-3">
-            <PriceBlock item={item} />
+            <PriceBlock item={item} hiddenPriceMessage={isGuest ? "Sign In for Pricing" : null} />
           </div>
 
           {avail && (
@@ -260,7 +298,7 @@ export default function ShopItemDetail({ kind, itemId, cart, onAddToCart, onBack
           </div>
 
           <div className="mt-auto pt-6 space-y-3">
-            {item.kind === "product" && !isShopifyMerch && !outOfStock && !atMaxInCart && (
+            {item.kind === "product" && !isShopifyMerch && !outOfStock && !atMaxInCart && !guestBlocked && (
               <div className="flex items-center gap-2" data-testid="shop-detail-qty">
                 <button onClick={() => setQty((q) => Math.max(1, q - 1))} className="w-9 h-9 rounded border border-shBorder text-shTextMuted hover:text-shText" style={{ background: "var(--sh-card-base)" }}>−</button>
                 <span className="w-8 text-center text-shText font-bold">{qty}</span>
@@ -274,6 +312,23 @@ export default function ShopItemDetail({ kind, itemId, cart, onAddToCart, onBack
               <PremiumButton variant="primary" onClick={handleShopifyClick} data-testid="shop-detail-view-options" className="w-full justify-center py-3">
                 View Options <i className="fas fa-arrow-up-right-from-square ml-1 text-[11px]" />
               </PremiumButton>
+            ) : guestBlocked ? (
+              cta.type === "hidden_price" ? (
+                <PremiumButton variant="primary" onClick={() => onRequireAccount?.(item, "hidden_price")} data-testid="shop-detail-hidden-price-cta" className="w-full justify-center py-3">
+                  Sign In for Pricing
+                </PremiumButton>
+              ) : cta.type === "contact_required" ? (
+                <div>
+                  <PremiumButton variant="secondary" onClick={() => onRequireAccount?.(item, cta.reason)} data-testid="shop-detail-contact-required" className="w-full justify-center py-3">
+                    {cta.reason === "dog" ? "Contact Us — Dog Selection Required" : "Contact Us — Approval Required"}
+                  </PremiumButton>
+                  <p className="text-[12px] text-shTextMuted mt-1">This item can&apos;t be completed online yet — our team will help you finish it.</p>
+                </div>
+              ) : (
+                <PremiumButton variant="primary" onClick={() => onRequireAccount?.(item, null)} data-testid="shop-detail-sign-in-required" className="w-full justify-center py-3">
+                  Sign In to Purchase
+                </PremiumButton>
+              )
             ) : outOfStock ? (
               <div>
                 <button disabled data-testid="shop-detail-purchase-disabled"
@@ -301,7 +356,7 @@ export default function ShopItemDetail({ kind, itemId, cart, onAddToCart, onBack
         </div>
       </div>
 
-      <RelatedItems item={item} allItems={allItems} onOpenItem={onOpenItem} />
+      <RelatedItems item={item} allItems={allItems} onOpenItem={onOpenItem} isPublic={isGuest} />
     </div>
   );
 }

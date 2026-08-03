@@ -35,6 +35,8 @@ import NeedsPasswordCard from "../components/NeedsPasswordCard";
 import PaymentOptionsCard from "../components/PaymentOptionsCard";
 import PortalInvoices from "../components/PortalInvoices";
 import PortalShop from "../components/PortalShop";
+import GuestCartMergeReview from "../components/GuestCartMergeReview";
+import { readGuestCart, consumePendingShopRedirect } from "../lib/shopGuestCart";
 import PortalPhotography from "../components/PortalPhotography";
 import NeedHelpCard from "../components/NeedHelpCard";
 import VaccineUploadWizard from "../components/VaccineUploadWizard";
@@ -566,6 +568,11 @@ export default function Portal() {
     if (typeof window === "undefined") return false;
     const params = new URLSearchParams(window.location.search);
     if (params.has("shop_order")) return true;
+    // Public no-account storefront (Phase 4) — a bare /shop or /shop/ path
+    // now also opens the real authenticated Shop directly (ShopRouteGate in
+    // App.js already resolved this visitor as authenticated before Portal
+    // ever mounts), not just the item-detail sub-path below.
+    if (/^\/shop\/?$/.test(window.location.pathname)) return true;
     // Client Shop Item Detail — a real /shop/item/:kind/:id route, so a
     // refresh or direct link on that path also needs to land back in the
     // full-screen Shop view (PortalShop itself reads the same path to
@@ -577,6 +584,47 @@ export default function Portal() {
   // show the live quantity. Still the ONE cart — PortalShop is a fully
   // controlled consumer of this same state, not a second cart.
   const [shopCart, setShopCart] = useState([]); // [{kind, ref_id, quantity}]
+
+  // Public no-account storefront (Phase 4) — once, on mount: (1) a strictly
+  // validated pending /shop or /shop/item/:kind/:id redirect stashed by the
+  // guest storefront's sign-in CTA (defense in depth — the primary flow
+  // never actually navigates away from /shop, see GuestAuthModal's doc
+  // comment, but this covers any real navigation elsewhere and back), and
+  // (2) whether a non-empty guest cart exists at all, which decides whether
+  // the merge-review dialog below ever mounts.
+  const [showGuestMergeReview, setShowGuestMergeReview] = useState(false);
+  // Tracks whether a non-empty guest cart still exists in localStorage —
+  // "Not Now" on the review deliberately leaves it there (never cleared
+  // except by an explicit confirm), so this count re-appears as a small,
+  // resumable "Review saved items" affordance rather than the guest's
+  // browsing being silently lost the moment they dismiss the dialog once.
+  const [guestCartPendingCount, setGuestCartPendingCount] = useState(0);
+  useEffect(() => {
+    const pending = consumePendingShopRedirect();
+    if (pending && pending !== window.location.pathname) {
+      window.history.replaceState({}, "", pending);
+      if (/^\/shop\/?$/.test(pending)) { setShopOpen(true); }
+      else if (/^\/shop\/item\//.test(pending)) { setShopOpen(true); }
+    }
+    if (window.location.pathname === "/shop" || window.location.pathname === "/shop/" || /^\/shop\/item\//.test(window.location.pathname)) {
+      const guestCart = readGuestCart();
+      if (guestCart.length > 0) {
+        setShowGuestMergeReview(true);
+        setGuestCartPendingCount(guestCart.reduce((n, l) => n + l.quantity, 0));
+      }
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+  // Refreshes the resumable-banner count (never force-reopens the dialog
+  // itself) each time the Shop view is opened, not just on Portal's initial
+  // mount — Portal itself never unmounts when toggling in and out of the
+  // Shop, so the authenticated cart survives that toggle even though it
+  // resets on a real page reload.
+  useEffect(() => {
+    if (!shopOpen) return;
+    const count = readGuestCart().reduce((n, l) => n + l.quantity, 0);
+    if (count > 0) setGuestCartPendingCount(count);
+  }, [shopOpen]);
   const shopCartCount = shopCart.reduce((n, c) => n + c.quantity, 0);
   const [dogs, setDogs] = useState([]);
   const [client, setClient] = useState(null);
@@ -974,10 +1022,24 @@ export default function Portal() {
           </PremiumButton>
           <img src="/logo.png" alt="Sit Happens" className="h-9 sm:h-12 shrink-0" />
         </header>
+        {!showGuestMergeReview && guestCartPendingCount > 0 && (
+          <button onClick={() => setShowGuestMergeReview(true)} data-testid="guest-cart-resume-banner"
+                  className="shrink-0 w-full text-center py-2 text-[12px] font-black uppercase tracking-widest bg-shSecondary/10 text-shSecondary border-b border-shSecondary/30 hover:bg-shSecondary/20 transition">
+            <i className="fas fa-cart-shopping mr-1.5" />
+            {guestCartPendingCount} item{guestCartPendingCount !== 1 ? "s" : ""} saved from browsing — Review &amp; Add to Cart
+          </button>
+        )}
         <div className="app-scroll-root flex-1 min-h-0 overflow-y-auto overscroll-contain p-3 sm:p-6" data-scroll-root>
           <PortalShop initialTab={shopInitialTab} fullScreen shopifyStoreUrl={pubSettings?.client_portal_links?.shopify_store_url}
                       cart={shopCart} onCartChange={setShopCart} />
         </div>
+        {showGuestMergeReview && (
+          <GuestCartMergeReview
+            authCart={shopCart}
+            onApply={(next) => { setShopCart(next); setShowGuestMergeReview(false); setGuestCartPendingCount(0); }}
+            onDismiss={() => setShowGuestMergeReview(false)}
+          />
+        )}
       </div>
     );
   }

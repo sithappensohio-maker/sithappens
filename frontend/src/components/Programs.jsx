@@ -51,6 +51,10 @@ export function ProgramsPanel() {
       prereq_slugs: [], modules: [], price: 0, active: true,
       available_online: false, online_description: "", image_id: null,
       category_id: null, subcategory_id: null,
+      // Public no-account storefront — training programs are ALWAYS
+      // account-required (kind-based hard rule, never a stored flag).
+      publicly_visible: false, show_public_price: true,
+      requires_dog: false, requires_approval: false, requires_completed_onboarding: false,
     });
   };
   const openEditProgram = (p) => { setOriginalImageId(p.image_id || null); setEdit({ ...p }); };
@@ -253,6 +257,58 @@ export function ProgramEditor({ program, setProgram, meta, allPrograms = [], onS
               </div>
             )}
           </div>
+
+          {/* Public no-account storefront — training programs always
+              require signing in to buy; these only affect browsing. */}
+          {program.available_online && (
+            <div className="border-t border-bgHover pt-3 space-y-3">
+              <p className="text-[11px] text-gray-500 uppercase tracking-widest font-black">Public Storefront (signed-out visitors)</p>
+              <label className="flex items-center gap-2">
+                <input type="checkbox" checked={!!program.publicly_visible}
+                       onChange={(e)=>set({publicly_visible: e.target.checked})}
+                       data-testid="prog-publicly-visible" />
+                <span className="text-white text-sm">Publicly Visible (shown to signed-out visitors — always requires sign-in to buy)</span>
+              </label>
+              {program.publicly_visible && (
+                <>
+                  <label className="flex items-center gap-2">
+                    <input type="checkbox" checked={program.show_public_price !== false}
+                           onChange={(e)=>set({show_public_price: e.target.checked})}
+                           data-testid="prog-show-public-price" />
+                    <span className="text-white text-sm">Show Price to Guests</span>
+                  </label>
+                  <label className="flex items-center gap-2">
+                    <input type="checkbox" checked={!!program.requires_dog}
+                           onChange={(e)=>set({requires_dog: e.target.checked})}
+                           data-testid="prog-requires-dog" />
+                    <span className="text-white text-sm">Requires Selecting a Dog</span>
+                  </label>
+                  {program.requires_dog && (
+                    <p className="text-[12px] text-amber-400" data-testid="prog-requires-dog-warning">
+                      Until real dog-selection support is built, this blocks online checkout entirely — customers will be directed to contact staff.
+                    </p>
+                  )}
+                  <label className="flex items-center gap-2">
+                    <input type="checkbox" checked={!!program.requires_approval}
+                           onChange={(e)=>set({requires_approval: e.target.checked})}
+                           data-testid="prog-requires-approval" />
+                    <span className="text-white text-sm">Requires Approval</span>
+                  </label>
+                  {program.requires_approval && (
+                    <p className="text-[12px] text-amber-400" data-testid="prog-requires-approval-warning">
+                      Until real approval-workflow support is built, this blocks online checkout entirely — customers will be directed to contact staff.
+                    </p>
+                  )}
+                  <label className="flex items-center gap-2">
+                    <input type="checkbox" checked={!!program.requires_completed_onboarding}
+                           onChange={(e)=>set({requires_completed_onboarding: e.target.checked})}
+                           data-testid="prog-requires-onboarding" />
+                    <span className="text-white text-sm">Requires Completed Account Setup</span>
+                  </label>
+                </>
+              )}
+            </div>
+          )}
 
           {/* Sprint 110bx — Welcome homework: auto-sent the moment the dog is enrolled */}
           <Field label="Welcome homework (auto-sent on enrollment)">

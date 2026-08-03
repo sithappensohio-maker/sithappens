@@ -62,8 +62,19 @@ api.interceptors.response.use(
   (err) => {
     if (err?.response?.status === 401) {
       try { localStorage.removeItem("sh_token"); } catch (e) { /* ignore */ }
-      // Avoid the redirect storm if we're already on the auth screen
-      if (window.location.pathname !== "/" && !window.location.pathname.startsWith("/login")) {
+      // Avoid the redirect storm if we're already on the auth screen — and
+      // never force-navigate a visitor off /shop. A guest on the public
+      // storefront has no token at all (a stray 401 there means some code
+      // path mistakenly called an authenticated endpoint, not that the
+      // visitor needs to be bounced), and an authenticated client whose
+      // token just expired mid-browse should fall back to the guest
+      // storefront at the SAME URL (ShopRouteGate's own job), never be
+      // yanked to the landing page.
+      if (
+        window.location.pathname !== "/"
+        && !window.location.pathname.startsWith("/login")
+        && !window.location.pathname.startsWith("/shop")
+      ) {
         window.location.replace("/");
       }
     }

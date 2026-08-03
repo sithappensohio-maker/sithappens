@@ -9849,6 +9849,43 @@ def _default_settings() -> dict:
         "photography_page": {
             "headline": "Capture the moments worth keeping.",
         },
+        # Shop Appearance & Organization + public no-account storefront.
+        # merch/prepaid_visits/training are the PERMANENT internal section
+        # keys (see SHOP_SECTION_FOR_KIND) — only their display attributes
+        # (label/description/image/visible/order) are admin-editable here,
+        # never the keys themselves.
+        "shop_page": {
+            "title": "Shop",
+            "subtitle": "",
+            "banner_image_id": None,
+            "banner_heading": "",
+            "banner_cta_text": "",
+            "banner_cta_url": "",
+            "landing_mode": "section_cards",  # "section_cards" | "featured_items" | "all_items"
+            "show_search": True,
+            "show_item_counts": True,
+            "show_out_of_stock": True,
+            "hide_empty_categories": True,
+            "sections": {
+                "merch":          {"label": "Merch & Gear",  "description": "", "image_id": None, "visible": True, "order": 0},
+                "prepaid_visits": {"label": "Prepaid Visits", "description": "", "image_id": None, "visible": True, "order": 1},
+                "training":       {"label": "Training",       "description": "", "image_id": None, "visible": True, "order": 2},
+            },
+            # Public no-account storefront (Phase B). allow_guest_merch_checkout
+            # is stored for forward-compatibility only — no admin UI control
+            # exists for it and no backend code reads it, since no guest
+            # checkout payment path exists yet.
+            "public_shop_enabled": False,
+            "public_browsing_enabled": False,
+            "show_public_prices": True,
+            "show_public_merch": True,
+            "show_public_prepaid": True,
+            "show_public_training": True,
+            "allow_guest_merch_checkout": False,
+            "require_account_for_service_purchases": True,
+            "existing_client_pricing_message": "Existing clients may have different pricing. Sign in to view your account rate.",
+            "guest_sign_in_message": "Create a free account or sign in to complete your purchase.",
+        },
         # Sprint 110aw — Sales tax (single flat rate, configurable scope).
         "sales_tax": {
             "enabled": False,
@@ -10311,6 +10348,34 @@ async def get_settings() -> dict:
             if pk not in s["photography_page"]:
                 s["photography_page"][pk] = pv
                 changed = True
+    # Backfill shop_page (Shop Appearance & Organization + public storefront
+    # settings) — deep-merge one level into sections.* so a future new
+    # sub-key never clobbers an already-saved section override, mirroring
+    # the day_to_day deep-merge below rather than the flatter
+    # photography_page block above.
+    shop_page_defaults = defaults.get("shop_page", {})
+    if not isinstance(s.get("shop_page"), dict):
+        s["shop_page"] = shop_page_defaults
+        changed = True
+    else:
+        for spk, spv in shop_page_defaults.items():
+            if spk == "sections":
+                if not isinstance(s["shop_page"].get("sections"), dict):
+                    s["shop_page"]["sections"] = spv
+                    changed = True
+                else:
+                    for sec_key, sec_default in spv.items():
+                        if not isinstance(s["shop_page"]["sections"].get(sec_key), dict):
+                            s["shop_page"]["sections"][sec_key] = sec_default
+                            changed = True
+                        else:
+                            for fk, fv in sec_default.items():
+                                if fk not in s["shop_page"]["sections"][sec_key]:
+                                    s["shop_page"]["sections"][sec_key][fk] = fv
+                                    changed = True
+            elif spk not in s["shop_page"]:
+                s["shop_page"][spk] = spv
+                changed = True
     # Sprint 110dk — backfill new booking_rules keys (stay-pricing thresholds)
     if isinstance(s.get("booking_rules"), dict):
         for bk, bv in (defaults.get("booking_rules") or {}).items():
@@ -10432,6 +10497,7 @@ class SettingsIn(BaseModel):
     service_descriptions: Optional[dict] = None
     client_portal_links: Optional[dict] = None
     photography_page: Optional[dict] = None
+    shop_page: Optional[dict] = None
     closed_dates: Optional[List[str]] = None  # ISO dates the business is closed (holidays, vacations)
     day_to_day: Optional[dict] = None  # Sprint 110dm — free-form day-to-day operator controls
     evaluation: Optional[dict] = None  # {require_evaluation_first}
@@ -10617,6 +10683,9 @@ async def fetch_public_settings():
         "service_descriptions": s.get("service_descriptions") or {},
         "client_portal_links": s.get("client_portal_links") or {},
         "photography_page": s.get("photography_page") or {"headline": "Capture the moments worth keeping."},
+        # Shop Appearance & Organization + public storefront settings —
+        # guests need this to render /shop before they have any token.
+        "shop_page": s.get("shop_page") or {},
         "closed_dates": s.get("closed_dates") or [],
         # Sprint 110di-4 — admin-editable "What to expect on your first visit"
         # block rendered on the client portal.
@@ -10670,8 +10739,36 @@ async def save_settings(body: SettingsIn, _: dict = Depends(require_admin_and_pe
             merged["per_catalog_service"] = dict(incoming.get("per_catalog_service") or {})
         update["booking_flow_controls"] = merged
 
+    if isinstance(update.get("shop_page"), dict):
+        current_shop_page = (await get_settings()).get("shop_page") or {}
+        incoming = update["shop_page"]
+        cta_url = incoming.get("banner_cta_url")
+        if cta_url:
+            _validate_banner_cta_url(cta_url)
+        merged_shop_page = {**current_shop_page, **{k: v for k, v in incoming.items() if k != "sections"}}
+        if isinstance(incoming.get("sections"), dict):
+            merged_sections = {k: dict(v) for k, v in (current_shop_page.get("sections") or {}).items()}
+            for sec_key, sec_row in incoming["sections"].items():
+                if isinstance(sec_row, dict):
+                    merged_sections[sec_key] = {**(merged_sections.get(sec_key) or {}), **sec_row}
+            merged_shop_page["sections"] = merged_sections
+        update["shop_page"] = merged_shop_page
+
     await db.settings.update_one({"id": "global"}, {"$set": update}, upsert=True)
     return await get_settings()
+
+
+def _validate_banner_cta_url(url: str) -> None:
+    """Shop banner CTA target — accept only a same-origin internal path
+    (starting with a single '/', never '//' or a backslash, which browsers
+    can treat as protocol-relative) or an https:// URL. Reject everything
+    else (http://, javascript:, data:, file:, bare //...) so a saved banner
+    link can never become an XSS/open-redirect vector."""
+    if url.startswith("/") and not url.startswith("//") and "\\" not in url:
+        return
+    if url.startswith("https://"):
+        return
+    raise HTTPException(status_code=422, detail="Banner link must be an internal path (starting with /) or an https:// URL.")
 
 
 def _card_type_theme_defaults() -> Dict[str, Any]:
@@ -14202,6 +14299,15 @@ class ProgramIn(BaseModel):
     # program pricing/format.
     category_id: Optional[str] = None
     subcategory_id: Optional[str] = None
+    # Public no-account storefront — training programs are ALWAYS
+    # account-required (see _public_purchase_state's kind-based hard rule);
+    # these fields only affect whether/how a guest can BROWSE this program,
+    # never whether they can complete a purchase.
+    publicly_visible: Optional[bool] = None
+    show_public_price: bool = True
+    requires_dog: bool = False
+    requires_approval: bool = False
+    requires_completed_onboarding: bool = False
     # Shop Manager unification — independent from `active`; see the
     # identical field on PosProductIn for the full rationale. Defaults True
     # so every existing program keeps appearing in the sell-program picker.
@@ -25828,16 +25934,23 @@ async def get_shop_media(media_id: str, _: dict = Depends(get_current_user)):
 
 
 async def _shop_media_referenced_by(media_id: str) -> Optional[str]:
-    """Checks the three catalog sources for a still-live reference to this
-    media_id. Returns a short description of what's referencing it, or None
-    if nothing is. Deliberately simple — three point lookups, no generic
-    "find all referrers" framework."""
+    """Checks all catalog AND organization sources for a still-live
+    reference to this media_id. Returns a short description of what's
+    referencing it, or None if nothing is. Deliberately simple — point
+    lookups, no generic "find all referrers" framework. Categories/
+    subcategories reference media via BOTH image_id (desktop) and
+    mobile_image_id — both must be checked, or this "last line of defense"
+    would miss a category still using a media_id only as its mobile image."""
     if await db.pos_products.find_one({"image_id": media_id}, {"_id": 0, "id": 1}):
         return "a product"
     if await db.credit_packs.find_one({"image_id": media_id}, {"_id": 0, "id": 1}):
         return "a credit pack"
     if await db.programs.find_one({"image_id": media_id}, {"_id": 0, "id": 1}):
         return "a training program"
+    if await db.shop_categories.find_one({"$or": [{"image_id": media_id}, {"mobile_image_id": media_id}]}, {"_id": 0, "id": 1}):
+        return "a shop category"
+    if await db.shop_subcategories.find_one({"$or": [{"image_id": media_id}, {"mobile_image_id": media_id}]}, {"_id": 0, "id": 1}):
+        return "a shop subcategory"
     return None
 
 
@@ -26098,6 +26211,17 @@ class ShopCategoryIn(BaseModel):
     description: Optional[str] = Field(default=None, max_length=500)
     icon: Optional[str] = None
     image_id: Optional[str] = None
+    # Shop Appearance & Organization — mobile_image_id is an OPTIONAL second
+    # cover image slot (falls back to image_id when unset); is_featured
+    # drives featured-category-first ordering on the client category index;
+    # hide_when_empty (null = defer to the global shop_page.hide_empty_categories
+    # setting) lets one category override that default individually. Note:
+    # the request spec's "image_url"/"display_order"/"is_visible" map to the
+    # existing image_id/sort_order/active fields below — deliberately not
+    # duplicated as separate fields.
+    mobile_image_id: Optional[str] = None
+    is_featured: bool = False
+    hide_when_empty: Optional[bool] = None
     active: bool = True
     sort_order: Optional[int] = None
     # Shop Manager unification — which permanent top-level section this
@@ -26113,6 +26237,9 @@ class ShopCategoryPatch(BaseModel):
     description: Optional[str] = Field(default=None, max_length=500)
     icon: Optional[str] = None
     image_id: Optional[str] = None
+    mobile_image_id: Optional[str] = None
+    is_featured: Optional[bool] = None
+    hide_when_empty: Optional[bool] = None
     active: Optional[bool] = None
 
 
@@ -26122,6 +26249,7 @@ class ShopSubcategoryIn(BaseModel):
     description: Optional[str] = Field(default=None, max_length=500)
     icon: Optional[str] = None
     image_id: Optional[str] = None
+    mobile_image_id: Optional[str] = None
     active: bool = True
     sort_order: Optional[int] = None
 
@@ -26131,6 +26259,7 @@ class ShopSubcategoryPatch(BaseModel):
     description: Optional[str] = Field(default=None, max_length=500)
     icon: Optional[str] = None
     image_id: Optional[str] = None
+    mobile_image_id: Optional[str] = None
     active: Optional[bool] = None
 
 
@@ -26303,7 +26432,8 @@ async def create_shop_category(body: ShopCategoryIn, user: dict = Depends(requir
     doc = {
         "id": str(uuid.uuid4()), "name": name, "slug": slug, "section": body.section,
         "description": (body.description or "").strip() or None,
-        "icon": body.icon, "image_id": body.image_id, "active": body.active,
+        "icon": body.icon, "image_id": body.image_id, "mobile_image_id": body.mobile_image_id,
+        "is_featured": body.is_featured, "hide_when_empty": body.hide_when_empty, "active": body.active,
         "sort_order": body.sort_order if body.sort_order is not None else await _next_shop_category_sort_order(),
         "created_at": ts, "updated_at": ts,
         "created_by": user.get("name", "Admin"), "updated_by": user.get("name", "Admin"),
@@ -26338,7 +26468,16 @@ async def update_shop_category(category_id: str, body: ShopCategoryPatch, user: 
     if body.icon is not None:
         patch["icon"] = body.icon
     if body.image_id is not None:
-        patch["image_id"] = body.image_id
+        # Empty string is the explicit "clear" signal (mirrors `description`
+        # above) — None means "field omitted, leave unchanged", since the
+        # frontend always resubmits the full draft on every save.
+        patch["image_id"] = body.image_id.strip() or None
+    if body.mobile_image_id is not None:
+        patch["mobile_image_id"] = body.mobile_image_id.strip() or None
+    if body.is_featured is not None:
+        patch["is_featured"] = body.is_featured
+    if body.hide_when_empty is not None:
+        patch["hide_when_empty"] = body.hide_when_empty
     if body.active is not None:
         patch["active"] = body.active
     await db.shop_categories.update_one({"id": category_id}, {"$set": patch})
@@ -26436,7 +26575,7 @@ async def create_shop_subcategory(body: ShopSubcategoryIn, user: dict = Depends(
     doc = {
         "id": str(uuid.uuid4()), "category_id": body.category_id, "name": name, "slug": slug,
         "description": (body.description or "").strip() or None,
-        "icon": body.icon, "image_id": body.image_id, "active": body.active,
+        "icon": body.icon, "image_id": body.image_id, "mobile_image_id": body.mobile_image_id, "active": body.active,
         "sort_order": body.sort_order if body.sort_order is not None else await _next_shop_subcategory_sort_order(body.category_id),
         "created_at": ts, "updated_at": ts,
         "created_by": user.get("name", "Admin"), "updated_by": user.get("name", "Admin"),
@@ -26472,7 +26611,9 @@ async def update_shop_subcategory(subcategory_id: str, body: ShopSubcategoryPatc
     if body.icon is not None:
         patch["icon"] = body.icon
     if body.image_id is not None:
-        patch["image_id"] = body.image_id
+        patch["image_id"] = body.image_id.strip() or None
+    if body.mobile_image_id is not None:
+        patch["mobile_image_id"] = body.mobile_image_id.strip() or None
     if body.active is not None:
         patch["active"] = body.active
     await db.shop_subcategories.update_one({"id": subcategory_id}, {"$set": patch})
@@ -26710,6 +26851,41 @@ async def shop_manager_list_items(
     return {"items": items}
 
 
+def _public_purchase_state(kind: str, item_doc: dict, *, global_show_public_prices: bool = True) -> dict:
+    """Public no-account storefront — migration-safe public-visibility/
+    purchase-state resolution for one catalog item. Computed from BOTH the
+    item's kind AND every account-dependent requirement flag — a product
+    can't be guest-cart-eligible merely because guest_cart_allowed is stored
+    True if it also requires_dog/requires_approval/requires_completed_onboarding,
+    nor if its price isn't visible to guests. account_required is NEVER a
+    stored/input field — only ever computed here, so it can never be
+    misconfigured into a guest-checkout bypass."""
+    is_product = kind == "product"
+    publicly_visible = item_doc.get("publicly_visible")
+    if publicly_visible is None:
+        publicly_visible = True  # caller already filtered to show_online/available_online rows
+    requires_dog = bool(item_doc.get("requires_dog", False))
+    requires_approval = bool(item_doc.get("requires_approval", False))
+    requires_completed_onboarding = bool(item_doc.get("requires_completed_onboarding", False))
+    has_account_requirement = requires_dog or requires_approval or requires_completed_onboarding
+    price_visible = global_show_public_prices and bool(item_doc.get("show_public_price", True))
+    stored_guest_cart_allowed = is_product and bool(item_doc.get("guest_cart_allowed", False))
+    # Effective eligibility: kind must be product, the stored flag must be
+    # True, NONE of the account-dependent requirements may apply, AND price
+    # must actually be visible — any one of these overrides the stored flag.
+    guest_cart_allowed = stored_guest_cart_allowed and not has_account_requirement and price_visible
+    account_required = (not is_product) or has_account_requirement or not stored_guest_cart_allowed
+    return {
+        "publicly_visible": bool(publicly_visible),
+        "account_required": account_required,
+        "guest_cart_allowed": guest_cart_allowed,
+        "show_public_price": price_visible,
+        "requires_dog": requires_dog,
+        "requires_approval": requires_approval,
+        "requires_completed_onboarding": requires_completed_onboarding,
+    }
+
+
 async def _build_shop_catalog(client_id: Optional[str]) -> dict:
     """The one real catalog-building routine — read-only aggregation across
     the three specialized collections, tagging each result with a `kind`
@@ -26751,11 +26927,20 @@ async def _build_shop_catalog(client_id: Optional[str]) -> dict:
             "subcategory_name": sub["name"] if sub else None,
         }
 
+    # Shop Appearance settings — a section with visible:false is hidden from
+    # EVERY audience (authenticated client and guest alike) from this one
+    # place, rather than three separate re-implementations. Additive: when
+    # unset, every section defaults to visible (today's behavior).
+    _shop_page_sections = ((await get_settings()).get("shop_page") or {}).get("sections") or {}
+    _section_visible = {
+        sec: bool((_shop_page_sections.get(sec) or {}).get("visible", True)) for sec in SHOP_SECTIONS
+    }
+
     items = []
 
     products = await db.pos_products.find(
         {"show_online": True, "active": True, "archived": {"$ne": True}}, {"_id": 0},
-    ).sort([("online_sort_order", 1), ("id", 1)]).to_list(length=None)
+    ).sort([("online_sort_order", 1), ("id", 1)]).to_list(length=None) if _section_visible["merch"] else []
     for p in products:
         if not _shop_org_visible(p.get("category_id"), p.get("subcategory_id")):
             continue
@@ -26779,6 +26964,16 @@ async def _build_shop_catalog(client_id: Optional[str]) -> dict:
                 "featured": bool(p.get("featured")),
                 "image_id": p.get("image_id"),
                 "sort_order": p.get("online_sort_order"),
+                # Public no-account storefront (Phase 1c fields) — carried
+                # through from the stored doc so _public_purchase_state ever
+                # sees the real values instead of silently falling back to
+                # its defaults. Copied for every kind/branch below too.
+                "publicly_visible": p.get("publicly_visible"),
+                "guest_cart_allowed": bool(p.get("guest_cart_allowed", False)),
+                "show_public_price": bool(p.get("show_public_price", True)),
+                "requires_dog": bool(p.get("requires_dog", False)),
+                "requires_approval": bool(p.get("requires_approval", False)),
+                "requires_completed_onboarding": bool(p.get("requires_completed_onboarding", False)),
                 **_shop_org_fields(p.get("category_id"), p.get("subcategory_id")),
             })
             continue
@@ -26819,12 +27014,18 @@ async def _build_shop_catalog(client_id: Optional[str]) -> dict:
             "price": effective_price,
             "legacy_price": list_price if has_override else None,
             "has_legacy_override": has_override,
+            "publicly_visible": p.get("publicly_visible"),
+            "guest_cart_allowed": bool(p.get("guest_cart_allowed", False)),
+            "show_public_price": bool(p.get("show_public_price", True)),
+            "requires_dog": bool(p.get("requires_dog", False)),
+            "requires_approval": bool(p.get("requires_approval", False)),
+            "requires_completed_onboarding": bool(p.get("requires_completed_onboarding", False)),
             **_shop_org_fields(p.get("category_id"), p.get("subcategory_id")),
         })
 
     packs = await db.credit_packs.find(
         {"available_online": True, "active": True}, {"_id": 0},
-    ).sort([("name", 1), ("id", 1)]).to_list(length=None)
+    ).sort([("name", 1), ("id", 1)]).to_list(length=None) if _section_visible["prepaid_visits"] else []
     for pk in packs:
         if not _shop_org_visible(pk.get("category_id"), pk.get("subcategory_id")):
             continue
@@ -26857,12 +27058,15 @@ async def _build_shop_catalog(client_id: Optional[str]) -> dict:
             "price": effective_price,
             "legacy_price": list_price if has_override else None,
             "has_legacy_override": has_override,
+            "publicly_visible": pk.get("publicly_visible"),
+            "show_public_price": bool(pk.get("show_public_price", True)),
+            "requires_completed_onboarding": bool(pk.get("requires_completed_onboarding", False)),
             **_shop_org_fields(pk.get("category_id"), pk.get("subcategory_id")),
         })
 
     programs = await db.programs.find(
         {"available_online": True, "active": True}, {"_id": 0},
-    ).sort([("name", 1), ("id", 1)]).to_list(length=None)
+    ).sort([("name", 1), ("id", 1)]).to_list(length=None) if _section_visible["training"] else []
     for prog in programs:
         if not _shop_org_visible(prog.get("category_id"), prog.get("subcategory_id")):
             continue
@@ -26880,6 +27084,11 @@ async def _build_shop_catalog(client_id: Optional[str]) -> dict:
             "price": round(float(prog.get("price") or 0), 2),
             "image_id": prog.get("image_id"),
             "featured": bool(prog.get("featured")),
+            "publicly_visible": prog.get("publicly_visible"),
+            "show_public_price": bool(prog.get("show_public_price", True)),
+            "requires_dog": bool(prog.get("requires_dog", False)),
+            "requires_approval": bool(prog.get("requires_approval", False)),
+            "requires_completed_onboarding": bool(prog.get("requires_completed_onboarding", False)),
             **_shop_org_fields(prog.get("category_id"), prog.get("subcategory_id")),
         })
 
@@ -27118,6 +27327,27 @@ async def shop_manager_catalog_preview(
     return await _build_shop_catalog(preview_client_id)
 
 
+async def _shop_taxonomy_payload() -> dict:
+    """Active-only category/subcategory navigation, in configured order —
+    the one implementation shared by the client-facing endpoint and the
+    admin Shop Manager preview (so preview is never a fake approximation)."""
+    cats = await db.shop_categories.find({"active": True}, {"_id": 0}).sort("sort_order", 1).to_list(500)
+    subs = await db.shop_subcategories.find({"active": True}, {"_id": 0}).sort("sort_order", 1).to_list(2000)
+    subs_by_cat: Dict[str, List[dict]] = {}
+    for s in subs:
+        subs_by_cat.setdefault(s["category_id"], []).append(
+            {"id": s["id"], "name": s["name"], "description": s.get("description"), "icon": s.get("icon"),
+             "image_id": s.get("image_id"), "mobile_image_id": s.get("mobile_image_id")}
+        )
+    return {"categories": [
+        {"id": c["id"], "name": c["name"], "description": c.get("description"), "icon": c.get("icon"),
+         "image_id": c.get("image_id"), "mobile_image_id": c.get("mobile_image_id"),
+         "is_featured": bool(c.get("is_featured")), "hide_when_empty": c.get("hide_when_empty"),
+         "subcategories": subs_by_cat.get(c["id"], [])}
+        for c in cats
+    ]}
+
+
 @api.get("/shop/catalog/taxonomy")
 async def get_shop_catalog_taxonomy(user: dict = Depends(get_current_user)):
     """Public (client-facing) category/subcategory navigation — active only,
@@ -27125,18 +27355,302 @@ async def get_shop_catalog_taxonomy(user: dict = Depends(get_current_user)):
     endpoint, which needs auth + inactive rows + counts for management)."""
     if user.get("role") != "client":
         raise HTTPException(status_code=403, detail="Client account required")
-    cats = await db.shop_categories.find({"active": True}, {"_id": 0}).sort("sort_order", 1).to_list(500)
-    subs = await db.shop_subcategories.find({"active": True}, {"_id": 0}).sort("sort_order", 1).to_list(2000)
-    subs_by_cat: Dict[str, List[dict]] = {}
-    for s in subs:
-        subs_by_cat.setdefault(s["category_id"], []).append(
-            {"id": s["id"], "name": s["name"], "description": s.get("description"), "icon": s.get("icon")}
+    return await _shop_taxonomy_payload()
+
+
+@api.get("/shop-manager/catalog-preview-taxonomy")
+async def shop_manager_catalog_preview_taxonomy(_: dict = Depends(require_admin_and_permission("pricing"))):
+    """Shop Manager Client Preview tab — the exact same taxonomy payload a
+    real client sees, so PortalShop's preview mode can render real category
+    navigation without needing a role=='client' account. Same permission
+    gate as GET /shop-manager/catalog-preview (the item/pricing sibling)."""
+    return await _shop_taxonomy_payload()
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# Public no-account storefront (Phase 2a/2b) — read-only, allowlist-only
+# surface for signed-out visitors. Every response below is built from an
+# EXPLICIT per-kind field allowlist (never `dict(item)` with keys popped),
+# reuses _build_shop_catalog(None) for pricing/visibility so standard
+# pricing here is byte-for-byte the same computation the authenticated Shop
+# and Client Preview already trust, and never accepts a client identity from
+# an unauthenticated request. Guest/public visibility (show_public_merch/
+# prepaid/training, show_public_prices, publicly_visible, item-level
+# show_public_price) is a SEPARATE, additive layer on top of the existing
+# section.visible/category/subcategory rules _build_shop_catalog already
+# applies — those still gate authenticated AND guest audiences alike.
+# ─────────────────────────────────────────────────────────────────────────────
+
+_PUBLIC_FIELDS_COMMON = {
+    "kind", "id", "name", "description", "image_id",
+    "category_id", "category_name", "subcategory_id", "subcategory_name",
+    "sort_order", "featured", "publicly_visible", "account_required",
+    "guest_cart_allowed", "requires_dog", "requires_approval",
+    "requires_completed_onboarding", "availability",
+}
+# ALL price-ish fields, including Shopify's own displayed price — stripped
+# under the exact same show_public_prices/show_public_price gate as every
+# other price field, never treated as a special case.
+_PUBLIC_FIELDS_PRICE = {"price", "list_price", "effective_price", "shopify_display_price", "shopify_from_price"}
+# sales_destination/shopify_product_url are NEVER price-gated — View Options
+# must keep working even when pricing is hidden.
+_PUBLIC_FIELDS_PRODUCT = {"sales_destination", "shopify_product_url"}
+_PUBLIC_FIELDS_PACK = {"service_type", "qty", "value_each"}
+_PUBLIC_FIELDS_PROGRAM = {"focus", "program_type", "format_count", "format_unit", "min_age_months"}
+
+_PUBLIC_SECTION_FLAG_FOR_SECTION = {"merch": "show_public_merch", "prepaid_visits": "show_public_prepaid", "training": "show_public_training"}
+_PUBLIC_SECTION_FOR_KIND = {"product": "merch", "credit_pack": "prepaid_visits", "training_program": "training"}
+
+
+def _public_shop_item_availability(raw_item: dict) -> str:
+    """Customer-safe stock state — never the raw count. Non-product kinds
+    (and Shopify-external products, which carry no track_inventory/in_stock
+    fields at all) have no local stock concept, so they're always
+    'in_stock'; Shopify itself owns its own inventory display."""
+    if raw_item.get("kind") != "product" or not raw_item.get("track_inventory"):
+        return "in_stock"
+    if not raw_item.get("in_stock"):
+        return "out_of_stock"
+    stock = raw_item.get("stock_on_hand")
+    threshold = raw_item.get("low_stock_threshold")
+    if stock is not None and threshold is not None and float(stock) <= float(threshold):
+        return "low_stock"
+    return "in_stock"
+
+
+def _build_public_shop_item(raw_item: dict, *, global_show_public_prices: bool) -> Optional[dict]:
+    """Builds ONE public item dict from an explicit allowlist — returns None
+    when the item isn't publicly visible at all (excluded from the base set
+    entirely, not just price-redacted)."""
+    kind = raw_item["kind"]
+    purchase_state = _public_purchase_state(kind, raw_item, global_show_public_prices=global_show_public_prices)
+    if not purchase_state["publicly_visible"]:
+        return None
+    field_set = set(_PUBLIC_FIELDS_COMMON)
+    if kind == "product":
+        field_set |= _PUBLIC_FIELDS_PRODUCT
+    elif kind == "credit_pack":
+        field_set |= _PUBLIC_FIELDS_PACK
+    elif kind == "training_program":
+        field_set |= _PUBLIC_FIELDS_PROGRAM
+    if purchase_state["show_public_price"]:
+        field_set |= _PUBLIC_FIELDS_PRICE
+    out = {k: raw_item[k] for k in field_set if k in raw_item}
+    out["availability"] = _public_shop_item_availability(raw_item)
+    out["publicly_visible"] = purchase_state["publicly_visible"]
+    out["account_required"] = purchase_state["account_required"]
+    out["guest_cart_allowed"] = purchase_state["guest_cart_allowed"]
+    out["requires_dog"] = purchase_state["requires_dog"]
+    out["requires_approval"] = purchase_state["requires_approval"]
+    out["requires_completed_onboarding"] = purchase_state["requires_completed_onboarding"]
+    return out
+
+
+async def _public_shop_settings_or_404() -> dict:
+    settings = await get_settings()
+    sp = settings.get("shop_page") or {}
+    if not sp.get("public_shop_enabled") or not sp.get("public_browsing_enabled"):
+        raise HTTPException(status_code=404, detail="Shop is not available.")
+    return sp
+
+
+async def _public_visible_shop_items() -> list[dict]:
+    """The BASE set: permanently public right now — publicly_visible,
+    section on (section.visible AND show_public_<section>), category/
+    subcategory active (already enforced by _build_shop_catalog). Used by
+    item-detail. Does NOT filter by stock — an out-of-stock item is still
+    'visible', just not purchase-ready."""
+    sp = await _public_shop_settings_or_404()
+    catalog = await _build_shop_catalog(None)  # standard pricing only — a public request never carries a client identity
+    show_public_prices_global = bool(sp.get("show_public_prices", True))
+    out = []
+    for raw in catalog["items"]:
+        section = _PUBLIC_SECTION_FOR_KIND[raw["kind"]]
+        if not bool(sp.get(_PUBLIC_SECTION_FLAG_FOR_SECTION[section], True)):
+            continue
+        built = _build_public_shop_item(raw, global_show_public_prices=show_public_prices_global)
+        if built is None:
+            continue
+        out.append(built)
+    return out
+
+
+async def _public_catalog_items() -> list[dict]:
+    """Browse list = _public_visible_shop_items() further filtered by
+    show_out_of_stock. Used by /public/shop/catalog and
+    /public/shop/taxonomy's item-count/emptiness math."""
+    base = await _public_visible_shop_items()
+    settings = await get_settings()
+    sp = settings.get("shop_page") or {}
+    if bool(sp.get("show_out_of_stock", True)):
+        return base
+    return [i for i in base if i.get("availability") != "out_of_stock"]
+
+
+@api.get("/public/shop/catalog")
+async def get_public_shop_catalog(request: Request):
+    await _enforce_rate_limit(request, "public_shop_catalog", _client_ip(request), limit=60, window_seconds=60)
+    return {"items": await _public_catalog_items()}
+
+
+@api.get("/public/shop/item/{kind}/{item_id}")
+async def get_public_shop_item_detail(kind: str, item_id: str, request: Request):
+    """Direct item-detail link — looks up the BASE (not stock-filtered) set,
+    so an out-of-stock item's direct link still 200s with its out-of-stock
+    state shown even when show_out_of_stock hides it from browsing. Same
+    404-never-403 behavior as the authenticated item-detail route."""
+    await _enforce_rate_limit(request, "public_shop_catalog", _client_ip(request), limit=60, window_seconds=60)
+    if kind not in _SHOP_ITEM_DETAIL_SECTION:
+        raise HTTPException(status_code=404, detail="This item is unavailable.")
+    items = await _public_visible_shop_items()
+    item = next((dict(i) for i in items if i["kind"] == kind and i["id"] == item_id), None)
+    if not item:
+        raise HTTPException(status_code=404, detail="This item is unavailable.")
+    section = _SHOP_ITEM_DETAIL_SECTION[kind]
+    item["section"] = section
+    item["section_label"] = SHOP_SECTION_LABELS[section]
+    return item
+
+
+@api.get("/public/shop/taxonomy")
+async def get_public_shop_taxonomy(request: Request):
+    """Mirrors /shop/catalog/taxonomy but counts/emptiness are derived from
+    _public_catalog_items() (browse-consistent — respects show_out_of_stock
+    and the public section/price gates), so a category the public catalog
+    would treat as empty is dropped here too under the same hide-when-empty
+    rule, never left inconsistently visible."""
+    await _enforce_rate_limit(request, "public_shop_catalog", _client_ip(request), limit=60, window_seconds=60)
+    sp = await _public_shop_settings_or_404()
+    catalog_items = await _public_catalog_items()
+    non_empty_cat_ids = {i["category_id"] for i in catalog_items if i.get("category_id")}
+    hide_empty_default = bool(sp.get("hide_empty_categories", True))
+    full = await _shop_taxonomy_payload()
+    out_categories = []
+    for c in full["categories"]:
+        effective_hide = c.get("hide_when_empty")
+        if effective_hide is None:
+            effective_hide = hide_empty_default
+        if effective_hide and c["id"] not in non_empty_cat_ids:
+            continue
+        out_categories.append(c)
+    return {"categories": out_categories}
+
+
+_SECTION_FOR_SHOP_COLLECTION = {"pos_products": "merch", "credit_packs": "prepaid_visits", "programs": "training"}
+
+
+async def _is_public_shop_media(media_id: str) -> bool:
+    """Layered, targeted-query authorization check for one media_id — never
+    a catalog rebuild. Applies the exact same rules the public taxonomy/
+    catalog browse view applies (section public+visible, category/
+    subcategory active, effective hide-when-empty non-emptiness, item
+    published+publicly_visible), just via direct point lookups so this can
+    run on every single media request cheaply."""
+    settings = await get_settings()
+    sp = settings.get("shop_page") or {}
+    if not sp.get("public_shop_enabled") or not sp.get("public_browsing_enabled"):
+        return False
+
+    def _section_is_public(section: str) -> bool:
+        sec = (sp.get("sections") or {}).get(section) or {}
+        if not bool(sec.get("visible", True)):
+            return False
+        return bool(sp.get(_PUBLIC_SECTION_FLAG_FOR_SECTION.get(section, ""), True))
+
+    if sp.get("banner_image_id") == media_id:
+        return True  # banner is site-wide chrome, not section-scoped
+
+    for key, sec in (sp.get("sections") or {}).items():
+        if sec.get("image_id") == media_id and _section_is_public(key):
+            return True
+
+    show_oos = bool(sp.get("show_out_of_stock", True))
+
+    async def _category_has_public_item(category_id: str) -> bool:
+        for coll, online_field in ((db.pos_products, "show_online"), (db.credit_packs, "available_online"), (db.programs, "available_online")):
+            async for doc in coll.find(
+                {"category_id": category_id, "active": True, online_field: True, "publicly_visible": {"$ne": False}},
+                {"_id": 0, "id": 1, "subcategory_id": 1, "track_inventory": 1, "stock_on_hand": 1},
+            ):
+                if doc.get("subcategory_id"):
+                    sub_active = await db.shop_subcategories.find_one({"id": doc["subcategory_id"], "active": True}, {"_id": 0, "id": 1})
+                    if not sub_active:
+                        continue
+                if not show_oos and doc.get("track_inventory") and float(doc.get("stock_on_hand") or 0) <= 0.0005:
+                    continue
+                return True
+        return False
+
+    async def _category_media_authorized(cat: dict) -> bool:
+        if not cat.get("active") or not _section_is_public(cat["section"]):
+            return False
+        effective_hide_when_empty = cat.get("hide_when_empty")
+        if effective_hide_when_empty is None:
+            effective_hide_when_empty = bool(sp.get("hide_empty_categories", True))
+        if effective_hide_when_empty and not await _category_has_public_item(cat["id"]):
+            return False
+        return True
+
+    cat = await db.shop_categories.find_one(
+        {"$or": [{"image_id": media_id}, {"mobile_image_id": media_id}]},
+        {"_id": 0, "id": 1, "section": 1, "active": 1, "hide_when_empty": 1},
+    )
+    if cat and await _category_media_authorized(cat):
+        return True
+
+    sub = await db.shop_subcategories.find_one(
+        {"active": True, "$or": [{"image_id": media_id}, {"mobile_image_id": media_id}]}, {"_id": 0, "id": 1, "category_id": 1},
+    )
+    if sub:
+        parent = await db.shop_categories.find_one(
+            {"id": sub["category_id"]}, {"_id": 0, "id": 1, "section": 1, "active": 1, "hide_when_empty": 1},
         )
-    return {"categories": [
-        {"id": c["id"], "name": c["name"], "description": c.get("description"), "icon": c.get("icon"),
-         "subcategories": subs_by_cat.get(c["id"], [])}
-        for c in cats
-    ]}
+        if parent and await _category_media_authorized(parent):
+            return True
+
+    for coll, online_field in ((db.pos_products, "show_online"), (db.credit_packs, "available_online"), (db.programs, "available_online")):
+        doc = await coll.find_one(
+            {"image_id": media_id, "active": True, online_field: True, "publicly_visible": {"$ne": False}},
+            {"_id": 0, "id": 1, "category_id": 1, "subcategory_id": 1},
+        )
+        if not doc:
+            continue
+        item_section = _SECTION_FOR_SHOP_COLLECTION[coll.name]
+        if not _section_is_public(item_section):
+            continue
+        if doc.get("category_id"):
+            active_cat = await db.shop_categories.find_one({"id": doc["category_id"], "active": True}, {"_id": 0, "id": 1})
+            if not active_cat:
+                continue
+        if doc.get("subcategory_id"):
+            active_sub = await db.shop_subcategories.find_one({"id": doc["subcategory_id"], "active": True}, {"_id": 0, "id": 1})
+            if not active_sub:
+                continue
+        return True
+    return False
+
+
+@api.get("/public/shop/media/{media_id}")
+async def get_public_shop_media(media_id: str, request: Request, response: Response):
+    """Public-safe media serving — its own, more permissive rate-limit scope
+    (separate from the catalog/item-detail family) since a shop page can
+    reference dozens of images per load. Runs _is_public_shop_media on EVERY
+    request, including conditional (If-None-Match) ones — authorization, not
+    just content, is what's being revalidated, so a since-hidden image must
+    404 even on a request that would otherwise be a cheap 304."""
+    await _enforce_rate_limit(request, "public_shop_media", _client_ip(request), limit=300, window_seconds=60)
+    authorized = await _is_public_shop_media(media_id)
+    if not authorized:
+        raise HTTPException(status_code=404, detail="Not found.")
+    etag = f'"{media_id}"'
+    if request.headers.get("if-none-match") == etag:
+        return Response(status_code=304, headers={"Cache-Control": "public, max-age=0, must-revalidate", "ETag": etag})
+    m = await db.shop_media.find_one({"id": media_id}, {"_id": 0})
+    if not m:
+        raise HTTPException(status_code=404, detail="Not found.")
+    response.headers["Cache-Control"] = "public, max-age=0, must-revalidate"
+    response.headers["ETag"] = etag
+    return {"data": m["data"], "mime": m["mime"]}
 
 
 class ShopMerchClickIn(BaseModel):
@@ -27200,6 +27714,111 @@ class ShopCartItemIn(BaseModel):
 class ShopCheckoutIn(BaseModel):
     items: List[ShopCartItemIn] = Field(min_length=1, max_length=40)
     idempotency_key: str = Field(min_length=8, max_length=128)
+
+
+def _normalize_cart_lines(items: List[ShopCartItemIn]) -> List[ShopCartItemIn]:
+    """Aggregates duplicate (kind, ref_id) cart lines into ONE summed-
+    quantity line each, in first-seen order — called before pricing, stock
+    checks, idempotency fingerprinting, reservation, entitlement creation,
+    or Stripe session creation, so a cart split into several small
+    duplicate lines can never bypass a stock ceiling or eligibility check
+    that only looked at each line individually.
+
+    Explicitly validates kind/ref_id/quantity itself rather than trusting
+    the caller's Pydantic model instance — the combined line below is built
+    via `model_construct` (bypassing Pydantic's own per-line `le=50` cap,
+    which was only ever a per-request-line sanity bound, not a true
+    aggregate ceiling — the real ceiling is the stock check downstream),
+    so this function is the one place a malformed line is guaranteed to be
+    rejected with a clean 422, never an unhandled construction error."""
+    combined: Dict[Tuple[str, str], int] = {}
+    order_seen: List[Tuple[str, str]] = []
+    for it in items:
+        kind = it.kind
+        ref_id = (it.ref_id or "").strip()
+        qty = it.quantity
+        if kind not in ("product", "credit_pack", "training_program"):
+            raise HTTPException(status_code=422, detail="Invalid item kind in cart.")
+        if not ref_id:
+            raise HTTPException(status_code=422, detail="Invalid item in cart.")
+        if not isinstance(qty, int) or isinstance(qty, bool) or qty <= 0:
+            raise HTTPException(status_code=422, detail="Invalid quantity in cart.")
+        key = (kind, ref_id)
+        if key not in combined:
+            order_seen.append(key)
+            combined[key] = 0
+        combined[key] += qty
+    return [ShopCartItemIn.model_construct(kind=k, ref_id=rid, quantity=combined[(k, rid)]) for (k, rid) in order_seen]
+
+
+_SHOP_ITEM_ONLINE_FIELD = {"product": "show_online", "credit_pack": "available_online", "training_program": "available_online"}
+_SHOP_ITEM_COLLECTION_NAME = {"product": "pos_products", "credit_pack": "credit_packs", "training_program": "programs"}
+
+
+async def _shop_item_org_visible(category_id: Optional[str], subcategory_id: Optional[str]) -> bool:
+    """Same two-level active-category/active-subcategory rule as the
+    private `_shop_org_visible` closures inside `_build_shop_catalog`/
+    `_build_register_catalog` — a standalone, targeted-query version so
+    checkout eligibility (which validates one already-known item at a time,
+    not a whole catalog) can reuse the identical rule without a batch
+    rebuild."""
+    if not category_id:
+        return True
+    cat = await db.shop_categories.find_one({"id": category_id, "active": True}, {"_id": 0, "id": 1})
+    if not cat:
+        return False
+    if subcategory_id:
+        sub = await db.shop_subcategories.find_one({"id": subcategory_id, "active": True}, {"_id": 0, "id": 1})
+        if not sub:
+            return False
+    return True
+
+
+async def _validate_shop_item_eligibility(client: dict, kind: str, item_doc: Optional[dict], quantity: int) -> None:
+    """ADDITIVE ONLY — never touches price, inventory math, or reservation
+    logic itself. Called once per already-normalized cart line in
+    create_shop_checkout, immediately before the order (and therefore any
+    reservation/entitlement/Stripe session) is created — never on a
+    retry that resumes an already-created order, so a fully eligible cart's
+    idempotent-retry behavior is completely unaffected by this check.
+
+    Deliberately never reads `publicly_visible` — that's a guest/public-
+    facing concept; an authenticated client's eligibility to buy something
+    they can already see in their own Shop never depends on it."""
+    name = (item_doc or {}).get("name") or "This item"
+    if item_doc is None:
+        raise HTTPException(status_code=404, detail="One of the items in your cart no longer exists.")
+    if not item_doc.get("active", True):
+        raise HTTPException(status_code=409, detail=f"{name} is no longer available.")
+    online_field = _SHOP_ITEM_ONLINE_FIELD[kind]
+    if not item_doc.get(online_field, False):
+        raise HTTPException(status_code=409, detail=f"{name} is no longer available online.")
+    settings = await get_settings()
+    sp = settings.get("shop_page") or {}
+    section = _PUBLIC_SECTION_FOR_KIND[kind]
+    section_visible = bool(((sp.get("sections") or {}).get(section) or {}).get("visible", True))
+    if not section_visible:
+        raise HTTPException(status_code=409, detail=f"{name} is no longer available.")
+    if not await _shop_item_org_visible(item_doc.get("category_id"), item_doc.get("subcategory_id")):
+        raise HTTPException(status_code=409, detail=f"{name} is no longer available.")
+    if not isinstance(quantity, int) or quantity <= 0:
+        raise HTTPException(status_code=422, detail="Invalid quantity.")
+    if kind == "product" and item_doc.get("track_inventory"):
+        stock = float(item_doc.get("stock_on_hand") or 0)
+        if quantity > stock + 0.0005:
+            if stock <= 0.0005:
+                raise HTTPException(status_code=409, detail=f"{name} is out of stock.")
+            raise HTTPException(status_code=409, detail=f"Only {stock:g} of {name} are available.")
+    if item_doc.get("requires_approval"):
+        raise HTTPException(status_code=422, detail=f"{name} requires approval before purchase — please contact us to complete this purchase.")
+    if item_doc.get("requires_dog"):
+        # No dog-selection-at-cart-line mechanism exists yet — conservatively
+        # reject rather than silently proceed without one.
+        raise HTTPException(status_code=422, detail=f"{name} requires selecting a dog — please contact us to complete this purchase.")
+    if item_doc.get("requires_completed_onboarding"):
+        status = await _compute_setup_status_for_client(client)
+        if status.get("booking_locked"):
+            raise HTTPException(status_code=422, detail="Please finish your account setup before completing this purchase.")
 
 
 async def _price_shop_cart(items: List[ShopCartItemIn], client_id: Optional[str] = None) -> dict:
@@ -27965,7 +28584,13 @@ async def create_shop_checkout(body: ShopCheckoutIn, user: dict = Depends(get_cu
     if not client:
         raise HTTPException(status_code=404, detail="Client not found")
 
-    cart_fingerprint_items = [{"kind": it.kind, "ref_id": it.ref_id, "quantity": it.quantity} for it in body.items]
+    # Combine duplicate (kind, ref_id) lines into one BEFORE anything else —
+    # fingerprinting, pricing, stock checks, eligibility, reservation,
+    # entitlement creation, and Stripe session creation all operate on this
+    # normalized list, never the raw, possibly-duplicated request body.
+    normalized_items = _normalize_cart_lines(body.items)
+
+    cart_fingerprint_items = [{"kind": it.kind, "ref_id": it.ref_id, "quantity": it.quantity} for it in normalized_items]
     fingerprint = _request_fingerprint(client_id, cart_fingerprint_items)
     order_id = str(uuid.uuid4())
     ts = now_iso()
@@ -27983,9 +28608,23 @@ async def create_shop_checkout(body: ShopCheckoutIn, user: dict = Depends(get_cu
 
     order = await db.shop_orders.find_one({"id": order_id}, {"_id": 0})
     if not order:
-        priced = await _price_shop_cart(body.items, client_id=client_id)
+        priced = await _price_shop_cart(normalized_items, client_id=client_id)
         if priced["total"] <= 0.005:
             raise HTTPException(status_code=400, detail="Cart total must be greater than zero.")
+
+        # Additive eligibility/state revalidation — immediately before the
+        # order (and therefore any reservation, entitlement, inventory
+        # movement, or Stripe session) is created. A rejection here means
+        # no order row is ever inserted — the idempotency claim row above
+        # is the only trace of the attempt, and the same idempotency key
+        # can be retried later once the underlying issue is fixed. Runs
+        # only on first creation, never when resuming an already-created
+        # order, so a fully eligible cart's idempotent-retry behavior is
+        # completely unaffected.
+        for line in priced["lines"]:
+            item_doc = await db[_SHOP_ITEM_COLLECTION_NAME[line["kind"]]].find_one({"id": line["ref_id"]}, {"_id": 0})
+            await _validate_shop_item_eligibility(client, line["kind"], item_doc, int(line["quantity"]))
+
         order_doc = {
             "id": order_id, "client_id": client_id, "client_name": client.get("name") or "",
             "status": "pending_payment", "fulfillment_status": "pending", "pickup_status": None,
@@ -28324,6 +28963,18 @@ class PosProductIn(BaseModel):
     # tax treatment unless an admin opts it out.
     taxable: bool = True
     tax_exempt_reason: Optional[str] = Field(default=None, max_length=300)
+    # Public no-account storefront — guest_cart_allowed permits temporary
+    # GUEST CART placement only; it never bypasses authenticated checkout
+    # (POST /shop/checkout still hard-requires role=="client" regardless).
+    # account_required is deliberately NOT a field here — it is only ever
+    # server-computed (see _public_purchase_state), so it can never be
+    # misconfigured into a guest-checkout bypass.
+    publicly_visible: Optional[bool] = None
+    guest_cart_allowed: bool = False
+    show_public_price: bool = True
+    requires_dog: bool = False
+    requires_approval: bool = False
+    requires_completed_onboarding: bool = False
 
 
 class PosProductCreateIn(PosProductIn):
@@ -28460,6 +29111,12 @@ async def create_pos_product(body: PosProductCreateIn, user: dict = Depends(requ
         "online_sort_order": body.online_sort_order,
         "category_id": body.category_id,
         "subcategory_id": body.subcategory_id,
+        "publicly_visible": body.publicly_visible,
+        "guest_cart_allowed": body.guest_cart_allowed,
+        "show_public_price": body.show_public_price,
+        "requires_dog": body.requires_dog,
+        "requires_approval": body.requires_approval,
+        "requires_completed_onboarding": body.requires_completed_onboarding,
         **destination_fields,
     }
     await db.pos_products.insert_one(doc)
@@ -28494,6 +29151,12 @@ async def update_pos_product(product_id: str, body: PosProductIn, user: dict = D
         "online_sort_order": body.online_sort_order,
         "category_id": body.category_id,
         "subcategory_id": body.subcategory_id,
+        "publicly_visible": body.publicly_visible,
+        "guest_cart_allowed": body.guest_cart_allowed,
+        "show_public_price": body.show_public_price,
+        "requires_dog": body.requires_dog,
+        "requires_approval": body.requires_approval,
+        "requires_completed_onboarding": body.requires_completed_onboarding,
         **_resolve_pos_product_destination_fields(body),
     }
     await db.pos_products.update_one({"id": product_id}, {"$set": patch})
@@ -33113,6 +33776,13 @@ class CreditPackIn(BaseModel):
     # override rather than a hardcoded "credit packs are never taxable" rule.
     taxable: bool = False
     tax_exempt_reason: Optional[str] = Field(default=None, max_length=300)
+    # Public no-account storefront — credit packs are ALWAYS account-required
+    # (see _public_purchase_state's kind-based hard rule); these fields only
+    # affect whether/how a guest can BROWSE this pack, never whether they
+    # can complete a purchase.
+    publicly_visible: Optional[bool] = None
+    show_public_price: bool = True
+    requires_completed_onboarding: bool = False
 
 
 class SellCreditPackIn(BaseModel):
