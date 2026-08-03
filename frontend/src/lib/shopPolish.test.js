@@ -1,6 +1,8 @@
 import {
   categoryOptionsForTab, subcategoryOptionsForTab, nextFiltersForTab,
   sortShopItems, singularUnit, stockCeiling, isInternalPhysical, orderStatusLabel,
+  categoryGroupsForTab, uncategorizedItemsForTab, categoryCoverItem, matchesSearchQuery,
+  OTHER_CATEGORY_ID,
 } from "./shopPolish";
 
 const categories = [
@@ -96,6 +98,108 @@ test("isInternalPhysical is true only for internal (non-Shopify) products", () =
   expect(isInternalPhysical({ kind: "product", sales_destination: "shopify_external" })).toBe(false);
   expect(isInternalPhysical({ kind: "credit_pack" })).toBe(false);
   expect(isInternalPhysical({ kind: "training_program" })).toBe(false);
+});
+
+// ---------------------------------------------------------------------------
+// Category-index navigation (categoryGroupsForTab / uncategorizedItemsForTab
+// / categoryCoverItem / matchesSearchQuery) — powers PortalShop.jsx's
+// clickable category cards, replacing the old category/subcategory
+// dropdowns.
+// ---------------------------------------------------------------------------
+
+const navCategories = [
+  { id: "cat-collars", name: "Collars & Leads", description: "Everyday walking gear", subcategories: [] },
+  { id: "cat-toys", name: "Toys", description: null, subcategories: [] },
+  { id: "cat-empty", name: "Seasonal", description: null, subcategories: [] }, // no matching items anywhere
+];
+
+const navItems = [
+  { kind: "product", id: "p1", name: "Leash", category_id: "cat-collars", featured: false, image_id: "img-1" },
+  { kind: "product", id: "p2", name: "Collar", category_id: "cat-collars", featured: true }, // featured, no image
+  { kind: "product", id: "p3", name: "Chew Toy", category_id: "cat-toys", featured: false, image_id: "img-3" },
+  { kind: "product", id: "p4", name: "Loose Bandana", category_id: null, featured: false, image_id: "img-4" }, // uncategorized
+  { kind: "credit_pack", id: "pk1", name: "5-Visit Pack", category_id: null }, // uncategorized, different tab
+];
+
+test("categoryGroupsForTab keeps categories in their configured taxonomy order", () => {
+  const groups = categoryGroupsForTab(navCategories, navItems, "product");
+  // cat-collars then cat-toys, matching navCategories' own order — cat-empty
+  // and the generated Other bucket are handled by the other assertions below.
+  expect(groups.map((g) => g.category.id)).toEqual(["cat-collars", "cat-toys", OTHER_CATEGORY_ID]);
+});
+
+test("categoryGroupsForTab reports correct item counts per tab", () => {
+  const productGroups = categoryGroupsForTab(navCategories, navItems, "product");
+  expect(productGroups.find((g) => g.category.id === "cat-collars").count).toBe(2);
+  expect(productGroups.find((g) => g.category.id === "cat-toys").count).toBe(1);
+  expect(productGroups.find((g) => g.category.id === OTHER_CATEGORY_ID).count).toBe(1);
+
+  const packGroups = categoryGroupsForTab(navCategories, navItems, "credit_pack");
+  expect(packGroups.find((g) => g.category.id === OTHER_CATEGORY_ID).count).toBe(1);
+});
+
+test("categoryGroupsForTab excludes categories with no matching item in the tab", () => {
+  const groups = categoryGroupsForTab(navCategories, navItems, "product");
+  expect(groups.some((g) => g.category.id === "cat-empty")).toBe(false);
+  // training_program tab has no items at all -> no configured categories, no Other
+  expect(categoryGroupsForTab(navCategories, navItems, "training_program")).toEqual([]);
+});
+
+test("uncategorizedItemsForTab / categoryGroupsForTab surface visible uncategorized items under Other, placed after configured categories", () => {
+  expect(uncategorizedItemsForTab(navItems, "product").map((i) => i.id)).toEqual(["p4"]);
+  const groups = categoryGroupsForTab(navCategories, navItems, "product");
+  const otherIndex = groups.findIndex((g) => g.category.id === OTHER_CATEGORY_ID);
+  expect(otherIndex).toBe(groups.length - 1); // last, after every configured category
+  expect(groups[otherIndex].category.name).toBe("Other");
+  expect(groups[otherIndex].items.map((i) => i.id)).toEqual(["p4"]);
+});
+
+test("categoryCoverItem prefers a featured item even when it has no image over a non-featured item that does", () => {
+  const group = { items: [
+    { id: "a", featured: false, image_id: "img-a" },
+    { id: "b", featured: true }, // no image_id at all
+  ] };
+  expect(categoryCoverItem(group)?.id).toBe("b");
+});
+
+test("categoryCoverItem falls back to the first item with an image when nothing is featured", () => {
+  const group = { items: [
+    { id: "a", featured: false },
+    { id: "b", featured: false, image_id: "img-b" },
+  ] };
+  expect(categoryCoverItem(group)?.id).toBe("b");
+});
+
+test("categoryCoverItem returns null (existing placeholder) when nothing is featured and nothing has an image", () => {
+  expect(categoryCoverItem({ items: [{ id: "a", featured: false }] })).toBeNull();
+  expect(categoryCoverItem({ items: [] })).toBeNull();
+  expect(categoryCoverItem(undefined)).toBeNull();
+});
+
+test("nextFiltersForTab clears the generated Other selection when the new tab has no uncategorized items", () => {
+  expect(nextFiltersForTab(navItems, "training_program", OTHER_CATEGORY_ID, ""))
+    .toEqual({ categoryFilter: "", subcategoryFilter: "" });
+});
+
+test("nextFiltersForTab keeps the generated Other selection when the new tab still has uncategorized items", () => {
+  expect(nextFiltersForTab(navItems, "credit_pack", OTHER_CATEGORY_ID, ""))
+    .toEqual({ categoryFilter: OTHER_CATEGORY_ID, subcategoryFilter: "" });
+});
+
+test("matchesSearchQuery matches on name, description, category name, and subcategory name", () => {
+  const item = { name: "Rope Leash", description: "Durable nylon rope", category_name: "Collars & Leads", subcategory_name: "Leashes" };
+  expect(matchesSearchQuery(item, "rope")).toBe(true); // name
+  expect(matchesSearchQuery(item, "nylon")).toBe(true); // description
+  expect(matchesSearchQuery(item, "collars")).toBe(true); // category_name
+  expect(matchesSearchQuery(item, "leashes")).toBe(true); // subcategory_name
+  expect(matchesSearchQuery(item, "mugs")).toBe(false);
+});
+
+test("matchesSearchQuery treats a blank/empty query as matching everything", () => {
+  const item = { name: "Anything" };
+  expect(matchesSearchQuery(item, "")).toBe(true);
+  expect(matchesSearchQuery(item, "   ")).toBe(true);
+  expect(matchesSearchQuery(item, undefined)).toBe(true);
 });
 
 test("orderStatusLabel maps every required status combination to its exact customer-facing label", () => {

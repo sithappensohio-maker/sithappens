@@ -8,8 +8,9 @@ import { accentRgb } from "./premium/tokens";
 import ItemThumbnail from "./ItemThumbnail";
 import ShopItemDetail from "./ShopItemDetail";
 import {
-  categoryOptionsForTab, subcategoryOptionsForTab, nextFiltersForTab,
+  itemsForTab, subcategoryOptionsForTab, nextFiltersForTab,
   sortShopItems, singularUnit, stockCeiling, isInternalPhysical, orderStatusLabel,
+  categoryGroupsForTab, categoryCoverItem, matchesSearchQuery, OTHER_CATEGORY_ID,
 } from "../lib/shopPolish";
 
 /* Client Shop — Phase 1 gave read-only catalog browsing. Phase 2 adds a
@@ -168,6 +169,113 @@ function ItemCard({ item, cartQty, onAdd, onOpenDetail }) {
         )}
       </div>
     </NeonEdge>
+  );
+}
+
+// Section cards (Merch & Gear / Prepaid Visits / Training) — the Shop's
+// top-level landing screen when the "All" tab is active and nothing else
+// (search/category) is selected. Clicking one just switches the active tab;
+// it never sets a category filter itself.
+function SectionCard({ tabKey, label, count, cover, onClick }) {
+  return (
+    <NeonEdge accentRgb={accentRgb("lime")} intensity="subtle" onClick={onClick}
+              className="p-5 flex flex-col items-center text-center gap-3 hover:-translate-y-0.5 transition duration-200 cursor-pointer"
+              data-testid={`shop-section-card-${tabKey}`}>
+      <ItemThumbnail imageId={cover?.image_id} alt={label} variant="banner" size={140} className="rounded-lg" />
+      <div>
+        <p className="text-shText font-black text-[16px]">{label}</p>
+        <p className="text-shTextMuted text-[11px] font-bold uppercase tracking-widest mt-1">{count} item{count !== 1 ? "s" : ""}</p>
+      </div>
+    </NeonEdge>
+  );
+}
+
+// Category cards — a tab's category-index screen, shown instead of an
+// immediate flat item grid so "Merch & Gear" doesn't dump tags, shirts, and
+// mugs into one scattered pile. `group` comes from categoryGroupsForTab (see
+// ../lib/shopPolish.js) and already carries the matching items/count; the
+// cover image is resolved via categoryCoverItem, never a second API call.
+function CategoryCard({ group, onClick }) {
+  const { category, count } = group;
+  const cover = categoryCoverItem(group);
+  return (
+    <NeonEdge accentRgb={accentRgb("lime")} intensity="subtle" onClick={onClick}
+              className="p-4 flex flex-col text-left gap-1.5 hover:-translate-y-0.5 transition duration-200 cursor-pointer"
+              data-testid={`shop-category-card-${category.id}`}>
+      <ItemThumbnail imageId={cover?.image_id} alt={category.name} variant="banner" size={120} className="rounded-lg" />
+      <p className="text-shText font-bold text-[15px] mt-1.5 line-clamp-1">{category.name}</p>
+      {category.description && <p className="text-shTextMuted text-[12px] line-clamp-2">{category.description}</p>}
+      <p className="text-shSecondary text-[11px] font-bold uppercase tracking-widest mt-auto pt-1">{count} item{count !== 1 ? "s" : ""}</p>
+    </NeonEdge>
+  );
+}
+
+// Section-index screen ("All" tab, nothing selected) — one card per kind.
+function SectionIndex({ sections, onSelect, onViewAll }) {
+  if (sections.length === 0) {
+    return <p className="text-gray-500 text-sm text-center py-6">Nothing here yet — check back soon.</p>;
+  }
+  return (
+    <div data-testid="shop-section-index">
+      <div className="grid grid-cols-2 md:grid-cols-3 gap-3 max-w-2xl mx-auto">
+        {sections.map((s) => (
+          <SectionCard key={s.key} tabKey={s.key} label={s.label} count={s.count} cover={categoryCoverItem(s)} onClick={() => onSelect(s.key)} />
+        ))}
+      </div>
+      <div className="text-center mt-4">
+        <button onClick={onViewAll} data-testid="shop-view-all-products-top"
+                className="text-[11px] font-black uppercase tracking-widest text-shTextMuted hover:text-shPrimary transition">
+          View All Products <i className="fas fa-arrow-right ml-1" />
+        </button>
+      </div>
+    </div>
+  );
+}
+
+// Category-index screen (a specific tab, no category selected yet).
+function CategoryIndex({ groups, onSelectCategory, onViewAll, sectionLabel }) {
+  if (groups.length === 0) {
+    return <p className="text-gray-500 text-sm text-center py-6">Nothing here yet — check back soon.</p>;
+  }
+  return (
+    <div data-testid="shop-category-index">
+      <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-4 gap-3">
+        {groups.map((g) => (
+          <CategoryCard key={g.category.id} group={g} onClick={() => onSelectCategory(g.category.id)} />
+        ))}
+      </div>
+      <div className="text-center mt-4">
+        <button onClick={onViewAll} data-testid="shop-view-all-products"
+                className="text-[11px] font-black uppercase tracking-widest text-shTextMuted hover:text-shPrimary transition">
+          View All {sectionLabel} <i className="fas fa-arrow-right ml-1" />
+        </button>
+      </div>
+    </div>
+  );
+}
+
+// Breadcrumb/heading + "Back to Categories" control shown above the product
+// grid whenever a category is selected (or the "View All Products" escape
+// hatch from a category-index screen is active) — never shown on the index
+// screens themselves.
+function CategoryGridHeader({ eyebrow, title, description, count, onBack, backLabel }) {
+  return (
+    <div className="mb-4" data-testid="shop-category-grid-header">
+      <button onClick={onBack} data-testid="shop-back-to-categories"
+              className="mb-3 inline-flex items-center gap-1.5 text-[11px] font-black uppercase tracking-widest text-shPrimary hover:text-shText transition">
+        <i className="fas fa-arrow-left" />{backLabel}
+      </button>
+      <div className="flex items-start justify-between gap-3 flex-wrap">
+        <div className="min-w-0">
+          {eyebrow && <p className="text-[11px] font-bold uppercase tracking-widest text-shTextMuted">{eyebrow}</p>}
+          <p className="text-shText font-black text-lg">{title}</p>
+          {description && <p className="text-shTextMuted text-sm mt-0.5 max-w-xl">{description}</p>}
+        </div>
+        <p className="text-[11px] font-bold uppercase tracking-widest text-shTextMuted shrink-0 pt-1" data-testid="shop-item-count">
+          {count} item{count !== 1 ? "s" : ""}
+        </p>
+      </div>
+    </div>
   );
 }
 
@@ -362,10 +470,12 @@ export default function PortalShop({ initialTab = "all", fullScreen = false, sho
   const [loading, setLoading] = useState(true);
   const [err, setErr] = useState("");
   const [tab, setTab] = useState(initialTab);
-  // Shop Organization (Phase 1) — category/subcategory browsing, additive to
-  // the existing kind tabs above. "" means no category filter (shows every
-  // item, categorized or not); a subcategory filter only applies once a
-  // category is chosen, and is cleared whenever the category changes.
+  // Shop category/subcategory navigation, additive to the existing kind tabs
+  // above. categoryFilter === "" means no category is selected — whether
+  // that shows category cards to click through or a flat grid of every item
+  // is the separate showAllItems flag below (see its own comment). A
+  // subcategory filter only ever applies once a category is chosen, and is
+  // cleared whenever the category changes.
   const [categories, setCategories] = useState([]);
   const [categoryFilter, setCategoryFilter] = useState("");
   const [subcategoryFilter, setSubcategoryFilter] = useState("");
@@ -436,20 +546,38 @@ export default function PortalShop({ initialTab = "all", fullScreen = false, sho
       .catch(() => setCategories([]));
   }, []);
 
-  // Category/subcategory choices are scoped to the selected tab — a category
-  // with no matching item in this tab should never appear as an option here,
-  // even though the full taxonomy (loaded above) still lists it for other
-  // tabs. Derived from the already-loaded catalog items, never a second
-  // taxonomy fetch/filter system (see ../lib/shopPolish.js).
-  const categoryOptions = useMemo(
-    () => categoryOptionsForTab(categories, items, tab),
+  // Category-card groups for the active tab (configured categories in their
+  // configured order, plus a generated "Other" bucket for uncategorized
+  // visible items — see categoryGroupsForTab in ../lib/shopPolish.js).
+  // Powers both the category-index screen's cards and the selected
+  // category's breadcrumb/heading below; never a second API request.
+  const categoryGroups = useMemo(
+    () => categoryGroupsForTab(categories, items, tab),
     [categories, items, tab],
   );
-  const selectedCategory = categoryOptions.find((c) => c.id === categoryFilter);
+  const selectedGroup = categoryGroups.find((g) => g.category.id === categoryFilter);
   const subcategoryOptions = useMemo(
     () => subcategoryOptionsForTab(categories, items, tab, categoryFilter),
     [categories, items, tab, categoryFilter],
   );
+
+  // Section-card groups for the "All" tab's landing screen — one per kind,
+  // reusing the same categoryCoverItem cover-resolution logic as category
+  // cards (just against itemsForTab instead of a category's own items).
+  const sectionGroups = useMemo(() => (
+    TABS.filter((t) => t.key !== "all").map((t) => {
+      const kindItems = itemsForTab(items, t.key);
+      return { key: t.key, label: t.label, items: kindItems, count: kindItems.length };
+    }).filter((s) => s.count > 0)
+  ), [items]);
+
+  // "" means no category filter is set. Whether that renders the
+  // category/section index (cards to click through) or a flat grid of every
+  // item in the tab is a SEPARATE, explicit choice — showAllItems — so
+  // categoryFilter === "" doesn't automatically mean "show every product".
+  // Reset whenever the top-level tab changes so a stale "View All" doesn't
+  // leak into a freshly selected section.
+  const [showAllItems, setShowAllItems] = useState(false);
 
   // Selecting a tab can invalidate the current category/subcategory choice
   // (e.g. a category that only ever contained Training items, while
@@ -457,26 +585,56 @@ export default function PortalShop({ initialTab = "all", fullScreen = false, sho
   // rather than silently showing a filter that can never match anything.
   const selectTab = (key) => {
     setTab(key);
+    setShowAllItems(false);
     const next = nextFiltersForTab(items, key, categoryFilter, subcategoryFilter);
     if (next.categoryFilter !== categoryFilter) setCategoryFilter(next.categoryFilter);
     if (next.subcategoryFilter !== subcategoryFilter) setSubcategoryFilter(next.subcategoryFilter);
   };
 
+  const openCategory = (categoryId) => {
+    setCategoryFilter(categoryId);
+    setSubcategoryFilter("");
+    setShowAllItems(false);
+  };
+
+  // "Back to Categories"/"Back to Sections" — clears the category filter
+  // and the View All escape hatch, returning to whichever index screen
+  // applies to the current tab.
+  const backToCategories = () => {
+    setCategoryFilter("");
+    setSubcategoryFilter("");
+    setShowAllItems(false);
+  };
+
+  const viewAllInTab = () => {
+    setCategoryFilter("");
+    setSubcategoryFilter("");
+    setShowAllItems(true);
+  };
+
+  const searching = search.trim().length > 0;
+  // Search always shows a flat grid immediately — even from an index screen
+  // with no category selected — rather than staying on category/section
+  // cards while results exist underneath them unseen.
+  const showIndexScreen = !searching && !categoryFilter && !showAllItems;
+  const showGridHeader = !!categoryFilter || (showAllItems && !searching);
+
   const filtered = useMemo(() => {
-    let list = tab === "all" ? items : items.filter((i) => i.kind === tab);
-    if (categoryFilter) list = list.filter((i) => i.category_id === categoryFilter);
-    if (subcategoryFilter) list = list.filter((i) => i.subcategory_id === subcategoryFilter);
-    const q = search.trim().toLowerCase();
-    if (q) {
-      list = list.filter((i) => (
-        (i.name || "").toLowerCase().includes(q)
-        || (i.description || "").toLowerCase().includes(q)
-        || (i.category_name || "").toLowerCase().includes(q)
-        || (i.subcategory_name || "").toLowerCase().includes(q)
-      ));
+    let list = itemsForTab(items, tab);
+    // A search always scopes to the whole active tab, ignoring whatever
+    // category/subcategory was selected before typing — see the search
+    // input's comment above for why.
+    if (!searching) {
+      if (categoryFilter === OTHER_CATEGORY_ID) {
+        list = list.filter((i) => !i.category_id);
+      } else if (categoryFilter) {
+        list = list.filter((i) => i.category_id === categoryFilter);
+      }
+      if (subcategoryFilter) list = list.filter((i) => i.subcategory_id === subcategoryFilter);
     }
+    list = list.filter((i) => matchesSearchQuery(i, search));
     return sortShopItems(list);
-  }, [items, tab, categoryFilter, subcategoryFilter, search]);
+  }, [items, tab, categoryFilter, subcategoryFilter, search, searching]);
 
   const cartCount = cart.reduce((n, c) => n + c.quantity, 0);
   const { lines: cartLines, subtotal: cartSubtotal } = useCartLines(cart, items);
@@ -749,54 +907,85 @@ export default function PortalShop({ initialTab = "all", fullScreen = false, sho
         ))}
       </div>
 
-      {/* Shop Organization (Phase 1) — a dropdown rather than a long row of
-          category buttons, so this never overflows on mobile. Subcategory
-          only appears once a category is chosen and clears whenever the
-          category changes. */}
-      <div className="flex flex-col sm:flex-row gap-2 mb-4 max-w-2xl mx-auto">
-        <div className="relative flex-1">
+      {/* Search — the only free-standing filter left in the normal browsing
+          experience; category/subcategory dropdowns were replaced by the
+          clickable section/category cards and subcategory pills below. A
+          non-empty search always forces the flat item grid immediately,
+          regardless of which index/category screen was showing. */}
+      <div className="max-w-2xl mx-auto mb-4">
+        <div className="relative">
           <i className="fas fa-magnifying-glass absolute left-3 top-1/2 -translate-y-1/2 text-shTextMuted text-[13px]" />
           <input value={search} onChange={(e) => setSearch(e.target.value)} placeholder="Search the shop…"
                  data-testid="shop-search-input"
                  className="w-full pl-9 pr-3 py-2 rounded-md border border-shBorder text-shText text-sm focus:outline-none focus:border-shPrimary/60"
                  style={{ background: "var(--sh-card-base)" }} />
         </div>
-        {categoryOptions.length > 0 && (
-          <>
-            <select value={categoryFilter} onChange={(e) => { setCategoryFilter(e.target.value); setSubcategoryFilter(""); }}
-                    data-testid="shop-category-select"
-                    className="rounded-md border border-shBorder text-shText text-sm px-3 py-2 focus:outline-none focus:border-shPrimary/60"
-                    style={{ background: "var(--sh-card-base)" }}>
-              <option value="">All Categories</option>
-              {categoryOptions.map((c) => <option key={c.id} value={c.id}>{c.name}</option>)}
-            </select>
-            {subcategoryOptions.length > 0 && (
-              <select value={subcategoryFilter} onChange={(e) => setSubcategoryFilter(e.target.value)}
-                      data-testid="shop-subcategory-select"
-                      className="rounded-md border border-shBorder text-shText text-sm px-3 py-2 focus:outline-none focus:border-shPrimary/60"
-                      style={{ background: "var(--sh-card-base)" }}>
-                <option value="">All of {selectedCategory.name}</option>
-                {subcategoryOptions.map((s) => <option key={s.id} value={s.id}>{s.name}</option>)}
-              </select>
-            )}
-          </>
-        )}
       </div>
 
       {loading && <p className="text-gray-500 text-sm text-center py-6">Loading the shop…</p>}
       {!loading && err && <p className="text-red-400 text-sm text-center py-6">{err}</p>}
-      {!loading && !err && filtered.length === 0 && (
-        <p className="text-gray-500 text-sm text-center py-6">Nothing here yet — check back soon.</p>
+
+      {!loading && !err && showIndexScreen && (
+        tab === "all" ? (
+          <SectionIndex sections={sectionGroups} onSelect={selectTab} onViewAll={viewAllInTab} />
+        ) : (
+          <CategoryIndex
+            groups={categoryGroups}
+            onSelectCategory={openCategory}
+            onViewAll={viewAllInTab}
+            sectionLabel={TABS.find((t) => t.key === tab)?.label || ""}
+          />
+        )
       )}
-      {!loading && !err && filtered.length > 0 && (
-        <div className={`grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 ${fullScreen ? "lg:grid-cols-4" : ""} gap-3`}>
-          {filtered.map((item) => {
-            const inCart = cart.find((c) => c.kind === item.kind && c.ref_id === item.id);
-            return (
-              <ItemCard key={`${item.kind}-${item.id}`} item={item} cartQty={inCart ? inCart.quantity : 0} onAdd={addToCart} onOpenDetail={openDetail} />
-            );
-          })}
-        </div>
+
+      {!loading && !err && !showIndexScreen && (
+        <>
+          {showGridHeader && (
+            <CategoryGridHeader
+              eyebrow={tab !== "all" ? TABS.find((t) => t.key === tab)?.label : undefined}
+              title={categoryFilter && !searching ? (selectedGroup?.category?.name || "") : `All ${TABS.find((t) => t.key === tab)?.label || "Products"}`}
+              description={categoryFilter && !searching ? selectedGroup?.category?.description : undefined}
+              count={filtered.length}
+              onBack={backToCategories}
+              backLabel={tab === "all" ? "Back to Sections" : "Back to Categories"}
+            />
+          )}
+
+          {categoryFilter && !searching && subcategoryOptions.length > 0 && (
+            <div className="flex flex-wrap gap-2 justify-center mb-4" data-testid="shop-subcategory-pills">
+              <button onClick={() => setSubcategoryFilter("")} data-testid="shop-subcategory-pill-all"
+                      className={`px-3 py-1.5 rounded-full text-[11px] font-bold uppercase tracking-widest transition border ${
+                        subcategoryFilter === "" ? "bg-shPrimary text-bgHeader border-shPrimary" : "border-shBorder text-shTextMuted hover:border-shPrimary/50 hover:text-shText"
+                      }`}
+                      style={subcategoryFilter === "" ? undefined : { background: "var(--sh-card-base)" }}>
+                All
+              </button>
+              {subcategoryOptions.map((s) => (
+                <button key={s.id} onClick={() => setSubcategoryFilter(s.id)} data-testid={`shop-subcategory-pill-${s.id}`}
+                        className={`px-3 py-1.5 rounded-full text-[11px] font-bold uppercase tracking-widest transition border ${
+                          subcategoryFilter === s.id ? "bg-shPrimary text-bgHeader border-shPrimary" : "border-shBorder text-shTextMuted hover:border-shPrimary/50 hover:text-shText"
+                        }`}
+                        style={subcategoryFilter === s.id ? undefined : { background: "var(--sh-card-base)" }}>
+                  {s.name}
+                </button>
+              ))}
+            </div>
+          )}
+
+          {filtered.length === 0 && (
+            <p className="text-gray-500 text-sm text-center py-6">Nothing here yet — check back soon.</p>
+          )}
+          {filtered.length > 0 && (
+            <div className={`grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 ${fullScreen ? "lg:grid-cols-4" : ""} gap-3`}>
+              {filtered.map((item) => {
+                const inCart = cart.find((c) => c.kind === item.kind && c.ref_id === item.id);
+                return (
+                  <ItemCard key={`${item.kind}-${item.id}`} item={item} cartQty={inCart ? inCart.quantity : 0} onAdd={addToCart} onOpenDetail={openDetail} />
+                );
+              })}
+            </div>
+          )}
+        </>
       )}
       </>
       )}

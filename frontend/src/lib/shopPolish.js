@@ -11,13 +11,65 @@ export function itemsForTab(items, tab) {
   return tab === "all" ? items : items.filter((i) => i.kind === tab);
 }
 
+// Shared by categoryOptionsForTab and categoryGroupsForTab below — pairs
+// each configured category with the items (in this tab) actually assigned
+// to it, dropping any category with none. Internal only: callers that need
+// the Other bucket too should go through categoryGroupsForTab instead.
+function realCategoryGroupsForTab(categories, items, tab) {
+  const scoped = itemsForTab(items, tab);
+  return categories
+    .map((category) => ({ category, items: scoped.filter((i) => i.category_id === category.id) }))
+    .filter((g) => g.items.length > 0);
+}
+
 // Category choices for a tab — only categories that actually contain at
 // least one item belonging to that tab, derived from the already-loaded
 // catalog (never a second taxonomy fetch/filter system).
 export function categoryOptionsForTab(categories, items, tab) {
-  const scoped = itemsForTab(items, tab);
-  const idsWithItems = new Set(scoped.map((i) => i.category_id).filter(Boolean));
-  return categories.filter((c) => idsWithItems.has(c.id));
+  return realCategoryGroupsForTab(categories, items, tab).map((g) => g.category);
+}
+
+// Synthetic id for the generated "Other" bucket that holds visible items
+// with no category assigned — never written back to any stored record, it
+// only exists for client-side grouping/navigation.
+export const OTHER_CATEGORY_ID = "__other__";
+
+// Visible items in a tab that have no category assigned at all.
+export function uncategorizedItemsForTab(items, tab) {
+  return itemsForTab(items, tab).filter((i) => !i.category_id);
+}
+
+// Category-card groups for the Shop's category-index screen: one entry per
+// configured category that has a matching item in this tab (kept in the
+// taxonomy's own configured order — categories is already sorted by
+// sort_order from GET /shop/catalog/taxonomy), plus a generated "Other"
+// entry appended at the end for any uncategorized visible items. Each group
+// carries its category record, the matching items, and a count — enough
+// for both the card (name/description/count/cover) and the product grid
+// underneath it without a second API request per category.
+export function categoryGroupsForTab(categories, items, tab) {
+  const groups = realCategoryGroupsForTab(categories, items, tab).map((g) => ({ ...g, count: g.items.length }));
+  const other = uncategorizedItemsForTab(items, tab);
+  if (other.length > 0) {
+    groups.push({
+      category: { id: OTHER_CATEGORY_ID, name: "Other", description: null, subcategories: [] },
+      items: other,
+      count: other.length,
+    });
+  }
+  return groups;
+}
+
+// A category card's representative thumbnail: the first featured item (an
+// admin's explicit "show this one" signal, even if it has no image of its
+// own — the card still falls back to the placeholder for it), otherwise the
+// first item that actually has an image, otherwise null (renders the
+// existing ItemThumbnail placeholder, never a second placeholder image).
+export function categoryCoverItem(group) {
+  const items = (group && group.items) || [];
+  const featured = items.find((i) => i.featured);
+  if (featured) return featured;
+  return items.find((i) => i.image_id) || null;
 }
 
 // Subcategory choices for a tab + selected category — same "must have a
@@ -35,6 +87,14 @@ export function subcategoryOptionsForTab(categories, items, tab, categoryId) {
 // than silently keeping a filter that can never match anything.
 export function nextFiltersForTab(items, tab, categoryFilter, subcategoryFilter) {
   if (!categoryFilter) return { categoryFilter: "", subcategoryFilter: "" };
+  if (categoryFilter === OTHER_CATEGORY_ID) {
+    // The generated "Other" bucket isn't a real category_id on any item, so
+    // it can never appear in the catIds set below — validity means "this
+    // tab still has at least one uncategorized visible item", not membership.
+    return uncategorizedItemsForTab(items, tab).length > 0
+      ? { categoryFilter, subcategoryFilter: "" }
+      : { categoryFilter: "", subcategoryFilter: "" };
+  }
   const scoped = itemsForTab(items, tab);
   const catIds = new Set(scoped.map((i) => i.category_id).filter(Boolean));
   if (!catIds.has(categoryFilter)) return { categoryFilter: "", subcategoryFilter: "" };
@@ -55,6 +115,22 @@ export function sortShopItems(list) {
     if (soa !== sob) return soa - sob;
     return (a.name || "").localeCompare(b.name || "");
   });
+}
+
+// Whether an item matches a free-text shop search — name, description,
+// category name, and subcategory name. An empty/blank query matches
+// everything, so callers can always run this unconditionally instead of
+// branching on "is there a search term". Extracted from PortalShop.jsx's
+// inline filter so it's covered by these unit tests without rendering.
+export function matchesSearchQuery(item, query) {
+  const q = (query || "").trim().toLowerCase();
+  if (!q) return true;
+  return (
+    (item.name || "").toLowerCase().includes(q)
+    || (item.description || "").toLowerCase().includes(q)
+    || (item.category_name || "").toLowerCase().includes(q)
+    || (item.subcategory_name || "").toLowerCase().includes(q)
+  );
 }
 
 // Singularizes a unit word ("sessions" -> "session", "classes" -> "class")
