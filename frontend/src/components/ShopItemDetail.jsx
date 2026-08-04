@@ -3,8 +3,7 @@ import { api } from "../lib/api";
 import { toast } from "sonner";
 import PremiumButton from "./premium/PremiumButton";
 import { useShopMediaSrc } from "./ItemThumbnail";
-import { CLIENT_LABELS } from "../lib/clientLabels";
-import { guestItemCta } from "../lib/shopPolish";
+import { guestItemCta, creditPackDetailLine } from "../lib/shopPolish";
 
 const money = (n) => `$${Number(n || 0).toFixed(2)}`;
 
@@ -277,7 +276,7 @@ export default function ShopItemDetail({ kind, itemId, cart, onAddToCart, onBack
 
           {item.kind === "credit_pack" && (
             <p className="text-shTextMuted text-[13px] mt-2" data-testid="shop-detail-pack-summary">
-              Includes {item.qty} {item.service_type} {CLIENT_LABELS.creditPack.toLowerCase()}. Credits are added to your account after successful payment and may be used for eligible {item.service_type} bookings.
+              {creditPackDetailLine(item)}
             </p>
           )}
           {item.kind === "training_program" && (

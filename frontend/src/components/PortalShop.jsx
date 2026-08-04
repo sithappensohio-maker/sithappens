@@ -12,7 +12,7 @@ import {
   sortShopItems, singularUnit, stockCeiling, isInternalPhysical, orderStatusLabel,
   categoryGroupsForTab, matchesSearchQuery, OTHER_CATEGORY_ID,
   sectionMetaFor, visibleSectionsInOrder, categoryCoverImageId, shouldHideEmptyCategory,
-  orderCategoryGroupsFeaturedFirst, filterFeaturedItems, guestItemCta,
+  orderCategoryGroupsFeaturedFirst, filterFeaturedItems, guestItemCta, creditPackCardLine,
 } from "../lib/shopPolish";
 
 /* Client Shop — Phase 1 gave read-only catalog browsing. Phase 2 adds a
@@ -160,7 +160,7 @@ function ItemCard({ item, cartQty, onAdd, onOpenDetail, mode = "authenticated", 
       ) : null}
       {item.kind === "credit_pack" && (
         <p className="text-[11px] text-shTextMuted uppercase tracking-widest font-bold mt-1">
-          {item.qty} {item.service_type} visits{item.value_each != null ? ` · ${money(item.value_each)} per visit` : ""}
+          {creditPackCardLine(item)}
         </p>
       )}
       {item.kind === "training_program" && (

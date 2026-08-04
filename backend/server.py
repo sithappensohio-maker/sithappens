@@ -30,7 +30,7 @@ from starlette.middleware.cors import CORSMiddleware
 from motor.motor_asyncio import AsyncIOMotorClient
 from pymongo import ReturnDocument
 from pymongo.errors import DuplicateKeyError
-from pydantic import BaseModel, Field, EmailStr, ConfigDict, field_validator
+from pydantic import BaseModel, Field, EmailStr, ConfigDict, field_validator, model_validator
 import stripe
 
 from email_service import (
@@ -26886,6 +26886,29 @@ def _public_purchase_state(kind: str, item_doc: dict, *, global_show_public_pric
     }
 
 
+def _credit_pack_display_fields(pk: dict, qty: int, effective_price: float) -> dict:
+    """Presentation-only credit-pack fields — never used for credit
+    granting/redemption/FIFO lots/balances/voids/refunds, which always key
+    off `qty` and `effective_price` directly. display_price_each and
+    credits_per_display_unit are derived from the CALLER's effective_price
+    (already grandfathered/tier-price-resolved), never the raw list price,
+    so a client-specific override recalculates the displayed per-unit price
+    too."""
+    display_quantity = pk.get("display_quantity")
+    out = {
+        "display_quantity": display_quantity,
+        "display_unit": pk.get("display_unit"),
+        "display_dog_count": pk.get("display_dog_count"),
+        "display_price_each": None,
+        "credits_per_display_unit": None,
+    }
+    if display_quantity:
+        dq = float(display_quantity)
+        out["display_price_each"] = round(float(effective_price) / dq, 2)
+        out["credits_per_display_unit"] = round(float(qty) / dq, 2)
+    return out
+
+
 async def _build_shop_catalog(client_id: Optional[str]) -> dict:
     """The one real catalog-building routine — read-only aggregation across
     the three specialized collections, tagging each result with a `kind`
@@ -27061,6 +27084,7 @@ async def _build_shop_catalog(client_id: Optional[str]) -> dict:
             "publicly_visible": pk.get("publicly_visible"),
             "show_public_price": bool(pk.get("show_public_price", True)),
             "requires_completed_onboarding": bool(pk.get("requires_completed_onboarding", False)),
+            **_credit_pack_display_fields(pk, qty, effective_price),
             **_shop_org_fields(pk.get("category_id"), pk.get("subcategory_id")),
         })
 
@@ -27203,6 +27227,7 @@ async def _build_register_catalog(client_id: Optional[str]) -> dict:
             "image_id": pk.get("image_id"),
             "taxable": bool(pk.get("taxable", False)),
             "tax_exempt_reason": pk.get("tax_exempt_reason") or ("Prepaid visit credits are a service, not a taxed retail good" if not pk.get("taxable", False) else None),
+            **_credit_pack_display_fields(pk, qty, effective_price),
             **_shop_org_fields(pk.get("category_id"), pk.get("subcategory_id")),
         })
 
@@ -27390,12 +27415,18 @@ _PUBLIC_FIELDS_COMMON = {
 }
 # ALL price-ish fields, including Shopify's own displayed price — stripped
 # under the exact same show_public_prices/show_public_price gate as every
-# other price field, never treated as a special case.
-_PUBLIC_FIELDS_PRICE = {"price", "list_price", "effective_price", "shopify_display_price", "shopify_from_price"}
+# other price field, never treated as a special case. value_each and
+# display_price_each are both derived from effective_price, so they belong
+# here too — a price-hidden pack must not leak its per-credit/per-unit rate
+# through these side-channel fields.
+_PUBLIC_FIELDS_PRICE = {"price", "list_price", "effective_price", "shopify_display_price", "shopify_from_price", "value_each", "display_price_each"}
 # sales_destination/shopify_product_url are NEVER price-gated — View Options
 # must keep working even when pricing is hidden.
 _PUBLIC_FIELDS_PRODUCT = {"sales_destination", "shopify_product_url"}
-_PUBLIC_FIELDS_PACK = {"service_type", "qty", "value_each"}
+# display_quantity/display_unit/display_dog_count/credits_per_display_unit
+# describe QUANTITY, not price (same precedent as raw `qty` below, already
+# unconditionally public) — safe to show even when pricing is hidden.
+_PUBLIC_FIELDS_PACK = {"service_type", "qty", "display_quantity", "display_unit", "display_dog_count", "credits_per_display_unit"}
 _PUBLIC_FIELDS_PROGRAM = {"focus", "program_type", "format_count", "format_unit", "min_age_months"}
 
 _PUBLIC_SECTION_FLAG_FOR_SECTION = {"merch": "show_public_merch", "prepaid_visits": "show_public_prepaid", "training": "show_public_training"}
@@ -33783,6 +33814,27 @@ class CreditPackIn(BaseModel):
     publicly_visible: Optional[bool] = None
     show_public_price: bool = True
     requires_completed_onboarding: bool = False
+    # Customer-facing quantity fix — presentation-only marketing metadata.
+    # `qty` (above) stays the sole authoritative credit count granted to the
+    # client's account/credit lot; these three fields never influence
+    # granting, redemption, FIFO lots, balances, voids, or refunds. They
+    # exist purely so "Daycare 2 dogs 10 days" (qty=15 internal credits,
+    # because a two-dog day costs 1.5 credits) can be described to
+    # customers as "10 days for 2 dogs" instead of the misleading "15
+    # visits". See _credit_pack_display_fields().
+    display_quantity: Optional[float] = Field(default=None, gt=0)
+    display_unit: Optional[Literal["day", "visit", "night", "session"]] = None
+    display_dog_count: Optional[int] = Field(default=None, ge=1)
+
+    @model_validator(mode="after")
+    def _display_quantity_and_unit_travel_together(self):
+        # A quantity with no unit ("10" — 10 what?) or a unit with no
+        # quantity is meaningless customer-facing copy — both or neither.
+        # display_dog_count has no such pairing requirement: a pack can
+        # legitimately advertise "10 days" with no dog count at all.
+        if (self.display_quantity is None) != (self.display_unit is None):
+            raise ValueError("display_quantity and display_unit must be set together, or both left unset.")
+        return self
 
 
 class SellCreditPackIn(BaseModel):
@@ -33818,7 +33870,10 @@ async def list_credit_packs(user: dict = Depends(get_current_user), include_inac
         await _apply_client_overrides(packs, user["client_id"], "credit_pack", "price")
     # Compute value_each AFTER override so it reflects what the client actually pays
     for p in packs:
-        p["value_each"] = round(float(p.get("price") or 0) / max(int(p.get("qty") or 1), 1), 2)
+        qty = int(p.get("qty") or 1)
+        price = float(p.get("price") or 0)
+        p["value_each"] = round(price / max(qty, 1), 2)
+        p.update(_credit_pack_display_fields(p, qty, price))
     return packs
 
 

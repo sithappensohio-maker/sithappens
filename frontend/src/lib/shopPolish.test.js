@@ -5,6 +5,8 @@ import {
   OTHER_CATEGORY_ID,
   sectionMetaFor, visibleSectionsInOrder, categoryCoverImageId, shouldHideEmptyCategory,
   orderCategoryGroupsFeaturedFirst, filterFeaturedItems, guestItemCta,
+  creditPackCardLine, creditPackDetailLine, creditPackStaffLine,
+  creditPackAdminSummaryLines, creditPackEditorPreview,
 } from "./shopPolish";
 
 const categories = [
@@ -343,5 +345,88 @@ describe("guestItemCta", () => {
   test("eligible product with guest_cart_allowed and a visible price adds to cart", () => {
     expect(guestItemCta({ kind: "product", price: 10, account_required: false, guest_cart_allowed: true }))
       .toEqual({ type: "add_to_cart" });
+  });
+});
+
+// Credit-pack customer-facing quantity fix — the "Daycare 2 dogs 10 days"
+// pack from the bug report: $375, 15 internal daycare credits (a two-dog
+// day costs 1.5 credits), sold to customers as "10 days for 2 dogs".
+const daycare2DogPack = {
+  kind: "credit_pack", id: "pk-2dog", name: "Daycare 2 dogs 10 days",
+  service_type: "daycare", qty: 15, price: 375, effective_price: 375,
+  value_each: 25.00,
+  display_quantity: 10, display_unit: "day", display_dog_count: 2,
+  display_price_each: 37.50, credits_per_display_unit: 1.5,
+};
+
+// A pack with no display metadata at all — the fallback path every
+// pre-existing pack must keep using.
+const plainPack = {
+  kind: "credit_pack", id: "pk-plain", name: "10-Pack Daycare",
+  service_type: "daycare", qty: 15, price: 375, effective_price: 375,
+  value_each: 25.00,
+};
+
+describe("credit-pack customer-facing wording", () => {
+  test("card line matches the exact spec string when display metadata exists", () => {
+    expect(creditPackCardLine(daycare2DogPack)).toBe("10 daycare days for 2 dogs · $37.50 per day");
+  });
+
+  test("detail line matches the exact spec paragraph when display metadata exists", () => {
+    expect(creditPackDetailLine(daycare2DogPack)).toBe(
+      "Includes 10 daycare days for 2 dogs. This purchase adds 15 daycare credits to your account. Each two-dog daycare day uses 1.5 credits."
+    );
+  });
+
+  test("card and detail fall back to the accurate credit count when no display metadata exists", () => {
+    expect(creditPackCardLine(plainPack)).toBe("15 daycare credits · $25.00 per credit");
+    expect(creditPackDetailLine(plainPack)).toBe("15 daycare credits · $25.00 per credit");
+  });
+
+  test("never labels raw qty as visits or days for either pack", () => {
+    for (const line of [creditPackCardLine(daycare2DogPack), creditPackDetailLine(daycare2DogPack),
+      creditPackCardLine(plainPack), creditPackDetailLine(plainPack)]) {
+      expect(line).not.toMatch(/visit/i);
+    }
+    expect(creditPackCardLine(plainPack)).not.toMatch(/\bdays?\b/i);
+    expect(creditPackDetailLine(plainPack)).not.toMatch(/\bdays?\b/i);
+  });
+
+  test("staff/register line shows both values for clarity", () => {
+    expect(creditPackStaffLine(daycare2DogPack)).toBe("10 days for 2 dogs · grants 15 daycare credits");
+    expect(creditPackStaffLine(plainPack)).toBe("15 daycare credits");
+  });
+
+  test("admin summary lines show internal values always, customer package only when display metadata exists", () => {
+    expect(creditPackAdminSummaryLines(daycare2DogPack)).toEqual([
+      "Credits granted: 15",
+      "Internal per-credit value: $25.00",
+      "Customer package: 10 days for 2 dogs",
+      "Customer price per package day: $37.50",
+      "Credits per package day: 1.5",
+    ]);
+    expect(creditPackAdminSummaryLines(plainPack)).toEqual([
+      "Credits granted: 15",
+      "Internal per-credit value: $25.00",
+    ]);
+  });
+
+  test("a grandfathered client price recalculates the displayed per-day price, not the credits-per-day ratio", () => {
+    const grandfathered = { ...daycare2DogPack, effective_price: 300, display_price_each: 30.0 };
+    expect(creditPackCardLine(grandfathered)).toBe("10 daycare days for 2 dogs · $30.00 per day");
+    // credits_per_display_unit is qty/display_quantity — price-independent, still 1.5
+    expect(creditPackDetailLine(grandfathered)).toContain("uses 1.5 credits");
+  });
+
+  test("PackEditor live preview matches the exact spec string", () => {
+    const form = { qty: 15, price: 375, service_type: "daycare", display_quantity: 10, display_unit: "day", display_dog_count: 2 };
+    expect(creditPackEditorPreview(form)).toBe(
+      "Clients receive 10 daycare days for 2 dogs. The account receives 15 daycare credits. Each two-dog day uses 1.5 credits. $37.50 per two-dog day."
+    );
+  });
+
+  test("PackEditor live preview returns null until a positive display_quantity is entered", () => {
+    expect(creditPackEditorPreview({ qty: 15, price: 375, service_type: "daycare" })).toBeNull();
+    expect(creditPackEditorPreview({ qty: 15, price: 375, service_type: "daycare", display_quantity: 0 })).toBeNull();
   });
 });

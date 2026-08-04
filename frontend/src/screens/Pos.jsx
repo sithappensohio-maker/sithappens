@@ -35,6 +35,7 @@ import {
 import { useLiveRefresh } from "../lib/useLiveRefresh";
 import { useConfirm } from "../lib/useConfirm";
 import { classifyVisit, visitStatusLabel, visitCounts, filterVisits, sortVisits, isMissedCheckout } from "../lib/frontDeskVisits";
+import { creditPackStaffLine } from "../lib/shopPolish";
 
 const TENDER_LABELS = { cash: "Cash", check: "Check", venmo: "Venmo", paypal: "PayPal", other: "Other" };
 const money = (n) => `$${Number(n || 0).toFixed(2)}`;
@@ -1342,7 +1343,7 @@ export default function Pos({ onOpenShopManager } = {}) {
                     )}
                     {item.kind === "credit_pack" && (
                       <p className="text-shTextMuted text-[11px] font-black uppercase tracking-widest mt-0.5">
-                        {item.qty} {item.service_type || "visit"} credits
+                        {creditPackStaffLine(item)}
                       </p>
                     )}
                     {item.kind === "training_program" && (

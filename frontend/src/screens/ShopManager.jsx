@@ -61,6 +61,9 @@ const BLANK_PACK_FORM = {
   available_online: false, online_description: "", image_id: null,
   category_id: null, subcategory_id: null, show_at_register: true, featured: false,
   publicly_visible: false, show_public_price: true, requires_completed_onboarding: false,
+  // Customer-facing quantity fix — presentation-only marketing metadata,
+  // see CreditPacksSettings.jsx's matching `empty` object for the rationale.
+  display_quantity: null, display_unit: null, display_dog_count: null,
 };
 
 const blankProgramForm = (type = "private_lessons") => ({

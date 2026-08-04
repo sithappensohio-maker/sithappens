@@ -268,6 +268,146 @@ export function guestItemCta(item) {
   return { type: "sign_in" };
 }
 
+// Credit-pack customer-facing wording — the ONE shared source for how a
+// pack's display_quantity/display_unit/display_dog_count metadata (or its
+// absence) gets turned into words, used by PortalShop.jsx, ShopItemDetail.jsx,
+// staff/register screens, and the ShopManager/CreditPacksSettings PackEditor
+// preview alike. `qty` (the internal credit count actually granted) is never
+// relabeled "visits"/"days" unless display metadata explicitly says so — see
+// backend/server.py's CreditPackIn.display_quantity docstring for the
+// accounting invariant this wording must never violate.
+const CREDIT_PACK_NUMBER_WORDS = { 1: "one", 2: "two", 3: "three", 4: "four", 5: "five", 6: "six", 7: "seven", 8: "eight", 9: "nine" };
+const numberWord = (n) => CREDIT_PACK_NUMBER_WORDS[n] || String(n);
+const pluralizeUnit = (unit, n) => (n === 1 ? unit : `${unit}s`);
+const pluralizeCredits = (n) => (n === 1 ? "credit" : "credits");
+const money = (n) => `$${Number(n || 0).toFixed(2)}`;
+// Trims a trailing ".0"/".50" -> "5"/"1.5" so a whole-number quantity or
+// credits-per-unit ratio never renders as "10.0" or "1.50".
+const trimNum = (n) => (Number.isInteger(n) ? String(n) : String(Number(n.toFixed(2))));
+
+// Normalizes a catalog/register/public item into the shape every wording
+// function below reads. hasDisplay is false whenever display_quantity is
+// absent or non-positive — the only signal that decides "days for N dogs"
+// vs. the honest "N credits" fallback.
+export function creditPackDisplayInfo(item) {
+  const qty = Number(item.qty || 0);
+  const serviceType = item.service_type || "";
+  const displayQuantity = item.display_quantity;
+  if (displayQuantity == null || Number(displayQuantity) <= 0) {
+    return { hasDisplay: false, qty, serviceType, valueEach: item.value_each };
+  }
+  return {
+    hasDisplay: true,
+    qty,
+    serviceType,
+    quantity: Number(displayQuantity),
+    unit: item.display_unit || "unit",
+    dogCount: item.display_dog_count != null ? Number(item.display_dog_count) : null,
+    pricePerUnit: item.display_price_each != null ? Number(item.display_price_each) : null,
+    creditsPerUnit: item.credits_per_display_unit != null ? Number(item.credits_per_display_unit) : null,
+  };
+}
+
+// Client Shop card/grid line, e.g. "10 daycare days for 2 dogs · $37.50 per
+// day", falling back to the accurate "15 daycare credits · $25.00 per
+// credit" when no display metadata exists.
+export function creditPackCardLine(item) {
+  const info = creditPackDisplayInfo(item);
+  if (!info.hasDisplay) {
+    const base = `${info.qty} ${info.serviceType} ${pluralizeCredits(info.qty)}`.trim();
+    return info.valueEach != null ? `${base} · ${money(info.valueEach)} per credit` : base;
+  }
+  const unitLabel = pluralizeUnit(info.unit, info.quantity);
+  const dogPart = info.dogCount != null ? ` for ${info.dogCount} dog${info.dogCount === 1 ? "" : "s"}` : "";
+  const pricePart = info.pricePerUnit != null ? ` · ${money(info.pricePerUnit)} per ${info.unit}` : "";
+  return `${trimNum(info.quantity)} ${info.serviceType} ${unitLabel}${dogPart}${pricePart}`.trim();
+}
+
+// Item-detail page paragraph — explicit about BOTH the customer-facing
+// package AND the internal credit balance it adds, e.g. "Includes 10
+// daycare days for 2 dogs. This purchase adds 15 daycare credits to your
+// account. Each two-dog daycare day uses 1.5 credits." Falls back to the
+// same honest "N credits" line as the card when no display metadata exists.
+export function creditPackDetailLine(item) {
+  const info = creditPackDisplayInfo(item);
+  if (!info.hasDisplay) {
+    const base = `${info.qty} ${info.serviceType} ${pluralizeCredits(info.qty)}`.trim();
+    return info.valueEach != null ? `${base} · ${money(info.valueEach)} per credit` : base;
+  }
+  const unitLabel = pluralizeUnit(info.unit, info.quantity);
+  const dogPart = info.dogCount != null ? ` for ${info.dogCount} dog${info.dogCount === 1 ? "" : "s"}` : "";
+  const sentences = [
+    `Includes ${trimNum(info.quantity)} ${info.serviceType} ${unitLabel}${dogPart}.`,
+    `This purchase adds ${info.qty} ${info.serviceType} ${pluralizeCredits(info.qty)} to your account.`,
+  ];
+  if (info.creditsPerUnit != null) {
+    const dogPrefix = info.dogCount != null ? `${numberWord(info.dogCount)}-dog ` : "";
+    sentences.push(`Each ${dogPrefix}${info.serviceType} ${info.unit} uses ${trimNum(info.creditsPerUnit)} credits.`);
+  }
+  return sentences.join(" ");
+}
+
+// Staff/register-facing line — shows both values for clarity, e.g. "10 days
+// for 2 dogs · grants 15 daycare credits". Falls back to the plain credit
+// count when no display metadata exists (same fallback wording as receipts).
+export function creditPackStaffLine(item) {
+  const info = creditPackDisplayInfo(item);
+  if (!info.hasDisplay) {
+    return `${info.qty} ${info.serviceType} ${pluralizeCredits(info.qty)}`.trim();
+  }
+  const unitLabel = pluralizeUnit(info.unit, info.quantity);
+  const dogPart = info.dogCount != null ? ` for ${info.dogCount} dog${info.dogCount === 1 ? "" : "s"}` : "";
+  return `${trimNum(info.quantity)} ${unitLabel}${dogPart} · grants ${info.qty} ${info.serviceType} ${pluralizeCredits(info.qty)}`;
+}
+
+// Admin/internal editor summary lines — always shows the raw credit values;
+// when display metadata exists, ALSO shows the customer package breakdown
+// (package day count/price/credits-per-day) right alongside it, never in
+// place of it.
+export function creditPackAdminSummaryLines(item) {
+  const info = creditPackDisplayInfo(item);
+  const lines = [`Credits granted: ${info.qty}`];
+  if (item.value_each != null) lines.push(`Internal per-credit value: ${money(item.value_each)}`);
+  if (info.hasDisplay) {
+    const unitLabel = pluralizeUnit(info.unit, info.quantity);
+    const dogPart = info.dogCount != null ? ` for ${info.dogCount} dog${info.dogCount === 1 ? "" : "s"}` : "";
+    lines.push(`Customer package: ${trimNum(info.quantity)} ${unitLabel}${dogPart}`);
+    if (info.pricePerUnit != null) lines.push(`Customer price per package ${info.unit}: ${money(info.pricePerUnit)}`);
+    if (info.creditsPerUnit != null) lines.push(`Credits per package ${info.unit}: ${trimNum(info.creditsPerUnit)}`);
+  }
+  return lines;
+}
+
+// PackEditor live preview — computed client-side from the form's raw values
+// (qty/price/service_type/display_*) since nothing has been saved yet, so
+// there's no server-resolved effective_price to read. Always uses the
+// pack's own standard `price` (never a client override — the editor has no
+// client context), matching e.g. "Clients receive 10 daycare days for 2
+// dogs. The account receives 15 daycare credits. Each two-dog day uses 1.5
+// credits. $37.50 per two-dog day." Returns null until a positive
+// display_quantity is entered.
+export function creditPackEditorPreview(form) {
+  const qty = Number(form.qty || 0);
+  const price = Number(form.price || 0);
+  const serviceType = form.service_type || "";
+  const displayQuantity = form.display_quantity;
+  if (displayQuantity == null || Number(displayQuantity) <= 0) return null;
+  const dq = Number(displayQuantity);
+  const unit = form.display_unit || "unit";
+  const dogCount = form.display_dog_count != null && form.display_dog_count !== "" ? Number(form.display_dog_count) : null;
+  const pricePerUnit = price / dq;
+  const creditsPerUnit = qty / dq;
+  const unitLabel = pluralizeUnit(unit, dq);
+  const dogPart = dogCount != null ? ` for ${dogCount} dog${dogCount === 1 ? "" : "s"}` : "";
+  const dogPrefix = dogCount != null ? `${numberWord(dogCount)}-dog ` : "";
+  return (
+    `Clients receive ${trimNum(dq)} ${serviceType} ${unitLabel}${dogPart}. `
+    + `The account receives ${qty} ${serviceType} ${pluralizeCredits(qty)}. `
+    + `Each ${dogPrefix}${unit} uses ${trimNum(creditsPerUnit)} credits. `
+    + `${money(pricePerUnit)} per ${dogPrefix}${unit}.`
+  );
+}
+
 // My Orders — exact customer-facing status label mapping. Reads only the
 // safe fields GET /portal/shop-orders already returns (status,
 // fulfillment_status, pickup_status, lines[].kind) — never anything that

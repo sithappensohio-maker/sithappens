@@ -5,6 +5,7 @@ import IconPicker from "./IconPicker";
 import ColorSwatchRow from "./ColorSwatchRow";
 import ShopImageUpload from "./ShopImageUpload";
 import ShopCategoryFields from "./ShopCategoryFields";
+import { creditPackEditorPreview, creditPackAdminSummaryLines } from "../lib/shopPolish";
 
 /**
  * Admin-managed catalog of credit packs (bulk daycare day discounts).
@@ -18,6 +19,10 @@ const empty = {
   // (kind-based hard rule, never a stored flag) — these only affect
   // BROWSING, never whether a guest can complete a purchase.
   publicly_visible: false, show_public_price: true, requires_completed_onboarding: false,
+  // Customer-facing quantity fix — presentation-only marketing metadata.
+  // `qty` above stays the sole authoritative credit count; these never
+  // affect granting, redemption, FIFO lots, balances, voids, or refunds.
+  display_quantity: null, display_unit: null, display_dog_count: null,
 };
 
 const DEFAULT_ICON_BY_POOL = { daycare: "fa-sun", training: "fa-graduation-cap", boarding: "fa-moon" };
@@ -143,6 +148,53 @@ export function PackEditor({ form, setForm, editing, originalImageId, emailTempl
             </div>
           </div>
         )}
+      </div>
+
+      {/* Customer-facing quantity fix — presentation-only marketing metadata.
+          `qty`/Credits per pack (above) stays the sole authoritative credit
+          count granted to the client's account; these fields only change
+          how the pack is DESCRIBED to customers (e.g. "10 days for 2 dogs"
+          instead of the misleading raw credit count). */}
+      <div className="mt-4 border-t border-shBorder pt-4">
+        <p className="text-[13px] font-black text-shTextMuted uppercase tracking-widest mb-2">Customer-Facing Package</p>
+        <p className="text-[13px] text-shTextMuted mb-3">
+          Optional. Describes what the customer receives (e.g. "10 daycare days for 2 dogs") separately from the {form.qty} credits actually granted to their account. Leave blank to show the raw credit count instead.
+        </p>
+        <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
+          <div>
+            <label className="text-[14px] font-black text-shTextMuted uppercase tracking-widest">Advertised quantity</label>
+            <input type="number" min="0" step="1" value={form.display_quantity ?? ""}
+                   onChange={(e)=>setForm({...form, display_quantity: e.target.value === "" ? null : parseFloat(e.target.value)})}
+                   data-testid="pack-display-quantity"
+                   className="w-full mt-1 bg-[var(--sh-card-base)] border border-shBorder rounded p-2 text-shText text-sm" />
+          </div>
+          <div>
+            <label className="text-[14px] font-black text-shTextMuted uppercase tracking-widest">Advertised unit</label>
+            <select value={form.display_unit ?? ""}
+                    onChange={(e)=>setForm({...form, display_unit: e.target.value || null})}
+                    data-testid="pack-display-unit"
+                    className="w-full mt-1 bg-[var(--sh-card-base)] border border-shBorder rounded p-2 text-shText text-sm">
+              <option value="">— None (show credits) —</option>
+              <option value="day">Day</option>
+              <option value="visit">Visit</option>
+              <option value="night">Night</option>
+              <option value="session">Session</option>
+            </select>
+          </div>
+          <div>
+            <label className="text-[14px] font-black text-shTextMuted uppercase tracking-widest">Number of dogs covered</label>
+            <input type="number" min="1" step="1" value={form.display_dog_count ?? ""}
+                   onChange={(e)=>setForm({...form, display_dog_count: e.target.value === "" ? null : parseInt(e.target.value)})}
+                   data-testid="pack-display-dog-count"
+                   className="w-full mt-1 bg-[var(--sh-card-base)] border border-shBorder rounded p-2 text-shText text-sm" />
+          </div>
+        </div>
+        {(() => {
+          const preview = creditPackEditorPreview(form);
+          return preview ? (
+            <p className="text-[13px] text-shTextMuted mt-3 leading-relaxed" data-testid="pack-display-preview">{preview}</p>
+          ) : null;
+        })()}
       </div>
 
       {/* Public no-account storefront — credit packs always require signing
@@ -342,6 +394,11 @@ export default function CreditPacksSettings() {
                 <p className="text-[11px] text-shTextMuted uppercase tracking-widest mt-0.5 truncate">
                   {shopCategoryLabel(p) || "Uncategorized"}
                 </p>
+                {p.display_quantity != null && (
+                  <p className="text-[11px] text-shSecondary uppercase tracking-widest mt-0.5 truncate" data-testid={`pack-admin-summary-${p.id}`}>
+                    {creditPackAdminSummaryLines(p).slice(2).join(" · ")}
+                  </p>
+                )}
               </div>
             </div>
             <div className="col-span-2 text-center">
