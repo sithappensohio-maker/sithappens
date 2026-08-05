@@ -1549,7 +1549,7 @@ async def list_clients(_: dict = Depends(require_admin_and_permission("clients_v
     return items
 
 @api.post("/clients", response_model=ClientOut)
-async def create_client(body: ClientIn, _: dict = Depends(require_admin_and_permission("clients_edit"))):
+async def create_client(body: ClientIn, user: dict = Depends(require_admin_and_permission("clients_edit"))):
     doc = body.model_dump()
     doc.update({"id": str(uuid.uuid4()), "waiver": False, "created_at": now_iso()})
     # Normalise referred_by_code: uppercase + strip, drop if invalid (no matching referrer)
@@ -1566,6 +1566,13 @@ async def create_client(body: ClientIn, _: dict = Depends(require_admin_and_perm
         if (settings_x.get("evaluation") or {}).get("require_evaluation_first"):
             doc["client_status"] = "prospect"
     await db.clients.insert_one(doc)
+    # Mint a backing lot for any credit balance entered right at creation
+    # (e.g. a new client's carried-over days) — see _mint_manual_credit_lot's
+    # docstring. A brand-new client's "old" value is implicitly 0.
+    for pool_field, service_type in CREDIT_POOL_FIELD_TO_SERVICE_TYPE.items():
+        qty = round(float(doc.get(pool_field) or 0), 2)
+        if qty > 0.0001:
+            await _mint_manual_credit_lot(doc["id"], service_type, qty, user.get("name") or user.get("display_name"))
     doc.pop("_id", None)
     doc["portal_email"] = None
     return doc
@@ -1603,11 +1610,20 @@ async def set_client_status(client_id: str, body: ClientStatusIn, user: dict = D
     return existing
 
 @api.put("/clients/{client_id}", response_model=ClientOut)
-async def update_client(client_id: str, body: ClientIn, _: dict = Depends(require_admin_and_permission("clients_edit"))):
+async def update_client(client_id: str, body: ClientIn, user: dict = Depends(require_admin_and_permission("clients_edit"))):
     existing = await db.clients.find_one({"id": client_id}, {"_id": 0})
     if not existing:
         raise HTTPException(status_code=404, detail="Client not found")
     update = body.model_dump()
+    # Whenever this edit RAISES a credit pool above its current stored
+    # value, mint a real backing lot for the increase — see
+    # _mint_manual_credit_lot's docstring. Decreases are left as before;
+    # shrinking existing lots to match a lowered number is a separate, more
+    # delicate operation not attempted here.
+    for pool_field, service_type in CREDIT_POOL_FIELD_TO_SERVICE_TYPE.items():
+        delta = round(float(update.get(pool_field) or 0) - float(existing.get(pool_field) or 0), 2)
+        if delta > 0.0001:
+            await _mint_manual_credit_lot(client_id, service_type, delta, user.get("name") or user.get("display_name"))
     await db.clients.update_one({"id": client_id}, {"$set": update})
     existing.update(update)
     u = await db.users.find_one({"client_id": client_id}, {"_id": 0, "email": 1})
@@ -4738,6 +4754,47 @@ def _credit_balance_field(service_type: str) -> Optional[str]:
         "training": "training_credits",
         "boarding": "boarding_credits",
     }.get(service_type)
+
+
+CREDIT_POOL_FIELD_TO_SERVICE_TYPE = {"credits": "daycare", "training_credits": "training", "boarding_credits": "boarding"}
+
+
+async def _mint_manual_credit_lot(client_id: str, service_type: str, qty: float, created_by_name: str) -> None:
+    """Real bug fix — redemption is entirely FIFO-lot-based (see
+    _consume_credit_lots below): a client can show a nonzero credits/
+    training_credits/boarding_credits balance with no backing credit_lots
+    document at all, if that balance was ever set directly on the client
+    record (e.g. manually granting a client days bought before any matching
+    pack existed as a catalog item, or entering a new client's carried-over
+    balance at signup). With no lot to draw from, checkout's "pay with
+    credits" silently finds nothing to consume and falls back to a full
+    cash charge — no error, no warning, credits never move.
+
+    Called whenever a client-record write RAISES one of these pools above
+    its previous stored value (see create_client/update_client) — mints a
+    real $0 lot for exactly the increase, so the number shown always stays
+    genuinely redeemable, exactly like a purchased pack. price_paid/
+    value_each are $0 since no real sale backs this adjustment — that's
+    accounting-correct: nothing should be (or already has been) recognized
+    as revenue for a balance that was set by hand, not sold."""
+    await db.credit_lots.insert_one({
+        "id": str(uuid.uuid4()),
+        "client_id": client_id,
+        "pack_id": None,
+        "pack_name": "Manual balance adjustment",
+        "service_type": service_type,
+        "qty_total": qty,
+        "qty_remaining": qty,
+        "price_paid": 0.0,
+        "list_price": 0.0,
+        "price_override_id": None,
+        "value_each": 0.0,
+        "payment_method": None,
+        "note": "Auto-created so a manually-set credit balance is redeemable at checkout.",
+        "sold_by": created_by_name or "Admin",
+        "purchased_at": now_iso(),
+        "recognize_at_sale": True,
+    })
 
 
 
@@ -8118,7 +8175,25 @@ async def _rollback_checkout_finances(
     snapshot: Dict[str, Any],
     operation_id: str,
 ) -> None:
-    """Best-effort compensating rollback for a failed checkout operation."""
+    """Best-effort compensating rollback for a failed checkout operation.
+
+    Diagnostic fix — this used to only log when a rollback STEP ITSELF
+    failed (see the logger.critical calls below), never when the rollback
+    merely ran. Combined with the global exception handler explicitly
+    skipping HTTPException from its own logging (see
+    _unhandled_exception_handler), a rollback triggered by an HTTPException
+    raised anywhere after the real checkout work had already committed
+    (e.g. after _consume_credit_lots decremented a lot) could silently undo
+    that completed work with ZERO trace in the logs — exactly what real
+    production data showed happened to at least one client's credit lots.
+    This unconditional warning, logged every time this function is called
+    regardless of what triggered it or whether the rollback itself
+    succeeds, closes that blind spot."""
+    logger.warning(
+        "Checkout rollback triggered for booking %s (operation_id=%s, client_id=%s) — "
+        "restoring booking/client balance/credit lots to their pre-checkout snapshot.",
+        booking_id, operation_id, original_booking.get("client_id"), exc_info=True,
+    )
     try:
         await db.bookings.replace_one({"id": booking_id}, original_booking, upsert=False)
     except Exception as exc:
@@ -8202,6 +8277,77 @@ async def _active_household_checkout_rows(anchor: Dict[str, Any]) -> List[Dict[s
     return items
 
 
+async def _refresh_booking_price_for_current_override(booking: Dict[str, Any]) -> Dict[str, Any]:
+    """Real bug fix — a booking's estimated_price/unit_price/pricing_snapshot
+    are captured ONCE, at creation time. Checkout deliberately trusts that
+    snapshot afterward (see _check_out_locked's comments) so a later GENERAL
+    price increase on the catalog never silently overcharges a booking made
+    under an older, lower rate — that protection is correct and untouched
+    here.
+
+    But that same snapshot-trust was also swallowing the opposite, much more
+    common case: a client-specific price override added or changed AFTER a
+    one-off/walk-in booking already existed (the normal order of operations
+    for an ad-hoc visit) never applied at checkout — the client kept getting
+    billed whatever price existed at booking time, base price included, even
+    though staff had since set up their correct rate. Confirmed by direct
+    reproduction: booking created at $30 (no override yet) → $25 client
+    override added → checkout still showed $30.
+
+    Fix, scoped narrowly to avoid touching the general-price-increase
+    protection: only refreshes when the client's CURRENTLY active
+    service-price override differs from whatever the snapshot captured
+    (added, changed, or replaced) — never when there's simply no override
+    either then or now (that's the plain catalog rate, left alone), and
+    never a currently-REVOKED override retroactively raising the price back
+    up. Returns a new dict; never mutates the caller's or persists anything
+    itself — call sites decide whether/how to persist the refreshed values."""
+    if booking.get("actual_price"):
+        return booking  # already charged — never touch a completed checkout's numbers
+    client_id = booking.get("client_id")
+    ps = booking.get("pricing_snapshot") or {}
+    service_id = ps.get("service_id") or booking.get("service_id")
+    if not client_id or not service_id:
+        return booking
+    svc = await db.services.find_one({"id": service_id}, {"_id": 0, "base_price": 1})
+    if not svc:
+        return booking
+    pricing = await resolve_client_price(client_id, "service", service_id, float(svc.get("base_price") or 0))
+    current_override_id = pricing.get("override_id")
+    if not current_override_id:
+        return booking  # no override active right now — never touches a plain-catalog-priced booking, and never retroactively raises the price back up after a revocation
+    old_unit = float(ps.get("unit_price") or booking.get("unit_price") or 0)
+    new_unit = round(float(pricing.get("effective_price") or 0), 2)
+    if old_unit <= 0 or new_unit == old_unit:
+        # Covers BOTH "already reflects the current override" (same id, same
+        # price) AND "the override row was edited but happens to land on the
+        # same amount" — either way there's nothing to refresh. Comparing
+        # the resolved PRICE (not the override id) is what correctly
+        # catches an existing override being edited to a new amount after
+        # the booking was made, not just a brand-new override appearing.
+        return booking
+    addons = _booking_addon_total_from(booking)
+    old_base = max(0.0, round(float(booking.get("estimated_price") or 0) - addons, 2))
+    units = old_base / old_unit
+    new_base = round(new_unit * units, 2)
+    refreshed = dict(booking)
+    refreshed["unit_price"] = new_unit
+    refreshed["estimated_price"] = round(new_base + addons, 2)
+    refreshed["price_override_id"] = current_override_id
+    refreshed["preferred_rate_applied"] = True
+    refreshed["price_source"] = pricing.get("pricing_source")
+    refreshed["price_label"] = "Preferred client rate"
+    refreshed["pricing_snapshot"] = {
+        **ps,
+        "unit_price": new_unit,
+        "price_override_id": current_override_id,
+        "preferred_rate_applied": True,
+        "price_source": pricing.get("pricing_source"),
+        "price_refreshed_at": now_iso(),
+    }
+    return refreshed
+
+
 @api.get("/bookings/{booking_id}/checkout-group-preview")
 async def checkout_group_preview(
     booking_id: str,
@@ -8224,6 +8370,7 @@ async def checkout_group_preview(
         "checked_out_at": {"$exists": True, "$ne": None},
     })
     for idx, row in enumerate(rows):
+        row = await _refresh_booking_price_for_current_override(row)
         addons = _booking_addon_total_from(row)
         total = float(row.get("estimated_price") or row.get("actual_price") or 0)
         if total <= 0 and row.get("service_type") in ("daycare", "boarding"):
@@ -8724,10 +8871,25 @@ async def _check_out_locked(
     booking = await db.bookings.find_one({"id": booking_id}, {"_id": 0})
     if not booking:
         raise HTTPException(status_code=404, detail="Booking not found")
+    # Client-specific pricing fix — see _refresh_booking_price_for_current_override's
+    # docstring. Refreshes the in-memory booking so every downstream read of
+    # estimated_price/unit_price/pricing_snapshot below already reflects the
+    # client's CURRENT override, not a stale snapshot from whenever this
+    # booking happened to be created. The refreshed fields are also folded
+    # into `update` below so the stored record (and its receipt/history)
+    # reflects the same corrected numbers, not just the amount charged.
+    _pre_refresh_booking = booking
+    booking = await _refresh_booking_price_for_current_override(booking)
+    price_refresh_fields = (
+        {k: booking[k] for k in ("unit_price", "estimated_price", "price_override_id",
+                                  "preferred_rate_applied", "price_source", "price_label", "pricing_snapshot")}
+        if booking is not _pre_refresh_booking else {}
+    )
     body = body or CheckoutIn()
     ts = now_iso()
     settings = await get_settings()  # Sprint 110dk — stay-pricing rules
     update: Dict[str, Any] = {
+        **price_refresh_fields,
         "checked_out_at": ts,
         "status": "completed",
         "checked_out_by": user["id"],
