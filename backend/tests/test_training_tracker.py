@@ -3,14 +3,23 @@
 Acceptance criteria (from user spec):
 1. Dog with no active program checks in normally (no tracker).
 2. Dog with active program returns has_program=True from /bookings/{id}/training-context.
-3. Marking a goal mastered via the training-session endpoint updates the
-   existing goal_progress (NOT a duplicate progress store).
+3. Marking a goal mastered via a training session updates the existing
+   goal_progress (NOT a duplicate progress store).
 4. Completing all goals in current module → all_current_goals_mastered=True.
 5. advance_to_next_module=True moves current_module_id forward.
 6. Advancing updates current_week everywhere — /training-context and the
    regular enrollment listing both reflect the new pointer.
 7. Existing Dog Training tab still sees the same progress (no duplicate doc).
 8. Audit row written to training_session_log with goal diffs + session note.
+
+Final correctness pass — this file used to write sessions via
+POST /api/dogs/{id}/programs/{id}/training-session, which has been retired:
+it was a second, independently-writing path into goal_progress/
+training_session_log that bypassed the training_session_drafts draft/
+completion state machine entirely. Every acceptance criterion above still
+holds; only the mechanism used to record a session changed, to the
+supported draft -> update -> complete pipeline (the same one the Training
+Session Workspace UI uses).
 """
 
 import os
@@ -57,6 +66,43 @@ def _cleanup(H, dog_id, eid, pid):
     except Exception:
         pass
     requests.delete(f"{BASE}/api/programs/{pid}", headers=H, timeout=15)
+
+
+def _run_session(H, dog_id, enr_id, goal_scores=None, session_note=None, advance_to_next_module=False, session_label=None):
+    """Runs one full session via the supported pipeline: start a direct
+    draft (no booking needed), record actuals for the given goal_id->score
+    map, complete it with the requested advancement action. Returns
+    (start_response, complete_response) — complete_response is the exact
+    shape POST .../complete returns (already_completed, session_log, draft,
+    enrollment, homework_created, homework_conflicts)."""
+    label = session_label or f"session-{os.urandom(4).hex()}"
+    started = requests.post(
+        f"{BASE}/api/dogs/{dog_id}/programs/{enr_id}/training-session/draft",
+        headers=H, params={"session_label": label}, timeout=15,
+    ).json()
+    draft_id = started["draft"]["id"]
+    activities = started["draft"]["plan"]["activities"]
+
+    if goal_scores or session_note is not None:
+        actuals = {}
+        for a in activities:
+            skill_id = a.get("skill_id")
+            if goal_scores and skill_id in goal_scores:
+                actuals[a["id"]] = {"score": goal_scores[skill_id]}
+        update_body = {}
+        if actuals:
+            update_body["actuals"] = actuals
+        if session_note is not None:
+            update_body["session_note"] = session_note
+        if update_body:
+            r = requests.put(f"{BASE}/api/training-session-drafts/{draft_id}", headers=H, json=update_body, timeout=15)
+            r.raise_for_status()
+
+    complete_body = {"advancement_action": "advance_module" if advance_to_next_module else "remain"}
+    completed = requests.post(
+        f"{BASE}/api/training-session-drafts/{draft_id}/complete", headers=H, json=complete_body, timeout=15,
+    ).json()
+    return started, completed
 
 
 def test_dog_with_no_active_program_returns_has_program_false():
@@ -108,7 +154,7 @@ def test_active_enrollment_returns_full_training_context():
 
 
 def test_goal_mastered_updates_existing_goal_progress():
-    """AC3 — Goals marked via training-session endpoint flow through the same
+    """AC3 — Goals marked via a completed session flow through the same
     goal_progress that update_goal uses. NO duplicate store is created."""
     H = _admin()
     prog = _make_program(H, "AC3 mastered")
@@ -120,22 +166,17 @@ def test_goal_mastered_updates_existing_goal_progress():
             headers=H, timeout=15,
         ).json()
         sit_id = ctx["goals"][0]["id"]
-        # Mark Sit mastered via training-session
-        r = requests.post(
-            f"{BASE}/api/dogs/{dog['id']}/programs/{enr['id']}/training-session",
-            headers=H,
-            json={"goal_updates": [{"goal_id": sit_id, "score": 5}], "session_note": "Mastered indoors"},
-            timeout=15,
-        ).json()
+        _, completed = _run_session(H, dog["id"], enr["id"], goal_scores={sit_id: 5}, session_note="Mastered indoors")
+
         # Verify via the existing enrollment listing (the one Dog Training tab uses)
         listing = requests.get(f"{BASE}/api/dogs/{dog['id']}/programs", headers=H, timeout=15).json()
         e = next(e for e in listing if e["id"] == enr["id"])
         gp = (e.get("goal_progress") or {}).get(sit_id) or {}
         assert gp.get("status") == "mastered"
         assert gp.get("score") == 5
-        # And the training-session response also reflects it
-        sit_in_resp = next(g for g in r["goals"] if g["id"] == sit_id)
-        assert sit_in_resp["status"] == "mastered"
+        # And the completion response also reflects it in goal_updates
+        diff = next(d for d in completed["session_log"]["goal_updates"] if d["goal_id"] == sit_id)
+        assert diff["new_status"] == "mastered"
     finally:
         _cleanup(H, dog["id"], enr["id"], prog["id"])
 
@@ -151,33 +192,37 @@ def test_all_goals_mastered_flips_flag():
             f"{BASE}/api/dogs/{dog['id']}/programs/{enr['id']}/training-context",
             headers=H, timeout=15,
         ).json()
-        updates = [{"goal_id": g["id"], "score": 5} for g in ctx["goals"]]
-        r = requests.post(
-            f"{BASE}/api/dogs/{dog['id']}/programs/{enr['id']}/training-session",
-            headers=H, json={"goal_updates": updates},
-            timeout=15,
+        scores = {g["id"]: 5 for g in ctx["goals"]}
+        _run_session(H, dog["id"], enr["id"], goal_scores=scores)
+
+        after = requests.get(
+            f"{BASE}/api/dogs/{dog['id']}/programs/{enr['id']}/training-context",
+            headers=H, timeout=15,
         ).json()
-        assert r["all_current_goals_mastered"] is True
+        assert after["all_current_goals_mastered"] is True
     finally:
         _cleanup(H, dog["id"], enr["id"], prog["id"])
 
 
 def test_advance_to_next_module_bumps_pointer():
-    """AC5+6 — advance_to_next_module=True bumps current_module_id and current_week
-    everywhere (training-context and enrollment listing both reflect it)."""
+    """AC5+6 — advancement_action='advance_module' bumps current_module_id
+    and current_week everywhere (training-context and enrollment listing
+    both reflect it)."""
     H = _admin()
     prog = _make_program(H, "AC5 advance")
     dog = _pick_dog(H)
     enr = _enroll(H, dog["id"], prog["id"])
     try:
-        r = requests.post(
-            f"{BASE}/api/dogs/{dog['id']}/programs/{enr['id']}/training-session",
-            headers=H, json={"advance_to_next_module": True},
-            timeout=15,
+        _, completed = _run_session(H, dog["id"], enr["id"], advance_to_next_module=True)
+        assert completed["enrollment"]["current_module_id"] is not None
+        assert completed["session_log"]["advanced_module"] is not None
+
+        ctx = requests.get(
+            f"{BASE}/api/dogs/{dog['id']}/programs/{enr['id']}/training-context",
+            headers=H, timeout=15,
         ).json()
-        assert r["enrollment"]["current_week"] == 2
-        assert r["current_module"]["name"] == "Week 2"
-        assert r["last_log"]["advanced_module"] is not None
+        assert ctx["enrollment"]["current_week"] == 2
+        assert ctx["current_module"]["name"] == "Week 2"
         # Enrollment listing must also reflect the new week
         listing = requests.get(f"{BASE}/api/dogs/{dog['id']}/programs", headers=H, timeout=15).json()
         e = next(e for e in listing if e["id"] == enr["id"])
@@ -187,7 +232,7 @@ def test_advance_to_next_module_bumps_pointer():
 
 
 def test_session_log_records_audit_row():
-    """AC8 — A training session writes one audit row with diffs + session_note."""
+    """AC8 — A completed session writes one audit row with diffs + session_note."""
     H = _admin()
     prog = _make_program(H, "AC8 audit")
     dog = _pick_dog(H)
@@ -198,39 +243,55 @@ def test_session_log_records_audit_row():
             headers=H, timeout=15,
         ).json()
         sit_id = ctx["goals"][0]["id"]
-        requests.post(
-            f"{BASE}/api/dogs/{dog['id']}/programs/{enr['id']}/training-session",
-            headers=H,
-            json={"goal_updates": [{"goal_id": sit_id, "score": 4}],
-                  "session_note": "First mastery", "booking_id": "qa-booking-123"},
-            timeout=15,
-        )
+        _run_session(H, dog["id"], enr["id"], goal_scores={sit_id: 4}, session_note="First mastery")
+
         log = requests.get(
             f"{BASE}/api/dogs/{dog['id']}/programs/{enr['id']}/session-log",
             headers=H, timeout=15,
         ).json()
         assert len(log) == 1
         assert log[0]["session_note"] == "First mastery"
-        assert log[0]["booking_id"] == "qa-booking-123"
         assert any(d["goal_id"] == sit_id and d["new_status"] == "mastered"
                    for d in log[0]["goal_updates"])
     finally:
         _cleanup(H, dog["id"], enr["id"], prog["id"])
 
 
-def test_alien_goal_id_is_rejected():
-    """Goal updates must belong to this enrollment's snapshotted plan."""
+def test_completion_rejects_activity_not_in_this_enrollment():
+    """The supported pipeline's equivalent of 'alien goal id is rejected':
+    the draft's own plan is built strictly from THIS enrollment's snapshot
+    (see start_training_session_draft_direct), so there is no way to submit
+    an actual for a skill outside it — proven here by confirming every
+    activity in a freshly-started draft resolves to a real goal id on the
+    enrollment, and that updating the draft with a bogus activity id is
+    simply ignored (never partially applied) rather than accepted."""
     H = _admin()
     prog = _make_program(H, "AC reject")
     dog = _pick_dog(H)
     enr = _enroll(H, dog["id"], prog["id"])
     try:
-        r = requests.post(
-            f"{BASE}/api/dogs/{dog['id']}/programs/{enr['id']}/training-session",
-            headers=H,
-            json={"goal_updates": [{"goal_id": "definitely-bogus", "score": 5}]},
-            timeout=15,
+        started = requests.post(
+            f"{BASE}/api/dogs/{dog['id']}/programs/{enr['id']}/training-session/draft",
+            headers=H, timeout=15,
+        ).json()
+        draft_id = started["draft"]["id"]
+        valid_goal_ids = {g["id"] for g in requests.get(
+            f"{BASE}/api/dogs/{dog['id']}/programs/{enr['id']}/training-context", headers=H, timeout=15,
+        ).json()["goals"]}
+        for a in started["draft"]["plan"]["activities"]:
+            if a.get("skill_id"):
+                assert a["skill_id"] in valid_goal_ids
+
+        r = requests.put(
+            f"{BASE}/api/training-session-drafts/{draft_id}", headers=H,
+            json={"actuals": {"definitely-bogus-activity-id": {"score": 5}}}, timeout=15,
         )
-        assert r.status_code == 404
+        assert r.status_code == 200  # the update itself succeeds (actuals are keyed freely)
+        completed = requests.post(
+            f"{BASE}/api/training-session-drafts/{draft_id}/complete", headers=H, json={}, timeout=15,
+        ).json()
+        # A bogus activity id that doesn't match any real plan activity
+        # never produces a goal_update — nothing to apply it to.
+        assert completed["session_log"]["goal_updates"] == []
     finally:
         _cleanup(H, dog["id"], enr["id"], prog["id"])

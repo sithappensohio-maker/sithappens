@@ -1,0 +1,66 @@
+// Training UI Phase 5 — one visual card per today's training dog, replacing
+// the old dense table row in Pipeline.jsx. Every field comes from
+// /admin/training/today (see backend/server.py:admin_training_today) —
+// this component adds no data of its own. Exactly one primary action button
+// per card (resolvePrimaryAction, lib/trainerDashboardPolish.js) — never a
+// second competing button.
+import Avatar from "../Avatar";
+import StatusChip from "./StatusChip";
+import { resolvePrimaryAction } from "../../lib/trainerDashboardPolish";
+
+const STATUS_META = {
+  not_checked_in: { label: "Not Checked In", icon: "fa-clock", tone: "muted" },
+  plan_ready: { label: "Plan Ready", icon: "fa-list-check", tone: "primary" },
+  in_progress: { label: "In Progress", icon: "fa-person-running", tone: "accent" },
+  completed: { label: "Completed", icon: "fa-flag-checkered", tone: "primary" },
+  resolution_needed: { label: "Needs Attention", icon: "fa-triangle-exclamation", tone: "danger" },
+};
+
+export default function TrainingDogRow({ row: r, onPrimaryAction, testid }) {
+  const sm = STATUS_META[r.session_status] || STATUS_META.not_checked_in;
+  const action = resolvePrimaryAction(r);
+  const breadcrumb = r.session_status === "resolution_needed"
+    ? (r.resolution_reason || "").replace(/_/g, " ")
+    : [r.program_name, r.current_module_name, r.current_lesson_name].filter(Boolean).join(" · ");
+
+  return (
+    <div className="bg-black/20 border border-shBorder rounded-lg p-3 flex flex-col sm:flex-row sm:items-center gap-3" data-testid={testid}>
+      <div className="flex items-center gap-3 min-w-0 flex-1">
+        <Avatar src={r.dog_photo} icon="fa-paw" size="md" alt={r.dog_name}/>
+        <div className="min-w-0 flex-1">
+          <div className="flex items-center gap-2 flex-wrap">
+            <p className="text-[14px] font-black text-shText truncate">{r.dog_name}</p>
+            <span className="text-shTextMuted text-[13px]">·</span>
+            <p className="text-[13px] text-shTextMuted truncate">{r.client_name}</p>
+            <span className="text-[12px] text-shTextMuted font-black tabular-nums shrink-0">{r.time || "—"}</span>
+          </div>
+          <p className={`text-[12px] truncate ${r.session_status === "resolution_needed" ? "text-red-400" : "text-shTextMuted"}`}>
+            {breadcrumb || "—"}
+          </p>
+          {r.recommended_focus?.length > 0 && (
+            <p className="text-[12px] text-shSecondary mt-0.5 truncate">Focus: {r.recommended_focus.join(", ")}</p>
+          )}
+          <div className="flex items-center gap-3 text-[12px] text-shTextMuted mt-1 flex-wrap">
+            {r.homework_completion && (
+              <span data-testid={testid ? `${testid}-homework` : undefined}><i className="fas fa-graduation-cap mr-1"/>{r.homework_completion.days_completed}/{r.homework_completion.total_days}</span>
+            )}
+            {r.media_awaiting_review > 0 && (
+              <span className="text-shAccent" data-testid={testid ? `${testid}-media` : undefined}><i className="fas fa-video mr-1"/>{r.media_awaiting_review}</span>
+            )}
+            {r.client_question && (
+              <span className="text-shSecondary" title={r.client_question} data-testid={testid ? `${testid}-question` : undefined}><i className="fas fa-comment-dots mr-1"/>Question</span>
+            )}
+            {r.assigned_trainer && <span className="hidden md:inline">{r.assigned_trainer}</span>}
+          </div>
+        </div>
+      </div>
+      <div className="flex items-center gap-2 shrink-0 justify-between sm:justify-end">
+        <StatusChip icon={sm.icon} label={sm.label} tone={sm.tone} testid={testid ? `${testid}-status` : undefined}/>
+        <button onClick={() => onPrimaryAction(action, r)} data-testid={testid ? `${testid}-action` : undefined}
+                className="bg-shPrimary/15 text-shPrimary border border-shPrimary/40 px-3 py-1.5 rounded text-[12px] font-black uppercase tracking-widest hover:bg-shPrimary/25 whitespace-nowrap">
+          {action.label}
+        </button>
+      </div>
+    </div>
+  );
+}

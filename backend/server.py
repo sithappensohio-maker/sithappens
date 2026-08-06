@@ -12178,6 +12178,11 @@ async def list_homework(user: dict = Depends(get_current_user), dog_id: Optional
                 prog = _compute_daily_progress(it)
                 it["total_days"] = len(prog)
                 it["streak"] = _streak_count(prog)
+                # UI Phase 3 — expose the same per-day status list the single-
+                # homework detail endpoint already returns to this same client
+                # (used by DailyCheckInCard/TodayPlanCard), so a Today card can
+                # show today's actionable status without a second round trip.
+                it["daily_progress"] = prog
             except Exception:
                 pass
     return items
@@ -12600,9 +12605,17 @@ class DailyTrackerCreateIn(BaseModel):
 class DaySubmitIn(BaseModel):
     field_values: Dict[str, object] = {}
     note: Optional[str] = ""
-    mood: Optional[int] = None  # 1-5
+    mood: Optional[int] = None  # 1-5 — kept for backward-compat analytics (mood_avg)
     photo: Optional[str] = ""   # base64 data-url (small previews only)
     video_media_id: Optional[str] = ""   # id of an uploaded video in homework_media
+    # Training-school expansion (Phase 5) — a labeled difficulty scale
+    # alongside the generic 1-5 mood, and a structured "attempted but
+    # couldn't finish" signal distinct from a planned rest day (which
+    # auto-passes and preserves streak; this does neither — it's a real
+    # attempt that needs the trainer's attention).
+    difficulty: Optional[Literal["easy", "good", "okay", "hard", "very_hard"]] = None
+    could_not_complete: bool = False
+    could_not_complete_reason: Optional[str] = Field(default=None, max_length=300)
 
 
 class DayRestIn(BaseModel):
@@ -12896,6 +12909,12 @@ async def submit_day(
         field_values["__photo"] = body.photo  # base64 data-url; small previews ok
     if body.video_media_id:
         field_values["__video_id"] = body.video_media_id
+    if body.difficulty is not None:
+        field_values["__difficulty"] = body.difficulty
+    if body.could_not_complete:
+        field_values["__could_not_complete"] = True
+        if body.could_not_complete_reason:
+            field_values["__could_not_complete_reason"] = body.could_not_complete_reason.strip()
 
     section_id = f"day-{day_number}"
     new_log = {
@@ -14008,6 +14027,7 @@ async def list_pending_reviews(_: dict = Depends(require_admin)):
         for log in hw.get("section_logs") or []:
             if log.get("submission_status") != "submitted":
                 continue
+            fv = log.get("field_values") or {}
             items.append({
                 "homework_id": hw["id"],
                 "dog_id": hw.get("dog_id"),
@@ -14019,9 +14039,45 @@ async def list_pending_reviews(_: dict = Depends(require_admin)):
                 "total_days": int(hw.get("total_days") or 0),
                 "submitted_at": log.get("logged_at"),
                 "note": log.get("note"),
-                "has_photo": bool((log.get("field_values") or {}).get("__photo")),
+                "has_photo": bool(fv.get("__photo")),
+                # Phase 5 — surface the new signals so the review queue can
+                # visually flag a rough day, not just "something's pending."
+                "has_video": bool(fv.get("__video_id")),
+                "difficulty": fv.get("__difficulty"),
+                "could_not_complete": bool(fv.get("__could_not_complete")),
+                "could_not_complete_reason": fv.get("__could_not_complete_reason"),
             })
     items.sort(key=lambda x: x.get("submitted_at") or "")
+    return items
+
+
+@api.get("/admin/homework/stalled")
+async def list_stalled_homework(days: int = 14, _: dict = Depends(require_admin)):
+    """Training-school expansion (Phase 5) — trainer review queue signal:
+    active daily-tracker homework with no client activity in `days` days
+    (default 14). Distinct from /admin/homework/pending-reviews (which is
+    about NEW submissions awaiting review) — this is about homework that's
+    gone quiet and needs a trainer nudge or a next-session adjustment."""
+    cutoff = (datetime.now(timezone.utc) - timedelta(days=days)).isoformat()
+    items: List[dict] = []
+    # Gap-closing pass — this previously had no cap; a growing business could
+    # eventually make this scan an unbounded number of documents. 5000 is far
+    # beyond any realistic "currently active daily-tracker homework" count.
+    cursor = db.homework.find({"daily_tracker": True, "status": {"$ne": "completed"}}, {"_id": 0}).limit(5000)
+    async for hw in cursor:
+        logs = hw.get("section_logs") or []
+        last_activity = max((l.get("logged_at") or "" for l in logs), default=hw.get("created_at") or "")
+        if last_activity and last_activity >= cutoff:
+            continue
+        items.append({
+            "homework_id": hw["id"], "dog_id": hw.get("dog_id"), "dog_name": hw.get("dog_name"),
+            "client_id": hw.get("client_id"), "client_name": hw.get("client_name"), "title": hw.get("title"),
+            "days_completed": sum(1 for l in logs if l.get("submission_status") in ("submitted", "approved")),
+            "total_days": int(hw.get("total_days") or 0),
+            "last_activity_at": last_activity or None,
+            "assigned_at": hw.get("created_at"),
+        })
+    items.sort(key=lambda x: x.get("last_activity_at") or "")
     return items
 
 
@@ -14590,6 +14646,56 @@ class GoalIn(BaseModel):
     order: int = 0
     command_id: Optional[str] = None
     manual_only: bool = False  # if true, goal is a checkbox not a 0-5 score
+    # Training-school expansion (Phase 1) — a "goal" doubles as a "skill";
+    # every field below is optional so every existing goal keeps working
+    # unchanged. Not every skill needs every measurement — the UI only shows
+    # ones that are actually set.
+    training_objective: Optional[str] = None
+    starting_criteria: Optional[str] = None
+    target_duration: Optional[str] = None
+    target_distance: Optional[str] = None
+    target_repetitions: Optional[str] = None
+    target_distraction_level: Optional[str] = None
+    target_environment: Optional[str] = None
+    handler_assistance: Optional[str] = None
+    leash_requirement: Optional[str] = None  # e.g. "on_leash" | "off_leash" | "either"
+    pass_criteria: Optional[str] = None
+    reset_criteria: Optional[str] = None
+    prerequisite_skill_ids: List[str] = []
+    suggested_next_skill_id: Optional[str] = None
+    client_facing_explanation: Optional[str] = None
+    trainer_only_guidance: Optional[str] = None
+    homework_template_ids: List[str] = []
+
+
+class LessonIn(BaseModel):
+    """Training-school expansion (Phase 1) — an organizational/content layer
+    sitting between a Module and its Skills. A lesson does NOT own progress
+    or duplicate the goal list: `skill_ids` merely references ids already
+    present in the parent module's `goals` list, so goal_progress /
+    completion / homework-engine logic (all keyed on goal id) keeps working
+    completely untouched whether or not lessons are used."""
+    id: Optional[str] = None
+    name: str = Field(min_length=1)
+    order: int = 0
+    active: bool = True  # draft/active state — draft lessons are excluded from client-facing reads
+    client_overview: Optional[str] = None
+    trainer_purpose: Optional[str] = None
+    why_it_matters: Optional[str] = None
+    demo_resource_id: Optional[str] = None
+    demo_video_url: Optional[str] = None
+    equipment_needed: Optional[str] = None
+    estimated_minutes: Optional[int] = None
+    trainer_prep_notes: Optional[str] = None
+    trainer_instructions: Optional[str] = None
+    client_instructions: Optional[str] = None
+    common_mistakes: Optional[str] = None
+    troubleshooting: Optional[str] = None
+    safety_notes: Optional[str] = None
+    success_criteria: Optional[str] = None
+    advancement_criteria: Optional[str] = None
+    suggested_homework_template_ids: List[str] = []
+    skill_ids: List[str] = []  # ids into the parent module's `goals`
 
 
 class ModuleIn(BaseModel):
@@ -14598,6 +14704,11 @@ class ModuleIn(BaseModel):
     description: Optional[str] = ""
     order: int = 0
     goals: List[GoalIn] = []
+    # Training-school expansion (Phase 1) — optional Lesson layer. Empty by
+    # default so every existing module (legacy modules-as-weeks) keeps
+    # working with zero lessons; see _effective_lessons() for the
+    # read-time default-lesson fallback used by lesson-aware consumers.
+    lessons: List[LessonIn] = []
     # Sprint 110bx — homework auto-assigned when this module flips to "mastered"
     homework_template_id: Optional[str] = None
 
@@ -14651,29 +14762,204 @@ class ProgramIn(BaseModel):
     tax_exempt_reason: Optional[str] = Field(default=None, max_length=300)
 
 
+# Optional skill-measurement fields carried on a goal/skill — see GoalIn's
+# docstring; every one is copied through as-is (no defaulting/validation
+# beyond what Pydantic already did on the way in).
+_SKILL_OPTIONAL_FIELDS = (
+    "training_objective", "starting_criteria", "target_duration", "target_distance",
+    "target_repetitions", "target_distraction_level", "target_environment",
+    "handler_assistance", "leash_requirement", "pass_criteria", "reset_criteria",
+    "suggested_next_skill_id", "client_facing_explanation", "trainer_only_guidance",
+)
+_LESSON_OPTIONAL_FIELDS = (
+    "client_overview", "trainer_purpose", "why_it_matters", "demo_resource_id",
+    "demo_video_url", "equipment_needed", "estimated_minutes", "trainer_prep_notes",
+    "trainer_instructions", "client_instructions", "common_mistakes", "troubleshooting",
+    "safety_notes", "success_criteria", "advancement_criteria",
+)
+
+
 def _stamp_ids(modules: List[dict]) -> List[dict]:
     out = []
     for m_i, m in enumerate(modules):
         mid = m.get("id") or _gid()
         goals = []
         for g_i, g in enumerate(m.get("goals") or []):
-            goals.append({
+            goal = {
                 "id": g.get("id") or _gid(),
                 "name": g["name"],
                 "description": g.get("description", ""),
                 "order": g.get("order", g_i),
                 "command_id": g.get("command_id"),
                 "manual_only": bool(g.get("manual_only")),
-            })
+                "prerequisite_skill_ids": list(g.get("prerequisite_skill_ids") or []),
+                "homework_template_ids": list(g.get("homework_template_ids") or []),
+            }
+            for f in _SKILL_OPTIONAL_FIELDS:
+                goal[f] = g.get(f)
+            goals.append(goal)
+        goal_ids = {g["id"] for g in goals}
+
+        lessons = []
+        for l_i, l in enumerate(m.get("lessons") or []):
+            lesson = {
+                "id": l.get("id") or _gid(),
+                "name": l["name"],
+                "order": l.get("order", l_i),
+                "active": bool(l.get("active", True)),
+                "suggested_homework_template_ids": list(l.get("suggested_homework_template_ids") or []),
+                # Only keep references to skills that actually exist in this
+                # module — a stale/typo'd id must never silently point at
+                # nothing once stamped.
+                "skill_ids": [sid for sid in (l.get("skill_ids") or []) if sid in goal_ids],
+            }
+            for f in _LESSON_OPTIONAL_FIELDS:
+                lesson[f] = l.get(f)
+            lessons.append(lesson)
+
         out.append({
             "id": mid,
             "name": m["name"],
             "description": m.get("description", ""),
             "order": m.get("order", m_i),
             "goals": goals,
+            "lessons": lessons,
             "homework_template_id": m.get("homework_template_id"),
         })
     return out
+
+
+def _referenced_homework_template_ids(modules: List[dict]) -> set:
+    ids = set()
+    for m in modules:
+        if m.get("homework_template_id"):
+            ids.add(m["homework_template_id"])
+        for g in (m.get("goals") or []):
+            ids.update(g.get("homework_template_ids") or [])
+        for l in (m.get("lessons") or []):
+            ids.update(l.get("suggested_homework_template_ids") or [])
+    return ids
+
+
+async def _validate_program_structure(modules: List[dict]) -> Dict[str, Any]:
+    """Program Studio (Phase 2) — structural validation shared by the
+    /validate endpoint and /publish (which blocks on `errors`, never on
+    `warnings`). Deliberately conservative about what counts as a hard
+    error: only genuinely BROKEN references (pointing at something that no
+    longer exists) block publish — incomplete-but-not-broken content
+    (missing instructions, empty modules, order ties) is a warning only, so
+    real historical programs (which commonly have goals sharing the same
+    default order=0) never retroactively become unpublishable."""
+    errors: List[Dict[str, Any]] = []
+    warnings: List[Dict[str, Any]] = []
+
+    all_goal_ids = {g["id"] for m in modules for g in (m.get("goals") or []) if g.get("id")}
+    referenced_template_ids = _referenced_homework_template_ids(modules)
+    templates_by_id: Dict[str, dict] = {}
+    if referenced_template_ids:
+        async for t in db.homework_templates.find({"id": {"$in": list(referenced_template_ids)}}, {"_id": 0, "id": 1, "active": 1}):
+            templates_by_id[t["id"]] = t
+
+    def _check_homework_refs(ids: List[str], where: Dict[str, Any]):
+        for tid in ids:
+            if tid not in templates_by_id:
+                errors.append({"code": "broken_homework_ref", "message": "References a homework template that no longer exists.", **where})
+            elif not templates_by_id[tid].get("active", True):
+                warnings.append({"code": "inactive_homework_ref", "message": "References a homework template that is currently inactive.", **where})
+
+    for m_i, m in enumerate(modules):
+        mid = m.get("id") or f"module[{m_i}]"
+        goals = m.get("goals") or []
+        lessons = m.get("lessons") or []
+        where_m = {"module_id": mid}
+
+        if not goals:
+            warnings.append({"code": "empty_module", "message": f"Module '{m.get('name', '')}' has no skills.", **where_m})
+
+        goal_orders = [g.get("order") for g in goals]
+        if len(goal_orders) != len(set(goal_orders)):
+            warnings.append({"code": "duplicate_order", "message": f"Module '{m.get('name', '')}' has skills sharing the same order value.", **where_m})
+        lesson_orders = [l.get("order") for l in lessons]
+        if len(lesson_orders) != len(set(lesson_orders)):
+            warnings.append({"code": "duplicate_order", "message": f"Module '{m.get('name', '')}' has lessons sharing the same order value.", **where_m})
+
+        if m.get("homework_template_id"):
+            _check_homework_refs([m["homework_template_id"]], where_m)
+
+        for g in goals:
+            where_g = {"module_id": mid, "skill_id": g.get("id") or "?"}
+            for pid in (g.get("prerequisite_skill_ids") or []):
+                if pid not in all_goal_ids:
+                    errors.append({"code": "broken_prerequisite", "message": f"Skill '{g.get('name', '')}' has a prerequisite that no longer exists.", **where_g})
+            nxt = g.get("suggested_next_skill_id")
+            if nxt and nxt not in all_goal_ids:
+                errors.append({"code": "broken_next_skill", "message": f"Skill '{g.get('name', '')}' points to a next-progression skill that no longer exists.", **where_g})
+            _check_homework_refs(g.get("homework_template_ids") or [], where_g)
+
+        for l in lessons:
+            where_l = {"module_id": mid, "lesson_id": l.get("id") or "?"}
+            if not (l.get("skill_ids") or []):
+                warnings.append({"code": "lesson_without_skills", "message": f"Lesson '{l.get('name', '')}' has no skills attached.", **where_l})
+            if not (l.get("advancement_criteria") or "").strip():
+                warnings.append({"code": "missing_advancement_criteria", "message": f"Lesson '{l.get('name', '')}' has no advancement criteria.", **where_l})
+            if not (l.get("trainer_instructions") or "").strip():
+                warnings.append({"code": "missing_trainer_instructions", "message": f"Lesson '{l.get('name', '')}' has no trainer instructions.", **where_l})
+            _check_homework_refs(l.get("suggested_homework_template_ids") or [], where_l)
+
+    return {"valid": len(errors) == 0, "errors": errors, "warnings": warnings}
+
+
+def _program_publish_impact(live_modules: List[dict], draft_modules: List[dict], enrollments_affected: int, active_goal_progress_ids: set) -> Dict[str, Any]:
+    """Read-only diff for the publish impact-preview — never writes
+    anything. Independent of (does not share code with) the actual
+    cascade-apply block, which is copied verbatim from update_program's
+    long-tested cascade logic so that code path stays untouched."""
+    live_module_ids = {m.get("id") for m in live_modules if m.get("id")}
+    draft_module_ids = {m.get("id") for m in draft_modules if m.get("id")}
+    live_lesson_ids = {l.get("id") for m in live_modules for l in (m.get("lessons") or []) if l.get("id")}
+    draft_lesson_ids = {l.get("id") for m in draft_modules for l in (m.get("lessons") or []) if l.get("id")}
+    live_goal_ids = {g.get("id") for m in live_modules for g in (m.get("goals") or []) if g.get("id")}
+    draft_goal_ids = {g.get("id") for m in draft_modules for g in (m.get("goals") or []) if g.get("id")}
+    live_hw_ids = _referenced_homework_template_ids(live_modules)
+    draft_hw_ids = _referenced_homework_template_ids(draft_modules)
+
+    return {
+        "enrollments_affected": enrollments_affected,
+        "modules_added": len(draft_module_ids - live_module_ids),
+        "modules_removed": len(live_module_ids - draft_module_ids),
+        "lessons_added": len(draft_lesson_ids - live_lesson_ids),
+        "lessons_removed": len(live_lesson_ids - draft_lesson_ids),
+        "skills_added": len(draft_goal_ids - live_goal_ids),
+        "skills_removed": len(live_goal_ids - draft_goal_ids),
+        "progress_entries_preserved": len(active_goal_progress_ids & draft_goal_ids),
+        "progress_entries_orphaned": len(active_goal_progress_ids - draft_goal_ids),
+        "homework_references_added": len(draft_hw_ids - live_hw_ids),
+        "homework_references_removed": len(live_hw_ids - draft_hw_ids),
+    }
+
+
+def _effective_lessons(module: dict) -> List[dict]:
+    """Lesson-aware readers should call this instead of reading
+    module["lessons"] directly: when a module has no explicit lessons yet
+    (every module that predates this feature, or one an admin simply hasn't
+    organized into lessons), synthesize a single default lesson wrapping
+    all of the module's existing goals — so legacy modules-as-weeks keep
+    behaving exactly like a one-lesson module rather than an empty one."""
+    lessons = module.get("lessons") or []
+    if lessons:
+        return lessons
+    goals = module.get("goals") or []
+    if not goals:
+        return []
+    return [{
+        "id": f"default-lesson-{module.get('id', '')}",
+        "name": "Lesson 1",
+        "order": 0,
+        "active": True,
+        "skill_ids": [g["id"] for g in goals if g.get("id")],
+        "suggested_homework_template_ids": [],
+        **{f: None for f in _LESSON_OPTIONAL_FIELDS},
+    }]
 
 
 @api.get("/programs/meta")
@@ -14736,7 +15022,7 @@ async def create_program(body: ProgramIn, _: dict = Depends(require_admin_and_pe
     return doc
 
 @api.get("/programs/{program_id}/active-enrollments-count")
-async def program_active_enrollments_count(program_id: str, _: dict = Depends(require_admin)):
+async def program_active_enrollments_count(program_id: str, _: dict = Depends(require_admin_and_permission("manage_training_content"))):
     """Lightweight count used by the program editor to ask the admin whether to
     cascade an edit onto currently-enrolled dogs."""
     count = await db.dog_programs.count_documents({"program_id": program_id, "status": "active"})
@@ -14746,14 +15032,24 @@ async def program_active_enrollments_count(program_id: str, _: dict = Depends(re
 
 
 @api.put("/programs/{program_id}")
-async def update_program(program_id: str, body: ProgramIn, cascade: bool = False, _: dict = Depends(require_admin_and_permission("manage_training_content"))):
+async def update_program(
+    program_id: str, body: ProgramIn, cascade: bool = False, save_as_draft: bool = False,
+    _: dict = Depends(require_admin_and_permission("manage_training_content")),
+):
     """Edit a program. When `cascade=true`, also pushes the updated snapshot to
     every **active** enrollment of this program:
       • Goals that still exist keep their score / notes / status.
       • New goals start at "not_started".
       • Removed goals have their progress dropped (per user choice).
     Completed / withdrawn / on-hold enrollments are left untouched so trainer
-    history stays trustworthy."""
+    history stays trustworthy.
+
+    Program Studio (Phase 2) — `save_as_draft=true` stores the proposed
+    state under the doc's `draft` key ONLY. It never touches the live
+    top-level fields, is never read by enrollment/training-context/homework
+    code (which all read the live fields), and `cascade` is ignored in this
+    mode since a draft can never affect an enrollment. Use POST
+    /programs/{id}/publish to apply a saved draft to the live program."""
     existing = await db.programs.find_one({"id": program_id}, {"_id": 0})
     if not existing:
         raise HTTPException(status_code=404, detail="Program not found")
@@ -14764,6 +15060,14 @@ async def update_program(program_id: str, body: ProgramIn, cascade: bool = False
     )
     update = body.model_dump()
     update["modules"] = _stamp_ids(update.get("modules") or [])
+
+    if save_as_draft:
+        draft_doc = {**update, "saved_at": now_iso()}
+        await db.programs.update_one({"id": program_id}, {"$set": {"draft": draft_doc}})
+        existing["draft"] = draft_doc
+        existing["_cascaded_enrollments"] = 0
+        return existing
+
     await db.programs.update_one({"id": program_id}, {"$set": update})
     existing.update(update)
 
@@ -14800,6 +15104,105 @@ async def update_program(program_id: str, body: ProgramIn, cascade: bool = False
     return existing
 
 
+@api.delete("/programs/{program_id}/draft")
+async def discard_program_draft(program_id: str, _: dict = Depends(require_admin_and_permission("manage_training_content"))):
+    """Program Studio (Phase 2) — discard a saved draft without publishing
+    it, so an admin can back out of in-progress edits and return to the
+    live version. Never touches live fields or enrollments."""
+    existing = await db.programs.find_one({"id": program_id}, {"_id": 0, "id": 1})
+    if not existing:
+        raise HTTPException(status_code=404, detail="Program not found")
+    await db.programs.update_one({"id": program_id}, {"$unset": {"draft": ""}})
+    return {"ok": True}
+
+
+@api.get("/programs/{program_id}/validate")
+async def validate_program(program_id: str, target: Literal["live", "draft"] = "live", _: dict = Depends(require_admin_and_permission("manage_training_content"))):
+    """Program Studio (Phase 2) — structural validation, read-only. Warnings
+    never block publish; only `errors` do (enforced in /publish below)."""
+    existing = await db.programs.find_one({"id": program_id}, {"_id": 0})
+    if not existing:
+        raise HTTPException(status_code=404, detail="Program not found")
+    if target == "draft":
+        draft = existing.get("draft")
+        if not draft:
+            raise HTTPException(status_code=404, detail="No draft saved for this program")
+        modules = draft.get("modules") or []
+    else:
+        modules = existing.get("modules") or []
+    return await _validate_program_structure(modules)
+
+
+@api.get("/programs/{program_id}/publish-impact")
+async def program_publish_impact(program_id: str, _: dict = Depends(require_admin_and_permission("manage_training_content"))):
+    """Program Studio (Phase 2) — read-only preview of what publishing the
+    current draft would change, before the admin commits to it. Never
+    writes anything."""
+    existing = await db.programs.find_one({"id": program_id}, {"_id": 0})
+    if not existing:
+        raise HTTPException(status_code=404, detail="Program not found")
+    draft = existing.get("draft")
+    if not draft:
+        raise HTTPException(status_code=404, detail="No draft saved for this program")
+    live_modules = existing.get("modules") or []
+    draft_modules = draft.get("modules") or []
+    active_enrollments = await db.dog_programs.find({"program_id": program_id, "status": "active"}, {"_id": 0, "goal_progress": 1}).to_list(10000)
+    active_goal_progress_ids = {gid for enr in active_enrollments for gid in (enr.get("goal_progress") or {}).keys()}
+    impact = _program_publish_impact(live_modules, draft_modules, len(active_enrollments), active_goal_progress_ids)
+    impact["validation"] = await _validate_program_structure(draft_modules)
+    return impact
+
+
+@api.post("/programs/{program_id}/publish")
+async def publish_program(program_id: str, cascade: bool = False, _: dict = Depends(require_admin_and_permission("manage_training_content"))):
+    """Program Studio (Phase 2) — apply a saved draft to the live program.
+    Blocks (422) on any structural validation ERROR (never on warnings) so
+    a structurally broken draft can't publish silently. `cascade` behaves
+    identically to update_program's cascade — copied rather than shared so
+    that already-tested code path is never touched by this addition."""
+    existing = await db.programs.find_one({"id": program_id}, {"_id": 0})
+    if not existing:
+        raise HTTPException(status_code=404, detail="Program not found")
+    draft = existing.get("draft")
+    if not draft:
+        raise HTTPException(status_code=404, detail="No draft saved for this program")
+    draft_modules = draft.get("modules") or []
+    validation = await _validate_program_structure(draft_modules)
+    if not validation["valid"]:
+        raise HTTPException(status_code=422, detail={"message": "Draft has structural errors and cannot be published.", "errors": validation["errors"]})
+
+    update = {k: v for k, v in draft.items() if k != "saved_at"}
+    await db.programs.update_one({"id": program_id}, {"$set": update, "$unset": {"draft": ""}})
+    existing.update(update)
+    existing.pop("draft", None)
+
+    cascaded = 0
+    if cascade:
+        new_modules = update.get("modules") or []
+        surviving_goal_ids = {g.get("id") for m in new_modules for g in (m.get("goals") or []) if g.get("id")}
+        new_snapshot_base = {
+            "name": update["name"], "type": update["type"], "slug": update.get("slug"),
+            "description": update.get("description", ""), "focus": update.get("focus", ""),
+            "format": update.get("format"), "modules": new_modules,
+            "completion_rule": update.get("completion_rule") or _default_completion_rule(),
+        }
+        cursor = db.dog_programs.find({"program_id": program_id, "status": "active"}, {"_id": 0})
+        async for enr in cursor:
+            old_progress = enr.get("goal_progress") or {}
+            merged = _empty_progress(new_modules)
+            for gid, prog in old_progress.items():
+                if gid in surviving_goal_ids and gid in merged:
+                    merged[gid] = prog
+            await db.dog_programs.update_one(
+                {"id": enr["id"]},
+                {"$set": {"program_snapshot": new_snapshot_base, "goal_progress": merged}},
+            )
+            cascaded += 1
+
+    existing["_cascaded_enrollments"] = cascaded
+    return existing
+
+
 @api.post("/programs/{program_id}/duplicate")
 async def duplicate_program(program_id: str, user: dict = Depends(require_admin_and_permission("manage_training_content"))):
     """Copies a program's definition (name, type, format, modules/goals,
@@ -14821,14 +15224,28 @@ async def duplicate_program(program_id: str, user: dict = Depends(require_admin_
         "created_at": now_iso(),
     }
     doc["slug"] = _shop_org_slugify(doc["name"])[:40]
-    # Fresh module/goal ids for the copy — _stamp_ids keeps an id if one is
-    # already present, and dog_programs.goal_progress is keyed by goal id,
-    # so a duplicate must never share ids with the program it was copied
-    # from even though it starts with zero enrollments.
-    stripped_modules = [
-        {**m, "id": None, "goals": [{**g, "id": None} for g in (m.get("goals") or [])]}
-        for m in (existing.get("modules") or [])
-    ]
+    # Fresh module/goal/lesson ids for the copy — _stamp_ids keeps an id if
+    # one is already present, and dog_programs.goal_progress is keyed by
+    # goal id, so a duplicate must never share ids with the program it was
+    # copied from even though it starts with zero enrollments. Lessons
+    # reference goals by id via skill_ids, so those references are remapped
+    # to the new (as-yet-unassigned) goal ids using a placeholder token
+    # generated here — _stamp_ids only fills in missing ids, so we mint the
+    # new goal ids ourselves up front to keep the skill_id links intact.
+    stripped_modules = []
+    for m in (existing.get("modules") or []):
+        old_to_new_goal_id = {}
+        new_goals = []
+        for g in (m.get("goals") or []):
+            new_id = _gid()
+            if g.get("id"):
+                old_to_new_goal_id[g["id"]] = new_id
+            new_goals.append({**g, "id": new_id})
+        new_lessons = [
+            {**l, "id": None, "skill_ids": [old_to_new_goal_id[sid] for sid in (l.get("skill_ids") or []) if sid in old_to_new_goal_id]}
+            for l in (m.get("lessons") or [])
+        ]
+        stripped_modules.append({**m, "id": None, "goals": new_goals, "lessons": new_lessons})
     doc["modules"] = _stamp_ids(stripped_modules)
     await db.programs.insert_one(doc)
     doc.pop("_id", None)
@@ -14972,7 +15389,7 @@ def _suggest_target_date(started: str, fmt: dict) -> Optional[str]:
 
 
 @api.post("/dogs/{dog_id}/programs")
-async def enroll_dog(dog_id: str, body: EnrollIn, _: dict = Depends(require_admin)):
+async def enroll_dog(dog_id: str, body: EnrollIn, _: dict = Depends(require_admin_and_permission("manage_training_sessions"))):
     dog = await db.dogs.find_one({"id": dog_id}, {"_id": 0})
     if not dog:
         raise HTTPException(status_code=404, detail="Dog not found")
@@ -15006,6 +15423,13 @@ async def enroll_dog(dog_id: str, body: EnrollIn, _: dict = Depends(require_admi
         # The current module is the "lesson plan week" the trainer is focused on.
         # Falls back to the first module on display.
         "current_module_id": (program.get("modules") or [{}])[0].get("id"),
+        # Training Session Workspace (Phase 4) — lesson-level pointer within
+        # the current module, additive to current_module_id. Falls back to
+        # the first effective lesson (real, or the synthesized default
+        # lesson for a legacy module with no explicit lessons).
+        "current_lesson_id": (
+            (lambda ls: ls[0]["id"] if ls else None)(_effective_lessons((program.get("modules") or [{}])[0]))
+        ),
         "sessions_count": 0,
         "trainer_notes": body.trainer_notes or "",
         "created_at": now_iso(),
@@ -15025,7 +15449,19 @@ async def enroll_dog(dog_id: str, body: EnrollIn, _: dict = Depends(require_admi
 
 @api.get("/dogs/{dog_id}/programs")
 async def list_dog_enrollments(dog_id: str, user: dict = Depends(get_current_user)):
-    await _dog_or_403(dog_id, user)
+    # Training-school expansion (Phase 8) — _dog_or_403 only admits the
+    # dog's owning client or role=="admin", which silently 403'd every
+    # non-admin staff account (including a trainer with manage_training_
+    # sessions) out of viewing a dog's own enrollment list. Widened here,
+    # specifically for this training-scoped endpoint, rather than touching
+    # _dog_or_403 itself (used broadly across unrelated dog endpoints).
+    dog = await db.dogs.find_one({"id": dog_id}, {"_id": 0})
+    if not dog:
+        raise HTTPException(status_code=404, detail="Dog not found")
+    is_owner_client = dog.get("owner_id") == user.get("client_id")
+    is_staff_with_training_access = user.get("role") in ("admin", "employee") and _perms_for(user).get("manage_training_sessions")
+    if not (is_owner_client or is_staff_with_training_access):
+        raise HTTPException(status_code=403, detail="Not allowed")
     enrollments = await db.dog_programs.find({"dog_id": dog_id}, {"_id": 0}).to_list(200)
     enrollments.sort(key=lambda e: (0 if e.get("status") == "active" else 1, e.get("created_at") or ""), reverse=False)
     # Active first, then by created_at descending for the rest
@@ -15043,7 +15479,7 @@ class EnrollmentUpdate(BaseModel):
 
 
 @api.put("/dogs/{dog_id}/programs/{enrollment_id}")
-async def update_enrollment(dog_id: str, enrollment_id: str, body: EnrollmentUpdate, _: dict = Depends(require_admin)):
+async def update_enrollment(dog_id: str, enrollment_id: str, body: EnrollmentUpdate, _: dict = Depends(require_admin_and_permission("manage_training_sessions"))):
     enrollment = await db.dog_programs.find_one({"id": enrollment_id, "dog_id": dog_id}, {"_id": 0})
     if not enrollment:
         raise HTTPException(status_code=404, detail="Enrollment not found")
@@ -15084,7 +15520,7 @@ class EnrollmentCurrentModuleIn(BaseModel):
 @api.put("/dogs/{dog_id}/programs/{enrollment_id}/current-module")
 async def set_enrollment_current_module(
     dog_id: str, enrollment_id: str, body: EnrollmentCurrentModuleIn,
-    _: dict = Depends(require_admin),
+    _: dict = Depends(require_admin_and_permission("manage_training_sessions")),
 ):
     """Bump the trainer's 'we are on this week/module' pointer for this dog's
     enrollment. The module must exist in the enrollment's snapshotted modules
@@ -15146,18 +15582,53 @@ async def _record_auto_assign(enrollment_id: str, template_id: str, trigger: str
     )
 
 
+async def _active_homework_conflict(dog_id: str, template_id: str) -> Optional[dict]:
+    """Training-school expansion (Phase 5) — 'do not create duplicate
+    assignments when the same module homework has already been assigned
+    and remains active.' Returns the existing conflicting homework doc (a
+    non-completed assignment for this dog sourced from the same template),
+    or None if it's safe to create a fresh one."""
+    return await db.homework.find_one(
+        {"dog_id": dog_id, "template_snapshot.template_id": template_id, "status": {"$ne": "completed"}},
+        {"_id": 0, "id": 1, "title": 1, "status": 1, "created_at": 1},
+    )
+
+
 async def _create_homework_from_template_internal(
     dog: dict, client: Optional[dict], template_id: str,
     assigned_by: str = "Auto-assigned",
+    *,
+    source_skill_id: Optional[str] = None,
+    source_lesson_id: Optional[str] = None,
+    source_session_log_id: Optional[str] = None,
+    trainer_personalized_note: Optional[str] = None,
+    practice_frequency: Optional[str] = None,
+    minutes_per_session: Optional[int] = None,
+    repetition_target: Optional[str] = None,
+    duration_target: Optional[str] = None,
+    distance_target: Optional[str] = None,
+    environment: Optional[str] = None,
+    distraction_level: Optional[str] = None,
+    required: bool = True,
+    video_requested: bool = False,
+    due_date_override: Optional[str] = None,
 ) -> Optional[dict]:
     """Internal homework-from-template creator. Mirrors the body of
     /homework/from-template but callable from auto-triggers. Returns the
-    new doc, or None if the template/dog is invalid."""
+    new doc, or None if the template/dog is invalid.
+
+    Training-school expansion (Phase 5) — the keyword-only params are all
+    optional, additive personalization: where THIS assignment came from
+    (a specific skill/lesson/session, for traceability back to the
+    curriculum) and how it's been tailored for this dog (frequency,
+    targets, environment, whether it's required or optional, whether a
+    video was requested). None of this changes the template itself —
+    templates stay reusable; only the assignment is personalized."""
     tpl = await db.homework_templates.find_one({"id": template_id}, {"_id": 0})
     if not tpl:
         return None
-    due = ""
-    if tpl.get("default_duration_days"):
+    due = due_date_override or ""
+    if not due and tpl.get("default_duration_days"):
         due = (business_today() + timedelta(days=int(tpl["default_duration_days"]))).isoformat()
     is_daily = bool(tpl.get("daily_tracker"))
     total_days = 0
@@ -15195,6 +15666,20 @@ async def _create_homework_from_template_internal(
         "daily_tracker": is_daily,
         "total_days": total_days,
         "auto_assigned": True,  # marker so admin can spot trigger-driven rows
+        # Phase 5 personalization — all optional/additive.
+        "source_skill_id": source_skill_id,
+        "source_lesson_id": source_lesson_id,
+        "source_session_log_id": source_session_log_id,
+        "trainer_personalized_note": trainer_personalized_note or "",
+        "practice_frequency": practice_frequency,
+        "minutes_per_session": minutes_per_session,
+        "repetition_target": repetition_target,
+        "duration_target": duration_target,
+        "distance_target": distance_target,
+        "environment": environment,
+        "distraction_level": distraction_level,
+        "required": required,
+        "video_requested": video_requested,
     }
     await db.homework.insert_one(doc)
     doc.pop("_id", None)
@@ -15349,7 +15834,7 @@ async def _apply_goal_update_to_enrollment(
 
 
 @api.put("/dogs/{dog_id}/programs/{enrollment_id}/goals/{goal_id}")
-async def update_goal(dog_id: str, enrollment_id: str, goal_id: str, body: GoalUpdate, _: dict = Depends(require_admin)):
+async def update_goal(dog_id: str, enrollment_id: str, goal_id: str, body: GoalUpdate, _: dict = Depends(require_admin_and_permission("manage_training_sessions"))):
     enrollment = await db.dog_programs.find_one({"id": enrollment_id, "dog_id": dog_id}, {"_id": 0})
     if not enrollment:
         raise HTTPException(status_code=404, detail="Enrollment not found")
@@ -15380,22 +15865,19 @@ async def update_goal(dog_id: str, enrollment_id: str, goal_id: str, body: GoalU
 
 # ─── Sprint 110di-69 · Training Tracker (trainer-side batch + audit) ──────
 # Layered on TOP of the existing enrollment + goal_progress system. Does NOT
-# create a duplicate progress store — just batches per-session goal updates
-# and writes one audit row to `training_session_log` for the activity feed.
-
-class TrainingSessionGoalUpdate(BaseModel):
-    goal_id: str
-    status: Optional[Literal["not_started", "in_progress", "mastered"]] = None
-    score: Optional[int] = Field(default=None, ge=0, le=5)
-    notes: Optional[str] = None
-
-
-class TrainingSessionIn(BaseModel):
-    booking_id: Optional[str] = None
-    session_note: Optional[str] = ""
-    goal_updates: List[TrainingSessionGoalUpdate] = []
-    advance_to_next_module: bool = False
-
+# create a duplicate progress store.
+#
+# Final correctness pass — the write endpoint that used to live here
+# (record_training_session, and its TrainingSessionIn/TrainingSessionGoalUpdate
+# request models) was retired: it was a second, independently-writing path
+# into goal_progress/training_session_log that bypassed the
+# training_session_drafts draft/completion state machine entirely — a real
+# server-side bypass even though no UI called it anymore. The read-only
+# training-context endpoints below (_build_training_context and its two
+# callers) are unaffected — they never wrote anything. The two legacy test
+# files that used to exercise the write endpoint directly
+# (tests/test_trainer_scorecard.py, tests/test_training_tracker.py) were
+# rewritten to use the supported draft/complete workflow instead.
 
 async def _build_training_context(enrollment: dict) -> dict:
     """Shape the current-module-with-progress payload the tracker modal renders."""
@@ -15435,8 +15917,1494 @@ async def _build_training_context(enrollment: dict) -> dict:
     }
 
 
+# ---------------------------------------------------------------------------
+# Training Session Workspace (Phase 3) — server-backed session-draft
+# mechanism. A draft is the single source of truth for an in-progress
+# session (never local-only browser state), keyed on
+# (enrollment_id, occurrence_date, session_label) so refresh/re-open always
+# resumes the same draft and two rapid clicks can never create two. Session
+# completion (writing progress/homework/advancement/recap) is Phase 4 — this
+# phase only covers planning, resuming, and recording against an open draft.
+# ---------------------------------------------------------------------------
+
+class SessionActivityIn(BaseModel):
+    id: Optional[str] = None
+    source: Literal["skill", "custom"] = "skill"
+    skill_id: Optional[str] = None
+    lesson_id: Optional[str] = None
+    name: str = Field(min_length=1)
+    order: int = 0
+    objective: Optional[str] = ""
+    why_it_matters: Optional[str] = ""
+    setup: Optional[str] = ""
+    equipment: Optional[str] = ""
+    trainer_instructions: Optional[str] = ""
+    starting_difficulty: Optional[str] = ""
+    progression_instructions: Optional[str] = ""
+    common_mistakes: Optional[str] = ""
+    troubleshooting: Optional[str] = ""
+    safety_notes: Optional[str] = ""
+    pass_criteria: Optional[str] = ""
+    reset_criteria: Optional[str] = ""
+    client_coaching_points: Optional[str] = ""
+    current_status: Optional[str] = None
+    current_score: Optional[int] = None
+    manual_only: bool = False
+    skipped: bool = False
+    skip_reason: Optional[str] = ""
+
+
+class SessionActivityActualIn(BaseModel):
+    score: Optional[int] = Field(default=None, ge=0, le=5)
+    status: Optional[Literal["not_started", "in_progress", "mastered"]] = None
+    duration_achieved: Optional[str] = None
+    distance_achieved: Optional[str] = None
+    repetitions_achieved: Optional[str] = None
+    distraction_level: Optional[str] = None
+    environment: Optional[str] = None
+    handler_assistance: Optional[str] = None
+    leash_off_leash: Optional[str] = None
+    outcome: Optional[Literal["passed", "improving", "needs_more_work", "skipped"]] = None
+    skip_reason: Optional[str] = None
+    notes: Optional[str] = None
+    homework_eligible: bool = False
+    needs_reassessment: bool = False
+
+
+class TrainingSessionDraftUpdateIn(BaseModel):
+    plan: Optional[List[SessionActivityIn]] = None
+    actuals: Optional[Dict[str, SessionActivityActualIn]] = None
+    session_note: Optional[str] = None
+    client_recap_note: Optional[str] = None
+
+
+async def _resolve_active_enrollment_for_dog(dog_id: str, requested_enrollment_id: Optional[str] = None) -> Dict[str, Any]:
+    """The single place that decides which enrollment a check-in/session-
+    start should use — every caller (booking check-in, direct dog/enrollment
+    entry) goes through this so the resolution rules can never drift apart.
+    Returns {"ok": True, "enrollment": {...}} or a structured
+    {"ok": False, "reason": ...} the caller surfaces as a resolution screen
+    rather than guessing or silently picking one."""
+    if requested_enrollment_id:
+        enr = await db.dog_programs.find_one(
+            {"id": requested_enrollment_id, "dog_id": dog_id, "status": "active"}, {"_id": 0},
+        )
+        if not enr:
+            return {"ok": False, "reason": "enrollment_not_found"}
+        return _check_enrollment_module_readiness(enr)
+
+    actives = await db.dog_programs.find({"dog_id": dog_id, "status": "active"}, {"_id": 0}).to_list(50)
+    if not actives:
+        return {"ok": False, "reason": "no_active_enrollment"}
+    if len(actives) > 1:
+        choices = []
+        for e in actives:
+            s = _enrollment_summary(e)
+            choices.append({
+                "enrollment_id": e["id"],
+                "program_name": (e.get("program_snapshot") or {}).get("name") or "",
+                "current_week": s.get("current_week"),
+            })
+        return {"ok": False, "reason": "multiple_active_enrollments", "choices": choices}
+    return _check_enrollment_module_readiness(actives[0])
+
+
+def _check_enrollment_module_readiness(enrollment: dict) -> Dict[str, Any]:
+    summary = _enrollment_summary(enrollment)
+    current_module = summary.get("current_module")
+    if not current_module:
+        return {"ok": False, "reason": "no_current_module", "enrollment_id": enrollment["id"]}
+    if not _effective_lessons(current_module):
+        return {"ok": False, "reason": "no_lessons_in_module", "enrollment_id": enrollment["id"], "module_name": current_module.get("name")}
+    return {"ok": True, "enrollment": enrollment}
+
+
+def _generate_suggested_plan(enrollment: dict) -> List[Dict[str, Any]]:
+    """Deterministic suggestion built purely from existing curriculum +
+    progress data — no AI, no external dependency. Mastered-and-stable
+    skills are filtered out; a skill marked needing reassessment resurfaces
+    even if mastered. The trainer can freely reorder/add/remove/skip once
+    the plan lands in the draft — this is a starting point, never a script."""
+    summary = _enrollment_summary(enrollment)
+    current_module = summary.get("current_module") or {}
+    goal_progress = enrollment.get("goal_progress") or {}
+    lessons = _effective_lessons(current_module)
+    goals_by_id = {g["id"]: g for g in (current_module.get("goals") or [])}
+
+    activities = []
+    order = 0
+    for lesson in sorted(lessons, key=lambda l: l.get("order", 0)):
+        if not lesson.get("active", True):
+            continue
+        for skill_id in (lesson.get("skill_ids") or []):
+            g = goals_by_id.get(skill_id)
+            if not g:
+                continue
+            prog = goal_progress.get(skill_id) or {}
+            status = prog.get("status") or "not_started"
+            if status == "mastered" and not prog.get("needs_reassessment"):
+                continue
+            activities.append({
+                "id": _gid(), "source": "skill", "skill_id": skill_id, "lesson_id": lesson.get("id"),
+                "name": g.get("name"), "order": order,
+                "objective": g.get("training_objective") or "",
+                "why_it_matters": lesson.get("why_it_matters") or "",
+                "setup": lesson.get("trainer_prep_notes") or "",
+                "equipment": lesson.get("equipment_needed") or "",
+                "trainer_instructions": lesson.get("trainer_instructions") or "",
+                "starting_difficulty": g.get("starting_criteria") or "",
+                "progression_instructions": lesson.get("advancement_criteria") or "",
+                "common_mistakes": lesson.get("common_mistakes") or "",
+                "troubleshooting": lesson.get("troubleshooting") or "",
+                "safety_notes": lesson.get("safety_notes") or "",
+                "pass_criteria": g.get("pass_criteria") or "",
+                "reset_criteria": g.get("reset_criteria") or "",
+                "client_coaching_points": g.get("client_facing_explanation") or lesson.get("client_instructions") or "",
+                "current_status": status, "current_score": int(prog.get("score") or 0),
+                "manual_only": bool(g.get("manual_only")),
+                "skipped": False, "skip_reason": "",
+                # UI Phase 2 — presentation-only fields, already stored on the
+                # lesson/goal, just not previously surfaced on the activity.
+                "demo_video_url": lesson.get("demo_video_url") or "",
+                "demo_resource_id": lesson.get("demo_resource_id") or "",
+                "estimated_minutes": lesson.get("estimated_minutes"),
+                "target_duration": g.get("target_duration") or "",
+                "target_distance": g.get("target_distance") or "",
+                "target_repetitions": g.get("target_repetitions") or "",
+                "target_distraction_level": g.get("target_distraction_level") or "",
+                "target_environment": g.get("target_environment") or "",
+                "handler_assistance": g.get("handler_assistance") or "",
+                "leash_requirement": g.get("leash_requirement") or "",
+            })
+            order += 1
+    return activities
+
+
+async def _build_pre_session_overview(enrollment: dict, dog: dict) -> Dict[str, Any]:
+    """Staff-only payload (never served to a client-portal route) — internal
+    trainer notes are included here specifically because this is a
+    staff-facing endpoint gated by manage_training_sessions."""
+    enrollment_id = enrollment["id"]
+    dog_id = enrollment["dog_id"]
+    summary = _enrollment_summary(enrollment)
+    current_module = summary.get("current_module") or {}
+
+    last_logs = await db.training_session_log.find(
+        {"enrollment_id": enrollment_id}, {"_id": 0},
+    ).sort("at", -1).limit(1).to_list(1)
+    last_log = last_logs[0] if last_logs else None
+    last_session = None
+    if last_log:
+        goal_names = {
+            g["id"]: g["name"]
+            for m in (enrollment.get("program_snapshot", {}).get("modules") or [])
+            for g in (m.get("goals") or [])
+        }
+        last_session = {
+            "at": last_log.get("at"), "by": last_log.get("by_user"), "note": last_log.get("session_note"),
+            "skills_worked": [
+                {"skill_id": d.get("goal_id"), "name": d.get("skill_name") or goal_names.get(d.get("goal_id"), ""),
+                 "new_status": d.get("new_status"), "new_score": d.get("new_score")}
+                for d in (last_log.get("goal_updates") or [])
+            ],
+        }
+
+    recent_homework = await db.homework.find(
+        {"dog_id": dog_id}, {"_id": 0},
+    ).sort("created_at", -1).limit(5).to_list(5)
+    homework_summary = []
+    client_questions: List[Dict[str, Any]] = []
+    recent_media: List[Dict[str, Any]] = []
+    for hw in recent_homework:
+        entry = {"id": hw.get("id"), "title": hw.get("title"), "status": hw.get("status"),
+                  "daily_tracker": bool(hw.get("daily_tracker"))}
+        if hw.get("daily_tracker"):
+            logs = hw.get("section_logs") or []
+            submitted = sum(1 for l in logs if l.get("submission_status") in ("submitted", "approved"))
+            total_days = int(hw.get("total_days") or len((hw.get("template_snapshot") or {}).get("sections") or []))
+            moods = [
+                (l.get("field_values") or {}).get("__mood") for l in logs
+                if isinstance((l.get("field_values") or {}).get("__mood"), (int, float))
+            ]
+            entry["days_completed"] = submitted
+            entry["total_days"] = total_days
+            entry["avg_difficulty"] = round(sum(moods) / len(moods), 1) if moods else None
+            for l in logs:
+                for q in (l.get("questions") or []):
+                    if not q.get("answer"):
+                        client_questions.append({
+                            "homework_id": hw.get("id"), "day_number": l.get("day_number"),
+                            "text": q.get("text"), "asked_at": q.get("asked_at"),
+                        })
+                fv = l.get("field_values") or {}
+                if fv.get("__video_id") or fv.get("__photo"):
+                    recent_media.append({
+                        "homework_id": hw.get("id"), "day_number": l.get("day_number"),
+                        "kind": "video" if fv.get("__video_id") else "photo",
+                    })
+        homework_summary.append(entry)
+
+    equipment_needed = sorted({
+        l["equipment_needed"] for l in _effective_lessons(current_module) if l.get("equipment_needed")
+    })
+    suggested_plan = _generate_suggested_plan(enrollment)
+
+    return {
+        "last_session": last_session,
+        "homework_since_last_session": homework_summary,
+        "client_questions": client_questions[:10],
+        "recent_media": recent_media[:10],
+        "behavior_safety_flags": dog.get("safety_flags") or [],
+        "equipment_needed": equipment_needed,
+        "internal_trainer_notes": enrollment.get("trainer_notes") or "",
+        "recommended_objectives": [a["name"] for a in suggested_plan],
+        "suggested_plan": suggested_plan,
+        # UI Phase 2 — presentation-only breadcrumb, derived from data
+        # _enrollment_summary already computes (program_snapshot name +
+        # current-module pointer), just not previously surfaced here.
+        "program_name": enrollment.get("program_snapshot", {}).get("name") or "",
+        "current_module_name": (current_module or {}).get("name") or "",
+        "current_week": summary.get("current_week"),
+        "total_weeks": summary.get("total_weeks"),
+    }
+
+
+async def _get_or_create_session_draft(enrollment: dict, booking_id: Optional[str], session_label: str, actor: dict) -> dict:
+    """Idempotent get-or-create keyed on (enrollment_id, occurrence_date,
+    session_label) — the unique partial index (status="draft"), verified
+    mandatory at startup by _ensure_critical_training_indexes, is what
+    actually prevents two concurrent clicks from ever creating two drafts;
+    the DuplicateKeyError catch here just re-fetches the winner instead of
+    erroring. See the block comment above TSD_DRAFT_OCCURRENCE_UNIQUE_
+    INDEX_NAME for the full scenario-by-scenario argument for why
+    status="draft" is the correct (and sufficient) scope for that index.
+
+    Gap-closing pass — this now matches status in (draft, completing,
+    completed), not just draft. The partial unique index only constrains
+    "draft" documents, so once a session for this exact occurrence/label
+    is completed (or mid-completion), THAT status no longer blocks a fresh
+    insert at the index level — without this broader lookup, clicking
+    "Log Session" again for an already-completed occurrence would silently
+    start a brand new, second draft instead of showing the trainer the
+    session that already happened. Reopening a completed session must go
+    through the explicit, audited POST .../reopen endpoint instead."""
+    enrollment_id = enrollment["id"]
+    occurrence_date = business_today().isoformat()
+    existing = await db.training_session_drafts.find_one(
+        {"enrollment_id": enrollment_id, "occurrence_date": occurrence_date,
+         "session_label": session_label, "status": {"$in": ["draft", "completing", "completed"]}},
+        {"_id": 0},
+    )
+    if existing:
+        if existing.get("status") == "draft" and booking_id and not existing.get("booking_id"):
+            await db.training_session_drafts.update_one({"id": existing["id"]}, {"$set": {"booking_id": booking_id}})
+            existing["booking_id"] = booking_id
+        return existing
+
+    ts = now_iso()
+    doc = {
+        "id": _gid(), "enrollment_id": enrollment_id, "dog_id": enrollment["dog_id"],
+        "program_id": enrollment.get("program_id"), "booking_id": booking_id,
+        "session_label": session_label, "occurrence_date": occurrence_date, "status": "draft",
+        "created_at": ts, "created_by": actor.get("id"),
+        "created_by_name": actor.get("name") or actor.get("display_name") or "",
+        "updated_at": ts,
+        "plan": {"activities": _generate_suggested_plan(enrollment)},
+        "actuals": {},
+        "session_note": "", "client_recap_note": "",
+    }
+    try:
+        await db.training_session_drafts.insert_one(doc)
+        doc.pop("_id", None)  # insert_one mutates doc in place, adding a raw ObjectId
+        return doc
+    except DuplicateKeyError:
+        existing = await db.training_session_drafts.find_one(
+            {"enrollment_id": enrollment_id, "occurrence_date": occurrence_date,
+             "session_label": session_label, "status": "draft"},
+            {"_id": 0},
+        )
+        return existing
+
+
+@api.post("/bookings/{booking_id}/training-session/draft")
+async def start_training_session_draft_for_booking(
+    booking_id: str, enrollment_id: Optional[str] = None, session_label: str = "",
+    user: dict = Depends(require_admin_and_permission("manage_training_sessions")),
+):
+    """Check-in behavior (Phase 3): resolve the correct active enrollment,
+    create-or-resume today's draft, and return everything the Training
+    Session Workspace needs to open in one call. If the dog has no active
+    program, multiple active programs, no current module, or no lessons in
+    the current module, returns a `resolution` reason instead of a draft so
+    the frontend can show a clear resolution screen rather than failing or
+    guessing."""
+    booking = await db.bookings.find_one({"id": booking_id}, {"_id": 0})
+    if not booking:
+        raise HTTPException(status_code=404, detail="Booking not found")
+    if booking.get("service_type") != "training":
+        # Training-school expansion (Phase 10) — the frontend only ever
+        # calls this for training bookings, but the backend must not trust
+        # that: a daycare/boarding booking must never spin up a training
+        # session draft just because its dog happens to have an active
+        # training enrollment.
+        return {"resolution": "not_a_training_booking"}
+    dog_id = booking.get("dog_id")
+    if not dog_id:
+        return {"resolution": "no_dog_on_booking"}
+    resolved = await _resolve_active_enrollment_for_dog(dog_id, enrollment_id)
+    if not resolved["ok"]:
+        return {"resolution": resolved["reason"], "dog_id": dog_id,
+                **{k: v for k, v in resolved.items() if k not in ("ok", "reason")}}
+    enrollment = resolved["enrollment"]
+    draft = await _get_or_create_session_draft(enrollment, booking_id, session_label, user)
+    dog = await db.dogs.find_one({"id": dog_id}, {"_id": 0}) or {}
+    overview = await _build_pre_session_overview(enrollment, dog)
+    return {"resolution": "ready", "draft": draft, "overview": overview,
+            "dog": {"id": dog_id, "name": dog.get("name") or "", "photo": dog.get("photo") or ""}, "booking_id": booking_id}
+
+
+@api.post("/dogs/{dog_id}/programs/{enrollment_id}/training-session/draft")
+async def start_training_session_draft_direct(
+    dog_id: str, enrollment_id: str, session_label: str = "",
+    user: dict = Depends(require_admin_and_permission("manage_training_sessions")),
+):
+    """Direct entry point (Care Board / dog profile / Pipeline — no booking)."""
+    enrollment = await db.dog_programs.find_one(
+        {"id": enrollment_id, "dog_id": dog_id, "status": "active"}, {"_id": 0},
+    )
+    if not enrollment:
+        raise HTTPException(status_code=404, detail="Active enrollment not found")
+    readiness = _check_enrollment_module_readiness(enrollment)
+    if not readiness["ok"]:
+        return {"resolution": readiness["reason"], "dog_id": dog_id,
+                **{k: v for k, v in readiness.items() if k not in ("ok", "reason")}}
+    draft = await _get_or_create_session_draft(enrollment, None, session_label, user)
+    dog = await db.dogs.find_one({"id": dog_id}, {"_id": 0}) or {}
+    overview = await _build_pre_session_overview(enrollment, dog)
+    return {"resolution": "ready", "draft": draft, "overview": overview,
+            "dog": {"id": dog_id, "name": dog.get("name") or "", "photo": dog.get("photo") or ""}}
+
+
+@api.get("/training-session-drafts/{draft_id}")
+async def get_training_session_draft(draft_id: str, user: dict = Depends(require_admin_and_permission("manage_training_sessions"))):
+    """Resume after refresh — the draft itself is the source of truth, never
+    local-only browser state."""
+    draft = await db.training_session_drafts.find_one({"id": draft_id}, {"_id": 0})
+    if not draft:
+        raise HTTPException(status_code=404, detail="Draft not found")
+    enrollment = await db.dog_programs.find_one({"id": draft["enrollment_id"]}, {"_id": 0})
+    dog = await db.dogs.find_one({"id": draft["dog_id"]}, {"_id": 0}) or {}
+    overview = await _build_pre_session_overview(enrollment, dog) if enrollment else None
+    return {"draft": draft, "overview": overview, "dog": {"id": draft["dog_id"], "name": dog.get("name") or "", "photo": dog.get("photo") or ""}}
+
+
+@api.put("/training-session-drafts/{draft_id}")
+async def update_training_session_draft(
+    draft_id: str, body: TrainingSessionDraftUpdateIn,
+    user: dict = Depends(require_admin_and_permission("manage_training_sessions")),
+):
+    """Autosave-friendly partial update of an open draft's plan/actuals/
+    notes. A completed draft is immutable — this is what makes the eventual
+    Phase 4 completion step safe against a stray late edit landing after
+    the session was already finalized."""
+    draft = await db.training_session_drafts.find_one({"id": draft_id}, {"_id": 0})
+    if not draft:
+        raise HTTPException(status_code=404, detail="Draft not found")
+    if draft.get("status") == "completed":
+        raise HTTPException(status_code=409, detail="This session has already been completed and can no longer be edited.")
+    update: Dict[str, Any] = {"updated_at": now_iso()}
+    if body.plan is not None:
+        update["plan"] = {"activities": [a.model_dump() for a in body.plan]}
+    if body.actuals is not None:
+        update["actuals"] = {k: v.model_dump() for k, v in body.actuals.items()}
+    if body.session_note is not None:
+        update["session_note"] = body.session_note
+    if body.client_recap_note is not None:
+        update["client_recap_note"] = body.client_recap_note
+    await db.training_session_drafts.update_one({"id": draft_id}, {"$set": update})
+    draft.update(update)
+    return draft
+
+
+class SessionCompletionIn(BaseModel):
+    advancement_action: Literal[
+        "remain", "advance_lesson", "advance_module", "assign_review",
+        "reopen_previous_lesson", "skip_lesson", "mark_for_assessment", "complete_program",
+    ] = "remain"
+    advancement_reason: Optional[str] = None
+    target_lesson_id: Optional[str] = None
+    # None = auto-select every activity whose recorded actual has
+    # homework_eligible=True; an explicit list overrides that.
+    homework_activity_ids: Optional[List[str]] = None
+    send_recap: bool = True
+
+
+class SessionReopenIn(BaseModel):
+    reason: str = Field(min_length=3)
+
+
+async def _claim_auto_homework_trigger(enrollment_id: str, template_id: str, trigger: str) -> bool:
+    """Atomically claims a (template_id, trigger) pair — returns True only
+    for the ONE caller that wins, across any number of genuinely concurrent
+    or crash-retried session-completion attempts. Unlike the check-then-act
+    _already_auto_assigned/_record_auto_assign pair (still used, unchanged,
+    by the enrollment/module auto-homework triggers elsewhere), this is a
+    single atomic Mongo update — the $ne filter means two concurrent $push
+    attempts for the same trigger can never both match, so at most one
+    homework row is ever created per trigger even under real concurrency."""
+    result = await db.dog_programs.update_one(
+        {"id": enrollment_id, "auto_homework_log.trigger": {"$ne": trigger}},
+        {"$push": {"auto_homework_log": {
+            "template_id": template_id, "trigger": trigger,
+            "homework_id": None, "assigned_at": now_iso(),
+        }}},
+    )
+    return result.modified_count == 1
+
+
+async def _finalize_auto_homework_claim(enrollment_id: str, trigger: str, homework_id: str) -> None:
+    await db.dog_programs.update_one(
+        {"id": enrollment_id, "auto_homework_log.trigger": trigger},
+        {"$set": {"auto_homework_log.$.homework_id": homework_id}},
+    )
+
+
+async def _compute_completion_plan(enrollment: dict, draft: dict, draft_id: str, body: SessionCompletionIn, user: dict) -> Dict[str, Any]:
+    """Pure computation, no DB writes — turns the draft + trainer's
+    completion choices into a fully-resolved plan: the exact final
+    dog_programs $set values, the exact session_log document (with a
+    log_id DERIVED FROM draft_id, never randomly generated), and the list
+    of homework triggers to attempt. Computed exactly once per draft, at
+    the moment it first transitions from draft -> completing, then
+    PERSISTED onto the draft and reused verbatim by every later retry —
+    see complete_training_session for why recomputing on retry would be
+    unsafe (it would re-read an enrollment that a partially-applied prior
+    attempt may have already advanced, double-applying advancement)."""
+    activities = list((draft.get("plan") or {}).get("activities") or [])
+    actuals = draft.get("actuals") or {}
+    modules_sorted = sorted(
+        (enrollment.get("program_snapshot", {}).get("modules") or []),
+        key=lambda m: (m.get("order", 0), m.get("name") or ""),
+    )
+    goal_ids_in_program = {g["id"] for m in modules_sorted for g in (m.get("goals") or [])}
+
+    goal_diffs: List[Dict[str, Any]] = []
+    reassessment_ids: set = set()
+    homework_eligible_activity_ids: List[str] = []
+    for a in activities:
+        if a.get("skipped"):
+            continue
+        actual = actuals.get(a["id"]) or {}
+        if a.get("source") == "skill" and a.get("skill_id") in goal_ids_in_program:
+            if actual.get("score") is not None or actual.get("status") is not None or actual.get("notes") is not None:
+                enrollment = await _apply_goal_update_to_enrollment(
+                    enrollment=enrollment, goal_id=a["skill_id"],
+                    body=GoalUpdate(status=actual.get("status"), score=actual.get("score"), notes=actual.get("notes")),
+                )
+                diff = enrollment.pop("_goal_diff_" + a["skill_id"], {})
+                diff["goal_id"] = a["skill_id"]
+                diff["activity_id"] = a["id"]
+                diff["note"] = actual.get("notes") or ""
+                # Training-school expansion (Phase 10) — snapshot the skill's
+                # name onto the log entry itself. A later curriculum edit
+                # (cascade) can remove this goal from the live program, but
+                # this historical row must still show what it was called —
+                # readers should always prefer this over a live lookup.
+                diff["skill_name"] = a.get("name") or ""
+                goal_diffs.append(diff)
+            if actual.get("needs_reassessment") or body.advancement_action == "mark_for_assessment":
+                reassessment_ids.add(a["skill_id"])
+        if actual.get("homework_eligible"):
+            homework_eligible_activity_ids.append(a["id"])
+    for gid in reassessment_ids:
+        gp = enrollment.get("goal_progress") or {}
+        if gid in gp:
+            gp[gid]["needs_reassessment"] = True
+
+    # ---- Advancement — the trainer's explicit choice, never automatic ----
+    module_ids = [m.get("id") for m in modules_sorted]
+    cur_module_id = enrollment.get("current_module_id") or (module_ids[0] if module_ids else None)
+    cur_module = next((m for m in modules_sorted if m.get("id") == cur_module_id), None)
+    lessons = sorted(_effective_lessons(cur_module or {}), key=lambda l: l.get("order", 0)) if cur_module else []
+    lesson_ids = [l.get("id") for l in lessons]
+    cur_lesson_id = enrollment.get("current_lesson_id") or (lesson_ids[0] if lesson_ids else None)
+
+    advance_record = None
+    lesson_change = None
+    action = body.advancement_action
+    if action == "advance_module":
+        if cur_module_id and cur_module_id in module_ids and module_ids.index(cur_module_id) < len(module_ids) - 1:
+            next_module_id = module_ids[module_ids.index(cur_module_id) + 1]
+            advance_record = {"from_module_id": cur_module_id, "to_module_id": next_module_id}
+            enrollment["current_module_id"] = next_module_id
+            new_module = next((m for m in modules_sorted if m.get("id") == next_module_id), None)
+            new_lessons = sorted(_effective_lessons(new_module or {}), key=lambda l: l.get("order", 0))
+            enrollment["current_lesson_id"] = new_lessons[0].get("id") if new_lessons else None
+    elif action in ("advance_lesson", "skip_lesson"):
+        if cur_lesson_id and cur_lesson_id in lesson_ids and lesson_ids.index(cur_lesson_id) < len(lesson_ids) - 1:
+            next_lesson_id = lesson_ids[lesson_ids.index(cur_lesson_id) + 1]
+            lesson_change = {"action": action, "from_lesson_id": cur_lesson_id, "to_lesson_id": next_lesson_id, "reason": body.advancement_reason}
+            enrollment["current_lesson_id"] = next_lesson_id
+    elif action == "reopen_previous_lesson":
+        target = body.target_lesson_id
+        if not target and cur_lesson_id and cur_lesson_id in lesson_ids and lesson_ids.index(cur_lesson_id) > 0:
+            target = lesson_ids[lesson_ids.index(cur_lesson_id) - 1]
+        if target and target in lesson_ids:
+            lesson_change = {"action": "reopen_previous_lesson", "from_lesson_id": cur_lesson_id, "to_lesson_id": target, "reason": body.advancement_reason}
+            enrollment["current_lesson_id"] = target
+    elif action == "complete_program":
+        enrollment["status"] = "completed"
+        enrollment["completed_at"] = now_iso()
+    # "remain", "assign_review", "mark_for_assessment" — no pointer change
+
+    set_doc: Dict[str, Any] = {
+        "goal_progress": enrollment["goal_progress"],
+        "current_module_id": enrollment.get("current_module_id"),
+        "current_lesson_id": enrollment.get("current_lesson_id"),
+    }
+    if enrollment.get("status") == "completed":
+        set_doc["status"] = "completed"
+        set_doc["completed_at"] = enrollment.get("completed_at")
+
+    target_activity_ids = body.homework_activity_ids if body.homework_activity_ids is not None else homework_eligible_activity_ids
+    homework_targets: List[Dict[str, Any]] = []
+    for aid in target_activity_ids:
+        act = next((a for a in activities if a["id"] == aid), None)
+        if not act:
+            continue
+        template_ids: List[str] = []
+        if act.get("skill_id"):
+            skill = next((g for m in modules_sorted for g in (m.get("goals") or []) if g["id"] == act["skill_id"]), None)
+            if skill:
+                template_ids.extend(skill.get("homework_template_ids") or [])
+        if act.get("lesson_id"):
+            lesson = next((l for l in lessons if l.get("id") == act["lesson_id"]), None)
+            if lesson:
+                template_ids.extend(lesson.get("suggested_homework_template_ids") or [])
+        actual = actuals.get(aid) or {}
+        for tid in dict.fromkeys(template_ids):  # de-dup, keep first-seen order
+            homework_targets.append({
+                "activity_id": aid, "template_id": tid,
+                "skill_id": act.get("skill_id"), "lesson_id": act.get("lesson_id"),
+                "trainer_personalized_note": actual.get("notes"),
+                "trigger": f"session:{draft_id}:{aid}:{tid}",
+            })
+
+    ts = now_iso()
+    # DETERMINISTIC — same value on every retry of this draft, so a retry's
+    # log write always targets the same row instead of inserting a second
+    # one. Includes reopen_count so a completion AFTER an explicit reopen
+    # (see reopen_training_session) gets a genuinely NEW log id rather than
+    # silently no-op'ing against the original, now-superseded log via the
+    # $setOnInsert upsert in _apply_completion_plan.
+    reopen_count = draft.get("reopen_count") or 0
+    log_id = f"sesslog-{draft_id}" if not reopen_count else f"sesslog-{draft_id}-r{reopen_count}"
+    log_doc = {
+        "id": log_id, "dog_id": enrollment["dog_id"], "enrollment_id": enrollment["id"],
+        "booking_id": draft.get("booking_id"), "draft_id": draft_id,
+        "by_user": user.get("name") or user.get("id"), "by_email": user.get("email"), "at": ts,
+        "session_note": draft.get("session_note") or "",
+        "client_recap_note": draft.get("client_recap_note") or "",
+        "goal_updates": goal_diffs,
+        "activities": activities,
+        "advancement_action": action,
+        "advancement_reason": body.advancement_reason,
+        "lesson_change": lesson_change,
+        "advanced_module": advance_record,
+        "current_module_id_after": enrollment.get("current_module_id"),
+        "current_lesson_id_after": enrollment.get("current_lesson_id"),
+        "homework_created": [],  # filled in by the log entry only for display; homework_created in the response is authoritative
+        "session_label": draft.get("session_label"),
+    }
+    recap_ready = bool(body.send_recap and (draft.get("client_recap_note") or "").strip())
+    return {
+        "enrollment_id": enrollment["id"], "dog_id": enrollment["dog_id"],
+        "set_doc": set_doc, "log_doc": log_doc, "homework_targets": homework_targets,
+        "final_status": enrollment.get("status"), "final_module_id": enrollment.get("current_module_id"),
+        "final_lesson_id": enrollment.get("current_lesson_id"),
+        "recap_ready": recap_ready,
+        "completed_by": user.get("id"), "completed_by_name": user.get("name") or "",
+    }
+
+
+class LostCompletionClaimError(RuntimeError):
+    """Raised when a completion worker discovers, immediately before a
+    mutation stage, that it no longer owns the draft's completion claim —
+    another request has since taken over (a stale-claim reclaim happened
+    while this worker was still alive, just slow). The worker must stop
+    writing immediately rather than continue on stale ownership; see
+    _apply_completion_plan's docstring for why idempotent writes alone are
+    NOT treated as sufficient here — this makes ownership itself exclusive,
+    not just the end state convergent."""
+
+
+async def _assert_claim_owned(draft_id: str, claim_token: str) -> None:
+    current = await db.training_session_drafts.find_one(
+        {"id": draft_id, "completing_claim_token": claim_token}, {"_id": 0, "id": 1},
+    )
+    if not current:
+        raise LostCompletionClaimError(
+            f"Draft {draft_id} completion claim {claim_token!r} is no longer owned by this worker — "
+            "another request has taken over. Aborting without further writes."
+        )
+
+
+async def _apply_completion_plan(draft_id: str, plan: Dict[str, Any], claim_token: str) -> Dict[str, Any]:
+    """Applies a precomputed, persisted completion plan. `claim_token` is
+    the unique token this worker was given when it claimed (or reclaimed)
+    the draft's "completing" state — see complete_training_session. Every
+    write here is ALSO idempotent/resumable (see below), but that is
+    deliberately treated as defense in depth, not as the sole guarantee:
+    _assert_claim_owned is called immediately before each mutation stage,
+    and the FINAL write is conditioned on the token via its own query
+    filter (closing the check-then-write gap the earlier stages, which
+    mutate collections that don't carry the token, can't fully close by
+    filter alone). A worker whose claim has been taken over by a stale-
+    claim reclaim (see complete_training_session) raises
+    LostCompletionClaimError at the next stage boundary and writes nothing
+    further — it does not rely on its remaining writes happening to be
+    harmless.
+
+    Beyond ownership, this also has to handle running again, later, after
+    a prior call to itself (by the SAME rightful owner) was interrupted
+    partway by an exception or a process crash — every step is safe to
+    redo for exactly that reason, each either setting a fixed final value
+    (not a delta) or claimed/upserted by a deterministic key:
+      - dog_programs $set writes the plan's fixed final goal_progress/
+        module/lesson values — applying it twice is a no-op the second time.
+      - homework triggers are claimed atomically (_claim_auto_homework_trigger)
+        before creating the homework doc; a claimed-but-not-yet-finalized
+        entry (a prior call died between claiming and creating) is finished
+        rather than silently skipped.
+      - the session log is upserted by its deterministic id — a retry
+        matches the existing document instead of inserting a second one.
+    This is the ONLY place training_session_log rows are written for
+    session completions; there is no compensating rollback here by design
+    — see complete_training_session's docstring for why resumable idempotent
+    replay, not rollback-and-restart, is the correct model once a plan has
+    been persisted and (possibly) partially applied.
+    """
+    await _assert_claim_owned(draft_id, claim_token)
+    await db.dog_programs.update_one({"id": plan["enrollment_id"]}, {"$set": plan["set_doc"]})
+
+    homework_created: List[str] = []  # newly created BY THIS CALL — the response's "what just happened"
+    homework_conflicts: List[Dict[str, Any]] = []
+    resolved_homework_ids: Dict[str, str] = {}  # trigger -> homework_id, created now OR by a prior attempt
+    if plan["homework_targets"]:
+        await _assert_claim_owned(draft_id, claim_token)
+        dog = await db.dogs.find_one({"id": plan["dog_id"]}, {"_id": 0})
+        client = await db.clients.find_one({"id": dog.get("owner_id")}, {"_id": 0}) if dog else None
+        current_enrollment = await db.dog_programs.find_one({"id": plan["enrollment_id"]}, {"_id": 0}) or {}
+        existing_log_by_trigger = {e.get("trigger"): e for e in (current_enrollment.get("auto_homework_log") or [])}
+        for target in plan["homework_targets"]:
+            trigger = target["trigger"]
+            if not dog:
+                continue
+            existing_entry = existing_log_by_trigger.get(trigger)
+            if existing_entry and existing_entry.get("homework_id"):
+                resolved_homework_ids[trigger] = existing_entry["homework_id"]  # a prior attempt already finished this one
+                continue  # retry-safe, not a real conflict
+            if not existing_entry:
+                conflict = await _active_homework_conflict(dog["id"], target["template_id"])
+                if conflict:
+                    homework_conflicts.append({
+                        "activity_id": target["activity_id"], "template_id": target["template_id"],
+                        "existing_homework_id": conflict["id"], "existing_title": conflict.get("title"),
+                        "existing_status": conflict.get("status"),
+                    })
+                    continue
+                won = await _claim_auto_homework_trigger(plan["enrollment_id"], target["template_id"], trigger)
+                if not won:
+                    continue  # a concurrent attempt claimed it first — it will finish it
+            # Either we just won the claim, or a prior attempt claimed it
+            # but crashed before finishing — either way, we finish it now.
+            hw = await _create_homework_from_template_internal(
+                dog, client, target["template_id"], assigned_by=plan["completed_by_name"] or "Trainer",
+                source_skill_id=target["skill_id"], source_lesson_id=target["lesson_id"],
+                source_session_log_id=plan["log_doc"]["id"], trainer_personalized_note=target["trainer_personalized_note"],
+            )
+            if hw:
+                await _finalize_auto_homework_claim(plan["enrollment_id"], trigger, hw["id"])
+                homework_created.append(hw["id"])
+                resolved_homework_ids[trigger] = hw["id"]
+
+    await _assert_claim_owned(draft_id, claim_token)
+    # The persisted log's homework_created must reflect EVERY homework item
+    # tied to this plan (created now or by an earlier partial attempt) —
+    # portal_session_recaps reads this field directly, so it must be
+    # complete even when the log doc itself lands on a later retry.
+    log_doc_to_write = dict(plan["log_doc"])
+    log_doc_to_write["homework_created"] = list(resolved_homework_ids.values())
+    await db.training_session_log.update_one(
+        {"id": plan["log_doc"]["id"]}, {"$setOnInsert": log_doc_to_write}, upsert=True,
+    )
+
+    await _assert_claim_owned(draft_id, claim_token)
+    enrollment = await db.dog_programs.find_one({"id": plan["enrollment_id"]}, {"_id": 0})
+    if enrollment:
+        enrollment = await _auto_complete_if_satisfied(enrollment)
+        try:
+            await check_dog_trophies(db, plan["dog_id"])
+        except Exception as exc:
+            logger.warning("Dog trophy check failed for %s: %s", plan["dog_id"], exc)
+
+    # Final write — conditioned directly on the token via the query filter
+    # itself (not a separate check-then-write), so this specific stage has
+    # no ownership-race window at all: either this worker still holds the
+    # token at the instant Mongo applies the update, or the update matches
+    # nothing and this worker learns it lost ownership right here.
+    ts = now_iso()
+    final_write = await db.training_session_drafts.update_one(
+        {"id": draft_id, "completing_claim_token": claim_token},
+        {"$set": {
+            "status": "completed", "completed_at": ts, "completed_by": plan["completed_by"],
+            "completed_by_name": plan["completed_by_name"], "completed_log_id": plan["log_doc"]["id"],
+            "recap_ready": plan["recap_ready"],
+        }},
+    )
+    if final_write.matched_count == 0:
+        raise LostCompletionClaimError(
+            f"Draft {draft_id} completion claim {claim_token!r} was taken over before the final write — "
+            "another worker already finished (or is finishing) this completion."
+        )
+    draft = await db.training_session_drafts.find_one({"id": draft_id}, {"_id": 0})
+    log_doc = await db.training_session_log.find_one({"id": plan["log_doc"]["id"]}, {"_id": 0})
+    return {
+        "already_completed": False, "session_log": log_doc, "draft": draft,
+        "enrollment": {
+            "id": plan["enrollment_id"],
+            "status": (enrollment or {}).get("status", plan["final_status"]),
+            "current_module_id": (enrollment or {}).get("current_module_id", plan["final_module_id"]),
+            "current_lesson_id": (enrollment or {}).get("current_lesson_id", plan["final_lesson_id"]),
+        },
+        "homework_created": homework_created,
+        "homework_conflicts": homework_conflicts,
+    }
+
+
+_COMPLETION_STALE_SECONDS = 30  # a real completion finishes in well under a second
+
+
+def _completing_is_stale(draft: dict) -> bool:
+    started = draft.get("completing_started_at")
+    if not started:
+        return True  # no timestamp recorded — treat as stale rather than get stuck forever
+    try:
+        started_dt = datetime.fromisoformat(started)
+        if started_dt.tzinfo is None:
+            started_dt = started_dt.replace(tzinfo=timezone.utc)
+        return (datetime.now(timezone.utc) - started_dt).total_seconds() > _COMPLETION_STALE_SECONDS
+    except Exception:
+        return True
+
+
+async def _run_completion_worker(draft_id: str, plan: Dict[str, Any], claim_token: str) -> Dict[str, Any]:
+    """Thin wrapper around _apply_completion_plan that clears
+    completing_started_at on a CAUGHT exception (the process is still
+    alive — a transient DB error, a bad template lookup, etc.) so the very
+    next call for this draft can retry immediately instead of waiting out
+    _COMPLETION_STALE_SECONDS. That staleness window exists specifically
+    for the case this wrapper CAN'T handle — the process dying outright,
+    with no chance to run this except block at all — which is why it stays
+    a real, if rare, safety margin rather than being removed entirely.
+
+    LostCompletionClaimError is handled separately and deliberately does
+    NOT clear completing_started_at: by definition this worker no longer
+    owns the claim, so clearing it would stomp on whichever worker (or
+    already-completed state) legitimately owns it now. The clear-on-failure
+    write below is itself scoped to this worker's own claim_token for the
+    same reason — a lost-then-late failure can never clobber a new owner."""
+    try:
+        return await _apply_completion_plan(draft_id, plan, claim_token)
+    except LostCompletionClaimError:
+        raise
+    except Exception:
+        try:
+            await db.training_session_drafts.update_one(
+                {"id": draft_id, "status": "completing", "completing_claim_token": claim_token},
+                {"$set": {"completing_started_at": None}},
+            )
+        except Exception as exc:
+            logger.warning("Could not clear completing_started_at for draft %s after a failed completion attempt: %s", draft_id, exc)
+        raise
+
+
+async def _wait_for_draft_completion(draft_id: str, *, timeout_seconds: float = 5.0, poll_interval: float = 0.1) -> Optional[dict]:
+    """Short bounded poll for a draft this request did NOT win the right to
+    complete itself — used only while another live request is actively
+    finishing it (see complete_training_session). Only the request that won
+    the draft->completing claim ever calls _apply_completion_plan; every
+    other concurrent request waits here instead of also replaying the plan,
+    which is what keeps homework creation and the session-log write free of
+    cross-request races. Returns the completed draft, or None on timeout."""
+    elapsed = 0.0
+    while elapsed < timeout_seconds:
+        draft = await db.training_session_drafts.find_one({"id": draft_id}, {"_id": 0})
+        if draft and draft.get("status") == "completed":
+            return draft
+        await asyncio.sleep(poll_interval)
+        elapsed += poll_interval
+    return None
+
+
+@api.post("/training-session-drafts/{draft_id}/complete")
+async def complete_training_session(
+    draft_id: str, body: SessionCompletionIn,
+    user: dict = Depends(require_admin_and_permission("manage_training_sessions")),
+):
+    """Training Session Workspace (Phase 4, hardened) — the one controlled
+    operation that finalizes a session: applies every recorded activity's
+    progress to goal_progress, advances/holds the curriculum per the
+    trainer's EXPLICIT choice (never automatically), creates homework from
+    existing templates for activities the trainer flagged, writes one
+    authoritative session-log row, and queues the client recap.
+
+    State machine: draft -> completing -> completed, with draft_id itself
+    as the idempotency key. IMPORTANT — this is NOT a rollback-on-failure
+    design (Mongo gives no multi-document transaction on this single-node
+    deployment, so a true rollback can itself fail partway through, which
+    is exactly the "recoverable state" gap a real hardening pass has to
+    close, not paper over). Instead:
+      1. The FIRST call to compute a plan for a draft does so once
+         (_compute_completion_plan, pure/no writes) and atomically claims
+         the draft -> completing transition via find_one_and_update — only
+         ONE caller can ever win this for a given draft — persisting that
+         exact plan onto the draft in the same update.
+      2. The winner alone calls _apply_completion_plan and applies it.
+         A genuinely concurrent second request that lost the claim does
+         NOT also apply the plan — it waits (_wait_for_draft_completion)
+         for the winner to finish and returns the same cached result. This
+         is what keeps homework creation and the session-log write free of
+         cross-request races: at most one live writer at a time.
+      3. If the winner's worker is still alive but slow (not actually
+         crashed, just past _COMPLETION_STALE_SECONDS), a LATER request is
+         still allowed to reclaim — staleness alone can't distinguish
+         "dead" from "slow". Each claim/reclaim mints a fresh, unique
+         completing_claim_token, and the reclaim is a compare-and-swap on
+         the CURRENT token, so at most one reclaim can ever win. Ownership
+         is not just advisory: _apply_completion_plan calls
+         _assert_claim_owned before every mutation stage, and its FINAL
+         write is conditioned on the token via the query filter itself. A
+         worker that loses ownership mid-flight raises
+         LostCompletionClaimError at the next stage boundary and performs
+         NO further writes — this is enforced independently of whether the
+         individual writes would have been idempotent anyway (see
+         _apply_completion_plan's docstring for why that distinction
+         matters: idempotent convergence and exclusive ownership are two
+         different guarantees, and this design provides both, not one
+         standing in for the other).
+      4. If the winner's process dies outright (no chance to run anything,
+         including the LostCompletionClaimError path), "completing" is
+         left stuck with no live writer at all — the SAME staleness+reclaim
+         mechanism above recovers it; the new owner reuses the SAME
+         persisted plan rather than recomputing one, which is what makes
+         crash-recovery retries safe: a fresh recompute could read an
+         enrollment a prior partial attempt already advanced, and would
+         double-advance it.
+      5. Once status=="completed", every later call is a pure cache read —
+         "already_completed": true with the same session_log every time.
+    A completed draft can only be re-opened for correction via the explicit,
+    audited POST .../reopen endpoint — never implicitly by calling this one.
+    """
+    draft = await db.training_session_drafts.find_one({"id": draft_id}, {"_id": 0})
+    if not draft:
+        raise HTTPException(status_code=404, detail="Draft not found")
+
+    if draft.get("status") == "completed":
+        log = None
+        if draft.get("completed_log_id"):
+            log = await db.training_session_log.find_one({"id": draft["completed_log_id"]}, {"_id": 0})
+        return {"already_completed": True, "session_log": log, "draft": draft}
+
+    if draft.get("status") not in ("draft", "completing"):
+        raise HTTPException(status_code=409, detail=f"This session is in an unexpected state ({draft.get('status')!r}) and cannot be completed.")
+
+    if draft.get("status") == "draft":
+        enrollment = await db.dog_programs.find_one({"id": draft["enrollment_id"]}, {"_id": 0})
+        if not enrollment:
+            raise HTTPException(status_code=404, detail="Enrollment not found")
+        plan = await _compute_completion_plan(enrollment, draft, draft_id, body, user)
+        claim_token = str(uuid.uuid4())
+        claimed = await db.training_session_drafts.find_one_and_update(
+            {"id": draft_id, "status": "draft"},
+            {"$set": {"status": "completing", "completing_started_at": now_iso(),
+                       "completion_plan": plan, "completing_claim_token": claim_token}},
+            projection={"_id": 0},
+            return_document=ReturnDocument.AFTER,
+        )
+        if claimed:
+            # We alone won the right to apply this plan — see
+            # _apply_completion_plan's docstring for why only ONE caller
+            # ever executes it at a time (every other concurrent/retried
+            # request either waits below or, if this worker crashes,
+            # reclaims a STALE "completing" state — never runs alongside it).
+            return await _resolve_completion_or_wait(draft_id, plan, claim_token)
+        # Lost the race — another request (or an earlier one that already
+        # finished) changed the status between our read and this update.
+        # Our locally-computed plan is discarded, never persisted, never
+        # applied. Re-fetch and fall through to the completing/waiting
+        # handling below instead of erroring.
+        draft = await db.training_session_drafts.find_one({"id": draft_id}, {"_id": 0})
+        if draft.get("status") == "completed":
+            log = await db.training_session_log.find_one({"id": draft["completed_log_id"]}, {"_id": 0}) if draft.get("completed_log_id") else None
+            return {"already_completed": True, "session_log": log, "draft": draft}
+
+    # draft["status"] == "completing" here, and this request did NOT just
+    # win the claim above (if it had, it would already have returned).
+    # Either a genuinely concurrent request is actively finishing it right
+    # now, or a previous worker crashed and left it stuck — staleness tells
+    # them apart.
+    if not _completing_is_stale(draft):
+        completed = await _wait_for_draft_completion(draft_id)
+        if completed:
+            log = await db.training_session_log.find_one({"id": completed["completed_log_id"]}, {"_id": 0}) if completed.get("completed_log_id") else None
+            return {"already_completed": True, "session_log": log, "draft": completed}
+        raise HTTPException(status_code=409, detail="This session is still being completed by another request. Try again shortly.")
+
+    # Stale — the original worker crashed OR is still slowly running past
+    # the staleness window. We reclaim via a compare-and-swap on its
+    # CURRENT claim token (not just the timestamp) — only one reclaimer can
+    # ever win this, and the moment it wins, the old token stops being
+    # valid, so the original worker (if it wasn't actually dead, just slow)
+    # will discover this at its very next _assert_claim_owned check and
+    # stop writing immediately — see _apply_completion_plan.
+    plan = draft.get("completion_plan")
+    if not plan:
+        # Defensive only — claim and plan are always written together, so
+        # this should be unreachable. Fail loudly rather than guess.
+        raise HTTPException(status_code=500, detail="Session is mid-completion but has no recorded plan. Contact support.")
+    new_claim_token = str(uuid.uuid4())
+    reclaimed = await db.training_session_drafts.find_one_and_update(
+        {"id": draft_id, "status": "completing", "completing_claim_token": draft.get("completing_claim_token")},
+        {"$set": {"completing_started_at": now_iso(), "completing_claim_token": new_claim_token}},
+        projection={"_id": 0}, return_document=ReturnDocument.AFTER,
+    )
+    if not reclaimed:
+        # Someone else reclaimed it (or finished it) in the meantime — wait
+        # for THEM the same way a non-stale concurrent request does, rather
+        # than immediately 409ing a request that lost the reclaim race by a
+        # matter of milliseconds while the actual winner is still writing.
+        current = await db.training_session_drafts.find_one({"id": draft_id}, {"_id": 0})
+        if current.get("status") == "completed":
+            log = await db.training_session_log.find_one({"id": current["completed_log_id"]}, {"_id": 0}) if current.get("completed_log_id") else None
+            return {"already_completed": True, "session_log": log, "draft": current}
+        completed = await _wait_for_draft_completion(draft_id)
+        if completed:
+            log = await db.training_session_log.find_one({"id": completed["completed_log_id"]}, {"_id": 0}) if completed.get("completed_log_id") else None
+            return {"already_completed": True, "session_log": log, "draft": completed}
+        raise HTTPException(status_code=409, detail="This session is still being completed by another request. Try again shortly.")
+    return await _resolve_completion_or_wait(draft_id, plan, new_claim_token)
+
+
+async def _resolve_completion_or_wait(draft_id: str, plan: Dict[str, Any], claim_token: str) -> Dict[str, Any]:
+    """Runs the completion worker under this claim_token. If it turns out
+    we lost the claim before finishing (LostCompletionClaimError — the
+    original still-alive worker was reclaimed out from under it, or this
+    reclaimer itself got reclaimed), that is NOT this request's failure to
+    report — someone else legitimately owns (or already finished) the
+    completion, so we wait for THEM the same way a non-owning concurrent
+    request always does."""
+    try:
+        return await _run_completion_worker(draft_id, plan, claim_token)
+    except LostCompletionClaimError:
+        completed = await _wait_for_draft_completion(draft_id)
+        if completed:
+            log = await db.training_session_log.find_one({"id": completed["completed_log_id"]}, {"_id": 0}) if completed.get("completed_log_id") else None
+            return {"already_completed": True, "session_log": log, "draft": completed}
+        raise HTTPException(status_code=409, detail="This session's completion claim was taken over by another request. Try again shortly.")
+
+
+@api.post("/training-session-drafts/{draft_id}/reopen")
+async def reopen_training_session(
+    draft_id: str, body: SessionReopenIn,
+    user: dict = Depends(require_admin_and_permission("manage_training_sessions")),
+):
+    """The ONLY way to re-edit a completed session — explicit and audited,
+    never implicit. Does not undo the goal_progress/advancement/homework
+    already applied (those remain real history under the original session
+    log row); it reopens the draft so the trainer can complete it again,
+    and that new completion computes and applies a fresh plan on top of
+    whatever the enrollment's state is at that time. Every reopen is
+    appended to the draft's own reopen_history — who, when, why — so
+    "a completed session got edited" is never silent."""
+    draft = await db.training_session_drafts.find_one({"id": draft_id}, {"_id": 0})
+    if not draft:
+        raise HTTPException(status_code=404, detail="Draft not found")
+    if draft.get("status") != "completed":
+        raise HTTPException(status_code=409, detail="Only a completed session can be reopened.")
+    reopen_event = {
+        "id": _gid(), "at": now_iso(),
+        "by_user": user.get("name") or user.get("email") or "admin", "by_email": user.get("email"),
+        "reason": body.reason.strip(), "prior_completed_log_id": draft.get("completed_log_id"),
+    }
+    result = await db.training_session_drafts.find_one_and_update(
+        {"id": draft_id, "status": "completed"},
+        {"$set": {"status": "draft", "completion_plan": None, "completed_log_id": None,
+                   "completed_at": None, "completed_by": None, "completed_by_name": None, "recap_ready": False},
+         "$inc": {"reopen_count": 1},
+         "$push": {"reopen_history": reopen_event}},
+        projection={"_id": 0},
+        return_document=ReturnDocument.AFTER,
+    )
+    if not result:
+        raise HTTPException(status_code=409, detail="This session is no longer in a state that can be reopened.")
+    return {"draft": result, "reopen_event": reopen_event}
+
+
+# ---------------------------------------------------------------------------
+# Client learning experience (Phase 6) — "Learn" (curriculum) and "Progress"
+# read models, plus session recaps. All client-scoped (role=="client",
+# reads only that client's own dogs), reusing the exact same enrollment/
+# goal_progress/training_session_log data every staff-facing view already
+# reads — no second progress store, no second curriculum copy.
+# ---------------------------------------------------------------------------
+
+SKILL_LEVEL_LABELS = {
+    0: "Not Introduced", 1: "Introduced", 2: "Learning",
+    3: "Practicing", 4: "Reliable", 5: "Mastered",
+}
+
+_CLIENT_SAFE_LESSON_FIELDS = (
+    "id", "name", "order", "active", "client_overview", "why_it_matters",
+    "demo_video_url", "demo_resource_id", "equipment_needed",
+    "client_instructions", "common_mistakes", "safety_notes",
+    # UI Phase 4 — already stored on Lesson, same client-appropriate category
+    # as common_mistakes/safety_notes above; just not previously surfaced.
+    "estimated_minutes", "troubleshooting", "success_criteria",
+)
+_CLIENT_SAFE_SKILL_FIELDS = (
+    "id", "name", "description", "client_facing_explanation",
+    # UI Phase 4 — already stored on Goal (target-setting info, not trainer
+    # strategy) — needed for Progress's skill-card measurement highlights.
+    "target_duration", "target_distance", "target_repetitions",
+    "target_distraction_level", "target_environment",
+)
+
+
+def _client_safe_lesson(lesson: dict) -> dict:
+    return {k: lesson.get(k) for k in _CLIENT_SAFE_LESSON_FIELDS}
+
+
+def _client_safe_skill(skill: dict, progress: dict) -> dict:
+    out = {k: skill.get(k) for k in _CLIENT_SAFE_SKILL_FIELDS}
+    score = int(progress.get("score") or 0)
+    out["score"] = score
+    out["level_label"] = SKILL_LEVEL_LABELS.get(score, "Not Introduced")
+    out["status"] = progress.get("status") or "not_started"
+    # UI Phase 4 — already stored per-skill (set every time a score/status/
+    # note changes in _apply_goal_update_to_enrollment); needed for the
+    # skill card's "last updated" date.
+    out["last_updated"] = progress.get("last_session_at")
+    # UI Phase 4 — already stored (the same flag _generate_suggested_plan
+    # already checks to resurface a mastered-but-flagged skill); needed for
+    # the roadmap's "Needs Review" module state.
+    out["needs_reassessment"] = bool(progress.get("needs_reassessment"))
+    return out
+
+
+def _client_unlocked_modules(enrollment: dict) -> tuple:
+    """Returns (unlocked_modules_sorted, current_module, current_module_index).
+    A module is unlocked if its order is <= the current module's order —
+    previously-completed curriculum stays visible, future modules stay
+    hidden so the client isn't shown material they haven't reached yet."""
+    modules_sorted = sorted(
+        (enrollment.get("program_snapshot", {}).get("modules") or []),
+        key=lambda m: (m.get("order", 0), m.get("name") or ""),
+    )
+    cur_id = enrollment.get("current_module_id") or (modules_sorted[0].get("id") if modules_sorted else None)
+    cur_idx = next((i for i, m in enumerate(modules_sorted) if m.get("id") == cur_id), 0)
+    return modules_sorted[:cur_idx + 1], (modules_sorted[cur_idx] if modules_sorted else None), cur_idx
+
+
+@api.get("/portal/learn")
+async def portal_learn(user: dict = Depends(get_current_user)):
+    """Client-accessible curriculum browser — active program, unlocked
+    modules/lessons only, client-safe fields only (no trainer instructions,
+    prep notes, troubleshooting, or pass/reset criteria)."""
+    if user.get("role") != "client":
+        raise HTTPException(status_code=403, detail="Client account required")
+    cid = user.get("client_id")
+    if not cid:
+        raise HTTPException(status_code=400, detail="No client linked")
+
+    # UI Phase 4 — photo added to this projection; already stored per-dog,
+    # needed for the Learn program header's dog identity.
+    dogs = await db.dogs.find({"owner_id": cid}, {"_id": 0, "id": 1, "name": 1, "photo": 1}).to_list(50)
+    out = []
+    for dog in dogs:
+        enr = await db.dog_programs.find_one({"dog_id": dog["id"], "status": "active"}, {"_id": 0})
+        if not enr:
+            continue
+        unlocked_modules, cur_module, cur_idx = _client_unlocked_modules(enr)
+        cur_lesson_id = enr.get("current_lesson_id")
+        modules_out = []
+        for m_i, m in enumerate(unlocked_modules):
+            lessons = sorted(_effective_lessons(m), key=lambda l: l.get("order", 0))
+            is_current_module = m.get("id") == (cur_module or {}).get("id")
+            if is_current_module and cur_lesson_id:
+                lesson_ids = [l.get("id") for l in lessons]
+                cur_lesson_idx = lesson_ids.index(cur_lesson_id) if cur_lesson_id in lesson_ids else len(lessons) - 1
+                visible_lessons = lessons[:cur_lesson_idx + 1]
+            else:
+                visible_lessons = lessons  # a prior, already-passed module — fully visible
+            modules_out.append({
+                "id": m.get("id"), "name": m.get("name"), "description": m.get("description") or "",
+                "is_current": is_current_module,
+                "lessons": [{**_client_safe_lesson(l), "is_current": is_current_module and l.get("id") == cur_lesson_id} for l in visible_lessons],
+                # UI Phase 4 — a count only (never the future lessons' own
+                # name/content) so the roadmap can honestly say "N more
+                # lessons unlock..." without exposing unpublished curriculum.
+                "locked_lesson_count": max(0, len(lessons) - len(visible_lessons)),
+            })
+        snap = enr.get("program_snapshot") or {}
+        total_modules = len((enr.get("program_snapshot") or {}).get("modules") or [])
+        out.append({
+            "dog_id": dog["id"], "dog_name": dog.get("name"), "dog_photo": dog.get("photo") or "",
+            "program_name": snap.get("name"), "program_focus": snap.get("focus"),
+            "current_module_name": (cur_module or {}).get("name"),
+            "modules": modules_out,
+            # UI Phase 4 — a count only, same reasoning as locked_lesson_count
+            # above: lets Learn's roadmap show "N more modules — locked" truthfully.
+            "locked_module_count": max(0, total_modules - len(unlocked_modules)),
+        })
+    return out
+
+
+@api.get("/portal/progress")
+async def portal_progress(user: dict = Depends(get_current_user)):
+    """Client-facing progress view — individual, not comparative. Never
+    frames a slower dog as behind; just shows where THIS dog is."""
+    if user.get("role") != "client":
+        raise HTTPException(status_code=403, detail="Client account required")
+    cid = user.get("client_id")
+    if not cid:
+        raise HTTPException(status_code=400, detail="No client linked")
+
+    # UI Phase 4 — photo added to this projection; needed for the Progress
+    # header and the report card's dog identity.
+    dogs = await db.dogs.find({"owner_id": cid}, {"_id": 0, "id": 1, "name": 1, "photo": 1}).to_list(50)
+    out = []
+    for dog in dogs:
+        enr = await db.dog_programs.find_one({"dog_id": dog["id"], "status": "active"}, {"_id": 0})
+        if not enr:
+            continue
+        summary = _enrollment_summary(enr)
+        unlocked_modules, cur_module, cur_idx = _client_unlocked_modules(enr)
+        progress = enr.get("goal_progress") or {}
+
+        completed_modules = [{"id": m.get("id"), "name": m.get("name")} for m in unlocked_modules[:cur_idx]]
+        current_skills = []
+        whats_next = []
+        if cur_module:
+            for g in (cur_module.get("goals") or []):
+                p = progress.get(g["id"]) or {}
+                skill = _client_safe_skill(g, p)
+                current_skills.append(skill)
+                if skill["score"] < 4:
+                    whats_next.append(skill["name"])
+
+        recent_logs = await db.training_session_log.find(
+            {"enrollment_id": enr["id"]}, {"_id": 0, "at": 1, "goal_updates": 1, "client_recap_note": 1},
+        ).sort("at", -1).limit(10).to_list(10)
+        goal_names = {g["id"]: g["name"] for m in (enr.get("program_snapshot", {}).get("modules") or []) for g in (m.get("goals") or [])}
+        session_history = [{
+            "at": log.get("at"),
+            "skills_worked": [d.get("skill_name") or goal_names.get(d.get("goal_id"), "") for d in (log.get("goal_updates") or [])],
+            "recap_note": log.get("client_recap_note") or None,
+        } for log in recent_logs]
+
+        out.append({
+            "dog_id": dog["id"], "dog_name": dog.get("name"), "dog_photo": dog.get("photo") or "",
+            "program_name": (enr.get("program_snapshot") or {}).get("name"),
+            "current_module_name": (cur_module or {}).get("name"),
+            "current_week": summary.get("current_week"), "total_weeks": summary.get("total_weeks"),
+            "mastered_pct": summary.get("mastered_pct"),
+            "completed_modules": completed_modules,
+            "current_skills": current_skills,
+            "whats_next": whats_next,
+            "session_history": session_history,
+            "program_status": enr.get("status"),
+        })
+    return out
+
+
+def _resolve_session_module_name(log: dict, modules_sorted: list, module_names: dict) -> str | None:
+    """Resolve a completed session's module name from data captured AT THAT
+    SESSION, never from the enrollment's current/live position — an
+    enrollment that has since advanced past this session must not cause an
+    old recap to relabel itself.
+
+    Documented session meaning: a session is labeled by the module it was
+    actively WORKED IN during that visit — i.e. the module the session
+    started in, even if the session's own advancement decision moved the
+    enrollment into the next module by the time it was logged. So a session
+    that advances Module 2 -> Module 3 is labeled "Module 2" (what was
+    trained that day), not "Module 3" (where the enrollment ended up).
+
+    Resolution order, all sourced from the immutable log_doc itself:
+    1. advanced_module.from_module_id — set only when THIS session caused
+       an advancement; directly names the module worked in before the move.
+    2. current_module_id_after — the enrollment's module pointer captured
+       once, at this log's write time. For a non-advancing session this is
+       unchanged from before the session, so it still names the module
+       worked in. Never re-read live from the enrollment afterward.
+    3. This session's own stored activities (always present, session-
+       specific) — cross-referenced against THIS log's own enrollment
+       snapshot to find which module contains the activity's lesson/skill.
+       Covers legacy logs from before current_module_id_after existed.
+    Returns None (render a neutral "Training Session" fallback) when none
+    of the above resolve — never guesses via the enrollment's current module.
+    """
+    advanced = log.get("advanced_module") or {}
+    from_id = advanced.get("from_module_id")
+    if from_id and from_id in module_names:
+        return module_names[from_id]
+    after_id = log.get("current_module_id_after")
+    if after_id and after_id in module_names:
+        return module_names[after_id]
+    for activity in (log.get("activities") or []):
+        lesson_id = activity.get("lesson_id")
+        skill_id = activity.get("skill_id")
+        for m in modules_sorted:
+            if lesson_id and any(l.get("id") == lesson_id for l in (m.get("lessons") or [])):
+                return m.get("name")
+            if skill_id and any(g.get("id") == skill_id for g in (m.get("goals") or [])):
+                return m.get("name")
+    return None
+
+
+@api.get("/portal/session-recaps")
+async def portal_session_recaps(limit: int = 20, user: dict = Depends(get_current_user)):
+    """Clean, client-friendly recap of each completed training session —
+    what was practiced, the trainer's note, homework assigned, and next
+    focus. Never includes internal trainer notes (session_note)."""
+    if user.get("role") != "client":
+        raise HTTPException(status_code=403, detail="Client account required")
+    cid = user.get("client_id")
+    if not cid:
+        raise HTTPException(status_code=400, detail="No client linked")
+
+    dogs = await db.dogs.find({"owner_id": cid}, {"_id": 0, "id": 1, "name": 1}).to_list(50)
+    dog_ids = [d["id"] for d in dogs]
+    dog_names = {d["id"]: d.get("name") for d in dogs}
+    if not dog_ids:
+        return []
+
+    logs = await db.training_session_log.find(
+        {"dog_id": {"$in": dog_ids}, "client_recap_note": {"$nin": [None, ""]}}, {"_id": 0},
+    ).sort("at", -1).limit(max(1, min(limit, 100))).to_list(100)
+
+    recaps = []
+    for log in logs:
+        enr = await db.dog_programs.find_one({"id": log.get("enrollment_id")}, {"_id": 0, "program_snapshot": 1, "current_module_id": 1})
+        goal_names = {}
+        module_names = {}
+        modules_sorted = []
+        if enr:
+            modules_sorted = sorted(enr.get("program_snapshot", {}).get("modules") or [], key=lambda m: m.get("order", 0))
+            for m in modules_sorted:
+                module_names[m.get("id")] = m.get("name")
+                for g in (m.get("goals") or []):
+                    goal_names[g["id"]] = g["name"]
+        # Resolved entirely from this session's own immutable log data — see
+        # _resolve_session_module_name's docstring for the resolution order
+        # and the documented from/to labeling convention. Deliberately never
+        # falls back to the enrollment's current/live current_module_id: a
+        # session must stay labeled with what it was actually about,
+        # regardless of how far the enrollment has advanced since.
+        resolved_module_name = _resolve_session_module_name(log, modules_sorted, module_names)
+        homework_titles = []
+        for hid in (log.get("homework_created") or []):
+            hw = await db.homework.find_one({"id": hid}, {"_id": 0, "title": 1})
+            if hw:
+                homework_titles.append(hw.get("title"))
+        recaps.append({
+            "dog_id": log.get("dog_id"), "dog_name": dog_names.get(log.get("dog_id")),
+            "at": log.get("at"),
+            # UI Phase 4 — already stored on the log (by_user) / derivable from
+            # the same program_snapshot already fetched above for goal_names;
+            # "who worked with your dog" and "which module" are client-
+            # appropriate context, not trainer-strategy content.
+            "trainer_name": log.get("by_user") or None,
+            "module_name": resolved_module_name or "Training Session",
+            "skills_practiced": [
+                {"name": d.get("skill_name") or goal_names.get(d.get("goal_id"), ""), "status": d.get("new_status")}
+                for d in (log.get("goal_updates") or [])
+            ],
+            "recap_note": log.get("client_recap_note"),
+            "homework_assigned": homework_titles,
+            "next_focus": (log.get("lesson_change") or {}).get("to_lesson_id") and "New material introduced" or None,
+        })
+    return recaps
+
+
+# ---------------------------------------------------------------------------
+# Trainer dashboard (Phase 7) — "Today's Training Dogs". Reuses the existing
+# bookings/check-in records and the Phase 3/4 session-draft machinery for
+# session status; never a second appointment calendar.
+# ---------------------------------------------------------------------------
+
+def _light_recommended_focus(enrollment: dict) -> List[str]:
+    """Cheap version of the suggested-plan generator for a dashboard list —
+    just the first couple of skill names, no full activity payload."""
+    plan = _generate_suggested_plan(enrollment)
+    return [a["name"] for a in plan[:2]]
+
+
+@api.get("/admin/training/today")
+async def admin_training_today(_: dict = Depends(require_admin_and_permission("manage_training_sessions"))):
+    """One row per today's training booking — appointment time, dog,
+    program, current module/lesson, recommended focus, homework completion,
+    media awaiting review, an unanswered client question if any, session
+    status (not_checked_in / plan_ready / in_progress / completed /
+    resolution_needed), and whoever last worked this dog's sessions. Batches
+    homework/media lookups across all of today's dogs in one query each —
+    no per-row fan-out.
+
+    UI Phase 5 — dog_photo/client_name/reopen_count/draft_created_at/
+    needs_reassessment_count/homework_difficulty_flags are additive: each is
+    either already stored (dog photo, client name, draft reopen_count/
+    created_at, goal_progress.needs_reassessment) or computed from a cursor
+    this endpoint already iterates (the homework field_values loop below) —
+    no new queries beyond one batched client-name lookup, no new storage."""
+    today = business_today().isoformat()
+    bookings = await db.bookings.find(
+        {"date": today, "service_type": "training", "status": {"$in": ["approved", "pending", "completed"]}},
+        {"_id": 0},
+    ).sort("time", 1).to_list(500)
+    if not bookings:
+        return []
+
+    dog_ids = list({b["dog_id"] for b in bookings if b.get("dog_id")})
+    dogs_by_id = {d["id"]: d for d in await db.dogs.find({"id": {"$in": dog_ids}}, {"_id": 0, "id": 1, "name": 1, "photo": 1, "owner_id": 1}).to_list(500)}
+    owner_ids = list({d["owner_id"] for d in dogs_by_id.values() if d.get("owner_id")})
+    client_name_by_id = {c["id"]: c.get("name") for c in await db.clients.find({"id": {"$in": owner_ids}}, {"_id": 0, "id": 1, "name": 1}).to_list(500)}
+    active_enrs = await db.dog_programs.find({"dog_id": {"$in": dog_ids}, "status": "active"}, {"_id": 0}).to_list(500)
+    enrs_by_dog: Dict[str, List[dict]] = {}
+    for e in active_enrs:
+        enrs_by_dog.setdefault(e["dog_id"], []).append(e)
+    enr_ids = [e["id"] for e in active_enrs]
+
+    drafts_today = await db.training_session_drafts.find(
+        {"enrollment_id": {"$in": enr_ids}, "occurrence_date": today}, {"_id": 0},
+    ).to_list(500)
+    draft_by_enr: Dict[str, dict] = {d["enrollment_id"]: d for d in drafts_today}
+
+    # One batched homework query for every dog on today's roster, instead of
+    # a query per row.
+    homework_by_dog: Dict[str, List[dict]] = {}
+    async for hw in db.homework.find({"dog_id": {"$in": dog_ids}, "status": {"$ne": "completed"}}, {"_id": 0}):
+        homework_by_dog.setdefault(hw["dog_id"], []).append(hw)
+
+    # Last trainer to touch this enrollment, from the audit log — a proxy
+    # since bookings have no trainer-assignment field of their own.
+    last_logs = await db.training_session_log.find(
+        {"enrollment_id": {"$in": enr_ids}}, {"_id": 0, "enrollment_id": 1, "by_user": 1, "at": 1},
+    ).sort("at", -1).to_list(1000)
+    last_trainer_by_enr: Dict[str, str] = {}
+    for log in last_logs:
+        last_trainer_by_enr.setdefault(log["enrollment_id"], log.get("by_user"))
+
+    rows = []
+    for b in bookings:
+        dog = dogs_by_id.get(b.get("dog_id")) or {}
+        row = {
+            "booking_id": b["id"], "time": b.get("time") or "", "dog_id": b.get("dog_id"),
+            "dog_name": dog.get("name") or b.get("dog_name") or "",
+            "dog_photo": dog.get("photo") or "",
+            "client_name": client_name_by_id.get(dog.get("owner_id")) or "",
+            "checked_in": bool(b.get("checked_in_at")),
+        }
+        enrs = enrs_by_dog.get(b.get("dog_id")) or []
+        if not enrs:
+            row.update({"session_status": "resolution_needed", "resolution_reason": "no_active_enrollment"})
+            rows.append(row)
+            continue
+        if len(enrs) > 1:
+            row.update({"session_status": "resolution_needed", "resolution_reason": "multiple_active_enrollments"})
+            rows.append(row)
+            continue
+        enr = enrs[0]
+        readiness = _check_enrollment_module_readiness(enr)
+        if not readiness["ok"]:
+            row.update({"session_status": "resolution_needed", "resolution_reason": readiness["reason"]})
+            rows.append(row)
+            continue
+
+        summary = _enrollment_summary(enr)
+        cur_module = summary.get("current_module") or {}
+        cur_lesson = None
+        if enr.get("current_lesson_id"):
+            for l in _effective_lessons(cur_module):
+                if l.get("id") == enr["current_lesson_id"]:
+                    cur_lesson = l.get("name")
+                    break
+
+        draft = draft_by_enr.get(enr["id"])
+        if not b.get("checked_in_at") and not draft:
+            status = "not_checked_in"
+        elif draft and draft.get("status") == "completed":
+            status = "completed"
+        elif draft and any(v for v in (draft.get("actuals") or {}).values()):
+            status = "in_progress"
+        elif draft:
+            status = "plan_ready"
+        else:
+            status = "not_checked_in"
+
+        hw_rows = homework_by_dog.get(b.get("dog_id")) or []
+        hw_total_days = sum(int(h.get("total_days") or 0) for h in hw_rows if h.get("daily_tracker"))
+        hw_completed_days = sum(
+            sum(1 for l in (h.get("section_logs") or []) if l.get("submission_status") in ("submitted", "approved"))
+            for h in hw_rows if h.get("daily_tracker")
+        )
+        media_awaiting = 0
+        client_question = None
+        difficulty_flags = 0
+        for h in hw_rows:
+            for l in (h.get("section_logs") or []):
+                fv = l.get("field_values") or {}
+                if fv.get("__video_id") or fv.get("__photo"):
+                    media_awaiting += 1
+                # UI Phase 5 — same __difficulty/__could_not_complete keys
+                # GET /admin/homework/pending-reviews already surfaces per-day
+                # to the homework review queue; here just counted (not the
+                # per-day detail) for the trainer attention queue.
+                if fv.get("__difficulty") in ("hard", "very_hard") or fv.get("__could_not_complete"):
+                    difficulty_flags += 1
+                for q in (l.get("questions") or []):
+                    if not q.get("answer") and not client_question:
+                        client_question = q.get("text")
+
+        goal_progress = enr.get("goal_progress") or {}
+        needs_reassessment_count = sum(
+            1 for g in (cur_module.get("goals") or []) if (goal_progress.get(g.get("id")) or {}).get("needs_reassessment")
+        )
+
+        row.update({
+            "program_name": (enr.get("program_snapshot") or {}).get("name"),
+            "current_module_name": cur_module.get("name"),
+            "current_lesson_name": cur_lesson,
+            "recommended_focus": _light_recommended_focus(enr),
+            "homework_completion": {"days_completed": hw_completed_days, "total_days": hw_total_days} if hw_total_days else None,
+            "media_awaiting_review": media_awaiting,
+            "client_question": client_question,
+            "homework_difficulty_flags": difficulty_flags,
+            "needs_reassessment_count": needs_reassessment_count,
+            "session_status": status,
+            "resolution_reason": None,
+            "assigned_trainer": last_trainer_by_enr.get(enr["id"]) or b.get("checked_in_by_name"),
+            "enrollment_id": enr["id"],
+            "draft_id": (draft or {}).get("id"),
+            "reopen_count": (draft or {}).get("reopen_count") or 0,
+            "draft_created_at": (draft or {}).get("created_at"),
+        })
+        rows.append(row)
+    return rows
+
+
 @api.get("/bookings/{booking_id}/training-context")
-async def get_training_context_for_booking(booking_id: str, _: dict = Depends(require_admin)):
+async def get_training_context_for_booking(booking_id: str, _: dict = Depends(require_admin_and_permission("manage_training_sessions"))):
     """Return the active training-program context for the dog on this booking,
     so the check-in flow can decide whether to surface the Training Tracker."""
     booking = await db.bookings.find_one({"id": booking_id}, {"_id": 0})
@@ -15458,7 +17426,7 @@ async def get_training_context_for_booking(booking_id: str, _: dict = Depends(re
 
 
 @api.get("/dogs/{dog_id}/programs/{enrollment_id}/training-context")
-async def get_training_context_direct(dog_id: str, enrollment_id: str, _: dict = Depends(require_admin)):
+async def get_training_context_direct(dog_id: str, enrollment_id: str, _: dict = Depends(require_admin_and_permission("manage_training_sessions"))):
     """Direct fetch (Care Board / dog profile entry points — no booking)."""
     enrollment = await db.dog_programs.find_one(
         {"id": enrollment_id, "dog_id": dog_id}, {"_id": 0},
@@ -15471,98 +17439,10 @@ async def get_training_context_direct(dog_id: str, enrollment_id: str, _: dict =
     return ctx
 
 
-@api.post("/dogs/{dog_id}/programs/{enrollment_id}/training-session")
-async def record_training_session(
-    dog_id: str, enrollment_id: str, body: TrainingSessionIn,
-    user: dict = Depends(require_admin),
-):
-    """Atomic batch: apply each goal update via the SAME helper update_goal
-    uses, optionally bump current_module to the next module in `order`,
-    write one audit row to training_session_log, return updated context."""
-    enrollment = await db.dog_programs.find_one(
-        {"id": enrollment_id, "dog_id": dog_id}, {"_id": 0},
-    )
-    if not enrollment:
-        raise HTTPException(status_code=404, detail="Enrollment not found")
-
-    # Apply every goal update against the in-memory enrollment doc, accumulating diffs
-    goal_diffs = []
-    for upd in body.goal_updates:
-        if not any(
-            g.get("id") == upd.goal_id
-            for m in (enrollment.get("program_snapshot", {}).get("modules") or [])
-            for g in (m.get("goals") or [])
-        ):
-            raise HTTPException(status_code=404, detail=f"Goal {upd.goal_id} not in this enrollment")
-        enrollment = await _apply_goal_update_to_enrollment(
-            enrollment=enrollment, goal_id=upd.goal_id,
-            body=GoalUpdate(status=upd.status, score=upd.score, notes=upd.notes),
-        )
-        diff = enrollment.pop("_goal_diff_" + upd.goal_id, {})
-        diff["goal_id"] = upd.goal_id
-        diff["note"] = upd.notes or ""
-        goal_diffs.append(diff)
-
-    # Optionally advance module pointer (trainer's discretion — no gating)
-    advance_record = None
-    if body.advance_to_next_module:
-        modules_sorted = sorted(
-            (enrollment.get("program_snapshot", {}).get("modules") or []),
-            key=lambda m: (m.get("order", 0), m.get("name") or ""),
-        )
-        ids = [m.get("id") for m in modules_sorted]
-        cur_id = enrollment.get("current_module_id") or (ids[0] if ids else None)
-        if cur_id and cur_id in ids and ids.index(cur_id) < len(ids) - 1:
-            next_id = ids[ids.index(cur_id) + 1]
-            advance_record = {"from_id": cur_id, "to_id": next_id}
-            enrollment["current_module_id"] = next_id
-
-    # Commit the enrollment doc in one $set
-    set_doc = {"goal_progress": enrollment["goal_progress"]}
-    if advance_record:
-        set_doc["current_module_id"] = enrollment["current_module_id"]
-    await db.dog_programs.update_one({"id": enrollment_id}, {"$set": set_doc})
-
-    # Run side effects ONCE at the end (auto-homework, auto-complete, trophies).
-    for diff in goal_diffs:
-        if diff.get("new_status") == "mastered" and diff.get("prior_status") != "mastered":
-            try:
-                await _auto_assign_module_homework(enrollment, diff["goal_id"])
-            except Exception as exc:
-                logger.warning("Auto-homework trigger failed: %s", exc)
-    enrollment = await _auto_complete_if_satisfied(enrollment)
-    try:
-        await check_dog_trophies(db, dog_id)
-    except Exception as exc:
-        logger.warning("Dog trophy check failed for %s: %s", dog_id, exc)
-
-    # Audit row — one per session, regardless of how many goals were touched
-    log_row = {
-        "id": _gid(),
-        "dog_id": dog_id,
-        "enrollment_id": enrollment_id,
-        "booking_id": body.booking_id,
-        "by_user": user.get("name") or user.get("email") or "admin",
-        "by_email": user.get("email"),
-        "at": datetime.now(timezone.utc).isoformat(),
-        "session_note": (body.session_note or "").strip(),
-        "goal_updates": goal_diffs,
-        "advanced_module": advance_record,
-        "current_module_id_after": enrollment.get("current_module_id"),
-    }
-    await db.training_session_log.insert_one(dict(log_row))
-
-    ctx = await _build_training_context(enrollment)
-    dog = await db.dogs.find_one({"id": dog_id}, {"_id": 0, "name": 1, "id": 1}) or {}
-    ctx["dog"] = {"id": dog_id, "name": dog.get("name") or ""}
-    ctx["last_log"] = log_row
-    return ctx
-
-
 @api.get("/dogs/{dog_id}/programs/{enrollment_id}/session-log")
 async def list_training_session_log(
     dog_id: str, enrollment_id: str, limit: int = 50,
-    _: dict = Depends(require_admin),
+    _: dict = Depends(require_admin_and_permission("manage_training_sessions")),
 ):
     """Activity feed for the dog/enrollment. Newest first."""
     cur = db.training_session_log.find(
@@ -15718,7 +17598,7 @@ class CustomProgramIn(BaseModel):
 
 
 @api.post("/dogs/{dog_id}/programs/custom")
-async def create_custom_and_enroll(dog_id: str, body: CustomProgramIn, _: dict = Depends(require_admin)):
+async def create_custom_and_enroll(dog_id: str, body: CustomProgramIn, _: dict = Depends(require_admin_and_permission("manage_training_content"))):
     dog = await db.dogs.find_one({"id": dog_id}, {"_id": 0})
     if not dog:
         raise HTTPException(status_code=404, detail="Dog not found")
@@ -15753,7 +17633,7 @@ async def seed_standard(_: dict = Depends(require_admin_and_permission("manage_t
 
 # Run-sheet/dashboard helper: which dogs have which active programs
 @api.get("/programs/active-summary")
-async def active_summary(_: dict = Depends(require_admin)):
+async def active_summary(_: dict = Depends(require_admin_and_permission("manage_training_sessions"))):
     cursor = db.dog_programs.find({"status": "active"}, {"_id": 0}).sort("started_at", -1)
     rows = await cursor.to_list(500)
     by_type: Dict[str, int] = {}
@@ -15765,7 +17645,7 @@ async def active_summary(_: dict = Depends(require_admin)):
 
 @api.get("/programs/pipeline")
 async def programs_pipeline(
-    _: dict = Depends(require_admin),
+    _: dict = Depends(require_admin_and_permission("manage_training_sessions")),
     status: Optional[str] = None,
     type: Optional[str] = None,
     search: Optional[str] = None,
@@ -21095,6 +22975,197 @@ async def _ensure_price_overrides_active_unique_index() -> None:
                      PRICE_OVERRIDES_ACTIVE_UNIQUE_INDEX_NAME, active)
 
 
+# Training-session draft/completion correctness — three indexes, explicit
+# stable names so verification never depends on Mongo's auto-generated
+# default naming.
+#
+# Why tsd_draft_occurrence_unique's partial filter is status="draft" ONLY,
+# and why that remains correct across the whole draft/completing/completed
+# lifecycle (confirmed empirically against the real dev database too — zero
+# duplicate (enrollment_id, occurrence_date, session_label) keys exist
+# across ANY status combination):
+#
+# The actual invariant: at most one DOCUMENT is ever created per
+# (enrollment_id, occurrence_date, session_label). The only way a second
+# document could ever come into existence for the same key is a second
+# insert_one() — and insert_one() is called in exactly one place
+# (_get_or_create_session_draft), which ALWAYS constructs the new doc with
+# status="draft" (see its `doc = {...}` literal). Every other status
+# transition (draft->completing, completing->completed, completed->draft
+# via reopen) is an UPDATE on that same, already-unique, already-existing
+# document by its own `id` — never a second insert. So a partial index
+# that only constrains "draft" documents already covers 100% of the actual
+# race window (two inserts racing each other), because BOTH racing
+# documents are, by construction, status="draft" at the moment they'd
+# collide. Broadening the filter to include completing/completed would add
+# no additional protection against a real race, while creating a real risk
+# of failing to build against legitimate historical data if it ever
+# violates a broader constraint — so it is deliberately left as-is, not
+# broadened casually.
+#
+#   1. Two concurrent initial starts (no doc yet): both find nothing, both
+#      attempt insert_one with status="draft" — the partial unique index
+#      lets exactly one succeed; the loser's DuplicateKeyError is caught
+#      and re-fetches the winner. Protected directly by this index.
+#   2. Draft becoming "completing": an update on the existing doc's `id`,
+#      not an insert. No second document is created, so there is nothing
+#      for the index to need to cover once status leaves "draft" — no new
+#      insert_one() call is ever reachable for a key whose document
+#      already exists (see _get_or_create_session_draft's own read-first
+#      $in ["draft","completing","completed"] lookup, checked BEFORE any
+#      insert is attempted).
+#   3. A start request arriving during completion (status="completing"):
+#      _get_or_create_session_draft's lookup matches "completing" and
+#      returns the existing doc directly — insert_one() is never called,
+#      so the index is never even exercised on this path.
+#   4. A start request arriving after completion (status="completed"):
+#      same as #3 — the lookup matches "completed" and returns it. No
+#      insert attempted; no race possible, since the document to be found
+#      already unconditionally exists by this point.
+#   5. Reopen: flips a COMPLETED doc back to "draft" via an update on its
+#      own `id` (never an insert). Once status="draft" again, THIS same
+#      document becomes subject to the partial index again — correctly:
+#      if some other path ever attempted a fresh insert for the same key
+#      while a reopened draft is live, the index would still reject it,
+#      exactly as in scenario 1.
+#   6. Hard-process interruption (crash mid-"completing", later reclaimed
+#      via staleness): the reclaim is an update on the existing doc by
+#      `id`+token (see complete_training_session), never an insert. Any
+#      concurrent "start" request during this window is caught by
+#      _get_or_create_session_draft's $in lookup (matches "completing")
+#      before it would ever attempt an insert.
+#   7. Board-and-train sessions with different labels: session_label is
+#      part of the compound key — different labels are different keys,
+#      never interact.
+#   8. Same label on a different date: occurrence_date is part of the
+#      compound key — different dates are different keys, never interact.
+TSD_DRAFT_OCCURRENCE_UNIQUE_INDEX_NAME = "tsd_draft_occurrence_unique"
+TSD_ID_UNIQUE_INDEX_NAME = "tsd_id_unique"
+TSL_ID_UNIQUE_INDEX_NAME = "tsl_id_unique"
+
+
+class CriticalIndexError(RuntimeError):
+    """Raised when a correctness-critical MongoDB index for the training-
+    session draft/completion pipeline is missing or misconfigured at
+    startup. Unlike the best-effort perf_indexes loop above (log a warning,
+    keep starting — fine for pure query-speed indexes), these three each
+    enforce a real invariant application code depends on being true:
+      - tsd_draft_occurrence_unique: draft-start concurrency safety — two
+        concurrent "start session" calls for the same (enrollment_id,
+        occurrence_date, session_label) can never both insert (see
+        _get_or_create_session_draft).
+      - tsd_id_unique: draft identity — draft_id is the idempotency key the
+        entire completion state machine (claim/reclaim/complete/reopen) is
+        built on.
+      - tsl_id_unique: completion retry/idempotency safety — the session-log
+        upsert in _apply_completion_plan relies on this to converge retries
+        and concurrent completions on exactly one row.
+    If any can't be verified present with the exact expected definition,
+    the app must not silently start as though training-session integrity
+    is protected — see _ensure_critical_training_indexes."""
+
+
+async def _critical_index_matches(coll, expected_key: list, unique: bool, partial: Optional[dict]) -> bool:
+    """True if ANY index on `coll` — regardless of name — already has the
+    expected key pattern, uniqueness, and partial filter expression.
+
+    Checking by definition rather than by our own chosen name is
+    deliberate: an index created before this pass under Mongo's
+    auto-generated default name (e.g.
+    "enrollment_id_1_occurrence_date_1_session_label_1") provides the
+    IDENTICAL guarantee as one created under TSD_DRAFT_OCCURRENCE_UNIQUE_
+    INDEX_NAME — confirmed directly against this MongoDB version: creating
+    an index with a new explicit name against an already-existing index of
+    identical key+options raises IndexOptionsConflict (the create is a
+    no-op, not a rename), so relying on our own create_index() call to
+    "fix" the name would make startup fail on every environment that
+    already has the correct index under the old name. The application
+    never drops or recreates an existing index to force a rename — this
+    metadata check is what lets an old-named-but-correct index continue to
+    verify as valid, matching the same idiom already used by
+    _ensure_retail_sales_payment_id_unique_index/_ensure_price_overrides_
+    active_unique_index above."""
+    existing = await coll.index_information()
+    for spec in existing.values():
+        key = spec.get("key") or []
+        normalized = [(k, float(v)) for k, v in key]
+        expected_normalized = [(k, float(v)) for k, v in expected_key]
+        if normalized != expected_normalized:
+            continue
+        if bool(spec.get("unique")) != unique:
+            continue
+        if partial is None:
+            if spec.get("partialFilterExpression"):
+                continue
+        else:
+            if spec.get("partialFilterExpression") != partial:
+                continue
+        return True
+    return False
+
+
+async def _ensure_critical_training_indexes() -> None:
+    """Mandatory verification for the three indexes CriticalIndexError's
+    docstring describes — separated out from the best-effort perf_indexes
+    loop above specifically because a missing/misconfigured index here
+    means real concurrency/idempotency bugs can occur silently in
+    production, not just a slower query.
+
+    Per index: attempt create_index under its explicit stable name -> read
+    the collection's ACTUAL index metadata via index_information() (never
+    trust create_index()'s own return value alone — it doesn't tell us
+    about a pre-existing, already-correct, differently-named index) ->
+    verify key order + unique + partial filter via _critical_index_matches
+    -> if nothing matches, log a fatal error naming the exact collection
+    and expected definition and raise CriticalIndexError. Raising here
+    aborts the FastAPI startup event, which stops uvicorn from ever
+    accepting traffic — the strongest available "fail startup" signal
+    without a separate health-check subsystem.
+
+    create_index() itself is never destructive: it cannot alter or drop an
+    existing index, only add a new one or fail. A name-only conflict
+    against an already-correct index is caught by the metadata check
+    (treated as a pass), never as a trigger to drop/recreate anything
+    against live data."""
+    specs = [
+        (db.training_session_drafts,
+         [("enrollment_id", 1), ("occurrence_date", 1), ("session_label", 1)],
+         True, {"status": "draft"}, TSD_DRAFT_OCCURRENCE_UNIQUE_INDEX_NAME),
+        (db.training_session_drafts, [("id", 1)], True, None, TSD_ID_UNIQUE_INDEX_NAME),
+        (db.training_session_log, [("id", 1)], True, None, TSL_ID_UNIQUE_INDEX_NAME),
+    ]
+    for coll, key, unique, partial, name in specs:
+        create_kwargs: Dict[str, Any] = {"unique": unique, "name": name}
+        if partial is not None:
+            create_kwargs["partialFilterExpression"] = partial
+        try:
+            await coll.create_index(key, **create_kwargs)
+        except Exception as e:
+            # Not fatal by itself — an already-correct index under an
+            # older auto-generated name raises exactly this way (see
+            # _critical_index_matches's docstring). The metadata check
+            # below is the real authority: any OTHER cause of failure
+            # (e.g. existing duplicate data blocking a fresh unique index)
+            # will correctly also fail that check and raise below.
+            logger.info(
+                "create_index(%s) on %s did not create a new index (%s) — verifying existing metadata instead.",
+                name, coll.name, e,
+            )
+        if not await _critical_index_matches(coll, key, unique, partial):
+            logger.critical(
+                "CRITICAL INDEX MISSING OR MISCONFIGURED: %s.%s expected key=%s unique=%s partial=%s — "
+                "training-session draft-start concurrency and completion idempotency safety cannot be "
+                "guaranteed. Refusing to start. Do not drop or recreate any existing index automatically; "
+                "investigate the collection's actual indexes manually before retrying.",
+                coll.name, name, key, unique, partial,
+            )
+            raise CriticalIndexError(
+                f"Critical index {name!r} on {coll.name!r} is missing or does not match the expected "
+                f"definition (key={key!r}, unique={unique!r}, partial_filter={partial!r})."
+            )
+        logger.info("Critical index verified: %s.%s (key=%s unique=%s partial=%s)", coll.name, name, key, unique, partial)
+
+
 # -------- Startup --------
 @app.on_event("startup")
 async def startup():
@@ -21245,12 +23316,23 @@ async def startup():
         (db.retail_sales, "shop_order_id", {}),
         (db.photography_gallery, "sort_order", {}),
         (db.photography_gallery, "active", {}),
+        # Training Session Workspace (Phase 3) — booking_id/dog_id are plain
+        # lookup-performance indexes, best-effort like everything else in
+        # this list. The two indexes that actually enforce correctness
+        # (the unique partial draft-occurrence index and the unique id
+        # index) and training_session_log's unique id index are
+        # deliberately NOT here — see _ensure_critical_training_indexes,
+        # called below, for why they need real fail-fast verification
+        # instead of a swallowed warning.
+        (db.training_session_drafts, "booking_id", {}),
+        (db.training_session_drafts, "dog_id", {}),
     ]
     for coll, key, opts in perf_indexes:
         try:
             await coll.create_index(key, **opts)
         except Exception as e:
             logger.warning(f"Could not create index {key} on {coll.name}: {e}")
+    await _ensure_critical_training_indexes()
     await _ensure_retail_sales_payment_id_unique_index()
     await _ensure_price_overrides_active_unique_index()
     # Seed admin — Sprint 110di-46 (security hardening):
@@ -38816,6 +40898,15 @@ PERMISSION_KEYS = (
     # below), since building training content is genuinely a trainer's job,
     # unlike the owner/manager-only keys above.
     "manage_training_content",
+    # Training-school expansion (Phase 1/8) — deliberately SEPARATE from
+    # manage_training_content: this is the day-to-day operational permission
+    # (open a session plan, record progress, save trainer notes, complete a
+    # session, assign session homework, review client practice) vs. the
+    # content-authoring permission above (build/edit programs, modules,
+    # lessons, homework templates). A trainer needs both by default; a
+    # front-desk employee who can check a training dog in must NOT
+    # automatically be able to edit that dog's training progress.
+    "manage_training_sessions",
     # Trivia, dog-facts, and photography-gallery ADMINISTRATION (creating/
     # editing/deleting the content itself). Deliberately does not cover
     # reading it (staff/clients keep existing read access) or day-to-day
@@ -38882,6 +40973,7 @@ ROLE_PERMISSIONS: Dict[str, Dict[str, bool]] = {
         # trainer's actual job, unlike the other owner/manager-only
         # management keys.
         "manage_training_content": True,
+        "manage_training_sessions": True,
     },
     "daycare_staff": {
         **_empty_perms(),

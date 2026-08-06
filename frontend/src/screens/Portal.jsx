@@ -8,14 +8,14 @@ import Lightbox from "../components/Lightbox";
 import PortalDogModal from "../components/PortalDogModal";
 import PortalProfileModal from "../components/PortalProfileModal";
 import PortalTrainingCard from "../components/PortalTrainingCard";
+import PortalLearn from "../components/PortalLearn";
+import PortalProgress from "../components/PortalProgress";
 import PortalFilesSection from "../components/PortalFilesSection";
 import IntakePortalSection from "../components/IntakePortalSection";
 import PortalBookWizard from "../components/PortalBookWizard";
-import HomeworkSectionLogger from "../components/HomeworkSectionLogger";
-import DailyCheckInCard from "../components/DailyCheckInCard";
-import TodayPlanCard from "../components/TodayPlanCard";
 import HomeworkIncentivesPanel from "../components/HomeworkIncentivesPanel";
-import PlanProgressRing from "../components/PlanProgressRing";
+import ClientTodayPanel from "../components/training/ClientTodayPanel";
+import PracticePanel from "../components/training/PracticePanel";
 import MultiDateCalendar from "../components/MultiDateCalendar";
 import PortalHomeActionCard from "../components/PortalHomeActionCard";
 import PremiumButton from "../components/premium/PremiumButton";
@@ -647,9 +647,7 @@ export default function Portal() {
   const [showWaiver, setShowWaiver] = useState(false);
   const [waiverSuccess, setWaiverSuccess] = useState(null); // { signedAt } | null
   const [homework, setHomework] = useState([]);
-  const [hwModal, setHwModal] = useState(null);
-  const [hwNote, setHwNote] = useState("");
-  const [hwPhoto, setHwPhoto] = useState("");
+  const [practiceFor, setPracticeFor] = useState(null); // homework doc open in the Homework Practice screen
   const [lightbox, setLightbox] = useState({ open: false, photos: [], index: 0 });
   const [dogModal, setDogModal] = useState({ open: false, dog: null });
   const [profileOpen, setProfileOpen] = useState(false);
@@ -968,19 +966,6 @@ export default function Portal() {
   const cancel = async (id) => {
     if (!(await confirm({ title: "Cancel this booking?", body: "Credits aren't charged until check-out, so cancelling is free.", confirmText: "Cancel booking", cancelText: "Keep it", tone: "danger" }))) return;
     try { await api.delete(`/bookings/${id}`); loadAll(); } catch (e) { alert(formatErr(e.response?.data?.detail)); }
-  };
-
-  const completeHw = async () => {
-    try {
-      await api.post(`/homework/${hwModal.id}/complete`, { note: hwNote, photo: hwPhoto });
-      setHwModal(null); setHwNote(""); setHwPhoto(""); loadAll();
-    } catch (e) { alert(formatErr(e.response?.data?.detail)); }
-  };
-
-  const onHwFile = async (e) => {
-    const f = e.target.files?.[0]; if (!f) return;
-    const dataUrl = await compressImage(f);
-    setHwPhoto(dataUrl);
   };
 
   const waiverNeeded = pubSettings?.waiver_required_for_booking && (!waiver?.signed || waiver?.needs_resign);
@@ -1856,6 +1841,16 @@ export default function Portal() {
         </div>
 
         <div className="col-span-2 space-y-6">
+          {/* Training UI Phase 3 — Client Today, promoted to the top of the
+              main column so active practice is never buried behind "More"
+              (the brief's core complaint about the previous layout). Reads
+              the SAME `dogs`/`homework`/`bookings` state already loaded by
+              loadAll() below — no second fetch, so an assignment can never
+              be represented twice. */}
+          {feat.homework && (
+            <ClientTodayPanel dogs={dogs} homework={homework} bookings={bookings} onOpenPractice={setPracticeFor} testid="client-today-panel"/>
+          )}
+
           {/* Focused Client Usability phase — Homework streak + Payment
               plans are secondary; tucked behind "More". Required intake
               forms stay OUTSIDE this wrapper (below) since they can block
@@ -1886,104 +1881,23 @@ export default function Portal() {
               per spec); tucked behind "More". My Dogs (below, outside this
               wrapper) stays prominent. */}
           <div className={moreOpen ? "" : "hidden"} data-testid="portal-more-homework-rewards">
-          {/* Sprint 110n — Homework is the #1 client priority; promoted to the
-              top of the portal main column, followed by Achievements. The old
-              referral feed has been removed (client uses a separate system). */}
-          {feat.homework && homework.length > 0 && (
-            <div id="portal-homework-anchor" data-testid="portal-homework">
-              {/* Sprint 110y — Homework section gets matching eyebrow + italic
-                  headline treatment. */}
-              <div className="mb-4">
-                <p className="text-[11px] font-black uppercase tracking-[0.3em] text-shBlue mb-1">
-                  <i className="fas fa-graduation-cap mr-1.5"/>Daily training
-                </p>
-                <h2 className="text-2xl font-black text-white uppercase italic tracking-tight">Training Homework.</h2>
-              </div>
-              <div className="space-y-3">
-                {homework.map(h => {
-                  const hasTemplate = !!h.template_snapshot;
-                  const isDone = h.status === "completed";
-                  // Sprint 110y — homework plan cards get the brand-glow + gradient
-                  // treatment matching the Book Service hero. Completed plans glow
-                  // green; active plans glow purple/orange depending on tracker type.
-                  const isTracker = !!h.daily_tracker;
-                  return (
-                  <div key={h.id}
-                       className={`relative overflow-hidden rounded-2xl border p-4 shadow-xl ${
-                         isDone
-                           ? "bg-gradient-to-br from-shGreen/15 via-bgPanel to-bgPanel border-shGreen/50"
-                           : isTracker
-                             ? "bg-gradient-to-br from-purple-500/15 via-bgPanel to-bgPanel border-purple-500/40"
-                             : "bg-gradient-to-br from-shOrange/15 via-bgPanel to-bgPanel border-shOrange/40"
-                       }`}>
-                    <div className="absolute inset-0 pointer-events-none opacity-30"
-                         style={{ background: isDone
-                           ? "radial-gradient(circle at 100% 0%, rgba(140,198,63,0.5) 0%, transparent 45%)"
-                           : isTracker
-                             ? "radial-gradient(circle at 100% 0%, rgba(168,85,247,0.45) 0%, transparent 45%)"
-                             : "radial-gradient(circle at 100% 0%, rgba(242,101,34,0.4) 0%, transparent 45%)" }}/>
-                    <div className="relative">
-                    <div className="flex items-start justify-between gap-3">
-                      <div className="flex-1 min-w-0">
-                        <div className="flex flex-wrap items-center gap-2 mb-1">
-                          <span className={`text-[14px] font-black uppercase px-2 py-0.5 rounded tracking-widest ${h.status==="completed"?"bg-shGreen/15 text-shGreen":"bg-shOrange/15 text-shOrange"}`}>{h.status}</span>
-                          {h.daily_tracker && <span className="text-[14px] text-purple-300 bg-purple-500/15 font-black uppercase px-2 py-0.5 rounded tracking-widest"><i className="fas fa-calendar-check mr-1"/>Daily Tracker</span>}
-                          <span className="text-[14px] text-shBlue font-black uppercase tracking-widest">{h.dog_name}</span>
-                          {h.due_date && <span className="text-[14px] text-gray-400 font-black uppercase tracking-widest">Due {h.due_date}</span>}
-                          {hasTemplate && !h.daily_tracker && <span className="text-[14px] text-shGreen font-black uppercase tracking-widest"><i className="fas fa-list-check mr-1"/>{(h.section_logs||[]).length} sessions logged</span>}
-                        </div>
-                        <h4 className="text-base sm:text-lg font-black text-white uppercase italic tracking-tight leading-tight">{h.title}</h4>
-                        {h.instructions && <p className="text-xs text-gray-300 mt-1 whitespace-pre-wrap">{h.instructions}</p>}
-                        {h.video_url && <a href={h.video_url} target="_blank" rel="noreferrer" className="inline-block mt-2 text-[14px] text-shBlue hover:underline font-black uppercase tracking-widest"><i className="fas fa-play mr-1"/>Watch demo</a>}
-                      </div>
-                      {h.daily_tracker && h.progress_summary && h.status !== "completed" && (
-                        <PlanProgressRing
-                          pct={h.progress_summary.pct}
-                          current={h.progress_summary.current_day}
-                          total={h.progress_summary.total_days}
-                          completed={h.progress_summary.completed_days}
-                          testid={`portal-plan-ring-${h.id}`}
-                        />
-                      )}
-                      {h.status !== "completed" && !h.daily_tracker && (
-                        <button onClick={()=>{setHwModal(h); setHwNote(""); setHwPhoto("");}} data-testid={`portal-complete-${h.id}`}
-                                className="shrink-0 bg-shGreen text-bgHeader px-4 py-2 rounded font-black uppercase text-[14px] tracking-widest hover:bg-shGreen/90 shadow-lg">Mark Done</button>
-                      )}
-                    </div>
+          {/* Training UI Phase 3 — the verbose per-assignment card list that
+              used to live here (Sprint 110n) was replaced by the prominent
+              ClientTodayPanel above, which covers the exact same `homework`
+              data with better presentation. Kept ONLY here in "More" is a
+              legacy quick-link scroll target (below) pointing back at
+              client-today-panel, so the "Training Files & Homework" tile
+              still resolves to something visible. */}
 
-                    {h.daily_tracker && h.status !== "completed" && (
-                      <>
-                        <div className="mt-4 pt-4 border-t border-bgHover" data-testid={`portal-today-${h.id}`}>
-                          <TodayPlanCard homeworkId={h.id} unwrapped={true} onChanged={loadAll} />
-                        </div>
-                        <details className="mt-3 group" data-testid={`portal-history-${h.id}`}>
-                          <summary className="list-none cursor-pointer flex items-center justify-between gap-2 py-2 px-3 rounded bg-bgBase border border-bgHover hover:border-shBlue/50 transition">
-                            <span className="text-[12px] font-black uppercase tracking-widest text-gray-400 group-hover:text-white">
-                              <i className="fas fa-clock-rotate-left mr-2"/>Previous days &amp; history
-                            </span>
-                            <i className="fas fa-chevron-down text-gray-500 text-xs group-open:rotate-180 transition-transform"/>
-                          </summary>
-                          <div className="mt-3">
-                            <DailyCheckInCard homeworkId={h.id} onChanged={loadAll} hideActionableForm={true} />
-                          </div>
-                        </details>
-                      </>
-                    )}
-                    {hasTemplate && !h.daily_tracker && h.status !== "completed" && (
-                      <div className="mt-4 pt-4 border-t border-bgHover">
-                        <HomeworkSectionLogger homework={h} onLogged={loadAll} />
-                      </div>
-                    )}
-                    {h.status === "completed" && h.completion_note && (
-                      <p className="mt-2 text-xs text-gray-300 italic">"{h.completion_note}"</p>
-                    )}
-                    </div>
-                  </div>
-                  );
-                })}
-              </div>
-            </div>
-          )}
+          {/* Training-school expansion (Phase 6) — client learning
+              experience: Learn (curriculum) and Progress, each a
+              self-contained read-only view fed by the same enrollment/
+              goal_progress data every staff view already reads. Both
+              render nothing if the client has no dog with an active
+              enrollment, so this is a no-op for daycare/boarding-only
+              clients. */}
+          <PortalLearn homework={homework}/>
+          <PortalProgress homework={homework}/>
 
           {sectionOn("trivia_rewards") && feat.rewards && (trophies.client_trophies.length > 0 || trophies.dog_trophies.length > 0) && (
             <div data-testid="portal-trophies-section"
@@ -2497,33 +2411,8 @@ export default function Portal() {
         />
       )}
 
-      {hwModal && (
-        <div className="fixed inset-0 bg-black/80 flex items-center justify-center p-4 z-50">
-          <div className="bg-bgPanel border border-bgHover rounded-2xl w-full max-w-md p-6 md:p-8 shadow-2xl animate-slide-in">
-            <h4 className="text-lg font-black text-white uppercase italic tracking-tight mb-1">Mark Done</h4>
-            <p className="text-[14px] text-shBlue font-black uppercase tracking-widest mb-4">{hwModal.title}</p>
-            <div className="space-y-4">
-              <div>
-                <label className="text-[14px] font-black text-gray-500 uppercase tracking-widest">How did it go? (optional)</label>
-                <textarea value={hwNote} onChange={(e)=>setHwNote(e.target.value)} rows={3} placeholder="Feedback for your trainer" data-testid="hw-complete-note"
-                          className="w-full mt-1 bg-bgBase border border-bgHover rounded p-2 text-white text-sm focus:border-shBlue outline-none" />
-              </div>
-              <div>
-                <label className="text-[14px] font-black text-gray-500 uppercase tracking-widest">Proof Photo (optional)</label>
-                <div className="mt-2 flex items-center gap-3">
-                  {hwPhoto && <img src={hwPhoto} alt="" loading="lazy" decoding="async" className="h-20 w-20 rounded object-cover border border-bgHover" />}
-                  <label className="bg-bgBase border border-bgHover rounded px-4 py-2 cursor-pointer text-xs font-black uppercase tracking-widest text-gray-300 hover:bg-bgHover">
-                    Upload <input type="file" accept="image/*" onChange={onHwFile} className="hidden" />
-                  </label>
-                </div>
-              </div>
-              <div className="flex justify-end gap-3">
-                <button onClick={()=>setHwModal(null)} className="text-gray-500 font-black uppercase text-[14px] tracking-widest">Cancel</button>
-                <button onClick={completeHw} data-testid="hw-complete-button" className="bg-shGreen text-bgHeader px-8 py-3 rounded font-black text-[14px] uppercase tracking-widest shadow-xl">Mark Complete</button>
-              </div>
-            </div>
-          </div>
-        </div>
+      {practiceFor && (
+        <PracticePanel homework={practiceFor} onClose={() => setPracticeFor(null)} onChanged={loadAll}/>
       )}
       {lightbox.open && (
         <Lightbox photos={lightbox.photos} index={lightbox.index}

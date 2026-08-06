@@ -3,6 +3,10 @@ import { api } from "../lib/api";
 
 const MOOD_EMOJI = ["", "😞", "😅", "😐", "💪", "😄"];
 const MOOD_LABEL = ["", "Rough", "Tricky", "OK", "Strong", "Awesome"];
+// Training-school expansion (Phase 5) — the backend's labeled difficulty
+// scale, derived from the same mood tap rather than a second redundant
+// picker (mood already asks "how'd it go?" on the same 1-5 axis).
+const MOOD_TO_DIFFICULTY = ["", "very_hard", "hard", "okay", "good", "easy"];
 
 const KIND_META = {
   reps:         { unit: "reps",   type: "number" },
@@ -38,6 +42,8 @@ export default function DailyCheckInCard({ homeworkId, onChanged, hideActionable
   const [photo, setPhoto] = useState("");
   const [videoId, setVideoId] = useState("");
   const [videoName, setVideoName] = useState("");
+  const [couldNotComplete, setCouldNotComplete] = useState(false);
+  const [couldNotCompleteReason, setCouldNotCompleteReason] = useState("");
   const [busy, setBusy] = useState(false);
   const [uploadingVideo, setUploadingVideo] = useState(false);
   const [remindersOpen, setRemindersOpen] = useState(false);
@@ -64,7 +70,10 @@ export default function DailyCheckInCard({ homeworkId, onChanged, hideActionable
           setMood(Number(fv.__mood) || 0);
           setPhoto(fv.__photo || "");
           setVideoId(fv.__video_id || "");
-          delete fv.__mood; delete fv.__photo; delete fv.__video_id;
+          setCouldNotComplete(!!fv.__could_not_complete);
+          setCouldNotCompleteReason(fv.__could_not_complete_reason || "");
+          delete fv.__mood; delete fv.__photo; delete fv.__video_id; delete fv.__difficulty;
+          delete fv.__could_not_complete; delete fv.__could_not_complete_reason;
           setValues(fv);
           setNote(next.log.note || "");
         }
@@ -82,11 +91,15 @@ export default function DailyCheckInCard({ homeworkId, onChanged, hideActionable
       setMood(Number(fv.__mood) || 0);
       setPhoto(fv.__photo || "");
       setVideoId(fv.__video_id || "");
-      delete fv.__mood; delete fv.__photo; delete fv.__video_id;
+      setCouldNotComplete(!!fv.__could_not_complete);
+      setCouldNotCompleteReason(fv.__could_not_complete_reason || "");
+      delete fv.__mood; delete fv.__photo; delete fv.__video_id; delete fv.__difficulty;
+      delete fv.__could_not_complete; delete fv.__could_not_complete_reason;
       setValues(fv);
       setNote(day.log.note || "");
     } else {
       setValues({}); setMood(0); setPhoto(""); setVideoId(""); setVideoName(""); setNote("");
+      setCouldNotComplete(false); setCouldNotCompleteReason("");
     }
   };
 
@@ -139,10 +152,14 @@ export default function DailyCheckInCard({ homeworkId, onChanged, hideActionable
       await api.post(`/homework/${homeworkId}/day/${openDay}/submit`, {
         field_values, note,
         mood: mood || null,
+        difficulty: mood ? MOOD_TO_DIFFICULTY[mood] : null,
         photo: photo || "",
         video_media_id: videoId || "",
+        could_not_complete: couldNotComplete,
+        could_not_complete_reason: couldNotComplete ? (couldNotCompleteReason || null) : null,
       });
       setValues({}); setMood(0); setNote(""); setPhoto(""); setVideoId(""); setVideoName("");
+      setCouldNotComplete(false); setCouldNotCompleteReason("");
       setOpenDay(null);
       await load();
       onChanged?.();
@@ -235,6 +252,8 @@ export default function DailyCheckInCard({ homeworkId, onChanged, hideActionable
             values={values} setValues={setValues}
             mood={mood} setMood={setMood}
             note={note} setNote={setNote}
+            couldNotComplete={couldNotComplete} setCouldNotComplete={setCouldNotComplete}
+            couldNotCompleteReason={couldNotCompleteReason} setCouldNotCompleteReason={setCouldNotCompleteReason}
             photo={photo} setPhoto={setPhoto}
             videoId={videoId} videoName={videoName} setVideoId={setVideoId} setVideoName={setVideoName}
             uploadingVideo={uploadingVideo}
@@ -256,7 +275,7 @@ export default function DailyCheckInCard({ homeworkId, onChanged, hideActionable
   );
 }
 
-function DayRow({ day, isOpen, onOpen, onClose, values, setValues, mood, setMood, note, setNote, photo, setPhoto, videoId, videoName, setVideoId, setVideoName, uploadingVideo, homeworkId, onPickPhoto, onPickVideo, onSubmit, onMarkRest, onAsk, busy, err, hideActionableForm = false }) {
+function DayRow({ day, isOpen, onOpen, onClose, values, setValues, mood, setMood, note, setNote, couldNotComplete, setCouldNotComplete, couldNotCompleteReason, setCouldNotCompleteReason, photo, setPhoto, videoId, videoName, setVideoId, setVideoName, uploadingVideo, homeworkId, onPickPhoto, onPickVideo, onSubmit, onMarkRest, onAsk, busy, err, hideActionableForm = false }) {
   const statusMeta = {
     locked:     { color: "border-shBorder bg-[var(--sh-card-base)] text-shTextMuted", icon: "fa-lock",          label: "Locked",              actionable: false },
     available:  { color: "border-shPrimary/50 bg-[var(--sh-card-base)]",               icon: "fa-circle-play",   label: "Ready to log",        actionable: true  },
@@ -315,6 +334,7 @@ function DayRow({ day, isOpen, onOpen, onClose, values, setValues, mood, setMood
               {logPhoto && <span>· <i className="fas fa-camera"/></span>}
               {log.field_values?.__video_id && <span>· <i className="fas fa-video"/></span>}
               {day.status === "rest" && <span className="text-shSecondary">· rest day</span>}
+              {log.field_values?.__could_not_complete && <span className="text-shAccent">· couldn't complete</span>}
             </div>
           )}
           {reviewerNote && day.status === "needs_redo" && (
@@ -370,6 +390,18 @@ function DayRow({ day, isOpen, onOpen, onClose, values, setValues, mood, setMood
                 <textarea value={note} onChange={(e) => setNote(e.target.value)} rows={2} data-testid={`day-note-${day.day_number}`}
                           placeholder="Anything tricky? Wins? Questions?"
                           className="w-full mt-1 bg-[var(--sh-card-base)] border border-shBorder rounded p-2 text-shText text-sm" />
+              </div>
+
+              <div className="bg-[var(--sh-card-base)] border border-shBorder rounded p-2">
+                <label className="flex items-center gap-2 text-[13px] text-shText cursor-pointer" data-testid={`day-cnc-toggle-${day.day_number}`}>
+                  <input type="checkbox" checked={couldNotComplete} onChange={(e) => setCouldNotComplete(e.target.checked)} />
+                  Couldn't complete this today
+                </label>
+                {couldNotComplete && (
+                  <textarea value={couldNotCompleteReason} onChange={(e) => setCouldNotCompleteReason(e.target.value)}
+                            rows={2} placeholder="What got in the way? (optional)" data-testid={`day-cnc-reason-${day.day_number}`}
+                            className="w-full mt-2 bg-transparent border border-shBorder rounded p-2 text-shText text-sm" />
+                )}
               </div>
 
               <div className="grid grid-cols-2 gap-2">

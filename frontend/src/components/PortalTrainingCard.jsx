@@ -170,7 +170,12 @@ function ActiveSection({ enrollment, typeMeta, dogName, expanded, setExpanded })
                     <div className="flex-1 min-w-0">
                       <p className="text-[14px] font-black text-white">{g.name}</p>
                       {g.description && <p className="text-[15px] text-gray-400">{g.description}</p>}
-                      {g.notes && <p className="text-[14px] text-gray-500 italic mt-1">Trainer: "{g.notes}"</p>}
+                      {/* Training-school expansion (Phase 8) — goal_progress.notes is the
+                          same free-text field trainers fill in from DogTrainingTab,
+                          Pipeline, and the Training Session Workspace's per-activity
+                          recording — none of which warn that it's client-visible. Internal
+                          notes stay internal; use client_recap_note (via /portal/session-
+                          recaps) for anything meant for the client to read. */}
                     </div>
                     <GoalChip score={g.score || 0} />
                   </div>
@@ -204,7 +209,9 @@ function escHtml(s) {
   ));
 }
 
-function printCertificate(dog, enrollment, typeByKey) {
+// UI Phase 4 — exported (unchanged logic) so Progress's certificate entry
+// point can trigger the exact same print flow instead of a second copy.
+export function printCertificate(dog, enrollment, typeByKey) {
   const snap = enrollment.program_snapshot;
   const tm = typeByKey[snap.type] || { color: "#8cc63f", label: snap.type };
   const today = new Date().toLocaleDateString();

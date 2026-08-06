@@ -1,12 +1,19 @@
 import { useEffect, useState, useMemo, useRef } from "react";
 import { api } from "../lib/api";
+import { useAuth } from "../lib/auth";
 import PageHero from "../components/PageHero";
 import ReviewRequestButton from "../components/ReviewRequestButton";
 import { useLiveRefresh } from "../lib/useLiveRefresh";
-import TrainingTrackerModal from "../components/TrainingTrackerModal";
+import TrainingSessionWorkspace from "../components/TrainingSessionWorkspace";
 import CsvImportButton from "../components/CsvImportButton";
 import { parseTrainingTipsCsv, TRAINING_TIPS_CSV_SAMPLE } from "../lib/csvImport";
 import { toast } from "sonner";
+import TrainingDaySummary from "../components/training/TrainingDaySummary";
+import TrainingDogRow from "../components/training/TrainingDogRow";
+import TrainerAttentionQueue from "../components/training/TrainerAttentionQueue";
+import SessionStatusFilter from "../components/training/SessionStatusFilter";
+import EmptyState from "../components/training/EmptyState";
+import { computeDaySummary, buildAttentionQueue, filterTrainingRows } from "../lib/trainerDashboardPolish";
 
 const STATUS_META = {
   active: { label: "Active", color: "#8cc63f", icon: "fa-play" },
@@ -32,6 +39,7 @@ const GOAL_STATUS_META = {
     Sprint 110cc — click a row to expand and edit trainer notes + per-goal
     progress inline; no need to jump to the dog page first. */
 export default function Pipeline({ onJumpToDog }) {
+  const { user } = useAuth();
   const [rows, setRows] = useState([]);
   const [filterStatus, setFilterStatus] = useState("active");
   const [filterType, setFilterType] = useState("");
@@ -40,9 +48,31 @@ export default function Pipeline({ onJumpToDog }) {
   const [search, setSearch] = useState("");
   const [loading, setLoading] = useState(true);
   const [expandedId, setExpandedId] = useState(null);
-  // Sprint 110di-72 — Training Hub upgrades: tip-of-day, training-tracker modal pop, action launchers
+  // Sprint 110di-72 — Training Hub upgrades: tip-of-day, action launchers
   const [todayTip, setTodayTip] = useState(null);
-  const [trackerFor, setTrackerFor] = useState(null);
+  // Training-school expansion (Phase 7, redesigned UI Phase 5) — "Today's
+  // Training Dogs" — the Trainer Daily Dashboard.
+  const [todayRows, setTodayRows] = useState([]);
+  const [todayLoading, setTodayLoading] = useState(true);
+  const [todayFilter, setTodayFilter] = useState("all");
+  // Gap-closing pass — workspaceFor now covers BOTH entry points, the
+  // booking-based "Open Plan" button ({ bookingId }) and the per-row
+  // "Log Session" button ({ dogId, enrollmentId }). Every session-writing
+  // entry point in this screen opens the same TrainingSessionWorkspace /
+  // server-backed draft pipeline — there is no longer a second, lighter
+  // modal that mutates goal_progress directly.
+  const [workspaceFor, setWorkspaceFor] = useState(null);
+
+  const loadToday = async () => {
+    setTodayLoading(true);
+    try {
+      const { data } = await api.get("/admin/training/today");
+      setTodayRows(data);
+    } catch { setTodayRows([]); }
+    setTodayLoading(false);
+  };
+  useEffect(() => { loadToday(); }, []);
+  useLiveRefresh(loadToday, { intervalMs: 30_000 });
 
   const load = async () => {
     setLoading(true);
@@ -80,6 +110,41 @@ export default function Pipeline({ onJumpToDog }) {
     });
     return s;
   }, [rows]);
+
+  // Training UI Phase 5 — Trainer Daily Dashboard derived state. All three
+  // are pure reductions over todayRows (lib/trainerDashboardPolish.js) —
+  // no additional fetch per summary/queue/filter.
+  const todaySummary = useMemo(() => computeDaySummary(todayRows), [todayRows]);
+  const attentionItems = useMemo(() => buildAttentionQueue(todayRows), [todayRows]);
+  const filteredTodayRows = useMemo(
+    () => filterTrainingRows(todayRows, todayFilter, user || null),
+    [todayRows, todayFilter, user],
+  );
+
+  const runPrimaryAction = async (action, r) => {
+    if (action.kind === "check_in") {
+      try {
+        await api.post(`/bookings/${r.booking_id}/check-in`);
+        loadToday();
+      } catch (e) {
+        toast.error(e?.response?.data?.detail || "Check-in failed — open the full check-in flow to resolve.");
+      }
+      return;
+    }
+    // "open_workspace" (Open Plan / Continue Session / Resume Draft / View
+    // Completed Session / Resolve) — every one of these opens the same
+    // TrainingSessionWorkspace, which already renders the correct state
+    // (resolution screen, in-progress plan, or completed recap) on its own.
+    setWorkspaceFor({ bookingId: r.booking_id });
+  };
+
+  const runAttentionAction = (item) => {
+    if (item.actionKind === "review_homework") {
+      if (onJumpToDog) onJumpToDog(item.dogId);
+      return;
+    }
+    setWorkspaceFor({ bookingId: item.bookingId });
+  };
 
   return (
     <>
@@ -137,6 +202,50 @@ export default function Pipeline({ onJumpToDog }) {
         </div>
       )}
 
+      {/* Training-school expansion (Phase 7, redesigned UI Phase 5) —
+          Trainer Daily Dashboard. Reuses the existing bookings/check-in
+          records and the Phase 3/4 session-draft machinery — never a
+          second appointment calendar, never a second progress store. */}
+      {(todayLoading || todayRows.length > 0) && (
+        <div className="space-y-3" data-testid="today-training-dogs">
+          <div className="flex items-center justify-between flex-wrap gap-2">
+            <p className="text-[13px] font-black uppercase tracking-widest text-shText"><i className="fas fa-paw mr-1.5 text-shPrimary"/>Today&rsquo;s Training Dogs</p>
+            {!todayLoading && <span className="text-[12px] text-shTextMuted font-black uppercase tracking-widest">{todayRows.length}</span>}
+          </div>
+
+          {todayLoading && <p className="p-6 text-center text-shTextMuted text-sm"><i className="fas fa-spinner fa-spin mr-2"/>Loading…</p>}
+
+          {!todayLoading && (
+            <>
+              <TrainingDaySummary summary={todaySummary} testid="today-summary"/>
+
+              {attentionItems.length > 0 && (
+                <div className="card-stat rounded-xl overflow-hidden shadow-lg p-3">
+                  <p className="text-[11px] font-black uppercase tracking-widest text-shTextMuted mb-2"><i className="fas fa-bell mr-1.5 text-shAccent"/>Needs Attention</p>
+                  <TrainerAttentionQueue items={attentionItems} onAction={runAttentionAction} testid="attention-queue"/>
+                </div>
+              )}
+
+              <SessionStatusFilter value={todayFilter} onChange={setTodayFilter} testid="today-filter"/>
+
+              {todayRows.length === 0 && (
+                <EmptyState icon="fa-calendar-day" message="No training appointments today." testid="today-empty-none"/>
+              )}
+              {todayRows.length > 0 && filteredTodayRows.length === 0 && (
+                <EmptyState icon="fa-filter" message="No dogs match this filter." testid="today-empty-filtered"/>
+              )}
+              {filteredTodayRows.length > 0 && (
+                <div className="space-y-2">
+                  {filteredTodayRows.map(r => (
+                    <TrainingDogRow key={r.booking_id} row={r} onPrimaryAction={runPrimaryAction} testid={`today-training-row-${r.booking_id}`}/>
+                  ))}
+                </div>
+              )}
+            </>
+          )}
+        </div>
+      )}
+
       <div className="flex flex-wrap gap-2 mb-5 items-center" data-testid="pipeline-filters">
         <input value={search} onChange={(e)=>setSearch(e.target.value)} placeholder="Search dog, client, program…"
                data-testid="pipeline-search"
@@ -181,7 +290,7 @@ export default function Pipeline({ onJumpToDog }) {
                 expanded={expandedId === r.id}
                 onToggle={() => setExpandedId(expandedId === r.id ? null : r.id)}
                 onJumpToDog={onJumpToDog}
-                onOpenTracker={() => setTrackerFor({ dog_id: r.dog_id, enrollment_id: r.id })}
+                onOpenWorkspace={() => setWorkspaceFor({ dogId: r.dog_id, enrollmentId: r.id })}
                 onSaved={load}
               />
             ))}
@@ -190,20 +299,20 @@ export default function Pipeline({ onJumpToDog }) {
       </div>
     </div>
 
-    {trackerFor && (
-      <TrainingTrackerModal
-        dogId={trackerFor.dog_id}
-        enrollmentId={trackerFor.enrollment_id}
-        onClose={() => setTrackerFor(null)}
-        onSaved={() => { setTrackerFor(null); load(); }}
-        onJumpToDog={onJumpToDog}
+    {workspaceFor && (
+      <TrainingSessionWorkspace
+        bookingId={workspaceFor.bookingId}
+        dogId={workspaceFor.dogId}
+        enrollmentId={workspaceFor.enrollmentId}
+        onClose={() => setWorkspaceFor(null)}
+        onSaved={() => { setWorkspaceFor(null); loadToday(); load(); }}
       />
     )}
     </>
   );
 }
 
-function Row({ row, expanded, onToggle, onJumpToDog, onOpenTracker, onSaved }) {
+function Row({ row, expanded, onToggle, onJumpToDog, onOpenWorkspace, onSaved }) {
   const sm = STATUS_META[row.status] || STATUS_META.active;
   const tm = TYPE_META[row.program_snapshot?.type] || TYPE_META.private_lessons;
   const overdue = row.status === "active" && row.days_to_target != null && row.days_to_target < 0;
@@ -270,10 +379,10 @@ function Row({ row, expanded, onToggle, onJumpToDog, onOpenTracker, onSaved }) {
           </span>
         )}
         <div className="ml-auto flex flex-wrap gap-1.5">
-          <button onClick={(e)=>{ e.stopPropagation(); onOpenTracker(); }}
-                  data-testid={`hub-open-tracker-${row.id}`}
+          <button onClick={(e)=>{ e.stopPropagation(); onOpenWorkspace(); }}
+                  data-testid={`hub-open-session-${row.id}`}
                   className="bg-shPrimary/15 text-shPrimary border border-shPrimary/40 px-2 py-1 rounded font-black uppercase tracking-widest hover:bg-shPrimary/25">
-            <i className="fas fa-paw mr-1"/>Tracker
+            <i className="fas fa-paw mr-1"/>Log Session
           </button>
           {onJumpToDog && (
             <button onClick={(e)=>{ e.stopPropagation(); onJumpToDog(row.dog_id); }}
@@ -384,7 +493,7 @@ function ExpandedDetail({ row, onJumpToDog, onSaved }) {
       <div className="mb-5">
         <div className="flex items-baseline justify-between mb-2">
           <label className="text-[11px] font-black uppercase tracking-[0.3em] text-shSecondary">
-            <i className="fas fa-note-sticky mr-1.5"/>Trainer Notes
+            <i className="fas fa-note-sticky mr-1.5"/>Trainer Notes <span className="text-shTextMuted normal-case tracking-normal font-bold">(staff only)</span>
           </label>
           <span className="text-[10px] text-shTextMuted font-black uppercase tracking-widest">
             {saving ? "Saving…" : savedAt ? `Saved ${formatRelativeTime(savedAt)}` : "Auto-saves as you type"}
@@ -405,6 +514,9 @@ function ExpandedDetail({ row, onJumpToDog, onSaved }) {
         <div data-testid={`pipeline-goals-${row.id}`}>
           <p className="text-[11px] font-black uppercase tracking-[0.3em] text-shPrimary mb-2">
             <i className="fas fa-list-check mr-1.5"/>Goals · Click a status to update
+          </p>
+          <p className="text-[12px] text-shTextMuted italic mb-2">
+            Quick corrections only — use <span className="text-shPrimary font-black not-italic">Log Session</span> to record an actual training appointment.
           </p>
           {modules.map((m, mi) => (
             <ModuleBlock

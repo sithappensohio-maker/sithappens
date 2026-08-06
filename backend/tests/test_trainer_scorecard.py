@@ -48,10 +48,40 @@ def test_scorecard_returns_required_shape():
         assert k in body["totals"]
 
 
+def _start_and_complete(H, dog_id, enr_id, goal_scores=None, session_note=None, advance=False, label=None):
+    """Runs one full session via the supported draft/complete pipeline —
+    same mechanism the Training Session Workspace UI uses. Retired the
+    old direct-write training-session endpoint that this file used to
+    call (a second, independently-writing bypass of this same pipeline);
+    the scorecard's data source (training_session_log) is written
+    identically either way, so this is a mechanism change only."""
+    label = label or f"session-{os.urandom(4).hex()}"
+    started = requests.post(
+        f"{BASE}/api/dogs/{dog_id}/programs/{enr_id}/training-session/draft",
+        headers=H, params={"session_label": label}, timeout=15,
+    ).json()
+    draft_id = started["draft"]["id"]
+    activities = started["draft"]["plan"]["activities"]
+    update_body = {}
+    if goal_scores:
+        actuals = {a["id"]: {"score": goal_scores[a["skill_id"]]} for a in activities if a.get("skill_id") in goal_scores}
+        if actuals:
+            update_body["actuals"] = actuals
+    if session_note is not None:
+        update_body["session_note"] = session_note
+    if update_body:
+        requests.put(f"{BASE}/api/training-session-drafts/{draft_id}", headers=H, json=update_body, timeout=15).raise_for_status()
+    return requests.post(
+        f"{BASE}/api/training-session-drafts/{draft_id}/complete", headers=H,
+        json={"advancement_action": "advance_module" if advance else "remain"}, timeout=15,
+    ).json()
+
+
 def test_scorecard_counts_sessions_and_mastery_for_admin():
-    """When admin logs sessions via the training-session endpoint, the
-    scorecard must show them under the admin trainer bucket with correct
-    session_count + skills_mastered + modules_advanced + unique_dogs."""
+    """When admin completes sessions via the supported draft/complete
+    pipeline, the scorecard must show them under the admin trainer bucket
+    with correct session_count + skills_mastered + modules_advanced +
+    unique_dogs."""
     H = _admin()
     prog = _make_program(H)
     dog = _pick_dog(H)
@@ -75,25 +105,11 @@ def test_scorecard_counts_sessions_and_mastery_for_admin():
         down_id = ctx["goals"][1]["id"]
 
         # Session 1: mark Sit mastered + Down learning
-        requests.post(
-            f"{BASE}/api/dogs/{dog['id']}/programs/{enr['id']}/training-session",
-            headers=H, json={
-                "session_note": "First session",
-                "goal_updates": [
-                    {"goal_id": sit_id, "score": 5},
-                    {"goal_id": down_id, "score": 2},
-                ],
-            }, timeout=15,
-        )
+        _start_and_complete(H, dog["id"], enr["id"], goal_scores={sit_id: 5, down_id: 2},
+                             session_note="First session", label="scorecard-1")
         # Session 2: master Down + advance week
-        requests.post(
-            f"{BASE}/api/dogs/{dog['id']}/programs/{enr['id']}/training-session",
-            headers=H, json={
-                "session_note": "Down finally clicked",
-                "goal_updates": [{"goal_id": down_id, "score": 5}],
-                "advance_to_next_module": True,
-            }, timeout=15,
-        )
+        _start_and_complete(H, dog["id"], enr["id"], goal_scores={down_id: 5},
+                             session_note="Down finally clicked", advance=True, label="scorecard-2")
 
         after = requests.get(f"{BASE}/api/admin/training/trainer-scorecard?days=30",
                              headers=H, timeout=15).json()

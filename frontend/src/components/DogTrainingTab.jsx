@@ -5,7 +5,7 @@ import ProgressRing from "./ProgressRing";
 import CollapsibleText from "./CollapsibleText";
 import { ProgramEditor } from "./Programs";
 import RecentTrainingSessionsPanel from "./RecentTrainingSessionsPanel";
-import TrainingTrackerModal from "./TrainingTrackerModal";
+import TrainingSessionWorkspace from "./TrainingSessionWorkspace";
 
 /* ============================================================
  *  Replaces the old Training tab inside the dog edit modal.
@@ -20,9 +20,11 @@ export default function DogTrainingTab({ dogId, dogName, dogAgeMonths = 0 }) {
   const [customOpen, setCustomOpen] = useState(false);
   const [activeGoalEdit, setActiveGoalEdit] = useState(null);
   const [err, setErr] = useState("");
-  // Sprint 110di-75 — Unified tracker: launch the SAME modal Pipeline/Dashboard use,
-  // so every session writes to training_session_log and the scorecard / timeline stay accurate.
-  const [trackerFor, setTrackerFor] = useState(null);
+  // Gap-closing pass — launch the SAME TrainingSessionWorkspace / server-backed
+  // draft pipeline Pipeline/Dashboard use, so every session goes through the one
+  // idempotent completion path (session log, progress, advancement, homework)
+  // instead of the old score-only modal's direct goal_progress write.
+  const [workspaceFor, setWorkspaceFor] = useState(null);
 
   const load = useCallback(async () => {
     try {
@@ -113,7 +115,7 @@ export default function DogTrainingTab({ dogId, dogName, dogAgeMonths = 0 }) {
                           onTargetDate={(d)=>updateTarget(e.id, d)}
                           onCurrentModule={(mid)=>setCurrentModule(e.id, mid)}
                           onGoal={(gid, patch)=>setGoal(e.id, gid, patch)}
-                          onOpenTracker={()=>setTrackerFor({ dog_id: dogId, enrollment_id: e.id })} />
+                          onOpenWorkspace={()=>setWorkspaceFor({ dog_id: dogId, enrollment_id: e.id })} />
         ))
       ) : (
         <div className="bg-[var(--sh-card-base)]/40 border border-dashed border-shBorder rounded p-6 text-center" data-testid="no-active">
@@ -160,20 +162,20 @@ export default function DogTrainingTab({ dogId, dogName, dogAgeMonths = 0 }) {
                               onCreated={()=>{ setCustomOpen(false); load(); }} />
       )}
 
-      {/* Sprint 110di-75 — Unified tracker modal (same instance Pipeline/Dashboard use) */}
-      {trackerFor && (
-        <TrainingTrackerModal
-          dogId={trackerFor.dog_id}
-          enrollmentId={trackerFor.enrollment_id}
-          onClose={()=>setTrackerFor(null)}
-          onSaved={()=>{ setTrackerFor(null); load(); }}
+      {/* Gap-closing pass — same TrainingSessionWorkspace instance Pipeline/Dashboard use */}
+      {workspaceFor && (
+        <TrainingSessionWorkspace
+          dogId={workspaceFor.dog_id}
+          enrollmentId={workspaceFor.enrollment_id}
+          onClose={()=>setWorkspaceFor(null)}
+          onSaved={()=>{ setWorkspaceFor(null); load(); }}
         />
       )}
     </div>
   );
 }
 
-function EnrollmentCard({ enrollment, typeMeta, dogId, onStatus, onUnenroll, onTargetDate, onCurrentModule, onGoal, onOpenTracker }) {
+function EnrollmentCard({ enrollment, typeMeta, dogId, onStatus, onUnenroll, onTargetDate, onCurrentModule, onGoal, onOpenWorkspace }) {
   const color = typeMeta?.color || "#00a9e0";
   const snap = enrollment.program_snapshot;
   const [editTarget, setEditTarget] = useState(false);
@@ -193,7 +195,7 @@ function EnrollmentCard({ enrollment, typeMeta, dogId, onStatus, onUnenroll, onT
             <p className="text-sm sm:text-base font-black text-shText truncate">{snap.name}</p>
           </div>
           <div className="flex flex-col gap-1 shrink-0">
-            <button onClick={onOpenTracker} data-testid={`open-tracker-${enrollment.id}`}
+            <button onClick={onOpenWorkspace} data-testid={`open-session-${enrollment.id}`}
                     className="bg-shPrimary/20 text-shPrimary border border-shPrimary/40 px-3 py-1.5 rounded font-black text-[13px] sm:text-[14px] uppercase tracking-widest hover:bg-shPrimary/30 transition whitespace-nowrap shadow">
               <i className="fas fa-paw mr-1"/>Log Session
             </button>
@@ -234,6 +236,9 @@ function EnrollmentCard({ enrollment, typeMeta, dogId, onStatus, onUnenroll, onT
       </div>
 
       <div className="px-2 sm:px-3 py-2 space-y-4">
+        <p className="px-2 text-[12px] text-shTextMuted italic">
+          Quick corrections only — use <span className="text-shPrimary font-black not-italic">Log Session</span> above to record an actual training appointment.
+        </p>
         {snap.modules.map((m, idx) => (
           <div key={m.id} className={`px-2 py-2 ${idx === 0 ? "" : "mt-1"}`}>
             <p className="text-[15px] font-black uppercase tracking-widest text-shSecondary mb-2">{m.name}</p>
@@ -345,9 +350,11 @@ function LessonPlanTimelineModal({ enrollment, color, onPickModule, onClose }) {
   );
 }
 
-// Sprint 110di-73 — Unified grading UI. Both the Dog Training tab and the
-// TrainingTrackerModal now use the SAME 4-status pills so the operator never
-// sees two grading systems for what is one and the same goal_progress doc.
+// Quick single-skill correction grid (e.g. fixing a data-entry mistake) —
+// NOT a session-recording tool. Writes goal_progress directly via
+// update_goal, with no session log, advancement, or homework side effects.
+// Use "Log Session" (TrainingSessionWorkspace) to record an actual
+// training appointment.
 const STATUS_PRESETS = [
   { key: "not_started", label: "Not Started", score: 0, cls: "bg-gray-500/20 text-shTextMuted border-gray-500/30" },
   { key: "in_progress", label: "Learning",    score: 2, cls: "bg-shSecondary/20 text-shSecondary border-shSecondary/30" },
@@ -407,7 +414,7 @@ function GoalRow({ goal, progress, onChange }) {
           <input value={note} onChange={(e)=>setNote(e.target.value)}
                  onBlur={()=>{ if (note !== progress.notes) onChange({ notes: note }); setOpenNote(false); }}
                  onKeyDown={(e)=>{ if (e.key === "Enter") { onChange({ notes: note }); setOpenNote(false); } }}
-                 placeholder="Trainer note for this goal"
+                 placeholder="Internal trainer note (staff only, not sent to the client)"
                  className="flex-1 bg-[var(--sh-card-base)] border border-shBorder rounded p-1.5 text-[15px] text-shText" autoFocus />
         </div>
       )}

@@ -1,25 +1,35 @@
 import { useEffect, useState } from "react";
 import { api, formatErr } from "../lib/api";
 import { useConfirm } from "../lib/useConfirm";
+import { useAuth } from "../lib/auth";
 import CsvImportButton from "./CsvImportButton";
 import { parseProgramCsv, PROGRAM_CSV_SAMPLE } from "../lib/csvImport";
 import ShopImageUpload from "./ShopImageUpload";
 import ShopCategoryFields from "./ShopCategoryFields";
+import ProgramStudio from "./ProgramStudio";
 
 /* ============================================================
  *  Admin: Settings → Programs tab. Manage the library of programs.
+ *
+ *  UI Phase 5 — Program Studio (edit/new) is hidden for any employee
+ *  without manage_training_content, on top of the pre-existing server-
+ *  side enforcement (every program-authoring endpoint already requires
+ *  this permission — see backend/server.py's require_admin_and_permission
+ *  calls). This is presentation-only: it hides an entry point a 403 would
+ *  reject anyway, it does not change what the permission itself grants.
  * ============================================================ */
 export function ProgramsPanel() {
   const confirm = useConfirm();
+  const { permissions } = useAuth();
+  // Owners/legacy-admin accounts get every permission back as `true` from
+  // /me/permissions itself (see backend's _perms_for owner bypass) — so
+  // checking the flag directly, with no separate owner special-case here,
+  // already covers them.
+  const canManage = permissions ? !!permissions.manage_training_content : true; // true while permissions are still loading, to avoid a flash of "forbidden"
   const [programs, setPrograms] = useState([]);
   const [meta, setMeta] = useState(null);
   const [edit, setEdit] = useState(null);
   const [err, setErr] = useState("");
-  // Client Shop Phase 1 media lifecycle — the image_id this program had
-  // BEFORE this form opened (null for a new program). Only deleted after a
-  // successful save that actually replaced/removed it, or on close if it
-  // was never saved.
-  const [originalImageId, setOriginalImageId] = useState(null);
 
   const load = async () => {
     try {
@@ -44,7 +54,6 @@ export function ProgramsPanel() {
   };
 
   const startNew = (type = "private_lessons") => {
-    setOriginalImageId(null);
     setEdit({
       name: "", slug: "", type, description: "", focus: "",
       format: { count: 1, unit: "sessions" }, min_age_months: 0,
@@ -57,48 +66,9 @@ export function ProgramsPanel() {
       requires_dog: false, requires_approval: false, requires_completed_onboarding: false,
     });
   };
-  const openEditProgram = (p) => { setOriginalImageId(p.image_id || null); setEdit({ ...p }); };
-  const closeEditor = () => {
-    // Closing without saving — drop any not-yet-saved upload from this session.
-    if (edit?.image_id && edit.image_id !== originalImageId) {
-      api.delete(`/shop/media/${edit.image_id}`).catch(() => {});
-    }
-    setEdit(null);
-  };
-
-  const save = async () => {
-    setErr("");
-    try {
-      const payload = { ...edit };
-      if (edit.id) {
-        // Editing existing program: ask whether to push changes to dogs already
-        // enrolled. Cascading preserves goal scores for surviving goal IDs and
-        // drops progress for any removed goals.
-        let cascade = false;
-        try {
-          const { data } = await api.get(`/programs/${edit.id}/active-enrollments-count`);
-          if ((data?.count || 0) > 0) {
-            cascade = await confirm({
-              title: `Apply changes to ${data.count} enrolled dog${data.count > 1 ? "s" : ""}?`,
-              body: "Yes: every active enrollment updates to the new program. Trainer scores and notes for goals that still exist are preserved; progress on any removed goals is dropped.\n\nNo: only future enrollments use the new version. Currently-enrolled dogs keep their existing program snapshot.",
-              confirmText: "Yes, update enrolled dogs",
-              cancelText: "No, only future enrollments",
-              tone: "warning",
-            });
-          }
-        } catch { /* count endpoint failure isn't fatal — just skip cascade */ }
-        const url = `/programs/${edit.id}${cascade ? "?cascade=true" : ""}`;
-        await api.put(url, payload);
-      } else {
-        await api.post("/programs", payload);
-      }
-      // Save succeeded — now safe to drop the old image, if replaced/removed.
-      if (originalImageId && originalImageId !== payload.image_id) {
-        api.delete(`/shop/media/${originalImageId}`).catch(() => {});
-      }
-      setEdit(null); load();
-    } catch (e) { setErr(formatErr(e.response?.data?.detail) || "Save failed"); }
-  };
+  const openEditProgram = (p) => setEdit({ ...p });
+  const closeEditor = () => setEdit(null);
+  const onStudioSaved = () => { setEdit(null); load(); };
 
   const remove = async (id) => {
     if (!(await confirm({ title: "Archive this program?", body: "Existing dogs already enrolled in this program will keep their progress. New enrollments will no longer be possible.", confirmText: "Archive", tone: "warning" }))) return;
@@ -115,9 +85,17 @@ export function ProgramsPanel() {
           <h4 className="text-sm font-black text-shBlue uppercase tracking-widest"><i className="fas fa-list-check mr-2"/>Training Programs</h4>
           <p className="text-[14px] text-gray-300 mt-1">Tiers and curricula you offer. Seeded from your website&rsquo;s standard lineup.</p>
         </div>
-        <button onClick={()=>startNew()} data-testid="prog-new"
-                className="bg-shGreen text-bgHeader px-4 py-2 rounded font-black text-[15px] uppercase tracking-widest shadow"><i className="fas fa-plus mr-1"/>New Program</button>
+        {canManage && (
+          <button onClick={()=>startNew()} data-testid="prog-new"
+                  className="bg-shGreen text-bgHeader px-4 py-2 rounded font-black text-[15px] uppercase tracking-widest shadow"><i className="fas fa-plus mr-1"/>New Program</button>
+        )}
       </div>
+
+      {!canManage && (
+        <div className="text-center text-gray-400 py-6 text-sm" data-testid="programs-forbidden">
+          You don&rsquo;t have permission to manage training content. Ask an owner/admin to grant the Manage Training Content permission — you can still view the catalog below.
+        </div>
+      )}
 
       {err && <div className="text-[15px] text-red-400 bg-red-500/10 rounded p-2 uppercase font-black">{err}</div>}
 
@@ -131,20 +109,24 @@ export function ProgramsPanel() {
             {g.items.map(p => (
               <div key={p.id} className="px-3 py-3 flex items-center gap-3">
                 <div className="flex-1 min-w-0">
-                  <p className="text-sm font-black text-white">{p.name} {p.is_default && <span className="text-[13px] text-gray-500 font-black tracking-widest ml-2">DEFAULT</span>}</p>
+                  <p className="text-sm font-black text-white">{p.name} {p.is_default && <span className="text-[13px] text-gray-500 font-black tracking-widest ml-2">DEFAULT</span>} {p.draft && <span className="text-[13px] text-orange-400 font-black tracking-widest ml-2">DRAFT SAVED</span>}</p>
                   <p className="text-[15px] text-gray-400">{p.modules.length} modules · {p.modules.reduce((a,m)=>a+m.goals.length,0)} goals · {p.format?.count} {p.format?.unit}</p>
                   <p className="text-[11px] text-gray-500 uppercase tracking-widest mt-0.5 truncate">{shopCategoryLabel(p)}</p>
                 </div>
                 <p className="text-shGreen font-black text-[16px] whitespace-nowrap">${Number(p.price || 0).toFixed(2)}</p>
-                <button onClick={()=>openEditProgram(p)} data-testid={`prog-edit-${p.id}`} className="text-shBlue hover:text-white text-sm px-2"><i className="fas fa-pen"/></button>
-                <button onClick={()=>remove(p.id)} className="text-red-400 hover:text-red-300 text-sm px-2"><i className="fas fa-trash"/></button>
+                {canManage && (
+                  <>
+                    <button onClick={()=>openEditProgram(p)} data-testid={`prog-edit-${p.id}`} className="text-shBlue hover:text-white text-sm px-2"><i className="fas fa-pen"/></button>
+                    <button onClick={()=>remove(p.id)} className="text-red-400 hover:text-red-300 text-sm px-2"><i className="fas fa-trash"/></button>
+                  </>
+                )}
               </div>
             ))}
           </div>
         </div>
       ))}
 
-      {edit && <ProgramEditor program={edit} setProgram={setEdit} meta={meta} allPrograms={programs} onSave={save} onClose={closeEditor} originalImageId={originalImageId} />}
+      {edit && <ProgramStudio programId={edit.id || null} initialProgram={edit} meta={meta} allPrograms={programs} onClose={closeEditor} onSaved={onStudioSaved} />}
     </div>
   );
 }

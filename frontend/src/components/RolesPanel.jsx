@@ -41,6 +41,7 @@ const PERM_LABELS = {
   manage_communications: "Communications",
   manage_staff_scheduling: "Staff scheduling",
   manage_training_content: "Training content",
+  manage_training_sessions: "Training sessions",
   manage_engagement_content: "Engagement content",
   manage_shop_media: "Shop media",
   sell_credits: "Sell prepaid visits",

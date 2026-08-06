@@ -4,6 +4,9 @@ import { api } from "../lib/api";
 
 const MOOD_EMOJI = ["", "😞", "😅", "😐", "💪", "😄"];
 const MOOD_LABEL = ["", "Rough", "Tricky", "OK", "Strong", "Awesome"];
+// Training-school expansion (Phase 5) — the backend's labeled difficulty
+// scale, derived from the same mood tap rather than a second redundant picker.
+const MOOD_TO_DIFFICULTY = ["", "very_hard", "hard", "okay", "good", "easy"];
 
 const KIND_META = {
   reps:         { unit: "reps",   type: "number" },
@@ -184,8 +187,11 @@ export default function TodayPlanCard({ onChanged, homeworkId = null, unwrapped 
         field_values,
         note: form.note || "",
         mood: form.mood || null,
+        difficulty: form.mood ? MOOD_TO_DIFFICULTY[form.mood] : null,
         photo: form.photo || "",
         video_media_id: "",
+        could_not_complete: !!form.couldNotComplete,
+        could_not_complete_reason: form.couldNotComplete ? (form.couldNotCompleteReason || null) : null,
       });
       // Sprint 110q — capture day_completed before reload, then compare with
       // the freshly-loaded items to decide if we should celebrate an
@@ -212,6 +218,8 @@ export default function TodayPlanCard({ onChanged, homeworkId = null, unwrapped 
           mood: prev.mood ?? 0,
           photo: prev.photo || "",
           note: prev.note || "",
+          couldNotComplete: false,
+          couldNotCompleteReason: "",
           submitting: false,
         };
       }
@@ -766,6 +774,18 @@ function InlineHomeworkForm({ item, form, patch, onPickPhoto, blockReason, onSub
                   data-testid={`today-plan-note-${hwId}`}
                   placeholder="Anything tricky? Wins? Questions?"
                   className="w-full mt-1 bg-[var(--sh-card-base)] border border-shBorder rounded p-2 text-shText text-sm" />
+      </div>
+
+      <div className="bg-[var(--sh-card-base)] border border-shBorder rounded p-2">
+        <label className="flex items-center gap-2 text-[13px] text-shText cursor-pointer" data-testid={`today-plan-cnc-${hwId}`}>
+          <input type="checkbox" checked={!!form.couldNotComplete} onChange={(e) => patch({ couldNotComplete: e.target.checked })} />
+          Couldn't complete this today
+        </label>
+        {form.couldNotComplete && (
+          <textarea value={form.couldNotCompleteReason || ""} onChange={(e) => patch({ couldNotCompleteReason: e.target.value })}
+                    rows={2} placeholder="What got in the way? (optional)" data-testid={`today-plan-cnc-reason-${hwId}`}
+                    className="w-full mt-2 bg-transparent border border-shBorder rounded p-2 text-shText text-sm" />
+        )}
       </div>
 
       <div>

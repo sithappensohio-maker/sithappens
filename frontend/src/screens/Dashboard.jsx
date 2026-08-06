@@ -17,7 +17,7 @@ import { useLiveRefresh } from "../lib/useLiveRefresh";
 import { OwnerClock, EndOfDayPanel } from "../components/OwnerClockAndEndOfDay";
 import ReadinessChecklist from "../components/ReadinessChecklist";
 import DashboardQuickLinks from "../components/DashboardQuickLinks";
-import TrainingTrackerModal from "../components/TrainingTrackerModal";
+import TrainingSessionWorkspace from "../components/TrainingSessionWorkspace";
 import { useTheme } from "../lib/theme";
 import { toast } from "sonner";
 
@@ -166,15 +166,14 @@ export default function Dashboard({ onNavigate = () => {}, onJumpToDog = () => {
     try {
       const geo = await captureGeo();
       await api.post(`/bookings/${id}/check-in`, { ...geo, vaccine_ack: vaccineAck });
-      // Sprint 110di-69 — if this booking is for a training service AND the dog
-      // has an active training enrollment, open the Training Tracker directly.
-      try {
-        const row = (stats?.today_roster || []).find(b => b.id === id);
-        if (row && row.service_type === "training") {
-          const { data } = await api.get(`/bookings/${id}/training-context`);
-          if (data?.has_program) setTrainingTrackerFor({ booking_id: id, dog_id: data.dog?.id, dog_name: data.dog?.name });
-        }
-      } catch { /* training context is best-effort */ }
+      // Training Session Workspace (Phase 3) — auto-open for training
+      // bookings; the workspace resolves the correct enrollment/draft
+      // itself and shows its own resolution screen if the dog isn't ready
+      // for a session (no/multiple active programs, empty module, etc.).
+      const row = (stats?.today_roster || []).find(b => b.id === id);
+      if (row && row.service_type === "training") {
+        setTrainingTrackerFor({ booking_id: id, dog_id: row.dog_id, dog_name: row.dog_name });
+      }
       load();
     } catch (e) {
       // The server re-checks vaccines at the actual moment of check-in (a
@@ -744,13 +743,12 @@ export default function Dashboard({ onNavigate = () => {}, onJumpToDog = () => {
       {reportFor && <ReportCardModal booking={reportFor} moodTags={moodTags} onClose={()=>{ setReportFor(null); load(); }} />}
       {detailFor && <BookingDetailModal booking={detailFor} onClose={()=>setDetailFor(null)} onJumpToDog={onJumpToDog} />}
       {trainingTrackerFor && (
-        <TrainingTrackerModal
+        <TrainingSessionWorkspace
           bookingId={trainingTrackerFor.booking_id}
           dogId={trainingTrackerFor.dog_id}
           enrollmentId={trainingTrackerFor.enrollment_id}
           onClose={()=>setTrainingTrackerFor(null)}
           onSaved={()=>{ setTrainingTrackerFor(null); load(); }}
-          onJumpToDog={(id)=>{ setTrainingTrackerFor(null); onJumpToDog?.(id); }}
         />
       )}
       {checkoutFor && <CheckoutModal booking={checkoutFor} services={services}
