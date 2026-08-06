@@ -151,16 +151,18 @@ def test_manually_granted_credits_are_actually_redeemable_at_checkout():
 # Must not regress existing behavior
 # ---------------------------------------------------------------------------
 
-def test_lowering_credits_does_not_touch_existing_lots():
-    """Decreases are deliberately left alone — shrinking lots to match a
-    lowered number is a separate operation this fix does not attempt."""
+def test_lowering_credits_reduces_actual_lots_to_match():
+    """Superseded by the shared credit-mutation service (_mutate_client_credits):
+    a decrease now reduces real lots by the same amount removed from the
+    displayed balance — no hidden excess lots left behind. See
+    test_shared_credit_mutation_service.py for the full invariant suite."""
     with _client_and_dog(credits=13) as (client, dog):
         assert _lots_remaining(client["id"]) == 13.0
         admin = _admin_user()
         run(server.update_client(client["id"], server.ClientIn(name=client["name"], email=client["email"], credits=5), admin))
         final_client = run(server.db.clients.find_one({"id": client["id"]}, {"_id": 0, "credits": 1}))
         assert final_client["credits"] == 5.0
-        assert _lots_remaining(client["id"]) == 13.0  # unchanged — no new lot minted, none shrunk
+        assert _lots_remaining(client["id"]) == 5.0  # reduced to match — no hidden excess left behind
 
 
 def test_resaving_the_same_credits_value_does_not_mint_a_duplicate_lot():

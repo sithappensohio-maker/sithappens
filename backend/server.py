@@ -1565,14 +1565,24 @@ async def create_client(body: ClientIn, user: dict = Depends(require_admin_and_p
         settings_x = await get_settings()
         if (settings_x.get("evaluation") or {}).get("require_evaluation_first"):
             doc["client_status"] = "prospect"
+    # Inserted at zero for every credit pool, regardless of what the form
+    # submitted — the shared credit-mutation service below is the only path
+    # allowed to raise these fields, so it also mints the matching backing
+    # lot for whatever initial balance was requested (e.g. a new client's
+    # carried-over days from before this pack existed as a catalog item).
+    initial_credits = {pf: round(float(doc.get(pf) or 0), 2) for pf in CREDIT_POOL_FIELD_TO_SERVICE_TYPE}
+    for pool_field in CREDIT_POOL_FIELD_TO_SERVICE_TYPE:
+        doc[pool_field] = 0
     await db.clients.insert_one(doc)
-    # Mint a backing lot for any credit balance entered right at creation
-    # (e.g. a new client's carried-over days) — see _mint_manual_credit_lot's
-    # docstring. A brand-new client's "old" value is implicitly 0.
     for pool_field, service_type in CREDIT_POOL_FIELD_TO_SERVICE_TYPE.items():
-        qty = round(float(doc.get(pool_field) or 0), 2)
+        qty = initial_credits[pool_field]
         if qty > 0.0001:
-            await _mint_manual_credit_lot(doc["id"], service_type, qty, user.get("name") or user.get("display_name"))
+            mutation = await _mutate_client_credits(
+                doc["id"], service_type, qty,
+                source="edit_client", reason="Initial balance set at client creation",
+                actor_id=user.get("id", "admin"), actor_name=user.get("name") or user.get("display_name") or "Admin",
+            )
+            doc[pool_field] = mutation["after"]
     doc.pop("_id", None)
     doc["portal_email"] = None
     return doc
@@ -1615,15 +1625,26 @@ async def update_client(client_id: str, body: ClientIn, user: dict = Depends(req
     if not existing:
         raise HTTPException(status_code=404, detail="Client not found")
     update = body.model_dump()
-    # Whenever this edit RAISES a credit pool above its current stored
-    # value, mint a real backing lot for the increase — see
-    # _mint_manual_credit_lot's docstring. Decreases are left as before;
-    # shrinking existing lots to match a lowered number is a separate, more
-    # delicate operation not attempted here.
+    # Any change to a credit pool — up OR down — routes through the shared
+    # credit-mutation service so the lot ledger and the displayed balance
+    # never diverge (see _mutate_client_credits's docstring for the
+    # invariant this preserves). These fields are popped out of the generic
+    # $set below — the shared service is the only thing allowed to write
+    # them, and it already applies its own $inc to the client record.
+    actor_name = user.get("name") or user.get("display_name") or "Admin"
     for pool_field, service_type in CREDIT_POOL_FIELD_TO_SERVICE_TYPE.items():
-        delta = round(float(update.get(pool_field) or 0) - float(existing.get(pool_field) or 0), 2)
-        if delta > 0.0001:
-            await _mint_manual_credit_lot(client_id, service_type, delta, user.get("name") or user.get("display_name"))
+        new_val = round(float(update.pop(pool_field, None) or 0), 2)
+        old_val = round(float(existing.get(pool_field) or 0), 2)
+        delta = round(new_val - old_val, 2)
+        if abs(delta) > 0.0001:
+            mutation = await _mutate_client_credits(
+                client_id, service_type, delta,
+                source="edit_client", reason="Balance changed via client profile edit",
+                actor_id=user.get("id", "admin"), actor_name=actor_name,
+            )
+            existing[pool_field] = mutation["after"]
+        else:
+            existing[pool_field] = old_val
     await db.clients.update_one({"id": client_id}, {"$set": update})
     existing.update(update)
     u = await db.users.find_one({"client_id": client_id}, {"_id": 0, "email": 1})
@@ -4759,45 +4780,6 @@ def _credit_balance_field(service_type: str) -> Optional[str]:
 CREDIT_POOL_FIELD_TO_SERVICE_TYPE = {"credits": "daycare", "training_credits": "training", "boarding_credits": "boarding"}
 
 
-async def _mint_manual_credit_lot(client_id: str, service_type: str, qty: float, created_by_name: str) -> None:
-    """Real bug fix — redemption is entirely FIFO-lot-based (see
-    _consume_credit_lots below): a client can show a nonzero credits/
-    training_credits/boarding_credits balance with no backing credit_lots
-    document at all, if that balance was ever set directly on the client
-    record (e.g. manually granting a client days bought before any matching
-    pack existed as a catalog item, or entering a new client's carried-over
-    balance at signup). With no lot to draw from, checkout's "pay with
-    credits" silently finds nothing to consume and falls back to a full
-    cash charge — no error, no warning, credits never move.
-
-    Called whenever a client-record write RAISES one of these pools above
-    its previous stored value (see create_client/update_client) — mints a
-    real $0 lot for exactly the increase, so the number shown always stays
-    genuinely redeemable, exactly like a purchased pack. price_paid/
-    value_each are $0 since no real sale backs this adjustment — that's
-    accounting-correct: nothing should be (or already has been) recognized
-    as revenue for a balance that was set by hand, not sold."""
-    await db.credit_lots.insert_one({
-        "id": str(uuid.uuid4()),
-        "client_id": client_id,
-        "pack_id": None,
-        "pack_name": "Manual balance adjustment",
-        "service_type": service_type,
-        "qty_total": qty,
-        "qty_remaining": qty,
-        "price_paid": 0.0,
-        "list_price": 0.0,
-        "price_override_id": None,
-        "value_each": 0.0,
-        "payment_method": None,
-        "note": "Auto-created so a manually-set credit balance is redeemable at checkout.",
-        "sold_by": created_by_name or "Admin",
-        "purchased_at": now_iso(),
-        "recognize_at_sale": True,
-    })
-
-
-
 async def _consume_credit_lots(
     client_id: str,
     qty: float,
@@ -4916,6 +4898,192 @@ async def _restore_credit_lots(redemptions_or_ids: List[Any], qty: Optional[floa
             restored = round(restored + remaining, 2)
             remaining = 0.0
     return restored
+
+
+async def _mutate_client_credits(
+    client_id: str,
+    service_type: str,
+    delta: float,
+    *,
+    source: str,
+    source_id: str = "",
+    reason: str = "",
+    actor_id: str = "system",
+    actor_name: str = "system",
+) -> Dict[str, Any]:
+    """THE single place allowed to change a client's SPENDABLE credit balance
+    outside of a real pack/program purchase (which mints its own lot
+    directly at sale time) or checkout/redemption (which spends via
+    _consume_credit_lots). Every other credit-granting or credit-removing
+    path in the app — manual admin adjustments, referral/trivia/promotional
+    rewards, and the client-profile edit form — must route through this
+    function. It exists to hold ONE invariant everywhere, always:
+
+        client.<credits field> == sum of that client's active
+        credit_lots.qty_remaining for the same service_type
+
+    Before this existed, several of those paths only ever changed the
+    client's balance FIELD, never a matching credit_lots row. Redemption is
+    entirely FIFO-lot-based, so a balance with no backing lot silently
+    fails to redeem at checkout and falls back to a full cash charge — no
+    error, no warning, confirmed live in production. Real pack/program
+    sales (sell_credit_pack, sell_credit_packs_bulk, sell_training_program,
+    the Shop fulfillment paths) already mint their own lot correctly and
+    are UNCHANGED by this function — they never call it.
+
+    delta > 0: mints a new $0-value credit_lots row for exactly `delta`,
+    tagged with `source`/`source_id`/`reason` so its origin is identifiable
+    in Pack Lots and reporting, then increments the balance field by the
+    same amount. price_paid/value_each are $0 because no real sale backs a
+    manual/reward grant — correctly recognizing $0 revenue for it, exactly
+    like the existing manual-adjustment and reward code already did before
+    this function existed.
+
+    delta < 0: reduces existing lots using the exact same FIFO order
+    checkout already trusts (_consume_credit_lots — oldest purchased_at
+    first, atomic per-lot via Mongo's own find_one_and_update guard, which
+    is what actually makes two simultaneous deductions safe, not any
+    locking added here), then decrements the balance field by the amount
+    ACTUALLY removed from lots — never the raw requested amount. Raises
+    HTTPException(400) up front if the requested removal would take the
+    displayed balance below zero. Raises HTTPException(409) if the lots
+    turn out to hold less than the displayed balance claims (an existing
+    invariant violation from before this fix existed) rather than silently
+    leaving the balance and lots disagreeing even further — this never
+    leaves "hidden" excess lots behind after a decrease.
+
+    A no-op call (delta rounds to 0) still returns a result dict but writes
+    nothing.
+
+    Best-effort atomic via snapshot + compensating rollback of whichever of
+    the three writes (lot, balance, audit row) already committed before a
+    later step failed — the same pattern _rollback_checkout_finances
+    already uses for checkout, because this Mongo deployment is a single
+    local node without native multi-document transactions.
+
+    Returns {"before": float, "after": float, "delta": float (the amount
+    ACTUALLY applied, which for a decrease may be less than |delta| was
+    never possible — it's always exactly what was requested, or the call
+    raises instead), "lot_id": str|None, "adjustment_id": str}.
+    """
+    field = _credit_balance_field(service_type)
+    if not field:
+        raise HTTPException(status_code=400, detail=f"Unknown credit pool for service_type={service_type!r}")
+    delta = round(float(delta or 0), 2)
+    client = await db.clients.find_one({"id": client_id}, {"_id": 0, "id": 1, "name": 1, field: 1})
+    if not client:
+        raise HTTPException(status_code=404, detail="Client not found")
+    before = round(float(client.get(field) or 0), 2)
+    if abs(delta) < 0.0001:
+        return {"before": before, "after": before, "delta": 0.0, "lot_id": None, "adjustment_id": None}
+
+    ts = now_iso()
+    lot_id: Optional[str] = None
+    redemptions: List[Dict[str, Any]] = []
+    consumed = 0.0
+    adjustment_id: Optional[str] = None
+    applied = 0.0
+    balance_mutated = False
+
+    try:
+        if delta > 0:
+            applied = delta
+            lot_id = str(uuid.uuid4())
+            await db.credit_lots.insert_one({
+                "id": lot_id,
+                "client_id": client_id,
+                "pack_id": None,
+                "pack_name": reason or f"Manual credit adjustment ({source})",
+                "service_type": service_type,
+                "qty_total": applied,
+                "qty_remaining": applied,
+                "price_paid": 0.0,
+                "list_price": 0.0,
+                "price_override_id": None,
+                "value_each": 0.0,
+                "payment_method": None,
+                "note": reason or "",
+                "sold_by": actor_name or "Admin",
+                "purchased_at": ts,
+                "recognize_at_sale": True,
+                "source": source,
+                "source_id": source_id,
+            })
+        else:
+            remove_amt = round(-delta, 2)
+            if before - remove_amt < -0.0001:
+                raise HTTPException(
+                    status_code=400,
+                    detail=f"Cannot remove {remove_amt:g} {service_type} credit(s): client only has {before:g}.",
+                )
+            _value, redemptions, consumed = await _consume_credit_lots(client_id, remove_amt, service_type)
+            if round(consumed, 2) < remove_amt - 0.0001:
+                if consumed > 0:
+                    await _restore_credit_lots(redemptions, consumed)
+                    redemptions = []
+                    consumed = 0.0
+                raise HTTPException(
+                    status_code=409,
+                    detail=(
+                        f"This client's {service_type} credit lots only have {consumed:g} available to remove "
+                        f"(displayed balance says {before:g}) — the ledger is out of sync. Run the credit "
+                        "balance audit before retrying."
+                    ),
+                )
+            applied = -consumed
+
+        updated = await db.clients.find_one_and_update(
+            {"id": client_id}, {"$inc": {field: applied}},
+            projection={"_id": 0, field: 1}, return_document=ReturnDocument.AFTER,
+        )
+        balance_mutated = True
+        if updated is None:
+            raise HTTPException(status_code=404, detail="Client not found")
+        after = round(float(updated.get(field) or 0), 2)
+
+        adjustment_id = str(uuid.uuid4())
+        await db.credit_adjustments.insert_one({
+            "id": adjustment_id,
+            "client_id": client_id,
+            "client_name": client.get("name", ""),
+            "changes": {service_type: {"before": before, "delta": applied, "after": after}},
+            "note": reason or "",
+            "adjusted_by": actor_name or actor_id or "system",
+            "adjusted_at": ts,
+            "source": source,
+            "source_id": source_id,
+        })
+    except Exception:
+        if lot_id:
+            try:
+                await db.credit_lots.delete_one({"id": lot_id})
+            except Exception as exc:
+                logger.critical("credit mutation rollback could not remove lot %s: %s", lot_id, exc)
+        if consumed > 0:
+            try:
+                await _restore_credit_lots(redemptions, consumed)
+            except Exception as exc:
+                logger.critical("credit mutation rollback could not restore lots for client %s: %s", client_id, exc)
+        # Undo ONLY this call's own delta via a relative $inc, never an
+        # absolute reset to the stale `before` snapshot — two concurrent
+        # calls each capture `before` from the SAME starting point, so a
+        # `$set: {field: before}` rollback in one call could silently wipe
+        # out a different concurrent call's already-committed, legitimate
+        # change. A relative reversal is safe and commutative regardless of
+        # what else happened to this balance in between.
+        if balance_mutated:
+            try:
+                await db.clients.update_one({"id": client_id}, {"$inc": {field: -applied}})
+            except Exception as exc:
+                logger.critical("credit mutation rollback could not restore client balance for %s: %s", client_id, exc)
+        if adjustment_id:
+            try:
+                await db.credit_adjustments.delete_one({"id": adjustment_id})
+            except Exception as exc:
+                logger.critical("credit mutation rollback could not remove audit row %s: %s", adjustment_id, exc)
+        raise
+
+    return {"before": before, "after": after, "delta": applied, "lot_id": lot_id, "adjustment_id": adjustment_id}
 
 
 @api.post("/bookings/{booking_id}/reject", response_model=BookingOut)
@@ -5539,6 +5707,15 @@ async def _grant_client_reward_credit(
     This is intentionally separate from sales/register cash. Referral/trivia
     credits are value given away, not income collected, so they must not pollute
     Register totals or Schedule C income estimates.
+
+    Routes the balance/lot mutation through the shared credit-mutation
+    service (_mutate_client_credits) so a reward credit mints a real
+    backing credit_lots row — never just the displayed balance — keeping
+    it genuinely redeemable at checkout. That call already writes the
+    generic `credit_adjustments` audit row; this function then adds its
+    OWN `rewards_ledger` row on top, which is a separate, reward-specific
+    record used for non-income/tax reporting, not a duplicate of the
+    generic adjustment audit trail.
     """
     if not client or not client.get("id"):
         raise HTTPException(status_code=404, detail="Client not found")
@@ -5549,23 +5726,14 @@ async def _grant_client_reward_credit(
     if amt <= 0 or amt > 50:
         raise HTTPException(status_code=400, detail="Reward credit amount must be greater than 0 and no more than 50")
     svc = _reward_service_label(service)
-    field = _reward_credit_field(svc)
-    before = round(float(client.get(field) or 0), 2)
-    after = round(before + amt, 2)
+    mutation = await _mutate_client_credits(
+        client["id"], svc, amt,
+        source=source, source_id=source_id, reason=reason,
+        actor_id=actor, actor_name=actor_name or actor,
+    )
+    before = mutation["before"]
+    after = mutation["after"]
     ts = now_iso()
-    await db.clients.update_one({"id": client["id"]}, {"$inc": {field: amt}})
-    adj_id = str(uuid.uuid4())
-    await db.credit_adjustments.insert_one({
-        "id": adj_id,
-        "client_id": client["id"],
-        "client_name": client.get("name", ""),
-        "changes": {svc: {"before": before, "delta": amt, "after": after}},
-        "note": reason,
-        "adjusted_by": actor_name or actor or "system",
-        "adjusted_at": ts,
-        "source": source,
-        "source_id": source_id,
-    })
     reward_row = {
         "id": str(uuid.uuid4()),
         "client_id": client["id"],
@@ -5583,7 +5751,7 @@ async def _grant_client_reward_credit(
         "created_at": ts,
         "cash_value": 0,
         "is_income": False,
-        "credit_adjustment_id": adj_id,
+        "credit_adjustment_id": mutation["adjustment_id"],
     }
     await db.rewards_ledger.insert_one(reward_row)
     reward_row.pop("_id", None)
@@ -34131,54 +34299,50 @@ class CreditAdjustIn(BaseModel):
 @api.post("/clients/{client_id}/adjust-credits")
 async def adjust_client_credits(client_id: str, body: CreditAdjustIn, user: dict = Depends(require_admin_and_permission("finance_reports"))):
     """Manual +/- credit adjustment for fixing mistakes or comping a client.
-    Does NOT touch credit_lots (no revenue change). Writes a `credit_adjustments`
-    entry so you have an audit trail. Refuses to take a balance below zero."""
+    Routes through the shared credit-mutation service (_mutate_client_credits)
+    so every adjustment mints/reduces a real backing credit_lots row —
+    never just the displayed balance — keeping it genuinely redeemable at
+    checkout exactly like a purchased pack. Writes one `credit_adjustments`
+    audit row per affected pool (previously one combined row per call —
+    see _mutate_client_credits's docstring). Refuses to take a balance
+    below zero."""
     client = await db.clients.find_one({"id": client_id}, {"_id": 0})
     if not client:
         raise HTTPException(status_code=404, detail="Client not found")
 
     pool_map = {
-        "daycare": ("credits", round(float(body.daycare or 0), 2)),
-        "training": ("training_credits", round(float(body.training or 0), 2)),
-        "boarding": ("boarding_credits", round(float(body.boarding or 0), 2)),
+        "daycare": round(float(body.daycare or 0), 2),
+        "training": round(float(body.training or 0), 2),
+        "boarding": round(float(body.boarding or 0), 2),
     }
-    if not any(delta for _, delta in pool_map.values()):
+    if not any(pool_map.values()):
         raise HTTPException(status_code=400, detail="No adjustment specified.")
 
-    # Validate no balance would go negative.
-    for pool, (field, delta) in pool_map.items():
-        if delta == 0:
-            continue
-        current = round(float(client.get(field) or 0), 2)
-        if current + delta < -0.0001:
-            raise HTTPException(
-                status_code=400,
-                detail=f"Cannot subtract {abs(delta):g} {pool} credit(s): client only has {current:g}.",
-            )
-
-    inc_doc: Dict[str, float] = {}
     changes: Dict[str, Dict[str, float]] = {}
-    for pool, (field, delta) in pool_map.items():
-        if abs(delta) > 0.0001:
-            before = round(float(client.get(field) or 0), 2)
-            inc_doc[field] = delta
-            changes[pool] = {
-                "before": before,
-                "delta": delta,
-                "after": round(before + delta, 2),
-            }
+    for service_type, delta in pool_map.items():
+        if abs(delta) < 0.0001:
+            continue
+        mutation = await _mutate_client_credits(
+            client_id, service_type, delta,
+            source="manual_adjustment", reason=body.note or "",
+            actor_id=user.get("id", "admin"), actor_name=user.get("name", "Admin"),
+        )
+        changes[service_type] = {"before": mutation["before"], "delta": mutation["delta"], "after": mutation["after"]}
 
-    await db.clients.update_one({"id": client_id}, {"$inc": inc_doc})
     # Sprint 110g — if a manual adjustment lifts any low-credit pool back above
     # the threshold, clear its email-sent stamp so the NEXT dip re-fires the
     # heads-up email instead of silently being skipped by the idempotency guard.
-    for pool, (field, delta) in pool_map.items():
-        if delta and (float(client.get(field) or 0) + delta) > 2:
+    for pool, change in changes.items():
+        if change["after"] > 2:
             await db.clients.update_one(
                 {"id": client_id, f"low_credit_emailed_at.{pool}": {"$exists": True}},
                 {"$unset": {f"low_credit_emailed_at.{pool}": ""}},
             )
-    log_entry = {
+
+    # Kept as one combined object for API-response-shape compatibility — the
+    # actual audit trail is now the per-pool credit_adjustments rows
+    # _mutate_client_credits already wrote, not a separate row for this.
+    return {
         "id": str(uuid.uuid4()),
         "client_id": client_id,
         "client_name": client.get("name", ""),
@@ -34187,9 +34351,6 @@ async def adjust_client_credits(client_id: str, body: CreditAdjustIn, user: dict
         "adjusted_by": user.get("name", "Admin"),
         "adjusted_at": now_iso(),
     }
-    await db.credit_adjustments.insert_one(log_entry)
-    log_entry.pop("_id", None)
-    return log_entry
 
 
 @api.get("/clients/{client_id}/credit-adjustments")
@@ -34234,8 +34395,19 @@ def _credit_recon_client_row(
         lot = lot_totals.get(pool) or {}
         displayed = _credit_recon_num(client.get(field))
         lot_remaining = _credit_recon_num(lot.get("remaining"))
+        # Real bug fix — manual/reward credit grants now ALWAYS mint a real
+        # backing credit_lots row (see _mutate_client_credits), so
+        # lot_remaining alone already reflects every adjustment that's ever
+        # been applied through the current code. Adding manual_net on top
+        # here used to double-count: an adjustment that had already been
+        # migrated into a real lot (by the manual-credits backfill, or by
+        # this fix going forward) would count once as a lot AND again as an
+        # adjustment-history total, making an already-correct client look
+        # like it had a variance. credit_adjustments/rewards_ledger stay
+        # informational history only — manual_net is still surfaced below
+        # for visibility, it just never feeds into the tracked/variance math.
         manual_net = _credit_recon_num(adjustment_totals.get(pool))
-        tracked_total = round(lot_remaining + manual_net, 2)
+        tracked_total = lot_remaining
         variance = round(displayed - tracked_total, 2)
         negative_lots = int(lot.get("negative_count") or 0)
         overfilled_lots = int(lot.get("overfilled_count") or 0)
@@ -34246,7 +34418,7 @@ def _credit_recon_client_row(
         if abs(variance) > 0.009:
             has_variance = True
             pool_issues.append(
-                f"Displayed balance differs from tracked lots + adjustments by {variance:+g}."
+                f"Displayed balance differs from backing credit lots by {variance:+g}."
             )
         if displayed < -0.009:
             has_structural_issue = True
