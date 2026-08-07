@@ -86,7 +86,7 @@ test("a prescribed refresher lesson gets a real Go-to-Refresher affordance sourc
 });
 
 test("the trainer-assist hold never renders a submit control and explains progress is preserved", () => {
-  const holdBlock = dashboardSrc.slice(dashboardSrc.indexOf('status?.on_hold'), dashboardSrc.indexOf('status?.on_hold') + 1500);
+  const holdBlock = dashboardSrc.slice(dashboardSrc.indexOf('status?.on_hold'), dashboardSrc.indexOf('status?.on_hold') + 2500);
   expect(holdBlock).not.toMatch(/CheckpointSubmitForm/);
   expect(holdBlock).toMatch(/course progress stays exactly where it is/);
 });

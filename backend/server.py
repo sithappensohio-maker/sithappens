@@ -817,6 +817,10 @@ class BookingOut(BaseModel):
     # Sprint 110di-38 — Multi-dog booking group. Same id across every dog
     # booked in one transaction; None for legacy single-dog rows.
     group_id: Optional[str] = None
+    # Online School Phase 4 — additive back-reference set only when this
+    # booking was scheduled from a Trainer Assist case (see
+    # admin_trainer_assist_schedule). None for every ordinary booking.
+    trainer_assist_case_id: Optional[str] = None
     # Income tracking (Sprint 16) — populated when the booking is logged as
     # a paid service. Backward-compatible; existing rows return None / "".
     service_id: Optional[str] = None
@@ -16677,6 +16681,11 @@ async def _school_roadmap(enrollment: dict, dog_id: str) -> dict:
                 if refresher_lesson:
                     checkpoint_status["prescription"]["refresher_lesson_id"] = refresher_lesson.get("id")
                     checkpoint_status["prescription"]["refresher_lesson_name"] = refresher_lesson.get("name")
+            # Online School Phase 4 — Trainer Assist scheduling info is
+            # resolved live from the linked booking (never a stale
+            # snapshot: a reschedule/cancellation must show up immediately).
+            if checkpoint_status and checkpoint_status.get("trainer_assist"):
+                checkpoint_status["trainer_assist"] = await _enrich_trainer_assist_schedule(checkpoint_status["trainer_assist"])
 
     return {
         "modules": modules_out,
@@ -16781,6 +16790,76 @@ def _client_safe_prescription(prescription: Optional[dict]) -> Optional[dict]:
     }
 
 
+TRAINER_ASSIST_STATUSES = ("needs_attention", "contacted", "scheduled", "completed")
+
+
+def _trainer_assist_display_status(sub: dict) -> Optional[str]:
+    """Derived display status — never a second source of truth. A
+    submission graded before Phase 4 shipped has trainer_assist_status
+    absent even though trainer_assist_hold_active is True; this makes such
+    a row display exactly as if it had just been recommended (the correct
+    behavior — it genuinely does still need attention), without a
+    backfill migration. Once any Phase 4 transition endpoint touches the
+    row, trainer_assist_status is stored explicitly and this just echoes
+    it back."""
+    stored = sub.get("trainer_assist_status")
+    if stored in TRAINER_ASSIST_STATUSES:
+        return stored
+    if sub.get("outcome") == "trainer_assist_recommended" and sub.get("trainer_assist_hold_active"):
+        return "needs_attention"
+    return None
+
+
+def _client_safe_trainer_assist(sub: dict) -> Optional[dict]:
+    """Client-facing view of the Trainer Assist case on this submission —
+    explicit allowlist, same discipline as the rest of this file. Never
+    includes: trainer_assist_history (staff notes live inside it),
+    trainer_assist_internal_note, contacted_by/completed_by staff
+    identity, or the raw appointment_id (resolved to a date/time by
+    _enrich_trainer_assist_schedule instead, so the client never sees a
+    booking id it could probe with)."""
+    if sub.get("outcome") != "trainer_assist_recommended":
+        return None
+    return {
+        "status": _trainer_assist_display_status(sub),
+        "contacted_at": sub.get("trainer_assist_contacted_at"),
+        "completed_at": sub.get("trainer_assist_completed_at"),
+        "client_summary": sub.get("trainer_assist_client_summary") or None,
+        "appointment_id": sub.get("trainer_assist_appointment_id"),  # popped by the enrichment step below
+    }
+
+
+async def _enrich_trainer_assist_schedule(ta: Optional[dict]) -> Optional[dict]:
+    """Merges the LIVE scheduled date/time from the linked booking into an
+    already-client-safe trainer_assist block. Always resolved fresh from
+    the booking, never a snapshot taken at schedule time — a reschedule or
+    cancellation must be reflected the next time the client loads this,
+    not frozen at whatever it was when first scheduled.
+
+    Cancellation lifecycle-integrity fix: trainer_assist_status="scheduled"
+    is stored on the checkpoint submission, but the booking can be
+    cancelled entirely through the EXISTING, untouched booking-cancellation
+    path — there is no hook back into this feature. Rather than duplicate
+    booking status onto the submission (a second cancellation system), the
+    booking's real status is read fresh on every request: if it's been
+    cancelled, the client-visible status downgrades to the derived-only
+    'reschedule_needed' value (never stored) and no stale date/time is
+    exposed, instead of the client being told they still have an appointment
+    that no longer exists."""
+    if not ta:
+        return ta
+    aid = ta.pop("appointment_id", None)
+    if aid:
+        b = await db.bookings.find_one({"id": aid}, {"_id": 0, "date": 1, "time": 1, "status": 1})
+        if b and b.get("status") == "cancelled":
+            if ta.get("status") == "scheduled":
+                ta["status"] = "reschedule_needed"
+        elif b:
+            ta["scheduled_date"] = b.get("date")
+            ta["scheduled_time"] = b.get("time")
+    return ta
+
+
 def _client_safe_checkpoint_submission(sub: Optional[dict]) -> Optional[dict]:
     """Client-facing view of the client's OWN checkpoint submission — built
     from an explicit allowlist, never dict(sub) with keys popped, so a
@@ -16788,7 +16867,9 @@ def _client_safe_checkpoint_submission(sub: Optional[dict]) -> Optional[dict]:
     notification_sent*, last_advance_conflict_at, or anything else) is
     invisible to the client until deliberately added here. Never includes:
     pass_readiness_guidance, grading_plan, notification_sent*, or any
-    trainer_assist_hold bookkeeping beyond a plain on_hold bool."""
+    trainer_assist_hold bookkeeping beyond a plain on_hold bool (Phase 4
+    lifecycle detail is a separate allowlisted "trainer_assist" block —
+    see _client_safe_trainer_assist)."""
     if not sub:
         return None
     status = sub.get("status")
@@ -16811,6 +16892,7 @@ def _client_safe_checkpoint_submission(sub: Optional[dict]) -> Optional[dict]:
             "outcome": sub.get("outcome"),
             "prescription": _client_safe_prescription(sub.get("prescription")),
             "graded_at": sub.get("graded_at"),
+            "trainer_assist": _client_safe_trainer_assist(sub),
         })
     return out
 
@@ -17159,6 +17241,8 @@ async def portal_school_checkpoint_history(school_enrollment_id: str, user: dict
         safe["lesson_name"] = sub.get("lesson_name")
         safe["module_name"] = _module_name_in_snapshot(enrollment, sub.get("module_id"))
         safe["rubric_snapshot"] = _client_safe_checkpoint_rubric(sub.get("rubric_snapshot"))
+        if safe.get("trainer_assist"):
+            safe["trainer_assist"] = await _enrich_trainer_assist_schedule(safe["trainer_assist"])
         out.append(safe)
     return out
 
@@ -17838,6 +17922,18 @@ async def admin_school_checkpoint_grade(
     }
     if outcome == "trainer_assist_recommended":
         finalize_set["trainer_assist_hold_active"] = True
+        # Online School Phase 4 — the queue-visibility guarantee starts
+        # here: this write happens exactly once (finalize only runs when
+        # status transitions grading -> graded, guarded by the CAS filter
+        # below), on the SAME document the hold itself lives on, so the
+        # staff queue can never fail to see a case because a second record
+        # didn't get created — there is no second record.
+        finalize_set["trainer_assist_status"] = "needs_attention"
+        finalize_set["trainer_assist_recommended_at"] = now_iso()
+        finalize_set["trainer_assist_history"] = [{
+            "status": "needs_attention", "at": finalize_set["trainer_assist_recommended_at"],
+            "by": plan.get("graded_by"), "by_name": plan.get("graded_by_name"), "note": None,
+        }]
     finalized = await db.checkpoint_submissions.find_one_and_update(
         {"id": submission_id, "status": "grading"},
         {"$set": finalize_set, "$unset": {"grading_plan": 1, "last_advance_conflict_at": 1}},
@@ -17869,17 +17965,277 @@ async def admin_school_checkpoint_clear_trainer_assist_hold(
     fabricates progress, scores, mastery, or advancement. Idempotent:
     calling this on an already-cleared (or never-held) submission is a
     no-op success, never an error — matches the CAS pattern used
-    throughout this feature rather than a check-then-act race."""
+    throughout this feature rather than a check-then-act race.
+
+    Online School Phase 4 — kept as the blunt admin escape hatch for
+    mistakes/exceptions (the full Trainer Assist Complete workflow below,
+    with a required client-facing summary, is the normal path). Updated
+    so it can never leave the Trainer Assist lifecycle metadata
+    contradicting the hold: clearing the hold here also resolves the
+    lifecycle to 'completed' with a system-generated internal note,
+    rather than leaving trainer_assist_status stuck on
+    needs_attention/contacted/scheduled while the hold itself says clear."""
     sub = await db.checkpoint_submissions.find_one({"id": submission_id}, {"_id": 0})
     if not sub:
         raise HTTPException(status_code=404, detail="Checkpoint submission not found")
+    now = now_iso()
+    entry = {
+        "status": "completed", "at": now, "by": user.get("id"), "by_name": user.get("name"),
+        "note": "Hold cleared via manual override (quick action, not the full Trainer Assist Complete workflow).",
+    }
     claimed = await db.checkpoint_submissions.find_one_and_update(
         {"id": submission_id, "trainer_assist_hold_active": True},
-        {"$set": {"trainer_assist_hold_active": False, "hold_cleared_at": now_iso(), "hold_cleared_by": user.get("id")}},
+        {"$set": {
+            "trainer_assist_hold_active": False, "hold_cleared_at": now, "hold_cleared_by": user.get("id"),
+            "trainer_assist_status": "completed",
+            "trainer_assist_completed_at": now, "trainer_assist_completed_by": user.get("id"),
+            "trainer_assist_completed_by_name": user.get("name"),
+        }, "$push": {"trainer_assist_history": entry}},
         projection={"_id": 0}, return_document=ReturnDocument.AFTER,
     )
     final_sub = claimed or sub
     return {"checkpoint": _admin_safe_checkpoint(final_sub)}
+
+
+# ─── Online School Phase 4 — Trainer Assist queue, detail & lifecycle ─────
+# "Do it yourself doesn't mean do it alone." A checkpoint graded
+# trainer_assist_recommended (Phase 2) IS the Trainer Assist case — there is
+# no second collection. Every endpoint below reads/writes the same
+# checkpoint_submissions document Phase 2 already created, so a held
+# checkpoint can never go missing from the staff queue because a companion
+# record failed to be created (there is no companion record to fail).
+
+class TrainerAssistContactIn(BaseModel):
+    note: Optional[str] = None
+
+
+class TrainerAssistScheduleIn(BaseModel):
+    booking_id: str
+
+
+class TrainerAssistCompleteIn(BaseModel):
+    client_summary: str = Field(min_length=1)
+    internal_note: Optional[str] = None
+
+
+def _require_trainer_assist_case(sub: Optional[dict]) -> dict:
+    if not sub:
+        raise HTTPException(status_code=404, detail="Trainer Assist case not found")
+    if sub.get("outcome") != "trainer_assist_recommended":
+        raise HTTPException(status_code=404, detail="This checkpoint is not a Trainer Assist case")
+    return sub
+
+
+@api.get("/admin/school/trainer-assist")
+async def admin_school_trainer_assist_queue(_: dict = Depends(require_admin_and_permission("manage_training_sessions"))):
+    """Staff queue — every checkpoint ever graded trainer_assist_recommended,
+    active hold OR already resolved (so 'Recently Completed' has something
+    to show). Always derived straight from checkpoint_submissions, never a
+    second store. Active cases sort oldest-recommended-first (priority to
+    what's been waiting longest); completed cases sort newest-first."""
+    rows = await db.checkpoint_submissions.find(
+        {"outcome": "trainer_assist_recommended", "status": "graded"}, {"_id": 0},
+    ).to_list(300)
+    if not rows:
+        return []
+    dog_ids = list({r["dog_id"] for r in rows})
+    client_ids = list({r["client_id"] for r in rows})
+    enrollment_ids = list({r["enrollment_id"] for r in rows if r.get("enrollment_id")})
+    # Cancellation lifecycle-integrity fix: batch-resolve the REAL status of
+    # every linked booking so a case whose appointment was cancelled through
+    # the existing booking-cancellation path never keeps presenting as a
+    # valid "Scheduled" session in the queue. Never stored back onto the
+    # submission — read fresh every time, same as the client-safe path.
+    appointment_ids = list({r["trainer_assist_appointment_id"] for r in rows if r.get("trainer_assist_appointment_id")})
+    dogs_by_id = {d["id"]: d for d in await db.dogs.find({"id": {"$in": dog_ids}}, {"_id": 0, "id": 1, "name": 1, "photo": 1}).to_list(500)}
+    clients_by_id = {c["id"]: c for c in await db.clients.find({"id": {"$in": client_ids}}, {"_id": 0, "id": 1, "name": 1}).to_list(500)}
+    enrollments_by_id = {e["id"]: e for e in await db.dog_programs.find({"id": {"$in": enrollment_ids}}, {"_id": 0, "id": 1, "program_snapshot": 1}).to_list(500)}
+    bookings_by_id = {}
+    if appointment_ids:
+        bookings_by_id = {b["id"]: b for b in await db.bookings.find({"id": {"$in": appointment_ids}}, {"_id": 0, "id": 1, "status": 1}).to_list(500)}
+    out = []
+    for r in rows:
+        dog = dogs_by_id.get(r["dog_id"]) or {}
+        client = clients_by_id.get(r["client_id"]) or {}
+        enrollment = enrollments_by_id.get(r.get("enrollment_id")) or {}
+        appt = bookings_by_id.get(r.get("trainer_assist_appointment_id"))
+        out.append({
+            "id": r["id"], "school_enrollment_id": r["school_enrollment_id"],
+            "dog_id": r["dog_id"], "dog_name": dog.get("name"), "dog_photo": dog.get("photo") or "",
+            "client_id": r["client_id"], "client_name": client.get("name"),
+            "program_name": (enrollment.get("program_snapshot") or {}).get("name"),
+            "module_name": _module_name_in_snapshot(enrollment, r.get("module_id")),
+            "lesson_name": r.get("lesson_name"),
+            "trainer_feedback": r.get("trainer_feedback"),
+            "trainer_name": r.get("graded_by_name"),
+            "recommended_at": r.get("trainer_assist_recommended_at") or r.get("graded_at"),
+            "completed_at": r.get("trainer_assist_completed_at"),
+            "trainer_assist_status": _trainer_assist_display_status(r),
+            "appointment_cancelled": bool(appt and appt.get("status") == "cancelled"),
+        })
+    active = [x for x in out if x["trainer_assist_status"] != "completed"]
+    completed = [x for x in out if x["trainer_assist_status"] == "completed"]
+    order = {"needs_attention": 0, "contacted": 1, "scheduled": 2}
+    active.sort(key=lambda x: (order.get(x["trainer_assist_status"], 0), x["recommended_at"] or ""))
+    completed.sort(key=lambda x: x["completed_at"] or x["recommended_at"] or "", reverse=True)
+    return active + completed
+
+
+@api.get("/admin/school/trainer-assist/{submission_id}")
+async def admin_school_trainer_assist_detail(submission_id: str, _: dict = Depends(require_admin_and_permission("manage_training_sessions"))):
+    """Everything a trainer needs to help without hunting through five
+    screens: student context, why they're here, the actual submitted
+    video (reused via the existing homework media endpoint — no
+    duplicate storage), Handler/Dog rubric scores, current Assist status,
+    and the linked appointment if one has been scheduled."""
+    sub = _require_trainer_assist_case(await db.checkpoint_submissions.find_one({"id": submission_id}, {"_id": 0}))
+    dog = await db.dogs.find_one({"id": sub["dog_id"]}, {"_id": 0, "id": 1, "name": 1, "photo": 1})
+    client = await db.clients.find_one({"id": sub["client_id"]}, {"_id": 0, "id": 1, "name": 1, "phone": 1, "email": 1})
+    enrollment = await db.dog_programs.find_one(
+        {"id": sub.get("enrollment_id")}, {"_id": 0, "id": 1, "program_snapshot": 1, "current_module_id": 1, "current_lesson_id": 1},
+    ) or {}
+    appointment = None
+    aid = sub.get("trainer_assist_appointment_id")
+    if aid:
+        b = await db.bookings.find_one({"id": aid}, {"_id": 0, "id": 1, "date": 1, "time": 1, "status": 1})
+        if b:
+            appointment = b
+    # Cancellation lifecycle-integrity fix — same derivation as the queue
+    # and client-safe views: a booking cancelled through the existing,
+    # untouched booking-cancellation path must not keep this case reading
+    # as a valid "Scheduled" session. Never stored back onto the
+    # submission — the booking's own status is the only source of truth.
+    status = _trainer_assist_display_status(sub)
+    if status == "scheduled" and appointment and appointment.get("status") == "cancelled":
+        status = "reschedule_needed"
+    return {
+        "checkpoint": _admin_safe_checkpoint(sub),
+        "dog": dog, "client": client,
+        "program_name": (enrollment.get("program_snapshot") or {}).get("name"),
+        "module_name": _module_name_in_snapshot(enrollment, sub.get("module_id")),
+        "current_module_name": _module_name_in_snapshot(enrollment, enrollment.get("current_module_id")),
+        "trainer_assist_status": status,
+        "appointment": appointment,
+    }
+
+
+@api.post("/admin/school/trainer-assist/{submission_id}/contact")
+async def admin_trainer_assist_contact(
+    submission_id: str, body: TrainerAssistContactIn, user: dict = Depends(require_admin_and_permission("manage_training_sessions")),
+):
+    """Explicit 'mark contacted' action. Never inferred from a client
+    thread being opened or replied to elsewhere in the app — only this
+    endpoint (called directly, or automatically by the Trainer Assist
+    Message Client action once a message has actually been sent, see
+    admin_messages_start/admin_reply_thread callers) moves the case here."""
+    sub = _require_trainer_assist_case(await db.checkpoint_submissions.find_one({"id": submission_id}, {"_id": 0}))
+    current = _trainer_assist_display_status(sub)
+    if current == "contacted":
+        return {"checkpoint": _admin_safe_checkpoint(sub)}
+    if current != "needs_attention":
+        raise HTTPException(status_code=409, detail=f"Cannot mark contacted from status {current!r}.")
+    now = now_iso()
+    entry = {"status": "contacted", "at": now, "by": user.get("id"), "by_name": user.get("name"), "note": (body.note or "").strip() or None}
+    updated = await db.checkpoint_submissions.find_one_and_update(
+        {"id": submission_id, "trainer_assist_hold_active": True,
+         "trainer_assist_status": {"$in": ["needs_attention", None]}},
+        {"$set": {"trainer_assist_status": "contacted", "trainer_assist_contacted_at": now,
+                   "trainer_assist_contacted_by": user.get("id"), "trainer_assist_contacted_by_name": user.get("name")},
+         "$push": {"trainer_assist_history": entry}},
+        projection={"_id": 0}, return_document=ReturnDocument.AFTER,
+    )
+    if updated is not None:
+        return {"checkpoint": _admin_safe_checkpoint(updated)}
+    fresh = await db.checkpoint_submissions.find_one({"id": submission_id}, {"_id": 0}) or sub
+    fresh_status = _trainer_assist_display_status(fresh)
+    if fresh_status == "contacted":
+        return {"checkpoint": _admin_safe_checkpoint(fresh)}
+    raise HTTPException(status_code=409, detail=f"Cannot mark contacted from status {fresh_status!r}.")
+
+
+@api.post("/admin/school/trainer-assist/{submission_id}/schedule")
+async def admin_trainer_assist_schedule(
+    submission_id: str, body: TrainerAssistScheduleIn, user: dict = Depends(require_admin_and_permission("manage_training_sessions")),
+):
+    """Links an appointment created through the EXISTING booking system
+    (AdminBookingModal / POST /bookings) to this Trainer Assist case — no
+    calendar of its own. Idempotent on repeat calls with the same
+    booking_id; a call with a DIFFERENT booking_id while already
+    'scheduled' is a legitimate reschedule, not an error. Never touches
+    trainer_assist_hold_active — scheduling a session does not mean the
+    training problem is resolved."""
+    sub = _require_trainer_assist_case(await db.checkpoint_submissions.find_one({"id": submission_id}, {"_id": 0}))
+    if not sub.get("trainer_assist_hold_active"):
+        raise HTTPException(status_code=409, detail="This Trainer Assist case is already resolved.")
+    booking = await db.bookings.find_one({"id": body.booking_id}, {"_id": 0, "id": 1, "dog_id": 1, "client_id": 1})
+    if not booking:
+        raise HTTPException(status_code=404, detail="Appointment not found")
+    if booking.get("dog_id") != sub.get("dog_id") or booking.get("client_id") != sub.get("client_id"):
+        raise HTTPException(status_code=422, detail="This appointment does not belong to this dog/client.")
+    current = _trainer_assist_display_status(sub)
+    if current == "scheduled" and sub.get("trainer_assist_appointment_id") == body.booking_id:
+        return {"checkpoint": _admin_safe_checkpoint(sub)}
+    if current not in ("needs_attention", "contacted", "scheduled"):
+        raise HTTPException(status_code=409, detail=f"Cannot schedule Trainer Assist from status {current!r}.")
+    now = now_iso()
+    entry = {
+        "status": "scheduled", "at": now, "by": user.get("id"), "by_name": user.get("name"),
+        "note": None, "appointment_id": body.booking_id,
+    }
+    updated = await db.checkpoint_submissions.find_one_and_update(
+        {"id": submission_id, "trainer_assist_hold_active": True},
+        {"$set": {"trainer_assist_status": "scheduled", "trainer_assist_appointment_id": body.booking_id},
+         "$push": {"trainer_assist_history": entry}},
+        projection={"_id": 0}, return_document=ReturnDocument.AFTER,
+    )
+    final = updated or await db.checkpoint_submissions.find_one({"id": submission_id}, {"_id": 0}) or sub
+    # Additive back-reference only — never touches booking pricing, status,
+    # availability, or any other booking field. Lets BookingDetailModal show
+    # "Online School Trainer Assist" context when this booking is opened.
+    await db.bookings.update_one({"id": body.booking_id}, {"$set": {"trainer_assist_case_id": submission_id}})
+    return {"checkpoint": _admin_safe_checkpoint(final)}
+
+
+@api.post("/admin/school/trainer-assist/{submission_id}/complete")
+async def admin_trainer_assist_complete(
+    submission_id: str, body: TrainerAssistCompleteIn, user: dict = Depends(require_admin_and_permission("manage_training_sessions")),
+):
+    """The real 'Trainer Assist Complete' workflow — requires a
+    client-facing follow-up summary (never fabricated; typed by the
+    trainer). Clears the SAME Phase 2 hold flag _check_checkpoint_
+    resubmission_allowed already reads, so resubmission becomes available
+    the instant this succeeds — never advances the lesson, never touches
+    goal_progress, never fabricates a passing grade. Idempotent: calling
+    again once already completed is a no-op that does NOT overwrite the
+    existing summary."""
+    sub = _require_trainer_assist_case(await db.checkpoint_submissions.find_one({"id": submission_id}, {"_id": 0}))
+    if not (body.client_summary or "").strip():
+        raise HTTPException(status_code=422, detail="A client-facing follow-up summary is required.")
+    current = _trainer_assist_display_status(sub)
+    if current == "completed":
+        return {"checkpoint": _admin_safe_checkpoint(sub)}
+    now = now_iso()
+    entry = {
+        "status": "completed", "at": now, "by": user.get("id"), "by_name": user.get("name"),
+        "note": (body.internal_note or "").strip() or None,
+    }
+    updated = await db.checkpoint_submissions.find_one_and_update(
+        {"id": submission_id, "trainer_assist_hold_active": True},
+        {"$set": {
+            "trainer_assist_status": "completed", "trainer_assist_hold_active": False,
+            "trainer_assist_completed_at": now, "trainer_assist_completed_by": user.get("id"),
+            "trainer_assist_completed_by_name": user.get("name"),
+            "trainer_assist_client_summary": body.client_summary.strip(),
+            "hold_cleared_at": now, "hold_cleared_by": user.get("id"),
+        }, "$push": {"trainer_assist_history": entry}},
+        projection={"_id": 0}, return_document=ReturnDocument.AFTER,
+    )
+    if updated is not None:
+        return {"checkpoint": _admin_safe_checkpoint(updated)}
+    fresh = await db.checkpoint_submissions.find_one({"id": submission_id}, {"_id": 0}) or sub
+    if _trainer_assist_display_status(fresh) == "completed":
+        return {"checkpoint": _admin_safe_checkpoint(fresh)}
+    raise HTTPException(status_code=409, detail="This Trainer Assist case is no longer active.")
 
 
 # ─── Sprint 110di-69 · Training Tracker (trainer-side batch + audit) ──────
@@ -44382,12 +44738,83 @@ async def my_unread_message_count(user: dict = Depends(get_current_user)):
     return {"unread": n}
 
 
+class AdminThreadStartIn(BaseModel):
+    client_id: str
+    body: str
+    subject: str = ""
+    category: str = "other"
+    dog_id: Optional[str] = None
+    email_notify: bool = True
+
+
+@api.post("/admin/messages/start")
+async def admin_start_thread(body: AdminThreadStartIn, user: dict = Depends(require_permission("messages"))):
+    """The one real gap Online School Phase 4 found in the existing
+    Messages system: only clients could start a thread (POST /me/messages)
+    — staff had no way to message a client who hadn't already written in.
+    Mirrors my_create_message's exact thread shape (same collection, same
+    fields), just with an admin-authored first message. Not tied to
+    Trainer Assist specifically — any staff screen can reuse this."""
+    if not (body.body or "").strip():
+        raise HTTPException(status_code=400, detail="Message body is required")
+    client = await db.clients.find_one({"id": body.client_id}, {"_id": 0})
+    if not client:
+        raise HTTPException(status_code=404, detail="Client not found")
+    cat = body.category if body.category in MESSAGE_CATEGORIES else "other"
+    dog_name = None
+    if body.dog_id:
+        d = await db.dogs.find_one({"id": body.dog_id}, {"_id": 0, "name": 1, "owner_id": 1})
+        if d and d.get("owner_id") == body.client_id:
+            dog_name = d.get("name")
+    role = "admin" if (user.get("role") or "").lower() == "admin" else "staff"
+    item = {
+        "id": str(uuid.uuid4()),
+        "sender_role": role,
+        "sender_id": user.get("id"),
+        "sender_name": user.get("name") or user.get("email"),
+        "body": body.body.strip(),
+        "created_at": now_iso(),
+    }
+    thread = {
+        "id": str(uuid.uuid4()),
+        "client_id": body.client_id,
+        "client_name": client.get("name") or "Client",
+        "client_email": client.get("email"),
+        "dog_id": body.dog_id if dog_name else None,
+        "dog_name": dog_name,
+        "booking_id": None,
+        "category": cat,
+        "subject": (body.subject or "").strip() or _thread_preview(body.body, 60),
+        "status": "open",
+        "messages": [item],
+        "internal_notes": [],
+        "created_at": item["created_at"],
+        "updated_at": item["created_at"],
+        "last_message_at": item["created_at"],
+        "last_message_preview": _thread_preview(body.body),
+        "last_message_role": role,
+        "unread_admin": False,
+        "unread_client": True,
+    }
+    await db.client_message_threads.insert_one(thread)
+    await _log_message_to_comm(thread, item)
+    if body.email_notify and thread.get("client_email"):
+        async def _notify_client_new():
+            try:
+                await _send_message_notification_email(thread, thread["client_email"], body.body, is_admin_reply=True)
+            except Exception:
+                pass
+        asyncio.create_task(_notify_client_new())
+    return _thread_shape(thread, "admin")
+
+
 # ---- Admin/staff endpoints ----
 @api.get("/admin/messages")
 async def admin_list_messages(
     status: Optional[str] = None,
     unread_only: bool = False,
     search: Optional[str] = None,
+    client_id: Optional[str] = None,
     limit: int = 200,
     _: dict = Depends(require_permission("messages")),
 ):
@@ -44396,6 +44823,8 @@ async def admin_list_messages(
         q["status"] = status
     if unread_only:
         q["unread_admin"] = True
+    if client_id:
+        q["client_id"] = client_id
     if search:
         s = search.strip()
         if s:

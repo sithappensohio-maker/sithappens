@@ -56,7 +56,7 @@ const calcDiscountAmount = (rawAdditionalDogBase, cfg, additionalDogs) => {
   return raw * (Math.min(100, Math.max(0, value)) / 100);
 };
 
-export default function AdminBookingModal({ defaultCheckIn = false, defaultDate = null, existing = null, presetClientId = null, presetDogId = null, onClose, onCreated }) {
+export default function AdminBookingModal({ defaultCheckIn = false, defaultDate = null, existing = null, presetClientId = null, presetDogId = null, presetServiceType = null, presetNotes = null, onClose, onCreated }) {
   useEditLock(true);
   const [clients, setClients] = useState([]);
   const [dogs, setDogs] = useState([]);
@@ -67,7 +67,7 @@ export default function AdminBookingModal({ defaultCheckIn = false, defaultDate 
   // Quick Check-in mode: dog-first selection (the common drop-off flow).
   // Normal booking creation stays client-first.
   const isQuickCheckin = defaultCheckIn && !existing;
-  const [serviceType, setServiceType] = useState(existing?.service_type || "daycare");
+  const [serviceType, setServiceType] = useState(existing?.service_type || presetServiceType || "daycare");
   const [serviceId, setServiceId] = useState(existing?.service_id || "");
   const [catalogServices, setCatalogServices] = useState([]);
   const [date, setDate] = useState(existing?.date || defaultDate || todayISO());
@@ -84,7 +84,7 @@ export default function AdminBookingModal({ defaultCheckIn = false, defaultDate 
   // scheduled SLOTS, not drop-off windows. Persisted on the booking as `time`.
   const [appointmentTime, setAppointmentTime] = useState(existing?.time || "");
   const [groomingType, setGroomingType] = useState(existing?.grooming_type || "bath");
-  const [notes, setNotes] = useState(existing?.notes || "");
+  const [notes, setNotes] = useState(existing?.notes || presetNotes || "");
   const [checkInNow, setCheckInNow] = useState(defaultCheckIn);
   const [overrideVaccines, setOverrideVaccines] = useState(false);
   const [overrideCapacity, setOverrideCapacity] = useState(false);
@@ -163,8 +163,9 @@ export default function AdminBookingModal({ defaultCheckIn = false, defaultDate 
           const chosen = activeBaseServices.find(s => s.id === existing.service_id);
           if (chosen) { setServiceId(chosen.id); setServiceType(chosen.service_type); }
         } else if (!existing?.service_id) {
-          const chosen = activeBaseServices.find(s => s.service_type === (existing?.service_type || "daycare") && s.is_default)
-            || activeBaseServices.find(s => s.service_type === (existing?.service_type || "daycare"));
+          const wantedType = existing?.service_type || presetServiceType || "daycare";
+          const chosen = activeBaseServices.find(s => s.service_type === wantedType && s.is_default)
+            || activeBaseServices.find(s => s.service_type === wantedType);
           if (chosen) { setServiceId(chosen.id); setServiceType(chosen.service_type); }
         }
         setKennels(sRes.data.kennels || []);
@@ -180,7 +181,7 @@ export default function AdminBookingModal({ defaultCheckIn = false, defaultDate 
           multi_dog_discount_label: sRes.data?.multi_dog_discount_label || "Additional dog discount",
           multi_dog_discount_by_service: sRes.data?.multi_dog_discount_by_service || {},
         });
-        if (!existing) {
+        if (!existing && !presetClientId && !presetDogId) {
           if (isQuickCheckin) {
             // Pre-select the first dog and its owner so the form is ready to submit.
             const firstDog = (dRes.data || []).find(d => d.owner_id);
@@ -194,7 +195,7 @@ export default function AdminBookingModal({ defaultCheckIn = false, defaultDate 
         }
       } catch (e) { setErr(formatErr(e.response?.data?.detail)); }
     })();
-  }, [existing, isQuickCheckin]);
+  }, [existing, isQuickCheckin, presetClientId, presetDogId, presetServiceType]);
 
   // Auto-detect conflicts when dog/date/client change. Keyed on clientId so
   // when the user switches clients (which auto-resets dogId via clientDogs),
@@ -484,6 +485,7 @@ export default function AdminBookingModal({ defaultCheckIn = false, defaultDate 
           pickup_time: pickupTime || "",
           time: ["training", "grooming", "photography"].includes(serviceType) ? (appointmentTime || "") : "",
         });
+        onCreated?.();
       } else {
         const body = {
           dog_id: dogId,
@@ -530,11 +532,12 @@ export default function AdminBookingModal({ defaultCheckIn = false, defaultDate 
             check_in_now: checkInNow,
           };
           await api.post("/bookings/group", groupBody);
+          onCreated?.();
         } else {
-          await api.post("/bookings", body);
+          const { data } = await api.post("/bookings", body);
+          onCreated?.(data);
         }
       }
-      onCreated?.();
       onClose();
     } catch (e) { setErr(formatErr(e.response?.data?.detail) || "Save failed"); }
     setSaving(false);

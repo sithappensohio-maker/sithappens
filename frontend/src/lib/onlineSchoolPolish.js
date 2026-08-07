@@ -84,7 +84,26 @@ export function trainerStatusLabel(roadmap) {
   const status = roadmap?.requires_checkpoint ? roadmap.checkpoint_status : null;
   // Color rules: orange = checkpoint/attention/trainer review, purple =
   // Trainer Assist/special support, muted = nothing needed right now.
-  if (status?.on_hold) return { label: "Trainer Assist recommended", tone: "purple", icon: "fa-handshake" };
+  // Online School Phase 4 — the Trainer Assist branch reflects the REAL
+  // lifecycle (needs_attention/contacted/scheduled/completed) instead of a
+  // single "recommended" label glued to the whole hold period. Every
+  // sub-label maps to a real stored field (ta.status, ta.scheduled_date) —
+  // never an invented ETA or response-time promise.
+  const ta = status?.trainer_assist;
+  if (status?.on_hold && ta) {
+    // Derived-only "reschedule_needed" (never stored) — the linked booking
+    // was cancelled through the existing booking-cancellation path; never
+    // keep telling the client about a date/time that no longer exists.
+    if (ta.status === "reschedule_needed") return { label: "Trainer Assist needs rescheduling", tone: "purple", icon: "fa-calendar-xmark" };
+    if (ta.status === "scheduled") {
+      return { label: ta.scheduled_date ? `Trainer Assist scheduled for ${ta.scheduled_date}` : "Trainer Assist scheduled", tone: "purple", icon: "fa-calendar-check" };
+    }
+    if (ta.status === "contacted") return { label: "Trainer contacted you", tone: "purple", icon: "fa-comment-dots" };
+    return { label: "Trainer Assist recommended", tone: "purple", icon: "fa-handshake" };
+  }
+  if (!status?.on_hold && ta?.status === "completed") {
+    return { label: "Trainer Assist complete — ready to continue", tone: "purple", icon: "fa-circle-check" };
+  }
   if (status?.status === "awaiting_review") return { label: "Checkpoint awaiting review", tone: "accent", icon: "fa-hourglass-half" };
   if (status?.status === "graded" && status.outcome === "prescribe_practice") return { label: "Practice plan assigned", tone: "accent", icon: "fa-rotate-left" };
   return { label: "No trainer action needed", tone: "muted", icon: "fa-circle-check" };

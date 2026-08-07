@@ -575,6 +575,27 @@ function CheckpointResultEntry({ entry, expanded, onToggle }) {
           <p className="text-[11px] text-shTextMuted italic">Handler and Dog are scored separately — a lower Dog score reflects where your dog is in training, not a handling mistake.</p>
         </div>
       )}
+      {/* Online School Phase 4 — Trainer Assist is a SEPARATE later chapter
+          of this same checkpoint's story, never overwriting the review
+          feedback above it: "why was I held here" (the review, above) vs
+          "what happened afterward" (this block). Internal staff notes
+          never reach entry.trainer_assist — see _client_safe_trainer_assist. */}
+      {entry.trainer_assist && (
+        <div className="mt-3 pt-3 border-t border-purple-400/20" data-testid={`school-history-${entry.id}-trainer-assist`}>
+          <p className="text-[10px] font-bold uppercase tracking-widest text-purple-300 mb-1"><i className="fas fa-handshake mr-1"/>Trainer Assist</p>
+          {entry.trainer_assist.status === "completed" ? (
+            <p className="text-[13px] text-shText/90">{entry.trainer_assist.client_summary || "Resolved — ready to continue."}</p>
+          ) : entry.trainer_assist.status === "reschedule_needed" ? (
+            <p className="text-[13px] text-shTextMuted">That appointment was canceled — your trainer will reschedule.</p>
+          ) : entry.trainer_assist.status === "scheduled" ? (
+            <p className="text-[13px] text-shTextMuted">Scheduled{entry.trainer_assist.scheduled_date ? ` for ${entry.trainer_assist.scheduled_date}${entry.trainer_assist.scheduled_time ? ` · ${entry.trainer_assist.scheduled_time}` : ""}` : ""}</p>
+          ) : entry.trainer_assist.status === "contacted" ? (
+            <p className="text-[13px] text-shTextMuted">Your trainer reached out and is working with you on this.</p>
+          ) : (
+            <p className="text-[13px] text-shTextMuted">Your trainer is reviewing next steps.</p>
+          )}
+        </div>
+      )}
     </div>
   );
 }
@@ -598,23 +619,59 @@ function TrainerFeedbackHistory({ history, expandedId, onToggle }) {
 // ---------------------------------------------------------------------------
 
 function CheckpointPanel({ lessonId, practiced, rubric, status, onSubmit, onGoToRefresher, busy }) {
+  const [returnedToCheckpoint, setReturnedToCheckpoint] = useState(false);
+
   if (!practiced) {
     return (
       <EmptyState icon="fa-video" message="Practice this lesson first, then submit a checkpoint video for your trainer to review." testid="school-checkpoint-needs-practice"/>
     );
   }
 
-  if (status?.on_hold) {
+  const ta = status?.trainer_assist;
+
+  // Online School Phase 4 — real Trainer Assist lifecycle, not just an
+  // on/off hold flag. "This is exactly where having a real trainer
+  // helps" — never scary wording, never a fail screen (spec §20).
+  if (status?.on_hold && ta) {
     return (
       <div className="bg-purple-500/10 border border-purple-400/30 rounded-xl p-4" data-testid="school-checkpoint-hold">
-        <p className="text-purple-300 font-black text-[15px] mb-1"><i className="fas fa-handshake mr-1.5"/>Your trainer recommends some hands-on help</p>
-        <p className="text-shText/90 text-[13px] mt-1.5">We've paused this lesson so we can help you work through it together.</p>
+        <p className="text-purple-300 font-black text-[15px] mb-1"><i className="fas fa-handshake mr-1.5"/>Your trainer wants to help with this one</p>
+        <p className="text-shText/90 text-[13px] mt-1.5">We've paused this checkpoint so we can work through it with you.</p>
         {status.trainer_feedback && <p className="text-shText/90 text-[13px] mt-2 italic">"{status.trainer_feedback}"</p>}
+        <div className="mt-3 pt-3 border-t border-purple-400/20" data-testid="school-checkpoint-hold-status">
+          {ta.status === "reschedule_needed" ? (
+            <p className="text-purple-300 text-[13px] font-bold"><i className="fas fa-calendar-xmark mr-1.5"/>Trainer Assist needs to be rescheduled</p>
+          ) : ta.status === "scheduled" ? (
+            <p className="text-purple-300 text-[13px] font-bold">
+              <i className="fas fa-calendar-check mr-1.5"/>Trainer Assist scheduled{ta.scheduled_date ? ` for ${ta.scheduled_date}${ta.scheduled_time ? ` · ${ta.scheduled_time}` : ""}` : ""}
+            </p>
+          ) : ta.status === "contacted" ? (
+            <p className="text-purple-300 text-[13px] font-bold"><i className="fas fa-comment-dots mr-1.5"/>Your trainer has reached out</p>
+          ) : (
+            <p className="text-purple-300 text-[13px] font-bold"><i className="fas fa-hourglass-half mr-1.5"/>Trainer is reviewing next steps</p>
+          )}
+        </div>
         <div className="mt-3 space-y-1">
-          <p className="text-[13px] text-shTextMuted"><i className="fas fa-check mr-1.5 text-purple-300"/>Your trainer will help identify the sticking point</p>
           <p className="text-[13px] text-shTextMuted"><i className="fas fa-check mr-1.5 text-purple-300"/>Your course progress stays exactly where it is</p>
           <p className="text-[13px] text-shTextMuted"><i className="fas fa-check mr-1.5 text-purple-300"/>You'll continue from here once cleared</p>
         </div>
+      </div>
+    );
+  }
+
+  // Trainer Assist complete — the hold has been lifted, but this same
+  // submission still holds the client-facing follow-up summary until the
+  // client resubmits. "Return to Checkpoint" is a local reveal step, not
+  // a fabricated success — it just opens the same submit form below.
+  if (!status?.on_hold && ta?.status === "completed" && !returnedToCheckpoint) {
+    return (
+      <div className="bg-purple-500/10 border border-purple-400/30 rounded-xl p-4" data-testid="school-checkpoint-assist-complete">
+        <p className="text-purple-300 font-black text-[15px] mb-1"><i className="fas fa-circle-check mr-1.5"/>Trainer Assist complete</p>
+        {ta.client_summary && <p className="text-shText/90 text-[13px] mt-1.5">{ta.client_summary}</p>}
+        <button onClick={() => setReturnedToCheckpoint(true)} data-testid="school-checkpoint-return-to-checkpoint"
+                className="mt-3 w-full bg-shPrimary text-bgHeader py-2.5 rounded-xl font-black text-[13px] uppercase tracking-widest">
+          You're ready to keep training <i className="fas fa-arrow-right ml-2"/>
+        </button>
       </div>
     );
   }

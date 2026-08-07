@@ -378,6 +378,13 @@ export default function BookingDetailModal({ booking: initial, onClose, onJumpTo
             </section>
           )}
 
+          {/* Online School Phase 4 — only rendered when this appointment was
+              scheduled from a Trainer Assist case. Never shown otherwise,
+              so an ordinary training booking looks exactly as before. */}
+          {booking.trainer_assist_case_id && (
+            <TrainerAssistContext caseId={booking.trainer_assist_case_id}/>
+          )}
+
           {/* Pricing */}
           <section>
             <h3 className="text-[11px] uppercase tracking-[0.3em] font-black text-shTextMuted mb-2">
@@ -594,4 +601,86 @@ function ReportCardEmailStatus({ booking, onResent: _onResent }) {
       <i className="fas fa-paper-plane mr-1"/>{busy ? "Sending…" : "Send to client"}
     </button>
   );
+}
+
+// Online School Phase 4 — "the trainer should know exactly why this dog is
+// in front of them." Reuses the exact same Trainer Assist detail endpoint
+// the staff queue uses (GET /admin/school/trainer-assist/{id}) — no
+// duplicate context-building, no duplicate video storage.
+function TrainerAssistContext({ caseId }) {
+  const [detail, setDetail] = useState(null);
+  const [loading, setLoading] = useState(true);
+  useEffect(() => {
+    let cancelled = false;
+    (async () => {
+      try {
+        const { data } = await api.get(`/admin/school/trainer-assist/${caseId}`);
+        if (!cancelled) setDetail(data);
+      } catch { /* case may have been deleted alongside its enrollment — fail quiet */ }
+      finally { if (!cancelled) setLoading(false); }
+    })();
+    return () => { cancelled = true; };
+  }, [caseId]);
+
+  if (loading) {
+    return <p className="text-shTextMuted text-[12px]"><i className="fas fa-spinner fa-spin mr-1"/>Loading Online School context…</p>;
+  }
+  if (!detail) return null;
+  const cp = detail.checkpoint || {};
+  return (
+    <section data-testid="booking-trainer-assist-context">
+      <h3 className="text-[11px] uppercase tracking-[0.3em] font-black text-purple-300 mb-2">
+        <i className="fas fa-handshake mr-1.5"/>Online School Trainer Assist
+      </h3>
+      <div className="bg-purple-500/10 border border-purple-400/40 rounded-lg p-3 space-y-2">
+        <p className="text-[13px] text-shText">
+          <span className="font-black">{detail.program_name}</span>
+          {detail.module_name ? ` · ${detail.module_name}` : ""} · {cp.lesson_name}
+        </p>
+        {cp.trainer_feedback && (
+          <p className="text-gray-200 text-[13px] italic border-l-2 border-purple-400/40 pl-3">"{cp.trainer_feedback}"</p>
+        )}
+        {cp.client_note && (
+          <p className="text-shTextMuted text-[12px]"><span className="font-black text-shText">Client note:</span> "{cp.client_note}"</p>
+        )}
+        {(cp.rubric_snapshot?.handler_criteria?.length > 0 || cp.rubric_snapshot?.dog_criteria?.length > 0) && (
+          <div className="grid grid-cols-2 gap-3 pt-1">
+            {cp.rubric_snapshot?.handler_criteria?.length > 0 && (
+              <div>
+                <p className="text-[10px] font-black uppercase tracking-widest text-shTextMuted mb-1">Handler — {cp.handler_overall != null ? `${Number(cp.handler_overall).toFixed(1)}/5` : "—"}</p>
+                {cp.rubric_snapshot.handler_criteria.map(c => (
+                  <p key={c.id} className="text-[12px] text-shText flex justify-between"><span>{c.name}</span><span className="font-black">{cp.handler_scores?.[c.id] ?? "—"}/5</span></p>
+                ))}
+              </div>
+            )}
+            {cp.rubric_snapshot?.dog_criteria?.length > 0 && (
+              <div>
+                <p className="text-[10px] font-black uppercase tracking-widest text-shTextMuted mb-1">Dog — {cp.dog_overall != null ? `${Number(cp.dog_overall).toFixed(1)}/5` : "—"}</p>
+                {cp.rubric_snapshot.dog_criteria.map(c => (
+                  <p key={c.id} className="text-[12px] text-shText flex justify-between"><span>{c.name}</span><span className="font-black">{cp.dog_scores?.[c.id] ?? "—"}/5</span></p>
+                ))}
+              </div>
+            )}
+          </div>
+        )}
+        {cp.video_media_id && cp.homework_id && (
+          <TrainerAssistVideo homeworkId={cp.homework_id} mediaId={cp.video_media_id}/>
+        )}
+      </div>
+    </section>
+  );
+}
+
+function TrainerAssistVideo({ homeworkId, mediaId }) {
+  const [src, setSrc] = useState("");
+  useEffect(() => {
+    (async () => {
+      try {
+        const { data } = await api.get(`/homework/${homeworkId}/media/${mediaId}`);
+        setSrc(data.data || "");
+      } catch { /* ignore */ }
+    })();
+  }, [homeworkId, mediaId]);
+  if (!src) return null;
+  return <video src={src} controls playsInline className="max-h-56 rounded border border-shBorder w-full" data-testid="booking-trainer-assist-video"/>;
 }

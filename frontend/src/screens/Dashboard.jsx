@@ -19,6 +19,8 @@ import ReadinessChecklist from "../components/ReadinessChecklist";
 import DashboardQuickLinks from "../components/DashboardQuickLinks";
 import TrainingSessionWorkspace from "../components/TrainingSessionWorkspace";
 import CheckpointReviewQueue from "../components/CheckpointReviewQueue";
+import TrainerAssistQueue from "../components/TrainerAssistQueue";
+import MessageClientModal from "../components/MessageClientModal";
 import { useTheme } from "../lib/theme";
 import { toast } from "sonner";
 
@@ -56,6 +58,10 @@ export default function Dashboard({ onNavigate = () => {}, onJumpToDog = () => {
   const [pendingHomework, setPendingHomework] = useState([]);
   const [pendingCheckpoints, setPendingCheckpoints] = useState([]);
   const [checkpointQueueOpen, setCheckpointQueueOpen] = useState(false);
+  // Online School Phase 4 — Trainer Assist queue tile + modal.
+  const [trainerAssistCases, setTrainerAssistCases] = useState([]);
+  const [trainerAssistQueueOpen, setTrainerAssistQueueOpen] = useState(false);
+  const [messageClientFor, setMessageClientFor] = useState(null); // {clientId, dogId, lessonName, onSent}
   const [vaxPhoto, setVaxPhoto] = useState(null); // {photo, dog_name, vaccine}
   const [todayPnl, setTodayPnl] = useState(null);
   const [registerDay, setRegisterDay] = useState(null);
@@ -86,7 +92,7 @@ export default function Dashboard({ onNavigate = () => {}, onJumpToDog = () => {
     try {
       const br = brRef.current;
       const widgetOnNow = (id) => (br?.dashboard_widgets || {})[id] !== false;
-      const [s, st, pg, sv, vx, hw, cp, lb, qr, pnl, reg] = await Promise.all([
+      const [s, st, pg, sv, vx, hw, cp, ta, lb, qr, pnl, reg] = await Promise.all([
         api.get("/dashboard/stats"),
         api.get("/settings"),
         api.get("/programs/active-summary").catch(()=>({data:null})),
@@ -95,6 +101,9 @@ export default function Dashboard({ onNavigate = () => {}, onJumpToDog = () => {
         api.get("/admin/homework/pending-reviews").catch(()=>({data:[]})),
         canRef.current("manage_training_sessions")
           ? api.get("/admin/school/checkpoints/pending").catch(()=>({data:[]}))
+          : Promise.resolve({data:[]}),
+        canRef.current("manage_training_sessions")
+          ? api.get("/admin/school/trainer-assist").catch(()=>({data:[]}))
           : Promise.resolve({data:[]}),
         (br?.feature_visibility?.rewards !== false)
           ? api.get("/trophies/leaderboard").catch(()=>({data:{top_dogs:[],top_clients:[]}}))
@@ -114,6 +123,7 @@ export default function Dashboard({ onNavigate = () => {}, onJumpToDog = () => {
       setPendingVax(Array.isArray(vx.data) ? vx.data : []);
       setPendingHomework(Array.isArray(hw.data) ? hw.data : []);
       setPendingCheckpoints(Array.isArray(cp.data) ? cp.data : []);
+      setTrainerAssistCases(Array.isArray(ta.data) ? ta.data : []);
       setLeaderboard(lb.data || { top_dogs: [], top_clients: [] });
       setQuoteRequests(Array.isArray(qr.data) ? qr.data : []);
       setTodayPnl(pnl.data);
@@ -401,6 +411,44 @@ export default function Dashboard({ onNavigate = () => {}, onJumpToDog = () => {
                 + {pendingCheckpoints.length - 5} more in the queue
               </p>
             )}
+          </div>
+        </div>
+      )}
+
+      {trainerAssistCases.filter(c => c.trainer_assist_status !== "completed").length > 0 && (
+        <div className="rounded-xl p-5 shadow-xl bg-purple-500/10 border border-purple-400/40" data-testid="trainer-assist-tile">
+          <div className="flex items-center justify-between mb-3 gap-3 flex-wrap">
+            <h3 className="text-xs font-black text-purple-300 uppercase tracking-widest flex items-center gap-2">
+              <i className="fas fa-handshake"/> Trainer Assist · Students Needing Help · {trainerAssistCases.filter(c => c.trainer_assist_status !== "completed").length}
+            </h3>
+            <button onClick={() => setTrainerAssistQueueOpen(true)}
+                    data-testid="open-trainer-assist-queue"
+                    className="text-[11px] font-black uppercase tracking-widest text-purple-300 hover:text-shText border border-purple-400/40 hover:border-purple-400 rounded px-3 py-1.5">
+              Open Trainer Assist <i className="fas fa-arrow-right ml-1"/>
+            </button>
+          </div>
+          <div className="space-y-2">
+            {trainerAssistCases.filter(c => c.trainer_assist_status !== "completed").slice(0, 5).map(c => (
+              <button key={c.id} type="button" onClick={() => setTrainerAssistQueueOpen(true)}
+                      data-testid={`trainer-assist-tile-item-${c.id}`}
+                      className="w-full text-left flex items-center justify-between gap-3 bg-[var(--sh-card-base)]/50 hover:bg-[var(--sh-card-base)] rounded p-3 flex-wrap transition">
+                <div className="flex items-center gap-3 min-w-0 flex-1">
+                  <div className="w-10 h-10 rounded bg-purple-500/15 text-purple-300 grid place-items-center shrink-0">
+                    <i className="fas fa-handshake"/>
+                  </div>
+                  <div className="text-xs min-w-0">
+                    <div className="font-black text-shText uppercase truncate">
+                      {c.dog_name || "—"}
+                      <span className="text-shTextMuted font-normal normal-case"> · {c.client_name || "—"}</span>
+                    </div>
+                    <div className="mt-1 flex flex-wrap items-center gap-2">
+                      <span className="text-shTextMuted truncate max-w-[260px]">{c.lesson_name || "Checkpoint"}</span>
+                    </div>
+                  </div>
+                </div>
+                <i className="fas fa-chevron-right text-shTextMuted shrink-0"/>
+              </button>
+            ))}
           </div>
         </div>
       )}
@@ -806,6 +854,23 @@ export default function Dashboard({ onNavigate = () => {}, onJumpToDog = () => {
       )}
       {checkpointQueueOpen && (
         <CheckpointReviewQueue onClose={() => setCheckpointQueueOpen(false)} onGraded={load}/>
+      )}
+      {trainerAssistQueueOpen && (
+        <TrainerAssistQueue
+          onClose={() => setTrainerAssistQueueOpen(false)}
+          onChanged={load}
+          canMessage={canRef.current("messages")}
+          onMessageClient={(ctx) => setMessageClientFor(ctx)}
+        />
+      )}
+      {messageClientFor && (
+        <MessageClientModal
+          clientId={messageClientFor.clientId}
+          dogId={messageClientFor.dogId}
+          lessonName={messageClientFor.lessonName}
+          onSent={() => { messageClientFor.onSent?.(); }}
+          onClose={() => setMessageClientFor(null)}
+        />
       )}
       {checkoutFor && <CheckoutModal booking={checkoutFor} services={services}
                                      onRequestCancel={(b)=>{ setCheckoutFor(null); setCancelFor(b); }}
