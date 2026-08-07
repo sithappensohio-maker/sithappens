@@ -2412,7 +2412,8 @@ export default function Portal() {
       )}
 
       {practiceFor && (
-        <PracticePanel homework={practiceFor} onClose={() => setPracticeFor(null)} onChanged={loadAll}/>
+        <PracticePanel homework={practiceFor} dogPhoto={dogs.find(d => d.id === practiceFor.dog_id)?.photo}
+                       onClose={() => setPracticeFor(null)} onChanged={loadAll}/>
       )}
       {lightbox.open && (
         <Lightbox photos={lightbox.photos} index={lightbox.index}

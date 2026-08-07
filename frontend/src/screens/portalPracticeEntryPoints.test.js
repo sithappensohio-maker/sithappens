@@ -96,7 +96,7 @@ test("PracticeCompletionPanel's submit button is only disabled during 'saving', 
 // /homework) after a successful submit.
 test("PracticePanel calls onChanged after a successful submit, and Portal.jsx wires it to loadAll", () => {
   expect(practicePanelSrc).toMatch(/setSaveState\("saved"\);\s*\n\s*onChanged\?\.\(\);/);
-  expect(portalSrc).toMatch(/<PracticePanel homework=\{practiceFor\} onClose=\{\(\) => setPracticeFor\(null\)\} onChanged=\{loadAll\}\/>/);
+  expect(portalSrc).toMatch(/<PracticePanel homework=\{practiceFor\}[\s\S]*?onChanged=\{loadAll\}\/>/);
 });
 
 // 11. Existing media upload remains functional — the video upload still

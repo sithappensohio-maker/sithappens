@@ -11,6 +11,7 @@ import ContentCompleteness from "./training/ContentCompleteness";
 import ProgramPreviewPanel from "./training/ProgramPreviewPanel";
 import PublishReadinessPanel from "./training/PublishReadinessPanel";
 import { computeLessonCompleteness, computeSkillCompleteness, resolveValidationTarget } from "../lib/programStudioPolish";
+import HomeworkTemplateEditor from "./HomeworkTemplateEditor";
 
 /* ============================================================
  * Training-school expansion, Phase 2 — Program Studio.
@@ -101,8 +102,16 @@ export default function ProgramStudio({ programId, initialProgram, meta, allProg
   const [previewTab, setPreviewTab] = useState("client");
   const [mobileStage, setMobileStage] = useState("outline");
 
-  useEffect(() => {
+  // Client Practice Coach upgrade — exposed so ModuleEditor's "Edit
+  // Template" affordance can refresh the picker list after saving through
+  // HomeworkTemplateEditor, without Program Studio owning any template-
+  // content editing itself.
+  const reloadHwTemplates = () => {
     api.get("/homework-templates").then(r => setHwTemplates(r.data || [])).catch(() => setHwTemplates([]));
+  };
+
+  useEffect(() => {
+    reloadHwTemplates();
     api.get("/admin/email-templates").then(r => setEmailTemplates((r.data || []).filter(t => t.audience === "client"))).catch(() => setEmailTemplates([]));
   }, []);
 
@@ -383,7 +392,7 @@ export default function ProgramStudio({ programId, initialProgram, meta, allProg
               addSkill={addSkill} updateSkill={updateSkill} removeSkill={removeSkill} moveSkill={moveSkill}
               addLesson={addLesson} updateLesson={updateLesson} removeLesson={removeLesson} moveLesson={moveLesson} duplicateLessonInto={duplicateLessonInto}
               selectedModule={selectedModule} selectedLesson={selectedLesson} selectedSkill={selectedSkill}
-              hwTemplates={hwTemplates} allPrograms={allPrograms.filter(p => p.id !== programId)} copyFromProgram={copyFromProgram}
+              hwTemplates={hwTemplates} reloadHwTemplates={reloadHwTemplates} allPrograms={allPrograms.filter(p => p.id !== programId)} copyFromProgram={copyFromProgram}
               set={set} program={program}
               validation={validation} validating={validating} onRunValidation={runValidation} onValidationNavigate={handleValidationNavigate}
               previewTab={previewTab} setPreviewTab={setPreviewTab}
@@ -670,19 +679,42 @@ function CurriculumTab(props) {
 }
 
 /* -------------------------------------------------------- Module editor */
-function ModuleEditor({ module: m, updateModule, hwTemplates }) {
+function ModuleEditor({ module: m, updateModule, hwTemplates, reloadHwTemplates }) {
+  // Client Practice Coach upgrade — an edit affordance next to the
+  // existing template select, opening the SAME HomeworkTemplateEditor the
+  // admin Homework screen uses (never a second/duplicate template editor).
+  // Program Studio never edits template content itself — it stays a
+  // consumer of the template list, exactly as before.
+  const [editingTemplate, setEditingTemplate] = useState(false);
   return (
     <div className="space-y-3 max-w-xl">
       <p className="text-[11px] font-black uppercase tracking-widest text-shPrimary">Module</p>
       <SField label="Name"><input value={m.name} onChange={(e) => updateModule(m._key, { name: e.target.value })} className={inputCls}/></SField>
       <SField label="Description"><textarea value={m.description || ""} onChange={(e) => updateModule(m._key, { description: e.target.value })} rows={2} className={inputCls}/></SField>
       <SField label="Homework for this module (auto-sent when the dog begins it)">
-        <select value={m.homework_template_id || ""} onChange={(e) => updateModule(m._key, { homework_template_id: e.target.value || null })} className={inputCls}>
-          <option value="">— None —</option>
-          {hwTemplates.map(t => <option key={t.id} value={t.id}>{t.name}{t.tier ? ` · ${t.tier}` : ""}</option>)}
-        </select>
+        <div className="flex gap-2">
+          <select value={m.homework_template_id || ""} onChange={(e) => updateModule(m._key, { homework_template_id: e.target.value || null })} className={inputCls}>
+            <option value="">— None —</option>
+            {hwTemplates.map(t => <option key={t.id} value={t.id}>{t.name}{t.tier ? ` · ${t.tier}` : ""}</option>)}
+          </select>
+          <button type="button" onClick={() => setEditingTemplate(true)} data-testid="module-edit-homework-template"
+                  className="shrink-0 bg-black/20 border border-shBorder text-shTextMuted hover:text-shPrimary rounded px-3">
+            <i className="fas fa-pen"/>
+          </button>
+        </div>
       </SField>
       <p className="text-[12px] text-shTextMuted">{(m.goals || []).length} skill(s) · {(m.lessons || []).length} lesson(s)</p>
+      {editingTemplate && (
+        <HomeworkTemplateEditor
+          templateId={m.homework_template_id || null}
+          onClose={() => setEditingTemplate(false)}
+          onSaved={(saved) => {
+            setEditingTemplate(false);
+            reloadHwTemplates?.();
+            if (!m.homework_template_id && saved?.id) updateModule(m._key, { homework_template_id: saved.id });
+          }}
+        />
+      )}
     </div>
   );
 }

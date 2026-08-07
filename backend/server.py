@@ -12185,6 +12185,8 @@ async def list_homework(user: dict = Depends(get_current_user), dog_id: Optional
                 it["daily_progress"] = prog
             except Exception:
                 pass
+    if user.get("role") != "admin":
+        items = [_client_safe_homework(it) for it in items]
     return items
 
 @api.post("/homework")
@@ -12259,6 +12261,273 @@ from homework_templates_data import SEED_TEMPLATES
 TIERS = ["foundation", "intermediate", "advanced", "specialty", "master"]
 
 
+# ---------------------------------------------------------------------------
+# Client Practice Coach — typed "Practice Recipe" model, additive to the
+# existing homework-template model. See 02_PRACTICE_RECIPE_DATA_MODEL.md in
+# the handoff pack for the product/data contract this implements.
+#
+# Every sub-model is deliberately permissive at the Pydantic level (fields
+# default to empty/None rather than being required) because a trainer can
+# save a Coach Mode template mid-draft, before it's complete — the actual
+# "is this enabled config valid" gate is _validate_practice_coach below,
+# which only fires when practice_coach.enabled is True. A template with
+# practice_coach=None, or enabled=False, is unaffected by any of this and
+# renders through the existing simple/Quick practice experience unchanged.
+# ---------------------------------------------------------------------------
+
+class PracticeCoachScheduleIn(BaseModel):
+    minutes_per_round: Optional[int] = None
+    rounds_per_day: Optional[int] = None
+    reps_per_round: Optional[int] = None
+    rest_after_reps: Optional[int] = None
+    target_response_seconds: Optional[int] = None
+
+
+class PracticeCoachSetupItemIn(BaseModel):
+    id: Optional[str] = None
+    icon_key: Optional[str] = None
+    title: str = ""
+    description: Optional[str] = ""
+    required: bool = False
+
+
+class PracticeCoachStepIn(BaseModel):
+    id: Optional[str] = None
+    title: str = ""
+    instruction: str = ""
+    media_url: Optional[str] = None
+
+
+class PracticeCoachExampleIn(BaseModel):
+    """Shared shape for both good_rep and not_this — a short labeled
+    sequence (cue -> response -> marker -> reward, or the common-mistake
+    equivalent) plus an explanation and optional demo media."""
+    sequence: List[str] = []
+    explanation: Optional[str] = ""
+    media_url: Optional[str] = None
+
+
+class PracticeCoachTroubleshootingItemIn(BaseModel):
+    id: Optional[str] = None
+    trigger: str = ""
+    title: str = ""
+    actions: List[str] = []
+    stop_round: bool = False
+
+
+class PracticeCoachStopRuleIn(BaseModel):
+    id: Optional[str] = None
+    condition: str = ""
+    message: str = ""
+
+
+class PracticeCoachGuidedPracticeIn(BaseModel):
+    enabled: bool = False
+    ready_instruction: Optional[str] = ""
+    cue_prompt: Optional[str] = ""
+    success_button_label: Optional[str] = "SUCCESS"
+    miss_button_label: Optional[str] = "MISS"
+    success_message: Optional[str] = ""
+    miss_message: Optional[str] = ""
+    count_successes: bool = True
+
+
+class PracticeCoachDifficultyFeedbackIn(BaseModel):
+    easy: Optional[str] = ""
+    good: Optional[str] = ""
+    okay: Optional[str] = ""
+    hard: Optional[str] = ""
+    very_hard: Optional[str] = ""
+
+
+class PracticeCoachEndQuestionIn(BaseModel):
+    id: Optional[str] = None
+    type: Literal["choice", "text"] = "text"
+    label: str = ""
+    options: List[str] = []
+    required: bool = False
+
+
+class PracticeCoachMediaRequestIn(BaseModel):
+    """Media-capture requirements for the end of a guided practice session.
+    Kept as its own typed sub-model — rather than two bare booleans inlined
+    on PracticeCoachIn — specifically so future media/review checkpoints
+    (e.g. a mid-session video-review gate) can extend this one place
+    without another top-level schema change. `request_video` may be set
+    today even though section-log homework doesn't yet have a video-upload
+    endpoint to fulfill it (see PracticeCoachIn's docstring) — the client
+    UI is responsible for disabling/omitting that specific control without
+    discarding the rest of the recipe."""
+    request_photo: bool = False
+    request_video: bool = False
+    media_prompt: Optional[str] = None
+
+
+class PracticeCoachIn(BaseModel):
+    enabled: bool = False
+    allow_quick_practice: bool = True
+    goal: Optional[str] = ""
+    success_today: Optional[str] = ""
+    encouragement: Optional[str] = ""
+    schedule: PracticeCoachScheduleIn = PracticeCoachScheduleIn()
+    setup_items: List[PracticeCoachSetupItemIn] = []
+    pro_tip: Optional[str] = ""
+    steps: List[PracticeCoachStepIn] = []
+    good_rep: Optional[PracticeCoachExampleIn] = None
+    not_this: Optional[PracticeCoachExampleIn] = None
+    troubleshooting: List[PracticeCoachTroubleshootingItemIn] = []
+    stop_rules: List[PracticeCoachStopRuleIn] = []
+    guided_practice: PracticeCoachGuidedPracticeIn = PracticeCoachGuidedPracticeIn()
+    difficulty_feedback: Optional[PracticeCoachDifficultyFeedbackIn] = None
+    end_questions: List[PracticeCoachEndQuestionIn] = []
+    # Video upload has no fulfilling endpoint yet for section-log homework
+    # (see 01_CLAUDE_IMPLEMENTATION_PROMPT.md §3 "Important persistence
+    # boundary" and the Phase 0 audit) — request_video may still be
+    # authored/stored now so no further schema change is needed once a
+    # section-scoped video-upload endpoint exists; the client simply
+    # doesn't render a video control against this schema version yet.
+    media: PracticeCoachMediaRequestIn = PracticeCoachMediaRequestIn()
+
+
+def _backfill_stable_ids(items: list) -> list:
+    """Array items (steps, setup items, troubleshooting rules, end
+    questions) need stable ids so client-side reordering/answers don't
+    lose identity — see 02_PRACTICE_RECIPE_DATA_MODEL.md's "Stable IDs"
+    rule. The authoring UI normally assigns one on add, but this is a
+    server-side safety net for any item that reaches save without one."""
+    for it in items:
+        if isinstance(it, dict) and not it.get("id"):
+            it["id"] = f"pc-{uuid.uuid4().hex[:8]}"
+    return items
+
+
+def _backfill_practice_coach_stable_ids(pc: Optional[dict]) -> None:
+    """Mutates a practice_coach dict (post model_dump()) in place, filling
+    stable ids on every array-of-object field that needs one."""
+    if not pc:
+        return
+    for key in ("setup_items", "steps", "troubleshooting", "stop_rules", "end_questions"):
+        _backfill_stable_ids(pc.get(key) or [])
+
+
+def _validate_practice_coach(pc: Optional[dict]) -> Dict[str, List[str]]:
+    """Per 02_PRACTICE_RECIPE_DATA_MODEL.md's "Validation rules". Only
+    evaluated when practice_coach.enabled is true — a disabled or absent
+    practice_coach is always valid (that's the whole backward-compat
+    guarantee). `errors` block saving; `warnings` are informational
+    readiness signals for the authoring UI's checklist and never block a
+    save — video/demo media is explicitly a warning, never an error, per
+    the handoff's own rule ("Do not make optional video/media an error").
+    Accepts a plain dict (already-serialized via .model_dump()), not the
+    Pydantic model, so it's equally usable from the template endpoints and
+    from tests constructing raw dicts."""
+    errors: List[str] = []
+    warnings: List[str] = []
+    if not pc or not pc.get("enabled"):
+        return {"errors": errors, "warnings": warnings}
+    if not str(pc.get("goal") or "").strip():
+        errors.append("Today's Goal is required when Coach Mode is enabled.")
+    if not str(pc.get("success_today") or "").strip():
+        errors.append("Success Today is required when Coach Mode is enabled.")
+    steps = pc.get("steps") or []
+    if not isinstance(steps, list) or len(steps) < 1:
+        errors.append("At least one guided step is required when Coach Mode is enabled.")
+    schedule = pc.get("schedule") or {}
+    rounds = schedule.get("rounds_per_day")
+    reps = schedule.get("reps_per_round")
+    if not isinstance(rounds, (int, float)) or isinstance(rounds, bool) or rounds <= 0:
+        errors.append("Rounds per day must be a positive number when Coach Mode is enabled.")
+    if not isinstance(reps, (int, float)) or isinstance(reps, bool) or reps <= 0:
+        errors.append("Reps per round must be a positive number when Coach Mode is enabled.")
+
+    if not pc.get("setup_items"):
+        warnings.append("No setup items — clients won't see a Before You Start checklist.")
+    if not pc.get("troubleshooting"):
+        warnings.append("No troubleshooting rules — clients won't get exercise-specific help.")
+    if not pc.get("stop_rules"):
+        warnings.append("No stop rule — clients won't get explicit permission to stop.")
+    if not pc.get("difficulty_feedback"):
+        warnings.append("No difficulty feedback — clients won't get a response after rating their session.")
+    steps_have_media = any(isinstance(s, dict) and s.get("media_url") for s in steps)
+    good_rep_media = (pc.get("good_rep") or {}).get("media_url")
+    if not steps_have_media and not good_rep_media:
+        warnings.append("No demo media — optional, but a photo or video helps clients see the exercise.")
+    return {"errors": errors, "warnings": warnings}
+
+
+# ---------------------------------------------------------------------------
+# Client-safe serialization — the portal receives exactly these allowlisted
+# fields, never the raw homework/template document. This replaces relying
+# solely on "the frontend just doesn't render internal fields": anything
+# added later that ISN'T on these allowlists (e.g. a future trainer-grading
+# rubric or online-course assessment field on a Practice Recipe) is excluded
+# by construction. Mirrors the existing _client_safe_lesson/_client_safe_skill
+# convention used for curriculum data.
+# ---------------------------------------------------------------------------
+
+_CLIENT_SAFE_HOMEWORK_FIELDS = (
+    "id", "dog_id", "dog_name", "client_id", "client_name", "title", "instructions",
+    "video_url", "due_date", "status", "created_at", "completed_at", "completion_note",
+    "completion_photo", "daily_tracker", "total_days", "resources",
+    "trainer_personalized_note", "practice_frequency", "minutes_per_session",
+    "repetition_target", "duration_target", "distance_target", "environment",
+    "distraction_level", "required",
+    "daily_progress", "streak",  # already-enriched fields some endpoints add
+)
+
+_CLIENT_SAFE_TEMPLATE_SNAPSHOT_FIELDS = (
+    "template_id", "slug", "name", "tier", "description", "cover_color", "icon",
+    "global_rules_this_week", "sections", "practice_coach",
+)
+
+_CLIENT_SAFE_SECTION_LOG_FIELDS = (
+    "id", "section_id", "day_number", "date", "field_values", "note",
+    "submission_status", "is_rest_day", "is_skipped", "questions",
+    "review_note", "reviewed_at", "reviewed_by", "logged_by", "logged_at",
+)
+
+
+def _client_safe_practice_coach(pc: Optional[dict]) -> Optional[dict]:
+    """Every field in practice_coach is designed to be client-facing (see
+    02_PRACTICE_RECIPE_DATA_MODEL.md's "Client-safe content" rule) — this
+    passes the object through unchanged today. Kept as its own function
+    (not inlined) so a future staff-only sub-field — trainer grading, an
+    online-course assessment rubric — has exactly one place to get
+    excluded without restructuring the rest of the serializer."""
+    return pc
+
+
+def _client_safe_template_snapshot(snap: Optional[dict]) -> Optional[dict]:
+    if not snap:
+        return snap
+    out = {k: snap.get(k) for k in _CLIENT_SAFE_TEMPLATE_SNAPSHOT_FIELDS}
+    out["practice_coach"] = _client_safe_practice_coach(out.get("practice_coach"))
+    return out
+
+
+def _client_safe_section_log(log: dict) -> dict:
+    return {k: log.get(k) for k in _CLIENT_SAFE_SECTION_LOG_FIELDS}
+
+
+def _client_safe_homework(hw: dict) -> dict:
+    """Allowlisted client-facing view of a homework document. Call this for
+    every client-role read; admins keep seeing the raw document (they need
+    the full trace/ownership fields this deliberately omits)."""
+    out = {k: hw.get(k) for k in _CLIENT_SAFE_HOMEWORK_FIELDS}
+    out["template_snapshot"] = _client_safe_template_snapshot(hw.get("template_snapshot"))
+    out["section_logs"] = [_client_safe_section_log(lg) for lg in (hw.get("section_logs") or [])]
+    if out.get("daily_progress"):
+        # _compute_daily_progress embeds the FULL raw section_log under
+        # each day's "log" key — filter that nested copy the same way, so
+        # the daily-tracker path gets the identical allowlist guarantee as
+        # the top-level section_logs list above, not just the outer shape.
+        out["daily_progress"] = [
+            {**day, "log": _client_safe_section_log(day["log"]) if day.get("log") else day.get("log")}
+            for day in out["daily_progress"]
+        ]
+    return out
+
+
 class HomeworkTemplateIn(BaseModel):
     slug: Optional[str] = ""
     name: str = Field(min_length=2)
@@ -12270,6 +12539,11 @@ class HomeworkTemplateIn(BaseModel):
     global_rules_this_week: List[str] = []
     sections: List[dict] = []
     active: bool = True
+    # Client Practice Coach upgrade — optional, additive, backward-compatible
+    # typed "Practice Recipe" (see PracticeCoachIn above). A template with
+    # practice_coach=None, or practice_coach.enabled=False, renders through
+    # the existing simple/Quick practice experience unchanged.
+    practice_coach: Optional[PracticeCoachIn] = None
 
 
 class HomeworkFromTemplateIn(BaseModel):
@@ -12287,6 +12561,15 @@ class SectionLogIn(BaseModel):
     date: Optional[str] = ""  # YYYY-MM-DD, defaults today
     field_values: Dict[str, object] = {}
     note: Optional[str] = ""
+    # Client Practice Coach upgrade — additive, optional. Mirrors DaySubmitIn's
+    # exact fields/semantics so section-log (Coach Mode) homework and
+    # daily-tracker homework converge on the SAME field_values.__* storage
+    # convention; the trainer-dashboard attention-queue code already reads
+    # these keys off ANY homework row, so no dashboard change is needed.
+    difficulty: Optional[Literal["easy", "good", "okay", "hard", "very_hard"]] = None
+    could_not_complete: bool = False
+    could_not_complete_reason: Optional[str] = Field(default=None, max_length=300)
+    photo: Optional[str] = ""  # base64 data-url (small previews only) — see DaySubmitIn.photo
 
 
 @api.get("/homework-templates")
@@ -12301,6 +12584,10 @@ async def list_homework_templates(_: dict = Depends(get_current_user)):
 @api.post("/homework-templates")
 async def create_homework_template(body: HomeworkTemplateIn, user: dict = Depends(require_admin_and_permission("manage_training_content"))):
     doc = body.model_dump()
+    check = _validate_practice_coach(doc.get("practice_coach"))
+    if check["errors"]:
+        raise HTTPException(status_code=422, detail="; ".join(check["errors"]))
+    _backfill_practice_coach_stable_ids(doc.get("practice_coach"))
     doc.update({
         "id": str(uuid.uuid4()),
         "slug": doc.get("slug") or doc["name"].lower().replace(" ", "_")[:40],
@@ -12311,6 +12598,7 @@ async def create_homework_template(body: HomeworkTemplateIn, user: dict = Depend
     })
     await db.homework_templates.insert_one(doc)
     doc.pop("_id", None)
+    doc["practice_coach_readiness"] = check
     return doc
 
 
@@ -12320,6 +12608,10 @@ async def update_homework_template(template_id: str, body: HomeworkTemplateIn, _
     if not tpl:
         raise HTTPException(status_code=404, detail="Template not found")
     update = body.model_dump()
+    check = _validate_practice_coach(update.get("practice_coach"))
+    if check["errors"]:
+        raise HTTPException(status_code=422, detail="; ".join(check["errors"]))
+    _backfill_practice_coach_stable_ids(update.get("practice_coach"))
     update.pop("slug", None)  # don't allow slug edit via PUT
     update.pop("is_default", None)  # never let the API flip system-vs-custom
     update.pop("active", None)  # active is toggled only via DELETE (soft) / seed (restore)
@@ -12327,7 +12619,9 @@ async def update_homework_template(template_id: str, body: HomeworkTemplateIn, _
     if tpl.get("is_default"):
         update["customized"] = True
     await db.homework_templates.update_one({"id": template_id}, {"$set": update})
-    return {**tpl, **update}
+    result = {**tpl, **update}
+    result["practice_coach_readiness"] = check
+    return result
 
 
 @api.delete("/homework-templates/{template_id}")
@@ -12396,6 +12690,10 @@ async def create_homework_from_template(body: HomeworkFromTemplateIn, user: dict
         "icon": tpl.get("icon"),
         "global_rules_this_week": body.custom_global_rules if body.custom_global_rules is not None else tpl.get("global_rules_this_week", []),
         "sections": tpl.get("sections", []),
+        # Client Practice Coach upgrade — snapshotted like every other field
+        # here so a later template edit never silently rewrites a client's
+        # already-active homework (see 01_CLAUDE_IMPLEMENTATION_PROMPT.md §5).
+        "practice_coach": tpl.get("practice_coach"),
     }
 
     # Sprint 110ad — Carry the `daily_tracker` flag from the template through to
@@ -12453,13 +12751,29 @@ async def log_section(homework_id: str, body: SectionLogIn, user: dict = Depends
     if body.section_id not in section_ids:
         raise HTTPException(status_code=400, detail="Unknown section_id")
 
+    field_values = dict(body.field_values or {})
+    # Client Practice Coach upgrade — same __-prefixed storage convention
+    # DaySubmitIn already uses, so the trainer-dashboard attention-queue code
+    # (which reads these keys off ANY homework row) needs no changes.
+    if body.difficulty is not None:
+        field_values["__difficulty"] = body.difficulty
+    if body.could_not_complete:
+        field_values["__could_not_complete"] = True
+        if body.could_not_complete_reason:
+            field_values["__could_not_complete_reason"] = body.could_not_complete_reason.strip()
+    if body.photo:
+        field_values["__photo"] = body.photo
+
     entry = {
         "id": str(uuid.uuid4()),
         "section_id": body.section_id,
         "date": body.date or business_today().isoformat(),
-        "field_values": body.field_values or {},
+        "field_values": field_values,
         "note": body.note or "",
+        "questions": [],
         "logged_by": user.get("name", ""),
+        "logged_by_id": user.get("id"),
+        "logged_by_role": user.get("role", "client"),
         "logged_at": now_iso(),
     }
     await db.homework.update_one(
@@ -12475,6 +12789,8 @@ async def log_section(homework_id: str, body: SectionLogIn, user: dict = Depends
             await notify_admin_homework_section_log(hw, entry, client, dog)
         except Exception:
             pass
+    if user.get("role") != "admin":
+        hw = _client_safe_homework(hw)
     return hw
 
 
@@ -12756,6 +13072,8 @@ async def get_homework_detail(homework_id: str, user: dict = Depends(get_current
         hw["daily_progress"] = prog
         hw["streak"] = _streak_count(prog)
         hw["total_days"] = len(prog)
+    if user.get("role") != "admin":
+        hw = _client_safe_homework(hw)
     return hw
 
 
@@ -13088,6 +13406,24 @@ async def mark_rest_day(
     return await get_homework_detail(homework_id, user)
 
 
+def _new_homework_question(text: str, user: dict) -> dict:
+    """Shared question-object shape/builder for BOTH daily-tracker (day-
+    scoped, ask_question below) and section-log/Coach Mode (log-scoped,
+    ask_section_question below) homework. One shape, one builder — never
+    two incompatible trainer-question formats for the same product
+    concept."""
+    return {
+        "id": str(uuid.uuid4()),
+        "text": text.strip(),
+        "asked_at": now_iso(),
+        "asked_by": user.get("name", ""),
+        "asked_by_role": user.get("role", "client"),
+        "answer": "",
+        "answered_at": None,
+        "answered_by": "",
+    }
+
+
 @api.post("/homework/{homework_id}/day/{day_number}/ask")
 async def ask_question(
     homework_id: str,
@@ -13109,16 +13445,7 @@ async def ask_question(
         (lo for lo in (hw.get("section_logs") or []) if int(lo.get("day_number") or 0) == int(day_number)),
         None,
     )
-    question = {
-        "id": str(uuid.uuid4()),
-        "text": body.text.strip(),
-        "asked_at": now_iso(),
-        "asked_by": user.get("name", ""),
-        "asked_by_role": user.get("role", "client"),
-        "answer": "",
-        "answered_at": None,
-        "answered_by": "",
-    }
+    question = _new_homework_question(body.text, user)
     if log:
         await db.homework.update_one(
             {"id": homework_id, "section_logs.day_number": int(day_number)},
@@ -13166,6 +13493,78 @@ async def answer_question(
             }
         },
         array_filters=[{"d.day_number": int(day_number)}, {"q.id": question_id}],
+    )
+    if res.matched_count == 0:
+        raise HTTPException(status_code=404, detail="Question not found")
+    return await get_homework_detail(homework_id, user)
+
+
+@api.post("/homework/{homework_id}/section/{section_id}/ask")
+async def ask_section_question(
+    homework_id: str,
+    section_id: str,
+    body: DayQuestionIn,
+    user: dict = Depends(get_current_user),
+):
+    """Section-log (Coach Mode) equivalent of ask_question above — same
+    question shape (_new_homework_question), same ownership check, same
+    "no log yet → create a placeholder to hold it" fallback. Addressed by
+    section_id rather than day_number since section-log entries have no
+    day-number concept; a question always creates a fresh draft-status
+    placeholder log rather than attaching to an arbitrary prior submission,
+    since section-log entries are append-only (many per section over
+    time), unlike daily-tracker's one-per-day-number replace semantics."""
+    hw = await db.homework.find_one({"id": homework_id}, {"_id": 0})
+    if not hw:
+        raise HTTPException(status_code=404, detail="Homework not found")
+    if user.get("role") != "admin" and hw.get("client_id") != user.get("client_id"):
+        raise HTTPException(status_code=403, detail="Not allowed")
+    if hw.get("daily_tracker"):
+        raise HTTPException(status_code=400, detail="This is a daily-tracker homework — use the day-scoped ask endpoint")
+    section_ids = {s["id"] for s in (hw.get("template_snapshot") or {}).get("sections", [])}
+    if section_id not in section_ids:
+        raise HTTPException(status_code=400, detail="Unknown section_id")
+
+    question = _new_homework_question(body.text, user)
+    placeholder = {
+        "id": str(uuid.uuid4()),
+        "section_id": section_id,
+        "date": business_today().isoformat(),
+        "field_values": {},
+        "note": "",
+        "submission_status": "draft",
+        "questions": [question],
+        "logged_by": user.get("name", ""),
+        "logged_by_id": user.get("id"),
+        "logged_by_role": user.get("role", "client"),
+        "logged_at": now_iso(),
+    }
+    await db.homework.update_one({"id": homework_id}, {"$push": {"section_logs": placeholder}})
+    return await get_homework_detail(homework_id, user)
+
+
+@api.post("/homework/{homework_id}/section-log/{log_id}/answer/{question_id}")
+async def answer_section_question(
+    homework_id: str,
+    log_id: str,
+    question_id: str,
+    body: DayAnswerIn,
+    user: dict = Depends(require_admin),
+):
+    """Admin answers a client's question on a section-log entry — the
+    section-log/Coach Mode equivalent of answer_question above. Same shape,
+    same fields set, addressed by the log's own stable id rather than a
+    day_number."""
+    res = await db.homework.update_one(
+        {"id": homework_id, "section_logs.id": log_id, "section_logs.questions.id": question_id},
+        {
+            "$set": {
+                "section_logs.$[l].questions.$[q].answer": body.text.strip(),
+                "section_logs.$[l].questions.$[q].answered_at": now_iso(),
+                "section_logs.$[l].questions.$[q].answered_by": user.get("name", "Admin"),
+            }
+        },
+        array_filters=[{"l.id": log_id}, {"q.id": question_id}],
     )
     if res.matched_count == 0:
         raise HTTPException(status_code=404, detail="Question not found")
@@ -15661,6 +16060,7 @@ async def _create_homework_from_template_internal(
             "icon": tpl.get("icon"),
             "global_rules_this_week": tpl.get("global_rules_this_week", []),
             "sections": tpl.get("sections", []),
+            "practice_coach": tpl.get("practice_coach"),
         },
         "section_logs": [],
         "daily_tracker": is_daily,

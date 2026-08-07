@@ -1,17 +1,27 @@
-// Training UI Phase 3 — the "How did it go?" completion flow. `richMode`
-// gates the difficulty/could-not-complete/media controls: daily-tracker
-// homework supports all of them (DaySubmitIn already has these fields);
-// single-log (section-based) homework only supports field values + a note
-// (POST /homework/{id}/section-log has no difficulty/photo/video/could-not-
-// complete fields), so this component never renders controls whose value
-// would silently go nowhere.
+// Training UI Phase 3 (extended by the Client Practice Coach upgrade) —
+// the "How did it go?" completion flow. Capability flags gate which
+// controls render, since two backend endpoints back this form with
+// different field support:
+//   - daily-tracker (POST .../day/{n}/submit): difficulty, could-not-
+//     complete, photo, AND video — allow* all default true.
+//   - section-log/Coach Mode (POST .../section-log): difficulty, could-
+//     not-complete, and photo are now supported (see server.py's
+//     SectionLogIn) — but NOT video (no section-scoped video-upload
+//     endpoint exists yet), so callers pass allowVideo={false} for this
+//     path. Never render a control whose value would be silently
+//     discarded — see 01_CLAUDE_IMPLEMENTATION_PROMPT.md §8.
 import DifficultySelector from "./DifficultySelector";
 import PracticeMediaUploader from "./PracticeMediaUploader";
 
 export default function PracticeCompletionPanel({
-  richMode = true,
+  allowDifficulty = true,
+  allowCouldNotComplete = true,
+  allowPhoto = true,
+  allowVideo = true,
   fieldsSlot,
+  extraSlot,
   difficulty, onDifficultyChange,
+  difficultyFeedbackSlot,
   note, onNoteChange,
   couldNotComplete, onCouldNotCompleteChange,
   couldNotCompleteReason, onCouldNotCompleteReasonChange,
@@ -26,11 +36,13 @@ export default function PracticeCompletionPanel({
   return (
     <div className="space-y-4" data-testid={testid}>
       {fieldsSlot}
+      {extraSlot}
 
-      {richMode && (
+      {allowDifficulty && (
         <div>
           <p className="text-[12px] font-black uppercase tracking-widest text-shTextMuted mb-2">How did it go?</p>
           <DifficultySelector value={difficulty} onChange={onDifficultyChange} testid={testid ? `${testid}-difficulty` : undefined}/>
+          {difficultyFeedbackSlot}
         </div>
       )}
 
@@ -53,7 +65,7 @@ export default function PracticeCompletionPanel({
         </div>
       )}
 
-      {richMode && (
+      {allowCouldNotComplete && (
         <div className="bg-black/20 border border-shBorder rounded-lg p-3 space-y-2">
           <label className="flex items-center gap-2 text-[13px] text-shText cursor-pointer" data-testid={testid ? `${testid}-cnc-toggle` : undefined}>
             <input type="checkbox" checked={!!couldNotComplete} onChange={(e) => onCouldNotCompleteChange(e.target.checked)}/>
@@ -67,9 +79,10 @@ export default function PracticeCompletionPanel({
         </div>
       )}
 
-      {richMode && (
+      {allowPhoto && (
         <PracticeMediaUploader photo={photo} onPhotoChange={onPhotoChange} videoId={videoId} videoName={videoName}
                                 onVideoUpload={onVideoUpload} uploadingVideo={uploadingVideo} onVideoClear={onVideoClear}
+                                allowVideo={allowVideo}
                                 testid={testid ? `${testid}-media` : undefined}/>
       )}
 
