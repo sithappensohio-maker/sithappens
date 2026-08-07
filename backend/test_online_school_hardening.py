@@ -608,20 +608,25 @@ def test_delete_school_enrollment_when_dog_programs_already_missing_succeeds_saf
             assert run(server.db.school_enrollments.find_one({"id": se["id"]})) is None
 
 
-def test_orphaned_dog_programs_without_companion_is_handled_deterministically():
+def test_orphaned_dog_programs_without_companion_self_heals_on_convergence():
     """The inverse orphan: an online dog_programs row exists with NO
-    school_enrollments companion at all (the residual double-failure risk
-    already disclosed in school_enroll's own compensating-rollback
-    docstring — not reachable via delete_school_enrollment's own failure
-    modes after the ordering fix, but verified here for determinism).
-    There is deliberately no endpoint keyed by a raw dog_programs id in the
-    school layer (no giant recovery system built for this) — the
-    requirement is that the SYSTEM behaves deterministically around it,
-    not that it silently self-heals: the admin lookup used to find a
-    school_enrollments id (list_dog_school_enrollments) simply doesn't
-    surface it, and a repeat school_enroll attempt for the same dog+program
-    deterministically rejects with 409 naming the real stuck row, rather
-    than crashing or silently creating a duplicate active enrollment."""
+    school_enrollments companion at all — the residual double-failure risk
+    disclosed in _grant_online_school_enrollment's own compensating-
+    rollback docstring (a hard process kill between the two inserts; not
+    reachable via delete_school_enrollment's own failure modes after the
+    ordering fix, but verified here directly).
+
+    Commerce-integrity hardening (Phase 5H) — this used to be handled only
+    "deterministically" (reject with a message naming the stuck
+    dog_programs id, but never actually fix anything — a real gap: a paid
+    Shop purchase landing in this exact window would retry forever and
+    mark the order line "fulfilled" while GET /portal/school, which reads
+    school_enrollments, never showed the course). Every convergence path
+    now SELF-HEALS: it find-or-creates the missing companion before
+    reporting "already enrolled", so a retry after a crash actually
+    finishes the job — list_dog_school_enrollments finds it, and a repeat
+    school_enroll attempt's 409 now names a real, working school_enrollment
+    id instead of the orphaned dog_programs id."""
     with _school_program(delivery_mode="self_guided") as (prog, admin):
         with _client_and_dog() as (c, dog):
             res = run(server.school_enroll(server.SchoolEnrollIn(dog_id=dog["id"], program_id=prog["id"]), admin))
@@ -629,16 +634,32 @@ def test_orphaned_dog_programs_without_companion_is_handled_deterministically():
             run(server.db.school_enrollments.delete_one({"id": se["id"]}))  # simulate the orphan directly
             try:
                 rows = run(server.list_dog_school_enrollments(dog["id"], admin))
-                assert rows == []  # nothing to key a DELETE call off of
+                assert rows == []  # companion still missing — not yet healed
 
                 try:
                     run(server.school_enroll(server.SchoolEnrollIn(dog_id=dog["id"], program_id=prog["id"]), admin))
                     assert False, "expected 409"
                 except server.HTTPException as exc:
                     assert exc.status_code == 409
-                    assert enr["id"] in exc.detail  # names the real stuck dog_programs id
+                    # A NEW school_enrollment id was healed into existence —
+                    # never the raw dog_programs id, and never the original
+                    # (deleted) se["id"].
+                    healed_id = exc.detail.rsplit(" ", 1)[-1].rstrip(").")
+                    assert healed_id not in (enr["id"], se["id"])
+
+                # The healed companion is now real and discoverable.
+                healed_rows = run(server.list_dog_school_enrollments(dog["id"], admin))
+                assert len(healed_rows) == 1
+                assert healed_rows[0]["enrollment_id"] == enr["id"]
+                assert healed_rows[0]["status"] == "active"
+
+                # No second dog_programs row was created by the healing.
+                assert run(server.db.dog_programs.count_documents(
+                    {"dog_id": dog["id"], "program_id": prog["id"], "status": "active"},
+                )) == 1
             finally:
                 run(server.db.dog_programs.delete_one({"id": enr["id"]}))
+                run(server.db.school_enrollments.delete_many({"dog_id": dog["id"]}))
 
 
 def test_delete_school_enrollment_failure_after_dog_programs_delete_is_retryable_not_falsely_successful():

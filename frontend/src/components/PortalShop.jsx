@@ -360,20 +360,21 @@ const ORDER_STATUS_TONE = {
   "Ready for Pickup": "text-shGreen",
 };
 
-const cartKey = (kind, refId) => `${kind}:${refId}`;
+const cartKey = (kind, refId, dogId) => `${kind}:${refId}:${dogId || ""}`;
 
 // Shared by CartPanel, the header Cart button, and CheckoutTray so every
 // surface that shows a total is reading the exact same numbers — never a
 // second, independently-recomputed total that could drift out of agreement.
-function useCartLines(cart, items) {
+function useCartLines(cart, items, dogs = []) {
   return useMemo(() => {
     const lines = cart.map((c) => {
       const item = items.find((i) => i.kind === c.kind && i.id === c.ref_id);
-      return { ...c, item };
+      const dog_name = c.dog_id ? dogs.find((d) => d.id === c.dog_id)?.name : undefined;
+      return { ...c, item, dog_name };
     }).filter((l) => l.item);
     const subtotal = lines.reduce((sum, l) => sum + (l.item.price || 0) * l.quantity, 0);
     return { lines, subtotal };
-  }, [cart, items]);
+  }, [cart, items, dogs]);
 }
 
 function CartPanel({ lines, subtotal, onQtyChange, onRemove, onCheckout, busy, previewMode, onClose, guestMode, onSignIn }) {
@@ -397,21 +398,22 @@ function CartPanel({ lines, subtotal, onQtyChange, onRemove, onCheckout, busy, p
             const ceiling = stockCeiling(l.item);
             const atMax = ceiling != null && l.quantity >= ceiling;
             return (
-              <div key={cartKey(l.kind, l.ref_id)} className="border border-shBorder rounded-lg p-3 flex items-center justify-between gap-2"
+              <div key={cartKey(l.kind, l.ref_id, l.dog_id)} className="border border-shBorder rounded-lg p-3 flex items-center justify-between gap-2"
                    style={{ background: "var(--sh-card-base)" }}
                    data-testid={`shop-cart-line-${l.kind}-${l.ref_id}`}>
                 <div className="min-w-0">
                   <p className="text-shText font-bold text-sm truncate">{l.item.name}</p>
+                  {l.dog_name && <p className="text-[11px] text-shPrimary font-bold">For {l.dog_name}</p>}
                   <p className="text-[11px] text-shTextMuted">{money(l.item.price)} each · {money(l.item.price * l.quantity)} total</p>
                 </div>
                 <div className="flex items-center gap-2 shrink-0">
-                  <button onClick={() => onQtyChange(l.kind, l.ref_id, l.quantity - 1)}
+                  <button onClick={() => onQtyChange(l.kind, l.ref_id, l.quantity - 1, l.dog_id)}
                           className="w-7 h-7 rounded border border-shBorder text-shTextMuted hover:text-shText transition bg-[var(--sh-card-base)]">−</button>
                   <span className="text-shText font-bold w-5 text-center">{l.quantity}</span>
-                  <button onClick={() => onQtyChange(l.kind, l.ref_id, l.quantity + 1)} disabled={atMax}
+                  <button onClick={() => onQtyChange(l.kind, l.ref_id, l.quantity + 1, l.dog_id)} disabled={atMax}
                           title={atMax ? "Maximum available quantity is already in your cart" : undefined}
                           className="w-7 h-7 rounded border border-shBorder text-shTextMuted hover:text-shText transition bg-[var(--sh-card-base)] disabled:opacity-30 disabled:cursor-not-allowed disabled:hover:text-shTextMuted">+</button>
-                  <button onClick={() => onRemove(l.kind, l.ref_id)} className="text-shTextMuted hover:text-shDanger ml-1">
+                  <button onClick={() => onRemove(l.kind, l.ref_id, l.dog_id)} className="text-shTextMuted hover:text-shDanger ml-1">
                     <i className="fas fa-trash-can text-xs" />
                   </button>
                 </div>
@@ -553,6 +555,11 @@ export default function PortalShop({
   // account (sign-in, hidden-price, or an approval/dog contact-required
   // blocker). `(item, reason)` — reason is "hidden_price"|"approval"|"dog"|null.
   onRequireAccount,
+  // Phase 5 — Online School commerce. Called when a client clicks "Go to
+  // Online School"/"View Completed Course" on an already-enrolled/completed
+  // online_school-fulfillment program's detail view; Portal.jsx wires this
+  // to closing the Shop overlay and opening the Online School dashboard.
+  onGoToOnlineSchool,
 }) {
   const [items, setItems] = useState([]);
   const [loading, setLoading] = useState(true);
@@ -579,6 +586,15 @@ export default function PortalShop({
   const [categoryFilter, setCategoryFilter] = useState("");
   const [subcategoryFilter, setSubcategoryFilter] = useState("");
   const [search, setSearch] = useState("");
+  // Phase 5 — Online School commerce. Only the authenticated client's own
+  // dogs (server already scopes GET /dogs by owner for role="client",
+  // same endpoint Portal.jsx itself uses) — needed for the dog-selection
+  // step on an online_school-fulfillment program and to label cart lines.
+  const [dogs, setDogs] = useState([]);
+  useEffect(() => {
+    if (mode !== "authenticated") return;
+    api.get("/dogs").then(({ data }) => setDogs(data || [])).catch(() => {});
+  }, [mode]);
   // Cart is controlled by the parent (Portal.jsx) when cart/onCartChange are
   // passed, so it survives leaving/returning to this view — still the ONE
   // cart, just lifted, not a second one. Falls back to local state so this
@@ -791,7 +807,7 @@ export default function PortalShop({
   }, [browsableItems, tab, categoryFilter, subcategoryFilter, search, searching]);
 
   const cartCount = cart.reduce((n, c) => n + c.quantity, 0);
-  const { lines: cartLines, subtotal: cartSubtotal } = useCartLines(cart, items);
+  const { lines: cartLines, subtotal: cartSubtotal } = useCartLines(cart, items, dogs);
 
   // Brief highlight on the persistent tray right after an add, so the client
   // notices it appeared/updated — auto-clears itself, never blocks anything.
@@ -804,9 +820,17 @@ export default function PortalShop({
   };
   useEffect(() => () => clearTimeout(justAddedTimerRef.current), []);
 
-  const addToCart = (item, qty = 1) => {
+  // Phase 5 — Online School commerce. `dogId` is only ever set for a
+  // training_program line whose program is purchase_fulfillment=
+  // "online_school" (see ShopItemDetail's dog selector); every other line
+  // passes it as undefined and behaves byte-identically to before. Cart-
+  // line identity includes dogId so two different dogs buying the SAME
+  // program stay as two separate lines — matches the server's own
+  // dog_id-aware _normalize_cart_lines aggregation key.
+  const addToCart = (item, qty = 1, dogId = undefined) => {
     const ceiling = stockCeiling(item);
-    const existingQty = cart.find((c) => c.kind === item.kind && c.ref_id === item.id)?.quantity || 0;
+    const sameLine = (c) => c.kind === item.kind && c.ref_id === item.id && c.dog_id === dogId;
+    const existingQty = cart.find(sameLine)?.quantity || 0;
     if (ceiling != null && existingQty >= ceiling) {
       toast.error(`Only ${ceiling} are currently available`);
       return;
@@ -817,20 +841,21 @@ export default function PortalShop({
       toast.error(`Only ${ceiling} are currently available`);
     }
     setCart((prev) => {
-      const existing = prev.find((c) => c.kind === item.kind && c.ref_id === item.id);
+      const existing = prev.find(sameLine);
       if (existing) {
         return prev.map((c) => (c === existing ? { ...c, quantity: nextQty } : c));
       }
-      return [...prev, { kind: item.kind, ref_id: item.id, quantity: nextQty }];
+      return [...prev, { kind: item.kind, ref_id: item.id, quantity: nextQty, dog_id: dogId }];
     });
     idemKeyRef.current = null; // cart changed — a fresh checkout attempt needs a fresh key
     pulseTray();
   };
 
-  const changeQty = (kind, refId, qty) => {
+  const changeQty = (kind, refId, qty, dogId = undefined) => {
     idemKeyRef.current = null;
+    const sameLine = (c) => c.kind === kind && c.ref_id === refId && c.dog_id === dogId;
     if (qty <= 0) {
-      setCart((prev) => prev.filter((c) => !(c.kind === kind && c.ref_id === refId)));
+      setCart((prev) => prev.filter((c) => !sameLine(c)));
       return;
     }
     const item = items.find((i) => i.kind === kind && i.id === refId);
@@ -839,12 +864,12 @@ export default function PortalShop({
       toast.error(`Only ${ceiling} are currently available`);
       qty = ceiling;
     }
-    setCart((prev) => prev.map((c) => (c.kind === kind && c.ref_id === refId ? { ...c, quantity: qty } : c)));
+    setCart((prev) => prev.map((c) => (sameLine(c) ? { ...c, quantity: qty } : c)));
   };
 
-  const removeFromCart = (kind, refId) => {
+  const removeFromCart = (kind, refId, dogId = undefined) => {
     idemKeyRef.current = null;
-    setCart((prev) => prev.filter((c) => !(c.kind === kind && c.ref_id === refId)));
+    setCart((prev) => prev.filter((c) => !(c.kind === kind && c.ref_id === refId && c.dog_id === dogId)));
   };
 
   // My Orders — a compact panel over the client's own existing order history
@@ -877,7 +902,7 @@ export default function PortalShop({
     setCheckoutBusy(true);
     try {
       const { data } = await api.post("/shop/checkout", {
-        items: cart.map((c) => ({ kind: c.kind, ref_id: c.ref_id, quantity: c.quantity })),
+        items: cart.map((c) => ({ kind: c.kind, ref_id: c.ref_id, quantity: c.quantity, dog_id: c.dog_id })),
         idempotency_key: idemKeyRef.current,
       });
       window.location.href = data.url; // plain navigation — no Stripe SDK involved
@@ -1063,6 +1088,8 @@ export default function PortalShop({
           onOpenItem={openDetail}
           mode={mode}
           onRequireAccount={onRequireAccount}
+          onGoToOnlineSchool={onGoToOnlineSchool}
+          dogs={dogs}
         />
       ) : (
       <>

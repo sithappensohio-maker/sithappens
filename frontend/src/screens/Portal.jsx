@@ -1022,7 +1022,8 @@ export default function Portal() {
         )}
         <div className="app-scroll-root flex-1 min-h-0 overflow-y-auto overscroll-contain p-3 sm:p-6" data-scroll-root>
           <PortalShop initialTab={shopInitialTab} fullScreen shopifyStoreUrl={pubSettings?.client_portal_links?.shopify_store_url}
-                      cart={shopCart} onCartChange={setShopCart} />
+                      cart={shopCart} onCartChange={setShopCart}
+                      onGoToOnlineSchool={() => { setShopOpen(false); setSchoolOpen(true); }} />
         </div>
         {showGuestMergeReview && (
           <GuestCartMergeReview

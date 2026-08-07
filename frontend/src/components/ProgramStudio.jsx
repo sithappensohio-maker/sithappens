@@ -511,6 +511,31 @@ function SetupTab({ program, set, meta, allPrograms, hwTemplates, emailTemplates
               </div>
             )}
           </div>
+          {(() => {
+            const canOnlineSchool = ["self_guided", "both"].includes(program.delivery_mode || "trainer_led");
+            return (
+              <div className="border-t border-shBorder pt-3 space-y-2">
+                <p className="text-[11px] text-shTextMuted uppercase tracking-widest font-black">Purchase Fulfillment</p>
+                <p className="text-[12px] text-shTextMuted">
+                  What a client actually gets when they buy this program. Delivery Mode above is curriculum capability — this is what a purchase does with it. A "Both"-capable program doesn't have to grant Online School access on every sale.
+                </p>
+                <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
+                  <button type="button" onClick={() => set({ purchase_fulfillment: "credits_only" })} data-testid="prog-fulfillment-credits_only"
+                          className={`py-2 rounded text-[12px] font-black uppercase tracking-widest border ${(program.purchase_fulfillment || "credits_only") === "credits_only" ? "bg-shPrimary text-bgHeader border-shPrimary" : "bg-transparent border-shBorder text-shTextMuted"}`}>
+                    <i className="fas fa-coins mr-1"/>Training Credits
+                  </button>
+                  <button type="button" disabled={!canOnlineSchool} onClick={() => canOnlineSchool && set({ purchase_fulfillment: "online_school" })} data-testid="prog-fulfillment-online_school"
+                          title={canOnlineSchool ? "" : "Set Delivery Mode to Self-Guided or Both first"}
+                          className={`py-2 rounded text-[12px] font-black uppercase tracking-widest border ${!canOnlineSchool ? "opacity-40 cursor-not-allowed bg-transparent border-shBorder text-shTextMuted" : program.purchase_fulfillment === "online_school" ? "bg-shPrimary text-bgHeader border-shPrimary" : "bg-transparent border-shBorder text-shTextMuted"}`}>
+                    <i className="fas fa-graduation-cap mr-1"/>Online School Access
+                  </button>
+                </div>
+                {program.purchase_fulfillment === "online_school" && (
+                  <p className="text-[12px] text-amber-400"><i className="fas fa-circle-info mr-1"/>Buying this program enrolls the selected dog directly into Online School — no training credits are involved.</p>
+                )}
+              </div>
+            );
+          })()}
         </div>
       </ExpandableSection>
 

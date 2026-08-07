@@ -15214,6 +15214,15 @@ class ProgramIn(BaseModel):
     # recorded on the enrollment itself (dog_programs.delivery_channel /
     # the companion school_enrollments record), never on the program.
     delivery_mode: Literal["trainer_led", "self_guided", "both"] = "trainer_led"
+    # Phase 5 — Online School commerce. Delivery capability (delivery_mode)
+    # and purchase fulfillment are separate concepts: a "both"-capable
+    # program does not imply every purchase should grant Online School
+    # access. Defaults "credits_only" so every existing program's Shop/POS/
+    # sell-program behavior is byte-identical (grants training_credits only,
+    # exactly as today) until a curriculum author explicitly opts a program
+    # in. "online_school" fulfillment requires delivery_mode to actually
+    # support self-guided delivery — enforced in create_program/update_program.
+    purchase_fulfillment: Literal["credits_only", "online_school"] = "credits_only"
 
 
 # Optional skill-measurement fields carried on a goal/skill — see GoalIn's
@@ -15518,9 +15527,22 @@ async def list_programs(
     return progs
 
 
+def _validate_purchase_fulfillment(body: "ProgramIn") -> None:
+    """Phase 5 — purchase_fulfillment='online_school' is meaningless (and
+    dangerous — it would let _grant_online_school_enrollment's own
+    delivery_mode check 422 at *purchase* time instead of at authoring
+    time) unless the program actually supports self-guided delivery."""
+    if body.purchase_fulfillment == "online_school" and body.delivery_mode not in ("self_guided", "both"):
+        raise HTTPException(
+            status_code=422,
+            detail="purchase_fulfillment=\"online_school\" requires delivery_mode to be \"self_guided\" or \"both\".",
+        )
+
+
 @api.post("/programs")
 async def create_program(body: ProgramIn, _: dict = Depends(require_admin_and_permission("manage_training_content"))):
     await _validate_category_subcategory_pair(body.category_id, body.subcategory_id, expected_section="training")
+    _validate_purchase_fulfillment(body)
     doc = body.model_dump()
     doc["id"] = _gid()
     doc["slug"] = doc.get("slug") or doc["name"].lower().replace(" ", "_")[:40]
@@ -15569,6 +15591,8 @@ async def update_program(
         existing_category_id=existing.get("category_id"), existing_subcategory_id=existing.get("subcategory_id"),
         expected_section="training",
     )
+    if not save_as_draft:
+        _validate_purchase_fulfillment(body)
     update = body.model_dump()
     update["modules"] = _stamp_ids(update.get("modules") or [])
 
@@ -16914,19 +16938,75 @@ async def _school_enrollment_for_client(school_enrollment_id: str, user: dict) -
     return se, enrollment
 
 
-@api.post("/school/enroll")
-async def school_enroll(body: SchoolEnrollIn, user: dict = Depends(require_admin_and_permission("manage_training_sessions"))):
-    """Manual admin/trainer enrollment into Online School (Phase 1 — the
-    only enrollment path; commerce-driven enrollment is a later phase)."""
-    dog = await db.dogs.find_one({"id": body.dog_id}, {"_id": 0})
-    if not dog:
-        raise HTTPException(status_code=404, detail="Dog not found")
+class OnlineSchoolAlreadyEnrolledError(Exception):
+    """Raised by _grant_online_school_enrollment instead of an HTTPException
+    — this can mean two very different things to two different callers.
+    To a human hitting the manual enroll endpoint it's a real 409. To
+    purchase fulfillment replaying an already-successful purchase (or
+    racing a concurrent retry) it's the expected, successful outcome:
+    access already exists, converge onto it, never error."""
+    def __init__(self, school_enrollment_id: Optional[str], dog_program_id: Optional[str]):
+        self.school_enrollment_id = school_enrollment_id
+        self.dog_program_id = dog_program_id
+        super().__init__(f"Already actively enrolled (dog_program {dog_program_id})")
+
+
+async def _self_heal_missing_school_enrollment(
+    dog_program_id: str, dog_id: str, program_id: str, client_id: str, enrolled_by: Optional[str],
+) -> dict:
+    """Commerce-integrity hardening — closes the one irreducible residual-
+    risk window documented on _grant_online_school_enrollment: a hard
+    process kill landing between the dog_programs insert and the
+    school_enrollments insert leaves an active online_school dog_programs
+    row with no companion. Before this helper existed, every convergence
+    path (OnlineSchoolAlreadyEnrolledError) simply reported
+    school_enrollment_id=None in that case — a retry/webhook-replay would
+    keep marking the shop order line "fulfilled" forever without the
+    course ever appearing in GET /portal/school, since that endpoint reads
+    school_enrollments. Find-or-create, never a second dog_programs row,
+    so any retry after a crash finishes the job instead of leaving the
+    client permanently unable to see a course they were charged for."""
+    se = await db.school_enrollments.find_one({"enrollment_id": dog_program_id}, {"_id": 0})
+    if se:
+        return se
+    school_enrollment = {
+        "id": _gid(), "client_id": client_id, "dog_id": dog_id, "program_id": program_id,
+        "enrollment_id": dog_program_id, "delivery_mode": "self_guided", "status": "active",
+        "enrolled_at": now_iso(), "enrolled_by": enrolled_by, "created_at": now_iso(),
+    }
+    try:
+        await db.school_enrollments.insert_one(school_enrollment)
+    except DuplicateKeyError:
+        # Lost a race to a concurrent healer (se_enrollment_id_unique) —
+        # read back whichever row won; it's the same shape either way.
+        existing_se = await db.school_enrollments.find_one({"enrollment_id": dog_program_id}, {"_id": 0})
+        if existing_se:
+            return existing_se
+        raise
+    school_enrollment.pop("_id", None)
+    return school_enrollment
+
+
+async def _grant_online_school_enrollment(
+    dog: dict, program: dict, enrolled_by: Optional[str], trainer_notes: str = "",
+    enrollment_source: str = "manual", source_ref: Optional[str] = None,
+) -> dict:
+    """THE canonical Online School enrollment creator. Manual staff
+    enrollment (school_enroll) and Shop/POS purchase fulfillment both call
+    this SAME function — a purchase-granted enrollment is byte-identical
+    in shape to a manually-created one (same program_snapshot/goal_progress/
+    current_lesson structure), differing only in the additive
+    enrollment_source/enrollment_source_ref provenance fields. There is no
+    separate "commerce enrollment" model — money grants access to the
+    exact same Phase 1 structures, nothing else.
+
+    Raises OnlineSchoolAlreadyEnrolledError (never an HTTPException) when
+    the dog already has an active Online School enrollment for this
+    program — see that class's docstring for why the two callers need to
+    treat this differently themselves."""
     client_id = dog.get("owner_id")
     if not client_id:
         raise HTTPException(status_code=422, detail="This dog has no owning client on file")
-    program = await db.programs.find_one({"id": body.program_id}, {"_id": 0})
-    if not program:
-        raise HTTPException(status_code=404, detail="Program not found")
     if program.get("delivery_mode", "trainer_led") not in ("self_guided", "both"):
         raise HTTPException(status_code=422, detail="This program is not configured for Online School delivery")
     if not (program.get("modules") or []):
@@ -16937,19 +17017,21 @@ async def school_enroll(body: SchoolEnrollIn, user: dict = Depends(require_admin
     # insert below; the real enforcement is the dp_online_active_unique
     # partial unique index, caught as DuplicateKeyError further down.
     existing = await db.dog_programs.find_one(
-        {"dog_id": body.dog_id, "program_id": body.program_id, "status": "active", "delivery_channel": "online_school"},
+        {"dog_id": dog["id"], "program_id": program["id"], "status": "active", "delivery_channel": "online_school"},
         {"_id": 0},
     )
     if existing:
         se = await db.school_enrollments.find_one({"enrollment_id": existing["id"]}, {"_id": 0})
-        raise HTTPException(status_code=409, detail=f"Already actively enrolled in Online School for this program (enrollment {se['id'] if se else existing['id']}).")
+        if not se:
+            se = await _self_heal_missing_school_enrollment(existing["id"], dog["id"], program["id"], client_id, enrolled_by)
+        raise OnlineSchoolAlreadyEnrolledError(se["id"], existing["id"])
 
     started = business_today().isoformat()
     first_module = program["modules"][0]
     dog_program_doc = {
         "id": _gid(),
-        "dog_id": body.dog_id,
-        "program_id": body.program_id,
+        "dog_id": dog["id"],
+        "program_id": program["id"],
         "program_snapshot": {
             "name": program["name"], "type": program["type"], "slug": program.get("slug"),
             "description": program.get("description", ""), "focus": program.get("focus", ""),
@@ -16963,12 +17045,17 @@ async def school_enroll(body: SchoolEnrollIn, user: dict = Depends(require_admin
         "current_module_id": first_module.get("id"),
         "current_lesson_id": (lambda ls: ls[0]["id"] if ls else None)(_effective_lesson_list(first_module)),
         "sessions_count": 0,
-        "trainer_notes": body.trainer_notes or "",
+        "trainer_notes": trainer_notes or "",
         "created_at": now_iso(),
         # Additive-only discriminator — see the Online School header comment
         # above. Absent on every trainer-led enrollment (enroll_dog,
         # sell_program, service-package auto-enroll never set this key).
         "delivery_channel": "online_school",
+        # Phase 5 — provenance. "manual" (school_enroll, unchanged default)
+        # or "purchase" with source_ref pointing at the durable shop-order-
+        # line (or POS-sale-line) identity that granted it.
+        "enrollment_source": enrollment_source,
+        "enrollment_source_ref": source_ref,
     }
     # Two-record write: dog_programs then school_enrollments. This
     # deployment's MongoDB is a standalone instance (verified live —
@@ -16981,26 +17068,38 @@ async def school_enroll(body: SchoolEnrollIn, user: dict = Depends(require_admin
     # no orphaned half-enrollment can be observed by any other request.
     # Residual risk, irreducible without real transactions: a hard process
     # kill (crash/OOM/host death) landing in the exact window between the
-    # two inserts. That is the one scenario compensating rollback cannot
-    # close in a standalone deployment.
+    # two inserts. For the manual path that's accepted (documented) risk;
+    # for the purchase path, _apply_shop_payment's own per-line retry
+    # (never re-charging, safe to call any number of times — see its
+    # docstring) is what closes THAT gap: a retry lands back in this same
+    # function, and the fast-path pre-check above (backstopped by
+    # dp_online_active_unique) converges it onto the one row that survived,
+    # via OnlineSchoolAlreadyEnrolledError, rather than creating a second.
     try:
         await db.dog_programs.insert_one(dog_program_doc)
     except DuplicateKeyError:
         # dp_online_active_unique caught a concurrent duplicate the
         # read-before-write pre-check above missed.
-        raise HTTPException(status_code=409, detail="Already actively enrolled in Online School for this program.")
+        existing = await db.dog_programs.find_one(
+            {"dog_id": dog["id"], "program_id": program["id"], "status": "active", "delivery_channel": "online_school"},
+            {"_id": 0},
+        )
+        se = await db.school_enrollments.find_one({"enrollment_id": existing["id"]}, {"_id": 0}) if existing else None
+        if existing and not se:
+            se = await _self_heal_missing_school_enrollment(existing["id"], dog["id"], program["id"], client_id, enrolled_by)
+        raise OnlineSchoolAlreadyEnrolledError(se["id"] if se else None, existing["id"] if existing else None)
     dog_program_doc.pop("_id", None)
 
     school_enrollment = {
         "id": _gid(),
         "client_id": client_id,
-        "dog_id": body.dog_id,
-        "program_id": body.program_id,
+        "dog_id": dog["id"],
+        "program_id": program["id"],
         "enrollment_id": dog_program_doc["id"],
         "delivery_mode": "self_guided",
         "status": "active",
         "enrolled_at": now_iso(),
-        "enrolled_by": user.get("id"),
+        "enrolled_by": enrolled_by,
         "created_at": now_iso(),
     }
     try:
@@ -17022,7 +17121,7 @@ async def school_enroll(body: SchoolEnrollIn, user: dict = Depends(require_admin
     if first_lesson_id:
         first_lesson = _find_lesson_in_snapshot(dog_program_doc, first_lesson_id)
         tpl_ids = (first_lesson or {}).get("suggested_homework_template_ids") or []
-        if tpl_ids and not await _active_homework_conflict(body.dog_id, tpl_ids[0]):
+        if tpl_ids and not await _active_homework_conflict(dog["id"], tpl_ids[0]):
             try:
                 hw = await _create_homework_from_template_internal(
                     dog, client, tpl_ids[0],
@@ -17035,6 +17134,28 @@ async def school_enroll(body: SchoolEnrollIn, user: dict = Depends(require_admin
                 logger.warning("Online School first-lesson homework auto-assign failed: %s", exc)
 
     return {"school_enrollment": school_enrollment, "enrollment": _enrollment_summary(dog_program_doc)}
+
+
+@api.post("/school/enroll")
+async def school_enroll(body: SchoolEnrollIn, user: dict = Depends(require_admin_and_permission("manage_training_sessions"))):
+    """Manual admin/trainer enrollment into Online School — a thin wrapper
+    around the canonical _grant_online_school_enrollment helper Phase 5's
+    purchase fulfillment also calls (see that function's docstring)."""
+    dog = await db.dogs.find_one({"id": body.dog_id}, {"_id": 0})
+    if not dog:
+        raise HTTPException(status_code=404, detail="Dog not found")
+    program = await db.programs.find_one({"id": body.program_id}, {"_id": 0})
+    if not program:
+        raise HTTPException(status_code=404, detail="Program not found")
+    try:
+        return await _grant_online_school_enrollment(
+            dog, program, enrolled_by=user.get("id"), trainer_notes=body.trainer_notes or "", enrollment_source="manual",
+        )
+    except OnlineSchoolAlreadyEnrolledError as exc:
+        raise HTTPException(
+            status_code=409,
+            detail=f"Already actively enrolled in Online School for this program (enrollment {exc.school_enrollment_id or exc.dog_program_id}).",
+        )
 
 
 @api.delete("/school/enrollments/{school_enrollment_id}")
@@ -17130,6 +17251,7 @@ async def portal_school_list(user: dict = Depends(get_current_user)):
         out.append({
             "school_enrollment_id": se["id"], "dog_id": se["dog_id"],
             "dog_name": (dog or {}).get("name"), "dog_photo": (dog or {}).get("photo") or "",
+            "program_id": enrollment.get("program_id"),
             "program_name": (enrollment.get("program_snapshot") or {}).get("name"),
             "status": se["status"],
             "mastered_pct": summary.get("mastered_pct", 0),
@@ -32000,6 +32122,9 @@ async def _build_shop_catalog(client_id: Optional[str]) -> dict:
             "requires_dog": bool(prog.get("requires_dog", False)),
             "requires_approval": bool(prog.get("requires_approval", False)),
             "requires_completed_onboarding": bool(prog.get("requires_completed_onboarding", False)),
+            # Phase 5 — client-facing so the Shop item detail page knows
+            # whether to show a dog selector / real ownership CTA states.
+            "purchase_fulfillment": prog.get("purchase_fulfillment") or "credits_only",
             **_shop_org_fields(prog.get("category_id"), prog.get("subcategory_id")),
         })
 
@@ -32152,6 +32277,9 @@ async def _build_register_catalog(client_id: Optional[str]) -> dict:
             "image_id": prog.get("image_id"),
             "taxable": bool(prog.get("taxable", False)),
             "tax_exempt_reason": prog.get("tax_exempt_reason") or ("Training is a service, not a taxed retail good" if not prog.get("taxable", False) else None),
+            # Phase 5 — client-facing so the Shop item detail page knows
+            # whether to show a dog selector / real ownership CTA states.
+            "purchase_fulfillment": prog.get("purchase_fulfillment") or "credits_only",
             **_shop_org_fields(prog.get("category_id"), prog.get("subcategory_id")),
         })
 
@@ -32627,6 +32755,13 @@ class ShopCartItemIn(BaseModel):
     kind: Literal["product", "credit_pack", "training_program"]
     ref_id: str = Field(min_length=1)
     quantity: int = Field(ge=1, le=50)
+    # Phase 5 — Online School commerce. Only meaningful for a
+    # training_program line whose program is configured
+    # purchase_fulfillment="online_school" (see _validate_shop_item_eligibility);
+    # every other line kind/fulfillment ignores this field entirely, same
+    # as before it existed. Never trusted as proof of ownership by itself —
+    # ownership is re-validated server-side at eligibility-check time.
+    dog_id: Optional[str] = None
 
 
 class ShopCheckoutIn(BaseModel):
@@ -32648,25 +32783,52 @@ def _normalize_cart_lines(items: List[ShopCartItemIn]) -> List[ShopCartItemIn]:
     which was only ever a per-request-line sanity bound, not a true
     aggregate ceiling — the real ceiling is the stock check downstream),
     so this function is the one place a malformed line is guaranteed to be
-    rejected with a clean 422, never an unhandled construction error."""
-    combined: Dict[Tuple[str, str], int] = {}
-    order_seen: List[Tuple[str, str]] = []
+    rejected with a clean 422, never an unhandled construction error.
+
+    Phase 5 — the aggregation key includes `dog_id` so two different dogs
+    buying the same online_school-fulfillment program stay as separate
+    lines (each needs its own enrollment) rather than being summed into a
+    single quantity>1 line, which _validate_shop_item_eligibility rejects
+    for that fulfillment kind. Every non-dog-targeted line (dog_id=None,
+    i.e. every line kind/program that existed before Phase 5) aggregates
+    exactly as it always has.
+
+    Commerce-integrity hardening — a dog_id-carrying line represents ONE
+    Online School entitlement for that one dog (dog_id is only ever set by
+    the client for that purpose; see ShopCartItemIn.dog_id). Quantity must
+    equal exactly 1 for such a line, enforced HERE, before pricing/stock/
+    eligibility/Stripe ever run — not merely by _validate_shop_item_eligibility
+    (defense-in-depth, kept below) and never only by hiding the UI quantity
+    stepper. Rejects a single request line requesting >1, and rejects two
+    requests for the SAME (kind, ref_id, dog_id) combining to >1 — neither
+    a single oversized line nor a client re-submitting the same dog+course
+    twice can turn into a quantity>1 charge for one entitlement."""
+    combined: Dict[Tuple[str, str, Optional[str]], int] = {}
+    order_seen: List[Tuple[str, str, Optional[str]]] = []
     for it in items:
         kind = it.kind
         ref_id = (it.ref_id or "").strip()
         qty = it.quantity
+        dog_id = (it.dog_id or "").strip() or None
         if kind not in ("product", "credit_pack", "training_program"):
             raise HTTPException(status_code=422, detail="Invalid item kind in cart.")
         if not ref_id:
             raise HTTPException(status_code=422, detail="Invalid item in cart.")
         if not isinstance(qty, int) or isinstance(qty, bool) or qty <= 0:
             raise HTTPException(status_code=422, detail="Invalid quantity in cart.")
-        key = (kind, ref_id)
+        if dog_id and qty != 1:
+            raise HTTPException(status_code=422, detail="An Online School course can only be purchased one at a time per dog.")
+        key = (kind, ref_id, dog_id)
         if key not in combined:
             order_seen.append(key)
             combined[key] = 0
         combined[key] += qty
-    return [ShopCartItemIn.model_construct(kind=k, ref_id=rid, quantity=combined[(k, rid)]) for (k, rid) in order_seen]
+        if dog_id and combined[key] > 1:
+            raise HTTPException(status_code=422, detail="An Online School course can only be purchased one at a time per dog.")
+    return [
+        ShopCartItemIn.model_construct(kind=k, ref_id=rid, quantity=combined[(k, rid, did)], dog_id=did)
+        for (k, rid, did) in order_seen
+    ]
 
 
 _SHOP_ITEM_ONLINE_FIELD = {"product": "show_online", "credit_pack": "available_online", "training_program": "available_online"}
@@ -32692,7 +32854,7 @@ async def _shop_item_org_visible(category_id: Optional[str], subcategory_id: Opt
     return True
 
 
-async def _validate_shop_item_eligibility(client: dict, kind: str, item_doc: Optional[dict], quantity: int) -> None:
+async def _validate_shop_item_eligibility(client: dict, kind: str, item_doc: Optional[dict], quantity: int, dog_id: Optional[str] = None) -> None:
     """ADDITIVE ONLY — never touches price, inventory math, or reservation
     logic itself. Called once per already-normalized cart line in
     create_shop_checkout, immediately before the order (and therefore any
@@ -32729,9 +32891,44 @@ async def _validate_shop_item_eligibility(client: dict, kind: str, item_doc: Opt
             raise HTTPException(status_code=409, detail=f"Only {stock:g} of {name} are available.")
     if item_doc.get("requires_approval"):
         raise HTTPException(status_code=422, detail=f"{name} requires approval before purchase — please contact us to complete this purchase.")
-    if item_doc.get("requires_dog"):
-        # No dog-selection-at-cart-line mechanism exists yet — conservatively
-        # reject rather than silently proceed without one.
+    if kind == "training_program" and item_doc.get("purchase_fulfillment") == "online_school":
+        # Phase 5 — this is the one case with a real dog-selection
+        # mechanism (the frozen per-line dog_id — see _price_shop_cart):
+        # require it, validate it against THIS client's own dogs (never
+        # trust the client-posted id as proof of ownership), and require
+        # exactly one enrollment per line so "buy for 2 dogs" can't
+        # silently collapse into a single enrollment. Every other
+        # requires_dog program (fulfillment left at the "credits_only"
+        # default) falls through to the unconditional reject below,
+        # completely unchanged.
+        if quantity != 1:
+            raise HTTPException(status_code=422, detail=f"{name} can only be purchased one dog at a time — add it again for a second dog.")
+        if not dog_id:
+            raise HTTPException(status_code=422, detail=f"{name} requires selecting a dog before checkout.")
+        dog = await db.dogs.find_one({"id": dog_id}, {"_id": 0, "id": 1, "owner_id": 1})
+        if not dog or dog.get("owner_id") != client.get("id"):
+            raise HTTPException(status_code=422, detail="Selected dog was not found on this account.")
+        # Commerce-integrity hardening — reject BEFORE any order/Stripe
+        # session is created, not just at fulfillment time. Fulfillment's
+        # OnlineSchoolAlreadyEnrolledError convergence stays in place as the
+        # final safety net for a genuine race (two concurrent checkouts),
+        # but a client should never be able to pay again for a course they
+        # already own or already completed — this is the no-retake policy
+        # from the Phase 5 spec (§10), enforced at the money boundary, not
+        # only implied by the CTA the client happens to be looking at.
+        existing_enrollment = await db.dog_programs.find_one(
+            {"dog_id": dog_id, "program_id": item_doc["id"], "delivery_channel": "online_school",
+             "status": {"$in": ["active", "completed"]}},
+            {"_id": 0, "status": 1},
+        )
+        if existing_enrollment:
+            if existing_enrollment["status"] == "completed":
+                raise HTTPException(status_code=409, detail=f"{name} has already been completed for this dog — repurchase isn't available yet.")
+            raise HTTPException(status_code=409, detail=f"This dog is already enrolled in {name} — go to Online School to continue instead of buying it again.")
+    elif item_doc.get("requires_dog"):
+        # No dog-selection-at-cart-line mechanism exists yet for any other
+        # requires_dog item kind — conservatively reject rather than
+        # silently proceed without one.
         raise HTTPException(status_code=422, detail=f"{name} requires selecting a dog — please contact us to complete this purchase.")
     if item_doc.get("requires_completed_onboarding"):
         status = await _compute_setup_status_for_client(client)
@@ -32823,6 +33020,16 @@ async def _price_shop_cart(items: List[ShopCartItemIn], client_id: Optional[str]
             "line_total": line_subtotal, "fulfillment_status": "pending",
             **org_snapshot,
         }
+        if cart_item.kind == "training_program":
+            # Phase 5 — frozen at pricing time so _apply_shop_payment never
+            # re-reads the (possibly since-edited) program doc to decide
+            # fulfillment branching, and so a dog picked at cart time can't
+            # be silently retargeted by a later program edit or payment
+            # retry. Every existing program (purchase_fulfillment absent/
+            # "credits_only") gets fulfillment_kind="credits_only" and
+            # dog_id=None exactly as today.
+            line["dog_id"] = cart_item.dog_id
+            line["fulfillment_kind"] = org_source.get("purchase_fulfillment") or "credits_only"
         if cart_item.kind == "credit_pack":
             # Immutable pricing snapshot — frozen at order-creation time so a
             # later public-price change or override/tier edit or revocation
@@ -33196,6 +33403,47 @@ async def _fulfill_shop_training_program_line(order: dict, line: dict) -> None:
         )
 
 
+async def _fulfill_shop_online_school_program_line(order: dict, line: dict) -> None:
+    """Phase 5 — grants Online School access for a purchase_fulfillment=
+    "online_school" program line by calling the SAME canonical helper
+    school_enroll uses: never a parallel commerce enrollment. Money grants
+    access; it does not create a second training-progress model.
+
+    Idempotent the same way every other _apply_shop_payment fulfillment
+    step is: this is called from Step B3, which already skips any line
+    already marked fulfillment_status=="fulfilled" and retries
+    "pending"/"failed" ones — so a crash or webhook replay before this
+    line's $set lands simply re-enters here, and
+    OnlineSchoolAlreadyEnrolledError (raised when the enrollment this
+    exact retry would create already exists) converges onto that existing
+    enrollment instead of erroring. dog_id/fulfillment_kind are read from
+    the line's own frozen pricing-time snapshot (see _price_shop_cart),
+    never re-derived from the live program doc, so a program edited after
+    purchase can't retarget an in-flight fulfillment."""
+    dog_id = line.get("dog_id")
+    if not dog_id:
+        raise HTTPException(status_code=500, detail="Online School shop line is missing its frozen dog_id during fulfillment")
+    dog = await db.dogs.find_one({"id": dog_id}, {"_id": 0})
+    if not dog or dog.get("owner_id") != order["client_id"]:
+        raise HTTPException(status_code=500, detail="Online School shop line's dog no longer belongs to the purchasing client")
+    program = await db.programs.find_one({"id": line["ref_id"]}, {"_id": 0})
+    if not program:
+        raise HTTPException(status_code=500, detail="Training program missing during shop fulfillment")
+    source_ref = f"shop_order:{order['id']}:line:{line['item_id']}"
+    try:
+        result = await _grant_online_school_enrollment(
+            dog, program, enrolled_by=None, enrollment_source="purchase", source_ref=source_ref,
+        )
+        enrollment_id = result["enrollment"]["id"]
+    except OnlineSchoolAlreadyEnrolledError as exc:
+        enrollment_id = exc.dog_program_id
+
+    await db.shop_orders.update_one(
+        {"id": order["id"], "lines.item_id": line["item_id"]},
+        {"$set": {"lines.$.online_school_enrollment_id": enrollment_id, "updated_at": now_iso()}},
+    )
+
+
 # ── Atomic shop_order-pointer reservation — the Invoice-pointer pattern,
 # reimplemented against shop_orders (can't reuse the invoice helpers
 # verbatim, they're hardcoded to db.invoices). ──────────────────────────────
@@ -33412,6 +33660,8 @@ async def _apply_shop_payment(attempt: dict, session_obj: Optional[dict] = None)
                 await _commit_shop_inventory_line(order_id, line)
             elif line["kind"] == "credit_pack":
                 await _fulfill_shop_credit_pack_line(order, line)
+            elif line["kind"] == "training_program" and line.get("fulfillment_kind") == "online_school":
+                await _fulfill_shop_online_school_program_line(order, line)
             else:
                 await _fulfill_shop_training_program_line(order, line)
             await db.shop_orders.update_one(
@@ -33508,7 +33758,7 @@ async def create_shop_checkout(body: ShopCheckoutIn, user: dict = Depends(get_cu
     # normalized list, never the raw, possibly-duplicated request body.
     normalized_items = _normalize_cart_lines(body.items)
 
-    cart_fingerprint_items = [{"kind": it.kind, "ref_id": it.ref_id, "quantity": it.quantity} for it in normalized_items]
+    cart_fingerprint_items = [{"kind": it.kind, "ref_id": it.ref_id, "quantity": it.quantity, "dog_id": it.dog_id} for it in normalized_items]
     fingerprint = _request_fingerprint(client_id, cart_fingerprint_items)
     order_id = str(uuid.uuid4())
     ts = now_iso()
@@ -33541,7 +33791,7 @@ async def create_shop_checkout(body: ShopCheckoutIn, user: dict = Depends(get_cu
         # completely unaffected.
         for line in priced["lines"]:
             item_doc = await db[_SHOP_ITEM_COLLECTION_NAME[line["kind"]]].find_one({"id": line["ref_id"]}, {"_id": 0})
-            await _validate_shop_item_eligibility(client, line["kind"], item_doc, int(line["quantity"]))
+            await _validate_shop_item_eligibility(client, line["kind"], item_doc, int(line["quantity"]), dog_id=line.get("dog_id"))
 
         order_doc = {
             "id": order_id, "client_id": client_id, "client_name": client.get("name") or "",
@@ -34510,6 +34760,19 @@ async def _price_pos_cart(lines: List[PosSaleLineIn], discount: Optional[PosSale
                 fmt = program.get("format") or {}
                 if int(fmt.get("count") or 0) <= 0:
                     raise HTTPException(status_code=400, detail=f"{program.get('name', 'This program')} isn't set up for sale (format.count must be > 0).")
+                if program.get("purchase_fulfillment") == "online_school":
+                    # Phase 5 decision — the Front Desk register has no safe
+                    # way to select which of the client's dogs an Online
+                    # School enrollment is for (PosSaleLineIn carries no
+                    # dog_id, and Pos.jsx's program-line UI is client-scoped
+                    # only). Rather than guess a dog, this line kind is
+                    # blocked here until a register dog-selector exists;
+                    # staff can sell it through "Sell Program" (which
+                    # already supports dog_id) or the client Shop instead.
+                    raise HTTPException(
+                        status_code=400,
+                        detail=f"{program.get('name', 'This program')} is an Online School course and can't be sold at the register yet — use \"Sell Program\" on the client's profile or have the client buy it in their Shop.",
+                    )
                 program_cache[line.program_id] = program
             qty = int(line.qty or 1)  # whole program enrollments purchased
             list_price = round(float(program.get("price") or 0), 2)
@@ -39351,10 +39614,33 @@ async def sell_training_program(
         )
 
     enrollment_summary = None
-    if dog:
-        # Don't double-enrol — return existing active enrollment if there is one.
+    if dog and program.get("purchase_fulfillment") == "online_school":
+        # Phase 5 — this staff tool grants the exact same Online School
+        # structures a Shop/POS purchase does (via the same canonical
+        # helper school_enroll itself calls), never a parallel trainer-led
+        # row, when the program is configured for online_school
+        # fulfillment. Credits above are still granted exactly as before —
+        # unchanged, since staff may legitimately want both.
+        try:
+            result = await _grant_online_school_enrollment(
+                dog, program, enrolled_by=user.get("id"),
+                enrollment_source="purchase", source_ref=f"sell_program:{lot['id']}",
+            )
+            enrollment_summary = result["enrollment"]
+        except OnlineSchoolAlreadyEnrolledError as exc:
+            existing = await db.dog_programs.find_one({"id": exc.dog_program_id}, {"_id": 0}) if exc.dog_program_id else None
+            enrollment_summary = _enrollment_summary(existing) if existing else None
+    elif dog:
+        # Don't double-enrol — return existing active enrollment if there is
+        # one. Phase 5 collision fix: explicitly excludes Online School rows
+        # (delivery_channel="online_school") — a dog can legitimately have
+        # BOTH an active trainer-led enrollment AND an active Online School
+        # enrollment for the same program at once; this lookup must never
+        # treat one as if it were the other (14 other call sites in this
+        # file already apply this same filter for exactly this reason).
         existing = await db.dog_programs.find_one(
-            {"dog_id": dog["id"], "program_id": program["id"], "status": "active"},
+            {"dog_id": dog["id"], "program_id": program["id"], "status": "active",
+             "delivery_channel": {"$ne": "online_school"}},
             {"_id": 0},
         )
         if existing:

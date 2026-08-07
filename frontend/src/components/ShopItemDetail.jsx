@@ -163,7 +163,7 @@ function HeroImage({ imageId, alt, isPublic }) {
   );
 }
 
-export default function ShopItemDetail({ kind, itemId, cart, onAddToCart, onBack, allItems, onOpenItem, mode = "authenticated", onRequireAccount }) {
+export default function ShopItemDetail({ kind, itemId, cart, onAddToCart, onBack, allItems, onOpenItem, mode = "authenticated", onRequireAccount, onGoToOnlineSchool, dogs = [] }) {
   const [item, setItem] = useState(null);
   const [loading, setLoading] = useState(true);
   const [notFound, setNotFound] = useState(false);
@@ -183,6 +183,36 @@ export default function ShopItemDetail({ kind, itemId, cart, onAddToCart, onBack
     return () => { cancelled = true; };
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [kind, itemId, isGuest]);
+
+  // Phase 5 — Online School commerce. Only fetched for the one item kind/
+  // fulfillment combination that needs it: a training_program whose
+  // program is purchase_fulfillment="online_school". Real server-derived
+  // ownership state per dog (GET /portal/school, the same list the
+  // Online School dashboard itself reads) — never guessed or cached
+  // stale across items.
+  const isOnlineSchoolProgram = !isGuest && item?.kind === "training_program" && item.purchase_fulfillment === "online_school";
+  const [schoolEnrollments, setSchoolEnrollments] = useState(null);
+  useEffect(() => {
+    if (!isOnlineSchoolProgram) { setSchoolEnrollments(null); return; }
+    let cancelled = false;
+    api.get("/portal/school").then(({ data }) => { if (!cancelled) setSchoolEnrollments(data || []); }).catch(() => { if (!cancelled) setSchoolEnrollments([]); });
+    return () => { cancelled = true; };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [isOnlineSchoolProgram, itemId]);
+
+  // Client's own dogs — for a single-dog client, default/select that dog
+  // (per the Phase 5 spec: convenience default only, the server still
+  // independently validates ownership at checkout regardless).
+  const [selectedDogId, setSelectedDogId] = useState(null);
+  useEffect(() => {
+    if (!isOnlineSchoolProgram) { setSelectedDogId(null); return; }
+    setSelectedDogId(dogs.length === 1 ? dogs[0].id : null);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [isOnlineSchoolProgram, itemId, dogs.length]);
+
+  const selectedDogEnrollment = isOnlineSchoolProgram && selectedDogId && schoolEnrollments
+    ? schoolEnrollments.find((e) => e.dog_id === selectedDogId && e.program_id === itemId)
+    : null;
 
   if (loading) {
     return <p className="text-shTextMuted text-sm text-center py-16" data-testid="shop-detail-loading">Loading…</p>;
@@ -215,6 +245,9 @@ export default function ShopItemDetail({ kind, itemId, cart, onAddToCart, onBack
   const cta = isGuest ? guestItemCta(item) : null;
   const guestBlocked = isGuest && cta && cta.type !== "add_to_cart" && cta.type !== "shopify";
   const cartQty = (cart || []).find((c) => c.kind === item.kind && c.ref_id === item.id)?.quantity || 0;
+  const dogCartQty = isOnlineSchoolProgram && selectedDogId
+    ? (cart || []).find((c) => c.kind === item.kind && c.ref_id === item.id && c.dog_id === selectedDogId)?.quantity || 0
+    : 0;
   // Stock-safe quantity — `qty` here is "how many more to add", so the real
   // ceiling is what's left after subtracting what's already sitting in the
   // cart, not just the raw stock_on_hand (which the old maxQty ignored).
@@ -233,6 +266,11 @@ export default function ShopItemDetail({ kind, itemId, cart, onAddToCart, onBack
   };
 
   const handlePurchase = () => {
+    if (isOnlineSchoolProgram) {
+      onAddToCart(item, 1, selectedDogId);
+      toast.success(`${item.name} added to cart`);
+      return;
+    }
     onAddToCart(item, item.kind === "product" ? qty : 1);
     toast.success(item.kind === "product" ? `Added ${qty} to cart` : `${item.name} added to cart`);
   };
@@ -291,6 +329,26 @@ export default function ShopItemDetail({ kind, itemId, cart, onAddToCart, onBack
             <p className="text-shTextMuted text-[13px] mt-1">Requires completing: {item.prerequisite_names.join(", ")}.</p>
           )}
 
+          {isOnlineSchoolProgram && (
+            <div className="mt-4 border border-shBorder rounded-lg p-3" data-testid="shop-detail-dog-selector">
+              <p className="text-[11px] font-black uppercase tracking-widest text-shTextMuted mb-2">
+                <i className="fas fa-dog mr-1" />This is an Online School course — choose a dog
+              </p>
+              {dogs.length === 0 ? (
+                <p className="text-shTextMuted text-[13px]">Add a dog to your account before purchasing an Online School course.</p>
+              ) : (
+                <div className="flex flex-wrap gap-2">
+                  {dogs.map((d) => (
+                    <button key={d.id} type="button" onClick={() => setSelectedDogId(d.id)} data-testid={`shop-detail-dog-${d.id}`}
+                            className={`px-3 py-1.5 rounded-full text-[13px] font-bold border transition ${selectedDogId === d.id ? "bg-shPrimary text-bgHeader border-shPrimary" : "border-shBorder text-shText hover:border-shPrimary/50"}`}>
+                      {d.name}
+                    </button>
+                  ))}
+                </div>
+              )}
+            </div>
+          )}
+
           <div className="mt-4">
             <p className="text-[11px] font-black uppercase tracking-widest text-shTextMuted mb-1">Description</p>
             <FormattedDescription text={item.description} />
@@ -311,6 +369,28 @@ export default function ShopItemDetail({ kind, itemId, cart, onAddToCart, onBack
               <PremiumButton variant="primary" onClick={handleShopifyClick} data-testid="shop-detail-view-options" className="w-full justify-center py-3">
                 View Options <i className="fas fa-arrow-up-right-from-square ml-1 text-[11px]" />
               </PremiumButton>
+            ) : isOnlineSchoolProgram ? (
+              !selectedDogId ? (
+                <PremiumButton variant="primary" disabled data-testid="shop-detail-purchase-disabled" className="w-full justify-center py-3 opacity-50 cursor-not-allowed">
+                  Choose a Dog to Continue
+                </PremiumButton>
+              ) : selectedDogEnrollment?.status === "completed" ? (
+                <PremiumButton variant="secondary" onClick={() => onGoToOnlineSchool?.()} data-testid="shop-detail-view-completed-course" className="w-full justify-center py-3">
+                  <i className="fas fa-graduation-cap mr-1.5" />View Completed Course
+                </PremiumButton>
+              ) : selectedDogEnrollment?.status === "active" ? (
+                <PremiumButton variant="secondary" onClick={() => onGoToOnlineSchool?.()} data-testid="shop-detail-go-to-online-school" className="w-full justify-center py-3">
+                  <i className="fas fa-graduation-cap mr-1.5" />Go to Online School
+                </PremiumButton>
+              ) : dogCartQty > 0 ? (
+                <PremiumButton variant="primary" disabled data-testid="shop-detail-purchase-disabled" className="w-full justify-center py-3 opacity-50 cursor-not-allowed">
+                  Already in Cart for This Dog
+                </PremiumButton>
+              ) : (
+                <PremiumButton variant="primary" onClick={handlePurchase} data-testid="shop-detail-purchase" className="w-full justify-center py-3">
+                  Buy Course
+                </PremiumButton>
+              )
             ) : guestBlocked ? (
               cta.type === "hidden_price" ? (
                 <PremiumButton variant="primary" onClick={() => onRequireAccount?.(item, "hidden_price")} data-testid="shop-detail-hidden-price-cta" className="w-full justify-center py-3">
