@@ -17,6 +17,8 @@ export default function DogTrainingTab({ dogId, dogName, dogAgeMonths = 0 }) {
   const [enrollments, setEnrollments] = useState([]);
   const [programs, setPrograms] = useState([]);
   const [enrollOpen, setEnrollOpen] = useState(false);
+  const [schoolEnrollOpen, setSchoolEnrollOpen] = useState(false);
+  const [schoolEnrollments, setSchoolEnrollments] = useState([]);
   const [customOpen, setCustomOpen] = useState(false);
   const [activeGoalEdit, setActiveGoalEdit] = useState(null);
   const [err, setErr] = useState("");
@@ -28,12 +30,13 @@ export default function DogTrainingTab({ dogId, dogName, dogAgeMonths = 0 }) {
 
   const load = useCallback(async () => {
     try {
-      const [m, e, p] = await Promise.all([
+      const [m, e, p, se] = await Promise.all([
         api.get("/programs/meta"),
         api.get(`/dogs/${dogId}/programs`),
         api.get("/programs"),
+        api.get(`/dogs/${dogId}/school-enrollments`).catch(() => ({ data: [] })),
       ]);
-      setMeta(m.data); setEnrollments(e.data); setPrograms(p.data);
+      setMeta(m.data); setEnrollments(e.data); setPrograms(p.data); setSchoolEnrollments(se.data);
     } catch (er) { setErr(formatErr(er.response?.data?.detail) || "Load failed"); }
   }, [dogId]);
   useEffect(() => { if (dogId) load(); }, [dogId, load]);
@@ -41,14 +44,45 @@ export default function DogTrainingTab({ dogId, dogName, dogAgeMonths = 0 }) {
   if (!meta) return <p className="text-shTextMuted text-sm py-6 text-center"><i className="fas fa-spinner fa-spin mr-2"/>Loading…</p>;
 
   const typeByKey = Object.fromEntries(meta.types.map(t => [t.key, t]));
-  const active = enrollments.filter(e => e.status === "active");
+  // Sit Happens Online School — list_dog_enrollments returns BOTH
+  // trainer-led and online-delivered dog_programs rows (same collection,
+  // additive delivery_channel field). Split them here so the trainer
+  // toolset (Log Session/Complete/Set Current Week/manual goal edits)
+  // never renders for a school-delivered row — those actions bypass the
+  // school's own progression/practice gating and would confuse an admin.
+  const activeAll = enrollments.filter(e => e.status === "active");
+  const active = activeAll.filter(e => e.delivery_channel !== "online_school");
+  const schoolActive = activeAll.filter(e => e.delivery_channel === "online_school");
   const history = enrollments.filter(e => e.status !== "active");
+  const schoolEnrollmentsById = Object.fromEntries(schoolEnrollments.map(se => [se.enrollment_id, se]));
+  const schoolCapablePrograms = programs.filter(p => (p.delivery_mode || "trainer_led") !== "trainer_led");
 
   const enrollIn = async (programId) => {
     try {
       await api.post(`/dogs/${dogId}/programs`, { program_id: programId });
       setEnrollOpen(false); load();
     } catch (e) { setErr(formatErr(e.response?.data?.detail) || "Enroll failed"); }
+  };
+
+  const schoolEnrollIn = async (programId) => {
+    try {
+      await api.post("/school/enroll", { dog_id: dogId, program_id: programId });
+      setSchoolEnrollOpen(false); load();
+    } catch (e) { setErr(formatErr(e.response?.data?.detail) || "Online School enroll failed"); }
+  };
+
+  const schoolUnenroll = async (enrollment) => {
+    const ok = await confirm({
+      title: `Remove ${dogName} from Online School?`,
+      body: `${(enrollment.program_snapshot || {}).name || "This program"} will be removed from Online School. This clean-removes the enrollment (Phase 1 has no withdraw/history for school enrollments yet).`,
+      confirmText: "Remove", tone: "danger",
+    });
+    if (!ok) return;
+    try {
+      const se = schoolEnrollmentsById[enrollment.id];
+      if (se) await api.delete(`/school/enrollments/${se.id}`);
+      load();
+    } catch (e) { setErr(formatErr(e.response?.data?.detail) || "Failed to remove"); }
   };
 
   const updateStatus = async (eid, status) => {
@@ -99,6 +133,10 @@ export default function DogTrainingTab({ dogId, dogName, dogAgeMonths = 0 }) {
                   className="bg-shSecondary text-shText px-4 py-2 rounded font-black text-[15px] uppercase tracking-widest shadow">
             <i className="fas fa-graduation-cap mr-1"/>Enroll
           </button>
+          <button onClick={()=>setSchoolEnrollOpen(true)} data-testid="school-enroll-btn"
+                  className="bg-shPrimary/15 text-shPrimary border border-shPrimary/40 px-4 py-2 rounded font-black text-[15px] uppercase tracking-widest">
+            <i className="fas fa-graduation-cap mr-1"/>Online School
+          </button>
           <button onClick={()=>setCustomOpen(true)} data-testid="custom-btn"
                   className="bg-pink-500/15 text-pink-300 border border-pink-500/50 px-4 py-2 rounded font-black text-[15px] uppercase tracking-widest">
             <i className="fas fa-wand-magic-sparkles mr-1"/>Custom
@@ -148,11 +186,41 @@ export default function DogTrainingTab({ dogId, dogName, dogAgeMonths = 0 }) {
         </details>
       )}
 
+      {/* Sit Happens Online School (Phase 1) — a school-delivered enrollment
+          is a real dog_programs row (same collection, delivery_channel=
+          "online_school"), rendered here as its own compact read-only card
+          rather than through EnrollmentCard — the trainer session/goal
+          tools there don't apply to a self-guided enrollment. */}
+      {schoolActive.length > 0 && (
+        <div className="bg-shPrimary/5 border border-shPrimary/30 rounded-lg p-3 space-y-2" data-testid="school-active-section">
+          <p className="text-[13px] font-black uppercase tracking-widest text-shPrimary"><i className="fas fa-graduation-cap mr-1.5"/>Online School</p>
+          {schoolActive.map(e => (
+            <div key={e.id} className="bg-[var(--sh-card-base)] rounded p-3 border border-shBorder flex items-center justify-between gap-3"
+                 data-testid={`school-enrollment-${e.id}`}>
+              <div className="min-w-0">
+                <p className="text-sm font-black text-shText truncate">{e.program_snapshot.name}</p>
+                <p className="text-[13px] text-shTextMuted">{e.mastered_goals}/{e.total_goals} skills mastered ({e.mastered_pct}%) · Started {e.started_at}</p>
+              </div>
+              <button onClick={()=>schoolUnenroll(e)} data-testid={`school-unenroll-${e.id}`}
+                      className="shrink-0 text-red-400 hover:text-red-300 text-[13px] font-black uppercase tracking-widest whitespace-nowrap">
+                <i className="fas fa-user-minus mr-1"/>Remove
+              </button>
+            </div>
+          ))}
+        </div>
+      )}
+
       {/* Enroll modal */}
       {enrollOpen && (
         <EnrollModal programs={programs.filter(p => p.type !== "custom" || p.owner_dog_id === dogId)}
                      dogAgeMonths={dogAgeMonths} typeMeta={typeByKey}
                      onPick={enrollIn} onClose={()=>setEnrollOpen(false)} />
+      )}
+
+      {/* Online School enroll modal */}
+      {schoolEnrollOpen && (
+        <SchoolEnrollModal programs={schoolCapablePrograms} typeMeta={typeByKey}
+                            onPick={schoolEnrollIn} onClose={()=>setSchoolEnrollOpen(false)} />
       )}
 
       {/* Custom program builder */}
@@ -461,6 +529,43 @@ function EnrollModal({ programs, dogAgeMonths, typeMeta, onPick, onClose }) {
                 })}
               </div>
             </div>
+          ))}
+        </div>
+      </div>
+    </div>
+  );
+}
+
+// Sit Happens Online School (Phase 1) — same picker shell as EnrollModal,
+// filtered upstream to only delivery_mode in (self_guided, both) programs
+// (schoolCapablePrograms). Deliberately simpler than EnrollModal — no
+// age-gate/module-count chrome yet, just name + focus, since Phase 1 is
+// manual-enrollment-only and the picker exists for a trainer who already
+// knows which curriculum they're placing the client into.
+function SchoolEnrollModal({ programs, typeMeta, onPick, onClose }) {
+  return (
+    <div className="fixed inset-0 bg-black/80 flex items-center justify-center p-4 z-50" data-testid="school-enroll-modal">
+      <div className="bg-[var(--sh-card-base)] border border-shBorder rounded-2xl w-full max-w-2xl max-h-[calc(var(--app-height)_-_2rem)] flex flex-col min-h-0 shadow-2xl">
+        <div className="px-6 py-4 border-b border-shBorder flex items-center justify-between shrink-0">
+          <div>
+            <h4 className="text-base font-black text-shText uppercase italic"><i className="fas fa-graduation-cap mr-1.5 text-shPrimary"/>Enroll in Online School</h4>
+            <p className="text-[12px] text-shTextMuted">Only programs configured for Self-Guided or Both delivery are shown.</p>
+          </div>
+          <button onClick={onClose} className="text-shTextMuted hover:text-shText"><i className="fas fa-times text-xl"/></button>
+        </div>
+        <div className="overflow-y-auto flex-1 min-h-0 p-4 space-y-2">
+          {programs.length === 0 && (
+            <p className="text-[13px] text-shTextMuted text-center py-8">No programs are configured for Online School yet — set a program's Delivery Mode to Self-Guided or Both in Program Studio.</p>
+          )}
+          {programs.map(p => (
+            <button key={p.id} onClick={()=>onPick(p.id)} data-testid={`school-enroll-pick-${p.id}`}
+                    className="w-full text-left bg-[var(--sh-card-base)]/60 border border-shBorder hover:border-shPrimary rounded p-3 transition">
+              <p className="text-sm font-black text-shText">{p.name}</p>
+              <p className="text-[15px] text-shTextMuted mt-0.5">{p.focus}</p>
+              <p className="text-[14px] text-shTextMuted font-black uppercase tracking-widest mt-1">
+                {p.modules.length} modules · {typeMeta[p.type]?.label || p.type}
+              </p>
+            </button>
           ))}
         </div>
       </div>

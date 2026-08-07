@@ -16,6 +16,8 @@ import PortalBookWizard from "../components/PortalBookWizard";
 import HomeworkIncentivesPanel from "../components/HomeworkIncentivesPanel";
 import ClientTodayPanel from "../components/training/ClientTodayPanel";
 import PracticePanel from "../components/training/PracticePanel";
+import OnlineSchoolDashboard from "../components/OnlineSchoolDashboard";
+import { nextActionLabel, formatCompletionPct } from "../lib/onlineSchoolPolish";
 import MultiDateCalendar from "../components/MultiDateCalendar";
 import PortalHomeActionCard from "../components/PortalHomeActionCard";
 import PremiumButton from "../components/premium/PremiumButton";
@@ -648,6 +650,8 @@ export default function Portal() {
   const [waiverSuccess, setWaiverSuccess] = useState(null); // { signedAt } | null
   const [homework, setHomework] = useState([]);
   const [practiceFor, setPracticeFor] = useState(null); // homework doc open in the Homework Practice screen
+  const [schoolEntries, setSchoolEntries] = useState([]); // Online School (Phase 1) — /portal/school; empty for any client with no school enrollment
+  const [schoolOpen, setSchoolOpen] = useState(false);
   const [lightbox, setLightbox] = useState({ open: false, photos: [], index: 0 });
   const [dogModal, setDogModal] = useState({ open: false, dog: null });
   const [profileOpen, setProfileOpen] = useState(false);
@@ -795,7 +799,7 @@ export default function Portal() {
 
   const loadAll = useCallback(async () => {
     try {
-      const [dRes, bRes, wRes, sRes, hRes, svcRes, prgRes] = await Promise.all([
+      const [dRes, bRes, wRes, sRes, hRes, svcRes, prgRes, schRes] = await Promise.all([
         api.get("/dogs"),
         api.get("/bookings"),
         api.get("/waivers/me"),
@@ -803,6 +807,7 @@ export default function Portal() {
         api.get("/homework"),
         api.get("/services").catch(()=>({data:[]})),
         api.get("/programs").catch(()=>({data:[]})),
+        api.get("/portal/school").catch(()=>({data:[]})),
       ]);
       setDogs(dRes.data);
       setBookings(bRes.data);
@@ -811,6 +816,7 @@ export default function Portal() {
       setHomework(hRes.data);
       setPublicServices((svcRes.data || []).filter(s => s.active));
       setPublicPrograms((prgRes.data || []));
+      setSchoolEntries(schRes.data || []);
       if (dRes.data.length > 0 && !bookDogId) setBookDogId(dRes.data[0].id);
       // Only auto-open the waiver modal AFTER the user has added at least one dog
       // (otherwise the onboarding banner takes them through profile → dog → waiver in order).
@@ -1851,6 +1857,32 @@ export default function Portal() {
             <ClientTodayPanel dogs={dogs} homework={homework} bookings={bookings} onOpenPractice={setPracticeFor} testid="client-today-panel"/>
           )}
 
+          {/* Sit Happens Online School (Phase 1) — a clear, prominent entry
+              point, never buried in "More". Renders nothing at all for any
+              client with no school enrollment (schoolEntries stays empty),
+              so this is a no-op for every daycare/boarding/trainer-led-only
+              client — same "renders nothing" convention PortalLearn/
+              PortalProgress already use. */}
+          {schoolEntries.length > 0 && (
+            <div className="relative overflow-hidden bg-gradient-to-br from-shBlue/15 via-bgPanel to-shPrimary/10 border border-shBorder rounded-2xl p-4 shadow-xl"
+                 data-testid="online-school-teaser">
+              <div className="flex items-center gap-3">
+                <div className="w-10 h-10 rounded-full bg-shPrimary/15 border border-shPrimary/40 grid place-items-center shrink-0">
+                  <i className="fas fa-graduation-cap text-shPrimary text-lg"/>
+                </div>
+                <div className="min-w-0 flex-1">
+                  <p className="text-[10px] font-black uppercase tracking-[0.3em] text-shBlue">Sit Happens Online School</p>
+                  <p className="text-[14px] font-black text-shText truncate">{schoolEntries[0].program_name} · {formatCompletionPct(schoolEntries[0].mastered_pct)}</p>
+                  <p className="text-[12px] text-shTextMuted truncate">{nextActionLabel(schoolEntries[0])}</p>
+                </div>
+                <button onClick={() => setSchoolOpen(true)} data-testid="online-school-open"
+                        className="shrink-0 bg-shPrimary text-bgHeader px-3 py-2 rounded-lg font-black text-[12px] uppercase tracking-widest shadow">
+                  Continue
+                </button>
+              </div>
+            </div>
+          )}
+
           {/* Focused Client Usability phase — Homework streak + Payment
               plans are secondary; tucked behind "More". Required intake
               forms stay OUTSIDE this wrapper (below) since they can block
@@ -2414,6 +2446,10 @@ export default function Portal() {
       {practiceFor && (
         <PracticePanel homework={practiceFor} dogPhoto={dogs.find(d => d.id === practiceFor.dog_id)?.photo}
                        onClose={() => setPracticeFor(null)} onChanged={loadAll}/>
+      )}
+      {schoolOpen && (
+        <OnlineSchoolDashboard clientFirstName={user.name?.split(" ")[0] || user.name}
+                                onClose={() => { setSchoolOpen(false); loadAll(); }}/>
       )}
       {lightbox.open && (
         <Lightbox photos={lightbox.photos} index={lightbox.index}

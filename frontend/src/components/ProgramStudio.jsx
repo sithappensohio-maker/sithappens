@@ -457,6 +457,24 @@ function SetupTab({ program, set, meta, allPrograms, hwTemplates, emailTemplates
         </div>
       </ExpandableSection>
 
+      <ExpandableSection title="Delivery Mode" icon="fa-route" testid="setup-section-delivery">
+        <div className="space-y-2">
+          <p className="text-[12px] text-shTextMuted">How this curriculum reaches clients — the same modules/lessons/skills either way, never duplicated content.</p>
+          <div className="grid grid-cols-1 sm:grid-cols-3 gap-2">
+            {[
+              { k: "trainer_led", label: "Trainer-Led", icon: "fa-user-tie" },
+              { k: "self_guided", label: "Self-Guided (Online School)", icon: "fa-graduation-cap" },
+              { k: "both", label: "Both", icon: "fa-arrows-split-up-and-left" },
+            ].map(dm => (
+              <button key={dm.k} type="button" onClick={() => set({ delivery_mode: dm.k })} data-testid={`prog-delivery-mode-${dm.k}`}
+                      className={`py-2 rounded text-[12px] font-black uppercase tracking-widest border ${(program.delivery_mode || "trainer_led") === dm.k ? "bg-shPrimary text-bgHeader border-shPrimary" : "bg-transparent border-shBorder text-shTextMuted"}`}>
+                <i className={`fas ${dm.icon} mr-1`}/>{dm.label}
+              </button>
+            ))}
+          </div>
+        </div>
+      </ExpandableSection>
+
       <ExpandableSection title="Training Format & Scheduling" icon="fa-calendar-days" testid="setup-section-format">
         <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
           <SField label="Sessions / credits issued">
