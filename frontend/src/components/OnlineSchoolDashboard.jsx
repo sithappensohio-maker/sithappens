@@ -13,6 +13,7 @@ import LessonCard from "./training/LessonCard";
 import LessonDetailPanel from "./training/LessonDetailPanel";
 import EmptyState from "./training/EmptyState";
 import PracticePanel from "./training/PracticePanel";
+import PracticeMediaUploader from "./training/PracticeMediaUploader";
 import {
   buildSchoolRoadmap, buildSchoolLessonCards, nextActionLabel, canAdvance,
   practiceButtonLabel, continueButtonLabel, formatCompletionPct,
@@ -71,6 +72,16 @@ export default function OnlineSchoolDashboard({ clientFirstName, onClose }) {
   const onPracticeClosed = () => {
     setPracticeHomework(null);
     loadDetail(activeId);
+  };
+
+  const submitCheckpoint = async (lessonId, video, filename, note) => {
+    setBusy(true); setErr("");
+    try {
+      await api.post(`/portal/school/${activeId}/lessons/${lessonId}/checkpoint`, { video, filename, note });
+      await loadDetail(activeId);
+    } catch (e) {
+      setErr(e.response?.data?.detail || "Couldn't submit checkpoint.");
+    } finally { setBusy(false); }
   };
 
   const advance = async () => {
@@ -221,11 +232,22 @@ export default function OnlineSchoolDashboard({ clientFirstName, onClose }) {
                 <EmptyState icon="fa-circle-info" message="Practice for this lesson isn't set up yet — check back soon." testid="school-no-practice"/>
               )}
 
-              {detailLesson.is_current && detailLesson.practiced && (
+              {detailLesson.is_current && detailLesson.practiced && !roadmap?.requires_checkpoint && (
                 <button onClick={advance} disabled={busy} data-testid="school-advance"
                         className="w-full bg-shSecondary text-bgHeader py-2.5 rounded-xl font-black text-[13px] uppercase tracking-widest shadow disabled:opacity-50">
                   <i className="fas fa-arrow-right mr-2"/>Continue
                 </button>
+              )}
+
+              {detailLesson.is_current && roadmap?.requires_checkpoint && (
+                <CheckpointPanel
+                  lessonId={detailLesson.lesson.id}
+                  practiced={detailLesson.practiced}
+                  rubric={roadmap.checkpoint_rubric}
+                  status={roadmap.checkpoint_status}
+                  onSubmit={submitCheckpoint}
+                  busy={busy}
+                />
               )}
             </div>
           </div>
@@ -239,6 +261,107 @@ export default function OnlineSchoolDashboard({ clientFirstName, onClose }) {
                         onClose={onPracticeClosed} onChanged={onPracticeClosed}/>
       )}
     </Overlay>
+  );
+}
+
+// Online School Phase 2 — Trainer Checkpoints & Grading. Renders whichever
+// state the current lesson's checkpoint is in: not yet practiced, ready to
+// submit, awaiting trainer review, prescribed more practice (with a live
+// remaining-count), or a Trainer Assist hold. Never advances anything
+// itself — the trainer's grade action is the only thing that moves the
+// enrollment forward for a checkpoint lesson (see server.py's
+// _advance_school_enrollment).
+function CheckpointPanel({ lessonId, practiced, rubric, status, onSubmit, busy }) {
+  if (!practiced) {
+    return (
+      <EmptyState icon="fa-video" message="Practice this lesson first, then submit a checkpoint video for your trainer to review." testid="school-checkpoint-needs-practice"/>
+    );
+  }
+
+  if (status?.on_hold) {
+    return (
+      <div className="bg-shBlue/10 border border-shBlue/40 rounded-xl p-4" data-testid="school-checkpoint-hold">
+        <p className="text-shBlue font-black uppercase tracking-widest text-[13px] mb-1"><i className="fas fa-handshake mr-1.5"/>Your trainer recommends hands-on help</p>
+        {status.trainer_feedback && <p className="text-shText text-[13px] mt-1">{status.trainer_feedback}</p>}
+        <p className="text-shTextMuted text-[12px] mt-2">Hang tight — a trainer will follow up before you can resubmit.</p>
+      </div>
+    );
+  }
+
+  if (status?.status === "awaiting_review") {
+    return (
+      <div className="bg-shPrimary/10 border border-shPrimary/40 rounded-xl p-4 text-center" data-testid="school-checkpoint-awaiting-review">
+        <i className="fas fa-hourglass-half text-shPrimary mb-1"/>
+        <p className="text-shPrimary font-black uppercase tracking-widest text-[13px]">Awaiting trainer review</p>
+      </div>
+    );
+  }
+
+  if (status?.status === "graded" && status.outcome === "prescribe_practice") {
+    const remaining = status.prescription?.practice_sessions_remaining;
+    const canResubmit = !remaining || remaining <= 0;
+    return (
+      <div className="space-y-3" data-testid="school-checkpoint-prescribed">
+        <div className="bg-shSecondary/10 border border-shSecondary/40 rounded-xl p-4">
+          <p className="text-shSecondary font-black uppercase tracking-widest text-[13px] mb-1"><i className="fas fa-rotate-left mr-1.5"/>A bit more practice first</p>
+          {status.trainer_feedback && <p className="text-shText text-[13px] mt-1">{status.trainer_feedback}</p>}
+          {remaining > 0 && (
+            <p className="text-shTextMuted text-[12px] mt-2" data-testid="school-checkpoint-remaining">
+              Practice {remaining} more time{remaining !== 1 ? "s" : ""} before resubmitting.
+            </p>
+          )}
+        </div>
+        {canResubmit && <CheckpointSubmitForm rubric={rubric} onSubmit={(v, f, n) => onSubmit(lessonId, v, f, n)} busy={busy}/>}
+      </div>
+    );
+  }
+
+  // not_submitted (or already graded+advanced, which won't render here —
+  // once advanced this lesson is no longer "current" so the roadmap simply
+  // moves on without this panel ever showing that state).
+  return <CheckpointSubmitForm rubric={rubric} onSubmit={(v, f, n) => onSubmit(lessonId, v, f, n)} busy={busy}/>;
+}
+
+function CheckpointSubmitForm({ rubric, onSubmit, busy }) {
+  const [videoFile, setVideoFile] = useState(null);
+  const [videoDataUrl, setVideoDataUrl] = useState("");
+  const [videoErr, setVideoErr] = useState("");
+  const [note, setNote] = useState("");
+
+  const onVideoUpload = (file, err) => {
+    if (err) { setVideoErr(err); return; }
+    setVideoErr("");
+    setVideoFile(file);
+    const reader = new FileReader();
+    reader.onload = () => setVideoDataUrl(reader.result || "");
+    reader.readAsDataURL(file);
+  };
+
+  return (
+    <div className="space-y-2" data-testid="school-checkpoint-submit-form">
+      {rubric?.submission_instructions && (
+        <div className="bg-shSecondary/5 border border-shSecondary/30 rounded-lg p-3">
+          <p className="text-[11px] font-black uppercase tracking-widest text-shSecondary mb-1"><i className="fas fa-circle-info mr-1.5"/>Filming instructions</p>
+          <p className="text-[13px] text-shText whitespace-pre-wrap">{rubric.submission_instructions}</p>
+        </div>
+      )}
+      <PracticeMediaUploader
+        photo="" onPhotoChange={() => {}} allowPhoto={false} allowVideo videoMaxMb={10}
+        videoId={videoFile ? "ready" : ""} videoName={videoFile?.name}
+        onVideoUpload={onVideoUpload}
+        onVideoClear={() => { setVideoFile(null); setVideoDataUrl(""); }}
+        testid="school-checkpoint-video"
+      />
+      {videoErr && <p className="text-shDanger text-[12px] font-bold">{videoErr}</p>}
+      <textarea value={note} onChange={(e) => setNote(e.target.value)} rows={2} placeholder="Note for your trainer (optional)"
+                data-testid="school-checkpoint-note"
+                className="w-full bg-[var(--sh-card-base)] border border-shBorder rounded p-2 text-shText text-sm"/>
+      <button onClick={() => onSubmit(videoDataUrl, videoFile?.name || "", note)} disabled={!videoDataUrl || busy}
+              data-testid="school-checkpoint-submit"
+              className="w-full bg-shPrimary text-bgHeader py-3 rounded-xl font-black text-[14px] uppercase tracking-widest shadow-lg disabled:opacity-50">
+        <i className="fas fa-video mr-2"/>Submit Checkpoint
+      </button>
+    </div>
   );
 }
 

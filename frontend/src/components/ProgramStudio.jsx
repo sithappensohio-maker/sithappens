@@ -833,6 +833,69 @@ function LessonEditor({ module: m, lesson: l, updateLesson, hwTemplates }) {
       <ExpandableSection title="Prerequisites and Advancement" icon="fa-stairs" testid="lesson-section-advancement">
         <SField label="Advancement criteria"><textarea value={l.advancement_criteria || ""} onChange={(e) => set({ advancement_criteria: e.target.value })} rows={2} className={inputCls}/></SField>
       </ExpandableSection>
+
+      <ExpandableSection title="Trainer Checkpoint" icon="fa-video" tone="accent" testid="lesson-section-checkpoint">
+        <div className="space-y-3">
+          <label className="flex items-center gap-2 text-[12px] text-shText">
+            <input type="checkbox" checked={!!l.checkpoint?.enabled}
+                   onChange={(e) => set({ checkpoint: { ...(l.checkpoint || {}), enabled: e.target.checked } })}
+                   data-testid="checkpoint-enabled-toggle"/>
+            Requires a trainer checkpoint before advancing — the client must submit a video for review instead of self-advancing
+          </label>
+          {l.checkpoint?.enabled && (
+            <div className="space-y-3 pl-3 border-l-2 border-shAccent/30 ml-1">
+              <SField label="Checkpoint title (optional — defaults to the lesson name)">
+                <input value={l.checkpoint?.title || ""} onChange={(e) => set({ checkpoint: { ...l.checkpoint, title: e.target.value } })} className={inputCls} data-testid="checkpoint-title"/>
+              </SField>
+              <SField label="Submission instructions (shown to the client)">
+                <textarea value={l.checkpoint?.submission_instructions || ""} onChange={(e) => set({ checkpoint: { ...l.checkpoint, submission_instructions: e.target.value } })} rows={2} className={inputCls} data-testid="checkpoint-submission-instructions"/>
+              </SField>
+              <CriteriaListEditor label="Handler criteria (at least one required)" testid="checkpoint-handler-criteria"
+                                   criteria={l.checkpoint?.handler_criteria || []}
+                                   onChange={(next) => set({ checkpoint: { ...l.checkpoint, handler_criteria: next } })}/>
+              <CriteriaListEditor label="Dog criteria (at least one required)" testid="checkpoint-dog-criteria"
+                                   criteria={l.checkpoint?.dog_criteria || []}
+                                   onChange={(next) => set({ checkpoint: { ...l.checkpoint, dog_criteria: next } })}/>
+              <SField label="Submission requirements (optional — e.g. filming angle)">
+                <textarea value={l.checkpoint?.submission_requirements || ""} onChange={(e) => set({ checkpoint: { ...l.checkpoint, submission_requirements: e.target.value } })} rows={2} className={inputCls} data-testid="checkpoint-submission-requirements"/>
+              </SField>
+              <SField label="Pass/readiness guidance — trainer-only, never shown to the client">
+                <textarea value={l.checkpoint?.pass_readiness_guidance || ""} onChange={(e) => set({ checkpoint: { ...l.checkpoint, pass_readiness_guidance: e.target.value } })} rows={2} className={inputCls} data-testid="checkpoint-pass-readiness-guidance"/>
+              </SField>
+            </div>
+          )}
+        </div>
+      </ExpandableSection>
+    </div>
+  );
+}
+
+/* ---------------------------------------------------- Checkpoint criteria */
+function CriteriaListEditor({ label, criteria, onChange, testid }) {
+  const addOne = () => onChange([...criteria, { id: undefined, name: "", guidance: "" }]);
+  const updateOne = (idx, patch) => onChange(criteria.map((c, i) => (i === idx ? { ...c, ...patch } : c)));
+  const removeOne = (idx) => onChange(criteria.filter((_, i) => i !== idx));
+  return (
+    <div data-testid={testid}>
+      <p className="text-[11px] font-black uppercase tracking-widest text-shTextMuted mb-1.5">{label}</p>
+      <div className="space-y-2">
+        {criteria.map((c, idx) => (
+          <div key={c.id || idx} className="flex gap-2 items-start bg-black/20 border border-shBorder rounded p-2" data-testid={`${testid}-row-${idx}`}>
+            <div className="flex-1 space-y-1">
+              <input value={c.name || ""} onChange={(e) => updateOne(idx, { name: e.target.value })}
+                     placeholder="Criterion name (e.g. Cue clarity)" className={inputCls} data-testid={`${testid}-name-${idx}`}/>
+              <input value={c.guidance || ""} onChange={(e) => updateOne(idx, { guidance: e.target.value })}
+                     placeholder="Grading guidance — trainer-only, optional" className={inputCls} data-testid={`${testid}-guidance-${idx}`}/>
+            </div>
+            <button type="button" onClick={() => removeOne(idx)} className="text-shTextMuted hover:text-shDanger px-2 py-1" data-testid={`${testid}-remove-${idx}`}>
+              <i className="fas fa-times"/>
+            </button>
+          </div>
+        ))}
+      </div>
+      <button type="button" onClick={addOne} className="mt-1.5 text-[12px] font-black uppercase tracking-widest text-shSecondary hover:text-shSecondary/80" data-testid={`${testid}-add`}>
+        <i className="fas fa-plus mr-1"/>Add criterion
+      </button>
     </div>
   );
 }

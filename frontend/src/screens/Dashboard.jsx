@@ -18,6 +18,7 @@ import { OwnerClock, EndOfDayPanel } from "../components/OwnerClockAndEndOfDay";
 import ReadinessChecklist from "../components/ReadinessChecklist";
 import DashboardQuickLinks from "../components/DashboardQuickLinks";
 import TrainingSessionWorkspace from "../components/TrainingSessionWorkspace";
+import CheckpointReviewQueue from "../components/CheckpointReviewQueue";
 import { useTheme } from "../lib/theme";
 import { toast } from "sonner";
 
@@ -53,6 +54,8 @@ export default function Dashboard({ onNavigate = () => {}, onJumpToDog = () => {
   const [pendingVax, setPendingVax] = useState([]);
   // Sprint 110di-82 — Pending homework day-submissions awaiting admin review.
   const [pendingHomework, setPendingHomework] = useState([]);
+  const [pendingCheckpoints, setPendingCheckpoints] = useState([]);
+  const [checkpointQueueOpen, setCheckpointQueueOpen] = useState(false);
   const [vaxPhoto, setVaxPhoto] = useState(null); // {photo, dog_name, vaccine}
   const [todayPnl, setTodayPnl] = useState(null);
   const [registerDay, setRegisterDay] = useState(null);
@@ -83,13 +86,16 @@ export default function Dashboard({ onNavigate = () => {}, onJumpToDog = () => {
     try {
       const br = brRef.current;
       const widgetOnNow = (id) => (br?.dashboard_widgets || {})[id] !== false;
-      const [s, st, pg, sv, vx, hw, lb, qr, pnl, reg] = await Promise.all([
+      const [s, st, pg, sv, vx, hw, cp, lb, qr, pnl, reg] = await Promise.all([
         api.get("/dashboard/stats"),
         api.get("/settings"),
         api.get("/programs/active-summary").catch(()=>({data:null})),
         api.get("/services").catch(()=>({data:[]})),
         api.get("/admin/vaccine-cert-uploads").catch(()=>({data:[]})),
         api.get("/admin/homework/pending-reviews").catch(()=>({data:[]})),
+        canRef.current("manage_training_sessions")
+          ? api.get("/admin/school/checkpoints/pending").catch(()=>({data:[]}))
+          : Promise.resolve({data:[]}),
         (br?.feature_visibility?.rewards !== false)
           ? api.get("/trophies/leaderboard").catch(()=>({data:{top_dogs:[],top_clients:[]}}))
           : Promise.resolve({data:{top_dogs:[],top_clients:[]}}),
@@ -107,6 +113,7 @@ export default function Dashboard({ onNavigate = () => {}, onJumpToDog = () => {
       setServices(sv.data || []);
       setPendingVax(Array.isArray(vx.data) ? vx.data : []);
       setPendingHomework(Array.isArray(hw.data) ? hw.data : []);
+      setPendingCheckpoints(Array.isArray(cp.data) ? cp.data : []);
       setLeaderboard(lb.data || { top_dogs: [], top_clients: [] });
       setQuoteRequests(Array.isArray(qr.data) ? qr.data : []);
       setTodayPnl(pnl.data);
@@ -346,6 +353,52 @@ export default function Dashboard({ onNavigate = () => {}, onJumpToDog = () => {
             {pendingHomework.length > 5 && (
               <p className="text-[12px] text-shTextMuted italic px-1">
                 + {pendingHomework.length - 5} more in the queue
+              </p>
+            )}
+          </div>
+        </div>
+      )}
+
+      {pendingCheckpoints.length > 0 && (
+        <div className="card-warning rounded-xl p-5 shadow-xl" data-testid="pending-checkpoint-reviews">
+          <div className="flex items-center justify-between mb-3 gap-3 flex-wrap">
+            <h3 className="text-xs font-black text-shAccent uppercase tracking-widest flex items-center gap-2">
+              <i className="fas fa-video"/> Checkpoints Awaiting Review · {pendingCheckpoints.length}
+            </h3>
+            <button onClick={() => setCheckpointQueueOpen(true)}
+                    data-testid="open-checkpoint-queue"
+                    className="text-[11px] font-black uppercase tracking-widest text-shAccent hover:text-shText border border-shAccent/40 hover:border-shAccent rounded px-3 py-1.5">
+              Open Review Queue <i className="fas fa-arrow-right ml-1"/>
+            </button>
+          </div>
+          <div className="space-y-2">
+            {pendingCheckpoints.slice(0, 5).map(c => (
+              <button key={c.id} type="button" onClick={() => setCheckpointQueueOpen(true)}
+                      data-testid={`pending-checkpoint-${c.id}`}
+                      className="w-full text-left flex items-center justify-between gap-3 bg-[var(--sh-card-base)]/50 hover:bg-[var(--sh-card-base)] rounded p-3 flex-wrap transition">
+                <div className="flex items-center gap-3 min-w-0 flex-1">
+                  <div className="w-10 h-10 rounded bg-shAccent/15 text-shAccent grid place-items-center shrink-0">
+                    <i className="fas fa-video"/>
+                  </div>
+                  <div className="text-xs min-w-0">
+                    <div className="font-black text-shText uppercase truncate">
+                      {c.dog_name || "—"}
+                      <span className="text-shTextMuted font-normal normal-case"> · {c.client_name || "—"}</span>
+                    </div>
+                    <div className="mt-1 flex flex-wrap items-center gap-2">
+                      <span className="text-shTextMuted truncate max-w-[260px]">{c.lesson_name || "Checkpoint"}</span>
+                      {c.submitted_at && (
+                        <span className="text-shTextMuted">submitted <span className="font-black text-shText">{new Date(c.submitted_at).toLocaleString()}</span></span>
+                      )}
+                    </div>
+                  </div>
+                </div>
+                <i className="fas fa-chevron-right text-shTextMuted shrink-0"/>
+              </button>
+            ))}
+            {pendingCheckpoints.length > 5 && (
+              <p className="text-[12px] text-shTextMuted italic px-1">
+                + {pendingCheckpoints.length - 5} more in the queue
               </p>
             )}
           </div>
@@ -750,6 +803,9 @@ export default function Dashboard({ onNavigate = () => {}, onJumpToDog = () => {
           onClose={()=>setTrainingTrackerFor(null)}
           onSaved={()=>{ setTrainingTrackerFor(null); load(); }}
         />
+      )}
+      {checkpointQueueOpen && (
+        <CheckpointReviewQueue onClose={() => setCheckpointQueueOpen(false)} onGraded={load}/>
       )}
       {checkoutFor && <CheckoutModal booking={checkoutFor} services={services}
                                      onRequestCancel={(b)=>{ setCheckoutFor(null); setCancelFor(b); }}

@@ -48,6 +48,7 @@ from email_service import (
     notify_client_booking_approved,
     notify_client_booking_rejected,
     notify_client_certificate_issued,
+    notify_client_checkpoint_graded,
     notify_client_day_reviewed,
     notify_client_homework_assigned,
     notify_client_low_credits,
@@ -15076,6 +15077,30 @@ class GoalIn(BaseModel):
     homework_template_ids: List[str] = []
 
 
+class CheckpointCriterionIn(BaseModel):
+    """Online School Phase 2 — one author-defined rubric line item. Never
+    hardcoded per-exercise; a curriculum author names whatever they want
+    graded (e.g. "Cue clarity" for a handler, "Latency" for a dog)."""
+    id: Optional[str] = None
+    name: str = Field(min_length=1)
+    guidance: Optional[str] = None  # TRAINER-ONLY — what differentiates a 1 from a 5; never sent to the client
+
+
+class CheckpointConfigIn(BaseModel):
+    """Online School Phase 2 — a lesson "requires a checkpoint" iff
+    `enabled` is true here; this is the single source of truth (no separate
+    boolean flag anywhere else to drift out of sync). Individual criterion
+    scores use the same 0-5 scale as GoalUpdate.score for one consistent
+    mental model app-wide."""
+    enabled: bool = False
+    title: Optional[str] = None  # defaults to the lesson name if unset
+    submission_instructions: Optional[str] = None  # client-facing filming instructions
+    handler_criteria: List[CheckpointCriterionIn] = []
+    dog_criteria: List[CheckpointCriterionIn] = []
+    submission_requirements: Optional[str] = None  # client-facing, e.g. "film from the side"
+    pass_readiness_guidance: Optional[str] = None  # TRAINER-ONLY, never sent to the client
+
+
 class LessonIn(BaseModel):
     """Training-school expansion (Phase 1) — an organizational/content layer
     sitting between a Module and its Skills. A lesson does NOT own progress
@@ -15104,6 +15129,8 @@ class LessonIn(BaseModel):
     advancement_criteria: Optional[str] = None
     suggested_homework_template_ids: List[str] = []
     skill_ids: List[str] = []  # ids into the parent module's `goals`
+    # Online School Phase 2 — Trainer Checkpoints & Grading.
+    checkpoint: Optional[CheckpointConfigIn] = None
 
 
 class ModuleIn(BaseModel):
@@ -15234,6 +15261,29 @@ def _stamp_ids(modules: List[dict]) -> List[dict]:
             }
             for f in _LESSON_OPTIONAL_FIELDS:
                 lesson[f] = l.get(f)
+            # Online School Phase 2 — stamp stable ids onto checkpoint
+            # criteria the exact same way goals/lessons already are, so
+            # criteria have durable ids for scoring even if the author
+            # never set one.
+            cp = l.get("checkpoint")
+            if cp:
+                lesson["checkpoint"] = {
+                    "enabled": bool(cp.get("enabled")),
+                    "title": cp.get("title"),
+                    "submission_instructions": cp.get("submission_instructions"),
+                    "handler_criteria": [
+                        {"id": c.get("id") or _gid(), "name": c["name"], "guidance": c.get("guidance")}
+                        for c in (cp.get("handler_criteria") or [])
+                    ],
+                    "dog_criteria": [
+                        {"id": c.get("id") or _gid(), "name": c["name"], "guidance": c.get("guidance")}
+                        for c in (cp.get("dog_criteria") or [])
+                    ],
+                    "submission_requirements": cp.get("submission_requirements"),
+                    "pass_readiness_guidance": cp.get("pass_readiness_guidance"),
+                }
+            else:
+                lesson["checkpoint"] = None
             lessons.append(lesson)
 
         out.append({
@@ -15324,6 +15374,25 @@ async def _validate_program_structure(modules: List[dict]) -> Dict[str, Any]:
             if not (l.get("trainer_instructions") or "").strip():
                 warnings.append({"code": "missing_trainer_instructions", "message": f"Lesson '{l.get('name', '')}' has no trainer instructions.", **where_l})
             _check_homework_refs(l.get("suggested_homework_template_ids") or [], where_l)
+
+            # Online School Phase 2 — checkpoint rubric validation. A lesson
+            # with no checkpoint, or checkpoint.enabled == false, is
+            # completely untouched by these checks (legacy lessons validate
+            # exactly as before).
+            cp = l.get("checkpoint")
+            if cp and cp.get("enabled"):
+                handler_criteria = cp.get("handler_criteria") or []
+                dog_criteria = cp.get("dog_criteria") or []
+                if not handler_criteria:
+                    errors.append({"code": "checkpoint_missing_handler_criteria", "message": f"Lesson '{l.get('name', '')}' requires a checkpoint but has no handler criteria.", **where_l})
+                if not dog_criteria:
+                    errors.append({"code": "checkpoint_missing_dog_criteria", "message": f"Lesson '{l.get('name', '')}' requires a checkpoint but has no dog criteria.", **where_l})
+                all_criteria = list(handler_criteria) + list(dog_criteria)
+                if any(not (c.get("name") or "").strip() for c in all_criteria):
+                    errors.append({"code": "checkpoint_blank_criterion_name", "message": f"Lesson '{l.get('name', '')}' has a checkpoint criterion with no name.", **where_l})
+                criterion_ids = [c.get("id") for c in all_criteria if c.get("id")]
+                if len(criterion_ids) != len(set(criterion_ids)):
+                    errors.append({"code": "checkpoint_duplicate_criterion_id", "message": f"Lesson '{l.get('name', '')}' has duplicate checkpoint criterion ids.", **where_l})
 
     return {"valid": len(errors) == 0, "errors": errors, "warnings": warnings}
 
@@ -16418,6 +16487,59 @@ def _lesson_is_practiced(hw: Optional[dict]) -> bool:
     return bool(hw.get("section_logs")) or hw.get("status") == "completed"
 
 
+async def _count_practice_sessions_since(homework_id: Optional[str], since_iso: Optional[str]) -> int:
+    """Online School Phase 2 — canonical, flavor-aware 'how many times has
+    this been practiced since X' count, used by the checkpoint resubmission
+    minimum-practice gate (and reusable by any future caller with the same
+    question). Non-daily-tracker homework: every section_logs entry logged
+    after since_iso counts — matches _lesson_is_practiced's own philosophy
+    for this flavor. Daily-tracker homework: only a day the client actually
+    completed and submitted counts (submission_status in submitted/
+    approved — the exact predicate already used elsewhere in this codebase
+    for daily-tracker progress, e.g. the pending-reviews/progress-summary
+    endpoints); a rest/skip day or an abandoned draft never counts."""
+    if not homework_id or not since_iso:
+        return 0
+    hw = await db.homework.find_one({"id": homework_id}, {"_id": 0, "section_logs": 1, "daily_tracker": 1})
+    if not hw:
+        return 0
+    is_daily_tracker = bool(hw.get("daily_tracker"))
+    count = 0
+    for log in (hw.get("section_logs") or []):
+        if (log.get("logged_at") or "") <= since_iso:
+            continue
+        if is_daily_tracker and log.get("submission_status") not in ("submitted", "approved"):
+            continue
+        count += 1
+    return count
+
+
+async def _active_refresher_entitlement(enrollment: dict) -> Optional[str]:
+    """Online School Phase 2 — narrow remediation entitlement. The CURRENT
+    lesson's most recent GRADED submission, if outcome=='prescribe_practice'
+    with prescription.action=='assign_refresher_lesson', entitles the
+    client to open that ONE prescribed lesson even though it may otherwise
+    be roadmap-locked — without unlocking anything else and without moving
+    current_module_id/current_lesson_id. Self-expiring by construction:
+    always computed fresh from 'the current lesson's latest submission,'
+    so it stops matching the instant the client submits a new checkpoint
+    for this lesson or advances past it — no separate unlock/expiry
+    bookkeeping anywhere."""
+    cur_lesson_id = enrollment.get("current_lesson_id")
+    if not cur_lesson_id:
+        return None
+    latest = await db.checkpoint_submissions.find_one(
+        {"enrollment_id": enrollment["id"], "lesson_id": cur_lesson_id, "status": "graded"},
+        {"_id": 0, "outcome": 1, "prescription": 1}, sort=[("graded_at", -1)],
+    )
+    if not latest or latest.get("outcome") != "prescribe_practice":
+        return None
+    prescription = latest.get("prescription") or {}
+    if prescription.get("action") != "assign_refresher_lesson":
+        return None
+    return prescription.get("refresher_lesson_id")
+
+
 async def _school_roadmap(enrollment: dict, dog_id: str) -> dict:
     """Server-internal (not client-safe) computation — the single source
     powering the roadmap response, the single-lesson lock check, and the
@@ -16497,6 +16619,27 @@ async def _school_roadmap(enrollment: dict, dog_id: str) -> dict:
         last_lessons = _effective_lesson_list(modules[cur_module_idx])
         is_final_lesson = bool(last_lessons) and last_lessons[-1].get("id") == cur_lesson_id
 
+    # Online School Phase 2 — checkpoint status for the CURRENT lesson
+    # only (mirrors the existing pattern of only enriching the current
+    # lesson with extra detail). Built via the same allowlist serializer
+    # every other client-facing checkpoint read uses.
+    requires_checkpoint = bool(current_lesson and (current_lesson.get("checkpoint") or {}).get("enabled"))
+    checkpoint_rubric = _client_safe_checkpoint_rubric(current_lesson.get("checkpoint")) if requires_checkpoint else None
+    checkpoint_status = None
+    if requires_checkpoint:
+        latest_cp = await db.checkpoint_submissions.find_one(
+            {"enrollment_id": enrollment["id"], "lesson_id": cur_lesson_id}, {"_id": 0}, sort=[("submitted_at", -1)],
+        )
+        if not latest_cp:
+            checkpoint_status = {"status": "not_submitted"}
+        else:
+            checkpoint_status = _client_safe_checkpoint_submission(latest_cp)
+            raw_prescription = latest_cp.get("prescription") or {}
+            min_required = raw_prescription.get("min_practice_sessions_required")
+            if checkpoint_status and checkpoint_status.get("prescription") and min_required:
+                count = await _count_practice_sessions_since(raw_prescription.get("tracked_homework_id"), raw_prescription.get("practice_count_since"))
+                checkpoint_status["prescription"]["practice_sessions_remaining"] = max(0, min_required - count)
+
     return {
         "modules": modules_out,
         "current_module_id": cur_module_id,
@@ -16505,6 +16648,9 @@ async def _school_roadmap(enrollment: dict, dog_id: str) -> dict:
         "current_lesson_practiced": practiced,
         "current_homework_id": (current_hw or {}).get("id"),
         "is_final_lesson": is_final_lesson,
+        "requires_checkpoint": requires_checkpoint,
+        "checkpoint_rubric": checkpoint_rubric,
+        "checkpoint_status": checkpoint_status,
     }
 
 
@@ -16537,6 +16683,9 @@ def _client_safe_school_roadmap(roadmap: dict) -> dict:
         "current_lesson": _client_safe_lesson(current_lesson) if current_lesson else None,
         "current_lesson_practiced": roadmap["current_lesson_practiced"],
         "is_final_lesson": roadmap["is_final_lesson"],
+        "requires_checkpoint": roadmap.get("requires_checkpoint", False),
+        "checkpoint_rubric": roadmap.get("checkpoint_rubric"),
+        "checkpoint_status": roadmap.get("checkpoint_status"),
     }
 
 
@@ -16546,6 +16695,84 @@ def _find_lesson_in_snapshot(enrollment: dict, lesson_id: str) -> Optional[dict]
             if l.get("id") == lesson_id:
                 return l
     return None
+
+
+# ─── Online School Phase 2 — Trainer Checkpoints & Grading ────────────────
+
+def _checkpoint_overall_scores(handler_scores: Optional[dict], dog_scores: Optional[dict]) -> dict:
+    """Derived Handler/Dog summary scores — NEVER stored, always computed
+    fresh from the authoritative per-criterion scores (a simple average).
+    The individual criterion scores remain the real assessment data."""
+    def _avg(scores):
+        vals = list((scores or {}).values())
+        return round(sum(vals) / len(vals), 1) if vals else None
+    return {"handler": _avg(handler_scores), "dog": _avg(dog_scores)}
+
+
+def _client_safe_checkpoint_rubric(checkpoint: Optional[dict]) -> Optional[dict]:
+    """Client-facing view of a lesson's checkpoint CONFIGURATION — never the
+    raw lesson.checkpoint dict, which carries trainer-only
+    pass_readiness_guidance and per-criterion guidance (grading guidance —
+    'what differentiates a 1 from a 5' — not filming instruction). Explicit
+    allowlist, not omission: a field added to CheckpointConfigIn later is
+    invisible here until deliberately added."""
+    if not checkpoint or not checkpoint.get("enabled"):
+        return None
+    return {
+        "title": checkpoint.get("title"),
+        "submission_instructions": checkpoint.get("submission_instructions"),
+        "handler_criteria": [{"id": c.get("id"), "name": c.get("name")} for c in (checkpoint.get("handler_criteria") or [])],
+        "dog_criteria": [{"id": c.get("id"), "name": c.get("name")} for c in (checkpoint.get("dog_criteria") or [])],
+        "submission_requirements": checkpoint.get("submission_requirements"),
+    }
+
+
+def _client_safe_prescription(prescription: Optional[dict]) -> Optional[dict]:
+    """Client-facing view of a prescribe_practice prescription's STATIC
+    fields only. Deliberately never exposes raw homework_template_id /
+    refresher_lesson_id / tracked_homework_id — a human-readable resolved
+    target name and the live practice_sessions_remaining count require an
+    async DB lookup and are merged in by the caller (see the checkpoint
+    status assembly in _school_roadmap)."""
+    if not prescription:
+        return None
+    return {
+        "action": prescription.get("action"),
+        "min_practice_sessions_required": prescription.get("min_practice_sessions_required"),
+    }
+
+
+def _client_safe_checkpoint_submission(sub: Optional[dict]) -> Optional[dict]:
+    """Client-facing view of the client's OWN checkpoint submission — built
+    from an explicit allowlist, never dict(sub) with keys popped, so a
+    field added to checkpoint_submissions later (grading_plan,
+    notification_sent*, last_advance_conflict_at, or anything else) is
+    invisible to the client until deliberately added here. Never includes:
+    pass_readiness_guidance, grading_plan, notification_sent*, or any
+    trainer_assist_hold bookkeeping beyond a plain on_hold bool."""
+    if not sub:
+        return None
+    status = sub.get("status")
+    out = {
+        "id": sub["id"],
+        "lesson_id": sub["lesson_id"],
+        "status": "graded" if status == "graded" else "awaiting_review",
+        "submitted_at": sub.get("submitted_at"),
+        "on_hold": bool(sub.get("trainer_assist_hold_active")),
+    }
+    if status == "graded":
+        overall = _checkpoint_overall_scores(sub.get("handler_scores"), sub.get("dog_scores"))
+        out.update({
+            "handler_scores": sub.get("handler_scores") or {},
+            "dog_scores": sub.get("dog_scores") or {},
+            "handler_overall": overall["handler"],
+            "dog_overall": overall["dog"],
+            "trainer_feedback": sub.get("trainer_feedback"),
+            "outcome": sub.get("outcome"),
+            "prescription": _client_safe_prescription(sub.get("prescription")),
+            "graded_at": sub.get("graded_at"),
+        })
+    return out
 
 
 async def _school_enrollment_for_client(school_enrollment_id: str, user: dict) -> tuple:
@@ -16717,6 +16944,23 @@ async def delete_school_enrollment(school_enrollment_id: str, _: dict = Depends(
     se = await db.school_enrollments.find_one({"id": school_enrollment_id}, {"_id": 0})
     if not se:
         raise HTTPException(status_code=404, detail="Enrollment not found")
+    # Online School Phase 2 — checkpoint history guard. A hard-delete here
+    # would silently orphan any checkpoint_submissions row (and the
+    # homework_media video it references) that points at this enrollment.
+    # An erroneous/test enrollment with zero checkpoint activity can still
+    # be hard-removed via the path below unchanged; once real checkpoint
+    # history exists, removal is refused cleanly rather than allowed to
+    # destroy it. A full history-preserving Withdraw Student workflow is a
+    # later phase — this is deliberately just a guard, not that workflow.
+    has_checkpoint_history = await db.checkpoint_submissions.count_documents(
+        {"school_enrollment_id": school_enrollment_id},
+    ) > 0
+    if has_checkpoint_history:
+        raise HTTPException(
+            status_code=409,
+            detail="This enrollment has checkpoint history and cannot be removed. "
+                   "A Withdraw Student workflow that preserves training history will be added in a later phase.",
+        )
     enrollment = await db.dog_programs.find_one({"id": se["enrollment_id"]}, {"_id": 0})
     if enrollment and enrollment.get("delivery_channel") != "online_school":
         raise HTTPException(status_code=409, detail="Refusing to remove — the linked enrollment is not an Online School enrollment.")
@@ -16796,11 +17040,29 @@ async def portal_school_lesson_detail(school_enrollment_id: str, lesson_id: str,
     se, enrollment = await _school_enrollment_for_client(school_enrollment_id, user)
     roadmap = await _school_roadmap(enrollment, se["dog_id"])
     lesson = next((l for m in roadmap["modules"] for l in m["lessons"] if l.get("id") == lesson_id), None)
+    module_name = None
+    if not lesson or lesson.get("status") == "locked":
+        # Online School Phase 2 — narrow remediation entitlement: a lesson
+        # the trainer explicitly prescribed as a refresher is accessible
+        # even if roadmap-locked (or inside an entirely locked future
+        # module, where the roadmap doesn't list it at all). Every other
+        # lesson's locked state is completely unaffected.
+        entitled_lesson_id = await _active_refresher_entitlement(enrollment)
+        if entitled_lesson_id == lesson_id:
+            full_lesson = _find_lesson_in_snapshot(enrollment, lesson_id)
+            if full_lesson:
+                lesson = {**full_lesson, "status": "available", "locked_reason": None, "is_current": False}
+                for m in (enrollment.get("program_snapshot") or {}).get("modules") or []:
+                    if any(l.get("id") == lesson_id for l in _effective_lessons(m)):
+                        module_name = m.get("name")
+                        break
     if not lesson:
         raise HTTPException(status_code=404, detail="Lesson not found")
     if lesson.get("status") == "locked":
         raise HTTPException(status_code=403, detail=lesson.get("locked_reason") or "This lesson is locked.")
-    module = next(m for m in roadmap["modules"] for l in m["lessons"] if l.get("id") == lesson_id)
+    if module_name is None:
+        module = next((m for m in roadmap["modules"] for l in m["lessons"] if l.get("id") == lesson_id), {})
+        module_name = module.get("name")
     skills = []
     for sid in (lesson.get("skill_ids") or []):
         goal = next((g for m in (enrollment.get("program_snapshot") or {}).get("modules") or []
@@ -16816,7 +17078,7 @@ async def portal_school_lesson_detail(school_enrollment_id: str, lesson_id: str,
     return {
         "lesson": _client_safe_lesson(lesson),
         "status": lesson.get("status"), "is_current": bool(lesson.get("is_current")),
-        "module_name": module.get("name"),
+        "module_name": module_name,
         "skills": skills,
         "has_practice_recipe": has_practice_recipe,
         "practiced": roadmap["current_lesson_practiced"] if lesson.get("is_current") else (lesson.get("status") == "completed"),
@@ -16832,6 +17094,16 @@ async def portal_school_start_practice(school_enrollment_id: str, lesson_id: str
     se, enrollment = await _school_enrollment_for_client(school_enrollment_id, user)
     roadmap = await _school_roadmap(enrollment, se["dog_id"])
     lesson = next((l for m in roadmap["modules"] for l in m["lessons"] if l.get("id") == lesson_id), None)
+    if not lesson or lesson.get("status") == "locked":
+        # Online School Phase 2 — same narrow remediation entitlement as
+        # portal_school_lesson_detail (see its comment for the full
+        # rationale): a trainer-prescribed refresher lesson is practiceable
+        # even while roadmap-locked.
+        entitled_lesson_id = await _active_refresher_entitlement(enrollment)
+        if entitled_lesson_id == lesson_id:
+            full_lesson = _find_lesson_in_snapshot(enrollment, lesson_id)
+            if full_lesson:
+                lesson = {**full_lesson, "status": "available", "locked_reason": None, "is_current": False}
     if not lesson:
         raise HTTPException(status_code=404, detail="Lesson not found")
     if lesson.get("status") == "locked":
@@ -16847,56 +17119,190 @@ async def portal_school_start_practice(school_enrollment_id: str, lesson_id: str
     return {"homework_id": hw["id"]}
 
 
-@api.post("/portal/school/{school_enrollment_id}/advance")
-async def portal_school_advance(school_enrollment_id: str, user: dict = Depends(get_current_user)):
-    """The only thing that ever moves current_lesson_id/current_module_id
-    for a school-delivered enrollment — explicit, client-initiated, and
-    gated on real practice having happened (never automatic, mirroring the
-    trainer-led session-completion pipeline's own explicit-only philosophy).
-    """
+# ─── Online School Phase 2 — checkpoint video submission ──────────────────
+# 10 MB raw ceiling: base64 inflates by 4/3, so 10 MB raw -> ~13.3 MB base64
+# (~83% of Mongo's 16 MB per-document BSON limit), leaving comfortable
+# headroom for the document's other fields. Verified against homework_media
+# (server.py's upload_day_video) being a flat, unchunked collection — no
+# GridFS/filesystem/cloud storage anywhere in this codebase — before this
+# ceiling was chosen; enforced server-side here, unlike upload_day_video's
+# existing client-side-only 15MB gate (a separate, pre-existing, out-of-
+# scope gap — not touched by this feature).
+CHECKPOINT_VIDEO_MAX_BYTES = 10 * 1024 * 1024
+ALLOWED_CHECKPOINT_VIDEO_MIME = {"video/mp4", "video/quicktime", "video/webm", "video/x-m4v", "video/3gpp"}
+
+
+class CheckpointSubmissionIn(BaseModel):
+    video: str = Field(min_length=10)  # base64 data URL, e.g. "data:video/mp4;base64,...."
+    filename: Optional[str] = ""
+    note: Optional[str] = ""
+
+
+class CheckpointPrescriptionIn(BaseModel):
+    """Online School Phase 2 — structured remediation, using EXISTING
+    curriculum/Practice Coach resources (never a new content-authoring
+    surface). Exactly one action; the grading endpoint resolves it to a
+    single tracked_homework_id the resubmission gate counts against."""
+    action: Literal["repeat_current_recipe", "assign_recipe", "assign_refresher_lesson"]
+    homework_template_id: Optional[str] = None      # required if action == assign_recipe
+    refresher_lesson_id: Optional[str] = None        # required if action == assign_refresher_lesson
+    min_practice_sessions_required: Optional[int] = None  # None = no enforced minimum
+
+
+async def _check_checkpoint_resubmission_allowed(school_enrollment_id: str, lesson_id: str) -> None:
+    """Online School Phase 2 — gates resubmission on the MOST RECENT
+    GRADED submission for this lesson (if any). Raises HTTPException if
+    resubmission is currently blocked: an active Trainer Assist hold, or
+    an unmet minimum-practice requirement from a prescribe_practice grade."""
+    latest = await db.checkpoint_submissions.find_one(
+        {"school_enrollment_id": school_enrollment_id, "lesson_id": lesson_id, "status": "graded"},
+        {"_id": 0}, sort=[("graded_at", -1)],
+    )
+    if not latest:
+        return
+    if latest.get("trainer_assist_hold_active"):
+        raise HTTPException(status_code=409, detail="A trainer will follow up before you can resubmit a checkpoint for this lesson.")
+    if latest.get("outcome") != "prescribe_practice":
+        return
+    prescription = latest.get("prescription") or {}
+    min_required = prescription.get("min_practice_sessions_required")
+    if not min_required:
+        return
+    count = await _count_practice_sessions_since(prescription.get("tracked_homework_id"), prescription.get("practice_count_since"))
+    if count < min_required:
+        remaining = min_required - count
+        raise HTTPException(
+            status_code=422,
+            detail=f"Practice {remaining} more time{'s' if remaining != 1 else ''} before resubmitting a checkpoint for this lesson.",
+        )
+
+
+def _validate_checkpoint_video(raw: str) -> int:
+    """Parses/validates a checkpoint video data URL, returns its
+    approximate raw byte size. Raises HTTPException on any problem."""
+    if not raw.startswith("data:"):
+        raise HTTPException(status_code=400, detail="Expected a base64 data URL for the video.")
+    try:
+        header, b64 = raw.split(",", 1)
+        mime = header.split(";")[0].replace("data:", "").lower().strip()
+    except Exception:
+        raise HTTPException(status_code=400, detail="Malformed video data URL.")
+    if mime not in ALLOWED_CHECKPOINT_VIDEO_MIME:
+        raise HTTPException(status_code=400, detail=f"Unsupported video type ({mime}).")
+    approx_bytes = (len(b64) * 3) // 4
+    if approx_bytes > CHECKPOINT_VIDEO_MAX_BYTES:
+        raise HTTPException(
+            status_code=400,
+            detail=f"Video too large ({approx_bytes // (1024 * 1024)} MB). Max is {CHECKPOINT_VIDEO_MAX_BYTES // (1024 * 1024)} MB (~10-15 seconds).",
+        )
+    return approx_bytes
+
+
+@api.post("/portal/school/{school_enrollment_id}/lessons/{lesson_id}/checkpoint")
+async def portal_school_submit_checkpoint(
+    school_enrollment_id: str, lesson_id: str, body: CheckpointSubmissionIn, user: dict = Depends(get_current_user),
+):
+    """Client submits a checkpoint video for trainer review. Two-record
+    write (homework_media video, then checkpoint_submissions), same
+    compensating-rollback idiom as school_enroll — but with the order
+    flipped relative to it: the row protected by the real duplicate-guard
+    index (cs_active_unique) goes SECOND here, so a concurrent duplicate is
+    rejected via DuplicateKeyError at the cost of occasionally orphaning a
+    just-uploaded video blob in that rare race — harmless (a leaf resource
+    with no other references) and best-effort cleaned up here regardless.
+    Flipped from school_enroll's order because, unlike dog_programs, the
+    video row has no natural way to exist without knowing the submission
+    it belongs to."""
     se, enrollment = await _school_enrollment_for_client(school_enrollment_id, user)
     roadmap = await _school_roadmap(enrollment, se["dog_id"])
     current_lesson = roadmap.get("current_lesson")
-    if not current_lesson:
-        raise HTTPException(status_code=409, detail="No current lesson to advance from.")
+    if not current_lesson or current_lesson.get("id") != lesson_id:
+        raise HTTPException(status_code=404, detail="This is not your current lesson.")
+    cp = current_lesson.get("checkpoint")
+    if not cp or not cp.get("enabled"):
+        raise HTTPException(status_code=422, detail="This lesson does not require a checkpoint.")
     if not roadmap["current_lesson_practiced"]:
-        raise HTTPException(status_code=422, detail=f"Practice {current_lesson.get('name')} at least once before continuing.")
+        raise HTTPException(status_code=422, detail=f"Practice {current_lesson.get('name')} at least once before submitting a checkpoint.")
+    await _check_checkpoint_resubmission_allowed(school_enrollment_id, lesson_id)
 
+    # Fast-path friendly-error pre-check — NOT the sole enforcement; the
+    # real enforcement is cs_active_unique, caught as DuplicateKeyError below.
+    existing = await db.checkpoint_submissions.find_one(
+        {"school_enrollment_id": school_enrollment_id, "lesson_id": lesson_id, "status": {"$in": ["pending", "grading"]}},
+        {"_id": 0, "id": 1},
+    )
+    if existing:
+        raise HTTPException(status_code=409, detail="A checkpoint for this lesson is already awaiting review.")
+
+    approx_bytes = _validate_checkpoint_video(body.video)
+
+    hw = await _lesson_practice_homework(se["dog_id"], lesson_id)
+    if not hw:
+        raise HTTPException(status_code=422, detail="No practice homework found for this lesson yet.")
+
+    media_id = _gid()
+    await db.homework_media.insert_one({
+        "id": media_id,
+        "homework_id": hw["id"],
+        "kind": "checkpoint_video",
+        "data": body.video,
+        "filename": (body.filename or "checkpoint")[:140],
+        "size_bytes": approx_bytes,
+        "uploaded_at": now_iso(),
+        "uploaded_by": user.get("id"),
+    })
+
+    submission = {
+        "id": _gid(),
+        "school_enrollment_id": school_enrollment_id,
+        "enrollment_id": enrollment["id"],
+        "dog_id": se["dog_id"],
+        "client_id": se["client_id"],
+        "lesson_id": lesson_id,
+        "module_id": roadmap["current_module_id"],
+        "lesson_name": current_lesson.get("name"),
+        "video_media_id": media_id,
+        "homework_id": hw["id"],
+        "client_note": body.note or "",
+        "rubric_snapshot": cp,
+        "status": "pending",
+        "submitted_at": now_iso(),
+        "created_at": now_iso(),
+    }
+    try:
+        await db.checkpoint_submissions.insert_one(submission)
+    except DuplicateKeyError:
+        await db.homework_media.delete_one({"id": media_id})
+        raise HTTPException(status_code=409, detail="A checkpoint for this lesson is already awaiting review.")
+    except Exception:
+        await db.homework_media.delete_one({"id": media_id})
+        raise HTTPException(status_code=500, detail="Checkpoint submission failed. Please try again.")
+    submission.pop("_id", None)
+
+    return {"checkpoint": _client_safe_checkpoint_submission(submission)}
+
+
+def _compute_next_school_position(enrollment: dict, cur_module_id: str, cur_lesson_id: str) -> dict:
+    """Pure computation of 'what does advancing from this exact position
+    mean' — used by BOTH portal_school_advance's self-advance path and the
+    checkpoint grading claim/resume step (Online School Phase 2), so there
+    is exactly one implementation of this lookup, never two that could
+    drift apart. Returns {"is_final", "next_module_id", "next_lesson_id"}
+    — for a final-lesson position, next_module_id is the SAME module
+    (unchanged) and next_lesson_id is None, matching what the dog_programs
+    $set has always done for program completion."""
     modules = sorted(
         (enrollment.get("program_snapshot") or {}).get("modules") or [],
         key=lambda m: (m.get("order", 0), m.get("name") or ""),
     )
-    cur_module_idx = next(i for i, m in enumerate(modules) if m.get("id") == roadmap["current_module_id"])
+    cur_module_idx = next(i for i, m in enumerate(modules) if m.get("id") == cur_module_id)
     cur_module = modules[cur_module_idx]
     lessons = _effective_lesson_list(cur_module)
-    cur_lesson_idx = next(i for i, l in enumerate(lessons) if l.get("id") == roadmap["current_lesson_id"])
+    cur_lesson_idx = next(i for i, l in enumerate(lessons) if l.get("id") == cur_lesson_id)
 
-    # Compare-and-swap on the exact (current_module_id, current_lesson_id)
-    # this roadmap was computed from. Online School hardening audit — two
-    # concurrent advance calls must never both apply an advancement on top
-    # of the same starting position (which would skip a lesson): the
-    # loser's filter matches zero documents, so it falls through to
-    # returning the enrollment's CURRENT (already-advanced) state instead
-    # of erroring or double-advancing. This also makes advance-twice safe/
-    # idempotent — a second call from the same client after a successful
-    # advance simply fails the "practice the new current lesson" check
-    # above on its own next attempt, never re-applies the same step.
-    read_module_id = roadmap["current_module_id"]
-    read_lesson_id = roadmap["current_lesson_id"]
-    cas_filter = {"id": enrollment["id"], "current_module_id": read_module_id, "current_lesson_id": read_lesson_id}
-
-    if roadmap["is_final_lesson"]:
-        cas = await db.dog_programs.find_one_and_update(
-            cas_filter, {"$set": {"current_lesson_id": None}},
-            projection={"_id": 0, "id": 1}, return_document=ReturnDocument.AFTER,
-        )
-        if cas is None:
-            fresh_se = await db.school_enrollments.find_one({"id": school_enrollment_id}, {"_id": 0, "status": 1})
-            return {"finished": (fresh_se or {}).get("status") == "completed", "school_enrollment_id": school_enrollment_id}
-        await db.school_enrollments.update_one({"id": school_enrollment_id}, {"$set": {
-            "status": "completed", "completed_at": now_iso(),
-        }})
-        return {"finished": True, "school_enrollment_id": school_enrollment_id}
+    is_final = (cur_module_idx == len(modules) - 1) and (cur_lesson_idx == len(lessons) - 1)
+    if is_final:
+        return {"is_final": True, "next_module_id": cur_module_id, "next_lesson_id": None}
 
     if cur_lesson_idx + 1 < len(lessons):
         next_module_id = cur_module.get("id")
@@ -16906,34 +17312,421 @@ async def portal_school_advance(school_enrollment_id: str, user: dict = Depends(
         next_module_id = next_module.get("id")
         next_lessons = _effective_lesson_list(next_module)
         next_lesson_id = next_lessons[0]["id"] if next_lessons else None
+    return {"is_final": False, "next_module_id": next_module_id, "next_lesson_id": next_lesson_id}
+
+
+async def _finish_school_advancement(
+    school_enrollment_id: str, enrollment: dict, se: dict,
+    next_module_id: Optional[str], next_lesson_id: Optional[str], is_final: bool,
+) -> None:
+    """Side effects after a successful (or already-applied) enrollment
+    position change — both idempotent, safe to run more than once for the
+    exact same logical advancement (Online School Phase 2's grading resume
+    step relies on this). Shared by the client's own portal_school_advance
+    and the trainer grading state machine."""
+    if is_final:
+        await db.school_enrollments.update_one(
+            {"id": school_enrollment_id, "status": {"$ne": "completed"}},
+            {"$set": {"status": "completed", "completed_at": now_iso()}},
+        )
+        return
+    if not next_lesson_id:
+        return
+    next_lesson = _find_lesson_in_snapshot(enrollment, next_lesson_id)
+    if not next_lesson:
+        return
+    fresh_enrollment = await db.dog_programs.find_one(
+        {"id": enrollment["id"]}, {"_id": 0, "id": 1, "auto_homework_log": 1},
+    ) or enrollment
+    try:
+        await _claim_school_lesson_homework(
+            fresh_enrollment, se["dog_id"], se.get("client_id"), next_lesson,
+            assigned_by=f"Online School · {next_lesson.get('name', 'Lesson')}",
+        )
+    except Exception as exc:
+        logger.warning("Online School next-lesson homework auto-assign failed: %s", exc)
+
+
+async def _advance_school_enrollment(se: dict, enrollment: dict, roadmap: dict) -> dict:
+    """The CAS-based advancement body, extracted from portal_school_advance
+    (Online School hardening audit's compare-and-swap design, unchanged)
+    so the client's self-advance path is exactly this one function. On a
+    CAS miss (a concurrent call already moved this exact position),
+    returns the enrollment's ACTUAL current position idempotently rather
+    than erroring or double-advancing — this is also what makes calling
+    advance twice safe: a second call after a successful advance simply
+    fails the caller's own 'practice the new current lesson' check on its
+    next attempt, never re-applies the same step."""
+    source_module_id = roadmap["current_module_id"]
+    source_lesson_id = roadmap["current_lesson_id"]
+    pos = _compute_next_school_position(enrollment, source_module_id, source_lesson_id)
+    cas_filter = {"id": enrollment["id"], "current_module_id": source_module_id, "current_lesson_id": source_lesson_id}
+
+    if pos["is_final"]:
+        cas = await db.dog_programs.find_one_and_update(
+            cas_filter, {"$set": {"current_lesson_id": None}},
+            projection={"_id": 0, "id": 1}, return_document=ReturnDocument.AFTER,
+        )
+        if cas is None:
+            fresh_se = await db.school_enrollments.find_one({"id": se["id"]}, {"_id": 0, "status": 1})
+            return {"finished": (fresh_se or {}).get("status") == "completed", "school_enrollment_id": se["id"]}
+        await _finish_school_advancement(se["id"], enrollment, se, pos["next_module_id"], None, True)
+        return {"finished": True, "school_enrollment_id": se["id"]}
 
     cas = await db.dog_programs.find_one_and_update(
-        cas_filter, {"$set": {"current_module_id": next_module_id, "current_lesson_id": next_lesson_id}},
+        cas_filter, {"$set": {"current_module_id": pos["next_module_id"], "current_lesson_id": pos["next_lesson_id"]}},
         projection={"_id": 0, "id": 1}, return_document=ReturnDocument.AFTER,
     )
     if cas is None:
-        # Lost the race — return the enrollment's actual current position
-        # idempotently rather than skipping a second lesson forward on top
-        # of whatever the winning concurrent call already applied.
         fresh = await db.dog_programs.find_one({"id": enrollment["id"]}, {"_id": 0, "current_module_id": 1, "current_lesson_id": 1})
         return {"finished": False, "current_module_id": (fresh or {}).get("current_module_id"), "current_lesson_id": (fresh or {}).get("current_lesson_id")}
 
-    if next_lesson_id:
-        next_module_doc = next((m for m in modules if m.get("id") == next_module_id), None)
-        next_lesson = _find_lesson_in_snapshot(enrollment, next_lesson_id) if next_module_doc else None
-        if next_lesson:
-            fresh_enrollment = await db.dog_programs.find_one(
-                {"id": enrollment["id"]}, {"_id": 0, "id": 1, "auto_homework_log": 1},
-            ) or enrollment
-            try:
-                await _claim_school_lesson_homework(
-                    fresh_enrollment, se["dog_id"], se.get("client_id"), next_lesson,
-                    assigned_by=f"Online School · {(next_lesson or {}).get('name', 'Lesson')}",
-                )
-            except Exception as exc:
-                logger.warning("Online School next-lesson homework auto-assign failed: %s", exc)
+    await _finish_school_advancement(se["id"], enrollment, se, pos["next_module_id"], pos["next_lesson_id"], False)
+    return {"finished": False, "current_module_id": pos["next_module_id"], "current_lesson_id": pos["next_lesson_id"]}
 
-    return {"finished": False, "current_module_id": next_module_id, "current_lesson_id": next_lesson_id}
+
+@api.post("/portal/school/{school_enrollment_id}/advance")
+async def portal_school_advance(school_enrollment_id: str, user: dict = Depends(get_current_user)):
+    """The only thing that ever moves current_lesson_id/current_module_id
+    for a school-delivered enrollment via the CLIENT's own action —
+    explicit, client-initiated, and gated on real practice having happened
+    (never automatic, mirroring the trainer-led session-completion
+    pipeline's own explicit-only philosophy). A checkpoint-required lesson
+    is never advanceable here at all — see _advance_school_enrollment for
+    the trainer grading state machine's own call to the same CAS logic.
+    """
+    se, enrollment = await _school_enrollment_for_client(school_enrollment_id, user)
+    roadmap = await _school_roadmap(enrollment, se["dog_id"])
+    current_lesson = roadmap.get("current_lesson")
+    if not current_lesson:
+        raise HTTPException(status_code=409, detail="No current lesson to advance from.")
+    # Online School Phase 2 — a checkpoint-required lesson can never be
+    # self-advanced by the client. The only path past it is the trainer's
+    # grade action (POST /admin/school/checkpoints/{id}/grade with
+    # outcome="advance"), which calls _advance_school_enrollment directly.
+    cp = current_lesson.get("checkpoint")
+    if cp and cp.get("enabled"):
+        raise HTTPException(status_code=422, detail="This lesson requires trainer review before continuing — submit a checkpoint video.")
+    if not roadmap["current_lesson_practiced"]:
+        raise HTTPException(status_code=422, detail=f"Practice {current_lesson.get('name')} at least once before continuing.")
+    return await _advance_school_enrollment(se, enrollment, roadmap)
+
+
+# ─── Online School Phase 2 — trainer checkpoint review & grading ──────────
+
+class CheckpointGradeIn(BaseModel):
+    handler_scores: Dict[str, int]
+    dog_scores: Dict[str, int]
+    feedback: str = ""
+    outcome: Literal["advance", "prescribe_practice", "trainer_assist_recommended"]
+    prescription: Optional[CheckpointPrescriptionIn] = None  # required when outcome == prescribe_practice
+
+
+def _checkpoint_queue_state(sub: dict) -> str:
+    """Derived, never stored — the trainer queue's display state (Online
+    School Phase 2): a submission mid-grade must never disappear from
+    staff view, a reconciliation conflict must stay visibly distinct until
+    resolved, and a graded submission with an active Trainer Assist hold
+    stays visible until a trainer explicitly clears it (otherwise there's
+    nowhere in the UI to find the 'Clear hold' action)."""
+    if sub.get("status") == "pending":
+        return "pending_review"
+    if sub.get("status") == "graded":
+        return "trainer_assist_hold"
+    if sub.get("last_advance_conflict_at"):
+        return "state_conflict"
+    return "grading_resume_needed"
+
+
+def _admin_safe_checkpoint(sub: dict) -> dict:
+    """Trainer-facing view — no allowlist restriction needed (trainers see
+    everything), but shapes derived overall scores in consistently."""
+    overall = _checkpoint_overall_scores(sub.get("handler_scores"), sub.get("dog_scores"))
+    return {**sub, "handler_overall": overall["handler"], "dog_overall": overall["dog"]}
+
+
+async def _notify_checkpoint_graded_once(sub: dict) -> None:
+    """Idempotent review notification — decoupled from the advance/
+    finalize logic, attempted on every path that reaches (or already
+    reached) 'graded', including a pure retry. Claims the send right via
+    CAS BEFORE sending, so the guarantee is 'at most one send' — a failure
+    between claim and the actual send is an acceptable silent miss (a
+    later retry tries again), never a duplicate. Standalone Mongo can't
+    guarantee 'exactly one' without transactions; callers must not let a
+    failure here fail the grade itself (see admin_school_checkpoint_grade
+    — grading already succeeded by the time this runs)."""
+    if sub.get("status") != "graded":
+        return
+    claimed = await db.checkpoint_submissions.find_one_and_update(
+        {"id": sub["id"], "notification_sent": {"$ne": True}},
+        {"$set": {"notification_sent": True, "notification_sent_at": now_iso()}},
+        projection={"_id": 0, "id": 1},
+    )
+    if claimed is None:
+        return
+    dog = await db.dogs.find_one({"id": sub["dog_id"]}, {"_id": 0, "name": 1})
+    client = await db.clients.find_one({"id": sub["client_id"]}, {"_id": 0})
+    if not client:
+        return
+    await notify_client_checkpoint_graded(
+        {**sub, "dog_name": (dog or {}).get("name")}, sub.get("outcome") or "", sub.get("trainer_feedback") or "", client,
+    )
+
+
+@api.get("/admin/school/checkpoints/pending")
+async def admin_school_checkpoints_pending(_: dict = Depends(require_admin_and_permission("manage_training_sessions"))):
+    """Trainer review queue. Returns pending, grading, AND graded-with-an-
+    active-Trainer-Assist-hold submissions — a grading operation
+    interrupted after its claim must never disappear from staff view, and
+    a Trainer Assist hold needs somewhere to be cleared from. State-
+    conflict rows (need a human, not just a retry) are sorted first."""
+    rows = await db.checkpoint_submissions.find(
+        {"$or": [
+            {"status": {"$in": ["pending", "grading"]}},
+            {"status": "graded", "trainer_assist_hold_active": True},
+        ]}, {"_id": 0},
+    ).sort("submitted_at", 1).to_list(200)
+    if not rows:
+        return []
+    dog_ids = list({r["dog_id"] for r in rows})
+    client_ids = list({r["client_id"] for r in rows})
+    dogs_by_id = {d["id"]: d for d in await db.dogs.find({"id": {"$in": dog_ids}}, {"_id": 0, "id": 1, "name": 1, "photo": 1}).to_list(500)}
+    clients_by_id = {c["id"]: c for c in await db.clients.find({"id": {"$in": client_ids}}, {"_id": 0, "id": 1, "name": 1}).to_list(500)}
+    out = []
+    for r in rows:
+        dog = dogs_by_id.get(r["dog_id"]) or {}
+        client = clients_by_id.get(r["client_id"]) or {}
+        out.append({
+            "id": r["id"], "school_enrollment_id": r["school_enrollment_id"],
+            "dog_id": r["dog_id"], "dog_name": dog.get("name"), "dog_photo": dog.get("photo") or "",
+            "client_id": r["client_id"], "client_name": client.get("name"),
+            "lesson_id": r["lesson_id"], "lesson_name": r.get("lesson_name"),
+            "client_note": r.get("client_note") or "",
+            "video_media_id": r.get("video_media_id"), "homework_id": r.get("homework_id"),
+            "rubric_snapshot": r.get("rubric_snapshot"),
+            "submitted_at": r.get("submitted_at"),
+            "outcome": r.get("outcome"), "trainer_feedback": r.get("trainer_feedback"),
+            "trainer_assist_hold_active": bool(r.get("trainer_assist_hold_active")),
+            "queue_state": _checkpoint_queue_state(r),
+        })
+    out.sort(key=lambda x: (0 if x["queue_state"] == "state_conflict" else 1, x["submitted_at"] or ""))
+    return out
+
+
+@api.post("/admin/school/checkpoints/{submission_id}/grade")
+async def admin_school_checkpoint_grade(
+    submission_id: str, body: CheckpointGradeIn, user: dict = Depends(require_admin_and_permission("manage_training_sessions")),
+):
+    """The durable pending -> grading -> graded state machine (Online
+    School Phase 2). The entire resolved grade — including, for
+    outcome=='advance', both the expected source position and the intended
+    target position — is persisted BEFORE any downstream effect runs, so a
+    failure between claim and finalize is always resumable by re-calling
+    this same endpoint: never a permanently-stuck submission, and never a
+    false 'already applied' when the enrollment actually moved somewhere
+    this grading plan never produced (that surfaces as an explicit,
+    recoverable conflict instead of a false success)."""
+    sub = await db.checkpoint_submissions.find_one({"id": submission_id}, {"_id": 0})
+    if not sub:
+        raise HTTPException(status_code=404, detail="Checkpoint submission not found")
+
+    if sub["status"] == "pending":
+        rubric = sub.get("rubric_snapshot") or {}
+        handler_ids = {c["id"] for c in (rubric.get("handler_criteria") or [])}
+        dog_criteria_ids = {c["id"] for c in (rubric.get("dog_criteria") or [])}
+        if set(body.handler_scores.keys()) != handler_ids:
+            raise HTTPException(status_code=422, detail="handler_scores must have exactly one score per handler criterion.")
+        if set(body.dog_scores.keys()) != dog_criteria_ids:
+            raise HTTPException(status_code=422, detail="dog_scores must have exactly one score per dog criterion.")
+        if any(not (0 <= v <= 5) for v in list(body.handler_scores.values()) + list(body.dog_scores.values())):
+            raise HTTPException(status_code=422, detail="Scores must be 0-5.")
+        if body.outcome == "prescribe_practice" and not body.prescription:
+            raise HTTPException(status_code=422, detail="prescription is required when outcome is prescribe_practice.")
+        if body.prescription and body.prescription.action == "assign_recipe" and not body.prescription.homework_template_id:
+            raise HTTPException(status_code=422, detail="homework_template_id is required when action is assign_recipe.")
+        if body.prescription and body.prescription.action == "assign_refresher_lesson" and not body.prescription.refresher_lesson_id:
+            raise HTTPException(status_code=422, detail="refresher_lesson_id is required when action is assign_refresher_lesson.")
+
+        prescription_plan = body.prescription.model_dump() if body.prescription else None
+        if prescription_plan is not None:
+            # Stamped ONCE, at claim time, never recomputed on a later
+            # resume — practice_count_since must stay a stable anchor even
+            # if the resolution step below (tracked_homework_id lookup) is
+            # re-run more than once.
+            prescription_plan["practice_count_since"] = now_iso()
+            prescription_plan["tracked_homework_id"] = None
+
+        grading_plan = {
+            "handler_scores": body.handler_scores, "dog_scores": body.dog_scores,
+            "feedback": body.feedback or "", "outcome": body.outcome, "prescription": prescription_plan,
+            "graded_by": user.get("id"), "graded_by_name": user.get("name"),
+        }
+        if body.outcome == "advance":
+            enrollment = await db.dog_programs.find_one({"id": sub["enrollment_id"]}, {"_id": 0})
+            if not enrollment:
+                raise HTTPException(status_code=404, detail="Enrollment not found")
+            pos = _compute_next_school_position(enrollment, sub["module_id"], sub["lesson_id"])
+            grading_plan.update({
+                "expected_source_module_id": sub["module_id"], "expected_source_lesson_id": sub["lesson_id"],
+                "intended_target_module_id": pos["next_module_id"], "intended_target_lesson_id": pos["next_lesson_id"],
+                "intended_target_is_final": pos["is_final"],
+            })
+        claimed = await db.checkpoint_submissions.find_one_and_update(
+            {"id": submission_id, "status": "pending"},
+            {"$set": {"status": "grading", "grading_plan": grading_plan}},
+            projection={"_id": 0}, return_document=ReturnDocument.AFTER,
+        )
+        sub = claimed or await db.checkpoint_submissions.find_one({"id": submission_id}, {"_id": 0})
+
+    if sub["status"] == "graded":
+        try:
+            await _notify_checkpoint_graded_once(sub)
+        except Exception as exc:
+            logger.warning("Online School checkpoint-graded notification failed: %s", exc)
+        return {"checkpoint": _admin_safe_checkpoint(sub)}
+
+    if sub["status"] != "grading":
+        raise HTTPException(status_code=409, detail=f"Unexpected submission status {sub['status']!r}")
+
+    plan = sub.get("grading_plan") or {}
+    outcome = plan.get("outcome")
+
+    if outcome == "advance":
+        se = await db.school_enrollments.find_one({"id": sub["school_enrollment_id"]}, {"_id": 0})
+        enrollment = await db.dog_programs.find_one({"id": sub["enrollment_id"]}, {"_id": 0})
+        if not se or not enrollment:
+            raise HTTPException(status_code=404, detail="Enrollment not found")
+        expected_source = (plan.get("expected_source_module_id"), plan.get("expected_source_lesson_id"))
+        is_final = bool(plan.get("intended_target_is_final"))
+        intended_target = (expected_source[0], None) if is_final else (plan.get("intended_target_module_id"), plan.get("intended_target_lesson_id"))
+        current = (enrollment.get("current_module_id"), enrollment.get("current_lesson_id"))
+
+        if current == expected_source:
+            cas_filter = {"id": enrollment["id"], "current_module_id": expected_source[0], "current_lesson_id": expected_source[1]}
+            cas_set = {"current_lesson_id": None} if is_final else {"current_module_id": intended_target[0], "current_lesson_id": intended_target[1]}
+            cas = await db.dog_programs.find_one_and_update(
+                cas_filter, {"$set": cas_set}, projection={"_id": 0, "id": 1}, return_document=ReturnDocument.AFTER,
+            )
+            if cas is not None:
+                await _finish_school_advancement(
+                    se["id"], enrollment, se,
+                    plan.get("intended_target_module_id"), None if is_final else intended_target[1], is_final,
+                )
+                current = intended_target
+            else:
+                fresh = await db.dog_programs.find_one({"id": enrollment["id"]}, {"_id": 0, "current_module_id": 1, "current_lesson_id": 1})
+                current = (fresh.get("current_module_id"), fresh.get("current_lesson_id"))
+
+        if current != intended_target:
+            # The enrollment moved to a position this grading plan never
+            # produced (some unrelated write happened between claim and
+            # resume). Never finalize as success — leave status="grading",
+            # flag for a human, return an explicit, recoverable conflict.
+            await db.checkpoint_submissions.update_one(
+                {"id": submission_id}, {"$set": {"last_advance_conflict_at": now_iso()}},
+            )
+            raise HTTPException(
+                status_code=409,
+                detail={"error_code": "checkpoint_advance_state_conflict",
+                        "message": "This enrollment has moved since this checkpoint was submitted. Manual reconciliation needed."},
+            )
+    elif outcome == "trainer_assist_recommended":
+        pass  # hold flag set at finalize below — the real hold
+    elif outcome == "prescribe_practice":
+        # Resolve the ONE tracked_homework_id the resubmission gate counts
+        # against, regardless of action — idempotent-safe-to-resume:
+        # repeat_current_recipe/assign_refresher_lesson reuse the already-
+        # idempotent _lesson_practice_homework/_claim_school_lesson_homework
+        # lookups; assign_recipe uses the same atomic-claim-trigger idiom
+        # the trainer-led completion pipeline already relies on, so a
+        # resumed retry can never create a second duplicate homework row.
+        prescription = dict(plan.get("prescription") or {})
+        action = prescription.get("action")
+        enrollment = await db.dog_programs.find_one({"id": sub["enrollment_id"]}, {"_id": 0})
+        if not enrollment:
+            raise HTTPException(status_code=404, detail="Enrollment not found")
+        tracked_homework_id = None
+        if action == "repeat_current_recipe":
+            hw = await _lesson_practice_homework(sub["dog_id"], sub["lesson_id"])
+            tracked_homework_id = (hw or {}).get("id") or sub.get("homework_id")
+        elif action == "assign_recipe":
+            template_id = prescription.get("homework_template_id")
+            trigger = f"checkpoint_prescription:{submission_id}"
+            existing_log = {e.get("trigger"): e for e in (enrollment.get("auto_homework_log") or [])}
+            entry = existing_log.get(trigger)
+            if entry and entry.get("homework_id"):
+                tracked_homework_id = entry["homework_id"]
+            else:
+                if not entry:
+                    won = await _claim_auto_homework_trigger(enrollment["id"], template_id, trigger)
+                else:
+                    won = False  # claimed by a prior attempt that hasn't finished yet
+                if won:
+                    dog = await db.dogs.find_one({"id": sub["dog_id"]}, {"_id": 0})
+                    client = await db.clients.find_one({"id": sub["client_id"]}, {"_id": 0})
+                    hw = await _create_homework_from_template_internal(
+                        dog, client, template_id, assigned_by="Trainer prescription", source_lesson_id=sub["lesson_id"],
+                    )
+                    if hw:
+                        await _finalize_auto_homework_claim(enrollment["id"], trigger, hw["id"])
+                        tracked_homework_id = hw["id"]
+                else:
+                    fresh_enrollment = await db.dog_programs.find_one({"id": enrollment["id"]}, {"_id": 0, "auto_homework_log": 1})
+                    fresh_log = {e.get("trigger"): e for e in ((fresh_enrollment or {}).get("auto_homework_log") or [])}
+                    tracked_homework_id = (fresh_log.get(trigger) or {}).get("homework_id")
+        elif action == "assign_refresher_lesson":
+            refresher_lesson = _find_lesson_in_snapshot(enrollment, prescription.get("refresher_lesson_id"))
+            if refresher_lesson:
+                hw = await _claim_school_lesson_homework(
+                    enrollment, sub["dog_id"], sub["client_id"], refresher_lesson,
+                    assigned_by=f"Online School · Refresher: {refresher_lesson.get('name', 'Lesson')}",
+                )
+                tracked_homework_id = (hw or {}).get("id")
+        prescription["tracked_homework_id"] = tracked_homework_id
+        plan = {**plan, "prescription": prescription}
+
+    finalize_set = {
+        "status": "graded", "handler_scores": plan.get("handler_scores"), "dog_scores": plan.get("dog_scores"),
+        "trainer_feedback": plan.get("feedback"), "outcome": outcome, "prescription": plan.get("prescription"),
+        "graded_at": now_iso(), "graded_by": plan.get("graded_by"), "graded_by_name": plan.get("graded_by_name"),
+    }
+    if outcome == "trainer_assist_recommended":
+        finalize_set["trainer_assist_hold_active"] = True
+    finalized = await db.checkpoint_submissions.find_one_and_update(
+        {"id": submission_id, "status": "grading"},
+        {"$set": finalize_set, "$unset": {"grading_plan": 1, "last_advance_conflict_at": 1}},
+        projection={"_id": 0}, return_document=ReturnDocument.AFTER,
+    )
+    final_sub = finalized or await db.checkpoint_submissions.find_one({"id": submission_id}, {"_id": 0})
+    try:
+        await _notify_checkpoint_graded_once(final_sub)
+    except Exception as exc:
+        logger.warning("Online School checkpoint-graded notification failed: %s", exc)
+    return {"checkpoint": _admin_safe_checkpoint(final_sub)}
+
+
+@api.post("/admin/school/checkpoints/{submission_id}/clear-trainer-assist-hold")
+async def admin_school_checkpoint_clear_trainer_assist_hold(
+    submission_id: str, user: dict = Depends(require_admin_and_permission("manage_training_sessions")),
+):
+    """'Trainer Assist Complete / Allow Resubmission' — the smallest
+    operational action needed to lift a Trainer Assist hold (Online School
+    Phase 2). No scheduling/booking/payment here — this only flips the
+    hold flag so the client can resubmit a checkpoint again; it never
+    fabricates progress, scores, mastery, or advancement. Idempotent:
+    calling this on an already-cleared (or never-held) submission is a
+    no-op success, never an error — matches the CAS pattern used
+    throughout this feature rather than a check-then-act race."""
+    sub = await db.checkpoint_submissions.find_one({"id": submission_id}, {"_id": 0})
+    if not sub:
+        raise HTTPException(status_code=404, detail="Checkpoint submission not found")
+    claimed = await db.checkpoint_submissions.find_one_and_update(
+        {"id": submission_id, "trainer_assist_hold_active": True},
+        {"$set": {"trainer_assist_hold_active": False, "hold_cleared_at": now_iso(), "hold_cleared_by": user.get("id")}},
+        projection={"_id": 0}, return_document=ReturnDocument.AFTER,
+    )
+    final_sub = claimed or sub
+    return {"checkpoint": _admin_safe_checkpoint(final_sub)}
 
 
 # ─── Sprint 110di-69 · Training Tracker (trainer-side batch + audit) ──────
@@ -24196,6 +24989,18 @@ TSL_ID_UNIQUE_INDEX_NAME = "tsl_id_unique"
 SE_ID_UNIQUE_INDEX_NAME = "se_id_unique"
 SE_ENROLLMENT_ID_UNIQUE_INDEX_NAME = "se_enrollment_id_unique"
 DP_ONLINE_ACTIVE_UNIQUE_INDEX_NAME = "dp_online_active_unique"
+# Online School Phase 2 (Trainer Checkpoints & Grading) — two more indexes
+# on the same mandatory startup-verification mechanism:
+#   - cs_id_unique: checkpoint_submissions.id is the public identity every
+#     grade/clear-hold/lookup endpoint is keyed on.
+#   - cs_active_unique: partial unique on (school_enrollment_id, lesson_id)
+#     where status is "pending" OR "grading" — at most one ACTIVE (not yet
+#     fully graded) checkpoint per lesson at the database level, closing
+#     the same TOCTOU class dp_online_active_unique closes. Both active
+#     states are covered (not just "pending") because a submission mid-
+#     grade must still block a duplicate new submission.
+CS_ID_UNIQUE_INDEX_NAME = "cs_id_unique"
+CS_ACTIVE_UNIQUE_INDEX_NAME = "cs_active_unique"
 
 
 class CriticalIndexError(RuntimeError):
@@ -24291,6 +25096,9 @@ async def _ensure_critical_training_indexes() -> None:
         (db.school_enrollments, [("enrollment_id", 1)], True, None, SE_ENROLLMENT_ID_UNIQUE_INDEX_NAME),
         (db.dog_programs, [("dog_id", 1), ("program_id", 1)], True,
          {"status": "active", "delivery_channel": "online_school"}, DP_ONLINE_ACTIVE_UNIQUE_INDEX_NAME),
+        (db.checkpoint_submissions, [("id", 1)], True, None, CS_ID_UNIQUE_INDEX_NAME),
+        (db.checkpoint_submissions, [("school_enrollment_id", 1), ("lesson_id", 1)], True,
+         {"status": {"$in": ["pending", "grading"]}}, CS_ACTIVE_UNIQUE_INDEX_NAME),
     ]
     for coll, key, unique, partial, name in specs:
         create_kwargs: Dict[str, Any] = {"unique": unique, "name": name}

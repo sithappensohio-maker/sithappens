@@ -1612,6 +1612,51 @@ async def notify_client_day_reviewed(hw: dict, day_number: int, action: str, rev
     )
 
 
+async def notify_client_checkpoint_graded(sub: dict, outcome: str, feedback: str, client: dict) -> None:
+    """Online School Phase 2 — a trainer just graded a client's checkpoint
+    submission. Caller (server.py's grading state machine) is responsible
+    for ensuring this is dispatched at most once per graded submission —
+    see the notification-claim CAS in the grading endpoint."""
+    to_email = client.get("email", "")
+    if not to_email:
+        return
+    first_name = (client.get("name") or "there").split(" ")[0]
+    dog_name = sub.get("dog_name") or "your pup"
+    lesson_name = sub.get("lesson_name") or "your checkpoint"
+    if outcome == "advance":
+        emoji = "🎉"
+        headline = f"{lesson_name} — you're moving on!"
+        body_intro = f"Great work, {first_name}! Your trainer reviewed {dog_name}'s checkpoint video and you're ready for the next lesson."
+    elif outcome == "trainer_assist_recommended":
+        emoji = "🤝"
+        headline = f"{lesson_name} — your trainer recommends hands-on help"
+        body_intro = f"Hi {first_name}, your trainer watched {dog_name}'s checkpoint video and thinks a bit of hands-on help would go a long way here. They'll be in touch."
+    else:
+        emoji = "🔁"
+        headline = f"{lesson_name} — a bit more practice first"
+        body_intro = f"Hi {first_name}, your trainer reviewed {dog_name}'s checkpoint video and has some practice for you before trying again."
+    rows = [("Dog", dog_name), ("Lesson", lesson_name)]
+    if feedback:
+        note = feedback if len(feedback) <= 400 else feedback[:400] + "…"
+        rows.append(("Feedback from your trainer", note))
+    cta_url = f"{APP_PUBLIC_URL}/" if APP_PUBLIC_URL else None
+    await _dispatch(
+        slug="client_checkpoint_graded",
+        to_email=to_email,
+        ctx={
+            "first_name": first_name, "client_name": client.get("name", ""),
+            "dog_name": dog_name, "lesson_name": lesson_name,
+            "outcome": outcome, "feedback": feedback or "",
+        },
+        rows=rows,
+        cta_url=cta_url,
+        fallback_title=f"{emoji} {headline}",
+        fallback_intro=body_intro,
+        fallback_subject=headline,
+        fallback_cta_text="Open Portal" if cta_url else "",
+    )
+
+
 async def notify_client_homework_assigned(hw: dict, client: dict) -> None:
     """A client just got a new homework assignment — let them know."""
     to_email = client.get("email", "")

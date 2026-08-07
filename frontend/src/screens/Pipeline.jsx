@@ -5,6 +5,7 @@ import PageHero from "../components/PageHero";
 import ReviewRequestButton from "../components/ReviewRequestButton";
 import { useLiveRefresh } from "../lib/useLiveRefresh";
 import TrainingSessionWorkspace from "../components/TrainingSessionWorkspace";
+import CheckpointReviewQueue from "../components/CheckpointReviewQueue";
 import CsvImportButton from "../components/CsvImportButton";
 import { parseTrainingTipsCsv, TRAINING_TIPS_CSV_SAMPLE } from "../lib/csvImport";
 import { toast } from "sonner";
@@ -62,6 +63,10 @@ export default function Pipeline({ onJumpToDog }) {
   // server-backed draft pipeline — there is no longer a second, lighter
   // modal that mutates goal_progress directly.
   const [workspaceFor, setWorkspaceFor] = useState(null);
+  // Online School Phase 2 — Trainer Checkpoints & Grading entry point,
+  // living next to Today's Training Dogs (the trainer daily-ops surface).
+  const [pendingCheckpointCount, setPendingCheckpointCount] = useState(0);
+  const [checkpointQueueOpen, setCheckpointQueueOpen] = useState(false);
 
   const loadToday = async () => {
     setTodayLoading(true);
@@ -71,7 +76,13 @@ export default function Pipeline({ onJumpToDog }) {
     } catch { setTodayRows([]); }
     setTodayLoading(false);
   };
-  useEffect(() => { loadToday(); }, []);
+  const loadPendingCheckpoints = async () => {
+    try {
+      const { data } = await api.get("/admin/school/checkpoints/pending");
+      setPendingCheckpointCount((data || []).length);
+    } catch { setPendingCheckpointCount(0); }
+  };
+  useEffect(() => { loadToday(); loadPendingCheckpoints(); }, []);
   useLiveRefresh(loadToday, { intervalMs: 30_000 });
 
   const load = async () => {
@@ -210,7 +221,15 @@ export default function Pipeline({ onJumpToDog }) {
         <div className="space-y-3" data-testid="today-training-dogs">
           <div className="flex items-center justify-between flex-wrap gap-2">
             <p className="text-[13px] font-black uppercase tracking-widest text-shText"><i className="fas fa-paw mr-1.5 text-shPrimary"/>Today&rsquo;s Training Dogs</p>
-            {!todayLoading && <span className="text-[12px] text-shTextMuted font-black uppercase tracking-widest">{todayRows.length}</span>}
+            <div className="flex items-center gap-2">
+              {pendingCheckpointCount > 0 && (
+                <button onClick={() => setCheckpointQueueOpen(true)} data-testid="open-checkpoint-queue-pipeline"
+                        className="text-[11px] font-black uppercase tracking-widest text-shAccent hover:text-shText border border-shAccent/40 hover:border-shAccent rounded px-2.5 py-1">
+                  <i className="fas fa-video mr-1"/>Checkpoints · {pendingCheckpointCount}
+                </button>
+              )}
+              {!todayLoading && <span className="text-[12px] text-shTextMuted font-black uppercase tracking-widest">{todayRows.length}</span>}
+            </div>
           </div>
 
           {todayLoading && <p className="p-6 text-center text-shTextMuted text-sm"><i className="fas fa-spinner fa-spin mr-2"/>Loading…</p>}
@@ -307,6 +326,9 @@ export default function Pipeline({ onJumpToDog }) {
         onClose={() => setWorkspaceFor(null)}
         onSaved={() => { setWorkspaceFor(null); loadToday(); load(); }}
       />
+    )}
+    {checkpointQueueOpen && (
+      <CheckpointReviewQueue onClose={() => setCheckpointQueueOpen(false)} onGraded={loadPendingCheckpoints}/>
     )}
     </>
   );

@@ -5,9 +5,9 @@
 // network directly and never invents a new storage path.
 import { useRef } from "react";
 
-const VIDEO_MAX_MB = 15;
+const DEFAULT_VIDEO_MAX_MB = 15;
 
-export default function PracticeMediaUploader({ photo, onPhotoChange, videoId, videoName, onVideoUpload, uploadingVideo, onVideoClear, allowVideo = true, testid }) {
+export default function PracticeMediaUploader({ photo, onPhotoChange, videoId, videoName, onVideoUpload, uploadingVideo, onVideoClear, allowVideo = true, allowPhoto = true, testid, videoMaxMb = DEFAULT_VIDEO_MAX_MB }) {
   const photoRef = useRef(null);
   const videoRef = useRef(null);
 
@@ -22,15 +22,16 @@ export default function PracticeMediaUploader({ photo, onPhotoChange, videoId, v
   const pickVideo = (e) => {
     const f = e.target.files?.[0];
     if (!f) return;
-    if (f.size > VIDEO_MAX_MB * 1024 * 1024) {
-      onVideoUpload(null, `Video too large — keep it under ${VIDEO_MAX_MB} MB (≈ 10-15 seconds).`);
+    if (f.size > videoMaxMb * 1024 * 1024) {
+      onVideoUpload(null, `Video too large — keep it under ${videoMaxMb} MB (≈ 10-15 seconds).`);
       return;
     }
     onVideoUpload(f);
   };
 
   return (
-    <div className={allowVideo ? "grid grid-cols-2 gap-2" : "grid grid-cols-1 gap-2"} data-testid={testid}>
+    <div className={allowVideo && allowPhoto ? "grid grid-cols-2 gap-2" : "grid grid-cols-1 gap-2"} data-testid={testid}>
+      {allowPhoto && (
       <div>
         <label className="text-[10px] font-black uppercase tracking-widest text-shTextMuted block">Photo</label>
         {photo ? (
@@ -48,6 +49,7 @@ export default function PracticeMediaUploader({ photo, onPhotoChange, videoId, v
           </button>
         )}
       </div>
+      )}
       {allowVideo && (
         <div>
           <label className="text-[10px] font-black uppercase tracking-widest text-shTextMuted block">Video</label>
@@ -66,7 +68,7 @@ export default function PracticeMediaUploader({ photo, onPhotoChange, videoId, v
           )}
         </div>
       )}
-      <input ref={photoRef} type="file" accept="image/*" onChange={pickPhoto} className="hidden"/>
+      {allowPhoto && <input ref={photoRef} type="file" accept="image/*" onChange={pickPhoto} className="hidden"/>}
       {allowVideo && <input ref={videoRef} type="file" accept="video/*" onChange={pickVideo} className="hidden"/>}
     </div>
   );
