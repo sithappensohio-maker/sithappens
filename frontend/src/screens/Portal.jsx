@@ -2449,7 +2449,8 @@ export default function Portal() {
       )}
       {schoolOpen && (
         <OnlineSchoolDashboard clientFirstName={user.name?.split(" ")[0] || user.name}
-                                onClose={() => { setSchoolOpen(false); loadAll(); }}/>
+                                onClose={() => { setSchoolOpen(false); loadAll(); }}
+                                onContactTrainer={() => { setSchoolOpen(false); setMessagesOpen(true); }}/>
       )}
       {lightbox.open && (
         <Lightbox photos={lightbox.photos} index={lightbox.index}

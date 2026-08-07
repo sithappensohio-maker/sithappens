@@ -844,6 +844,12 @@ function LessonEditor({ module: m, lesson: l, updateLesson, hwTemplates }) {
           </label>
           {l.checkpoint?.enabled && (
             <div className="space-y-3 pl-3 border-l-2 border-shAccent/30 ml-1">
+              <label className="flex items-center gap-2 text-[12px] text-shText">
+                <input type="checkbox" checked={l.checkpoint?.assessment_type === "final_assessment"}
+                       onChange={(e) => set({ checkpoint: { ...l.checkpoint, assessment_type: e.target.checked ? "final_assessment" : "checkpoint" } })}
+                       data-testid="checkpoint-final-assessment-toggle"/>
+                Mark as the program's Final Assessment — client sees "Final Assessment" instead of "Checkpoint"; only one lesson per program may be marked this way
+              </label>
               <SField label="Checkpoint title (optional — defaults to the lesson name)">
                 <input value={l.checkpoint?.title || ""} onChange={(e) => set({ checkpoint: { ...l.checkpoint, title: e.target.value } })} className={inputCls} data-testid="checkpoint-title"/>
               </SField>

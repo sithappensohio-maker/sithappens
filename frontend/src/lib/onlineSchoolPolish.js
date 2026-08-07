@@ -73,3 +73,27 @@ export function continueButtonLabel(roadmap) {
 export function formatCompletionPct(pct) {
   return `${Math.max(0, Math.min(100, Math.round(pct || 0)))}% complete`;
 }
+
+// Online School Phase 3 — Student Home's "Trainer Status" line. Deliberately
+// reads the CURRENT lesson's live checkpoint_status only (not history —
+// see recentFeedbackFromHistory below for why those are different
+// questions). Every branch maps to a real, already-returned field; there is
+// no "everything's fine, guessing" fallback beyond the genuinely correct
+// default of "no trainer action needed" when no checkpoint is in play.
+export function trainerStatusLabel(roadmap) {
+  const status = roadmap?.requires_checkpoint ? roadmap.checkpoint_status : null;
+  // Color rules: orange = checkpoint/attention/trainer review, purple =
+  // Trainer Assist/special support, muted = nothing needed right now.
+  if (status?.on_hold) return { label: "Trainer Assist recommended", tone: "purple", icon: "fa-handshake" };
+  if (status?.status === "awaiting_review") return { label: "Checkpoint awaiting review", tone: "accent", icon: "fa-hourglass-half" };
+  if (status?.status === "graded" && status.outcome === "prescribe_practice") return { label: "Practice plan assigned", tone: "accent", icon: "fa-rotate-left" };
+  return { label: "No trainer action needed", tone: "muted", icon: "fa-circle-check" };
+}
+
+// The newest GRADED item from /portal/school/{id}/checkpoint-history — NOT
+// roadmap.checkpoint_status, since an "advance" outcome moves the current
+// lesson forward and the just-reviewed submission is no longer "the
+// current lesson's" checkpoint (Phase 3 review correction).
+export function recentFeedbackFromHistory(history) {
+  return (history && history[0]) || null;
+}

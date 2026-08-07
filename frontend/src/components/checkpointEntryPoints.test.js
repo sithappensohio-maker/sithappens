@@ -73,7 +73,10 @@ test("CheckpointPanel covers not-practiced, awaiting-review, prescribed-practice
 });
 
 test("the prescribed-practice state shows the live remaining-practice count, not a static message", () => {
-  expect(dashboardSrc).toMatch(/status\.prescription\?\.practice_sessions_remaining/);
+  // Phase 3 renamed the local alias (const p = status.prescription || {})
+  // but reads the exact same live field — not a static message.
+  expect(dashboardSrc).toMatch(/const p = status\.prescription \|\| \{\}/);
+  expect(dashboardSrc).toMatch(/p\.practice_sessions_remaining/);
   expect(dashboardSrc).toMatch(/data-testid="school-checkpoint-remaining"/);
 });
 

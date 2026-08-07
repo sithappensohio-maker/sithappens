@@ -1635,7 +1635,10 @@ async def notify_client_checkpoint_graded(sub: dict, outcome: str, feedback: str
         emoji = "🔁"
         headline = f"{lesson_name} — a bit more practice first"
         body_intro = f"Hi {first_name}, your trainer reviewed {dog_name}'s checkpoint video and has some practice for you before trying again."
+    trainer_name = sub.get("graded_by_name") or ""
     rows = [("Dog", dog_name), ("Lesson", lesson_name)]
+    if trainer_name:
+        rows.append(("Reviewed by", trainer_name))
     if feedback:
         note = feedback if len(feedback) <= 400 else feedback[:400] + "…"
         rows.append(("Feedback from your trainer", note))
@@ -1646,7 +1649,7 @@ async def notify_client_checkpoint_graded(sub: dict, outcome: str, feedback: str
         ctx={
             "first_name": first_name, "client_name": client.get("name", ""),
             "dog_name": dog_name, "lesson_name": lesson_name,
-            "outcome": outcome, "feedback": feedback or "",
+            "outcome": outcome, "feedback": feedback or "", "trainer_name": trainer_name,
         },
         rows=rows,
         cta_url=cta_url,

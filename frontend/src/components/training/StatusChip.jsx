@@ -6,6 +6,7 @@ const TONE = {
   primary:   "bg-shPrimary/10 border-shPrimary/30 text-shPrimary",
   secondary: "bg-shSecondary/10 border-shSecondary/30 text-shSecondary",
   accent:    "bg-shAccent/10 border-shAccent/30 text-shAccent",
+  purple:    "bg-purple-500/10 border-purple-400/30 text-purple-300",
   danger:    "bg-red-500/10 border-red-500/30 text-red-300",
   muted:     "bg-shBorder/20 border-shBorder text-shTextMuted",
 };

@@ -490,9 +490,13 @@ def test_advance_through_entire_program_marks_school_enrollment_completed():
                 raw_se = run(server.db.school_enrollments.find_one({"id": se["id"]}))
                 assert raw_se["status"] == "completed"
                 assert raw_se["completed_at"]
-                # No longer surfaced by the active-only list endpoint.
+                # Online School Phase 3 correction — a completed enrollment
+                # must stay visible (Continue-Training vs
+                # Completed/Graduation is a frontend branch on `status`,
+                # never a server-side disappearance).
                 listed = run(server.portal_school_list(client_user))
-                assert all(row["school_enrollment_id"] != se["id"] for row in listed)
+                row = next(r for r in listed if r["school_enrollment_id"] == se["id"])
+                assert row["status"] == "completed"
             finally:
                 _cleanup_school(se["id"], enr["id"])
 

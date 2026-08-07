@@ -1374,7 +1374,10 @@ def test_count_practice_sessions_since_section_log_style():
         assert run(server._count_practice_sessions_since(hw_id, "2026-01-01T12:00:00")) == 2
         assert run(server._count_practice_sessions_since(hw_id, "2026-01-03T12:00:00")) == 0
         assert run(server._count_practice_sessions_since(None, "2026-01-01T00:00:00")) == 0
-        assert run(server._count_practice_sessions_since(hw_id, None)) == 0
+        # Online School Phase 3 — since_iso=None means "no lower bound":
+        # every logged session counts (generalized for the graduation
+        # completion_summary's whole-program practice total).
+        assert run(server._count_practice_sessions_since(hw_id, None)) == 3
     finally:
         run(server.db.homework.delete_one({"id": hw_id}))
 

@@ -150,6 +150,13 @@ async def _count_dog_programs_completed(db, dog_id: str) -> int:
     return await db.dog_programs.count_documents({"dog_id": dog_id, "status": "completed"})
 
 
+async def _count_dog_checkpoints_passed(db, dog_id: str) -> int:
+    """Online School Phase 3 — mirrors _count_dog_programs_completed's
+    shape exactly for a new, small, real milestone: the dog's first
+    trainer-graded checkpoint advance."""
+    return await db.checkpoint_submissions.count_documents({"dog_id": dog_id, "outcome": "advance"})
+
+
 async def check_dog_trophies(db, dog_id: str) -> List[Dict[str, Any]]:
     """Re-evaluate auto-trophies for a single dog and award newly-met ones."""
     awarded: List[Dict[str, Any]] = []
@@ -170,6 +177,16 @@ async def check_dog_trophies(db, dog_id: str) -> List[Dict[str, Any]]:
             row = await award_trophy(
                 db, recipient_type="dog", recipient_id=dog_id, trophy_code=t["code"],
                 meta={"programs_completed_at_award": progs},
+            )
+            if row:
+                awarded.append(row)
+    # 3) first_checkpoint_passed (Online School Phase 3)
+    checkpoints_passed = await _count_dog_checkpoints_passed(db, dog_id)
+    for t in await _eligible_trophies(db, category="dog", kind="first_checkpoint_passed"):
+        if checkpoints_passed >= int(t.get("threshold") or 0):
+            row = await award_trophy(
+                db, recipient_type="dog", recipient_id=dog_id, trophy_code=t["code"],
+                meta={"checkpoints_passed_at_award": checkpoints_passed},
             )
             if row:
                 awarded.append(row)
