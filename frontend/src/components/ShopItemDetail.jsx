@@ -382,6 +382,14 @@ export default function ShopItemDetail({ kind, itemId, cart, onAddToCart, onBack
                 <PremiumButton variant="secondary" onClick={() => onGoToOnlineSchool?.()} data-testid="shop-detail-go-to-online-school" className="w-full justify-center py-3">
                   <i className="fas fa-graduation-cap mr-1.5" />Go to Online School
                 </PremiumButton>
+              ) : selectedDogEnrollment?.status === "withdrawn" ? (
+                // Phase 6 retake policy — the server itself rejects this
+                // repurchase with a 409 (see _validate_shop_item_eligibility);
+                // show that outcome up front instead of letting the client
+                // reach checkout and fail there.
+                <PremiumButton variant="secondary" disabled data-testid="shop-detail-withdrawn-disabled" className="w-full justify-center py-3 opacity-60 cursor-not-allowed">
+                  Contact Us to Re-enroll
+                </PremiumButton>
               ) : dogCartQty > 0 ? (
                 <PremiumButton variant="primary" disabled data-testid="shop-detail-purchase-disabled" className="w-full justify-center py-3 opacity-50 cursor-not-allowed">
                   Already in Cart for This Dog

@@ -53,7 +53,14 @@ export default function DogTrainingTab({ dogId, dogName, dogAgeMonths = 0 }) {
   const activeAll = enrollments.filter(e => e.status === "active");
   const active = activeAll.filter(e => e.delivery_channel !== "online_school");
   const schoolActive = activeAll.filter(e => e.delivery_channel === "online_school");
-  const history = enrollments.filter(e => e.status !== "active");
+  const history = enrollments.filter(e => e.status !== "active" && e.delivery_channel !== "online_school");
+  // Phase 6 — completed/withdrawn Online School rows get their OWN section
+  // (below), never the generic trainer-led History block: that block's
+  // "Resume" button calls PUT /dogs/{id}/programs/{id} with status=
+  // "active", which the server explicitly 409s for delivery_channel==
+  // "online_school" (that endpoint has always meant "trainer-led enrollment
+  // controls" — see update_enrollment's own guard).
+  const schoolHistory = enrollments.filter(e => e.status !== "active" && e.delivery_channel === "online_school");
   const schoolEnrollmentsById = Object.fromEntries(schoolEnrollments.map(se => [se.enrollment_id, se]));
   const schoolCapablePrograms = programs.filter(p => (p.delivery_mode || "trainer_led") !== "trainer_led");
 
@@ -71,10 +78,14 @@ export default function DogTrainingTab({ dogId, dogName, dogAgeMonths = 0 }) {
     } catch (e) { setErr(formatErr(e.response?.data?.detail) || "Online School enroll failed"); }
   };
 
+  // Case A only — a mistaken/test enrollment with zero checkpoint history.
+  // The server itself refuses this once real checkpoint history exists
+  // (409, pointing staff at Withdraw Student instead), so this stays safe
+  // even if clicked on a history-bearing row by mistake.
   const schoolUnenroll = async (enrollment) => {
     const ok = await confirm({
       title: `Remove ${dogName} from Online School?`,
-      body: `${(enrollment.program_snapshot || {}).name || "This program"} will be removed from Online School. This clean-removes the enrollment (Phase 1 has no withdraw/history for school enrollments yet).`,
+      body: `${(enrollment.program_snapshot || {}).name || "This program"} will be permanently removed. Only works for an enrollment with no checkpoint history yet — use Withdraw Student for one with real progress.`,
       confirmText: "Remove", tone: "danger",
     });
     if (!ok) return;
@@ -83,6 +94,34 @@ export default function DogTrainingTab({ dogId, dogName, dogAgeMonths = 0 }) {
       if (se) await api.delete(`/school/enrollments/${se.id}`);
       load();
     } catch (e) { setErr(formatErr(e.response?.data?.detail) || "Failed to remove"); }
+  };
+
+  // Phase 6 — Withdraw Student: the history-preserving replacement for
+  // hard-delete once a school enrollment has real checkpoint activity.
+  const schoolWithdraw = async (enrollment) => {
+    const reason = window.prompt(
+      `Why is ${dogName} being withdrawn from ${(enrollment.program_snapshot || {}).name || "this course"}? (required — this is recorded on the enrollment)`,
+    );
+    if (reason === null) return;
+    if (!reason.trim()) { setErr("A withdrawal reason is required."); return; }
+    const revokeAccess = window.confirm("Also revoke this student's access to the course content? (Cancel keeps read-only historical access.)");
+    try {
+      const se = schoolEnrollmentsById[enrollment.id];
+      if (se) await api.post(`/school/enrollments/${se.id}/withdraw`, { reason: reason.trim(), revoke_access: revokeAccess });
+      load();
+    } catch (e) { setErr(formatErr(e.response?.data?.detail) || "Failed to withdraw"); }
+  };
+
+  // Phase 6 — independent access toggle, usable at any training status
+  // (this is also the mechanism behind the refund/revocation policy: a
+  // refund never deletes training history, it revokes access here).
+  const schoolSetAccess = async (enrollment, accessState) => {
+    const reason = accessState === "revoked" ? (window.prompt("Reason for revoking access? (optional)") || "") : "";
+    try {
+      const se = schoolEnrollmentsById[enrollment.id];
+      if (se) await api.post(`/school/enrollments/${se.id}/access`, { access_state: accessState, reason });
+      load();
+    } catch (e) { setErr(formatErr(e.response?.data?.detail) || "Failed to update access"); }
   };
 
   const updateStatus = async (eid, status) => {
@@ -186,27 +225,33 @@ export default function DogTrainingTab({ dogId, dogName, dogAgeMonths = 0 }) {
         </details>
       )}
 
-      {/* Sit Happens Online School (Phase 1) — a school-delivered enrollment
-          is a real dog_programs row (same collection, delivery_channel=
-          "online_school"), rendered here as its own compact read-only card
-          rather than through EnrollmentCard — the trainer session/goal
-          tools there don't apply to a self-guided enrollment. */}
-      {schoolActive.length > 0 && (
+      {/* Sit Happens Online School — a school-delivered enrollment is a real
+          dog_programs row (same collection, delivery_channel="online_school"),
+          rendered here as its own card rather than through EnrollmentCard —
+          the trainer session/goal tools there don't apply to a self-guided
+          enrollment. Phase 6 adds lifecycle visibility (status/access/
+          provenance), Withdraw Student, and the access revoke/restore toggle. */}
+      {(schoolActive.length > 0 || schoolHistory.length > 0) && (
         <div className="bg-shPrimary/5 border border-shPrimary/30 rounded-lg p-3 space-y-2" data-testid="school-active-section">
           <p className="text-[13px] font-black uppercase tracking-widest text-shPrimary"><i className="fas fa-graduation-cap mr-1.5"/>Online School</p>
           {schoolActive.map(e => (
-            <div key={e.id} className="bg-[var(--sh-card-base)] rounded p-3 border border-shBorder flex items-center justify-between gap-3"
-                 data-testid={`school-enrollment-${e.id}`}>
-              <div className="min-w-0">
-                <p className="text-sm font-black text-shText truncate">{e.program_snapshot.name}</p>
-                <p className="text-[13px] text-shTextMuted">{e.mastered_goals}/{e.total_goals} skills mastered ({e.mastered_pct}%) · Started {e.started_at}</p>
-              </div>
-              <button onClick={()=>schoolUnenroll(e)} data-testid={`school-unenroll-${e.id}`}
-                      className="shrink-0 text-red-400 hover:text-red-300 text-[13px] font-black uppercase tracking-widest whitespace-nowrap">
-                <i className="fas fa-user-minus mr-1"/>Remove
-              </button>
-            </div>
+            <SchoolEnrollmentAdminCard key={e.id} enrollment={e} dogName={dogName}
+                                       schoolEnrollmentId={schoolEnrollmentsById[e.id]?.id}
+                                       onWithdraw={()=>schoolWithdraw(e)} onRemove={()=>schoolUnenroll(e)}
+                                       onSetAccess={(s)=>schoolSetAccess(e, s)} />
           ))}
+          {schoolHistory.length > 0 && (
+            <details className="pt-1" data-testid="school-history-section">
+              <summary className="cursor-pointer text-[12px] font-black uppercase tracking-widest text-shTextMuted">History · {schoolHistory.length}</summary>
+              <div className="mt-2 space-y-2">
+                {schoolHistory.map(e => (
+                  <SchoolEnrollmentAdminCard key={e.id} enrollment={e} dogName={dogName}
+                                             schoolEnrollmentId={schoolEnrollmentsById[e.id]?.id}
+                                             onRemove={()=>schoolUnenroll(e)} onSetAccess={(s)=>schoolSetAccess(e, s)} />
+                ))}
+              </div>
+            </details>
+          )}
         </div>
       )}
 
@@ -238,6 +283,103 @@ export default function DogTrainingTab({ dogId, dogName, dogAgeMonths = 0 }) {
           onClose={()=>setWorkspaceFor(null)}
           onSaved={()=>{ setWorkspaceFor(null); load(); }}
         />
+      )}
+    </div>
+  );
+}
+
+const SCHOOL_STATUS_LABEL = { active: "Active", completed: "Completed", withdrawn: "Withdrawn" };
+
+// Phase 6 — staff-facing lifecycle card for a single Online School
+// enrollment: status, access state, provenance (manual vs purchase), and
+// the Withdraw Student / access revoke-restore actions. Reused for both
+// the active section and the (collapsed) history section — history rows
+// simply omit onWithdraw. No visual polish investment here on purpose
+// (Phase 6 spec: structurally usable now, redesigned in the later UI pass).
+function SchoolEnrollmentAdminCard({ enrollment: e, dogName, schoolEnrollmentId, onWithdraw, onRemove, onSetAccess }) {
+  const [historyOpen, setHistoryOpen] = useState(false);
+  const [cpHistory, setCpHistory] = useState(null);
+  const accessRevoked = (e.access_state || "active") === "revoked";
+  const provenance = e.enrollment_source === "purchase" ? "Purchased" : "Manually enrolled";
+
+  const loadHistory = async () => {
+    if (cpHistory !== null) { setHistoryOpen(o => !o); return; }
+    if (!schoolEnrollmentId) { setCpHistory([]); setHistoryOpen(true); return; }
+    try {
+      // The admin checkpoint-history endpoint is keyed by the
+      // school_enrollments row's OWN id, not the dog_programs (enrollment)
+      // id `e.id` — a real wiring bug caught by live browser verification:
+      // this used to pass e.id here and always 404'd.
+      const { data } = await api.get(`/admin/school-enrollments/${schoolEnrollmentId}/checkpoint-history`);
+      setCpHistory(data);
+      setHistoryOpen(true);
+    } catch { setCpHistory([]); setHistoryOpen(true); }
+  };
+
+  return (
+    <div className="bg-[var(--sh-card-base)] rounded p-3 border border-shBorder space-y-2" data-testid={`school-enrollment-${e.id}`}>
+      <div className="flex items-start justify-between gap-3">
+        <div className="min-w-0">
+          <p className="text-sm font-black text-shText truncate">{e.program_snapshot.name}</p>
+          <p className="text-[13px] text-shTextMuted">
+            {SCHOOL_STATUS_LABEL[e.status] || e.status} · {e.mastered_goals}/{e.total_goals} skills mastered ({e.mastered_pct}%) · {provenance}
+          </p>
+          {e.status === "withdrawn" && (
+            <p className="text-[12px] text-red-400 mt-0.5">Withdrawn {e.withdrawn_at ? new Date(e.withdrawn_at).toLocaleDateString() : ""} by {e.withdrawn_by_name || "staff"}{e.withdrawal_reason ? ` — "${e.withdrawal_reason}"` : ""}</p>
+          )}
+          <p className={`text-[12px] mt-0.5 font-black uppercase tracking-widest ${accessRevoked ? "text-red-400" : "text-shTextMuted"}`}>
+            {accessRevoked ? "Access Revoked" : "Access Active"}
+          </p>
+        </div>
+        <div className="shrink-0 flex flex-col items-end gap-1">
+          {onWithdraw && e.status === "active" && (
+            <button onClick={onWithdraw} data-testid={`school-withdraw-${e.id}`}
+                    className="text-amber-400 hover:text-amber-300 text-[12px] font-black uppercase tracking-widest whitespace-nowrap">
+              <i className="fas fa-user-slash mr-1"/>Withdraw Student
+            </button>
+          )}
+          {onRemove && (
+            <button onClick={onRemove} data-testid={`school-unenroll-${e.id}`}
+                    className="text-red-400 hover:text-red-300 text-[12px] font-black uppercase tracking-widest whitespace-nowrap">
+              <i className="fas fa-user-minus mr-1"/>Remove
+            </button>
+          )}
+          {onSetAccess && (
+            accessRevoked ? (
+              <button onClick={()=>onSetAccess("active")} data-testid={`school-restore-access-${e.id}`}
+                      className="text-shSecondary hover:text-shText text-[12px] font-black uppercase tracking-widest whitespace-nowrap">
+                <i className="fas fa-unlock mr-1"/>Restore Access
+              </button>
+            ) : (
+              <button onClick={()=>onSetAccess("revoked")} data-testid={`school-revoke-access-${e.id}`}
+                      className="text-shTextMuted hover:text-red-400 text-[12px] font-black uppercase tracking-widest whitespace-nowrap">
+                <i className="fas fa-lock mr-1"/>Revoke Access
+              </button>
+            )
+          )}
+        </div>
+      </div>
+      <button onClick={loadHistory} data-testid={`school-cp-history-toggle-${e.id}`}
+              className="text-[11px] font-black uppercase tracking-widest text-shTextMuted hover:text-shPrimary">
+        <i className={`fas fa-chevron-${historyOpen ? "up" : "down"} mr-1`}/>Checkpoint History
+      </button>
+      {historyOpen && (
+        <div className="space-y-1.5 pt-1 border-t border-shBorder" data-testid={`school-cp-history-${e.id}`}>
+          {(cpHistory || []).length === 0 ? (
+            <p className="text-[12px] text-shTextMuted">No graded checkpoints yet.</p>
+          ) : (cpHistory || []).map(cp => (
+            <div key={cp.id} className="text-[12px] text-shTextMuted">
+              <span className="text-shText font-bold">{cp.lesson_name}</span> — {cp.outcome?.replace(/_/g, " ")}
+              {cp.handler_scores && Object.keys(cp.handler_scores).length > 0 && (
+                <> · Handler avg {(Object.values(cp.handler_scores).reduce((a,b)=>a+b,0) / Object.values(cp.handler_scores).length).toFixed(1)}</>
+              )}
+              {cp.dog_scores && Object.keys(cp.dog_scores).length > 0 && (
+                <> · Dog avg {(Object.values(cp.dog_scores).reduce((a,b)=>a+b,0) / Object.values(cp.dog_scores).length).toFixed(1)}</>
+              )}
+              {cp.graded_at && <> · {new Date(cp.graded_at).toLocaleDateString()}</>}
+            </div>
+          ))}
+        </div>
       )}
     </div>
   );

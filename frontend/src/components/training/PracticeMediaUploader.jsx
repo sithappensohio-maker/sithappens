@@ -5,7 +5,14 @@
 // network directly and never invents a new storage path.
 import { useRef } from "react";
 
-const DEFAULT_VIDEO_MAX_MB = 15;
+// Phase 6 focused pass — every current caller of this uploader posts to
+// POST /homework/{id}/day/{day}/video, which the server now caps at 10 MB
+// raw (see server.py's upload_day_video / CHECKPOINT_VIDEO_MAX_BYTES —
+// same computed-safe Mongo-16MB-document principle as checkpoint video).
+// The default here previously advertised 15 MB, letting a client pick a
+// file the server would then reject — aligned to the real enforced value
+// so the picker/error message never promises headroom that doesn't exist.
+const DEFAULT_VIDEO_MAX_MB = 10;
 
 export default function PracticeMediaUploader({ photo, onPhotoChange, videoId, videoName, onVideoUpload, uploadingVideo, onVideoClear, allowVideo = true, allowPhoto = true, testid, videoMaxMb = DEFAULT_VIDEO_MAX_MB }) {
   const photoRef = useRef(null);

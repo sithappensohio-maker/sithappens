@@ -84,7 +84,18 @@ export default function OnlineSchoolDashboard({ clientFirstName, onClose, onCont
     try {
       const { data } = await api.get("/portal/school");
       setList(data);
-      if (data.length > 0) setActiveId(id => id || data[0].school_enrollment_id);
+      // Phase 6 (6.12) — the server already returns this list ordered
+      // active-and-accessible first (see portal_school_list's _rank), but
+      // pick explicitly rather than trust position alone: with one
+      // completed, one withdrawn, and one active course, "Continue
+      // Training" must always land on the active one, deterministically.
+      if (data.length > 0) {
+        setActiveId(id => {
+          if (id && data.some(e => e.school_enrollment_id === id)) return id;
+          const current = data.find(e => e.status === "active" && e.access_state !== "revoked");
+          return (current || data[0]).school_enrollment_id;
+        });
+      }
     } catch { setList([]); }
   };
 
@@ -210,7 +221,13 @@ export default function OnlineSchoolDashboard({ clientFirstName, onClose, onCont
       {err && <p className="text-shDanger text-[13px] font-bold mb-3" data-testid="school-error">{err}</p>}
 
       {schoolView === "home" && (
-        isCompleted ? (
+        entry.access_state === "revoked" ? (
+          // Phase 6 (6.5) — access revoked: no protected content at all,
+          // but the client still sees THAT the course exists rather than
+          // it silently vanishing (matches portal_school_detail's own
+          // graceful-degrade: roadmap is null, everything else stays).
+          <EmptyState icon="fa-lock" message="Access to this course has been revoked. Contact us if you believe this is a mistake." testid="online-school-access-revoked"/>
+        ) : isCompleted ? (
           <GraduationView
             dogName={entry.dog_name} dogPhoto={entry.dog_photo} programName={entry.program_name}
             completionSummary={detail?.completion_summary}
@@ -218,13 +235,25 @@ export default function OnlineSchoolDashboard({ clientFirstName, onClose, onCont
             onViewAchievements={() => setSchoolView("achievements")}
           />
         ) : (
-          <HomeView
-            entry={entry} roadmap={roadmap}
-            heroMasteredPct={heroMasteredPct} heroCurrentLessonName={heroCurrentLessonName}
-            trainerStatus={trainerStatus} recentFeedback={recentFeedback} busy={busy}
-            onContinue={() => roadmap?.current_lesson && openLesson(roadmap.current_lesson.id)}
-            onViewFeedback={() => { setSchoolView("feedback"); setExpandedHistoryId(recentFeedback?.id || null); }}
-          />
+          <>
+            {entry.status === "withdrawn" && (
+              // Phase 6 (6.5) — withdrawn + access still active: read-only
+              // historical browsing stays available (My Journey/Trainer
+              // Feedback tabs), but no new progression — the server itself
+              // 403s start-practice/checkpoint/advance for a withdrawn
+              // enrollment regardless of what the UI shows here.
+              <div className="bg-amber-500/10 border border-amber-500/30 rounded-xl p-3 mb-4 text-center" data-testid="school-withdrawn-banner">
+                <p className="text-amber-400 font-black text-sm"><i className="fas fa-circle-info mr-1.5"/>This enrollment was withdrawn. You can still browse past lessons and feedback, but training progress has stopped.</p>
+              </div>
+            )}
+            <HomeView
+              entry={entry} roadmap={roadmap}
+              heroMasteredPct={heroMasteredPct} heroCurrentLessonName={heroCurrentLessonName}
+              trainerStatus={trainerStatus} recentFeedback={recentFeedback} busy={busy}
+              onContinue={() => entry.status !== "withdrawn" && roadmap?.current_lesson && openLesson(roadmap.current_lesson.id)}
+              onViewFeedback={() => { setSchoolView("feedback"); setExpandedHistoryId(recentFeedback?.id || null); }}
+            />
+          </>
         )
       )}
 

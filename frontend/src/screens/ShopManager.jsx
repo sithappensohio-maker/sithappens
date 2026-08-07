@@ -1150,8 +1150,14 @@ function OnlineOrdersTab() {
                       {o.created_at ? new Date(o.created_at).toLocaleString() : "—"} · {money(o.total)}
                     </p>
                     <p className="text-[11px] text-shTextMuted mt-1">
-                      {(o.lines || []).map((l) => `${l.quantity}× ${l.name}`).join(", ")}
+                      {(o.lines || []).map((l) => `${l.quantity}× ${l.name}${l.dog_name ? ` (${l.dog_name})` : ""}`).join(", ")}
                     </p>
+                    {/* Phase 6 (6.8) — surface WHY a line is stuck, not just that it is. */}
+                    {(o.lines || []).filter((l) => l.fulfillment_error).map((l) => (
+                      <p key={l.item_id} className="text-[11px] text-shOrange mt-1" data-testid={`sm-order-line-error-${l.item_id}`}>
+                        <i className="fas fa-triangle-exclamation mr-1"/>{l.name}: {l.fulfillment_error}
+                      </p>
+                    ))}
                   </div>
                   <div className="text-right">
                     <p className={`text-[11px] font-black uppercase tracking-widest ${

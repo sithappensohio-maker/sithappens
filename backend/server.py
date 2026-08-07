@@ -13601,6 +13601,23 @@ async def upload_day_video(
         raise HTTPException(status_code=404, detail="Homework not found")
     if user.get("role") != "admin" and hw.get("client_id") != user.get("client_id"):
         raise HTTPException(status_code=403, detail="Not allowed")
+    # Phase 6 (6.15) — this upload previously had ONLY a frontend 15 MB
+    # gate; nothing server-side stopped a raw payload from landing well
+    # past Mongo's 16 MB per-document BSON limit (base64 already inflates
+    # by 4/3, and homework_media stores `data` as a single field on one
+    # document — same computed-safe principle _validate_checkpoint_video
+    # already established for Online School checkpoint video, applied here
+    # to close the pre-existing, unrelated-but-real gap this same audit
+    # flagged). A frontend bypass (direct API call) could otherwise still
+    # write an oversized document even with the client-side cap in place.
+    if "," in (body.photo or ""):
+        _, _b64 = body.photo.split(",", 1)
+        approx_bytes = (len(_b64) * 3) // 4
+        if approx_bytes > CHECKPOINT_VIDEO_MAX_BYTES:
+            raise HTTPException(
+                status_code=400,
+                detail=f"Video too large ({approx_bytes // (1024 * 1024)} MB). Max is {CHECKPOINT_VIDEO_MAX_BYTES // (1024 * 1024)} MB.",
+            )
     media_id = str(uuid.uuid4())
     await db.homework_media.insert_one({
         "id": media_id,
@@ -16008,6 +16025,17 @@ async def list_dog_enrollments(dog_id: str, user: dict = Depends(get_current_use
     if not (is_owner_client or is_staff_with_training_access):
         raise HTTPException(status_code=403, detail="Not allowed")
     enrollments = await db.dog_programs.find({"dog_id": dog_id}, {"_id": 0}).to_list(200)
+    if is_owner_client and not is_staff_with_training_access:
+        # Phase 6 data-leakage audit (6.19) — this endpoint predates Online
+        # School and returns the RAW dog_programs doc via _enrollment_summary
+        # (trainer_notes, enrollment_source_ref, auto_homework_log trigger
+        # strings, full program_snapshot internals) to whoever owns the dog.
+        # That's fine for trainer-led rows (always been this way), but an
+        # online_school row must never surface here — the client's Online
+        # School data has its own dedicated, allowlisted /portal/school*
+        # endpoints, and this raw endpoint bypasses every one of those
+        # allowlists. Staff keep seeing everything (admin-facing).
+        enrollments = [e for e in enrollments if e.get("delivery_channel") != "online_school"]
     enrollments.sort(key=lambda e: (0 if e.get("status") == "active" else 1, e.get("created_at") or ""), reverse=False)
     # Active first, then by created_at descending for the rest
     active = [e for e in enrollments if e.get("status") == "active"]
@@ -16921,10 +16949,64 @@ def _client_safe_checkpoint_submission(sub: Optional[dict]) -> Optional[dict]:
     return out
 
 
+def _school_access_state(row: dict) -> str:
+    """Phase 6 — absent access_state (every row created before this field
+    existed) is treated as 'active' by every reader, so no backfill is
+    required for legacy enrollments (see the Phase 6 spec's 'safe default'
+    guidance)."""
+    return row.get("access_state") or "active"
+
+
+# Phase 6 focused pass — multi-document lifecycle consistency. dog_programs
+# is THE canonical source of truth for lifecycle status/access_state, for
+# the same reason it's already the canonical source for everything else
+# Online School (program_snapshot, goal_progress, current_lesson_id — see
+# the Online School header comment near _grant_online_school_enrollment):
+# school_enrollments is a companion READ MIRROR, not a second ledger.
+# Both withdraw_school_enrollment and set_school_enrollment_access write
+# dog_programs FIRST, school_enrollments SECOND — so on a standalone Mongo
+# (no multi-document transactions — verified live, same constraint
+# documented on _grant_online_school_enrollment), a crash between the two
+# writes always leaves dog_programs holding the true post-request state.
+# Every canonical status/access check below reads dog_programs (the
+# `enrollment` dict), never school_enrollments — so a mid-crash mirror
+# lag can NEVER be observed as a wrong answer by the client, even before
+# any reconciliation write happens.
+def _canonical_school_status(enrollment: dict) -> str:
+    return enrollment.get("status") or "active"
+
+
+async def _reconcile_school_enrollment_mirror(enrollment: dict, se: dict) -> dict:
+    """Idempotent self-heal — closes the mirror gap for any consumer that
+    still reads school_enrollments.status/access_state directly (admin
+    listings, future code), so drift left by a crash between the two writes
+    doesn't persist indefinitely once observed. A pure $set to whatever
+    dog_programs (canonical) already says; calling this on an
+    already-consistent pair is a harmless no-op. Returns the corrected `se`
+    dict for immediate use without a re-fetch."""
+    canonical_status = _canonical_school_status(enrollment)
+    canonical_access = _school_access_state(enrollment)
+    updates = {}
+    if se.get("status") != canonical_status:
+        updates["status"] = canonical_status
+    if _school_access_state(se) != canonical_access:
+        updates["access_state"] = canonical_access
+    if not updates:
+        return se
+    await db.school_enrollments.update_one({"id": se["id"]}, {"$set": updates})
+    return {**se, **updates}
+
+
 async def _school_enrollment_for_client(school_enrollment_id: str, user: dict) -> tuple:
     """Loads a school_enrollments row + its underlying dog_programs row,
     enforcing that the requesting client owns it. Returns (school_enrollment,
-    enrollment) or raises 404 (never leaks existence to a non-owner)."""
+    enrollment) or raises 404 (never leaks existence to a non-owner).
+
+    Opportunistically self-heals the school_enrollments mirror on every
+    client read (see _reconcile_school_enrollment_mirror) — this is the
+    exact path a client's "am I still enrolled / do I still have access"
+    check goes through, so it's also the right place to close any drift a
+    crashed withdraw/access request left behind."""
     if user.get("role") != "client":
         raise HTTPException(status_code=403, detail="Client account required")
     se = await db.school_enrollments.find_one(
@@ -16935,7 +17017,34 @@ async def _school_enrollment_for_client(school_enrollment_id: str, user: dict) -
     enrollment = await db.dog_programs.find_one({"id": se["enrollment_id"]}, {"_id": 0})
     if not enrollment:
         raise HTTPException(status_code=404, detail="Enrollment not found")
+    se = await _reconcile_school_enrollment_mirror(enrollment, se)
     return se, enrollment
+
+
+def _require_school_access(enrollment: dict, *, allow_withdrawn_read: bool = False) -> None:
+    """The single Phase 6 access-lifecycle gate for protected Online School
+    content, applied on top of (never instead of) _school_enrollment_for_
+    client's ownership check. Reads the CANONICAL dog_programs `enrollment`
+    dict, never the school_enrollments mirror — see the canonical-source
+    comment above _canonical_school_status. This is what guarantees a
+    revoke/withdraw is enforced immediately and correctly even in the exact
+    crash window before the school_enrollments mirror write has happened.
+
+    access_state=='revoked' ALWAYS blocks — this is a staff-triggered
+    revocation (Withdraw Student with revoke_access=True, or the standalone
+    access endpoint used by the refund policy) and applies regardless of
+    training status.
+
+    training status=='withdrawn' blocks unless allow_withdrawn_read=True —
+    a withdrawn (but access-still-active) enrollment keeps read-only
+    historical access (roadmap, lesson content, checkpoint history) per the
+    Phase 6 spec's 6.5 policy table, but can never gain NEW protected
+    actions (start-practice, checkpoint submission, advancement) — those
+    call sites pass allow_withdrawn_read=False (the default)."""
+    if _school_access_state(enrollment) == "revoked":
+        raise HTTPException(status_code=403, detail="Access to this course has been revoked. Contact us if you believe this is a mistake.")
+    if _canonical_school_status(enrollment) == "withdrawn" and not allow_withdrawn_read:
+        raise HTTPException(status_code=403, detail="This enrollment was withdrawn — no further training actions are available here.")
 
 
 class OnlineSchoolAlreadyEnrolledError(Exception):
@@ -16944,11 +17053,20 @@ class OnlineSchoolAlreadyEnrolledError(Exception):
     To a human hitting the manual enroll endpoint it's a real 409. To
     purchase fulfillment replaying an already-successful purchase (or
     racing a concurrent retry) it's the expected, successful outcome:
-    access already exists, converge onto it, never error."""
-    def __init__(self, school_enrollment_id: Optional[str], dog_program_id: Optional[str]):
+    access already exists, converge onto it, never error.
+
+    Phase 6 — `status` carries the EXISTING row's training status
+    ("active", "completed", or "withdrawn") so callers can give a
+    status-specific message. Repurchase/re-enrollment is blocked for all
+    three: completed and withdrawn enrollments are explicitly NOT silently
+    superseded by a second enrollment (see the Phase 6 retake policy —
+    a real retake needs a future, explicit staff workflow, not an
+    automatic second row here)."""
+    def __init__(self, school_enrollment_id: Optional[str], dog_program_id: Optional[str], status: Optional[str] = "active"):
         self.school_enrollment_id = school_enrollment_id
         self.dog_program_id = dog_program_id
-        super().__init__(f"Already actively enrolled (dog_program {dog_program_id})")
+        self.status = status or "active"
+        super().__init__(f"Already enrolled (dog_program {dog_program_id}, status={self.status})")
 
 
 async def _self_heal_missing_school_enrollment(
@@ -16972,6 +17090,8 @@ async def _self_heal_missing_school_enrollment(
     school_enrollment = {
         "id": _gid(), "client_id": client_id, "dog_id": dog_id, "program_id": program_id,
         "enrollment_id": dog_program_id, "delivery_mode": "self_guided", "status": "active",
+        # Phase 6 — access lifecycle, explicit on every newly-created row.
+        "access_state": "active",
         "enrolled_at": now_iso(), "enrolled_by": enrolled_by, "created_at": now_iso(),
     }
     try:
@@ -17016,15 +17136,24 @@ async def _grant_online_school_enrollment(
     # concurrent duplicate is still possible between this read and the
     # insert below; the real enforcement is the dp_online_active_unique
     # partial unique index, caught as DuplicateKeyError further down.
+    #
+    # Phase 6 retake policy — status $in active/completed/withdrawn (not
+    # just active): a completed or withdrawn Online School enrollment must
+    # NOT be silently superseded by a second one, from either caller
+    # (manual admin re-enroll or a repeat purchase). dp_online_active_unique
+    # only guards concurrent ACTIVE duplicates, so completed/withdrawn
+    # blocking is enforced here in application code — a real future retake
+    # is a deliberate, separate staff workflow, not an automatic new row.
     existing = await db.dog_programs.find_one(
-        {"dog_id": dog["id"], "program_id": program["id"], "status": "active", "delivery_channel": "online_school"},
-        {"_id": 0},
+        {"dog_id": dog["id"], "program_id": program["id"], "delivery_channel": "online_school",
+         "status": {"$in": ["active", "completed", "withdrawn"]}},
+        {"_id": 0}, sort=[("created_at", -1)],
     )
     if existing:
         se = await db.school_enrollments.find_one({"enrollment_id": existing["id"]}, {"_id": 0})
-        if not se:
+        if not se and existing["status"] == "active":
             se = await _self_heal_missing_school_enrollment(existing["id"], dog["id"], program["id"], client_id, enrolled_by)
-        raise OnlineSchoolAlreadyEnrolledError(se["id"], existing["id"])
+        raise OnlineSchoolAlreadyEnrolledError(se["id"] if se else None, existing["id"], existing.get("status"))
 
     started = business_today().isoformat()
     first_module = program["modules"][0]
@@ -17056,6 +17185,13 @@ async def _grant_online_school_enrollment(
         # line (or POS-sale-line) identity that granted it.
         "enrollment_source": enrollment_source,
         "enrollment_source_ref": source_ref,
+        # Phase 6 — access lifecycle, separate from training status (see
+        # _require_school_access). Explicit "active" on every newly-created
+        # row; a legacy row from before this field existed is treated as
+        # active by every reader (see _school_access_state's absent-is-safe
+        # default), never requiring a backfill.
+        "access_state": "active",
+        "withdrawn_at": None, "withdrawn_by": None, "withdrawn_by_name": None, "withdrawal_reason": None,
     }
     # Two-record write: dog_programs then school_enrollments. This
     # deployment's MongoDB is a standalone instance (verified live —
@@ -17087,7 +17223,7 @@ async def _grant_online_school_enrollment(
         se = await db.school_enrollments.find_one({"enrollment_id": existing["id"]}, {"_id": 0}) if existing else None
         if existing and not se:
             se = await _self_heal_missing_school_enrollment(existing["id"], dog["id"], program["id"], client_id, enrolled_by)
-        raise OnlineSchoolAlreadyEnrolledError(se["id"] if se else None, existing["id"] if existing else None)
+        raise OnlineSchoolAlreadyEnrolledError(se["id"] if se else None, existing["id"] if existing else None, (existing or {}).get("status"))
     dog_program_doc.pop("_id", None)
 
     school_enrollment = {
@@ -17098,6 +17234,8 @@ async def _grant_online_school_enrollment(
         "enrollment_id": dog_program_doc["id"],
         "delivery_mode": "self_guided",
         "status": "active",
+        # Phase 6 — access lifecycle, explicit on every newly-created row.
+        "access_state": "active",
         "enrolled_at": now_iso(),
         "enrolled_by": enrolled_by,
         "created_at": now_iso(),
@@ -17152,10 +17290,13 @@ async def school_enroll(body: SchoolEnrollIn, user: dict = Depends(require_admin
             dog, program, enrolled_by=user.get("id"), trainer_notes=body.trainer_notes or "", enrollment_source="manual",
         )
     except OnlineSchoolAlreadyEnrolledError as exc:
-        raise HTTPException(
-            status_code=409,
-            detail=f"Already actively enrolled in Online School for this program (enrollment {exc.school_enrollment_id or exc.dog_program_id}).",
-        )
+        if exc.status == "completed":
+            detail = "This dog already completed this Online School program. Repurchase/re-enrollment isn't available yet — a retake would need a dedicated staff workflow (not yet built)."
+        elif exc.status == "withdrawn":
+            detail = "This dog was previously withdrawn from this Online School program. Re-enrolling would need a dedicated staff workflow (not yet built) rather than a silent second enrollment."
+        else:
+            detail = f"Already actively enrolled in Online School for this program (enrollment {exc.school_enrollment_id or exc.dog_program_id})."
+        raise HTTPException(status_code=409, detail=detail)
 
 
 @api.delete("/school/enrollments/{school_enrollment_id}")
@@ -17193,16 +17334,16 @@ async def delete_school_enrollment(school_enrollment_id: str, _: dict = Depends(
     # An erroneous/test enrollment with zero checkpoint activity can still
     # be hard-removed via the path below unchanged; once real checkpoint
     # history exists, removal is refused cleanly rather than allowed to
-    # destroy it. A full history-preserving Withdraw Student workflow is a
-    # later phase — this is deliberately just a guard, not that workflow.
+    # destroy it. Phase 6 adds the history-preserving replacement — see
+    # withdraw_school_enrollment below (Case B/C/D of the Phase 6 spec);
+    # this hard-delete stays available ONLY for Case A (zero-history).
     has_checkpoint_history = await db.checkpoint_submissions.count_documents(
         {"school_enrollment_id": school_enrollment_id},
     ) > 0
     if has_checkpoint_history:
         raise HTTPException(
             status_code=409,
-            detail="This enrollment has checkpoint history and cannot be removed. "
-                   "A Withdraw Student workflow that preserves training history will be added in a later phase.",
+            detail="This enrollment has checkpoint history and cannot be removed. Use Withdraw Student instead — it preserves training history.",
         )
     enrollment = await db.dog_programs.find_one({"id": se["enrollment_id"]}, {"_id": 0})
     if enrollment and enrollment.get("delivery_channel") != "online_school":
@@ -17216,6 +17357,160 @@ async def delete_school_enrollment(school_enrollment_id: str, _: dict = Depends(
     return {"ok": True}
 
 
+# ─── Online School Phase 6 — Withdraw Student + Access lifecycle ──────────
+# Two DISTINCT, independently-triggerable staff actions, matching the
+# spec's Core Principle 3 (access lifecycle and training lifecycle are
+# different things):
+#   - withdraw: a TRAINING status change (active -> withdrawn). Stops
+#     further lesson/checkpoint progression. Does NOT by itself revoke
+#     read access — a withdrawn+access-active enrollment stays historically
+#     browsable (see _require_school_access). Optionally also revokes
+#     access in the same call via revoke_access=True, for the common case
+#     where staff want both at once.
+#   - access: an ACCESS state change (active <-> revoked), independent of
+#     training status. This is also the mechanism behind the Phase 6
+#     refund/revocation policy (6.6) — refunding a purchase never deletes
+#     training history, it revokes access via this same endpoint.
+# Neither action ever touches program_snapshot, goal_progress,
+# checkpoint_submissions, homework, auto_homework_log, or trainer_assist
+# fields — every byte of training history survives both.
+
+class WithdrawStudentIn(BaseModel):
+    reason: str = Field(min_length=1, max_length=1000)
+    revoke_access: bool = False
+
+
+@api.post("/school/enrollments/{school_enrollment_id}/withdraw")
+async def withdraw_school_enrollment(
+    school_enrollment_id: str, body: WithdrawStudentIn,
+    user: dict = Depends(require_admin_and_permission("manage_training_sessions")),
+):
+    """History-preserving replacement for hard-delete once an enrollment has
+    real training history (Phase 6 Case B). Refuses to touch a COMPLETED
+    enrollment (Case C — completed training is never silently rewritten to
+    withdrawn) and is idempotent on an already-withdrawn one (Case B/D
+    retry safety — see the Phase 6 retry test matrix), returning the
+    current state rather than erroring so a duplicate click/retry can never
+    fail confusingly."""
+    se = await db.school_enrollments.find_one({"id": school_enrollment_id}, {"_id": 0})
+    if not se:
+        raise HTTPException(status_code=404, detail="Enrollment not found")
+    enrollment = await db.dog_programs.find_one({"id": se["enrollment_id"]}, {"_id": 0})
+    if not enrollment or enrollment.get("delivery_channel") != "online_school":
+        raise HTTPException(status_code=404, detail="Enrollment not found")
+    # Focused pass — heal any mirror drift left by a PRIOR crashed
+    # withdraw/access request before deciding anything below, so a
+    # retry's own decision logic (completed? already withdrawn?) is never
+    # made against a stale mirror — it already reads `enrollment`
+    # (canonical) exclusively anyway, this just keeps `se` consistent too.
+    se = await _reconcile_school_enrollment_mirror(enrollment, se)
+
+    if enrollment.get("status") == "completed":
+        raise HTTPException(
+            status_code=409,
+            detail="This training is already completed and cannot be withdrawn. Use Revoke Access if you need to restrict access to a completed course.",
+        )
+    if enrollment.get("status") == "withdrawn":
+        # Idempotent no-op — same converge-not-error contract as every
+        # other Online School retry path in this codebase. `se` is already
+        # reconciled above, so this is correct even if a PRIOR call crashed
+        # between the two writes and left the mirror behind.
+        return {"ok": True, "already_withdrawn": True, "enrollment": _enrollment_summary(enrollment), "school_enrollment": se}
+
+    ts = now_iso()
+    set_doc = {
+        "status": "withdrawn", "withdrawn_at": ts, "withdrawn_by": user.get("id"),
+        "withdrawn_by_name": user.get("name"), "withdrawal_reason": body.reason.strip(),
+        "previous_training_state": enrollment.get("status"),
+    }
+    if body.revoke_access:
+        set_doc.update({
+            "access_state": "revoked", "access_changed_at": ts, "access_changed_by": user.get("id"),
+            "access_changed_by_name": user.get("name"), "access_change_reason": "withdrawal",
+        })
+    # ── Step 1 — canonical write. dog_programs is the source of truth (see
+    # the canonical-source comment above _canonical_school_status); this is
+    # the ONLY write a crash between here and Step 2 needs to have landed
+    # for the request to be considered durably applied — Step 2 is a pure
+    # mirror sync any retry (or any subsequent read, via the reconcile call
+    # at the top of this function and of every client-facing read) repairs
+    # on its own. ──
+    updated = await db.dog_programs.find_one_and_update(
+        {"id": enrollment["id"], "status": "active"},
+        {"$set": set_doc}, projection={"_id": 0}, return_document=ReturnDocument.AFTER,
+    )
+    if updated is None:
+        # Lost a race — re-enter with the fresh state (completed or already
+        # withdrawn), same handling as the pre-checks above.
+        fresh = await db.dog_programs.find_one({"id": enrollment["id"]}, {"_id": 0})
+        if not fresh or fresh.get("status") == "completed":
+            raise HTTPException(status_code=409, detail="This training was completed just now and cannot be withdrawn. Use Revoke Access instead.")
+        fresh_se = await _reconcile_school_enrollment_mirror(fresh, se)
+        return {"ok": True, "already_withdrawn": True, "enrollment": _enrollment_summary(fresh), "school_enrollment": fresh_se}
+
+    # ── Step 2 — mirror sync. Simulated-crash test coverage: killing the
+    # process anywhere between Step 1 committing and this line completing
+    # leaves dog_programs withdrawn / school_enrollments still active — the
+    # exact "school_enrollment says withdrawn / dog_programs says active,
+    # or the reverse" state this pass was asked to make unobservable. A
+    # retry re-enters at the top, takes the "already withdrawn" branch
+    # above, and _reconcile_school_enrollment_mirror repairs the mirror
+    # right there — no separate recovery path needed. ──
+    fresh_se = await _reconcile_school_enrollment_mirror(updated, se)
+    return {"ok": True, "already_withdrawn": False, "enrollment": _enrollment_summary(updated), "school_enrollment": fresh_se}
+
+
+class SchoolAccessStateIn(BaseModel):
+    access_state: Literal["active", "revoked"]
+    reason: Optional[str] = Field(default=None, max_length=1000)
+
+
+@api.post("/school/enrollments/{school_enrollment_id}/access")
+async def set_school_enrollment_access(
+    school_enrollment_id: str, body: SchoolAccessStateIn,
+    user: dict = Depends(require_admin_and_permission("manage_training_sessions")),
+):
+    """Independent access-lifecycle toggle (Phase 6 6.2/6.6) — usable at ANY
+    training status (active/completed/withdrawn), most commonly to revoke
+    access after a refund without touching training history at all, or to
+    restore access if a revocation was made in error. A pure, idempotent
+    $set — calling it twice with the same access_state is a harmless no-op,
+    which is what makes it safe to retry.
+
+    Multi-document consistency (focused pass): dog_programs is written
+    FIRST (Step 1, canonical) and school_enrollments SECOND (Step 2,
+    mirror) — same order and same reasoning as withdraw_school_enrollment
+    (see the canonical-source comment above _canonical_school_status). A
+    crash between the two leaves the mirror stale; every client-facing
+    read derives access_state from dog_programs directly (never the
+    mirror), so that crash window is never externally observable as a
+    wrong answer, and _reconcile_school_enrollment_mirror repairs the
+    mirror itself on the very next read or the very next call here."""
+    se = await db.school_enrollments.find_one({"id": school_enrollment_id}, {"_id": 0})
+    if not se:
+        raise HTTPException(status_code=404, detail="Enrollment not found")
+    enrollment = await db.dog_programs.find_one({"id": se["enrollment_id"]}, {"_id": 0})
+    if not enrollment or enrollment.get("delivery_channel") != "online_school":
+        raise HTTPException(status_code=404, detail="Enrollment not found")
+    # Heal any drift left by a prior crashed withdraw/access request before
+    # applying this one.
+    se = await _reconcile_school_enrollment_mirror(enrollment, se)
+
+    ts = now_iso()
+    set_doc = {
+        "access_state": body.access_state, "access_changed_at": ts, "access_changed_by": user.get("id"),
+        "access_changed_by_name": user.get("name"), "access_change_reason": (body.reason or "").strip() or None,
+    }
+    # Step 1 — canonical write.
+    await db.dog_programs.update_one({"id": enrollment["id"]}, {"$set": set_doc})
+    fresh = await db.dog_programs.find_one({"id": enrollment["id"]}, {"_id": 0})
+    # Step 2 — mirror sync. Simulated-crash test coverage: a kill between
+    # Step 1 and here leaves the mirror stale until the next reconcile
+    # (this same endpoint retried, or any client read) repairs it.
+    fresh_se = await _reconcile_school_enrollment_mirror(fresh, se)
+    return {"ok": True, "enrollment": _enrollment_summary(fresh), "school_enrollment": fresh_se}
+
+
 @api.get("/dogs/{dog_id}/school-enrollments")
 async def list_dog_school_enrollments(dog_id: str, _: dict = Depends(require_admin_and_permission("manage_training_sessions"))):
     """Admin-facing lookup — the dog-profile Training tab already gets the
@@ -17224,6 +17519,39 @@ async def list_dog_school_enrollments(dog_id: str, _: dict = Depends(require_adm
     school_enrollments id each one needs for DELETE /school/enrollments/{id}
     (clean removal), without exposing school_enrollments to clients."""
     return await db.school_enrollments.find({"dog_id": dog_id}, {"_id": 0}).to_list(50)
+
+
+@api.get("/admin/school-enrollments/{school_enrollment_id}/checkpoint-history")
+async def admin_school_enrollment_checkpoint_history(
+    school_enrollment_id: str, _: dict = Depends(require_admin_and_permission("manage_training_sessions")),
+):
+    """Phase 6 admin-operability gap — before this endpoint, staff had NO
+    way to review a student's GRADED checkpoint history (Handler vs Dog
+    scores, trainer feedback, outcome) at all: CheckpointReviewQueue.jsx
+    only ever fetched the PENDING queue, and the equivalent history read
+    (portal_school_checkpoint_history) is hard-gated to role=='client'.
+    Reuses the exact same _client_safe_checkpoint_submission shape the
+    client already receives (which already includes handler_scores/
+    dog_scores/outcome/trainer feedback) — staff don't need MORE than the
+    client sees here, just the SAME thing without the client-only gate."""
+    se = await db.school_enrollments.find_one({"id": school_enrollment_id}, {"_id": 0})
+    if not se:
+        raise HTTPException(status_code=404, detail="Enrollment not found")
+    enrollment = await db.dog_programs.find_one({"id": se["enrollment_id"]}, {"_id": 0})
+    out = []
+    async for sub in db.checkpoint_submissions.find(
+        {"school_enrollment_id": school_enrollment_id, "status": "graded"}, {"_id": 0},
+    ).sort("graded_at", -1):
+        safe = _client_safe_checkpoint_submission(sub)
+        if not safe:
+            continue
+        safe["lesson_name"] = sub.get("lesson_name")
+        safe["module_name"] = _module_name_in_snapshot(enrollment or {}, sub.get("module_id"))
+        safe["rubric_snapshot"] = _client_safe_checkpoint_rubric(sub.get("rubric_snapshot"))
+        if safe.get("trainer_assist"):
+            safe["trainer_assist"] = await _enrich_trainer_assist_schedule(safe["trainer_assist"])
+        out.append(safe)
+    return out
 
 
 @api.get("/portal/school")
@@ -17245,22 +17573,56 @@ async def portal_school_list(user: dict = Depends(get_current_user)):
         enrollment = await db.dog_programs.find_one({"id": se["enrollment_id"]}, {"_id": 0})
         if not enrollment:
             continue
+        # Phase 6 focused pass — self-heal any mirror drift left by a
+        # crashed withdraw/access request, and derive both fields the
+        # client sees from the CANONICAL dog_programs `enrollment`, never
+        # the (possibly still-stale, in the exact crash window before this
+        # heal runs) school_enrollments row — see _require_school_access's
+        # canonical-source comment.
+        se = await _reconcile_school_enrollment_mirror(enrollment, se)
         dog = await db.dogs.find_one({"id": se["dog_id"]}, {"_id": 0, "id": 1, "name": 1, "photo": 1})
-        roadmap = _client_safe_school_roadmap(await _school_roadmap(enrollment, se["dog_id"]))
+        access_state = _school_access_state(enrollment)
+        status = _canonical_school_status(enrollment)
         summary = _enrollment_summary(enrollment)
+        # Phase 6 — a revoked-access row skips roadmap computation entirely
+        # (no lesson/module names leak into the list for a course the
+        # client can no longer open) but still appears in the list itself,
+        # so the client isn't left wondering where a purchase went.
+        if access_state == "revoked":
+            current_module_name = current_lesson_name = None
+            current_lesson_practiced = False
+        else:
+            roadmap = _client_safe_school_roadmap(await _school_roadmap(enrollment, se["dog_id"]))
+            current_module_name = (roadmap.get("current_lesson") and next(
+                (m["name"] for m in roadmap["modules"] if m["status"] == "current"), None,
+            )) or next((m["name"] for m in roadmap["modules"] if m["status"] == "current"), None)
+            current_lesson_name = (roadmap.get("current_lesson") or {}).get("name")
+            current_lesson_practiced = roadmap.get("current_lesson_practiced", False)
         out.append({
             "school_enrollment_id": se["id"], "dog_id": se["dog_id"],
             "dog_name": (dog or {}).get("name"), "dog_photo": (dog or {}).get("photo") or "",
             "program_id": enrollment.get("program_id"),
             "program_name": (enrollment.get("program_snapshot") or {}).get("name"),
-            "status": se["status"],
+            "status": status, "access_state": access_state,
             "mastered_pct": summary.get("mastered_pct", 0),
-            "current_module_name": (roadmap.get("current_lesson") and next(
-                (m["name"] for m in roadmap["modules"] if m["status"] == "current"), None,
-            )) or next((m["name"] for m in roadmap["modules"] if m["status"] == "current"), None),
-            "current_lesson_name": (roadmap.get("current_lesson") or {}).get("name"),
-            "current_lesson_practiced": roadmap.get("current_lesson_practiced", False),
+            "current_module_name": current_module_name,
+            "current_lesson_name": current_lesson_name,
+            "current_lesson_practiced": current_lesson_practiced,
         })
+    # Phase 6 (6.12) — deterministic ordering so "Continue Training" always
+    # resolves to the same entry: active-and-accessible first, then other
+    # active, then completed, then withdrawn, ties broken by most recently
+    # enrolled. Previously the frontend picked list[0] with no server-side
+    # ordering guarantee at all.
+    def _rank(row):
+        if row["status"] == "active" and row["access_state"] != "revoked":
+            return 0
+        if row["status"] == "active":
+            return 1
+        if row["status"] == "completed":
+            return 2
+        return 3
+    out.sort(key=_rank)
     return out
 
 
@@ -17272,8 +17634,12 @@ async def _school_completion_summary(se: dict, enrollment: dict) -> Optional[dic
     enrollment-scoped (via this dog_programs row's OWN auto_homework_log —
     never a dog+lesson_id query) so a same-dog trainer-led enrollment's
     practice activity can never leak into an Online School graduation
-    total, and vice versa."""
-    if se.get("status") != "completed":
+    total, and vice versa.
+
+    Phase 6 focused pass — checks the CANONICAL dog_programs `enrollment`
+    status, never the school_enrollments mirror (see the canonical-source
+    comment above _canonical_school_status)."""
+    if _canonical_school_status(enrollment) != "completed":
         return None
     snapshot_modules = (enrollment.get("program_snapshot") or {}).get("modules") or []
     total_modules = len(snapshot_modules)
@@ -17302,7 +17668,7 @@ async def _school_completion_summary(se: dict, enrollment: dict) -> Optional[dic
             "graded_at": final_sub.get("graded_at"),
         }
     return {
-        "completed_at": se.get("completed_at"),
+        "completed_at": enrollment.get("completed_at") or se.get("completed_at"),
         "total_modules": total_modules, "total_lessons": total_lessons,
         "checkpoints_passed": checkpoints_passed,
         "practice_sessions_logged": practice_sessions_logged,
@@ -17314,11 +17680,26 @@ async def _school_completion_summary(se: dict, enrollment: dict) -> Optional[dic
 async def portal_school_detail(school_enrollment_id: str, user: dict = Depends(get_current_user)):
     se, enrollment = await _school_enrollment_for_client(school_enrollment_id, user)
     dog = await db.dogs.find_one({"id": se["dog_id"]}, {"_id": 0, "id": 1, "name": 1, "photo": 1})
-    roadmap = _client_safe_school_roadmap(await _school_roadmap(enrollment, se["dog_id"]))
+    # Phase 6 focused pass — canonical dog_programs read, not the mirror
+    # (see _require_school_access's canonical-source comment); _school_
+    # enrollment_for_client has already opportunistically healed `se` too,
+    # so these agree either way, but `enrollment` is the one guaranteed
+    # correct even in the exact crash window before that heal runs.
+    access_state = _school_access_state(enrollment)
+    status = _canonical_school_status(enrollment)
     summary = _enrollment_summary(enrollment)
+    # Phase 6 — a revoked-access enrollment degrades gracefully rather than
+    # 403ing the whole detail view: the client can see THAT the course
+    # exists and its lifecycle state, just not its protected roadmap/lesson
+    # content. completion_summary (the graduation "certificate") is a
+    # historical record of an already-earned achievement, not ongoing
+    # protected content, so it stays visible even when access is revoked —
+    # matching the spec's Core Principle 5 (completed courses remain
+    # accessible) and Principle 2 (training history is historical data).
+    roadmap = None if access_state == "revoked" else _client_safe_school_roadmap(await _school_roadmap(enrollment, se["dog_id"]))
     completion_summary = await _school_completion_summary(se, enrollment)
     return {
-        "school_enrollment_id": se["id"], "status": se["status"],
+        "school_enrollment_id": se["id"], "status": status, "access_state": access_state,
         "dog_id": se["dog_id"], "dog_name": (dog or {}).get("name"), "dog_photo": (dog or {}).get("photo") or "",
         "program_name": (enrollment.get("program_snapshot") or {}).get("name"),
         "program_focus": (enrollment.get("program_snapshot") or {}).get("focus"),
@@ -17353,6 +17734,7 @@ async def portal_school_checkpoint_history(school_enrollment_id: str, user: dict
     since an advance outcome moves the current lesson forward and the
     just-reviewed submission is no longer "the current lesson's"."""
     se, enrollment = await _school_enrollment_for_client(school_enrollment_id, user)
+    _require_school_access(enrollment, allow_withdrawn_read=True)
     out = []
     async for sub in db.checkpoint_submissions.find(
         {"school_enrollment_id": school_enrollment_id, "status": "graded"}, {"_id": 0},
@@ -17375,6 +17757,7 @@ async def portal_school_lesson_detail(school_enrollment_id: str, lesson_id: str,
     roadmap computation the list view uses, so a client requesting a locked
     lesson_id directly (bypassing the UI entirely) gets 403, not content."""
     se, enrollment = await _school_enrollment_for_client(school_enrollment_id, user)
+    _require_school_access(enrollment, allow_withdrawn_read=True)
     roadmap = await _school_roadmap(enrollment, se["dog_id"])
     lesson = next((l for m in roadmap["modules"] for l in m["lessons"] if l.get("id") == lesson_id), None)
     module_name = None
@@ -17429,6 +17812,7 @@ async def portal_school_start_practice(school_enrollment_id: str, lesson_id: str
     Practice Coach flow used everywhere else in the app — Online School
     never forks the practice engine, it only launches it."""
     se, enrollment = await _school_enrollment_for_client(school_enrollment_id, user)
+    _require_school_access(enrollment, allow_withdrawn_read=False)
     roadmap = await _school_roadmap(enrollment, se["dog_id"])
     lesson = next((l for m in roadmap["modules"] for l in m["lessons"] if l.get("id") == lesson_id), None)
     if not lesson or lesson.get("status") == "locked":
@@ -17551,6 +17935,7 @@ async def portal_school_submit_checkpoint(
     video row has no natural way to exist without knowing the submission
     it belongs to."""
     se, enrollment = await _school_enrollment_for_client(school_enrollment_id, user)
+    _require_school_access(enrollment, allow_withdrawn_read=False)
     roadmap = await _school_roadmap(enrollment, se["dog_id"])
     current_lesson = roadmap.get("current_lesson")
     if not current_lesson or current_lesson.get("id") != lesson_id:
@@ -17748,6 +18133,7 @@ async def portal_school_advance(school_enrollment_id: str, user: dict = Depends(
     the trainer grading state machine's own call to the same CAS logic.
     """
     se, enrollment = await _school_enrollment_for_client(school_enrollment_id, user)
+    _require_school_access(enrollment, allow_withdrawn_read=False)
     roadmap = await _school_roadmap(enrollment, se["dog_id"])
     current_lesson = roadmap.get("current_lesson")
     if not current_lesson:
@@ -32918,12 +33304,19 @@ async def _validate_shop_item_eligibility(client: dict, kind: str, item_doc: Opt
         # only implied by the CTA the client happens to be looking at.
         existing_enrollment = await db.dog_programs.find_one(
             {"dog_id": dog_id, "program_id": item_doc["id"], "delivery_channel": "online_school",
-             "status": {"$in": ["active", "completed"]}},
+             # Phase 6 retake policy — withdrawn is blocked here too, not
+             # just active/completed: a withdrawn enrollment must not be
+             # silently superseded by a repurchase either (see the Phase 6
+             # spec's retake policy — a real retake needs a future,
+             # explicit staff workflow, never an automatic second charge).
+             "status": {"$in": ["active", "completed", "withdrawn"]}},
             {"_id": 0, "status": 1},
         )
         if existing_enrollment:
             if existing_enrollment["status"] == "completed":
                 raise HTTPException(status_code=409, detail=f"{name} has already been completed for this dog — repurchase isn't available yet.")
+            if existing_enrollment["status"] == "withdrawn":
+                raise HTTPException(status_code=409, detail=f"This dog's enrollment in {name} was withdrawn — contact us before repurchasing.")
             raise HTTPException(status_code=409, detail=f"This dog is already enrolled in {name} — go to Online School to continue instead of buying it again.")
     elif item_doc.get("requires_dog"):
         # No dog-selection-at-cart-line mechanism exists yet for any other
@@ -33030,6 +33423,14 @@ async def _price_shop_cart(items: List[ShopCartItemIn], client_id: Optional[str]
             # dog_id=None exactly as today.
             line["dog_id"] = cart_item.dog_id
             line["fulfillment_kind"] = org_source.get("purchase_fulfillment") or "credits_only"
+            if cart_item.dog_id:
+                # Phase 6 (6.8) — staff operational visibility. Without this,
+                # the admin Online Orders view has no way to show WHICH dog
+                # an online_school purchase is for short of decoding a raw
+                # dog_id — frozen at order time like every other line
+                # snapshot, so a later dog rename never rewrites history.
+                dog_doc = await db.dogs.find_one({"id": cart_item.dog_id}, {"_id": 0, "name": 1})
+                line["dog_name"] = (dog_doc or {}).get("name")
         if cart_item.kind == "credit_pack":
             # Immutable pricing snapshot — frozen at order-creation time so a
             # later public-price change or override/tier edit or revocation
@@ -33666,13 +34067,19 @@ async def _apply_shop_payment(attempt: dict, session_obj: Optional[dict] = None)
                 await _fulfill_shop_training_program_line(order, line)
             await db.shop_orders.update_one(
                 {"id": order_id, "lines.item_id": line["item_id"]},
-                {"$set": {"lines.$.fulfillment_status": "fulfilled", "updated_at": now_iso()}},
+                # Phase 6 (6.8) — clear any stale fulfillment_error from an
+                # earlier failed attempt now that a retry has succeeded, so
+                # staff never see a resolved error sitting on a fulfilled line.
+                {"$set": {"lines.$.fulfillment_status": "fulfilled", "lines.$.fulfillment_error": None, "updated_at": now_iso()}},
             )
         except Exception as exc:
             logger.warning("Shop order %s line %s fulfillment failed: %s", order_id, line["item_id"], exc)
             await db.shop_orders.update_one(
                 {"id": order_id, "lines.item_id": line["item_id"]},
-                {"$set": {"lines.$.fulfillment_status": "failed", "updated_at": now_iso()}},
+                # Phase 6 (6.8) — the actual failure reason, truncated, so
+                # the admin Online Orders "Needs Attention" view can show
+                # WHY a line is stuck rather than only that it is.
+                {"$set": {"lines.$.fulfillment_status": "failed", "lines.$.fulfillment_error": str(exc)[:500], "updated_at": now_iso()}},
             )
 
     # ── Step B4 — order-level fulfillment status, always safe to rerun (a

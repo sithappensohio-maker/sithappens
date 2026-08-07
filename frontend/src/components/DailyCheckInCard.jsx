@@ -22,7 +22,12 @@ const KIND_META = {
   longtext:     { type: "longtext" },
 };
 
-const VIDEO_MAX_MB = 15;
+// Phase 6 focused pass — matches the server's real enforced ceiling for
+// this exact endpoint (POST /homework/{id}/day/{day}/video), which now
+// caps raw video at 10 MB (see server.py's upload_day_video). Previously
+// advertised 15 MB here, letting a client pick a file the server would
+// then reject.
+const VIDEO_MAX_MB = 10;
 
 /**
  * Client-portal Daily Check-In Card.
