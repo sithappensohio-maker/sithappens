@@ -16459,8 +16459,22 @@ async def _claim_school_lesson_homework(
     if entry and entry.get("homework_id"):
         return await db.homework.find_one({"id": entry["homework_id"]}, {"_id": 0})
     if not entry:
-        if await _active_homework_conflict(dog_id, template_id):
-            return None
+        conflict = await _active_homework_conflict(dog_id, template_id)
+        if conflict:
+            # The client's explicit Start Practice must never dead-end. An
+            # active assignment from the SAME recipe already exists (e.g. the
+            # program's own auto/welcome homework, or a trainer-assigned copy).
+            # If it isn't already owned by another lesson, ADOPT it as this
+            # lesson's practice (attach + return) so the panel opens and
+            # completing it advances the lesson; if another lesson owns it, fall
+            # through and create this lesson's own. Previously this returned None,
+            # which surfaced a misleading "practice template no longer exists"
+            # error and left the practice panel unopened.
+            conflict_hw = await db.homework.find_one({"id": conflict["id"]}, {"_id": 0})
+            if conflict_hw and not conflict_hw.get("source_lesson_id"):
+                await db.homework.update_one({"id": conflict["id"]}, {"$set": {"source_lesson_id": lesson_id}})
+                conflict_hw["source_lesson_id"] = lesson_id
+                return conflict_hw
         won = await _claim_auto_homework_trigger(enrollment_id, template_id, trigger)
         if not won:
             # A concurrent caller claimed this trigger first — it is
@@ -20977,6 +20991,35 @@ async def admin_today_brain(_: dict = Depends(require_admin)):
             "ts": now_dt.isoformat(),
             "cta": {"type": "open_screen", "screen": "homework"},
             "icon": "fa-clipboard-check",
+        })
+
+    # 1a2. Online School self-guided practice the client just logged. These
+    # homework rows are NOT daily_tracker, so §1 above never counted them —
+    # which is exactly why a client's Online School practice only emailed the
+    # trainer and never appeared in-app. Surface unreviewed practice logs here
+    # so the trainer sees them in the action center and can open what the
+    # client actually did (reps/notes live on the section_log).
+    school_practice_count = 0
+    school_practice_sample = None
+    async for hw in db.homework.find(
+        {"source_lesson_id": {"$ne": None}, "section_logs.0": {"$exists": True}},
+        {"_id": 0, "dog_name": 1, "title": 1, "section_logs": 1},
+    ):
+        for lo in hw.get("section_logs") or []:
+            if not lo.get("reviewed_at"):
+                school_practice_count += 1
+                if not school_practice_sample:
+                    school_practice_sample = f"{hw.get('dog_name') or 'A dog'} · {hw.get('title') or 'practice'}"
+    if school_practice_count > 0:
+        items.append({
+            "id": f"school-practice:{school_practice_count}",
+            "kind": "school_practice_log",
+            "priority": "info",
+            "title": f"{school_practice_count} Online School practice log{'s' if school_practice_count != 1 else ''} to review",
+            "subtitle": school_practice_sample or "A client logged self-guided practice",
+            "ts": now_dt.isoformat(),
+            "cta": {"type": "open_screen", "screen": "homework"},
+            "icon": "fa-paw",
         })
 
     # 1b. Client-uploaded vaccine certificates waiting for admin review (urgent)
