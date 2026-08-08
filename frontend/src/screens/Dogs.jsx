@@ -326,7 +326,7 @@ export default function Dogs({ focusId = null, focusMode = "scroll", onConsumed 
           const careCount = (d.feeding_schedule?.length || 0) + (d.medications?.length || 0);
           return (
             <div key={d.id} className="sh-entity-card relative group" data-testid={`dog-card-${d.id}`}>
-              <div className="sh-entity-card__media h-44 w-full">
+              <div className="sh-entity-card__media aspect-[4/3] w-full">
                 <HuskyDogImage src={d.photo} name={d.name} alt={d.name} className="h-full w-full object-cover object-top" />
               </div>
               <div className="p-5">
