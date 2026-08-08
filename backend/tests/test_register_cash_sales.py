@@ -169,7 +169,7 @@ def test_credit_checkout_cash_addon_hits_cash_drawer(admin_headers):
         sell_r = requests.post(
             f"{API}/clients/{client['id']}/sell-pack",
             headers=admin_headers,
-            json={"pack_id": pack["id"], "payment_method": "clover"},
+            json={"pack_id": pack["id"], "payment_method": "card"},
             timeout=15,
         )
         assert sell_r.status_code == 200, sell_r.text

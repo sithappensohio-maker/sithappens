@@ -2,6 +2,7 @@ import { useEffect, useMemo, useState } from "react";
 import { api } from "../lib/api";
 import { compressImage } from "../lib/imageCompress";
 import PremiumButton from "./premium/PremiumButton";
+import { useConfirm } from "../lib/useConfirm";
 
 /**
  * Multi-step wizard that walks a client through uploading every missing /
@@ -14,6 +15,7 @@ import PremiumButton from "./premium/PremiumButton";
  * admin approval before booking unlocks.
  */
 export default function VaccineUploadWizard({ queue = [], onClose = () => {}, onAllDone = () => {}, onProgress = () => {} }) {
+  const confirm = useConfirm();
   const [idx, setIdx] = useState(0);
   const [expiresOn, setExpiresOn] = useState("");
   const [photo, setPhoto] = useState("");
@@ -131,8 +133,8 @@ export default function VaccineUploadWizard({ queue = [], onClose = () => {}, on
     } finally { setSaving(false); }
   };
 
-  const skipStep = () => {
-    if (!window.confirm(`Skip ${label} for ${current.dog.name}? This vaccine will still block booking until it is uploaded and approved.`)) return;
+  const skipStep = async () => {
+    if (!(await confirm({ title: `Skip ${label}?`, body: `${current.dog.name} will still be blocked from booking until this vaccine is uploaded and approved.`, confirmText: "Skip for now", tone: "warning" }))) return;
     setNotice(`${label} skipped. This still needs to be uploaded before booking unlocks.`);
     if (isLast) {
       if (savedCount > 0) onAllDone();

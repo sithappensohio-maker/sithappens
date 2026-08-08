@@ -17,8 +17,8 @@ const noop = () => {};
 const TABS = [
   { key: "client", label: "Client", icon: "fa-user" },
   { key: "trainer", label: "Trainer", icon: "fa-clipboard-user" },
-  { key: "mobile", label: "Mobile", icon: "fa-mobile-screen-button" },
-  { key: "validation", label: "Validation", icon: "fa-clipboard-check" },
+  { key: "mobile", label: "Phone", icon: "fa-mobile-screen-button" },
+  { key: "validation", label: "Validate", icon: "fa-clipboard-check" },
 ];
 
 function ClientPreviewContent({ modules, selectedModule, selectedLesson, selectedSkill }) {
@@ -70,20 +70,32 @@ function TrainerPreviewContent({ selectedLesson, selectedSkill }) {
 export default function ProgramPreviewPanel({ modules, selectedModule, selectedLesson, selectedSkill, validation, onValidationNavigate, onValidationRefresh, validating, tab, onTabChange, testid }) {
   return (
     <div className="flex flex-col h-full" data-testid={testid}>
-      <div className="flex border-b border-shBorder shrink-0 overflow-x-auto">
-        {TABS.map(t => (
-          <button key={t.key} onClick={() => onTabChange(t.key)} data-testid={testid ? `${testid}-tab-${t.key}` : undefined}
-                  className={`px-3 py-2 text-[12px] font-black uppercase tracking-widest whitespace-nowrap border-b-2 ${tab === t.key ? "border-shSecondary text-shSecondary" : "border-transparent text-shTextMuted hover:text-shText"}`}>
-            <i className={`fas ${t.icon} mr-1`}/>{t.label}
-          </button>
-        ))}
+      <div className="px-3 pt-3 shrink-0 bg-black/10">
+        <div className="grid grid-cols-4 gap-1 rounded-xl border border-shBorder/60 bg-black/25 p-1 overflow-x-auto">
+          {TABS.map(t => (
+            <button key={t.key} onClick={() => onTabChange(t.key)} data-testid={testid ? `${testid}-tab-${t.key}` : undefined}
+                    className={`min-h-[40px] px-2 py-2 text-[10px] font-black whitespace-nowrap rounded-lg transition ${tab === t.key ? "bg-shSecondary text-[#031018] shadow-[0_0_16px_rgba(0,169,224,0.10)]" : "text-shTextMuted hover:text-shText hover:bg-white/[0.035]"}`}>
+              <i className={`fas ${t.icon} mr-1`}/>{t.label}
+            </button>
+          ))}
+        </div>
       </div>
-      <div className="flex-1 min-h-0 overflow-y-auto p-3">
-        {tab === "client" && <ClientPreviewContent modules={modules} selectedModule={selectedModule} selectedLesson={selectedLesson} selectedSkill={selectedSkill}/>}
-        {tab === "trainer" && <TrainerPreviewContent selectedLesson={selectedLesson} selectedSkill={selectedSkill}/>}
+      <div className="flex-1 min-h-0 overflow-y-auto p-3 sm:p-4">
+        {tab !== "validation" && (
+          <div className="mb-3 flex items-center justify-between gap-2">
+            <div>
+              <p className="text-[9px] font-black uppercase tracking-[0.16em] text-shTextMuted">Live preview</p>
+              <p className="text-[10px] text-shTextMuted mt-0.5">Same production components — not a fake mockup.</p>
+            </div>
+            <span className="rounded-full border border-shBorder/50 bg-black/20 px-2 py-1 text-[9px] font-black text-shTextMuted">{tab === "mobile" ? "320px target" : tab === "trainer" ? "Trainer view" : "Client view"}</span>
+          </div>
+        )}
+        {tab === "client" && <ClientPreviewContent modules={modules} selectedModule={selectedModule} selectedLesson={selectedLesson} selectedSkill={selectedSkill}/>} 
+        {tab === "trainer" && <TrainerPreviewContent selectedLesson={selectedLesson} selectedSkill={selectedSkill}/>} 
         {tab === "mobile" && (
-          <div className="mx-auto border-4 border-shBorder rounded-2xl overflow-hidden" style={{ width: 280 }} data-testid={testid ? `${testid}-mobile-frame` : undefined}>
-            <div className="max-h-[420px] overflow-y-auto p-2 bg-black/30">
+          <div className="mx-auto rounded-[28px] border-[5px] border-[#1a2030] bg-[#03050a] shadow-[0_20px_60px_rgba(0,0,0,0.5)] p-1.5" style={{ width: "min(320px, 100%)" }} data-testid={testid ? `${testid}-mobile-frame` : undefined}>
+            <div className="h-4 flex items-center justify-center"><span className="w-14 h-1 rounded-full bg-white/10"/></div>
+            <div className="max-h-[520px] overflow-y-auto rounded-[20px] p-2 bg-black/30">
               <ClientPreviewContent modules={modules} selectedModule={selectedModule} selectedLesson={selectedLesson} selectedSkill={selectedSkill}/>
             </div>
           </div>

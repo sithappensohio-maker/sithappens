@@ -53,7 +53,7 @@ export default function MessageClientModal({ clientId, dogId, lessonName, sugges
 
   return (
     <div className="fixed inset-0 bg-black/80 flex items-center justify-center p-4 z-[60]" onClick={onClose} data-testid="message-client-modal">
-      <div className="bg-[var(--sh-card-base)] border border-shBorder rounded-2xl w-full max-w-lg shadow-2xl" onClick={(e) => e.stopPropagation()}>
+      <div className="bg-[var(--sh-card-base)] border border-shBorder rounded-2xl w-full max-w-lg shadow-2xl sh-modal-surface" onClick={(e) => e.stopPropagation()}>
         <div className="border-b border-shBorder p-4 flex items-center justify-between">
           <p className="text-shText font-black uppercase tracking-widest text-[14px]">
             <i className="fas fa-comment text-shSecondary mr-2"/>Message {clientName || "Client"}

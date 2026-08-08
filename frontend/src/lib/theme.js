@@ -1,15 +1,11 @@
-// ThemeProvider — fetches admin's global Brand & Theme settings (unauthed),
+// ThemeProvider — fetches the admin's global appearance settings (unauthed),
 // fetches per-user text-size preference (when logged in), and applies them as
-// CSS variables + an html font-size. All Tailwind brand colors (bg-shGreen,
-// text-shBlue, etc.) and the body font are wired to these vars so the whole
-// app recolors instantly without rebuilds.
+// CSS variables + an html font-size. The unified Sit Happens UI uses these
+// variables everywhere, so changing the brand does not require a rebuild.
 //
-// Usage:
-//   <ThemeProvider><App/></ThemeProvider>
-//   const { branding, prefs, savePrefs, saveBranding } = useTheme();
-//
-// Text size scale (controls html font-size — all rem-based Tailwind sizes follow):
-//   S=16px  M=18.5px (default)  L=21px  XL=24px
+// Card appearance intentionally has ONE control (`interface_style`) instead of
+// the retired per-card theme matrix. Semantic meaning still comes from the
+// normal brand/status colors; this setting only changes chrome intensity.
 
 import { createContext, useCallback, useContext, useEffect, useState } from "react";
 import { api } from "./api";
@@ -31,6 +27,7 @@ export const FONT_OPTIONS = [
   { value: "Roboto",  label: "Roboto (classic)" },
   { value: "System",  label: "System UI" },
 ];
+
 const DEFAULT_BRANDING = {
   brand_primary: "#8cc63f",
   brand_accent:  "#00a9e0",
@@ -38,14 +35,7 @@ const DEFAULT_BRANDING = {
   brand_font_family: "Inter",
   brand_footer_text: "Sit Happens",
   brand_footer_url: "",
-  grad_hero_color:    "#8cc63f",
-  grad_info_color:    "#00a9e0",
-  grad_warning_color: "#f59e0b",
-  grad_danger_color:  "#ef4444",
-  grad_success_color: "#8cc63f",
-  // Sprint 110di-8 — expanded theme controls. All five groups (backgrounds,
-  // text, buttons, forms, calendar/table) live under the same global
-  // settings doc and apply via CSS vars on <html>.
+  interface_style: "standard",
   theme_bg_base:              "#060c2e",
   theme_bg_panel:             "#0c143e",
   theme_bg_header:            "#03061a",
@@ -65,50 +55,17 @@ const DEFAULT_BRANDING = {
   theme_calendar_active:      "#8cc63f",
   theme_table_hover:          "#1a225a",
   theme_row_border:           "#1a225a",
-  // Sprint 110di-13 — Card chrome lives entirely under `card_type_themes`.
-  // The Default Card type drives the global panel border/glow/highlight via
-  // the mirror block in applyBranding() below.
 };
 
-// Sprint 110di-12/13/16 — Card Type Themes. Mirrors the backend
-// `_card_type_theme_defaults()`. Catalog covers every reusable surface
-// across the app so admins can recolor any card category from one place.
-const CT_BASE = { border_opacity: 0.75, border_width: 2, glow_opacity: 0.25, glow_blur: 14, inner_highlight_color: "#FFFFFF", inner_highlight_opacity: 0.08, heading: "", text: "" };
-export const DEFAULT_CARD_TYPES = {
-  default:  { bg: "#05090D", border: "#008CFF", glow: "#008CFF", accent: "#008CFF", ...CT_BASE },
-  hero:     { bg: "#060c2e", border: "#9BCB00", glow: "#9BCB00", accent: "#9BCB00", ...CT_BASE },
-  stat:     { bg: "#05090D", border: "#1B4D7A", glow: "#008CFF", accent: "#9BCB00", ...CT_BASE },
-  info:     { bg: "#05090D", border: "#008CFF", glow: "#008CFF", accent: "#00C8FF", ...CT_BASE },
-  task:     { bg: "#0E0902", border: "#F26500", glow: "#F26500", accent: "#F26500", ...CT_BASE },
-  fact:     { bg: "#04111B", border: "#00C8FF", glow: "#00C8FF", accent: "#00C8FF", ...CT_BASE },
-  booking:  { bg: "#050B14", border: "#008CFF", glow: "#008CFF", accent: "#00C8FF", ...CT_BASE },
-  client:   { bg: "#080C16", border: "#9BCB00", glow: "#008CFF", accent: "#9BCB00", ...CT_BASE },
-  dog:      { bg: "#0A0F08", border: "#9BCB00", glow: "#9BCB00", accent: "#9BCB00", ...CT_BASE },
-  staff:    { bg: "#0A0814", border: "#A855F7", glow: "#A855F7", accent: "#A855F7", ...CT_BASE },
-  care:     { bg: "#04130B", border: "#9BCB00", glow: "#9BCB00", accent: "#9BCB00", ...CT_BASE },
-  kennel:   { bg: "#050B14", border: "#008CFF", glow: "#008CFF", accent: "#00C8FF", ...CT_BASE },
-  waitlist: { bg: "#120A02", border: "#F26500", glow: "#F26500", accent: "#F26500", ...CT_BASE },
-  intake:   { bg: "#05090D", border: "#008CFF", glow: "#008CFF", accent: "#00C8FF", ...CT_BASE },
-  waiver:   { bg: "#060c2e", border: "#1B4D7A", glow: "#008CFF", accent: "#9BCB00", ...CT_BASE },
-  finance:  { bg: "#09080D", border: "#F26500", glow: "#F26500", accent: "#9BCB00", ...CT_BASE },
-  report:   { bg: "#0A0E18", border: "#1B4D7A", glow: "#008CFF", accent: "#00C8FF", ...CT_BASE },
-  payment:  { bg: "#09080D", border: "#F26500", glow: "#F26500", accent: "#9BCB00", ...CT_BASE },
-  warning:  { bg: "#130B02", border: "#F26500", glow: "#F26500", accent: "#F26500", ...CT_BASE },
-  success:  { bg: "#071006", border: "#9BCB00", glow: "#9BCB00", accent: "#9BCB00", ...CT_BASE },
-  danger:   { bg: "#170407", border: "#FF3B5C", glow: "#FF3B5C", accent: "#FF3B5C", ...CT_BASE },
-  modal:    { bg: "#0c143e", border: "#008CFF", glow: "#008CFF", accent: "#008CFF", ...CT_BASE },
-  form:     { bg: "#05090D", border: "#1A225A", glow: "#008CFF", accent: "#9BCB00", ...CT_BASE },
-  table:    { bg: "#05090D", border: "#1A225A", glow: "#008CFF", accent: "#00C8FF", ...CT_BASE },
-  // legacy aliases (do not surface in UI; kept so older settings keep working)
-  stats:    { bg: "#05090D", border: "#1B4D7A", glow: "#008CFF", accent: "#9BCB00", ...CT_BASE },
-  training: { bg: "#070914", border: "#A855F7", glow: "#A855F7", accent: "#A855F7", ...CT_BASE },
-  profile:  { bg: "#080C16", border: "#9BCB00", glow: "#008CFF", accent: "#9BCB00", ...CT_BASE },
+const INTERFACE_STYLES = {
+  subtle:   { borderOpacity: 0.40, borderWidth: 1, glowOpacity: 0.08, glowBlur: 8,  innerOpacity: 0.04 },
+  standard: { borderOpacity: 0.75, borderWidth: 2, glowOpacity: 0.25, glowBlur: 14, innerOpacity: 0.08 },
+  bold:     { borderOpacity: 0.95, borderWidth: 2, glowOpacity: 0.42, glowBlur: 22, innerOpacity: 0.11 },
 };
 
-// Convert "#RRGGBB" → "r, g, b" string for CSS rgba() composition.
 function hexToRgb(hex) {
   const h = (hex || "").replace("#", "").trim();
-  if (h.length !== 6) return "140, 198, 63";
+  if (h.length !== 6) return "0, 169, 224";
   const n = parseInt(h, 16);
   return `${(n >> 16) & 255}, ${(n >> 8) & 255}, ${n & 255}`;
 }
@@ -116,33 +73,13 @@ function hexToRgb(hex) {
 function applyBranding(b) {
   const root = document.documentElement;
   const get = (k) => b[k] || DEFAULT_BRANDING[k];
+
   root.style.setProperty("--sh-green",  get("brand_primary"));
-
-// Clamp a 0-1 value with a graceful fallback when undefined / NaN.
-function clamp01(v, fallback) {
-  const n = parseFloat(v);
-  if (Number.isNaN(n)) return fallback;
-  return Math.min(Math.max(n, 0), 1);
-}
-
   root.style.setProperty("--sh-blue",   get("brand_accent"));
   root.style.setProperty("--sh-orange", get("brand_warning"));
   const fam = b.brand_font_family || DEFAULT_BRANDING.brand_font_family;
   root.style.setProperty("--sh-font", fam === "System" ? "system-ui" : `'${fam}'`);
-  // Gradient colors → expose both hex (for borders) and rgb (for rgba() in gradient stops)
-  root.style.setProperty("--grad-hero",       get("grad_hero_color"));
-  root.style.setProperty("--grad-info",       get("grad_info_color"));
-  root.style.setProperty("--grad-warning",    get("grad_warning_color"));
-  root.style.setProperty("--grad-danger",     get("grad_danger_color"));
-  root.style.setProperty("--grad-success",    get("grad_success_color"));
-  root.style.setProperty("--grad-hero-rgb",    hexToRgb(get("grad_hero_color")));
-  root.style.setProperty("--grad-info-rgb",    hexToRgb(get("grad_info_color")));
-  root.style.setProperty("--grad-warning-rgb", hexToRgb(get("grad_warning_color")));
-  root.style.setProperty("--grad-danger-rgb",  hexToRgb(get("grad_danger_color")));
-  root.style.setProperty("--grad-success-rgb", hexToRgb(get("grad_success_color")));
-  // Sprint 110di-8 — expanded theme surfaces. CSS vars consumed directly by
-  // Tailwind utilities (bgBase/bgPanel/bgHeader/bgHover) and `index.css`
-  // global selectors (forms, calendar, tables, buttons).
+
   root.style.setProperty("--bg-base",   get("theme_bg_base"));
   root.style.setProperty("--bg-panel",  get("theme_bg_panel"));
   root.style.setProperty("--bg-header", get("theme_bg_header"));
@@ -162,61 +99,30 @@ function clamp01(v, fallback) {
   root.style.setProperty("--calendar-active",      get("theme_calendar_active"));
   root.style.setProperty("--table-hover",          get("theme_table_hover"));
   root.style.setProperty("--row-border",           get("theme_row_border"));
-  // Sprint 110di-13 — Card chrome variables (--card-border-*, --card-glow-*,
-  // --card-inner-highlight-*) are written exclusively by the Default Card
-  // Type Theme block further down. Legacy top-level `card_border_*` /
-  // `card_glow_*` / `card_inner_highlight_*` settings are no longer used.
 
-  // Sprint 110di-12 — Card Type Themes. Each type writes a small block of
-  // CSS vars consumed by the matching `.card-{type}` class in index.css.
-  // Default-fallback chain: explicit setting → DEFAULT_CARD_TYPES → black.
-  const types = (b.card_type_themes && typeof b.card_type_themes === "object")
-    ? b.card_type_themes
-    : DEFAULT_CARD_TYPES;
-  Object.keys(DEFAULT_CARD_TYPES).forEach((id) => {
-    const t = { ...DEFAULT_CARD_TYPES[id], ...(types[id] || {}) };
-    const bRgb = hexToRgb(t.border);
-    const gRgb = hexToRgb(t.glow);
-    const ihRgb = hexToRgb(t.inner_highlight_color || "#FFFFFF");
-    const bAlpha = clamp01(t.border_opacity, 0.75);
-    const gAlpha = clamp01(t.glow_opacity, 0.25);
-    const ihAlpha = clamp01(t.inner_highlight_opacity, 0.08);
-    const bWidth = Math.max(0, parseFloat(t.border_width ?? 2));
-    const gBlur  = Math.max(0, parseFloat(t.glow_blur ?? 14));
-    root.style.setProperty(`--ct-${id}-bg`,         t.bg);
-    root.style.setProperty(`--ct-${id}-border`,     t.border);
-    root.style.setProperty(`--ct-${id}-border-rgba`, `rgba(${bRgb}, ${bAlpha})`);
-    root.style.setProperty(`--ct-${id}-border-w`,   `${bWidth}px`);
-    root.style.setProperty(`--ct-${id}-glow`,       t.glow);
-    root.style.setProperty(`--ct-${id}-glow-rgba`,  `rgba(${gRgb}, ${gAlpha})`);
-    root.style.setProperty(`--ct-${id}-glow-blur`,  `${gBlur}px`);
-    root.style.setProperty(`--ct-${id}-accent`,     t.accent);
-    root.style.setProperty(`--ct-${id}-inner-highlight-rgba`, `rgba(${ihRgb}, ${ihAlpha})`);
-    if (t.heading) root.style.setProperty(`--ct-${id}-heading`, t.heading);
-    if (t.text)    root.style.setProperty(`--ct-${id}-text`,    t.text);
-    // Sprint 110di-13 — Mirror the DEFAULT type to the legacy global card
-    // variables so `.bg-bgPanel::after` (and any code still reading
-    // `--card-border-rgba` / `--card-glow-rgba` / `--card-inner-highlight-rgba`)
-    // also picks up the unified Default Card values. Single source of truth.
-    if (id === "default") {
-      root.style.setProperty("--card-border-color",   t.border);
-      root.style.setProperty("--card-border-rgba",    `rgba(${bRgb}, ${bAlpha})`);
-      root.style.setProperty("--card-border-width",   `${bWidth}px`);
-      root.style.setProperty("--card-glow-color",     t.glow);
-      root.style.setProperty("--card-glow-rgba",      `rgba(${gRgb}, ${gAlpha})`);
-      root.style.setProperty("--card-glow-blur",      `${gBlur}px`);
-      root.style.setProperty("--card-inner-highlight-color", t.inner_highlight_color || "#FFFFFF");
-      root.style.setProperty("--card-inner-highlight-rgba",  `rgba(${ihRgb}, ${ihAlpha})`);
-    }
-  });
-  // Sprint 110dm — admin-controlled UI knobs. data-* attributes drive CSS
-  // selectors (splatter intensity, letter case, time/date format, week start).
+  // One app-wide card chrome setting. Border/glow color follows the current
+  // brand accent, so the UI remains coherent when the brand palette changes.
+  const styleId = INTERFACE_STYLES[b.interface_style] ? b.interface_style : "standard";
+  const style = INTERFACE_STYLES[styleId];
+  const accent = get("brand_accent");
+  const accentRgb = hexToRgb(accent);
+  root.setAttribute("data-interface-style", styleId);
+  root.style.setProperty("--card-border-color", accent);
+  root.style.setProperty("--card-border-rgba", `rgba(${accentRgb}, ${style.borderOpacity})`);
+  root.style.setProperty("--card-border-width", `${style.borderWidth}px`);
+  root.style.setProperty("--card-glow-color", accent);
+  root.style.setProperty("--card-glow-rgba", `rgba(${accentRgb}, ${style.glowOpacity})`);
+  root.style.setProperty("--card-glow-blur", `${style.glowBlur}px`);
+  root.style.setProperty("--card-inner-highlight-color", "#FFFFFF");
+  root.style.setProperty("--card-inner-highlight-rgba", `rgba(255, 255, 255, ${style.innerOpacity})`);
+
+  // Admin-controlled UI knobs. data-* attributes drive formatters/CSS without
+  // creating additional visual theme systems.
   root.setAttribute("data-splatter", b.splatter_intensity || "medium");
   root.setAttribute("data-case",     b.letter_case_preference || "upper");
   root.setAttribute("data-tfmt",     b.time_format || "12h");
   root.setAttribute("data-dfmt",     b.date_format || "us");
   root.setAttribute("data-wkstart",  b.week_starts_on || "sunday");
-  // Persist for the lightweight format helpers in lib/format.js
   try {
     window.__shUi = {
       time_format: b.time_format || "12h",

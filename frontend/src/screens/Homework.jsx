@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState } from "react";
 import { api, formatErr } from "../lib/api";
 import { useConfirm } from "../lib/useConfirm";
+import { toast } from "sonner";
 import TemplatePicker, { tierMeta } from "../components/HomeworkTemplatePicker";
 import HomeworkReportPanel from "../components/HomeworkReportPanel";
 import DailyTrackerBuilder from "../components/DailyTrackerBuilder";
@@ -51,9 +52,9 @@ export default function Homework() {
       else if (data.skipped_already_sent) msg = "Already sent this week. Run the dedup-clear and try again.";
       else if (data.reason === "email_send_failed") msg = "Email send failed — check Resend domain verification.";
       else msg = `Result: ${JSON.stringify(data)}`;
-      alert(msg);
+      toast.success(msg);
     } catch (e) {
-      alert(`Failed: ${e.response?.data?.detail || e.message}`);
+      toast.error(`Failed: ${e.response?.data?.detail || e.message}`);
     } finally { setMondayBusy(false); }
   };
 
@@ -70,14 +71,14 @@ export default function Homework() {
       if (data.attempted && data.sent < data.attempted) {
         msg += ` (${data.attempted - data.sent} email${data.attempted - data.sent === 1 ? "" : "s"} failed — check Resend domain verification)`;
       }
-      alert(msg);
+      toast.success(msg);
     } catch (e) {
-      alert(`Failed: ${e.response?.data?.detail || e.message}`);
+      toast.error(`Failed: ${e.response?.data?.detail || e.message}`);
     } finally { setDigestBusy(false); }
   };
 
   const openNew = () => {
-    if (dogs.length === 0) { alert("Add a dog first"); return; }
+    if (dogs.length === 0) { toast.error("Add a dog first"); return; }
     setForm({ dog_id: dogs[0].id, title: "", instructions: "", video_url: "", due_date: "" });
     setErr(""); setOpen(true);
   };
@@ -145,7 +146,7 @@ export default function Homework() {
       </div>
 
       <div className="space-y-3" data-testid="homework-list">
-        {filtered.length === 0 && <div className="card-default rounded-xl p-10 text-center text-xs text-shTextMuted uppercase font-black">No homework {filter !== "all" ? `(${filter})` : "yet"}.</div>}
+        {filtered.length === 0 && <div className="bg-[var(--sh-card-base)] border border-shBorder rounded-xl p-10 text-center text-xs text-shTextMuted uppercase font-black">No homework {filter !== "all" ? `(${filter})` : "yet"}.</div>}
         {filtered.map(h => {
           const snap = h.template_snapshot;
           const tm = snap ? tierMeta(snap.tier) : null;
@@ -277,6 +278,7 @@ export default function Homework() {
 
 
 function CertUploadInline({ homeworkId, hasCert, certFilename, onChanged }) {
+  const confirm = useConfirm();
   const [busy, setBusy] = useState(false);
   const ref = useRef(null);
 
@@ -284,18 +286,24 @@ function CertUploadInline({ homeworkId, hasCert, certFilename, onChanged }) {
   const onFile = async (e) => {
     const f = e.target.files?.[0];
     if (!f) return;
-    if (f.size > 5 * 1024 * 1024) { alert("Cert file too large — keep it under 5 MB."); return; }
+    if (f.size > 5 * 1024 * 1024) { toast.error("Certificate file is too large — keep it under 5 MB."); return; }
     setBusy(true);
     try {
       const reader = new FileReader();
       const dataUrl = await new Promise((res, rej) => { reader.onload = () => res(reader.result); reader.onerror = rej; reader.readAsDataURL(f); });
       await api.post(`/homework/${homeworkId}/certificate`, { photo: dataUrl, filename: f.name });
       onChanged?.();
-    } catch (ex) { alert("Upload failed: " + (ex.response?.data?.detail || ex.message)); }
+    } catch (ex) { toast.error("Upload failed: " + (ex.response?.data?.detail || ex.message)); }
     finally { setBusy(false); }
   };
   const remove = async () => {
-    if (!window.confirm("Remove the certificate for this homework?")) return;
+    const ok = await confirm({
+      title: "Remove this completion certificate?",
+      body: "The homework record stays intact; only the uploaded certificate is removed.",
+      confirmText: "Remove Certificate",
+      tone: "warning",
+    });
+    if (!ok) return;
     await api.delete(`/homework/${homeworkId}/certificate`);
     onChanged?.();
   };

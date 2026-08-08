@@ -7,6 +7,7 @@ import PremiumButton from "./premium/PremiumButton";
 import { accentRgb } from "./premium/tokens";
 import ItemThumbnail from "./ItemThumbnail";
 import ShopItemDetail from "./ShopItemDetail";
+import HuskyDogImage from "./brand/HuskyDogImage";
 import {
   itemsForTab, subcategoryOptionsForTab, nextFiltersForTab,
   sortShopItems, singularUnit, stockCeiling, isInternalPhysical, orderStatusLabel,
@@ -38,14 +39,15 @@ const TABS = [
   { key: "product", label: "Merch & Gear" },
   { key: "credit_pack", label: "Prepaid Visits" },
   { key: "training_program", label: "Training" },
+  { key: "online_school", label: "Online School" },
 ];
 
 // Bridges the cart/catalog kind vocabulary above ("product"/"credit_pack"/
 // "training_program") to shop_page.sections' permanent BACKEND section
 // vocabulary ("merch"/"prepaid_visits"/"training", matching
 // SHOP_SECTION_FOR_KIND server-side) — the one place this mapping lives.
-const SECTION_KEY_FOR_TAB = { product: "merch", credit_pack: "prepaid_visits", training_program: "training" };
-const TAB_KEY_FOR_SECTION = { merch: "product", prepaid_visits: "credit_pack", training: "training_program" };
+const SECTION_KEY_FOR_TAB = { product: "merch", credit_pack: "prepaid_visits", training_program: "training", online_school: "online_school" };
+const TAB_KEY_FOR_SECTION = { merch: "product", prepaid_visits: "credit_pack", training: "training_program", online_school: "online_school" };
 
 function useIsMobileViewport() {
   const [isMobile, setIsMobile] = useState(
@@ -126,18 +128,31 @@ function ItemCard({ item, cartQty, onAdd, onOpenDetail, mode = "authenticated", 
   const atMax = ceiling != null && cartQty >= ceiling;
   const cta = isGuest ? guestItemCta(item) : null;
   const guestBlocked = isGuest && cta && cta.type !== "add_to_cart" && cta.type !== "shopify";
+  const isOnlineSchool = item.kind === "training_program" && item.purchase_fulfillment === "online_school";
   return (
-    <NeonEdge accentRgb={accentRgb("lime")} intensity="subtle" onClick={() => onOpenDetail(item)}
+    <NeonEdge accentRgb={isOnlineSchool ? accentRgb("cyan") : accentRgb("lime")} intensity={isOnlineSchool ? "standard" : "subtle"} onClick={() => onOpenDetail(item)}
               className="p-3 flex flex-col hover:-translate-y-0.5 transition duration-200 text-left cursor-pointer" data-testid={`shop-card-${item.kind}-${item.id}`}>
-      <div className="relative">
-        <ItemThumbnail imageId={item.image_id} alt={item.name} variant="banner" size={128} className="rounded-lg" public={isGuest} />
+      <div className="relative overflow-hidden rounded-xl bg-black/25">
+        {isOnlineSchool && !item.image_id ? (
+          <div className="h-[128px] relative overflow-hidden rounded-lg bg-[radial-gradient(circle_at_50%_20%,rgba(0,169,224,0.16),transparent_58%)]">
+            <HuskyDogImage name={item.name} className="w-full h-full object-contain object-center scale-[1.06]"/>
+            <div className="absolute inset-x-0 bottom-0 h-14 bg-gradient-to-t from-black/80 to-transparent"/>
+          </div>
+        ) : (
+          <ItemThumbnail imageId={item.image_id} alt={item.name} variant="banner" size={128} className="rounded-lg" public={isGuest} />
+        )}
+        {isOnlineSchool && (
+          <span className="absolute top-1.5 right-1.5 px-2 py-1 rounded-lg text-[9px] font-black uppercase tracking-[0.12em] bg-shSecondary text-[#041018] shadow-lg">
+            <i className="fas fa-graduation-cap mr-1"/>Online School
+          </span>
+        )}
         {item.featured && (
           <span className="absolute top-1.5 left-1.5 px-1.5 py-0.5 rounded text-[9px] font-black uppercase tracking-widest bg-shPrimary text-bgHeader">
             Featured
           </span>
         )}
       </div>
-      <p className="text-shText font-bold text-[14px] mt-3 line-clamp-2 min-h-[2.25em]">{item.name}</p>
+      <p className={`${isOnlineSchool ? "sh-display text-[17px] leading-tight" : "text-[14px] font-bold"} text-shText mt-3 line-clamp-2 min-h-[2.25em]`}>{item.name}</p>
       {item.category_name && (
         <p className="text-[11px] text-shSecondary font-bold mt-0.5 truncate">
           {item.category_name}{item.subcategory_name ? ` → ${item.subcategory_name}` : ""}
@@ -164,11 +179,15 @@ function ItemCard({ item, cartQty, onAdd, onOpenDetail, mode = "authenticated", 
         </p>
       )}
       {item.kind === "training_program" && (
-        <p className="text-[11px] text-shTextMuted uppercase tracking-widest font-bold mt-1">
-          {item.format_count} {item.format_unit}
-          {item.format_count > 0 && item.price != null
-            ? ` · ${money(item.price / item.format_count)} per ${singularUnit(item.format_unit)}`
-            : ""}
+        <p className={`text-[11px] mt-1 ${isOnlineSchool ? "text-shSecondary font-bold" : "text-shTextMuted uppercase tracking-widest font-bold"}`}>
+          {isOnlineSchool ? (
+            <><i className="fas fa-circle-play mr-1"/>Self-paced lessons · guided practice · trainer feedback</>
+          ) : (
+            <>{item.format_count} {item.format_unit}
+            {item.format_count > 0 && item.price != null
+              ? ` · ${money(item.price / item.format_count)} per ${singularUnit(item.format_unit)}`
+              : ""}</>
+          )}
         </p>
       )}
 

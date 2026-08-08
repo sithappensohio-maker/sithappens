@@ -4,6 +4,8 @@
  */
 import { useEffect, useState } from "react";
 import axios from "axios";
+import PublicBrandShell from "../components/PublicBrandShell";
+import { EmptyState, PremiumButton, SectionCard, StatusBadge } from "../components/premium";
 
 const API = (process.env.REACT_APP_BACKEND_URL || "") + "/api";
 
@@ -24,20 +26,20 @@ export default function ShareCertificatePage({ token }) {
 
   if (err) {
     return (
-      <div className="min-h-screen bg-bgBase grid place-items-center p-6">
-        <div className="bg-bgPanel border border-bgHover rounded-xl p-8 max-w-md text-center" data-testid="share-cert-error">
-          <i className="fas fa-circle-exclamation text-4xl text-red-400 mb-3"/>
-          <h1 className="text-xl font-black text-white mb-2">Certificate unavailable</h1>
-          <p className="text-gray-400 text-sm">{err}</p>
-        </div>
-      </div>
+      <PublicBrandShell compact center eyebrow="Certificate" title="CERTIFICATE UNAVAILABLE." subtitle="This public link can't be opened right now." mascotKey="certificate-error" testid="share-cert-error">
+        <EmptyState icon="fa-certificate" accent="danger" title="Certificate unavailable" description={err} />
+      </PublicBrandShell>
     );
   }
+
   if (!cert) {
     return (
-      <div className="min-h-screen bg-bgBase grid place-items-center">
-        <i className="fas fa-spinner fa-spin text-3xl text-shGreen"/>
-      </div>
+      <PublicBrandShell compact center eyebrow="Certificate" title="LOADING ACHIEVEMENT…" subtitle="Verifying this Sit Happens training record." footer={false} mascotKey="certificate-loading">
+        <SectionCard accent="cyan" className="w-full max-w-md text-center py-10">
+          <i className="fas fa-circle-notch fa-spin text-3xl text-shSecondary"/>
+          <p className="text-shTextMuted text-[13px] mt-4">Loading certificate.</p>
+        </SectionCard>
+      </PublicBrandShell>
     );
   }
 
@@ -45,66 +47,73 @@ export default function ShareCertificatePage({ token }) {
     ? new Date(cert.completed_at).toLocaleDateString(undefined, { year: "numeric", month: "long", day: "numeric" })
     : "";
 
+  const share = () => {
+    if (navigator.share) {
+      navigator.share({ title: cert.title || "Training Certificate", url: window.location.href });
+    } else {
+      navigator.clipboard.writeText(window.location.href).catch(() => {});
+    }
+  };
+
   return (
-    <div className="min-h-screen bg-bgBase py-10 px-4" data-testid="share-cert-page">
-      <div className="max-w-2xl mx-auto">
-        <div className="text-center mb-6">
-          <p className="text-[12px] font-black uppercase tracking-widest text-gray-500">
-            Certificate of completion · Issued by {cert.brand_name}
-          </p>
-          <h1 className="text-3xl font-black text-white mt-2 italic tracking-tight">
-            {cert.dog_name ? `${cert.dog_name}'s ` : ""}Achievement
-          </h1>
-        </div>
-
-        <div className="bg-white rounded-xl p-3 shadow-2xl mb-6">
+    <PublicBrandShell
+      eyebrow="Certificate of completion"
+      title={cert.dog_name ? `${cert.dog_name.toUpperCase()} DID IT.` : "ACHIEVEMENT UNLOCKED."}
+      subtitle={`A verified Sit Happens training achievement${cert.brand_name ? ` issued by ${cert.brand_name}` : ""}.`}
+      testid="share-cert-page"
+      mascotKey={cert.dog_name || cert.title || "certificate"}
+    >
+      <div className="sh-certificate-grid max-w-5xl mx-auto">
+        <SectionCard accent="lime" intensity="hero" className="sh-certificate-frame p-2 sm:p-3">
           {cert.certificate ? (
-            <img src={cert.certificate} alt="Training certificate"
-                 data-testid="share-cert-image"
-                 className="w-full rounded"/>
+            <img
+              src={cert.certificate}
+              alt="Training certificate"
+              data-testid="share-cert-image"
+              className="w-full rounded-xl bg-white object-contain"
+            />
           ) : (
-            <p className="text-center text-gray-400 py-12">No image attached.</p>
+            <EmptyState icon="fa-image" accent="cyan" title="Certificate image unavailable" description="The achievement record is valid, but no certificate image is attached." />
           )}
-        </div>
+        </SectionCard>
 
-        <div className="bg-bgPanel border border-bgHover rounded-xl p-5">
-          <div className="space-y-2 text-center">
-            <p className="text-[12px] font-black uppercase tracking-widest text-gray-500">Plan</p>
-            <p className="text-xl font-black text-white">{cert.title || "Training Plan"}</p>
-            {completedDate && (
-              <>
-                <p className="text-[12px] font-black uppercase tracking-widest text-gray-500 pt-2">Completed</p>
-                <p className="text-sm text-shGreen font-black">{completedDate}</p>
-              </>
-            )}
+        <SectionCard accent="cyan" className="sh-certificate-summary">
+          <div className="flex flex-wrap items-center gap-2 mb-5">
+            <StatusBadge tone="success" glow><i className="fas fa-circle-check"/> Completed</StatusBadge>
+            <StatusBadge tone="info"><i className="fas fa-shield-halved"/> Public verification</StatusBadge>
           </div>
-          <div className="mt-6 flex justify-center gap-2 flex-wrap">
+
+          <p className="sh-eyebrow text-shSecondary">Training plan</p>
+          <h2 className="text-2xl sm:text-3xl font-black text-shText mt-2">{cert.title || "Training Plan"}</h2>
+          {cert.dog_name && <p className="text-[14px] text-shTextMuted mt-1">Completed by <span className="text-shText font-bold">{cert.dog_name}</span></p>}
+
+          {completedDate && (
+            <div className="mt-5 pt-5 border-t border-shBorder">
+              <p className="text-[11px] font-bold text-shTextMuted uppercase tracking-wide">Completed</p>
+              <p className="text-lg font-black text-shPrimary mt-1">{completedDate}</p>
+            </div>
+          )}
+
+          <div className="mt-6 grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-1 gap-2">
             {cert.certificate && (
-              <a href={cert.certificate}
-                 download={cert.filename || "certificate.png"}
-                 data-testid="share-cert-download"
-                 className="bg-shGreen text-bgHeader px-5 py-2.5 rounded text-[13px] font-black uppercase tracking-widest">
-                <i className="fas fa-download mr-2"/>Download
-              </a>
+              <PremiumButton
+                as="a"
+                href={cert.certificate}
+                download={cert.filename || "certificate.png"}
+                data-testid="share-cert-download"
+                className="justify-center"
+              >
+                <i className="fas fa-download"/>Download certificate
+              </PremiumButton>
             )}
-            <button onClick={() => {
-                      if (navigator.share) {
-                        navigator.share({ title: cert.title || "Training Certificate", url: window.location.href });
-                      } else {
-                        navigator.clipboard.writeText(window.location.href).catch(() => {});
-                      }
-                    }}
-                    data-testid="share-cert-reshare"
-                    className="bg-shBlue text-bgHeader px-5 py-2.5 rounded text-[13px] font-black uppercase tracking-widest">
-              <i className="fas fa-share-nodes mr-2"/>Share this link
-            </button>
+            <PremiumButton type="button" variant="cyan" onClick={share} data-testid="share-cert-reshare" className="justify-center">
+              <i className="fas fa-share-nodes"/>Share this link
+            </PremiumButton>
           </div>
-        </div>
 
-        <p className="text-center text-[11px] text-gray-600 mt-6 font-black uppercase tracking-widest">
-          Powered by {cert.brand_name}
-        </p>
+          <p className="text-[11px] text-shTextMuted mt-6">This page contains only the public certificate record. Private client and training data are not shown.</p>
+        </SectionCard>
       </div>
-    </div>
+    </PublicBrandShell>
   );
 }

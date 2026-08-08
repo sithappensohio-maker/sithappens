@@ -96,7 +96,7 @@ export default function SendClientEmailModal({ client, onClose }) {
   return (
     <div className="fixed inset-0 z-50 bg-black/80 p-3 sm:p-6 overflow-y-auto"
          data-testid="send-client-email-modal" onClick={onClose}>
-      <div className="bg-[var(--sh-card-base)] rounded-xl border border-shBorder max-w-2xl mx-auto"
+      <div className="bg-[var(--sh-card-base)] rounded-xl border border-shBorder max-w-2xl mx-auto sh-modal-surface"
            onClick={e => e.stopPropagation()}>
         <div className="flex items-center justify-between px-5 py-4 border-b border-shBorder">
           <div className="min-w-0">

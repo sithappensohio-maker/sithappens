@@ -452,6 +452,7 @@ export default function CreditPacksSettings() {
  * Historical P&L is NOT touched — only future-redemption behavior changes.
  */
 function LegacyMigrationCard() {
+  const confirm = useConfirm();
   const [preview, setPreview] = useState(null);
   const [busy, setBusy] = useState(false);
   const [done, setDone] = useState(null);
@@ -470,12 +471,12 @@ function LegacyMigrationCard() {
   const { to_migrate, already_legacy, training_programs_skipped } = preview;
 
   const run = async () => {
-    const ok = window.confirm(
-      `Mark ALL ${to_migrate} currently paid-at-sale lot${to_migrate===1?"":"s"} as Legacy?\n\n` +
-      `From now on, those packs will add to revenue WHEN EACH CREDIT IS REDEEMED at checkout (you'll enter the $ then).\n\n` +
-      `Any NEW credit packs sold AFTER this point will keep using the new "paid at sale" model automatically — no change there.\n\n` +
-      `Historical income / P&L is NOT modified. This is fully reversible per-lot from the Pack Lots modal on each client.`
-    );
+    const ok = await confirm({
+      title: `Move ${to_migrate} existing lot${to_migrate===1?"":"s"} to redemption accounting?`,
+      body: `Those packs will add to revenue when each credit is redeemed at checkout. New packs sold after this keep using paid-at-sale accounting. Historical income / P&L is not modified, and each lot remains reversible from the client's Pack Lots view.`,
+      confirmText: "Apply migration",
+      tone: "warning",
+    });
     if (!ok) return;
     setBusy(true);
     setErr("");

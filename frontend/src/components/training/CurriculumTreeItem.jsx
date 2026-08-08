@@ -3,32 +3,35 @@
 // also carries an aria-label naming its type, so the hierarchy reads
 // correctly to a screen reader, not just by icon/indent.
 const TYPE_META = {
-  module: { icon: "fa-layer-group", cls: "text-shPrimary" },
-  lesson: { icon: "fa-book", cls: "text-shSecondary" },
-  skill: { icon: "fa-bullseye", cls: "text-shAccent" },
+  module: { icon: "fa-layer-group", cls: "text-shPrimary", active: "border-shPrimary/30 bg-shPrimary/[0.08]" },
+  lesson: { icon: "fa-book-open", cls: "text-shSecondary", active: "border-shSecondary/30 bg-shSecondary/[0.07]" },
+  skill: { icon: "fa-bullseye", cls: "text-shAccent", active: "border-shAccent/30 bg-shAccent/[0.06]" },
 };
 
 const COMPLETENESS_DOT = {
-  complete: "bg-shPrimary",
-  needs_attention: "bg-shAccent",
+  complete: "bg-shPrimary shadow-[0_0_6px_rgba(140,198,63,0.45)]",
+  needs_attention: "bg-shAccent shadow-[0_0_6px_rgba(242,101,34,0.45)]",
   optional: "bg-shTextMuted",
 };
 
-export default function CurriculumTreeItem({ type, name, selected, indent = 0, completeness, inactive, onSelect, actions, testid }) {
+export default function CurriculumTreeItem({ type, name, selected, indent = 0, completeness, inactive, meta: metaText, onSelect, actions, testid }) {
   const meta = TYPE_META[type] || TYPE_META.module;
   return (
-    <div className={`flex items-center gap-1 px-2 py-1.5 rounded cursor-pointer ${selected ? "bg-shPrimary/15" : "hover:bg-white/5"}`}
-         style={{ paddingLeft: `${8 + indent * 16}px` }}
+    <div className={`group flex items-center gap-2 min-h-[42px] px-2.5 py-2 rounded-xl border cursor-pointer transition ${selected ? meta.active : "border-transparent hover:border-shBorder/50 hover:bg-white/[0.025]"}`}
+         style={{ paddingLeft: `${10 + indent * 6}px` }}
          onClick={onSelect}
          role="treeitem" aria-selected={selected} aria-label={`${type.charAt(0).toUpperCase()}${type.slice(1)}: ${name}`}
          data-testid={testid}>
-      <i className={`fas ${meta.icon} ${meta.cls} text-[11px] w-4 text-center shrink-0`} aria-hidden="true"/>
-      <span className="flex-1 text-[12.5px] text-shText truncate">
-        {name}
-        {inactive && <span className="text-shTextMuted ml-1">(draft)</span>}
+      <span className={`w-7 h-7 rounded-lg border border-shBorder/40 bg-black/20 grid place-items-center shrink-0 ${meta.cls}`}>
+        <i className={`fas ${meta.icon} text-[10px]`} aria-hidden="true"/>
       </span>
-      {completeness && <span className={`w-1.5 h-1.5 rounded-full shrink-0 ${COMPLETENESS_DOT[completeness] || COMPLETENESS_DOT.optional}`} title={`Content: ${completeness.replace("_", " ")}`}/>}
-      {actions}
+      <span className="flex-1 min-w-0">
+        <span className={`block text-[11.5px] font-bold truncate ${inactive ? "text-shTextMuted" : "text-shText"}`}>{name}</span>
+        {metaText && <span className="block text-[9px] text-shTextMuted truncate mt-0.5">{metaText}</span>}
+        {inactive && <span className="text-[8px] text-shTextMuted">draft / inactive</span>}
+      </span>
+      {completeness && <span className={`w-2 h-2 rounded-full shrink-0 ${COMPLETENESS_DOT[completeness] || COMPLETENESS_DOT.optional}`} title={`Content: ${completeness.replace("_", " ")}`}/>} 
+      <span className="flex items-center gap-0.5 opacity-70 sm:opacity-0 sm:group-hover:opacity-100 sm:group-focus-within:opacity-100 transition">{actions}</span>
     </div>
   );
 }

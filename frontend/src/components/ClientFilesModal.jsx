@@ -6,10 +6,12 @@
 
 import { useCallback, useEffect, useRef, useState } from "react";
 import { api, formatErr } from "../lib/api";
+import { useConfirm } from "../lib/useConfirm";
 
 const MAX_BYTES = 10 * 1024 * 1024;
 
 export default function ClientFilesModal({ client, onClose }) {
+  const confirm = useConfirm();
   const [files, setFiles] = useState([]);
   const [dogs, setDogs] = useState([]);
   const [loading, setLoading] = useState(true);
@@ -63,7 +65,7 @@ export default function ClientFilesModal({ client, onClose }) {
   };
 
   const remove = async (file) => {
-    if (!window.confirm(`Delete "${file.name}"?`)) return;
+    if (!(await confirm({ title: `Delete ${file.name}?`, body: "This removes the file from the client record and portal.", confirmText: "Delete file", tone: "danger" }))) return;
     try {
       await api.delete(`/files/${file.id}`);
       setFiles(prev => prev.filter(f => f.id !== file.id));

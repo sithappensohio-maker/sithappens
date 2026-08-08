@@ -822,44 +822,44 @@ export default function Pos({ onOpenShopManager } = {}) {
       />
 
       {/* Register + hardware status header */}
-      <div className="bg-[var(--sh-card-base)] border border-shBorder rounded-2xl p-4 flex flex-wrap items-center gap-3 justify-between">
-        <div className="flex items-center gap-3">
-          <span className={`text-[11px] font-black uppercase tracking-widest px-3 py-1.5 rounded ${registerOpen ? "text-shPrimary bg-shPrimary/10" : "text-shAccent bg-shAccent/10"}`}>
+      <div className="sh-front-desk-statusbar">
+        <div className="sh-front-desk-statuses">
+          <span className={`sh-front-desk-status ${registerOpen ? "sh-front-desk-status--good" : "sh-front-desk-status--warn"}`}>
             Register: {registerStatus?.status || "…"}
           </span>
-          <span className={`text-[11px] font-black uppercase tracking-widest px-3 py-1.5 rounded ${printerReady ? "text-shPrimary bg-shPrimary/10" : "text-shTextMuted bg-shBorder/40"}`}>
+          <span className={`sh-front-desk-status ${printerReady ? "sh-front-desk-status--good" : ""}`}>
             Printer: {printerReady === null ? "Checking…" : printerReady ? "Ready" : "Unavailable"}
           </span>
         </div>
-        <div className="flex items-center flex-wrap gap-2">
+        <div className="sh-front-desk-tools">
           {canDrawerAndRefunds && (
             <button onClick={() => setDrawerFormOpen((o) => !o)} data-testid="pos-open-drawer-toggle"
-                    className="bg-[var(--sh-card-base)] border border-shBorder hover:border-shPrimary/50 rounded px-4 py-2 text-shText text-[12px] font-black uppercase tracking-widest">
+                    className="sh-front-desk-tool">
               <i className="fas fa-drawer-alt mr-1.5" />Open Drawer
             </button>
           )}
           <button onClick={() => setRecentOpen((o) => !o)}
-                  className="bg-[var(--sh-card-base)] border border-shBorder hover:border-shPrimary/50 rounded px-4 py-2 text-shText text-[12px] font-black uppercase tracking-widest">
+                  className="sh-front-desk-tool">
             Recent Sales
           </button>
           {canPricingActions && (
             <button onClick={() => onOpenShopManager?.()} data-testid="pos-manage-products-toggle"
-                    className="bg-[var(--sh-card-base)] border border-shBorder hover:border-shPrimary/50 rounded px-4 py-2 text-shText text-[12px] font-black uppercase tracking-widest">
+                    className="sh-front-desk-tool">
               Shop Manager
             </button>
           )}
           <button onClick={() => setRegisterToolsOpen((o) => !o)} data-testid="pos-register-tools-toggle"
-                  className="bg-[var(--sh-card-base)] border border-shBorder hover:border-shPrimary/50 rounded px-4 py-2 text-shText text-[12px] font-black uppercase tracking-widest">
+                  className="sh-front-desk-tool">
             Register Tools
           </button>
           {canDrawerAndRefunds && (
             <button onClick={() => setOnlinePaymentsOpen((o) => !o)} data-testid="pos-online-payments-toggle"
-                    className="bg-[var(--sh-card-base)] border border-shBorder hover:border-shSecondary/50 rounded px-4 py-2 text-shText text-[12px] font-black uppercase tracking-widest">
+                    className="sh-front-desk-tool">
               Online Payments
             </button>
           )}
           <button onClick={() => setOnlineOrdersOpen((o) => !o)} data-testid="pos-online-orders-toggle"
-                  className="bg-[var(--sh-card-base)] border border-shBorder hover:border-shPrimary/50 rounded px-4 py-2 text-shText text-[12px] font-black uppercase tracking-widest">
+                  className="sh-front-desk-tool">
             Online Orders
             {onlineOrdersUnseenCount > 0 && (
               <span className="ml-2 inline-block bg-shAccent text-bgHeader text-[10px] font-black px-1.5 py-0.5 rounded-full align-middle"
@@ -873,7 +873,7 @@ export default function Pos({ onOpenShopManager } = {}) {
           second dashboard: three status tabs with counts, search, and just
           enough per-row detail to act (check in / check out) without
           leaving Front Desk. */}
-      <div className="bg-[var(--sh-card-base)] border border-shBorder rounded-2xl p-4" data-testid="pos-todays-visits">
+      <div className="sh-front-desk-panel p-4" data-testid="pos-todays-visits">
         <div className="flex items-center justify-between flex-wrap gap-2 mb-3">
           <p className="text-shText font-black uppercase tracking-widest text-sm">
             <i className="fas fa-paw mr-2 text-shPrimary" />Today&apos;s Visits
@@ -1201,7 +1201,7 @@ export default function Pos({ onOpenShopManager } = {}) {
         {/* Left: client + products */}
         <div className="lg:col-span-3 space-y-4">
           {/* Client panel */}
-          <div className="bg-[var(--sh-card-base)] border border-shBorder rounded-2xl p-4">
+          <div className="sh-front-desk-panel p-4">
             {!selectedClient ? (
               <>
                 <p className="text-shTextMuted text-[13px] uppercase tracking-widest font-black mb-2">Client</p>
@@ -1295,8 +1295,8 @@ export default function Pos({ onOpenShopManager } = {}) {
           </div>
 
           {/* Product panel */}
-          <div className="bg-[var(--sh-card-base)] border border-shBorder rounded-2xl p-4">
-            <p className="text-shTextMuted text-[13px] uppercase tracking-widest font-black mb-2">Products</p>
+          <div className="sh-front-desk-panel p-4">
+            <div className="sh-front-desk-panel__head"><div><p className="sh-front-desk-panel__eyebrow">Register catalog</p><h3 className="sh-front-desk-panel__title">Products & Services</h3></div></div>
             <input value={productSearch} onChange={(e) => setProductSearch(e.target.value)} placeholder="Search by name, SKU, category…"
                    data-testid="pos-product-search"
                    className="w-full bg-[var(--sh-card-base)] border border-shBorder rounded p-2 text-shText mb-2" />
@@ -1385,7 +1385,7 @@ export default function Pos({ onOpenShopManager } = {}) {
 
         {/* Right: cart */}
         <div className="lg:col-span-2">
-          <div className="bg-[var(--sh-card-base)] border border-shBorder rounded-2xl p-4 sticky top-4">
+          <div className="sh-front-desk-cart p-4">
             <div className="flex items-center justify-between mb-2">
               <p className="text-shTextMuted text-[13px] uppercase tracking-widest font-black">Cart</p>
               {cartLines.length > 0 && (
@@ -1454,7 +1454,7 @@ export default function Pos({ onOpenShopManager } = {}) {
             </div>
 
             <button onClick={openTender} disabled={cartLines.length === 0 || !priced} data-testid="pos-checkout-button"
-                    className="mt-4 w-full bg-shPrimary text-bgHeader rounded-2xl py-4 font-black uppercase tracking-widest text-lg disabled:opacity-40">
+                    className="sh-front-desk-checkout mt-4 w-full bg-shPrimary text-bgHeader font-black disabled:opacity-40">
               Checkout
             </button>
           </div>

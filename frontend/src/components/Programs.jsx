@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { api, formatErr } from "../lib/api";
 import { useConfirm } from "../lib/useConfirm";
 import { useAuth } from "../lib/auth";
@@ -7,6 +7,7 @@ import { parseProgramCsv, PROGRAM_CSV_SAMPLE } from "../lib/csvImport";
 import ShopImageUpload from "./ShopImageUpload";
 import ShopCategoryFields from "./ShopCategoryFields";
 import ProgramStudio from "./ProgramStudio";
+import { programToTemplate, parseProgramTemplate, remapProgramHomework } from "../lib/programStudioPolish";
 
 /* ============================================================
  *  Admin: Settings → Programs tab. Manage the library of programs.
@@ -30,6 +31,13 @@ export function ProgramsPanel() {
   const [meta, setMeta] = useState(null);
   const [edit, setEdit] = useState(null);
   const [err, setErr] = useState("");
+  const [importing, setImporting] = useState(false);
+  // Practice Coach recipes, loaded so an exported template can bundle the ones
+  // its lessons link to (import recreates them and relinks — see below).
+  const [hwTemplates, setHwTemplates] = useState([]);
+  useEffect(() => {
+    api.get("/homework-templates").then(({ data }) => setHwTemplates(data || [])).catch(() => setHwTemplates([]));
+  }, []);
 
   const load = async () => {
     try {
@@ -53,6 +61,8 @@ export function ProgramsPanel() {
     return sub ? `${cat.name} / ${sub.name}` : cat.name;
   };
 
+  const importInputRef = useRef(null);
+
   const startNew = (type = "private_lessons") => {
     setEdit({
       name: "", slug: "", type, description: "", focus: "",
@@ -70,6 +80,56 @@ export function ProgramsPanel() {
   const closeEditor = () => setEdit(null);
   const onStudioSaved = () => { setEdit(null); load(); };
 
+  // Program templates — download a program (WITH the Practice Coach recipes its
+  // lessons link to) as one reusable .json blueprint, and upload one to seed a
+  // NEW program: import first recreates the bundled recipes, relinks each
+  // lesson to the fresh ids, then opens the editor for review + Save through
+  // the normal create path (never a silent import).
+  const exportTemplate = (p) => {
+    const blob = new Blob([JSON.stringify(programToTemplate(p, hwTemplates), null, 2)], { type: "application/json" });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement("a");
+    const safe = (p.name || "program").toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/^-|-$/g, "").slice(0, 40) || "program";
+    a.href = url; a.download = `sit-happens-program-${safe}.json`;
+    document.body.appendChild(a); a.click(); a.remove();
+    URL.revokeObjectURL(url);
+  };
+  const importTemplate = async (file) => {
+    setErr("");
+    if (!file) return;
+    let bundle;
+    try {
+      bundle = parseProgramTemplate(JSON.parse(await file.text()));
+    } catch (e) {
+      setErr("Couldn't read that template file — make sure it's a .json exported from a program.");
+      return;
+    }
+    if (!bundle) { setErr("That file isn't a Sit Happens program template (no program with modules and a name)."); return; }
+    let program = bundle.program;
+    if (bundle.homeworkTemplates.length) {
+      // Recreate each bundled Practice Coach recipe, then relink lessons to the
+      // fresh ids. Recipes are independently-useful library records, so leaving
+      // them behind if the operator later cancels the Save is harmless.
+      setImporting(true);
+      try {
+        const idMap = {};
+        for (const t of bundle.homeworkTemplates) {
+          const body = { ...t };
+          delete body.id; delete body._id; delete body.created_at; delete body.practice_coach_readiness;
+          const { data } = await api.post("/homework-templates", body);
+          if (t.id && data?.id) idMap[t.id] = data.id;
+        }
+        program = remapProgramHomework(program, idMap);
+      } catch (e) {
+        setImporting(false);
+        setErr(formatErr(e) || "Couldn't recreate this template's practice recipes.");
+        return;
+      }
+      setImporting(false);
+    }
+    setEdit(program); // id-less => opens Program Studio as a NEW program for review + Save
+  };
+
   const remove = async (id) => {
     if (!(await confirm({ title: "Archive this program?", body: "Existing dogs already enrolled in this program will keep their progress. New enrollments will no longer be possible.", confirmText: "Archive", tone: "warning" }))) return;
     try { await api.delete(`/programs/${id}`); load(); } catch (e) { setErr(e.response?.data?.detail); }
@@ -86,8 +146,14 @@ export function ProgramsPanel() {
           <p className="text-[14px] text-gray-300 mt-1">Tiers and curricula you offer. Seeded from your website&rsquo;s standard lineup.</p>
         </div>
         {canManage && (
-          <button onClick={()=>startNew()} data-testid="prog-new"
-                  className="bg-shGreen text-bgHeader px-4 py-2 rounded font-black text-[15px] uppercase tracking-widest shadow"><i className="fas fa-plus mr-1"/>New Program</button>
+          <div className="flex items-center gap-2 shrink-0">
+            <input ref={importInputRef} type="file" accept="application/json,.json" className="hidden" data-testid="prog-import-input"
+                   onChange={(e)=>{ const f = e.target.files?.[0]; e.target.value = ""; importTemplate(f); }} />
+            <button onClick={()=>importInputRef.current?.click()} data-testid="prog-import" disabled={importing}
+                    className="border border-shBlue/60 text-shBlue px-3 py-2 rounded font-black text-[13px] uppercase tracking-widest hover:bg-shBlue/10 disabled:opacity-60"><i className={`fas ${importing ? "fa-spinner fa-spin" : "fa-file-import"} mr-1`}/>{importing ? "Importing…" : "Import Template"}</button>
+            <button onClick={()=>startNew()} data-testid="prog-new"
+                    className="bg-shGreen text-bgHeader px-4 py-2 rounded font-black text-[15px] uppercase tracking-widest shadow"><i className="fas fa-plus mr-1"/>New Program</button>
+          </div>
         )}
       </div>
 
@@ -116,8 +182,9 @@ export function ProgramsPanel() {
                 <p className="text-shGreen font-black text-[16px] whitespace-nowrap">${Number(p.price || 0).toFixed(2)}</p>
                 {canManage && (
                   <>
-                    <button onClick={()=>openEditProgram(p)} data-testid={`prog-edit-${p.id}`} className="text-shBlue hover:text-white text-sm px-2"><i className="fas fa-pen"/></button>
-                    <button onClick={()=>remove(p.id)} className="text-red-400 hover:text-red-300 text-sm px-2"><i className="fas fa-trash"/></button>
+                    <button onClick={()=>exportTemplate(p)} data-testid={`prog-export-${p.id}`} title="Download as reusable template" className="text-gray-400 hover:text-white text-sm px-2"><i className="fas fa-file-export"/></button>
+                    <button onClick={()=>openEditProgram(p)} data-testid={`prog-edit-${p.id}`} title="Edit" className="text-shBlue hover:text-white text-sm px-2"><i className="fas fa-pen"/></button>
+                    <button onClick={()=>remove(p.id)} title="Archive" className="text-red-400 hover:text-red-300 text-sm px-2"><i className="fas fa-trash"/></button>
                   </>
                 )}
               </div>

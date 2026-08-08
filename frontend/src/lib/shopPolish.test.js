@@ -1,4 +1,5 @@
 import {
+  itemsForTab,
   categoryOptionsForTab, subcategoryOptionsForTab, nextFiltersForTab,
   sortShopItems, singularUnit, stockCeiling, isInternalPhysical, orderStatusLabel,
   categoryGroupsForTab, uncategorizedItemsForTab, categoryCoverItem, matchesSearchQuery,
@@ -19,6 +20,25 @@ const merchProductNoSub = { kind: "product", id: "p2", name: "Toy", category_id:
 const packItem = { kind: "credit_pack", id: "pk1", name: "5-Visit Pack", category_id: "cat-training" };
 const programItem = { kind: "training_program", id: "pr1", name: "Puppy 101", category_id: "cat-training", subcategory_id: "sub-leads" };
 const items = [merchProduct, merchProductNoSub, packItem, programItem];
+
+test("itemsForTab splits Online School out of the Training tab (presentation-only, kind unchanged)", () => {
+  const trainerLed = { kind: "training_program", id: "tl", name: "Board & Train", purchase_fulfillment: "credits_only" };
+  const legacyProgram = { kind: "training_program", id: "lp", name: "Puppy 101" }; // no field => trainer-led
+  const onlineCourse = { kind: "training_program", id: "os", name: "Puppy Foundations", purchase_fulfillment: "online_school" };
+  const all = [trainerLed, legacyProgram, onlineCourse];
+  expect(itemsForTab(all, "online_school").map((i) => i.id)).toEqual(["os"]);
+  expect(itemsForTab(all, "training_program").map((i) => i.id)).toEqual(["tl", "lp"]);
+  expect(itemsForTab(all, "all").length).toBe(3);
+  // the split is presentation-only — the catalog kind is never rewritten
+  expect(onlineCourse.kind).toBe("training_program");
+});
+
+test("Online School is a visible shop section by default, ordered after Training", () => {
+  const keys = visibleSectionsInOrder({}).map((s) => s.key);
+  expect(keys).toContain("online_school");
+  expect(keys.indexOf("online_school")).toBeGreaterThan(keys.indexOf("training"));
+  expect(sectionMetaFor("online_school", {}).label).toBe("Online School");
+});
 
 test("categoryOptionsForTab only returns categories with a matching item in the selected tab", () => {
   expect(categoryOptionsForTab(categories, items, "product").map((c) => c.id)).toEqual(["cat-merch"]);
@@ -233,7 +253,9 @@ test("visibleSectionsInOrder excludes a section with visible:false and sorts by 
       training: { order: 1, visible: false },
     },
   };
-  expect(visibleSectionsInOrder(shopPage).map((s) => s.key)).toEqual(["prepaid_visits", "merch"]);
+  // online_school is visible by default (order 3), so it follows merch;
+  // training stays excluded because it's explicitly hidden here.
+  expect(visibleSectionsInOrder(shopPage).map((s) => s.key)).toEqual(["prepaid_visits", "merch", "online_school"]);
 });
 
 test("categoryCoverImageId prefers the category's own configured image over any item cover", () => {

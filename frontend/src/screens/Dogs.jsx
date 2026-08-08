@@ -2,6 +2,7 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import { api, formatErr } from "../lib/api";
 import { compressImage } from "../lib/imageCompress";
 import { useConfirm } from "../lib/useConfirm";
+import { toast } from "sonner";
 import { dogAgeLabel, dogAgeMonths } from "../lib/dogAge";
 import { Modal, Input } from "./Clients";
 import Lightbox from "../components/Lightbox";
@@ -9,6 +10,7 @@ import DogTrainingTab from "../components/DogTrainingTab";
 import DogTimeline from "../components/DogTimeline";
 import TrophyWall, { ManualAwardPicker } from "../components/TrophyWall";
 import PageHero from "../components/PageHero";
+import HuskyDogImage from "../components/brand/HuskyDogImage";
 import IntakeFormsSection from "../components/IntakeFormsSection";
 import DogManageMenu from "../components/DogManageMenu";
 import SafetyFlagsManager from "../components/SafetyFlagsManager";
@@ -159,7 +161,7 @@ export default function Dogs({ focusId = null, focusMode = "scroll", onConsumed 
   }, []);
 
   const openNew = () => {
-    if (clients.length === 0) { alert("Add a client first."); return; }
+    if (clients.length === 0) { toast.error("Add a client first."); return; }
     setEditing(null);
     setForm({ ...empty, owner_id: clients[0].id });
     setTab("timeline"); setOpen(true); setErr("");
@@ -311,7 +313,7 @@ export default function Dogs({ focusId = null, focusMode = "scroll", onConsumed 
         subtitle="Photos, breed, vaccines, feeding, meds, behaviour notes — all here."
         right={(
           <button onClick={openNew} data-testid="add-dog-button"
-                  className="bg-shPrimary text-bgHeader px-5 py-2.5 rounded-lg text-[13px] font-black uppercase tracking-widest shadow-lg hover:bg-shPrimary/90 transition">
+                  className="bg-shPrimary text-bgHeader px-5 py-2.5 rounded-lg text-[13px] font-black shadow-lg hover:brightness-105 transition">
             <i className="fas fa-plus mr-2"/>Add Dog
           </button>
         )}
@@ -323,12 +325,10 @@ export default function Dogs({ focusId = null, focusMode = "scroll", onConsumed 
         {dogs.map(d => {
           const careCount = (d.feeding_schedule?.length || 0) + (d.medications?.length || 0);
           return (
-            <div key={d.id} className="bg-[var(--sh-card-base)] border border-shBorder hover:border-shPrimary/40 transition rounded-xl relative group shadow-2xl overflow-hidden" data-testid={`dog-card-${d.id}`}>
-              {d.photo
-                ? <div className="h-40 w-full bg-[var(--sh-card-base)] flex items-center justify-center overflow-hidden">
-                    <img src={d.photo} alt={d.name} loading="lazy" decoding="async" className="max-h-40 max-w-full object-contain" />
-                  </div>
-                : <div className="h-40 w-full bg-gradient-to-br from-shBorder/30 to-[var(--sh-card-base)] flex items-center justify-center text-shPrimary text-5xl"><i className="fas fa-paw" /></div>}
+            <div key={d.id} className="sh-entity-card relative group" data-testid={`dog-card-${d.id}`}>
+              <div className="sh-entity-card__media h-44 w-full">
+                <HuskyDogImage src={d.photo} name={d.name} alt={d.name} className="h-full w-full object-cover object-top" />
+              </div>
               <div className="p-5">
                 {/* Sprint 110di-34 — Always-visible quick Manage menu in
                     the card top-right. Previously the only entry was a
@@ -340,9 +340,9 @@ export default function Dogs({ focusId = null, focusMode = "scroll", onConsumed 
                     every time. */}
                 <DogManageMenu dog={d} onOpen={openEdit} onDelete={()=>remove(d.id)} />
                 <button onClick={()=>openHub(d)} data-testid={`open-dog-hub-${d.id}`} className="text-left hover:text-shPrimary transition">
-                  <h4 className="text-lg font-black text-shText uppercase tracking-tight">{d.name}</h4>
+                  <h4 className="sh-entity-name">{d.name}</h4>
                 </button>
-                <p className="text-[15px] text-shSecondary font-black uppercase tracking-widest">{d.breed || "Unknown breed"}</p>
+                <p className="sh-entity-accent mt-1">{d.breed || "Unknown breed"}</p>
                 <p className="text-[15px] text-shTextMuted mt-2">Owner: <span className="text-gray-200 font-bold">{ownerName(d.owner_id)}</span></p>
                 <div className="mt-3 flex items-center justify-between text-[14px] uppercase font-black tracking-widest">
                   <span className="text-shTextMuted">{d.sex} • {d.fixed==="Yes"?"Fixed":"Intact"} • {dogAgeLabel(d)}</span>

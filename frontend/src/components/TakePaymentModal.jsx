@@ -218,7 +218,7 @@ export default function TakePaymentModal({ onClose, onSuccess, presetClientId })
   if (hwBusy || hwResult) {
     return (
       <div className="fixed inset-0 bg-black/80 z-[80] flex items-center justify-center p-4" data-testid="take-payment-hw-status">
-        <div className="bg-[var(--sh-card-base)] border border-shBorder rounded-2xl w-full max-w-md p-6 shadow-2xl">
+        <div className="bg-[var(--sh-card-base)] border border-shBorder rounded-2xl w-full max-w-md p-6 shadow-2xl sh-modal-surface">
           <div className="flex items-center gap-3 mb-4">
             <div className="bg-shPrimary/20 text-shPrimary w-11 h-11 rounded-full flex items-center justify-center text-xl">
               <i className="fas fa-check"/>
@@ -305,7 +305,7 @@ export default function TakePaymentModal({ onClose, onSuccess, presetClientId })
     <div className="fixed inset-0 bg-black/80 z-[80] flex items-center justify-center p-4"
          onMouseDown={(e) => { if (e.target === e.currentTarget) onClose(); }}
          data-testid="take-payment-modal">
-      <div className="bg-[var(--sh-card-base)] border border-shBorder rounded-2xl w-full max-w-md p-6 shadow-2xl max-h-[calc(var(--app-height)_-_2rem)] overflow-y-auto card-payment">
+      <div className="bg-[var(--sh-card-base)] border border-shBorder rounded-2xl w-full max-w-md p-6 shadow-2xl max-h-[calc(var(--app-height)_-_2rem)] overflow-y-auto sh-modal-surface">
         <h3 className="text-xl font-black text-shText uppercase tracking-tight mb-1">
           <i className="fas fa-cash-register text-shPrimary mr-2"/>{isInvoiceMode ? "Pay Invoice" : "Take Payment"}
         </h3>
@@ -367,7 +367,7 @@ export default function TakePaymentModal({ onClose, onSuccess, presetClientId })
         <select value={method} onChange={(e)=>{ setMethod(e.target.value); setTenderedAmount(""); }} data-testid="take-payment-method"
                 className="w-full mt-1 mb-3 bg-[var(--sh-card-base)] border border-shBorder rounded p-2 text-shText text-sm">
           <option value="cash">Cash</option>
-          {isInvoiceMode ? null : <option value="clover">Clover / Credit Card</option>}
+          {isInvoiceMode ? null : <option value="card">Card</option>}
           <option value="venmo">Venmo</option><option value="paypal">PayPal</option><option value="check">Check</option>
           <option value="other">Other</option>
         </select>

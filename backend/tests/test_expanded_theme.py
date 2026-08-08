@@ -45,16 +45,18 @@ def test_branding_endpoint_exposes_all_new_theme_keys_with_defaults():
     assert body["theme_bg_panel"]  == "#0c143e"
     assert body["theme_bg_header"] == "#03061a"
     assert body["theme_bg_hover"]  == "#1a225a"
-    # brand_* keys still present (no regression).
-    for legacy in ["brand_primary", "brand_accent", "brand_warning",
-                   "brand_font_family", "grad_hero_color"]:
-        assert legacy in body
+    # Brand keys + the unified interface-style setting stay available.
+    for key in ["brand_primary", "brand_accent", "brand_warning",
+                "brand_font_family", "interface_style"]:
+        assert key in body
+    assert body["interface_style"] in {"subtle", "standard", "bold"}
 
 
 def test_settings_persists_expanded_theme_keys_round_trip():
     h = _admin_h()
     # Save a custom palette
     custom = {
+        "interface_style":            "bold",
         "theme_bg_base":              "#1a1a2e",
         "theme_bg_panel":             "#16213e",
         "theme_bg_header":            "#0f0f1e",
@@ -88,6 +90,7 @@ def test_settings_persists_expanded_theme_keys_round_trip():
         # Restore Sit Happens defaults so we don't leave the test DB in a
         # weird-looking state for other tests / screenshots.
         defaults = {
+            "interface_style":            "standard",
             "theme_bg_base":              "#060c2e",
             "theme_bg_panel":             "#0c143e",
             "theme_bg_header":            "#03061a",

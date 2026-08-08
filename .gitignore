@@ -59,8 +59,7 @@ sit-happens-backup-*.json
 sit-happens-backup-*.tar.gz
 sit-happens-FULL-BACKUP-*.tar.gz
 
-# ── Agent-only files (Emergent platform) ────────────────────────────
-memory/test_credentials.md
+# ── Local testing artifacts ───────────────────────────────────────
 test_reports/
 test_result.md
 

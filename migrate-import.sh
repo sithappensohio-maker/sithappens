@@ -14,7 +14,7 @@ fi
 
 if ! command -v docker >/dev/null 2>&1; then
   echo "❌ docker is not installed on this PC."
-  echo "   Install it first (see BAZZITE_SETUP.md Section 1), then re-run this."
+  echo "   Install it first (see docs/operations/BAZZITE_SETUP.md Section 1), then re-run this."
   exit 1
 fi
 

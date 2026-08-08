@@ -12,6 +12,7 @@ import ProgramPreviewPanel from "./training/ProgramPreviewPanel";
 import PublishReadinessPanel from "./training/PublishReadinessPanel";
 import { computeLessonCompleteness, computeSkillCompleteness, resolveValidationTarget } from "../lib/programStudioPolish";
 import HomeworkTemplateEditor from "./HomeworkTemplateEditor";
+import HuskyDogImage from "./brand/HuskyDogImage";
 
 /* ============================================================
  * Training-school expansion, Phase 2 — Program Studio.
@@ -361,23 +362,35 @@ export default function ProgramStudio({ programId, initialProgram, meta, allProg
   };
 
   return (
-    <div className="fixed inset-0 bg-black/80 flex items-center justify-center p-2 sm:p-4 z-50" data-testid="program-studio">
-      <div className="bg-[var(--sh-card-base)] border border-shBorder rounded-2xl w-full max-w-6xl max-h-[calc(var(--app-height)_-_1rem)] flex flex-col min-h-0 shadow-2xl">
-        <div className="px-4 sm:px-6 py-3 border-b border-shBorder flex items-center justify-between shrink-0 gap-2">
-          <div className="min-w-0">
-            <h4 className="text-base font-black text-shText uppercase italic truncate">{isNew ? "New Program" : program.name || "Edit Program"}</h4>
-            {draftMeta && <p className="text-[11px] text-shAccent font-black uppercase tracking-widest">Editing draft · unpublished</p>}
+    <div className="fixed inset-0 bg-black/[0.92] backdrop-blur-md flex items-stretch sm:items-center justify-center p-0 sm:p-3 z-50" data-testid="program-studio">
+      <div className="relative overflow-hidden bg-[var(--sh-card-base)] sm:border border-shBorder/80 rounded-none sm:rounded-[24px] w-full max-w-[1580px] h-[var(--app-height)] sm:h-auto sm:max-h-[calc(var(--app-height)_-_0.75rem)] flex flex-col min-h-0 shadow-[0_30px_100px_rgba(0,0,0,0.78)]">
+        <div className="absolute inset-x-0 top-0 h-28 pointer-events-none bg-[radial-gradient(circle_at_18%_0%,rgba(140,198,63,0.12),transparent_45%),radial-gradient(circle_at_76%_0%,rgba(0,169,224,0.09),transparent_40%)]"/>
+        <div className="relative px-3 sm:px-6 py-3 sm:py-4 border-b border-shBorder/70 flex items-center justify-between shrink-0 gap-3 bg-black/25">
+          <div className="flex items-center gap-3 min-w-0">
+            <div className="w-11 h-11 sm:w-14 sm:h-14 rounded-xl sm:rounded-2xl border border-shPrimary/25 bg-black/30 overflow-hidden shrink-0 shadow-[0_0_24px_rgba(140,198,63,0.10)]">
+              <HuskyDogImage name={program.name || "Sit Happens"} className="w-full h-full object-cover"/>
+            </div>
+            <div className="min-w-0">
+              <p className="text-[10px] font-black uppercase tracking-[0.2em] text-shPrimary">Sit Happens · Course Builder</p>
+              <h4 className="sh-display text-lg sm:text-2xl text-shText truncate mt-0.5">{isNew ? "New Program" : program.name || "Edit Program"}</h4>
+              <div className="flex items-center gap-2 mt-1 flex-wrap">
+                <span className="hidden sm:inline text-[10px] text-shTextMuted">Build the curriculum, client experience, and storefront from one place.</span>
+                {draftMeta && <span className="rounded-full px-2 py-0.5 bg-shAccent/10 border border-shAccent/25 text-[9px] font-black uppercase tracking-[0.13em] text-shAccent">Draft · unpublished</span>}
+              </div>
+            </div>
           </div>
-          <button onClick={handleCancel} className="text-shTextMuted hover:text-shText shrink-0"><i className="fas fa-times text-xl"/></button>
+          <button onClick={handleCancel} className="w-10 h-10 rounded-xl border border-shBorder/70 bg-white/[0.025] text-shTextMuted hover:text-shText hover:border-shTextMuted/50 transition shrink-0"><i className="fas fa-times"/></button>
         </div>
 
-        <div className="flex border-b border-shBorder shrink-0 overflow-x-auto">
-          {TABS.map(t => (
-            <button key={t.key} onClick={() => setTab(t.key)} data-testid={`studio-tab-${t.key}`}
-                    className={`px-4 py-2.5 text-[13px] font-black uppercase tracking-widest whitespace-nowrap border-b-2 ${tab === t.key ? "border-shPrimary text-shPrimary" : "border-transparent text-shTextMuted hover:text-shText"}`}>
-              <i className={`fas ${t.icon} mr-1.5`}/>{t.label}
-            </button>
-          ))}
+        <div className="relative px-3 sm:px-6 py-2 border-b border-shBorder/60 shrink-0 overflow-x-auto bg-black/10">
+          <div className="inline-flex rounded-xl border border-shBorder/60 bg-black/30 p-1 gap-1 min-w-max">
+            {TABS.map(t => (
+              <button key={t.key} onClick={() => setTab(t.key)} data-testid={`studio-tab-${t.key}`}
+                      className={`px-4 py-2 text-[11px] font-black whitespace-nowrap rounded-lg transition ${tab === t.key ? "bg-shPrimary text-[#071018] shadow-[0_0_20px_rgba(140,198,63,0.12)]" : "text-shTextMuted hover:text-shText hover:bg-white/[0.04]"}`}>
+                <i className={`fas ${t.icon} mr-1.5`}/>{t.label}
+              </button>
+            ))}
+          </div>
         </div>
 
         <div className="flex-1 min-h-0 overflow-y-auto">
@@ -402,18 +415,18 @@ export default function ProgramStudio({ programId, initialProgram, meta, allProg
           )}
         </div>
 
-        <div className="px-4 sm:px-6 py-3 border-t border-shBorder flex flex-wrap justify-between items-center gap-3 shrink-0">
-          {err ? <p className="text-red-400 text-[13px] font-bold flex-1 min-w-[200px]" data-testid="studio-err">{err}</p> : <span className="flex-1"/>}
-          <div className="flex flex-wrap gap-2 shrink-0">
-            <button onClick={handleCancel} className="text-shTextMuted hover:text-shText font-black uppercase text-[13px] tracking-widest px-2">Cancel</button>
+        <div className="relative px-3 sm:px-6 py-2.5 sm:py-3 border-t border-shBorder/70 bg-black/30 flex flex-col-reverse sm:flex-row sm:flex-wrap justify-between items-stretch sm:items-center gap-2 sm:gap-3 shrink-0">
+          {err ? <p className="text-red-400 text-[12px] font-bold flex-1 min-w-[200px] rounded-xl border border-red-500/20 bg-red-500/[0.06] px-3 py-2" data-testid="studio-err">{err}</p> : <span className="flex-1"/>}
+          <div className="grid grid-cols-2 sm:flex sm:flex-wrap gap-2 shrink-0">
+            <button onClick={handleCancel} className="text-shTextMuted hover:text-shText font-bold text-[12px] px-3 py-2.5 rounded-lg hover:bg-white/[0.04] transition min-h-[44px]">Cancel</button>
             {!isNew && draftMeta && (
-              <button onClick={discardDraft} className="bg-red-500/15 text-red-400 border border-red-500/40 px-3 py-2 rounded font-black text-[13px] uppercase tracking-widest">
+              <button onClick={discardDraft} className="bg-red-500/[0.08] text-red-400 border border-red-500/25 px-3 py-2 rounded-lg font-black text-[11px] uppercase tracking-[0.1em] hover:bg-red-500/[0.13] transition">
                 Discard Draft
               </button>
             )}
             {!isNew && (
               <button onClick={saveDraft} disabled={saving} data-testid="studio-save-draft"
-                      className="bg-shSecondary/15 text-shSecondary border border-shSecondary/40 px-3 py-2 rounded font-black text-[13px] uppercase tracking-widest hover:bg-shSecondary/25 disabled:opacity-50">
+                      className="bg-shSecondary/[0.08] text-shSecondary border border-shSecondary/25 px-3 py-2.5 rounded-lg font-black text-[11px] tracking-[0.06em] hover:bg-shSecondary/[0.13] disabled:opacity-50 transition min-h-[44px]">
                 <i className="fas fa-floppy-disk mr-1.5"/>Save Draft
               </button>
             )}
@@ -422,7 +435,7 @@ export default function ProgramStudio({ programId, initialProgram, meta, allProg
                 needs — kept out of this bar so Publish vs. Publish &
                 Cascade are never squeezed into one ambiguous button here. */}
             <button onClick={saveLive} disabled={saving} data-testid="studio-save-live"
-                    className={`px-4 py-2 rounded font-black text-[13px] uppercase tracking-widest shadow disabled:opacity-50 ${(!isNew && draftMeta) ? "bg-transparent border border-shBorder text-shTextMuted" : "bg-shPrimary text-bgHeader"}`}>
+                    className={`px-4 py-2.5 rounded-lg font-black text-[11px] tracking-[0.06em] shadow disabled:opacity-50 transition min-h-[44px] ${(!isNew && draftMeta) ? "bg-transparent border border-shBorder text-shTextMuted hover:bg-white/[0.03]" : "bg-shPrimary text-[#071018] hover:brightness-110 shadow-[0_0_22px_rgba(140,198,63,0.12)]"}`}>
               {isNew ? "Create Program" : "Save Live Now"}
             </button>
           </div>
@@ -440,192 +453,247 @@ export default function ProgramStudio({ programId, initialProgram, meta, allProg
 // field/value below is identical to before — this only reorganizes the
 // single flat form into focused, collapsible groups.
 function SetupTab({ program, set, meta, allPrograms, hwTemplates, emailTemplates, originalImageId, programId }) {
+  const moduleCount = (program.modules || []).length;
+  const lessonCount = (program.modules || []).reduce((sum, m) => sum + (m.lessons || []).length, 0);
+  const skillCount = (program.modules || []).reduce((sum, m) => sum + (m.goals || []).length, 0);
+  const deliveryLabel = {
+    trainer_led: "Trainer-Led",
+    self_guided: "Online School",
+    both: "Trainer + Online",
+  }[program.delivery_mode || "trainer_led"];
+
   return (
-    <div className="px-4 sm:px-6 py-4 space-y-3">
-      <ExpandableSection title="Program Identity" icon="fa-tag" defaultOpen testid="setup-section-identity">
-        <div className="space-y-3">
-          <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
-            <SField label="Name *"><input value={program.name} onChange={(e) => set({ name: e.target.value })} data-testid="prog-name" className={inputCls} /></SField>
-            <SField label="Type">
-              <select value={program.type} onChange={(e) => set({ type: e.target.value })} className={inputCls}>
-                {meta.types.filter(t => t.key !== "custom").map(t => <option key={t.key} value={t.key}>{t.label}</option>)}
-              </select>
-            </SField>
+    <div className="px-3 sm:px-6 py-4 sm:py-5">
+      <div className="grid grid-cols-1 xl:grid-cols-[minmax(0,1fr)_320px] gap-4 max-w-[1380px] mx-auto">
+        <div className="space-y-3 min-w-0">
+          <div className="rounded-2xl border border-shPrimary/20 bg-[radial-gradient(circle_at_0%_0%,rgba(140,198,63,0.08),transparent_42%),rgba(0,0,0,0.15)] p-4 sm:p-5">
+            <p className="text-[10px] font-black uppercase tracking-[0.18em] text-shPrimary">Course setup</p>
+            <h5 className="text-lg sm:text-xl font-black text-shText mt-1">Start with what the client is buying.</h5>
+            <p className="text-[12px] sm:text-[13px] text-shTextMuted mt-1 max-w-2xl">Identity, delivery, pricing, access, and completion rules live here. Curriculum authoring stays in its own workbench so you are not hunting through one giant form.</p>
           </div>
-          <SField label="Description (internal purpose)"><textarea value={program.description || ""} onChange={(e) => set({ description: e.target.value })} rows={2} className={inputCls}/></SField>
-          <SField label="Focus (client-facing overview)"><input value={program.focus || ""} onChange={(e) => set({ focus: e.target.value })} className={inputCls}/></SField>
-        </div>
-      </ExpandableSection>
 
-      <ExpandableSection title="Delivery Mode" icon="fa-route" testid="setup-section-delivery">
-        <div className="space-y-2">
-          <p className="text-[12px] text-shTextMuted">How this curriculum reaches clients — the same modules/lessons/skills either way, never duplicated content.</p>
-          <div className="grid grid-cols-1 sm:grid-cols-3 gap-2">
-            {[
-              { k: "trainer_led", label: "Trainer-Led", icon: "fa-user-tie" },
-              { k: "self_guided", label: "Self-Guided (Online School)", icon: "fa-graduation-cap" },
-              { k: "both", label: "Both", icon: "fa-arrows-split-up-and-left" },
-            ].map(dm => (
-              <button key={dm.k} type="button" onClick={() => set({ delivery_mode: dm.k })} data-testid={`prog-delivery-mode-${dm.k}`}
-                      className={`py-2 rounded text-[12px] font-black uppercase tracking-widest border ${(program.delivery_mode || "trainer_led") === dm.k ? "bg-shPrimary text-bgHeader border-shPrimary" : "bg-transparent border-shBorder text-shTextMuted"}`}>
-                <i className={`fas ${dm.icon} mr-1`}/>{dm.label}
-              </button>
-            ))}
-          </div>
-        </div>
-      </ExpandableSection>
-
-      <ExpandableSection title="Training Format & Scheduling" icon="fa-calendar-days" testid="setup-section-format">
-        <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
-          <SField label="Sessions / credits issued">
-            <input type="number" min="1" value={program.format?.count || 1} onChange={(e) => set({ format: { ...program.format, count: parseInt(e.target.value) || 1 } })} data-testid="prog-format-count" className={inputCls}/>
-          </SField>
-          <SField label="Unit">
-            <select value={program.format?.unit || "sessions"} onChange={(e) => set({ format: { ...program.format, unit: e.target.value } })} className={inputCls}>
-              <option value="sessions">Sessions</option><option value="weeks">Weeks</option><option value="days">Days</option><option value="months">Months</option>
-            </select>
-          </SField>
-          <SField label="Min age (months)"><input type="number" min="0" value={program.min_age_months || 0} onChange={(e) => set({ min_age_months: parseInt(e.target.value) || 0 })} className={inputCls}/></SField>
-        </div>
-      </ExpandableSection>
-
-      <ExpandableSection title="Client Shop & Pricing" icon="fa-dollar-sign" testid="setup-section-pricing">
-        <div className="space-y-3">
-          <SField label="Price (USD)">
-            <input type="number" min="0" step="0.01" value={program.price ?? 0} onChange={(e) => set({ price: parseFloat(e.target.value) || 0 })} data-testid="prog-price" className={inputCls}/>
-          </SField>
-          <div className="border-t border-shBorder pt-3 space-y-3">
-            <p className="text-[11px] text-shTextMuted uppercase tracking-widest font-black">Shop Category</p>
-            <ShopCategoryFields categoryId={program.category_id} subcategoryId={program.subcategory_id} section="training" onChange={(patch) => set(patch)} />
-          </div>
-          <div className="border-t border-shBorder pt-3 space-y-3">
-            <p className="text-[11px] text-shTextMuted uppercase tracking-widest font-black">Client Shop</p>
-            <label className="flex items-center gap-2">
-              <input type="checkbox" checked={!!program.available_online} onChange={(e) => set({ available_online: e.target.checked })} data-testid="prog-available-online"/>
-              <span className="text-shText text-sm">Available Online (client Shop)</span>
-            </label>
-            {program.available_online && (
-              <div className="space-y-3">
-                <SField label="Online Description (optional)"><input value={program.online_description || ""} onChange={(e) => set({ online_description: e.target.value })} className={inputCls}/></SField>
-                <SField label="Program Photo"><ShopImageUpload imageId={program.image_id} originalImageId={originalImageId} onChange={(id) => set({ image_id: id })}/></SField>
+          <ExpandableSection title="Program Identity" icon="fa-tag" defaultOpen testid="setup-section-identity">
+            <div className="space-y-3">
+              <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
+                <SField label="Name *"><input value={program.name} onChange={(e) => set({ name: e.target.value })} data-testid="prog-name" className={inputCls} /></SField>
+                <SField label="Type">
+                  <select value={program.type} onChange={(e) => set({ type: e.target.value })} className={inputCls}>
+                    {meta.types.filter(t => t.key !== "custom").map(t => <option key={t.key} value={t.key}>{t.label}</option>)}
+                  </select>
+                </SField>
               </div>
-            )}
-          </div>
-          {(() => {
-            const canOnlineSchool = ["self_guided", "both"].includes(program.delivery_mode || "trainer_led");
-            return (
-              <div className="border-t border-shBorder pt-3 space-y-2">
-                <p className="text-[11px] text-shTextMuted uppercase tracking-widest font-black">Purchase Fulfillment</p>
-                <p className="text-[12px] text-shTextMuted">
-                  What a client actually gets when they buy this program. Delivery Mode above is curriculum capability — this is what a purchase does with it. A "Both"-capable program doesn't have to grant Online School access on every sale.
-                </p>
-                <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
-                  <button type="button" onClick={() => set({ purchase_fulfillment: "credits_only" })} data-testid="prog-fulfillment-credits_only"
-                          className={`py-2 rounded text-[12px] font-black uppercase tracking-widest border ${(program.purchase_fulfillment || "credits_only") === "credits_only" ? "bg-shPrimary text-bgHeader border-shPrimary" : "bg-transparent border-shBorder text-shTextMuted"}`}>
-                    <i className="fas fa-coins mr-1"/>Training Credits
-                  </button>
-                  <button type="button" disabled={!canOnlineSchool} onClick={() => canOnlineSchool && set({ purchase_fulfillment: "online_school" })} data-testid="prog-fulfillment-online_school"
-                          title={canOnlineSchool ? "" : "Set Delivery Mode to Self-Guided or Both first"}
-                          className={`py-2 rounded text-[12px] font-black uppercase tracking-widest border ${!canOnlineSchool ? "opacity-40 cursor-not-allowed bg-transparent border-shBorder text-shTextMuted" : program.purchase_fulfillment === "online_school" ? "bg-shPrimary text-bgHeader border-shPrimary" : "bg-transparent border-shBorder text-shTextMuted"}`}>
-                    <i className="fas fa-graduation-cap mr-1"/>Online School Access
-                  </button>
+              <SField label="Description (internal purpose)"><textarea value={program.description || ""} onChange={(e) => set({ description: e.target.value })} rows={2} className={inputCls}/></SField>
+              <SField label="Focus (client-facing overview)"><input value={program.focus || ""} onChange={(e) => set({ focus: e.target.value })} className={inputCls}/></SField>
+            </div>
+          </ExpandableSection>
+
+          <ExpandableSection title="Delivery Mode" icon="fa-route" testid="setup-section-delivery">
+            <div className="space-y-3">
+              <p className="text-[12px] text-shTextMuted">How this curriculum reaches clients — the same modules, lessons, and skills either way.</p>
+              <div className="grid grid-cols-1 sm:grid-cols-3 gap-2">
+                {[
+                  { k: "trainer_led", label: "Trainer-Led", icon: "fa-user-tie", note: "Staff guides the program" },
+                  { k: "self_guided", label: "Online School", icon: "fa-graduation-cap", note: "Client follows the school" },
+                  { k: "both", label: "Both", icon: "fa-arrows-split-up-and-left", note: "One curriculum, two paths" },
+                ].map(dm => {
+                  const active = (program.delivery_mode || "trainer_led") === dm.k;
+                  return (
+                    <button key={dm.k} type="button" onClick={() => set({ delivery_mode: dm.k })} data-testid={`prog-delivery-mode-${dm.k}`}
+                            className={`min-h-[74px] rounded-xl border p-3 text-left transition ${active ? "bg-shPrimary/[0.10] border-shPrimary/60 shadow-[0_0_20px_rgba(140,198,63,0.08)]" : "bg-black/10 border-shBorder/70 hover:border-shTextMuted/40"}`}>
+                      <span className={`w-8 h-8 rounded-lg grid place-items-center mb-2 ${active ? "bg-shPrimary text-[#071018]" : "bg-white/[0.03] text-shTextMuted border border-shBorder/60"}`}><i className={`fas ${dm.icon} text-[11px]`}/></span>
+                      <span className={`block text-[12px] font-black ${active ? "text-shPrimary" : "text-shText"}`}>{dm.label}</span>
+                      <span className="block text-[10px] text-shTextMuted mt-0.5">{dm.note}</span>
+                    </button>
+                  );
+                })}
+              </div>
+            </div>
+          </ExpandableSection>
+
+          <ExpandableSection title="Training Format & Scheduling" icon="fa-calendar-days" testid="setup-section-format">
+            <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
+              <SField label="Sessions / credits issued">
+                <input type="number" min="1" value={program.format?.count || 1} onChange={(e) => set({ format: { ...program.format, count: parseInt(e.target.value) || 1 } })} data-testid="prog-format-count" className={inputCls}/>
+              </SField>
+              <SField label="Unit">
+                <select value={program.format?.unit || "sessions"} onChange={(e) => set({ format: { ...program.format, unit: e.target.value } })} className={inputCls}>
+                  <option value="sessions">Sessions</option><option value="weeks">Weeks</option><option value="days">Days</option><option value="months">Months</option>
+                </select>
+              </SField>
+              <SField label="Min age (months)"><input type="number" min="0" value={program.min_age_months || 0} onChange={(e) => set({ min_age_months: parseInt(e.target.value) || 0 })} className={inputCls}/></SField>
+            </div>
+          </ExpandableSection>
+
+          <ExpandableSection title="Client Shop & Pricing" icon="fa-dollar-sign" testid="setup-section-pricing">
+            <div className="space-y-4">
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 items-end">
+                <SField label="Price (USD)">
+                  <input type="number" min="0" step="0.01" value={program.price ?? 0} onChange={(e) => set({ price: parseFloat(e.target.value) || 0 })} data-testid="prog-price" className={inputCls}/>
+                </SField>
+                <div className="rounded-xl border border-shBorder/60 bg-black/10 px-3 py-2.5 min-h-[44px] flex items-center justify-between gap-3">
+                  <div><p className="text-[10px] font-bold text-shTextMuted">Client Shop</p><p className="text-[12px] font-black text-shText">{program.available_online ? "Visible as a sellable item" : "Not available online"}</p></div>
+                  <label className="relative inline-flex items-center cursor-pointer shrink-0">
+                    <input type="checkbox" checked={!!program.available_online} onChange={(e) => set({ available_online: e.target.checked })} data-testid="prog-available-online" className="sr-only peer"/>
+                    <span className="w-11 h-6 rounded-full bg-white/10 border border-shBorder peer-checked:bg-shPrimary/30 peer-checked:border-shPrimary/60 transition"/>
+                    <span className="absolute left-1 w-4 h-4 rounded-full bg-shTextMuted peer-checked:bg-shPrimary peer-checked:translate-x-5 transition"/>
+                  </label>
                 </div>
-                {program.purchase_fulfillment === "online_school" && (
-                  <p className="text-[12px] text-amber-400"><i className="fas fa-circle-info mr-1"/>Buying this program enrolls the selected dog directly into Online School — no training credits are involved.</p>
+              </div>
+
+              <div className="rounded-xl border border-shBorder/50 bg-black/10 p-3 space-y-3">
+                <p className="text-[11px] text-shTextMuted font-black">Shop category</p>
+                <ShopCategoryFields categoryId={program.category_id} subcategoryId={program.subcategory_id} section="training" onChange={(patch) => set(patch)} />
+              </div>
+
+              {program.available_online && (
+                <div className="grid grid-cols-1 lg:grid-cols-[minmax(0,1fr)_260px] gap-3 items-start">
+                  <SField label="Online Description (optional)"><textarea value={program.online_description || ""} onChange={(e) => set({ online_description: e.target.value })} rows={3} className={inputCls}/></SField>
+                  <SField label="Program Photo"><ShopImageUpload imageId={program.image_id} originalImageId={originalImageId} onChange={(id) => set({ image_id: id })}/></SField>
+                </div>
+              )}
+
+              {(() => {
+                const canOnlineSchool = ["self_guided", "both"].includes(program.delivery_mode || "trainer_led");
+                return (
+                  <div className="rounded-xl border border-shBorder/50 bg-black/10 p-3 space-y-3">
+                    <div>
+                      <p className="text-[11px] text-shText font-black">What does a purchase grant?</p>
+                      <p className="text-[11px] text-shTextMuted mt-0.5">Delivery capability and purchase fulfillment stay separate on purpose.</p>
+                    </div>
+                    <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
+                      <button type="button" onClick={() => set({ purchase_fulfillment: "credits_only" })} data-testid="prog-fulfillment-credits_only"
+                              className={`min-h-[52px] rounded-xl text-[12px] font-black border transition ${(program.purchase_fulfillment || "credits_only") === "credits_only" ? "bg-shPrimary/[0.10] text-shPrimary border-shPrimary/50" : "bg-black/10 border-shBorder text-shTextMuted hover:text-shText"}`}>
+                        <i className="fas fa-coins mr-1.5"/>Training Credits
+                      </button>
+                      <button type="button" disabled={!canOnlineSchool} onClick={() => canOnlineSchool && set({ purchase_fulfillment: "online_school" })} data-testid="prog-fulfillment-online_school"
+                              title={canOnlineSchool ? "" : "Set Delivery Mode to Self-Guided or Both first"}
+                              className={`min-h-[52px] rounded-xl text-[12px] font-black border transition ${!canOnlineSchool ? "opacity-40 cursor-not-allowed bg-black/10 border-shBorder text-shTextMuted" : program.purchase_fulfillment === "online_school" ? "bg-shSecondary/[0.10] text-shSecondary border-shSecondary/50" : "bg-black/10 border-shBorder text-shTextMuted hover:text-shText"}`}>
+                        <i className="fas fa-graduation-cap mr-1.5"/>Online School Access
+                      </button>
+                    </div>
+                    {program.purchase_fulfillment === "online_school" && (
+                      <p className="text-[11px] text-shAccent"><i className="fas fa-circle-info mr-1"/>Buying this program enrolls the selected dog directly into Online School — no training credits are involved.</p>
+                    )}
+                  </div>
+                );
+              })()}
+            </div>
+          </ExpandableSection>
+
+          {program.available_online && (
+            <ExpandableSection title="Public Storefront" icon="fa-globe" testid="setup-section-storefront">
+              <div className="space-y-3">
+                <label className="flex items-center justify-between gap-3 rounded-xl border border-shBorder/50 bg-black/10 p-3">
+                  <span><span className="block text-[12px] font-black text-shText">Publicly Visible</span><span className="block text-[10px] text-shTextMuted">Guests can see it; buying still requires sign-in.</span></span>
+                  <input type="checkbox" checked={!!program.publicly_visible} onChange={(e) => set({ publicly_visible: e.target.checked })} data-testid="prog-publicly-visible" className="w-5 h-5"/>
+                </label>
+                {program.publicly_visible && (
+                  <div className="grid grid-cols-1 md:grid-cols-3 gap-2">
+                    <label className="rounded-xl border border-shBorder/50 bg-black/10 p-3 flex items-start gap-2"><input className="mt-0.5" type="checkbox" checked={program.show_public_price !== false} onChange={(e) => set({ show_public_price: e.target.checked })}/><span className="text-[11px] text-shText">Show Price to Guests</span></label>
+                    <label className="rounded-xl border border-shBorder/50 bg-black/10 p-3 flex items-start gap-2"><input className="mt-0.5" type="checkbox" checked={!!program.requires_dog} onChange={(e) => set({ requires_dog: e.target.checked })}/><span className="text-[11px] text-shText">Requires Selecting a Dog</span></label>
+                    <label className="rounded-xl border border-shBorder/50 bg-black/10 p-3 flex items-start gap-2"><input className="mt-0.5" type="checkbox" checked={!!program.requires_approval} onChange={(e) => set({ requires_approval: e.target.checked })}/><span className="text-[11px] text-shText">Requires Approval</span></label>
+                    <label className="rounded-xl border border-shBorder/50 bg-black/10 p-3 flex items-start gap-2"><input className="mt-0.5" type="checkbox" checked={!!program.requires_completed_onboarding} onChange={(e) => set({ requires_completed_onboarding: e.target.checked })}/><span className="text-[11px] text-shText">Requires Completed Account Setup</span></label>
+                  </div>
+                )}
+                {program.publicly_visible && program.requires_dog && <p className="text-[11px] text-shAccent">Dog selection is required before checkout for dog-specific programs.</p>}
+                {program.publicly_visible && program.requires_approval && <p className="text-[11px] text-shAccent">Approval requirements can block online checkout until the requirement is satisfied.</p>}
+              </div>
+            </ExpandableSection>
+          )}
+
+          <ExpandableSection title="Enrollment & Completion" icon="fa-flag-checkered" testid="setup-section-enrollment">
+            <div className="space-y-4">
+              {allPrograms.length > 0 && (
+                <SField label="Prerequisites (any of these)">
+                  <select multiple value={program.prereq_slugs || []} onChange={(e) => set({ prereq_slugs: Array.from(e.target.selectedOptions, o => o.value) })} className={`${inputCls} h-28`}>
+                    {allPrograms.filter(p => p.slug && p.id !== programId).map(p => <option key={p.id} value={p.slug}>{p.name}</option>)}
+                  </select>
+                </SField>
+              )}
+              <div className="rounded-xl border border-shSecondary/20 bg-shSecondary/[0.035] p-3 sm:p-4">
+                <p className="text-[11px] font-black text-shSecondary mb-2">Completion rule</p>
+                <div className="grid grid-cols-2 lg:grid-cols-4 gap-2">
+                  {[
+                    { k: "percent", label: "% mastered", icon: "fa-percent" },
+                    { k: "all_mastered", label: "All skills", icon: "fa-list-check" },
+                    { k: "manual", label: "Manual sign-off", icon: "fa-hand-pointer" },
+                    { k: "sessions", label: "Session count", icon: "fa-calendar-check" },
+                  ].map(rt => {
+                    const active = (program.completion_rule?.type || "percent") === rt.k;
+                    return (
+                      <button key={rt.k} type="button" onClick={() => set({ completion_rule: { ...(program.completion_rule || {}), type: rt.k } })}
+                              className={`min-h-[50px] rounded-xl text-[11px] font-black border transition ${active ? "bg-shSecondary text-[#031018] border-shSecondary" : "bg-black/10 border-shBorder text-shTextMuted hover:text-shText"}`}>
+                        <i className={`fas ${rt.icon} mr-1`}/>{rt.label}
+                      </button>
+                    );
+                  })}
+                </div>
+                {((program.completion_rule?.type || "percent") === "percent" || program.completion_rule?.type === "sessions") && (
+                  <div className="mt-3 flex flex-wrap items-center gap-2">
+                    <label className="text-[11px] font-bold text-shTextMuted">{program.completion_rule?.type === "sessions" ? "Required sessions" : "Threshold %"}</label>
+                    <input type="number" min="1" max="100" value={program.completion_rule?.threshold ?? (program.completion_rule?.type === "sessions" ? 5 : 80)}
+                           onChange={(e) => set({ completion_rule: { ...(program.completion_rule || { type: "percent" }), threshold: parseInt(e.target.value) || 0 } })}
+                           className="w-28 min-h-[42px] bg-black/25 border border-shBorder rounded-xl px-3 text-shText text-sm focus:outline-none focus:border-shSecondary/60"/>
+                  </div>
                 )}
               </div>
-            );
-          })()}
+            </div>
+          </ExpandableSection>
+
+          <ExpandableSection title="Welcome Communication" icon="fa-envelope-open-text" testid="setup-section-welcome">
+            <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
+              <SField label="Welcome homework (auto-sent on enrollment)">
+                <select value={program.welcome_homework_template_id || ""} onChange={(e) => set({ welcome_homework_template_id: e.target.value || null })} className={inputCls}>
+                  <option value="">— None —</option>
+                  {hwTemplates.map(t => <option key={t.id} value={t.id}>{t.name}{t.tier ? ` · ${t.tier}` : ""}</option>)}
+                </select>
+              </SField>
+              <SField label="Welcome email (auto-sent when program is sold)">
+                <select value={program.welcome_email_template_slug || ""} onChange={(e) => set({ welcome_email_template_slug: e.target.value || null })} className={inputCls}>
+                  <option value="">— None (default sale email) —</option>
+                  {emailTemplates.map(t => <option key={t.slug} value={t.slug}>{t.name}{t.kind === "custom" ? " · Custom" : ""}</option>)}
+                </select>
+              </SField>
+            </div>
+          </ExpandableSection>
         </div>
-      </ExpandableSection>
 
-      {program.available_online && (
-        <ExpandableSection title="Public Storefront" icon="fa-globe" testid="setup-section-storefront">
-          <div className="space-y-3">
-            <label className="flex items-center gap-2">
-              <input type="checkbox" checked={!!program.publicly_visible} onChange={(e) => set({ publicly_visible: e.target.checked })} data-testid="prog-publicly-visible"/>
-              <span className="text-shText text-sm">Publicly Visible (always requires sign-in to buy)</span>
-            </label>
-            {program.publicly_visible && (
-              <>
-                <label className="flex items-center gap-2">
-                  <input type="checkbox" checked={program.show_public_price !== false} onChange={(e) => set({ show_public_price: e.target.checked })}/>
-                  <span className="text-shText text-sm">Show Price to Guests</span>
-                </label>
-                <label className="flex items-center gap-2">
-                  <input type="checkbox" checked={!!program.requires_dog} onChange={(e) => set({ requires_dog: e.target.checked })}/>
-                  <span className="text-shText text-sm">Requires Selecting a Dog</span>
-                </label>
-                {program.requires_dog && <p className="text-[12px] text-shAccent">Until dog-selection support is built, this blocks online checkout — customers are directed to contact staff.</p>}
-                <label className="flex items-center gap-2">
-                  <input type="checkbox" checked={!!program.requires_approval} onChange={(e) => set({ requires_approval: e.target.checked })}/>
-                  <span className="text-shText text-sm">Requires Approval</span>
-                </label>
-                {program.requires_approval && <p className="text-[12px] text-shAccent">Until approval-workflow support is built, this blocks online checkout — customers are directed to contact staff.</p>}
-                <label className="flex items-center gap-2">
-                  <input type="checkbox" checked={!!program.requires_completed_onboarding} onChange={(e) => set({ requires_completed_onboarding: e.target.checked })}/>
-                  <span className="text-shText text-sm">Requires Completed Account Setup</span>
-                </label>
-              </>
-            )}
+        <aside className="xl:sticky xl:top-4 self-start rounded-2xl border border-shBorder/60 bg-black/20 overflow-hidden">
+          <div className="relative h-40 bg-black/30 overflow-hidden">
+            <HuskyDogImage name={program.name || "Sit Happens"} className="w-full h-full object-cover opacity-75"/>
+            <div className="absolute inset-0 bg-gradient-to-t from-[#07080d] via-black/30 to-transparent"/>
+            <div className="absolute left-4 right-4 bottom-3">
+              <p className="text-[9px] font-black uppercase tracking-[0.18em] text-shPrimary">Course at a glance</p>
+              <h6 className="text-lg font-black text-white truncate">{program.name || "Untitled Program"}</h6>
+            </div>
           </div>
-        </ExpandableSection>
-      )}
-
-      <ExpandableSection title="Enrollment & Completion" icon="fa-flag-checkered" testid="setup-section-enrollment">
-        <div className="space-y-3">
-          {allPrograms.length > 0 && (
-            <SField label="Prerequisites (any of these)">
-              <select multiple value={program.prereq_slugs || []} onChange={(e) => set({ prereq_slugs: Array.from(e.target.selectedOptions, o => o.value) })} className={`${inputCls} h-24`}>
-                {allPrograms.filter(p => p.slug && p.id !== programId).map(p => <option key={p.id} value={p.slug}>{p.name}</option>)}
-              </select>
-            </SField>
-          )}
-          <div className="bg-black/20 border border-shBorder rounded p-3">
-            <p className="text-[13px] font-black uppercase tracking-widest text-shSecondary mb-2">Completion Rule</p>
-            <div className="grid grid-cols-2 md:grid-cols-4 gap-2">
-              {[
-                { k: "percent", label: "% mastered", icon: "fa-percent" },
-                { k: "all_mastered", label: "All skills", icon: "fa-list-check" },
-                { k: "manual", label: "Manual sign-off", icon: "fa-hand-pointer" },
-                { k: "sessions", label: "Session count", icon: "fa-calendar-check" },
-              ].map(rt => (
-                <button key={rt.k} type="button" onClick={() => set({ completion_rule: { ...(program.completion_rule || {}), type: rt.k } })}
-                        className={`py-2 rounded text-[13px] font-black uppercase tracking-widest border ${(program.completion_rule?.type || "percent") === rt.k ? "bg-shSecondary text-bgHeader border-shSecondary" : "bg-transparent border-shBorder text-shTextMuted"}`}>
-                  <i className={`fas ${rt.icon} mr-1`}/>{rt.label}
-                </button>
+          <div className="p-4 space-y-4">
+            <div className="grid grid-cols-3 gap-2">
+              {[{ v: moduleCount, l: "Modules" }, { v: lessonCount, l: "Lessons" }, { v: skillCount, l: "Skills" }].map(item => (
+                <div key={item.l} className="rounded-xl border border-shBorder/50 bg-black/20 px-2 py-3 text-center">
+                  <p className="text-lg font-black text-shText">{item.v}</p><p className="text-[9px] text-shTextMuted">{item.l}</p>
+                </div>
               ))}
             </div>
-            {((program.completion_rule?.type || "percent") === "percent" || program.completion_rule?.type === "sessions") && (
-              <div className="mt-2 flex items-center gap-2">
-                <label className="text-[13px] font-black text-shTextMuted uppercase tracking-widest">{program.completion_rule?.type === "sessions" ? "Required sessions" : "Threshold %"}:</label>
-                <input type="number" min="1" max="100" value={program.completion_rule?.threshold ?? (program.completion_rule?.type === "sessions" ? 5 : 80)}
-                       onChange={(e) => set({ completion_rule: { ...(program.completion_rule || { type: "percent" }), threshold: parseInt(e.target.value) || 0 } })}
-                       className="w-24 bg-[var(--sh-card-base)] border border-shBorder rounded p-1.5 text-shText text-sm"/>
-              </div>
-            )}
+            <div className="space-y-2 text-[11px]">
+              <SetupSummaryRow label="Delivery" value={deliveryLabel}/>
+              <SetupSummaryRow label="Price" value={`$${Number(program.price || 0).toFixed(2)}`}/>
+              <SetupSummaryRow label="Shop" value={program.available_online ? "Available online" : "Staff / manual only"}/>
+              <SetupSummaryRow label="Purchase grants" value={program.purchase_fulfillment === "online_school" ? "Online School access" : "Training credits"}/>
+            </div>
+            <div className="rounded-xl border border-shPrimary/20 bg-shPrimary/[0.04] p-3">
+              <p className="text-[10px] font-black text-shPrimary">Next best move</p>
+              <p className="text-[11px] text-shTextMuted mt-1">Finish the setup, then switch to Curriculum to build the exact client journey lesson by lesson.</p>
+            </div>
           </div>
-        </div>
-      </ExpandableSection>
-
-      <ExpandableSection title="Welcome Communication" icon="fa-envelope-open-text" testid="setup-section-welcome">
-        <div className="space-y-3">
-          <SField label="Welcome homework (auto-sent on enrollment)">
-            <select value={program.welcome_homework_template_id || ""} onChange={(e) => set({ welcome_homework_template_id: e.target.value || null })} className={inputCls}>
-              <option value="">— None —</option>
-              {hwTemplates.map(t => <option key={t.id} value={t.id}>{t.name}{t.tier ? ` · ${t.tier}` : ""}</option>)}
-            </select>
-          </SField>
-          <SField label="Welcome email (auto-sent when program is sold)">
-            <select value={program.welcome_email_template_slug || ""} onChange={(e) => set({ welcome_email_template_slug: e.target.value || null })} className={inputCls}>
-              <option value="">— None (default sale email) —</option>
-              {emailTemplates.map(t => <option key={t.slug} value={t.slug}>{t.name}{t.kind === "custom" ? " · Custom" : ""}</option>)}
-            </select>
-          </SField>
-        </div>
-      </ExpandableSection>
+        </aside>
+      </div>
     </div>
   );
+}
+
+function SetupSummaryRow({ label, value }) {
+  return <div className="flex items-start justify-between gap-3"><span className="text-shTextMuted">{label}</span><span className="font-black text-shText text-right">{value}</span></div>;
 }
 
 /* ------------------------------------------------------------ Curriculum */
@@ -644,78 +712,142 @@ function CurriculumTab(props) {
     isNew, draftMeta, impact, loadingImpact, onPublish, saving,
   } = props;
   const [copySource, setCopySource] = useState("");
+  const lessonCount = modules.reduce((sum, m) => sum + (m.lessons || []).length, 0);
+  const skillCount = modules.reduce((sum, m) => sum + (m.goals || []).length, 0);
+  const selectedType = selectedLesson ? "Lesson" : selectedSkill ? "Skill" : selectedModule ? "Module" : "Nothing selected";
+  const selectedName = selectedLesson?.name || selectedSkill?.name || selectedModule?.name || "Choose something from the outline";
 
   return (
-    <div className="flex flex-col min-h-full">
-      <div className="md:hidden flex border-b border-shBorder shrink-0 overflow-x-auto" data-testid="studio-mobile-stages">
-        {MOBILE_STAGES.map(s => (
-          <button key={s.key} onClick={() => setMobileStage(s.key)} data-testid={`studio-mobile-stage-${s.key}`}
-                  className={`flex-1 px-2 py-2 text-[11px] font-black uppercase tracking-widest whitespace-nowrap border-b-2 ${mobileStage === s.key ? "border-shSecondary text-shSecondary" : "border-transparent text-shTextMuted"}`}>
-            <i className={`fas ${s.icon} mr-1`}/>{s.label}
-          </button>
-        ))}
+    <div className="flex flex-col min-h-full bg-[radial-gradient(circle_at_40%_0%,rgba(0,169,224,0.035),transparent_32%),transparent]">
+      <div className="md:hidden sticky top-0 z-20 px-2 py-2 border-b border-shBorder/70 bg-[var(--sh-card-base)] backdrop-blur overflow-x-auto" data-testid="studio-mobile-stages">
+        <div className="grid grid-cols-4 min-w-[360px] gap-1 rounded-xl border border-shBorder/60 bg-black/30 p-1">
+          {MOBILE_STAGES.map(s => (
+            <button key={s.key} onClick={() => setMobileStage(s.key)} data-testid={`studio-mobile-stage-${s.key}`}
+                    className={`min-h-[44px] px-2 py-2 text-[10px] font-black whitespace-nowrap rounded-lg transition ${mobileStage === s.key ? "bg-shSecondary text-[#031018]" : "text-shTextMuted hover:text-shText"}`}>
+              <i className={`fas ${s.icon} mr-1`}/>{s.label}
+            </button>
+          ))}
+        </div>
+      </div>
+
+      <div className="hidden md:flex items-center justify-between gap-4 px-5 py-3 border-b border-shBorder/60 bg-black/10 shrink-0">
+        <div className="min-w-0">
+          <p className="text-[9px] font-black uppercase tracking-[0.18em] text-shSecondary">Curriculum workbench</p>
+          <div className="flex items-center gap-2 min-w-0 mt-0.5">
+            <span className="text-[11px] font-black text-shTextMuted">{selectedType}</span>
+            <i className="fas fa-chevron-right text-[8px] text-shTextMuted/50"/>
+            <span className="text-[13px] font-black text-shText truncate">{selectedName}</span>
+          </div>
+        </div>
+        <div className="flex items-center gap-2 shrink-0">
+          {[{ icon: "fa-layer-group", v: modules.length, l: "modules", c: "text-shPrimary" }, { icon: "fa-book-open", v: lessonCount, l: "lessons", c: "text-shSecondary" }, { icon: "fa-bullseye", v: skillCount, l: "skills", c: "text-shAccent" }].map(item => (
+            <div key={item.l} className="rounded-xl border border-shBorder/50 bg-black/20 px-3 py-2 flex items-center gap-2">
+              <i className={`fas ${item.icon} ${item.c} text-[10px]`}/><span className="text-[12px] font-black text-shText">{item.v}</span><span className="text-[9px] text-shTextMuted">{item.l}</span>
+            </div>
+          ))}
+        </div>
       </div>
 
       <div className="flex flex-col md:flex-row flex-1 min-h-0">
-        <div className={`${mobileStage === "outline" ? "block" : "hidden"} md:block md:w-72 shrink-0 border-b md:border-b-0 md:border-r border-shBorder p-3 space-y-2 overflow-y-auto`}>
-          <div className="flex items-center justify-between gap-2">
-            <p className="text-[11px] font-black uppercase tracking-widest text-shTextMuted">Outline</p>
-            <div className="flex gap-1">
-              <CsvImportButton label="CSV" parse={parseProgramCsv} sampleText={PROGRAM_CSV_SAMPLE} sampleFilename="program-template.csv"
-                                testIdPrefix="studio-csv" helpText="Columns: module_name, module_description, goal_name, goal_description."
-                                onImport={(parsed) => { if (parsed?.modules?.length) props.set({ modules: [...modules, ...parsed.modules] }); }}/>
-              <button onClick={addModule} data-testid="studio-add-module" className="bg-shPrimary/15 text-shPrimary border border-shPrimary/40 px-2 py-1 rounded text-[12px] font-black uppercase tracking-widest">
+        <aside className={`${mobileStage === "outline" ? "block" : "hidden"} md:block md:w-[320px] shrink-0 border-b md:border-b-0 md:border-r border-shBorder/60 bg-black/10 overflow-y-auto`}>
+          <div className="sticky top-0 z-10 p-3 sm:p-4 border-b border-shBorder/50 bg-[var(--sh-card-base)] backdrop-blur space-y-3">
+            <div className="flex items-start justify-between gap-2">
+              <div>
+                <p className="text-[9px] font-black uppercase tracking-[0.18em] text-shPrimary">Course outline</p>
+                <p className="text-[11px] text-shTextMuted mt-0.5">Build the path clients actually follow.</p>
+              </div>
+              <button onClick={addModule} data-testid="studio-add-module" className="min-h-[38px] bg-shPrimary text-[#071018] px-3 py-2 rounded-lg text-[10px] font-black shadow-[0_6px_16px_-8px_rgba(140,198,63,0.9)]">
                 <i className="fas fa-plus mr-1"/>Module
               </button>
             </div>
-          </div>
-          {allPrograms.length > 0 && (
-            <div className="flex gap-1">
-              <select value={copySource} onChange={(e) => setCopySource(e.target.value)} className="flex-1 bg-[var(--sh-card-base)] border border-shBorder rounded p-1 text-[11px] text-shText">
-                <option value="">Copy modules from…</option>
-                {allPrograms.map(p => <option key={p.id} value={p.id}>{p.name}</option>)}
-              </select>
-              <button disabled={!copySource} onClick={() => { copyFromProgram(copySource); setCopySource(""); }}
-                      className="bg-shSecondary/15 text-shSecondary border border-shSecondary/40 px-2 rounded text-[11px] font-black uppercase disabled:opacity-40">Copy</button>
+            <div className="flex items-center gap-1.5">
+              <CsvImportButton label="CSV" parse={parseProgramCsv} sampleText={PROGRAM_CSV_SAMPLE} sampleFilename="program-template.csv"
+                                testIdPrefix="studio-csv" helpText="Columns: module_name, module_description, goal_name, goal_description."
+                                onImport={(parsed) => { if (parsed?.modules?.length) props.set({ modules: [...modules, ...parsed.modules] }); }}/>
+              {allPrograms.length > 0 && (
+                <>
+                  <select value={copySource} onChange={(e) => setCopySource(e.target.value)} className="min-w-0 flex-1 min-h-[38px] bg-black/30 border border-shBorder/70 rounded-lg px-2 text-[10px] text-shText focus:outline-none focus:border-shSecondary/50">
+                    <option value="">Copy from another program…</option>
+                    {allPrograms.map(p => <option key={p.id} value={p.id}>{p.name}</option>)}
+                  </select>
+                  <button disabled={!copySource} onClick={() => { copyFromProgram(copySource); setCopySource(""); }}
+                          className="min-h-[38px] bg-shSecondary/[0.08] text-shSecondary border border-shSecondary/25 px-2.5 rounded-lg text-[10px] font-black disabled:opacity-40">Copy</button>
+                </>
+              )}
             </div>
-          )}
-          {modules.length === 0 && <p className="text-[13px] text-shTextMuted italic py-3">No modules yet.</p>}
-          <CurriculumTree
-            modules={modules} selected={selected}
-            setSelected={(sel) => { setSelected(sel); setMobileStage("edit"); }}
-            moveModule={props.moveModule} duplicateModule={props.duplicateModule} removeModule={props.removeModule}
-            addSkill={props.addSkill} addLesson={props.addLesson} moveSkill={props.moveSkill} moveLesson={props.moveLesson}
-            removeSkill={props.removeSkill} removeLesson={props.removeLesson}
-            testid="studio-outline"
-          />
-        </div>
+          </div>
+          <div className="p-3 sm:p-4">
+            {modules.length === 0 && (
+              <div className="rounded-2xl border border-dashed border-shBorder bg-black/10 px-4 py-10 text-center">
+                <div className="w-12 h-12 rounded-2xl grid place-items-center mx-auto bg-shPrimary/[0.08] border border-shPrimary/20 text-shPrimary"><i className="fas fa-layer-group"/></div>
+                <p className="text-[13px] font-black text-shText mt-3">Start with your first module</p>
+                <p className="text-[11px] text-shTextMuted mt-1">Modules group lessons and skills into a clear training path.</p>
+              </div>
+            )}
+            <CurriculumTree
+              modules={modules} selected={selected}
+              setSelected={(sel) => { setSelected(sel); setMobileStage("edit"); }}
+              moveModule={props.moveModule} duplicateModule={props.duplicateModule} removeModule={props.removeModule}
+              addSkill={props.addSkill} addLesson={props.addLesson} moveSkill={props.moveSkill} moveLesson={props.moveLesson}
+              removeSkill={props.removeSkill} removeLesson={props.removeLesson}
+              testid="studio-outline"
+            />
+          </div>
+        </aside>
 
-        <div className={`${mobileStage === "edit" ? "block" : "hidden"} md:block flex-1 min-w-0 p-4 overflow-y-auto`}>
-          {!selected && <p className="text-[14px] text-shTextMuted italic">Select a module, lesson, or skill from the outline to edit it.</p>}
-          {selected && selectedModule && !selected.lessonKey && !selected.skillKey && (
-            <ModuleEditor module={selectedModule} {...props} />
-          )}
-          {selected && selectedLesson && (
-            <LessonEditor module={selectedModule} lesson={selectedLesson} {...props} />
-          )}
-          {selected && selectedSkill && (
-            <SkillEditor module={selectedModule} skill={selectedSkill} {...props} />
-          )}
-        </div>
+        <main className={`${mobileStage === "edit" ? "block" : "hidden"} md:block flex-1 min-w-0 overflow-y-auto`}>
+          <div className="p-3 sm:p-5 lg:p-6 max-w-[820px] mx-auto">
+            {!selected && (
+              <div className="min-h-[420px] flex items-center justify-center">
+                <div className="max-w-md text-center rounded-2xl border border-shBorder/50 bg-black/10 p-6 sm:p-8">
+                  <div className="w-14 h-14 rounded-2xl grid place-items-center mx-auto border border-shSecondary/25 bg-shSecondary/[0.06] text-shSecondary"><i className="fas fa-pen-ruler text-lg"/></div>
+                  <h5 className="text-lg font-black text-shText mt-4">Pick something to edit</h5>
+                  <p className="text-[12px] text-shTextMuted mt-1">Choose a module, lesson, or skill from the outline. Your live client/trainer preview stays available beside you on desktop.</p>
+                  <button onClick={() => setMobileStage("outline")} className="md:hidden mt-4 min-h-[44px] px-4 rounded-lg bg-shPrimary text-[#071018] text-[11px] font-black">Open Outline</button>
+                </div>
+              </div>
+            )}
+            {selected && (
+              <div className="mb-4 rounded-2xl border border-shBorder/50 bg-black/20 p-3 sm:p-4 flex items-center justify-between gap-3">
+                <div className="min-w-0">
+                  <p className="text-[9px] font-black uppercase tracking-[0.18em] text-shTextMuted">Editing {selectedType}</p>
+                  <h5 className="text-lg sm:text-xl font-black text-shText truncate">{selectedName}</h5>
+                  {selectedModule && (selectedLesson || selectedSkill) && <p className="text-[10px] text-shTextMuted mt-0.5">Inside {selectedModule.name}</p>}
+                </div>
+                <button onClick={() => setMobileStage("preview")} className="md:hidden shrink-0 min-h-[42px] px-3 rounded-lg border border-shSecondary/30 bg-shSecondary/[0.06] text-shSecondary text-[10px] font-black"><i className="fas fa-eye mr-1"/>Preview</button>
+              </div>
+            )}
+            {selected && selectedModule && !selected.lessonKey && !selected.skillKey && (
+              <ModuleEditor module={selectedModule} {...props} />
+            )}
+            {selected && selectedLesson && (
+              <LessonEditor module={selectedModule} lesson={selectedLesson} {...props} />
+            )}
+            {selected && selectedSkill && (
+              <SkillEditor module={selectedModule} skill={selectedSkill} {...props} />
+            )}
+          </div>
+        </main>
 
-        <div className={`${mobileStage === "preview" || mobileStage === "validate" ? "block" : "hidden"} md:block md:w-96 shrink-0 border-t md:border-t-0 md:border-l border-shBorder flex flex-col`}>
-          <div className="p-3 border-b border-shBorder">
+        <aside className={`${mobileStage === "preview" || mobileStage === "validate" ? "block" : "hidden"} md:block md:w-[410px] shrink-0 border-t md:border-t-0 md:border-l border-shBorder/60 bg-black/10 flex flex-col min-h-0`}>
+          <div className="p-3 sm:p-4 border-b border-shBorder/50 bg-black/10">
+            <div className="mb-2">
+              <p className="text-[9px] font-black uppercase tracking-[0.18em] text-shPrimary">Publish center</p>
+              <p className="text-[11px] text-shTextMuted">See readiness and enrollment impact before anything goes live.</p>
+            </div>
             <PublishReadinessPanel isNew={isNew} draftMeta={draftMeta} validation={validation} impact={impact}
                                     loadingImpact={loadingImpact} onPublish={onPublish} saving={saving} testid="studio-publish-readiness"/>
           </div>
-          <ProgramPreviewPanel
-            modules={modules} selectedModule={selectedModule} selectedLesson={selectedLesson} selectedSkill={selectedSkill}
-            validation={validation} onValidationNavigate={onValidationNavigate} onValidationRefresh={onRunValidation} validating={validating}
-            tab={mobileStage === "validate" ? "validation" : previewTab}
-            onTabChange={(t) => { setPreviewTab(t); if (t === "validation") setMobileStage("validate"); else if (mobileStage === "validate") setMobileStage("preview"); }}
-            testid="studio-preview"
-          />
-        </div>
+          <div className="flex-1 min-h-0">
+            <ProgramPreviewPanel
+              modules={modules} selectedModule={selectedModule} selectedLesson={selectedLesson} selectedSkill={selectedSkill}
+              validation={validation} onValidationNavigate={onValidationNavigate} onValidationRefresh={onRunValidation} validating={validating}
+              tab={mobileStage === "validate" ? "validation" : previewTab}
+              onTabChange={(t) => { setPreviewTab(t); if (t === "validation") setMobileStage("validate"); else if (mobileStage === "validate") setMobileStage("preview"); }}
+              testid="studio-preview"
+            />
+          </div>
+        </aside>
       </div>
     </div>
   );
@@ -730,23 +862,44 @@ function ModuleEditor({ module: m, updateModule, hwTemplates, reloadHwTemplates 
   // consumer of the template list, exactly as before.
   const [editingTemplate, setEditingTemplate] = useState(false);
   return (
-    <div className="space-y-3 max-w-xl">
-      <p className="text-[11px] font-black uppercase tracking-widest text-shPrimary">Module</p>
-      <SField label="Name"><input value={m.name} onChange={(e) => updateModule(m._key, { name: e.target.value })} className={inputCls}/></SField>
-      <SField label="Description"><textarea value={m.description || ""} onChange={(e) => updateModule(m._key, { description: e.target.value })} rows={2} className={inputCls}/></SField>
-      <SField label="Homework for this module (auto-sent when the dog begins it)">
-        <div className="flex gap-2">
-          <select value={m.homework_template_id || ""} onChange={(e) => updateModule(m._key, { homework_template_id: e.target.value || null })} className={inputCls}>
-            <option value="">— None —</option>
-            {hwTemplates.map(t => <option key={t.id} value={t.id}>{t.name}{t.tier ? ` · ${t.tier}` : ""}</option>)}
-          </select>
-          <button type="button" onClick={() => setEditingTemplate(true)} data-testid="module-edit-homework-template"
-                  className="shrink-0 bg-black/20 border border-shBorder text-shTextMuted hover:text-shPrimary rounded px-3">
-            <i className="fas fa-pen"/>
-          </button>
+    <div className="space-y-4">
+      <div className="grid grid-cols-1 lg:grid-cols-[minmax(0,1fr)_220px] gap-3">
+        <div className="rounded-2xl border border-shPrimary/20 bg-shPrimary/[0.035] p-4 space-y-3">
+          <div className="flex items-center gap-3">
+            <span className="w-10 h-10 rounded-xl grid place-items-center bg-shPrimary/[0.10] border border-shPrimary/25 text-shPrimary"><i className="fas fa-layer-group"/></span>
+            <div><p className="text-[9px] font-black uppercase tracking-[0.18em] text-shPrimary">Module</p><p className="text-[11px] text-shTextMuted">A major section of the client's training journey.</p></div>
+          </div>
+          <SField label="Name"><input value={m.name} onChange={(e) => updateModule(m._key, { name: e.target.value })} className={inputCls}/></SField>
+          <SField label="Description"><textarea value={m.description || ""} onChange={(e) => updateModule(m._key, { description: e.target.value })} rows={3} className={inputCls}/></SField>
         </div>
-      </SField>
-      <p className="text-[12px] text-shTextMuted">{(m.goals || []).length} skill(s) · {(m.lessons || []).length} lesson(s)</p>
+        <div className="rounded-2xl border border-shBorder/50 bg-black/10 p-4">
+          <p className="text-[9px] font-black uppercase tracking-[0.16em] text-shTextMuted">Module contents</p>
+          <div className="grid grid-cols-2 gap-2 mt-3">
+            <div className="rounded-xl border border-shSecondary/20 bg-shSecondary/[0.035] p-3 text-center"><p className="text-xl font-black text-shSecondary">{(m.lessons || []).length}</p><p className="text-[9px] text-shTextMuted">Lessons</p></div>
+            <div className="rounded-xl border border-shAccent/20 bg-shAccent/[0.03] p-3 text-center"><p className="text-xl font-black text-shAccent">{(m.goals || []).length}</p><p className="text-[9px] text-shTextMuted">Skills</p></div>
+          </div>
+          <p className="text-[10px] text-shTextMuted mt-3">Add and reorder lessons/skills from the course outline on the left.</p>
+        </div>
+      </div>
+
+      <div className="rounded-2xl border border-shBorder/50 bg-black/10 p-4">
+        <div className="flex items-start gap-3 mb-3">
+          <span className="w-9 h-9 rounded-xl grid place-items-center bg-shSecondary/[0.06] border border-shSecondary/20 text-shSecondary shrink-0"><i className="fas fa-graduation-cap text-[11px]"/></span>
+          <div><p className="text-[12px] font-black text-shText">Module homework</p><p className="text-[10px] text-shTextMuted">Automatically send the linked homework when the dog begins this module.</p></div>
+        </div>
+        <SField label="Homework template">
+          <div className="flex flex-col sm:flex-row gap-2">
+            <select value={m.homework_template_id || ""} onChange={(e) => updateModule(m._key, { homework_template_id: e.target.value || null })} className={inputCls}>
+              <option value="">— None —</option>
+              {hwTemplates.map(t => <option key={t.id} value={t.id}>{t.name}{t.tier ? ` · ${t.tier}` : ""}</option>)}
+            </select>
+            <button type="button" onClick={() => setEditingTemplate(true)} data-testid="module-edit-homework-template"
+                    className="shrink-0 min-h-[44px] bg-black/25 border border-shBorder text-shTextMuted hover:text-shPrimary hover:border-shPrimary/30 rounded-xl px-4 text-[11px] font-black transition">
+              <i className="fas fa-pen mr-1.5"/>Edit Template
+            </button>
+          </div>
+        </SField>
+      </div>
       {editingTemplate && (
         <HomeworkTemplateEditor
           templateId={m.homework_template_id || null}
@@ -775,10 +928,10 @@ function LessonEditor({ module: m, lesson: l, updateLesson, hwTemplates }) {
   const skillOptions = m.goals || [];
   const completeness = computeLessonCompleteness(l);
   return (
-    <div className="space-y-3 max-w-2xl">
-      <div className="flex items-center justify-between flex-wrap gap-2">
-        <p className="text-[11px] font-black uppercase tracking-widest text-shSecondary">Lesson</p>
-        <label className="flex items-center gap-2 text-[12px] text-shText"><input type="checkbox" checked={l.active !== false} onChange={(e) => set({ active: e.target.checked })}/>Active (uncheck to keep as draft)</label>
+    <div className="space-y-4">
+      <div className="rounded-2xl border border-shSecondary/20 bg-shSecondary/[0.035] p-4 flex items-start justify-between gap-3 flex-wrap">
+        <div className="flex items-center gap-3"><span className="w-10 h-10 rounded-xl grid place-items-center bg-shSecondary/[0.10] border border-shSecondary/25 text-shSecondary"><i className="fas fa-book-open"/></span><div><p className="text-[9px] font-black uppercase tracking-[0.18em] text-shSecondary">Lesson</p><p className="text-[11px] text-shTextMuted">Client learning, trainer direction, practice, and checkpoint rules live here.</p></div></div>
+        <label className="min-h-[40px] flex items-center gap-2 rounded-xl border border-shBorder/50 bg-black/10 px-3 text-[11px] font-bold text-shText"><input type="checkbox" checked={l.active !== false} onChange={(e) => set({ active: e.target.checked })}/>Active lesson</label>
       </div>
 
       <ContentCompleteness items={completeness} testid="lesson-completeness"/>
@@ -846,7 +999,7 @@ function LessonEditor({ module: m, lesson: l, updateLesson, hwTemplates }) {
             <div className="flex flex-wrap gap-1.5">
               {(l.suggested_homework_template_ids || []).map(tid => {
                 const t = hwTemplates.find(h => h.id === tid);
-                return <span key={tid} className="px-2 py-1 rounded text-[11px] bg-shSecondary/15 text-shSecondary border border-shSecondary/40">
+                return <span key={tid} className="px-2 py-1 rounded text-[11px] bg-shSecondary/10 text-shSecondary border border-shSecondary/40">
                   {t?.name || tid} <button onClick={() => set({ suggested_homework_template_ids: (l.suggested_homework_template_ids || []).filter(x => x !== tid) })} className="ml-1"><i className="fas fa-times"/></button>
                 </span>;
               })}
@@ -911,20 +1064,20 @@ function CriteriaListEditor({ label, criteria, onChange, testid }) {
       <p className="text-[11px] font-black uppercase tracking-widest text-shTextMuted mb-1.5">{label}</p>
       <div className="space-y-2">
         {criteria.map((c, idx) => (
-          <div key={c.id || idx} className="flex gap-2 items-start bg-black/20 border border-shBorder rounded p-2" data-testid={`${testid}-row-${idx}`}>
+          <div key={c.id || idx} className="flex flex-col sm:flex-row gap-2 items-stretch sm:items-start bg-black/20 border border-shBorder/60 rounded-xl p-2.5" data-testid={`${testid}-row-${idx}`}>
             <div className="flex-1 space-y-1">
               <input value={c.name || ""} onChange={(e) => updateOne(idx, { name: e.target.value })}
                      placeholder="Criterion name (e.g. Cue clarity)" className={inputCls} data-testid={`${testid}-name-${idx}`}/>
               <input value={c.guidance || ""} onChange={(e) => updateOne(idx, { guidance: e.target.value })}
                      placeholder="Grading guidance — trainer-only, optional" className={inputCls} data-testid={`${testid}-guidance-${idx}`}/>
             </div>
-            <button type="button" onClick={() => removeOne(idx)} className="text-shTextMuted hover:text-shDanger px-2 py-1" data-testid={`${testid}-remove-${idx}`}>
+            <button type="button" onClick={() => removeOne(idx)} className="shrink-0 min-h-[40px] sm:min-h-0 text-shTextMuted hover:text-shDanger px-3 py-2 rounded-lg hover:bg-red-500/[0.06]" data-testid={`${testid}-remove-${idx}`}>
               <i className="fas fa-times"/>
             </button>
           </div>
         ))}
       </div>
-      <button type="button" onClick={addOne} className="mt-1.5 text-[12px] font-black uppercase tracking-widest text-shSecondary hover:text-shSecondary/80" data-testid={`${testid}-add`}>
+      <button type="button" onClick={addOne} className="mt-2 min-h-[40px] px-3 rounded-lg border border-dashed border-shSecondary/30 bg-shSecondary/[0.035] text-[11px] font-black text-shSecondary hover:bg-shSecondary/[0.07]" data-testid={`${testid}-add`}>
         <i className="fas fa-plus mr-1"/>Add criterion
       </button>
     </div>
@@ -936,11 +1089,11 @@ function SkillEditor({ module: m, skill: g, updateSkill }) {
   const set = (patch) => updateSkill(m._key, g._key, patch);
   const completeness = computeSkillCompleteness(g);
   return (
-    <div className="space-y-3 max-w-2xl">
-      <div className="flex items-center justify-between flex-wrap gap-2">
-        <p className="text-[11px] font-black uppercase tracking-widest text-shAccent">Skill</p>
-        <label className="flex items-center gap-2 text-[12px] text-pink-300" title="Check-off (Done/Reset) instead of a 0-5 score">
-          <input type="checkbox" checked={!!g.manual_only} onChange={(e) => set({ manual_only: e.target.checked })}/>Manual (checkbox, not scored)
+    <div className="space-y-4">
+      <div className="rounded-2xl border border-shAccent/20 bg-shAccent/[0.03] p-4 flex items-start justify-between gap-3 flex-wrap">
+        <div className="flex items-center gap-3"><span className="w-10 h-10 rounded-xl grid place-items-center bg-shAccent/[0.08] border border-shAccent/25 text-shAccent"><i className="fas fa-bullseye"/></span><div><p className="text-[9px] font-black uppercase tracking-[0.18em] text-shAccent">Skill</p><p className="text-[11px] text-shTextMuted">Define what success looks like and how it is measured.</p></div></div>
+        <label className="min-h-[40px] flex items-center gap-2 rounded-xl border border-shBorder/50 bg-black/10 px-3 text-[11px] font-bold text-pink-300" title="Check-off (Done/Reset) instead of a 0-5 score">
+          <input type="checkbox" checked={!!g.manual_only} onChange={(e) => set({ manual_only: e.target.checked })}/>Manual check-off
         </label>
       </div>
 
@@ -973,7 +1126,7 @@ function SkillEditor({ module: m, skill: g, updateSkill }) {
       </ExpandableSection>
 
       <ExpandableSection title="Measurements" icon="fa-ruler" testid="skill-section-measurements">
-        <div className="grid grid-cols-2 md:grid-cols-3 gap-3">
+        <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 gap-3">
           <SField label="Target duration"><input value={g.target_duration || ""} onChange={(e) => set({ target_duration: e.target.value })} placeholder="e.g. 30s" className={inputCls}/></SField>
           <SField label="Target distance"><input value={g.target_distance || ""} onChange={(e) => set({ target_distance: e.target.value })} placeholder="e.g. 15ft" className={inputCls}/></SField>
           <SField label="Target repetitions"><input value={g.target_repetitions || ""} onChange={(e) => set({ target_repetitions: e.target.value })} placeholder="e.g. 5x" className={inputCls}/></SField>
@@ -1014,7 +1167,7 @@ function SkillEditor({ module: m, skill: g, updateSkill }) {
   );
 }
 
-const inputCls = "w-full bg-[var(--sh-card-base)] border border-shBorder rounded p-2 text-shText text-sm";
+const inputCls = "w-full min-h-[44px] bg-black/25 border border-shBorder/70 rounded-xl px-3 py-2.5 text-shText text-sm placeholder:text-shTextMuted/50 focus:outline-none focus:border-shSecondary/60 focus:ring-1 focus:ring-shSecondary/20 transition";
 function SField({ label, children }) {
-  return <div><label className="text-[11px] font-black text-shTextMuted uppercase tracking-widest">{label}</label><div className="mt-1">{children}</div></div>;
+  return <div><label className="text-[11px] font-bold text-shTextMuted">{label}</label><div className="mt-1.5">{children}</div></div>;
 }

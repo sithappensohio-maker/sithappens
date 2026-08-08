@@ -205,7 +205,7 @@ export default function BookingDetailModal({ booking: initial, onClose, onJumpTo
       onMouseDown={(e) => { if (e.target === e.currentTarget) onClose(); }}
       data-testid="booking-detail-modal"
     >
-      <div className="bg-bgCard border border-shBorder rounded-2xl shadow-2xl w-full max-w-3xl my-8" onClick={(e)=>e.stopPropagation()}>
+      <div className="bg-bgCard border border-shBorder rounded-2xl shadow-2xl w-full max-w-3xl my-8 sh-modal-surface" onClick={(e)=>e.stopPropagation()}>
         {/* Header */}
         <div className={`px-6 py-5 rounded-t-2xl border-b border-shBorder ${
           done ? "bg-gradient-to-r from-gray-700/30 to-gray-900/30"

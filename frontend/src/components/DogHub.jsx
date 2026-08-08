@@ -5,6 +5,7 @@ import DogTrainingTab from "./DogTrainingTab";
 import DogTimeline from "./DogTimeline";
 import TrophyWall from "./TrophyWall";
 import { BOOKING_STATUS, vaccineStatus } from "../lib/statusDefs";
+import HuskyDogImage from "./brand/HuskyDogImage";
 
 const TABS = [
   { id: "overview", label: "Overview", icon: "fa-paw" },
@@ -73,19 +74,24 @@ export default function DogHub({
 
   return (
     <div className="fixed inset-0 bg-black/70 z-50 flex items-center justify-center p-2 sm:p-4" onClick={onClose} data-testid="dog-hub">
-      <div className="bg-bgPanel border border-bgHover rounded-2xl w-full max-w-4xl shadow-2xl flex flex-col max-h-[92vh]" onClick={(e) => e.stopPropagation()}>
-        <div className="flex items-center justify-between px-5 py-4 border-b border-bgHover shrink-0">
-          <div className="min-w-0">
-            <h3 className="text-white font-black text-lg uppercase italic truncate">{dog.name}</h3>
-            <p className="text-[12px] text-gray-500 font-black uppercase tracking-widest truncate">{dog.breed || "Unknown breed"}</p>
+      <div className="bg-[var(--sh-card-base)] border border-shBorder rounded-2xl w-full max-w-4xl shadow-2xl flex flex-col max-h-[92vh] overflow-hidden" onClick={(e) => e.stopPropagation()}>
+        <div className="relative flex items-center justify-between gap-4 px-4 sm:px-5 py-4 border-b border-shBorder shrink-0 overflow-hidden">
+          <div className="absolute inset-0 pointer-events-none opacity-30" style={{background:"radial-gradient(circle at 5% 30%, rgba(140,198,63,.26), transparent 38%), radial-gradient(circle at 80% 0%, rgba(0,169,224,.16), transparent 35%)"}}/>
+          <div className="relative flex items-center gap-3 min-w-0">
+            <HuskyDogImage src={(full || dog).photo || dog.photo} name={dog.name} className="w-14 h-14 rounded-xl object-cover object-top border border-shPrimary/25 shrink-0" />
+            <div className="min-w-0">
+              <p className="text-[9px] font-black uppercase tracking-[0.16em] text-shPrimary">Sit Happens · Dog Record</p>
+              <h3 className="sh-display text-xl sm:text-2xl text-white leading-none truncate mt-1">{dog.name}</h3>
+              <p className="text-[11px] text-shSecondary font-bold truncate mt-1">{dog.breed || "Unknown breed"}</p>
+            </div>
           </div>
-          <button onClick={onClose} className="text-gray-500 hover:text-white shrink-0 ml-3" aria-label="Close"><i className="fas fa-times text-xl" /></button>
+          <button onClick={onClose} className="relative w-10 h-10 rounded-xl border border-shBorder text-shTextMuted hover:text-white hover:border-shPrimary/40 shrink-0 grid place-items-center" aria-label="Close"><i className="fas fa-times" /></button>
         </div>
 
-        <div className="flex overflow-x-auto border-b border-bgHover shrink-0 px-2" data-testid="dog-hub-tabs">
+        <div className="flex overflow-x-auto border-b border-shBorder shrink-0 px-2 bg-black/10" data-testid="dog-hub-tabs">
           {TABS.map((t) => (
             <button key={t.id} onClick={() => setTab(t.id)} data-testid={`dog-hub-tab-${t.id}`}
-                    className={`shrink-0 flex items-center gap-1.5 px-3 py-3 min-h-[44px] text-[12px] font-black uppercase tracking-widest border-b-2 transition ${tab === t.id ? "border-shGreen text-white" : "border-transparent text-gray-500 hover:text-gray-300"}`}>
+                    className={`shrink-0 flex items-center gap-1.5 px-3 py-3 min-h-[44px] text-[12px] font-black uppercase tracking-widest border-b-2 transition ${tab === t.id ? "border-shPrimary text-shPrimary" : "border-transparent text-gray-500 hover:text-gray-300"}`}>
               <i className={`fas ${t.icon}`} />{t.label}
             </button>
           ))}

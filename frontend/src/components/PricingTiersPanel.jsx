@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useState } from "react";
 import { api, formatErr } from "../lib/api";
 import { toast } from "sonner";
+import { useConfirm, usePromptDialog } from "../lib/useConfirm";
 
 /* Pricing Tiers — a lightweight, reusable alternative to entering the same
  * individual client override on every "Grandfathered Clients" / "Founding
@@ -120,6 +121,8 @@ function AddTierPriceFlow({ catalogs, onSave, onCancel }) {
 }
 
 function TierDetail({ tier, onBack, onRefresh }) {
+  const confirm = useConfirm();
+  const promptDialog = usePromptDialog();
   const [detail, setDetail] = useState(null);
   const [addingPrice, setAddingPrice] = useState(false);
   const [clientQuery, setClientQuery] = useState("");
@@ -166,8 +169,15 @@ function TierDetail({ tier, onBack, onRefresh }) {
   };
 
   const rename = async () => {
-    const name = window.prompt("Rename tier", detail.name);
-    if (!name || !name.trim() || name.trim() === detail.name) return;
+    const name = await promptDialog({
+      title: "Rename pricing tier",
+      body: "Choose the label staff will see anywhere this pricing tier is used.",
+      defaultValue: detail.name,
+      placeholder: "Tier name",
+      confirmText: "Rename",
+      tone: "info",
+    });
+    if (name === null || !name.trim() || name.trim() === detail.name) return;
     try {
       await api.put(`/pricing-tiers/${tier.id}`, { name: name.trim() });
       load(); onRefresh();
@@ -186,7 +196,13 @@ function TierDetail({ tier, onBack, onRefresh }) {
   };
 
   const unassignClient = async (client) => {
-    if (!window.confirm(`Remove ${client.name} from ${detail.name}? They'll immediately pay standard (or their individual override) pricing.`)) return;
+    const ok = await confirm({
+      title: `Remove ${client.name} from ${detail.name}?`,
+      body: "They will immediately pay standard pricing unless they have an individual override.",
+      confirmText: "Remove Client",
+      tone: "warning",
+    });
+    if (!ok) return;
     try {
       await api.delete(`/pricing-tiers/${tier.id}/clients/${client.id}`);
       load(); onRefresh();
@@ -202,7 +218,13 @@ function TierDetail({ tier, onBack, onRefresh }) {
   };
 
   const removePrice = async (price) => {
-    if (!window.confirm(`Remove the tier price for "${price.target_name}"?`)) return;
+    const ok = await confirm({
+      title: `Remove tier price for ${price.target_name}?`,
+      body: "Assigned clients will fall back to their individual override or the standard price for this item.",
+      confirmText: "Remove Price",
+      tone: "warning",
+    });
+    if (!ok) return;
     try {
       await api.delete(`/pricing-tiers/${tier.id}/prices/${price.id}`);
       load(); onRefresh();

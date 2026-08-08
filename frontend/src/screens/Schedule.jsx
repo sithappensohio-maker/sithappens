@@ -251,7 +251,7 @@ export default function Schedule() {
   };
 
   return (
-    <div className={`${mobile ? "flex flex-col gap-3" : "h-full flex flex-col gap-4"} animate-slide-in`} data-testid="schedule-calendar">
+    <div className={`${mobile ? "flex flex-col gap-3" : "h-full flex flex-col gap-4"} animate-slide-in sh-schedule-workspace`} data-testid="schedule-calendar">
       <PageHero
         eyebrow={{ icon: "fa-mouse-pointer", text: "Schedule · drag to reschedule", color: "text-shSecondary" }}
         title="The Calendar."

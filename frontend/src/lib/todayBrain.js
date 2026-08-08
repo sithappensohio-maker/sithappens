@@ -1,4 +1,5 @@
 import { api } from "./api";
+import { toast } from "sonner";
 
 /* Shared /admin/today-brain CTA-routing — extracted from the copy that used
  * to live separately in ActionCenter.jsx and Dashboard.jsx's TodaysBrainTile
@@ -13,7 +14,7 @@ export function runTodayBrainCTA(item, { onJumpToDog, onJumpToClient, onNavigate
   else if (cta.type === "open_screen" && cta.screen) onNavigate?.(cta.screen);
   else if (cta.type === "send_monday_digest") {
     api.post("/admin/homework/send-monday-digest")
-      .then(() => alert("Monday digest fired — check your admin email."))
-      .catch((e) => alert("Failed to send: " + (e.response?.data?.detail || e.message)));
+      .then(() => toast.success("Monday digest sent — check your admin email."))
+      .catch((e) => toast.error("Failed to send: " + (e.response?.data?.detail || e.message)));
   }
 }

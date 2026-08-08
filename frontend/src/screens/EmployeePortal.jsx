@@ -12,6 +12,7 @@ import { useCallback, useEffect, useMemo, useState } from "react";
 import { api, formatErr } from "../lib/api";
 import { useAuth } from "../lib/auth";
 import BrandFooter from "../components/BrandFooter";
+import AdminTabs from "../components/admin/AdminTabs";
 import ReportCardModal from "../components/ReportCardModal";
 import { CheckoutModal, CancelBookingModal } from "../components/CheckoutModal";
 import { todayISO } from "../lib/date";
@@ -80,40 +81,41 @@ export default function EmployeePortal() {
   }, [tab, canClients, canIncidents]);
 
   return (
-    <div className="min-h-screen bg-bgBase flex flex-col pb-safe" data-scroll-root data-testid="employee-portal">
-      <header className="bg-bgPanel border-b border-bgHover p-3 sm:p-4 flex items-center justify-between gap-2 sticky top-0 z-30">
-        <div className="flex items-center gap-2 min-w-0">
+    <div className="min-h-screen bg-bgBase flex flex-col pb-safe sh-employee-portal" data-scroll-root data-testid="employee-portal">
+      <header className="sh-employee-header sticky top-0 z-30">
+        <div className="flex items-center gap-3 min-w-0">
           <img src="/logo.png" alt="Sit Happens" className="w-10 h-10 sm:w-12 sm:h-12 object-contain shrink-0" />
           <div className="min-w-0">
-            <p className="text-[12px] sm:text-[13px] font-black uppercase tracking-widest text-shGreen">Staff Portal</p>
-            <p className="text-white font-black truncate" data-testid="emp-name">{user.name || user.email}</p>
+            <p className="sh-employee-wordmark">Sit Happens</p>
+            <p className="text-[9px] font-black uppercase tracking-[0.18em] text-shSecondary">Staff Portal</p>
+            <p className="text-white text-[12px] font-bold truncate mt-0.5" data-testid="emp-name">{user.name || user.email}</p>
           </div>
         </div>
-        <button onClick={logout} data-testid="emp-logout"
-                className="bg-bgBase border border-bgHover text-gray-300 px-3 py-2 rounded text-[13px] font-black uppercase tracking-widest hover:border-red-400 hover:text-red-300 shrink-0">
+        <button onClick={logout} data-testid="emp-logout" className="sh-employee-logout">
           <i className="fas fa-right-from-bracket mr-1"/><span className="hidden sm:inline">Logout</span>
         </button>
       </header>
 
-      <nav className="bg-bgPanel border-b border-bgHover px-2 py-2 flex gap-1 overflow-x-auto sticky top-[64px] sm:top-[72px] z-20" data-testid="emp-nav">
-        {[
-          ["clock", "Clock", "fa-clock"],
-          ["roster", "Roster", "fa-paw"],
-          ...(canClients ? [["clients", "Clients", "fa-users"]] : []),
-          ...(canIncidents ? [["incidents", "Incidents", "fa-triangle-exclamation"]] : []),
-          ["tasks", "My Tasks", "fa-list-check"],
-          ["schedule", "Schedule", "fa-calendar-week"],
-          ["timecard", "Timecard", "fa-receipt"],
-          ["timeoff", "Time Off", "fa-umbrella-beach"],
-          ["trivia", "Trivia", "fa-brain"],
-          ["profile", "Profile", "fa-user"],
-        ].map(([k, label, icon]) => (
-          <button key={k} onClick={()=>setTab(k)} data-testid={`emp-tab-${k}`}
-                  className={`shrink-0 px-3 py-2 rounded text-[13px] font-black uppercase tracking-widest transition ${tab===k ? "bg-shGreen text-bgHeader shadow" : "text-gray-400 hover:text-white"}`}>
-            <i className={`fas ${icon} mr-1.5`}/>{label}
-          </button>
-        ))}
-      </nav>
+      <div className="sh-employee-nav sticky top-[73px] sm:top-[81px] z-20">
+        <AdminTabs
+          compact
+          testid="emp-nav"
+          value={tab}
+          onChange={setTab}
+          items={[
+            { key: "clock", label: "Clock", icon: "fa-clock", testid: "emp-tab-clock" },
+            { key: "roster", label: "Roster", icon: "fa-paw", testid: "emp-tab-roster", accent: "cyan" },
+            ...(canClients ? [{ key: "clients", label: "Clients", icon: "fa-users", testid: "emp-tab-clients", accent: "cyan" }] : []),
+            ...(canIncidents ? [{ key: "incidents", label: "Incidents", icon: "fa-triangle-exclamation", testid: "emp-tab-incidents", accent: "orange" }] : []),
+            { key: "tasks", label: "My Tasks", icon: "fa-list-check", testid: "emp-tab-tasks" },
+            { key: "schedule", label: "Schedule", icon: "fa-calendar-week", testid: "emp-tab-schedule", accent: "cyan" },
+            { key: "timecard", label: "Timecard", icon: "fa-receipt", testid: "emp-tab-timecard" },
+            { key: "timeoff", label: "Time Off", icon: "fa-umbrella-beach", testid: "emp-tab-timeoff", accent: "cyan" },
+            { key: "trivia", label: "Trivia", icon: "fa-brain", testid: "emp-tab-trivia", accent: "purple" },
+            { key: "profile", label: "Profile", icon: "fa-user", testid: "emp-tab-profile" },
+          ]}
+        />
+      </div>
 
       <main className={`flex-1 p-3 sm:p-5 pb-28 sm:pb-8 w-full mx-auto ${(tab === "clients" || tab === "incidents") ? "max-w-6xl" : "max-w-3xl"}`}>
         {tab === "clock" && <ClockTab />}

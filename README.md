@@ -58,7 +58,7 @@ When it finishes, open `http://localhost:8080` in your browser.
 
 So you can use it on your phone outside the house, and clients can log in.
 
-Follow `BAZZITE_SETUP.md` Sections 5–8 for the Cloudflare Tunnel walkthrough. You'll need:
+Follow `docs/operations/BAZZITE_SETUP.md` Sections 5–8 for the Cloudflare Tunnel walkthrough. You'll need:
 - A domain you own (~$10/year — Cloudflare sells `.app`, `.com`, etc.)
 - 10 minutes
 
@@ -75,7 +75,7 @@ cd ~/sit-happens
 ./backup-now.sh    # Run a backup right now (local + Google Drive)
 ```
 
-For everything else (logs, troubleshooting, advanced commands) → see **TERMINAL_COMMANDS.md** in this repo.
+For everything else (logs, troubleshooting, advanced commands) → see **docs/operations/TERMINAL_COMMANDS.md** in this repo.
 
 ---
 
@@ -112,8 +112,8 @@ That's it. Same domain, same data, same everything.
 
 | File | What's in it |
 |------|--------------|
-| `BAZZITE_SETUP.md` | Long-form setup walkthrough (Cloudflare Tunnel, LAN access, etc.) |
-| `TERMINAL_COMMANDS.md` | Every command you'll ever need, grouped by job |
+| `docs/operations/BAZZITE_SETUP.md` | Long-form setup walkthrough (Cloudflare Tunnel, LAN access, etc.) |
+| `docs/operations/TERMINAL_COMMANDS.md` | Every command you'll ever need, grouped by job |
 | `install.sh` | Interactive installer (Step 3 above) |
 | `update.sh` | One-command updater |
 | `migrate-export.sh` / `migrate-import.sh` | Move to a new PC |
@@ -126,7 +126,7 @@ That's it. Same domain, same data, same everything.
 
 1. Check the logs: `docker compose -p sit-happens logs -f backend`
 2. Restart everything: `docker compose -p sit-happens restart`
-3. See `TERMINAL_COMMANDS.md → Recovery Scenarios` for specific fixes
+3. See `docs/operations/TERMINAL_COMMANDS.md → Recovery Scenarios` for specific fixes
 4. Last resort: restore from your most recent backup (`./migrate-import.sh`)
 
 ---

@@ -6,3 +6,5 @@ export { default as AdminFilterBar, AdminFilterChip } from "./AdminFilterBar";
 export { default as AdminMobileCard } from "./AdminMobileCard";
 export { default as AdminTable } from "./AdminTable";
 export { default as AdminActionMenu } from "./AdminActionMenu";
+
+export { default as AdminTabs } from "./AdminTabs";

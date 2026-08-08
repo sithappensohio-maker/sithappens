@@ -127,16 +127,17 @@ export default function Login() {
   const activeServiceCount = services.length;
 
   return (
-    <div className="min-h-screen w-full bg-bgBase text-white" data-testid="login-screen">
+    <div className="min-h-screen w-full bg-bgBase text-white sh-public-landing" data-testid="login-screen">
       {/* ===== Top bar ===== */}
-      <header className="sticky top-0 z-30 backdrop-blur bg-bgBase/80 border-b border-bgHover/60">
+      <header className="sticky top-0 z-30 backdrop-blur bg-bgBase/80 border-b border-bgHover/60 sh-public-landing__header">
         <div className="max-w-6xl mx-auto px-4 sm:px-6 py-3 flex items-center justify-between gap-3">
           <div className="flex items-center gap-3 min-w-0">
             <img src="/logo.png" alt="Sit Happens"
                  className="h-14 sm:h-16 lg:h-20 shrink-0 drop-shadow-[0_0_18px_rgba(140,198,63,0.35)]"
                  data-testid="landing-logo"/>
             <div className="hidden sm:block min-w-0">
-              <p className="text-[11px] uppercase font-black tracking-[0.25em] text-gray-400 truncate">
+              <p className="sh-public-wordmark sh-public-wordmark--header">Sit Happens</p>
+              <p className="text-[10px] font-bold tracking-[0.08em] text-shTextMuted truncate mt-0.5">
                 Dog Training · Daycare · Boarding · Photography
               </p>
             </div>
@@ -213,7 +214,7 @@ export default function Login() {
               <p className="text-[11px] font-black uppercase tracking-[0.3em] text-gray-500 mb-3">
                 Already a client, or ready to sign up now?
               </p>
-              <div className="relative bg-bgPanel border border-bgHover rounded-2xl p-6 sm:p-7 shadow-2xl card-form">
+              <div className="relative bg-bgPanel border border-bgHover rounded-2xl p-6 sm:p-7 shadow-2xl sh-public-auth-card">
                 <div className="flex gap-2 mb-5 bg-bgBase rounded-lg p-1">
                   <button onClick={() => setMode("login")} data-testid="tab-login"
                           className={`flex-1 py-2 rounded text-[13px] font-black uppercase tracking-widest transition ${mode==="login"?"bg-shBlue text-white":"text-gray-400 hover:text-gray-200"}`}>
@@ -423,7 +424,7 @@ function BrowseServicesModal({ services, onClose, onCta }) {
          onClick={onClose}
          data-testid="landing-browse-modal">
       <div onClick={(e) => e.stopPropagation()}
-           className="bg-bgPanel border border-bgHover rounded-2xl w-full max-w-4xl max-h-[calc(var(--app-height)_-_1.5rem)] overflow-y-auto shadow-2xl animate-slide-in">
+           className="bg-bgPanel border border-bgHover rounded-2xl w-full max-w-4xl max-h-[calc(var(--app-height)_-_1.5rem)] overflow-y-auto shadow-2xl animate-slide-in sh-modal-surface sh-public-browse-modal">
         <div className="sticky top-0 z-10 flex items-center justify-between gap-3 px-5 sm:px-6 py-4 bg-bgPanel/95 backdrop-blur border-b border-bgHover">
           <div className="min-w-0">
             <h2 className="text-xl sm:text-2xl font-black text-white uppercase italic tracking-tight">

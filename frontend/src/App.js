@@ -484,20 +484,23 @@ function AdminShell() {
           )}
         </div>
         {!collapsed && (
-          <div className="relative text-center">
-            <div className="absolute inset-0 pointer-events-none opacity-60 blur-2xl"
-                 style={{ background: "radial-gradient(circle at 50% 30%, rgba(140,198,63,0.35) 0%, rgba(0,169,224,0.22) 45%, transparent 75%)" }}/>
-            <img src="/logo.png" alt="Sit Happens"
-                 className="relative h-16 mx-auto drop-shadow-[0_6px_18px_rgba(0,0,0,0.55)]"
-                 data-testid={`${prefix}sidebar-logo`} />
-            <p className="relative text-[10px] text-shTextMuted font-bold uppercase tracking-[0.25em] mt-1.5 leading-tight">
-              Dog Training · Daycare · Boarding · Photography
-            </p>
+          <div className="relative px-1 pb-1">
+            <div className="absolute inset-0 pointer-events-none opacity-45 blur-2xl"
+                 style={{ background: "radial-gradient(circle at 35% 25%, rgba(140,198,63,0.30) 0%, rgba(0,169,224,0.18) 48%, transparent 76%)" }}/>
+            <div className="relative flex items-center gap-3">
+              <img src="/logo.png" alt="Sit Happens"
+                   className="h-12 w-12 object-contain shrink-0 drop-shadow-[0_5px_14px_rgba(0,0,0,0.55)]"
+                   data-testid={`${prefix}sidebar-logo`} />
+              <div className="min-w-0 text-left">
+                <p className="sh-shell-wordmark text-[22px] leading-[0.9]">Sit Happens</p>
+                <p className="sh-shell-kicker mt-1">Dog Training · Daycare</p>
+              </div>
+            </div>
           </div>
         )}
         {collapsed && (
           <img src="/logo.png" alt="Sit Happens"
-               className="h-8 mx-auto drop-shadow-[0_4px_12px_rgba(0,0,0,0.55)]"
+               className="h-9 mx-auto drop-shadow-[0_4px_12px_rgba(0,0,0,0.55)]"
                data-testid={`${prefix}sidebar-logo`} />
         )}
       </div>
@@ -667,7 +670,7 @@ function AdminShell() {
       <main className="flex-1 min-w-0 min-h-0 flex flex-col overflow-hidden">
         {/* Persistent top header — near-black w/ restrained accent glow,
             friendly page label (from nav metadata, not the raw tab id). */}
-        <header className="relative shrink-0 border-b border-shBorder h-16 flex items-center justify-between px-4 md:px-8 gap-3 overflow-hidden"
+        <header className="relative shrink-0 border-b border-shBorder h-[68px] flex items-center justify-between px-4 md:px-7 gap-3 overflow-hidden"
                 style={{ background: "rgba(7,8,13,0.95)", backdropFilter: "blur(8px)" }}>
           <div className="absolute inset-0 pointer-events-none opacity-20"
                style={{ background: "radial-gradient(circle at 0% 50%, rgba(0,169,224,0.3) 0%, transparent 40%), radial-gradient(circle at 100% 50%, rgba(140,198,63,0.22) 0%, transparent 45%)" }}/>
@@ -676,12 +679,14 @@ function AdminShell() {
                     className="md:hidden text-shText hover:text-shPrimary p-2 -ml-2 text-lg transition">
               <i className="fas fa-bars" />
             </button>
-            <img src="/logo.png" alt="Sit Happens"
-                 className="h-11 md:hidden drop-shadow-[0_0_10px_rgba(140,198,63,0.4)]" />
-            <h2 className="text-base sm:text-lg font-bold text-shText tracking-tight truncate pr-1"
-                data-testid="header-title">
-              <span className="text-shPrimary">·</span> {currentNavLabel}
-            </h2>
+            <div className="md:hidden min-w-0">
+              <p className="sh-shell-wordmark text-[16px] leading-none">Sit Happens</p>
+              <p className="sh-shell-page-title truncate mt-0.5" data-testid="header-title">{currentNavLabel}</p>
+            </div>
+            <div className="hidden md:block min-w-0">
+              <p className="sh-shell-kicker">Sit Happens · Workspace</p>
+              <h2 className="sh-shell-page-title truncate mt-0.5" data-testid="header-title">{currentNavLabel}</h2>
+            </div>
           </div>
           <div className="relative hidden md:flex items-center gap-2">
             <ActionMenu groups={visibleActionGroups} disabled={newMenuBlocked}
@@ -704,7 +709,7 @@ function AdminShell() {
             <button onClick={()=>setSearchOpen(true)} className="relative text-shTextMuted p-2 hover:text-shPrimary transition"><i className="fas fa-search" /></button>
           </div>
         </header>
-        <div className="app-scroll-root flex-1 min-h-0 overflow-y-auto overscroll-contain p-4 md:p-8 relative" data-scroll-root>
+        <div className="app-scroll-root flex-1 min-h-0 overflow-y-auto overscroll-contain p-4 md:p-7 relative" data-scroll-root>
           {tab === "today" && navAllowed("today") && <Today
             onNavigate={(t)=>setTab(t)}
             onJumpToDog={(id)=>{ setSearchTarget({kind:"dog", id, mode:"open"}); setTab("dogs"); }}

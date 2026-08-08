@@ -1,6 +1,8 @@
 import { useEffect, useMemo, useState } from "react";
 import { api } from "../lib/api";
 import { toast } from "sonner";
+import PageHero from "../components/PageHero";
+import AdminTabs from "../components/admin/AdminTabs";
 
 /** Filter chip row */
 function FilterChips({ available, selected, onToggle }) {
@@ -158,36 +160,25 @@ export default function BulkEmail() {
   const isManualMode = manualIds != null;
 
   return (
-    <div className="space-y-5" data-testid="bulk-email-screen">
-      {/* Header */}
-      <div className="bg-[var(--sh-card-base)] rounded-xl border border-shBorder p-5">
-        <div className="flex items-start justify-between gap-3 flex-wrap">
-          <div>
-            <p className="text-xs font-black text-shText uppercase tracking-widest">
-              <i className="fas fa-paper-plane mr-2 text-shPrimary"/>Bulk Client Email
-            </p>
-            <p className="text-[13px] text-shTextMuted mt-1 max-w-xl">
-              Send a single email to a filtered slice of your clients. Every send is logged on each recipient's
-              communication timeline so nothing falls through the cracks.
-            </p>
-          </div>
-          <div className="flex bg-[var(--sh-card-base)] rounded p-1 gap-1">
-            {[
-              { id: "compose",   label: "Compose",   icon: "fa-pen-to-square" },
-              { id: "templates", label: "Templates", icon: "fa-bookmark" },
-              { id: "history",   label: "History",   icon: "fa-clock-rotate-left" },
-            ].map(t => (
-              <button key={t.id} onClick={() => setView(t.id)}
-                      data-testid={`bulk-email-view-${t.id}`}
-                      className={`text-[12px] font-black uppercase tracking-widest px-3 py-1.5 rounded transition ${
-                        view === t.id ? "bg-shPrimary/15 text-shPrimary" : "text-shTextMuted hover:text-shText"
-                      }`}>
-                <i className={`fas ${t.icon} mr-1.5`}/>{t.label}
-              </button>
-            ))}
-          </div>
-        </div>
-      </div>
+    <div className="space-y-5 sh-bulk-email-workspace" data-testid="bulk-email-screen">
+      <PageHero
+        eyebrow={{ icon: "fa-paper-plane", text: "Client communication", color: "text-shPrimary" }}
+        title="Bulk Email."
+        highlight="Send the right message."
+        subtitle="Email a filtered slice of clients; every send remains logged on each communication timeline."
+        testid="bulk-email-hero"
+      />
+      <AdminTabs
+        compact
+        testid="bulk-email-views"
+        value={view}
+        onChange={setView}
+        items={[
+          { key: "compose", label: "Compose", icon: "fa-pen-to-square", testid: "bulk-email-view-compose" },
+          { key: "templates", label: "Templates", icon: "fa-bookmark", testid: "bulk-email-view-templates", accent: "cyan" },
+          { key: "history", label: "History", icon: "fa-clock-rotate-left", testid: "bulk-email-view-history", accent: "orange" },
+        ]}
+      />
 
       {view === "compose" && (
         <div className="grid grid-cols-1 lg:grid-cols-3 gap-5">

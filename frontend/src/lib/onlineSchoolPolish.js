@@ -45,8 +45,12 @@ export function buildSchoolLessonCards(module) {
   }));
 }
 
-// The dashboard hero's single "what do I do next" line.
+// The dashboard hero's single "what do I do next" line. A completed
+// enrollment still carries a current_lesson_name (the final lesson stays
+// "current" after a checkpoint graduation), so completion must be checked
+// FIRST — otherwise a graduated program reads "Start: <final lesson>".
 export function nextActionLabel(entry) {
+  if (entry && entry.status === "completed") return "Program complete — review your journey";
   if (!entry || !entry.current_lesson_name) return "Review your progress";
   return entry.current_lesson_practiced
     ? `Continue: ${entry.current_lesson_name}`
@@ -72,6 +76,24 @@ export function continueButtonLabel(roadmap) {
 
 export function formatCompletionPct(pct) {
   return `${Math.max(0, Math.min(100, Math.round(pct || 0)))}% complete`;
+}
+
+// Group the graduation summary's flat skills_mastered list
+// ([{name, explanation, module}]) into per-module buckets, preserving the
+// authored order (first appearance wins), so the "Skills your dog mastered"
+// recap reads module-by-module exactly as the curriculum was built. Skills
+// with a blank/missing name are dropped — the recap only ever shows real,
+// named skills the server included from the completed enrollment's snapshot.
+export function groupSkillsByModule(skills) {
+  const order = [];
+  const byModule = new Map();
+  for (const s of skills || []) {
+    if (!s || !s.name) continue;
+    const module = s.module || "";
+    if (!byModule.has(module)) { byModule.set(module, []); order.push(module); }
+    byModule.get(module).push(s);
+  }
+  return order.map(module => ({ module, skills: byModule.get(module) }));
 }
 
 // Online School Phase 3 — Student Home's "Trainer Status" line. Deliberately

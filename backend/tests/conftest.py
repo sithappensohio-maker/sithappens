@@ -207,12 +207,10 @@ def _seed_legacy_named_fixtures():
         # tests relying on it will surface that separately, same as any
         # other real fixture gap.
 
-    # 21 curated trivia questions — test_dog_trivia.py's admin-generate flow
-    # falls back to live LLM generation when the library is thin, which
-    # needs EMERGENT_LLM_KEY (unavailable in this test environment) and
-    # test_backup_coverage.py separately asserts >=21 trivia_questions
-    # exist. seed_curated_trivia.py is this repo's own idempotent seed
-    # script for exactly this — only run it here (direct DB access) when
+    # 21 curated trivia questions. The production app uses the same bundled
+    # curated seed when the pool is thin, and the backup coverage test
+    # separately asserts that the question library is present. Only seed here
+    # (direct DB access) when
     # this run has MONGO_URL/DB_NAME exported (see RELEASE_CHECKLIST.md).
     if os.environ.get("MONGO_URL") and os.environ.get("DB_NAME"):
         import asyncio

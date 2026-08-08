@@ -22,7 +22,7 @@ export default function PortalTrainingTipCard() {
 
   return (
     <div data-testid="portal-training-tip-card"
-         className="bg-bgPanel border-l-4 border-shGreen rounded-r-xl p-4 sm:p-5 shadow-md card-info">
+         className="bg-bgPanel border-l-4 border-shGreen rounded-r-xl p-4 sm:p-5 shadow-md">
       <p className="text-[11px] font-black uppercase tracking-[0.3em] text-shGreen mb-1">
         <i className="fas fa-lightbulb mr-1.5"/>Training tip of the day
         {tip.category ? ` · ${tip.category.replace(/_/g, " ")}` : ""}

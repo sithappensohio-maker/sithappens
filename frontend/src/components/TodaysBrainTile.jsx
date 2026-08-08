@@ -1,5 +1,6 @@
 import { useEffect, useState } from "react";
 import { api } from "../lib/api";
+import { useConfirm } from "../lib/useConfirm";
 
 const PRIORITY_META = {
   urgent: { color: "border-red-500/40 bg-red-500/5",   chip: "bg-red-500/15 text-red-300",   accent: "text-red-300",   icon: "fa-circle-exclamation" },
@@ -24,6 +25,7 @@ const PRIORITY_META = {
  *                    send_monday_digest → fire the digest API
  */
 export default function TodaysBrainTile({ onCTA }) {
+  const confirm = useConfirm();
   const [data, setData] = useState(null);
   const [err, setErr] = useState("");
   const [showAll, setShowAll] = useState(false);
@@ -45,7 +47,13 @@ export default function TodaysBrainTile({ onCTA }) {
   };
 
   const clearAll = async () => {
-    if (!window.confirm("Hide every task currently on the list? They'll reappear automatically if the underlying state changes (e.g. a credit pool drops further, a new booking request comes in).")) return;
+    const ok = await confirm({
+      title: "Hide every current task?",
+      body: "Dismissed items will reappear automatically if the underlying state changes, such as a credit pool dropping again or a new request arriving.",
+      confirmText: "Hide Current Tasks",
+      tone: "warning",
+    });
+    if (!ok) return;
     setBusy(true);
     try {
       await api.post("/admin/today-brain/clear-all");

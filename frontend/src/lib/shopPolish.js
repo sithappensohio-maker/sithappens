@@ -6,9 +6,21 @@
  * the client-facing UI reads the catalog/cart/order data it's already given.
  */
 
-// Items scoped to one Shop tab ("all" keeps everything).
+// Items scoped to one Shop tab ("all" keeps everything). Online School is a
+// presentation-only split of the training_program kind: self-guided courses
+// (purchase_fulfillment === "online_school") get their own dedicated section,
+// and the plain Training section shows the trainer-led rest. The catalog
+// kind ("training_program") — and therefore cart/checkout/detail routing —
+// is unchanged; this only decides which tab an item is browsed under.
 export function itemsForTab(items, tab) {
-  return tab === "all" ? items : items.filter((i) => i.kind === tab);
+  if (tab === "all") return items;
+  if (tab === "online_school") {
+    return items.filter((i) => i.kind === "training_program" && i.purchase_fulfillment === "online_school");
+  }
+  if (tab === "training_program") {
+    return items.filter((i) => i.kind === "training_program" && i.purchase_fulfillment !== "online_school");
+  }
+  return items.filter((i) => i.kind === tab);
 }
 
 // Shared by categoryOptionsForTab and categoryGroupsForTab below — pairs
@@ -171,6 +183,7 @@ const DEFAULT_SECTION_META = {
   merch: { label: "Merch & Gear", description: "", image_id: null, visible: true, order: 0 },
   prepaid_visits: { label: "Prepaid Visits", description: "", image_id: null, visible: true, order: 1 },
   training: { label: "Training", description: "", image_id: null, visible: true, order: 2 },
+  online_school: { label: "Online School", description: "Self-guided courses your dog learns at home, at your own pace.", image_id: null, visible: true, order: 3 },
 };
 
 // Resolved display metadata for one permanent section key — configured

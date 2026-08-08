@@ -1,11 +1,13 @@
 import { useCallback, useEffect, useState } from "react";
 import { api, formatErr } from "../lib/api";
-import { useConfirm } from "../lib/useConfirm";
+import { useConfirm, usePromptDialog } from "../lib/useConfirm";
 import ProgressRing from "./ProgressRing";
 import CollapsibleText from "./CollapsibleText";
 import { ProgramEditor } from "./Programs";
 import RecentTrainingSessionsPanel from "./RecentTrainingSessionsPanel";
 import TrainingSessionWorkspace from "./TrainingSessionWorkspace";
+import NeonEdge from "./premium/NeonEdge";
+import HuskyDogImage from "./brand/HuskyDogImage";
 
 /* ============================================================
  *  Replaces the old Training tab inside the dog edit modal.
@@ -13,6 +15,7 @@ import TrainingSessionWorkspace from "./TrainingSessionWorkspace";
  * ============================================================ */
 export default function DogTrainingTab({ dogId, dogName, dogAgeMonths = 0 }) {
   const confirm = useConfirm();
+  const promptDialog = usePromptDialog();
   const [meta, setMeta] = useState(null);
   const [enrollments, setEnrollments] = useState([]);
   const [programs, setPrograms] = useState([]);
@@ -99,12 +102,23 @@ export default function DogTrainingTab({ dogId, dogName, dogAgeMonths = 0 }) {
   // Phase 6 — Withdraw Student: the history-preserving replacement for
   // hard-delete once a school enrollment has real checkpoint activity.
   const schoolWithdraw = async (enrollment) => {
-    const reason = window.prompt(
-      `Why is ${dogName} being withdrawn from ${(enrollment.program_snapshot || {}).name || "this course"}? (required — this is recorded on the enrollment)`,
-    );
+    const courseName = (enrollment.program_snapshot || {}).name || "this course";
+    const reason = await promptDialog({
+      title: `Withdraw ${dogName} from ${courseName}?`,
+      body: "A withdrawal reason is required and will be recorded on the enrollment history.",
+      placeholder: "Reason for withdrawal",
+      confirmText: "Continue",
+      tone: "warning",
+    });
     if (reason === null) return;
     if (!reason.trim()) { setErr("A withdrawal reason is required."); return; }
-    const revokeAccess = window.confirm("Also revoke this student's access to the course content? (Cancel keeps read-only historical access.)");
+    const revokeAccess = await confirm({
+      title: "Revoke course access too?",
+      body: "Revoke Access blocks the student from course content. Keep Read-Only preserves historical course access without resuming training.",
+      confirmText: "Revoke Access",
+      cancelText: "Keep Read-Only",
+      tone: "warning",
+    });
     try {
       const se = schoolEnrollmentsById[enrollment.id];
       if (se) await api.post(`/school/enrollments/${se.id}/withdraw`, { reason: reason.trim(), revoke_access: revokeAccess });
@@ -116,7 +130,18 @@ export default function DogTrainingTab({ dogId, dogName, dogAgeMonths = 0 }) {
   // (this is also the mechanism behind the refund/revocation policy: a
   // refund never deletes training history, it revokes access here).
   const schoolSetAccess = async (enrollment, accessState) => {
-    const reason = accessState === "revoked" ? (window.prompt("Reason for revoking access? (optional)") || "") : "";
+    let reason = "";
+    if (accessState === "revoked") {
+      const entered = await promptDialog({
+        title: `Revoke ${dogName}'s course access?`,
+        body: "The reason is optional and is kept with the access change for staff history.",
+        placeholder: "Optional reason",
+        confirmText: "Revoke Access",
+        tone: "warning",
+      });
+      if (entered === null) return;
+      reason = entered.trim();
+    }
     try {
       const se = schoolEnrollmentsById[enrollment.id];
       if (se) await api.post(`/school/enrollments/${se.id}/access`, { access_state: accessState, reason });
@@ -232,18 +257,32 @@ export default function DogTrainingTab({ dogId, dogName, dogAgeMonths = 0 }) {
           enrollment. Phase 6 adds lifecycle visibility (status/access/
           provenance), Withdraw Student, and the access revoke/restore toggle. */}
       {(schoolActive.length > 0 || schoolHistory.length > 0) && (
-        <div className="bg-shPrimary/5 border border-shPrimary/30 rounded-lg p-3 space-y-2" data-testid="school-active-section">
-          <p className="text-[13px] font-black uppercase tracking-widest text-shPrimary"><i className="fas fa-graduation-cap mr-1.5"/>Online School</p>
-          {schoolActive.map(e => (
-            <SchoolEnrollmentAdminCard key={e.id} enrollment={e} dogName={dogName}
-                                       schoolEnrollmentId={schoolEnrollmentsById[e.id]?.id}
-                                       onWithdraw={()=>schoolWithdraw(e)} onRemove={()=>schoolUnenroll(e)}
-                                       onSetAccess={(s)=>schoolSetAccess(e, s)} />
-          ))}
+        <NeonEdge accentRgb="140,198,63" intensity="subtle" className="p-4 sm:p-5 space-y-4" data-testid="school-active-section">
+          <div className="flex items-center justify-between gap-3 flex-wrap">
+            <div className="flex items-center gap-3">
+              <div className="w-11 h-11 rounded-2xl bg-shPrimary/10 border border-shPrimary/30 grid place-items-center"><i className="fas fa-graduation-cap text-shPrimary"/></div>
+              <div>
+                <p className="text-[10px] font-black uppercase tracking-[0.16em] text-shPrimary">Sit Happens Online School</p>
+                <h3 className="text-[18px] font-black text-shText mt-0.5">{dogName}'s enrollments</h3>
+              </div>
+            </div>
+            <div className="flex items-center gap-2 text-[10px] font-bold text-shTextMuted">
+              {schoolActive.length > 0 && <span className="px-2 py-1 rounded-md bg-shPrimary/10 border border-shPrimary/20 text-shPrimary">{schoolActive.length} active</span>}
+              {schoolHistory.length > 0 && <span className="px-2 py-1 rounded-md bg-white/[0.03] border border-shBorder/60">{schoolHistory.length} historical</span>}
+            </div>
+          </div>
+          <div className="space-y-3">
+            {schoolActive.map(e => (
+              <SchoolEnrollmentAdminCard key={e.id} enrollment={e} dogName={dogName}
+                                         schoolEnrollmentId={schoolEnrollmentsById[e.id]?.id}
+                                         onWithdraw={()=>schoolWithdraw(e)} onRemove={()=>schoolUnenroll(e)}
+                                         onSetAccess={(s)=>schoolSetAccess(e, s)} />
+            ))}
+          </div>
           {schoolHistory.length > 0 && (
-            <details className="pt-1" data-testid="school-history-section">
-              <summary className="cursor-pointer text-[12px] font-black uppercase tracking-widest text-shTextMuted">History · {schoolHistory.length}</summary>
-              <div className="mt-2 space-y-2">
+            <details className="pt-1 border-t border-shBorder/50" data-testid="school-history-section">
+              <summary className="cursor-pointer text-[11px] font-black uppercase tracking-[0.14em] text-shTextMuted py-2">Past Online School enrollments · {schoolHistory.length}</summary>
+              <div className="mt-2 space-y-3">
                 {schoolHistory.map(e => (
                   <SchoolEnrollmentAdminCard key={e.id} enrollment={e} dogName={dogName}
                                              schoolEnrollmentId={schoolEnrollmentsById[e.id]?.id}
@@ -252,7 +291,7 @@ export default function DogTrainingTab({ dogId, dogName, dogAgeMonths = 0 }) {
               </div>
             </details>
           )}
-        </div>
+        </NeonEdge>
       )}
 
       {/* Enroll modal */}
@@ -289,6 +328,11 @@ export default function DogTrainingTab({ dogId, dogName, dogAgeMonths = 0 }) {
 }
 
 const SCHOOL_STATUS_LABEL = { active: "Active", completed: "Completed", withdrawn: "Withdrawn" };
+const SCHOOL_STATUS_STYLE = {
+  active: "bg-shPrimary/10 text-shPrimary border-shPrimary/25",
+  completed: "bg-shSecondary/10 text-shSecondary border-shSecondary/25",
+  withdrawn: "bg-amber-500/10 text-amber-300 border-amber-500/25",
+};
 
 // Phase 6 — staff-facing lifecycle card for a single Online School
 // enrollment: status, access state, provenance (manual vs purchase), and
@@ -301,6 +345,7 @@ function SchoolEnrollmentAdminCard({ enrollment: e, dogName, schoolEnrollmentId,
   const [cpHistory, setCpHistory] = useState(null);
   const accessRevoked = (e.access_state || "active") === "revoked";
   const provenance = e.enrollment_source === "purchase" ? "Purchased" : "Manually enrolled";
+  const pct = Math.max(0, Math.min(100, Number(e.mastered_pct || 0)));
 
   const loadHistory = async () => {
     if (cpHistory !== null) { setHistoryOpen(o => !o); return; }
@@ -317,68 +362,97 @@ function SchoolEnrollmentAdminCard({ enrollment: e, dogName, schoolEnrollmentId,
   };
 
   return (
-    <div className="bg-[var(--sh-card-base)] rounded p-3 border border-shBorder space-y-2" data-testid={`school-enrollment-${e.id}`}>
-      <div className="flex items-start justify-between gap-3">
-        <div className="min-w-0">
-          <p className="text-sm font-black text-shText truncate">{e.program_snapshot.name}</p>
-          <p className="text-[13px] text-shTextMuted">
-            {SCHOOL_STATUS_LABEL[e.status] || e.status} · {e.mastered_goals}/{e.total_goals} skills mastered ({e.mastered_pct}%) · {provenance}
-          </p>
-          {e.status === "withdrawn" && (
-            <p className="text-[12px] text-red-400 mt-0.5">Withdrawn {e.withdrawn_at ? new Date(e.withdrawn_at).toLocaleDateString() : ""} by {e.withdrawn_by_name || "staff"}{e.withdrawal_reason ? ` — "${e.withdrawal_reason}"` : ""}</p>
-          )}
-          <p className={`text-[12px] mt-0.5 font-black uppercase tracking-widest ${accessRevoked ? "text-red-400" : "text-shTextMuted"}`}>
-            {accessRevoked ? "Access Revoked" : "Access Active"}
-          </p>
+    <div className="rounded-2xl border border-shBorder/65 bg-black/20 overflow-hidden" data-testid={`school-enrollment-${e.id}`}>
+      <div className="p-4 sm:p-5">
+        <div className="flex items-start gap-3.5">
+          <div className="w-14 h-14 rounded-2xl overflow-hidden border border-shPrimary/20 bg-black/30 shrink-0">
+            <HuskyDogImage name={dogName} alt={dogName} className="w-full h-full object-cover object-top"/>
+          </div>
+          <div className="min-w-0 flex-1">
+            <div className="flex items-start justify-between gap-3 flex-wrap">
+              <div className="min-w-0">
+                <p className="text-[10px] font-black uppercase tracking-[0.14em] text-shTextMuted">{provenance}</p>
+                <p className="text-[16px] font-black text-shText mt-0.5 truncate">{e.program_snapshot.name}</p>
+              </div>
+              <div className="flex items-center gap-1.5 flex-wrap">
+                <span className={`text-[9px] font-black uppercase tracking-[0.12em] px-2 py-1 rounded-md border ${SCHOOL_STATUS_STYLE[e.status] || "border-shBorder text-shTextMuted"}`}>{SCHOOL_STATUS_LABEL[e.status] || e.status}</span>
+                <span className={`text-[9px] font-black uppercase tracking-[0.12em] px-2 py-1 rounded-md border ${accessRevoked ? "bg-red-500/10 text-red-300 border-red-500/25" : "bg-white/[0.03] text-shTextMuted border-shBorder/60"}`}>
+                  {accessRevoked ? "Access Revoked" : "Access Active"}
+                </span>
+              </div>
+            </div>
+
+            <div className="mt-3">
+              <div className="flex items-center justify-between text-[10px] text-shTextMuted mb-1.5">
+                <span>{e.mastered_goals}/{e.total_goals} skills mastered</span><span className="font-black text-shPrimary">{pct}%</span>
+              </div>
+              <div className="h-1.5 rounded-full bg-white/[0.06] overflow-hidden"><div className="h-full rounded-full bg-gradient-to-r from-shSecondary to-shPrimary" style={{ width: `${pct}%` }}/></div>
+            </div>
+
+            {e.status === "withdrawn" && (
+              <div className="mt-3 rounded-xl border border-amber-500/20 bg-amber-500/[0.05] px-3 py-2.5">
+                <p className="text-[11px] text-amber-300"><i className="fas fa-user-slash mr-1.5"/>Withdrawn {e.withdrawn_at ? new Date(e.withdrawn_at).toLocaleDateString() : ""} by {e.withdrawn_by_name || "staff"}{e.withdrawal_reason ? ` — “${e.withdrawal_reason}”` : ""}</p>
+              </div>
+            )}
+          </div>
         </div>
-        <div className="shrink-0 flex flex-col items-end gap-1">
+      </div>
+
+      <div className="border-t border-shBorder/50 bg-black/15 px-4 sm:px-5 py-3 flex items-center justify-between gap-2 flex-wrap">
+        <button onClick={loadHistory} data-testid={`school-cp-history-toggle-${e.id}`}
+                className="inline-flex items-center gap-2 text-[11px] font-black text-shSecondary hover:text-shText transition">
+          <i className={`fas fa-chevron-${historyOpen ? "up" : "down"} text-[9px]`}/>Checkpoint History
+        </button>
+        <div className="flex items-center gap-2 flex-wrap">
+          {onSetAccess && (accessRevoked ? (
+            <button onClick={()=>onSetAccess("active")} data-testid={`school-restore-access-${e.id}`}
+                    className="px-3 py-2 rounded-lg border border-shSecondary/25 bg-shSecondary/[0.06] text-shSecondary hover:bg-shSecondary/10 text-[11px] font-black transition">
+              <i className="fas fa-unlock mr-1.5"/>Restore Access
+            </button>
+          ) : (
+            <button onClick={()=>onSetAccess("revoked")} data-testid={`school-revoke-access-${e.id}`}
+                    className="px-3 py-2 rounded-lg border border-shBorder/60 bg-white/[0.02] text-shTextMuted hover:text-red-300 hover:border-red-500/25 text-[11px] font-black transition">
+              <i className="fas fa-lock mr-1.5"/>Revoke Access
+            </button>
+          ))}
           {onWithdraw && e.status === "active" && (
             <button onClick={onWithdraw} data-testid={`school-withdraw-${e.id}`}
-                    className="text-amber-400 hover:text-amber-300 text-[12px] font-black uppercase tracking-widest whitespace-nowrap">
-              <i className="fas fa-user-slash mr-1"/>Withdraw Student
+                    className="px-3 py-2 rounded-lg border border-amber-500/25 bg-amber-500/[0.05] text-amber-300 hover:bg-amber-500/10 text-[11px] font-black transition">
+              <i className="fas fa-user-slash mr-1.5"/>Withdraw Student
             </button>
           )}
           {onRemove && (
             <button onClick={onRemove} data-testid={`school-unenroll-${e.id}`}
-                    className="text-red-400 hover:text-red-300 text-[12px] font-black uppercase tracking-widest whitespace-nowrap">
-              <i className="fas fa-user-minus mr-1"/>Remove
+                    className="px-3 py-2 rounded-lg text-red-400/80 hover:text-red-300 text-[11px] font-black transition">
+              <i className="fas fa-trash-can mr-1.5"/>Remove
             </button>
-          )}
-          {onSetAccess && (
-            accessRevoked ? (
-              <button onClick={()=>onSetAccess("active")} data-testid={`school-restore-access-${e.id}`}
-                      className="text-shSecondary hover:text-shText text-[12px] font-black uppercase tracking-widest whitespace-nowrap">
-                <i className="fas fa-unlock mr-1"/>Restore Access
-              </button>
-            ) : (
-              <button onClick={()=>onSetAccess("revoked")} data-testid={`school-revoke-access-${e.id}`}
-                      className="text-shTextMuted hover:text-red-400 text-[12px] font-black uppercase tracking-widest whitespace-nowrap">
-                <i className="fas fa-lock mr-1"/>Revoke Access
-              </button>
-            )
           )}
         </div>
       </div>
-      <button onClick={loadHistory} data-testid={`school-cp-history-toggle-${e.id}`}
-              className="text-[11px] font-black uppercase tracking-widest text-shTextMuted hover:text-shPrimary">
-        <i className={`fas fa-chevron-${historyOpen ? "up" : "down"} mr-1`}/>Checkpoint History
-      </button>
+
       {historyOpen && (
-        <div className="space-y-1.5 pt-1 border-t border-shBorder" data-testid={`school-cp-history-${e.id}`}>
+        <div className="space-y-2 p-4 sm:p-5 border-t border-shBorder/50 bg-black/20" data-testid={`school-cp-history-${e.id}`}>
           {(cpHistory || []).length === 0 ? (
             <p className="text-[12px] text-shTextMuted">No graded checkpoints yet.</p>
-          ) : (cpHistory || []).map(cp => (
-            <div key={cp.id} className="text-[12px] text-shTextMuted">
-              <span className="text-shText font-bold">{cp.lesson_name}</span> — {cp.outcome?.replace(/_/g, " ")}
-              {cp.handler_scores && Object.keys(cp.handler_scores).length > 0 && (
-                <> · Handler avg {(Object.values(cp.handler_scores).reduce((a,b)=>a+b,0) / Object.values(cp.handler_scores).length).toFixed(1)}</>
-              )}
-              {cp.dog_scores && Object.keys(cp.dog_scores).length > 0 && (
-                <> · Dog avg {(Object.values(cp.dog_scores).reduce((a,b)=>a+b,0) / Object.values(cp.dog_scores).length).toFixed(1)}</>
-              )}
-              {cp.graded_at && <> · {new Date(cp.graded_at).toLocaleDateString()}</>}
-            </div>
-          ))}
+          ) : (cpHistory || []).map(cp => {
+            const handlerAvg = cp.handler_scores && Object.keys(cp.handler_scores).length > 0
+              ? (Object.values(cp.handler_scores).reduce((a,b)=>a+b,0) / Object.values(cp.handler_scores).length).toFixed(1)
+              : null;
+            const dogAvg = cp.dog_scores && Object.keys(cp.dog_scores).length > 0
+              ? (Object.values(cp.dog_scores).reduce((a,b)=>a+b,0) / Object.values(cp.dog_scores).length).toFixed(1)
+              : null;
+            return (
+              <div key={cp.id} className="rounded-xl border border-shBorder/55 bg-black/20 p-3">
+                <div className="flex items-start justify-between gap-3">
+                  <div className="min-w-0"><p className="text-[12px] text-shText font-black truncate">{cp.lesson_name}</p><p className="text-[10px] text-shTextMuted mt-0.5 capitalize">{cp.outcome?.replace(/_/g, " ")}{cp.graded_at ? ` · ${new Date(cp.graded_at).toLocaleDateString()}` : ""}</p></div>
+                  <div className="flex gap-1.5 shrink-0">
+                    {handlerAvg && <span className="px-2 py-1 rounded-md bg-shPrimary/10 border border-shPrimary/20 text-shPrimary text-[10px] font-black">Handler avg {handlerAvg}</span>}
+                    {dogAvg && <span className="px-2 py-1 rounded-md bg-shSecondary/10 border border-shSecondary/20 text-shSecondary text-[10px] font-black">Dog avg {dogAvg}</span>}
+                  </div>
+                </div>
+              </div>
+            );
+          })}
         </div>
       )}
     </div>

@@ -1,7 +1,7 @@
 import { useMemo, useState } from "react";
 import { api } from "../lib/api";
 
-const METHODS = ["cash", "check", "venmo", "paypal", "clover", "card", "transfer", "other"];
+const METHODS = ["cash", "check", "venmo", "paypal", "card", "transfer", "other"];
 
 function money(value) {
   return `$${(Number(value) || 0).toFixed(2)}`;
@@ -11,7 +11,7 @@ export default function FinancialCorrectionModal({ booking, onClose, onSaved }) 
   const [action, setAction] = useState("charge");
   const [amount, setAmount] = useState("");
   const [reason, setReason] = useState("");
-  const [method, setMethod] = useState(booking?.payment_method || "clover");
+  const [method, setMethod] = useState(booking?.payment_method || "card");
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState("");
   // Payment rebuild Phase 1 — one stable key per modal-open, so a double-
@@ -63,7 +63,7 @@ export default function FinancialCorrectionModal({ booking, onClose, onSaved }) 
 
   return (
     <div className="fixed inset-0 z-[80] bg-black/75 backdrop-blur-sm overflow-y-auto p-4 grid place-items-start sm:place-items-center" onMouseDown={(e)=>{ if (e.target === e.currentTarget) onClose(); }}>
-      <div className="w-full max-w-xl my-8 bg-bgCard border border-shBorder rounded-2xl shadow-2xl" onMouseDown={(e)=>e.stopPropagation()} data-testid="financial-correction-modal">
+      <div className="w-full max-w-xl my-8 bg-bgCard border border-shBorder rounded-2xl shadow-2xl sh-modal-surface" onMouseDown={(e)=>e.stopPropagation()} data-testid="financial-correction-modal">
         <div className="p-5 border-b border-shBorder flex items-start justify-between gap-4">
           <div>
             <p className="text-[11px] uppercase tracking-[0.3em] font-black text-shAccent">Locked financial record</p>

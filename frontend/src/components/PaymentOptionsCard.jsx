@@ -19,7 +19,7 @@ import { useTheme } from "../lib/theme";
 const ICONS = {
   venmo:  "fa-mobile-screen",
   paypal: "fa-paypal",
-  clover: "fa-credit-card",
+  card: "fa-credit-card",
   cash:   "fa-money-bill-wave",
   check:  "fa-money-check-dollar",
 };

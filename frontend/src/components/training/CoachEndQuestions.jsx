@@ -1,28 +1,23 @@
-// Client Practice Coach upgrade — end-of-practice questions, rendered only
-// when the recipe actually defines them (never forced on every exercise).
-// `answers` is a plain {question_id: value} map the caller folds into
-// field_values (e.g. field_values["q_" + question_id]) when submitting —
-// no new backend endpoint, reuses the existing flexible field_values dict.
 import { renderPracticeCoachText } from "../../lib/practiceCoachPolish";
 
 export default function CoachEndQuestions({ questions, answers, onAnswerChange, tokens, testid }) {
   if (!questions || questions.length === 0) return null;
   return (
-    <div className="space-y-3" data-testid={testid}>
+    <div className="rounded-2xl border border-shBorder/50 bg-black/12 p-4 space-y-4" data-testid={testid}>
+      <div><p className="text-[10px] font-black uppercase tracking-[0.14em] text-shTextMuted">Quick wrap-up</p><p className="text-[12px] text-shTextMuted mt-1">A couple of details help your trainer see the whole picture.</p></div>
       {questions.map(q => (
         <div key={q.id} data-testid={testid ? `${testid}-${q.id}` : undefined}>
-          <label className="text-[11px] font-black uppercase tracking-widest text-shTextMuted">
+          <label className="text-[12px] font-black text-shText">
             {renderPracticeCoachText(q.label, tokens)}{q.required && <span className="text-shDanger"> *</span>}
           </label>
           {q.type === "choice" ? (
-            <div className="flex flex-wrap gap-1.5 mt-1">
+            <div className="grid grid-cols-2 sm:flex sm:flex-wrap gap-2 mt-2">
               {(q.options || []).map(opt => {
                 const selected = answers?.[q.id] === opt;
                 return (
                   <button key={opt} type="button" onClick={() => onAnswerChange(q.id, opt)}
                           data-testid={testid ? `${testid}-${q.id}-${opt}` : undefined}
-                          className={`px-2.5 py-1.5 rounded text-[11px] font-black uppercase tracking-widest border transition
-                            ${selected ? "bg-shPrimary text-bgHeader border-shPrimary" : "bg-transparent text-shTextMuted border-shBorder hover:text-shText"}`}>
+                          className={`min-h-[42px] px-3 py-2 rounded-xl text-[11px] font-black border transition ${selected ? "bg-shPrimary/15 text-shPrimary border-shPrimary/45" : "bg-black/10 text-shTextMuted border-shBorder/55 hover:text-shText hover:border-shBorder"}`}>
                     {opt}
                   </button>
                 );
@@ -31,7 +26,7 @@ export default function CoachEndQuestions({ questions, answers, onAnswerChange, 
           ) : (
             <input value={answers?.[q.id] || ""} onChange={(e) => onAnswerChange(q.id, e.target.value)}
                    data-testid={testid ? `${testid}-${q.id}-input` : undefined}
-                   className="w-full mt-1 bg-black/20 border border-shBorder rounded p-2 text-shText text-sm"/>
+                   className="w-full mt-2 min-h-[44px] bg-black/20 border border-shBorder/55 rounded-xl px-3 text-shText text-sm focus:outline-none focus:border-shSecondary/45"/>
           )}
         </div>
       ))}

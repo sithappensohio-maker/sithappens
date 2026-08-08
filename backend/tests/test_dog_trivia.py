@@ -21,10 +21,7 @@ def _ensure_questions(h, min_n=5):
     rows = requests.get(f"{BASE}/api/admin/trivia/questions", headers=h, timeout=15).json()
     if rows.get("active", 0) >= min_n:
         return
-    # Top up via AI generation (smoke - will hit Emergent LLM)
-    r = requests.post(f"{BASE}/api/admin/trivia/generate", headers=h,
-                      json={"count": min_n}, timeout=90)
-    assert r.status_code == 200, r.text
+    assert rows.get("active", 0) >= min_n, "curated trivia seed is missing"
 
 
 def _wipe_today_attempt(h):
@@ -35,7 +32,7 @@ def _wipe_today_attempt(h):
     pass
 
 
-def test_admin_can_list_and_generate_questions():
+def test_admin_can_list_curated_questions():
     h = _admin()
     _ensure_questions(h, min_n=5)
     rows = requests.get(f"{BASE}/api/admin/trivia/questions", headers=h, timeout=15).json()
@@ -128,8 +125,8 @@ def test_portal_endpoints_require_client():
 def test_admin_endpoints_require_admin():
     r = requests.get(f"{BASE}/api/admin/trivia/questions", timeout=15)
     assert r.status_code in (401, 403)
-    r = requests.post(f"{BASE}/api/admin/trivia/generate", json={"count": 2}, timeout=15)
-    assert r.status_code in (401, 403)
+    r = requests.post(f"{BASE}/api/admin/trivia/questions", json={}, timeout=15)
+    assert r.status_code in (401, 403, 422)
     r = requests.get(f"{BASE}/api/admin/trivia/leaderboard", timeout=15)
     assert r.status_code in (401, 403)
 

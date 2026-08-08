@@ -19,6 +19,7 @@ import GuidedPracticeFlow from "./training/GuidedPracticeFlow";
 import PracticeCompletionPanel from "./training/PracticeCompletionPanel";
 import CoachEndQuestions from "./training/CoachEndQuestions";
 import DifficultyFeedbackNotice from "./training/DifficultyFeedbackNotice";
+import HuskyDogImage from "./brand/HuskyDogImage";
 
 const TIERS = ["foundation", "intermediate", "advanced", "specialty", "master"];
 const TABS = ["basics", "coach", "troubleshooting", "preview"];
@@ -52,24 +53,24 @@ function emptyTemplate() {
 function Field({ label, children }) {
   return (
     <div>
-      <label className="text-[11px] font-black uppercase tracking-widest text-shTextMuted block mb-1">{label}</label>
+      <label className="text-[11px] font-bold text-shTextMuted block mb-1.5">{label}</label>
       {children}
     </div>
   );
 }
-const inputCls = "w-full bg-black/20 border border-shBorder rounded p-2 text-shText text-sm";
+const inputCls = "w-full min-h-[44px] bg-black/25 border border-shBorder/70 rounded-xl px-3 py-2.5 text-shText text-sm placeholder:text-shTextMuted/55 focus:outline-none focus:border-shSecondary/60 focus:ring-1 focus:ring-shSecondary/20 transition";
 
 function StringListEditor({ items, onChange, placeholder, testid }) {
   return (
     <div className="space-y-1.5" data-testid={testid}>
       {(items || []).map((v, i) => (
-        <div key={i} className="flex gap-1.5">
+        <div key={i} className="flex gap-1.5 items-stretch">
           <input value={v} onChange={(e) => onChange(items.map((x, j) => j === i ? e.target.value : x))} className={inputCls}/>
-          <button type="button" onClick={() => onChange(items.filter((_, j) => j !== i))} className="text-shDanger px-2"><i className="fas fa-trash"/></button>
+          <button type="button" onClick={() => onChange(items.filter((_, j) => j !== i))} className="min-w-[42px] min-h-[42px] rounded-lg text-shDanger px-2 hover:bg-red-500/[0.06]"><i className="fas fa-trash"/></button>
         </div>
       ))}
       <button type="button" onClick={() => onChange([...(items || []), ""])}
-              className="text-[11px] font-black uppercase tracking-widest text-shPrimary">
+              className="min-h-[40px] px-3 rounded-lg border border-dashed border-shPrimary/30 bg-shPrimary/[0.035] text-[11px] font-black text-shPrimary">
         <i className="fas fa-plus mr-1"/>{placeholder || "Add"}
       </button>
     </div>
@@ -89,7 +90,7 @@ function ListEditor({ items, onChange, newItem, renderItem, addLabel, testid }) 
   return (
     <div className="space-y-2" data-testid={testid}>
       {(items || []).map((it, i) => (
-        <div key={it.id || i} className="bg-black/20 border border-shBorder rounded-lg p-2.5 space-y-2" data-testid={testid ? `${testid}-item-${i}` : undefined}>
+        <div key={it.id || i} className="bg-black/20 border border-shBorder/60 rounded-2xl p-3 space-y-2.5" data-testid={testid ? `${testid}-item-${i}` : undefined}>
           {renderItem(it, (patch) => update(i, patch), i)}
           <div className="flex items-center gap-2 justify-end pt-1 border-t border-shBorder/50">
             <button type="button" onClick={() => move(i, -1)} disabled={i === 0} data-testid={testid ? `${testid}-item-${i}-up` : undefined}
@@ -102,7 +103,7 @@ function ListEditor({ items, onChange, newItem, renderItem, addLabel, testid }) 
         </div>
       ))}
       <button type="button" onClick={() => onChange([...(items || []), newItem()])} data-testid={testid ? `${testid}-add` : undefined}
-              className="text-[11px] font-black uppercase tracking-widest text-shPrimary">
+              className="min-h-[40px] px-3 rounded-lg border border-dashed border-shPrimary/30 bg-shPrimary/[0.035] text-[11px] font-black text-shPrimary">
         <i className="fas fa-plus mr-1"/>{addLabel}
       </button>
     </div>
@@ -188,24 +189,29 @@ export default function HomeworkTemplateEditor({ templateId, onClose, onSaved })
   if (loading) return <div className="fixed inset-0 bg-black/80 z-50 flex items-center justify-center"><i className="fas fa-spinner fa-spin text-shText text-2xl"/></div>;
 
   return (
-    <div className="fixed inset-0 bg-black/80 z-50 flex items-center justify-center p-2 sm:p-4" data-testid="homework-template-editor">
-      <div className="bg-[var(--sh-card-base)] border border-shBorder rounded-2xl w-full max-w-4xl max-h-[calc(var(--app-height)_-_1rem)] flex flex-col min-h-0 shadow-2xl">
-        <div className="px-4 sm:px-5 py-3.5 border-b border-shBorder flex items-center justify-between shrink-0">
-          <h3 className="text-base font-black text-shText uppercase tracking-tight">{templateId ? "Edit Template" : "New Template"}</h3>
-          <button onClick={onClose} data-testid="template-editor-close" className="text-shTextMuted hover:text-shText text-xl px-2"><i className="fas fa-times"/></button>
+    <div className="fixed inset-0 bg-black/[0.92] backdrop-blur-md z-50 flex items-stretch sm:items-center justify-center p-0 sm:p-3" data-testid="homework-template-editor">
+      <div className="relative overflow-hidden bg-[var(--sh-card-base)] sm:border border-shBorder/80 rounded-none sm:rounded-[24px] w-full max-w-5xl h-[var(--app-height)] sm:h-auto sm:max-h-[calc(var(--app-height)_-_0.75rem)] flex flex-col min-h-0 shadow-[0_30px_100px_rgba(0,0,0,0.78)]">
+        <div className="absolute inset-x-0 top-0 h-24 pointer-events-none bg-[radial-gradient(circle_at_20%_0%,rgba(140,198,63,0.10),transparent_45%),radial-gradient(circle_at_75%_0%,rgba(0,169,224,0.08),transparent_40%)]"/>
+        <div className="relative px-3 sm:px-5 py-3.5 border-b border-shBorder/70 flex items-center justify-between shrink-0 bg-black/20 gap-3">
+          <div className="flex items-center gap-3 min-w-0">
+            <div className="w-11 h-11 rounded-xl border border-shPrimary/25 bg-black/30 overflow-hidden shrink-0"><HuskyDogImage name={draft.name || "Practice Coach"} className="w-full h-full object-cover"/></div>
+            <div className="min-w-0"><p className="text-[9px] font-black uppercase tracking-[0.18em] text-shPrimary">Sit Happens · Practice Recipe Builder</p><h3 className="sh-display text-lg sm:text-xl text-shText truncate">{templateId ? (draft.name || "Edit Template") : "New Practice Recipe"}</h3><p className="hidden sm:block text-[10px] text-shTextMuted">Build the practice your client will actually follow between lessons.</p></div>
+          </div>
+          <button onClick={onClose} data-testid="template-editor-close" className="w-10 h-10 rounded-xl border border-shBorder/70 bg-white/[0.025] text-shTextMuted hover:text-shText transition shrink-0"><i className="fas fa-times"/></button>
         </div>
 
-        <div className="flex border-b border-shBorder shrink-0 px-2">
+        <div className="shrink-0 px-3 sm:px-5 py-2 border-b border-shBorder/60 overflow-x-auto bg-black/10">
+          <div className="inline-flex min-w-max rounded-xl border border-shBorder/60 bg-black/25 p-1 gap-1">
           {TABS.map(t => (
             <button key={t} onClick={() => setActiveTab(t)} data-testid={`template-editor-tab-${t}`}
-                    className={`px-3 py-2.5 text-[11px] font-black uppercase tracking-widest border-b-2 transition
-                      ${activeTab === t ? "border-shPrimary text-shPrimary" : "border-transparent text-shTextMuted hover:text-shText"}`}>
+                    className={`min-h-[42px] px-3 sm:px-4 py-2 text-[10px] sm:text-[11px] font-black whitespace-nowrap rounded-lg transition ${activeTab === t ? "bg-shPrimary text-[#071018]" : "text-shTextMuted hover:text-shText hover:bg-white/[0.035]"}`}>
               {TAB_LABELS[t]}
             </button>
           ))}
+          </div>
         </div>
 
-        <div className="overflow-y-auto flex-1 min-h-0 px-4 sm:px-5 py-4">
+        <div className="overflow-y-auto flex-1 min-h-0 px-3 sm:px-5 py-4 sm:py-5">
           {activeTab === "basics" && (
             <div className="space-y-3" data-testid="tab-basics">
               <Field label="Name"><input value={draft.name} onChange={(e) => setDraft(d => ({ ...d, name: e.target.value }))} className={inputCls} data-testid="tpl-name"/></Field>
@@ -388,11 +394,10 @@ export default function HomeworkTemplateEditor({ templateId, onClose, onSaved })
 
           {activeTab === "preview" && (
             <div data-testid="tab-preview">
-              <div className="flex flex-wrap items-center gap-2 mb-3">
+              <div className="grid grid-cols-2 sm:flex sm:flex-wrap items-center gap-2 mb-4">
                 {["overview", "guided", "quick", "mobile"].map(m => (
                   <button key={m} onClick={() => setPreviewMode(m)} data-testid={`preview-mode-${m}`}
-                          className={`px-2.5 py-1.5 rounded text-[11px] font-black uppercase tracking-widest border
-                            ${previewMode === m ? "bg-shPrimary text-bgHeader border-shPrimary" : "bg-transparent text-shTextMuted border-shBorder"}`}>
+                          className={`min-h-[40px] px-3 py-2 rounded-lg text-[10px] font-black border transition ${previewMode === m ? "bg-shPrimary text-[#071018] border-shPrimary" : "bg-black/15 text-shTextMuted border-shBorder hover:text-shText"}`}>
                     {m}
                   </button>
                 ))}
@@ -400,7 +405,7 @@ export default function HomeworkTemplateEditor({ templateId, onClose, onSaved })
               {!pc.enabled ? (
                 <p className="text-[12px] text-shTextMuted">Enable Coach Mode to preview the guided client experience.</p>
               ) : (
-                <div className={previewMode === "mobile" ? "max-w-[390px] mx-auto border border-shBorder rounded-xl p-3" : ""}>
+                <div className={previewMode === "mobile" ? "max-w-[320px] mx-auto border-[5px] border-[#1a2030] bg-black/30 rounded-[28px] p-2 shadow-[0_20px_60px_rgba(0,0,0,0.5)]" : ""}>
                   {(previewMode === "overview" || previewMode === "mobile") && (
                     <CoachPracticeOverview practiceCoach={pc} tokens={previewTokens} testid="preview-overview"/>
                   )}
@@ -421,12 +426,12 @@ export default function HomeworkTemplateEditor({ templateId, onClose, onSaved })
           )}
         </div>
 
-        <div className="px-4 sm:px-5 py-3 border-t border-shBorder flex items-center justify-between shrink-0">
+        <div className="px-3 sm:px-5 py-3 border-t border-shBorder/70 bg-black/30 flex flex-col-reverse sm:flex-row items-stretch sm:items-center justify-between gap-2 shrink-0">
           {error ? <p className="text-shDanger text-[12px] font-bold">{error}</p> : <span/>}
-          <div className="flex gap-2">
-            <button onClick={onClose} className="text-shTextMuted px-3 py-2 text-[12px] font-black uppercase tracking-widest">Cancel</button>
+          <div className="grid grid-cols-2 sm:flex gap-2">
+            <button onClick={onClose} className="min-h-[44px] text-shTextMuted px-3 py-2 text-[11px] font-black rounded-lg hover:bg-white/[0.035]">Cancel</button>
             <button onClick={save} disabled={saving} data-testid="template-editor-save"
-                    className="bg-shPrimary text-bgHeader px-5 py-2.5 rounded font-black text-[13px] uppercase tracking-widest disabled:opacity-50">
+                    className="min-h-[44px] bg-shPrimary text-[#071018] px-5 py-2.5 rounded-lg font-black text-[11px] disabled:opacity-50 shadow-[0_8px_20px_-10px_rgba(140,198,63,0.9)]">
               {saving ? "Saving…" : "Save Template"}
             </button>
           </div>

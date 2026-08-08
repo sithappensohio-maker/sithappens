@@ -25,7 +25,7 @@ export default function ReadinessChecklist({ onNavigate = () => {} }) {
   const allDone = completed === total;
 
   return (
-    <div className="bg-[var(--sh-card-base)] rounded-xl border border-shBorder overflow-hidden card-task" data-testid="readiness-checklist">
+    <div className="bg-[var(--sh-card-base)] rounded-xl border border-shBorder overflow-hidden" data-testid="readiness-checklist">
       <button
         type="button"
         onClick={() => setCollapsed(c => !c)}

@@ -54,7 +54,7 @@ export default function KennelBoard() {
   };
 
   return (
-    <div className="space-y-6 animate-slide-in" data-testid="kennel-board-screen">
+    <div className="space-y-6 animate-slide-in sh-kennel-workspace" data-testid="kennel-board-screen">
       <PageHero
         eyebrow={{ icon: "fa-paw", text: `${board?.on_site_count || 0} dog${(board?.on_site_count||0)===1?"":"s"} scheduled today`, color: "text-shPrimary" }}
         title="Kennel Board."

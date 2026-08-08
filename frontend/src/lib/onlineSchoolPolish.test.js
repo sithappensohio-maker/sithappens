@@ -1,6 +1,7 @@
 import {
   buildSchoolRoadmap, schoolLessonCardStatus, buildSchoolLessonCards,
   nextActionLabel, canAdvance, practiceButtonLabel, continueButtonLabel, formatCompletionPct,
+  groupSkillsByModule,
 } from "./onlineSchoolPolish";
 
 const ROADMAP = {
@@ -74,6 +75,29 @@ test("nextActionLabel says Start before practice, Continue after", () => {
 test("nextActionLabel falls back honestly when there's no current lesson at all", () => {
   expect(nextActionLabel(null)).toBe("Review your progress");
   expect(nextActionLabel({ current_lesson_name: null })).toBe("Review your progress");
+});
+
+test("groupSkillsByModule buckets skills per module in authored order, dropping unnamed ones", () => {
+  const skills = [
+    { name: "Name recognition", explanation: "Turns on their name.", module: "Module 1 · Attention & Focus" },
+    { name: "Watch me", explanation: "Holds eye contact.", module: "Module 1 · Attention & Focus" },
+    { name: "", explanation: "blank name is dropped", module: "Module 1 · Attention & Focus" },
+    { name: "Sit on cue", explanation: "Sits on the word.", module: "Module 2 · Sit & Settle" },
+  ];
+  const grouped = groupSkillsByModule(skills);
+  expect(grouped.map(g => g.module)).toEqual(["Module 1 · Attention & Focus", "Module 2 · Sit & Settle"]);
+  expect(grouped[0].skills.map(s => s.name)).toEqual(["Name recognition", "Watch me"]);
+  expect(grouped[1].skills.map(s => s.name)).toEqual(["Sit on cue"]);
+  expect(groupSkillsByModule(null)).toEqual([]);
+  expect(groupSkillsByModule(undefined)).toEqual([]);
+});
+
+test("nextActionLabel reports completion first, even though the final lesson stays 'current'", () => {
+  // A checkpoint-graduated enrollment still carries current_lesson_name — completion must win.
+  expect(nextActionLabel({ status: "completed", current_lesson_name: "The Recall Party", current_lesson_practiced: true }))
+    .toBe("Program complete — review your journey");
+  expect(nextActionLabel({ status: "completed", current_lesson_name: null }))
+    .toBe("Program complete — review your journey");
 });
 
 test("canAdvance is true only once the server confirms real practice happened", () => {

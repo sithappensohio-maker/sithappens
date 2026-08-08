@@ -53,7 +53,7 @@ def test_payment_options_default_rows(admin_headers):
     assert r.status_code == 200
     po = r.json().get("payment_options", [])
     keys = {p["key"] for p in po}
-    assert keys >= {"venmo", "paypal", "clover", "cash", "check"}
+    assert keys >= {"venmo", "paypal", "card", "cash", "check"}
 
 
 def test_payment_options_round_trip(admin_headers):
@@ -83,7 +83,7 @@ def test_payment_options_round_trip(admin_headers):
         cash = next(p for p in po if p["key"] == "cash")
         assert cash["enabled"] is True
         # Defaults still come along for the disabled rows the admin didn't touch.
-        for k in ("paypal", "clover", "check"):
+        for k in ("paypal", "card", "check"):
             row = next(p for p in po if p["key"] == k)
             assert row["enabled"] is False
     finally:

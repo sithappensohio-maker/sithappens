@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useState } from "react";
 import { api } from "../lib/api";
 import AdminStatCard from "../components/admin/AdminStatCard";
+import PageHero from "../components/PageHero";
 import ActionRow from "../components/admin/ActionRow";
 import ActionMenu from "../components/admin/ActionMenu";
 import { runTodayBrainCTA } from "../lib/todayBrain";
@@ -150,16 +151,26 @@ export default function Today({ onNavigate = () => {}, onJumpToDog = () => {}, o
 
   return (
     <div className="space-y-5 animate-slide-in" data-testid="today-screen">
-      {/* 1. Top actions */}
-      <div className="flex flex-wrap items-center gap-2" data-testid="today-top-actions">
-        <ActionMenu groups={actionGroups} disabled={newMenuBlocked}
-                    disabledReason="Close the current dialog first."
-                    buttonTestId="today-new-action-button" />
-        <button onClick={onOpenSearch} data-testid="today-open-search"
-                className="min-h-[44px] px-4 py-2.5 rounded-lg border border-shBorder bg-[var(--sh-card-base)] text-shText font-bold text-[13px] hover:border-shPrimary/40 transition">
-          <i className="fas fa-search mr-2 text-shTextMuted"/>Search
-        </button>
-      </div>
+      {/* 1. Daily workspace hero + primary actions */}
+      <PageHero
+        compact
+        testid="today-page-hero"
+        eyebrow={{ icon: "fa-sun", text: "Today at Sit Happens", color: "text-shPrimary" }}
+        title="Today."
+        highlight="Your day at a glance."
+        subtitle={new Date().toLocaleDateString("en-US", { weekday: "long", month: "long", day: "numeric" })}
+        right={(
+          <div className="flex flex-wrap items-center gap-2" data-testid="today-top-actions">
+            <ActionMenu groups={actionGroups} disabled={newMenuBlocked}
+                        disabledReason="Close the current dialog first."
+                        buttonTestId="today-new-action-button" />
+            <button onClick={onOpenSearch} data-testid="today-open-search"
+                    className="min-h-[44px] px-4 py-2.5 rounded-xl border border-shBorder bg-[var(--sh-card-base)] text-shText font-bold text-[13px] hover:border-shPrimary/40 transition">
+              <i className="fas fa-search mr-2 text-shTextMuted"/>Search
+            </button>
+          </div>
+        )}
+      />
 
       {/* 1b. Recently Opened — compact horizontal strip, only when non-empty */}
       {recents.length > 0 && (

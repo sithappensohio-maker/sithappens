@@ -12,6 +12,7 @@ Operator actions per row:
 import { useEffect, useState } from "react";
 import { api } from "../lib/api";
 import TakePaymentModal from "../components/TakePaymentModal";
+import { EmptyState, FormError, FormInput, FormLabel, PremiumButton, SectionCard, StatusBadge } from "../components/premium";
 
 const fmt = (n) => `$${(Number(n) || 0).toFixed(2)}`;
 const fmtDateTime = (iso) => {
@@ -22,20 +23,18 @@ const fmtDateTime = (iso) => {
 
 const ROW_TYPE_TONE = {
   charge:     { tone: "text-shAccent",  icon: "fa-arrow-up",   label: "Charge" },
-  payment:    { tone: "text-shPrimary",   icon: "fa-arrow-down", label: "Payment" },
-  refund:     { tone: "text-red-400",   icon: "fa-rotate-left", label: "Refund" },
-  adjustment: { tone: "text-shSecondary",    icon: "fa-pen-to-square", label: "Adjustment" },
+  payment:    { tone: "text-shPrimary", icon: "fa-arrow-down", label: "Payment" },
+  refund:     { tone: "text-red-400",    icon: "fa-rotate-left", label: "Refund" },
+  adjustment: { tone: "text-shSecondary", icon: "fa-pen-to-square", label: "Adjustment" },
 };
 
 export default function AccountsReceivableTab() {
   const [data, setData] = useState(null);
   const [loading, setLoading] = useState(true);
   const [err, setErr] = useState("");
-  const [openLedger, setOpenLedger] = useState(null); // client row currently expanded
-  const [payOpen, setPayOpen] = useState(null);       // client row for "apply payment"
-  const [adjOpen, setAdjOpen] = useState(null);       // client row for "adjustment"
-  // Sprint 110di-53 — Send statement toast state. Keyed by client id so
-  // multiple rows can be in-flight at once without stomping each other.
+  const [openLedger, setOpenLedger] = useState(null);
+  const [payOpen, setPayOpen] = useState(null);
+  const [adjOpen, setAdjOpen] = useState(null);
   const [sendingStatement, setSendingStatement] = useState({});
   const [statementToast, setStatementToast] = useState("");
 
@@ -50,9 +49,6 @@ export default function AccountsReceivableTab() {
   };
   useEffect(() => { load(); }, []);
 
-  // Sprint 110di-53 — Send a full ledger/statement email to the client.
-  // Uses the existing payment methods the business already accepts —
-  // no Stripe / payment gateway involvement.
   const sendStatement = async (client) => {
     if (!client.email) {
       setStatementToast(`${client.name} has no email on file.`);
@@ -73,151 +69,131 @@ export default function AccountsReceivableTab() {
 
   if (loading) {
     return (
-      <div className="bg-[var(--sh-card-base)] border border-shBorder rounded-xl p-6 text-center text-shTextMuted"
-           data-testid="ar-loading">
-        <i className="fas fa-circle-notch fa-spin mr-2"/>Loading accounts…
-      </div>
+      <SectionCard accent="cyan" className="text-center py-8" data-testid="ar-loading">
+        <i className="fas fa-circle-notch fa-spin text-2xl text-shSecondary"/>
+        <p className="text-shText font-bold mt-3">Loading accounts…</p>
+      </SectionCard>
     );
   }
   if (err) {
     return (
-      <div className="bg-red-500/10 border border-red-500/30 text-red-300 rounded-xl p-4 card-danger" data-testid="ar-err">
-        {err}
-      </div>
+      <SectionCard accent="danger" data-testid="ar-err">
+        <div className="flex items-start gap-3 text-red-300">
+          <i className="fas fa-triangle-exclamation mt-0.5"/>
+          <div><p className="font-black">Accounts receivable couldn't load.</p><p className="text-[13px] mt-1 opacity-85">{err}</p></div>
+        </div>
+      </SectionCard>
     );
   }
   if (!data || !data.clients?.length) {
     return (
-      <div className="bg-[var(--sh-card-base)] border border-shBorder rounded-xl p-10 text-center text-shTextMuted"
-           data-testid="ar-empty">
-        <i className="fas fa-circle-check text-shPrimary text-4xl mb-3 block"/>
-        <p className="text-[15px] font-black uppercase tracking-widest">All settled up</p>
-        <p className="text-[13px] mt-1 text-shTextMuted">No clients with outstanding balances or prepaid credits.</p>
-      </div>
+      <EmptyState
+        icon="fa-circle-check"
+        accent="lime"
+        title="All settled up"
+        description="No clients with outstanding balances or prepaid credits."
+        testId="ar-empty"
+      />
     );
   }
 
   return (
-    <div className="space-y-4" data-testid="ar-tab">
-      {/* Sprint 110di-53 — Send-statement toast (also used for "no email" warnings) */}
+    <div className="space-y-4 sh-ar-workspace" data-testid="ar-tab">
       {statementToast && (
-        <div className="bg-purple-500/15 border border-purple-500/40 text-purple-200 rounded-lg px-3 py-2 text-[13px] font-black"
-             data-testid="ar-statement-toast">
-          <i className="fas fa-envelope-circle-check mr-2 text-purple-300"/>{statementToast}
-        </div>
+        <SectionCard accent="purple" intensity="subtle" className="py-3" data-testid="ar-statement-toast">
+          <p className="text-[13px] font-bold text-purple-200"><i className="fas fa-envelope-circle-check mr-2 text-purple-300"/>{statementToast}</p>
+        </SectionCard>
       )}
-      {/* Totals strip */}
-      <div className="grid grid-cols-1 md:grid-cols-3 gap-3" data-testid="ar-totals">
-        <StatTile label="Owed to you" value={fmt(data.total_receivable)} tone="shAccent"
-                  testid="ar-total-receivable"/>
-        <StatTile label="Credit on file" value={fmt(data.total_credit_on_file)} tone="shPrimary"
-                  testid="ar-total-credit"/>
-        <StatTile label="Net" value={fmt(data.net)} tone={data.net >= 0 ? "shAccent" : "shPrimary"}
-                  testid="ar-net"/>
+
+      <div className="grid grid-cols-1 sm:grid-cols-3 gap-3" data-testid="ar-totals">
+        <StatTile label="Owed to you" value={fmt(data.total_receivable)} tone="warning" testid="ar-total-receivable"/>
+        <StatTile label="Credit on file" value={fmt(data.total_credit_on_file)} tone="success" testid="ar-total-credit"/>
+        <StatTile label="Net position" value={fmt(data.net)} tone={data.net >= 0 ? "warning" : "success"} testid="ar-net"/>
       </div>
 
-      {/* Clients table */}
-      <div className="bg-[var(--sh-card-base)] border border-shBorder rounded-xl overflow-hidden card-table"
-           data-testid="ar-clients-table">
-        <div className="px-4 py-3 border-b border-shBorder flex items-center justify-between">
-          <h3 className="text-[13px] uppercase tracking-widest font-black text-shTextMuted">
-            <i className="fas fa-users mr-2"/>
-            {data.count} client{data.count === 1 ? "" : "s"} with balance
-          </h3>
-          <button onClick={load} data-testid="ar-refresh"
-                  className="text-[12px] uppercase tracking-widest font-black text-shTextMuted hover:text-shPrimary">
-            <i className="fas fa-rotate-right mr-1"/>Refresh
-          </button>
+      <SectionCard accent="cyan" intensity="subtle" className="!p-0 overflow-hidden sh-ar-ledger-list" data-testid="ar-clients-table">
+        <div className="px-4 py-3 border-b border-shBorder flex items-center justify-between gap-3">
+          <div>
+            <p className="sh-eyebrow text-shSecondary"><i className="fas fa-users mr-1.5"/>Accounts with balance</p>
+            <p className="text-[13px] text-shTextMuted mt-1">{data.count} client{data.count === 1 ? "" : "s"} need money attention.</p>
+          </div>
+          <PremiumButton onClick={load} data-testid="ar-refresh" variant="ghost" className="!px-3 !py-2 !min-h-[38px] !text-[12px]">
+            <i className="fas fa-rotate-right"/>Refresh
+          </PremiumButton>
         </div>
-        <ul className="divide-y divide-shBorder">
+
+        <ul className="divide-y divide-shBorder/70">
           {data.clients.map((c) => {
             const owed = (c.account_balance || 0) > 0;
+            const ledgerOpen = openLedger === c.id || openLedger?.id === c.id;
             return (
-              <li key={c.id} className="px-4 py-3" data-testid={`ar-row-${c.id}`}>
-                <div className="flex items-center gap-3 flex-wrap">
-                  <div className="flex-1 min-w-0">
-                    <p className="text-[15px] font-black text-shText truncate">{c.name}</p>
-                    <p className="text-[12px] text-shTextMuted truncate">
-                      {c.email || "no email"} · {c.phone || "no phone"}
-                    </p>
+              <li key={c.id} className="sh-ar-row" data-testid={`ar-row-${c.id}`}>
+                <div className="sh-ar-row__main">
+                  <div className="min-w-0 flex-1">
+                    <div className="flex flex-wrap items-center gap-2">
+                      <p className="text-[15px] font-black text-shText truncate">{c.name}</p>
+                      <StatusBadge tone={owed ? "warning" : "success"}>{owed ? "Balance due" : "Credit on file"}</StatusBadge>
+                    </div>
+                    <p className="text-[12px] text-shTextMuted truncate mt-1">{c.email || "No email"} · {c.phone || "No phone"}</p>
                   </div>
-                  <div className="text-right">
-                    <p className={`text-[10px] uppercase tracking-widest font-black ${owed ? "text-shAccent" : "text-shPrimary"}`}>
-                      {owed ? "Owes" : "Credit"}
-                    </p>
-                    <p className={`text-2xl font-black ${owed ? "text-shAccent" : "text-shPrimary"}`}
-                       data-testid={`ar-bal-${c.id}`}>
-                      {fmt(Math.abs(c.account_balance))}
-                    </p>
-                  </div>
-                  <div className="flex gap-1.5 flex-wrap">
-                    <button onClick={() => setOpenLedger(openLedger === c.id ? null : c)}
-                            data-testid={`ar-view-ledger-${c.id}`}
-                            className="bg-[var(--sh-card-base)] border border-shBorder text-gray-200 px-3 py-1.5 rounded text-[11px] font-black uppercase tracking-widest hover:border-shSecondary hover:text-shSecondary transition">
-                      <i className="fas fa-list mr-1"/>Ledger
-                    </button>
-                    <button onClick={() => setPayOpen(c)}
-                            data-testid={`ar-apply-payment-${c.id}`}
-                            className="bg-shPrimary/20 border border-shPrimary/40 text-shPrimary px-3 py-1.5 rounded text-[11px] font-black uppercase tracking-widest hover:bg-shPrimary/30 transition">
-                      <i className="fas fa-cash-register mr-1"/>Apply payment
-                    </button>
-                    <button onClick={() => setAdjOpen(c)}
-                            data-testid={`ar-adjust-${c.id}`}
-                            className="bg-shSecondary/15 border border-shSecondary/40 text-shSecondary px-3 py-1.5 rounded text-[11px] font-black uppercase tracking-widest hover:bg-shSecondary/25 transition">
-                      <i className="fas fa-sliders mr-1"/>Adjust
-                    </button>
-                    <button onClick={() => sendStatement(c)}
-                            disabled={!!sendingStatement[c.id] || !c.email}
-                            title={c.email ? `Email ledger statement to ${c.email}` : "No email on file"}
-                            data-testid={`ar-send-statement-${c.id}`}
-                            className="bg-purple-500/15 border border-purple-500/40 text-purple-300 px-3 py-1.5 rounded text-[11px] font-black uppercase tracking-widest hover:bg-purple-500/25 transition disabled:opacity-40 disabled:cursor-not-allowed">
-                      <i className={`fas ${sendingStatement[c.id] ? "fa-circle-notch fa-spin" : "fa-envelope"} mr-1`}/>
-                      {sendingStatement[c.id] ? "Sending…" : "Send statement"}
-                    </button>
+
+                  <div className="sh-ar-row__balance">
+                    <p className="text-[10px] font-bold text-shTextMuted">{owed ? "Owes" : "Credit"}</p>
+                    <p className={`text-2xl font-black ${owed ? "text-shAccent" : "text-shPrimary"}`} data-testid={`ar-bal-${c.id}`}>{fmt(Math.abs(c.account_balance))}</p>
                   </div>
                 </div>
-                {/* Inline ledger drawer */}
-                {openLedger === c.id && (
-                  <LedgerDrawer clientId={c.id} clientName={c.name} />
-                )}
-                {/* Also support drawer when state holds the row */}
-                {openLedger?.id === c.id && openLedger !== c.id && (
-                  <LedgerDrawer clientId={c.id} clientName={c.name} />
-                )}
+
+                <div className="sh-ar-row__actions">
+                  <PremiumButton
+                    onClick={() => setOpenLedger(ledgerOpen ? null : c)}
+                    data-testid={`ar-view-ledger-${c.id}`}
+                    variant="secondary"
+                    className="sh-ar-action"
+                  ><i className="fas fa-list"/>{ledgerOpen ? "Hide ledger" : "Ledger"}</PremiumButton>
+                  <PremiumButton onClick={() => setPayOpen(c)} data-testid={`ar-apply-payment-${c.id}`} className="sh-ar-action">
+                    <i className="fas fa-cash-register"/>Apply payment
+                  </PremiumButton>
+                  <PremiumButton onClick={() => setAdjOpen(c)} data-testid={`ar-adjust-${c.id}`} variant="cyan" className="sh-ar-action">
+                    <i className="fas fa-sliders"/>Adjust
+                  </PremiumButton>
+                  <PremiumButton
+                    onClick={() => sendStatement(c)}
+                    disabled={!!sendingStatement[c.id] || !c.email}
+                    title={c.email ? `Email ledger statement to ${c.email}` : "No email on file"}
+                    data-testid={`ar-send-statement-${c.id}`}
+                    variant="secondary"
+                    className="sh-ar-action"
+                  >
+                    <i className={`fas ${sendingStatement[c.id] ? "fa-circle-notch fa-spin" : "fa-envelope"}`}/>
+                    {sendingStatement[c.id] ? "Sending…" : "Send statement"}
+                  </PremiumButton>
+                </div>
+
+                {ledgerOpen && <LedgerDrawer clientId={c.id} clientName={c.name} />}
               </li>
             );
           })}
         </ul>
-      </div>
+      </SectionCard>
 
-      {/* Money Hub consolidation — this used to be a separate ApplyPaymentModal
-          implementation calling POST /clients/{id}/payment directly (no
-          tendered/change capture, no hardware integration). Reuses the
-          shared TakePaymentModal now — one canonical "take a payment" UI,
-          with the same cash/hardware rules as everywhere else. */}
       {payOpen && (
-        <TakePaymentModal presetClientId={payOpen.id} onClose={() => setPayOpen(null)}
-                          onSuccess={() => { setPayOpen(null); load(); }} />
+        <TakePaymentModal presetClientId={payOpen.id} onClose={() => setPayOpen(null)} onSuccess={() => { setPayOpen(null); load(); }} />
       )}
       {adjOpen && (
-        <AdjustmentModal client={adjOpen} onClose={() => setAdjOpen(null)}
-                         onSuccess={() => { setAdjOpen(null); load(); }} />
+        <AdjustmentModal client={adjOpen} onClose={() => setAdjOpen(null)} onSuccess={() => { setAdjOpen(null); load(); }} />
       )}
     </div>
   );
 }
 
 function StatTile({ label, value, tone, testid }) {
-  const tones = {
-    shPrimary:  "border-shPrimary/40 bg-shPrimary/10 text-shPrimary",
-    shAccent: "border-shAccent/40 bg-shAccent/10 text-shAccent",
-    shSecondary:   "border-shSecondary/40 bg-shSecondary/10 text-shSecondary",
-  };
+  const accent = tone === "success" ? "lime" : tone === "warning" ? "orange" : "cyan";
+  const valueClass = tone === "success" ? "text-shPrimary" : tone === "warning" ? "text-shAccent" : "text-shSecondary";
   return (
-    <div className={`border rounded-xl p-4 ${tones[tone] || tones.shSecondary}`} data-testid={testid}>
-      <p className="text-[10px] uppercase tracking-widest font-black opacity-80">{label}</p>
-      <p className="text-3xl font-black mt-1">{value}</p>
-    </div>
+    <SectionCard accent={accent} intensity="subtle" className="!p-4" data-testid={testid}>
+      <p className="text-[11px] font-bold text-shTextMuted">{label}</p>
+      <p className={`text-2xl sm:text-3xl font-black mt-1 ${valueClass}`}>{value}</p>
+    </SectionCard>
   );
 }
 
@@ -238,25 +214,22 @@ function LedgerDrawer({ clientId, clientName }) {
   if (rows === null) return <p className="mt-3 text-shTextMuted text-[13px]"><i className="fas fa-circle-notch fa-spin mr-1"/>Loading…</p>;
   if (rows.length === 0) return <p className="mt-3 text-shTextMuted text-[13px]">No ledger entries yet.</p>;
   return (
-    <div className="mt-3 bg-[var(--sh-card-base)]/40 border border-shBorder rounded-lg p-3"
-         data-testid={`ar-ledger-${clientId}`}>
-      <p className="text-[11px] uppercase tracking-widest font-black text-shTextMuted mb-2">
-        <i className="fas fa-clock-rotate-left mr-1"/>Ledger · {clientName} · Balance {fmt(balance)}
-      </p>
+    <div className="sh-ar-ledger" data-testid={`ar-ledger-${clientId}`}>
+      <div className="flex flex-wrap items-center justify-between gap-2 mb-2">
+        <p className="text-[11px] font-bold text-shTextMuted"><i className="fas fa-clock-rotate-left mr-1.5 text-shSecondary"/>Ledger · {clientName}</p>
+        <StatusBadge tone={balance > 0 ? "warning" : "success"}>Balance {fmt(balance)}</StatusBadge>
+      </div>
       <ul className="divide-y divide-shBorder/40">
         {rows.map((r) => {
           const t = ROW_TYPE_TONE[r.type] || { tone: "text-shTextMuted", icon: "fa-receipt", label: r.type };
           return (
-            <li key={r.id} className="py-2 flex items-center gap-3 text-[13px]"
-                data-testid={`ledger-row-${r.id}`}>
-              <i className={`fas ${t.icon} ${t.tone}`}/>
+            <li key={r.id} className="py-2.5 flex items-center gap-3 text-[13px]" data-testid={`ledger-row-${r.id}`}>
+              <span className="w-8 h-8 rounded-lg border border-shBorder bg-black/20 grid place-items-center shrink-0"><i className={`fas ${t.icon} ${t.tone}`}/></span>
               <div className="flex-1 min-w-0">
-                <p className="text-shText truncate"><span className={`${t.tone} font-black uppercase tracking-widest text-[11px] mr-2`}>{t.label}</span>{r.notes || ""}</p>
+                <p className="text-shText truncate"><span className={`${t.tone} font-bold text-[11px] mr-2`}>{t.label}</span>{r.notes || ""}</p>
                 <p className="text-[11px] text-shTextMuted">{fmtDateTime(r.created_at)}{r.method ? ` · ${r.method}` : ""}</p>
               </div>
-              <span className={`${r.amount > 0 ? "text-shAccent" : "text-shPrimary"} font-black`}>
-                {r.amount > 0 ? "+" : ""}{fmt(r.amount)}
-              </span>
+              <span className={`${r.amount > 0 ? "text-shAccent" : "text-shPrimary"} font-black whitespace-nowrap`}>{r.amount > 0 ? "+" : ""}{fmt(r.amount)}</span>
             </li>
           );
         })}
@@ -273,9 +246,7 @@ function AdjustmentModal({ client, onClose, onSuccess }) {
   const submit = async () => {
     setBusy(true); setErr("");
     try {
-      await api.post(`/clients/${client.id}/adjustment`, {
-        amount: Number(amount), notes,
-      });
+      await api.post(`/clients/${client.id}/adjustment`, { amount: Number(amount), notes });
       onSuccess();
     } catch (e) {
       setErr(e?.response?.data?.detail || "Adjustment failed");
@@ -283,36 +254,35 @@ function AdjustmentModal({ client, onClose, onSuccess }) {
     }
   };
   return (
-    <div className="fixed inset-0 bg-black/80 z-50 flex items-center justify-center p-4"
-         data-testid="ar-adjust-modal" onMouseDown={(e)=>{ if(e.target===e.currentTarget) onClose(); }}>
-      <div className="bg-[var(--sh-card-base)] border border-shBorder rounded-2xl w-full max-w-md p-6 shadow-2xl">
-        <h3 className="text-xl font-black text-shText uppercase tracking-tight mb-1">
-          <i className="fas fa-sliders text-shSecondary mr-2"/>Manual Adjustment
-        </h3>
-        <p className="text-[13px] text-shTextMuted mb-4">
-          {client.name} · Balance {fmt(client.account_balance)}
-        </p>
-        <p className="text-[12px] text-shTextMuted mb-3">
-          Use NEGATIVE to forgive part of the tab (write-off). POSITIVE to add to it (manual charge).
-        </p>
-        <label className="text-[11px] uppercase tracking-widest font-black text-shTextMuted">Amount (signed)</label>
-        <input type="number" step="0.01" value={amount} onChange={(e)=>setAmount(e.target.value)}
-               data-testid="ar-adj-amount" placeholder="-25.00"
-               className="w-full mt-1 mb-3 bg-[var(--sh-card-base)] border border-shBorder rounded p-2 text-shText text-sm"/>
-        <label className="text-[11px] uppercase tracking-widest font-black text-shTextMuted">Reason (required)</label>
-        <input value={notes} onChange={(e)=>setNotes(e.target.value)} data-testid="ar-adj-notes"
-               placeholder="Goodwill write-off"
-               className="w-full mt-1 mb-4 bg-[var(--sh-card-base)] border border-shBorder rounded p-2 text-shText text-sm"/>
-        {err && <p className="text-red-400 text-[13px] mb-3">{err}</p>}
-        <div className="flex justify-end gap-2">
-          <button onClick={onClose} className="text-shTextMuted px-4 py-2 font-black uppercase text-[13px] tracking-widest">Cancel</button>
-          <button onClick={submit} disabled={busy || amount === "" || Number(amount) === 0 || !notes.trim()}
-                  data-testid="ar-adj-submit"
-                  className="bg-shSecondary text-shText px-6 py-2 rounded font-black uppercase text-[13px] tracking-widest disabled:opacity-50">
-            {busy ? "Saving…" : "Apply adjustment"}
-          </button>
+    <div className="fixed inset-0 bg-black/80 z-50 flex items-center justify-center p-3 sm:p-4" data-testid="ar-adjust-modal" onMouseDown={(e)=>{ if(e.target===e.currentTarget) onClose(); }}>
+      <SectionCard accent="cyan" className="w-full max-w-md sh-modal-surface">
+        <div className="flex items-start justify-between gap-3 mb-5">
+          <div>
+            <p className="sh-eyebrow text-shSecondary">Finance correction</p>
+            <h3 className="text-xl font-black text-shText mt-1">Manual adjustment</h3>
+            <p className="text-[13px] text-shTextMuted mt-1">{client.name} · Balance {fmt(client.account_balance)}</p>
+          </div>
+          <PremiumButton type="button" variant="ghost" onClick={onClose} className="!px-3 !py-2 !min-h-[40px]" aria-label="Close"><i className="fas fa-times"/></PremiumButton>
         </div>
-      </div>
+        <p className="text-[12px] text-shTextMuted mb-4">Use a negative amount to forgive part of the tab. Use a positive amount to add a manual charge.</p>
+        <div className="space-y-4">
+          <div>
+            <FormLabel>Amount (signed)</FormLabel>
+            <FormInput type="number" step="0.01" value={amount} onChange={(e)=>setAmount(e.target.value)} data-testid="ar-adj-amount" placeholder="-25.00"/>
+          </div>
+          <div>
+            <FormLabel>Reason (required)</FormLabel>
+            <FormInput value={notes} onChange={(e)=>setNotes(e.target.value)} data-testid="ar-adj-notes" placeholder="Goodwill write-off"/>
+          </div>
+          <FormError>{err}</FormError>
+          <div className="grid grid-cols-2 gap-2">
+            <PremiumButton type="button" variant="secondary" onClick={onClose} className="justify-center">Cancel</PremiumButton>
+            <PremiumButton type="button" variant="cyan" onClick={submit} disabled={busy || amount === "" || Number(amount) === 0 || !notes.trim()} data-testid="ar-adj-submit" className="justify-center">
+              {busy ? <><i className="fas fa-circle-notch fa-spin"/>Saving…</> : "Apply adjustment"}
+            </PremiumButton>
+          </div>
+        </div>
+      </SectionCard>
     </div>
   );
 }

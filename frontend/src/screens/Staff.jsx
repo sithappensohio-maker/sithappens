@@ -4,10 +4,12 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { api, formatErr } from "../lib/api";
 import { useConfirm } from "../lib/useConfirm";
 import PageHero from "../components/PageHero";
+import AdminTabs from "../components/admin/AdminTabs";
 import RolesPanel from "../components/RolesPanel";
 import { todayISO, daysAgoISO } from "../lib/date";
 import TrainerScorecardTab from "../components/TrainerScorecardTab";
 import { compressImage } from "../lib/imageCompress";
+import { toast } from "sonner";
 
 function fmtTime(iso) {
   if (!iso) return "—";
@@ -89,7 +91,7 @@ export default function Staff() {
   };
 
   return (
-    <div className="space-y-6 animate-slide-in" data-testid="staff-screen">
+    <div className="space-y-6 animate-slide-in sh-staff-workspace" data-testid="staff-screen">
       {err && <div className="text-red-400 bg-red-500/10 rounded p-3 text-[14px] font-black uppercase tracking-widest">{err}</div>}
       <PageHero
         eyebrow={{ icon: "fa-users-gear", text: "Team operations", color: "text-shPrimary" }}
@@ -108,34 +110,29 @@ export default function Staff() {
       {/* Sprint 110ex — Phase 7: Roles & permissions panel */}
       <RolesPanel />
 
-      {/* Sub-tabs */}
-      <div className="flex gap-1 border-b border-shBorder overflow-x-auto" data-testid="staff-subtabs">
-        {[
-          ["ops", "Ops Hub", "fa-tower-observation"],
-          ["employees", "Employees", "fa-users"],
-          ["timecards", "Timecards", "fa-clock"],
-          ["schedule", "Schedule", "fa-calendar-week"],
-          ["tasks", "Tasks", "fa-list-check"],
-          ["payroll", "Payroll", "fa-file-csv"],
-          ["taxes", "Payroll Tax", "fa-calculator"],
-          ["quarterly", "Quarterly Tax", "fa-file-invoice-dollar"],
-          ["money", "Money Audit", "fa-scale-balanced"],
-          ["register", "Register", "fa-cash-register"],
-          ["timeoff", "Time Off", "fa-umbrella-beach"],
-          ["corrections", "Corrections", "fa-clock-rotate-left"],
-          ["training", "Training", "fa-clipboard-user"],
-        ].map(([k, label, icon]) => (
-          <button key={k}
-                  onClick={() => k === "register"
-                    ? window.dispatchEvent(new CustomEvent("sh:nav", { detail: "pos" }))
-                    : setSubtab(k)}
-                  data-testid={`staff-subtab-${k}`}
-                  title={k === "register" ? "Opens the Front Desk screen — Register now lives there" : undefined}
-                  className={`shrink-0 px-3 py-2 text-[13px] font-black uppercase tracking-widest border-b-2 transition ${subtab===k ? "border-shPrimary text-shPrimary" : "border-transparent text-shTextMuted hover:text-shText"}`}>
-            <i className={`fas ${icon} mr-1.5`}/>{label}{k === "register" && <i className="fas fa-arrow-up-right-from-square ml-1.5 text-[10px]"/>}
-          </button>
-        ))}
-      </div>
+      {/* One consistent, phone-safe workspace navigation row. */}
+      <AdminTabs
+        testid="staff-subtabs"
+        value={subtab}
+        onChange={(k) => k === "register"
+          ? window.dispatchEvent(new CustomEvent("sh:nav", { detail: "pos" }))
+          : setSubtab(k)}
+        items={[
+          { key: "ops", label: "Ops Hub", icon: "fa-tower-observation", testid: "staff-subtab-ops" },
+          { key: "employees", label: "Employees", icon: "fa-users", testid: "staff-subtab-employees" },
+          { key: "timecards", label: "Timecards", icon: "fa-clock", testid: "staff-subtab-timecards", accent: "cyan" },
+          { key: "schedule", label: "Schedule", icon: "fa-calendar-week", testid: "staff-subtab-schedule", accent: "cyan" },
+          { key: "tasks", label: "Tasks", icon: "fa-list-check", testid: "staff-subtab-tasks" },
+          { key: "payroll", label: "Payroll", icon: "fa-file-csv", testid: "staff-subtab-payroll", accent: "cyan" },
+          { key: "taxes", label: "Payroll Tax", icon: "fa-calculator", testid: "staff-subtab-taxes", accent: "orange" },
+          { key: "quarterly", label: "Quarterly Tax", icon: "fa-file-invoice-dollar", testid: "staff-subtab-quarterly", accent: "orange" },
+          { key: "money", label: "Money Audit", icon: "fa-scale-balanced", testid: "staff-subtab-money", accent: "orange" },
+          { key: "register", label: "Register", icon: "fa-cash-register", testid: "staff-subtab-register", external: true, title: "Opens Front Desk" },
+          { key: "timeoff", label: "Time Off", icon: "fa-umbrella-beach", testid: "staff-subtab-timeoff", accent: "cyan" },
+          { key: "corrections", label: "Corrections", icon: "fa-clock-rotate-left", testid: "staff-subtab-corrections", accent: "orange" },
+          { key: "training", label: "Training", icon: "fa-clipboard-user", testid: "staff-subtab-training", accent: "purple" },
+        ]}
+      />
 
       {subtab === "ops" && <StaffOpsTab onGo={setSubtab} />}
 
@@ -721,7 +718,7 @@ function ScheduleTab({ employees }) {
     setGenBusy(true); setErr("");
     try {
       const r = await api.post("/admin/shifts/generate", { start_date: start, end_date: end });
-      alert(`Generated ${r.data.created} shift(s). Skipped ${r.data.skipped} (already existed).`);
+      toast.success(`Generated ${r.data.created} shift(s). Skipped ${r.data.skipped} already-existing shift(s).`);
       await load();
     } catch (e) { setErr(formatErr(e.response?.data?.detail)); }
     finally { setGenBusy(false); }
@@ -1934,13 +1931,13 @@ export function RegisterTab({ excludeTabs = [] } = {}) {
   const [reopenReason, setReopenReason] = useState("");
   const [clients, setClients] = useState([]);
   const [packs, setPacks] = useState([]);
-  const [sale, setSale] = useState({ description: "", quantity: "1", unit_price: "", amount: "", category: "Misc Sale", payment_method: "clover", client_id: "", notes: "", apply_tax: false });
-  const [packSale, setPackSale] = useState({ client_id: "", pack_id: "", quantity: "1", payment_method: "clover", amount_paid: "", note: "" });
-  const [payment, setPayment] = useState({ client_id: "", amount: "", method: "clover", notes: "" });
-  const [refund, setRefund] = useState({ client_id: "", amount: "", payment_method: "clover", reason: "", notes: "" });
+  const [sale, setSale] = useState({ description: "", quantity: "1", unit_price: "", amount: "", category: "Misc Sale", payment_method: "card", client_id: "", notes: "", apply_tax: false });
+  const [packSale, setPackSale] = useState({ client_id: "", pack_id: "", quantity: "1", payment_method: "card", amount_paid: "", note: "" });
+  const [payment, setPayment] = useState({ client_id: "", amount: "", method: "card", notes: "" });
+  const [refund, setRefund] = useState({ client_id: "", amount: "", payment_method: "card", reason: "", notes: "" });
   const [payout, setPayout] = useState({ amount: "", description: "", category: "Supplies", vendor: "", notes: "", tax_deductible: true });
   const [tillAdjustment, setTillAdjustment] = useState({ direction: "remove", amount: "", adjustment_type: "owner_draw", reason: "", notes: "" });
-  const [closeout, setCloseout] = useState({ cash_counted: "", clover_batch: "", venmo_total: "", paypal_total: "", check_total: "", notes: "" });
+  const [closeout, setCloseout] = useState({ cash_counted: "", card_batch: "", venmo_total: "", paypal_total: "", check_total: "", notes: "" });
   const [closeoutReview, setCloseoutReview] = useState(false);
   const [reportStart, setReportStart] = useState(`${new Date().getFullYear()}-01-01`);
   const [reportEnd, setReportEnd] = useState(todayISO());
@@ -1949,12 +1946,12 @@ export function RegisterTab({ excludeTabs = [] } = {}) {
   const [expenseCategories, setExpenseCategories] = useState([]);
   const [expenseReceiptPreview, setExpenseReceiptPreview] = useState(null);
   const [expenseUploadBusy, setExpenseUploadBusy] = useState(false);
-  const blankExpense = { description: "", quantity: "1", unit_price: "", amount: "", category: "Cleaning supplies", payment_method: "clover", vendor: "", notes: "", tax_deductible: true, from_cash_drawer: false, recurring: false, recurring_interval: "monthly", receipt_image: "", receipt_filename: "" };
+  const blankExpense = { description: "", quantity: "1", unit_price: "", amount: "", category: "Cleaning supplies", payment_method: "card", vendor: "", notes: "", tax_deductible: true, from_cash_drawer: false, recurring: false, recurring_interval: "monthly", receipt_image: "", receipt_filename: "" };
   const [expense, setExpense] = useState(blankExpense);
   const confirm = useConfirm();
 
   const methodOptions = [
-    ["cash", "Cash"], ["check", "Check"], ["venmo", "Venmo"], ["paypal", "PayPal"], ["clover", "Clover / Credit Card"], ["other", "Other"],
+    ["cash", "Cash"], ["check", "Check"], ["venmo", "Venmo"], ["paypal", "PayPal"], ["card", "Card"], ["other", "Other"],
   ];
   const methodLabelMap = Object.fromEntries(methodOptions);
   const _prettyMethod = (m) => methodLabelMap[m] || m || "Other";
@@ -2190,13 +2187,13 @@ export function RegisterTab({ excludeTabs = [] } = {}) {
       cash_counted: counted,
       rollover_confirmed: true,
       confirmed_rollover_cash: counted,
-      clover_batch: closeout.clover_batch === "" ? null : Number(closeout.clover_batch),
+      card_batch: closeout.card_batch === "" ? null : Number(closeout.card_batch),
       venmo_total: closeout.venmo_total === "" ? null : Number(closeout.venmo_total),
       paypal_total: closeout.paypal_total === "" ? null : Number(closeout.paypal_total),
       check_total: closeout.check_total === "" ? null : Number(closeout.check_total),
       notes: closeout.notes,
     });
-    setCloseout({ cash_counted: "", clover_batch: "", venmo_total: "", paypal_total: "", check_total: "", notes: "" });
+    setCloseout({ cash_counted: "", card_batch: "", venmo_total: "", paypal_total: "", check_total: "", notes: "" });
     setCloseoutReview(false);
     showDone(`Closeout saved. ${money(counted)} will carry forward.`);
   });
@@ -2299,7 +2296,7 @@ export function RegisterTab({ excludeTabs = [] } = {}) {
       <div className="grid grid-cols-2 md:grid-cols-5 gap-3">
         <AuditTile label="Net incoming" value={totals.net_incoming_total ?? totals.incoming_total} color="text-shPrimary"/>
         <AuditTile label="Cash drawer" value={totals.expected_cash} color="text-shText"/>
-        <AuditTile label="Clover/card" value={incoming.clover} color="text-shSecondary"/>
+        <AuditTile label="Card" value={incoming.card} color="text-shSecondary"/>
         <AuditTile label="Venmo + PayPal" value={Number(incoming.venmo || 0) + Number(incoming.paypal || 0)} color="text-shPrimary"/>
         <AuditTile label="Refunds" value={sources.refunds} color="text-red-300"/>
       </div>
@@ -2351,7 +2348,7 @@ export function RegisterTab({ excludeTabs = [] } = {}) {
               <h4 className="text-shText font-black uppercase italic mb-3"><i className="fas fa-money-bill-transfer text-shSecondary mr-2"/>Expected by payment method</h4>
               <div className="space-y-1 text-[13px]">
                 <Row label="Cash" value={incoming.cash || 0}/>
-                <Row label="Clover / Credit Card" value={incoming.clover || 0}/>
+                <Row label="Card" value={incoming.card || 0}/>
                 <Row label="Venmo" value={incoming.venmo || 0}/>
                 <Row label="PayPal" value={incoming.paypal || 0}/>
                 <Row label="Checks" value={incoming.check || 0}/>
@@ -2514,7 +2511,7 @@ export function RegisterTab({ excludeTabs = [] } = {}) {
         </div>
         <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-3">
           <RegisterFormInput label="Description" value={expense.description} onChange={v=>setExpense({...expense, description:v})} placeholder="Kibble, cleaner, software, etc."/>
-          <RegisterFormInput label="Vendor / store" value={expense.vendor} onChange={v=>setExpense({...expense, vendor:v})} placeholder="Chewy, Tractor Supply, Clover, etc."/>
+          <RegisterFormInput label="Vendor / store" value={expense.vendor} onChange={v=>setExpense({...expense, vendor:v})} placeholder="Chewy, Tractor Supply, Amazon, etc."/>
           <RegisterFormInput label="Category" value={expense.category} onChange={v=>setExpense({...expense, category:v})}>
             <input list="register-expense-categories" value={expense.category} onChange={e=>setExpense({...expense, category:e.target.value})} className="mt-1 w-full bg-[var(--sh-card-base)] border border-shBorder rounded p-2 text-shText text-sm"/>
           </RegisterFormInput>
@@ -2575,7 +2572,7 @@ export function RegisterTab({ excludeTabs = [] } = {}) {
         </div>
         <div className="grid grid-cols-2 md:grid-cols-5 gap-2">
           <AuditTile label="Expected cash" value={totals.expected_cash}/>
-          <AuditTile label="Expected Clover" value={incoming.clover}/>
+          <AuditTile label="Expected Card" value={incoming.card}/>
           <AuditTile label="Expected Venmo" value={incoming.venmo}/>
           <AuditTile label="Expected PayPal" value={incoming.paypal}/>
           <AuditTile label="Expected checks" value={incoming.check}/>
@@ -2588,7 +2585,7 @@ export function RegisterTab({ excludeTabs = [] } = {}) {
         ) : (<>
           <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-3">
             <RegisterFormInput label="Actual cash counted · required" type="number" step="0.01" value={closeout.cash_counted} onChange={v=>{setCloseout({...closeout, cash_counted:v});setCloseoutReview(false);}}/>
-            <RegisterFormInput label="Clover batch total" type="number" step="0.01" value={closeout.clover_batch} onChange={v=>{setCloseout({...closeout, clover_batch:v});setCloseoutReview(false);}}/>
+            <RegisterFormInput label="Card batch total" type="number" step="0.01" value={closeout.card_batch} onChange={v=>{setCloseout({...closeout, card_batch:v});setCloseoutReview(false);}}/>
             <RegisterFormInput label="Venmo verified total" type="number" step="0.01" value={closeout.venmo_total} onChange={v=>{setCloseout({...closeout, venmo_total:v});setCloseoutReview(false);}}/>
             <RegisterFormInput label="PayPal verified total" type="number" step="0.01" value={closeout.paypal_total} onChange={v=>{setCloseout({...closeout, paypal_total:v});setCloseoutReview(false);}}/>
             <RegisterFormInput label="Checks in drawer" type="number" step="0.01" value={closeout.check_total} onChange={v=>{setCloseout({...closeout, check_total:v});setCloseoutReview(false);}}/>
@@ -2663,7 +2660,7 @@ export function RegisterTab({ excludeTabs = [] } = {}) {
                   return <div key={`${c.date}-${idx}`} className="border border-shBorder rounded p-3 text-sm">
                     <div className="flex justify-between gap-2"><p className="text-shText font-black">{c.date}</p><p className={`text-[10px] font-black uppercase tracking-widest ${c.status === "reopened" ? "text-shAccent" : "text-shPrimary"}`}>{c.status || "closed"}</p></div>
                     <p className="text-[11px] text-shTextMuted mt-1">Closed by {c.created_by_name || "—"}</p>
-                    <p className="text-[12px] text-shTextMuted mt-1">Cash {moneyOrMissing(c.cash_counted)} · Clover {moneyOrMissing(c.clover_batch)} · Venmo {moneyOrMissing(c.venmo_total)} · PayPal {moneyOrMissing(c.paypal_total)} · Checks {moneyOrMissing(c.check_total)}</p>
+                    <p className="text-[12px] text-shTextMuted mt-1">Cash {moneyOrMissing(c.cash_counted)} · Card {moneyOrMissing(c.card_batch)} · Venmo {moneyOrMissing(c.venmo_total)} · PayPal {moneyOrMissing(c.paypal_total)} · Checks {moneyOrMissing(c.check_total)}</p>
                     {c.expected_cash != null && <p className="text-[11px] text-shTextMuted mt-1">Expected {money(c.expected_cash)} · Over/short {money(c.cash_over_short || 0)} · Rollover {moneyOrMissing(c.rollover_cash)}</p>}
                     {Object.keys(deltas).length > 0 && <p className="text-[11px] text-shTextMuted mt-1">Diffs: {Object.entries(deltas).map(([m,row]) => `${m} ${money(row.delta)}`).join(" · ")}</p>}
                     {c.status === "reopened" && <p className="text-[12px] text-shAccent mt-1"><i className="fas fa-lock-open mr-1"/>Reopened by {c.reopened_by_name || "—"}: {c.reopened_reason || "No reason recorded"}</p>}

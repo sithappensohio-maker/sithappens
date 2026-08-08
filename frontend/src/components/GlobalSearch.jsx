@@ -199,7 +199,7 @@ export default function GlobalSearch({ open, onClose, onNavigate, onAction, user
 
   return (
     <div className="fixed inset-0 bg-black/70 z-50 flex items-start justify-center p-3 sm:p-4 sm:pt-24" onClick={onClose} data-testid="global-search">
-      <div className="bg-bgPanel border border-bgHover rounded-2xl w-full max-w-2xl shadow-2xl animate-slide-in flex flex-col max-h-[85vh] sm:max-h-[70vh]" onClick={(e) => e.stopPropagation()}>
+      <div className="bg-bgPanel border border-bgHover rounded-2xl w-full max-w-2xl shadow-2xl animate-slide-in flex flex-col max-h-[85vh] sm:max-h-[70vh] sh-modal-surface" onClick={(e) => e.stopPropagation()}>
         <div className="flex items-center px-4 py-3 border-b border-bgHover shrink-0">
           <i className="fas fa-search text-gray-500 mr-3" />
           <input ref={inputRef} value={q} onChange={(e) => setQ(e.target.value)} onKeyDown={handleKey}

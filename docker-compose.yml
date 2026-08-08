@@ -1,7 +1,7 @@
 # Sit Happens — self-hosted stack.
 # Two containers (frontend + backend) plus Mongo with a named volume for persistence.
 # Cloudflare Tunnel runs on the HOST (not in compose) so a tunnel restart
-# doesn't take the app down with it. See BAZZITE_SETUP.md.
+# doesn't take the app down with it. See docs/operations/BAZZITE_SETUP.md.
 
 services:
   mongo:
@@ -40,7 +40,6 @@ services:
       RESEND_API_KEY: "${RESEND_API_KEY:-}"
       SENDER_EMAIL: "${SENDER_EMAIL:-}"
       ADMIN_NOTIFICATION_EMAIL: "${ADMIN_NOTIFICATION_EMAIL:-}"
-      EMERGENT_LLM_KEY: "${EMERGENT_LLM_KEY:-}"
       JWT_SECRET: "${JWT_SECRET:-}"
       ADMIN_EMAIL: "${ADMIN_EMAIL:-admin@sithappens.com}"
       ADMIN_PASSWORD: "${ADMIN_PASSWORD:-}"

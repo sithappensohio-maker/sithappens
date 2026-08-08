@@ -1,8 +1,7 @@
 import { useEffect, useState, useCallback } from "react";
 import { api, formatErr } from "../lib/api";
 import { useAuth } from "../lib/auth";
-import { useFeature } from "../lib/theme";
-import { useTheme } from "../lib/theme";
+import { useFeature, useTheme } from "../lib/theme";
 import WaiverModal from "../components/WaiverModal";
 import Lightbox from "../components/Lightbox";
 import PortalDogModal from "../components/PortalDogModal";
@@ -57,6 +56,8 @@ import { useConfirm } from "../lib/useConfirm";
 import { compressImage } from "../lib/imageCompress";
 import { useLiveRefresh } from "../lib/useLiveRefresh";
 import { todayISO } from "../lib/date";
+import HuskyDogImage from "../components/brand/HuskyDogImage";
+import { toast } from "sonner";
 
 const _WD = ["Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun"];
 const _emptyRecurring = { dog_id: "", service_type: "daycare", service_id: "", dropoff_time: "", weekdays: [0, 2, 4], notes: "", default_horizon_weeks: 12, active: true, label: "", start_date: "" };
@@ -69,6 +70,7 @@ const _emptyRecurring = { dog_id: "", service_type: "daycare", service_id: "", d
  * without occupying screen real-estate when the client isn't using it.
  */
 function MyRecurringModal({ dogs, onClose }) {
+  const confirm = useConfirm();
   const [rows, setRows] = useState([]);
   const [services, setServices] = useState([]);
   const [editing, setEditing] = useState(null);
@@ -133,7 +135,13 @@ function MyRecurringModal({ dogs, onClose }) {
   };
 
   const remove = async (r) => {
-    if (!window.confirm(`Delete "${r.label}"? Already-booked sessions remain on the calendar.`)) return;
+    const ok = await confirm({
+      title: `Delete “${r.label}”?`,
+      body: "Already-booked sessions remain on the calendar. Only the recurring schedule is removed.",
+      confirmText: "Delete Schedule",
+      tone: "danger",
+    });
+    if (!ok) return;
     try { await api.delete(`/recurring-templates/${r.id}`); load(); } catch (e) { console.warn("recurring delete failed", e); }
   };
 
@@ -971,7 +979,7 @@ export default function Portal() {
 
   const cancel = async (id) => {
     if (!(await confirm({ title: "Cancel this booking?", body: "Credits aren't charged until check-out, so cancelling is free.", confirmText: "Cancel booking", cancelText: "Keep it", tone: "danger" }))) return;
-    try { await api.delete(`/bookings/${id}`); loadAll(); } catch (e) { alert(formatErr(e.response?.data?.detail)); }
+    try { await api.delete(`/bookings/${id}`); loadAll(); } catch (e) { toast.error(formatErr(e.response?.data?.detail) || "Could not cancel booking"); }
   };
 
   const waiverNeeded = pubSettings?.waiver_required_for_booking && (!waiver?.signed || waiver?.needs_resign);
@@ -1176,7 +1184,7 @@ export default function Portal() {
   };
 
   return (
-    <div className="app-shell h-full min-h-0 flex bg-bgBase" data-testid="client-portal">
+    <div className="app-shell h-full min-h-0 flex bg-bgBase sh-client-portal" data-testid="client-portal">
       <ClientSidebar
         shopCartCount={shopCartCount}
         messagesUnread={messagesUnread}
@@ -1647,7 +1655,7 @@ export default function Portal() {
               here too would just duplicate that same promotion. */}
 
           {sectionOn("waiver_documents") && (
-          <div className={`p-5 rounded-xl border shadow-2xl ${waiverNeeded?"bg-red-500/10 border-red-500/40 card-danger":"bg-shGreen/5 border-shGreen/30 card-success"}`} data-testid="waiver-status-card">
+          <div className={`p-5 rounded-xl border shadow-2xl ${waiverNeeded?"bg-red-500/10 border-red-500/40":"bg-shGreen/5 border-shGreen/30"}`} data-testid="waiver-status-card">
             <div className="flex items-center justify-between mb-2">
               <p className={`text-[14px] font-black uppercase tracking-widest ${waiverNeeded?"text-red-400":"text-shGreen"}`}>
                 <i className={`fas ${waiverNeeded?"fa-exclamation-triangle":"fa-file-signature"} mr-2`} /> Client Waiver
@@ -1873,12 +1881,12 @@ export default function Portal() {
                 </div>
                 <div className="min-w-0 flex-1">
                   <p className="text-[10px] font-black uppercase tracking-[0.3em] text-shBlue">Sit Happens Online School</p>
-                  <p className="text-[14px] font-black text-shText truncate">{schoolEntries[0].program_name} · {formatCompletionPct(schoolEntries[0].mastered_pct)}</p>
+                  <p className="text-[14px] font-black text-shText truncate">{schoolEntries[0].program_name} · {schoolEntries[0].status === "completed" ? "Completed" : formatCompletionPct(schoolEntries[0].mastered_pct)}</p>
                   <p className="text-[12px] text-shTextMuted truncate">{nextActionLabel(schoolEntries[0])}</p>
                 </div>
                 <button onClick={() => setSchoolOpen(true)} data-testid="online-school-open"
                         className="shrink-0 bg-shPrimary text-bgHeader px-3 py-2 rounded-lg font-black text-[12px] uppercase tracking-widest shadow">
-                  Continue
+                  {schoolEntries[0].status === "completed" ? "Review" : "Continue"}
                 </button>
               </div>
             </div>
@@ -2043,11 +2051,14 @@ export default function Portal() {
                   </span>
                   <button onClick={()=>setDogModal({open:true, dog:d})}
                           className="relative block w-full text-left group">
-                    {d.photo
-                      ? <div className="h-36 w-full bg-bgBase flex items-center justify-center overflow-hidden">
-                          <img src={d.photo} alt={d.name} loading="lazy" decoding="async" className="max-h-36 max-w-full object-contain" />
-                        </div>
-                      : <div className="h-36 bg-gradient-to-br from-shGreen/20 via-bgHover to-shBlue/10 flex items-center justify-center text-shGreen text-5xl drop-shadow-[0_0_18px_rgba(140,198,63,0.45)]"><i className="fas fa-paw" /></div>}
+                    <div className="h-36 w-full bg-bgBase overflow-hidden">
+                      <HuskyDogImage
+                        src={d.photo}
+                        name={d.name}
+                        alt={d.name}
+                        className="w-full h-full object-cover object-top transition-transform duration-300 group-hover:scale-[1.02]"
+                      />
+                    </div>
                     <div className="p-4 relative">
                       <div className="flex items-center justify-between gap-2">
                         {/* Sprint 110di-6 — pr-1 + min-w-0 stops italic glyph
@@ -2334,7 +2345,7 @@ export default function Portal() {
                     </div>
                   </div>
                   {b.report_card && (
-                    <div className="border-t border-bgHover/50 card-success p-4" data-testid={`report-card-${b.id}`}>
+                    <div className="border-t border-shPrimary/20 bg-shPrimary/5 p-4" data-testid={`report-card-${b.id}`}>
                       <p className="text-[14px] font-black text-shGreen uppercase tracking-widest mb-3"><i className="fas fa-paw mr-1"/> Pup Report Card</p>
                       {b.report_card.photos?.length > 0 && (
                         <div className="flex gap-2 mb-3">

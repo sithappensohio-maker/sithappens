@@ -2,6 +2,7 @@ import { useCallback, useEffect, useMemo, useState } from "react";
 import { api, formatErr } from "../lib/api";
 import { toast } from "sonner";
 import PageHero from "../components/PageHero";
+import AdminTabs from "../components/admin/AdminTabs";
 import { useConfirm } from "../lib/useConfirm";
 import { ProductEditor } from "../components/ManageProductsPanel";
 import { PackEditor } from "../components/CreditPacksSettings";
@@ -9,6 +10,8 @@ import { ProgramEditor } from "../components/Programs";
 import ItemThumbnail from "../components/ItemThumbnail";
 import ShopImageUpload from "../components/ShopImageUpload";
 import PortalShop from "../components/PortalShop";
+import NeonEdge from "../components/premium/NeonEdge";
+import HuskyDogImage from "../components/brand/HuskyDogImage";
 import {
   inventoryStatus, itemWarnings, marginDisplay, filterItemsByView,
   orderRef, orderComputedStatus, filterOrdersByView, searchOrders,
@@ -1110,21 +1113,35 @@ function OnlineOrdersTab() {
   }
 
   return (
-    <div className="space-y-3">
-      <div className="flex flex-wrap items-center gap-2">
-        {ORDER_FILTERS.map(([k, label]) => (
-          <button key={k} onClick={() => setFilter(k)} data-testid={`sm-order-filter-${k}`}
-                  className={`px-3 py-1.5 rounded text-[11px] font-black uppercase tracking-widest ${filter === k ? "bg-shPrimary text-bgHeader" : "bg-[var(--sh-card-base)] border border-shBorder text-shTextMuted"}`}>
-            {label}
-          </button>
-        ))}
-        <button onClick={load} className="ml-auto text-[11px] uppercase tracking-widest font-black text-shTextMuted hover:text-shPrimary">
-          <i className="fas fa-rotate-right mr-1" />Refresh
-        </button>
-      </div>
-      <input value={search} onChange={(e) => setSearch(e.target.value)} placeholder="Search by client, order reference, or item"
-             data-testid="sm-order-search"
-             className="w-full bg-[var(--sh-card-base)] border border-shBorder rounded p-2 text-shText text-sm" />
+    <div className="space-y-4">
+      <NeonEdge accentRgb="0,169,224" intensity="subtle">
+        <div className="p-4 sm:p-5">
+          <div className="flex items-start justify-between gap-3 flex-wrap mb-4">
+            <div>
+              <p className="text-[10px] font-black uppercase tracking-[0.18em] text-shSecondary">Shop operations</p>
+              <h3 className="sh-display text-xl text-shText mt-0.5">Online Orders</h3>
+              <p className="text-[11px] text-shTextMuted mt-1">Paid orders, pickup fulfillment, and any access issue that needs your attention.</p>
+            </div>
+            <button onClick={load} className="rounded-xl border border-shBorder/70 bg-white/[0.025] px-3 py-2 text-[11px] font-black text-shTextMuted hover:text-shSecondary hover:border-shSecondary/30 transition">
+              <i className="fas fa-rotate-right mr-1.5" />Refresh
+            </button>
+          </div>
+          <div className="flex flex-wrap items-center gap-2">
+            {ORDER_FILTERS.map(([k, label]) => (
+              <button key={k} onClick={() => setFilter(k)} data-testid={`sm-order-filter-${k}`}
+                      className={`px-3 py-2 rounded-lg text-[10px] font-black uppercase tracking-[0.1em] transition ${filter === k ? "bg-shPrimary text-[#071018] shadow-[0_0_18px_rgba(140,198,63,0.10)]" : "bg-white/[0.025] border border-shBorder/60 text-shTextMuted hover:text-shText"}`}>
+                {label}
+              </button>
+            ))}
+          </div>
+          <div className="relative mt-3">
+            <i className="fas fa-magnifying-glass absolute left-3 top-1/2 -translate-y-1/2 text-[11px] text-shTextMuted"/>
+            <input value={search} onChange={(e) => setSearch(e.target.value)} placeholder="Search client, order, dog, or item"
+                   data-testid="sm-order-search"
+                   className="w-full bg-black/20 border border-shBorder/60 rounded-xl pl-9 pr-3 py-2.5 text-shText text-sm outline-none" />
+          </div>
+        </div>
+      </NeonEdge>
 
       {loading ? (
         <div className="text-center text-shTextMuted py-10 text-sm">Loading…</div>
@@ -1137,11 +1154,14 @@ function OnlineOrdersTab() {
             const status = orderComputedStatus(o);
             const hasPhysical = (o.lines || []).some((l) => l.kind === "product");
             return (
-              <div key={o.id} className="border border-shBorder rounded-xl p-3" data-testid={`sm-order-${o.id}`}>
-                <div className="flex items-start justify-between flex-wrap gap-2">
-                  <div>
-                    <p className="text-shText font-bold text-sm">
-                      Order #{orderRef(o)} · {o.client_name || "Unknown client"}
+              <NeonEdge key={o.id} accentRgb={status === "needs_attention" ? "242,101,34" : "0,169,224"} intensity={status === "needs_attention" ? "standard" : "subtle"} data-testid={`sm-order-${o.id}`}>
+                <div className="p-4">
+                  <div className="flex items-start justify-between flex-wrap gap-3">
+                    <div className="flex items-start gap-3 min-w-0">
+                      <HuskyDogImage name={(o.lines || []).find(l => l.dog_name)?.dog_name || o.client_name} className="w-11 h-11 rounded-xl object-cover border border-shBorder/60 bg-black/30 shrink-0"/>
+                      <div className="min-w-0">
+                        <p className="text-shText font-bold text-sm">
+                          Order #{orderRef(o)} · {o.client_name || "Unknown client"}
                       {o.admin_unseen === true && (
                         <span className="ml-2 inline-block bg-shAccent text-bgHeader text-[10px] font-black px-1.5 py-0.5 rounded-full align-middle" data-testid={`sm-order-new-${o.id}`}>NEW</span>
                       )}
@@ -1153,13 +1173,14 @@ function OnlineOrdersTab() {
                       {(o.lines || []).map((l) => `${l.quantity}× ${l.name}${l.dog_name ? ` (${l.dog_name})` : ""}`).join(", ")}
                     </p>
                     {/* Phase 6 (6.8) — surface WHY a line is stuck, not just that it is. */}
-                    {(o.lines || []).filter((l) => l.fulfillment_error).map((l) => (
-                      <p key={l.item_id} className="text-[11px] text-shOrange mt-1" data-testid={`sm-order-line-error-${l.item_id}`}>
-                        <i className="fas fa-triangle-exclamation mr-1"/>{l.name}: {l.fulfillment_error}
-                      </p>
-                    ))}
-                  </div>
-                  <div className="text-right">
+                        {(o.lines || []).filter((l) => l.fulfillment_error).map((l) => (
+                          <div key={l.item_id} className="mt-2 rounded-lg border border-shAccent/25 bg-shAccent/[0.06] px-3 py-2 text-[11px] text-shAccent" data-testid={`sm-order-line-error-${l.item_id}`}>
+                            <i className="fas fa-triangle-exclamation mr-1.5"/><span className="font-black">{l.name}</span>: {l.fulfillment_error}
+                          </div>
+                        ))}
+                      </div>
+                    </div>
+                  <div className="text-right shrink-0">
                     <p className={`text-[11px] font-black uppercase tracking-widest ${
                       status === "needs_attention" ? "text-shOrange" : ["picked_up", "completed"].includes(status) ? "text-shPrimary" : "text-shTextMuted"
                     }`}>
@@ -1170,10 +1191,10 @@ function OnlineOrdersTab() {
                     </p>
                   </div>
                 </div>
-                <div className="flex items-center gap-2 mt-2 flex-wrap">
+                  <div className="flex items-center gap-2 mt-3 pt-3 border-t border-shBorder/45 flex-wrap">
                   {status === "needs_attention" && (
                     <button onClick={() => runAction(o.id, "retry_fulfillment")} disabled={busy} data-testid={`sm-order-retry-${o.id}`}
-                            className="bg-shAccent/15 border border-shAccent/40 text-shAccent px-3 py-1.5 rounded text-[11px] font-black uppercase tracking-widest hover:bg-shAccent/25 transition disabled:opacity-50">
+                            className="bg-shAccent text-[#080b12] px-3 py-2 rounded-lg text-[10px] font-black uppercase tracking-[0.1em] hover:brightness-110 transition disabled:opacity-50 shadow-[0_0_18px_rgba(242,101,34,0.10)]">
                       {busy ? "Retrying…" : "Retry Fulfillment"}
                     </button>
                   )}
@@ -1189,8 +1210,9 @@ function OnlineOrdersTab() {
                       Mark Picked Up
                     </button>
                   )}
+                  </div>
                 </div>
-              </div>
+              </NeonEdge>
             );
           })}
         </div>
@@ -1666,7 +1688,7 @@ export default function ShopManager({ openCreateOnMount = false, onCreateConsume
   };
 
   return (
-    <div className="space-y-5">
+    <div className="space-y-5 sh-shop-manager-workspace">
       <PageHero
         eyebrow={{ icon: "fa-bag-shopping", text: "Shop Manager", color: "text-shPrimary" }}
         title="Shop Manager"
@@ -1674,16 +1696,18 @@ export default function ShopManager({ openCreateOnMount = false, onCreateConsume
         subtitle="Create, edit, organize, price, and display physical products, Shopify merchandise, prepaid visit packs, and training programs — all from one screen."
       />
 
-      <div className="flex gap-2 border-b border-shBorder">
-        {[["items", "Items"], ["categories", "Categories & Layout"], ["shop_settings", "Shop Settings"], ["orders", "Online Orders"], ["preview", "Client Preview"]].map(([key, label]) => (
-          <button key={key} onClick={() => setTab(key)} data-testid={`sm-tab-${key}`}
-                  className={`px-3 py-2 text-[12px] font-black uppercase tracking-widest border-b-2 -mb-px ${
-                    tab === key ? "border-shPrimary text-shPrimary" : "border-transparent text-shTextMuted hover:text-shText"
-                  }`}>
-            {label}
-          </button>
-        ))}
-      </div>
+      <AdminTabs
+        testid="shop-manager-tabs"
+        value={tab}
+        onChange={setTab}
+        items={[
+          { key: "items", label: "Items", icon: "fa-boxes-stacked", testid: "sm-tab-items" },
+          { key: "categories", label: "Categories & Layout", icon: "fa-layer-group", testid: "sm-tab-categories", accent: "cyan" },
+          { key: "shop_settings", label: "Shop Settings", icon: "fa-sliders", testid: "sm-tab-shop_settings", accent: "cyan" },
+          { key: "orders", label: "Online Orders", icon: "fa-receipt", testid: "sm-tab-orders", accent: "orange" },
+          { key: "preview", label: "Client Preview", icon: "fa-mobile-screen", testid: "sm-tab-preview", accent: "cyan" },
+        ]}
+      />
 
       {tab === "items" && <ItemsTab key={refreshKey} onEditItem={editItem} onAddShopItem={() => setPickerOpen(true)} />}
       {tab === "categories" && <CategoriesTab key={`cat-${refreshKey}`} />}

@@ -52,7 +52,7 @@ export function DogFactCard({ variant = "big" }) {
   if (variant === "chip") {
     return (
       <div data-testid="dog-fact-chip"
-           className="flex items-center gap-3 bg-bgPanel border border-bgHover rounded-xl px-4 py-3 hover:border-shGreen/30 transition card-fact">
+           className="flex items-center gap-3 bg-bgPanel border border-bgHover rounded-xl px-4 py-3 hover:border-shGreen/30 transition">
         <div className="text-2xl shrink-0" aria-hidden>{fact.emoji || "🐶"}</div>
         <div className="min-w-0 flex-1">
           <p className="text-[10px] font-black tracking-[0.18em] uppercase text-gray-500">Dog Fact · Today</p>
@@ -66,7 +66,7 @@ export function DogFactCard({ variant = "big" }) {
   // (left-border accent, no oversized background glyph, compact one-line layout).
   return (
     <div data-testid="dog-fact-big"
-         className="bg-bgPanel border-l-4 border-shGreen rounded-r-xl p-4 sm:p-5 shadow-md card-info">
+         className="bg-bgPanel border-l-4 border-shGreen rounded-r-xl p-4 sm:p-5 shadow-md">
       <div className="flex items-baseline flex-wrap gap-2 mb-1">
         <p className="text-[11px] font-black uppercase tracking-[0.3em] text-shGreen">
           <span className="mr-1.5" aria-hidden>{fact.emoji || "🐶"}</span>Dog Fact of the Day

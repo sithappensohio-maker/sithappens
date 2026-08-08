@@ -2,6 +2,8 @@ import { useEffect, useState } from "react";
 import { api, formatErr } from "../lib/api";
 import RichTextEditor from "./RichTextEditor";
 import { sanitizeHtml } from "../lib/sanitizeHtml";
+import { toast } from "sonner";
+import { useConfirm } from "../lib/useConfirm";
 
 /**
  * Sprint 110by — Email Designer.
@@ -382,6 +384,7 @@ function BrandPreview({ draft }) {
 // ----------------------------- Templates list -----------------------------
 
 function TemplatesCard() {
+  const confirm = useConfirm();
   const [rows, setRows] = useState([]);
   const [editing, setEditing] = useState(null);
   const [filter, setFilter] = useState("all");
@@ -399,12 +402,12 @@ function TemplatesCard() {
     : rows.filter(r => r.audience === filter || r.category === filter));
 
   const handleDelete = async (slug, name) => {
-    if (!window.confirm(`Delete the "${name}" template? Any product bound to it will be unbound.`)) return;
+    if (!(await confirm({ title: `Delete ${name}?`, body: "Any product bound to this template will be unbound.", confirmText: "Delete template", tone: "danger" }))) return;
     try {
       await api.delete(`/admin/email-templates/custom/${slug}`);
       load();
     } catch (e) {
-      alert(e?.response?.data?.detail || "Delete failed");
+      toast.error(e?.response?.data?.detail || "Delete failed");
     }
   };
 
@@ -635,6 +638,7 @@ function CreateCustomTemplateModal({ onClose, onCreated }) {
 // ----------------------------- Template editor modal -----------------------------
 
 function TemplateEditorModal({ slug, onClose }) {
+  const confirm = useConfirm();
   const [tpl, setTpl] = useState(null);
   const [draft, setDraft] = useState(null);
   const [busy, setBusy] = useState(false);
@@ -685,7 +689,7 @@ function TemplateEditorModal({ slug, onClose }) {
   };
 
   const reset = async () => {
-    if (!window.confirm("Reset this template back to the default text?")) return;
+    if (!(await confirm({ title: "Reset this template?", body: "Your custom text will be removed and the Sit Happens default will be restored.", confirmText: "Reset to default", tone: "warning" }))) return;
     setBusy(true);
     try {
       await api.post(`/admin/email-templates/${slug}/reset`);

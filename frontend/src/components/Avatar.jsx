@@ -1,23 +1,25 @@
 /**
- * Round profile avatar that renders `src` (base64 or remote URL) if present,
- * otherwise falls back to an iconified placeholder. Use for clients (fa-user)
- * and dogs (fa-paw). Sizes: sm | md | lg.
- *
- * Props:
- *   src:      data URL or remote URL (optional)
- *   icon:     fontawesome class to show when src is empty (defaults to fa-user)
- *   size:     sm (32) | md (48) | lg (64). Defaults to md.
- *   ring:     tailwind border-color class (e.g. "border-shSecondary"). Defaults to border-shBorder.
- *   testid:   data-testid attribute
+ * Round profile avatar that renders `src` (base64 or remote URL) if present.
+ * Dog avatars (`icon="fa-paw"`) use a deterministic Sit Happens husky mascot
+ * when the client has not uploaded a real dog photo; people retain the simple
+ * icon fallback. Sizes: sm | md | lg.
  */
+import { huskyPlaceholderSrc } from "./brand/HuskyDogImage";
+
 const SIZE = { sm: "w-8 h-8 text-base", md: "w-12 h-12 text-lg", lg: "w-16 h-16 text-2xl" };
 
 export default function Avatar({ src, icon = "fa-user", size = "md", ring = "border-shBorder", alt = "", testid }) {
   const cls = `${SIZE[size] || SIZE.md} shrink-0 rounded-full border-2 ${ring} overflow-hidden bg-[var(--sh-card-base)] grid place-items-center`;
-  if (src) {
+  if (src || icon === "fa-paw") {
     return (
       <div className={cls} data-testid={testid}>
-        <img src={src} alt={alt} loading="lazy" decoding="async" className="w-full h-full object-cover"/>
+        <img
+          src={src || huskyPlaceholderSrc(alt)}
+          alt={alt}
+          loading="lazy"
+          decoding="async"
+          className="w-full h-full object-cover object-top"
+        />
       </div>
     );
   }

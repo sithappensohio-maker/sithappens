@@ -1,5 +1,6 @@
 import { useEffect, useRef } from "react";
 import { sanitizeHtml } from "../lib/sanitizeHtml";
+import { usePromptDialog } from "../lib/useConfirm";
 
 /**
  * Sprint 110ci — Friendly rich-text editor.
@@ -19,6 +20,7 @@ export default function RichTextEditor({
   rows = 6,
   variables = [],  // ["client_name", "total_amount", ...] - rendered as click-to-insert chips
 }) {
+  const promptDialog = usePromptDialog();
   const ref = useRef(null);
   const lastEmittedRef = useRef("");
 
@@ -45,9 +47,16 @@ export default function RichTextEditor({
     ref.current?.focus();
     emit();
   };
-  const promptLink = () => {
-    const url = prompt("Link URL (paste from your browser):", "https://");
-    if (url) fmt("createLink", url);
+  const promptLink = async () => {
+    const url = await promptDialog({
+      title: "Add a link",
+      body: "Paste the full destination URL.",
+      defaultValue: "https://",
+      placeholder: "https://example.com",
+      confirmText: "Add Link",
+      tone: "info",
+    });
+    if (url?.trim()) fmt("createLink", url.trim());
   };
   const insertVar = (v) => {
     document.execCommand("insertText", false, `{{${v}}}`);

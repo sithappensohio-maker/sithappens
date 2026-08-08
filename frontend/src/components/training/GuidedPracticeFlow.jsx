@@ -1,10 +1,7 @@
-// Client Practice Coach upgrade — Screen 4, the guided round/rep
-// interaction. Local UI state only (useReducer over
-// guidedPracticeReducer) — per 01_CLAUDE_IMPLEMENTATION_PROMPT.md's
-// "Important persistence boundary", nothing here calls the network. The
-// caller receives the final tallies via onFinish(metrics) and folds them
-// into whichever existing submit call it already makes.
+// Guided Practice local UI state. Reducer/network boundaries are unchanged;
+// this pass only gives the interaction the same premium Online School shell.
 import { useReducer } from "react";
+import PremiumButton from "../premium/PremiumButton";
 import {
   initGuidedState, guidedPracticeReducer, sessionMetricsFromGuidedState, renderPracticeCoachText,
 } from "../../lib/practiceCoachPolish";
@@ -18,123 +15,107 @@ export default function GuidedPracticeFlow({ practiceCoach, tokens, onOpenTroubl
   );
 
   const record = (outcome) => dispatch({ type: "RECORD_OUTCOME", outcome });
+  const roundPct = state.repsPerRound ? Math.min(100, ((Math.min(state.repIndex, state.repsPerRound) / state.repsPerRound) * 100)) : 0;
 
   return (
-    <div className="space-y-4" data-testid={testid}>
-      <div className="flex items-center justify-between text-[11px] font-black uppercase tracking-widest text-shTextMuted">
-        <span data-testid={testid ? `${testid}-round` : undefined}>Round {state.roundIndex + 1} of {state.roundsPerDay}</span>
-        <span data-testid={testid ? `${testid}-rep` : undefined}>Rep {Math.min(state.repIndex + 1, state.repsPerRound)} of {state.repsPerRound}</span>
+    <div className="space-y-4 sm:space-y-5" data-testid={testid}>
+      <div className="rounded-2xl border border-shSecondary/25 bg-gradient-to-br from-shSecondary/[0.07] via-black/15 to-black/25 p-4 sm:p-5">
+        <div className="flex items-center justify-between gap-4">
+          <div>
+            <p className="text-[9px] font-black uppercase tracking-[0.16em] text-shSecondary">Guided Practice</p>
+            <p className="text-[15px] sm:text-[17px] font-black text-shText mt-1" data-testid={testid ? `${testid}-round` : undefined}>Round {state.roundIndex + 1} of {state.roundsPerDay}</p>
+          </div>
+          <div className="text-right">
+            <p className="text-[9px] font-black uppercase tracking-[0.14em] text-shTextMuted">Current rep</p>
+            <p className="text-[14px] font-black text-shText mt-1" data-testid={testid ? `${testid}-rep` : undefined}>{Math.min(state.repIndex + 1, state.repsPerRound)} / {state.repsPerRound}</p>
+          </div>
+        </div>
+        <div className="h-2 rounded-full bg-white/[0.055] overflow-hidden mt-4"><div className="h-full rounded-full bg-gradient-to-r from-shSecondary to-shPrimary transition-all" style={{ width: `${roundPct}%` }}/></div>
       </div>
 
       {state.phase === "active" && !state.lastOutcome && (
-        <div className="space-y-3 text-center">
-          <div className="w-20 h-20 mx-auto rounded-full border-4 border-shPrimary/40 flex items-center justify-center">
-            <span className="text-[26px] font-black text-shText">{state.repIndex + 1}</span>
+        <section className="rounded-3xl border border-shPrimary/30 bg-gradient-to-br from-shPrimary/[0.07] via-black/15 to-black/30 p-5 sm:p-7 text-center shadow-[0_18px_55px_-38px_rgba(140,198,63,0.8)]">
+          <div className="w-24 h-24 sm:w-28 sm:h-28 mx-auto rounded-full border border-shPrimary/40 bg-shPrimary/[0.065] shadow-[0_0_40px_rgba(140,198,63,0.08)] grid place-items-center">
+            <div><p className="text-[9px] font-black uppercase tracking-[0.14em] text-shPrimary/80">Rep</p><span className="text-[36px] sm:text-[42px] leading-none font-black text-white">{state.repIndex + 1}</span></div>
           </div>
-          <p className="text-[11px] font-black uppercase tracking-widest text-shPrimary">Ready</p>
-          <p className="text-[13px] text-shTextMuted">{renderPracticeCoachText(gp.ready_instruction, tokens)}</p>
-          <p className="text-[16px] font-black text-shText">{renderPracticeCoachText(gp.cue_prompt, tokens)}</p>
-          <div className="grid grid-cols-2 gap-2 pt-1">
+          <p className="text-[10px] font-black uppercase tracking-[0.16em] text-shPrimary mt-5">Ready</p>
+          {gp.ready_instruction && <p className="text-[12px] sm:text-[13px] text-shTextMuted mt-2 max-w-lg mx-auto leading-relaxed">{renderPracticeCoachText(gp.ready_instruction, tokens)}</p>}
+          <p className="text-[19px] sm:text-[23px] font-black text-shText mt-3 leading-snug">{renderPracticeCoachText(gp.cue_prompt, tokens)}</p>
+          <div className="grid grid-cols-2 gap-3 mt-6">
             <button type="button" onClick={() => record("success")} data-testid={testid ? `${testid}-success` : undefined}
-                    className="bg-shPrimary/15 text-shPrimary border border-shPrimary rounded-lg py-3 font-black text-[13px] uppercase tracking-widest">
-              <i className="fas fa-check mr-1.5"/>{gp.success_button_label || "SUCCESS"}
+                    className="min-h-[64px] sm:min-h-[70px] rounded-2xl bg-shPrimary/14 text-shPrimary border border-shPrimary/55 font-black text-[13px] sm:text-[14px] uppercase tracking-[0.1em] hover:bg-shPrimary/20 active:scale-[0.98] transition">
+              <i className="fas fa-check mr-2"/>{gp.success_button_label || "SUCCESS"}
             </button>
             <button type="button" onClick={() => record("miss")} data-testid={testid ? `${testid}-miss` : undefined}
-                    className="bg-shDanger/10 text-shDanger border border-shDanger/60 rounded-lg py-3 font-black text-[13px] uppercase tracking-widest">
-              <i className="fas fa-xmark mr-1.5"/>{gp.miss_button_label || "MISS"}
+                    className="min-h-[64px] sm:min-h-[70px] rounded-2xl bg-shDanger/[0.07] text-shDanger border border-shDanger/45 font-black text-[13px] sm:text-[14px] uppercase tracking-[0.1em] hover:bg-shDanger/10 active:scale-[0.98] transition">
+              <i className="fas fa-xmark mr-2"/>{gp.miss_button_label || "MISS"}
             </button>
           </div>
-        </div>
+        </section>
       )}
 
       {state.phase === "active" && state.lastOutcome && (
-        <div className="space-y-3 text-center">
-          <p className={`text-[14px] font-bold ${state.lastOutcome === "success" ? "text-shPrimary" : "text-shDanger"}`}
-             data-testid={testid ? `${testid}-outcome-message` : undefined}>
+        <section className={`rounded-3xl border p-6 sm:p-7 text-center ${state.lastOutcome === "success" ? "border-shPrimary/30 bg-shPrimary/[0.06]" : "border-shDanger/30 bg-shDanger/[0.05]"}`}>
+          <div className={`w-14 h-14 rounded-2xl mx-auto grid place-items-center border ${state.lastOutcome === "success" ? "bg-shPrimary/10 border-shPrimary/30 text-shPrimary" : "bg-shDanger/10 border-shDanger/30 text-shDanger"}`}><i className={`fas ${state.lastOutcome === "success" ? "fa-check" : "fa-rotate-left"} text-[18px]`}/></div>
+          <p className={`text-[16px] sm:text-[18px] font-black mt-4 ${state.lastOutcome === "success" ? "text-shPrimary" : "text-shDanger"}`} data-testid={testid ? `${testid}-outcome-message` : undefined}>
             {renderPracticeCoachText(state.lastOutcome === "success" ? gp.success_message : gp.miss_message, tokens)}
           </p>
-          <button type="button" onClick={() => dispatch({ type: "ACK_OUTCOME" })} data-testid={testid ? `${testid}-next-rep` : undefined}
-                  className="bg-shPrimary text-bgHeader rounded-lg px-5 py-2.5 font-black text-[13px] uppercase tracking-widest">
-            Next Rep
-          </button>
-        </div>
+          <PremiumButton onClick={() => dispatch({ type: "ACK_OUTCOME" })} data-testid={testid ? `${testid}-next-rep` : undefined} className="mt-5 justify-center min-h-[48px] sm:min-w-[180px]">Next Rep <i className="fas fa-arrow-right text-[10px]"/></PremiumButton>
+        </section>
       )}
 
       {state.phase === "resting" && (
-        <div className="space-y-3 text-center bg-shSecondary/10 border border-shSecondary/30 rounded-lg p-4">
-          <i className="fas fa-mug-hot text-shSecondary text-[22px]"/>
-          <p className="text-[13px] font-black text-shText">Take a short break</p>
-          <button type="button" onClick={() => dispatch({ type: "CONTINUE_AFTER_REST" })} data-testid={testid ? `${testid}-continue-after-rest` : undefined}
-                  className="bg-shSecondary text-bgHeader rounded-lg px-5 py-2.5 font-black text-[13px] uppercase tracking-widest">
-            Continue
-          </button>
-        </div>
+        <section className="rounded-3xl border border-shSecondary/30 bg-shSecondary/[0.06] p-6 sm:p-7 text-center">
+          <div className="w-14 h-14 rounded-2xl bg-shSecondary/10 border border-shSecondary/30 grid place-items-center mx-auto"><i className="fas fa-mug-hot text-shSecondary text-[18px]"/></div>
+          <p className="text-[17px] font-black text-shText mt-4">Take a short break</p>
+          <p className="text-[12px] text-shTextMuted mt-1">Give both of you a reset before the next round.</p>
+          <PremiumButton onClick={() => dispatch({ type: "CONTINUE_AFTER_REST" })} data-testid={testid ? `${testid}-continue-after-rest` : undefined} className="mt-5 justify-center min-h-[48px]">Continue</PremiumButton>
+        </section>
       )}
 
       {state.phase === "stopped" && (
-        <div className="space-y-3 text-center bg-shAccent/10 border border-shAccent/30 rounded-lg p-4">
-          <i className="fas fa-hand text-shAccent text-[22px]"/>
-          <p className="text-[13px] font-black text-shText">Let&apos;s pause here</p>
-          {state.stopMessage && <p className="text-[12px] text-shTextMuted">{renderPracticeCoachText(state.stopMessage, tokens)}</p>}
-          <div className="flex items-center justify-center gap-2">
-            <button type="button" onClick={() => dispatch({ type: "RESUME_AFTER_STOP" })} data-testid={testid ? `${testid}-resume` : undefined}
-                    className="bg-black/20 border border-shBorder text-shText rounded-lg px-4 py-2.5 font-black text-[12px] uppercase tracking-widest">
-              Try Again
-            </button>
-            <button type="button" onClick={() => onFinish(sessionMetricsFromGuidedState(state))} data-testid={testid ? `${testid}-finish-from-stop` : undefined}
-                    className="bg-shPrimary text-bgHeader rounded-lg px-4 py-2.5 font-black text-[12px] uppercase tracking-widest">
-              Finish for Now
-            </button>
+        <section className="rounded-3xl border border-shAccent/30 bg-shAccent/[0.06] p-5 sm:p-6 text-center">
+          <div className="w-14 h-14 rounded-2xl bg-shAccent/10 border border-shAccent/30 grid place-items-center mx-auto"><i className="fas fa-hand text-shAccent text-[18px]"/></div>
+          <p className="text-[17px] font-black text-shText mt-4">Let&apos;s pause here</p>
+          {state.stopMessage && <p className="text-[12px] sm:text-[13px] text-shTextMuted mt-2 max-w-lg mx-auto leading-relaxed">{renderPracticeCoachText(state.stopMessage, tokens)}</p>}
+          <div className="flex flex-col sm:flex-row items-stretch sm:items-center justify-center gap-2.5 mt-5">
+            <PremiumButton variant="secondary" onClick={() => dispatch({ type: "RESUME_AFTER_STOP" })} data-testid={testid ? `${testid}-resume` : undefined} className="justify-center min-h-[48px]">Try Again</PremiumButton>
+            <PremiumButton onClick={() => onFinish(sessionMetricsFromGuidedState(state))} data-testid={testid ? `${testid}-finish-from-stop` : undefined} className="justify-center min-h-[48px]">Finish for Now</PremiumButton>
           </div>
-        </div>
+        </section>
       )}
 
       {state.phase === "round_summary" && (
-        <div className="space-y-3 text-center bg-black/20 border border-shBorder rounded-lg p-4">
-          <i className="fas fa-star text-shPrimary text-[22px]"/>
-          <p className="text-[13px] font-black text-shText">
-            Round {state.roundIndex + 1} done — {state.successesThisRound} of {state.repsPerRound}
-          </p>
-          <div className="flex items-center justify-center gap-2">
-            <button type="button" onClick={() => onFinish(sessionMetricsFromGuidedState(state))} data-testid={testid ? `${testid}-finish-for-now` : undefined}
-                    className="bg-black/20 border border-shBorder text-shText rounded-lg px-4 py-2.5 font-black text-[12px] uppercase tracking-widest">
-              Finish for Now
-            </button>
-            {state.roundIndex + 1 < state.roundsPerDay && (
-              <button type="button" onClick={() => dispatch({ type: "NEXT_ROUND" })} data-testid={testid ? `${testid}-next-round` : undefined}
-                      className="bg-shPrimary text-bgHeader rounded-lg px-4 py-2.5 font-black text-[12px] uppercase tracking-widest">
-                Next Round
-              </button>
-            )}
+        <section className="rounded-3xl border border-shBorder/55 bg-black/15 p-5 sm:p-6 text-center">
+          <div className="w-14 h-14 rounded-2xl bg-shPrimary/10 border border-shPrimary/30 grid place-items-center mx-auto"><i className="fas fa-star text-shPrimary text-[18px]"/></div>
+          <p className="text-[17px] font-black text-shText mt-4">Round {state.roundIndex + 1} done</p>
+          <p className="text-[13px] text-shTextMuted mt-1">{state.successesThisRound} of {state.repsPerRound} successful reps</p>
+          <div className="flex flex-col sm:flex-row items-stretch sm:items-center justify-center gap-2.5 mt-5">
+            <PremiumButton variant="secondary" onClick={() => onFinish(sessionMetricsFromGuidedState(state))} data-testid={testid ? `${testid}-finish-for-now` : undefined} className="justify-center min-h-[48px]">Finish for Now</PremiumButton>
+            {state.roundIndex + 1 < state.roundsPerDay && <PremiumButton onClick={() => dispatch({ type: "NEXT_ROUND" })} data-testid={testid ? `${testid}-next-round` : undefined} className="justify-center min-h-[48px]">Next Round <i className="fas fa-arrow-right text-[10px]"/></PremiumButton>}
           </div>
-        </div>
+        </section>
       )}
 
       {state.phase === "finished" && (
-        <div className="space-y-2 text-center bg-shPrimary/10 border border-shPrimary/30 rounded-lg p-4">
-          <i className="fas fa-trophy text-shPrimary text-[22px]"/>
-          <p className="text-[13px] font-black text-shText">Great job today!</p>
-          <button type="button" onClick={() => onFinish(sessionMetricsFromGuidedState(state))} data-testid={testid ? `${testid}-wrap-up` : undefined}
-                  className="bg-shPrimary text-bgHeader rounded-lg px-5 py-2.5 font-black text-[13px] uppercase tracking-widest">
-            Continue
-          </button>
-        </div>
+        <section className="rounded-3xl border border-shPrimary/35 bg-gradient-to-br from-shPrimary/[0.09] via-black/15 to-black/25 p-6 sm:p-7 text-center">
+          <div className="w-16 h-16 rounded-2xl bg-shPrimary/12 border border-shPrimary/35 grid place-items-center mx-auto"><i className="fas fa-trophy text-shPrimary text-[21px]"/></div>
+          <p className="text-[20px] font-black text-white mt-4">Great job today!</p>
+          <p className="text-[12px] text-shTextMuted mt-1">Wrap up the session and log how it went.</p>
+          <PremiumButton onClick={() => onFinish(sessionMetricsFromGuidedState(state))} data-testid={testid ? `${testid}-wrap-up` : undefined} className="mt-5 justify-center min-h-[48px] sm:min-w-[180px]">Continue</PremiumButton>
+        </section>
       )}
 
-      {state.phase !== "finished" && (
-        <div className="flex items-center gap-2">
-          {onOpenTroubleshooting && (
-            <button type="button" onClick={onOpenTroubleshooting} data-testid={testid ? `${testid}-troubleshooting` : undefined}
-                    className="flex-1 bg-black/20 border border-shBorder text-shTextMuted rounded-lg py-2 text-[11px] font-black uppercase tracking-widest">
-              <i className="fas fa-circle-question mr-1"/>Troubleshooting
-            </button>
-          )}
-          {onOpenTroubleshooting && (
-            <button type="button" onClick={onOpenTroubleshooting} data-testid={testid ? `${testid}-im-stuck` : undefined}
-                    className="flex-1 bg-black/20 border border-shBorder text-shTextMuted rounded-lg py-2 text-[11px] font-black uppercase tracking-widest">
-              <i className="fas fa-life-ring mr-1"/>I&apos;m Stuck
-            </button>
-          )}
+      {state.phase !== "finished" && onOpenTroubleshooting && (
+        <div className="grid grid-cols-2 gap-2.5">
+          <button type="button" onClick={onOpenTroubleshooting} data-testid={testid ? `${testid}-troubleshooting` : undefined}
+                  className="min-h-[48px] rounded-xl bg-black/10 border border-shBorder/55 text-shTextMuted px-3 py-2 text-[10px] sm:text-[11px] font-black hover:text-shSecondary hover:border-shSecondary/30 transition">
+            <i className="fas fa-circle-question mr-1.5"/>Troubleshooting
+          </button>
+          <button type="button" onClick={onOpenTroubleshooting} data-testid={testid ? `${testid}-im-stuck` : undefined}
+                  className="min-h-[48px] rounded-xl bg-black/10 border border-shBorder/55 text-shTextMuted px-3 py-2 text-[10px] sm:text-[11px] font-black hover:text-shSecondary hover:border-shSecondary/30 transition">
+            <i className="fas fa-life-ring mr-1.5"/>I&apos;m Stuck
+          </button>
         </div>
       )}
     </div>
