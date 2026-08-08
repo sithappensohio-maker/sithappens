@@ -58,6 +58,8 @@ from email_service import (
     send_meet_greet_request_received,
 )
 import email_service
+import school_events
+from school_events import EventType as SchoolEvent
 
 from trophy_service import (
     seed_trophies_if_empty,
@@ -95,6 +97,8 @@ db = mongo_client[os.environ["DB_NAME"]]
 # Give email_service a handle to the DB so it can look up admin email
 # customizations and branding (one-time wire-up — avoids circular imports).
 email_service.set_db(db)
+# Same one-time wire-up for the Online School event/notification spine.
+school_events.set_db(db)
 
 app = FastAPI(title="Sit Happens API")
 api = APIRouter(prefix="/api")
@@ -12677,6 +12681,117 @@ async def create_homework_from_template(body: HomeworkFromTemplateIn, user: dict
     return doc
 
 
+def _is_school_homework(hw: dict) -> bool:
+    """A practice homework that belongs to the Online School (created from a
+    lesson's Start Practice / auto-homework — it carries source_lesson_id).
+    Non-school homework keeps its existing behavior and never generates School
+    events; the Online School product boundary is deliberately narrow here."""
+    return bool(hw.get("source_lesson_id"))
+
+
+def _school_event_ctx_from_hw(hw: dict) -> dict:
+    """Common School-event context read straight off a school practice homework
+    doc — these fields already live on it, so no extra DB round-trips."""
+    return {
+        "client_id": hw.get("client_id"),
+        "client_name": hw.get("client_name"),
+        "dog_id": hw.get("dog_id"),
+        "dog_name": hw.get("dog_name"),
+        "homework_id": hw.get("id"),
+        "lesson_id": hw.get("source_lesson_id"),
+        "lesson_name": hw.get("title"),
+    }
+
+
+async def _emit_school_practice_log_event(hw: dict, entry: dict, body, user: dict) -> None:
+    """Turn a client's practice section-log into exactly ONE School event:
+    a could-not-complete report (attention alert), a hard-difficulty report,
+    or a routine completion (both activity-feed only). Best-effort — never
+    disturbs the already-saved log. Idempotent on the log's own id."""
+    if user.get("role") == "admin" or not _is_school_homework(hw):
+        return
+    ctx = _school_event_ctx_from_hw(hw)
+    who = ctx["client_name"] or "A student"
+    dog = ctx["dog_name"] or ""
+    subject = f"{who}" + (f" · {dog}" if dog else "")
+    title_hw = hw.get("title") or "practice"
+    dedupe = f"section_log:{entry['id']}"
+    # A video attached to the submission is the one practice upload that is
+    # unambiguous trainer work — the trainer must watch it. Detected off the
+    # stored field_values.__video_id (set by submit_day from body.video_media_id),
+    # so a free section-log with no video never trips this. A plain photo or a
+    # routine metrics-only log does NOT alert.
+    video_id = (entry.get("field_values") or {}).get("__video_id")
+    day_number = entry.get("day_number")
+    try:
+        if getattr(body, "could_not_complete", False):
+            reason = (getattr(body, "could_not_complete_reason", "") or "").strip()
+            await school_events.emit_event(
+                SchoolEvent.PRACTICE_COULD_NOT_COMPLETE,
+                actor_type="client", actor_id=user.get("id"), actor_name=user.get("name"),
+                title=f"{subject} couldn't complete practice",
+                summary=reason or f"Reported unable to complete “{title_hw}”.",
+                deep_link={"screen": "school_hq", "tab": "needs_attention", "homework_id": hw.get("id")},
+                metadata={"reason": reason} if reason else {},
+                dedupe_key=dedupe, **ctx,
+            )
+        elif video_id:
+            await school_events.emit_event(
+                SchoolEvent.PRACTICE_VIDEO_SUBMITTED,
+                actor_type="client", actor_id=user.get("id"), actor_name=user.get("name"),
+                title=f"{subject} submitted a practice video",
+                summary=f"Video for “{title_hw}” is ready for review.",
+                deep_link={"screen": "school_hq", "tab": "needs_attention",
+                           "homework_id": hw.get("id"), "video_media_id": video_id, "day_number": day_number},
+                metadata={"video_media_id": video_id, "day_number": day_number},
+                dedupe_key=dedupe, **ctx,
+            )
+        elif getattr(body, "difficulty", None) in ("hard", "very_hard"):
+            await school_events.emit_event(
+                SchoolEvent.PRACTICE_DIFFICULTY_REPORTED,
+                actor_type="client", actor_id=user.get("id"), actor_name=user.get("name"),
+                title=f"{subject} found practice hard",
+                summary=f"Rated “{title_hw}” as {body.difficulty.replace('_', ' ')}.",
+                deep_link={"screen": "homework", "homework_id": hw.get("id")},
+                metadata={"difficulty": body.difficulty},
+                dedupe_key=dedupe, **ctx,
+            )
+        else:
+            await school_events.emit_event(
+                SchoolEvent.PRACTICE_COMPLETED,
+                actor_type="client", actor_id=user.get("id"), actor_name=user.get("name"),
+                title=f"{subject} logged practice",
+                summary=f"Practiced “{title_hw}”.",
+                deep_link={"screen": "homework", "homework_id": hw.get("id")},
+                dedupe_key=dedupe, **ctx,
+            )
+    except Exception:
+        pass
+
+
+async def _emit_school_question_event(hw: dict, question: dict, user: dict) -> None:
+    """A student's practice question → one attention event (in-app + email).
+    Best-effort, idempotent on the question id, school homework only."""
+    if user.get("role") == "admin" or not _is_school_homework(hw):
+        return
+    ctx = _school_event_ctx_from_hw(hw)
+    who = ctx["client_name"] or "A student"
+    dog = ctx["dog_name"] or ""
+    subject = f"{who}" + (f" · {dog}" if dog else "")
+    try:
+        await school_events.emit_event(
+            SchoolEvent.PRACTICE_QUESTION_ASKED,
+            actor_type="client", actor_id=user.get("id"), actor_name=user.get("name"),
+            title=f"{subject} asked a question",
+            summary=(question.get("text") or "").strip()[:280],
+            deep_link={"screen": "school_hq", "tab": "needs_attention", "homework_id": hw.get("id")},
+            metadata={"question_id": question.get("id")},
+            dedupe_key=f"question:{question.get('id')}", **ctx,
+        )
+    except Exception:
+        pass
+
+
 @api.post("/homework/{homework_id}/section-log")
 async def log_section(homework_id: str, body: SectionLogIn, user: dict = Depends(get_current_user)):
     hw = await db.homework.find_one({"id": homework_id}, {"_id": 0})
@@ -12729,6 +12844,9 @@ async def log_section(homework_id: str, body: SectionLogIn, user: dict = Depends
             await notify_admin_homework_section_log(hw, entry, client, dog)
         except Exception:
             pass
+    # Online School spine — record the practice as a School event (routine
+    # completion → activity feed; could-not-complete → attention alert).
+    await _emit_school_practice_log_event(hw, entry, body, user)
     if user.get("role") != "admin":
         hw = _client_safe_homework(hw)
     return hw
@@ -13216,6 +13334,8 @@ async def submit_day(
             await notify_admin_homework_section_log(hw, new_log, client, dog)
         except Exception as exc:
             logger.warning("Daily tracker submit notify failed: %s", exc)
+    # Online School spine — same practice-event emission as the section-log path.
+    await _emit_school_practice_log_event(hw, new_log, body, user)
 
     # Return the refreshed homework with progress.
     return await get_homework_detail(homework_id, user)
@@ -13411,6 +13531,7 @@ async def ask_question(
         }
         await db.homework.update_one({"id": homework_id}, {"$push": {"section_logs": placeholder}})
 
+    await _emit_school_question_event(hw, question, user)
     return await get_homework_detail(homework_id, user)
 
 
@@ -13480,6 +13601,7 @@ async def ask_section_question(
         "logged_at": now_iso(),
     }
     await db.homework.update_one({"id": homework_id}, {"$push": {"section_logs": placeholder}})
+    await _emit_school_question_event(hw, question, user)
     return await get_homework_detail(homework_id, user)
 
 
@@ -17211,6 +17333,31 @@ async def _grant_online_school_enrollment(
             except Exception as exc:
                 logger.warning("Online School first-lesson homework auto-assign failed: %s", exc)
 
+    # Online School spine — record enrollment as an activity event. This is
+    # ALSO the post-deployment inactivity baseline: a student who enrolls after
+    # deploy and then never trains has this as their most-recent School event,
+    # so the HQ summary's >14-day rule can eventually flag them — WITHOUT
+    # inventing history for legacy enrollments that predate the spine (they
+    # have no events and are never counted). Routed through the central helper
+    # so both manual enrollment and purchase fulfillment emit it.
+    try:
+        _enr_who = (client or {}).get("name") or "A student"
+        _enr_dog = dog.get("name") or ""
+        await school_events.emit_event(
+            SchoolEvent.SCHOOL_ENROLLED,
+            actor_type="system", actor_id=enrolled_by,
+            client_id=client_id, client_name=(client or {}).get("name"),
+            dog_id=dog["id"], dog_name=dog.get("name"),
+            enrollment_id=dog_program_doc["id"], school_enrollment_id=school_enrollment["id"],
+            program_id=program["id"], program_name=program.get("name"),
+            title=f"{_enr_who}" + (f" · {_enr_dog}" if _enr_dog else "") + " enrolled in Online School",
+            summary=f"Enrolled in “{program.get('name') or 'a program'}”.",
+            deep_link={"screen": "school_hq", "tab": "activity", "enrollment_id": dog_program_doc["id"]},
+            dedupe_key=f"school_enrolled:{school_enrollment['id']}",
+        )
+    except Exception:
+        pass
+
     return {"school_enrollment": school_enrollment, "enrollment": _enrollment_summary(dog_program_doc)}
 
 
@@ -17958,6 +18105,34 @@ async def portal_school_submit_checkpoint(
         raise HTTPException(status_code=500, detail="Checkpoint submission failed. Please try again.")
     submission.pop("_id", None)
 
+    # Online School spine — a submitted checkpoint needs a trainer. Emit ONE
+    # attention event (in-app notification + email), deep-linked to the
+    # existing checkpoint review workflow. Best-effort; the submission is
+    # already durably saved. Idempotent on the submission id.
+    try:
+        _cli = await db.clients.find_one({"id": se["client_id"]}, {"_id": 0, "name": 1}) or {}
+        _dog = await db.dogs.find_one({"id": se["dog_id"]}, {"_id": 0, "name": 1}) or {}
+        _prog_name = (enrollment.get("program_snapshot") or {}).get("name")
+        _who = _cli.get("name") or "A student"
+        _dogn = _dog.get("name") or ""
+        await school_events.emit_event(
+            SchoolEvent.CHECKPOINT_SUBMITTED,
+            actor_type="client", actor_id=user.get("id"), actor_name=user.get("name"),
+            client_id=se["client_id"], client_name=_cli.get("name"),
+            dog_id=se["dog_id"], dog_name=_dog.get("name"),
+            enrollment_id=enrollment["id"], school_enrollment_id=school_enrollment_id,
+            program_id=enrollment.get("program_id"), program_name=_prog_name,
+            module_id=roadmap.get("current_module_id"),
+            lesson_id=lesson_id, lesson_name=current_lesson.get("name"),
+            homework_id=hw["id"], checkpoint_id=submission["id"],
+            title=f"{_who}" + (f" · {_dogn}" if _dogn else "") + " submitted a checkpoint",
+            summary=f"Checkpoint for “{current_lesson.get('name') or 'lesson'}” is awaiting review.",
+            deep_link={"screen": "school_hq", "tab": "checkpoints", "checkpoint_id": submission["id"]},
+            dedupe_key=f"checkpoint_submitted:{submission['id']}",
+        )
+    except Exception:
+        pass
+
     return {"checkpoint": _client_safe_checkpoint_submission(submission)}
 
 
@@ -18041,6 +18216,55 @@ async def _finish_school_advancement(
         logger.warning("Online School next-lesson homework auto-assign failed: %s", exc)
 
 
+async def _emit_school_advance_events(
+    se: dict, enrollment: dict, source_module_id: Optional[str],
+    source_lesson_id: Optional[str], next_module_id: Optional[str], is_final: bool,
+) -> None:
+    """Emit the progress ACTIVITY events for a just-confirmed advance: the
+    lesson just finished (always), the module just finished (when the advance
+    crosses a module boundary, or on final), and course completion (on final).
+    All activity-only — never an alert — and idempotent on the source position,
+    so the resumable/CAS-safe advance path can't double-emit. Best-effort."""
+    try:
+        snap = enrollment.get("program_snapshot") or {}
+        src_lesson = _find_lesson_in_snapshot(enrollment, source_lesson_id) or {}
+        module = next((m for m in (snap.get("modules") or []) if m.get("id") == source_module_id), {})
+        cli = await db.clients.find_one({"id": se.get("client_id")}, {"_id": 0, "name": 1}) or {}
+        dog = await db.dogs.find_one({"id": se.get("dog_id")}, {"_id": 0, "name": 1}) or {}
+        subject = f"{cli.get('name') or 'A student'}" + (f" · {dog.get('name')}" if dog.get("name") else "")
+        common = dict(
+            actor_type="client",
+            client_id=se.get("client_id"), client_name=cli.get("name"),
+            dog_id=se.get("dog_id"), dog_name=dog.get("name"),
+            enrollment_id=enrollment["id"], school_enrollment_id=se["id"],
+            program_id=enrollment.get("program_id"), program_name=snap.get("name"),
+            deep_link={"screen": "school_hq", "tab": "activity", "enrollment_id": enrollment["id"]},
+        )
+        await school_events.emit_event(
+            SchoolEvent.LESSON_COMPLETED, module_id=source_module_id, module_name=module.get("name"),
+            lesson_id=source_lesson_id, lesson_name=src_lesson.get("name"),
+            title=f"{subject} completed a lesson",
+            summary=f"Finished “{src_lesson.get('name') or 'a lesson'}”.",
+            dedupe_key=f"lesson_completed:{enrollment['id']}:{source_lesson_id}", **common,
+        )
+        if source_module_id and (is_final or (next_module_id and next_module_id != source_module_id)):
+            await school_events.emit_event(
+                SchoolEvent.MODULE_COMPLETED, module_id=source_module_id, module_name=module.get("name"),
+                title=f"{subject} completed a module",
+                summary=f"Finished “{module.get('name') or 'a module'}”.",
+                dedupe_key=f"module_completed:{enrollment['id']}:{source_module_id}", **common,
+            )
+        if is_final:
+            await school_events.emit_event(
+                SchoolEvent.COURSE_COMPLETED,
+                title=f"{subject} completed the course",
+                summary=f"Graduated “{snap.get('name') or 'the program'}”!",
+                dedupe_key=f"course_completed:{enrollment['id']}", **common,
+            )
+    except Exception:
+        pass
+
+
 async def _advance_school_enrollment(se: dict, enrollment: dict, roadmap: dict) -> dict:
     """The CAS-based advancement body, extracted from portal_school_advance
     (Online School hardening audit's compare-and-swap design, unchanged)
@@ -18065,6 +18289,7 @@ async def _advance_school_enrollment(se: dict, enrollment: dict, roadmap: dict) 
             fresh_se = await db.school_enrollments.find_one({"id": se["id"]}, {"_id": 0, "status": 1})
             return {"finished": (fresh_se or {}).get("status") == "completed", "school_enrollment_id": se["id"]}
         await _finish_school_advancement(se["id"], enrollment, se, pos["next_module_id"], None, True)
+        await _emit_school_advance_events(se, enrollment, source_module_id, source_lesson_id, pos["next_module_id"], True)
         return {"finished": True, "school_enrollment_id": se["id"]}
 
     cas = await db.dog_programs.find_one_and_update(
@@ -18076,6 +18301,7 @@ async def _advance_school_enrollment(se: dict, enrollment: dict, roadmap: dict) 
         return {"finished": False, "current_module_id": (fresh or {}).get("current_module_id"), "current_lesson_id": (fresh or {}).get("current_lesson_id")}
 
     await _finish_school_advancement(se["id"], enrollment, se, pos["next_module_id"], pos["next_lesson_id"], False)
+    await _emit_school_advance_events(se, enrollment, source_module_id, source_lesson_id, pos["next_module_id"], False)
     return {"finished": False, "current_module_id": pos["next_module_id"], "current_lesson_id": pos["next_lesson_id"]}
 
 
@@ -18405,6 +18631,37 @@ async def admin_school_checkpoint_grade(
         projection={"_id": 0}, return_document=ReturnDocument.AFTER,
     )
     final_sub = finalized or await db.checkpoint_submissions.find_one({"id": submission_id}, {"_id": 0})
+    # Online School spine — a Trainer Assist case just came into existence and
+    # needs a human (contact/schedule the client). `finalized is not None` means
+    # THIS call performed the grading→graded transition (the CAS filter above),
+    # so this emits exactly once even when the resumable grade endpoint is
+    # re-invoked; the dedupe_key is belt-and-suspenders. Deep-links to the
+    # existing Trainer Assist workflow — never a second Trainer Assist store.
+    if finalized is not None and outcome == "trainer_assist_recommended":
+        try:
+            _tacli = await db.clients.find_one({"id": sub["client_id"]}, {"_id": 0, "name": 1}) or {}
+            _tadog = await db.dogs.find_one({"id": sub["dog_id"]}, {"_id": 0, "name": 1}) or {}
+            _taenr = await db.dog_programs.find_one(
+                {"id": sub.get("enrollment_id")}, {"_id": 0, "program_id": 1, "program_snapshot": 1}) or {}
+            _tawho = _tacli.get("name") or "A student"
+            _tadogn = _tadog.get("name") or ""
+            await school_events.emit_event(
+                SchoolEvent.TRAINER_ASSIST_REQUESTED,
+                actor_type="trainer", actor_id=plan.get("graded_by"), actor_name=plan.get("graded_by_name"),
+                client_id=sub["client_id"], client_name=_tacli.get("name"),
+                dog_id=sub["dog_id"], dog_name=_tadog.get("name"),
+                enrollment_id=sub.get("enrollment_id"), school_enrollment_id=sub.get("school_enrollment_id"),
+                program_id=_taenr.get("program_id"), program_name=(_taenr.get("program_snapshot") or {}).get("name"),
+                module_id=sub.get("module_id"), lesson_id=sub.get("lesson_id"), lesson_name=sub.get("lesson_name"),
+                checkpoint_id=submission_id, trainer_assist_id=submission_id,
+                title=f"{_tawho}" + (f" · {_tadogn}" if _tadogn else "") + " needs Trainer Assist",
+                summary=f"Trainer Assist recommended after the “{sub.get('lesson_name') or 'lesson'}” checkpoint — contact the client.",
+                deep_link={"screen": "school_hq", "tab": "trainer_assist",
+                           "checkpoint_id": submission_id, "trainer_assist_id": submission_id},
+                dedupe_key=f"trainer_assist_requested:{submission_id}",
+            )
+        except Exception:
+            pass
     if outcome == "advance":
         # Online School Phase 3 — first_checkpoint_passed trophy: checked
         # right after a pass, not only at program completion.
@@ -18701,6 +18958,151 @@ async def admin_trainer_assist_complete(
     if _trainer_assist_display_status(fresh) == "completed":
         return {"checkpoint": _admin_safe_checkpoint(fresh)}
     raise HTTPException(status_code=409, detail="This Trainer Assist case is no longer active.")
+
+
+# ───────────────────── Online School — School HQ (admin) ─────────────────────
+# Phase 1 operations hub. A thin read/aggregate + notification-lifecycle layer
+# over the School event/notification spine (school_events.py) and the existing
+# authoritative checkpoint / Trainer-Assist / enrollment collections — never a
+# second business store. Every endpoint is gated by the dedicated `manage_school`
+# permission, enforced server-side (nav-hiding is never the authorization).
+_SCHOOL_INACTIVE_DAYS = 14
+
+
+@api.get("/admin/school/hq/summary")
+async def admin_school_hq_summary(_: dict = Depends(require_admin_and_permission("manage_school"))):
+    """Overview counters. Sourced from the authoritative collections where one
+    exists (checkpoints, Trainer Assist, enrollments) and from
+    school_notifications for the attention/questions aggregate — never a fake
+    number. `inactive_students` uses the documented _SCHOOL_INACTIVE_DAYS rule."""
+    active_enr = await db.school_enrollments.find(
+        {"status": "active"}, {"_id": 0, "client_id": 1}
+    ).to_list(2000)
+    active_client_ids = list({e.get("client_id") for e in active_enr if e.get("client_id")})
+
+    checkpoints_pending = await db.checkpoint_submissions.count_documents(
+        {"status": {"$in": ["pending", "grading"]}}
+    )
+    trainer_assists = await db.checkpoint_submissions.count_documents(
+        {"outcome": "trainer_assist_recommended", "trainer_assist_hold_active": True}
+    )
+    needs_attention = await school_events.attention_count()
+    new_questions = await db.school_notifications.count_documents(
+        {"audience": "school_staff", "resolved_at": None,
+         "notification_type": {"$in": [SchoolEvent.STUDENT_QUESTION, SchoolEvent.PRACTICE_QUESTION_ASKED]}}
+    )
+
+    # Inactive = an ACTIVE enrollment whose most-recent School event is older
+    # than _SCHOOL_INACTIVE_DAYS. Students with NO events yet are deliberately
+    # NOT counted (activity history begins at deploy; counting them would fake
+    # the number). Becomes fully accurate as events accumulate.
+    inactive_students = 0
+    if active_client_ids:
+        cutoff = (datetime.now(timezone.utc) - timedelta(days=_SCHOOL_INACTIVE_DAYS)).isoformat()
+        async for row in db.school_events.aggregate([
+            {"$match": {"client_id": {"$in": active_client_ids}}},
+            {"$group": {"_id": "$client_id", "last": {"$max": "$created_at"}}},
+        ]):
+            if row.get("last") and row["last"] < cutoff:
+                inactive_students += 1
+
+    return {
+        "active_students": len(active_client_ids),
+        "needs_attention": needs_attention,
+        "checkpoints_pending": checkpoints_pending,
+        "new_questions": new_questions,
+        "trainer_assists": trainer_assists,
+        "inactive_students": inactive_students,
+        "inactive_rule": f"No School activity in {_SCHOOL_INACTIVE_DAYS} days (students with no events yet are not counted).",
+    }
+
+
+@api.get("/admin/school/hq/activity")
+async def admin_school_hq_activity(
+    limit: int = 40,
+    before: Optional[str] = None,
+    client_id: Optional[str] = None,
+    event_type: Optional[str] = None,
+    attention_only: bool = False,
+    _: dict = Depends(require_admin_and_permission("manage_school")),
+):
+    """Chronological activity feed (newest first), cursor-paginated by
+    `before` (an ISO created_at). Bounded — never an unbounded collection."""
+    lim = max(1, min(int(limit or 40), 100))
+    items = await school_events.recent_activity(
+        limit=lim, before=before, client_id=client_id,
+        event_type=event_type, attention_only=attention_only,
+    )
+    return {"items": items, "next_before": items[-1]["created_at"] if len(items) == lim else None}
+
+
+@api.get("/admin/school/hq/notifications")
+async def admin_school_hq_notifications(
+    limit: int = 40,
+    before: Optional[str] = None,
+    status: str = "open",
+    priority: Optional[str] = None,
+    client_id: Optional[str] = None,
+    notification_type: Optional[str] = None,
+    sort: str = "newest",
+    _: dict = Depends(require_admin_and_permission("manage_school")),
+):
+    """Filterable staff-notification list. status ∈ {open, unread, resolved, all}."""
+    lim = max(1, min(int(limit or 40), 100))
+    items = await school_events.list_notifications(
+        limit=lim, before=before, status=status, priority=priority,
+        client_id=client_id, notification_type=notification_type, sort=sort,
+    )
+    return {"items": items, "next_before": items[-1]["created_at"] if len(items) == lim else None}
+
+
+@api.get("/admin/school/hq/needs-attention")
+async def admin_school_hq_needs_attention(
+    limit: int = 40,
+    sort: str = "priority",
+    _: dict = Depends(require_admin_and_permission("manage_school")),
+):
+    """The consolidated queue: every OPEN (unresolved) attention notification —
+    unanswered questions, pending checkpoints, could-not-completes, video
+    submissions, Trainer Assist requests — as ONE operational view over the
+    spine, each deep-linked to the real record. sort=priority ranks
+    urgent→high→normal (newest first within a tier); sort=newest/oldest by age."""
+    lim = max(1, min(int(limit or 40), 100))
+    raw = await school_events.list_notifications(status="open", limit=100, sort="newest")
+    rank = school_events.Priority.ORDER
+    if sort == "oldest":
+        raw.sort(key=lambda n: n.get("created_at") or "")
+    elif sort == "newest":
+        raw.sort(key=lambda n: n.get("created_at") or "", reverse=True)
+    else:  # priority
+        raw.sort(key=lambda n: (rank.get(n.get("priority"), 0), n.get("created_at") or ""), reverse=True)
+    return {"items": raw[:lim], "total_open": len(raw)}
+
+
+@api.get("/admin/school/hq/attention-count")
+async def admin_school_hq_attention_count(_: dict = Depends(require_admin_and_permission("manage_school"))):
+    """Badge number — unresolved attention notifications, plus the unread subset."""
+    return {"count": await school_events.attention_count(), "unread": await school_events.unread_count()}
+
+
+@api.post("/admin/school/hq/notifications/{notification_id}/read")
+async def admin_school_hq_notification_read(
+    notification_id: str, _: dict = Depends(require_admin_and_permission("manage_school")),
+):
+    doc = await school_events.mark_notification_read(notification_id)
+    if not doc:
+        raise HTTPException(status_code=404, detail="Notification not found")
+    return doc
+
+
+@api.post("/admin/school/hq/notifications/{notification_id}/resolve")
+async def admin_school_hq_notification_resolve(
+    notification_id: str, user: dict = Depends(require_admin_and_permission("manage_school")),
+):
+    doc = await school_events.resolve_notification(notification_id, by=user.get("id"))
+    if not doc:
+        raise HTTPException(status_code=404, detail="Notification not found")
+    return doc
 
 
 # ─── Sprint 110di-69 · Training Tracker (trainer-side batch + audit) ──────
@@ -26137,6 +26539,31 @@ async def startup():
         # instead of a swallowed warning.
         (db.training_session_drafts, "booking_id", {}),
         (db.training_session_drafts, "dog_id", {}),
+        # Online School Phase 1 — event/notification spine (school_events.py).
+        # Activity feed (created_at desc), per-student, per-enrollment, by type,
+        # attention-first, and per-assigned-trainer are all indexed. dedupe_key
+        # is the idempotency guard — brand-new field, no historical rows ever
+        # set it, so this partial unique index carries zero preflight risk
+        # (same reasoning as the payment/shop idempotency indexes above).
+        (db.school_events, "id", {"unique": True}),
+        (db.school_events, [("created_at", -1)], {}),
+        (db.school_events, "client_id", {}),
+        (db.school_events, "enrollment_id", {}),
+        (db.school_events, "event_type", {}),
+        (db.school_events, "assigned_trainer_id", {}),
+        (db.school_events, [("requires_attention", 1), ("created_at", -1)], {}),
+        (db.school_events, "dedupe_key",
+         {"name": school_events.EVENT_DEDUPE_INDEX, "unique": True,
+          "partialFilterExpression": {"dedupe_key": {"$type": "string"}}}),
+        (db.school_notifications, "id", {"unique": True}),
+        (db.school_notifications, [("created_at", -1)], {}),
+        (db.school_notifications, [("audience", 1), ("resolved_at", 1), ("created_at", -1)], {}),
+        (db.school_notifications, [("audience", 1), ("read_at", 1)], {}),
+        (db.school_notifications, "priority", {}),
+        (db.school_notifications, "client_id", {}),
+        (db.school_notifications, "dedupe_key",
+         {"name": school_events.NOTIF_DEDUPE_INDEX, "unique": True,
+          "partialFilterExpression": {"dedupe_key": {"$type": "string"}}}),
     ]
     for coll, key, opts in perf_indexes:
         try:
@@ -43900,6 +44327,15 @@ PERMISSION_KEYS = (
     # front-desk employee who can check a training dog in must NOT
     # automatically be able to edit that dog's training progress.
     "manage_training_sessions",
+    # Online School Phase 1 — School HQ (the admin operations hub: activity
+    # feed, Needs Attention queue, notifications, checkpoint/Trainer-Assist
+    # oversight). A dedicated key rather than reusing manage_training_sessions
+    # so School HQ access can be granted/revoked independently of who may grade
+    # a checkpoint. Defaults True for owner/manager/trainer (see the trainer
+    # override below); _empty_perms() defaults every other role False. Server-
+    # side enforced on every /admin/school/hq/* endpoint — hiding the nav item
+    # is never the authorization.
+    "manage_school",
     # Trivia, dog-facts, and photography-gallery ADMINISTRATION (creating/
     # editing/deleting the content itself). Deliberately does not cover
     # reading it (staff/clients keep existing read access) or day-to-day
@@ -43967,6 +44403,8 @@ ROLE_PERMISSIONS: Dict[str, Dict[str, bool]] = {
         # management keys.
         "manage_training_content": True,
         "manage_training_sessions": True,
+        # School HQ is the trainer's daily operations hub — on by default.
+        "manage_school": True,
     },
     "daycare_staff": {
         **_empty_perms(),
