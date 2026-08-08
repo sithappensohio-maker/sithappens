@@ -46,7 +46,36 @@ export default function HomeworkReportPanel({ homeworkId }) {
   const isTracker = !!hw?.daily_tracker;
   const daysWithLogs = (hw?.daily_progress || []).filter(d => d.log);
 
-  if (report.total_logs === 0 && !daysWithLogs.length) {
+  // Raw per-entry view of exactly what the client submitted. The aggregate
+  // tiles below only surface metrics whose keys line up with the template's
+  // defined fields, and they never show the client's NOTE at all — so a
+  // self-guided Online School practice (which logs its own metric keys) would
+  // render an empty report even though the client logged reps + a note. This
+  // reads straight from hw.section_logs (already fetched) so every value and
+  // note the client entered is shown, mapped to the template's field labels
+  // when available and humanized otherwise.
+  const _labelMap = {};
+  const _sectionTitleMap = {};
+  (hw?.template_snapshot?.sections || []).forEach((s) => {
+    _sectionTitleMap[s.id] = s.title;
+    (s.fields || []).forEach((f) => { _labelMap[f.id] = f.label; });
+  });
+  const _humanize = (k) => String(k || "").replace(/_/g, " ").replace(/\b\w/g, (c) => c.toUpperCase());
+  const rawEntries = (hw?.section_logs || []).map((lo) => {
+    const fv = lo.field_values || {};
+    const metrics = Object.keys(fv)
+      .filter((k) => !k.startsWith("__") && fv[k] !== null && fv[k] !== "" && fv[k] !== undefined)
+      .map((k) => ({ key: k, label: _labelMap[k] || _humanize(k), value: typeof fv[k] === "boolean" ? (fv[k] ? "Yes" : "No") : String(fv[k]) }));
+    return {
+      date: (lo.date || lo.logged_at || "").slice(0, 16).replace("T", " "),
+      sectionTitle: _sectionTitleMap[lo.section_id] || lo.section_id || "Practice log",
+      reviewed: !!lo.reviewed_at,
+      metrics,
+      note: lo.note || "",
+    };
+  });
+
+  if (report.total_logs === 0 && !daysWithLogs.length && !rawEntries.length) {
     return (
       <div className="bg-[var(--sh-card-base)] border border-shBorder rounded p-4 text-center text-[15px] text-shTextMuted uppercase font-black tracking-widest">
         No client logs yet.
@@ -63,6 +92,43 @@ export default function HomeworkReportPanel({ homeworkId }) {
           <span className="bg-purple-500/15 text-purple-300 px-3 py-1.5 rounded"><i className="fas fa-calendar-check mr-1"/>Daily Tracker</span>
         )}
       </div>
+
+      {/* Exactly what the client submitted — every logged value + their note.
+          Non-tracker only (trackers get the richer per-day timeline below). */}
+      {!isTracker && rawEntries.length > 0 && (
+        <div className="space-y-2" data-testid="hw-report-raw-entries">
+          <p className="text-[11px] font-black uppercase tracking-[0.3em] text-shSecondary"><i className="fas fa-list-ul mr-1"/>What the client logged</p>
+          {rawEntries.map((e, i) => (
+            <div key={i} className="bg-[var(--sh-card-base)] border border-shBorder rounded-lg p-3">
+              <div className="flex items-center justify-between gap-2 mb-2">
+                <span className="text-[13px] font-black uppercase tracking-tight text-shText">{e.sectionTitle}</span>
+                <span className="flex items-center gap-2 shrink-0">
+                  {e.date && <span className="text-[11px] uppercase tracking-widest text-shTextMuted"><i className="fas fa-clock mr-1"/>{e.date}</span>}
+                  <span className={`text-[10px] font-black uppercase tracking-widest px-2 py-0.5 rounded border ${e.reviewed ? "bg-shPrimary/15 text-shPrimary border-shPrimary/40" : "bg-shAccent/15 text-shAccent border-shAccent/40"}`}>
+                    <i className={`fas ${e.reviewed ? "fa-check" : "fa-hourglass-half"} mr-1`}/>{e.reviewed ? "Reviewed" : "New"}
+                  </span>
+                </span>
+              </div>
+              {e.metrics.length > 0 && (
+                <div className="grid grid-cols-2 md:grid-cols-3 gap-2 mb-2">
+                  {e.metrics.map((m) => (
+                    <div key={m.key} className="bg-[var(--sh-card-base)]/60 border border-shBorder rounded p-2">
+                      <p className="text-[11px] font-black uppercase tracking-widest text-shTextMuted truncate">{m.label}</p>
+                      <p className="text-[15px] font-black text-shText mt-0.5 whitespace-pre-wrap break-words">{m.value}</p>
+                    </div>
+                  ))}
+                </div>
+              )}
+              {e.note && (
+                <div className="bg-[var(--sh-card-base)]/60 rounded p-2.5 border-l-2 border-shAccent/40">
+                  <p className="text-[10px] font-black uppercase tracking-widest text-shTextMuted mb-1"><i className="fas fa-comment mr-1"/>Client's note</p>
+                  <p className="text-gray-200 text-[12px] italic whitespace-pre-wrap">"{e.note}"</p>
+                </div>
+              )}
+            </div>
+          ))}
+        </div>
+      )}
 
       {/* Sprint 110af — Per-day timeline for daily trackers. */}
       {isTracker && daysWithLogs.length > 0 && (
