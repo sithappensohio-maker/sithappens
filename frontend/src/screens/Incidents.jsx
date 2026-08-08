@@ -3,6 +3,7 @@ import { api, formatErr } from "../lib/api";
 import { useConfirm } from "../lib/useConfirm";
 import { compressImage } from "../lib/imageCompress";
 import PageHero from "../components/PageHero";
+import { toast } from "sonner";
 
 const TYPES = [
   // Sprint 110ev — expanded type set (Phase 5)
@@ -58,7 +59,7 @@ export default function Incidents({ openCreateOnMount = false, onCreateConsumed 
   useEffect(() => { load(); }, []);
 
   const openNew = () => {
-    if (dogs.length === 0) { alert("Add a dog first"); return; }
+    if (dogs.length === 0) { toast.error("Add a dog first"); return; }
     setEditing(null);
     setForm({ ...emptyForm, dog_id: presetDogId && dogs.some(d => d.id === presetDogId) ? presetDogId : dogs[0].id });
     setOpen(true); setErr("");
@@ -129,9 +130,9 @@ export default function Incidents({ openCreateOnMount = false, onCreateConsumed 
       </div>
 
       <div className="space-y-3" data-testid="incidents-list">
-        {filtered.length === 0 && <div className="card-warning rounded-xl p-10 text-center"><p className="text-shPrimary font-black uppercase text-xs tracking-widest"><i className="fas fa-shield-heart mr-2"/>No incidents on record. Keep up the great work.</p></div>}
+        {filtered.length === 0 && <div className="bg-shPrimary/5 border border-shPrimary/20 rounded-xl p-10 text-center"><p className="text-shPrimary font-black uppercase text-xs tracking-widest"><i className="fas fa-shield-heart mr-2"/>No incidents on record. Keep up the great work.</p></div>}
         {filtered.map(i => (
-          <div key={i.id} className="card-warning rounded-xl p-5 shadow-lg" data-testid={`incident-${i.id}`}>
+          <div key={i.id} className="bg-shAccent/5 border border-shAccent/25 rounded-xl p-5 shadow-lg" data-testid={`incident-${i.id}`}>
             <div className="flex items-start justify-between gap-4">
               <div className="flex-1 min-w-0">
                 <div className="flex flex-wrap items-center gap-2 mb-2">

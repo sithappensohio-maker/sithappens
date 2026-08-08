@@ -46,7 +46,7 @@ export default function PortalProfileModal({ client, onClose, onSaved }) {
 
   return (
     <div className="fixed inset-0 bg-black/80 flex items-center justify-center p-4 z-50" data-testid="portal-profile-modal">
-      <div className="border border-shBorder rounded-2xl w-full max-w-lg p-6 md:p-8 shadow-sh animate-slide-in max-h-[calc(var(--app-height)_-_2rem)] overflow-y-auto" style={{ background: "var(--sh-card-base)" }}>
+      <div className="border border-shBorder rounded-2xl w-full max-w-lg p-6 md:p-8 shadow-sh animate-slide-in max-h-[calc(var(--app-height)_-_2rem)] overflow-y-auto sh-modal-surface" style={{ background: "var(--sh-card-base)" }}>
         <div className="flex items-center justify-between mb-4">
           <h4 className="text-xl font-bold text-shText tracking-tight">My Profile</h4>
           <button onClick={onClose} className="text-shTextMuted hover:text-shText"><i className="fas fa-times text-xl" /></button>

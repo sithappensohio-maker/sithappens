@@ -21,7 +21,7 @@ export default function AdminTrainingTipCard() {
 
   return (
     <div data-testid="dashboard-training-tip-card"
-         className="bg-[var(--sh-card-base)] border-l-4 border-shPrimary rounded-r-xl p-4 sm:p-5 shadow-md card-info">
+         className="bg-[var(--sh-card-base)] border-l-4 border-shPrimary rounded-r-xl p-4 sm:p-5 shadow-md">
       <p className="text-[11px] font-black uppercase tracking-[0.3em] text-shPrimary mb-1">
         <i className="fas fa-lightbulb mr-1.5"/>Training tip of the day
         {tip.category ? ` · ${tip.category.replace(/_/g, " ")}` : ""}

@@ -75,7 +75,7 @@ export default function RequestMeetGreetModal({ open, onClose }) {
 
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/70 p-4" onClick={close} data-testid="meet-greet-modal">
-      <div className="bg-bgPanel border border-bgHover rounded-2xl w-full max-w-md p-8 shadow-2xl animate-slide-in max-h-[calc(var(--app-height)_-_2rem)] overflow-y-auto" onClick={(e) => e.stopPropagation()}>
+      <div className="bg-bgPanel border border-bgHover rounded-2xl w-full max-w-md p-8 shadow-2xl animate-slide-in max-h-[calc(var(--app-height)_-_2rem)] overflow-y-auto sh-modal-surface" onClick={(e) => e.stopPropagation()}>
         <div className="flex justify-between items-start mb-4">
           <h3 className="text-xl font-black text-white uppercase italic tracking-tight">
             <i className="fas fa-paw text-shGreen mr-2"/>Request a Meet &amp; Greet

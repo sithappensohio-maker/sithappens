@@ -207,7 +207,7 @@ export default function TrainingSessionWorkspace({ bookingId, dogId, enrollmentI
   if (err) {
     return (
       <div className="fixed inset-0 bg-black/80 z-50 flex items-center justify-center p-4" data-testid="training-session-workspace">
-        <div className="bg-[var(--sh-card-base)] border border-red-500/40 rounded-2xl p-6 max-w-md text-red-300 card-danger">
+        <div className="bg-[var(--sh-card-base)] border border-red-500/40 rounded-2xl p-6 max-w-md text-red-300">
           <p className="font-black uppercase tracking-widest text-[12px] mb-2">Couldn&apos;t open workspace</p>
           <p className="text-sm">{err}</p>
           <button onClick={onClose} className="mt-4 text-shSecondary font-black uppercase text-[12px] tracking-widest">Close</button>

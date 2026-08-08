@@ -296,7 +296,7 @@ export default function Clients({ focusId = null, focusMode = "scroll", onConsum
         subtitle="Profiles, dogs, credits, and waivers — all in one place."
         right={(
           <button onClick={openNewClient} data-testid="add-client-button"
-                  className="bg-shPrimary text-bgHeader px-5 py-2.5 rounded-lg text-[13px] font-black uppercase tracking-widest shadow-lg hover:bg-shPrimary/90 transition">
+                  className="bg-shPrimary text-bgHeader px-5 py-2.5 rounded-lg text-[13px] font-black shadow-lg hover:brightness-105 transition">
             <i className="fas fa-plus mr-2"/>Add Client
           </button>
         )}
@@ -306,7 +306,7 @@ export default function Clients({ focusId = null, focusMode = "scroll", onConsum
       <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4 sm:gap-6" data-testid="client-grid">
         {clients.length === 0 && <div className="col-span-full text-center text-shTextMuted text-xs font-black uppercase py-16">No clients yet — add your first.</div>}
         {clients.map(c => (
-          <div key={c.id} className="bg-[var(--sh-card-base)] border border-shBorder hover:border-shPrimary/40 transition p-5 sm:p-6 rounded-xl group relative shadow-lg" data-testid={`client-card-${c.id}`}>
+          <div key={c.id} className="sh-entity-card p-5 sm:p-6 group relative" data-testid={`client-card-${c.id}`}>
             <div className="absolute top-3 right-3 flex gap-1 opacity-100 md:opacity-0 md:group-hover:opacity-100 transition">
               {c.email && (
                 <button onClick={()=>setEmailClient(c)} className="text-shTextMuted hover:text-shPrimary p-2 -m-1"
@@ -321,7 +321,7 @@ export default function Clients({ focusId = null, focusMode = "scroll", onConsum
               <div className="min-w-0 flex-1">
                 <button onClick={()=>openHub(c)} data-testid={`open-client-hub-${c.id}`}
                         className="text-left hover:text-shPrimary transition">
-                  <h4 className="text-lg font-black text-shText uppercase tracking-tight min-w-0 truncate">{c.name}</h4>
+                  <h4 className="sh-entity-name min-w-0 truncate">{c.name}</h4>
                 </button>
                 <div className="flex items-center gap-1.5 mt-1 flex-wrap">
                   {c.client_status && c.client_status !== "active" && (
@@ -954,7 +954,7 @@ function SellPackModal({ client, packs, onClose, onSold }) {
             <label className="text-[14px] font-black text-shTextMuted uppercase tracking-widest">Payment method</label>
             <select value={method} onChange={(e)=>setMethod(e.target.value)}
                     className="w-full mt-1 bg-[var(--sh-card-base)] border border-shBorder rounded p-2 text-shText text-sm">
-              <option value="cash">Cash</option><option value="clover">Clover / Credit Card</option><option value="venmo">Venmo</option><option value="paypal">PayPal</option><option value="check">Check</option><option value="other">Other</option>
+              <option value="cash">Cash</option><option value="card">Card</option><option value="venmo">Venmo</option><option value="paypal">PayPal</option><option value="check">Check</option><option value="other">Other</option>
             </select>
           </div>
           <div>
@@ -1277,7 +1277,7 @@ function SellProgramModal({ client, onClose, onSold }) {
                     data-testid="sell-program-method"
                     className="mt-1 w-full bg-[var(--sh-card-base)] border border-shBorder rounded p-2 text-shText text-sm">
               <option value="cash">Cash</option>
-              <option value="clover">Clover / Credit Card</option>
+              <option value="card">Card</option>
               <option value="venmo">Venmo</option>
               <option value="paypal">PayPal</option>
               <option value="check">Check</option>
@@ -1694,7 +1694,7 @@ function ClientStatusPill({ status, clientId, onChange }) {
       await api.post(`/clients/${clientId}/status`, { status: newStatus, note });
       setOpen(false); setNote(""); onChange?.();
     } catch (e) {
-      alert(e.response?.data?.detail || "Failed to update status");
+      toast.error(e.response?.data?.detail || "Failed to update status");
     } finally { setBusy(false); }
   };
   return (

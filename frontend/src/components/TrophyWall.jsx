@@ -22,7 +22,7 @@ function TrophyDetailModal({ award, onClose }) {
   const copy = async () => {
     try { await navigator.clipboard.writeText(`${shareText} ${cardUrl}`); setCopied(true); setTimeout(()=>setCopied(false), 2500); } catch {}
   };
-  // Sprint 110di-77 — render via portal so the `.card-dog` (isolation: isolate)
+  // Render via portal so trophy overlays escape any parent stacking context.
   // stacking context can't trap us behind a sibling card.
   return createPortal((
     <div className="fixed inset-0 z-[100] bg-black/85 backdrop-blur grid place-items-center p-4" onClick={onClose} data-testid="trophy-detail-modal">

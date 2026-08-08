@@ -128,7 +128,7 @@ export default function Bookings() {
   const { pulling, progress } = usePullToRefresh("[data-scroll-root]", load);
 
   return (
-    <div className="space-y-6 animate-slide-in" data-testid="bookings-screen">
+    <div className="space-y-6 animate-slide-in sh-bookings-workspace" data-testid="bookings-screen">
       <RefreshSpinner pulling={pulling} progress={progress} />
       {/* Sprint 110cf — surface pending client reschedule requests at the top */}
       <RescheduleRequestsInbox onChanged={load} />

@@ -12,8 +12,8 @@ export default function BrandFooter() {
 
   const inner = (
     <>
-      <i className="fas fa-paw text-shGreen" />
-      <span className="font-black uppercase tracking-widest">{text}</span>
+      <i className="fas fa-paw text-shGreen text-[11px]" />
+      <span className="sh-shell-wordmark text-[13px] normal-case">{text}</span>
     </>
   );
 

@@ -1,4 +1,7 @@
 import { useState } from "react";
+import PageHero from "../components/PageHero";
+import AdminTabs from "../components/admin/AdminTabs";
+import { EmptyState, PremiumButton, SectionCard, StatusBadge } from "../components/premium";
 
 /**
  * Operator + client tutorial center.
@@ -514,8 +517,8 @@ const ADMIN_SECTIONS = [
         title: "A note on payment methods you'll still see referenced",
         badges: ["Reference"],
         steps: [
-          "Settings → Finance & Bookkeeping → Payment Options still lists a Clover toggle from an earlier payment-processor evaluation.",
-          "Clover is not the active payment path — Stripe (online) plus cash/manual entry through the Front Desk register is. If you see a Clover option anywhere, treat it as legacy and do not configure it; flag it to support if it's confusing.",
+          "Settings → Finance & Bookkeeping → Payment Options still lists a Card toggle from an earlier payment-processor evaluation.",
+          "Card is not the active payment path — Stripe (online) plus cash/manual entry through the Front Desk register is. If you see a Card option anywhere, treat it as legacy and do not configure it; flag it to support if it's confusing.",
         ],
       },
     ],
@@ -1107,14 +1110,13 @@ export default function Tutorials({ role = "admin" }) {
   };
 
   return (
-    <div className="space-y-6 animate-slide-in tutorials-root" data-testid="tutorials-screen" data-role={role}>
+    <div className="space-y-5 animate-slide-in tutorials-root sh-tutorials-workspace" data-testid="tutorials-screen" data-role={role}>
       <style>{`
         @media print {
           body.tutorials-printing aside,
           body.tutorials-printing header,
           body.tutorials-printing [data-testid="portal-tutorials-overlay"] > header,
           body.tutorials-printing .tutorials-no-print,
-          body.tutorials-printing #emergent-badge { display: none !important; }
           body.tutorials-printing { background: #ffffff !important; }
           body.tutorials-printing .tutorials-root,
           body.tutorials-printing .tutorials-root * {
@@ -1144,156 +1146,151 @@ export default function Tutorials({ role = "admin" }) {
         }
       `}</style>
 
-      {/* Header */}
-      <div className="flex flex-col md:flex-row md:items-center justify-between gap-3 tutorials-no-print">
-        <div>
-          <h3 className="text-xl font-black text-shText uppercase italic tracking-tight">
-            <i className="fas fa-circle-question text-shPrimary mr-2" />
-            {role === "client" ? "Client Portal Tutorial" : "How To Use Sit Happens"}
-          </h3>
-          <p className="text-[14px] text-shTextMuted font-black uppercase tracking-widest mt-1">
-            {role === "client"
-              ? "How clients book, manage dogs, view homework, and keep records updated"
-              : "Operator tutorial center — learn the daily workflow step by step"}
-          </p>
-        </div>
-        <div className="flex flex-col sm:flex-row gap-2 items-stretch sm:items-center">
-          <div className="relative w-full sm:w-64">
-            <i className="fas fa-search absolute left-3 top-1/2 -translate-y-1/2 text-shTextMuted text-[15px]" />
-            <input
-              value={query}
-              onChange={(e) => setQuery(e.target.value)}
-              placeholder="Search tutorials…"
-              data-testid="tutorials-search"
-              className="w-full bg-[var(--sh-card-base)] border border-shBorder rounded-lg pl-9 pr-3 py-2 text-shText text-sm"
-            />
-          </div>
-          <div className="flex gap-2">
-            <button onClick={printCurrent} data-testid="tutorials-print-current"
-                    title="Print only the section you're looking at"
-                    className="bg-shSecondary/15 text-shSecondary px-4 py-2 rounded-lg text-[14px] font-black uppercase tracking-widest hover:bg-shSecondary/25 flex items-center gap-2">
-              <i className="fas fa-print" /><span className="hidden sm:inline">Print Page</span>
-            </button>
-            <button onClick={printAll} data-testid="tutorials-print-all"
-                    title="Print the full guide (all sections)"
-                    className="bg-shPrimary/15 text-shPrimary px-4 py-2 rounded-lg text-[14px] font-black uppercase tracking-widest hover:bg-shPrimary/25 flex items-center gap-2">
-              <i className="fas fa-file-pdf" /><span className="hidden sm:inline">Print All</span>
-            </button>
-          </div>
-        </div>
+      <div className="tutorials-no-print">
+        <PageHero
+          eyebrow={{ text: role === "client" ? "Client guide" : "How to use", icon: "fa-circle-question", color: "text-shSecondary" }}
+          title={role === "client" ? "LEARN THE PORTAL." : "KNOW THE APP."}
+          highlight={role === "client" ? "STEP BY STEP." : "WITHOUT GUESSING."}
+          subtitle={role === "client"
+            ? "Booking, dogs, homework, payments, records, and the mobile experience in plain language."
+            : "The real Sit Happens operator playbook — daily work, clients, training, money, shop, settings, and mobile."}
+          right={(
+            <div className="sh-tutorials-hero-actions">
+              <div className="relative sh-tutorials-search">
+                <i className="fas fa-search absolute left-3 top-1/2 -translate-y-1/2 text-shTextMuted text-[13px]" />
+                <input
+                  value={query}
+                  onChange={(e) => setQuery(e.target.value)}
+                  placeholder="Search tutorials…"
+                  data-testid="tutorials-search"
+                  className="w-full bg-[var(--sh-card-base)] border border-shBorder rounded-lg pl-9 pr-3 py-2.5 text-shText text-[14px]"
+                />
+              </div>
+              <PremiumButton onClick={printCurrent} data-testid="tutorials-print-current" variant="secondary" title="Print only the section you're looking at">
+                <i className="fas fa-print"/><span className="hidden sm:inline">Print Page</span>
+              </PremiumButton>
+              <PremiumButton onClick={printAll} data-testid="tutorials-print-all" variant="ghost" title="Print the full guide (all sections)">
+                <i className="fas fa-file-pdf"/><span className="hidden sm:inline">Print All</span>
+              </PremiumButton>
+            </div>
+          )}
+          testid="tutorials-hero"
+        />
       </div>
 
-      {/* Quick action cards */}
-      <div className="tutorials-no-print">
-        <p className="text-[11px] font-black uppercase tracking-[0.25em] text-shTextMuted mb-2">Quick Jumps</p>
+      <SectionCard accent="cyan" intensity="subtle" className="tutorials-no-print sh-tutorials-quick-section">
+        <div className="flex items-center justify-between gap-3 mb-3">
+          <div>
+            <p className="sh-eyebrow text-shSecondary">Quick jumps</p>
+            <p className="text-[13px] text-shTextMuted mt-1">Go straight to the job you're trying to do.</p>
+          </div>
+          <span className="text-[11px] text-shTextMuted font-bold">{quickActions.length} shortcuts</span>
+        </div>
         <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-5 gap-2">
           {quickActions.map(qa => (
             <button
               key={qa.id}
               onClick={() => { setQuery(""); setOpenId(qa.target); }}
               data-testid={`tutorials-quick-${qa.id}`}
-              className="bg-[var(--sh-card-base)] border border-shBorder hover:border-shSecondary/60 hover:bg-[var(--sh-card-base)]/50 rounded-lg p-3 text-left transition flex items-center gap-2.5"
+              className="sh-tutorial-quick"
             >
-              <i className={`fas ${qa.icon} text-shSecondary text-[14px] w-4`} />
-              <span className="text-[12px] font-black uppercase tracking-widest text-shText leading-tight">{qa.label}</span>
+              <span className="sh-tutorial-quick__icon"><i className={`fas ${qa.icon}`} /></span>
+              <span className="text-[12px] font-bold text-shText leading-tight">{qa.label}</span>
             </button>
           ))}
         </div>
+      </SectionCard>
+
+      <div className="tutorials-no-print">
+        <AdminTabs
+          items={filtered.map((s) => ({ key: s.id, label: s.title, icon: s.icon, testid: `tutorial-chip-${s.id}`, accent: s.color.includes("Accent") ? "orange" : s.color.includes("Primary") ? "lime" : "cyan" }))}
+          value={openId}
+          onChange={(id) => setOpenId(id)}
+          testid="tutorials-section-tabs"
+          accent="cyan"
+        />
       </div>
 
-      {/* Section chip nav */}
-      <div className="flex flex-wrap gap-2 tutorials-no-print">
-        {filtered.map((s) => (
-          <button
-            key={s.id}
-            onClick={() => setOpenId(s.id)}
-            data-testid={`tutorial-chip-${s.id}`}
-            className={`px-4 py-2 rounded-lg text-[15px] font-black uppercase tracking-widest border transition ${
-              openId === s.id
-                ? "bg-[var(--sh-card-base)] border-shSecondary text-shSecondary"
-                : "bg-[var(--sh-card-base)]/40 border-shBorder text-shTextMuted hover:border-shSecondary/40"
-            }`}
-          >
-            <i className={`fas ${s.icon} ${s.color} mr-2`} />{s.title}
-          </button>
-        ))}
-      </div>
-
-      {/* Section cards */}
-      <div className="space-y-6">
+      <div className="space-y-5">
         {filtered.map((s) => {
           const isActive = query.trim() || openId === s.id;
           return (
             <div key={s.id} className={`tutorial-section ${isActive ? "" : "hidden print-hidden"}`}>
-              {/* Section overview header */}
-              <div className="bg-[var(--sh-card-base)]/40 border border-shBorder rounded-lg p-4 mb-3">
-                <h4 className={`text-[15px] font-black uppercase tracking-widest ${s.color}`}>
-                  <i className={`fas ${s.icon} mr-2`} />{s.title}
-                </h4>
-                {s.overview && (
-                  <p className="text-[14px] text-shTextMuted mt-1.5 normal-case leading-relaxed">{s.overview}</p>
-                )}
-              </div>
+              <SectionCard accent={s.color.includes("Accent") ? "orange" : s.color.includes("Primary") ? "lime" : "cyan"} intensity="subtle" className="mb-3 sh-tutorial-section-head">
+                <div className="flex items-start gap-3">
+                  <span className="sh-tutorial-section-icon"><i className={`fas ${s.icon} ${s.color}`} /></span>
+                  <div className="min-w-0">
+                    <h4 className="text-[18px] font-black text-shText">{s.title}</h4>
+                    {s.overview && <p className="text-[14px] text-shTextMuted mt-1 leading-relaxed">{s.overview}</p>}
+                  </div>
+                </div>
+              </SectionCard>
 
-              <div className="grid grid-cols-1 md:grid-cols-2 gap-4" data-testid={`tutorial-section-${s.id}`}>
+              <div className="grid grid-cols-1 xl:grid-cols-2 gap-3" data-testid={`tutorial-section-${s.id}`}>
                 {s.cards.map((c, i) => (
-                  <div key={i} className="bg-[var(--sh-card-base)] border border-shBorder rounded-xl p-5 shadow-lg tutorial-card" data-testid={`tutorial-card-${s.id}-${i}`}>
-                    <h5 className="text-shText font-black uppercase tracking-tight text-[15px] flex items-start gap-2">
-                      <i className={`fas fa-circle-check ${s.color} mt-1 text-[14px]`} />
-                      <span>{c.title}</span>
-                    </h5>
-                    {(c.badges || []).length > 0 && (
-                      <div className="mt-2 flex flex-wrap gap-1.5">
-                        {c.badges.map(b => <CardBadge key={b} label={b} />)}
+                  <SectionCard key={i} accent="cyan" intensity="subtle" className="tutorial-card sh-tutorial-card" data-testid={`tutorial-card-${s.id}-${i}`}>
+                    <div className="flex items-start gap-3">
+                      <span className="sh-tutorial-check"><i className="fas fa-check"/></span>
+                      <div className="min-w-0 flex-1">
+                        <h5 className="text-shText font-black text-[15px] leading-tight">{c.title}</h5>
+                        {(c.badges || []).length > 0 && (
+                          <div className="mt-2 flex flex-wrap gap-1.5">
+                            {c.badges.map(b => <CardBadge key={b} label={b} />)}
+                          </div>
+                        )}
                       </div>
-                    )}
+                    </div>
+
                     {c.path && (
-                      <p className="mt-2.5 text-[12px] text-shSecondary bg-shSecondary/10 border border-shSecondary/25 rounded px-2 py-1.5 inline-block normal-case font-bold tracking-wide">
+                      <p className="mt-3 text-[12px] text-shSecondary bg-shSecondary/10 border border-shSecondary/20 rounded-lg px-3 py-2 font-semibold">
                         <i className="fas fa-location-arrow mr-1.5" />{c.path}
                       </p>
                     )}
-                    <ol className="mt-3 space-y-2 text-[15px] text-shTextMuted">
+
+                    <ol className="mt-4 space-y-2.5 text-[14px] text-shTextMuted">
                       {(c.steps || []).map((step, j) => (
-                        <li key={j} className="flex gap-3">
-                          <span className={`${s.color} font-black flex-shrink-0`}>{j + 1}.</span>
-                          <span className="leading-snug">{step}</span>
+                        <li key={j} className="flex gap-3 items-start">
+                          <span className="sh-tutorial-step">{j + 1}</span>
+                          <span className="leading-relaxed pt-0.5">{step}</span>
                         </li>
                       ))}
                     </ol>
+
                     {c.tip && (
-                      <p className="mt-3 text-[14px] text-shAccent bg-shAccent/5 border border-shAccent/20 rounded p-2.5 leading-snug tip-box">
-                        <i className="fas fa-lightbulb mr-1" />
-                        <strong className="uppercase tracking-widest">Pro tip · </strong>{c.tip}
+                      <p className="mt-4 text-[13px] text-shAccent bg-shAccent/5 border border-shAccent/20 rounded-lg p-3 leading-relaxed tip-box">
+                        <i className="fas fa-lightbulb mr-1.5"/><strong>Pro tip · </strong>{c.tip}
                       </p>
                     )}
                     {c.mistake && (
-                      <p className="mt-2 text-[14px] text-red-300 bg-red-500/5 border border-red-500/30 rounded p-2.5 leading-snug mistake-box">
-                        <i className="fas fa-triangle-exclamation mr-1" />
-                        <strong className="uppercase tracking-widest">Common mistake · </strong>{c.mistake}
+                      <p className="mt-3 text-[13px] text-red-300 bg-red-500/5 border border-red-500/25 rounded-lg p-3 leading-relaxed mistake-box">
+                        <i className="fas fa-triangle-exclamation mr-1.5"/><strong>Common mistake · </strong>{c.mistake}
                       </p>
                     )}
                     {(c.related || []).length > 0 && (
-                      <div className="mt-3 pt-2.5 border-t border-shBorder">
-                        <p className="text-[10px] font-black uppercase tracking-widest text-shTextMuted mb-1.5">Related</p>
-                        <ul className="space-y-1">
+                      <div className="mt-4 pt-3 border-t border-shBorder">
+                        <p className="text-[11px] font-bold text-shTextMuted mb-2">Related</p>
+                        <ul className="space-y-1.5">
                           {c.related.map((r, k) => (
-                            <li key={k} className="text-[13px] text-shSecondary normal-case">
-                              <i className="fas fa-arrow-right text-[10px] mr-1.5" />{r}
+                            <li key={k} className="text-[13px] text-shSecondary">
+                              <i className="fas fa-arrow-right text-[10px] mr-1.5"/>{r}
                             </li>
                           ))}
                         </ul>
                       </div>
                     )}
-                  </div>
+                  </SectionCard>
                 ))}
               </div>
             </div>
           );
         })}
         {filtered.length === 0 && (
-          <div className="bg-[var(--sh-card-base)] border border-shBorder rounded-xl p-10 text-center text-shTextMuted uppercase font-black tracking-widest text-xs">
-            No tutorials match &ldquo;{query}&rdquo;
-          </div>
+          <EmptyState
+            icon="fa-magnifying-glass"
+            accent="cyan"
+            title={`No tutorials match “${query}”`}
+            description="Try a feature name like booking, payments, training, shop, or mobile."
+          />
         )}
       </div>
     </div>
@@ -1301,26 +1298,16 @@ export default function Tutorials({ role = "admin" }) {
 }
 
 function CardBadge({ label }) {
-  const palette = {
-    "Beginner":            "bg-shPrimary/15 text-shPrimary border-shPrimary/30",
-    "Daily Use":           "bg-shSecondary/15 text-shSecondary border-shSecondary/30",
-    "Admin Only":          "bg-red-500/15 text-red-400 border-red-500/30",
-    "Client-Facing":       "bg-purple-500/15 text-purple-300 border-purple-500/30",
-    "Setup Only":          "bg-shAccent/15 text-shAccent border-shAccent/30",
-    "Staff-Only":          "bg-shAccent/15 text-shAccent border-shAccent/30",
-    "Optional":            "bg-shSecondary/15 text-shSecondary border-shSecondary/30",
-    "Required":            "bg-red-500/15 text-red-400 border-red-500/30",
-    "Reference":           "bg-shSurfaceRaised/60 text-shTextMuted border-shBorder",
-    "Live":                "bg-shPrimary/15 text-shPrimary border-shPrimary/30",
-    "Permission-gated":    "bg-shSurfaceRaised/60 text-shTextMuted border-shBorder",
-    "All staff":           "bg-shSurfaceRaised/60 text-shTextMuted border-shBorder",
-    "Care/Dog perms":      "bg-shSurfaceRaised/60 text-shTextMuted border-shBorder",
-    "Coming Soon":         "bg-shSurfaceRaised/60 text-shTextMuted border-shBorder",
-    "Only shown if enabled": "bg-shSurfaceRaised/60 text-shTextMuted border-shBorder",
-  }[label] || "bg-shSurfaceRaised/60 text-shTextMuted border-shBorder";
-  return (
-    <span className={`text-[9px] font-black uppercase tracking-[0.2em] px-1.5 py-0.5 rounded border ${palette}`}>
-      {label}
-    </span>
-  );
+  const tone = {
+    "Beginner": "success",
+    "Daily Use": "info",
+    "Admin Only": "error",
+    "Client-Facing": "special",
+    "Setup Only": "warning",
+    "Staff-Only": "warning",
+    "Optional": "info",
+    "Required": "error",
+    "Live": "success",
+  }[label] || "info";
+  return <StatusBadge tone={tone}>{label}</StatusBadge>;
 }

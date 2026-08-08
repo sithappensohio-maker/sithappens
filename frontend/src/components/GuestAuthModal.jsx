@@ -30,7 +30,7 @@ export default function GuestAuthModal({ open, onClose }) {
 
   return (
     <div className="fixed inset-0 bg-black/70 flex items-center justify-center z-[60] p-4" data-testid="guest-auth-modal" onClick={onClose}>
-      <div onClick={(e) => e.stopPropagation()} className="border border-shBorder rounded-2xl w-full max-w-sm p-6 space-y-4 shadow-sh" style={{ background: "var(--sh-card-base)" }}>
+      <div onClick={(e) => e.stopPropagation()} className="border border-shBorder rounded-2xl w-full max-w-sm p-6 space-y-4 shadow-sh sh-modal-surface" style={{ background: "var(--sh-card-base)" }}>
         <div className="flex items-center justify-between">
           <p className="text-shText font-bold uppercase tracking-widest text-sm">{mode === "login" ? "Sign In" : "Create Account"}</p>
           <button onClick={onClose} data-testid="guest-auth-close" className="text-shTextMuted hover:text-shText">

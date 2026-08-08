@@ -85,3 +85,96 @@ export function resolveValidationTarget(issue, modules) {
   }
   return { moduleKey: mod._key };
 }
+
+// ---------------------------------------------------------------------------
+// Program templates — export a program as a portable, editable blueprint and
+// re-import it to seed a brand-new program. A template bundles EVERYTHING the
+// course needs: the curriculum (modules/lessons/skills/checkpoints) AND the
+// Practice Coach homework recipes each lesson links to, so one file recreates
+// the whole thing. This never touches the server's create/validate authority:
+// import recreates the practice recipes (POST /homework-templates), relinks
+// the lessons to their new ids, then prefills the New Program editor (an
+// id-less draft) so the operator still reviews and Saves through the normal
+// POST /programs path. Curriculum ids (module/lesson/goal) are KEPT so a
+// lesson's skill_ids keep pointing at their goals; only identity/runtime
+// fields that must not carry across into a fresh program are stripped.
+// ---------------------------------------------------------------------------
+export const TEMPLATE_STRIP_FIELDS = [
+  "id", "_id", "slug", "created_at", "is_default", "owner_dog_id",
+  "draft", "practice_coach_readiness", "_cascaded_enrollments",
+];
+// Homework (Practice Coach) recipes keep their `id` in the bundle purely so
+// import can remap each lesson's link after recreating them; only true
+// runtime/derived fields are dropped.
+export const HW_TEMPLATE_STRIP_FIELDS = ["_id", "created_at", "practice_coach_readiness"];
+
+// Every homework-template id a program references, from ALL link sites: the
+// program welcome recipe, a module's on-mastery recipe, a goal's recipes, and
+// a lesson's practice recipes. Bundling from all of them keeps a template
+// self-contained no matter which links the author used.
+export function referencedHomeworkTemplateIds(program) {
+  const ids = new Set();
+  const add = (id) => { if (id) ids.add(id); };
+  add(program?.welcome_homework_template_id);
+  for (const m of (program?.modules || [])) {
+    add(m.homework_template_id);
+    for (const g of (m.goals || [])) for (const id of (g.homework_template_ids || [])) add(id);
+    for (const l of (m.lessons || [])) for (const id of (l.suggested_homework_template_ids || [])) add(id);
+  }
+  return [...ids];
+}
+
+// Serialize a program (plus the homework templates it references, drawn from
+// the caller's already-loaded library) into a self-describing bundle — what a
+// downloaded .json file contains.
+export function programToTemplate(program, homeworkTemplates = []) {
+  const p = { ...(program || {}) };
+  for (const f of TEMPLATE_STRIP_FIELDS) delete p[f];
+  const refIds = new Set(referencedHomeworkTemplateIds(program));
+  const bundled = (homeworkTemplates || [])
+    .filter((t) => t && refIds.has(t.id))
+    .map((t) => { const c = { ...t }; for (const f of HW_TEMPLATE_STRIP_FIELDS) delete c[f]; return c; });
+  return { sit_happens_template: "online_school_program", version: 2, program: p, homework_templates: bundled };
+}
+
+// Parse an uploaded template (accepts either the wrapped {program} shape or a
+// bare program object) into a New Program draft. Returns null if it isn't a
+// usable program (no modules array) so the caller can show a clean error
+// instead of opening an empty editor.
+export function templateToNewProgram(parsed) {
+  const raw = parsed && typeof parsed === "object" && parsed.program ? parsed.program : parsed;
+  if (!raw || typeof raw !== "object" || !Array.isArray(raw.modules) || !raw.name) return null;
+  const draft = { ...raw };
+  for (const f of TEMPLATE_STRIP_FIELDS) delete draft[f]; // never carry an id => saves as NEW
+  return draft;
+}
+
+// Full bundle parse: the program draft plus any embedded homework recipes the
+// caller must recreate before opening the editor. Null when it isn't a usable
+// program at all.
+export function parseProgramTemplate(parsed) {
+  const draft = templateToNewProgram(parsed);
+  if (!draft) return null;
+  const homeworkTemplates = Array.isArray(parsed?.homework_templates) ? parsed.homework_templates : [];
+  return { program: draft, homeworkTemplates };
+}
+
+// After import recreates the bundled homework templates (getting fresh server
+// ids), rewrite every lesson's practice link from the old bundled id to the
+// new one. Links with no mapping (a recipe that wasn't in the bundle) are
+// dropped rather than left dangling at an id that doesn't exist here.
+export function remapProgramHomework(program, idMap) {
+  const map = idMap || {};
+  // A bundled id remaps to its fresh server id; an id that wasn't in the
+  // bundle is left as-is (it may be a real recipe that already exists on this
+  // install), never dropped or nulled.
+  const one = (id) => (id ? (map[id] || id) : id);
+  const many = (ids) => (ids || []).map((id) => map[id] || id);
+  const modules = (program?.modules || []).map((m) => ({
+    ...m,
+    homework_template_id: one(m.homework_template_id),
+    goals: (m.goals || []).map((g) => ({ ...g, homework_template_ids: many(g.homework_template_ids) })),
+    lessons: (m.lessons || []).map((l) => ({ ...l, suggested_homework_template_ids: many(l.suggested_homework_template_ids) })),
+  }));
+  return { ...program, welcome_homework_template_id: one(program?.welcome_homework_template_id), modules };
+}

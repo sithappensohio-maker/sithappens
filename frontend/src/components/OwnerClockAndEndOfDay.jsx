@@ -120,7 +120,7 @@ export function EndOfDayPanel({ onJump = () => {} }) {
   const [loading, setLoading] = useState(false);
   const [closing, setClosing] = useState(false);
   const [starting, setStarting] = useState(false);
-  const [closeout, setCloseout] = useState({ notes: "", cash_counted: "", clover_batch: "", venmo_total: "", paypal_total: "", check_total: "" });
+  const [closeout, setCloseout] = useState({ notes: "", cash_counted: "", card_batch: "", venmo_total: "", paypal_total: "", check_total: "" });
   const [closeoutReview, setCloseoutReview] = useState(false);
   const [startDay, setStartDay] = useState({ opening_cash: "", notes: "", opening_override_reason: "" });
   const [reopenReason, setReopenReason] = useState("");
@@ -219,7 +219,7 @@ export function EndOfDayPanel({ onJump = () => {} }) {
         cash_counted: counted,
         rollover_confirmed: true,
         confirmed_rollover_cash: counted,
-        clover_batch: closeout.clover_batch === "" ? null : Number(closeout.clover_batch),
+        card_batch: closeout.card_batch === "" ? null : Number(closeout.card_batch),
         venmo_total: closeout.venmo_total === "" ? null : Number(closeout.venmo_total),
         paypal_total: closeout.paypal_total === "" ? null : Number(closeout.paypal_total),
         check_total: closeout.check_total === "" ? null : Number(closeout.check_total),
@@ -227,7 +227,7 @@ export function EndOfDayPanel({ onJump = () => {} }) {
       await api.post("/admin/end-of-day/closeout", payload);
       toast.success(`Day closed. $${counted.toFixed(2)} will carry forward.`);
       setCloseoutReview(false);
-      setCloseout({ notes: "", cash_counted: "", clover_batch: "", venmo_total: "", paypal_total: "", check_total: "" });
+      setCloseout({ notes: "", cash_counted: "", card_batch: "", venmo_total: "", paypal_total: "", check_total: "" });
       // Do not carry today's opening form state into tomorrow. The next open
       // always hydrates from the confirmed server rollover.
       setStartDay({ opening_cash: "", notes: "", opening_override_reason: "" });
@@ -447,7 +447,7 @@ export function EndOfDayPanel({ onJump = () => {} }) {
                       <p className="text-[11px] font-black uppercase tracking-widest text-shPrimary mb-2"><i className="fas fa-cash-register mr-1"/>Expected register totals</p>
                       <div className="grid grid-cols-2 sm:grid-cols-4 gap-2">
                         <EodStat label="Expected cash drawer" value={`$${(data.register.totals?.expected_cash || 0).toFixed(2)}`} color="text-shPrimary"/>
-                        <EodStat label="Clover" value={`$${(data.register.incoming_by_method?.clover || 0).toFixed(2)}`}/>
+                        <EodStat label="Card" value={`$${(data.register.incoming_by_method?.card || 0).toFixed(2)}`}/>
                         <EodStat label="Venmo" value={`$${(data.register.incoming_by_method?.venmo || 0).toFixed(2)}`}/>
                         <EodStat label="PayPal" value={`$${(data.register.incoming_by_method?.paypal || 0).toFixed(2)}`}/>
                       </div>
@@ -467,7 +467,7 @@ export function EndOfDayPanel({ onJump = () => {} }) {
                       <div className="grid grid-cols-1 sm:grid-cols-3 gap-2">
                         {[
                           ["cash_counted", "Actual cash counted · required"],
-                          ["clover_batch", "Clover batch"],
+                          ["card_batch", "Card batch"],
                           ["venmo_total", "Venmo total"],
                           ["paypal_total", "PayPal total"],
                           ["check_total", "Checks total"],

@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useState, useRef } from "react";
 import { api } from "../lib/api";
+import { useConfirm } from "../lib/useConfirm";
 
 const MOOD_EMOJI = ["", "😞", "😅", "😐", "💪", "😄"];
 const MOOD_LABEL = ["", "Rough", "Tricky", "OK", "Strong", "Awesome"];
@@ -37,6 +38,7 @@ const VIDEO_MAX_MB = 10;
  * is complete.
  */
 export default function DailyCheckInCard({ homeworkId, onChanged, hideActionableForm = false }) {
+  const confirm = useConfirm();
   const [hw, setHw] = useState(null);
   const [loading, setLoading] = useState(true);
   const [err, setErr] = useState("");
@@ -173,7 +175,7 @@ export default function DailyCheckInCard({ homeworkId, onChanged, hideActionable
   };
 
   const markRestDay = async (dayNum) => {
-    if (!window.confirm("Mark today as a rest day? It won't break your streak and the next day will unlock.")) return;
+    if (!(await confirm({ title: "Mark today as a rest day?", body: "It won't break the streak, and the next day will unlock normally.", confirmText: "Mark rest day", tone: "info" }))) return;
     setBusy(true); setErr("");
     try {
       await api.post(`/homework/${homeworkId}/day/${dayNum}/rest`, { note: "" });

@@ -2,6 +2,8 @@ import { useEffect, useState } from "react";
 import { api } from "../lib/api";
 import PortalShop from "../components/PortalShop";
 import GuestAuthModal from "../components/GuestAuthModal";
+import PublicBrandShell from "../components/PublicBrandShell";
+import { EmptyState, PremiumButton, SectionCard } from "../components/premium";
 import { readGuestCart, writeGuestCart, stashPendingShopRedirect } from "../lib/shopGuestCart";
 
 // Public no-account storefront — the guest-mode entry point mounted by
@@ -46,42 +48,53 @@ export default function PublicShop() {
     setAuthOpen(true);
   };
 
+  const shellAction = (
+    <PremiumButton onClick={handleRequireAccount} data-testid="public-shop-sign-in" className="whitespace-nowrap">
+      <i className="fas fa-user mr-1"/>Sign In / Create Account
+    </PremiumButton>
+  );
+
   if (shopEnabled === null) {
     return (
-      <div className="h-screen w-screen flex items-center justify-center text-shTextMuted text-sm font-bold uppercase tracking-widest" style={{ background: "var(--sh-card-base)" }}>
-        Loading…
-      </div>
+      <PublicBrandShell compact center eyebrow="Shop" title="Loading the shop…" subtitle="Getting the latest Sit Happens products and programs." footer={false}>
+        <SectionCard accent="cyan" className="w-full max-w-md text-center py-10">
+          <i className="fas fa-circle-notch fa-spin text-3xl text-shSecondary"/>
+          <p className="text-shTextMuted text-sm font-semibold mt-4">Just a second.</p>
+        </SectionCard>
+      </PublicBrandShell>
     );
   }
 
   if (!shopEnabled) {
     return (
-      <div className="h-screen w-screen flex flex-col items-center justify-center gap-3 text-center px-6" style={{ background: "var(--sh-card-base)" }} data-testid="public-shop-disabled">
-        <img src="/logo.png" alt="Sit Happens" className="h-16 mb-2" />
-        <p className="text-shText font-black text-xl">Shop is currently closed</p>
-        <p className="text-shTextMuted text-sm max-w-md">Check back soon, or sign in to your account.</p>
-        <a href="/" data-testid="public-shop-disabled-home" className="mt-2 text-shPrimary font-bold uppercase tracking-widest text-sm hover:text-shText transition">
-          Back to Sit Happens
-        </a>
-      </div>
+      <PublicBrandShell compact center eyebrow="Shop" title="The shop is closed." subtitle="Check back soon, or sign in to your Sit Happens account." testid="public-shop-disabled">
+        <EmptyState
+          icon="fa-store"
+          accent="cyan"
+          title="Shop is currently closed"
+          description="The storefront is temporarily unavailable. Your account and training history are unaffected."
+          ctaLabel="Back to Sit Happens"
+          onClick={() => { window.location.href = "/"; }}
+          testId="public-shop-disabled-home"
+        />
+      </PublicBrandShell>
     );
   }
 
   return (
-    <div className="min-h-screen w-full" style={{ background: "var(--sh-card-base)" }} data-testid="public-shop-page">
-      <header className="border-b border-shBorder flex items-center justify-between px-4 sm:px-8 py-3">
-        <a href="/" data-testid="public-shop-home-link">
-          <img src="/logo.png" alt="Sit Happens" className="h-9 sm:h-12" />
-        </a>
-        <button onClick={handleRequireAccount} data-testid="public-shop-sign-in"
-                className="bg-shPrimary text-bgHeader px-4 py-2 rounded font-black text-[12px] uppercase tracking-widest hover:brightness-110 transition">
-          Sign In / Create Account
-        </button>
-      </header>
-      <div className="max-w-6xl mx-auto p-3 sm:p-6">
+    <PublicBrandShell
+      eyebrow="Shop"
+      title="SHOP SIT HAPPENS."
+      subtitle="Courses, packs, programs, and dog gear — all in one place."
+      action={shellAction}
+      testid="public-shop-page"
+      homeTestId="public-shop-home-link"
+      mascotKey="shop-husky"
+    >
+      <section className="sh-public-shop-canvas">
         <PortalShop mode="guest" fullScreen initialTab="all" cart={cart} onCartChange={setCart} onRequireAccount={handleRequireAccount} />
-      </div>
+      </section>
       <GuestAuthModal open={authOpen} onClose={() => setAuthOpen(false)} />
-    </div>
+    </PublicBrandShell>
   );
 }

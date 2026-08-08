@@ -48,7 +48,7 @@ def test_today_pnl_reconciles_to_register_for_every_payment_method(admin_headers
 
     expected_methods = register_body.get("incoming_by_method") or {}
     actual_methods = pnl_body.get("revenue_by_method") or {}
-    for method in ("cash", "check", "venmo", "paypal", "clover", "venmo_paypal", "other"):
+    for method in ("cash", "check", "venmo", "paypal", "card", "venmo_paypal", "other"):
         assert round(float(actual_methods.get(method) or 0), 2) == round(float(expected_methods.get(method) or 0), 2), (
             f"P&L method total for {method} does not match the register."
         )

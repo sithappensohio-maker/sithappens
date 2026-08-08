@@ -63,7 +63,7 @@ export default function StripeRefundModal({ payment, onClose, onDone }) {
   return (
     <div className="fixed inset-0 z-[80] bg-black/75 backdrop-blur-sm overflow-y-auto p-4 grid place-items-start sm:place-items-center"
          onMouseDown={(e) => { if (e.target === e.currentTarget && !busy) onClose(); }}>
-      <div className="w-full max-w-md my-8 bg-bgCard border border-shBorder rounded-2xl shadow-2xl"
+      <div className="w-full max-w-md my-8 bg-bgCard border border-shBorder rounded-2xl shadow-2xl sh-modal-surface"
            onMouseDown={(e) => e.stopPropagation()} data-testid="stripe-refund-modal">
         <div className="p-5 border-b border-shBorder flex items-start justify-between gap-4">
           <div>

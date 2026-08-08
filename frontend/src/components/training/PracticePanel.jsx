@@ -36,6 +36,8 @@ import GuidedPracticeFlow from "./GuidedPracticeFlow";
 import TroubleshootingDrawer from "./TroubleshootingDrawer";
 import CoachEndQuestions from "./CoachEndQuestions";
 import DifficultyFeedbackNotice from "./DifficultyFeedbackNotice";
+import HuskyDogImage from "../brand/HuskyDogImage";
+import SectionCard from "../premium/SectionCard";
 
 const FIELD_ICON = { reps: "fa-rotate", sets: "fa-layer-group", duration_sec: "fa-stopwatch", duration_min: "fa-stopwatch",
   distance_ft: "fa-ruler", success_rate: "fa-percent", rating_5: "fa-star", checkbox: "fa-square-check", text: "fa-pen", longtext: "fa-pen" };
@@ -194,17 +196,21 @@ export default function PracticePanel({ homework, dogPhoto, onClose, onChanged }
   const finishGuided = (metrics) => { setGuidedMetrics(metrics); setEntryContext("guided_done"); setViewMode("form"); };
 
   return (
-    <div className="fixed inset-0 bg-black/80 z-50 flex items-center justify-center p-2 sm:p-4" data-testid="practice-panel">
-      <div className="bg-[var(--sh-card-base)] border border-shBorder rounded-2xl w-full max-w-lg max-h-[calc(var(--app-height)_-_1rem)] flex flex-col min-h-0 shadow-2xl">
-        <div className="px-4 sm:px-5 py-3.5 border-b border-shBorder flex items-center justify-between shrink-0">
-          <div className="min-w-0">
-            <p className="text-[10px] font-black uppercase tracking-widest text-shPrimary">{homework.dog_name}</p>
-            <h3 className="text-base font-black text-shText uppercase tracking-tight truncate">{homework.title}</h3>
+    <div className="fixed inset-0 bg-black/90 backdrop-blur-sm z-50 flex items-end sm:items-center justify-center sm:p-4 lg:p-6" data-testid="practice-panel">
+      <div className="relative bg-[var(--sh-card-base)] border border-shBorder/70 rounded-t-3xl sm:rounded-3xl w-full sm:max-w-3xl h-[100dvh] sm:h-auto sm:max-h-[calc(var(--app-height)_-_2rem)] flex flex-col min-h-0 shadow-[0_30px_100px_rgba(0,0,0,0.7)] overflow-hidden">
+        <div className="absolute inset-0 pointer-events-none opacity-60" style={{ background: "radial-gradient(circle at 10% 0%, rgba(140,198,63,0.07), transparent 25%), radial-gradient(circle at 100% 10%, rgba(0,169,224,0.07), transparent 28%)" }}/>
+        <div className="relative px-3 sm:px-5 py-3 border-b border-shBorder/55 bg-bgHeader/90 backdrop-blur-xl flex items-center justify-between gap-3 shrink-0">
+          <div className="flex items-center gap-3 min-w-0">
+            <div className="w-11 h-11 sm:w-12 sm:h-12 rounded-xl overflow-hidden border border-shPrimary/30 bg-black/35 shrink-0"><HuskyDogImage src={dogPhoto} name={homework.dog_name} alt={homework.dog_name} className="w-full h-full object-cover object-top"/></div>
+            <div className="min-w-0">
+              <div className="flex items-center gap-2"><p className="text-[9px] font-black uppercase tracking-[0.16em] text-shPrimary">Practice Coach</p><span className="w-1 h-1 rounded-full bg-shBorder"/><p className="text-[9px] font-black uppercase tracking-[0.12em] text-shSecondary truncate">{homework.dog_name}</p></div>
+              <h3 className="text-[16px] sm:text-[18px] font-black text-shText truncate mt-0.5">{homework.title}</h3>
+            </div>
           </div>
-          <button onClick={onClose} data-testid="practice-panel-close" className="text-shTextMuted hover:text-shText text-xl px-2 shrink-0"><i className="fas fa-times"/></button>
+          <button onClick={onClose} data-testid="practice-panel-close" className="w-10 h-10 rounded-xl border border-shBorder/55 bg-black/15 text-shTextMuted hover:text-shText hover:bg-white/[0.03] grid place-items-center shrink-0"><i className="fas fa-times"/></button>
         </div>
 
-        <div className="overflow-y-auto flex-1 min-h-0 px-4 sm:px-5 py-4 space-y-4">
+        <div className="relative overflow-y-auto flex-1 min-h-0 px-3 sm:px-5 lg:px-6 py-4 sm:py-5 space-y-4 sm:space-y-5 pb-[max(1rem,env(safe-area-inset-bottom))]">
           {!section ? (
             <EmptyState icon="fa-clipboard-check" message="This assignment doesn't have any sessions to log yet." testid="practice-no-section"/>
           ) : readOnly ? (
@@ -240,22 +246,19 @@ export default function PracticePanel({ homework, dogPhoto, onClose, onChanged }
               </div>
 
               {entryContext === "quick" && practiceCoach?.goal && (
-                <div className="bg-black/20 border border-shBorder rounded-lg p-2.5">
-                  <p className="text-[10px] font-black uppercase tracking-widest text-shPrimary">Goal</p>
-                  <p className="text-[13px] text-shText font-bold">{renderPracticeCoachText(practiceCoach.goal, tokens)}</p>
-                  {(practiceCoach.steps || []).length > 0 && (
-                    <p className="text-[11px] text-shTextMuted mt-1">
-                      {practiceCoach.steps.map(s => renderPracticeCoachText(s.title, tokens)).join(" · ")}
-                    </p>
-                  )}
-                </div>
+                <SectionCard accent="lime" intensity="subtle">
+                  <p className="text-[9px] font-black uppercase tracking-[0.15em] text-shPrimary mb-1.5">Quick Practice Goal</p>
+                  <p className="text-[15px] text-shText font-black leading-snug">{renderPracticeCoachText(practiceCoach.goal, tokens)}</p>
+                  {(practiceCoach.steps || []).length > 0 && <p className="text-[11px] text-shTextMuted mt-2 leading-relaxed">{practiceCoach.steps.map(s => renderPracticeCoachText(s.title, tokens)).join(" · ")}</p>}
+                </SectionCard>
               )}
               {entryContext === "guided_done" && guidedMetrics && (
-                <div className="bg-shPrimary/10 border border-shPrimary/30 rounded-lg p-2.5 text-center">
-                  <p className="text-[12px] font-black text-shText">
-                    {guidedMetrics.rounds_completed} round{guidedMetrics.rounds_completed === 1 ? "" : "s"} · {guidedMetrics.successful_reps}/{guidedMetrics.reps_attempted} successful
-                  </p>
-                </div>
+                <SectionCard accent="lime" intensity="subtle">
+                  <div className="flex items-center gap-3">
+                    <span className="w-10 h-10 rounded-xl bg-shPrimary/10 border border-shPrimary/30 grid place-items-center text-shPrimary shrink-0"><i className="fas fa-check"/></span>
+                    <div><p className="text-[9px] font-black uppercase tracking-[0.14em] text-shPrimary">Guided practice complete</p><p className="text-[13px] sm:text-[14px] font-black text-shText mt-1">{guidedMetrics.rounds_completed} round{guidedMetrics.rounds_completed === 1 ? "" : "s"} · {guidedMetrics.successful_reps}/{guidedMetrics.reps_attempted} successful</p></div>
+                  </div>
+                </SectionCard>
               )}
 
               <VideoDemoCard videoUrl={homework.video_url} testid="practice-video"/>
@@ -280,20 +283,15 @@ export default function PracticePanel({ homework, dogPhoto, onClose, onChanged }
                 </ExpandableSection>
               )}
 
-              <div>
-                <p className="text-[11px] font-black uppercase tracking-widest text-shTextMuted mb-2"><i className="fas fa-stopwatch mr-1"/>Practice Timer (optional)</p>
-                <div className="flex items-center gap-3 bg-black/20 border border-shBorder rounded-lg p-3">
-                  <span className="text-2xl font-black text-shText tabular-nums" data-testid="practice-timer-display">
-                    {String(Math.floor(timerSec / 60)).padStart(2, "0")}:{String(timerSec % 60).padStart(2, "0")}
-                  </span>
-                  <button type="button" onClick={() => setTimerRunning(r => !r)} data-testid="practice-timer-toggle"
-                          className="bg-shSecondary/15 text-shSecondary border border-shSecondary/40 px-3 py-1.5 rounded text-[12px] font-black uppercase tracking-widest">
-                    {timerRunning ? "Pause" : "Start"}
-                  </button>
-                  <button type="button" onClick={() => { setTimerSec(0); setTimerRunning(false); }} data-testid="practice-timer-reset"
-                          className="text-shTextMuted text-[12px] font-black uppercase tracking-widest">Reset</button>
+              <SectionCard accent="cyan" intensity="subtle">
+                <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3">
+                  <div><p className="text-[9px] font-black uppercase tracking-[0.14em] text-shTextMuted"><i className="fas fa-stopwatch mr-1.5 text-shSecondary"/>Practice Timer <span className="normal-case tracking-normal font-semibold">(optional)</span></p><span className="block text-[30px] font-black text-white tabular-nums mt-1" data-testid="practice-timer-display">{String(Math.floor(timerSec / 60)).padStart(2, "0")}:{String(timerSec % 60).padStart(2, "0")}</span></div>
+                  <div className="grid grid-cols-2 gap-2 sm:flex">
+                    <button type="button" onClick={() => setTimerRunning(r => !r)} data-testid="practice-timer-toggle" className="min-h-[44px] bg-shSecondary/12 text-shSecondary border border-shSecondary/35 px-4 py-2 rounded-xl text-[11px] font-black">{timerRunning ? "Pause" : "Start"}</button>
+                    <button type="button" onClick={() => { setTimerSec(0); setTimerRunning(false); }} data-testid="practice-timer-reset" className="min-h-[44px] border border-shBorder/55 bg-black/10 text-shTextMuted px-4 py-2 rounded-xl text-[11px] font-black">Reset</button>
+                  </div>
                 </div>
-              </div>
+              </SectionCard>
 
               <PracticeCompletionPanel
                 allowDifficulty={true}
@@ -321,7 +319,7 @@ export default function PracticePanel({ homework, dogPhoto, onClose, onChanged }
               />
               {!isDailyTracker && (
                 <button type="button" onClick={markAssignmentComplete} disabled={markingComplete} data-testid="practice-mark-assignment-complete"
-                        className="w-full text-center text-[12px] font-black uppercase tracking-widest text-shTextMuted hover:text-shPrimary py-1 disabled:opacity-50">
+                        className="w-full min-h-[44px] text-center text-[11px] sm:text-[12px] font-black text-shTextMuted hover:text-shPrimary py-2 disabled:opacity-50">
                   {markingComplete ? "Marking complete…" : "This assignment is fully done — mark complete"}
                 </button>
               )}

@@ -21,6 +21,9 @@ import TrainingSessionWorkspace from "../components/TrainingSessionWorkspace";
 import CheckpointReviewQueue from "../components/CheckpointReviewQueue";
 import TrainerAssistQueue from "../components/TrainerAssistQueue";
 import MessageClientModal from "../components/MessageClientModal";
+import NeonEdge from "../components/premium/NeonEdge";
+import HuskyDogImage from "../components/brand/HuskyDogImage";
+import PageHero from "../components/PageHero";
 import { useTheme } from "../lib/theme";
 import { toast } from "sonner";
 
@@ -259,33 +262,22 @@ export default function Dashboard({ onNavigate = () => {}, onJumpToDog = () => {
           the bare H2 the page used to open with. */}
       {/* Sprint 110di-20-fix — hero card gated. */}
       {widgetOn("hero_card") && (
-      <div className="relative overflow-hidden rounded-2xl border border-shBorder bg-[var(--sh-card-base)] p-5 sm:p-7" data-testid="dashboard-hero">
-        <div className="absolute inset-0 pointer-events-none opacity-40"
-             style={{ background: "radial-gradient(circle at 15% 20%, rgba(0,169,224,0.45) 0%, transparent 40%), radial-gradient(circle at 85% 80%, rgba(140,198,63,0.4) 0%, transparent 45%), radial-gradient(circle at 70% 10%, rgba(242,101,34,0.25) 0%, transparent 35%)" }}/>
-        <div className="relative flex flex-col sm:flex-row items-start sm:items-end justify-between gap-4">
-          <div className="min-w-0 sm:min-w-[260px] flex-1">
-            <p className="text-[11px] font-black uppercase tracking-widest text-shPrimary mb-2 whitespace-nowrap">
-              <i className="fas fa-paw mr-2"/>Today at Sit Happens
-            </p>
-            <h1 className="text-3xl sm:text-4xl lg:text-5xl font-black uppercase italic tracking-tight text-shText leading-tight">
-              Good {new Date().getHours() < 12 ? "morning" : new Date().getHours() < 18 ? "afternoon" : "evening"},
-              <span className="text-shPrimary"> let's get to it.</span>
-            </h1>
-            <p className="text-[14px] text-shTextMuted mt-2">
-              {new Date().toLocaleDateString(undefined, { weekday: "long", month: "long", day: "numeric" })}
-            </p>
-          </div>
-          {stats && (
-            <div className="flex flex-wrap gap-2 shrink-0" data-testid="dashboard-hero-tiles">
-              {widgetOn("daycare_stats")  && <DashHeroTile icon="fa-sun"           color="#00a9e0" label="Daycare today" value={`${stats?.daycare_occupancy ?? 0}/${stats?.daycare_capacity ?? 0}`}/>}
-              {widgetOn("boarding_stats") && <DashHeroTile icon="fa-moon"          color="#8cc63f" label="Boarding tonight" value={stats?.boarding_today ?? 0}/>}
+        <PageHero
+          eyebrow={{ icon: "fa-paw", text: "Today at Sit Happens", color: "text-shSecondary" }}
+          title={`Good ${new Date().getHours() < 12 ? "morning" : new Date().getHours() < 18 ? "afternoon" : "evening"}.`}
+          highlight="Let's get to it."
+          subtitle={new Date().toLocaleDateString(undefined, { weekday: "long", month: "long", day: "numeric" })}
+          right={stats ? (
+            <div className="grid grid-cols-2 sm:flex sm:flex-wrap gap-2 w-full lg:w-auto" data-testid="dashboard-hero-tiles">
+              {widgetOn("daycare_stats")  && <DashHeroTile icon="fa-sun" color="#00a9e0" label="Daycare today" value={`${stats?.daycare_occupancy ?? 0}/${stats?.daycare_capacity ?? 0}`}/>}
+              {widgetOn("boarding_stats") && <DashHeroTile icon="fa-moon" color="#8cc63f" label="Boarding tonight" value={stats?.boarding_today ?? 0}/>}
               {widgetOn("training_stats") && <DashHeroTile icon="fa-graduation-cap" color="#a855f7" label="Training today" value={stats?.training_today ?? 0}/>}
-              {widgetOn("grooming_stats") && <DashHeroTile icon="fa-bath"          color="#06b6d4" label="Grooming today" value={stats?.grooming_today ?? 0}/>}
-              <DashHeroTile icon="fa-camera-retro"  color="#f97316" label="Photography today" value={stats?.photography_today ?? 0}/>
+              {widgetOn("grooming_stats") && <DashHeroTile icon="fa-bath" color="#06b6d4" label="Grooming today" value={stats?.grooming_today ?? 0}/>}
+              <DashHeroTile icon="fa-camera-retro" color="#f97316" label="Photography today" value={stats?.photography_today ?? 0}/>
             </div>
-          )}
-        </div>
-      </div>
+          ) : null}
+          testid="dashboard-hero"
+        />
       )}
 
       {/* Sprint 110df — Solo-operator owner clock + end-of-day wrap-up
@@ -318,7 +310,7 @@ export default function Dashboard({ onNavigate = () => {}, onJumpToDog = () => {
       {widgetOn("trivia") && <TriviaDashboardTile onNavSettings={()=>onNavigate("settings")} />}
 
       {pendingHomework.length > 0 && (
-        <div className="card-warning rounded-xl p-5 shadow-xl" data-testid="pending-homework-reviews">
+        <div className="bg-shAccent/5 border border-shAccent/25 rounded-xl p-5 shadow-xl" data-testid="pending-homework-reviews">
           <div className="flex items-center justify-between mb-3 gap-3 flex-wrap">
             <h3 className="text-xs font-black text-shAccent uppercase tracking-widest flex items-center gap-2">
               <i className="fas fa-clipboard-check"/> Homework Awaiting Review · {pendingHomework.length}
@@ -370,91 +362,89 @@ export default function Dashboard({ onNavigate = () => {}, onJumpToDog = () => {
       )}
 
       {pendingCheckpoints.length > 0 && (
-        <div className="card-warning rounded-xl p-5 shadow-xl" data-testid="pending-checkpoint-reviews">
-          <div className="flex items-center justify-between mb-3 gap-3 flex-wrap">
-            <h3 className="text-xs font-black text-shAccent uppercase tracking-widest flex items-center gap-2">
-              <i className="fas fa-video"/> Checkpoints Awaiting Review · {pendingCheckpoints.length}
-            </h3>
-            <button onClick={() => setCheckpointQueueOpen(true)}
-                    data-testid="open-checkpoint-queue"
-                    className="text-[11px] font-black uppercase tracking-widest text-shAccent hover:text-shText border border-shAccent/40 hover:border-shAccent rounded px-3 py-1.5">
-              Open Review Queue <i className="fas fa-arrow-right ml-1"/>
-            </button>
-          </div>
-          <div className="space-y-2">
-            {pendingCheckpoints.slice(0, 5).map(c => (
-              <button key={c.id} type="button" onClick={() => setCheckpointQueueOpen(true)}
-                      data-testid={`pending-checkpoint-${c.id}`}
-                      className="w-full text-left flex items-center justify-between gap-3 bg-[var(--sh-card-base)]/50 hover:bg-[var(--sh-card-base)] rounded p-3 flex-wrap transition">
-                <div className="flex items-center gap-3 min-w-0 flex-1">
-                  <div className="w-10 h-10 rounded bg-shAccent/15 text-shAccent grid place-items-center shrink-0">
-                    <i className="fas fa-video"/>
-                  </div>
-                  <div className="text-xs min-w-0">
-                    <div className="font-black text-shText uppercase truncate">
-                      {c.dog_name || "—"}
-                      <span className="text-shTextMuted font-normal normal-case"> · {c.client_name || "—"}</span>
-                    </div>
-                    <div className="mt-1 flex flex-wrap items-center gap-2">
-                      <span className="text-shTextMuted truncate max-w-[260px]">{c.lesson_name || "Checkpoint"}</span>
-                      {c.submitted_at && (
-                        <span className="text-shTextMuted">submitted <span className="font-black text-shText">{new Date(c.submitted_at).toLocaleString()}</span></span>
-                      )}
-                    </div>
-                  </div>
+        <NeonEdge accentRgb="242,101,34" intensity="standard" className="overflow-hidden" data-testid="pending-checkpoint-reviews">
+          <div className="p-5 sm:p-6">
+            <div className="flex items-start justify-between mb-4 gap-4 flex-wrap">
+              <div className="flex items-center gap-3">
+                <div className="w-11 h-11 rounded-xl bg-shAccent/12 border border-shAccent/25 text-shAccent grid place-items-center shadow-[0_0_24px_rgba(242,101,34,0.10)]">
+                  <i className="fas fa-video"/>
                 </div>
-                <i className="fas fa-chevron-right text-shTextMuted shrink-0"/>
+                <div>
+                  <p className="text-[10px] font-black uppercase tracking-[0.18em] text-shAccent">Online School · Trainer desk</p>
+                  <h3 className="sh-display text-xl text-shText mt-0.5">Checkpoint Reviews</h3>
+                  <p className="text-[11px] text-shTextMuted mt-1">{pendingCheckpoints.length} student{pendingCheckpoints.length === 1 ? "" : "s"} waiting for your review</p>
+                </div>
+              </div>
+              <button onClick={() => setCheckpointQueueOpen(true)}
+                      data-testid="open-checkpoint-queue"
+                      className="rounded-xl px-4 py-2.5 bg-shAccent text-[#080b12] text-[11px] font-black uppercase tracking-[0.12em] hover:brightness-110 transition shadow-[0_0_24px_rgba(242,101,34,0.14)]">
+                Review Queue <i className="fas fa-arrow-right ml-1.5"/>
               </button>
-            ))}
-            {pendingCheckpoints.length > 5 && (
-              <p className="text-[12px] text-shTextMuted italic px-1">
-                + {pendingCheckpoints.length - 5} more in the queue
-              </p>
-            )}
+            </div>
+            <div className="grid gap-2">
+              {pendingCheckpoints.slice(0, 5).map(c => (
+                <button key={c.id} type="button" onClick={() => setCheckpointQueueOpen(true)}
+                        data-testid={`pending-checkpoint-${c.id}`}
+                        className="group w-full text-left flex items-center justify-between gap-3 bg-white/[0.025] hover:bg-shAccent/[0.055] border border-shBorder/50 hover:border-shAccent/25 rounded-xl p-3.5 transition">
+                  <div className="flex items-center gap-3 min-w-0 flex-1">
+                    <HuskyDogImage name={c.dog_name} className="w-11 h-11 rounded-xl object-cover bg-black/30 border border-shBorder/60 shrink-0"/>
+                    <div className="min-w-0">
+                      <div className="font-black text-shText text-sm truncate">{c.dog_name || "—"}</div>
+                      <div className="text-[11px] text-shTextMuted truncate">{c.client_name || "—"} · {c.lesson_name || "Checkpoint"}</div>
+                      {c.submitted_at && <div className="text-[10px] text-shAccent/80 mt-1">Submitted {new Date(c.submitted_at).toLocaleString()}</div>}
+                    </div>
+                  </div>
+                  <span className="w-8 h-8 rounded-lg border border-shBorder/60 grid place-items-center text-shTextMuted group-hover:text-shAccent group-hover:border-shAccent/30 transition shrink-0"><i className="fas fa-chevron-right text-[10px]"/></span>
+                </button>
+              ))}
+              {pendingCheckpoints.length > 5 && <p className="text-[11px] text-shTextMuted px-1 pt-1">+ {pendingCheckpoints.length - 5} more awaiting review</p>}
+            </div>
           </div>
-        </div>
+        </NeonEdge>
       )}
 
       {trainerAssistCases.filter(c => c.trainer_assist_status !== "completed").length > 0 && (
-        <div className="rounded-xl p-5 shadow-xl bg-purple-500/10 border border-purple-400/40" data-testid="trainer-assist-tile">
-          <div className="flex items-center justify-between mb-3 gap-3 flex-wrap">
-            <h3 className="text-xs font-black text-purple-300 uppercase tracking-widest flex items-center gap-2">
-              <i className="fas fa-handshake"/> Trainer Assist · Students Needing Help · {trainerAssistCases.filter(c => c.trainer_assist_status !== "completed").length}
-            </h3>
-            <button onClick={() => setTrainerAssistQueueOpen(true)}
-                    data-testid="open-trainer-assist-queue"
-                    className="text-[11px] font-black uppercase tracking-widest text-purple-300 hover:text-shText border border-purple-400/40 hover:border-purple-400 rounded px-3 py-1.5">
-              Open Trainer Assist <i className="fas fa-arrow-right ml-1"/>
-            </button>
-          </div>
-          <div className="space-y-2">
-            {trainerAssistCases.filter(c => c.trainer_assist_status !== "completed").slice(0, 5).map(c => (
-              <button key={c.id} type="button" onClick={() => setTrainerAssistQueueOpen(true)}
-                      data-testid={`trainer-assist-tile-item-${c.id}`}
-                      className="w-full text-left flex items-center justify-between gap-3 bg-[var(--sh-card-base)]/50 hover:bg-[var(--sh-card-base)] rounded p-3 flex-wrap transition">
-                <div className="flex items-center gap-3 min-w-0 flex-1">
-                  <div className="w-10 h-10 rounded bg-purple-500/15 text-purple-300 grid place-items-center shrink-0">
-                    <i className="fas fa-handshake"/>
-                  </div>
-                  <div className="text-xs min-w-0">
-                    <div className="font-black text-shText uppercase truncate">
-                      {c.dog_name || "—"}
-                      <span className="text-shTextMuted font-normal normal-case"> · {c.client_name || "—"}</span>
-                    </div>
-                    <div className="mt-1 flex flex-wrap items-center gap-2">
-                      <span className="text-shTextMuted truncate max-w-[260px]">{c.lesson_name || "Checkpoint"}</span>
-                    </div>
-                  </div>
+        <NeonEdge accentRgb="168,85,247" intensity="standard" className="overflow-hidden bg-purple-500/10 border border-purple-400/40" data-testid="trainer-assist-tile">
+          <div className="p-5 sm:p-6">
+            <div className="flex items-start justify-between mb-4 gap-4 flex-wrap">
+              <div className="flex items-center gap-3">
+                <div className="w-11 h-11 rounded-xl bg-purple-500/12 border border-purple-400/25 text-purple-300 grid place-items-center shadow-[0_0_24px_rgba(168,85,247,0.12)]">
+                  <i className="fas fa-handshake"/>
                 </div>
-                <i className="fas fa-chevron-right text-shTextMuted shrink-0"/>
+                <div>
+                  <p className="text-[10px] font-black uppercase tracking-[0.18em] text-purple-300">Online School · Human support</p>
+                  <h3 className="sh-display text-xl text-shText mt-0.5">Trainer Assist</h3>
+                  <p className="text-[11px] text-shTextMuted mt-1">{trainerAssistCases.filter(c => c.trainer_assist_status !== "completed").length} student{trainerAssistCases.filter(c => c.trainer_assist_status !== "completed").length === 1 ? "" : "s"} need a human handoff</p>
+                </div>
+              </div>
+              <button onClick={() => setTrainerAssistQueueOpen(true)}
+                      data-testid="open-trainer-assist-queue"
+                      className="rounded-xl px-4 py-2.5 bg-purple-500 text-white text-[11px] font-black uppercase tracking-[0.12em] hover:bg-purple-400 transition shadow-[0_0_24px_rgba(168,85,247,0.16)]">
+                Open Trainer Assist <i className="fas fa-arrow-right ml-1.5"/>
               </button>
-            ))}
+            </div>
+            <div className="grid gap-2">
+              {trainerAssistCases.filter(c => c.trainer_assist_status !== "completed").slice(0, 5).map(c => (
+                <button key={c.id} type="button" onClick={() => setTrainerAssistQueueOpen(true)}
+                        data-testid={`trainer-assist-tile-item-${c.id}`}
+                        className="group w-full text-left flex items-center justify-between gap-3 bg-white/[0.025] hover:bg-purple-500/[0.055] border border-shBorder/50 hover:border-purple-400/25 rounded-xl p-3.5 transition">
+                  <div className="flex items-center gap-3 min-w-0 flex-1">
+                    <HuskyDogImage name={c.dog_name} className="w-11 h-11 rounded-xl object-cover bg-black/30 border border-shBorder/60 shrink-0"/>
+                    <div className="min-w-0">
+                      <div className="font-black text-shText text-sm truncate">{c.dog_name || "—"}</div>
+                      <div className="text-[11px] text-shTextMuted truncate">{c.client_name || "—"} · {c.lesson_name || "Checkpoint"}</div>
+                    </div>
+                  </div>
+                  <span className="w-8 h-8 rounded-lg border border-shBorder/60 grid place-items-center text-shTextMuted group-hover:text-purple-300 group-hover:border-purple-400/30 transition shrink-0"><i className="fas fa-chevron-right text-[10px]"/></span>
+                </button>
+              ))}
+            </div>
           </div>
-        </div>
+        </NeonEdge>
       )}
 
       {pendingVax.length > 0 && (
-        <div className="card-info rounded-xl p-5 shadow-xl" data-testid="pending-vax-reviews">
+        <div className="bg-shSecondary/5 border border-shSecondary/25 rounded-xl p-5 shadow-xl" data-testid="pending-vax-reviews">
           <div className="flex items-center justify-between mb-3">
             <h3 className="text-xs font-black text-shSecondary uppercase tracking-widest flex items-center gap-2">
               <i className="fas fa-file-medical"/> Pending Vaccine Reviews · {pendingVax.length}
@@ -512,7 +502,7 @@ export default function Dashboard({ onNavigate = () => {}, onJumpToDog = () => {
       )}
 
       {quoteRequests.length > 0 && (
-        <div className="card-info rounded-xl p-5 shadow-xl" data-testid="quote-requests-panel">
+        <div className="bg-shSecondary/5 border border-shSecondary/25 rounded-xl p-5 shadow-xl" data-testid="quote-requests-panel">
           <div className="flex items-center justify-between mb-3 flex-wrap gap-2">
             <h3 className="text-xs font-black text-shPrimary uppercase tracking-widest flex items-center gap-2">
               <i className="fas fa-envelope-open-text"/> Quote Requests · {quoteRequests.length}
@@ -553,7 +543,7 @@ export default function Dashboard({ onNavigate = () => {}, onJumpToDog = () => {
       )}
 
       {(stats.first_time_bookings_today || []).length > 0 && (
-        <div className="card-success rounded-xl p-5 shadow-xl" data-testid="first-booking-banner">
+        <div className="bg-shPrimary/5 border border-shPrimary/25 rounded-xl p-5 shadow-xl" data-testid="first-booking-banner">
           <h3 className="text-xs font-black text-shPrimary uppercase tracking-widest flex items-center gap-2 mb-3">
             <i className="fas fa-party-horn"/> First Booking Celebration · {stats.first_time_bookings_today.length}
           </h3>
@@ -573,7 +563,7 @@ export default function Dashboard({ onNavigate = () => {}, onJumpToDog = () => {
       )}
 
       {(stats.upcoming_birthdays || []).length > 0 && (
-        <div className="card-info rounded-xl p-5 shadow-xl" data-testid="birthday-banner">
+        <div className="bg-shSecondary/5 border border-shSecondary/25 rounded-xl p-5 shadow-xl" data-testid="birthday-banner">
           <h3 className="text-xs font-black text-shPrimary uppercase tracking-widest flex items-center gap-2 mb-3"><i className="fas fa-cake-candles"/> Upcoming Birthdays · {stats.upcoming_birthdays.length}</h3>
           <div className="flex flex-wrap gap-2">
             {stats.upcoming_birthdays.map(b => (
@@ -594,8 +584,8 @@ export default function Dashboard({ onNavigate = () => {}, onJumpToDog = () => {
         else if (t === "open_screen" && it.cta.screen) onNavigate(it.cta.screen);
         else if (t === "send_monday_digest") {
           api.post("/admin/homework/send-monday-digest")
-            .then(() => alert("Monday digest fired — check your admin email."))
-            .catch((e) => alert("Failed to send: " + (e.response?.data?.detail || e.message)));
+            .then(() => toast.success("Monday digest sent — check your admin email."))
+            .catch((e) => toast.error("Failed to send: " + (e.response?.data?.detail || e.message)));
         }
       }} />
 
@@ -605,9 +595,9 @@ export default function Dashboard({ onNavigate = () => {}, onJumpToDog = () => {
 
       {(widgetOn("daycare_stats") || widgetOn("boarding_stats") || widgetOn("total_dogs")) && (
       <div className="grid grid-cols-3 gap-3 md:gap-6">
-        {widgetOn("daycare_stats")  && <StatCard label="Daycare Today" value={`${stats.daycare_occupancy} / ${stats.daycare_capacity}`} accent="border-t-shSecondary" gradClass="card-stats"    textColor="text-shText" testId="stat-daycare" onClick={()=>onNavigate("schedule")} />}
-        {widgetOn("boarding_stats") && <StatCard label="Boarding Today" value={stats.boarding_today}   accent="border-t-shPrimary"  gradClass="card-stats"    textColor="text-shPrimary" testId="stat-boarding" onClick={()=>onNavigate("schedule")} />}
-        {widgetOn("total_dogs")     && <StatCard label="Total Dogs"    value={stats.total_dogs}      accent="border-t-bgHover"  gradClass="card-stats"             textColor="text-shText" testId="stat-dogs" onClick={()=>onNavigate("dogs")} />}
+        {widgetOn("daycare_stats")  && <StatCard label="Daycare Today" value={`${stats.daycare_occupancy} / ${stats.daycare_capacity}`} accent="border-t-shSecondary"  textColor="text-shText" testId="stat-daycare" onClick={()=>onNavigate("schedule")} />}
+        {widgetOn("boarding_stats") && <StatCard label="Boarding Today" value={stats.boarding_today}   accent="border-t-shPrimary"   textColor="text-shPrimary" testId="stat-boarding" onClick={()=>onNavigate("schedule")} />}
+        {widgetOn("total_dogs")     && <StatCard label="Total Dogs"    value={stats.total_dogs}      accent="border-t-bgHover"            textColor="text-shText" testId="stat-dogs" onClick={()=>onNavigate("dogs")} />}
       </div>
       )}
 
@@ -947,7 +937,7 @@ function TodayPnlTile({ data, expanded, onToggle, onNavStaff, onRefresh }) {
   const fmt = (n) => `${n < 0 ? "-" : ""}$${Math.abs(Number(n)||0).toFixed(2)}`;
   const isProfit = data.net >= 0;
   const revenueMethods = [
-    ["cash", "Cash"], ["clover", "Clover / Card"], ["venmo", "Venmo"],
+    ["cash", "Cash"], ["card", "Card / Card"], ["venmo", "Venmo"],
     ["paypal", "PayPal"], ["check", "Check"],
     ["venmo_paypal", "Venmo / PayPal (legacy)"], ["other", "Other"],
   ].filter(([key]) => Math.abs(Number(data.revenue_by_method?.[key] || 0)) >= 0.005);
@@ -1067,8 +1057,8 @@ function TodayPnlTile({ data, expanded, onToggle, onNavStaff, onRefresh }) {
   );
 }
 
-function StatCard({ label, value, accent, gradClass = "", textColor, testId, onClick }) {
-  const base = `bg-[var(--sh-card-base)] ${gradClass} p-6 rounded-xl border-t-4 ${accent} shadow-lg text-left w-full transition`;
+function StatCard({ label, value, accent, textColor, testId, onClick }) {
+  const base = `bg-[var(--sh-card-base)] border border-shBorder p-6 rounded-xl border-t-4 ${accent} shadow-lg text-left w-full transition`;
   if (onClick) {
     return (
       <button
@@ -1097,15 +1087,15 @@ function StatCard({ label, value, accent, gradClass = "", textColor, testId, onC
 
 function DashHeroTile({ icon, color, label, value }) {
   return (
-    <div className="bg-[var(--sh-card-base)]/60 backdrop-blur border border-shBorder rounded-lg px-3 py-2 flex items-center gap-3 min-w-[150px]"
+    <div className="min-w-0 sm:min-w-[150px] rounded-xl border border-shBorder/70 bg-black/20 px-3 py-2.5 flex items-center gap-3"
          data-testid={`dash-hero-tile-${label.replace(/\s+/g,'-').toLowerCase()}`}>
-      <div className="w-9 h-9 rounded grid place-items-center shrink-0"
-           style={{ backgroundColor: `${color}22`, color }}>
+      <div className="w-9 h-9 rounded-lg grid place-items-center shrink-0 border border-white/5"
+           style={{ backgroundColor: `${color}18`, color }}>
         <i className={`fas ${icon}`}/>
       </div>
       <div className="min-w-0">
-        <p className="text-[10px] font-black uppercase tracking-widest text-shTextMuted leading-none">{label}</p>
-        <p className="text-xl font-black text-shText leading-tight mt-0.5">{value}</p>
+        <p className="text-[10px] font-bold text-shTextMuted leading-none truncate">{label}</p>
+        <p className="text-xl font-black text-shText leading-tight mt-1">{value}</p>
       </div>
     </div>
   );

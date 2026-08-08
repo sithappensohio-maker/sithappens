@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { api } from "../lib/api";
 import { toast } from "sonner";
+import PageHero from "../components/PageHero";
 
 const STATUS_PILLS = {
   open:     { label: "Open",     cls: "bg-shPrimary/15 text-shPrimary" },
@@ -106,9 +107,17 @@ export default function ClientMessages() {
   };
 
   return (
-    <div className="h-full flex flex-col gap-3" data-testid="admin-messages-screen">
+    <div className="h-full flex flex-col gap-3 sh-messages-workspace" data-testid="admin-messages-screen">
+      <PageHero
+        compact
+        eyebrow={{ icon: "fa-comments", text: "Client communication", color: "text-shSecondary" }}
+        title="Messages."
+        highlight="One conversation at a time."
+        subtitle="Client threads, internal notes, and follow-up state in one inbox."
+        testid="messages-hero"
+      />
       {/* Header */}
-      <div className="bg-[var(--sh-card-base)] rounded-xl border border-shBorder p-4 space-y-3">
+      <div className="sh-messages-toolbar space-y-3">
         <div className="flex items-center justify-between gap-3 flex-wrap">
           <p className="text-xs font-black text-shText uppercase tracking-widest">
             <i className="fas fa-inbox mr-2 text-shPrimary"/>Client Messages
@@ -151,9 +160,9 @@ export default function ClientMessages() {
         </div>
       </div>
 
-      <div className="grid grid-cols-1 lg:grid-cols-3 gap-3 flex-1 min-h-0">
+      <div className="grid grid-cols-1 lg:grid-cols-[minmax(300px,0.9fr)_minmax(0,2.1fr)] gap-3 flex-1 min-h-0 sh-messages-grid">
         {/* Thread list */}
-        <div className="bg-[var(--sh-card-base)] rounded-xl border border-shBorder overflow-y-auto" data-testid="admin-messages-list">
+        <div className="sh-messages-list overflow-y-auto" data-testid="admin-messages-list">
           {threads.length === 0 && (
             <p className="text-[13px] text-shTextMuted p-5 text-center">No client messages match.</p>
           )}
@@ -188,7 +197,7 @@ export default function ClientMessages() {
         </div>
 
         {/* Active thread */}
-        <div className="lg:col-span-2 bg-[var(--sh-card-base)] rounded-xl border border-shBorder overflow-y-auto flex flex-col" data-testid="admin-messages-active">
+        <div className="sh-messages-detail overflow-y-auto flex flex-col" data-testid="admin-messages-active">
           {!active && <p className="text-[13px] text-shTextMuted p-8 text-center">Select a thread to view the conversation.</p>}
           {active && (
             <>

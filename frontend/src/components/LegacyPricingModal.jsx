@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { api, formatErr } from "../lib/api";
 import { useEditLock } from "../lib/useLiveRefresh";
+import { useConfirm } from "../lib/useConfirm";
 
 // Sprint 110am — Per-client price overrides ("Client-Specific Pricing").
 // Admins use this to lock an individual client into a fixed final price for
@@ -305,6 +306,7 @@ function BulkApplyFlow({ services, packs, onCancel, onSave, err }) {
 }
 
 export default function LegacyPricingModal({ client, onClose }) {
+  const confirm = useConfirm();
   useEditLock(true);
   const [overrides, setOverrides] = useState([]);
   const [services, setServices] = useState([]);
@@ -382,11 +384,12 @@ export default function LegacyPricingModal({ client, onClose }) {
   };
 
   const revoke = async (row) => {
-    const ok = window.confirm(
-      `Return "${row.target_name}" to standard pricing?\n\n` +
-      `This client will immediately pay the current public price (${money(row.list_price)}) on their next purchase. ` +
-      `This override's history is kept, not deleted. Nothing about past bookings, orders, payments, or credit lots changes.`
-    );
+    const ok = await confirm({
+      title: `Return ${row.target_name} to standard pricing?`,
+      body: `This client will immediately pay the current public price (${money(row.list_price)}) on their next purchase. This override's history is kept, not deleted. Nothing about past bookings, orders, payments, or credit lots changes.`,
+      confirmText: "Return to standard",
+      tone: "warning",
+    });
     if (!ok) return;
     try {
       await api.delete(`/price-overrides/${row.id}`);

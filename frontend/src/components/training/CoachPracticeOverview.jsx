@@ -1,33 +1,32 @@
-// Client Practice Coach upgrade — Screens 2-3 of the approved client flow
-// (03_CLIENT_FLOW.md): practice time / Quick Practice / Today's Goal /
-// Success Today / Encouragement / Before You Start / Pro Tip / How It
-// Works steps / Good Rep-Not This / troubleshooting quick link / Start
-// Guided Practice. Renders entirely from practice_coach — no
-// exercise-specific content of its own.
+// Client Practice Coach overview. All behavior/data remains driven by the
+// authored practice_coach object; only presentation changed.
 import { useState } from "react";
 import SetupChecklist from "./SetupChecklist";
 import GoodRepNotThisCards from "./GoodRepNotThisCards";
+import HuskyDogImage from "../brand/HuskyDogImage";
+import PremiumButton from "../premium/PremiumButton";
+import SectionCard from "../premium/SectionCard";
 import { renderPracticeCoachText, practiceTimeLabel } from "../../lib/practiceCoachPolish";
 
 function StepRow({ step, index, tokens, testid }) {
   const [open, setOpen] = useState(false);
   const hasDetail = !!step.media_url;
   return (
-    <div className="bg-black/20 border border-shBorder rounded-lg" data-testid={testid}>
+    <div className="rounded-2xl border border-shBorder/50 bg-black/12 overflow-hidden" data-testid={testid}>
       <button type="button" onClick={() => hasDetail && setOpen(o => !o)}
-              className="w-full flex items-start gap-2.5 px-3 py-2.5 text-left">
-        <span className="w-5 h-5 rounded-full bg-shSecondary/20 text-shSecondary text-[11px] font-black flex items-center justify-center shrink-0 mt-0.5">
+              className="w-full flex items-start gap-3 px-3.5 py-3.5 sm:px-4 text-left hover:bg-white/[0.02] transition">
+        <span className="w-8 h-8 rounded-xl bg-shSecondary/12 border border-shSecondary/30 text-shSecondary text-[12px] font-black grid place-items-center shrink-0">
           {index + 1}
         </span>
         <span className="min-w-0 flex-1">
-          <p className="text-[12px] font-black text-shText">{renderPracticeCoachText(step.title, tokens)}</p>
-          <p className="text-[11px] text-shTextMuted">{renderPracticeCoachText(step.instruction, tokens)}</p>
+          <p className="text-[13px] sm:text-[14px] font-black text-shText leading-tight">{renderPracticeCoachText(step.title, tokens)}</p>
+          <p className="text-[12px] text-shTextMuted leading-relaxed mt-1">{renderPracticeCoachText(step.instruction, tokens)}</p>
         </span>
-        {hasDetail && <i className={`fas fa-chevron-${open ? "up" : "down"} text-shTextMuted text-[10px] mt-1 shrink-0`}/>}
+        {hasDetail && <i className={`fas fa-chevron-${open ? "up" : "down"} text-shTextMuted text-[10px] mt-2 shrink-0`}/>} 
       </button>
       {open && hasDetail && (
-        <div className="px-3 pb-3">
-          <img src={step.media_url} alt="" className="w-full rounded-md border border-shBorder/60"/>
+        <div className="px-3.5 pb-3.5 sm:px-4 sm:pb-4">
+          <img src={step.media_url} alt="" className="w-full rounded-xl border border-shBorder/50"/>
         </div>
       )}
     </div>
@@ -38,54 +37,66 @@ export default function CoachPracticeOverview({
   practiceCoach, tokens, dogPhoto, onStartGuided, onQuickPractice, onOpenTroubleshooting, testid,
 }) {
   const pc = practiceCoach || {};
+  const dogName = tokens?.dog_name || "Your dog";
   return (
-    <div className="space-y-4" data-testid={testid}>
-      <div className="flex items-center justify-between gap-2">
-        <div className="flex items-center gap-1.5 text-shTextMuted text-[11px] font-bold" data-testid={testid ? `${testid}-time` : undefined}>
-          <i className="fas fa-clock"/>{practiceTimeLabel(pc.schedule) || "Today's practice"}
+    <div className="space-y-4 sm:space-y-5" data-testid={testid}>
+      <section className="relative overflow-hidden rounded-3xl border border-shSecondary/30 bg-gradient-to-br from-shSecondary/[0.085] via-black/20 to-black/35 min-h-[250px] sm:min-h-[280px]">
+        <div className="absolute -right-12 -top-12 w-56 h-56 rounded-full bg-shSecondary/10 blur-3xl pointer-events-none"/>
+        <div className="grid sm:grid-cols-[1.25fr_0.75fr] min-h-[250px] sm:min-h-[280px]">
+          <div className="relative z-10 p-5 sm:p-6 flex flex-col justify-center order-2 sm:order-1">
+            <div className="flex items-center gap-2 text-shSecondary text-[10px] font-black uppercase tracking-[0.14em] mb-3" data-testid={testid ? `${testid}-time` : undefined}>
+              <i className="fas fa-clock"/>{practiceTimeLabel(pc.schedule) || "Today's practice"}
+            </div>
+            <p className="text-[10px] font-black uppercase tracking-[0.15em] text-shPrimary mb-1.5"><i className="fas fa-bullseye mr-1.5"/>Today&apos;s Goal</p>
+            <h3 className="text-[22px] sm:text-[28px] font-black text-white leading-tight max-w-xl">{renderPracticeCoachText(pc.goal, tokens)}</h3>
+            {pc.success_today && (
+              <p className="text-[12px] sm:text-[13px] text-shTextMuted mt-3 leading-relaxed"><span className="font-black text-shText">Success today: </span>{renderPracticeCoachText(pc.success_today, tokens)}</p>
+            )}
+            {pc.encouragement && <p className="text-[11px] sm:text-[12px] text-shTextMuted mt-2 italic">{renderPracticeCoachText(pc.encouragement, tokens)}</p>}
+            <div className="flex flex-col sm:flex-row gap-2.5 mt-5">
+              {onStartGuided && (
+                <PremiumButton onClick={onStartGuided} data-testid={testid ? `${testid}-start-guided` : undefined} className="justify-center min-h-[48px] sm:min-w-[220px]">
+                  <i className="fas fa-play text-[10px]"/>Start Guided Practice
+                </PremiumButton>
+              )}
+              {onQuickPractice && (
+                <PremiumButton variant="secondary" onClick={onQuickPractice} data-testid={testid ? `${testid}-quick-practice` : undefined} className="justify-center min-h-[48px]">
+                  <i className="fas fa-bolt text-[10px]"/>Quick Practice
+                </PremiumButton>
+              )}
+            </div>
+          </div>
+          <div className="relative h-[170px] sm:h-auto order-1 sm:order-2 overflow-hidden border-b sm:border-b-0 sm:border-l border-shSecondary/20">
+            <div className="absolute inset-0 bg-gradient-to-t sm:bg-gradient-to-l from-[var(--sh-card-base)] via-transparent to-transparent z-10 pointer-events-none"/>
+            <HuskyDogImage src={dogPhoto} name={dogName} alt={dogName} className="absolute inset-0 w-full h-full object-cover object-top"/>
+            <div className="absolute left-4 bottom-4 z-20 px-3 py-1.5 rounded-lg bg-black/60 backdrop-blur border border-white/10 text-white text-[11px] font-black">{dogName}</div>
+          </div>
         </div>
-        {onQuickPractice && (
-          <button type="button" onClick={onQuickPractice} data-testid={testid ? `${testid}-quick-practice` : undefined}
-                  className="flex items-center gap-1.5 bg-shSecondary/15 text-shSecondary border border-shSecondary/40 rounded-lg px-2.5 py-1.5 text-[11px] font-black uppercase tracking-widest">
-            <i className="fas fa-bolt"/>Quick Practice
-          </button>
-        )}
-      </div>
-
-      <div className="flex items-start gap-3">
-        <div className="min-w-0 flex-1 space-y-1.5">
-          <p className="text-[10px] font-black uppercase tracking-widest text-shPrimary flex items-center gap-1.5">
-            <i className="fas fa-bullseye"/>Today&apos;s Goal
-          </p>
-          <p className="text-[16px] font-black text-shText leading-snug">{renderPracticeCoachText(pc.goal, tokens)}</p>
-          {pc.success_today && (
-            <p className="text-[12px] text-shTextMuted">
-              <span className="font-black text-shText">Success today = </span>{renderPracticeCoachText(pc.success_today, tokens)}
-            </p>
-          )}
-          {pc.encouragement && <p className="text-[11px] text-shTextMuted italic">{renderPracticeCoachText(pc.encouragement, tokens)}</p>}
-        </div>
-        {dogPhoto && <img src={dogPhoto} alt="" className="w-16 h-16 rounded-lg object-cover border border-shBorder shrink-0"/>}
-      </div>
+      </section>
 
       {(pc.setup_items || []).length > 0 && (
-        <div>
-          <p className="text-[11px] font-black uppercase tracking-widest text-shTextMuted mb-1.5">Before You Start</p>
+        <SectionCard accent="cyan" intensity="subtle">
+          <p className="text-[10px] font-black uppercase tracking-[0.15em] text-shSecondary mb-3">Before You Start</p>
           <SetupChecklist items={pc.setup_items} tokens={tokens} testid={testid ? `${testid}-setup` : undefined}/>
-        </div>
+        </SectionCard>
       )}
 
       {pc.pro_tip && (
-        <div className="bg-shPrimary/10 border border-shPrimary/30 rounded-lg p-2.5 flex items-start gap-2">
-          <i className="fas fa-lightbulb text-shPrimary text-[13px] mt-0.5 shrink-0"/>
-          <p className="text-[12px] text-shText"><span className="font-black">Pro tip: </span>{renderPracticeCoachText(pc.pro_tip, tokens)}</p>
-        </div>
+        <SectionCard accent="lime" intensity="subtle">
+          <div className="flex items-start gap-3">
+            <span className="w-9 h-9 rounded-xl bg-shPrimary/12 border border-shPrimary/30 grid place-items-center shrink-0"><i className="fas fa-lightbulb text-shPrimary text-[12px]"/></span>
+            <p className="text-[12px] sm:text-[13px] text-shText leading-relaxed"><span className="font-black text-shPrimary">Pro tip: </span>{renderPracticeCoachText(pc.pro_tip, tokens)}</p>
+          </div>
+        </SectionCard>
       )}
 
       {(pc.steps || []).length > 0 && (
         <div>
-          <p className="text-[11px] font-black uppercase tracking-widest text-shTextMuted mb-1.5">How It Works</p>
-          <div className="space-y-1.5">
+          <div className="flex items-end justify-between gap-3 mb-2.5">
+            <div><p className="text-[10px] font-black uppercase tracking-[0.15em] text-shTextMuted">How It Works</p><p className="text-[13px] text-shTextMuted mt-0.5">Keep it simple and move one rep at a time.</p></div>
+            <span className="text-[10px] font-black text-shSecondary shrink-0">{pc.steps.length} step{pc.steps.length === 1 ? "" : "s"}</span>
+          </div>
+          <div className="space-y-2.5">
             {pc.steps.map((step, i) => (
               <StepRow key={step.id} step={step} index={i} tokens={tokens} testid={testid ? `${testid}-step-${step.id}` : undefined}/>
             ))}
@@ -97,16 +108,9 @@ export default function CoachPracticeOverview({
 
       {onOpenTroubleshooting && (pc.troubleshooting || []).length > 0 && (
         <button type="button" onClick={onOpenTroubleshooting} data-testid={testid ? `${testid}-troubleshooting-link` : undefined}
-                className="w-full text-left bg-black/20 border border-shBorder rounded-lg px-3 py-2.5 text-[12px] font-bold text-shSecondary flex items-center justify-between">
-          What if {renderPracticeCoachText("{{dog_name}}", tokens) || "your dog"} doesn&apos;t...?
-          <i className="fas fa-chevron-right text-[10px]"/>
-        </button>
-      )}
-
-      {onStartGuided && (
-        <button type="button" onClick={onStartGuided} data-testid={testid ? `${testid}-start-guided` : undefined}
-                className="w-full bg-shPrimary text-bgHeader rounded-lg py-3 font-black text-[13px] uppercase tracking-widest shadow">
-          <i className="fas fa-play mr-1.5"/>Start Guided Practice
+                className="w-full text-left rounded-2xl border border-shBorder/55 bg-black/15 px-4 py-3.5 text-[12px] font-bold text-shSecondary flex items-center justify-between gap-3 hover:border-shSecondary/35 hover:bg-shSecondary/[0.035] transition min-h-[48px]">
+          <span><i className="fas fa-circle-question mr-2"/>What if {renderPracticeCoachText("{{dog_name}}", tokens) || "your dog"} doesn&apos;t...?</span>
+          <i className="fas fa-chevron-right text-[10px] shrink-0"/>
         </button>
       )}
     </div>

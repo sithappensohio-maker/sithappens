@@ -113,13 +113,13 @@ _capacity_lock_ctx = contextvars.ContextVar("capacity_lock_context", default=Non
 # Canonical methods for the new POS-style register. Legacy values are still
 # accepted so old clients, old frontend builds, and historical records do not
 # break; reports group them into the clean labels Garrett actually uses.
-REGISTER_METHOD_ORDER = ["cash", "check", "venmo", "paypal", "clover", "venmo_paypal", "stripe_online", "other"]
+REGISTER_METHOD_ORDER = ["cash", "check", "venmo", "paypal", "card", "venmo_paypal", "stripe_online", "other"]
 REGISTER_METHOD_LABELS = {
     "cash": "Cash",
     "check": "Check",
     "venmo": "Venmo",
     "paypal": "PayPal",
-    "clover": "Clover / Credit Card",
+    "card": "Card",
     "venmo_paypal": "Venmo / PayPal (legacy transfer)",
     "stripe_online": "Online Card (Stripe)",
     "credits": "Credits",
@@ -136,8 +136,8 @@ def _normalize_payment_method(method: Optional[str], *, store: bool = False) -> 
     m = (method or "").strip().lower().replace(" ", "_").replace("-", "_")
     if m in ("stripe_online", "stripe"):
         return "stripe_online"
-    if m in ("credit", "credit_card", "cc", "clover", "card", "cards"):
-        return "clover"
+    if m in ("credit", "credit_card", "cc", "card", "cards"):
+        return "card"
     if m in ("venmo",):
         return "venmo"
     if m in ("paypal", "pay_pal"):
@@ -827,13 +827,13 @@ class BookingOut(BaseModel):
     service_name: Optional[str] = None
     actual_price: Optional[float] = None
     payment_status: Optional[Literal["unpaid", "paid", "paid_partial", "refunded", "comped"]] = None
-    payment_method: Optional[Literal["cash", "card", "transfer", "venmo", "paypal", "clover", "credits", "check", "other"]] = None
+    payment_method: Optional[Literal["cash", "card", "transfer", "venmo", "paypal", "credits", "check", "other"]] = None
     # Mixed credits+cash checkout stores the real tender for the cash
     # portion here (payment_method itself stays "credits") — already used
     # internally for register/P&L tender resolution; exposed here so API
     # consumers (tests, future UI) can see it too, without changing any
     # pricing/money computation.
-    cash_payment_method: Optional[Literal["cash", "card", "transfer", "venmo", "paypal", "clover", "check", "other"]] = None
+    cash_payment_method: Optional[Literal["cash", "card", "transfer", "venmo", "paypal", "check", "other"]] = None
     paid_at: Optional[str] = None
     # Sprint 110di-51 — Partial-payment / tab support. When a booking is
     # checked out and the client only paid part of the bill, `amount_paid`
@@ -958,7 +958,7 @@ class CheckoutIn(BaseModel):
     callers (legacy clients) still work — defaults to the previous behaviour:
     use any pre-deducted credits, no add-ons, no payment-method override."""
     use_credits: Optional[bool] = True  # False → refund pre-deducted credits, charge instead
-    payment_method: Optional[Literal["cash", "card", "transfer", "venmo", "paypal", "clover", "credits", "check", "other"]] = None
+    payment_method: Optional[Literal["cash", "card", "transfer", "venmo", "paypal", "credits", "check", "other"]] = None
     # "paid_partial" is an explicit CALLER-asserted tab/partial intent (e.g.
     # the Dashboard checkout modal's "Partial / on tab" pill) — belt-and-
     # suspenders so a partial/tab checkout can never silently collapse into
@@ -1036,7 +1036,7 @@ class BookingFinancialAdjustmentIn(BaseModel):
 
 class BookingRefundIn(BaseModel):
     amount: float = Field(gt=0, le=100000)
-    payment_method: Literal["cash", "card", "transfer", "venmo", "paypal", "clover", "check", "other"]
+    payment_method: Literal["cash", "card", "transfer", "venmo", "paypal", "check", "other"]
     reason: str = Field(min_length=3, max_length=500)
     # Payment rebuild Phase 1 — optional so existing/legacy callers behave
     # exactly as before. When supplied, `_booking_refund_locked` atomically
@@ -1991,7 +1991,7 @@ async def _first_booking_created_for_clients(client_ids: List[str]) -> Dict[str,
 async def send_claim_emails_bulk(_: dict = Depends(require_admin)):
     """Send a claim email to EVERY client who has an email on file but no
     portal user yet. Designed for one-shot recovery after a data migration
-    (e.g. moving off Emergent) where login credentials weren't preserved.
+    (e.g. moving from an older hosted instance) where login credentials weren't preserved.
 
     Returns a per-client breakdown so the admin can see exactly who got an
     email, who was skipped (no email), and who errored."""
@@ -6894,10 +6894,9 @@ async def _send_partial_payment_receipt(
 
 def _map_booking_method_to_payment_method(method: Optional[str]) -> str:
     """Translate the existing register/reporting taxonomy (cash/check/venmo/
-    paypal/clover/other/credits) into the new, forward-looking Payment.method
-    enum. `clover` here is always the pre-existing MANUAL "Clover / Credit
-    Card" label (no processor integration exists) so it maps to "other" —
-    there is no Clover-specific Payment.method."""
+    paypal/card/other/credits) into the new, forward-looking Payment.method
+    enum. Generic manual `card` entries map to `other`; processor-backed card
+    payments use the explicit Stripe methods in Payment.method."""
     m = _normalize_payment_method(method, store=True) if method else "other"
     if m in ("cash", "check", "venmo", "paypal", "credits"):
         return m
@@ -7890,7 +7889,7 @@ class TabPaymentIn(BaseModel):
     physical cash — see the cash-specific fields below — so it participates
     in the exact same register/hardware rules as every other cash path."""
     amount: float = Field(gt=0)
-    method: Literal["cash", "card", "transfer", "venmo", "paypal", "clover", "credits", "check", "other"] = "cash"
+    method: Literal["cash", "card", "transfer", "venmo", "paypal", "credits", "check", "other"] = "cash"
     notes: Optional[str] = ""
     tendered_amount: Optional[float] = Field(default=None, ge=0)  # cash only
     workstation_id: Optional[str] = Field(default=None, max_length=100)
@@ -10427,7 +10426,7 @@ def _default_settings() -> dict:
         # underlying data.
         "dashboard_widgets": _default_dashboard_widgets(),
         # Sprint 110di-29 — Payment Options. Admin-curated list of how
-        # clients can pay (Venmo / PayPal / Clover / Cash / Check, plus
+        # clients can pay (Venmo / PayPal / Card / Cash / Check, plus
         # any custom rows). Displayed in the portal + post-booking
         # acknowledgement. Strictly informational — booking is NEVER
         # blocked on payment, no payment is processed. Manual Payment
@@ -10446,7 +10445,7 @@ def _default_payment_options() -> list:
     return [
         {"key": "venmo",  "label": "Venmo",  "enabled": False, "link": "", "instructions": "Open your Venmo app and send to the handle in the link."},
         {"key": "paypal", "label": "PayPal", "enabled": False, "link": "", "instructions": "Use the PayPal.me link — pick 'Friends & Family' if no fees should apply."},
-        {"key": "clover", "label": "Clover", "enabled": False, "link": "", "instructions": "Tap-to-pay or card-on-file via our Clover terminal at the front desk."},
+        {"key": "card", "label": "Card", "enabled": False, "link": "", "instructions": "Pay by card using the secure checkout option available for your purchase."},
         {"key": "cash",   "label": "Cash",   "enabled": False, "link": "", "instructions": "Pay exact change at drop-off if possible."},
         {"key": "check",  "label": "Check",  "enabled": False, "link": "", "instructions": "Made out to the business name. Memo line: dog's name."},
     ]
@@ -10854,12 +10853,10 @@ class SettingsIn(BaseModel):
     # Footer pill (Sprint 76)
     brand_footer_text: Optional[str] = None  # text shown in the bottom-right pill (default "Sit Happens")
     brand_footer_url: Optional[str] = None   # link target (default "" = no link, just text)
-    # Card gradients (Sprint 78) — colors auto-applied to semantic card surfaces
-    grad_hero_color: Optional[str] = None     # default #8cc63f — credit balance, dashboard hero stat
-    grad_info_color: Optional[str] = None     # default #00a9e0 — info banners, secondary stat tiles
-    grad_warning_color: Optional[str] = None  # default #f59e0b — vaccine expiring, low credits
-    grad_danger_color: Optional[str] = None   # default #ef4444 — vaccine missing, server errors
-    grad_success_color: Optional[str] = None  # default #8cc63f — approved bookings, trophies earned
+    # Unified card/interface chrome. The old per-card theme matrix was retired
+    # after the app-wide UI consolidation; one intensity choice now controls
+    # panel border/glow strength everywhere.
+    interface_style: Optional[Literal["subtle", "standard", "bold"]] = None
     # Sprint 105 — notification preferences
     email_per_step: Optional[bool] = None  # when True, fire an email on EVERY homework step completion (default False; daily roll-up is always on)
     # Sprint 110 — multi-dog household discount (auto-applied at check-out for
@@ -10890,11 +10887,7 @@ async def fetch_branding():
         "brand_font_family": s.get("brand_font_family") or "Inter",
         "brand_footer_text": s.get("brand_footer_text") or "Sit Happens",
         "brand_footer_url":  s.get("brand_footer_url")  or "",
-        "grad_hero_color":    s.get("grad_hero_color")    or "#8cc63f",
-        "grad_info_color":    s.get("grad_info_color")    or "#00a9e0",
-        "grad_warning_color": s.get("grad_warning_color") or "#f59e0b",
-        "grad_danger_color":  s.get("grad_danger_color")  or "#ef4444",
-        "grad_success_color": s.get("grad_success_color") or "#8cc63f",
+        "interface_style":   s.get("interface_style")   or "standard",
         # Sprint 110di-8 — expanded theme controls. Backgrounds / text /
         # buttons / forms / calendar+table. Defaults match the historical
         # Sit Happens palette; admins override via Settings → Brand & Theme.
@@ -10917,17 +10910,8 @@ async def fetch_branding():
         "theme_calendar_active":    s.get("theme_calendar_active")    or s.get("brand_primary") or "#8cc63f",
         "theme_table_hover":        s.get("theme_table_hover")        or "#1a225a",
         "theme_row_border":         s.get("theme_row_border")         or "#1a225a",
-        # Sprint 110di-13 — Card chrome lives entirely under
-        # `card_type_themes` (Default Card drives the global panel look).
-        # Legacy top-level card_border_*/card_glow_*/card_inner_highlight_*
-        # keys are no longer returned; any stale values in MongoDB are
-        # ignored harmlessly.
-        # Sprint 110di-12 — Card Type Themes. Each type maps to a reusable
-        # CSS class (.card-default/.card-info/.card-stats/etc.) so admins can
-        # recolor each category independently without touching every card.
-        # Merge with defaults so a partial PUT doesn't wipe types the admin
-        # didn't touch.
-        "card_type_themes":         {**_card_type_theme_defaults(), **(s.get("card_type_themes") or {})},
+        # Unified app-wide chrome. Old per-card theme blobs may still exist in
+        # historical Mongo settings, but are intentionally ignored.
         # Sprint 110dm — UI knobs surfaced for the front-end formatters.
         "splatter_intensity":      ui.get("splatter_intensity", "medium"),
         "primary_cta_copy":        ui.get("primary_cta_copy", "Book Now"),
@@ -11113,64 +11097,6 @@ def _validate_banner_cta_url(url: str) -> None:
     if url.startswith("https://"):
         return
     raise HTTPException(status_code=422, detail="Banner link must be an internal path (starting with /) or an https:// URL.")
-
-
-def _card_type_theme_defaults() -> Dict[str, Any]:
-    """Sprint 110di-12 — Sit Happens default palette for the card type themes.
-    Each entry drives a reusable `.card-{id}` class via CSS vars.
-    Sprint 110di-13 — Unified: each type now also carries inner_highlight
-    color/opacity (rolled in from the legacy global card chrome controls).
-    Sprint 110di-16 — Catalog extended to 23 types covering every reusable
-    surface across the app (hero, stat, info, task, fact, booking, client,
-    dog, staff, care, kennel, waitlist, intake, waiver, finance, report,
-    payment, warning, success, danger, modal, form, table). Each type
-    inherits from `default` unless overridden by the admin in Settings →
-    Brand & Theme → Card Type Themes. Legacy keys (`stats`, `training`,
-    `profile`) are kept so older saved settings keep working but are no
-    longer surfaced in the UI editor."""
-    base = {"border_opacity": 0.75, "border_width": 2,
-            "glow_opacity": 0.25, "glow_blur": 14,
-            "inner_highlight_color": "#FFFFFF",
-            "inner_highlight_opacity": 0.08,
-            "heading": "", "text": ""}
-    return {
-        # --- core surfaces ---
-        "default":  {"bg": "#05090D", "border": "#008CFF", "glow": "#008CFF", "accent": "#008CFF", **base},
-        "hero":     {"bg": "#060c2e", "border": "#9BCB00", "glow": "#9BCB00", "accent": "#9BCB00", **base},
-        # --- data / informational ---
-        "stat":     {"bg": "#05090D", "border": "#1B4D7A", "glow": "#008CFF", "accent": "#9BCB00", **base},
-        "info":     {"bg": "#05090D", "border": "#008CFF", "glow": "#008CFF", "accent": "#00C8FF", **base},
-        "task":     {"bg": "#0E0902", "border": "#F26500", "glow": "#F26500", "accent": "#F26500", **base},
-        "fact":     {"bg": "#04111B", "border": "#00C8FF", "glow": "#00C8FF", "accent": "#00C8FF", **base},
-        # --- bookings / people / animals ---
-        "booking":  {"bg": "#050B14", "border": "#008CFF", "glow": "#008CFF", "accent": "#00C8FF", **base},
-        "client":   {"bg": "#080C16", "border": "#9BCB00", "glow": "#008CFF", "accent": "#9BCB00", **base},
-        "dog":      {"bg": "#0A0F08", "border": "#9BCB00", "glow": "#9BCB00", "accent": "#9BCB00", **base},
-        "staff":    {"bg": "#0A0814", "border": "#A855F7", "glow": "#A855F7", "accent": "#A855F7", **base},
-        # --- operations boards ---
-        "care":     {"bg": "#04130B", "border": "#9BCB00", "glow": "#9BCB00", "accent": "#9BCB00", **base},
-        "kennel":   {"bg": "#050B14", "border": "#008CFF", "glow": "#008CFF", "accent": "#00C8FF", **base},
-        "waitlist": {"bg": "#120A02", "border": "#F26500", "glow": "#F26500", "accent": "#F26500", **base},
-        # --- compliance / paperwork ---
-        "intake":   {"bg": "#05090D", "border": "#008CFF", "glow": "#008CFF", "accent": "#00C8FF", **base},
-        "waiver":   {"bg": "#060c2e", "border": "#1B4D7A", "glow": "#008CFF", "accent": "#9BCB00", **base},
-        # --- money ---
-        "finance":  {"bg": "#09080D", "border": "#F26500", "glow": "#F26500", "accent": "#9BCB00", **base},
-        "report":   {"bg": "#0A0E18", "border": "#1B4D7A", "glow": "#008CFF", "accent": "#00C8FF", **base},
-        "payment":  {"bg": "#09080D", "border": "#F26500", "glow": "#F26500", "accent": "#9BCB00", **base},
-        # --- state semantics ---
-        "warning":  {"bg": "#130B02", "border": "#F26500", "glow": "#F26500", "accent": "#F26500", **base},
-        "success":  {"bg": "#071006", "border": "#9BCB00", "glow": "#9BCB00", "accent": "#9BCB00", **base},
-        "danger":   {"bg": "#170407", "border": "#FF3B5C", "glow": "#FF3B5C", "accent": "#FF3B5C", **base},
-        # --- chrome surfaces ---
-        "modal":    {"bg": "#0c143e", "border": "#008CFF", "glow": "#008CFF", "accent": "#008CFF", **base},
-        "form":     {"bg": "#05090D", "border": "#1A225A", "glow": "#008CFF", "accent": "#9BCB00", **base},
-        "table":    {"bg": "#05090D", "border": "#1A225A", "glow": "#008CFF", "accent": "#00C8FF", **base},
-        # --- legacy aliases — kept so older settings keep working ---
-        "stats":    {"bg": "#05090D", "border": "#1B4D7A", "glow": "#008CFF", "accent": "#9BCB00", **base},
-        "training": {"bg": "#070914", "border": "#A855F7", "glow": "#A855F7", "accent": "#A855F7", **base},
-        "profile":  {"bg": "#080C16", "border": "#9BCB00", "glow": "#008CFF", "accent": "#9BCB00", **base},
-    }
 
 
 
@@ -17667,12 +17593,29 @@ async def _school_completion_summary(se: dict, enrollment: dict) -> Optional[dic
             "trainer_name": final_sub.get("graded_by_name"),
             "graded_at": final_sub.get("graded_at"),
         }
+    # Skills the dog actually mastered — the graduation recap's concrete
+    # payoff ("what does my dog now know?"). Sourced verbatim from the
+    # completed enrollment's OWN program_snapshot goals (never re-read from
+    # the live program, which may have been edited since), in authored
+    # module/goal order. Only client-safe fields are exposed.
+    skills_mastered = []
+    for m in snapshot_modules:
+        for g in (m.get("goals") or []):
+            nm = (g.get("name") or "").strip()
+            if not nm:
+                continue
+            skills_mastered.append({
+                "name": nm,
+                "explanation": g.get("client_facing_explanation") or "",
+                "module": m.get("name") or "",
+            })
     return {
         "completed_at": enrollment.get("completed_at") or se.get("completed_at"),
         "total_modules": total_modules, "total_lessons": total_lessons,
         "checkpoints_passed": checkpoints_passed,
         "practice_sessions_logged": practice_sessions_logged,
         "final_assessment": final_assessment,
+        "skills_mastered": skills_mastered,
     }
 
 
@@ -21898,7 +21841,7 @@ async def backup_export(user: dict = Depends(require_admin)):
 # A trimmed slice of the backup that ONLY contains "configurability" data:
 # the master `settings` blob (branding, feature_visibility,
 # client_portal_controls, booking_flow_controls, dashboard_widgets,
-# card_type_themes, etc.), email templates/branding, payment-plan settings,
+# interface appearance, email templates/branding, payment-plan settings,
 # and named app_settings rows (auto_backup, quarterly_tax, …).
 #
 # Lets the operator carry their configuration between staging/prod or back
@@ -22660,7 +22603,7 @@ async def admin_backup_safety_report(_: dict = Depends(require_admin_and_permiss
             "key": "no_volume_delete",
             "ok": True,
             "label": "Never use destructive Docker volume commands",
-            "detail": "Do not run docker compose down -v, docker volume rm, reset_db.py, or cleanup_test_data.py unless intentionally restoring with a verified backup.",
+            "detail": "Do not run docker compose down -v, docker volume rm, reset_db.py unless intentionally restoring with a verified backup.",
         },
     ]
     danger_count = sum(1 for w in warnings if w.get("severity") == "danger")
@@ -23086,80 +23029,6 @@ async def import_training_tips(body: TrainingTipsImportIn, _: dict = Depends(req
     return {"imported": len(docs)}
 
 
-class DogFactGenerateIn(BaseModel):
-    count: int = Field(default=3, ge=1, le=10)
-    style_hint: Optional[str] = ""
-
-
-@api.post("/dog-facts/generate")
-async def generate_dog_facts(body: DogFactGenerateIn, _: dict = Depends(require_admin_and_permission("manage_engagement_content"))):
-    """Ask the Emergent LLM to generate fresh facts and stage them as inactive
-    so the admin can review before publishing. Uses Claude Haiku — cheap +
-    fast for this kind of bite-size text."""
-    api_key = os.environ.get("EMERGENT_LLM_KEY")
-    if not api_key:
-        raise HTTPException(status_code=400, detail="EMERGENT_LLM_KEY not configured")
-    try:
-        from emergentintegrations.llm.chat import LlmChat, UserMessage
-    except Exception as e:
-        raise HTTPException(status_code=500, detail=f"emergentintegrations not available: {e}")
-    existing = await db.dog_facts.find({}, {"_id": 0, "text": 1}).limit(200).to_list(200)
-    recent_sample = " ".join(r["text"][:60] for r in existing[-30:])
-    prompt = (
-        f"Generate {body.count} short, warm, accurate, family-friendly fun facts about dogs. "
-        f"Each one should be ONE sentence, under 200 characters, and DELIGHTFUL to read. "
-        f"Avoid duplicating these recent ones: {recent_sample}\n\n"
-        f"{('Voice hint: ' + body.style_hint) if body.style_hint else ''}\n"
-        f"Output strict JSON: {{\"facts\": [{{\"text\": \"...\", \"tag\": \"anatomy|behavior|breed|health|fun|training|myth-buster\", \"emoji\": \"single emoji\"}}]}}"
-    )
-    try:
-        chat = (
-            LlmChat(api_key=api_key, session_id=f"dog-facts-{uuid.uuid4().hex[:8]}",
-                    system_message="You are a warm, knowledgeable dog enthusiast. Always return strict JSON.")
-            .with_model("anthropic", "claude-haiku-4-5-20251001")
-        )
-        resp = await chat.send_message(UserMessage(text=prompt))
-    except Exception as e:
-        raise HTTPException(status_code=502, detail=f"LLM call failed: {e}")
-    import json as _json
-    import re as _re
-    raw = resp if isinstance(resp, str) else getattr(resp, "content", str(resp))
-    m = _re.search(r"\{[\s\S]*\}", raw)
-    if not m:
-        raise HTTPException(status_code=502, detail="LLM did not return JSON")
-    try:
-        parsed = _json.loads(m.group(0))
-    except Exception as e:
-        raise HTTPException(status_code=502, detail=f"LLM JSON parse failed: {e}")
-    items = parsed.get("facts") or []
-    if not isinstance(items, list):
-        raise HTTPException(status_code=502, detail="LLM returned no fact list")
-    # Stage as inactive so admin reviews before they go live in rotation
-    max_sort = await db.dog_facts.find({}, {"_id": 0, "sort_order": 1}).sort("sort_order", -1).to_list(1)
-    base = (max_sort[0]["sort_order"] + 1) if max_sort else 0
-    docs = []
-    for i, it in enumerate(items):
-        text = (it.get("text") or "").strip()
-        if len(text) < 5:
-            continue
-        docs.append({
-            "id": str(uuid.uuid4()),
-            "text": text[:500],
-            "tag": (it.get("tag") or "fun").strip()[:40],
-            "emoji": (it.get("emoji") or "✨")[:4],
-            "active": False,  # staged — admin must approve
-            "seeded": False,
-            "ai_generated": True,
-            "created_at": now_iso(),
-            "sort_order": base + i,
-        })
-    if docs:
-        await db.dog_facts.insert_many(docs)
-        for d in docs:
-            d.pop("_id", None)
-    return {"created": len(docs), "facts": docs}
-
-
 # ─────────────── Sprint 110bp · CSV import for dog facts ───────────────
 DOG_FACTS_CSV_NAMESPACE = uuid.UUID("4fd03d11-d164-44c0-bcfc-67614a1b7d5a")
 DOG_FACTS_CSV_HEADERS = ["text", "tag", "emoji"]
@@ -23282,113 +23151,38 @@ async def _get_trivia_rewards() -> List[dict]:
     return list(DEFAULT_TRIVIA_MILESTONES)
 
 
-class TriviaGenerateIn(BaseModel):
-    count: int = Field(default=25, ge=1, le=50)
-    difficulty_mix: Optional[str] = None  # "easy,medium,hard" weights, defaults to balanced
-
 
 async def _ensure_trivia_seeded(min_count: int = 30) -> int:
-    """If the question pool is empty (or below `min_count`), kick off an AI
-    generation pass so the daily question always has something to pick. Returns
-    the current pool size."""
+    """Ensure a fresh self-hosted install has a usable local trivia pool.
+
+    The app no longer depends on a hosted AI provider for content seeding.
+    When the active pool is small, upsert the bundled curated questions.
+    """
     count = await db.trivia_questions.count_documents({"active": True})
     if count >= min_count:
         return count
-    try:
-        await _trivia_ai_generate(min_count - count)
-    except Exception as e:
-        logger.warning("trivia seed failed: %s", e)
-    return await db.trivia_questions.count_documents({"active": True})
 
+    from seed_curated_trivia import CURATED, SEED_NAMESPACE
 
-async def _trivia_ai_generate(count: int, difficulty_mix: Optional[str] = None) -> List[dict]:
-    """Call the Emergent LLM key (Claude Sonnet) to generate `count` trivia
-    questions and insert them as active. Returns the inserted docs."""
-    api_key = os.environ.get("EMERGENT_LLM_KEY")
-    if not api_key:
-        raise HTTPException(status_code=400, detail="EMERGENT_LLM_KEY not configured")
-    try:
-        from emergentintegrations.llm.chat import LlmChat, UserMessage
-    except Exception as e:
-        raise HTTPException(status_code=500, detail=f"emergentintegrations not available: {e}")
-    # Recent questions to avoid duplicates
-    existing = await db.trivia_questions.find(
-        {}, {"_id": 0, "question": 1}
-    ).sort("created_at", -1).limit(80).to_list(80)
-    recent_sample = " | ".join(r["question"][:70] for r in existing[-40:]) or "(none yet)"
-    mix = difficulty_mix or "balanced — roughly 40% easy, 40% medium, 20% hard"
-    prompt = (
-        f"Generate {count} fun, accurate, family-friendly DOG trivia questions for a dog "
-        f"daycare's client portal. Each question must be ONE multiple-choice question with "
-        f"EXACTLY 4 answer choices. Topics: {', '.join(TRIVIA_TAGS)}. Difficulty mix: {mix}. "
-        f"AVOID duplicating these recent questions: {recent_sample}\n\n"
-        f"Constraints:\n"
-        f"- question ≤ 130 chars\n"
-        f"- each choice ≤ 60 chars, plausible distractors (no obvious throwaway)\n"
-        f"- correct_index is 0-3\n"
-        f"- difficulty: \"easy\" | \"medium\" | \"hard\"\n"
-        f"- tag: one of {list(TRIVIA_TAGS)}\n"
-        f"- no breed bias, no medical-advice questions that could be misread\n\n"
-        f"Return strict JSON: {{\"questions\":[{{\"question\":\"...\",\"choices\":[\"a\",\"b\",\"c\",\"d\"],"
-        f"\"correct_index\":0,\"difficulty\":\"easy\",\"tag\":\"breeds\"}}]}}"
-    )
-    try:
-        chat = (
-            LlmChat(api_key=api_key, session_id=f"trivia-{uuid.uuid4().hex[:8]}",
-                    system_message=(
-                        "You are a warm, knowledgeable canine educator writing kid-safe "
-                        "trivia for a dog daycare's family portal. Always return STRICT JSON only."
-                    ))
-            .with_model("anthropic", "claude-sonnet-4-6")
-        )
-        resp = await chat.send_message(UserMessage(text=prompt))
-    except Exception as e:
-        raise HTTPException(status_code=502, detail=f"LLM call failed: {e}")
-    import json as _json
-    import re as _re
-    raw = resp if isinstance(resp, str) else getattr(resp, "content", str(resp))
-    m = _re.search(r"\{[\s\S]*\}", raw)
-    if not m:
-        raise HTTPException(status_code=502, detail="LLM did not return JSON")
-    try:
-        parsed = _json.loads(m.group(0))
-    except Exception as e:
-        raise HTTPException(status_code=502, detail=f"LLM JSON parse failed: {e}")
-    items = parsed.get("questions") or []
-    if not isinstance(items, list):
-        raise HTTPException(status_code=502, detail="LLM returned no question list")
-    docs: List[dict] = []
-    for it in items:
-        q = (it.get("question") or "").strip()
-        choices = it.get("choices") or []
-        ci = it.get("correct_index")
-        diff = (it.get("difficulty") or "medium").strip().lower()
-        tag = (it.get("tag") or "fun").strip().lower()
-        if not q or not isinstance(choices, list) or len(choices) != 4:
-            continue
-        if not isinstance(ci, int) or ci < 0 or ci > 3:
-            continue
-        if diff not in TRIVIA_DIFFICULTIES:
-            diff = "medium"
-        if tag not in TRIVIA_TAGS:
-            tag = "fun"
-        docs.append({
-            "id": str(uuid.uuid4()),
-            "question": q[:200],
-            "choices": [str(c)[:80] for c in choices],
-            "correct_index": ci,
-            "difficulty": diff,
-            "tag": tag,
-            "source": "ai",
+    for item in CURATED:
+        qid = str(uuid.uuid5(SEED_NAMESPACE, item["question"]))
+        existing = await db.trivia_questions.find_one({"id": qid}, {"_id": 0})
+        doc = {
+            "id": qid,
+            "question": item["question"][:200],
+            "choices": [str(c)[:80] for c in item["choices"]],
+            "correct_index": item["correct_index"],
+            "difficulty": item["difficulty"],
+            "tag": item["tag"],
+            "source": "curated",
             "active": True,
-            "created_at": now_iso(),
-            "times_used": 0,
-        })
-    if docs:
-        await db.trivia_questions.insert_many(docs)
-        for d in docs:
-            d.pop("_id", None)
-    return docs
+            "created_at": existing.get("created_at") if existing else now_iso(),
+            "times_used": existing.get("times_used", 0) if existing else 0,
+            "curated": True,
+        }
+        await db.trivia_questions.update_one({"id": qid}, {"$set": doc}, upsert=True)
+
+    return await db.trivia_questions.count_documents({"active": True})
 
 
 async def _get_or_create_today_question(date_str: str) -> Optional[dict]:
@@ -24278,15 +24072,6 @@ async def admin_trivia_update(
     if not res.matched_count:
         raise HTTPException(status_code=404, detail="Question not found")
     return await db.trivia_questions.find_one({"id": qid}, {"_id": 0})
-
-
-@api.post("/admin/trivia/generate")
-async def admin_trivia_generate(
-    body: TriviaGenerateIn,
-    _: dict = Depends(require_admin_and_permission("manage_engagement_content")),
-):
-    docs = await _trivia_ai_generate(body.count, body.difficulty_mix)
-    return {"created": len(docs), "questions": docs}
 
 
 @api.delete("/admin/trivia/questions/{qid}")
@@ -26533,13 +26318,13 @@ class LogServiceIn(BaseModel):
     notes: Optional[str] = ""
     status: Literal["pending", "approved", "completed"] = "completed"
     payment_status: Literal["unpaid", "paid", "refunded", "comped"] = "paid"
-    payment_method: Literal["cash", "card", "transfer", "venmo", "paypal", "clover", "credits", "other"] = "cash"
+    payment_method: Literal["cash", "card", "transfer", "venmo", "paypal", "credits", "other"] = "cash"
 
 
 class TransactionUpdateIn(BaseModel):
     actual_price: Optional[float] = None
     payment_status: Optional[Literal["unpaid", "paid", "refunded", "comped"]] = None
-    payment_method: Optional[Literal["cash", "card", "transfer", "venmo", "paypal", "clover", "credits", "check", "other"]] = None
+    payment_method: Optional[Literal["cash", "card", "transfer", "venmo", "paypal", "credits", "check", "other"]] = None
     status: Optional[Literal["pending", "approved", "rejected", "completed", "cancelled"]] = None
     service_id: Optional[str] = None
 
@@ -28968,7 +28753,7 @@ async def _register_day_summary(day: Optional[str] = None) -> Dict[str, Any]:
         "notes": {
             "cash": "Expected drawer cash = opening cash + cash payments - cash-drawer expenses + till additions - till removals.",
             "till_adjustments": "Till adjustments change physical cash only. They are not treated as sales, refunds, or business expenses.",
-            "external": "Clover, Venmo, PayPal, and checks are expected totals from app entries; verify them against the external apps/batch at closeout.",
+            "external": "Card, Venmo, PayPal, and checks are expected totals from app entries; verify them against the external apps/batch at closeout.",
         },
     }
 
@@ -29003,7 +28788,7 @@ def _register_method_delta(expected: Dict[str, float], closeout: Optional[Dict[s
         return {}
     fields = {
         "cash": "cash_counted",
-        "clover": "clover_batch",
+        "card": "card_batch",
         "venmo": "venmo_total",
         "paypal": "paypal_total",
         "check": "check_total",
@@ -29076,7 +28861,7 @@ async def _register_range_summary(start_date: Optional[str] = None, end_date: Op
                 "reopened_at": closeout.get("reopened_at"),
                 "reopened_reason": closeout.get("reopened_reason") or "",
                 "reopened_by_name": closeout.get("reopened_by_name") or "",
-                "clover_batch": closeout.get("clover_batch"),
+                "card_batch": closeout.get("card_batch"),
                 "venmo_total": closeout.get("venmo_total"),
                 "paypal_total": closeout.get("paypal_total"),
                 "check_total": closeout.get("check_total"),
@@ -29120,7 +28905,7 @@ async def _register_range_summary(start_date: Optional[str] = None, end_date: Op
             "reopened_at": c.get("reopened_at"),
             "reopened_reason": c.get("reopened_reason") or "",
             "reopened_by_name": c.get("reopened_by_name") or "",
-            "clover_batch": c.get("clover_batch"),
+            "card_batch": c.get("card_batch"),
             "venmo_total": c.get("venmo_total"),
             "paypal_total": c.get("paypal_total"),
             "check_total": c.get("check_total"),
@@ -29232,20 +29017,20 @@ async def admin_register_export_csv(
         return _csv_response(rows, f"sit-happens-register-activity-{stamp}.csv")
 
     if safe_kind == "payment-methods":
-        rows = [["Date", "Cash", "Check", "Venmo", "PayPal", "Clover / Credit Card", "Legacy Transfer", "Other", "Incoming Total", "Refunds", "Expenses", "Cash Payouts", "Till Added", "Till Removed", "Till Net"]]
+        rows = [["Date", "Cash", "Check", "Venmo", "PayPal", "Card", "Legacy Transfer", "Other", "Incoming Total", "Refunds", "Expenses", "Cash Payouts", "Till Added", "Till Removed", "Till Net"]]
         for d in days:
             day = await _register_day_summary(d)
             m = day.get("incoming_by_method") or {}
             t = day.get("totals") or {}
             src = day.get("incoming_sources") or {}
-            rows.append([d, f"{m.get('cash',0):.2f}", f"{m.get('check',0):.2f}", f"{m.get('venmo',0):.2f}", f"{m.get('paypal',0):.2f}", f"{m.get('clover',0):.2f}", f"{m.get('venmo_paypal',0):.2f}", f"{m.get('other',0):.2f}", f"{t.get('incoming_total',0):.2f}", f"{src.get('refunds',0):.2f}", f"{t.get('expense_total',0):.2f}", f"{t.get('cash_drawer_payouts',0):.2f}", f"{t.get('till_additions',0):.2f}", f"{t.get('till_removals',0):.2f}", f"{t.get('till_adjustment_net',0):.2f}"])
+            rows.append([d, f"{m.get('cash',0):.2f}", f"{m.get('check',0):.2f}", f"{m.get('venmo',0):.2f}", f"{m.get('paypal',0):.2f}", f"{m.get('card',0):.2f}", f"{m.get('venmo_paypal',0):.2f}", f"{m.get('other',0):.2f}", f"{t.get('incoming_total',0):.2f}", f"{src.get('refunds',0):.2f}", f"{t.get('expense_total',0):.2f}", f"{t.get('cash_drawer_payouts',0):.2f}", f"{t.get('till_additions',0):.2f}", f"{t.get('till_removals',0):.2f}", f"{t.get('till_adjustment_net',0):.2f}"])
         return _csv_response(rows, f"sit-happens-register-methods-{stamp}.csv")
 
     if safe_kind == "closeouts":
-        rows = [["Date", "Created At", "Status", "Closed By", "Expected Cash", "Cash Counted", "Over / Short", "Rollover Cash", "Clover Batch", "Venmo Total", "PayPal Total", "Check Total", "Reopened At", "Reopened By", "Reopen Reason", "Notes"]]
+        rows = [["Date", "Created At", "Status", "Closed By", "Expected Cash", "Cash Counted", "Over / Short", "Rollover Cash", "Card Batch", "Venmo Total", "PayPal Total", "Check Total", "Reopened At", "Reopened By", "Reopen Reason", "Notes"]]
         closeouts = await db.daily_closeouts.find({"date": {"$gte": sd, "$lte": ed}}, {"_id": 0}).sort([("date", -1), ("created_at", -1)]).to_list(5000)
         for c in closeouts:
-            rows.append([c.get("date"), c.get("created_at"), c.get("status") or ("reopened" if c.get("reopened_at") else "closed"), c.get("created_by_name"), c.get("expected_cash"), c.get("cash_counted"), c.get("cash_over_short"), c.get("rollover_cash", c.get("cash_counted")), c.get("clover_batch"), c.get("venmo_total"), c.get("paypal_total"), c.get("check_total"), c.get("reopened_at"), c.get("reopened_by_name"), c.get("reopened_reason"), c.get("notes")])
+            rows.append([c.get("date"), c.get("created_at"), c.get("status") or ("reopened" if c.get("reopened_at") else "closed"), c.get("created_by_name"), c.get("expected_cash"), c.get("cash_counted"), c.get("cash_over_short"), c.get("rollover_cash", c.get("cash_counted")), c.get("card_batch"), c.get("venmo_total"), c.get("paypal_total"), c.get("check_total"), c.get("reopened_at"), c.get("reopened_by_name"), c.get("reopened_reason"), c.get("notes")])
         return _csv_response(rows, f"sit-happens-closeouts-{stamp}.csv")
 
     if safe_kind == "expenses":
@@ -29310,7 +29095,7 @@ async def admin_register_tax_packet_zip(
     files: Dict[str, bytes] = {}
 
     activity_rows = [["Date", "Created At", "Kind", "Label", "Description", "Client/Vendor", "Payment Method", "Amount"]]
-    methods_rows = [["Date", "Cash", "Check", "Venmo", "PayPal", "Clover / Credit Card", "Legacy Transfer", "Other", "Incoming Total", "Refunds", "Expenses", "Cash Payouts", "Till Added", "Till Removed", "Till Net"]]
+    methods_rows = [["Date", "Cash", "Check", "Venmo", "PayPal", "Card", "Legacy Transfer", "Other", "Incoming Total", "Refunds", "Expenses", "Cash Payouts", "Till Added", "Till Removed", "Till Net"]]
     for d in days:
         day = await _register_day_summary(d)
         for a in day.get("activity") or []:
@@ -29318,14 +29103,14 @@ async def admin_register_tax_packet_zip(
         m = day.get("incoming_by_method") or {}
         t = day.get("totals") or {}
         src = day.get("incoming_sources") or {}
-        methods_rows.append([d, f"{m.get('cash',0):.2f}", f"{m.get('check',0):.2f}", f"{m.get('venmo',0):.2f}", f"{m.get('paypal',0):.2f}", f"{m.get('clover',0):.2f}", f"{m.get('venmo_paypal',0):.2f}", f"{m.get('other',0):.2f}", f"{t.get('incoming_total',0):.2f}", f"{src.get('refunds',0):.2f}", f"{t.get('expense_total',0):.2f}", f"{t.get('cash_drawer_payouts',0):.2f}", f"{t.get('till_additions',0):.2f}", f"{t.get('till_removals',0):.2f}", f"{t.get('till_adjustment_net',0):.2f}"])
+        methods_rows.append([d, f"{m.get('cash',0):.2f}", f"{m.get('check',0):.2f}", f"{m.get('venmo',0):.2f}", f"{m.get('paypal',0):.2f}", f"{m.get('card',0):.2f}", f"{m.get('venmo_paypal',0):.2f}", f"{m.get('other',0):.2f}", f"{t.get('incoming_total',0):.2f}", f"{src.get('refunds',0):.2f}", f"{t.get('expense_total',0):.2f}", f"{t.get('cash_drawer_payouts',0):.2f}", f"{t.get('till_additions',0):.2f}", f"{t.get('till_removals',0):.2f}", f"{t.get('till_adjustment_net',0):.2f}"])
     files[f"register-activity-{stamp}.csv"] = csv_bytes(activity_rows)
     files[f"payment-methods-{stamp}.csv"] = csv_bytes(methods_rows)
 
-    closeout_rows = [["Date", "Created At", "Status", "Closed By", "Expected Cash", "Cash Counted", "Over / Short", "Rollover Cash", "Clover Batch", "Venmo Total", "PayPal Total", "Check Total", "Reopened At", "Reopened By", "Reopen Reason", "Notes"]]
+    closeout_rows = [["Date", "Created At", "Status", "Closed By", "Expected Cash", "Cash Counted", "Over / Short", "Rollover Cash", "Card Batch", "Venmo Total", "PayPal Total", "Check Total", "Reopened At", "Reopened By", "Reopen Reason", "Notes"]]
     closeouts = await db.daily_closeouts.find({"date": {"$gte": sd, "$lte": ed}}, {"_id": 0}).sort([("date", -1), ("created_at", -1)]).to_list(5000)
     for c in closeouts:
-        closeout_rows.append([c.get("date"), c.get("created_at"), c.get("status") or ("reopened" if c.get("reopened_at") else "closed"), c.get("created_by_name"), c.get("expected_cash"), c.get("cash_counted"), c.get("cash_over_short"), c.get("rollover_cash", c.get("cash_counted")), c.get("clover_batch"), c.get("venmo_total"), c.get("paypal_total"), c.get("check_total"), c.get("reopened_at"), c.get("reopened_by_name"), c.get("reopened_reason"), c.get("notes")])
+        closeout_rows.append([c.get("date"), c.get("created_at"), c.get("status") or ("reopened" if c.get("reopened_at") else "closed"), c.get("created_by_name"), c.get("expected_cash"), c.get("cash_counted"), c.get("cash_over_short"), c.get("rollover_cash", c.get("cash_counted")), c.get("card_batch"), c.get("venmo_total"), c.get("paypal_total"), c.get("check_total"), c.get("reopened_at"), c.get("reopened_by_name"), c.get("reopened_reason"), c.get("notes")])
     files[f"closeouts-{stamp}.csv"] = csv_bytes(closeout_rows)
 
     expense_rows = [["Date", "Vendor", "Category", "Description", "Quantity", "Unit Price", "Payment Method", "Amount", "Tax Deductible", "From Cash Drawer", "Recurring", "Receipt Attached", "Notes"]]
@@ -29489,7 +29274,7 @@ async def delete_till_adjustment(adjustment_id: str, _: dict = Depends(require_a
 class RegisterRefundIn(BaseModel):
     date: Optional[str] = None
     amount: float = Field(gt=0)
-    payment_method: Optional[Literal["cash", "card", "transfer", "venmo", "paypal", "clover", "check", "other"]] = "clover"
+    payment_method: Optional[Literal["cash", "card", "transfer", "venmo", "paypal", "check", "other"]] = "card"
     reason: str = Field(min_length=1, max_length=200)
     client_id: Optional[str] = None
     notes: Optional[str] = ""
@@ -29563,9 +29348,8 @@ class EndOfDayCloseoutIn(BaseModel):
     cash_counted: float = Field(ge=0)
     rollover_confirmed: bool = False
     confirmed_rollover_cash: Optional[float] = Field(default=None, ge=0)
-    card_batch: Optional[float] = None  # legacy field; maps to clover_batch
-    venmo_paypal: Optional[float] = None  # legacy combined field
-    clover_batch: Optional[float] = None
+    card_batch: Optional[float] = None
+    venmo_paypal: Optional[float] = None  # legacy combined transfer field
     venmo_total: Optional[float] = None
     paypal_total: Optional[float] = None
     check_total: Optional[float] = None
@@ -29605,10 +29389,8 @@ async def admin_end_of_day_closeout(body: EndOfDayCloseoutIn, user: dict = Depen
         "expected_cash": expected_cash,
         "cash_over_short": round(counted - expected_cash, 2),
         "status": "closed",
-        # Keep legacy fields for old UI/backups, but save the explicit methods too.
         "card_batch": round(float(body.card_batch), 2) if body.card_batch is not None else None,
         "venmo_paypal": round(float(body.venmo_paypal), 2) if body.venmo_paypal is not None else None,
-        "clover_batch": round(float(body.clover_batch if body.clover_batch is not None else body.card_batch), 2) if (body.clover_batch is not None or body.card_batch is not None) else None,
         "venmo_total": round(float(body.venmo_total), 2) if body.venmo_total is not None else None,
         "paypal_total": round(float(body.paypal_total), 2) if body.paypal_total is not None else None,
         "check_total": round(float(body.check_total), 2) if body.check_total is not None else None,
@@ -37807,7 +37589,7 @@ async def today_pnl(_: dict = Depends(require_admin_and_permission("finance_repo
     # details (booked_count, completed_count, legacy pricing impact). Actual
     # P&L revenue, however, must use the same cash-basis source of truth as the
     # register: the BUSINESS DATE the money was collected, regardless of the
-    # booking/service date or tender. This prevents Clover, Venmo, PayPal,
+    # booking/service date or tender. This prevents Card, Venmo, PayPal,
     # checks, tab payments, pack sales, and payments on earlier boarding stays
     # from disappearing from Today's P&L while still showing in the register.
     catalog_forecast = round(catalog_forecast, 2)
@@ -38331,7 +38113,7 @@ class ExpenseIn(BaseModel):
     unit_price: Optional[float] = Field(default=None, ge=0)
     category: Optional[str] = ""
     notes: Optional[str] = ""
-    payment_method: Optional[Literal["cash", "card", "transfer", "venmo", "paypal", "clover", "check", "other"]] = "clover"
+    payment_method: Optional[Literal["cash", "card", "transfer", "venmo", "paypal", "check", "other"]] = "card"
     tax_deductible: Optional[bool] = True
     from_cash_drawer: Optional[bool] = False
     vendor: Optional[str] = ""
@@ -38476,7 +38258,7 @@ class RetailSaleIn(BaseModel):
     unit_price: Optional[float] = Field(default=None, ge=0)
     category: Optional[str] = ""
     notes: Optional[str] = ""
-    payment_method: Optional[Literal["cash", "card", "transfer", "venmo", "paypal", "clover", "check", "credits", "other"]] = "clover"
+    payment_method: Optional[Literal["cash", "card", "transfer", "venmo", "paypal", "check", "credits", "other"]] = "card"
     client_id: Optional[str] = None  # optional — link a sale to a specific client
     # Sprint 110aw — Sales tax. If true, `amount` is the TOTAL the customer
     # paid (incl. tax) and the backend back-calculates the tax slice. If false
@@ -39396,7 +39178,7 @@ class CreditPackIn(BaseModel):
 
 class SellCreditPackIn(BaseModel):
     pack_id: str
-    payment_method: Optional[Literal["cash", "card", "transfer", "venmo", "paypal", "clover", "check", "other"]] = "cash"
+    payment_method: Optional[Literal["cash", "card", "transfer", "venmo", "paypal", "check", "other"]] = "cash"
     note: Optional[str] = ""
     # Sprint 110di-61 — Partial pay. When < pack price, the delta lands on
     # client.account_balance and today's recognized revenue = amount_paid.
@@ -39410,7 +39192,7 @@ class SellCreditPackItem(BaseModel):
 
 class SellCreditPacksBulkIn(BaseModel):
     items: List[SellCreditPackItem] = Field(min_length=1, max_length=20)
-    payment_method: Optional[Literal["cash", "card", "transfer", "venmo", "paypal", "clover", "check", "other"]] = "cash"
+    payment_method: Optional[Literal["cash", "card", "transfer", "venmo", "paypal", "check", "other"]] = "cash"
     note: Optional[str] = ""
     # Sprint 110di-61 — Partial pay across the whole bulk-sale cart.
     amount_paid: Optional[float] = Field(default=None, ge=0)
@@ -39878,7 +39660,7 @@ async def seed_credit_packs(_: dict = Depends(require_admin_and_permission("pric
 
 class SellProgramIn(BaseModel):
     program_id: str
-    payment_method: Literal["cash", "card", "clover", "venmo", "paypal", "check", "other", "complimentary"] = "cash"
+    payment_method: Literal["cash", "card", "venmo", "paypal", "check", "other", "complimentary"] = "cash"
     override_price: Optional[float] = Field(default=None, ge=0)
     dog_id: Optional[str] = None       # If set, auto-creates a dog_programs row
     started_at: Optional[str] = None   # YYYY-MM-DD, defaults to today

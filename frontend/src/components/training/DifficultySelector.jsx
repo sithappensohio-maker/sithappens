@@ -1,8 +1,4 @@
-// Training UI Phase 3 — shared "How did it go?" difficulty selector.
-// Deferred from Phase 1 (nothing consumed it yet); built now for the
-// Homework Practice completion flow. Maps directly onto the existing
-// DaySubmitIn.difficulty enum ("easy"|"good"|"okay"|"hard"|"very_hard") —
-// no new backend values. Accessible labeled buttons, not emoji-only.
+// Shared "How did it go?" selector. Values/back-end mapping unchanged.
 const CHOICES = [
   { value: "easy", emoji: "😊", label: "Easy" },
   { value: "good", emoji: "🙂", label: "Good" },
@@ -13,16 +9,16 @@ const CHOICES = [
 
 export default function DifficultySelector({ value, onChange, testid }) {
   return (
-    <div className="grid grid-cols-5 gap-1.5" role="radiogroup" aria-label="How did it go?" data-testid={testid}>
-      {CHOICES.map(c => {
+    <div className="grid grid-cols-2 sm:grid-cols-5 gap-2" role="radiogroup" aria-label="How did it go?" data-testid={testid}>
+      {CHOICES.map((c, index) => {
         const selected = value === c.value;
         return (
           <button key={c.value} type="button" role="radio" aria-checked={selected}
                   onClick={() => onChange(c.value)} data-testid={testid ? `${testid}-${c.value}` : undefined}
-                  className={`flex flex-col items-center gap-1 py-2.5 rounded-lg border transition
-                    ${selected ? "bg-shPrimary/15 border-shPrimary text-shPrimary" : "border-shBorder text-shTextMuted hover:border-shPrimary/40"}`}>
-            <span className="text-[22px] leading-none" aria-hidden="true">{c.emoji}</span>
-            <span className="text-[10px] font-black uppercase tracking-widest">{c.label}</span>
+                  className={`min-h-[72px] flex flex-col items-center justify-center gap-1.5 px-2 py-3 rounded-xl border transition ${index === CHOICES.length - 1 ? "col-span-2 sm:col-span-1" : ""}
+                    ${selected ? "bg-shPrimary/12 border-shPrimary/55 text-shPrimary shadow-[0_0_22px_rgba(140,198,63,0.08)]" : "bg-black/10 border-shBorder/55 text-shTextMuted hover:border-shPrimary/35 hover:bg-white/[0.025]"}`}>
+            <span className="text-[24px] leading-none" aria-hidden="true">{c.emoji}</span>
+            <span className="text-[10px] font-black uppercase tracking-[0.1em]">{c.label}</span>
           </button>
         );
       })}

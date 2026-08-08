@@ -9,6 +9,7 @@ import CheckpointReviewQueue from "../components/CheckpointReviewQueue";
 import CsvImportButton from "../components/CsvImportButton";
 import { parseTrainingTipsCsv, TRAINING_TIPS_CSV_SAMPLE } from "../lib/csvImport";
 import { toast } from "sonner";
+import { useConfirm } from "../lib/useConfirm";
 import TrainingDaySummary from "../components/training/TrainingDaySummary";
 import TrainingDogRow from "../components/training/TrainingDogRow";
 import TrainerAttentionQueue from "../components/training/TrainerAttentionQueue";
@@ -179,7 +180,7 @@ export default function Pipeline({ onJumpToDog }) {
       {/* Sprint 110di-72 — Training Tip of the Day */}
       {todayTip && (
         <div data-testid="training-tip-card"
-             className="bg-[var(--sh-card-base)] border-l-4 border-shPrimary rounded-r-xl p-4 sm:p-5 shadow-md card-info">
+             className="bg-[var(--sh-card-base)] border-l-4 border-shPrimary rounded-r-xl p-4 sm:p-5 shadow-md">
           <div className="flex items-start justify-between gap-3 flex-wrap">
             <div className="min-w-0 flex-1">
               <p className="text-[11px] font-black uppercase tracking-[0.3em] text-shPrimary mb-1">
@@ -239,7 +240,7 @@ export default function Pipeline({ onJumpToDog }) {
               <TrainingDaySummary summary={todaySummary} testid="today-summary"/>
 
               {attentionItems.length > 0 && (
-                <div className="card-stat rounded-xl overflow-hidden shadow-lg p-3">
+                <div className="bg-[var(--sh-card-base)] border border-shBorder rounded-xl overflow-hidden shadow-lg p-3">
                   <p className="text-[11px] font-black uppercase tracking-widest text-shTextMuted mb-2"><i className="fas fa-bell mr-1.5 text-shAccent"/>Needs Attention</p>
                   <TrainerAttentionQueue items={attentionItems} onAction={runAttentionAction} testid="attention-queue"/>
                 </div>
@@ -295,7 +296,7 @@ export default function Pipeline({ onJumpToDog }) {
         </button>
       </div>
 
-      <div className="card-stat rounded-xl overflow-hidden shadow-lg">
+      <div className="bg-[var(--sh-card-base)] border border-shBorder rounded-xl overflow-hidden shadow-lg">
         {loading && <p className="p-8 text-center text-shTextMuted text-sm"><i className="fas fa-spinner fa-spin mr-2"/>Loading…</p>}
         {!loading && rows.length === 0 && (
           <p className="p-12 text-center text-shTextMuted text-sm">No enrollments match these filters.</p>
@@ -420,6 +421,7 @@ function Row({ row, expanded, onToggle, onJumpToDog, onOpenWorkspace, onSaved })
 }
 
 function ExpandedDetail({ row, onJumpToDog, onSaved }) {
+  const confirm = useConfirm();
   const [notes, setNotes] = useState(row.trainer_notes || "");
   const [savedAt, setSavedAt] = useState(null);
   const [saving, setSaving] = useState(false);
@@ -453,7 +455,13 @@ function ExpandedDetail({ row, onJumpToDog, onSaved }) {
   };
 
   const setStatus = async (newStatus) => {
-    if (!window.confirm(`Change status to "${newStatus}"?`)) return;
+    const ok = await confirm({
+      title: `Change training status to ${newStatus}?`,
+      body: "This changes the enrollment status immediately.",
+      confirmText: "Change Status",
+      tone: "warning",
+    });
+    if (!ok) return;
     try {
       await api.put(`/dogs/${row.dog_id}/programs/${row.id}`, { status: newStatus });
       onSaved?.();

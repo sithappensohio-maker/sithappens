@@ -8,9 +8,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
 
 WORKDIR /app
 
-# Install Python deps. The emergentintegrations package is optional — it's
-# only needed for Emergent-managed LLM features which aren't required for
-# self-hosted operation. Marked || true so a registry hiccup doesn't fail the build.
+# Install Python dependencies for the self-hosted backend.
 COPY backend/requirements.txt ./requirements.txt
 RUN pip install --no-cache-dir -r requirements.txt
 

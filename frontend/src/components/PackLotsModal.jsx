@@ -1,5 +1,7 @@
 import { useEffect, useState } from "react";
 import { api } from "../lib/api";
+import { toast } from "sonner";
+import { useConfirm } from "../lib/useConfirm";
 
 // Sprint 110da — Quick reference modal for the operator to see ALL credit
 // lots on a client at once, with a clear "Legacy" vs "Paid at sale" badge
@@ -9,6 +11,7 @@ import { api } from "../lib/api";
 //
 // Read-only by design. Adjust / consume happens elsewhere.
 export default function PackLotsModal({ client, onClose }) {
+  const confirm = useConfirm();
   const [lots, setLots] = useState([]);
   const [loading, setLoading] = useState(true);
   const [showDrained, setShowDrained] = useState(false);
@@ -59,7 +62,7 @@ export default function PackLotsModal({ client, onClose }) {
     const msg = wantsPaidAtSale
       ? `Mark "${lot.pack_name}" as PAID AT SALE? Future redemptions will be $0 to revenue (we'll treat them as already counted). Historical P&L is NOT changed.`
       : `Mark "${lot.pack_name}" as LEGACY? Each future redemption will add to revenue at checkout time. Historical P&L is NOT changed.`;
-    if (!window.confirm(msg)) return;
+    if (!(await confirm({ title: wantsPaidAtSale ? "Count this pack at sale?" : "Return this pack to redemption accounting?", body: msg, confirmText: "Apply change", tone: "warning" }))) return;
     setBusyLotId(lot.id);
     try {
       await api.patch(`/credit-lots/${lot.id}/recognition`, {
@@ -67,7 +70,7 @@ export default function PackLotsModal({ client, onClose }) {
       });
       await refresh();
     } catch (e) {
-      alert(e?.response?.data?.detail || `Couldn't switch to ${verb}`);
+      toast.error(e?.response?.data?.detail || `Couldn't switch to ${verb}`);
     }
     setBusyLotId(null);
   };

@@ -64,7 +64,7 @@ export default function RunSheet() {
     : bookings.length;
 
   return (
-    <div className="animate-slide-in space-y-6" data-testid="run-sheet">
+    <div className="animate-slide-in space-y-6 sh-runsheet-workspace" data-testid="run-sheet">
       <style>{`@media print { .no-print{display:none!important;} body{background:white!important;} .print-card{background:white!important;color:black!important;border-color:#ccc!important;} .print-card *{color:black!important;} }`}</style>
       <div className="no-print">
         <PageHero

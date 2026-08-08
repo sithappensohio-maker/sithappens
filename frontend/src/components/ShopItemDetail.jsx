@@ -2,6 +2,8 @@ import { useEffect, useState } from "react";
 import { api } from "../lib/api";
 import { toast } from "sonner";
 import PremiumButton from "./premium/PremiumButton";
+import NeonEdge from "./premium/NeonEdge";
+import HuskyDogImage from "./brand/HuskyDogImage";
 import { useShopMediaSrc } from "./ItemThumbnail";
 import { guestItemCta, creditPackDetailLine } from "../lib/shopPolish";
 
@@ -139,7 +141,7 @@ function ImgOrPlaceholder({ imageId, alt, isPublic }) {
   );
 }
 
-function HeroImage({ imageId, alt, isPublic }) {
+function HeroImage({ imageId, alt, isPublic, fallbackSrc }) {
   const src = useShopMediaSrc(imageId, { public: isPublic });
   const [enlarged, setEnlarged] = useState(false);
   return (
@@ -147,9 +149,14 @@ function HeroImage({ imageId, alt, isPublic }) {
       <button type="button" onClick={() => src && setEnlarged(true)} data-testid="shop-detail-hero-image"
               className="block w-full rounded-xl border border-shBorder overflow-hidden" style={{ background: "var(--sh-card-base)", cursor: src ? "zoom-in" : "default" }}>
         {src ? (
-          <img src={src} alt={alt || ""} className="w-full object-cover" style={{ height: 320 }} />
+          <img src={src} alt={alt || ""} className="w-full object-cover" style={{ height: 360 }} />
+        ) : fallbackSrc ? (
+          <div className="relative overflow-hidden" style={{ height: 360 }}>
+            <img src={fallbackSrc} alt={alt || ""} className="absolute inset-0 w-full h-full object-cover object-top" />
+            <div className="absolute inset-0 bg-gradient-to-t from-black/60 via-transparent to-transparent" />
+          </div>
         ) : (
-          <div style={{ height: 320 }} className="w-full grid place-items-center text-shTextMuted">
+          <div style={{ height: 360 }} className="w-full grid place-items-center text-shTextMuted bg-black/20">
             <i className="fas fa-image text-4xl" />
           </div>
         )}
@@ -283,7 +290,7 @@ export default function ShopItemDetail({ kind, itemId, cart, onAddToCart, onBack
 
       <div className="grid grid-cols-1 lg:grid-cols-2 gap-6 lg:gap-10">
         <div>
-          <HeroImage imageId={item.image_id} alt={item.name} isPublic={isGuest} />
+          <HeroImage imageId={item.image_id} alt={item.name} isPublic={isGuest} fallbackSrc={isOnlineSchoolProgram ? "/brand/husky-placeholder-silver-white.png" : null} />
         </div>
 
         <div className="flex flex-col">
@@ -293,7 +300,13 @@ export default function ShopItemDetail({ kind, itemId, cart, onAddToCart, onBack
           <p className="text-[11px] font-black uppercase tracking-widest text-shSecondary">
             {item.section_label}{item.category_name ? ` · ${item.category_name}` : ""}{item.subcategory_name ? ` → ${item.subcategory_name}` : ""}
           </p>
-          <h1 className="text-2xl font-bold text-shText mt-1">{item.name}</h1>
+          {isOnlineSchoolProgram && (
+            <div className="flex items-center gap-2 mt-2">
+              <span className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-md bg-shPrimary/10 border border-shPrimary/25 text-shPrimary text-[10px] font-black uppercase tracking-[0.14em]"><i className="fas fa-graduation-cap"/>Online School</span>
+              <span className="text-[11px] text-shTextMuted">Train from home with the Sit Happens system</span>
+            </div>
+          )}
+          <h1 className={`${isOnlineSchoolProgram ? "sh-display text-3xl sm:text-4xl leading-none" : "text-2xl font-bold"} text-shText mt-1`}>{item.name}</h1>
 
           <div className="mt-3">
             <PriceBlock item={item} hiddenPriceMessage={isGuest ? "Sign In for Pricing" : null} />
@@ -330,23 +343,38 @@ export default function ShopItemDetail({ kind, itemId, cart, onAddToCart, onBack
           )}
 
           {isOnlineSchoolProgram && (
-            <div className="mt-4 border border-shBorder rounded-lg p-3" data-testid="shop-detail-dog-selector">
-              <p className="text-[11px] font-black uppercase tracking-widest text-shTextMuted mb-2">
-                <i className="fas fa-dog mr-1" />This is an Online School course — choose a dog
-              </p>
+            <NeonEdge accentRgb="140,198,63" intensity="subtle" className="mt-5 p-4" data-testid="shop-detail-dog-selector">
+              <div className="flex items-start gap-3 mb-3">
+                <div className="w-10 h-10 rounded-xl bg-shPrimary/10 border border-shPrimary/25 grid place-items-center shrink-0"><i className="fas fa-dog text-shPrimary"/></div>
+                <div>
+                  <p className="text-[13px] font-black text-shText">Who is taking this course?</p>
+                  <p className="text-[11px] text-shTextMuted mt-0.5">Online School enrollment is tied to one dog. Choose the student before checkout.</p>
+                </div>
+              </div>
               {dogs.length === 0 ? (
-                <p className="text-shTextMuted text-[13px]">Add a dog to your account before purchasing an Online School course.</p>
+                <p className="text-shTextMuted text-[13px] rounded-xl border border-shBorder/50 bg-black/20 p-3">Add a dog to your account before purchasing an Online School course.</p>
               ) : (
-                <div className="flex flex-wrap gap-2">
-                  {dogs.map((d) => (
-                    <button key={d.id} type="button" onClick={() => setSelectedDogId(d.id)} data-testid={`shop-detail-dog-${d.id}`}
-                            className={`px-3 py-1.5 rounded-full text-[13px] font-bold border transition ${selectedDogId === d.id ? "bg-shPrimary text-bgHeader border-shPrimary" : "border-shBorder text-shText hover:border-shPrimary/50"}`}>
-                      {d.name}
-                    </button>
-                  ))}
+                <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
+                  {dogs.map((d) => {
+                    const enrollment = schoolEnrollments?.find((e) => e.dog_id === d.id && e.program_id === itemId);
+                    const selected = selectedDogId === d.id;
+                    return (
+                      <button key={d.id} type="button" onClick={() => setSelectedDogId(d.id)} data-testid={`shop-detail-dog-${d.id}`}
+                              className={`flex items-center gap-3 text-left p-2.5 rounded-xl border transition ${selected ? "bg-shPrimary/10 border-shPrimary/45 shadow-[0_0_18px_rgba(140,198,63,0.08)]" : "bg-black/20 border-shBorder/60 hover:border-shPrimary/30"}`}>
+                        <div className={`w-11 h-11 rounded-xl overflow-hidden border shrink-0 ${selected ? "border-shPrimary/40" : "border-shBorder"}`}>
+                          <HuskyDogImage src={d.photo} name={d.name} alt={d.name} className="w-full h-full object-cover object-top"/>
+                        </div>
+                        <div className="min-w-0 flex-1">
+                          <p className={`text-[13px] font-black truncate ${selected ? "text-shPrimary" : "text-shText"}`}>{d.name}</p>
+                          <p className="text-[10px] text-shTextMuted truncate">{enrollment?.status === "completed" ? "Course completed" : enrollment?.status === "active" ? "Already enrolled" : enrollment?.status === "withdrawn" ? "Previously withdrawn" : "Available"}</p>
+                        </div>
+                        <i className={`fas ${selected ? "fa-circle-check text-shPrimary" : "fa-circle text-shTextMuted/40"} text-[12px]`}/>
+                      </button>
+                    );
+                  })}
                 </div>
               )}
-            </div>
+            </NeonEdge>
           )}
 
           <div className="mt-4">

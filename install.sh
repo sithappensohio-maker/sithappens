@@ -87,7 +87,6 @@ ADMIN_PASSWORD="CHANGE_ME_ON_INSTALL"
 ADMIN_NAME="Admin"
 CORS_ORIGINS=""
 ACCESS_TOKEN_EXPIRE_DAYS="7"
-EMERGENT_LLM_KEY=""
 REACT_APP_BACKEND_URL=""
 EOF
     ok "Created a blank .env"
@@ -217,12 +216,12 @@ elif ask_yn "Set up Cloudflare Tunnel now to make the app publicly reachable?" "
         ↳ replace YOUR-DOMAIN.app with your real domain
 
     nano ~/cloudflared/config.yml
-        ↳ paste the YAML block from BAZZITE_SETUP.md §5.6
+        ↳ paste the YAML block from docs/operations/BAZZITE_SETUP.md §5.6
 
     sudo cloudflared --config ~/cloudflared/config.yml service install
     sudo systemctl enable --now cloudflared
 
-  Or just follow BAZZITE_SETUP.md sections 5.3 → 5.8.
+  Or just follow docs/operations/BAZZITE_SETUP.md sections 5.3 → 5.8.
 
 EOF
 else

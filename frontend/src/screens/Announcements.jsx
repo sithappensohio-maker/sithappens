@@ -2,6 +2,8 @@ import { useEffect, useState, useCallback } from "react";
 import { toast } from "sonner";
 import { api } from "../lib/api";
 import { compressImage } from "../lib/imageCompress";
+import PageHero from "../components/PageHero";
+import { useConfirm } from "../lib/useConfirm";
 
 /**
  * Sprint 110di-4 — Admin Announcements screen.
@@ -21,6 +23,7 @@ const fmtDate = (iso) => {
 const emptyForm = () => ({ title: "", body: "", image: "", pinned: false, expires_on: "", published: true });
 
 export default function Announcements({ openCreateOnMount = false, onCreateConsumed = () => {} }) {
+  const confirm = useConfirm();
   const [items, setItems] = useState([]);
   const [loading, setLoading] = useState(true);
   const [editing, setEditing] = useState(null);  // id of item being edited, or "new"
@@ -95,7 +98,13 @@ export default function Announcements({ openCreateOnMount = false, onCreateConsu
   };
 
   const remove = async (a) => {
-    if (!window.confirm(`Delete "${a.title}"? Clients will stop seeing it immediately.`)) return;
+    const ok = await confirm({
+      title: `Delete “${a.title}”?`,
+      body: "Clients will stop seeing this announcement immediately.",
+      confirmText: "Delete Announcement",
+      tone: "danger",
+    });
+    if (!ok) return;
     try {
       await api.delete(`/admin/announcements/${a.id}`);
       await load();
@@ -103,23 +112,20 @@ export default function Announcements({ openCreateOnMount = false, onCreateConsu
   };
 
   return (
-    <div className="space-y-6" data-testid="admin-announcements-screen">
-      {/* Header */}
-      <div className="flex items-end justify-between flex-wrap gap-3">
-        <div>
-          <p className="text-[11px] font-black uppercase tracking-[0.3em] text-shSecondary mb-1">
-            <i className="fas fa-bullhorn mr-1.5"/>From the Sit Happens Team
-          </p>
-          <h2 className="text-3xl sm:text-4xl font-black italic text-shText uppercase tracking-tight">Announcements</h2>
-          <p className="text-[13px] text-shTextMuted mt-1">Anything you post here lands on every active client&apos;s portal home page.</p>
-        </div>
-        {editing === null && (
+    <div className="space-y-6 sh-announcements-workspace" data-testid="admin-announcements-screen">
+      <PageHero
+        eyebrow={{ icon: "fa-bullhorn", text: "Client broadcast", color: "text-shSecondary" }}
+        title="Announcements."
+        highlight="Tell everyone once."
+        subtitle="Anything you publish here lands on every active client's portal home page."
+        right={editing === null ? (
           <button onClick={startNew} data-testid="ann-new-btn"
                   className="text-[13px] font-black uppercase tracking-widest px-4 py-2 rounded bg-shPrimary text-bgHeader hover:bg-shPrimary/90 transition">
             <i className="fas fa-plus mr-1.5"/>New Announcement
           </button>
-        )}
-      </div>
+        ) : null}
+        testid="announcements-hero"
+      />
 
       {/* Composer */}
       {editing !== null && (

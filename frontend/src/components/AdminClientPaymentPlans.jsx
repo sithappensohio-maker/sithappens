@@ -1,6 +1,7 @@
 import { useEffect, useState } from "react";
 import { api, formatErr } from "../lib/api";
 import { toast } from "sonner";
+import { useConfirm } from "../lib/useConfirm";
 import RichTextEditor from "./RichTextEditor";
 import { sanitizeHtml } from "../lib/sanitizeHtml";
 
@@ -28,6 +29,7 @@ const STATUS_META = {
  * empty array reference each render → useEffect dep changed → setPlans → re-render loop.
  */
 export default function AdminClientPaymentPlans({ clientId, plans: plansFromParent }) {
+  const confirm = useConfirm();
   const [plans, setPlans] = useState(Array.isArray(plansFromParent) ? plansFromParent : []);
   const [creating, setCreating] = useState(false);
 
@@ -61,7 +63,13 @@ export default function AdminClientPaymentPlans({ clientId, plans: plansFromPare
   };
 
   const reversePayment = async (planId, instId) => {
-    if (!window.confirm("Reverse this payment? This removes it from your P&L and flips the installment back to DUE.")) return;
+    const ok = await confirm({
+      title: "Reverse this payment?",
+      body: "This removes the payment from your P&L and returns the installment to Due.",
+      confirmText: "Reverse Payment",
+      tone: "danger",
+    });
+    if (!ok) return;
     try {
       await api.post(`/admin/payment-plans/${planId}/installments/${instId}/reverse-payment`,
                      { notes: "Manual reversal" });
@@ -73,7 +81,13 @@ export default function AdminClientPaymentPlans({ clientId, plans: plansFromPare
   };
 
   const cancelPlan = async (planId) => {
-    if (!window.confirm("Cancel this payment plan? Unpaid installments will be voided.")) return;
+    const ok = await confirm({
+      title: "Cancel this payment plan?",
+      body: "Unpaid installments will be voided. Recorded payments remain in the financial history.",
+      confirmText: "Cancel Plan",
+      tone: "danger",
+    });
+    if (!ok) return;
     try {
       await api.post(`/admin/payment-plans/${planId}/cancel`);
       load();

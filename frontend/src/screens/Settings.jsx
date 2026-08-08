@@ -223,8 +223,8 @@ export default function Settings() {
       accent: "shSecondary",
       blurb: "Logo, brand colors, public copy, QR codes, and portal content.",
       subsections: [
-        { id: "brand", label: "Brand & Theme", icon: "fa-palette",
-          desc: "Logo, colors, fonts, splatter intensity, UI polish knobs.",
+        { id: "brand", label: "Brand & Appearance", icon: "fa-palette",
+          desc: "Brand colors, typography, surfaces, and the overall interface intensity. Advanced legacy theme overrides stay tucked away unless you need them.",
           badges: ["Live", "Client-facing"] },
         { id: "_d2d_ui", label: "Portal & UI Polish", icon: "fa-sparkles",
           desc: "Splatter intensity, primary CTA copy, PWA name/tagline, time/date format, week start, show prices/waitlist in portal.",
@@ -287,7 +287,7 @@ export default function Settings() {
           desc: "Fiscal year start, bookkeeping export format, mileage rate, 1099 threshold.",
           badges: ["Live", "Admin-only"], d2dSection: "finance" },
         { id: "payment_options", label: "Payment Options", icon: "fa-money-bill-wave",
-          desc: "Venmo / PayPal / Clover / Cash / Check — toggle which payment methods to show clients in the portal and on booking confirmations. Manual Payment Tracking remains the source of truth.",
+          desc: "Venmo / PayPal / Card / Cash / Check — toggle which payment methods to show clients in the portal and on booking confirmations. Manual Payment Tracking remains the source of truth.",
           badges: ["Live", "Client-facing"] },
         { id: "_processors_soon", label: "Payment Processors", icon: "fa-credit-card",
           desc: "Stripe / processor keys, webhook health, payout schedule.",
@@ -408,7 +408,7 @@ export default function Settings() {
   if (!s) return <div className="text-shTextMuted text-sm">Loading settings…</div>;
 
   return (
-    <div className="animate-slide-in space-y-5" data-testid="settings-screen">
+    <div className="animate-slide-in space-y-5 sh-settings-workspace" data-testid="settings-screen">
       <PageHero
         eyebrow={{ icon: "fa-sliders", text: "Configuration", color: "text-shSecondary" }}
         title="Settings."
@@ -419,7 +419,7 @@ export default function Settings() {
       />
 
       {/* Search + breadcrumb row */}
-      <div className="bg-[var(--sh-card-base)] border border-shBorder rounded-xl p-3 md:p-4 flex flex-col md:flex-row md:items-center gap-3 md:gap-4">
+      <div className="sh-settings-commandbar flex flex-col md:flex-row md:items-center gap-3 md:gap-4">
         <div className="flex items-center gap-2 text-[13px] font-black uppercase tracking-widest min-w-0 flex-wrap" data-testid="settings-breadcrumb">
           <button
             type="button"
@@ -479,7 +479,7 @@ export default function Settings() {
       {/* Common Settings — quick jumps to the settings operators reach for
           most often. Each button opens the exact existing settings section;
           nothing here is a new panel or duplicated control. */}
-      <div className="bg-[var(--sh-card-base)] border border-shBorder rounded-xl p-3 md:p-4" data-testid="settings-common-shortcuts">
+      <div className="sh-settings-shortcuts" data-testid="settings-common-shortcuts">
         <p className="text-[12px] font-black uppercase tracking-widest text-shTextMuted mb-2.5">Common Settings</p>
         <div className="flex flex-wrap gap-2">
           {COMMON_SETTINGS_SHORTCUTS.map(sc => {
@@ -504,7 +504,7 @@ export default function Settings() {
       <div className="flex flex-col md:flex-row gap-4 md:gap-6 relative">
         {/* Category sidebar */}
         <nav
-          className={`${mobileNavOpen ? "block" : "hidden"} md:block md:w-64 md:shrink-0 space-y-1.5`}
+          className={`${mobileNavOpen ? "block" : "hidden"} md:block md:w-72 md:shrink-0 space-y-2 sh-settings-sidebar`}
           data-testid="settings-sidebar"
         >
           {CATEGORIES.map(cat => {
@@ -532,7 +532,7 @@ export default function Settings() {
         </nav>
 
         {/* Main content */}
-        <div className="flex-1 min-w-0 bg-[var(--sh-card-base)] border border-shBorder rounded-xl p-4 md:p-6 shadow-2xl overflow-x-auto">
+        <div className="flex-1 min-w-0 sh-settings-canvas overflow-x-auto">
           {isOverview ? (
             <CategoryOverview category={activeCategory} onOpen={openSub} showPlanned={showPlanned} />
           ) : (
@@ -627,7 +627,7 @@ function SubsectionCard({ sub, onOpen }) {
       onClick={onOpen}
       disabled={isComing}
       data-testid={`settings-card-${sub.id}`}
-      className={`text-left rounded-xl border p-4 transition flex flex-col gap-2 ${
+      className={`sh-settings-card text-left transition flex flex-col gap-2 ${
         isComing
           ? "bg-[var(--sh-card-base)]/30 border-shBorder/40 cursor-not-allowed opacity-60"
           : "bg-[var(--sh-card-base)]/50 border-shBorder hover:border-shSecondary hover:bg-[var(--sh-card-base)]/80 hover:shadow-lg hover:-translate-y-0.5"
@@ -1155,7 +1155,7 @@ const BFC_SERVICES = [
 ];
 
 // Sprint 110di-29 — Payment Options panel. Five canonical methods
-// (Venmo / PayPal / Clover / Cash / Check) each with an enabled toggle,
+// (Venmo / PayPal / Card / Cash / Check) each with an enabled toggle,
 // editable display name, optional link, and instructions. Shown in the
 // client portal so the operator can tell clients HOW to pay — payment
 // is NEVER processed here and booking is NEVER blocked on payment.
@@ -1190,7 +1190,7 @@ function PaymentOptionsPanel() {
   };
 
   const ICONS = {
-    venmo:  "fa-mobile-screen", paypal: "fa-paypal", clover: "fa-credit-card",
+    venmo:  "fa-mobile-screen", paypal: "fa-paypal", card: "fa-credit-card",
     cash:   "fa-money-bill-wave", check:  "fa-money-check-dollar",
   };
 
@@ -1833,10 +1833,7 @@ function BrandPanel() {
   const [draft, setDraft] = useState(null);
   const [saving, setSaving] = useState(false);
   const [msg, setMsg] = useState("");
-  // ────────────────────────────────────────────────────────────────────────
-  // Sprint 110di-18/19/20 — Sub-panels (Client Portal Controls, Booking Flow
-  // Controls, Dashboard Widget Controls, Permission Matrix) defined above.
-  // ────────────────────────────────────────────────────────────────────────
+  const [advancedOpen, setAdvancedOpen] = useState(false);
 
   useEffect(() => {
     if (ctx?.branding && !draft) setDraft({ ...ctx.branding });
@@ -1844,59 +1841,6 @@ function BrandPanel() {
 
   if (!ctx || !draft) return <div className="text-shTextMuted text-sm">Loading…</div>;
 
-  const dirty = JSON.stringify(draft) !== JSON.stringify(ctx.branding);
-
-  const onSave = async () => {
-    setSaving(true); setMsg("");
-    try {
-      await ctx.saveBranding({
-        brand_primary: draft.brand_primary,
-        brand_accent: draft.brand_accent,
-        brand_warning: draft.brand_warning,
-        brand_font_family: draft.brand_font_family,
-        brand_footer_text: draft.brand_footer_text,
-        brand_footer_url: draft.brand_footer_url,
-        grad_hero_color:    draft.grad_hero_color,
-        grad_info_color:    draft.grad_info_color,
-        grad_warning_color: draft.grad_warning_color,
-        grad_danger_color:  draft.grad_danger_color,
-        grad_success_color: draft.grad_success_color,
-        // Sprint 110di-8 — expanded theme surfaces.
-        theme_bg_base:               draft.theme_bg_base,
-        theme_bg_panel:              draft.theme_bg_panel,
-        theme_bg_header:             draft.theme_bg_header,
-        theme_bg_hover:              draft.theme_bg_hover,
-        theme_text_primary:          draft.theme_text_primary,
-        theme_text_muted:            draft.theme_text_muted,
-        theme_text_display:          draft.theme_text_display,
-        theme_btn_primary_bg:        draft.theme_btn_primary_bg,
-        theme_btn_primary_fg:        draft.theme_btn_primary_fg,
-        theme_btn_secondary_border:  draft.theme_btn_secondary_border,
-        theme_btn_secondary_fg:      draft.theme_btn_secondary_fg,
-        theme_btn_danger_bg:         draft.theme_btn_danger_bg,
-        theme_btn_danger_fg:         draft.theme_btn_danger_fg,
-        theme_input_bg:              draft.theme_input_bg,
-        theme_input_border:          draft.theme_input_border,
-        theme_input_focus:           draft.theme_input_focus,
-        theme_calendar_active:       draft.theme_calendar_active,
-        theme_table_hover:           draft.theme_table_hover,
-        theme_row_border:            draft.theme_row_border,
-        // Sprint 110di-13 — Card chrome lives entirely under
-        // `card_type_themes`. The Default Card type also drives the legacy
-        // global card CSS vars (see theme.js), so there's a single source of
-        // truth for normal panels and the 9 categorized variants.
-        card_type_themes:            draft.card_type_themes,
-      });
-      setMsg("Saved");
-      setTimeout(() => setMsg(""), 1800);
-    } catch (e) {
-      setMsg("Failed to save");
-    }
-    setSaving(false);
-  };
-
-  // Sprint 110di-8 — the canonical Sit Happens default palette. Reset button
-  // copies these into the draft (admin still has to hit Save to commit).
   const SH_DEFAULTS = {
     brand_primary: "#8cc63f",
     brand_accent:  "#00a9e0",
@@ -1904,11 +1848,7 @@ function BrandPanel() {
     brand_font_family: "Inter",
     brand_footer_text: "Sit Happens",
     brand_footer_url: "",
-    grad_hero_color:    "#8cc63f",
-    grad_info_color:    "#00a9e0",
-    grad_warning_color: "#f59e0b",
-    grad_danger_color:  "#ef4444",
-    grad_success_color: "#8cc63f",
+    interface_style: "standard",
     theme_bg_base:               "#060c2e",
     theme_bg_panel:              "#0c143e",
     theme_bg_header:             "#03061a",
@@ -1928,27 +1868,86 @@ function BrandPanel() {
     theme_calendar_active:       "#8cc63f",
     theme_table_hover:           "#1a225a",
     theme_row_border:            "#1a225a",
-    // Sprint 110di-13 — Card chrome defaults live exclusively in the
-    // `card_type_themes` object now. The Default Card type controls the
-    // global panel border/glow/inset highlight app-wide.
-    card_type_themes: SH_CARD_TYPE_DEFAULTS(),
   };
 
-  const reset = () => setDraft({ ...SH_DEFAULTS });
+  const INTERFACE_PRESETS = [
+    { id: "subtle", label: "Subtle", desc: "Quiet edges and almost no glow.", border: 1, borderOpacity: 0.4, glow: 8, glowOpacity: 0.08 },
+    { id: "standard", label: "Standard", desc: "The current Sit Happens look.", border: 2, borderOpacity: 0.75, glow: 14, glowOpacity: 0.25 },
+    { id: "bold", label: "Bold", desc: "More neon edge without changing the palette.", border: 2, borderOpacity: 0.95, glow: 22, glowOpacity: 0.42 },
+  ];
+
+  const activeStyle = INTERFACE_PRESETS.find((p) => p.id === (draft.interface_style || "standard")) || INTERFACE_PRESETS[1];
+  const rgb = (hex) => {
+    const h = (hex || "").replace("#", "").trim();
+    if (h.length !== 6) return "0, 169, 224";
+    const n = parseInt(h, 16);
+    return `${(n >> 16) & 255}, ${(n >> 8) & 255}, ${n & 255}`;
+  };
+  const accentRgb = rgb(draft.brand_accent);
+  const previewChrome = {
+    background: draft.theme_bg_panel,
+    border: `${activeStyle.border}px solid rgba(${accentRgb}, ${activeStyle.borderOpacity})`,
+    boxShadow: `0 0 ${activeStyle.glow}px rgba(${accentRgb}, ${activeStyle.glowOpacity}), inset 0 1px 0 rgba(255,255,255,.08)`,
+    color: draft.theme_text_primary,
+  };
+
+  const dirty = JSON.stringify(draft) !== JSON.stringify(ctx.branding);
+
+  const onSave = async () => {
+    setSaving(true);
+    setMsg("");
+    try {
+      await ctx.saveBranding({
+        brand_primary: draft.brand_primary,
+        brand_accent: draft.brand_accent,
+        brand_warning: draft.brand_warning,
+        brand_font_family: draft.brand_font_family,
+        brand_footer_text: draft.brand_footer_text,
+        brand_footer_url: draft.brand_footer_url,
+        interface_style: draft.interface_style || "standard",
+        theme_bg_base: draft.theme_bg_base,
+        theme_bg_panel: draft.theme_bg_panel,
+        theme_bg_header: draft.theme_bg_header,
+        theme_bg_hover: draft.theme_bg_hover,
+        theme_text_primary: draft.theme_text_primary,
+        theme_text_muted: draft.theme_text_muted,
+        theme_text_display: draft.theme_text_display,
+        theme_btn_primary_bg: draft.theme_btn_primary_bg,
+        theme_btn_primary_fg: draft.theme_btn_primary_fg,
+        theme_btn_secondary_border: draft.theme_btn_secondary_border,
+        theme_btn_secondary_fg: draft.theme_btn_secondary_fg,
+        theme_btn_danger_bg: draft.theme_btn_danger_bg,
+        theme_btn_danger_fg: draft.theme_btn_danger_fg,
+        theme_input_bg: draft.theme_input_bg,
+        theme_input_border: draft.theme_input_border,
+        theme_input_focus: draft.theme_input_focus,
+        theme_calendar_active: draft.theme_calendar_active,
+        theme_table_hover: draft.theme_table_hover,
+        theme_row_border: draft.theme_row_border,
+      });
+      setMsg("Saved");
+      setTimeout(() => setMsg(""), 1800);
+    } catch {
+      setMsg("Failed to save");
+    }
+    setSaving(false);
+  };
+
+  const reset = () => setDraft((current) => ({ ...current, ...SH_DEFAULTS }));
 
   return (
     <div className="space-y-6" data-testid="brand-panel">
-      <Section title="Brand Colors" subtitle="Applied everywhere — login screen, admin shell, and client portal. Changes save when you hit the Save button below.">
+      <Section title="Brand Colors" subtitle="The three colors that identify Sit Happens across the admin app, client portal, Online School, and public pages.">
         <div className="grid sm:grid-cols-3 gap-4">
-          <ColorField testid="brand-primary"  label="Primary" sub="buttons, accents, active nav" value={draft.brand_primary}  onChange={(v)=>setDraft({...draft, brand_primary: v})} />
-          <ColorField testid="brand-accent"   label="Accent"  sub="highlights, links, info badges" value={draft.brand_accent}   onChange={(v)=>setDraft({...draft, brand_accent: v})} />
-          <ColorField testid="brand-warning"  label="Warning" sub="alerts, expiring vaccines"    value={draft.brand_warning}  onChange={(v)=>setDraft({...draft, brand_warning: v})} />
+          <ColorField testid="brand-primary" label="Primary" sub="main actions and success" value={draft.brand_primary} onChange={(v)=>setDraft({...draft, brand_primary:v, theme_btn_primary_bg:v, theme_input_focus:v, theme_calendar_active:v})} />
+          <ColorField testid="brand-accent" label="Accent" sub="current state, links, information" value={draft.brand_accent} onChange={(v)=>setDraft({...draft, brand_accent:v})} />
+          <ColorField testid="brand-warning" label="Attention" sub="warnings and attention states" value={draft.brand_warning} onChange={(v)=>setDraft({...draft, brand_warning:v})} />
         </div>
       </Section>
 
-      <Section title="Font" subtitle="Switches the typeface used throughout the app.">
+      <Section title="Font" subtitle="The main typeface used throughout the application.">
         <div className="flex flex-wrap gap-2" data-testid="brand-font-options">
-          {FONT_OPTIONS.map(opt => {
+          {FONT_OPTIONS.map((opt) => {
             const active = draft.brand_font_family === opt.value;
             const styleFam = opt.value === "System" ? "system-ui" : opt.value;
             return (
@@ -1956,632 +1955,155 @@ function BrandPanel() {
                 key={opt.value}
                 type="button"
                 data-testid={`brand-font-${opt.value}`}
-                onClick={()=>setDraft({...draft, brand_font_family: opt.value})}
-                className={`px-4 py-3 rounded-lg border-2 transition text-left ${
-                  active
-                    ? "border-shPrimary bg-shPrimary/10"
-                    : "border-shBorder bg-[var(--sh-card-base)] hover:border-shPrimary/50"
-                }`}
+                onClick={()=>setDraft({...draft, brand_font_family:opt.value})}
+                className={`min-h-12 px-4 py-3 rounded-lg border transition text-left ${active ? "border-shPrimary bg-shPrimary/10" : "border-shBorder bg-[var(--sh-card-base)] hover:border-shSecondary/50"}`}
                 style={{ fontFamily: styleFam }}
               >
-                <div className="text-sm font-black text-shText">{opt.label}</div>
-                <div className="text-[14px] text-shTextMuted mt-0.5">The quick brown fox</div>
+                <span className={`block text-sm font-black ${active ? "text-shPrimary" : "text-shText"}`}>{opt.label}</span>
+                <span className="block text-[11px] text-shTextMuted mt-0.5">Sit Happens Dog Training</span>
               </button>
             );
           })}
         </div>
       </Section>
 
-      <Section title="Card Gradients" subtitle="Each card type in the app gets a tinted gradient. Pick the color for each — every matching card across admin + portal recolors instantly. Hover any swatch to see what kind of cards it controls.">
-        <div className="grid sm:grid-cols-2 lg:grid-cols-3 gap-3">
-          <GradColorField testid="grad-hero"    label="Hero"    sub="credit balance, hero stats, onboarding banner" sample="card-hero"    value={draft.grad_hero_color}    onChange={(v)=>setDraft({...draft, grad_hero_color: v})} />
-          <GradColorField testid="grad-info"    label="Info"    sub="dashboard tiles, tips, secondary info"          sample="card-info"    value={draft.grad_info_color}    onChange={(v)=>setDraft({...draft, grad_info_color: v})} />
-          <GradColorField testid="grad-warning" label="Warning" sub="vaccine expiring, low credits, attention"       sample="card-warning" value={draft.grad_warning_color} onChange={(v)=>setDraft({...draft, grad_warning_color: v})} />
-          <GradColorField testid="grad-danger"  label="Danger"  sub="vaccine missing, errors, overdue"               sample="card-danger"  value={draft.grad_danger_color}  onChange={(v)=>setDraft({...draft, grad_danger_color: v})} />
-          <GradColorField testid="grad-success" label="Success" sub="report cards, approvals, trophies earned"       sample="card-success" value={draft.grad_success_color} onChange={(v)=>setDraft({...draft, grad_success_color: v})} />
-        </div>
-      </Section>
-
-      <Section title="Footer Pill" subtitle="The small pill in the bottom-right corner of every page. Leave the URL blank to make it a non-clickable label.">
-        <div className="grid sm:grid-cols-2 gap-4">
-          <div className="bg-[var(--sh-card-base)] border border-shBorder rounded-lg p-3">
-            <label className="text-[15px] font-black text-shTextMuted uppercase tracking-widest">Text</label>
-            <p className="text-[13px] text-shTextMuted mt-0.5">What the pill says</p>
-            <input
-              type="text"
-              maxLength={28}
-              value={draft.brand_footer_text || ""}
-              onChange={(e)=>setDraft({...draft, brand_footer_text: e.target.value})}
-              data-testid="brand-footer-text"
-              placeholder="Sit Happens"
-              className="w-full mt-2 bg-[var(--sh-card-base)] border border-shBorder rounded px-2 py-1.5 text-sm text-shText"
-            />
-          </div>
-          <div className="bg-[var(--sh-card-base)] border border-shBorder rounded-lg p-3">
-            <label className="text-[15px] font-black text-shTextMuted uppercase tracking-widest">Link URL</label>
-            <p className="text-[13px] text-shTextMuted mt-0.5">Opens in a new tab when clicked. Blank = no link.</p>
-            <input
-              type="url"
-              value={draft.brand_footer_url || ""}
-              onChange={(e)=>setDraft({...draft, brand_footer_url: e.target.value})}
-              data-testid="brand-footer-url"
-              placeholder="https://sithappens.app"
-              className="w-full mt-2 bg-[var(--sh-card-base)] border border-shBorder rounded px-2 py-1.5 text-sm text-shText font-mono"
-            />
-          </div>
-        </div>
-      </Section>
-
-      {/* Sprint 110di-8 — Expanded theme surfaces. Five collapsible groups
-          (Backgrounds, Text, Buttons, Forms, Calendar/Table) so the panel
-          stays scannable. Each row is just a thin ColorField; defaults match
-          the historical Sit Happens palette and can be wiped back by hitting
-          the Reset button below. */}
-      <ThemeGroup title="App Backgrounds" subtitle="Page, panel, header/sidebar, and hover/border surfaces." testid="theme-group-bg">
-        <ColorField testid="theme-bg-base"   label="Base Background"        sub="page body"               value={draft.theme_bg_base}   onChange={(v)=>setDraft({...draft, theme_bg_base: v})} />
-        <ColorField testid="theme-bg-panel"  label="Panel / Card Background" sub="cards, modals, sheets"   value={draft.theme_bg_panel}  onChange={(v)=>setDraft({...draft, theme_bg_panel: v})} />
-        <ColorField testid="theme-bg-header" label="Header / Sidebar"        sub="top nav, side rail"      value={draft.theme_bg_header} onChange={(v)=>setDraft({...draft, theme_bg_header: v})} />
-        <ColorField testid="theme-bg-hover"  label="Hover / Border"          sub="row hover + borders"     value={draft.theme_bg_hover}  onChange={(v)=>setDraft({...draft, theme_bg_hover: v})} />
-      </ThemeGroup>
-
-      <ThemeGroup title="Text" subtitle="Primary body text, muted/secondary text, and display headings." testid="theme-group-text">
-        <ColorField testid="theme-text-primary" label="Primary Text" sub="body copy" value={draft.theme_text_primary} onChange={(v)=>setDraft({...draft, theme_text_primary: v})} />
-        <ColorField testid="theme-text-muted"   label="Muted / Secondary"   sub="captions, hints" value={draft.theme_text_muted}   onChange={(v)=>setDraft({...draft, theme_text_muted: v})} />
-        <ColorField testid="theme-text-display" label="Display / Heading"  sub="hero titles, h1/h2" value={draft.theme_text_display} onChange={(v)=>setDraft({...draft, theme_text_display: v})} />
-      </ThemeGroup>
-
-      <ThemeGroup title="Buttons" subtitle="Primary, secondary outline, and danger button colors." testid="theme-group-btn">
-        <ColorField testid="theme-btn-primary-bg" label="Primary Button BG" sub="solid CTA button" value={draft.theme_btn_primary_bg} onChange={(v)=>setDraft({...draft, theme_btn_primary_bg: v})} />
-        <ColorField testid="theme-btn-primary-fg" label="Primary Button Text" sub="label color"   value={draft.theme_btn_primary_fg} onChange={(v)=>setDraft({...draft, theme_btn_primary_fg: v})} />
-        <ColorField testid="theme-btn-secondary-border" label="Secondary Border" sub="outline color" value={draft.theme_btn_secondary_border} onChange={(v)=>setDraft({...draft, theme_btn_secondary_border: v})} />
-        <ColorField testid="theme-btn-secondary-fg"     label="Secondary Text"   sub="label color"   value={draft.theme_btn_secondary_fg}     onChange={(v)=>setDraft({...draft, theme_btn_secondary_fg: v})} />
-        <ColorField testid="theme-btn-danger-bg" label="Danger Button BG" sub="delete/destructive" value={draft.theme_btn_danger_bg} onChange={(v)=>setDraft({...draft, theme_btn_danger_bg: v})} />
-        <ColorField testid="theme-btn-danger-fg" label="Danger Button Text" sub="label color"     value={draft.theme_btn_danger_fg} onChange={(v)=>setDraft({...draft, theme_btn_danger_fg: v})} />
-      </ThemeGroup>
-
-      <ThemeGroup title="Forms" subtitle="Input fields and focus state." testid="theme-group-form">
-        <ColorField testid="theme-input-bg"     label="Input BG"     sub="text field fill"  value={draft.theme_input_bg}     onChange={(v)=>setDraft({...draft, theme_input_bg: v})} />
-        <ColorField testid="theme-input-border" label="Input Border" sub="resting border"   value={draft.theme_input_border} onChange={(v)=>setDraft({...draft, theme_input_border: v})} />
-        <ColorField testid="theme-input-focus"  label="Focus Glow"   sub="active border + glow" value={draft.theme_input_focus}  onChange={(v)=>setDraft({...draft, theme_input_focus: v})} />
-      </ThemeGroup>
-
-      <ThemeGroup title="Calendar & Tables" subtitle="Calendar active day, table row hover, and row borders." testid="theme-group-grid">
-        <ColorField testid="theme-calendar-active" label="Calendar Active" sub="today / selected day" value={draft.theme_calendar_active} onChange={(v)=>setDraft({...draft, theme_calendar_active: v})} />
-        <ColorField testid="theme-table-hover"     label="Table Row Hover"  sub="hover highlight"      value={draft.theme_table_hover}     onChange={(v)=>setDraft({...draft, theme_table_hover: v})} />
-        <ColorField testid="theme-row-border"      label="Row Border"       sub="dividers"             value={draft.theme_row_border}      onChange={(v)=>setDraft({...draft, theme_row_border: v})} />
-      </ThemeGroup>
-
-      <CardTypeThemesPanel draft={draft} setDraft={setDraft} />
-
-      <Section title="Live Preview" subtitle="A quick taste of how things look with the choices above.">
-        {/* Sprint 110di-8 — Expanded live preview surfaces (card / primary
-            button / secondary button / input / warning pill / sidebar). Uses
-            in-flight draft colors directly so admins can compare before Save. */}
-        <div className="rounded-xl p-5 border space-y-4"
-             data-testid="brand-live-preview"
-             style={{
-               borderColor: draft.theme_bg_hover,
-               backgroundColor: draft.theme_bg_base,
-               color: draft.theme_text_primary,
-               fontFamily: draft.brand_font_family === "System" ? "system-ui" : draft.brand_font_family,
-             }}>
-          {/* Top row: pills */}
-          <div className="flex items-center gap-2 flex-wrap">
-            <span className="px-3 py-1 rounded font-black text-[15px] uppercase tracking-widest" style={{ background: draft.brand_primary, color: "#0f172a" }}>Primary</span>
-            <span className="px-3 py-1 rounded font-black text-[15px] uppercase tracking-widest" style={{ background: draft.brand_accent, color: "#fff" }}>Accent</span>
-            <span className="px-3 py-1 rounded font-black text-[15px] uppercase tracking-widest" style={{ background: draft.brand_warning, color: "#fff" }}>Warning</span>
-            <span className="px-3 py-1 rounded-full font-black text-[12px] uppercase tracking-widest border"
-                  style={{ background: `${draft.theme_btn_danger_bg}22`, color: draft.theme_btn_danger_bg, borderColor: `${draft.theme_btn_danger_bg}55` }}>
-              <i className="fas fa-triangle-exclamation mr-1"/>Danger Pill
-            </span>
-          </div>
-
-          {/* Sidebar + card sample */}
-          <div className="grid grid-cols-[120px_1fr] gap-3 rounded-lg overflow-hidden border"
-               style={{ borderColor: draft.theme_bg_hover, background: draft.theme_bg_panel }}>
-            <div className="p-3 space-y-2" style={{ background: draft.theme_bg_header }}>
-              <p className="text-[10px] uppercase tracking-widest font-black" style={{ color: draft.theme_text_muted }}>Sidebar</p>
-              <div className="px-2 py-1.5 rounded text-[12px] font-black uppercase tracking-widest"
-                   style={{ background: draft.brand_primary, color: draft.theme_btn_primary_fg }}>Dashboard</div>
-              <div className="px-2 py-1.5 rounded text-[12px] font-black uppercase tracking-widest"
-                   style={{ color: draft.theme_text_muted }}>Schedule</div>
-              <div className="px-2 py-1.5 rounded text-[12px] font-black uppercase tracking-widest"
-                   style={{ color: draft.theme_text_muted }}>Clients</div>
-            </div>
-            <div className="p-3 space-y-2">
-              <p className="text-[10px] uppercase tracking-widest font-black" style={{ color: draft.theme_text_muted }}>Card</p>
-              <h4 className="text-base font-black uppercase italic" style={{ color: draft.theme_text_display }}>Buddy is ready for pickup</h4>
-              <p className="text-[13px]" style={{ color: draft.theme_text_primary }}>Crate training, leash manners, and a long walk today.</p>
-              <div className="flex items-center gap-2 pt-1">
-                <button type="button" className="px-3 py-1.5 rounded font-black text-[12px] uppercase tracking-widest"
-                        style={{ background: draft.theme_btn_primary_bg, color: draft.theme_btn_primary_fg }}>Primary Btn</button>
-                <button type="button" className="px-3 py-1.5 rounded border font-black text-[12px] uppercase tracking-widest"
-                        style={{ borderColor: draft.theme_btn_secondary_border, color: draft.theme_btn_secondary_fg, background: "transparent" }}>Secondary</button>
-                <button type="button" className="px-3 py-1.5 rounded font-black text-[12px] uppercase tracking-widest"
-                        style={{ background: draft.theme_btn_danger_bg, color: draft.theme_btn_danger_fg }}>Delete</button>
-              </div>
-              <div className="pt-2">
-                <input readOnly value="Sample input"
-                       className="w-full rounded px-2 py-1.5 text-sm"
-                       style={{ background: draft.theme_input_bg, border: `1px solid ${draft.theme_input_border}`, color: draft.theme_text_primary }} />
-              </div>
-            </div>
-          </div>
-
-          {/* Calendar + table mini */}
-          <div className="grid sm:grid-cols-2 gap-3">
-            <div className="rounded-lg p-3 border" style={{ background: draft.theme_bg_panel, borderColor: draft.theme_row_border }}>
-              <p className="text-[10px] uppercase tracking-widest font-black mb-2" style={{ color: draft.theme_text_muted }}>Calendar (mini)</p>
-              <div className="grid grid-cols-7 gap-1 text-center text-[11px]">
-                {["S","M","T","W","T","F","S"].map((d, i) => (
-                  <div key={`hd${i}`} style={{ color: draft.theme_text_muted }}>{d}</div>
-                ))}
-                {Array.from({ length: 14 }).map((_, i) => {
-                  const isActive = i === 5;
-                  return (
-                    <div key={i} className="rounded py-1"
-                         style={{
-                           background: isActive ? draft.theme_calendar_active : "transparent",
-                           color: isActive ? draft.theme_btn_primary_fg : draft.theme_text_primary,
-                           border: `1px solid ${draft.theme_row_border}`,
-                         }}>{i + 1}</div>
-                  );
-                })}
-              </div>
-            </div>
-            <div className="rounded-lg p-0 border overflow-hidden" style={{ background: draft.theme_bg_panel, borderColor: draft.theme_row_border }}>
-              <p className="text-[10px] uppercase tracking-widest font-black px-3 pt-3" style={{ color: draft.theme_text_muted }}>Table rows</p>
-              <div className="mt-2">
-                {["Buddy", "Rocky", "Daisy"].map((name, i) => (
-                  <div key={name}
-                       className={`flex items-center justify-between px-3 py-2 text-sm border-t`}
-                       style={{
-                         borderTopColor: draft.theme_row_border,
-                         background: i === 1 ? draft.theme_table_hover : "transparent",
-                         color: draft.theme_text_primary,
-                       }}>
-                    <span className="font-black">{name}</span>
-                    <span style={{ color: draft.theme_text_muted }}>{i === 1 ? "hover" : "row"}</span>
-                  </div>
-                ))}
-              </div>
-            </div>
-          </div>
-
-          {/* Sprint 110di-13 — Cards & Panels preview reads from the
-              `Default Card` type. One source of truth: tweak the Default
-              tab below and this preview reflects it instantly. */}
-          {(() => {
-            const dflt = { ...SH_CARD_TYPE_DEFAULTS().default, ...((draft.card_type_themes || {}).default || {}) };
-            const cbRgb = hexToRgbInline(dflt.border);
-            const cgRgb = hexToRgbInline(dflt.glow);
-            const ihRgb = hexToRgbInline(dflt.inner_highlight_color || "#FFFFFF");
-            const opacity = Math.min(Math.max(parseFloat(dflt.border_opacity ?? 0.75), 0), 1);
-            const width = Math.max(0, parseFloat(dflt.border_width ?? 2));
-            const glowAlpha = Math.min(Math.max(parseFloat(dflt.glow_opacity ?? 0.25), 0), 1);
-            const glowBlur = Math.max(0, parseFloat(dflt.glow_blur ?? 14));
-            const innerAlpha = Math.min(Math.max(parseFloat(dflt.inner_highlight_opacity ?? 0.08), 0), 1);
-            const liveBorder = `${width}px solid rgba(${cbRgb}, ${opacity})`;
-            const liveShadow = `0 0 ${glowBlur}px rgba(${cgRgb}, ${glowAlpha}), inset 0 1px 0 rgba(${ihRgb}, ${innerAlpha})`;
-            const cardStyle = {
-              border: liveBorder,
-              background: dflt.bg || draft.theme_bg_panel,
-              boxShadow: liveShadow,
-              color: draft.theme_text_primary,
-            };
-            const nestedStyle = {
-              border: `${Math.max(width, 1)}px solid rgba(${cbRgb}, ${opacity * 0.85})`,
-              background: draft.theme_bg_base,
-              boxShadow: `0 0 ${glowBlur * 0.6}px rgba(${cgRgb}, ${glowAlpha * 0.7}), inset 0 1px 0 rgba(${ihRgb}, ${innerAlpha * 0.8})`,
+      <Section title="Interface Style" subtitle="One control for card borders and glow across the unified UI. Status colors still keep their normal meaning.">
+        <div className="grid md:grid-cols-3 gap-3" data-testid="interface-style-options">
+          {INTERFACE_PRESETS.map((preset) => {
+            const active = activeStyle.id === preset.id;
+            const prgb = rgb(draft.brand_accent);
+            const style = {
+              background: draft.theme_bg_panel,
+              border: `${preset.border}px solid rgba(${prgb}, ${preset.borderOpacity})`,
+              boxShadow: `0 0 ${preset.glow}px rgba(${prgb}, ${preset.glowOpacity}), inset 0 1px 0 rgba(255,255,255,.08)`,
             };
             return (
-              <div className="space-y-3 mt-2" data-testid="brand-cards-preview">
-                <p className="text-[10px] uppercase tracking-widest font-black" style={{ color: draft.theme_text_muted }}>Cards & Panels preview</p>
-
-                {/* 3-way comparison: no border / subtle / current admin choice */}
-                <div className="grid grid-cols-1 sm:grid-cols-3 gap-3" data-testid="brand-cards-comparison">
-                  <div className="rounded-lg p-3" style={{ background: draft.theme_bg_panel, color: draft.theme_text_primary, border: "1px solid transparent" }}>
-                    <p className="text-[10px] uppercase tracking-widest font-black mb-1" style={{ color: draft.theme_text_muted }}>No border</p>
-                    <p className="text-[12px]">Blends right into the page.</p>
-                  </div>
-                  <div className="rounded-lg p-3" style={{
-                    background: draft.theme_bg_panel,
-                    color: draft.theme_text_primary,
-                    border: `1px solid rgba(${cbRgb}, 0.45)`,
-                    boxShadow: `0 0 8px rgba(${cgRgb}, 0.18), inset 0 1px 0 rgba(${ihRgb}, 0.05)`,
-                  }}>
-                    <p className="text-[10px] uppercase tracking-widest font-black mb-1" style={{ color: draft.theme_text_muted }}>Subtle</p>
-                    <p className="text-[12px]">Visible but quiet.</p>
-                  </div>
-                  <div className="rounded-lg p-3" style={{
-                    background: draft.theme_bg_panel,
-                    color: draft.theme_text_primary,
-                    border: liveBorder,
-                    boxShadow: liveShadow,
-                  }}>
-                    <p className="text-[10px] uppercase tracking-widest font-black mb-1" style={{ color: draft.brand_primary }}>Your settings</p>
-                    <p className="text-[12px]">Stronger neon edge.</p>
-                  </div>
+              <button
+                key={preset.id}
+                type="button"
+                data-testid={`interface-style-${preset.id}`}
+                onClick={()=>setDraft({...draft, interface_style:preset.id})}
+                className={`rounded-xl p-4 text-left transition min-h-[116px] ${active ? "ring-2 ring-shPrimary/70" : "hover:-translate-y-0.5"}`}
+                style={style}
+              >
+                <div className="flex items-center justify-between gap-3">
+                  <span className={`font-black text-base ${active ? "text-shPrimary" : "text-shText"}`}>{preset.label}</span>
+                  {active && <span className="text-[10px] font-black uppercase tracking-widest text-shPrimary">Current</span>}
                 </div>
-
-                {/* Full sample card with your settings applied */}
-                <div className="rounded-xl p-4" style={cardStyle}>
-                  <p className="text-[11px] font-black uppercase tracking-widest" style={{ color: draft.brand_primary }}>
-                    <i className="fas fa-paw mr-1"/>Dashboard card
-                  </p>
-                  <h4 className="text-base font-black uppercase italic mt-1" style={{ color: draft.theme_text_display }}>Sample card with border + glow + inset highlight</h4>
-                  <p className="text-[12px] mt-1" style={{ color: draft.theme_text_muted }}>This chrome gets applied app-wide to dashboard, portal, dog profile, booking, training, and settings cards.</p>
-                  <div className="mt-3 rounded-lg p-3" style={nestedStyle}>
-                    <p className="text-[10px] uppercase tracking-widest font-black" style={{ color: draft.brand_accent }}>Nested panel</p>
-                    <p className="text-[12px] mt-1" style={{ color: draft.theme_text_primary }}>Used for sub-sections inside a card.</p>
-                  </div>
-                  <div className="grid grid-cols-2 gap-2 mt-3">
-                    <div className="rounded-lg px-3 py-2 text-[11px] font-black uppercase tracking-widest"
-                         style={{ ...nestedStyle, color: draft.brand_primary }}>
-                      <i className="fas fa-bolt mr-1"/>Quick link
-                    </div>
-                    <div className="rounded-lg px-3 py-2 text-[11px] font-black uppercase tracking-widest"
-                         style={{ ...nestedStyle, color: draft.brand_accent }}>
-                      <i className="fas fa-bullhorn mr-1"/>Announcements
-                    </div>
-                  </div>
-                  <div className="flex items-center gap-2 mt-3 flex-wrap">
-                    <button type="button" className="px-3 py-1.5 rounded font-black text-[12px] uppercase tracking-widest"
-                            style={{ background: draft.theme_btn_primary_bg, color: draft.theme_btn_primary_fg }}>Save</button>
-                    <button type="button" className="px-3 py-1.5 rounded border font-black text-[12px] uppercase tracking-widest"
-                            style={{ borderColor: draft.theme_btn_secondary_border, color: draft.theme_btn_secondary_fg, background: "transparent" }}>Cancel</button>
-                    <button type="button" className="px-3 py-1.5 rounded font-black text-[12px] uppercase tracking-widest"
-                            style={{ background: draft.theme_btn_danger_bg, color: draft.theme_btn_danger_fg }}>Delete</button>
-                  </div>
-                </div>
-              </div>
+                <p className="text-xs text-shTextMuted mt-2 leading-relaxed">{preset.desc}</p>
+              </button>
             );
-          })()}
+          })}
         </div>
       </Section>
 
-      <div className="flex justify-between items-center pt-4 border-t border-shBorder">
-        <button onClick={reset} data-testid="brand-reset" className="text-[14px] font-black uppercase tracking-widest text-shTextMuted hover:text-shText">
-          <i className="fas fa-rotate-left mr-2"/>Reset to Sit Happens Defaults
+      <button
+        type="button"
+        data-testid="brand-advanced-toggle"
+        onClick={()=>setAdvancedOpen((v)=>!v)}
+        className="w-full min-h-14 bg-[var(--sh-card-base)] border border-shBorder rounded-xl px-4 py-3 flex items-center justify-between gap-4 text-left hover:border-shSecondary/40 transition"
+      >
+        <span>
+          <span className="block text-sm font-black text-shText">Advanced Appearance</span>
+          <span className="block text-xs text-shTextMuted mt-1">Backgrounds, text, buttons, forms, calendar/table colors, and the footer label.</span>
+        </span>
+        <i className={`fas fa-chevron-${advancedOpen ? "up" : "down"} text-shSecondary`}/>
+      </button>
+
+      {advancedOpen && (
+        <div className="space-y-4" data-testid="brand-advanced-controls">
+          <Section title="Footer Label" subtitle="The small label shown at the bottom of the app. Leave URL blank for plain text.">
+            <div className="grid sm:grid-cols-2 gap-4">
+              <div className="bg-[var(--sh-card-base)] border border-shBorder rounded-lg p-3">
+                <label className="text-[13px] font-black text-shTextMuted uppercase tracking-widest">Text</label>
+                <input type="text" maxLength={28} value={draft.brand_footer_text || ""} onChange={(e)=>setDraft({...draft,brand_footer_text:e.target.value})} data-testid="brand-footer-text" placeholder="Sit Happens" className="w-full mt-2 bg-[var(--sh-card-base)] border border-shBorder rounded px-2 py-2 text-sm text-shText"/>
+              </div>
+              <div className="bg-[var(--sh-card-base)] border border-shBorder rounded-lg p-3">
+                <label className="text-[13px] font-black text-shTextMuted uppercase tracking-widest">Link URL</label>
+                <input type="url" value={draft.brand_footer_url || ""} onChange={(e)=>setDraft({...draft,brand_footer_url:e.target.value})} data-testid="brand-footer-url" placeholder="https://sithappens.app" className="w-full mt-2 bg-[var(--sh-card-base)] border border-shBorder rounded px-2 py-2 text-sm text-shText font-mono"/>
+              </div>
+            </div>
+          </Section>
+
+          <ThemeGroup title="App Backgrounds" subtitle="Page, panel, header/sidebar, and hover/border surfaces." testid="theme-group-bg">
+            <ColorField testid="theme-bg-base" label="Base Background" sub="page body" value={draft.theme_bg_base} onChange={(v)=>setDraft({...draft,theme_bg_base:v})}/>
+            <ColorField testid="theme-bg-panel" label="Panel / Card Background" sub="cards, modals, sheets" value={draft.theme_bg_panel} onChange={(v)=>setDraft({...draft,theme_bg_panel:v})}/>
+            <ColorField testid="theme-bg-header" label="Header / Sidebar" sub="top nav, side rail" value={draft.theme_bg_header} onChange={(v)=>setDraft({...draft,theme_bg_header:v})}/>
+            <ColorField testid="theme-bg-hover" label="Hover / Border" sub="row hover + dividers" value={draft.theme_bg_hover} onChange={(v)=>setDraft({...draft,theme_bg_hover:v})}/>
+          </ThemeGroup>
+
+          <ThemeGroup title="Text" subtitle="Primary, muted, and display-heading colors." testid="theme-group-text">
+            <ColorField testid="theme-text-primary" label="Primary Text" sub="body copy" value={draft.theme_text_primary} onChange={(v)=>setDraft({...draft,theme_text_primary:v})}/>
+            <ColorField testid="theme-text-muted" label="Muted / Secondary" sub="captions and hints" value={draft.theme_text_muted} onChange={(v)=>setDraft({...draft,theme_text_muted:v})}/>
+            <ColorField testid="theme-text-display" label="Display / Heading" sub="hero titles" value={draft.theme_text_display} onChange={(v)=>setDraft({...draft,theme_text_display:v})}/>
+          </ThemeGroup>
+
+          <ThemeGroup title="Buttons" subtitle="Primary, secondary, and destructive actions." testid="theme-group-btn">
+            <ColorField testid="theme-btn-primary-bg" label="Primary Button BG" sub="solid CTA" value={draft.theme_btn_primary_bg} onChange={(v)=>setDraft({...draft,theme_btn_primary_bg:v})}/>
+            <ColorField testid="theme-btn-primary-fg" label="Primary Button Text" sub="label color" value={draft.theme_btn_primary_fg} onChange={(v)=>setDraft({...draft,theme_btn_primary_fg:v})}/>
+            <ColorField testid="theme-btn-secondary-border" label="Secondary Border" sub="outline color" value={draft.theme_btn_secondary_border} onChange={(v)=>setDraft({...draft,theme_btn_secondary_border:v})}/>
+            <ColorField testid="theme-btn-secondary-fg" label="Secondary Text" sub="label color" value={draft.theme_btn_secondary_fg} onChange={(v)=>setDraft({...draft,theme_btn_secondary_fg:v})}/>
+            <ColorField testid="theme-btn-danger-bg" label="Danger Button BG" sub="delete/destructive" value={draft.theme_btn_danger_bg} onChange={(v)=>setDraft({...draft,theme_btn_danger_bg:v})}/>
+            <ColorField testid="theme-btn-danger-fg" label="Danger Button Text" sub="label color" value={draft.theme_btn_danger_fg} onChange={(v)=>setDraft({...draft,theme_btn_danger_fg:v})}/>
+          </ThemeGroup>
+
+          <ThemeGroup title="Forms" subtitle="Input fields and focus state." testid="theme-group-form">
+            <ColorField testid="theme-input-bg" label="Input BG" sub="field fill" value={draft.theme_input_bg} onChange={(v)=>setDraft({...draft,theme_input_bg:v})}/>
+            <ColorField testid="theme-input-border" label="Input Border" sub="resting border" value={draft.theme_input_border} onChange={(v)=>setDraft({...draft,theme_input_border:v})}/>
+            <ColorField testid="theme-input-focus" label="Focus" sub="active border + glow" value={draft.theme_input_focus} onChange={(v)=>setDraft({...draft,theme_input_focus:v})}/>
+          </ThemeGroup>
+
+          <ThemeGroup title="Calendar & Tables" subtitle="Active day, row hover, and dividers." testid="theme-group-grid">
+            <ColorField testid="theme-calendar-active" label="Calendar Active" sub="today / selected day" value={draft.theme_calendar_active} onChange={(v)=>setDraft({...draft,theme_calendar_active:v})}/>
+            <ColorField testid="theme-table-hover" label="Table Row Hover" sub="hover highlight" value={draft.theme_table_hover} onChange={(v)=>setDraft({...draft,theme_table_hover:v})}/>
+            <ColorField testid="theme-row-border" label="Row Border" sub="dividers" value={draft.theme_row_border} onChange={(v)=>setDraft({...draft,theme_row_border:v})}/>
+          </ThemeGroup>
+        </div>
+      )}
+
+      <Section title="Live Preview" subtitle="A quick look at the unified Sit Happens shell using the choices above.">
+        <div className="rounded-xl p-5 space-y-4" data-testid="brand-live-preview" style={{ ...previewChrome, backgroundColor:draft.theme_bg_base, fontFamily:draft.brand_font_family === "System" ? "system-ui" : draft.brand_font_family }}>
+          <div className="flex items-center gap-2 flex-wrap">
+            <span className="px-3 py-1 rounded font-black text-[12px] uppercase tracking-widest" style={{background:draft.brand_primary,color:draft.theme_btn_primary_fg}}>Primary</span>
+            <span className="px-3 py-1 rounded font-black text-[12px] uppercase tracking-widest" style={{background:draft.brand_accent,color:"#031019"}}>Accent</span>
+            <span className="px-3 py-1 rounded font-black text-[12px] uppercase tracking-widest" style={{background:draft.brand_warning,color:"#fff"}}>Attention</span>
+          </div>
+          <div className="grid sm:grid-cols-[120px_1fr] gap-3 rounded-lg overflow-hidden border" style={{borderColor:draft.theme_bg_hover,background:draft.theme_bg_panel}}>
+            <div className="p-3 space-y-2" style={{background:draft.theme_bg_header}}>
+              <p className="text-[10px] uppercase tracking-widest font-black" style={{color:draft.theme_text_muted}}>Sidebar</p>
+              <div className="px-2 py-1.5 rounded text-[11px] font-black" style={{background:draft.brand_primary,color:draft.theme_btn_primary_fg}}>Dashboard</div>
+              <div className="px-2 py-1.5 rounded text-[11px] font-black" style={{color:draft.theme_text_muted}}>Dogs</div>
+              <div className="px-2 py-1.5 rounded text-[11px] font-black" style={{color:draft.theme_text_muted}}>Training</div>
+            </div>
+            <div className="p-3">
+              <div className="rounded-xl p-4" style={previewChrome}>
+                <p className="text-[10px] font-black uppercase tracking-widest" style={{color:draft.brand_accent}}>Today's work</p>
+                <h4 className="text-base font-black mt-1" style={{color:draft.theme_text_display}}>Biscuit is ready for pickup</h4>
+                <p className="text-[12px] mt-1" style={{color:draft.theme_text_muted}}>Cards, buttons, forms, and tables now share this same visual system.</p>
+                <div className="flex gap-2 mt-3 flex-wrap">
+                  <button type="button" className="px-3 py-2 rounded font-black text-[11px]" style={{background:draft.theme_btn_primary_bg,color:draft.theme_btn_primary_fg}}>Primary action</button>
+                  <button type="button" className="px-3 py-2 rounded border font-black text-[11px]" style={{borderColor:draft.theme_btn_secondary_border,color:draft.theme_btn_secondary_fg}}>Secondary</button>
+                </div>
+              </div>
+            </div>
+          </div>
+        </div>
+      </Section>
+
+      <div className="flex flex-col sm:flex-row sm:justify-between sm:items-center gap-3 pt-4 border-t border-shBorder">
+        <button onClick={reset} data-testid="brand-reset" className="min-h-11 text-[12px] font-black uppercase tracking-widest text-shTextMuted hover:text-shText text-left">
+          <i className="fas fa-rotate-left mr-2"/>Reset Appearance Defaults
         </button>
-        <div className="flex items-center gap-3">
-          {msg && <span className={`text-[14px] font-black uppercase tracking-widest ${msg==="Saved"?"text-shPrimary":"text-red-400"}`}>{msg}</span>}
-          <button onClick={onSave} disabled={saving || !dirty} data-testid="brand-save"
-                  className="bg-shPrimary text-bgHeader px-8 py-3 rounded font-black text-[14px] uppercase tracking-widest shadow-xl disabled:opacity-40">
-            {saving ? "Saving…" : "Save Brand"}
+        <div className="flex items-center gap-3 sm:justify-end">
+          {msg && <span className={`text-[12px] font-black uppercase tracking-widest ${msg === "Saved" ? "text-shPrimary" : "text-red-400"}`}>{msg}</span>}
+          <button onClick={onSave} disabled={saving || !dirty} data-testid="brand-save" className="min-h-12 bg-shPrimary text-bgHeader px-8 py-3 rounded font-black text-[13px] uppercase tracking-widest shadow-xl disabled:opacity-40">
+            {saving ? "Saving…" : "Save Appearance"}
           </button>
         </div>
       </div>
     </div>
   );
 }
-
-
-// Sprint 110di-12 — Card Type Themes. Canonical Sit Happens defaults; also
-// used by the "Reset card themes" button and the export/import fallback.
-// Sprint 110di-16 — Catalog extended to 23 surface types so every reusable
-// card/panel/modal/table/form in the app inherits from one source.
-function SH_CARD_TYPE_DEFAULTS() {
-  const base = { border_opacity: 0.75, border_width: 2, glow_opacity: 0.25, glow_blur: 14, inner_highlight_color: "#FFFFFF", inner_highlight_opacity: 0.08, heading: "", text: "" };
-  return {
-    default:  { bg: "#05090D", border: "#008CFF", glow: "#008CFF", accent: "#008CFF", ...base },
-    hero:     { bg: "#060c2e", border: "#9BCB00", glow: "#9BCB00", accent: "#9BCB00", ...base },
-    stat:     { bg: "#05090D", border: "#1B4D7A", glow: "#008CFF", accent: "#9BCB00", ...base },
-    info:     { bg: "#05090D", border: "#008CFF", glow: "#008CFF", accent: "#00C8FF", ...base },
-    task:     { bg: "#0E0902", border: "#F26500", glow: "#F26500", accent: "#F26500", ...base },
-    fact:     { bg: "#04111B", border: "#00C8FF", glow: "#00C8FF", accent: "#00C8FF", ...base },
-    booking:  { bg: "#050B14", border: "#008CFF", glow: "#008CFF", accent: "#00C8FF", ...base },
-    client:   { bg: "#080C16", border: "#9BCB00", glow: "#008CFF", accent: "#9BCB00", ...base },
-    dog:      { bg: "#0A0F08", border: "#9BCB00", glow: "#9BCB00", accent: "#9BCB00", ...base },
-    staff:    { bg: "#0A0814", border: "#A855F7", glow: "#A855F7", accent: "#A855F7", ...base },
-    care:     { bg: "#04130B", border: "#9BCB00", glow: "#9BCB00", accent: "#9BCB00", ...base },
-    kennel:   { bg: "#050B14", border: "#008CFF", glow: "#008CFF", accent: "#00C8FF", ...base },
-    waitlist: { bg: "#120A02", border: "#F26500", glow: "#F26500", accent: "#F26500", ...base },
-    intake:   { bg: "#05090D", border: "#008CFF", glow: "#008CFF", accent: "#00C8FF", ...base },
-    waiver:   { bg: "#060c2e", border: "#1B4D7A", glow: "#008CFF", accent: "#9BCB00", ...base },
-    finance:  { bg: "#09080D", border: "#F26500", glow: "#F26500", accent: "#9BCB00", ...base },
-    report:   { bg: "#0A0E18", border: "#1B4D7A", glow: "#008CFF", accent: "#00C8FF", ...base },
-    payment:  { bg: "#09080D", border: "#F26500", glow: "#F26500", accent: "#9BCB00", ...base },
-    warning:  { bg: "#130B02", border: "#F26500", glow: "#F26500", accent: "#F26500", ...base },
-    success:  { bg: "#071006", border: "#9BCB00", glow: "#9BCB00", accent: "#9BCB00", ...base },
-    danger:   { bg: "#170407", border: "#FF3B5C", glow: "#FF3B5C", accent: "#FF3B5C", ...base },
-    modal:    { bg: "#0c143e", border: "#008CFF", glow: "#008CFF", accent: "#008CFF", ...base },
-    form:     { bg: "#05090D", border: "#1A225A", glow: "#008CFF", accent: "#9BCB00", ...base },
-    table:    { bg: "#05090D", border: "#1A225A", glow: "#008CFF", accent: "#00C8FF", ...base },
-    // legacy aliases — not surfaced in UI editor but kept so older saved
-    // settings keep their custom colors and don't snap back to defaults.
-    stats:    { bg: "#05090D", border: "#1B4D7A", glow: "#008CFF", accent: "#9BCB00", ...base },
-    training: { bg: "#070914", border: "#A855F7", glow: "#A855F7", accent: "#A855F7", ...base },
-    profile:  { bg: "#080C16", border: "#9BCB00", glow: "#008CFF", accent: "#9BCB00", ...base },
-  };
-}
-
-const CARD_TYPE_META = [
-  { id: "default",  label: "Default Card",      desc: "Every generic dark panel/card across the app." },
-  { id: "hero",     label: "Hero Card",         desc: "Top-of-page feature cards (Today at Sit Happens, Welcome hero)." },
-  { id: "stat",     label: "Stat Card",         desc: "Dashboard counts: daycare, boarding, totals." },
-  { id: "info",     label: "Info Card",         desc: "Neutral notices, read-only callouts, helper text." },
-  { id: "task",     label: "Task Card",         desc: "Operational readiness, to-do items, reminders." },
-  { id: "fact",     label: "Fact Card",         desc: "Dog Fact of the Day, trivia answer, fun facts." },
-  { id: "booking",  label: "Booking Card",      desc: "Bookings, schedule rows, appointment cards." },
-  { id: "client",   label: "Client Card",       desc: "Client list rows + client profile summaries." },
-  { id: "dog",      label: "Dog Card",          desc: "Dog list rows + dog profile summaries." },
-  { id: "staff",    label: "Staff Card",        desc: "Employees, schedule, time clock entries." },
-  { id: "care",     label: "Care Board",        desc: "Care Board rows (feeding, meds, potty)." },
-  { id: "kennel",   label: "Kennel Board",      desc: "Kennel Board rows + assignments." },
-  { id: "waitlist", label: "Waitlist",          desc: "Waitlist requests + queued bookings." },
-  { id: "intake",   label: "Intake Forms",      desc: "Service intake forms (admin + client)." },
-  { id: "waiver",   label: "Waiver",            desc: "Liability waiver + signatures." },
-  { id: "finance",  label: "Finance",           desc: "P&L, expenses, tax payments, revenue summaries." },
-  { id: "report",   label: "Reports",           desc: "Reports + analytics dashboards." },
-  { id: "payment",  label: "Payment",           desc: "Invoices, transactions, credit packs." },
-  { id: "warning",  label: "Warning",           desc: "Expiring soon, attention needed, alerts." },
-  { id: "success",  label: "Success",           desc: "Complete, paid, approved, healthy, active." },
-  { id: "danger",   label: "Danger / Urgent",   desc: "Overdue, missing vaccines, critical alerts." },
-  { id: "modal",    label: "Modal",             desc: "Modal/drawer surfaces (booking wizard, profile editor)." },
-  { id: "form",     label: "Form",              desc: "Form panels — inputs, textareas, dropdowns." },
-  { id: "table",    label: "Table",             desc: "Table wrappers + sortable lists." },
-];
-
-
-function CardTypeThemesPanel({ draft, setDraft }) {
-  // Sprint 110di-12 — Tabbed editor for the 10 card type themes. Tabs keep
-  // the panel compact (~10 short blocks of 8 controls). Each edit writes to
-  // `draft.card_type_themes.{id}`; persistence handled by parent onSave.
-  const types = draft.card_type_themes || SH_CARD_TYPE_DEFAULTS();
-  const [active, setActive] = useState("default");
-  const [open, setOpen] = useState(false);
-  const cur = { ...SH_CARD_TYPE_DEFAULTS()[active], ...(types[active] || {}) };
-
-  const update = (patch) => {
-    const next = { ...types, [active]: { ...cur, ...patch } };
-    setDraft({ ...draft, card_type_themes: next });
-  };
-  const resetAll = () => setDraft({ ...draft, card_type_themes: SH_CARD_TYPE_DEFAULTS() });
-  const resetCurrent = () => {
-    const next = { ...types, [active]: { ...SH_CARD_TYPE_DEFAULTS()[active] } };
-    setDraft({ ...draft, card_type_themes: next });
-  };
-
-  const exportJson = () => {
-    const blob = new Blob([JSON.stringify({ card_type_themes: types }, null, 2)],
-                         { type: "application/json" });
-    const url = URL.createObjectURL(blob);
-    const a = document.createElement("a");
-    a.href = url; a.download = "sit-happens-card-themes.json"; a.click();
-    URL.revokeObjectURL(url);
-  };
-  const importJson = async (e) => {
-    const f = (e.target.files || [])[0];
-    if (!f) return;
-    try {
-      const txt = await f.text();
-      const obj = JSON.parse(txt);
-      const next = obj.card_type_themes || obj;
-      if (next && typeof next === "object") {
-        setDraft({ ...draft, card_type_themes: { ...SH_CARD_TYPE_DEFAULTS(), ...next } });
-      }
-    } catch (err) {
-      alert("That doesn't look like a Sit Happens card-themes JSON file.");
-    }
-    e.target.value = "";
-  };
-
-  return (
-    <div className="rounded-lg border border-shBorder bg-[var(--sh-card-base)]/40" data-testid="theme-group-card-types">
-      <button type="button" onClick={()=>setOpen(o=>!o)}
-              className="w-full flex items-center justify-between px-4 py-3 text-left"
-              data-testid="theme-group-card-types-toggle">
-        <div>
-          <p className="text-[14px] font-black text-shText uppercase tracking-widest">Card Type Themes</p>
-          <p className="text-[12px] text-shTextMuted mt-0.5">Control default card styling plus specific card types like stats, success, warning, danger, payment, training, booking, profile, and info.</p>
-          <p className="text-[11px] text-shPrimary mt-1"><i className="fas fa-info-circle mr-1"/>Default Card controls normal panels app-wide. Other card types only override the values they define — blank/zero fields fall back to Default Card.</p>
-        </div>
-        <i className={`fas ${open ? "fa-chevron-up" : "fa-chevron-down"} text-shTextMuted`}/>
-      </button>
-      {open && (
-        <div className="px-4 pb-4 pt-1">
-          {/* Tabs */}
-          <div className="flex flex-wrap gap-1 mb-3" role="tablist">
-            {CARD_TYPE_META.map(({ id, label }) => (
-              <button key={id} type="button" onClick={()=>setActive(id)}
-                      data-testid={`ct-tab-${id}`}
-                      className={`text-[11px] font-black uppercase tracking-widest px-3 py-1.5 rounded border transition ${active === id ? "bg-shPrimary/15 border-shPrimary text-shPrimary" : "bg-[var(--sh-card-base)] border-shBorder text-shTextMuted hover:text-shText"}`}>
-                {label}
-              </button>
-            ))}
-          </div>
-          <p className="text-[12px] text-shTextMuted mb-3">{CARD_TYPE_META.find(c => c.id === active)?.desc}</p>
-
-          {/* Color + sliders for the active type */}
-          <div className="grid sm:grid-cols-2 lg:grid-cols-3 gap-3" data-testid={`ct-editor-${active}`}>
-            <ColorField testid={`ct-${active}-bg`}     label="Background" sub="card fill"             value={cur.bg}     onChange={(v)=>update({ bg: v })} />
-            <ColorField testid={`ct-${active}-border`} label="Border Color" sub="edge tint"           value={cur.border} onChange={(v)=>update({ border: v })} />
-            <ColorField testid={`ct-${active}-glow`}   label="Glow Color"   sub="halo behind card"    value={cur.glow}   onChange={(v)=>update({ glow: v })} />
-            <ColorField testid={`ct-${active}-accent`} label="Accent Color" sub="icons, labels, pills" value={cur.accent} onChange={(v)=>update({ accent: v })} />
-            <SliderField testid={`ct-${active}-bo`} label="Border Opacity" sub="0 → 1" min={0} max={1}  step={0.05} value={cur.border_opacity} onChange={(v)=>update({ border_opacity: v })} />
-            <SliderField testid={`ct-${active}-bw`} label="Border Width"   sub="px"    min={0} max={4}  step={1}    value={cur.border_width}   onChange={(v)=>update({ border_width: v })}   suffix="px"/>
-            <SliderField testid={`ct-${active}-go`} label="Glow Opacity"   sub="0 → 1" min={0} max={1}  step={0.05} value={cur.glow_opacity}   onChange={(v)=>update({ glow_opacity: v })} />
-            <SliderField testid={`ct-${active}-gb`} label="Glow Blur"      sub="px"    min={0} max={40} step={1}    value={cur.glow_blur}      onChange={(v)=>update({ glow_blur: v })}      suffix="px"/>
-            <ColorField testid={`ct-${active}-heading`} label="Heading Color (optional)" sub="leave blank to inherit" value={cur.heading || ""} onChange={(v)=>update({ heading: v })} />
-            <ColorField testid={`ct-${active}-text`}    label="Text Color (optional)"    sub="leave blank to inherit" value={cur.text || ""}    onChange={(v)=>update({ text: v })} />
-          </div>
-
-          {/* Preview grid: thumb buttons for each card type (clickable to switch) */}
-          <div className="grid grid-cols-2 sm:grid-cols-5 gap-2 mt-4" data-testid="ct-preview-grid">
-            {CARD_TYPE_META.map(({ id, label }) => {
-              const t = { ...SH_CARD_TYPE_DEFAULTS()[id], ...(types[id] || {}) };
-              const bRgb = hexToRgbInline(t.border);
-              const gRgb = hexToRgbInline(t.glow);
-              const ba = clamp(t.border_opacity, 0, 1);
-              const ga = clamp(t.glow_opacity,   0, 1);
-              const isActive = id === active;
-              return (
-                <button key={id} type="button" onClick={()=>setActive(id)}
-                        data-testid={`ct-preview-${id}`}
-                        style={{
-                          background: t.bg,
-                          border: `${Math.max(1, t.border_width)}px solid rgba(${bRgb}, ${ba})`,
-                          boxShadow: `0 0 ${t.glow_blur}px rgba(${gRgb}, ${ga}), inset 0 1px 0 rgba(255,255,255,0.06)`,
-                          outline: isActive ? `1px dashed ${t.accent}` : "none",
-                          outlineOffset: "2px",
-                        }}
-                        className="rounded-lg p-3 text-left transition">
-                  <p className="text-[9px] font-black uppercase tracking-widest" style={{ color: t.accent }}>{label}</p>
-                  <p className="text-[10px] text-shTextMuted mt-1">Sample copy</p>
-                </button>
-              );
-            })}
-          </div>
-
-          {/* Sprint 110di-16 — Full live-preview gallery. Shows realistic
-              sample content for the most visible card types so admins can
-              eyeball the overall app look without leaving Settings. All
-              swatches read from the in-flight draft so edits apply live. */}
-          <div className="mt-6 pt-5 border-t border-shBorder" data-testid="ct-sample-gallery">
-            <p className="text-[11px] font-black uppercase tracking-[0.35em] text-shPrimary mb-3">
-              <i className="fas fa-images mr-1.5"/>Live sample gallery
-            </p>
-            <p className="text-[12px] text-shTextMuted mb-3">
-              These render with the exact CSS variables your saved theme writes — what you see is what
-              every matching card across the app gets.
-            </p>
-            <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-3">
-              {[
-                { id: "hero",    icon: "fa-bolt",            title: "Welcome back, Alex!",  body: "3 of your favorite people are here today.",       chip: "Today" },
-                { id: "stat",    icon: "fa-chart-simple",    title: "Daycare today",        body: "12 / 30 dogs · capacity 40%",                      chip: "Live" },
-                { id: "info",    icon: "fa-circle-info",     title: "Heads up",             body: "Saturday daycare opens next month — same pricing.", chip: "Info" },
-                { id: "task",    icon: "fa-list-check",      title: "Operational readiness", body: "8 of 9 setup steps complete.",                    chip: "1 left" },
-                { id: "fact",    icon: "fa-paw",             title: "Dog fact of the day",  body: "Poodles came from Germany — 'Pudel' = 'to splash'.", chip: "Breed" },
-                { id: "booking", icon: "fa-calendar-check",  title: "Daycare · Buddy",      body: "Tue, Feb 20 · 7:30am drop-off",                     chip: "Approved" },
-                { id: "client",  icon: "fa-user",            title: "Alex Rivera",          body: "3 dogs · 5 credits · waiver signed",                chip: "Active" },
-                { id: "dog",     icon: "fa-dog",             title: "Buddy — Lab",          body: "4 yo · vaccines current · loves the splash pool",    chip: "Healthy" },
-                { id: "staff",   icon: "fa-id-badge",        title: "Trainer Jamie",        body: "Clocked in · 4h 12m · Care Board",                  chip: "On shift" },
-                { id: "care",    icon: "fa-bowl-food",       title: "Care log · Buddy",     body: "Fed 8am · Meds 10am · Potty 11am",                  chip: "On track" },
-                { id: "kennel",  icon: "fa-warehouse",       title: "Kennel 4",             body: "Rocky · Boarding · until Fri",                      chip: "Occupied" },
-                { id: "waitlist",icon: "fa-hourglass-half",  title: "Waitlist · Daycare",   body: "Daisy · requested Thu Feb 22",                      chip: "Pending" },
-                { id: "intake",  icon: "fa-clipboard-list",  title: "Boarding intake",      body: "12 questions · 4 minutes",                          chip: "Required" },
-                { id: "waiver",  icon: "fa-file-signature",  title: "Liability waiver",     body: "Signed Jan 15, 2026 · v3",                          chip: "Signed" },
-                { id: "finance", icon: "fa-dollar-sign",     title: "January revenue",      body: "$4,250 · expenses $1,180 · net $3,070",            chip: "P&L" },
-                { id: "report",  icon: "fa-chart-line",      title: "Weekly report",        body: "Feb 10 → Feb 16 · 84 visits · 12 new",              chip: "Report" },
-                { id: "payment", icon: "fa-credit-card",     title: "Daycare pack · 10",    body: "$200 · paid by card · Jan 8",                       chip: "Paid" },
-                { id: "warning", icon: "fa-triangle-exclamation", title: "Vaccine expiring", body: "Buddy · rabies expires Mar 1",                    chip: "Soon" },
-                { id: "success", icon: "fa-circle-check",    title: "Setup complete",       body: "You can now book daycare, boarding, training.",     chip: "Ready" },
-                { id: "danger",  icon: "fa-circle-exclamation", title: "Overdue",           body: "Daisy · DHPP expired 12 days ago",                 chip: "Action" },
-                { id: "modal",   icon: "fa-window-restore",  title: "Book a service",       body: "Step 1 of 3 · choose service type",                 chip: "Modal" },
-                { id: "form",    icon: "fa-keyboard",        title: "Add a dog",            body: "Name · breed · age · vaccines",                     chip: "Form" },
-                { id: "table",   icon: "fa-table",           title: "Today's bookings",     body: "12 rows · sort by time · filter by service",        chip: "Table" },
-              ].map((sample) => {
-                const t = { ...SH_CARD_TYPE_DEFAULTS()[sample.id], ...(types[sample.id] || {}) };
-                const bRgb = hexToRgbInline(t.border);
-                const gRgb = hexToRgbInline(t.glow);
-                const ihRgb = hexToRgbInline(t.inner_highlight_color || "#FFFFFF");
-                const ba = clamp(t.border_opacity, 0, 1);
-                const ga = clamp(t.glow_opacity,   0, 1);
-                const iha = clamp(t.inner_highlight_opacity, 0, 1);
-                const cardStyle = {
-                  background: t.bg,
-                  border: `${Math.max(1, t.border_width)}px solid rgba(${bRgb}, ${ba})`,
-                  boxShadow: `0 0 ${t.glow_blur}px rgba(${gRgb}, ${ga}), inset 0 1px 0 rgba(${ihRgb}, ${iha})`,
-                  color: t.text || draft.theme_text_primary,
-                };
-                return (
-                  <button
-                    key={sample.id}
-                    type="button"
-                    onClick={() => setActive(sample.id)}
-                    data-testid={`ct-sample-${sample.id}`}
-                    className="text-left rounded-xl p-3 transition hover:scale-[1.01]"
-                    style={cardStyle}
-                  >
-                    <div className="flex items-start justify-between gap-2 mb-1">
-                      <p className="text-[10px] font-black uppercase tracking-widest" style={{ color: t.accent }}>
-                        <i className={`fas ${sample.icon} mr-1`}/>{sample.id}
-                      </p>
-                      <span className="text-[9px] font-black uppercase tracking-widest px-1.5 py-0.5 rounded border"
-                            style={{ color: t.accent, borderColor: `rgba(${bRgb}, ${Math.max(ba, 0.4)})`, background: `rgba(${bRgb}, 0.08)` }}>
-                        {sample.chip}
-                      </span>
-                    </div>
-                    <p className="text-[13px] font-black uppercase italic leading-tight"
-                       style={{ color: t.heading || draft.theme_text_display || "#fff" }}>
-                      {sample.title}
-                    </p>
-                    <p className="text-[11px] mt-1 leading-snug"
-                       style={{ color: t.text || draft.theme_text_muted }}>
-                      {sample.body}
-                    </p>
-                  </button>
-                );
-              })}
-            </div>
-          </div>
-
-          {/* Footer actions */}
-          <div className="flex items-center justify-between flex-wrap gap-2 mt-4 pt-3 border-t border-shBorder">
-            <div className="flex items-center gap-2">
-              <button type="button" onClick={resetCurrent}
-                      data-testid="ct-reset-current"
-                      className="text-[12px] font-black uppercase tracking-widest text-shTextMuted hover:text-shText">
-                <i className="fas fa-rotate-left mr-1"/>Reset this type
-              </button>
-              <button type="button"
-                      onClick={()=>{ setActive("default"); const next = { ...types, default: { ...SH_CARD_TYPE_DEFAULTS().default } }; setDraft({ ...draft, card_type_themes: next }); }}
-                      data-testid="ct-reset-default"
-                      className="text-[12px] font-black uppercase tracking-widest text-shSecondary hover:underline">
-                <i className="fas fa-rotate-left mr-1"/>Reset Default Card
-              </button>
-              <button type="button" onClick={resetAll}
-                      data-testid="ct-reset-all"
-                      className="text-[12px] font-black uppercase tracking-widest text-shAccent hover:underline">
-                <i className="fas fa-rotate-left mr-1"/>Reset all types
-              </button>
-            </div>
-            <div className="flex items-center gap-2">
-              <button type="button" onClick={exportJson}
-                      data-testid="ct-export"
-                      className="text-[12px] font-black uppercase tracking-widest text-shSecondary hover:underline">
-                <i className="fas fa-arrow-down mr-1"/>Export JSON
-              </button>
-              <label className="text-[12px] font-black uppercase tracking-widest text-shSecondary hover:underline cursor-pointer">
-                <i className="fas fa-arrow-up mr-1"/>Import JSON
-                <input type="file" accept="application/json" onChange={importJson} className="hidden" data-testid="ct-import"/>
-              </label>
-            </div>
-          </div>
-        </div>
-      )}
-    </div>
-  );
-}
-
-function clamp(v, lo, hi) { const n = parseFloat(v); return Number.isNaN(n) ? lo : Math.min(Math.max(n, lo), hi); }
-
-
-
-function SliderField({ label, sub, value, onChange, min, max, step, suffix = "", testid }) {
-  // Sprint 110di-10 — compact slider + numeric readout used for the new card
-  // border opacity/width and glow strength controls.
-  const v = value == null ? min : value;
-  return (
-    <div className="bg-[var(--sh-card-base)] border border-shBorder rounded-lg p-3" data-testid={testid}>
-      <label className="text-[15px] font-black text-shTextMuted uppercase tracking-widest">{label}</label>
-      {sub && <p className="text-[13px] text-shTextMuted mt-0.5 mb-2 leading-tight">{sub}</p>}
-      <div className="flex items-center gap-3">
-        <input type="range" min={min} max={max} step={step} value={v}
-               onChange={(e)=>onChange(parseFloat(e.target.value))}
-               data-testid={`${testid}-slider`}
-               className="flex-1 accent-shPrimary"/>
-        <span className="text-[13px] font-black text-shText font-mono w-14 text-right"
-              data-testid={`${testid}-readout`}>
-          {Number(v).toString()}{suffix}
-        </span>
-      </div>
-    </div>
-  );
-}
-
-
 
 function ThemeGroup({ title, subtitle, testid, children }) {
   // Sprint 110di-8 — collapsible color group used by the expanded Brand &
@@ -2607,56 +2129,6 @@ function ThemeGroup({ title, subtitle, testid, children }) {
       )}
     </div>
   );
-}
-
-
-function GradColorField({ label, sub, sample, value, onChange, testid }) {
-  // Live mini-preview card that uses the actual gradient class — when the
-  // admin drags the color, the swatch recolors in real time because the
-  // class references CSS vars set by ThemeProvider on save.
-  return (
-    <div className="bg-[var(--sh-card-base)] border border-shBorder rounded-lg p-3" data-testid={testid}>
-      <label className="text-[15px] font-black text-shTextMuted uppercase tracking-widest">{label}</label>
-      <p className="text-[13px] text-shTextMuted mt-0.5 mb-2 leading-tight">{sub}</p>
-      <div
-        className={`${sample} rounded-lg h-12 flex items-center justify-center mb-2 text-[13px] font-black uppercase tracking-widest text-shText/80`}
-        style={{
-          // Inline override so the preview reflects the in-flight draft color
-          // before the admin hits Save (instead of waiting for theme vars to update).
-          ["--grad-hero-rgb"]: hexToRgbInline(value),
-          ["--grad-info-rgb"]: hexToRgbInline(value),
-          ["--grad-warning-rgb"]: hexToRgbInline(value),
-          ["--grad-danger-rgb"]: hexToRgbInline(value),
-          ["--grad-success-rgb"]: hexToRgbInline(value),
-        }}
-      >
-        Preview
-      </div>
-      <div className="flex items-center gap-2">
-        <input
-          type="color"
-          value={value || "#000000"}
-          onChange={(e)=>onChange(e.target.value)}
-          data-testid={`${testid}-picker`}
-          className="w-12 h-9 rounded cursor-pointer bg-transparent border border-shBorder"
-        />
-        <input
-          type="text"
-          value={value || ""}
-          onChange={(e)=>onChange(e.target.value)}
-          data-testid={`${testid}-hex`}
-          className="flex-1 bg-[var(--sh-card-base)] border border-shBorder rounded px-2 py-1.5 text-sm text-shText font-mono"
-        />
-      </div>
-    </div>
-  );
-}
-
-function hexToRgbInline(hex) {
-  const h = (hex || "").replace("#", "").trim();
-  if (h.length !== 6) return "140, 198, 63";
-  const n = parseInt(h, 16);
-  return `${(n >> 16) & 255}, ${(n >> 8) & 255}, ${n & 255}`;
 }
 
 
@@ -3625,6 +3097,7 @@ function SaveBar({ onSave, saving }) {
 
 
 function ErrorsPanel() {
+  const confirm = useConfirm();
   const [errors, setErrors] = useState([]);
   const [loading, setLoading] = useState(false);
   const [msg, setMsg] = useState("");
@@ -3646,7 +3119,13 @@ function ErrorsPanel() {
   useEffect(() => { load(); }, []);
 
   const clearAll = async () => {
-    if (!window.confirm("Clear all recent errors from the buffer?")) return;
+    const ok = await confirm({
+      title: "Clear recent errors?",
+      body: "This clears the in-app recent-error buffer. It does not change application data.",
+      confirmText: "Clear Errors",
+      tone: "warning",
+    });
+    if (!ok) return;
     try {
       await api.post("/admin/recent-errors/clear");
       setErrors([]);
@@ -3951,7 +3430,7 @@ function BackupPanel() {
         <h4 className="text-sm font-black text-purple-400 uppercase tracking-widest mb-2"><i className="fas fa-sliders mr-2"/>Config Export / Import</h4>
         <p className="text-[14px] text-shTextMuted mb-3 leading-relaxed">
           Download just your <span className="text-shText font-black">configuration</span> — branding, themes, feature visibility,
-          portal controls, dashboard widgets, card themes, email templates, and payment-plan settings.
+          portal controls, dashboard widgets, appearance, email templates, and payment-plan settings.
           <br/><span className="text-shTextMuted">No client/dog/booking data is touched. Tiny file — perfect for cloning a staging-tested config into production, or rolling back a theme change.</span>
         </p>
         <button onClick={downloadConfig} disabled={busy} data-testid="config-download"
@@ -5278,11 +4757,10 @@ function AutomationPanel() {
 
 // ─────── Sprint 110bi · Dog Trivia question pool management ───────
 function TriviaPanel() {
+  const confirm = useConfirm();
   const [view, setView] = useState("leaderboard"); // leaderboard | rewards | questions
   const [rows, setRows] = useState([]);
   const [active, setActive] = useState(0);
-  const [count, setCount] = useState(15);
-  const [busy, setBusy] = useState(false);
   const [err, setErr] = useState("");
   const [lb, setLb] = useState(null);
   const [editing, setEditing] = useState(null); // null | {mode: "new"} | {mode: "edit", q}
@@ -5322,23 +4800,29 @@ function TriviaPanel() {
   const removeReward = (i) => setRewards(rs => rs.filter((_, idx) => idx !== i));
   const resetRewards = () => setRewards(rewardsDefaults.map(d => ({ ...d })));
 
-  const generate = async () => {
-    setBusy(true); setErr("");
-    try { await api.post("/admin/trivia/generate", { count: Number(count) || 10 }); await loadQuestions(); }
-    catch (e) { setErr(e.response?.data?.detail || "Generation failed"); }
-    finally { setBusy(false); }
-  };
   const toggle = async (q) => {
     try { await api.put(`/admin/trivia/questions/${q.id}/active`, { active: !q.active }); loadQuestions(); }
     catch (e) { setErr(e.response?.data?.detail || "Toggle failed"); }
   };
   const del = async (q) => {
-    if (!window.confirm("Delete this question? This cannot be undone.")) return;
+    const ok = await confirm({
+      title: "Delete this trivia question?",
+      body: "This cannot be undone.",
+      confirmText: "Delete Question",
+      tone: "danger",
+    });
+    if (!ok) return;
     try { await api.delete(`/admin/trivia/questions/${q.id}`); loadQuestions(); }
     catch (e) { setErr(e.response?.data?.detail || "Delete failed"); }
   };
   const redeem = async (m) => {
-    if (!window.confirm(`Mark ${m.client_name}'s ${m.days}-day milestone as redeemed?`)) return;
+    const ok = await confirm({
+      title: `Redeem ${m.client_name}'s ${m.days}-day milestone?`,
+      body: "This records the reward milestone as redeemed.",
+      confirmText: "Mark Redeemed",
+      tone: "warning",
+    });
+    if (!ok) return;
     try {
       await api.post("/admin/trivia/milestones/redeem", {
         client_id: m.client_id, days: m.days, earned_on: m.earned_on,
@@ -5574,13 +5058,6 @@ function TriviaPanel() {
                   className="bg-shPrimary text-bgHeader px-3 py-1.5 rounded text-[12px] font-black uppercase tracking-widest">
             <i className="fas fa-plus mr-1"/>New question
           </button>
-          <input type="number" min={1} max={50} value={count} onChange={(e)=>setCount(e.target.value)}
-                 data-testid="trivia-gen-count"
-                 className="bg-[var(--sh-card-base)] border border-shBorder rounded p-1.5 text-shText text-sm w-20"/>
-          <button onClick={generate} disabled={busy} data-testid="trivia-gen-btn"
-                  className="bg-shSecondary text-bgHeader px-3 py-1.5 rounded text-[12px] font-black uppercase tracking-widest disabled:opacity-50">
-            {busy ? "Generating…" : <><i className="fas fa-wand-magic-sparkles mr-1"/>Generate with AI</>}
-          </button>
         </div>
         {editing && (
           <TriviaQuestionEditor
@@ -5591,7 +5068,7 @@ function TriviaPanel() {
         )}
         <div className="space-y-1 max-h-96 overflow-y-auto pr-1">
           {rows.length === 0 ? (
-            <p className="text-shTextMuted text-sm italic">No questions yet. Tap "New question" or "Generate with AI" to seed the pool.</p>
+            <p className="text-shTextMuted text-sm italic">No questions yet. Add a question manually; bundled curated questions seed automatically on first use.</p>
           ) : rows.map(q => (
             <div key={q.id} className={`flex items-start gap-2 p-2 rounded border ${q.active ? "border-shBorder bg-[var(--sh-card-base)]/50" : "border-shBorder/40 bg-[var(--sh-card-base)]/20 opacity-50"}`} data-testid={`trivia-row-${q.id}`}>
               <div className="flex-1 min-w-0">
@@ -5750,13 +5227,12 @@ function TriviaQuestionEditor({ initial, onClose, onSaved }) {
 
 // ─────── Sprint 110ax · Dog Facts management ───────
 function DogFactsPanel() {
+  const confirm = useConfirm();
   const [rows, setRows] = useState([]);
   const [today, setToday] = useState(null);
-  const [filter, setFilter] = useState("all"); // all | active | inactive | ai
+  const [filter, setFilter] = useState("all"); // all | active | inactive
   const [editing, setEditing] = useState(null);
   const [draft, setDraft] = useState({ text: "", tag: "fun", emoji: "🐶" });
-  const [genBusy, setGenBusy] = useState(false);
-  const [genCount, setGenCount] = useState(3);
   const [err, setErr] = useState("");
   const load = async () => {
     setErr("");
@@ -5783,7 +5259,13 @@ function DogFactsPanel() {
     catch (e) { setErr(e.response?.data?.detail || "Toggle failed"); }
   };
   const remove = async (f) => {
-    if (!window.confirm(`Delete this fact?\n\n"${f.text}"`)) return;
+    const ok = await confirm({
+      title: "Delete this dog fact?",
+      body: f.text,
+      confirmText: "Delete Fact",
+      tone: "danger",
+    });
+    if (!ok) return;
     try { await api.delete(`/dog-facts/${f.id}`); load(); }
     catch (e) { setErr(e.response?.data?.detail || "Delete failed"); }
   };
@@ -5791,20 +5273,10 @@ function DogFactsPanel() {
     try { await api.patch(`/dog-facts/${editing.id}`, editing); setEditing(null); load(); }
     catch (e) { setErr(e.response?.data?.detail || "Save failed"); }
   };
-  const generate = async () => {
-    setGenBusy(true); setErr("");
-    try {
-      const { data } = await api.post("/dog-facts/generate", { count: Number(genCount) || 3 });
-      load();
-      alert(`Generated ${data.created} new facts. They're staged as INACTIVE — review them below and toggle on to add to rotation.`);
-    } catch (e) { setErr(e.response?.data?.detail || "Generation failed"); }
-    finally { setGenBusy(false); }
-  };
   const visible = rows.filter(r =>
     filter === "all" ? true :
     filter === "active" ? r.active :
-    filter === "inactive" ? !r.active :
-    filter === "ai" ? r.ai_generated : true
+    filter === "inactive" ? !r.active : true
   );
   const activeCount = rows.filter(r => r.active).length;
   return (
@@ -5823,23 +5295,6 @@ function DogFactsPanel() {
 
       {err && <p className="text-red-400 text-[14px] mb-2">{err}</p>}
 
-      {/* AI generate */}
-      <div className="bg-[var(--sh-card-base)] border border-purple-500/30 rounded-lg p-3 mb-4">
-        <p className="text-[12px] font-black uppercase tracking-widest text-purple-300 mb-2"><i className="fas fa-wand-magic-sparkles mr-1"/>Generate new facts (AI)</p>
-        <div className="flex items-end gap-2">
-          <label className="block">
-            <span className="text-[10px] font-black text-shTextMuted uppercase tracking-widest">Count</span>
-            <input type="number" min={1} max={10} value={genCount} onChange={(e)=>setGenCount(e.target.value)}
-                   data-testid="dog-facts-gen-count"
-                   className="mt-1 block w-20 bg-[var(--sh-card-base)] border border-shBorder rounded p-2 text-shText text-sm font-mono"/>
-          </label>
-          <button onClick={generate} disabled={genBusy} data-testid="dog-facts-generate"
-                  className="bg-purple-500 text-shText px-4 py-2 rounded font-black text-[12px] uppercase tracking-widest shadow disabled:opacity-50">
-            {genBusy ? <><i className="fas fa-circle-notch fa-spin mr-1"/>Generating…</> : <><i className="fas fa-wand-magic-sparkles mr-1"/>Generate</>}
-          </button>
-          <p className="text-[11px] text-shTextMuted italic">Staged inactive — you review before they go live.</p>
-        </div>
-      </div>
 
       <CsvImportRow
         templateUrl="/admin/dog-facts/import-csv/template"
@@ -5877,7 +5332,7 @@ function DogFactsPanel() {
 
       {/* Filters */}
       <div className="flex items-center gap-2 mb-2 text-[12px] font-black uppercase tracking-widest">
-        {[["all","All"],["active","Active"],["inactive","Inactive"],["ai","AI"]].map(([k, label]) => (
+        {[["all","All"],["active","Active"],["inactive","Inactive"]].map(([k, label]) => (
           <button key={k} onClick={()=>setFilter(k)} data-testid={`dog-facts-filter-${k}`}
                   className={`px-3 py-1 rounded ${filter === k ? "bg-shPrimary text-bgHeader" : "bg-[var(--sh-card-base)] text-shTextMuted hover:text-shText border border-shBorder"}`}>
             {label} {k === "active" ? `(${activeCount})` : k === "ai" ? `(${rows.filter(r => r.ai_generated).length})` : k === "all" ? `(${rows.length})` : `(${rows.length - activeCount})`}

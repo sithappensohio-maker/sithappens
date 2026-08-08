@@ -3,6 +3,7 @@ import { api } from "../lib/api";
 import { useConfirm } from "../lib/useConfirm";
 import ActionRow, { ACTION_PRIORITY_META as META } from "../components/admin/ActionRow";
 import { runTodayBrainCTA } from "../lib/todayBrain";
+import PageHero from "../components/PageHero";
 
 export default function ActionCenter({ onNavigate = () => {}, onJumpToDog = () => {}, onJumpToClient = () => {} }) {
   const confirm = useConfirm();
@@ -44,22 +45,20 @@ export default function ActionCenter({ onNavigate = () => {}, onJumpToDog = () =
   const runCTA = (item) => runTodayBrainCTA(item, { onJumpToDog, onJumpToClient, onNavigate });
 
   return (
-    <div className="space-y-5 animate-slide-in" data-testid="action-center-screen">
-      <div className="relative overflow-hidden rounded-2xl border border-shBorder bg-gradient-to-br from-[var(--sh-card-base)] via-[var(--sh-card-base)] to-[var(--sh-card-base)] p-5 sm:p-7">
-        <div className="absolute inset-0 pointer-events-none opacity-35"
-             style={{ background: "radial-gradient(circle at 12% 15%, rgba(0,169,224,0.38) 0%, transparent 38%), radial-gradient(circle at 90% 75%, rgba(140,198,63,0.34) 0%, transparent 44%)" }}/>
-        <div className="relative flex items-start justify-between gap-4 flex-wrap">
-          <div>
-            <p className="text-[11px] font-black uppercase tracking-[0.35em] text-shPrimary mb-2"><i className="fas fa-list-check mr-2"/>Daily Command Center</p>
-            <h1 className="text-3xl sm:text-4xl font-black uppercase italic text-shText tracking-tight">Action Center</h1>
-            <p className="text-[14px] text-shTextMuted mt-2 max-w-3xl">One place for things that need attention: vaccines, rewards, quote requests, unpaid balances, closeouts, stuck checkouts, and other cleanup before they turn into business problems.</p>
-          </div>
-          <div className="flex gap-2">
+    <div className="space-y-5 animate-slide-in sh-action-center-workspace" data-testid="action-center-screen">
+      <PageHero
+        eyebrow={{ icon: "fa-list-check", text: "Daily command center", color: "text-shPrimary" }}
+        title="Action Center."
+        highlight="Handle what matters."
+        subtitle="Vaccines, rewards, quote requests, balances, closeouts, stuck checkouts, and cleanup that needs your attention."
+        right={(
+          <div className="flex gap-2 flex-wrap">
             <button onClick={load} disabled={busy} data-testid="action-center-refresh" className="bg-[var(--sh-card-base)] border border-shBorder text-gray-200 hover:border-shSecondary hover:text-shText rounded-lg px-4 py-2 text-[12px] font-black uppercase tracking-widest transition"><i className="fas fa-rotate mr-1"/>Refresh</button>
             {items.length > 0 && <button onClick={clearAll} disabled={busy} data-testid="action-center-clear-all" className="bg-red-500/15 border border-red-500/30 text-red-300 hover:bg-red-500/25 rounded-lg px-4 py-2 text-[12px] font-black uppercase tracking-widest transition"><i className="fas fa-broom mr-1"/>Clear All</button>}
           </div>
-        </div>
-      </div>
+        )}
+        testid="action-center-hero"
+      />
 
       <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
         <CountTile label="Total" value={counts.total} icon="fa-list-check" active={filter === "all"} onClick={() => setFilter("all")} />
@@ -68,7 +67,7 @@ export default function ActionCenter({ onNavigate = () => {}, onJumpToDog = () =
         <CountTile label="FYI" value={counts.info} icon="fa-lightbulb" tone="info" active={filter === "info"} onClick={() => setFilter("info")} />
       </div>
 
-      {err && <div className="card-warning rounded-xl p-4 text-shAccent text-sm font-bold" data-testid="action-center-error">{err}</div>}
+      {err && <div className="bg-shAccent/10 border border-shAccent/30 rounded-xl p-4 text-shAccent text-sm font-bold" data-testid="action-center-error">{err}</div>}
 
       {!data ? (
         <div className="rounded-xl border border-shBorder bg-[var(--sh-card-base)] p-5 text-shTextMuted text-sm">Loading Action Center…</div>

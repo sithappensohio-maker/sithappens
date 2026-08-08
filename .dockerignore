@@ -9,7 +9,6 @@
 **/.pytest_cache
 **/node_modules
 frontend/build
-.emergent
 .vscode
 .idea
 *.log

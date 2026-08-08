@@ -4,6 +4,8 @@
 // endpoint) — same visual language, same conventions.
 import { useEffect, useState } from "react";
 import { api } from "../lib/api";
+import NeonEdge from "./premium/NeonEdge";
+import HuskyDogImage from "./brand/HuskyDogImage";
 
 const QUEUE_BADGES = {
   state_conflict: { label: "Needs attention", cls: "bg-red-500/15 text-red-300 border-red-500/40" },
@@ -83,24 +85,22 @@ export default function CheckpointReviewQueue({ onClose, onGraded }) {
   };
 
   return (
-    <div className="fixed inset-0 bg-black/80 flex items-center justify-center p-4 z-50" onClick={onClose} data-testid="checkpoint-review-queue-modal">
-      <div className="bg-[var(--sh-card-base)] border border-shBorder rounded-2xl w-full max-w-3xl max-h-[calc(var(--app-height)_-_2rem)] overflow-y-auto shadow-2xl" onClick={(e) => e.stopPropagation()}>
-        <div className="sticky top-0 bg-[var(--sh-card-base)] border-b border-shBorder p-5 flex items-center justify-between z-10">
-          <div>
-            <h3 className="text-xl font-black text-shText uppercase italic tracking-tight">
-              <i className="fas fa-video text-shAccent mr-2"/>Checkpoint Reviews
-            </h3>
-            <p className="text-[14px] text-shTextMuted font-black uppercase tracking-widest mt-1">
-              {loading ? "Loading…" : items.length === 0 ? "Inbox zero — nothing pending" : `${items.length} checkpoint${items.length === 1 ? "" : "s"} awaiting your attention`}
-            </p>
+    <div className="fixed inset-0 bg-black/90 backdrop-blur-sm flex items-end sm:items-center justify-center sm:p-4 lg:p-6 z-50" onClick={onClose} data-testid="checkpoint-review-queue-modal">
+      <div className="bg-bgPanel border border-shBorder/70 rounded-t-3xl sm:rounded-3xl w-full sm:max-w-5xl h-[100dvh] sm:h-auto sm:max-h-[calc(var(--app-height)_-_2rem)] overflow-y-auto shadow-[0_30px_100px_rgba(0,0,0,0.72)]" onClick={(e) => e.stopPropagation()}>
+        <div className="sticky top-0 bg-bgHeader/95 backdrop-blur-xl border-b border-shBorder/60 px-3 sm:px-5 py-3.5 sm:py-4 flex items-center justify-between gap-3 z-10">
+          <div className="flex items-center gap-3 min-w-0">
+            <div className="w-11 h-11 rounded-xl bg-shAccent/10 border border-shAccent/30 grid place-items-center"><i className="fas fa-video text-shAccent"/></div>
+            <div className="min-w-0">
+              <p className="text-[9px] sm:text-[10px] font-black uppercase tracking-[0.16em] text-shAccent truncate">Online School · Trainer desk</p>
+              <h3 className="sh-display text-xl sm:text-2xl text-shText leading-none mt-1 truncate">Checkpoint Reviews</h3>
+              <p className="text-[12px] text-shTextMuted mt-1">{loading ? "Loading…" : items.length === 0 ? "Inbox zero — nothing pending" : `${items.length} checkpoint${items.length === 1 ? "" : "s"} need your attention`}</p>
+            </div>
           </div>
-          <button onClick={onClose} className="text-shTextMuted hover:text-shText text-xl" data-testid="checkpoint-review-queue-close">
-            <i className="fas fa-times"/>
-          </button>
+          <button onClick={onClose} className="w-10 h-10 rounded-xl border border-shBorder/60 bg-black/20 grid place-items-center text-shTextMuted hover:text-shText" data-testid="checkpoint-review-queue-close"><i className="fas fa-times"/></button>
         </div>
 
         {!active ? (
-          <div className="p-5 space-y-3" data-testid="checkpoint-review-queue-list">
+          <div className="p-3 sm:p-5 space-y-3 pb-[max(1rem,env(safe-area-inset-bottom))]" data-testid="checkpoint-review-queue-list">
             {items.length === 0 && !loading && (
               <div className="text-center py-12 text-shTextMuted">
                 <i className="fas fa-mug-hot text-3xl mb-3 opacity-40 block"/>
@@ -111,42 +111,47 @@ export default function CheckpointReviewQueue({ onClose, onGraded }) {
               const badge = QUEUE_BADGES[it.queue_state] || QUEUE_BADGES.pending_review;
               return (
                 <button key={it.id} onClick={() => open(it)} data-testid={`checkpoint-review-item-${idx}`}
-                        className="w-full text-left bg-[var(--sh-card-base)] border border-shBorder rounded-lg p-4 hover:border-shAccent/40 transition">
-                  <div className="flex items-center justify-between gap-3 flex-wrap">
+                        className="w-full text-left border border-shBorder/60 bg-black/20 rounded-2xl p-3.5 sm:p-4 hover:border-shAccent/40 hover:bg-white/[0.025] transition">
+                  <div className="flex items-start sm:items-center gap-3">
+                    <div className="w-12 h-12 sm:w-14 sm:h-14 rounded-2xl overflow-hidden border border-shBorder/70 shrink-0 bg-black/30">
+                      <HuskyDogImage src={it.dog_photo} name={it.dog_name} alt={it.dog_name} className="w-full h-full object-cover object-top"/>
+                    </div>
                     <div className="flex-1 min-w-0">
                       <div className="flex items-center gap-2 mb-1 flex-wrap">
                         <span className={`text-[12px] font-black uppercase tracking-widest px-2 py-0.5 rounded border ${badge.cls}`} data-testid={`checkpoint-review-item-${idx}-state`}>
                           {badge.label}
                         </span>
-                        <span className="text-shTextMuted text-[12px] font-black uppercase tracking-widest">
+                        <span className="text-shTextMuted text-[10px] sm:text-[11px] font-bold">
                           {(it.submitted_at || "").slice(0, 10)} · {(it.submitted_at || "").slice(11, 16)}
                         </span>
                       </div>
-                      <p className="text-shText font-black text-[15px] truncate">{it.dog_name} · {it.client_name}</p>
+                      <p className="text-shText font-black text-[14px] sm:text-[15px] truncate">{it.dog_name} · {it.client_name}</p>
                       <p className="text-shTextMuted text-[13px] truncate mt-0.5">{it.lesson_name}</p>
                       {it.client_note && <p className="text-shTextMuted text-[13px] italic mt-1 truncate">"{it.client_note}"</p>}
                     </div>
-                    <i className="fas fa-chevron-right text-shTextMuted"/>
+                    <div className="hidden sm:grid w-9 h-9 rounded-xl border border-shBorder/60 place-items-center shrink-0"><i className="fas fa-chevron-right text-shTextMuted text-[11px]"/></div>
                   </div>
                 </button>
               );
             })}
           </div>
         ) : (
-          <div className="p-5 space-y-4" data-testid="checkpoint-review-detail-pane">
-            <button onClick={back} className="text-[14px] text-shTextMuted hover:text-shSecondary font-black uppercase tracking-widest" data-testid="checkpoint-review-back">
+          <div className="p-3 sm:p-5 space-y-4 pb-[max(1rem,env(safe-area-inset-bottom))]" data-testid="checkpoint-review-detail-pane">
+            <button onClick={back} className="inline-flex items-center min-h-[42px] text-[12px] sm:text-[13px] text-shTextMuted hover:text-shSecondary font-black" data-testid="checkpoint-review-back">
               <i className="fas fa-chevron-left mr-1"/>Back to queue
             </button>
 
-            <div className="bg-[var(--sh-card-base)] border border-shBorder rounded-xl p-4">
-              <h4 className="text-shText text-lg font-black tracking-tight">{active.dog_name} · {active.client_name}</h4>
-              <p className="text-shTextMuted text-[14px] mt-1">{active.lesson_name}</p>
-              {active.client_note && (
-                <div className="bg-[var(--sh-card-base)]/60 rounded p-3 mt-2 border-l-2 border-shAccent/40">
-                  <p className="text-gray-200 text-[14px] italic whitespace-pre-wrap">"{active.client_note}"</p>
+            <NeonEdge accentRgb="242,101,34" intensity="subtle" className="p-4 sm:p-5">
+              <div className="flex items-center gap-3.5">
+                <div className="w-14 h-14 rounded-2xl overflow-hidden border border-shAccent/25 shrink-0"><HuskyDogImage src={active.dog_photo} name={active.dog_name} alt={active.dog_name} className="w-full h-full object-cover object-top"/></div>
+                <div className="min-w-0">
+                  <p className="text-[10px] font-black uppercase tracking-[0.15em] text-shAccent">Checkpoint review</p>
+                  <h4 className="text-shText text-lg font-black tracking-tight mt-1">{active.dog_name} <span className="text-shTextMuted font-medium">· {active.client_name}</span></h4>
+                  <p className="text-shTextMuted text-[13px] mt-0.5">{active.lesson_name}</p>
                 </div>
-              )}
-            </div>
+              </div>
+              {active.client_note && <div className="bg-black/25 rounded-xl p-3 mt-3 border border-shAccent/15"><p className="text-[10px] font-black uppercase tracking-[0.14em] text-shAccent/80 mb-1">Client note</p><p className="text-gray-200 text-[13px] italic whitespace-pre-wrap">“{active.client_note}”</p></div>}
+            </NeonEdge>
 
             {active.homework_id && active.video_media_id && (
               <ReviewVideo homeworkId={active.homework_id} mediaId={active.video_media_id}/>
@@ -179,7 +184,7 @@ export default function CheckpointReviewQueue({ onClose, onGraded }) {
               </div>
             ) : (
               <>
-                <div className="bg-[var(--sh-card-base)] border border-shBorder rounded-xl p-4 space-y-3">
+                <div className="bg-black/15 border border-shBorder/55 rounded-2xl p-4 sm:p-5 space-y-3">
                   <p className="text-[13px] font-black uppercase tracking-widest text-shSecondary"><i className="fas fa-user mr-1"/>Handler</p>
                   {(active.rubric_snapshot?.handler_criteria || []).map(c => (
                     <ScoreRow key={c.id} criterion={c} value={handlerScores[c.id]} onChange={(v) => setHandlerScores(s => ({ ...s, [c.id]: v }))}/>
@@ -190,30 +195,30 @@ export default function CheckpointReviewQueue({ onClose, onGraded }) {
                   ))}
                 </div>
 
-                <div className="bg-[var(--sh-card-base)] border border-shBorder rounded-xl p-4 space-y-3">
+                <div className="bg-black/15 border border-shBorder/55 rounded-2xl p-4 sm:p-5 space-y-3">
                   <p className="text-[13px] font-black uppercase tracking-widest text-shSecondary"><i className="fas fa-comment mr-1"/>Feedback (emailed to the client)</p>
                   <textarea value={feedback} onChange={(e) => setFeedback(e.target.value)} rows={3} data-testid="checkpoint-review-feedback"
-                            className="w-full bg-[var(--sh-card-base)] border border-shBorder rounded p-2 text-shText text-sm"/>
+                            className="w-full min-h-[96px] bg-black/20 border border-shBorder/55 rounded-xl p-3 text-shText text-sm focus:outline-none focus:border-shSecondary/40"/>
 
                   {mode === "prescribe" ? (
                     <div className="space-y-2 border-t border-shBorder/50 pt-3" data-testid="checkpoint-review-prescription-form">
                       <select value={prescriptionAction} onChange={(e) => setPrescriptionAction(e.target.value)} data-testid="checkpoint-review-prescription-action"
-                              className="w-full bg-[var(--sh-card-base)] border border-shBorder rounded p-2 text-shText text-sm">
+                              className="w-full min-h-[96px] bg-black/20 border border-shBorder/55 rounded-xl p-3 text-shText text-sm focus:outline-none focus:border-shSecondary/40">
                         <option value="repeat_current_recipe">Repeat current Practice Recipe</option>
                         <option value="assign_recipe">Assign a different Practice Recipe</option>
                         <option value="assign_refresher_lesson">Assign a refresher lesson</option>
                       </select>
                       {prescriptionAction === "assign_recipe" && (
                         <input value={templateId} onChange={(e) => setTemplateId(e.target.value)} placeholder="Homework template id" data-testid="checkpoint-review-template-id"
-                               className="w-full bg-[var(--sh-card-base)] border border-shBorder rounded p-2 text-shText text-sm"/>
+                               className="w-full min-h-[96px] bg-black/20 border border-shBorder/55 rounded-xl p-3 text-shText text-sm focus:outline-none focus:border-shSecondary/40"/>
                       )}
                       {prescriptionAction === "assign_refresher_lesson" && (
                         <input value={refresherLessonId} onChange={(e) => setRefresherLessonId(e.target.value)} placeholder="Refresher lesson id" data-testid="checkpoint-review-refresher-lesson-id"
-                               className="w-full bg-[var(--sh-card-base)] border border-shBorder rounded p-2 text-shText text-sm"/>
+                               className="w-full min-h-[96px] bg-black/20 border border-shBorder/55 rounded-xl p-3 text-shText text-sm focus:outline-none focus:border-shSecondary/40"/>
                       )}
                       <input value={minSessions} onChange={(e) => setMinSessions(e.target.value)} type="number" min="0"
                              placeholder="Minimum practice sessions before resubmit (optional)" data-testid="checkpoint-review-min-sessions"
-                             className="w-full bg-[var(--sh-card-base)] border border-shBorder rounded p-2 text-shText text-sm"/>
+                             className="w-full min-h-[96px] bg-black/20 border border-shBorder/55 rounded-xl p-3 text-shText text-sm focus:outline-none focus:border-shSecondary/40"/>
                       <div className="flex gap-2 justify-end pt-2">
                         <button onClick={() => setMode("grade")} className="text-[12px] text-shTextMuted hover:text-shText font-black uppercase tracking-widest px-3 py-2">
                           Back
@@ -225,17 +230,17 @@ export default function CheckpointReviewQueue({ onClose, onGraded }) {
                       </div>
                     </div>
                   ) : (
-                    <div className="flex gap-2 justify-end pt-2 border-t border-shBorder/50 flex-wrap">
+                    <div className="grid grid-cols-1 sm:flex gap-2 sm:justify-end pt-3 border-t border-shBorder/50">
                       <button onClick={() => grade("trainer_assist_recommended")} disabled={busy} data-testid="checkpoint-review-trainer-assist"
-                              className="bg-shBlue/15 text-shBlue border border-shBlue/40 px-4 py-2 rounded text-[14px] font-black uppercase tracking-widest hover:bg-shBlue/25 disabled:opacity-50">
+                              className="min-h-[46px] bg-purple-500/10 text-purple-300 border border-purple-400/30 px-4 py-2.5 rounded-xl text-[11px] sm:text-[12px] font-black hover:bg-purple-500/15 disabled:opacity-50">
                         <i className="fas fa-handshake mr-1"/>Recommend Trainer Assist
                       </button>
                       <button onClick={() => setMode("prescribe")} disabled={busy} data-testid="checkpoint-review-prescribe-practice"
-                              className="bg-red-500/15 text-red-300 border border-red-500/40 px-4 py-2 rounded text-[14px] font-black uppercase tracking-widest hover:bg-red-500/25 disabled:opacity-50">
+                              className="min-h-[46px] bg-shAccent/10 text-shAccent border border-shAccent/30 px-4 py-2.5 rounded-xl text-[11px] sm:text-[12px] font-black hover:bg-shAccent/15 disabled:opacity-50">
                         <i className="fas fa-rotate-left mr-1"/>Prescribe Practice
                       </button>
                       <button onClick={() => grade("advance")} disabled={busy} data-testid="checkpoint-review-advance"
-                              className="bg-shPrimary text-bgHeader px-5 py-2 rounded text-[14px] font-black uppercase tracking-widest hover:bg-shPrimary/80 disabled:opacity-50">
+                              className="min-h-[46px] bg-shPrimary text-bgHeader px-5 py-2.5 rounded-xl text-[11px] sm:text-[12px] font-black hover:bg-shPrimary/85 disabled:opacity-50">
                         <i className="fas fa-check mr-1"/>Advance to Next Lesson
                       </button>
                     </div>
@@ -252,10 +257,10 @@ export default function CheckpointReviewQueue({ onClose, onGraded }) {
 
 function ScoreRow({ criterion, value, onChange }) {
   return (
-    <div className="flex items-center justify-between gap-3" data-testid={`checkpoint-review-score-${criterion.id}`}>
+    <div className="flex items-center justify-between gap-3 rounded-xl border border-shBorder/40 bg-black/10 px-3 py-2.5" data-testid={`checkpoint-review-score-${criterion.id}`}>
       <span className="text-[13px] text-shText">{criterion.name}</span>
       <select value={value ?? 3} onChange={(e) => onChange(parseInt(e.target.value, 10))}
-              className="bg-[var(--sh-card-base)] border border-shBorder rounded p-1.5 text-shText text-sm w-16">
+              className="bg-black/20 border border-shBorder/55 rounded-lg px-2 py-2 text-shText text-sm w-20 min-h-[40px]">
         {[0, 1, 2, 3, 4, 5].map(n => <option key={n} value={n}>{n}</option>)}
       </select>
     </div>
@@ -275,7 +280,7 @@ function ReviewVideo({ homeworkId, mediaId }) {
   if (!src) return <p className="text-[13px] text-shTextMuted mt-2 font-black uppercase tracking-widest"><i className="fas fa-spinner fa-spin mr-1"/>Loading video…</p>;
   return (
     <div data-testid="checkpoint-review-video">
-      <video src={src} controls playsInline className="max-h-72 rounded border border-shBorder w-full"/>
+      <video src={src} controls playsInline className="max-h-[420px] rounded-2xl border border-shBorder/55 bg-black/40 w-full"/>
     </div>
   );
 }

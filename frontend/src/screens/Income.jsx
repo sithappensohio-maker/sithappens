@@ -3,6 +3,7 @@ import { api } from "../lib/api";
 import { useConfirm } from "../lib/useConfirm";
 import CollapsibleDateGroups from "../components/CollapsibleDateGroups";
 import PageHero from "../components/PageHero";
+import AdminTabs from "../components/admin/AdminTabs";
 import { compressImage } from "../lib/imageCompress";
 import Lightbox from "../components/Lightbox";
 import { todayISO, localISOFromDate, parseLocalISO } from "../lib/date";
@@ -282,7 +283,7 @@ export default function Income({ openCreateExpenseOnMount = false, onCreateConsu
   };
 
   return (
-    <div className="space-y-6 animate-slide-in" data-testid="income-screen">
+    <div className="space-y-6 animate-slide-in sh-finance-workspace" data-testid="income-screen">
       {editErr && (
         <div className="fixed top-4 right-4 z-[70] bg-red-500/95 text-shText px-4 py-2.5 rounded-lg shadow-xl flex items-center gap-2 animate-slide-in" data-testid="income-edit-err">
           <i className="fas fa-exclamation-triangle"/>
@@ -323,17 +324,16 @@ export default function Income({ openCreateExpenseOnMount = false, onCreateConsu
           testid="income-hero"
         />
       </div>
-      {/* Sprint 110di-51 — Tab strip: Transactions vs Accounts Receivable */}
-      <div className="flex items-center gap-1 border-b border-shBorder" data-testid="income-tabs">
-        <button onClick={()=>setTab("transactions")} data-testid="income-tab-transactions"
-                className={`px-4 py-2.5 text-[12px] font-black uppercase tracking-widest border-b-2 transition ${tab==="transactions" ? "text-shPrimary border-shPrimary" : "text-shTextMuted border-transparent hover:text-shPrimary/80"}`}>
-          <i className="fas fa-list mr-1.5"/>Transactions
-        </button>
-        <button onClick={()=>setTab("ar")} data-testid="income-tab-ar"
-                className={`px-4 py-2.5 text-[12px] font-black uppercase tracking-widest border-b-2 transition ${tab==="ar" ? "text-shAccent border-shAccent" : "text-shTextMuted border-transparent hover:text-shAccent/80"}`}>
-          <i className="fas fa-file-invoice-dollar mr-1.5"/>Accounts Receivable
-        </button>
-      </div>
+      <AdminTabs
+        compact
+        testid="income-tabs"
+        value={tab}
+        onChange={setTab}
+        items={[
+          { key: "transactions", label: "Transactions", icon: "fa-list", testid: "income-tab-transactions" },
+          { key: "ar", label: "Accounts Receivable", icon: "fa-file-invoice-dollar", testid: "income-tab-ar", accent: "orange" },
+        ]}
+      />
       {tab === "ar" ? (
         <AccountsReceivableTab />
       ) : (
@@ -382,7 +382,7 @@ export default function Income({ openCreateExpenseOnMount = false, onCreateConsu
 
       {/* Weekly tally tiles */}
       {summary && (
-        <div className="card-finance rounded-xl p-5" data-testid="weekly-summary">
+        <div className="bg-[var(--sh-card-base)] border border-shAccent/20 rounded-xl p-5" data-testid="weekly-summary">
           <div className="flex flex-col md:flex-row md:items-center justify-between gap-3 mb-4">
             <div>
               <p className="text-[15px] font-black uppercase tracking-widest text-shTextMuted">This Week (Mon–Sun)</p>
@@ -435,7 +435,7 @@ export default function Income({ openCreateExpenseOnMount = false, onCreateConsu
 
       {/* Range view (month / quarter / YTD / custom) */}
       {rangeSummary && (
-        <div className="card-finance rounded-xl p-5" data-testid="range-summary">
+        <div className="bg-[var(--sh-card-base)] border border-shAccent/20 rounded-xl p-5" data-testid="range-summary">
           <div className="flex flex-col md:flex-row md:items-center justify-between gap-3 mb-4">
             <div>
               <p className="text-[15px] font-black uppercase tracking-widest text-shTextMuted">Longer-Range View</p>
@@ -473,7 +473,7 @@ export default function Income({ openCreateExpenseOnMount = false, onCreateConsu
       )}
 
       {/* Retail Sales (external POS) — date range matches Range View above */}
-      <div className="card-finance rounded-xl p-5" data-testid="retail-card">
+      <div className="bg-[var(--sh-card-base)] border border-shAccent/20 rounded-xl p-5" data-testid="retail-card">
         <div className="flex flex-col md:flex-row md:items-center justify-between gap-3 mb-4">
           <div>
             <h4 className="text-sm font-black text-purple-300 uppercase tracking-widest"><i className="fas fa-bag-shopping mr-2"/>Retail Sales</h4>
@@ -632,7 +632,7 @@ export default function Income({ openCreateExpenseOnMount = false, onCreateConsu
 
       {/* Spreadsheet table OR grouped-by-date view */}
       {groupByDate ? (
-        <div className="bg-[var(--sh-card-base)] border border-shBorder rounded-xl p-4 card-table" data-testid="income-grouped">
+        <div className="bg-[var(--sh-card-base)] border border-shBorder rounded-xl p-4" data-testid="income-grouped">
           <CollapsibleDateGroups
             rows={filtered}
             getDate={(r) => r.date}
@@ -959,7 +959,7 @@ function ExpenseModal({ expense, categories, onClose, onSaved, onError }) {
     description: expense?.description || "",
     amount: expense?.amount ?? "",
     category: expense?.category || "",
-    payment_method: expense?.payment_method || "clover",
+    payment_method: expense?.payment_method || "card",
     notes: expense?.notes || "",
     receipt_image: expense?.receipt_image || "",
     receipt_filename: expense?.receipt_filename || "",
@@ -1084,7 +1084,7 @@ function ExpenseModal({ expense, categories, onClose, onSaved, onError }) {
             <label className="text-[13px] uppercase tracking-widest text-shTextMuted font-black">Payment method</label>
             <select value={form.payment_method} onChange={(e)=>setForm({...form, payment_method:e.target.value})}
                     className="w-full mt-1 bg-[var(--sh-card-base)] border border-shBorder rounded p-2 text-shText text-sm">
-              <option value="clover">Clover / Credit Card</option>
+              <option value="card">Card</option>
               <option value="cash">Cash</option>
               <option value="venmo">Venmo</option>
               <option value="paypal">PayPal</option>
@@ -1179,7 +1179,7 @@ function RetailSaleModal({ sale, categories, clients, onClose, onSaved, onError 
     description: sale?.description || "",
     amount: sale?.amount ?? "",
     category: sale?.category || "",
-    payment_method: sale?.payment_method || "clover",
+    payment_method: sale?.payment_method || "card",
     notes: sale?.notes || "",
     client_id: sale?.client_id || "",
   });
@@ -1271,7 +1271,7 @@ function RetailSaleModal({ sale, categories, clients, onClose, onSaved, onError 
             <label className="text-[13px] uppercase tracking-widest text-shTextMuted font-black">Payment method</label>
             <select value={form.payment_method} onChange={(e)=>setForm({...form, payment_method:e.target.value})}
                     className="w-full mt-1 bg-[var(--sh-card-base)] border border-shBorder rounded p-2 text-shText text-sm" data-testid="retail-payment-method">
-              <option value="clover">Clover / Credit Card</option>
+              <option value="card">Card</option>
               <option value="cash">Cash</option>
               <option value="venmo">Venmo</option>
               <option value="paypal">PayPal</option>

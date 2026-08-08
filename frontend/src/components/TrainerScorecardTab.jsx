@@ -70,7 +70,7 @@ export default function TrainerScorecardTab() {
       )}
 
       {err && (
-        <div className="bg-red-500/10 border border-red-500/30 text-red-300 rounded-xl p-4 card-danger" data-testid="scorecard-err">
+        <div className="bg-red-500/10 border border-red-500/30 text-red-300 rounded-xl p-4" data-testid="scorecard-err">
           <i className="fas fa-triangle-exclamation mr-2"/>{err}
         </div>
       )}
@@ -93,7 +93,7 @@ export default function TrainerScorecardTab() {
               <p className="text-[12px] mt-1">Trainers will appear here after their first logged session via the Training Tracker.</p>
             </div>
           ) : (
-            <div className="bg-[var(--sh-card-base)] border border-shBorder rounded-xl overflow-hidden card-table" data-testid="scorecard-table">
+            <div className="bg-[var(--sh-card-base)] border border-shBorder rounded-xl overflow-hidden" data-testid="scorecard-table">
               <div className="hidden sm:grid grid-cols-12 gap-3 px-4 py-2 bg-[var(--sh-card-base)]/50 border-b border-shBorder text-[10px] font-black uppercase tracking-[0.25em] text-shTextMuted">
                 <div className="col-span-4">Trainer</div>
                 <div className="col-span-2 text-right">Sessions</div>

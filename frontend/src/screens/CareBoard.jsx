@@ -68,7 +68,7 @@ export default function CareBoard() {
   const dueNowCount = summary.due_now;
 
   return (
-    <div className="space-y-6 animate-slide-in" data-testid="care-board-screen">
+    <div className="space-y-6 animate-slide-in sh-care-workspace" data-testid="care-board-screen">
       <PageHero
         eyebrow={{ icon: "fa-bowl-food", text: `${data?.on_site_count || 0} dog${(data?.on_site_count||0)===1?"":"s"} on-site today`, color: "text-shPrimary" }}
         title="Care Board."
