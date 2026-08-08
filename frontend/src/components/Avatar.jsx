@@ -18,7 +18,10 @@ export default function Avatar({ src, icon = "fa-user", size = "md", ring = "bor
           alt={alt}
           loading="lazy"
           decoding="async"
-          className="w-full h-full object-cover object-top"
+          className="w-full h-full object-cover"
+          // Real photo centers (a top-crop cuts the dog's face off); the husky
+          // mascot peeks from the top. Matches HuskyDogImage's framing.
+          style={{ objectPosition: src ? "center" : "top" }}
         />
       </div>
     );

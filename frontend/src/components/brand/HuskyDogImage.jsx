@@ -21,7 +21,8 @@ export function huskyPlaceholderSrc(name = "") {
  * of the Sit Happens husky mascot variants. The fallback is deterministic by
  * dog name so the same dog does not randomly change mascots between screens.
  */
-export default function HuskyDogImage({ src, name = "", alt, className = "", ...rest }) {
+export default function HuskyDogImage({ src, name = "", alt, className = "", style, ...rest }) {
+  const isRealPhoto = !!src;
   return (
     <img
       src={src || huskyPlaceholderSrc(name)}
@@ -29,6 +30,13 @@ export default function HuskyDogImage({ src, name = "", alt, className = "", ...
       loading="lazy"
       decoding="async"
       className={className}
+      // A real dog photo frames to the CENTER — a top-crop cuts the dog off
+      // (see the reported card issue). The husky mascot is drawn peeking from
+      // the TOP, so it stays anchored there. This inline object-position
+      // intentionally overrides any `object-top` utility a caller passes, so
+      // every dog card/avatar gets correct framing from this one place. A
+      // caller can still override by passing its own style.objectPosition.
+      style={{ objectPosition: isRealPhoto ? "center" : "top", ...style }}
       {...rest}
     />
   );
