@@ -88,12 +88,20 @@ def test_action_no_practice_lesson_learn_then_advance():
     assert ca("active", "active", _roadmap(learn_done=False, has_practice=False, requires_cp=False))["type"] == "lesson"
     assert ca("active", "active", _roadmap(learn_done=True, has_practice=False, requires_cp=False))["type"] == "advance"
 
-# A no-practice lesson WITH a checkpoint must not bypass the checkpoint.
-def test_action_no_practice_checkpoint_not_bypassed():
+# checkpoint + no practice is an impossible-submission config (video attaches to
+# the practice homework): publishing it is now blocked; a legacy enrollment gets
+# the safe non-advancing setup_required state — never an impossible Submit CTA,
+# never advance, regardless of learn state.
+def test_action_checkpoint_without_practice_is_setup_required():
     fresh = ca("active", "active", _roadmap(learn_done=False, has_practice=False, requires_cp=True, cp={"status": "not_submitted"}))
-    assert fresh["type"] == "lesson"  # learn first, never straight to advance
+    assert fresh["type"] == "setup_required"
     after_learn = ca("active", "active", _roadmap(learn_done=True, has_practice=False, requires_cp=True, cp={"status": "not_submitted"}))
-    assert after_learn["type"] == "submit_checkpoint"  # routes to the checkpoint, NOT advance
+    assert after_learn["type"] == "setup_required"
+    # non-technical client copy
+    assert "trainer" in after_learn["sublabel"].lower() and "practice" not in after_learn["sublabel"].lower()
+    # remediation/TA still take priority over the shield
+    cp = {"status": "graded", "outcome": "prescribe_practice", "prescription": {"action": "repeat_current_recipe"}}
+    assert ca("active", "active", _roadmap(learn_done=False, has_practice=False, requires_cp=True, cp=cp))["type"] == "remediation"
 
 
 # ── Integration: the real Student Home view-model ───────────────────────────
@@ -207,22 +215,73 @@ def test_no_practice_lesson_learn_then_advance():
             _p4_cleanup(se_row["id"], enr["id"])
 
 
-def test_no_practice_checkpoint_lesson_not_bypassed():
+def test_legacy_checkpoint_without_practice_is_safe():
+    """A legacy enrollment whose frozen snapshot has checkpoint+no-practice
+    (publishing this is now blocked) must not crash, must never offer the
+    impossible Submit Checkpoint CTA, and must not be self-advanceable."""
     with _p4_program(n_lessons_per_module=2, checkpoint_lesson_idx=0) as (prog, admin), _p4_client_and_dog() as (client_doc, dog):
         se_row, enr = _p4_enroll(prog, dog, admin)
         try:
             cu = _p4_client_user(client_doc["id"])
             _strip_practice(enr["id"])  # practice-less, but keep the checkpoint
+            home = _home(se_row["id"], cu)  # must NOT crash
+            act = home["current_action"]
+            assert act["type"] == "setup_required"
+            assert act["label"] == "Training setup needs attention"
+            assert "trainer needs to update" in act["sublabel"].lower()
+            # even after the learn step, still setup_required — never submit_checkpoint
             lesson_id = run(server.db.dog_programs.find_one({"id": enr["id"]}, {"_id": 0, "current_lesson_id": 1}))["current_lesson_id"]
-            assert _home(se_row["id"], cu)["current_action"]["type"] == "lesson"
             run(server.portal_school_complete_lesson(se_row["id"], lesson_id, cu))
-            # learn done → routes to the checkpoint, never advance
-            assert _home(se_row["id"], cu)["current_action"]["type"] == "submit_checkpoint"
+            assert _home(se_row["id"], cu)["current_action"]["type"] == "setup_required"
+            # cannot self-advance around the problem (checkpoint gate holds)
             import pytest
-            with pytest.raises(server.HTTPException):  # /advance stays blocked by the checkpoint
+            with pytest.raises(server.HTTPException):
                 run(server.portal_school_advance(se_row["id"], cu))
+            # enrollment pointer untouched
+            assert run(server.db.dog_programs.find_one({"id": enr["id"]}, {"_id": 0, "current_lesson_id": 1}))["current_lesson_id"] == lesson_id
         finally:
             _p4_cleanup(se_row["id"], enr["id"])
+
+
+def test_validation_checkpoint_without_practice_is_error():
+    """checkpoint + no practice → hard validation ERROR; no-practice without a
+    checkpoint stays valid; /publish refuses the invalid draft."""
+    import pytest
+    with _p4_program(n_lessons_per_module=2, checkpoint_lesson_idx=0) as (prog, admin):
+        # Build module payload from the live program with the checkpoint
+        # lesson's practice stripped.
+        live = run(server.db.programs.find_one({"id": prog["id"]}, {"_id": 0}))
+        modules = live["modules"]
+        for m in modules:
+            for l in (m.get("lessons") or []):
+                if (l.get("checkpoint") or {}).get("enabled"):
+                    l["suggested_homework_template_ids"] = []
+        v = run(server._validate_program_structure(modules))
+        codes = [e["code"] for e in v["errors"]]
+        assert "checkpoint_without_practice" in codes and v["valid"] is False
+
+        # A no-practice lesson WITHOUT a checkpoint remains valid (no such error).
+        modules_ok = run(server.db.programs.find_one({"id": prog["id"]}, {"_id": 0}))["modules"]
+        for m in modules_ok:
+            for l in (m.get("lessons") or []):
+                if not (l.get("checkpoint") or {}).get("enabled"):
+                    l["suggested_homework_template_ids"] = []
+        v_ok = run(server._validate_program_structure(modules_ok))
+        assert "checkpoint_without_practice" not in [e["code"] for e in v_ok["errors"]]
+
+        # /publish refuses a draft containing the invalid combination.
+        def _to_in(mods):
+            return [server.ModuleIn(
+                id=m["id"], name=m["name"], order=m.get("order", 0),
+                goals=[server.GoalIn(**g) for g in (m.get("goals") or [])],
+                lessons=[server.LessonIn(**{k: v for k, v in l.items() if k in server.LessonIn.model_fields}) for l in (m.get("lessons") or [])],
+            ) for m in mods]
+        body = server.ProgramIn(name=live["name"], type=live["type"], format=live["format"], price=0,
+                                delivery_mode="self_guided", modules=_to_in(modules))
+        run(server.update_program(prog["id"], body, cascade=False, save_as_draft=True, _=admin))
+        with pytest.raises(server.HTTPException) as exc:
+            run(server.publish_program(prog["id"], cascade=False, _=admin))
+        assert exc.value.status_code == 422
 
 
 def test_complete_lesson_current_only_and_per_dog():

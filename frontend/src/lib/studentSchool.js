@@ -23,6 +23,7 @@ export const ACTION_META = {
   advance:          { icon: "fa-arrow-right",         accent: "lime" },
   course_complete:  { icon: "fa-graduation-cap",      accent: "lime" },
   access_expired:   { icon: "fa-lock",                accent: "neutral" },
+  setup_required:   { icon: "fa-wrench",              accent: "neutral" },
   start:            { icon: "fa-play",                accent: "lime" },
 };
 

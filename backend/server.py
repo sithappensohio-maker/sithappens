@@ -15466,6 +15466,14 @@ async def _validate_program_structure(modules: List[dict]) -> Dict[str, Any]:
             # exactly as before).
             cp = l.get("checkpoint")
             if cp and cp.get("enabled"):
+                # A checkpoint-required lesson MUST have at least one Practice
+                # assignment: checkpoint submission attaches its video to the
+                # lesson's practice homework record, so a checkpoint with no
+                # practice is an impossible client state (Submit Checkpoint
+                # that can never succeed). Hard ERROR — blocks publish. A
+                # no-practice lesson without a checkpoint remains fully valid.
+                if not (l.get("suggested_homework_template_ids") or []):
+                    errors.append({"code": "checkpoint_without_practice", "message": f"Lesson '{l.get('name', '')}' requires a trainer checkpoint but has no Practice assignment — lessons requiring a checkpoint must include at least one Practice assignment.", **where_l})
                 handler_criteria = cp.get("handler_criteria") or []
                 dog_criteria = cp.get("dog_criteria") or []
                 if not handler_criteria:
@@ -17885,6 +17893,18 @@ def _school_current_action(status: str, access_state: str, roadmap: Optional[dic
         return {"type": "awaiting_review", "label": "Awaiting trainer review",
                 "sublabel": f"You submitted your {lesson_name} checkpoint — your trainer will review it soon.",
                 "target": {"screen": "feedback"}}
+    # 2c. Legacy malformed configuration: checkpoint required but NO practice
+    #     configured. Submission is impossible (the checkpoint video attaches to
+    #     the lesson's practice homework), so never offer Submit Checkpoint.
+    #     Publishing this combo is now blocked (checkpoint_without_practice
+    #     validation error); this shield covers enrollments whose frozen
+    #     snapshot predates that rule. Safe, non-advancing, non-technical copy —
+    #     never advances, never fabricates practice, never bypasses the
+    #     checkpoint. Caller logs the context for diagnosis.
+    if requires_cp and not has_practice:
+        return {"type": "setup_required", "label": "Training setup needs attention",
+                "sublabel": "Your trainer needs to update this lesson before you can continue.",
+                "target": {"screen": "home", "lesson_id": lesson_id}}
     # 3. Learn done + practice satisfied + checkpoint required, not yet
     #    submitted → submit. `practice_satisfied` (never just `practiced`) keeps
     #    a no-practice checkpoint lesson from bypassing its checkpoint.
@@ -17970,6 +17990,16 @@ async def portal_school_home(school_enrollment_id: str, user: dict = Depends(get
                     upcoming = {"kind": "module", "name": nxt_mod.get("name"), "locked": True}
 
     action = _school_current_action(status, access_state, roadmap)
+    if action.get("type") == "setup_required":
+        # Malformed legacy curriculum (checkpoint required, no practice
+        # configured) — publishing this combo is now blocked, so log enough
+        # context to find and fix the surviving snapshot.
+        logger.warning(
+            "School setup_required: enrollment %s (school_enrollment %s, program %s) lesson %s (%s) "
+            "requires a checkpoint but has no practice configured — trainer must update the lesson.",
+            enrollment.get("id"), se.get("id"), enrollment.get("program_id"),
+            (roadmap or {}).get("current_lesson_id"), ((roadmap or {}).get("current_lesson") or {}).get("name"),
+        )
 
     # Latest trainer feedback (newest graded checkpoint) — the "your trainer is
     # present" signal + the trainer identity (no assigned_trainer field exists).
