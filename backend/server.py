@@ -17852,6 +17852,11 @@ def _school_current_action(status: str, access_state: str, roadmap: Optional[dic
     has_practice = bool(roadmap.get("current_lesson_has_practice"))
     requires_cp = bool(roadmap.get("requires_checkpoint"))
     cp_state = cp.get("status")  # not_submitted | awaiting_review | graded
+    # The practice requirement is met by practicing, OR — for a lesson with no
+    # Practice step — by completing its Learn step. A no-practice lesson never
+    # "auto-satisfies" until Learn is explicitly completed, so nothing advances
+    # past an un-learned lesson.
+    practice_satisfied = practiced or (not has_practice and learn_done)
 
     # 1a. Trainer Assist (support, never framed as failure)
     if cp_state == "graded" and cp.get("outcome") == "trainer_assist_recommended":
@@ -17880,24 +17885,27 @@ def _school_current_action(status: str, access_state: str, roadmap: Optional[dic
         return {"type": "awaiting_review", "label": "Awaiting trainer review",
                 "sublabel": f"You submitted your {lesson_name} checkpoint — your trainer will review it soon.",
                 "target": {"screen": "feedback"}}
-    # 3. Learn + practice done, checkpoint required, not yet submitted → submit
-    if requires_cp and practiced and cp_state in (None, "not_submitted"):
+    # 3. Learn done + practice satisfied + checkpoint required, not yet
+    #    submitted → submit. `practice_satisfied` (never just `practiced`) keeps
+    #    a no-practice checkpoint lesson from bypassing its checkpoint.
+    if requires_cp and learn_done and practice_satisfied and cp_state in (None, "not_submitted"):
         return {"type": "submit_checkpoint", "label": "Submit your checkpoint",
-                "sublabel": f"You've practiced {lesson_name} — record your checkpoint video for review.",
+                "sublabel": f"Record your checkpoint video for “{lesson_name}” so your trainer can review it.",
                 "target": {"screen": "lesson", "lesson_id": lesson_id}}
     # (awaiting_review handled above.)
-    # 5. Learn step first — the student hasn't started practice for this lesson,
-    #    so its instructional content comes before Practice Coach. Learn is
-    #    marked complete only by the explicit Start-Practice action.
-    if has_practice and not learn_done and not practiced:
+    # 5. Learn step first — EVERY lesson (with or without practice) starts here
+    #    until its Learn step is explicitly completed. No lesson advances until
+    #    learn_completed == True.
+    if not learn_done:
         return {"type": "lesson", "label": "Start lesson",
-                "sublabel": f"Learn {lesson_name} before you practice.",
+                "sublabel": (f"Learn {lesson_name} before you practice." if has_practice
+                             else f"Work through {lesson_name}, then mark it complete."),
                 "target": {"screen": "lesson", "lesson_id": lesson_id}}
-    # 6. Learn done, practice not done → practice.
+    # 6. Learn done, has a practice step, not yet practiced → practice.
     if has_practice and not practiced:
         return {"type": "practice", "label": "Start practice", "sublabel": lesson_name,
                 "target": {"screen": "lesson", "lesson_id": lesson_id}}
-    # 7. Practiced (or a lesson with no practice step) → move on.
+    # 7. Learn done + practice satisfied → move on.
     return {"type": "advance", "label": "Continue to your next lesson",
             "sublabel": f"You've finished {lesson_name}.", "target": {"screen": "course"}}
 
@@ -18161,6 +18169,49 @@ async def portal_school_start_practice(school_enrollment_id: str, lesson_id: str
         {"id": enrollment["id"]}, {"$addToSet": {"learn_completed_lesson_ids": lesson_id}},
     )
     return {"homework_id": hw["id"]}
+
+
+@api.post("/portal/school/{school_enrollment_id}/lessons/{lesson_id}/complete-lesson")
+async def portal_school_complete_lesson(school_enrollment_id: str, lesson_id: str, user: dict = Depends(get_current_user)):
+    """Explicit 'I've completed the Learn step for this lesson' — the learn
+    boundary for a lesson that has NO Practice step (a lesson WITH practice uses
+    Start-Practice for the same purpose). It ONLY records learn completion; it
+    never advances, and never bypasses remediation / Trainer Assist / checkpoint
+    / lock rules (advancement still runs through the gated /advance + checkpoint
+    flows). Constraints: authorized to this enrollment, the CURRENT lesson only
+    (never a future/locked lesson), idempotent ($addToSet), per enrollment/dog,
+    and no fabricated Practice record."""
+    se, enrollment = await _school_enrollment_for_client(school_enrollment_id, user)
+    _require_school_access(enrollment, allow_withdrawn_read=False)
+    roadmap = await _school_roadmap(enrollment, se["dog_id"])
+    if roadmap.get("current_lesson_id") != lesson_id:
+        raise HTTPException(status_code=422, detail="You can only complete your current lesson.")
+    current_lesson = roadmap.get("current_lesson")
+    if not current_lesson or current_lesson.get("status") == "locked":
+        raise HTTPException(status_code=403, detail="This lesson is locked.")
+    await db.dog_programs.update_one(
+        {"id": enrollment["id"]}, {"$addToSet": {"learn_completed_lesson_ids": lesson_id}},
+    )
+    # Routine progress signal on the Phase-1 spine (activity only, no admin
+    # alert) — gives a no-practice lesson some activity-feed presence it would
+    # otherwise never produce. Best-effort, idempotent per enrollment+lesson.
+    try:
+        _cli = await db.clients.find_one({"id": se.get("client_id")}, {"_id": 0, "name": 1}) or {}
+        _dog = await db.dogs.find_one({"id": se.get("dog_id")}, {"_id": 0, "name": 1}) or {}
+        await school_events.emit_event(
+            SchoolEvent.LESSON_STARTED, actor_type="client", actor_id=user.get("id"),
+            client_id=se.get("client_id"), client_name=_cli.get("name"),
+            dog_id=se.get("dog_id"), dog_name=_dog.get("name"),
+            enrollment_id=enrollment["id"], school_enrollment_id=se["id"],
+            lesson_id=lesson_id, lesson_name=current_lesson.get("name"),
+            title=f"{_cli.get('name') or 'A student'} completed a lesson",
+            summary=f"Completed the learning for “{current_lesson.get('name') or 'a lesson'}”.",
+            deep_link={"screen": "school_hq", "tab": "activity"},
+            dedupe_key=f"lesson_learned:{enrollment['id']}:{lesson_id}",
+        )
+    except Exception:
+        pass
+    return {"learn_completed": True, "lesson_id": lesson_id}
 
 
 # ─── Online School Phase 2 — checkpoint video submission ──────────────────
@@ -18548,7 +18599,16 @@ async def portal_school_advance(school_enrollment_id: str, user: dict = Depends(
     if cp and cp.get("enabled"):
         raise HTTPException(status_code=422, detail="This lesson requires trainer review before continuing — submit a checkpoint video.")
     if not roadmap["current_lesson_practiced"]:
-        raise HTTPException(status_code=422, detail=f"Practice {current_lesson.get('name')} at least once before continuing.")
+        # A lesson WITH a Practice step must be practiced before advancing. A
+        # lesson with NO practice step advances once its Learn step is
+        # EXPLICITLY completed (POST .../complete-lesson) — never on a page
+        # view. This keeps the Learn → (optional Practice) → advance invariant
+        # for both kinds of lesson without weakening the practice gate for
+        # normal (practice-bearing) lessons.
+        if roadmap.get("current_lesson_has_practice"):
+            raise HTTPException(status_code=422, detail=f"Practice {current_lesson.get('name')} at least once before continuing.")
+        if not roadmap.get("current_lesson_learn_completed"):
+            raise HTTPException(status_code=422, detail=f"Complete {current_lesson.get('name')} before continuing.")
     return await _advance_school_enrollment(se, enrollment, roadmap)
 
 

@@ -83,9 +83,17 @@ def test_action_noncheckpoint_progression_order():
     assert ca("active", "active", _roadmap(practiced=False, learn_done=True, requires_cp=False))["type"] == "practice"
     assert ca("active", "active", _roadmap(practiced=True, learn_done=True, requires_cp=False))["type"] == "advance"
 
-# A lesson with no practice step at all shouldn't dead-end on a learn/practice step.
-def test_action_no_practice_lesson_skips_to_advance():
-    assert ca("active", "active", _roadmap(practiced=False, learn_done=False, has_practice=False, requires_cp=False))["type"] == "advance"
+# A no-practice lesson still starts at the Learn step and only advances after it.
+def test_action_no_practice_lesson_learn_then_advance():
+    assert ca("active", "active", _roadmap(learn_done=False, has_practice=False, requires_cp=False))["type"] == "lesson"
+    assert ca("active", "active", _roadmap(learn_done=True, has_practice=False, requires_cp=False))["type"] == "advance"
+
+# A no-practice lesson WITH a checkpoint must not bypass the checkpoint.
+def test_action_no_practice_checkpoint_not_bypassed():
+    fresh = ca("active", "active", _roadmap(learn_done=False, has_practice=False, requires_cp=True, cp={"status": "not_submitted"}))
+    assert fresh["type"] == "lesson"  # learn first, never straight to advance
+    after_learn = ca("active", "active", _roadmap(learn_done=True, has_practice=False, requires_cp=True, cp={"status": "not_submitted"}))
+    assert after_learn["type"] == "submit_checkpoint"  # routes to the checkpoint, NOT advance
 
 
 # ── Integration: the real Student Home view-model ───────────────────────────
@@ -154,6 +162,89 @@ def test_learn_completed_is_per_dog():
             run(server.portal_school_start_practice(se1["id"], l1, cu))
             assert _home(se1["id"], cu)["current_action"]["type"] == "practice"      # dog1 learn done
             assert _home(se2_id, cu)["current_action"]["type"] == "lesson"           # dog2 untouched
+        finally:
+            _p4_cleanup(se2_id, enr2_id)
+            run(server.db.dogs.delete_one({"id": did2}))
+            _p4_cleanup(se1["id"], enr1["id"])
+
+
+def _strip_practice(enr_id):
+    """Make the current lesson practice-less (empty suggested_homework_template_ids)
+    on the enrollment's own snapshot — a legitimately publishable state."""
+    enr = run(server.db.dog_programs.find_one({"id": enr_id}, {"_id": 0}))
+    cur = enr["current_lesson_id"]
+    snap = enr["program_snapshot"]
+    for m in snap["modules"]:
+        for l in (m.get("lessons") or []):
+            if l.get("id") == cur:
+                l["suggested_homework_template_ids"] = []
+    run(server.db.dog_programs.update_one({"id": enr_id}, {"$set": {"program_snapshot": snap}}))
+
+
+def test_no_practice_lesson_learn_then_advance():
+    # no-practice, no-checkpoint lesson: lesson → (open ≠ complete) → Complete Lesson → advance.
+    with _p4_program(n_lessons_per_module=2, checkpoint_lesson_idx=99) as (prog, admin), _p4_client_and_dog() as (client_doc, dog):
+        se_row, enr = _p4_enroll(prog, dog, admin)
+        try:
+            cu = _p4_client_user(client_doc["id"])
+            _strip_practice(enr["id"])
+            lesson_id = run(server.db.dog_programs.find_one({"id": enr["id"]}, {"_id": 0, "current_lesson_id": 1}))["current_lesson_id"]
+            assert _home(se_row["id"], cu)["current_action"]["type"] == "lesson"
+            # merely opening the lesson does NOT complete it
+            run(server.portal_school_lesson_detail(se_row["id"], lesson_id, cu))
+            assert _home(se_row["id"], cu)["current_action"]["type"] == "lesson"
+            assert _home(se_row["id"], cu)["lesson_state"]["learn_completed"] is False
+            # advance is blocked before completion
+            import pytest
+            with pytest.raises(server.HTTPException):
+                run(server.portal_school_advance(se_row["id"], cu))
+            # explicit Complete Lesson → learn done → advance action, and it advances
+            run(server.portal_school_complete_lesson(se_row["id"], lesson_id, cu))
+            assert _home(se_row["id"], cu)["current_action"]["type"] == "advance"
+            run(server.portal_school_advance(se_row["id"], cu))
+            assert run(server.db.dog_programs.find_one({"id": enr["id"]}, {"_id": 0, "current_lesson_id": 1}))["current_lesson_id"] != lesson_id
+        finally:
+            _p4_cleanup(se_row["id"], enr["id"])
+
+
+def test_no_practice_checkpoint_lesson_not_bypassed():
+    with _p4_program(n_lessons_per_module=2, checkpoint_lesson_idx=0) as (prog, admin), _p4_client_and_dog() as (client_doc, dog):
+        se_row, enr = _p4_enroll(prog, dog, admin)
+        try:
+            cu = _p4_client_user(client_doc["id"])
+            _strip_practice(enr["id"])  # practice-less, but keep the checkpoint
+            lesson_id = run(server.db.dog_programs.find_one({"id": enr["id"]}, {"_id": 0, "current_lesson_id": 1}))["current_lesson_id"]
+            assert _home(se_row["id"], cu)["current_action"]["type"] == "lesson"
+            run(server.portal_school_complete_lesson(se_row["id"], lesson_id, cu))
+            # learn done → routes to the checkpoint, never advance
+            assert _home(se_row["id"], cu)["current_action"]["type"] == "submit_checkpoint"
+            import pytest
+            with pytest.raises(server.HTTPException):  # /advance stays blocked by the checkpoint
+                run(server.portal_school_advance(se_row["id"], cu))
+        finally:
+            _p4_cleanup(se_row["id"], enr["id"])
+
+
+def test_complete_lesson_current_only_and_per_dog():
+    import pytest
+    with _p4_program(n_lessons_per_module=2, checkpoint_lesson_idx=99) as (prog, admin), _p4_client_and_dog() as (client_doc, dog1):
+        se1, enr1 = _p4_enroll(prog, dog1, admin)
+        did2 = str(uuid.uuid4())
+        run(server.db.dogs.insert_one({"id": did2, "name": "Dog2", "owner_id": client_doc["id"], "breed": "Mix",
+                                       "age_y": 2, "vaccines": {"rabies": "2030-01-01", "dhpp": "2030-01-01", "bordetella": "2030-01-01"}}))
+        res2 = run(server.school_enroll(server.SchoolEnrollIn(dog_id=did2, program_id=prog["id"]), admin))
+        se2_id, enr2_id = res2["school_enrollment"]["id"], res2["enrollment"]["id"]
+        try:
+            cu = _p4_client_user(client_doc["id"])
+            _strip_practice(enr1["id"])
+            l1 = run(server.db.dog_programs.find_one({"id": enr1["id"]}, {"_id": 0, "current_lesson_id": 1}))["current_lesson_id"]
+            # a non-current lesson id is rejected
+            with pytest.raises(server.HTTPException):
+                run(server.portal_school_complete_lesson(se1["id"], "not-the-current-lesson", cu))
+            run(server.portal_school_complete_lesson(se1["id"], l1, cu))
+            assert run(server.db.dog_programs.find_one({"id": enr1["id"]}, {"_id": 0, "learn_completed_lesson_ids": 1}))["learn_completed_lesson_ids"] == [l1]
+            # dog2 untouched
+            assert not (run(server.db.dog_programs.find_one({"id": enr2_id}, {"_id": 0, "learn_completed_lesson_ids": 1})) or {}).get("learn_completed_lesson_ids")
         finally:
             _p4_cleanup(se2_id, enr2_id)
             run(server.db.dogs.delete_one({"id": did2}))
