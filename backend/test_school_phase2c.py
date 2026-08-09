@@ -163,8 +163,11 @@ def test_remediation_start_opens_exact_prescribed_homework_then_stops_when_satis
             raw = run(server.db.checkpoint_submissions.find_one({"id": sub_id}, {"_id": 0, "prescription": 1}))
             assert raw["prescription"]["tracked_homework_id"] == original_hw
 
-            run(server.log_section(original_hw, server.SectionLogIn(section_id="remediation-1"), cu))
-            run(server.log_section(original_hw, server.SectionLogIn(section_id="remediation-2"), cu))
+            # Two post-grade practice sessions against the SAME tracked
+            # homework/template section — log_section validates section ids
+            # against the template snapshot, so use its real "practice" id.
+            run(server.log_section(original_hw, server.SectionLogIn(section_id="practice"), cu))
+            run(server.log_section(original_hw, server.SectionLogIn(section_id="practice"), cu))
             home = run(server.portal_school_home(se_row["id"], cu))
             assert home["current_action"]["type"] == "submit_checkpoint"
 

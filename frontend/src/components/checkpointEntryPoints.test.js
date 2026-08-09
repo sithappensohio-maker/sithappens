@@ -12,6 +12,10 @@ const read = (...p) => fs.readFileSync(path.join(__dirname, ...p), "utf8");
 
 const programStudioSrc = read("ProgramStudio.jsx");
 const dashboardSrc = read("OnlineSchoolDashboard.jsx");
+// Phase 2B+ moved the live checkpoint UI to the native School runtime; the
+// legacy dashboard above is dormant. Checkpoint-state guards read the
+// canonical native panel instead.
+const checkpointPanelSrc = read("school", "student", "CheckpointPanel.jsx");
 const reviewQueueSrc = read("CheckpointReviewQueue.jsx");
 const uploaderSrc = read("training", "PracticeMediaUploader.jsx");
 const dashboardScreenSrc = read("..", "screens", "Dashboard.jsx");
@@ -66,18 +70,18 @@ test("checkpoint submission posts to the dedicated checkpoint endpoint, not the 
 });
 
 test("CheckpointPanel covers not-practiced, awaiting-review, prescribed-practice, and trainer-assist-hold states", () => {
-  expect(dashboardSrc).toMatch(/testid="school-checkpoint-needs-practice"/);
-  expect(dashboardSrc).toMatch(/data-testid="school-checkpoint-awaiting-review"/);
-  expect(dashboardSrc).toMatch(/data-testid="school-checkpoint-prescribed"/);
-  expect(dashboardSrc).toMatch(/data-testid="school-checkpoint-hold"/);
+  expect(checkpointPanelSrc).toMatch(/testid="school-checkpoint-needs-practice"/);
+  expect(checkpointPanelSrc).toMatch(/data-testid="school-checkpoint-awaiting-review"/);
+  expect(checkpointPanelSrc).toMatch(/data-testid="school-checkpoint-prescribed"/);
+  expect(checkpointPanelSrc).toMatch(/data-testid="school-checkpoint-hold"/);
 });
 
 test("the prescribed-practice state shows the live remaining-practice count, not a static message", () => {
   // Phase 3 renamed the local alias (const p = status.prescription || {})
   // but reads the exact same live field — not a static message.
-  expect(dashboardSrc).toMatch(/const p = status\.prescription \|\| \{\}/);
-  expect(dashboardSrc).toMatch(/p\.practice_sessions_remaining/);
-  expect(dashboardSrc).toMatch(/data-testid="school-checkpoint-remaining"/);
+  expect(checkpointPanelSrc).toMatch(/const p = status\.prescription \|\| \{\}/);
+  expect(checkpointPanelSrc).toMatch(/p\.practice_sessions_remaining/);
+  expect(checkpointPanelSrc).toMatch(/data-testid="school-checkpoint-remaining"/);
 });
 
 test("the trainer-assist hold state never renders a submit control", () => {
@@ -86,8 +90,8 @@ test("the trainer-assist hold state never renders a submit control", () => {
 });
 
 test("the checkpoint video picker reuses PracticeMediaUploader with a 10 MB ceiling and no photo picker", () => {
-  expect(dashboardSrc).toMatch(/import PracticeMediaUploader from "\.\/training\/PracticeMediaUploader"/);
-  expect(dashboardSrc).toMatch(/allowPhoto=\{false\} allowVideo videoMaxMb=\{10\}/);
+  expect(checkpointPanelSrc).toMatch(/import PracticeMediaUploader from "\.\.\/\.\.\/training\/PracticeMediaUploader"/);
+  expect(checkpointPanelSrc).toMatch(/allowPhoto=\{false\} allowVideo videoMaxMb=\{10\}/);
 });
 
 test("PracticeMediaUploader's video size ceiling and photo picker are both configurable, not hardcoded", () => {
@@ -108,8 +112,10 @@ test("the review queue fetches the pending endpoint and renders a badge per queu
   expect(reviewQueueSrc).toMatch(/trainer_assist_hold:/);
 });
 
-test("the video plays back through the exact same media endpoint the daily-tracker review already uses", () => {
-  expect(reviewQueueSrc).toMatch(/api\.get\(`\/homework\/\$\{homeworkId\}\/media\/\$\{mediaId\}`\)/);
+test("the video plays back through the authenticated School media file/blob path, not base64 JSON", () => {
+  expect(reviewQueueSrc).toMatch(/loadSchoolMediaUrl\(mediaId\)/);
+  const schoolMediaSrc = fs.readFileSync(path.join(__dirname, "..", "lib", "schoolMedia.js"), "utf8");
+  expect(schoolMediaSrc).toMatch(/api\.get\(`\/portal\/school\/media\/\$\{mediaId\}\/file`, \{ responseType: "blob" \}\)/);
 });
 
 test("scoring renders one input per rubric criterion, not a single overall score", () => {

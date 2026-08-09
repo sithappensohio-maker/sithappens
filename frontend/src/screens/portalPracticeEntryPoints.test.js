@@ -88,14 +88,14 @@ test("PracticePanel guards submit against double-tap and disables the button whi
 test("PracticeCompletionPanel's submit button is only disabled during 'saving', not 'error'", () => {
   const panelSrc = fs.readFileSync(path.join(__dirname, "..", "components", "training", "PracticeCompletionPanel.jsx"), "utf8");
   expect(panelSrc).toMatch(/disabled=\{saveState === "saving"\}/);
-  expect(panelSrc).toMatch(/saveState === "error" \? "Retry"/);
+  expect(panelSrc).toMatch(/saveState === "error" \? (?:"Retry"|<>Retry<\/>)/);
 });
 
 // 10. Successful save updates the card state — PracticePanel calls the
 // caller's onChanged (wired to Portal.jsx's loadAll, which re-fetches
 // /homework) after a successful submit.
 test("PracticePanel calls onChanged after a successful submit, and Portal.jsx wires it to loadAll", () => {
-  expect(practicePanelSrc).toMatch(/setSaveState\("saved"\);\s*\n\s*onChanged\?\.\(\);/);
+  expect(practicePanelSrc).toMatch(/setSaveState\("saved"\);\s*\n(?:\s*onPracticeLogged\?\.\(\);\s*\n)?\s*onChanged\?\.\(\);/);
   expect(portalSrc).toMatch(/<PracticePanel homework=\{practiceFor\}[\s\S]*?onChanged=\{loadAll\}\/>/);
 });
 

@@ -13785,10 +13785,14 @@ async def upload_day_video(
     if "," in (body.photo or ""):
         _, _b64 = body.photo.split(",", 1)
         approx_bytes = (len(_b64) * 3) // 4
-        if approx_bytes > CHECKPOINT_VIDEO_MAX_BYTES:
+        # School homework persists to the filesystem media root and may use
+        # the full School ceiling; generic Homework still embeds base64 in a
+        # single Mongo document, so it must stay under the 16 MB BSON cap.
+        day_video_limit = CHECKPOINT_VIDEO_MAX_BYTES if hw.get("school_enrollment_id") else GENERIC_DAY_VIDEO_MAX_BYTES
+        if approx_bytes > day_video_limit:
             raise HTTPException(
                 status_code=400,
-                detail=f"Video too large ({approx_bytes // (1024 * 1024)} MB). Max is {CHECKPOINT_VIDEO_MAX_BYTES // (1024 * 1024)} MB.",
+                detail=f"Video too large ({approx_bytes // (1024 * 1024)} MB). Max is {day_video_limit // (1024 * 1024)} MB.",
             )
     media_id = str(uuid.uuid4())
     media_doc = {
@@ -19105,6 +19109,9 @@ async def portal_school_start_remediation(school_enrollment_id: str, user: dict 
 # server-side to protect request memory and disk usage; Mongo stores metadata
 # only. Generic non-School Homework media retains its legacy storage behavior.
 CHECKPOINT_VIDEO_MAX_BYTES = 100 * 1024 * 1024
+# Generic (non-School) daily-tracker videos still live as base64 inside one
+# Mongo document, so their ceiling must stay under the 16 MB BSON limit.
+GENERIC_DAY_VIDEO_MAX_BYTES = 10 * 1024 * 1024
 ALLOWED_CHECKPOINT_VIDEO_MIME = {"video/mp4", "video/quicktime", "video/webm", "video/x-m4v", "video/3gpp"}
 
 
@@ -19229,7 +19236,7 @@ def _validate_checkpoint_video(raw: str) -> int:
     if approx_bytes > CHECKPOINT_VIDEO_MAX_BYTES:
         raise HTTPException(
             status_code=400,
-            detail=f"Video too large ({approx_bytes // (1024 * 1024)} MB). Max is {CHECKPOINT_VIDEO_MAX_BYTES // (1024 * 1024)} MB (~10-15 seconds).",
+            detail=f"Video too large ({approx_bytes // (1024 * 1024)} MB). Max is {CHECKPOINT_VIDEO_MAX_BYTES // (1024 * 1024)} MB.",
         )
     return approx_bytes
 

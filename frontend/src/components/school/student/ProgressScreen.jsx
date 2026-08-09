@@ -30,7 +30,7 @@ export default function ProgressScreen({ enrollmentId, home, detail }) {
     const [h, t, r] = await Promise.all([api.get(`/portal/school/${enrollmentId}/checkpoint-history`), api.get("/portal/trophies"), api.get(`/portal/school/${enrollmentId}/record`)]);
     setHistory(h.data || []); setTrophies(t.data?.dog_trophies || []); setRecord(r.data || { programs: [], checkpoints: [] });
   }, [enrollmentId]);
-  useEffect(() => { setHistory(null); setTrophies(null); setRecord(null); load().catch(() => { setHistory([]); setTrophies([]); setRecord({ programs: [], checkpoints: [] }); }); }, [load]);
+  useEffect(() => { if (!enrollmentId) return; setHistory(null); setTrophies(null); setRecord(null); load().catch(() => { setHistory([]); setTrophies([]); setRecord({ programs: [], checkpoints: [] }); }); }, [load, enrollmentId]);
 
   const p = home?.progress || {};
   const dogTrophies = useMemo(() => (trophies || []).filter((t) => !home?.dog?.id || t.recipient_id === home.dog.id || t.dog_id === home.dog.id), [trophies, home?.dog?.id]);

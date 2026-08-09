@@ -14,6 +14,10 @@ const queueSrc = read("TrainerAssistQueue.jsx");
 const messageModalSrc = read("MessageClientModal.jsx");
 const bookingDetailSrc = read("BookingDetailModal.jsx");
 const dashboardSrc = read("OnlineSchoolDashboard.jsx");
+// Phase 2B+ moved the live checkpoint UI to the native School runtime; the
+// legacy dashboard above is dormant. Checkpoint-state guards read the
+// canonical native panel instead.
+const checkpointPanelSrc = read("school", "student", "CheckpointPanel.jsx");
 const polishSrc = read("..", "lib", "onlineSchoolPolish.js");
 const adminDashboardSrc = read("..", "screens", "Dashboard.jsx");
 const adminBookingModalSrc = read("AdminBookingModal.jsx");
@@ -153,25 +157,25 @@ test("Message Client is gated by the messages permission, not manage_training_se
 // ---------------------------------------------------------------------------
 
 test("the held checkpoint panel shows the real lifecycle sub-status (needs_attention/contacted/scheduled), not just a single hold message", () => {
-  expect(dashboardSrc).toMatch(/data-testid="school-checkpoint-hold-status"/);
-  expect(dashboardSrc).toMatch(/ta\.status === "scheduled"/);
-  expect(dashboardSrc).toMatch(/ta\.status === "contacted"/);
+  expect(checkpointPanelSrc).toMatch(/data-testid="school-checkpoint-hold-status"/);
+  expect(checkpointPanelSrc).toMatch(/ta\.status === "scheduled"/);
+  expect(checkpointPanelSrc).toMatch(/ta\.status === "contacted"/);
 });
 
 test("scheduled status shows the REAL date from stored data, never an invented ETA", () => {
-  expect(dashboardSrc).toMatch(/ta\.scheduled_date/);
-  expect(dashboardSrc).not.toMatch(/within 24 hours|1-2 business days/i);
+  expect(checkpointPanelSrc).toMatch(/ta\.scheduled_date/);
+  expect(checkpointPanelSrc).not.toMatch(/within 24 hours|1-2 business days/i);
 });
 
 test("Trainer Assist complete shows the client-facing summary and a Return to Checkpoint action, not an auto-resubmit", () => {
-  expect(dashboardSrc).toMatch(/data-testid="school-checkpoint-assist-complete"/);
-  expect(dashboardSrc).toMatch(/data-testid="school-checkpoint-return-to-checkpoint"/);
-  expect(dashboardSrc).toMatch(/setReturnedToCheckpoint\(true\)/);
+  expect(checkpointPanelSrc).toMatch(/data-testid="school-checkpoint-assist-complete"/);
+  expect(checkpointPanelSrc).toMatch(/data-testid="school-checkpoint-return-to-checkpoint"/);
+  expect(checkpointPanelSrc).toMatch(/setReturnedToCheckpoint\(true\)/);
 });
 
 test("the hold and completed states never show scary fail/warning copy to the client — this reads as help, not failure", () => {
-  const start = dashboardSrc.indexOf("function CheckpointPanel");
-  const panelSrc = dashboardSrc.slice(start, start + 4000);
+  const start = checkpointPanelSrc.indexOf("function CheckpointPanel");
+  const panelSrc = checkpointPanelSrc.slice(start, start + 4000);
   // Renderable JSX text only — excludes source comments (which legitimately
   // discuss the word "fail" while explaining what NOT to render).
   const jsxText = panelSrc.replace(/\/\/.*$/gm, "").replace(/\/\*[\s\S]*?\*\//g, "");
@@ -199,8 +203,8 @@ test("Trainer Feedback history renders Trainer Assist as a later chapter, never 
 // ---------------------------------------------------------------------------
 
 test("client held-checkpoint panel has a distinct reschedule-needed sub-state, not a stale scheduled date", () => {
-  expect(dashboardSrc).toMatch(/ta\.status === "reschedule_needed"/);
-  expect(dashboardSrc).toMatch(/Trainer Assist needs to be rescheduled/);
+  expect(checkpointPanelSrc).toMatch(/ta\.status === "reschedule_needed"/);
+  expect(checkpointPanelSrc).toMatch(/Trainer Assist needs to be rescheduled/);
 });
 
 test("Trainer Feedback history reflects reschedule-needed too, not just the live current-lesson state", () => {

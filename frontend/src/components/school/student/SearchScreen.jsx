@@ -8,7 +8,7 @@ export default function SearchScreen({ enrollmentId, onOpenLesson, onFeedback })
   const [loading, setLoading] = useState(false);
   useEffect(() => {
     const needle = q.trim();
-    if (needle.length < 2) { setData(null); setLoading(false); return undefined; }
+    if (needle.length < 2 || !enrollmentId) { setData(null); setLoading(false); return undefined; }
     setLoading(true);
     const id = setTimeout(() => {
       api.get(`/portal/school/${enrollmentId}/search`, { params: { q: needle } })

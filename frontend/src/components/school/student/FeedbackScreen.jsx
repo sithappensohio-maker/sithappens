@@ -121,7 +121,7 @@ export default function FeedbackScreen({ enrollmentId, onAsk, onChanged }) {
     setHistory(h.data || []); setSupport(s.data || { threads: [], practice_questions: [] });
     onChanged?.();
   }, [enrollmentId, onChanged]);
-  useEffect(() => { setHistory(null); setSupport(null); load().catch(() => { setHistory([]); setSupport({ threads: [], practice_questions: [] }); }); }, [load]);
+  useEffect(() => { if (!enrollmentId) return; setHistory(null); setSupport(null); load().catch(() => { setHistory([]); setSupport({ threads: [], practice_questions: [] }); }); }, [load, enrollmentId]);
 
   const answeredPractice = useMemo(() => (support?.practice_questions || []).filter((q) => q.answer), [support]);
   const pendingPractice = useMemo(() => (support?.practice_questions || []).filter((q) => !q.answer), [support]);

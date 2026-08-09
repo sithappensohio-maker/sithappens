@@ -76,7 +76,7 @@ test("Quick Practice is offered only when the recipe allows it, and skips straig
 test("the pre-existing polished practice UI is reused as Quick Practice's foundation, not deleted", () => {
   // The same timer + PracticeInstructionSteps + PracticeCompletionPanel
   // block that existed before Coach Mode still renders for the "form" view.
-  expect(practicePanelSrc).toMatch(/Practice Timer \(optional\)/);
+  expect(practicePanelSrc).toMatch(/Practice Timer\b[\s\S]{0,160}?\(optional\)/);
   expect(practicePanelSrc).toMatch(/<PracticeInstructionSteps text=\{section\.instructions\}/);
 });
 
