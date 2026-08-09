@@ -173,3 +173,51 @@ Test-only changes (stale assertions/fixtures updated to the intended architectur
 4. `analytics.practice_sessions_30d` counts only *currently-active* students, so sessions logged by a student who since completed disappear from the 30-day count — arguably correct, but worth knowing.
 
 **Verification-coverage notes (honesty items):** visual screenshots were not capturable in this session (structural/DOM verification used instead); Program Studio's *editor UI* for the block-test course could not be opened due to the pre-existing 500-program list cap (block editing/validation was exercised through the same API the Studio calls, and preview-renderer reuse is source- and test-verified); admin School HQ mobile breakpoints were not swept (client School screens were, at all three widths).
+
+---
+
+# Addendum — Final polish/hardening pass (2026-08-09, commit `2f570c8`)
+
+## Files changed
+- `backend/server.py` — new `GET /programs/{program_id}` (admin + `manage_training_content`), registered after all literal `/programs/*` GET routes so it cannot shadow `meta` / `active-summary` / `pipeline`.
+- `backend/school_events.py` — `TRAINER_REQUEST_COMPLETED` added to `EVENT_POLICY` (attention + HIGH + email).
+- `backend/school_suite.py` — request-respond emit now carries client/dog/program names.
+- `frontend/src/components/Programs.jsx` — `fetchProgramById` helper; `openEditProgram` loads the current full doc by id.
+- `frontend/src/screens/ShopManager.jsx` — program edit loader uses `fetchProgramById` instead of a bounded-list lookup.
+- `frontend/src/components/ProgramStudio.jsx` — `schoolTrainers` passed into `SetupTab` (crash fix).
+- `frontend/src/components/school/student/FeedbackScreen.jsx` — 44px hit areas on the two review links.
+- `frontend/src/screens/SchoolHQ.jsx` — 44px hit area on "See all".
+
+## 1. Program Studio / list cap
+**Root cause:** both program-edit entry points resolved the program by searching a bounded list response (`GET /programs` caps at 500; this dev DB has 806), so a program outside the window produced "Could not load program" — and no fetch-by-id endpoint existed. A second, independent bug surfaced during verification: ProgramStudio crashed with `ReferenceError: schoolTrainers is not defined` for ANY self-guided program, because the state was declared in ProgramStudio but referenced inside the separate `SetupTab` component (never passed as a prop) — this is why the Studio had never successfully opened a School-delivery program.
+**Fix:** direct fetch-by-id (`GET /programs/{program_id}`) through one shared `fetchProgramById` helper used by both editors; list/search behavior untouched; a load failure shows an error and never silently selects a fallback program. `schoolTrainers` passed as a prop.
+**Verified live with `QA_SCHOOL BlockLab` (outside the 500-row window):** Shop Manager EDIT opens it (network trace shows `GET /programs/18514009-… → 200`), edit → save ("Program updated") → reopen shows the edit; Program Studio opens it (Setup + Curriculum), Client live preview renders the production block components, Phone preview renders in a real 320px frame, Save Live Now persists, reopen shows the saved edit. No wrong program ever displayed.
+
+## 2. School HQ mobile QA (all 10 tabs)
+| Breakpoint | Result |
+|---|---|
+| 1440×900 | all 10 tabs: no horizontal overflow |
+| 375×812 | all 10 tabs: no page overflow; every element extending past the viewport sits inside its own `overflow-x` scroll container (HQ tab bar, Analytics tables) — nothing clipped; Student Workspace modal usable (46px close, Save reachable, no overflow); Checkpoint review-queue modal usable (detail pane opens, grade buttons 46px, on-screen) |
+| 320×568 | all 10 tabs: no overflow, zero clipped elements; review-queue modal fine; Settings inputs 44px and on-screen; Save button 44px |
+
+**Issue found & fixed:** "See all" section links were 16px tall → now 44px hit areas. Card action buttons (REPLY / MARK READ / RESOLVE / OPEN STUDENT / REVIEW CHECKPOINT / OPEN TRAINER ASSIST) measure 34px tall × 89–155px wide — kept as-is (usable, consistent with the app's admin controls); noted for a future design pass if 44px is wanted everywhere.
+
+## 3. Feedback touch targets
+**Root cause:** plain text-link buttons with no minimum height (16px line box).
+**Fix:** `min-h-[44px] inline-flex items-center` with negative margins so the visual design is unchanged.
+**Measurements:** 375px → both buttons 190–200 × **44px**; 320px → same 44px, right edges ≤238px (no wrap-overflow), no page horizontal scroll.
+
+## 4. `trainer_request_completed` staff alert policy
+**Root cause:** the event type was missing from `school_events.EVENT_POLICY`, so the emit site's explicit `requires_attention=True` produced the in-app notification but the policy-driven email stayed `none`.
+**Fix:** policy entry `{attention: True, priority: HIGH, email: True}` — the single documented policy table; no second notification/email system. Emit enriched with client/dog/program names.
+**Proof:** respond → notification `email_status: "queued"` titled "QA_SCHOOL Family · Birch completed a trainer request" (client/dog/program fields populated) + exactly one outbox row (subject carries the same identity). Re-emit with the same dedupe key: still 1 event / 1 notification / 1 outbox row. Notification deleted + re-emit: notification restored, outbox still 1 (reconciliation works, email never duplicated).
+
+## Verification battery (after all fixes)
+- Targeted backend: 84 passed (school_events_phase1, phase2a/2b/2c, online_school_phase4).
+- Full in-process backend suite (38 files): **570 passed / 570**.
+- Release-critical gate: **all 16 files passed clean**.
+- Jest: **446 passed / 446** (27 suites).
+- Production build: **success** (exit 0; pre-existing sourcemap warning only).
+- Browser: all four fixes verified live (above); Student School regression sweep — Home, My Course, Today, Progress, Feedback, Library all load clean with no error states.
+
+**Remaining release blockers: none.**
