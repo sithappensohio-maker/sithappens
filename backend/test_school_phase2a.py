@@ -77,6 +77,20 @@ def test_action_trainer_assist_overrides():
     a = ca("active", "active", _roadmap(practiced=False, learn_done=False, requires_cp=True, cp=cp))
     assert a["type"] == "trainer_assist" and "not a setback" in a["sublabel"]
 
+def test_action_trainer_assist_completed_moves_to_resubmit():
+    cp = {"status": "graded", "outcome": "trainer_assist_recommended", "id": "cp1",
+          "on_hold": False, "trainer_assist": {"status": "completed"}}
+    a = ca("active", "active", _roadmap(practiced=True, learn_done=True, requires_cp=True, cp=cp))
+    assert a["type"] == "submit_checkpoint"
+    assert "Trainer Assist is complete" in a["sublabel"]
+
+def test_action_completed_remediation_moves_to_resubmit():
+    cp = {"status": "graded", "outcome": "prescribe_practice", "id": "cp1",
+          "prescription": {"practice_sessions_remaining": 0}}
+    a = ca("active", "active", _roadmap(practiced=True, learn_done=True, requires_cp=True, cp=cp))
+    assert a["type"] == "submit_checkpoint"
+    assert "completed the prescribed practice" in a["sublabel"]
+
 # 7) Non-checkpoint lesson advances ONLY after its learn + practice steps.
 def test_action_noncheckpoint_progression_order():
     assert ca("active", "active", _roadmap(practiced=False, learn_done=False, requires_cp=False))["type"] == "lesson"

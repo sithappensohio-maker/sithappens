@@ -65,7 +65,12 @@ def _client_user(client_id):
 
 
 def _make_school_homework(*, daily_tracker=False):
-    """A school practice homework (source_lesson_id set) owned by a client."""
+    """A school practice homework owned by a client.
+
+    source_lesson_id alone no longer marks School ownership (trainer-led
+    completion shares that field); the assigned_by "Online School" marker is
+    the explicit ownership signal _is_school_homework requires.
+    """
     cid, did = str(uuid.uuid4()), str(uuid.uuid4())
     hwid = str(uuid.uuid4())
     section = {"id": "drill", "title": "Practice log",
@@ -76,6 +81,7 @@ def _make_school_homework(*, daily_tracker=False):
         "title": "Week 1 Engagement Reps",
         "template_snapshot": {"sections": [section]},
         "section_logs": [], "source_lesson_id": "lesson-1",
+        "assigned_by": "Online School",
         "status": "assigned", "daily_tracker": daily_tracker,
         "created_at": server.now_iso(),
     }
@@ -114,6 +120,8 @@ def test_scenario_a_student_question_creates_event_notification_email():
     q_notifs = [n for n in notifs if n["notification_type"] == ET.PRACTICE_QUESTION_ASKED]
     assert len(q_notifs) == 1
     assert q_notifs[0]["resolved_at"] is None and q_notifs[0]["email_status"] == "queued"
+    assert q_notifs[0]["metadata"].get("question_id") == ev["metadata"].get("question_id")
+    assert q_notifs[0]["deep_link"].get("question_id") == ev["metadata"].get("question_id")
 
     # email queued through the outbox (idempotent key)
     n_email = run(server.db.email_outbox.count_documents(
@@ -224,8 +232,30 @@ def test_scenario_f_idempotent_retry():
     )
     first = run(se.emit_event(ET.PRACTICE_QUESTION_ASKED, **kwargs))
     second = run(se.emit_event(ET.PRACTICE_QUESTION_ASKED, **kwargs))
-    assert first is not None and second is None  # second is a no-op
+    assert first is not None and second is not None
+    assert first["id"] == second["id"]  # retry reconciles delivery, never creates a second event
 
+    assert run(server.db.school_events.count_documents({"dedupe_key": key})) == 1
+    assert run(server.db.school_notifications.count_documents({"dedupe_key": f"{key}:notif"})) == 1
+    assert run(server.db.email_outbox.count_documents({"key": f"school_notif:{key}:notif"})) == 1
+
+
+def test_scenario_f_retry_repairs_partial_notification_delivery():
+    key = f"idem-repair:{uuid.uuid4()}"
+    kwargs = dict(
+        actor_type="client", client_id=str(uuid.uuid4()), client_name="Melissa", dog_name="Bolt",
+        homework_id=str(uuid.uuid4()), title="Melissa · Bolt asked a question", summary="repair?",
+        deep_link={"screen": "homework", "homework_id": "hw-repair"}, dedupe_key=key,
+    )
+    first = run(se.emit_event(ET.PRACTICE_QUESTION_ASKED, **kwargs))
+    assert first is not None
+    # Simulate a crash/failure after the event was durable but before delivery
+    # remained durable. Retrying the SAME business request must reconstruct the
+    # idempotent notification + email without duplicating the event.
+    run(server.db.school_notifications.delete_many({"dedupe_key": f"{key}:notif"}))
+    run(server.db.email_outbox.delete_many({"key": f"school_notif:{key}:notif"}))
+    again = run(se.emit_event(ET.PRACTICE_QUESTION_ASKED, **kwargs))
+    assert again and again["id"] == first["id"]
     assert run(server.db.school_events.count_documents({"dedupe_key": key})) == 1
     assert run(server.db.school_notifications.count_documents({"dedupe_key": f"{key}:notif"})) == 1
     assert run(server.db.email_outbox.count_documents({"key": f"school_notif:{key}:notif"})) == 1
@@ -280,8 +310,9 @@ def test_scenario_video_submission_requires_review():
     hw = run(server.create_daily_tracker(server.DailyTrackerCreateIn(
         dog_id=did, title="Week 1 Focus",
         days=[server.DailyTrackerSectionIn(day_number=1, day_focus="Name game", fields=[])]), admin))
-    # Make it school-linked so the spine treats it as Online School practice.
-    run(server.db.homework.update_one({"id": hw["id"]}, {"$set": {"source_lesson_id": "lesson-1"}}))
+    # Make it school-owned so the spine treats it as Online School practice —
+    # source_lesson_id alone is deliberately no longer sufficient.
+    run(server.db.homework.update_one({"id": hw["id"]}, {"$set": {"source_lesson_id": "lesson-1", "assigned_by": "Online School"}}))
     hw = run(server.db.homework.find_one({"id": hw["id"]}, {"_id": 0}))
 
     cu = _client_user(c["id"])
@@ -306,7 +337,7 @@ def test_scenario_video_submission_requires_review():
     hw2 = run(server.create_daily_tracker(server.DailyTrackerCreateIn(
         dog_id=did, title="Week 2 Focus",
         days=[server.DailyTrackerSectionIn(day_number=1, day_focus="Sit", fields=[])]), admin))
-    run(server.db.homework.update_one({"id": hw2["id"]}, {"$set": {"source_lesson_id": "lesson-2"}}))
+    run(server.db.homework.update_one({"id": hw2["id"]}, {"$set": {"source_lesson_id": "lesson-2", "assigned_by": "Online School"}}))
     hw2 = run(server.db.homework.find_one({"id": hw2["id"]}, {"_id": 0}))
     run(server.submit_day(hw2["id"], 1, server.DaySubmitIn(field_values={"reps": 5}), cu))
     assert run(server.db.school_notifications.count_documents({"homework_id": hw2["id"]})) == 0

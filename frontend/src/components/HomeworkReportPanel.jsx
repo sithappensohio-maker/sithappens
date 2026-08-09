@@ -1,5 +1,6 @@
 import { useEffect, useState } from "react";
 import { api } from "../lib/api";
+import { loadSchoolMediaUrl } from "../lib/schoolMedia";
 
 const TREND_META = {
   up:   { icon: "fa-arrow-trend-up",   color: "text-shPrimary", label: "improving" },
@@ -21,7 +22,7 @@ const KIND_UNIT = {
  * metrics, note, photo. The aggregate section tiles (used for session-log
  * templates) still render below for backwards-compatible reporting.
  */
-export default function HomeworkReportPanel({ homeworkId }) {
+export default function HomeworkReportPanel({ homeworkId, focus = null }) {
   const [report, setReport] = useState(null);
   const [hw, setHw] = useState(null);
   const [loading, setLoading] = useState(true);
@@ -39,6 +40,12 @@ export default function HomeworkReportPanel({ homeworkId }) {
     }).finally(() => mounted && setLoading(false));
     return () => { mounted = false; };
   }, [homeworkId]);
+
+  useEffect(() => {
+    if (!focus || loading) return undefined;
+    const timer = setTimeout(() => document.querySelector('[data-school-hq-focus="true"]')?.scrollIntoView({ behavior: "smooth", block: "center" }), 80);
+    return () => clearTimeout(timer);
+  }, [focus, loading, report, hw]);
 
   if (loading) return <div className="text-[15px] text-shTextMuted uppercase font-black tracking-widest">Loading report…</div>;
   if (!report) return null;
@@ -67,11 +74,17 @@ export default function HomeworkReportPanel({ homeworkId }) {
       .filter((k) => !k.startsWith("__") && fv[k] !== null && fv[k] !== "" && fv[k] !== undefined)
       .map((k) => ({ key: k, label: _labelMap[k] || _humanize(k), value: typeof fv[k] === "boolean" ? (fv[k] ? "Yes" : "No") : String(fv[k]) }));
     return {
+      id: lo.id,
       date: (lo.date || lo.logged_at || "").slice(0, 16).replace("T", " "),
       sectionTitle: _sectionTitleMap[lo.section_id] || lo.section_id || "Practice log",
       reviewed: !!lo.reviewed_at,
       metrics,
       note: lo.note || "",
+      questions: lo.questions || [],
+      videoMediaId: fv.__video_id || null,
+      dayNumber: lo.day_number || null,
+      couldNotComplete: !!fv.__could_not_complete,
+      couldNotCompleteReason: fv.__could_not_complete_reason || "",
     };
   });
 
@@ -93,13 +106,22 @@ export default function HomeworkReportPanel({ homeworkId }) {
         )}
       </div>
 
+      {focus?.video_media_id && (
+        <div className="rounded-2xl border border-purple-400/35 bg-purple-500/[0.05] p-3" data-testid="hw-report-focused-video">
+          <p className="text-[10px] font-black uppercase tracking-widest text-purple-300 mb-2"><i className="fas fa-video mr-1.5" />Video submitted for trainer review</p>
+          <InlineHomeworkVideo homeworkId={homeworkId} mediaId={focus.video_media_id} />
+        </div>
+      )}
+
       {/* Exactly what the client submitted — every logged value + their note.
           Non-tracker only (trackers get the richer per-day timeline below). */}
       {!isTracker && rawEntries.length > 0 && (
         <div className="space-y-2" data-testid="hw-report-raw-entries">
           <p className="text-[11px] font-black uppercase tracking-[0.3em] text-shSecondary"><i className="fas fa-list-ul mr-1"/>What the client logged</p>
-          {rawEntries.map((e, i) => (
-            <div key={i} className="bg-[var(--sh-card-base)] border border-shBorder rounded-lg p-3">
+          {rawEntries.map((e, i) => {
+            const focusedEntry = !!focus?.section_log_id && focus.section_log_id === e.id;
+            return (
+            <div key={e.id || i} className={`bg-[var(--sh-card-base)] border rounded-lg p-3 ${focusedEntry ? "border-shAccent ring-1 ring-shAccent/35" : "border-shBorder"}`} data-testid={focusedEntry ? "hw-report-focused-log" : undefined} data-school-hq-focus={focusedEntry ? "true" : undefined}>
               <div className="flex items-center justify-between gap-2 mb-2">
                 <span className="text-[13px] font-black uppercase tracking-tight text-shText">{e.sectionTitle}</span>
                 <span className="flex items-center gap-2 shrink-0">
@@ -119,14 +141,32 @@ export default function HomeworkReportPanel({ homeworkId }) {
                   ))}
                 </div>
               )}
+              {e.couldNotComplete && (
+                <div className="mb-2 rounded-lg border border-red-400/30 bg-red-500/[0.06] p-2.5">
+                  <p className="text-[10px] font-black uppercase tracking-widest text-red-300"><i className="fas fa-triangle-exclamation mr-1" />Could not complete</p>
+                  {e.couldNotCompleteReason && <p className="text-[12px] text-gray-200 mt-1 whitespace-pre-wrap">{e.couldNotCompleteReason}</p>}
+                </div>
+              )}
               {e.note && (
                 <div className="bg-[var(--sh-card-base)]/60 rounded p-2.5 border-l-2 border-shAccent/40">
                   <p className="text-[10px] font-black uppercase tracking-widest text-shTextMuted mb-1"><i className="fas fa-comment mr-1"/>Client's note</p>
                   <p className="text-gray-200 text-[12px] italic whitespace-pre-wrap">"{e.note}"</p>
                 </div>
               )}
+              {e.questions.length > 0 && (
+                <div className="mt-2 space-y-2">
+                  {e.questions.map((q) => (
+                    <div key={q.id} className={`rounded-lg border p-2.5 ${focus?.question_id === q.id ? "border-shSecondary bg-shSecondary/[0.06]" : "border-shBorder bg-black/10"}`} data-school-hq-focus={focus?.question_id === q.id ? "true" : undefined}>
+                      <p className="text-[10px] font-black uppercase tracking-widest text-shSecondary">Client question</p>
+                      <p className="text-[12px] text-shText mt-1">{q.text}</p>
+                      {q.answer ? <p className="text-[12px] text-gray-200 mt-2 border-l-2 border-shPrimary/35 pl-2"><span className="font-black text-shPrimary">{q.answered_by || "Trainer"}:</span> {q.answer}</p> : <p className="text-[10px] font-black uppercase tracking-widest text-shAccent mt-2">Needs reply</p>}
+                    </div>
+                  ))}
+                </div>
+              )}
             </div>
-          ))}
+            );
+          })}
         </div>
       )}
 
@@ -135,7 +175,7 @@ export default function HomeworkReportPanel({ homeworkId }) {
         <div className="space-y-3" data-testid="hw-report-day-timeline">
           <p className="text-[11px] font-black uppercase tracking-[0.3em] text-purple-300"><i className="fas fa-stream mr-1"/>Day-by-day timeline</p>
           {daysWithLogs.map((d) => (
-            <DayDetail key={d.day_number} day={d} hwId={homeworkId} />
+            <DayDetail key={d.day_number} day={d} hwId={homeworkId} focus={focus} />
           ))}
         </div>
       )}
@@ -156,8 +196,29 @@ export default function HomeworkReportPanel({ homeworkId }) {
 }
 
 
-function DayDetail({ day, hwId }) {
-  const [open, setOpen] = useState(false);
+function InlineHomeworkVideo({ homeworkId, mediaId }) {
+  const [src, setSrc] = useState("");
+  useEffect(() => {
+    let alive = true; let cleanup = () => {};
+    loadSchoolMediaUrl(mediaId).then((media) => {
+      if (!alive) { media.revoke(); return; } cleanup = media.revoke; setSrc(media.url);
+    }).catch(() => {
+      // Generic Homework media is intentionally outside the School media
+      // boundary; retain the legacy endpoint as a fallback for those rows.
+      api.get(`/homework/${homeworkId}/media/${mediaId}`).then(({ data }) => { if (alive) setSrc(data?.data || ""); }).catch(() => {});
+    });
+    return () => { alive = false; cleanup(); };
+  }, [homeworkId, mediaId]);
+  if (!src) return <p className="text-[11px] text-shTextMuted"><i className="fas fa-spinner fa-spin mr-1" />Loading video…</p>;
+  return <video src={src} controls playsInline className="w-full max-h-[420px] rounded-xl border border-shBorder bg-black" data-testid={`hw-video-${mediaId}`} />;
+}
+
+
+function DayDetail({ day, hwId, focus }) {
+  const focused = (focus?.day_number && Number(focus.day_number) === Number(day.day_number))
+    || (focus?.video_media_id && focus.video_media_id === day.log?.field_values?.__video_id)
+    || (focus?.section_log_id && focus.section_log_id === day.log?.id);
+  const [open, setOpen] = useState(!!focused);
   const log = day.log || {};
   const status = day.status;
   const mood = log.field_values?.__mood;
@@ -179,7 +240,7 @@ function DayDetail({ day, hwId }) {
   });
 
   return (
-    <div className={`bg-[var(--sh-card-base)] border ${statusMeta.border} rounded-lg overflow-hidden`} data-testid={`hw-report-day-${day.day_number}`}>
+    <div className={`bg-[var(--sh-card-base)] border ${statusMeta.border} rounded-lg overflow-hidden ${focused ? "ring-1 ring-shAccent/40" : ""}`} data-testid={`hw-report-day-${day.day_number}`} data-school-hq-focus={focused ? "true" : undefined}>
       <button onClick={() => setOpen((o) => !o)} className="w-full px-4 py-3 flex items-center justify-between gap-3 hover:bg-[var(--sh-card-base)]/40 transition text-left">
         <div className="flex items-center gap-3 min-w-0 flex-1">
           <span className={`shrink-0 ${statusMeta.bg} ${statusMeta.text} px-2 py-0.5 rounded text-[11px] font-black uppercase tracking-widest border ${statusMeta.border}`}>
@@ -207,6 +268,9 @@ function DayDetail({ day, hwId }) {
               <p className="text-[10px] font-black uppercase tracking-widest text-shTextMuted mb-1"><i className="fas fa-circle-info mr-1"/>What they were asked to do</p>
               <p className="text-shTextMuted text-[12px] whitespace-pre-wrap">{day.instructions}</p>
             </div>
+          )}
+          {log.field_values?.__video_id && (
+            <InlineHomeworkVideo homeworkId={hwId} mediaId={log.field_values.__video_id} />
           )}
           {/* Steps */}
           {stepsTotal > 0 && (
@@ -245,6 +309,12 @@ function DayDetail({ day, hwId }) {
               </div>
             </div>
           )}
+          {log.field_values?.__could_not_complete && (
+            <div className="rounded p-2.5 border border-red-400/30 bg-red-500/[0.06]">
+              <p className="text-[10px] font-black uppercase tracking-widest text-red-300"><i className="fas fa-triangle-exclamation mr-1" />Could not complete</p>
+              {log.field_values?.__could_not_complete_reason && <p className="text-[12px] text-gray-200 mt-1 whitespace-pre-wrap">{log.field_values.__could_not_complete_reason}</p>}
+            </div>
+          )}
           {/* Note */}
           {log.note && (
             <div className="bg-[var(--sh-card-base)] rounded p-2.5 border-l-2 border-shAccent/40">
@@ -264,12 +334,16 @@ function DayDetail({ day, hwId }) {
             <div>
               <p className="text-[10px] font-black uppercase tracking-widest text-shTextMuted mb-1.5"><i className="fas fa-circle-question mr-1"/>Questions ({day.questions.length})</p>
               <div className="space-y-1.5">
-                {day.questions.map((q, i) => (
-                  <div key={i} className="text-[12px] bg-[var(--sh-card-base)] rounded p-2">
+                {day.questions.map((q, i) => {
+                  const qid = q.id || q.question_id;
+                  const isFocusedQuestion = !!focus?.question_id && focus.question_id === qid;
+                  return (
+                  <div key={qid || i} className={`text-[12px] rounded p-2 border ${isFocusedQuestion ? "bg-shSecondary/[0.06] border-shSecondary" : "bg-[var(--sh-card-base)] border-transparent"}`} data-school-hq-focus={isFocusedQuestion ? "true" : undefined}>
                     <p className="text-shTextMuted italic">"{q.question || q.text}"</p>
                     {q.answer && <p className="text-shPrimary mt-1"><i className="fas fa-reply mr-1"/>{q.answer}</p>}
                   </div>
-                ))}
+                  );
+                })}
               </div>
             </div>
           )}

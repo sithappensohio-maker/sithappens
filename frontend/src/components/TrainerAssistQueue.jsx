@@ -6,7 +6,7 @@
 // from CheckpointReviewQueue.jsx (same homework media endpoint, no
 // duplicate storage). Scheduling reuses AdminBookingModal / the real
 // booking system — no calendar of its own.
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { api } from "../lib/api";
 import AdminBookingModal from "./AdminBookingModal";
 import NeonEdge from "./premium/NeonEdge";
@@ -36,7 +36,7 @@ function fmtDateTime(iso) {
   catch { return iso; }
 }
 
-export default function TrainerAssistQueue({ onClose, onChanged, onMessageClient, canMessage = false }) {
+export default function TrainerAssistQueue({ onClose, onChanged, onMessageClient, canMessage = false, initialSubmissionId = null }) {
   const [items, setItems] = useState([]);
   const [loading, setLoading] = useState(true);
   const [activeId, setActiveId] = useState(null);
@@ -48,6 +48,7 @@ export default function TrainerAssistQueue({ onClose, onChanged, onMessageClient
   const [completeMode, setCompleteMode] = useState(false);
   const [clientSummary, setClientSummary] = useState("");
   const [internalNote, setInternalNote] = useState("");
+  const initialHandled = useRef(false);
 
   const load = async () => {
     setLoading(true);
@@ -69,6 +70,11 @@ export default function TrainerAssistQueue({ onClose, onChanged, onMessageClient
   };
 
   const open = (id) => { setActiveId(id); loadDetail(id); };
+  useEffect(() => {
+    if (initialHandled.current || !initialSubmissionId) return;
+    initialHandled.current = true;
+    open(initialSubmissionId);
+  }, [initialSubmissionId]);
   const back = () => { setActiveId(null); setDetail(null); setErr(""); };
 
   const refreshAll = async (id) => {

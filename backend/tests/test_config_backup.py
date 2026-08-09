@@ -14,6 +14,7 @@ BASE = os.environ.get("API_URL", os.environ.get("TEST_BACKEND_URL","http://local
 CONFIG_COLLECTIONS = {
     "settings", "app_settings", "email_settings",
     "email_templates", "payment_plan_settings",
+    "school_settings",  # Online School intervention/settings thresholds are config
 }
 
 

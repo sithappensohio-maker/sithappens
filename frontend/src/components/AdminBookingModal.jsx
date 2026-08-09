@@ -155,8 +155,22 @@ export default function AdminBookingModal({ defaultCheckIn = false, defaultDate 
         const [cRes, dRes, sRes, svcRes] = await Promise.all([
           api.get("/clients"), api.get("/dogs"), api.get("/settings"), api.get("/services"),
         ]);
-        setClients(cRes.data);
-        setDogs(dRes.data);
+        // The list endpoints are capped; a preset/existing client or dog that
+        // falls outside the returned window must still resolve, otherwise the
+        // controlled selects silently drift to the first option and the
+        // booking lands on the WRONG client.
+        let clientRows = cRes.data;
+        let dogRows = dRes.data;
+        const wantClient = existing?.client_id || presetClientId;
+        if (wantClient && !clientRows.some(c => c.id === wantClient)) {
+          try { const one = await api.get(`/clients/${wantClient}`); if (one.data?.id) clientRows = [one.data, ...clientRows]; } catch { /* keep list as-is */ }
+        }
+        const wantDog = existing?.dog_id || presetDogId;
+        if (wantDog && !dogRows.some(d => d.id === wantDog)) {
+          try { const one = await api.get(`/dogs/${wantDog}`); if (one.data?.id) dogRows = [one.data, ...dogRows]; } catch { /* keep list as-is */ }
+        }
+        setClients(clientRows);
+        setDogs(dogRows);
         const activeBaseServices = (Array.isArray(svcRes.data) ? svcRes.data : []).filter(s => s.active !== false && !s.is_addon);
         setCatalogServices(activeBaseServices);
         if (existing?.service_id) {

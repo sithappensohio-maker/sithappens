@@ -12,7 +12,11 @@ export default function CurrentTrainingCard({ home, onPrimary }) {
   const lesson = home?.current_lesson;
   const moduleName = home?.current_module?.name;
   const caughtUp = isCaughtUp(action.type);
-  const equipment = Array.isArray(lesson?.equipment) ? lesson.equipment.filter(Boolean) : [];
+  const noPrimaryAction = ["awaiting_review", "access_expired", "setup_required", "course_paused"].includes(action.type);
+  const equipment = Array.isArray(lesson?.equipment_needed)
+    ? lesson.equipment_needed.filter(Boolean)
+    : (typeof lesson?.equipment_needed === "string" && lesson.equipment_needed
+        ? lesson.equipment_needed.split(",").map((v) => v.trim()).filter(Boolean) : []);
   const minutes = lesson?.estimated_minutes || lesson?.practice_minutes;
 
   return (
@@ -51,16 +55,25 @@ export default function CurrentTrainingCard({ home, onPrimary }) {
         </div>
       )}
 
-      <button
-        type="button"
-        onClick={onPrimary}
-        className="mt-5 w-full sm:w-auto inline-flex items-center justify-center gap-2 text-[14px] font-black uppercase tracking-widest px-6 py-3.5 rounded-xl transition active:scale-[0.99]"
-        style={{ background: `rgb(${rgb})`, color: "#0b0f14" }}
-        data-testid="current-training-cta"
-      >
-        {action.label || "Start"}
-        <i className="fas fa-arrow-right" />
-      </button>
+      {noPrimaryAction ? (
+        <p className="mt-5 text-[13px] font-bold text-shTextMuted" data-testid="current-training-no-cta">
+          {action.type === "awaiting_review" ? "Your trainer has the checkpoint now — nothing else is required from you yet."
+            : action.type === "setup_required" ? "Your trainer needs to update this lesson before you can continue."
+            : action.type === "course_paused" ? "Training is paused for now. Your completed work and feedback remain saved."
+            : "Reach out to Sit Happens if you need help restoring course access."}
+        </p>
+      ) : (
+        <button
+          type="button"
+          onClick={onPrimary}
+          className="mt-5 w-full sm:w-auto inline-flex items-center justify-center gap-2 text-[14px] font-black uppercase tracking-widest px-6 py-3.5 rounded-xl transition active:scale-[0.99]"
+          style={{ background: `rgb(${rgb})`, color: "#0b0f14" }}
+          data-testid="current-training-cta"
+        >
+          {action.label || "Start"}
+          <i className="fas fa-arrow-right" />
+        </button>
+      )}
     </section>
   );
 }

@@ -35,7 +35,7 @@ import HuskyDogImage from "./brand/HuskyDogImage";
 const uid = () => (window.crypto?.randomUUID ? window.crypto.randomUUID() : `tmp-${Math.random().toString(36).slice(2)}`);
 
 const emptySkill = () => ({ _key: uid(), name: "New skill", description: "" });
-const emptyLesson = () => ({ _key: uid(), name: "New lesson", order: 0, active: true, skill_ids: [] });
+const emptyLesson = () => ({ _key: uid(), name: "New lesson", order: 0, active: true, skill_ids: [], content_blocks: [] });
 const emptyModule = () => ({ _key: uid(), name: "New module", description: "", goals: [], lessons: [], homework_template_id: null });
 
 function withKeys(program) {
@@ -94,6 +94,7 @@ export default function ProgramStudio({ programId, initialProgram, meta, allProg
   const [validating, setValidating] = useState(false);
   const [hwTemplates, setHwTemplates] = useState([]);
   const [emailTemplates, setEmailTemplates] = useState([]);
+  const [schoolTrainers, setSchoolTrainers] = useState([]);
   // UI Phase 5 — pre-publish impact, fetched proactively whenever a draft
   // exists so PublishReadinessPanel can show it prominently BEFORE the
   // trainer decides Publish vs. Publish & Cascade, instead of only
@@ -114,6 +115,7 @@ export default function ProgramStudio({ programId, initialProgram, meta, allProg
   useEffect(() => {
     reloadHwTemplates();
     api.get("/admin/email-templates").then(r => setEmailTemplates((r.data || []).filter(t => t.audience === "client"))).catch(() => setEmailTemplates([]));
+    api.get("/admin/school/trainers").then(r => setSchoolTrainers(r.data || [])).catch(() => setSchoolTrainers([]));
   }, []);
 
   useEffect(() => {
@@ -396,7 +398,8 @@ export default function ProgramStudio({ programId, initialProgram, meta, allProg
         <div className="flex-1 min-h-0 overflow-y-auto">
           {tab === "setup" && (
             <SetupTab program={program} set={set} meta={meta} allPrograms={allPrograms} hwTemplates={hwTemplates}
-                      emailTemplates={emailTemplates} originalImageId={originalImageId} programId={programId} />
+                      emailTemplates={emailTemplates} originalImageId={originalImageId} programId={programId}
+                      schoolTrainers={schoolTrainers} />
           )}
           {tab === "curriculum" && (
             <CurriculumTab
@@ -452,7 +455,7 @@ export default function ProgramStudio({ programId, initialProgram, meta, allProg
 // kept fully separate from curriculum authoring per the brief. Every
 // field/value below is identical to before — this only reorganizes the
 // single flat form into focused, collapsible groups.
-function SetupTab({ program, set, meta, allPrograms, hwTemplates, emailTemplates, originalImageId, programId }) {
+function SetupTab({ program, set, meta, allPrograms, hwTemplates, emailTemplates, originalImageId, programId, schoolTrainers = [] }) {
   const moduleCount = (program.modules || []).length;
   const lessonCount = (program.modules || []).reduce((sum, m) => sum + (m.lessons || []).length, 0);
   const skillCount = (program.modules || []).reduce((sum, m) => sum + (m.goals || []).length, 0);
@@ -604,7 +607,7 @@ function SetupTab({ program, set, meta, allPrograms, hwTemplates, emailTemplates
           <ExpandableSection title="Enrollment & Completion" icon="fa-flag-checkered" testid="setup-section-enrollment">
             <div className="space-y-4">
               {allPrograms.length > 0 && (
-                <SField label="Prerequisites (any of these)">
+                <SField label="Required prerequisites (complete all selected)">
                   <select multiple value={program.prereq_slugs || []} onChange={(e) => set({ prereq_slugs: Array.from(e.target.selectedOptions, o => o.value) })} className={`${inputCls} h-28`}>
                     {allPrograms.filter(p => p.slug && p.id !== programId).map(p => <option key={p.id} value={p.slug}>{p.name}</option>)}
                   </select>
@@ -639,6 +642,33 @@ function SetupTab({ program, set, meta, allPrograms, hwTemplates, emailTemplates
               </div>
             </div>
           </ExpandableSection>
+
+          {(["self_guided", "both"].includes(program.delivery_mode || "trainer_led")) && (
+            <ExpandableSection title="Online School Experience" icon="fa-school" tone="accent" testid="setup-section-school-experience">
+              <div className="space-y-4">
+                <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
+                  <SField label="Expected course length (weeks)"><input type="number" min="1" max="104" value={program.estimated_weeks ?? ""} onChange={(e) => set({ estimated_weeks: e.target.value ? parseInt(e.target.value) : null })} className={inputCls}/></SField>
+                  <SField label="Default School trainer"><select value={program.school_default_trainer_id || ""} onChange={(e) => set({ school_default_trainer_id: e.target.value || null })} className={inputCls}><option value="">Unassigned / Sit Happens team</option>{schoolTrainers.map(t => <option key={t.id} value={t.id}>{t.name}</option>)}</select></SField>
+                  <SField label="Trainer checkpoints included"><input type="number" min="0" value={program.school_support?.trainer_checkpoints_included ?? ""} onChange={(e) => set({ school_support: { ...(program.school_support || {}), trainer_checkpoints_included: e.target.value === "" ? null : parseInt(e.target.value) } })} className={inputCls}/></SField>
+                  <SField label="Trainer Assists included"><input type="number" min="0" value={program.school_support?.trainer_assists_included ?? ""} onChange={(e) => set({ school_support: { ...(program.school_support || {}), trainer_assists_included: e.target.value === "" ? null : parseInt(e.target.value) } })} className={inputCls}/></SField>
+                </div>
+                <SField label="Target trainer response time (hours — informational)"><input type="number" min="1" max="168" value={program.school_support?.response_target_hours ?? ""} onChange={(e) => set({ school_support: { ...(program.school_support || {}), response_target_hours: e.target.value === "" ? null : parseInt(e.target.value) } })} className={`${inputCls} max-w-[180px]`}/></SField>
+                <div className="rounded-xl border border-shBorder/50 bg-black/10 p-3">
+                  <p className="text-[11px] font-black text-shText mb-2">Enrollment onboarding</p>
+                  <div className="grid sm:grid-cols-3 gap-2">
+                    <label className="flex items-center gap-2 text-[11px] text-shText"><input type="checkbox" checked={program.school_onboarding?.enabled !== false} onChange={(e) => set({ school_onboarding: { ...(program.school_onboarding || {}), enabled: e.target.checked } })}/>Guided onboarding</label>
+                    <label className="flex items-center gap-2 text-[11px] text-shText"><input type="checkbox" checked={!!program.school_onboarding?.require_baseline} onChange={(e) => set({ school_onboarding: { ...(program.school_onboarding || {}), require_baseline: e.target.checked } })}/>Require baseline</label>
+                    <label className="flex items-center gap-2 text-[11px] text-shText"><input type="checkbox" checked={!!program.school_onboarding?.require_equipment_check} onChange={(e) => set({ school_onboarding: { ...(program.school_onboarding || {}), require_equipment_check: e.target.checked } })}/>Equipment check</label>
+                  </div>
+                </div>
+                {allPrograms.length > 0 && <SField label="Recommended next programs">
+                  <select multiple value={program.recommended_next_program_slugs || []} onChange={(e) => set({ recommended_next_program_slugs: Array.from(e.target.selectedOptions, o => o.value) })} className={`${inputCls} h-28`}>
+                    {allPrograms.filter(p => p.slug && p.id !== programId).map(p => <option key={p.id} value={p.slug}>{p.name}</option>)}
+                  </select>
+                </SField>}
+              </div>
+            </ExpandableSection>
+          )}
 
           <ExpandableSection title="Welcome Communication" icon="fa-envelope-open-text" testid="setup-section-welcome">
             <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
@@ -989,7 +1019,11 @@ function LessonEditor({ module: m, lesson: l, updateLesson, hwTemplates }) {
         </div>
       </ExpandableSection>
 
-      <ExpandableSection title="Homework Links" icon="fa-graduation-cap" testid="lesson-section-homework">
+      <ExpandableSection title="Lesson Builder" icon="fa-layer-group" tone="accent" testid="lesson-section-blocks">
+        <LessonBlocksEditor blocks={l.content_blocks || []} onChange={(content_blocks) => set({ content_blocks })} />
+      </ExpandableSection>
+
+      <ExpandableSection title="Practice Links" icon="fa-graduation-cap" testid="lesson-section-homework">
         <div className="space-y-2">
           <select value={""} onChange={(e) => { if (e.target.value) set({ suggested_homework_template_ids: [...new Set([...(l.suggested_homework_template_ids || []), e.target.value])] }); }} className={inputCls}>
             <option value="">+ Add template…</option>
@@ -1052,6 +1086,35 @@ function LessonEditor({ module: m, lesson: l, updateLesson, hwTemplates }) {
       </ExpandableSection>
     </div>
   );
+}
+
+const BLOCK_TYPES = [
+  ["text","Text"],["video","Video"],["image","Image"],["steps","Steps"],["trainer_tip","Trainer Tip"],
+  ["warning","Safety / Warning"],["checklist","Checklist"],["quiz","Knowledge Check"],["timer","Timer"],
+  ["rep_counter","Rep Counter"],["download","Download / Resource"],["practice","Practice Prompt"],["checkpoint","Checkpoint Prompt"],
+];
+
+function LessonBlocksEditor({ blocks, onChange }) {
+  const [schoolResources, setSchoolResources] = useState([]);
+  useEffect(() => { let live = true; api.get("/admin/school/resources").then(({data}) => { if (live) setSchoolResources((data || []).filter((r) => r.active !== false)); }).catch(() => {}); return () => { live = false; }; }, []);
+  const update = (idx, patch) => onChange(blocks.map((b, i) => i === idx ? { ...b, ...patch } : b));
+  const add = () => onChange([...blocks, { id: undefined, type: "text", title: "", body: "", url: "", resource_id: null, items: [], config: {}, order: blocks.length, active: true }]);
+  const remove = (idx) => onChange(blocks.filter((_, i) => i !== idx).map((b, i) => ({ ...b, order: i })));
+  const move = (idx, dir) => { const j = idx + dir; if (j < 0 || j >= blocks.length) return; const next = [...blocks]; [next[idx], next[j]] = [next[j], next[idx]]; onChange(next.map((b, i) => ({ ...b, order: i }))); };
+  return <div className="space-y-3">
+    <div className="flex items-start justify-between gap-3"><div><p className="text-[12px] font-black text-shText">Build the client lesson in ordered blocks</p><p className="text-[11px] text-shTextMuted mt-0.5">Old lesson fields still work. Blocks let you mix video, steps, tips, checks, timers, reps and resources without code.</p></div><button type="button" onClick={add} className="min-h-[40px] px-3 rounded-xl bg-shSecondary text-[#031018] text-[11px] font-black"><i className="fas fa-plus mr-1"/>Add block</button></div>
+    {blocks.length === 0 && <div className="rounded-xl border border-dashed border-shBorder p-5 text-center text-[12px] text-shTextMuted">No blocks yet. The legacy lesson fields above will still render normally.</div>}
+    {blocks.map((b, idx) => <div key={b.id || idx} className="rounded-xl border border-shBorder/70 bg-black/15 p-3 space-y-3" data-testid={`lesson-block-${idx}`}>
+      <div className="flex flex-wrap items-center gap-2"><span className="text-[10px] font-black text-shTextMuted">#{idx + 1}</span><select value={b.type || "text"} onChange={(e) => update(idx,{type:e.target.value})} className={`${inputCls} max-w-[190px]`}>{BLOCK_TYPES.map(([k,l]) => <option key={k} value={k}>{l}</option>)}</select><label className="text-[11px] text-shText flex items-center gap-1"><input type="checkbox" checked={b.active !== false} onChange={(e)=>update(idx,{active:e.target.checked})}/>Visible</label><span className="flex-1"/><button type="button" onClick={()=>move(idx,-1)} disabled={idx===0} className="px-2 py-1 text-shTextMuted disabled:opacity-30"><i className="fas fa-arrow-up"/></button><button type="button" onClick={()=>move(idx,1)} disabled={idx===blocks.length-1} className="px-2 py-1 text-shTextMuted disabled:opacity-30"><i className="fas fa-arrow-down"/></button><button type="button" onClick={()=>remove(idx)} className="px-2 py-1 text-shDanger"><i className="fas fa-trash"/></button></div>
+      <SField label="Heading (optional)"><input value={b.title || ""} onChange={(e)=>update(idx,{title:e.target.value})} className={inputCls}/></SField>
+      {!["video","image","download"].includes(b.type) && <SField label={b.type === "quiz" ? "Question / explanation" : "Content"}><textarea rows={2} value={b.body || ""} onChange={(e)=>update(idx,{body:e.target.value})} className={inputCls}/></SField>}
+      {["video","image","download"].includes(b.type) && <div className="grid sm:grid-cols-2 gap-2"><SField label="Direct URL (optional)"><input value={b.url || ""} onChange={(e)=>update(idx,{url:e.target.value,resource_id:e.target.value?null:b.resource_id})} className={inputCls}/></SField><SField label="School resource"><select value={b.resource_id || ""} onChange={(e)=>update(idx,{resource_id:e.target.value || null,url:e.target.value?"":b.url})} className={inputCls}><option value="">— Use URL / none —</option>{schoolResources.map((r)=><option key={r.id} value={r.id}>{r.title} · {r.kind}</option>)}</select></SField></div>}
+      {["steps","checklist","quiz"].includes(b.type) && <SField label={b.type === "quiz" ? "Answer options — one per line" : "Items — one per line"}><textarea rows={3} value={(b.items || []).join("\n")} onChange={(e)=>{const items=e.target.value.split("\n").map(x=>x.trim()).filter(Boolean);const correct=(b.config||{}).correct_answer;update(idx,{items,config:{...(b.config||{}),correct_answer:items.includes(correct)?correct:null}})}} className={inputCls}/></SField>}
+      {b.type === "quiz" && (b.items || []).length > 0 && <div className="grid sm:grid-cols-2 gap-2"><SField label="Correct answer (optional — leave blank for reflection only)"><select value={b.config?.correct_answer || ""} onChange={(e)=>update(idx,{config:{...(b.config||{}),correct_answer:e.target.value||null}})} className={inputCls}><option value="">Reflection only</option>{(b.items||[]).map(o=><option key={o} value={o}>{o}</option>)}</select></SField><SField label="Answer explanation / coaching note (optional)"><textarea rows={2} value={b.config?.explanation || ""} onChange={(e)=>update(idx,{config:{...(b.config||{}),explanation:e.target.value}})} className={inputCls}/></SField></div>}
+      {b.type === "timer" && <SField label="Timer seconds"><input type="number" min="1" value={b.config?.seconds || ""} onChange={(e)=>update(idx,{config:{...(b.config||{}),seconds:parseInt(e.target.value)||null}})} className={`${inputCls} max-w-[160px]`}/></SField>}
+      {b.type === "rep_counter" && <SField label="Target reps"><input type="number" min="1" value={b.config?.target || ""} onChange={(e)=>update(idx,{config:{...(b.config||{}),target:parseInt(e.target.value)||null}})} className={`${inputCls} max-w-[160px]`}/></SField>}
+    </div>)}
+  </div>;
 }
 
 /* ---------------------------------------------------- Checkpoint criteria */

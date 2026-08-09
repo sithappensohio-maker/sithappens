@@ -11,6 +11,7 @@ import SkillLevelIndicator from "./SkillLevelIndicator";
 import ProgramRoadmap from "./ProgramRoadmap";
 import EmptyState from "./EmptyState";
 import ValidationChecklist from "./ValidationChecklist";
+import LessonContentBlocks from "../school/student/LessonContentBlocks";
 
 const noop = () => {};
 
@@ -22,7 +23,23 @@ const TABS = [
 ];
 
 function ClientPreviewContent({ modules, selectedModule, selectedLesson, selectedSkill }) {
-  if (selectedLesson) return <LessonDetailPanel lesson={selectedLesson} actionLabel="Mark Practiced" onAction={noop}/>;
+  if (selectedLesson) {
+    const activeBlocks = (selectedLesson.content_blocks || []).filter((b) => b?.active !== false);
+    if (activeBlocks.length) {
+      return (
+        <div className="space-y-4">
+          <div className="rounded-2xl border border-shBorder bg-[var(--sh-card-base)] p-4">
+            <p className="text-[9px] font-black uppercase tracking-[0.16em] text-shSecondary">Student lesson</p>
+            <p className="mt-1 text-lg font-black text-shText">{selectedLesson.name}</p>
+            {selectedLesson.overview && <p className="mt-2 text-[13px] leading-relaxed text-shTextMuted">{selectedLesson.overview}</p>}
+          </div>
+          <LessonContentBlocks blocks={activeBlocks} previewMode />
+          <button type="button" onClick={noop} className="min-h-[46px] rounded-xl bg-shPrimary px-5 text-[11px] font-black uppercase tracking-widest text-[#071018]">{(selectedLesson.suggested_homework_template_ids || []).length ? "Start Practice" : "Complete Lesson"}</button>
+        </div>
+      );
+    }
+    return <LessonDetailPanel lesson={selectedLesson} actionLabel="Mark Practiced" onAction={noop}/>;
+  }
   if (selectedSkill) {
     return (
       <div className="space-y-3 p-1">

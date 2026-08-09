@@ -220,6 +220,9 @@ export default function ShopItemDetail({ kind, itemId, cart, onAddToCart, onBack
   const selectedDogEnrollment = isOnlineSchoolProgram && selectedDogId && schoolEnrollments
     ? schoolEnrollments.find((e) => e.dog_id === selectedDogId && e.program_id === itemId)
     : null;
+  const selectedDogEligibility = isOnlineSchoolProgram && selectedDogId
+    ? (item?.school_prerequisite_eligibility || []).find((e) => e.dog_id === selectedDogId)
+    : null;
 
   if (loading) {
     return <p className="text-shTextMuted text-sm text-center py-16" data-testid="shop-detail-loading">Loading…</p>;
@@ -343,6 +346,15 @@ export default function ShopItemDetail({ kind, itemId, cart, onAddToCart, onBack
           )}
 
           {isOnlineSchoolProgram && (
+            <div className="grid grid-cols-2 gap-2 mt-4" data-testid="shop-detail-school-includes">
+              <div className="rounded-xl border border-shSecondary/20 bg-shSecondary/[0.04] p-3"><i className="fas fa-person-chalkboard text-shSecondary"/><p className="text-[12px] font-black text-shText mt-2">Real trainer oversight</p><p className="text-[10px] text-shTextMuted mt-1">{item.school_support?.trainer_checkpoints_included == null ? "Trainer-reviewed checkpoints at required course milestones" : `${item.school_support.trainer_checkpoints_included} trainer-reviewed checkpoint${Number(item.school_support.trainer_checkpoints_included) === 1 ? "" : "s"} included`}</p></div>
+              <div className="rounded-xl border border-shPrimary/20 bg-shPrimary/[0.04] p-3"><i className="fas fa-hand-holding-heart text-shPrimary"/><p className="text-[12px] font-black text-shText mt-2">Trainer Assist support</p><p className="text-[10px] text-shTextMuted mt-1">{item.school_support?.trainer_assists_included == null ? "Trainer Assist support is available when direct help is needed" : `${item.school_support.trainer_assists_included} included hands-on assist${Number(item.school_support.trainer_assists_included) === 1 ? "" : "s"}`}</p></div>
+              <div className="rounded-xl border border-shBorder bg-black/15 p-3"><i className="fas fa-calendar-days text-shTextMuted"/><p className="text-[12px] font-black text-shText mt-2">Guided program</p><p className="text-[10px] text-shTextMuted mt-1">{item.estimated_weeks ? `About ${item.estimated_weeks} weeks` : "Progress at your dog's pace"}</p></div>
+              <div className="rounded-xl border border-shBorder bg-black/15 p-3"><i className="fas fa-mobile-screen-button text-shTextMuted"/><p className="text-[12px] font-black text-shText mt-2">Train from your phone</p><p className="text-[10px] text-shTextMuted mt-1">Lessons, guided practice, progress and trainer feedback in one place</p></div>
+            </div>
+          )}
+
+          {isOnlineSchoolProgram && (
             <NeonEdge accentRgb="140,198,63" intensity="subtle" className="mt-5 p-4" data-testid="shop-detail-dog-selector">
               <div className="flex items-start gap-3 mb-3">
                 <div className="w-10 h-10 rounded-xl bg-shPrimary/10 border border-shPrimary/25 grid place-items-center shrink-0"><i className="fas fa-dog text-shPrimary"/></div>
@@ -357,7 +369,9 @@ export default function ShopItemDetail({ kind, itemId, cart, onAddToCart, onBack
                 <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
                   {dogs.map((d) => {
                     const enrollment = schoolEnrollments?.find((e) => e.dog_id === d.id && e.program_id === itemId);
+                    const eligibility = (item.school_prerequisite_eligibility || []).find((e) => e.dog_id === d.id);
                     const selected = selectedDogId === d.id;
+                    const missingNames = (eligibility?.missing || []).map((x) => x.name || x.slug).filter(Boolean);
                     return (
                       <button key={d.id} type="button" onClick={() => setSelectedDogId(d.id)} data-testid={`shop-detail-dog-${d.id}`}
                               className={`flex items-center gap-3 text-left p-2.5 rounded-xl border transition ${selected ? "bg-shPrimary/10 border-shPrimary/45 shadow-[0_0_18px_rgba(140,198,63,0.08)]" : "bg-black/20 border-shBorder/60 hover:border-shPrimary/30"}`}>
@@ -366,7 +380,13 @@ export default function ShopItemDetail({ kind, itemId, cart, onAddToCart, onBack
                         </div>
                         <div className="min-w-0 flex-1">
                           <p className={`text-[13px] font-black truncate ${selected ? "text-shPrimary" : "text-shText"}`}>{d.name}</p>
-                          <p className="text-[10px] text-shTextMuted truncate">{enrollment?.status === "completed" ? "Course completed" : enrollment?.status === "active" ? "Already enrolled" : enrollment?.status === "withdrawn" ? "Previously withdrawn" : "Available"}</p>
+                          <p className="text-[10px] text-shTextMuted truncate">{
+                            enrollment?.status === "completed" ? "Course completed"
+                              : enrollment?.status === "active" ? "Already enrolled"
+                              : enrollment?.status === "withdrawn" ? "Previously withdrawn"
+                              : eligibility?.eligible === false ? `Complete: ${missingNames.join(", ")}`
+                              : "Available"
+                          }</p>
                         </div>
                         <i className={`fas ${selected ? "fa-circle-check text-shPrimary" : "fa-circle text-shTextMuted/40"} text-[12px]`}/>
                       </button>
@@ -375,6 +395,14 @@ export default function ShopItemDetail({ kind, itemId, cart, onAddToCart, onBack
                 </div>
               )}
             </NeonEdge>
+          )}
+          {isOnlineSchoolProgram && selectedDogId && selectedDogEligibility?.eligible === false && (
+            <div className="mt-3 rounded-xl border border-shOrange/35 bg-shOrange/[0.07] p-3" data-testid="shop-detail-prerequisite-blocked">
+              <p className="text-[12px] font-black text-shOrange"><i className="fas fa-route mr-1.5"/>Complete the prerequisite course first</p>
+              <p className="text-[11px] text-shTextMuted mt-1">
+                {dogs.find((d) => d.id === selectedDogId)?.name || "This dog"} needs to complete {(selectedDogEligibility.missing || []).map((x) => x.name || x.slug).filter(Boolean).join(", ")} before enrolling in {item.name}.
+              </p>
+            </div>
           )}
 
           <div className="mt-4">
@@ -417,6 +445,10 @@ export default function ShopItemDetail({ kind, itemId, cart, onAddToCart, onBack
                 // reach checkout and fail there.
                 <PremiumButton variant="secondary" disabled data-testid="shop-detail-withdrawn-disabled" className="w-full justify-center py-3 opacity-60 cursor-not-allowed">
                   Contact Us to Re-enroll
+                </PremiumButton>
+              ) : selectedDogEligibility?.eligible === false ? (
+                <PremiumButton variant="secondary" disabled data-testid="shop-detail-prerequisite-disabled" className="w-full justify-center py-3 opacity-60 cursor-not-allowed">
+                  <i className="fas fa-lock mr-1.5"/>Complete Prerequisites First
                 </PremiumButton>
               ) : dogCartQty > 0 ? (
                 <PremiumButton variant="primary" disabled data-testid="shop-detail-purchase-disabled" className="w-full justify-center py-3 opacity-50 cursor-not-allowed">

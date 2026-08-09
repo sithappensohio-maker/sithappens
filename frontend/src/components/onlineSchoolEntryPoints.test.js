@@ -149,7 +149,7 @@ test("removing a school enrollment calls the safe DELETE endpoint, not a raw sta
 test("ProgramStudio exposes exactly the 3 delivery modes and defaults the UI to trainer_led when unset", () => {
   expect(programStudioSrc).toMatch(/data-testid=\{`prog-delivery-mode-\$\{dm\.k\}`\}/);
   expect(programStudioSrc).toMatch(/\{ k: "trainer_led", label: "Trainer-Led"/);
-  expect(programStudioSrc).toMatch(/\{ k: "self_guided", label: "Self-Guided \(Online School\)"/);
+  expect(programStudioSrc).toMatch(/\{ k: "self_guided", label: "Online School"/);
   expect(programStudioSrc).toMatch(/\{ k: "both", label: "Both"/);
   expect(programStudioSrc).toMatch(/\(program\.delivery_mode \|\| "trainer_led"\) === dm\.k/);
 });

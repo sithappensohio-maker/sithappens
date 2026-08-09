@@ -10,15 +10,34 @@ import CourseRoadmap from "../components/school/student/CourseRoadmap";
 import LessonScreen from "../components/school/student/LessonScreen";
 import TodayScreen from "../components/school/student/TodayScreen";
 import PracticePanel from "../components/training/PracticePanel";
-import OnlineSchoolDashboard from "../components/OnlineSchoolDashboard";
+import FeedbackScreen from "../components/school/student/FeedbackScreen";
+import ProgressScreen from "../components/school/student/ProgressScreen";
+import AskTrainerPanel from "../components/school/student/AskTrainerPanel";
+import StudentWorkspaceExtras from "../components/school/student/StudentWorkspaceExtras";
+import SchoolNotificationBell from "../components/school/student/SchoolNotificationBell";
+import ResourcesScreen from "../components/school/student/ResourcesScreen";
+import SearchScreen from "../components/school/student/SearchScreen";
 import { parseSchoolPath, schoolPathFor, SELECTED_ENROLLMENT_KEY } from "../lib/studentSchool";
 
+function AccessEndedState({ onHome, onExit }) {
+  return (
+    <div className="max-w-xl mx-auto rounded-2xl border border-shAccent/30 bg-shAccent/[0.05] p-5 sm:p-6" data-testid="school-access-ended">
+      <p className="text-[10px] font-black uppercase tracking-[0.22em] text-shAccent"><i className="fas fa-lock mr-1.5" />Course access</p>
+      <h1 className="text-xl sm:text-2xl font-black text-shText mt-1">Course access ended</h1>
+      <p className="text-[13px] text-shTextMuted mt-2 leading-relaxed">This course is still part of your School history, but the training content is not currently available. Contact Sit Happens if you believe access should be restored.</p>
+      <div className="flex flex-wrap gap-2 mt-4">
+        <button onClick={onHome} className="min-h-[44px] px-4 rounded-xl bg-shPrimary text-bgHeader text-[11px] font-black uppercase tracking-widest">School Home</button>
+        <button onClick={onExit} className="min-h-[44px] px-4 rounded-xl border border-shBorder text-shText text-[11px] font-black uppercase tracking-widest">Back to Portal</button>
+      </div>
+    </div>
+  );
+}
+
 /* Student School — the routed client area. Phase 2B: Home, My Course, Lesson,
- * and Today's Training are native screens; Practice Coach is hosted here with
- * full School context and returns to /school/today on completion. The legacy
- * OnlineSchoolDashboard remains ONLY as the bridge for the Phase-2C routes
- * (Progress, Feedback). Progression/data all come from the backend — no
- * progression logic lives in this shell. */
+ * Today's Training, Progress, Feedback, and contextual Ask Trainer are native.
+ * Practice Coach is hosted here with full School context and returns to
+ * /school/today without exposing generic Homework. Progression/data all come
+ * from the backend — no progression logic lives in this shell. */
 export default function SchoolApp({ path, clientName, onNavigate, onExit }) {
   const parsed = parseSchoolPath(path);
   const [list, setList] = useState(null);          // enrollments; null = loading
@@ -28,7 +47,7 @@ export default function SchoolApp({ path, clientName, onNavigate, onExit }) {
   const [detail, setDetail] = useState(null);      // roadmap detail for the selected enrollment
   const [practice, setPractice] = useState(null);  // { homework } → PracticePanel hosted here
   const [practiceDone, setPracticeDone] = useState(false);
-  const [legacy, setLegacy] = useState(null);      // 2C bridge only: { view }
+  const [askContext, setAskContext] = useState(null);
 
   const loadList = useCallback(async () => {
     try { const { data } = await api.get("/portal/school"); setList(data || []); }
@@ -84,25 +103,48 @@ export default function SchoolApp({ path, clientName, onNavigate, onExit }) {
     else onNavigate(schoolPathFor(parsed.view === "lesson" ? "course" : parsed.view, id));
   }, [onNavigate, parsed.view]);
 
+  const selectedEntry = Array.isArray(list) ? list.find((e) => e.school_enrollment_id === selectedId) : null;
+
   // ── Practice Coach hosting (engine reused as-is, School context kept) ──
+  const openHomework = useCallback(async (homeworkId) => {
+    const { data: hw } = await api.get(`/homework/${homeworkId}`);
+    setPractice({ homework: hw });
+  }, []);
+
   const openPractice = useCallback(async (lessonId) => {
+    setPracticeDone(false);
     try {
       const { data } = await api.post(`/portal/school/${selectedId}/lessons/${lessonId}/start-practice`);
-      const { data: hw } = await api.get(`/homework/${data.homework_id}`);
-      setPractice({ homework: hw });
+      await openHomework(data.homework_id);
       refreshAll(); // Start-Practice completed the Learn step server-side
     } catch (e) {
       const msg = e.response?.data?.detail || "Couldn't start practice — try again.";
       window.alert(typeof msg === "string" ? msg : "Couldn't start practice — try again.");
     }
-  }, [selectedId, refreshAll]);
+  }, [selectedId, refreshAll, openHomework]);
+
+  const openPrescribedPractice = useCallback(async () => {
+    setPracticeDone(false);
+    try {
+      const { data } = await api.post(`/portal/school/${selectedId}/remediation/start`);
+      await openHomework(data.homework_id);
+      refreshAll();
+    } catch (e) {
+      const msg = e.response?.data?.detail || "Couldn't open your trainer's practice plan — try again.";
+      window.alert(typeof msg === "string" ? msg : "Couldn't open your trainer's practice plan — try again.");
+    }
+  }, [selectedId, refreshAll, openHomework]);
 
   const closePractice = useCallback(() => {
     setPractice(null);
-    setPracticeDone(true);
     refreshAll();
     go("today");
   }, [refreshAll, go]);
+
+  const practiceLogged = useCallback(() => {
+    setPracticeDone(true);
+    refreshAll();
+  }, [refreshAll]);
 
   // ── One router for every school action (Home CTA, Today CTA) ──
   const runAction = useCallback(async (action) => {
@@ -110,37 +152,59 @@ export default function SchoolApp({ path, clientName, onNavigate, onExit }) {
     const lessonId = action?.target?.lesson_id || home?.current_lesson?.id;
     setPracticeDone(false);
     if (t === "practice" && lessonId) { openPractice(lessonId); return; }
-    if ((t === "lesson" || t === "submit_checkpoint" || t === "remediation") && lessonId) { go("lesson", lessonId); return; }
+    if (t === "remediation") { openPrescribedPractice(); return; }
+    if ((t === "lesson" || t === "submit_checkpoint") && lessonId) { go("lesson", lessonId); return; }
     if (t === "advance") {
       // The existing advancement action — backend moves the pointer exactly
       // once (CAS-guarded); we just refresh and stay on Today for the new task.
       try { await api.post(`/portal/school/${selectedId}/advance`); } catch { /* backend gate holds */ }
       refreshAll(); go("today"); return;
     }
-    if (t === "course_complete" || t === "start") { go("course"); return; }
-    if (t === "trainer_assist") { setLegacy({ view: "feedback" }); go("feedback"); return; }
+    if (t === "course_complete") { go("progress"); return; }
+    if (t === "start") { go("course"); return; }
+    if (t === "trainer_assist") { go("feedback"); return; }
+    if (t === "onboarding") { requestAnimationFrame(() => document.querySelector('[data-testid="school-onboarding"]')?.scrollIntoView({ behavior: "smooth", block: "start" })); return; }
+    if (t === "course_paused") { go("home"); return; }
     go("today");
-  }, [home, go, openPractice, selectedId, refreshAll]);
+  }, [home, go, openPractice, openPrescribedPractice, selectedId, refreshAll]);
 
-  // 2C bridge — Progress & Feedback only.
   const goView = useCallback((view) => {
     setPracticeDone(false);
-    if (view === "progress" || view === "feedback") {
-      onNavigate(schoolPathFor(view));
-      setLegacy({ view: view === "progress" ? "journey" : "feedback" });
-      return;
-    }
-    setLegacy(null);
     go(view === "course" ? "course" : view);
-  }, [go, onNavigate]);
+  }, [go]);
 
-  const closeLegacy = useCallback(() => {
-    setLegacy(null);
-    onNavigate(schoolPathFor("home"));
-    loadList(); refreshAll();
-  }, [onNavigate, loadList, refreshAll]);
+  const openAsk = useCallback((extra = {}) => {
+    const checkpoint = extra.checkpoint || null;
+    const lessonPayload = extra.lesson?.lesson || extra.lesson || null;
+    const lessonId = checkpoint?.lesson_id || extra.lessonId || lessonPayload?.id || home?.current_lesson?.id || null;
+    setAskContext({
+      school_enrollment_id: selectedId,
+      dog_id: home?.dog?.id || selectedEntry?.dog_id || null,
+      dog_name: home?.dog?.name || selectedEntry?.dog_name || null,
+      school_program_name: home?.program?.name || selectedEntry?.program_name || null,
+      school_module_id: lessonId === home?.current_lesson?.id ? home?.current_module?.id || null : null,
+      school_module_name: checkpoint?.module_name || (lessonId === home?.current_lesson?.id ? home?.current_module?.name : null),
+      school_lesson_id: lessonId,
+      school_lesson_name: checkpoint?.lesson_name || lessonPayload?.name || (lessonId === home?.current_lesson?.id ? home?.current_lesson?.name : null),
+      school_homework_id: extra.homeworkId || null,
+      school_checkpoint_id: checkpoint?.id || extra.checkpointId || home?.checkpoint_status?.id || null,
+    });
+  }, [selectedId, home, selectedEntry]);
 
-  const selectedEntry = Array.isArray(list) ? list.find((e) => e.school_enrollment_id === selectedId) : null;
+
+
+  const navigateFromNotification = useCallback((view, dl = {}) => {
+    const targetId = dl.school_enrollment_id && Array.isArray(list) && list.some((e) => e.school_enrollment_id === dl.school_enrollment_id)
+      ? dl.school_enrollment_id : selectedId;
+    if (targetId && targetId !== selectedId) {
+      setSelectedId(targetId);
+      try { sessionStorage.setItem(SELECTED_ENROLLMENT_KEY, targetId); } catch { /* ignore */ }
+    }
+    const targetView = view || "feedback";
+    if (targetView === "lesson" && dl.lesson_id && targetId) { onNavigate(schoolPathFor("lesson", targetId, dl.lesson_id)); return; }
+    if (targetView === "course" && targetId) { onNavigate(schoolPathFor("course", targetId)); return; }
+    onNavigate(schoolPathFor(targetView, targetId));
+  }, [list, selectedId, onNavigate]);
 
   const header = (
     <header className="shrink-0 border-b border-shBorder flex items-center justify-between gap-2 px-3 sm:px-6 py-3" style={{ background: "var(--sh-card-base)" }}>
@@ -150,7 +214,7 @@ export default function SchoolApp({ path, clientName, onNavigate, onExit }) {
       <div className="flex items-center gap-2 text-shText font-black uppercase tracking-widest text-[13px]">
         <i className="fas fa-graduation-cap text-shPrimary" />School
       </div>
-      <img src="/logo.png" alt="Sit Happens" className="h-8 sm:h-10 shrink-0" />
+      <div className="flex items-center gap-2"><button type="button" onClick={()=>go("search")} aria-label="Search Online School" title="Search Online School" className="w-10 h-10 rounded-xl border border-shBorder text-shTextMuted hover:text-shSecondary"><i className="fas fa-search"/></button><SchoolNotificationBell onNavigate={navigateFromNotification} /><img src="/logo.png" alt="Sit Happens" className="h-8 sm:h-10 shrink-0" /></div>
     </header>
   );
 
@@ -167,7 +231,13 @@ export default function SchoolApp({ path, clientName, onNavigate, onExit }) {
     );
   } else {
     let screen;
-    if (parsed.view === "course") {
+    // A revoked enrollment keeps a safe School Home/history shell, but its
+    // protected course/feedback/progress endpoints intentionally 403. Catch
+    // that lifecycle state here so direct/refreshed School URLs never flash a
+    // raw API error or empty screen.
+    if (home?.current_action?.type === "access_expired" && parsed.view !== "home") {
+      screen = <AccessEndedState onHome={() => go("home")} onExit={onExit} />;
+    } else if (parsed.view === "course") {
       screen = (
         <CourseRoadmap detail={detail} loading={!detail}
                        onOpenLesson={(lid) => go("lesson", lid)}
@@ -179,25 +249,44 @@ export default function SchoolApp({ path, clientName, onNavigate, onExit }) {
           enrollmentId={selectedId} lessonId={parsed.lessonId} detail={detail}
           dogName={selectedEntry?.dog_name} dogPhoto={selectedEntry?.dog_photo}
           onStartPractice={openPractice}
+          onStartPrescribedPractice={openPrescribedPractice}
           onAdvanced={() => { refreshAll(); go("today"); }}
           onStateChanged={(opts) => { refreshAll(); if (opts?.openLessonId) go("lesson", opts.openLessonId); }}
           onBackToCourse={() => go("course")}
+          onAskTrainer={(ctx) => openAsk(ctx)}
         />
       );
     } else if (parsed.view === "today") {
       screen = (
-        <TodayScreen home={home} loading={homeLoading}
-                     practiceJustCompleted={practiceDone} onAction={runAction} />
+        <div className="space-y-4">
+          <TodayScreen home={home} loading={homeLoading}
+                       practiceJustCompleted={practiceDone} onAction={runAction}
+                       onAskTrainer={() => openAsk()} />
+          <StudentWorkspaceExtras enrollmentId={selectedId} home={home} mode="today" onChanged={refreshAll}
+                                  onOpenLesson={(lid) => go("lesson", lid)} onOpenHomework={openHomework} />
+        </div>
       );
+    } else if (parsed.view === "feedback") {
+      screen = <FeedbackScreen enrollmentId={selectedId} onAsk={openAsk} onChanged={refreshAll} />;
+    } else if (parsed.view === "progress") {
+      screen = <ProgressScreen enrollmentId={selectedId} home={home} detail={detail} />;
+    } else if (parsed.view === "resources") {
+      screen = <ResourcesScreen enrollmentId={selectedId} />;
+    } else if (parsed.view === "search") {
+      screen = <SearchScreen enrollmentId={selectedId} onOpenLesson={(lid)=>go("lesson",lid)} onFeedback={()=>go("feedback")} />;
     } else {
       screen = (
-        <StudentHome
-          home={home} loading={homeLoading} clientName={clientName}
-          onPrimaryAction={() => runAction(home?.current_action)}
-          onAsk={() => setLegacy({ view: "help" })}
-          onViewFeedback={() => goView("feedback")}
-          onViewProgress={() => goView("progress")}
-        />
+        <div className="space-y-4">
+          <StudentHome
+            home={home} loading={homeLoading} clientName={clientName}
+            onPrimaryAction={() => runAction(home?.current_action)}
+            onAsk={() => openAsk()}
+            onViewFeedback={() => goView("feedback")}
+            onViewProgress={() => goView("progress")}
+          />
+          <StudentWorkspaceExtras enrollmentId={selectedId} home={home} mode="home" onChanged={refreshAll}
+                                  onOpenLesson={(lid) => go("lesson", lid)} onOpenHomework={openHomework} />
+        </div>
       );
     }
     body = (
@@ -223,19 +312,12 @@ export default function SchoolApp({ path, clientName, onNavigate, onExit }) {
       {/* Practice Coach — the exact same engine, hosted with School context. */}
       {practice && (
         <PracticePanel homework={practice.homework} dogPhoto={selectedEntry?.dog_photo}
-                       onClose={closePractice} onChanged={closePractice} />
+                       onClose={closePractice} onChanged={refreshAll} onPracticeLogged={practiceLogged} />
       )}
 
-      {/* Legacy bridge — Phase 2C routes only (Progress / Feedback / Help). */}
-      {legacy && (
-        <OnlineSchoolDashboard
-          clientFirstName={clientName}
-          initialActiveId={selectedId}
-          initialView={legacy.view}
-          onClose={closeLegacy}
-          onContactTrainer={() => setLegacy({ view: "help" })}
-        />
-      )}
+      <AskTrainerPanel open={!!askContext} context={askContext}
+                       onClose={() => setAskContext(null)}
+                       onSent={() => { refreshAll(); }} />
     </div>
   );
 }

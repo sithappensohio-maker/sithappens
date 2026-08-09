@@ -9,6 +9,7 @@ import DailyReviewQueue from "../components/DailyReviewQueue";
 import HomeworkAnalytics from "../components/HomeworkAnalytics";
 import PageHero from "../components/PageHero";
 import { todayISO } from "../lib/date";
+import { SCHOOL_HQ_TARGET_KEY } from "../lib/schoolHq";
 
 export default function Homework() {
   const [list, setList] = useState([]);
@@ -23,6 +24,7 @@ export default function Homework() {
   const [err, setErr] = useState("");
   const [filter, setFilter] = useState("all");
   const [expandedId, setExpandedId] = useState(null);
+  const [deepLinkTarget, setDeepLinkTarget] = useState(null);
 
   const load = async () => {
     const [h, d] = await Promise.all([api.get("/homework"), api.get("/dogs")]);
@@ -33,6 +35,24 @@ export default function Homework() {
     } catch { setPendingCount(0); }
   };
   useEffect(() => { load(); }, []);
+  useEffect(() => {
+    try {
+      const raw = sessionStorage.getItem(SCHOOL_HQ_TARGET_KEY);
+      if (!raw) return;
+      const target = JSON.parse(raw);
+      if (target?.screen !== "homework" || !target.homework_id) return;
+      sessionStorage.removeItem(SCHOOL_HQ_TARGET_KEY);
+      setFilter("all");
+      setExpandedId(target.homework_id);
+      setDeepLinkTarget(target);
+    } catch { /* ignore malformed target */ }
+  }, []);
+  useEffect(() => {
+    if (!deepLinkTarget?.homework_id || !list.some((h) => h.id === deepLinkTarget.homework_id)) return;
+    setExpandedId(deepLinkTarget.homework_id);
+    const timer = setTimeout(() => document.querySelector(`[data-testid="hw-${deepLinkTarget.homework_id}"]`)?.scrollIntoView({ behavior: "smooth", block: "center" }), 50);
+    return () => clearTimeout(timer);
+  }, [list, deepLinkTarget]);
 
   const [digestBusy, setDigestBusy] = useState(false);
   const [mondayBusy, setMondayBusy] = useState(false);
@@ -158,7 +178,7 @@ export default function Homework() {
           const progressPct = totalDays > 0 ? Math.round((streak / totalDays) * 100) : 0;
           const isTracker = !!h.daily_tracker;
           return (
-            <div key={h.id} className={`bg-[var(--sh-card-base)] border rounded-xl p-5 shadow-lg ${h.status==="completed"?"border-shPrimary/40":"border-shBorder"}`} data-testid={`hw-${h.id}`}>
+            <div key={h.id} className={`bg-[var(--sh-card-base)] border rounded-xl p-5 shadow-lg ${deepLinkTarget?.homework_id === h.id ? "border-shSecondary ring-2 ring-shSecondary/20" : h.status==="completed"?"border-shPrimary/40":"border-shBorder"}`} data-testid={`hw-${h.id}`}>
               <div className="flex items-start justify-between gap-4">
                 <div className="flex-1 min-w-0">
                   <div className="flex flex-wrap items-center gap-2 mb-2">
@@ -207,7 +227,7 @@ export default function Homework() {
               </div>
               {snap && isExpanded && (
                 <div className="mt-4 pt-4 border-t border-shBorder">
-                  <HomeworkReportPanel homeworkId={h.id} />
+                  <HomeworkReportPanel homeworkId={h.id} focus={deepLinkTarget?.homework_id === h.id ? deepLinkTarget : null} />
                 </div>
               )}
             </div>

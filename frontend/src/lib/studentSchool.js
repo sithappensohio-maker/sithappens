@@ -24,6 +24,8 @@ export const ACTION_META = {
   course_complete:  { icon: "fa-graduation-cap",      accent: "lime" },
   access_expired:   { icon: "fa-lock",                accent: "neutral" },
   setup_required:   { icon: "fa-wrench",              accent: "neutral" },
+  onboarding:       { icon: "fa-clipboard-user",      accent: "cyan" },
+  course_paused:    { icon: "fa-pause",               accent: "neutral" },
   start:            { icon: "fa-play",                accent: "lime" },
 };
 
@@ -34,13 +36,13 @@ export function actionMeta(type) {
 /* Is the current action one the student acts on now vs. a "caught up / their
  * trainer's turn" state? Used to soften the hero when nothing is required. */
 export function isCaughtUp(type) {
-  return type === "awaiting_review" || type === "course_complete" || type === "access_expired";
+  return type === "awaiting_review" || type === "course_complete" || type === "access_expired" || type === "course_paused";
 }
 
 /* Student School routes (Shop-style history.pushState, no react-router).
  * /school · /school/course/:enrollmentId · /school/course/:eid/lesson/:lessonId
  * /school/today · /school/progress · /school/feedback */
-export const SCHOOL_VIEWS = ["home", "course", "today", "progress", "feedback"];
+export const SCHOOL_VIEWS = ["home", "course", "today", "progress", "feedback", "resources", "search"];
 
 export function parseSchoolPath(pathname) {
   const m = /^\/school(?:\/([^/?#]+))?(?:\/([^/?#]+))?(?:\/([^/?#]+))?(?:\/([^/?#]+))?/.exec(pathname || "");

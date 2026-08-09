@@ -185,7 +185,10 @@ def _tiny_video(raw_bytes=1000, mime="video/mp4"):
 
 
 def _oversized_video():
-    return _tiny_video(raw_bytes=11 * 1024 * 1024)
+    # Track the configured School ceiling (filesystem-backed uploads raised it
+    # from the old 10 MB) instead of hardcoding a size that a config change
+    # silently un-oversizes.
+    return _tiny_video(raw_bytes=server.CHECKPOINT_VIDEO_MAX_BYTES + 1024 * 1024)
 
 
 def _enroll(prog, dog, admin):

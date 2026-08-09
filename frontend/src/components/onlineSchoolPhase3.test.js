@@ -11,6 +11,10 @@ import path from "path";
 const read = (...p) => fs.readFileSync(path.join(__dirname, ...p), "utf8");
 
 const dashboardSrc = read("OnlineSchoolDashboard.jsx");
+// Phase 2B+ moved the live checkpoint UI to the native School runtime; the
+// legacy dashboard above is dormant. Checkpoint-state guards read the
+// canonical native panel instead.
+const checkpointPanelSrc = read("school", "student", "CheckpointPanel.jsx");
 const polishSrc = read("..", "lib", "onlineSchoolPolish.js");
 const certSrc = read("..", "lib", "schoolCertificate.js");
 const programStudioSrc = read("ProgramStudio.jsx");
@@ -28,8 +32,10 @@ test("the dashboard has an internal 5-tab nav (Home/My Journey/Trainer Feedback/
   });
 });
 
-test("Portal.jsx itself gains no new navigation — only wires the onContactTrainer callback", () => {
-  expect(portalSrc).toMatch(/onContactTrainer=\{\(\) => \{ setSchoolOpen\(false\); setMessagesOpen\(true\); \}\}/);
+test("Portal.jsx enters the native routed School instead of mounting the legacy overlay", () => {
+  expect(portalSrc).toMatch(/const openSchool = \(\) =>/);
+  expect(portalSrc).toMatch(/<SchoolApp/);
+  expect(portalSrc).not.toMatch(/<OnlineSchoolDashboard/);
 });
 
 // ---------------------------------------------------------------------------
@@ -74,19 +80,19 @@ test("rubric score rows are keyed by real criterion id/name, no hardcoded exerci
 // ---------------------------------------------------------------------------
 
 test("prescribed practice never shows a fabricated focus criterion, only the real action + remaining count", () => {
-  expect(dashboardSrc).toMatch(/data-testid="school-checkpoint-prescribed"/);
-  expect(dashboardSrc).not.toMatch(/FOCUS:/i);
-  expect(dashboardSrc).toMatch(/practice_sessions_remaining/);
+  expect(checkpointPanelSrc).toMatch(/data-testid="school-checkpoint-prescribed"/);
+  expect(checkpointPanelSrc).not.toMatch(/FOCUS:/i);
+  expect(checkpointPanelSrc).toMatch(/practice_sessions_remaining/);
 });
 
 test("a prescribed refresher lesson gets a real Go-to-Refresher affordance sourced from the resolved lesson id/name", () => {
   expect(polishSrc).not.toMatch(/refresher_lesson_id.*=.*["'][^"']+["']/); // never hardcoded
-  expect(dashboardSrc).toMatch(/data-testid="school-checkpoint-go-to-refresher"/);
-  expect(dashboardSrc).toMatch(/onGoToRefresher\(p\.refresher_lesson_id\)/);
+  expect(checkpointPanelSrc).toMatch(/data-testid="school-checkpoint-go-to-refresher"/);
+  expect(checkpointPanelSrc).toMatch(/onGoToRefresher\(p\.refresher_lesson_id\)/);
 });
 
 test("the trainer-assist hold never renders a submit control and explains progress is preserved", () => {
-  const holdBlock = dashboardSrc.slice(dashboardSrc.indexOf('status?.on_hold'), dashboardSrc.indexOf('status?.on_hold') + 2500);
+  const holdBlock = checkpointPanelSrc.slice(checkpointPanelSrc.indexOf('status?.on_hold'), checkpointPanelSrc.indexOf('status?.on_hold') + 2500);
   expect(holdBlock).not.toMatch(/CheckpointSubmitForm/);
   expect(holdBlock).toMatch(/course progress stays exactly where it is/);
 });

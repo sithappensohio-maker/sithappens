@@ -6,7 +6,7 @@ import AdminTabs from "../components/admin/AdminTabs";
 import { useConfirm } from "../lib/useConfirm";
 import { ProductEditor } from "../components/ManageProductsPanel";
 import { PackEditor } from "../components/CreditPacksSettings";
-import { ProgramEditor } from "../components/Programs";
+import { ProgramEditor, fetchProgramById } from "../components/Programs";
 import ItemThumbnail from "../components/ItemThumbnail";
 import ShopImageUpload from "../components/ShopImageUpload";
 import PortalShop from "../components/PortalShop";
@@ -1561,8 +1561,10 @@ export default function ShopManager({ openCreateOnMount = false, onCreateConsume
       setPackErr("");
       setPackForm({ ...BLANK_PACK_FORM, ...raw });
     } else {
-      const { data } = await api.get("/programs", { params: { include_inactive: true } });
-      const raw = (data || []).find((p) => p.id === item.id);
+      // The bounded /programs list must never decide editability — load the
+      // exact program by id (fetchProgramById falls back to nothing, so a
+      // wrong program can never be silently selected).
+      const raw = await fetchProgramById(item.id);
       if (!raw) { toast.error("Could not load program"); return; }
       setProgramOriginalImageId(raw.image_id || null);
       setProgramForm({ ...raw });

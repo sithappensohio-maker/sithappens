@@ -8,6 +8,7 @@ const ITEMS = [
   { view: "today", label: "Today", icon: "fa-bullseye" },
   { view: "progress", label: "Progress", icon: "fa-chart-line" },
   { view: "feedback", label: "Feedback", icon: "fa-comment-dots" },
+  { view: "resources", label: "Library", icon: "fa-folder-open" },
 ];
 
 export default function SchoolNav({ active, onNavigate }) {

@@ -10,6 +10,11 @@ import SchoolNeedsAttention from "../components/school/SchoolNeedsAttention";
 import SchoolActivityFeed from "../components/school/SchoolActivityFeed";
 import CheckpointReviewQueue from "../components/CheckpointReviewQueue";
 import TrainerAssistQueue from "../components/TrainerAssistQueue";
+import SchoolStudentsPanel from "../components/school/SchoolStudentsPanel";
+import SchoolInterventionsPanel from "../components/school/SchoolInterventionsPanel";
+import SchoolAnalyticsPanel from "../components/school/SchoolAnalyticsPanel";
+import SchoolResourcesPanel from "../components/school/SchoolResourcesPanel";
+import SchoolSettingsPanel from "../components/school/SchoolSettingsPanel";
 import { navigateToScreen, announceAttentionChanged } from "../lib/schoolHq";
 
 /* School HQ — the admin operations hub for the Online School. A thin, live
@@ -29,6 +34,9 @@ export default function SchoolHQ() {
   const [busyId, setBusyId] = useState(null);
   const [checkpointOpen, setCheckpointOpen] = useState(false);
   const [trainerAssistOpen, setTrainerAssistOpen] = useState(false);
+  const [checkpointTargetId, setCheckpointTargetId] = useState(null);
+  const [trainerAssistTargetId, setTrainerAssistTargetId] = useState(null);
+  const [studentTargetId, setStudentTargetId] = useState(null);
 
   const loadSummary = useCallback(async () => {
     const { data } = await api.get("/admin/school/hq/summary");
@@ -78,9 +86,27 @@ export default function SchoolHQ() {
     if (item.id && item.notification_type && !item.read_at) {
       try { await api.post(`/admin/school/hq/notifications/${item.id}/read`); announceAttentionChanged(); } catch { /* ignore */ }
     }
-    if (t.startsWith("checkpoint")) { setTab("checkpoints"); setCheckpointOpen(true); }
-    else if (t.startsWith("trainer_assist")) { setTab("trainer_assist"); setTrainerAssistOpen(true); }
-    else { navigateToScreen("homework"); }
+    const dl = item.deep_link || {};
+    if (t.startsWith("checkpoint")) {
+      setCheckpointTargetId(item.checkpoint_id || dl.checkpoint_id || null);
+      setTab("checkpoints"); setCheckpointOpen(true);
+    } else if (t.startsWith("trainer_assist")) {
+      setTrainerAssistTargetId(item.trainer_assist_id || item.checkpoint_id || dl.trainer_assist_id || dl.checkpoint_id || null);
+      setTab("trainer_assist"); setTrainerAssistOpen(true);
+    } else if ((t === "student_question" || dl.screen === "messages") && (item.thread_id || dl.thread_id)) {
+      navigateToScreen("messages", { thread_id: item.thread_id || dl.thread_id });
+    } else if (t === "trainer_request_completed" || dl.student_id || dl.school_enrollment_id) {
+      const sid = dl.student_id || dl.school_enrollment_id || item.school_enrollment_id;
+      if (sid) { setStudentTargetId(sid); setTab("students"); }
+    } else {
+      navigateToScreen("homework", {
+        homework_id: item.homework_id || dl.homework_id || null,
+        video_media_id: dl.video_media_id || item.metadata?.video_media_id || null,
+        question_id: item.metadata?.question_id || dl.question_id || null,
+        section_log_id: dl.section_log_id || item.metadata?.section_log_id || null,
+        day_number: dl.day_number || item.metadata?.day_number || null,
+      });
+    }
   }, []);
 
   const markRead = useCallback(async (item) => {
@@ -111,6 +137,11 @@ export default function SchoolHQ() {
     { key: "needs_attention", label: "Needs Attention", icon: "fa-bell", accent: "orange", count: s.needs_attention || 0 },
     { key: "checkpoints", label: "Checkpoints", icon: "fa-clipboard-check", accent: "purple", count: s.checkpoints_pending || 0 },
     { key: "trainer_assist", label: "Trainer Assist", icon: "fa-hand-holding-heart", accent: "purple", count: s.trainer_assists || 0 },
+    { key: "students", label: "Students", icon: "fa-user-graduate", accent: "cyan" },
+    { key: "interventions", label: "Interventions", icon: "fa-shield-heart", accent: "orange" },
+    { key: "analytics", label: "Analytics", icon: "fa-chart-column", accent: "lime" },
+    { key: "resources", label: "Resources", icon: "fa-folder-open", accent: "cyan" },
+    { key: "settings", label: "Settings", icon: "fa-sliders", accent: "neutral" },
   ];
 
   return (
@@ -183,12 +214,20 @@ export default function SchoolHQ() {
         />
       )}
 
+      {tab === "students" && <SchoolStudentsPanel initialStudentId={studentTargetId} onInitialConsumed={() => setStudentTargetId(null)} />}
+      {tab === "interventions" && <SchoolInterventionsPanel onOpenStudent={(id) => { setStudentTargetId(id); setTab("students"); }} />}
+      {tab === "analytics" && <SchoolAnalyticsPanel />}
+      {tab === "resources" && <SchoolResourcesPanel />}
+      {tab === "settings" && <SchoolSettingsPanel />}
+
       {checkpointOpen && (
-        <CheckpointReviewQueue onClose={() => { setCheckpointOpen(false); onQueueChanged(); }}
+        <CheckpointReviewQueue initialSubmissionId={checkpointTargetId}
+                               onClose={() => { setCheckpointOpen(false); setCheckpointTargetId(null); onQueueChanged(); }}
                                onGraded={onQueueChanged} />
       )}
       {trainerAssistOpen && (
-        <TrainerAssistQueue onClose={() => { setTrainerAssistOpen(false); onQueueChanged(); }}
+        <TrainerAssistQueue initialSubmissionId={trainerAssistTargetId}
+                            onClose={() => { setTrainerAssistOpen(false); setTrainerAssistTargetId(null); onQueueChanged(); }}
                             onChanged={onQueueChanged} />
       )}
     </div>
@@ -200,7 +239,7 @@ function SectionTitle({ icon, title, onSeeAll }) {
     <div className="flex items-center justify-between mb-2">
       <p className="text-[12px] font-black uppercase tracking-[0.28em] text-shTextMuted"><i className={`fas ${icon} mr-1.5 text-shSecondary`} />{title}</p>
       {onSeeAll && (
-        <button type="button" onClick={onSeeAll} className="text-[11px] font-black uppercase tracking-widest text-shTextMuted hover:text-shText transition">
+        <button type="button" onClick={onSeeAll} className="min-h-[44px] px-2 -mx-2 -my-3 inline-flex items-center text-[11px] font-black uppercase tracking-widest text-shTextMuted hover:text-shText transition">
           See all <i className="fas fa-arrow-right ml-1" />
         </button>
       )}

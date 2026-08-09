@@ -2,8 +2,9 @@
 // DailyReviewQueue.jsx's list -> detail -> action structure and its
 // ReviewVideo pattern (fetching from the existing homework media
 // endpoint) — same visual language, same conventions.
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { api } from "../lib/api";
+import { loadSchoolMediaUrl } from "../lib/schoolMedia";
 import NeonEdge from "./premium/NeonEdge";
 import HuskyDogImage from "./brand/HuskyDogImage";
 
@@ -14,7 +15,7 @@ const QUEUE_BADGES = {
   pending_review: { label: "Awaiting review", cls: "bg-shAccent/15 text-shAccent border-shAccent/40" },
 };
 
-export default function CheckpointReviewQueue({ onClose, onGraded }) {
+export default function CheckpointReviewQueue({ onClose, onGraded, initialSubmissionId = null }) {
   const [items, setItems] = useState([]);
   const [loading, setLoading] = useState(true);
   const [active, setActive] = useState(null);
@@ -28,6 +29,10 @@ export default function CheckpointReviewQueue({ onClose, onGraded }) {
   const [minSessions, setMinSessions] = useState("");
   const [busy, setBusy] = useState(false);
   const [err, setErr] = useState("");
+  const [videoTime, setVideoTime] = useState(0);
+  const [annotationNote, setAnnotationNote] = useState("");
+  const [seekTo, setSeekTo] = useState(null);
+  const initialHandled = useRef(false);
 
   const load = async () => {
     setLoading(true);
@@ -42,9 +47,15 @@ export default function CheckpointReviewQueue({ onClose, onGraded }) {
     setActive(it);
     setHandlerScores(Object.fromEntries((it.rubric_snapshot?.handler_criteria || []).map(c => [c.id, 3])));
     setDogScores(Object.fromEntries((it.rubric_snapshot?.dog_criteria || []).map(c => [c.id, 3])));
-    setFeedback(""); setErr(""); setMode("grade");
+    setFeedback(""); setErr(""); setMode("grade"); setVideoTime(0); setAnnotationNote(""); setSeekTo(null);
     setPrescriptionAction("repeat_current_recipe"); setTemplateId(""); setRefresherLessonId(""); setMinSessions("");
   };
+
+  useEffect(() => {
+    if (initialHandled.current || !initialSubmissionId || !items.length) return;
+    const target = items.find((it) => it.id === initialSubmissionId);
+    if (target) { open(target); initialHandled.current = true; }
+  }, [items, initialSubmissionId]);
 
   const back = () => { setActive(null); setErr(""); };
 
@@ -69,6 +80,16 @@ export default function CheckpointReviewQueue({ onClose, onGraded }) {
       const d = e.response?.data?.detail;
       setErr((d && d.message) || d || "Failed to grade.");
     } finally { setBusy(false); }
+  };
+
+  const addAnnotation = async () => {
+    if (!active || !annotationNote.trim()) return;
+    setBusy(true); setErr("");
+    try {
+      const { data } = await api.post(`/admin/school/checkpoints/${active.id}/annotations`, { timestamp_seconds: videoTime || 0, note: annotationNote.trim() });
+      setActive((a) => ({ ...a, video_annotations: data.annotations || [] })); setAnnotationNote("");
+    } catch (e) { setErr(e.response?.data?.detail || "Could not add video note."); }
+    finally { setBusy(false); }
   };
 
   const clearHold = async () => {
@@ -154,7 +175,14 @@ export default function CheckpointReviewQueue({ onClose, onGraded }) {
             </NeonEdge>
 
             {active.homework_id && active.video_media_id && (
-              <ReviewVideo homeworkId={active.homework_id} mediaId={active.video_media_id}/>
+              <div className="space-y-3">
+                <ReviewVideo homeworkId={active.homework_id} mediaId={active.video_media_id} onTime={setVideoTime} seekTo={seekTo}/>
+                <div className="rounded-2xl border border-shBorder/55 bg-black/15 p-4" data-testid="checkpoint-video-annotations">
+                  <div className="flex items-center justify-between gap-2"><p className="text-[12px] font-black uppercase tracking-widest text-shSecondary"><i className="fas fa-comment-medical mr-1.5"/>Video notes</p><span className="text-[11px] text-shTextMuted">Current time {formatVideoTime(videoTime)}</span></div>
+                  <div className="flex flex-col sm:flex-row gap-2 mt-3"><input value={annotationNote} onChange={(e)=>setAnnotationNote(e.target.value)} placeholder="Add a trainer note at this moment…" className="flex-1 min-h-[42px] rounded-xl border border-shBorder/55 bg-black/20 px-3 text-sm text-shText"/><button onClick={addAnnotation} disabled={busy || !annotationNote.trim()} className="min-h-[42px] px-4 rounded-xl bg-shSecondary text-bgHeader text-[11px] font-black uppercase tracking-widest disabled:opacity-40">Add at {formatVideoTime(videoTime)}</button></div>
+                  {(active.video_annotations || []).length > 0 && <div className="space-y-2 mt-3">{active.video_annotations.map((a)=><button key={a.id} onClick={()=>setSeekTo({ seconds:a.timestamp_seconds, token:Date.now() })} className="w-full text-left rounded-xl border border-shBorder/40 p-2.5 hover:border-shSecondary/30"><span className="text-[10px] font-black text-shSecondary mr-2">{formatVideoTime(a.timestamp_seconds)}</span><span className="text-[12px] text-shText">{a.note}</span></button>)}</div>}
+                </div>
+              </div>
             )}
 
             {err && <p className="text-red-400 text-[14px] uppercase font-black">{err}</p>}
@@ -267,20 +295,21 @@ function ScoreRow({ criterion, value, onChange }) {
   );
 }
 
-function ReviewVideo({ homeworkId, mediaId }) {
-  const [src, setSrc] = useState("");
-  useEffect(() => {
-    (async () => {
-      try {
-        const { data } = await api.get(`/homework/${homeworkId}/media/${mediaId}`);
-        setSrc(data.data || "");
-      } catch { /* ignore */ }
-    })();
-  }, [homeworkId, mediaId]);
-  if (!src) return <p className="text-[13px] text-shTextMuted mt-2 font-black uppercase tracking-widest"><i className="fas fa-spinner fa-spin mr-1"/>Loading video…</p>;
-  return (
-    <div data-testid="checkpoint-review-video">
-      <video src={src} controls playsInline className="max-h-[420px] rounded-2xl border border-shBorder/55 bg-black/40 w-full"/>
-    </div>
-  );
+function formatVideoTime(value) {
+  const n = Math.max(0, Number(value || 0)); const m = Math.floor(n / 60); const sec = Math.floor(n % 60);
+  return `${m}:${String(sec).padStart(2, "0")}`;
 }
+
+function ReviewVideo({ homeworkId, mediaId, onTime, seekTo }) {
+  const [src, setSrc] = useState("");
+  const videoRef = useRef(null);
+  useEffect(() => {
+    let live = true; let cleanup = () => {};
+    loadSchoolMediaUrl(mediaId).then((media) => { if (!live) { media.revoke(); return; } cleanup = media.revoke; setSrc(media.url); }).catch(() => {});
+    return () => { live = false; cleanup(); };
+  }, [mediaId]);
+  useEffect(() => { if (seekTo && videoRef.current) { videoRef.current.currentTime = Math.max(0, Number(seekTo.seconds || 0)); videoRef.current.play().catch(()=>{}); } }, [seekTo]);
+  if (!src) return <p className="text-[13px] text-shTextMuted mt-2 font-black uppercase tracking-widest"><i className="fas fa-spinner fa-spin mr-1"/>Loading video…</p>;
+  return <div data-testid="checkpoint-review-video"><video ref={videoRef} src={src} controls playsInline onTimeUpdate={(e)=>onTime?.(e.currentTarget.currentTime)} className="max-h-[420px] rounded-2xl border border-shBorder/55 bg-black/40 w-full"/></div>;
+}
+

@@ -18,7 +18,8 @@ Design constraints honored here:
   * Retried HTTP requests must not double-alert — every event and notification
     carries a deterministic ``dedupe_key`` protected by a unique partial index
     (see server.startup's perf_indexes). A duplicate insert is caught and the
-    duplicate downstream work is skipped.
+    idempotent delivery fan-out is reconciled so a partial notification/email
+    failure can be repaired without creating duplicates.
   * Email is a delivery channel, not the notification store. Email is queued
     through the existing durable email outbox (email_service). If email fails,
     the in-app notification still exists.
@@ -73,10 +74,14 @@ class EventType:
     SCHOOL_ENROLLED = "school_enrolled"
     SCHOOL_STARTED = "school_started"
     LESSON_STARTED = "lesson_started"
+    LESSON_LEARN_COMPLETED = "lesson_learn_completed"
     LESSON_COMPLETED = "lesson_completed"
     MODULE_COMPLETED = "module_completed"
     COURSE_COMPLETED = "course_completed"
     ACHIEVEMENT_EARNED = "achievement_earned"
+    BASELINE_SUBMITTED = "baseline_submitted"
+    TRAINING_PLAN_TASK_COMPLETED = "training_plan_task_completed"
+    TRAINER_REQUEST_COMPLETED = "trainer_request_completed"
     # Practice
     PRACTICE_STARTED = "practice_started"
     PRACTICE_COMPLETED = "practice_completed"
@@ -118,6 +123,10 @@ EVENT_POLICY: Dict[str, Dict[str, Any]] = {
     EventType.PRACTICE_COULD_NOT_COMPLETE: {"attention": True, "priority": Priority.HIGH, "email": True},
     EventType.TRAINER_ASSIST_REQUESTED:    {"attention": True, "priority": Priority.HIGH, "email": True},
     EventType.CHECKPOINT_TRAINER_ASSIST_REQUIRED: {"attention": True, "priority": Priority.HIGH, "email": True},
+    # A submitted trainer-request response is trainer work waiting on a human
+    # (review the student's video/check-in), so it alerts + emails exactly
+    # like the other attention-required School actions.
+    EventType.TRAINER_REQUEST_COMPLETED:   {"attention": True, "priority": Priority.HIGH, "email": True},
     EventType.CHECKPOINT_REMEDIATION_REQUIRED:    {"attention": True, "priority": Priority.NORMAL, "email": False},
     # ── Notable but not a screaming alert (in-app, no email) ─────────────────
     EventType.ACHIEVEMENT_EARNED:          {"attention": False, "priority": Priority.NORMAL, "email": False},
@@ -150,7 +159,7 @@ _CONTEXT_FIELDS = (
     "enrollment_id", "school_enrollment_id", "program_id", "program_name",
     "module_id", "module_name", "lesson_id", "lesson_name",
     "homework_id", "checkpoint_id", "trainer_assist_id", "thread_id",
-    "assigned_trainer_id", "deep_link",
+    "assigned_trainer_id", "deep_link", "metadata",
 )
 
 
@@ -192,10 +201,11 @@ async def emit_event(
       * Never raises — any failure is logged and swallowed so the caller's
         business action (already committed) is never disturbed.
       * If ``dedupe_key`` is supplied and an event with that key already
-        exists, this is a no-op (returns None) — the retried request neither
-        re-inserts the event nor re-creates notifications/emails.
+        exists, the canonical event is reused and its idempotent staff-delivery
+        fan-out is reconciled. This repairs partial delivery while still
+        preventing duplicate notifications/emails.
 
-    Returns the inserted event dict, or None if it was a duplicate / failed.
+    Returns the inserted/reconciled event dict, or None if delivery failed.
     """
     if _db is None:
         logger.warning("school_events.emit_event called before set_db; dropping %s", event_type)
@@ -242,9 +252,21 @@ async def emit_event(
     try:
         await _db[EVENTS_COLLECTION].insert_one(dict(event))
     except DuplicateKeyError:
-        # Same logical action already recorded (retry / double-submit) — skip
-        # everything downstream so we never double-notify or double-email.
-        return None
+        # Retry/double-submit. The event itself is already durable, but a prior
+        # attempt may have failed *after* the event insert while creating the
+        # staff notification/email. Load the canonical event and re-run the
+        # idempotent fan-out so retries repair partial delivery instead of
+        # permanently losing the alert.
+        if not dedupe_key:
+            return None
+        try:
+            existing = await _db[EVENTS_COLLECTION].find_one({"dedupe_key": dedupe_key}, {"_id": 0})
+            if existing and existing.get("requires_attention"):
+                await _create_staff_notification(existing, policy_for(existing.get("event_type") or event_type))
+            return existing
+        except Exception as e:
+            logger.warning("school_events: duplicate reconciliation failed for %s: %s", event_type, e)
+            return None
     except Exception as e:
         logger.warning("school_events: failed to insert event %s: %s", event_type, e)
         return None
@@ -304,7 +326,11 @@ async def _create_staff_notification(event: dict, pol: dict) -> None:
     try:
         await _db[NOTIFICATIONS_COLLECTION].insert_one(dict(notif))
     except DuplicateKeyError:
-        return  # already notified for this event
+        # Notification already exists. Do NOT return before the email call:
+        # the durable outbox is independently idempotent, so retrying it here
+        # safely repairs the edge case where notification creation succeeded
+        # but the email enqueue failed.
+        pass
     except Exception as e:
         logger.warning("school_events: failed to insert notification for %s: %s", event["event_type"], e)
         return
@@ -318,6 +344,71 @@ async def _create_staff_notification(event: dict, pol: dict) -> None:
         except Exception as e:
             # Email failure must not undo the in-app notification.
             logger.warning("school_events: attention email queue failed for %s: %s", event["event_type"], e)
+
+
+async def create_client_notification(
+    *, client_id: str, notification_type: str, title: str, body: str = "",
+    school_enrollment_id: Optional[str] = None, enrollment_id: Optional[str] = None,
+    dog_id: Optional[str] = None, dog_name: Optional[str] = None,
+    program_id: Optional[str] = None, program_name: Optional[str] = None,
+    module_id: Optional[str] = None, module_name: Optional[str] = None,
+    lesson_id: Optional[str] = None, lesson_name: Optional[str] = None,
+    homework_id: Optional[str] = None, checkpoint_id: Optional[str] = None,
+    thread_id: Optional[str] = None, deep_link: Optional[dict] = None,
+    priority: str = Priority.NORMAL, dedupe_key: Optional[str] = None, metadata: Optional[dict] = None,
+) -> Optional[dict]:
+    """Create one durable client-facing School notification.
+
+    This intentionally uses the SAME ``school_notifications`` collection as
+    staff alerts, distinguished by an audience key. It is idempotent and does
+    not send email by itself — trainer replies/checkpoint workflows retain
+    their existing email behavior while the client gets a durable in-app
+    school alert with a real deep-link.
+    """
+    if _db is None or not client_id:
+        return None
+    ndedupe = dedupe_key or f"client:{client_id}:{notification_type}:{_gid()}"
+    doc = {
+        "id": _gid(), "event_id": None, "event_type": notification_type,
+        "notification_type": notification_type, "audience": f"school_client:{client_id}",
+        "title": title, "body": body or "", "priority": priority, "created_at": _now_iso(),
+        "read_at": None, "resolved_at": None, "resolved_by": None, "snoozed_until": None,
+        "email_status": "none", "email_queued_at": None, "email_sent_at": None,
+        "dedupe_key": ndedupe, "client_id": client_id, "school_enrollment_id": school_enrollment_id,
+        "enrollment_id": enrollment_id, "dog_id": dog_id, "dog_name": dog_name,
+        "program_id": program_id, "program_name": program_name, "module_id": module_id,
+        "module_name": module_name, "lesson_id": lesson_id, "lesson_name": lesson_name,
+        "homework_id": homework_id, "checkpoint_id": checkpoint_id, "thread_id": thread_id,
+        "deep_link": deep_link or {}, "metadata": metadata or {},
+    }
+    try:
+        await _db[NOTIFICATIONS_COLLECTION].insert_one(dict(doc))
+    except DuplicateKeyError:
+        existing = await _db[NOTIFICATIONS_COLLECTION].find_one({"dedupe_key": ndedupe}, {"_id": 0})
+        return existing
+    except Exception as e:
+        logger.warning("school_events: client notification failed %s: %s", notification_type, e)
+        return None
+    doc.pop("_id", None)
+    return doc
+
+
+async def list_client_notifications(client_id: str, *, limit: int = 40, before: Optional[str] = None, unread_only: bool = False) -> List[dict]:
+    if _db is None or not client_id:
+        return []
+    limit = max(1, min(int(limit or 40), 100))
+    q: Dict[str, Any] = {"audience": f"school_client:{client_id}"}
+    if unread_only:
+        q["read_at"] = None
+    if before:
+        q["created_at"] = {"$lt": before}
+    return await _db[NOTIFICATIONS_COLLECTION].find(q, {"_id": 0}).sort("created_at", DESCENDING).to_list(limit)
+
+
+async def client_unread_count(client_id: str) -> int:
+    if _db is None or not client_id:
+        return 0
+    return await _db[NOTIFICATIONS_COLLECTION].count_documents({"audience": f"school_client:{client_id}", "read_at": None})
 
 
 def _default_title(event: dict) -> str:

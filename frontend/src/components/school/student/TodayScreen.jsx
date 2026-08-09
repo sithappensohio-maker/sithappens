@@ -1,6 +1,7 @@
 import { accentRgb } from "../../premium/tokens";
 import { actionMeta, isCaughtUp } from "../../../lib/studentSchool";
 import EmptyState from "../../training/EmptyState";
+import SupportStatusCard from "./SupportStatusCard";
 
 /* Today's Training (Phase 2B) — "what do I need to do right now?" One hero,
  * one obvious CTA, driven entirely by the server-derived current_action (the
@@ -18,10 +19,12 @@ const HERO_COPY = {
   course_complete:   { eyebrow: "Course complete",    cta: "Review your course" },
   access_expired:    { eyebrow: "Course access",      cta: null },
   setup_required:    { eyebrow: "One moment",         cta: null },
+  onboarding:        { eyebrow: "School setup",        cta: null },
+  course_paused:     { eyebrow: "Training paused",     cta: null },
   start:             { eyebrow: "Welcome",            cta: "Start school" },
 };
 
-export default function TodayScreen({ home, loading, practiceJustCompleted, onAction }) {
+export default function TodayScreen({ home, loading, practiceJustCompleted, onAction, onAskTrainer }) {
   if (loading && !home) {
     return (
       <div className="space-y-4" data-testid="today-loading">
@@ -99,11 +102,21 @@ export default function TodayScreen({ home, loading, practiceJustCompleted, onAc
           <p className="mt-5 text-[13px] font-bold text-shTextMuted" data-testid="today-no-cta">
             {action.type === "awaiting_review" ? "Your trainer will review your checkpoint — you'll get an email when it's ready."
               : action.type === "setup_required" ? "Your trainer needs to update this lesson before you can continue."
+              : action.type === "onboarding" ? "Complete the School setup below before you begin training."
+              : action.type === "course_paused" ? "Training is paused for now. Your completed work and feedback remain saved."
               : action.type === "access_expired" ? "Reach out to us to restore access to this course."
               : "Nothing needed from you right now."}
           </p>
         )}
       </section>
+
+      <SupportStatusCard home={home} onAskTrainer={onAskTrainer} onStartPractice={action.type === "remediation" ? () => onAction(action) : null} />
+
+      {!["access_expired", "setup_required", "course_complete"].includes(action.type) && (
+        <button type="button" onClick={onAskTrainer} className="w-full sm:w-auto min-h-[44px] px-4 rounded-xl border border-shSecondary/30 text-shSecondary text-[11px] font-black uppercase tracking-widest hover:text-shText" data-testid="today-ask-trainer">
+          <i className="fas fa-comment-dots mr-1.5" />Ask your trainer
+        </button>
+      )}
 
       {/* Concise supporting context from the current lesson — not the whole lesson page */}
       {showLessonContext && (lesson.client_overview || lesson.success_criteria) && (

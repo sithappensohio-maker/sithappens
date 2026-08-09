@@ -1,14 +1,13 @@
 // Online School — client checkpoint state panel (submit / awaiting review /
-// prescribed practice / Trainer Assist hold). EXTRACTED VERBATIM from
-// OnlineSchoolDashboard.jsx in Phase 2B so the native Lesson screen and the
-// legacy dashboard share ONE implementation — never two checkpoint UIs.
-// Behavior and endpoints are unchanged.
+// prescribed practice / Trainer Assist hold). Kept as the single native
+// checkpoint UI for the School lesson flow; progression and grading remain
+// backend-owned.
 import { useState } from "react";
 import NeonEdge from "../../premium/NeonEdge";
 import PremiumButton from "../../premium/PremiumButton";
 import PracticeMediaUploader from "../../training/PracticeMediaUploader";
 
-export default function CheckpointPanel({ lessonId, practiced, rubric, status, onSubmit, onGoToRefresher, busy }) {
+export default function CheckpointPanel({ lessonId, practiced, rubric, status, onSubmit, onStartPrescribedPractice, onGoToRefresher, busy }) {
   const [returnedToCheckpoint, setReturnedToCheckpoint] = useState(false);
 
   if (!practiced) {
@@ -126,9 +125,14 @@ export default function CheckpointPanel({ lessonId, practiced, rubric, status, o
                 <p className="text-shTextMuted text-[11px] mt-2">{remaining > 0 ? `Practice ${remaining} more time${remaining !== 1 ? "s" : ""} before resubmitting.` : "You're ready to resubmit."}</p>
               </div>
             )}
+            {remaining !== 0 && onStartPrescribedPractice && (
+              <PremiumButton onClick={onStartPrescribedPractice} data-testid="school-checkpoint-start-prescribed" className="mt-3 w-full justify-center">
+                <i className="fas fa-paw text-[10px]" />Start prescribed practice
+              </PremiumButton>
+            )}
             {p.action === "assign_refresher_lesson" && p.refresher_lesson_id && (
               <button onClick={() => onGoToRefresher(p.refresher_lesson_id)} data-testid="school-checkpoint-go-to-refresher" className="mt-3 text-shAccent font-black text-[12px]">
-                Go to refresher lesson <i className="fas fa-arrow-right ml-1 text-[10px]"/>
+                Review refresher lesson <i className="fas fa-arrow-right ml-1 text-[10px]"/>
               </button>
             )}
           </div>
