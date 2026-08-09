@@ -40831,6 +40831,30 @@ async def list_client_price_overrides(client_id: str, _: dict = Depends(require_
     return {"overrides": rows}
 
 
+@api.get("/clients/{client_id}/credit-pack-prices")
+async def client_credit_pack_prices(client_id: str, _: dict = Depends(require_admin_and_permission("sell_credits"))):
+    """Effective credit-pack prices for ONE client, straight from
+    resolve_client_price — the same resolver the sell endpoints charge with.
+    Exists so the sell-packs UI can show the number the client will actually
+    pay (individual override or tier price) instead of the public list price.
+    Gated by sell_credits (not `pricing`) so anyone allowed to sell packs can
+    see the price they are about to charge."""
+    client = await db.clients.find_one({"id": client_id}, {"_id": 0, "id": 1})
+    if not client:
+        raise HTTPException(status_code=404, detail="Client not found")
+    packs = await db.credit_packs.find({"active": True}, {"_id": 0, "id": 1, "price": 1}).to_list(200)
+    out = {}
+    for pack in packs:
+        pricing = await resolve_client_price(client_id, "credit_pack", pack["id"], float(pack.get("price") or 0))
+        out[pack["id"]] = {
+            "list_price": pricing["list_price"],
+            "effective_price": pricing["effective_price"],
+            "pricing_source": pricing["pricing_source"],
+            "tier_name": pricing["tier_name"],
+        }
+    return {"prices": out}
+
+
 @api.post("/clients/{client_id}/price-overrides")
 async def create_client_price_override(client_id: str, body: PriceOverrideIn, user: dict = Depends(require_admin_and_permission("pricing"))):
     client = await db.clients.find_one({"id": client_id}, {"_id": 0, "id": 1, "name": 1})

@@ -818,6 +818,23 @@ function AdjustCreditsModal({ client, onClose, onSaved }) {
 function SellPackModal({ client, packs, onClose, onSold }) {
   const [poolFilter, setPoolFilter] = useState("all"); // all | daycare | training
   const active = packs.filter(p => p.active && (poolFilter === "all" || p.service_type === poolFilter));
+  // Client-specific pricing (individual override or tier) — the sell endpoint
+  // charges resolve_client_price's number, so the modal must show that same
+  // number, never the public list price. Falls back to list price until the
+  // fetch lands (or if it fails, matching the backend's own fallback).
+  const [clientPrices, setClientPrices] = useState({});
+  useEffect(() => {
+    let live = true;
+    api.get(`/clients/${client.id}/credit-pack-prices`)
+      .then(r => { if (live) setClientPrices(r.data?.prices || {}); })
+      .catch(() => {});
+    return () => { live = false; };
+  }, [client.id]);
+  const effectivePrice = (p) => {
+    const cp = clientPrices[p.id];
+    return cp ? Number(cp.effective_price) : Number(p.price);
+  };
+  const priceInfo = (p) => clientPrices[p.id] || null;
   // cart: { [pack_id]: quantity }
   const [cart, setCart] = useState({});
   const [method, setMethod] = useState("cash");
@@ -846,7 +863,7 @@ function SellPackModal({ client, packs, onClose, onSold }) {
   const totalDaycare = cartItems.filter(it => (it.pack.service_type || "daycare") === "daycare").reduce((s, it) => s + it.pack.qty * it.qty, 0);
   const totalTraining = cartItems.filter(it => it.pack.service_type === "training").reduce((s, it) => s + it.pack.qty * it.qty, 0);
   const totalBoarding = cartItems.filter(it => it.pack.service_type === "boarding").reduce((s, it) => s + it.pack.qty * it.qty, 0);
-  const totalCharge = cartItems.reduce((sum, it) => sum + (it.pack.price * it.qty), 0);
+  const totalCharge = cartItems.reduce((sum, it) => sum + (effectivePrice(it.pack) * it.qty), 0);
 
   const sell = async () => {
     setBusy(true); setErr("");
@@ -899,8 +916,13 @@ function SellPackModal({ client, packs, onClose, onSold }) {
                       <div className="min-w-0 flex-1">
                         <p className="text-[14px] font-black text-shText truncate">{p.name}</p>
                         <p className={`text-[13px] uppercase tracking-widest font-bold ${color}`}>
-                          {p.qty} {unit} · ${p.price.toFixed(2)} · ${p.value_each.toFixed(2)}/each
+                          {p.qty} {unit} · {effectivePrice(p) !== Number(p.price) && <span className="line-through opacity-50 mr-1">${Number(p.price).toFixed(2)}</span>}${effectivePrice(p).toFixed(2)} · ${(effectivePrice(p) / Math.max(p.qty, 1)).toFixed(2)}/each
                         </p>
+                        {effectivePrice(p) !== Number(p.price) && (
+                          <p className="text-[10px] font-black uppercase tracking-widest text-shSecondary" data-testid={`client-price-badge-${p.id}`}>
+                            {priceInfo(p)?.pricing_source === "tier" ? `${priceInfo(p)?.tier_name || "Tier"} price` : "Client price"}
+                          </p>
+                        )}
                       </div>
                     </div>
                     <div className="flex items-center gap-2 shrink-0">
@@ -927,7 +949,7 @@ function SellPackModal({ client, packs, onClose, onSold }) {
                     <div className="min-w-0 flex-1">
                       <p className="text-[15px] text-shText font-bold truncate">{pack.name}</p>
                       <p className={`text-[12px] uppercase tracking-widest font-bold ${color}`}>
-                        {pack.qty * qty} {unit} · ${(pack.price * qty).toFixed(2)}
+                        {pack.qty * qty} {unit} · ${(effectivePrice(pack) * qty).toFixed(2)}
                       </p>
                     </div>
                     <div className="flex items-center gap-1.5 shrink-0">
