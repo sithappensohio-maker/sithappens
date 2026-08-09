@@ -702,6 +702,60 @@ async def notify_admin_new_booking(booking: dict, client: dict) -> None:
     )
 
 
+async def queue_school_attention_email(event: dict, *, outbox_key: str) -> bool:
+    """Durably queue the operator email for an attention-worthy Online School
+    event (question, checkpoint, could-not-complete, Trainer Assist, …).
+
+    Routes through the SAME email_outbox + idempotency mechanism every other
+    automated email uses — a retried student action that produced the same
+    ``outbox_key`` just re-affirms the one pending row, never a second email.
+    Creating the in-app notification is the caller's job (school_events) and is
+    independent of whether this email ever sends; this is a pure queue write
+    (Mongo only, no network) so a crash after it still leaves the row for
+    process_email_outbox to deliver."""
+    if not ADMIN_NOTIFICATION_EMAIL:
+        logger.warning(
+            "ADMIN_NOTIFICATION_EMAIL not set — skipping School attention email for %s",
+            event.get("event_type"),
+        )
+        return False
+    client_name = event.get("client_name") or "A student"
+    dog = event.get("dog_name") or "—"
+    course = event.get("program_name") or "—"
+    lesson = event.get("lesson_name") or event.get("module_name") or "—"
+    title = event.get("title") or "Online School — action needed"
+    summary = event.get("summary") or ""
+    rows = [
+        ("Student", client_name),
+        ("Dog", dog),
+        ("Course", course),
+        ("Lesson", lesson),
+    ]
+    if summary:
+        rows.append(("Detail", summary))
+    cta_url = f"{APP_PUBLIC_URL}/" if APP_PUBLIC_URL else None
+    subject, html = await _render(
+        slug="admin_school_attention",
+        ctx={"client_name": client_name, "dog_name": dog, "title": title, "summary": summary},
+        rows=rows,
+        cta_url=cta_url,
+        show_install=False,
+        fallback_subject=f"\U0001F393 {title}",
+        fallback_title=title,
+        fallback_intro=summary or "A student needs your attention in the Online School.",
+        fallback_cta_text="Open School HQ",
+    )
+    return await _queue_email(
+        to_email=ADMIN_NOTIFICATION_EMAIL,
+        subject=subject,
+        html=html,
+        outbox_key=outbox_key,
+        on_success=None,
+        attachments=None,
+        error="school_attention",
+    )
+
+
 async def queue_admin_new_shop_order(order: dict, client: dict | None = None) -> bool:
     """A client Shop order just became PAID — durably QUEUE the operator
     alert into email_outbox with a deterministic key, before any network

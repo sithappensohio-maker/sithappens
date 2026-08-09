@@ -17,6 +17,7 @@ import Settings from "./screens/Settings";
 import Incidents from "./screens/Incidents";
 import RunSheet from "./screens/RunSheet";
 import Homework from "./screens/Homework";
+import SchoolHQ from "./screens/SchoolHQ";
 import Pipeline from "./screens/Pipeline";
 import Income from "./screens/Income";
 import Trophies from "./screens/Trophies";
@@ -83,6 +84,7 @@ function AdminShell() {
   const clearSearchTarget = useCallback(() => setSearchTarget(null), []);
   const [messagesUnread, setMessagesUnread] = useState(0);
   const [shopOrdersUnseen, setShopOrdersUnseen] = useState(0);
+  const [schoolAttention, setSchoolAttention] = useState(0);
 
   // Poll the admin messages-unread badge every 60s and on tab change so
   // the sidebar dot stays roughly fresh without hammering the API.
@@ -119,6 +121,26 @@ function AdminShell() {
     const onSeen = () => tick();
     window.addEventListener("sh:shop-orders-seen", onSeen);
     return () => { alive = false; clearInterval(h); window.removeEventListener("sh:shop-orders-seen", onSeen); };
+  }, [can, tab]);
+
+  // School HQ attention badge — unresolved School notifications needing a
+  // human. Same 60s poll + tab-change pattern as the messages badge; School HQ
+  // dispatches "sh:school-attention-changed" after a read/resolve so the badge
+  // drops immediately instead of waiting for the next poll.
+  useEffect(() => {
+    if (!can || !can("manage_school")) return;
+    let alive = true;
+    const tick = async () => {
+      try {
+        const { data } = await api.get("/admin/school/hq/attention-count");
+        if (alive) setSchoolAttention(data?.count || 0);
+      } catch { /* ignore */ }
+    };
+    tick();
+    const h = setInterval(tick, 60000);
+    const onChanged = () => tick();
+    window.addEventListener("sh:school-attention-changed", onChanged);
+    return () => { alive = false; clearInterval(h); window.removeEventListener("sh:school-attention-changed", onChanged); };
   }, [can, tab]);
 
   // Cmd/Ctrl+K to open global search
@@ -201,6 +223,7 @@ function AdminShell() {
     { id: "dogs", label: "Dogs", icon: "fa-paw", perm: "dogs_view" },
     { id: "duplicate_check", label: "Duplicate Check", icon: "fa-copy", perm: "settings" },
     { id: "pipeline", label: "Pipeline", icon: "fa-line-chart" },
+    { id: "school_hq", label: "School HQ", icon: "fa-school", perm: "manage_school" },
     { id: "homework", label: "Homework", icon: "fa-graduation-cap", feature: "homework" },
     { id: "rewards_center", label: "Rewards", icon: "fa-gift", feature: "rewards" },
     { id: "trophies", label: "Trophies", icon: "fa-trophy", feature: "rewards" },
@@ -241,7 +264,7 @@ function AdminShell() {
     { label: "Daily Work", ids: ["today", "dashboard", "action_center", "pos", "schedule", "clients", "dogs", "messages"] },
     { label: "Care", ids: ["runsheet", "care", "kennel", "incidents"] },
     { label: "Bookings", ids: ["bookings", "waitlist", "recurring"] },
-    { label: "Training", ids: ["pipeline", "homework", "rewards_center", "trophies"] },
+    { label: "Training", ids: ["pipeline", "school_hq", "homework", "rewards_center", "trophies"] },
     { label: "Shop", ids: ["shop_manager"] },
     { label: "Money", ids: ["income", "credit_reconciliation"] },
     { label: "Communication", ids: ["announcements", "bulkemail", "intake"] },
@@ -600,6 +623,10 @@ function AdminShell() {
                             <span className={`${collapsed ? "absolute top-0 right-0 -mt-1 -mr-1" : "ml-2"} inline-block bg-shAccent text-white text-[10px] font-bold px-1.5 py-0.5 rounded-full align-middle`}
                                   data-testid={`${prefix}nav-pos-badge`}>{collapsed ? "•" : shopOrdersUnseen}</span>
                           )}
+                          {n.id === "school_hq" && schoolAttention > 0 && (
+                            <span className={`${collapsed ? "absolute top-0 right-0 -mt-1 -mr-1" : "ml-2"} inline-block bg-shAccent text-white text-[10px] font-bold px-1.5 py-0.5 rounded-full align-middle`}
+                                  data-testid={`${prefix}nav-school_hq-badge`}>{collapsed ? "•" : schoolAttention}</span>
+                          )}
                         </button>
                         {!collapsed && (
                           <button onClick={(e) => { e.stopPropagation(); togglePin(n.id); }}
@@ -757,6 +784,7 @@ function AdminShell() {
           />}
           {tab === "duplicate_check" && navAllowed("duplicate_check") && <DuplicateCheck />}
           {tab === "pipeline" && navAllowed("pipeline") && <Pipeline onJumpToDog={(id)=>{ setSearchTarget({kind:"dog", id, mode:"open"}); setTab("dogs"); }} />}
+          {tab === "school_hq" && navAllowed("school_hq") && <SchoolHQ />}
           {tab === "homework" && navAllowed("homework") && <Homework />}
           {tab === "rewards_center" && navAllowed("rewards_center") && <Rewards />}
           {tab === "trophies" && navAllowed("trophies") && <Trophies />}
