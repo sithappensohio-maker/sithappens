@@ -5,6 +5,7 @@ import AdminPageHeader from "../components/admin/AdminPageHeader";
 import AdminTabs from "../components/admin/AdminTabs";
 import AdminStatCard from "../components/admin/AdminStatCard";
 import EmptyState from "../components/premium/EmptyState";
+import { accentRgb } from "../components/premium/tokens";
 import SchoolNeedsAttention from "../components/school/SchoolNeedsAttention";
 import SchoolActivityFeed from "../components/school/SchoolActivityFeed";
 import CheckpointReviewQueue from "../components/CheckpointReviewQueue";
@@ -115,7 +116,7 @@ export default function SchoolHQ() {
   return (
     <div className="space-y-4" data-testid="school-hq">
       <AdminPageHeader icon="fa-school" title="School HQ" testid="school-hq-header"
-                       description="Everything happening in your Online School — activity, who needs a human, checkpoints, and Trainer Assist, in one place." />
+                       description="Everything happening in your Online School — student activity, items needing attention, checkpoints, and Trainer Assist in one place." />
 
       <AdminTabs items={tabs} value={tab} onChange={setTab} testid="school-hq-tabs" />
 
@@ -127,7 +128,7 @@ export default function SchoolHQ() {
             <AdminStatCard icon="fa-clipboard-check" accent="purple" value={s.checkpoints_pending ?? "—"} label="Checkpoints to review" onClick={() => setTab("checkpoints")} testid="stat-checkpoints" />
             <AdminStatCard icon="fa-circle-question" accent="orange" value={s.new_questions ?? "—"} label="New questions" onClick={() => setTab("needs_attention")} testid="stat-questions" />
             <AdminStatCard icon="fa-hand-holding-heart" accent="purple" value={s.trainer_assists ?? "—"} label="Trainer assists" onClick={() => setTab("trainer_assist")} testid="stat-trainer-assist" />
-            <AdminStatCard icon="fa-user-clock" accent="neutral" value={s.inactive_students ?? "—"} label="Inactive students" detail={s.inactive_rule} testid="stat-inactive" />
+            <AdminStatCard icon="fa-user-clock" accent="neutral" value={s.inactive_students ?? "—"} label="Inactive students" detail="No activity for 14+ days" testid="stat-inactive" />
           </div>
 
           <div className="grid gap-4 lg:grid-cols-2">
@@ -211,14 +212,25 @@ function QueueLaunchPanel({ icon, accent, count, title, blurb, buttonLabel, onOp
   if (!count) {
     return <EmptyState icon={icon} accent="lime" title="All clear" description={emptyLabel} />;
   }
+  const rgb = accentRgb(accent);
+  // Row on desktop, stacked on narrow. The count block keeps its intrinsic
+  // width (shrink-0) and the copy carries a real minimum width, so the
+  // explanatory text can never be squeezed into a sliver between the count and
+  // the action button (the previous AdminStatCard was w-full and collapsed it).
   return (
-    <div className="rounded-2xl border border-shBorder bg-[var(--sh-card-base)] p-5 flex flex-col sm:flex-row sm:items-center gap-4" data-testid="queue-launch">
-      <AdminStatCard icon={icon} accent={accent} value={count} label={title} />
-      <div className="min-w-0 flex-1">
-        <p className="text-shTextMuted text-[13px]">{blurb}</p>
+    <div className="rounded-2xl border border-shBorder bg-[var(--sh-card-base)] p-5 flex flex-col md:flex-row md:items-center gap-4 md:gap-6" data-testid="queue-launch">
+      <div className="shrink-0 flex items-center gap-3">
+        <span className="w-12 h-12 rounded-xl grid place-items-center" style={{ background: `rgba(${rgb},0.14)`, color: `rgb(${rgb})` }}>
+          <i className={`fas ${icon} text-lg`} />
+        </span>
+        <div className="min-w-0">
+          <p className="text-[28px] font-black text-shText leading-none">{count}</p>
+          <p className="text-[11px] font-bold uppercase tracking-widest text-shTextMuted mt-1">{title}</p>
+        </div>
       </div>
+      <p className="flex-1 md:min-w-[15rem] text-shTextMuted text-[13px] leading-relaxed">{blurb}</p>
       <button type="button" onClick={onOpen}
-              className="shrink-0 text-[13px] font-black uppercase tracking-widest px-5 py-2.5 rounded-xl bg-shPrimary/15 border border-shPrimary/40 text-shPrimary hover:bg-shPrimary/25 transition"
+              className="shrink-0 w-full md:w-auto text-[13px] font-black uppercase tracking-widest px-5 py-2.5 rounded-xl bg-shPrimary/15 border border-shPrimary/40 text-shPrimary hover:bg-shPrimary/25 transition"
               data-testid="queue-launch-open">
         <i className="fas fa-arrow-right mr-2" />{buttonLabel}
       </button>
