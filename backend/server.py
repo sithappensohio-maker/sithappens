@@ -16700,6 +16700,10 @@ async def _school_roadmap(enrollment: dict, dog_id: str) -> dict:
     cur_module_id = enrollment.get("current_module_id") or (modules[0].get("id") if modules else None)
     cur_lesson_id = enrollment.get("current_lesson_id")
     cur_module_idx = next((i for i, m in enumerate(modules) if m.get("id") == cur_module_id), 0)
+    # Learn → Practice: which lessons' Learn step the student has completed
+    # (set by the explicit Start-Practice action — see portal_school_start_practice).
+    # Per-enrollment/dog, so dogs never contaminate each other; absent = none.
+    learn_completed_ids = set(enrollment.get("learn_completed_lesson_ids") or [])
 
     current_hw = await _lesson_practice_homework(dog_id, cur_lesson_id) if cur_lesson_id else None
     practiced = _lesson_is_practiced(current_hw)
@@ -16738,13 +16742,14 @@ async def _school_roadmap(enrollment: dict, dog_id: str) -> dict:
                 prev_l = lessons[l_idx - 1] if l_idx > 0 else None
                 lessons_out.append({
                     "id": l.get("id"), "name": l.get("name"), "order": l.get("order", 0),
-                    "status": l_status,
+                    "status": l_status, "learn_completed": False,
                     "locked_reason": f"Complete {(prev_l or {}).get('name') or 'the previous lesson'} before continuing.",
                 })
             else:
                 lessons_out.append({
                     **l, "status": l_status, "locked_reason": None,
                     "is_current": m_status == "current" and l_idx == cur_lesson_idx,
+                    "learn_completed": l.get("id") in learn_completed_ids,
                 })
         modules_out.append({
             "id": m.get("id"), "name": m.get("name"), "description": m.get("description") or "",
@@ -16807,6 +16812,8 @@ async def _school_roadmap(enrollment: dict, dog_id: str) -> dict:
         "current_lesson_id": cur_lesson_id,
         "current_lesson": current_lesson,
         "current_lesson_practiced": practiced,
+        "current_lesson_learn_completed": bool(cur_lesson_id and cur_lesson_id in learn_completed_ids),
+        "current_lesson_has_practice": bool((current_lesson or {}).get("suggested_homework_template_ids")),
         "current_homework_id": (current_hw or {}).get("id"),
         "is_final_lesson": is_final_lesson,
         "requires_checkpoint": requires_checkpoint,
@@ -16830,6 +16837,7 @@ def _client_safe_school_roadmap(roadmap: dict) -> dict:
                 lessons_out.append({
                     **_client_safe_lesson(l), "status": l.get("status"),
                     "locked_reason": l.get("locked_reason"), "is_current": bool(l.get("is_current")),
+                    "learn_completed": bool(l.get("learn_completed")),
                 })
         modules_out.append({
             "id": m["id"], "name": m["name"], "description": m["description"],
@@ -16843,6 +16851,8 @@ def _client_safe_school_roadmap(roadmap: dict) -> dict:
         "current_lesson_id": roadmap["current_lesson_id"],
         "current_lesson": _client_safe_lesson(current_lesson) if current_lesson else None,
         "current_lesson_practiced": roadmap["current_lesson_practiced"],
+        "current_lesson_learn_completed": roadmap.get("current_lesson_learn_completed", False),
+        "current_lesson_has_practice": roadmap.get("current_lesson_has_practice", False),
         "is_final_lesson": roadmap["is_final_lesson"],
         "requires_checkpoint": roadmap.get("requires_checkpoint", False),
         "checkpoint_rubric": roadmap.get("checkpoint_rubric"),
@@ -17838,6 +17848,8 @@ def _school_current_action(status: str, access_state: str, roadmap: Optional[dic
     lesson_name = current_lesson.get("name") or "your current lesson"
     cp = roadmap.get("checkpoint_status") or {}
     practiced = bool(roadmap.get("current_lesson_practiced"))
+    learn_done = bool(roadmap.get("current_lesson_learn_completed"))
+    has_practice = bool(roadmap.get("current_lesson_has_practice"))
     requires_cp = bool(roadmap.get("requires_checkpoint"))
     cp_state = cp.get("status")  # not_submitted | awaiting_review | graded
 
@@ -17868,18 +17880,26 @@ def _school_current_action(status: str, access_state: str, roadmap: Optional[dic
         return {"type": "awaiting_review", "label": "Awaiting trainer review",
                 "sublabel": f"You submitted your {lesson_name} checkpoint — your trainer will review it soon.",
                 "target": {"screen": "feedback"}}
-    # 3. Practiced + checkpoint required + not yet submitted → submit
+    # 3. Learn + practice done, checkpoint required, not yet submitted → submit
     if requires_cp and practiced and cp_state in (None, "not_submitted"):
         return {"type": "submit_checkpoint", "label": "Submit your checkpoint",
                 "sublabel": f"You've practiced {lesson_name} — record your checkpoint video for review.",
                 "target": {"screen": "lesson", "lesson_id": lesson_id}}
-    # 4. Current lesson not practiced yet → today's training
-    if not practiced:
-        return {"type": "practice", "label": "Start today's training", "sublabel": lesson_name,
+    # (awaiting_review handled above.)
+    # 5. Learn step first — the student hasn't started practice for this lesson,
+    #    so its instructional content comes before Practice Coach. Learn is
+    #    marked complete only by the explicit Start-Practice action.
+    if has_practice and not learn_done and not practiced:
+        return {"type": "lesson", "label": "Start lesson",
+                "sublabel": f"Learn {lesson_name} before you practice.",
                 "target": {"screen": "lesson", "lesson_id": lesson_id}}
-    # 5. Practiced, no checkpoint gate → move on
+    # 6. Learn done, practice not done → practice.
+    if has_practice and not practiced:
+        return {"type": "practice", "label": "Start practice", "sublabel": lesson_name,
+                "target": {"screen": "lesson", "lesson_id": lesson_id}}
+    # 7. Practiced (or a lesson with no practice step) → move on.
     return {"type": "advance", "label": "Continue to your next lesson",
-            "sublabel": f"You've practiced {lesson_name}.", "target": {"screen": "course"}}
+            "sublabel": f"You've finished {lesson_name}.", "target": {"screen": "course"}}
 
 
 def _school_lesson_counts(enrollment: dict) -> dict:
@@ -17985,6 +18005,12 @@ async def portal_school_home(school_enrollment_id: str, user: dict = Depends(get
                                               "description": current_module.get("description") or ""},
         "current_lesson": current_lesson,
         "current_action": action,
+        "lesson_state": {
+            "learn_completed": (roadmap or {}).get("current_lesson_learn_completed", False),
+            "practiced": (roadmap or {}).get("current_lesson_practiced", False),
+            "has_practice": (roadmap or {}).get("current_lesson_has_practice", False),
+            "requires_checkpoint": (roadmap or {}).get("requires_checkpoint", False),
+        },
         "checkpoint_status": (roadmap or {}).get("checkpoint_status"),
         "latest_feedback": latest_feedback,
         "trainer": trainer,
@@ -18122,6 +18148,18 @@ async def portal_school_start_practice(school_enrollment_id: str, lesson_id: str
     )
     if not hw:
         raise HTTPException(status_code=422, detail="This lesson's practice template no longer exists.")
+    # Learn → Practice boundary: the student's explicit Start-Practice action is
+    # the authoritative "I've engaged with this lesson, now I'm practicing"
+    # signal — the practice homework itself is auto-provisioned at enrollment/
+    # advance, so its existence can't mark this. Recorded idempotently
+    # ($addToSet) on the enrollment so Student Home's current_action shows the
+    # lesson (learn) step first and the practice step only after. Reuses this
+    # existing action; no new client step, no fabricated "viewed" state. Legacy
+    # enrollments (absent list) simply show the lesson step first — correct, and
+    # no migration needed.
+    await db.dog_programs.update_one(
+        {"id": enrollment["id"]}, {"$addToSet": {"learn_completed_lesson_ids": lesson_id}},
+    )
     return {"homework_id": hw["id"]}
 
 
