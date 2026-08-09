@@ -18409,27 +18409,48 @@ async def admin_school_checkpoints_pending(_: dict = Depends(require_admin_and_p
     ).sort("submitted_at", 1).to_list(200)
     if not rows:
         return []
-    dog_ids = list({r["dog_id"] for r in rows})
-    client_ids = list({r["client_id"] for r in rows})
+    # Defensive against incomplete/legacy rows: a single malformed checkpoint
+    # submission (a legacy row missing school_enrollment_id/dog_id/lesson_id, or
+    # a partial write) must NEVER 500 the entire trainer review queue. All
+    # look-ups use .get(), and each row is built inside a try/except so a bad
+    # row is logged with its id and skipped rather than taking the queue down.
+    # Missing relation fields (e.g. school_enrollment_id) are surfaced as None —
+    # never fabricated. Valid rows are unaffected.
+    dog_ids = list({r.get("dog_id") for r in rows if r.get("dog_id")})
+    client_ids = list({r.get("client_id") for r in rows if r.get("client_id")})
     dogs_by_id = {d["id"]: d for d in await db.dogs.find({"id": {"$in": dog_ids}}, {"_id": 0, "id": 1, "name": 1, "photo": 1}).to_list(500)}
     clients_by_id = {c["id"]: c for c in await db.clients.find({"id": {"$in": client_ids}}, {"_id": 0, "id": 1, "name": 1}).to_list(500)}
     out = []
     for r in rows:
-        dog = dogs_by_id.get(r["dog_id"]) or {}
-        client = clients_by_id.get(r["client_id"]) or {}
-        out.append({
-            "id": r["id"], "school_enrollment_id": r["school_enrollment_id"],
-            "dog_id": r["dog_id"], "dog_name": dog.get("name"), "dog_photo": dog.get("photo") or "",
-            "client_id": r["client_id"], "client_name": client.get("name"),
-            "lesson_id": r["lesson_id"], "lesson_name": r.get("lesson_name"),
-            "client_note": r.get("client_note") or "",
-            "video_media_id": r.get("video_media_id"), "homework_id": r.get("homework_id"),
-            "rubric_snapshot": r.get("rubric_snapshot"),
-            "submitted_at": r.get("submitted_at"),
-            "outcome": r.get("outcome"), "trainer_feedback": r.get("trainer_feedback"),
-            "trainer_assist_hold_active": bool(r.get("trainer_assist_hold_active")),
-            "queue_state": _checkpoint_queue_state(r),
-        })
+        sub_id = r.get("id")
+        if not sub_id:
+            logger.warning(
+                "Checkpoint pending queue: skipping submission with no id (dog=%s client=%s status=%s)",
+                r.get("dog_id"), r.get("client_id"), r.get("status"),
+            )
+            continue
+        try:
+            dog = dogs_by_id.get(r.get("dog_id")) or {}
+            client = clients_by_id.get(r.get("client_id")) or {}
+            out.append({
+                "id": sub_id, "school_enrollment_id": r.get("school_enrollment_id"),
+                "dog_id": r.get("dog_id"), "dog_name": dog.get("name"), "dog_photo": dog.get("photo") or "",
+                "client_id": r.get("client_id"), "client_name": client.get("name"),
+                "lesson_id": r.get("lesson_id"), "lesson_name": r.get("lesson_name"),
+                "client_note": r.get("client_note") or "",
+                "video_media_id": r.get("video_media_id"), "homework_id": r.get("homework_id"),
+                "rubric_snapshot": r.get("rubric_snapshot"),
+                "submitted_at": r.get("submitted_at"),
+                "outcome": r.get("outcome"), "trainer_feedback": r.get("trainer_feedback"),
+                "trainer_assist_hold_active": bool(r.get("trainer_assist_hold_active")),
+                "queue_state": _checkpoint_queue_state(r),
+            })
+        except Exception as exc:
+            logger.warning(
+                "Checkpoint pending queue: skipping malformed submission %s (dog=%s client=%s status=%s): %s",
+                sub_id, r.get("dog_id"), r.get("client_id"), r.get("status"), exc,
+            )
+            continue
     out.sort(key=lambda x: (0 if x["queue_state"] == "state_conflict" else 1, x["submitted_at"] or ""))
     return out
 

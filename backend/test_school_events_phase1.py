@@ -424,6 +424,50 @@ def test_scenario_lesson_completed_is_activity_only():
             _p4_cleanup(se_row["id"], enr["id"])
 
 
+# ── Robustness: a malformed/legacy checkpoint row can't 500 the queue ───────
+def test_malformed_checkpoint_does_not_break_pending_queue():
+    admin = {"id": str(uuid.uuid4()), "role": "admin", "name": "SCE admin"}
+    valid_id, malformed_id = str(uuid.uuid4()), str(uuid.uuid4())
+    cid, did = str(uuid.uuid4()), str(uuid.uuid4())
+    run(server.db.clients.insert_one({"id": cid, "name": "Valid Client"}))
+    run(server.db.dogs.insert_one({"id": did, "name": "ValidDog"}))
+    # A complete, valid pending checkpoint.
+    run(server.db.checkpoint_submissions.insert_one({
+        "id": valid_id, "school_enrollment_id": str(uuid.uuid4()), "enrollment_id": str(uuid.uuid4()),
+        "dog_id": did, "client_id": cid, "lesson_id": "l1", "lesson_name": "Recall",
+        "status": "pending", "submitted_at": server.now_iso(),
+    }))
+    # A malformed/legacy pending checkpoint MISSING school_enrollment_id (the
+    # exact field that previously caused the KeyError 500), plus dog_id/client_id.
+    # lesson_id is set only so this row doesn't collide with the id-less row on
+    # the (school_enrollment_id, lesson_id) partial-unique index — it's the
+    # missing school_enrollment_id that reproduces the original crash.
+    run(server.db.checkpoint_submissions.insert_one({
+        "id": malformed_id, "status": "pending", "submitted_at": server.now_iso(),
+        "lesson_id": "sce-mal-lesson",
+    }))
+    # A row with no id at all — un-actionable, must be skipped (not crash).
+    run(server.db.checkpoint_submissions.insert_one({
+        "status": "pending", "submitted_at": server.now_iso(),
+        "lesson_id": "sce-noid-lesson", "_sce_noid": True,
+    }))
+    try:
+        out = run(server.admin_school_checkpoints_pending(admin))  # must NOT raise
+        ids = {x["id"] for x in out}
+        assert valid_id in ids, "a valid checkpoint must still render normally"
+        # The malformed-but-identifiable row is surfaced with what exists;
+        # its missing enrollment id is None (never fabricated).
+        mal = next((x for x in out if x["id"] == malformed_id), None)
+        assert mal is not None and mal["school_enrollment_id"] is None
+        # The id-less row is skipped, and the whole queue survived.
+        assert all(x.get("id") for x in out)
+    finally:
+        run(server.db.checkpoint_submissions.delete_many({"id": {"$in": [valid_id, malformed_id]}}))
+        run(server.db.checkpoint_submissions.delete_many({"_sce_noid": True}))
+        run(server.db.clients.delete_one({"id": cid}))
+        run(server.db.dogs.delete_one({"id": did}))
+
+
 def test_scenario_g_permissions_enforced_server_side():
     owner_h = _token_for("admin")                       # true owner
     fd_h = _token_for("employee", "front_desk")         # no manage_school
