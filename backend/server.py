@@ -16716,9 +16716,16 @@ async def _school_roadmap(enrollment: dict, dog_id: str) -> dict:
     current_hw = await _lesson_practice_homework(dog_id, cur_lesson_id) if cur_lesson_id else None
     practiced = _lesson_is_practiced(current_hw)
 
+    # Phase 2B — a COMPLETED enrollment has no current pointer (current_lesson_id
+    # is cleared on the final advance), which previously made the index default
+    # to 0 and present the final module's first lesson as "current" and the rest
+    # as locked. A graduated course is fully completed and stays reviewable:
+    # every module/lesson reads "completed", nothing is current or locked.
+    is_completed_enrollment = _canonical_school_status(enrollment) == "completed"
+
     modules_out = []
     for m_idx, m in enumerate(modules):
-        if m_idx < cur_module_idx:
+        if is_completed_enrollment or m_idx < cur_module_idx:
             m_status = "completed"
         elif m_idx == cur_module_idx:
             m_status = "current"
@@ -18150,6 +18157,12 @@ async def portal_school_lesson_detail(school_enrollment_id: str, lesson_id: str,
         "module_name": module_name,
         "skills": skills,
         "has_practice_recipe": has_practice_recipe,
+        # Phase 2B — the native Lesson screen's Learn/Practice boundary state.
+        # has_practice mirrors the roadmap's definition (a configured practice
+        # template), distinct from has_practice_recipe (Coach Mode enabled).
+        "has_practice": bool(tpl_ids),
+        "learn_completed": bool(lesson.get("learn_completed")) or (
+            lesson_id in set(enrollment.get("learn_completed_lesson_ids") or [])),
         "practiced": roadmap["current_lesson_practiced"] if lesson.get("is_current") else (lesson.get("status") == "completed"),
     }
 

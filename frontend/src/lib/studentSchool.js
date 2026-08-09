@@ -37,21 +37,27 @@ export function isCaughtUp(type) {
   return type === "awaiting_review" || type === "course_complete" || type === "access_expired";
 }
 
-/* Student School routes (Shop-style history.pushState, no react-router). */
+/* Student School routes (Shop-style history.pushState, no react-router).
+ * /school · /school/course/:enrollmentId · /school/course/:eid/lesson/:lessonId
+ * /school/today · /school/progress · /school/feedback */
 export const SCHOOL_VIEWS = ["home", "course", "today", "progress", "feedback"];
 
 export function parseSchoolPath(pathname) {
-  const m = /^\/school(?:\/([^/?#]+))?(?:\/([^/?#]+))?/.exec(pathname || "");
-  if (!m) return { view: "home", enrollmentId: null };
+  const m = /^\/school(?:\/([^/?#]+))?(?:\/([^/?#]+))?(?:\/([^/?#]+))?(?:\/([^/?#]+))?/.exec(pathname || "");
+  if (!m) return { view: "home", enrollmentId: null, lessonId: null };
   const seg = m[1];
-  if (!seg) return { view: "home", enrollmentId: null };
-  if (seg === "course") return { view: "course", enrollmentId: m[2] || null };
-  if (SCHOOL_VIEWS.includes(seg)) return { view: seg, enrollmentId: null };
-  return { view: "home", enrollmentId: null };
+  if (!seg) return { view: "home", enrollmentId: null, lessonId: null };
+  if (seg === "course") {
+    if (m[3] === "lesson" && m[4]) return { view: "lesson", enrollmentId: m[2] || null, lessonId: m[4] };
+    return { view: "course", enrollmentId: m[2] || null, lessonId: null };
+  }
+  if (SCHOOL_VIEWS.includes(seg)) return { view: seg, enrollmentId: null, lessonId: null };
+  return { view: "home", enrollmentId: null, lessonId: null };
 }
 
-export function schoolPathFor(view, enrollmentId) {
+export function schoolPathFor(view, enrollmentId, lessonId) {
   if (view === "home") return "/school";
+  if (view === "lesson" && enrollmentId && lessonId) return `/school/course/${enrollmentId}/lesson/${lessonId}`;
   if (view === "course" && enrollmentId) return `/school/course/${enrollmentId}`;
   return `/school/${view}`;
 }
