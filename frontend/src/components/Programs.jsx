@@ -9,6 +9,18 @@ import ShopCategoryFields from "./ShopCategoryFields";
 import ProgramStudio from "./ProgramStudio";
 import { programToTemplate, parseProgramTemplate, remapProgramHomework } from "../lib/programStudioPolish";
 
+/** Canonical single-program loader for every editor entry point.
+ *  The list endpoints are bounded (500 rows), so an editor must never depend
+ *  on a program appearing in a list response — fetch the current full doc by
+ *  id, and only fall back to a caller-supplied row if the fetch fails. */
+export async function fetchProgramById(programId, fallbackRow = null) {
+  try {
+    const { data } = await api.get(`/programs/${programId}`);
+    if (data?.id === programId) return data;
+  } catch { /* fall through to the caller's row, if any */ }
+  return fallbackRow && fallbackRow.id === programId ? fallbackRow : null;
+}
+
 /* ============================================================
  *  Admin: Settings → Programs tab. Manage the library of programs.
  *
@@ -76,7 +88,14 @@ export function ProgramsPanel() {
       requires_dog: false, requires_approval: false, requires_completed_onboarding: false,
     });
   };
-  const openEditProgram = (p) => setEdit({ ...p });
+  const openEditProgram = async (p) => {
+    // Always open the Studio on the CURRENT full document — the list row may
+    // be stale, and the list response is bounded, so it is never the source
+    // of truth for what the editor loads.
+    const full = await fetchProgramById(p.id, p);
+    if (!full) { setErr("Could not load program"); return; }
+    setEdit({ ...full });
+  };
   const closeEditor = () => setEdit(null);
   const onStudioSaved = () => { setEdit(null); load(); };
 

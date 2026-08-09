@@ -643,7 +643,13 @@ def register_school_suite(*, api, db, get_current_user, manage_school_dep, perms
         se,dp=await _client_context(sid,user)
         now=_now(); row=await db.school_requests.find_one_and_update({"id":request_id,"school_enrollment_id":sid,"status":"open"},{"$set":{"status":"submitted","response_note":body.note or "","response_media_id":body.media_id,"submitted_at":now}},projection={"_id":0},return_document=ReturnDocument.AFTER)
         if not row: raise HTTPException(status_code=404,detail="Trainer request not found")
-        await school_events.emit_event(school_events.EventType.TRAINER_REQUEST_COMPLETED,actor_type="client",actor_id=user.get("id"),client_id=se.get("client_id"),dog_id=se.get("dog_id"),enrollment_id=dp.get("id"),school_enrollment_id=sid,title="Student completed a trainer request",summary=row.get("title") or "Trainer request",requires_attention=True,priority="high",deep_link={"screen":"school_hq","student_id":sid,"request_id":request_id},dedupe_key=f"request_response:{request_id}")
+        # Same identifying context the other attention events carry — the
+        # staff email/notification must name the client, dog, and course, not
+        # just say "a student".
+        client=await db.clients.find_one({"id":se.get("client_id")},{"_id":0,"name":1}) or {}
+        dog=await db.dogs.find_one({"id":se.get("dog_id")},{"_id":0,"name":1}) or {}
+        who=" · ".join(x for x in [client.get("name"),dog.get("name")] if x) or "A student"
+        await school_events.emit_event(school_events.EventType.TRAINER_REQUEST_COMPLETED,actor_type="client",actor_id=user.get("id"),client_id=se.get("client_id"),client_name=client.get("name"),dog_id=se.get("dog_id"),dog_name=dog.get("name"),enrollment_id=dp.get("id"),school_enrollment_id=sid,program_id=se.get("program_id"),program_name=(dp.get("program_snapshot") or {}).get("name"),title=f"{who} completed a trainer request",summary=row.get("title") or "Trainer request",requires_attention=True,priority="high",deep_link={"screen":"school_hq","student_id":sid,"request_id":request_id},dedupe_key=f"request_response:{request_id}")
         return row
 
     @api.get("/portal/school/{sid}/workspace")

@@ -398,7 +398,8 @@ export default function ProgramStudio({ programId, initialProgram, meta, allProg
         <div className="flex-1 min-h-0 overflow-y-auto">
           {tab === "setup" && (
             <SetupTab program={program} set={set} meta={meta} allPrograms={allPrograms} hwTemplates={hwTemplates}
-                      emailTemplates={emailTemplates} originalImageId={originalImageId} programId={programId} />
+                      emailTemplates={emailTemplates} originalImageId={originalImageId} programId={programId}
+                      schoolTrainers={schoolTrainers} />
           )}
           {tab === "curriculum" && (
             <CurriculumTab
@@ -454,7 +455,7 @@ export default function ProgramStudio({ programId, initialProgram, meta, allProg
 // kept fully separate from curriculum authoring per the brief. Every
 // field/value below is identical to before — this only reorganizes the
 // single flat form into focused, collapsible groups.
-function SetupTab({ program, set, meta, allPrograms, hwTemplates, emailTemplates, originalImageId, programId }) {
+function SetupTab({ program, set, meta, allPrograms, hwTemplates, emailTemplates, originalImageId, programId, schoolTrainers = [] }) {
   const moduleCount = (program.modules || []).length;
   const lessonCount = (program.modules || []).reduce((sum, m) => sum + (m.lessons || []).length, 0);
   const skillCount = (program.modules || []).reduce((sum, m) => sum + (m.goals || []).length, 0);

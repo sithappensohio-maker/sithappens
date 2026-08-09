@@ -22387,6 +22387,18 @@ async def programs_pipeline(
     return out
 
 
+# Registered AFTER every literal /programs/<name> GET route (meta,
+# active-summary, pipeline) so the path parameter can never shadow them.
+# The Course Builder's editors open programs by id; the list endpoint's
+# bounded response must never decide whether a program is editable.
+@api.get("/programs/{program_id}")
+async def get_program(program_id: str, _: dict = Depends(require_admin_and_permission("manage_training_content"))):
+    program = await db.programs.find_one({"id": program_id}, {"_id": 0})
+    if not program:
+        raise HTTPException(status_code=404, detail="Program not found")
+    return program
+
+
 # ----- Dog tags (lightweight, per-dog) -----
 class TagsIn(BaseModel):
     tags: List[str] = []

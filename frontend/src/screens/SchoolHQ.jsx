@@ -239,7 +239,7 @@ function SectionTitle({ icon, title, onSeeAll }) {
     <div className="flex items-center justify-between mb-2">
       <p className="text-[12px] font-black uppercase tracking-[0.28em] text-shTextMuted"><i className={`fas ${icon} mr-1.5 text-shSecondary`} />{title}</p>
       {onSeeAll && (
-        <button type="button" onClick={onSeeAll} className="text-[11px] font-black uppercase tracking-widest text-shTextMuted hover:text-shText transition">
+        <button type="button" onClick={onSeeAll} className="min-h-[44px] px-2 -mx-2 -my-3 inline-flex items-center text-[11px] font-black uppercase tracking-widest text-shTextMuted hover:text-shText transition">
           See all <i className="fas fa-arrow-right ml-1" />
         </button>
       )}

@@ -123,6 +123,10 @@ EVENT_POLICY: Dict[str, Dict[str, Any]] = {
     EventType.PRACTICE_COULD_NOT_COMPLETE: {"attention": True, "priority": Priority.HIGH, "email": True},
     EventType.TRAINER_ASSIST_REQUESTED:    {"attention": True, "priority": Priority.HIGH, "email": True},
     EventType.CHECKPOINT_TRAINER_ASSIST_REQUIRED: {"attention": True, "priority": Priority.HIGH, "email": True},
+    # A submitted trainer-request response is trainer work waiting on a human
+    # (review the student's video/check-in), so it alerts + emails exactly
+    # like the other attention-required School actions.
+    EventType.TRAINER_REQUEST_COMPLETED:   {"attention": True, "priority": Priority.HIGH, "email": True},
     EventType.CHECKPOINT_REMEDIATION_REQUIRED:    {"attention": True, "priority": Priority.NORMAL, "email": False},
     # ── Notable but not a screaming alert (in-app, no email) ─────────────────
     EventType.ACHIEVEMENT_EARNED:          {"attention": False, "priority": Priority.NORMAL, "email": False},

@@ -72,9 +72,11 @@ function FeedbackEntry({ entry, onAsk }) {
         </div>
       )}
 
-      <div className="mt-4 flex flex-wrap gap-3">
-        {hasRubric && <button onClick={() => setOpen((v) => !v)} className="text-[11px] font-black uppercase tracking-widest text-shSecondary hover:text-shText">{open ? "Hide scoring details" : "View scoring details"} <i className={`fas fa-chevron-${open ? "up" : "down"} ml-1`} /></button>}
-        <button onClick={() => onAsk?.({ checkpoint: entry })} className="text-[11px] font-black uppercase tracking-widest text-shSecondary hover:text-shText"><i className="fas fa-comment-dots mr-1" />Ask about this review</button>
+      {/* Same text-link visual, but a real >=44px touch target (negative
+          x-margin keeps the label aligned with the card edge). */}
+      <div className="mt-2 flex flex-wrap gap-x-3">
+        {hasRubric && <button onClick={() => setOpen((v) => !v)} className="min-h-[44px] px-2 -mx-2 inline-flex items-center text-[11px] font-black uppercase tracking-widest text-shSecondary hover:text-shText">{open ? "Hide scoring details" : "View scoring details"} <i className={`fas fa-chevron-${open ? "up" : "down"} ml-1`} /></button>}
+        <button onClick={() => onAsk?.({ checkpoint: entry })} className="min-h-[44px] px-2 -mx-2 inline-flex items-center text-[11px] font-black uppercase tracking-widest text-shSecondary hover:text-shText"><i className="fas fa-comment-dots mr-1" />Ask about this review</button>
       </div>
       {open && hasRubric && <div className="grid sm:grid-cols-2 gap-3 mt-4 pt-4 border-t border-shBorder"><CriterionGroup title="Handler Skills" criteria={rubric.handler_criteria} scores={entry.handler_scores} /><CriterionGroup title="Dog Performance" criteria={rubric.dog_criteria} scores={entry.dog_scores} /></div>}
     </article>
