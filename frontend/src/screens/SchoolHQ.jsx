@@ -1,0 +1,227 @@
+import { useCallback, useEffect, useRef, useState } from "react";
+import { api } from "../lib/api";
+import { useLiveRefresh } from "../lib/useLiveRefresh";
+import AdminPageHeader from "../components/admin/AdminPageHeader";
+import AdminTabs from "../components/admin/AdminTabs";
+import AdminStatCard from "../components/admin/AdminStatCard";
+import EmptyState from "../components/premium/EmptyState";
+import SchoolNeedsAttention from "../components/school/SchoolNeedsAttention";
+import SchoolActivityFeed from "../components/school/SchoolActivityFeed";
+import CheckpointReviewQueue from "../components/CheckpointReviewQueue";
+import TrainerAssistQueue from "../components/TrainerAssistQueue";
+import { navigateToScreen, announceAttentionChanged } from "../lib/schoolHq";
+
+/* School HQ — the admin operations hub for the Online School. A thin, live
+ * view over the Phase-1 event/notification spine + the existing checkpoint /
+ * Trainer-Assist workflows (reused as-is, launched from their tabs). Broken
+ * into small pieces (feed, queue, stat cards) rather than one mega-component. */
+export default function SchoolHQ() {
+  const [tab, setTab] = useState("overview");
+  const tabRef = useRef(tab);
+  useEffect(() => { tabRef.current = tab; }, [tab]);
+
+  const [summary, setSummary] = useState(null);
+  const [attention, setAttention] = useState([]);
+  const [activity, setActivity] = useState([]);
+  const [activityCursor, setActivityCursor] = useState(null);
+  const [loading, setLoading] = useState(true);
+  const [busyId, setBusyId] = useState(null);
+  const [checkpointOpen, setCheckpointOpen] = useState(false);
+  const [trainerAssistOpen, setTrainerAssistOpen] = useState(false);
+
+  const loadSummary = useCallback(async () => {
+    const { data } = await api.get("/admin/school/hq/summary");
+    setSummary(data);
+  }, []);
+  const loadAttention = useCallback(async () => {
+    const { data } = await api.get("/admin/school/hq/needs-attention", { params: { sort: "priority", limit: 50 } });
+    setAttention(data.items || []);
+  }, []);
+  const loadActivity = useCallback(async () => {
+    const { data } = await api.get("/admin/school/hq/activity", { params: { limit: 40 } });
+    setActivity(data.items || []);
+    setActivityCursor(data.next_before || null);
+  }, []);
+
+  // One live-refresh loader: summary always (drives cards + tab counts + the
+  // sidebar badge stays in sync via its own poll), plus the active tab's list.
+  const refresh = useCallback(async () => {
+    await loadSummary();
+    const t = tabRef.current;
+    if (t === "overview" || t === "needs_attention") await loadAttention();
+    if (t === "overview" || t === "activity") await loadActivity();
+  }, [loadSummary, loadAttention, loadActivity]);
+
+  useEffect(() => {
+    let alive = true;
+    setLoading(true);
+    refresh().finally(() => { if (alive) setLoading(false); });
+    return () => { alive = false; };
+  }, [refresh, tab]);
+
+  useLiveRefresh(refresh, { intervalMs: 30000 });
+
+  const loadMoreActivity = useCallback(async () => {
+    if (!activityCursor) return;
+    const { data } = await api.get("/admin/school/hq/activity", { params: { limit: 40, before: activityCursor } });
+    setActivity((prev) => [...prev, ...(data.items || [])]);
+    setActivityCursor(data.next_before || null);
+  }, [activityCursor]);
+
+  // Deep-link routing — every actionable item opens the EXACT record/workflow,
+  // never a dead end. Checkpoint/Trainer-Assist open their existing queue
+  // modal on the matching tab; question/video/could-not-complete open the
+  // Homework thread (the real practice record) via the app shell.
+  const openItem = useCallback(async (item) => {
+    const t = item.notification_type || item.event_type || "";
+    if (item.id && item.notification_type && !item.read_at) {
+      try { await api.post(`/admin/school/hq/notifications/${item.id}/read`); announceAttentionChanged(); } catch { /* ignore */ }
+    }
+    if (t.startsWith("checkpoint")) { setTab("checkpoints"); setCheckpointOpen(true); }
+    else if (t.startsWith("trainer_assist")) { setTab("trainer_assist"); setTrainerAssistOpen(true); }
+    else { navigateToScreen("homework"); }
+  }, []);
+
+  const markRead = useCallback(async (item) => {
+    setBusyId(item.id);
+    try {
+      await api.post(`/admin/school/hq/notifications/${item.id}/read`);
+      setAttention((prev) => prev.map((n) => (n.id === item.id ? { ...n, read_at: new Date().toISOString() } : n)));
+      announceAttentionChanged();
+    } finally { setBusyId(null); }
+  }, []);
+
+  const resolveItem = useCallback(async (item) => {
+    setBusyId(item.id);
+    try {
+      await api.post(`/admin/school/hq/notifications/${item.id}/resolve`);
+      setAttention((prev) => prev.filter((n) => n.id !== item.id));
+      announceAttentionChanged();
+      loadSummary();
+    } finally { setBusyId(null); }
+  }, [loadSummary]);
+
+  const onQueueChanged = useCallback(() => { refresh(); }, [refresh]);
+
+  const s = summary || {};
+  const tabs = [
+    { key: "overview", label: "Overview", icon: "fa-gauge", accent: "lime" },
+    { key: "activity", label: "Activity", icon: "fa-stream", accent: "cyan" },
+    { key: "needs_attention", label: "Needs Attention", icon: "fa-bell", accent: "orange", count: s.needs_attention || 0 },
+    { key: "checkpoints", label: "Checkpoints", icon: "fa-clipboard-check", accent: "purple", count: s.checkpoints_pending || 0 },
+    { key: "trainer_assist", label: "Trainer Assist", icon: "fa-hand-holding-heart", accent: "purple", count: s.trainer_assists || 0 },
+  ];
+
+  return (
+    <div className="space-y-4" data-testid="school-hq">
+      <AdminPageHeader icon="fa-school" title="School HQ" testid="school-hq-header"
+                       description="Everything happening in your Online School — activity, who needs a human, checkpoints, and Trainer Assist, in one place." />
+
+      <AdminTabs items={tabs} value={tab} onChange={setTab} testid="school-hq-tabs" />
+
+      {tab === "overview" && (
+        <div className="space-y-4">
+          <div className="grid grid-cols-2 lg:grid-cols-3 gap-3" data-testid="school-hq-overview-cards">
+            <AdminStatCard icon="fa-user-graduate" accent="cyan" value={s.active_students ?? "—"} label="Active students" onClick={() => setTab("activity")} testid="stat-active-students" />
+            <AdminStatCard icon="fa-bell" accent="orange" value={s.needs_attention ?? "—"} label="Needs attention" onClick={() => setTab("needs_attention")} testid="stat-needs-attention" />
+            <AdminStatCard icon="fa-clipboard-check" accent="purple" value={s.checkpoints_pending ?? "—"} label="Checkpoints to review" onClick={() => setTab("checkpoints")} testid="stat-checkpoints" />
+            <AdminStatCard icon="fa-circle-question" accent="orange" value={s.new_questions ?? "—"} label="New questions" onClick={() => setTab("needs_attention")} testid="stat-questions" />
+            <AdminStatCard icon="fa-hand-holding-heart" accent="purple" value={s.trainer_assists ?? "—"} label="Trainer assists" onClick={() => setTab("trainer_assist")} testid="stat-trainer-assist" />
+            <AdminStatCard icon="fa-user-clock" accent="neutral" value={s.inactive_students ?? "—"} label="Inactive students" detail={s.inactive_rule} testid="stat-inactive" />
+          </div>
+
+          <div className="grid gap-4 lg:grid-cols-2">
+            {/* min-w-0 lets each grid column shrink below its content's
+                intrinsic min-width (grid items default to min-width:auto),
+                so the row cards wrap instead of forcing horizontal overflow
+                on narrow screens. */}
+            <section className="min-w-0">
+              <SectionTitle icon="fa-bell" title="Needs attention" onSeeAll={() => setTab("needs_attention")} />
+              <SchoolNeedsAttention items={attention.slice(0, 5)} loading={loading} busyId={busyId}
+                                    onOpen={openItem} onRead={markRead} onResolve={resolveItem} />
+            </section>
+            <section className="min-w-0">
+              <SectionTitle icon="fa-stream" title="Recent activity" onSeeAll={() => setTab("activity")} />
+              <SchoolActivityFeed items={activity.slice(0, 8)} loading={loading} onOpen={openItem} />
+            </section>
+          </div>
+        </div>
+      )}
+
+      {tab === "activity" && (
+        <SchoolActivityFeed items={activity} loading={loading} onOpen={openItem}
+                            hasMore={!!activityCursor} onLoadMore={loadMoreActivity} />
+      )}
+
+      {tab === "needs_attention" && (
+        <SchoolNeedsAttention items={attention} loading={loading} busyId={busyId}
+                              onOpen={openItem} onRead={markRead} onResolve={resolveItem} />
+      )}
+
+      {tab === "checkpoints" && (
+        <QueueLaunchPanel
+          icon="fa-clipboard-check" accent="purple"
+          count={s.checkpoints_pending || 0}
+          title="Checkpoints awaiting review"
+          blurb="Grade Handler Skills and Dog Performance, then advance, prescribe practice, or recommend Trainer Assist."
+          buttonLabel="Open review queue"
+          onOpen={() => setCheckpointOpen(true)}
+          emptyLabel="No checkpoints are waiting for review."
+        />
+      )}
+
+      {tab === "trainer_assist" && (
+        <QueueLaunchPanel
+          icon="fa-hand-holding-heart" accent="purple"
+          count={s.trainer_assists || 0}
+          title="Trainer Assist cases"
+          blurb="Students a trainer recommended for a hands-on session — contact, schedule, and complete each case."
+          buttonLabel="Open Trainer Assist queue"
+          onOpen={() => setTrainerAssistOpen(true)}
+          emptyLabel="No active Trainer Assist cases."
+        />
+      )}
+
+      {checkpointOpen && (
+        <CheckpointReviewQueue onClose={() => { setCheckpointOpen(false); onQueueChanged(); }}
+                               onGraded={onQueueChanged} />
+      )}
+      {trainerAssistOpen && (
+        <TrainerAssistQueue onClose={() => { setTrainerAssistOpen(false); onQueueChanged(); }}
+                            onChanged={onQueueChanged} />
+      )}
+    </div>
+  );
+}
+
+function SectionTitle({ icon, title, onSeeAll }) {
+  return (
+    <div className="flex items-center justify-between mb-2">
+      <p className="text-[12px] font-black uppercase tracking-[0.28em] text-shTextMuted"><i className={`fas ${icon} mr-1.5 text-shSecondary`} />{title}</p>
+      {onSeeAll && (
+        <button type="button" onClick={onSeeAll} className="text-[11px] font-black uppercase tracking-widest text-shTextMuted hover:text-shText transition">
+          See all <i className="fas fa-arrow-right ml-1" />
+        </button>
+      )}
+    </div>
+  );
+}
+
+function QueueLaunchPanel({ icon, accent, count, title, blurb, buttonLabel, onOpen, emptyLabel }) {
+  if (!count) {
+    return <EmptyState icon={icon} accent="lime" title="All clear" description={emptyLabel} />;
+  }
+  return (
+    <div className="rounded-2xl border border-shBorder bg-[var(--sh-card-base)] p-5 flex flex-col sm:flex-row sm:items-center gap-4" data-testid="queue-launch">
+      <AdminStatCard icon={icon} accent={accent} value={count} label={title} />
+      <div className="min-w-0 flex-1">
+        <p className="text-shTextMuted text-[13px]">{blurb}</p>
+      </div>
+      <button type="button" onClick={onOpen}
+              className="shrink-0 text-[13px] font-black uppercase tracking-widest px-5 py-2.5 rounded-xl bg-shPrimary/15 border border-shPrimary/40 text-shPrimary hover:bg-shPrimary/25 transition"
+              data-testid="queue-launch-open">
+        <i className="fas fa-arrow-right mr-2" />{buttonLabel}
+      </button>
+    </div>
+  );
+}
