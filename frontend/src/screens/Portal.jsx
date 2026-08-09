@@ -1906,7 +1906,7 @@ export default function Portal() {
                 </div>
                 <div className="min-w-0 flex-1">
                   <p className="text-[10px] font-black uppercase tracking-[0.3em] text-shBlue">Sit Happens Online School</p>
-                  <p className="text-[14px] font-black text-shText truncate">{schoolEntries[0].program_name} · {schoolEntries[0].status === "completed" ? "Completed" : formatCompletionPct(schoolEntries[0].mastered_pct)}</p>
+                  <p className="text-[14px] font-black text-shText truncate">{schoolEntries[0].program_name} · {schoolEntries[0].status === "completed" ? "Completed" : formatCompletionPct(schoolEntries[0].course_pct ?? schoolEntries[0].mastered_pct)}</p>
                   <p className="text-[12px] text-shTextMuted truncate">{nextActionLabel(schoolEntries[0])}</p>
                 </div>
                 <button onClick={openSchool} data-testid="online-school-open"
