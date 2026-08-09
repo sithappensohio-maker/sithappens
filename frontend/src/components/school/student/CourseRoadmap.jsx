@@ -28,7 +28,9 @@ export default function CourseRoadmap({ detail, loading, onOpenLesson, onResume 
 
   const roadmap = detail.roadmap;
   const modules = buildSchoolRoadmap(roadmap);
-  const pct = Math.max(0, Math.min(100, Math.round(detail.mastered_pct || 0)));
+  // Backend-derived curriculum completion (completed/total lessons) — never
+  // the trainer-scored mastered_pct, which is a different measure.
+  const pct = Math.max(0, Math.min(100, Math.round(detail.course_pct ?? 0)));
   const currentModule = modules.find((m) => m.status === "current");
   const currentLesson = roadmap?.current_lesson;
   const cpStatus = roadmap?.checkpoint_status;

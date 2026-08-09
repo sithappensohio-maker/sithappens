@@ -89,6 +89,46 @@ def test_locked_lesson_direct_fetch_403():
             _p4_cleanup(se_row["id"], enr["id"])
 
 
+def test_course_pct_tracks_curriculum_completion():
+    """Course Progress = completed lessons / total lessons (backend-derived,
+    _school_course_progress). 0/2 → 0%, 1/2 → 50%, completed → exactly 100%.
+    Never mastered_pct (skill mastery, which stays 0 for self-guided school)."""
+    with _p4_program(n_lessons_per_module=2, checkpoint_lesson_idx=99) as (prog, admin), _p4_client_and_dog() as (client_doc, dog):
+        se_row, enr = _p4_enroll(prog, dog, admin)
+        try:
+            cu = _p4_client_user(client_doc["id"])
+            home = run(server.portal_school_home(se_row["id"], cu))
+            assert home["progress"]["course_pct"] == 0
+            assert home["progress"]["lessons_total"] == 2
+
+            # complete lesson 1 → 50%
+            lid = _current_lesson_id(enr["id"])
+            started = run(server.portal_school_start_practice(se_row["id"], lid, cu))
+            run(server.log_section(started["homework_id"], server.SectionLogIn(section_id="practice"), cu))
+            run(server.portal_school_advance(se_row["id"], cu))
+            home = run(server.portal_school_home(se_row["id"], cu))
+            assert home["progress"]["course_pct"] == 50, home["progress"]
+            assert home["progress"]["lessons_completed"] == 1
+            detail = run(server.portal_school_detail(se_row["id"], cu))
+            assert detail["course_pct"] == 50  # detail (My Course header) agrees
+
+            # complete lesson 2 → course completed → exactly 100, counts 2/2
+            lid2 = _current_lesson_id(enr["id"])
+            started2 = run(server.portal_school_start_practice(se_row["id"], lid2, cu))
+            run(server.log_section(started2["homework_id"], server.SectionLogIn(section_id="practice"), cu))
+            run(server.portal_school_advance(se_row["id"], cu))
+            home = run(server.portal_school_home(se_row["id"], cu))
+            assert home["status"] == "completed"
+            assert home["progress"]["course_pct"] == 100
+            assert home["progress"]["lessons_completed"] == home["progress"]["lessons_total"] == 2
+            assert run(server.portal_school_detail(se_row["id"], cu))["course_pct"] == 100
+            # the list endpoint row carries the same number
+            row = next(r for r in run(server.portal_school_list(cu)) if r["school_enrollment_id"] == se_row["id"])
+            assert row["course_pct"] == 100
+        finally:
+            _p4_cleanup(se_row["id"], enr["id"])
+
+
 def test_completed_course_roadmap_fully_reviewable():
     """After graduation the roadmap must read fully completed — no lesson
     presented as current, none locked — and every lesson stays fetchable."""

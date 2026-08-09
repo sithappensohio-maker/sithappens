@@ -17717,6 +17717,7 @@ async def portal_school_list(user: dict = Depends(get_current_user)):
             "program_name": (enrollment.get("program_snapshot") or {}).get("name"),
             "status": status, "access_state": access_state,
             "mastered_pct": summary.get("mastered_pct", 0),
+            "course_pct": _school_course_progress(enrollment, status)["course_pct"],
             "current_module_name": current_module_name,
             "current_lesson_name": current_lesson_name,
             "current_lesson_practiced": current_lesson_practiced,
@@ -17833,6 +17834,7 @@ async def portal_school_detail(school_enrollment_id: str, user: dict = Depends(g
         "program_name": (enrollment.get("program_snapshot") or {}).get("name"),
         "program_focus": (enrollment.get("program_snapshot") or {}).get("focus"),
         "mastered_pct": summary.get("mastered_pct", 0),
+        "course_pct": _school_course_progress(enrollment, status)["course_pct"],
         "roadmap": roadmap,
         "completion_summary": completion_summary,
     }
@@ -17937,6 +17939,32 @@ def _school_current_action(status: str, access_state: str, roadmap: Optional[dic
             "sublabel": f"You've finished {lesson_name}.", "target": {"screen": "course"}}
 
 
+def _school_course_progress(enrollment: dict, status: str) -> dict:
+    """The student-facing Course Progress number — CURRICULUM completion, not
+    skill mastery (mastered_pct is trainer-scored goal_progress, which
+    self-guided checkpoint grading deliberately never writes, so it reads 0%
+    for School students no matter how far they've progressed — never present
+    that as course progress).
+
+    Formula: course_pct = round(100 * lessons_completed / lessons_total),
+    where lessons_completed/total come from _school_lesson_counts (the
+    enrollment's OWN frozen snapshot + pointer, same ordering as
+    _school_roadmap — per enrollment/dog, locked future work never counted).
+    Checkpoints carry NO separate weight: a checkpoint gates its lesson's
+    completion (the pointer cannot pass it without the trainer's advance), so
+    it is already embedded in the lesson count — a separate term would
+    double-count the same unit. The pointer only ever moves forward, so the
+    percentage never decreases; a completed enrollment is pinned to exactly
+    100 (and total/total) regardless of any legacy pointer state."""
+    counts = _school_lesson_counts(enrollment)
+    if status == "completed":
+        return {"lessons_completed": counts["lessons_total"],
+                "lessons_total": counts["lessons_total"], "course_pct": 100}
+    total = counts["lessons_total"]
+    pct = int(round(100 * counts["lessons_completed"] / total)) if total else 0
+    return {**counts, "course_pct": max(0, min(100, pct))}
+
+
 def _school_lesson_counts(enrollment: dict) -> dict:
     """Completed/total lesson tally from the enrollment's own program_snapshot
     + current pointer — same module/lesson ordering _school_roadmap uses, so
@@ -18027,18 +18055,23 @@ async def portal_school_home(school_enrollment_id: str, user: dict = Depends(get
                "role": "Sit Happens Trainer" if (latest_feedback or {}).get("trainer_name") else None,
                "is_general_support": not (latest_feedback or {}).get("trainer_name")}
 
-    counts = _school_lesson_counts(enrollment)
+    course_progress = _school_course_progress(enrollment, status)
     modules = roadmap["modules"] if roadmap else []
     checkpoints_passed = await db.checkpoint_submissions.count_documents(
         {"school_enrollment_id": se["id"], "outcome": "advance"},
     )
     progress = {
+        # course_pct is the ONLY number presented as Course Progress —
+        # curriculum completion (see _school_course_progress). mastered_pct
+        # (trainer-scored skill mastery) stays available but is a different
+        # measure and must never be labeled course progress.
+        "course_pct": course_progress["course_pct"],
         "mastered_pct": summary.get("mastered_pct", 0),
         "modules_total": len(snap.get("modules") or []),
         "modules_completed": sum(1 for m in modules if m["status"] == "completed"),
         "current_module_name": (current_module or {}).get("name"),
-        "lessons_completed": counts["lessons_completed"],
-        "lessons_total": counts["lessons_total"],
+        "lessons_completed": course_progress["lessons_completed"],
+        "lessons_total": course_progress["lessons_total"],
         "checkpoints_passed": checkpoints_passed,
     }
 

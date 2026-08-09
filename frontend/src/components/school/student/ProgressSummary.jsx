@@ -1,8 +1,11 @@
 /* Compact progress summary for Home. Real counts only — no invented streaks or
- * trends. Links to the full Progress screen (built in 2C). */
+ * trends. The headline % is course_pct: backend-derived CURRICULUM completion
+ * (completed lessons / total lessons; checkpoints gate lessons rather than
+ * carrying separate weight). Never mastered_pct — that's trainer-scored skill
+ * mastery, a different measure. Links to the full Progress screen (2C). */
 export default function ProgressSummary({ progress, onView }) {
   if (!progress) return null;
-  const pct = Math.max(0, Math.min(100, progress.mastered_pct || 0));
+  const pct = Math.max(0, Math.min(100, progress.course_pct ?? 0));
   const stat = (value, label) => (
     <div className="min-w-0">
       <p className="text-[20px] font-black text-shText leading-none tabular-nums">{value}</p>

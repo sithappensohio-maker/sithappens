@@ -496,7 +496,7 @@ function DogSwitcher({ list, activeId, onSelect }) {
               <Avatar src={d.dog_photo} icon="fa-paw" size="sm" ring={d.school_enrollment_id === activeId ? "border-shPrimary/50" : "border-shBorder"} alt={d.dog_name}/>
               <div className="min-w-0 flex-1">
                 <p className={`text-[13px] font-black truncate ${d.school_enrollment_id === activeId ? "text-shPrimary" : "text-shText"}`}>{d.dog_name}</p>
-                <p className="text-[10px] text-shTextMuted truncate">{d.program_name} · {d.status === "completed" ? "Completed" : formatCompletionPct(d.mastered_pct)}</p>
+                <p className="text-[10px] text-shTextMuted truncate">{d.program_name} · {d.status === "completed" ? "Completed" : formatCompletionPct(d.course_pct ?? d.mastered_pct)}</p>
               </div>
               {d.school_enrollment_id === activeId && <i className="fas fa-check text-shPrimary text-[11px]"/>}
             </button>
