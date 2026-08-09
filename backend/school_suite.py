@@ -28,9 +28,14 @@ def _parse_iso(value: Optional[str]) -> Optional[datetime]:
     if not value:
         return None
     try:
-        return datetime.fromisoformat(value.replace("Z", "+00:00"))
+        parsed = datetime.fromisoformat(value.replace("Z", "+00:00"))
     except Exception:
         return None
+    # Legacy rows store naive timestamps; treat them as UTC so date math
+    # never mixes naive and aware datetimes (analytics 500'd on real data).
+    if parsed.tzinfo is None:
+        parsed = parsed.replace(tzinfo=timezone.utc)
+    return parsed
 
 
 def _gid() -> str:

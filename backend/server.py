@@ -18321,7 +18321,9 @@ async def portal_school_list(user: dict = Depends(get_current_user)):
         # canonical-source comment.
         se = await _reconcile_school_enrollment_mirror(enrollment, se)
         dog = await db.dogs.find_one({"id": se["dog_id"]}, {"_id": 0, "id": 1, "name": 1, "photo": 1})
-        access_state = _school_access_state(enrollment)
+        # Same derived state Home/detail use — an expired/paused course must
+        # never present as "active" in the course switcher.
+        access_state = _effective_school_access_state(enrollment)
         status = _canonical_school_status(enrollment)
         summary = _enrollment_summary(enrollment)
         # Phase 6 — a revoked-access row skips roadmap computation entirely
