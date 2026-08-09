@@ -65,16 +65,16 @@ const STUCK_TIPS = {
   need_trainer: "That's what they're here for — send a message and they'll follow up.",
 };
 
-export default function OnlineSchoolDashboard({ clientFirstName, onClose, onContactTrainer }) {
+export default function OnlineSchoolDashboard({ clientFirstName, onClose, onContactTrainer, initialActiveId = null, initialView = "home" }) {
   const [list, setList] = useState(null);
-  const [activeId, setActiveId] = useState(null);
+  const [activeId, setActiveId] = useState(initialActiveId);
   const [detail, setDetail] = useState(null);
   const [detailLesson, setDetailLesson] = useState(null);
   const [practiceHomework, setPracticeHomework] = useState(null);
   const [busy, setBusy] = useState(false);
   const [err, setErr] = useState("");
   const [finishedMsg, setFinishedMsg] = useState("");
-  const [schoolView, setSchoolView] = useState("home");
+  const [schoolView, setSchoolView] = useState(initialView || "home");
   const [history, setHistory] = useState(null);
   const [expandedHistoryId, setExpandedHistoryId] = useState(null);
   const [trophies, setTrophies] = useState(null);

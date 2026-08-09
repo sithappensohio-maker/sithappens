@@ -16,6 +16,7 @@ import HomeworkIncentivesPanel from "../components/HomeworkIncentivesPanel";
 import ClientTodayPanel from "../components/training/ClientTodayPanel";
 import PracticePanel from "../components/training/PracticePanel";
 import OnlineSchoolDashboard from "../components/OnlineSchoolDashboard";
+import SchoolApp from "./SchoolApp";
 import { nextActionLabel, formatCompletionPct } from "../lib/onlineSchoolPolish";
 import MultiDateCalendar from "../components/MultiDateCalendar";
 import PortalHomeActionCard from "../components/PortalHomeActionCard";
@@ -660,6 +661,17 @@ export default function Portal() {
   const [practiceFor, setPracticeFor] = useState(null); // homework doc open in the Homework Practice screen
   const [schoolEntries, setSchoolEntries] = useState([]); // Online School (Phase 1) — /portal/school; empty for any client with no school enrollment
   const [schoolOpen, setSchoolOpen] = useState(false);
+  // Student School (Phase 2A) — real /school* URLs via the same history
+  // navigation-swap pattern the Shop view uses, so a refresh while in School
+  // lands back in School (not the portal home).
+  const [schoolPath, setSchoolPath] = useState(() =>
+    (typeof window !== "undefined" && /^\/school(\/.*)?$/.test(window.location.pathname)) ? window.location.pathname : null);
+  useEffect(() => {
+    const onPop = () => setSchoolPath(/^\/school(\/.*)?$/.test(window.location.pathname) ? window.location.pathname : null);
+    window.addEventListener("popstate", onPop);
+    return () => window.removeEventListener("popstate", onPop);
+  }, []);
+  const openSchool = () => { window.history.pushState({}, "", "/school"); setSchoolPath("/school"); };
   const [lightbox, setLightbox] = useState({ open: false, photos: [], index: 0 });
   const [dogModal, setDogModal] = useState({ open: false, dog: null });
   const [profileOpen, setProfileOpen] = useState(false);
@@ -1031,7 +1043,7 @@ export default function Portal() {
         <div className="app-scroll-root flex-1 min-h-0 overflow-y-auto overscroll-contain p-3 sm:p-6" data-scroll-root>
           <PortalShop initialTab={shopInitialTab} fullScreen shopifyStoreUrl={pubSettings?.client_portal_links?.shopify_store_url}
                       cart={shopCart} onCartChange={setShopCart}
-                      onGoToOnlineSchool={() => { setShopOpen(false); setSchoolOpen(true); }} />
+                      onGoToOnlineSchool={() => { setShopOpen(false); openSchool(); }} />
         </div>
         {showGuestMergeReview && (
           <GuestCartMergeReview
@@ -1068,6 +1080,19 @@ export default function Portal() {
           />
         </div>
       </div>
+    );
+  }
+
+  // Student School (Phase 2A) — full-screen routed area, same navigation-swap
+  // early-return as the Shop/Photography views above.
+  if (schoolPath) {
+    return (
+      <SchoolApp
+        path={schoolPath}
+        clientName={user.name?.split(" ")[0] || user.name}
+        onNavigate={(p) => { window.history.pushState({}, "", p); setSchoolPath(p); }}
+        onExit={() => { window.history.pushState({}, "", "/"); setSchoolPath(null); loadAll(); }}
+      />
     );
   }
 
@@ -1884,7 +1909,7 @@ export default function Portal() {
                   <p className="text-[14px] font-black text-shText truncate">{schoolEntries[0].program_name} · {schoolEntries[0].status === "completed" ? "Completed" : formatCompletionPct(schoolEntries[0].mastered_pct)}</p>
                   <p className="text-[12px] text-shTextMuted truncate">{nextActionLabel(schoolEntries[0])}</p>
                 </div>
-                <button onClick={() => setSchoolOpen(true)} data-testid="online-school-open"
+                <button onClick={openSchool} data-testid="online-school-open"
                         className="shrink-0 bg-shPrimary text-bgHeader px-3 py-2 rounded-lg font-black text-[12px] uppercase tracking-widest shadow">
                   {schoolEntries[0].status === "completed" ? "Review" : "Continue"}
                 </button>
