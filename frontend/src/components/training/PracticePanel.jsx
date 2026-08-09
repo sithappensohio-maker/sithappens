@@ -43,7 +43,7 @@ const FIELD_ICON = { reps: "fa-rotate", sets: "fa-layer-group", duration_sec: "f
   distance_ft: "fa-ruler", success_rate: "fa-percent", rating_5: "fa-star", checkbox: "fa-square-check", text: "fa-pen", longtext: "fa-pen" };
 const FIELD_UNIT = { duration_sec: "sec", duration_min: "min", distance_ft: "ft", success_rate: "%", rating_5: "/5" };
 
-export default function PracticePanel({ homework, dogPhoto, onClose, onChanged }) {
+export default function PracticePanel({ homework, dogPhoto, onClose, onChanged, onPracticeLogged }) {
   const model = assignmentCardModel(homework);
   const isDailyTracker = !!homework.daily_tracker;
   const readOnly = model.status === "completed" || model.status === "waiting_review";
@@ -140,6 +140,7 @@ export default function PracticePanel({ homework, dogPhoto, onClose, onChanged }
         });
       }
       setSaveState("saved");
+      onPracticeLogged?.();
       onChanged?.();
       toast.success("Practice logged");
     } catch (e) {
@@ -154,6 +155,7 @@ export default function PracticePanel({ homework, dogPhoto, onClose, onChanged }
     try {
       await api.post(`/homework/${homework.id}/complete`, { note, photo: "" });
       toast.success("Assignment marked complete");
+      onPracticeLogged?.();
       onChanged?.();
       onClose();
     } catch (e) {

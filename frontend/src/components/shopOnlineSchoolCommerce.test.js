@@ -65,8 +65,9 @@ test("PortalShop fetches only the authenticated client's own dogs, the same scop
   expect(shopSrc).toMatch(/if \(mode !== "authenticated"\) return;\s*\n\s*api\.get\("\/dogs"\)/);
 });
 
-test("Portal.jsx wires Go-to-Online-School to close Shop and open the real Online School dashboard, not a dead link", () => {
-  expect(portalSrc).toMatch(/onGoToOnlineSchool=\{\(\) => \{ setShopOpen\(false\); setSchoolOpen\(true\); \}\}/);
+test("Portal.jsx wires Go-to-Online-School to close Shop and open the native School route, not a dead link", () => {
+  expect(portalSrc).toMatch(/onGoToOnlineSchool=\{\(\) => \{ setShopOpen\(false\); openSchool\(\); \}\}/);
+  expect(portalSrc).toMatch(/const openSchool = \(\) => \{ window\.history\.pushState\(\{\}, "", "\/school"\); setSchoolPath\("\/school"\); \}/);
 });
 
 // ---------------------------------------------------------------------------

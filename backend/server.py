@@ -5,6 +5,7 @@ load_dotenv(ROOT_DIR / '.env')
 
 import os
 import re
+import base64
 import socket
 import uuid
 import asyncio
@@ -24,7 +25,7 @@ from urllib.parse import urlsplit
 from typing import List, Optional, Literal, Dict, Any, Tuple
 
 from fastapi import FastAPI, APIRouter, Depends, HTTPException, Request, Query, Body, UploadFile, File
-from fastapi.responses import Response
+from fastapi.responses import Response, FileResponse
 from fastapi.security import HTTPBearer, HTTPAuthorizationCredentials
 from starlette.middleware.cors import CORSMiddleware
 from motor.motor_asyncio import AsyncIOMotorClient
@@ -12182,14 +12183,20 @@ async def complete_homework(homework_id: str, body: HomeworkCompleteIn, user: di
     }
     await db.homework.update_one({"id": homework_id}, {"$set": update})
     hw.update(update)
-    # Notify the operator when a client completes homework (skip admin-triggered marks).
+    # Generic homework keeps its legacy email. Online School practice routes
+    # through the School event spine instead, so routine completion appears in
+    # Activity without bypassing the centralized notification policy/email
+    # rules or double-emailing the operator.
     if user.get("role") != "admin":
-        try:
-            client = await db.clients.find_one({"id": hw.get("client_id")}, {"_id": 0}) or {}
-            dog = await db.dogs.find_one({"id": hw.get("dog_id")}, {"_id": 0}) or {}
-            await notify_admin_homework_completed(hw, client, dog)
-        except Exception:
-            pass
+        if _is_school_homework(hw):
+            await _emit_school_simple_completion_event(hw, user)
+        else:
+            try:
+                client = await db.clients.find_one({"id": hw.get("client_id")}, {"_id": 0}) or {}
+                dog = await db.dogs.find_one({"id": hw.get("dog_id")}, {"_id": 0}) or {}
+                await notify_admin_homework_completed(hw, client, dog)
+            except Exception:
+                pass
     # 🏆 Re-evaluate trophy eligibility for the client (streak + completed counts).
     try:
         if hw.get("client_id"):
@@ -12682,17 +12689,30 @@ async def create_homework_from_template(body: HomeworkFromTemplateIn, user: dict
 
 
 def _is_school_homework(hw: dict) -> bool:
-    """A practice homework that belongs to the Online School (created from a
-    lesson's Start Practice / auto-homework — it carries source_lesson_id).
-    Non-school homework keeps its existing behavior and never generates School
-    events; the Online School product boundary is deliberately narrow here."""
-    return bool(hw.get("source_lesson_id"))
+    """True only for self-guided Online School practice assignments.
+
+    ``source_lesson_id`` alone is NOT enough: the trainer-led program
+    completion pipeline uses the same traceability field. New School homework
+    carries explicit ownership markers; the assigned_by fallbacks keep
+    pre-marker School rows working without misclassifying ordinary trainer-led
+    homework.
+    """
+    if hw.get("school_enrollment_id") or hw.get("school_enrollment_record_id"):
+        return True
+    assigned = str(hw.get("assigned_by") or "")
+    return bool(hw.get("source_lesson_id") and (assigned.startswith("Online School") or assigned == "Trainer prescription"))
 
 
-def _school_event_ctx_from_hw(hw: dict) -> dict:
-    """Common School-event context read straight off a school practice homework
-    doc — these fields already live on it, so no extra DB round-trips."""
-    return {
+async def _school_event_ctx_from_hw(hw: dict) -> dict:
+    """Resolve full School context for a School-owned practice row.
+
+    New assignments carry both public School-enrollment and internal
+    dog_program ids. For older School rows, we safely resolve the enrollment by
+    dog/client + frozen lesson id, then self-heal the markers. That keeps real
+    activity/attention events tied to the correct course/module while avoiding
+    the old false assumption that every source_lesson_id homework was School.
+    """
+    ctx = {
         "client_id": hw.get("client_id"),
         "client_name": hw.get("client_name"),
         "dog_id": hw.get("dog_id"),
@@ -12701,6 +12721,57 @@ def _school_event_ctx_from_hw(hw: dict) -> dict:
         "lesson_id": hw.get("source_lesson_id"),
         "lesson_name": hw.get("title"),
     }
+    se = None
+    enrollment = None
+    if hw.get("school_enrollment_id"):
+        se = await db.school_enrollments.find_one({"id": hw.get("school_enrollment_id")}, {"_id": 0})
+    if not se and hw.get("school_enrollment_record_id"):
+        se = await db.school_enrollments.find_one({"enrollment_id": hw.get("school_enrollment_record_id")}, {"_id": 0})
+    if se:
+        enrollment = await db.dog_programs.find_one({"id": se.get("enrollment_id")}, {"_id": 0})
+
+    # Legacy School homework predating explicit ownership markers. Limit the
+    # search to this client's dog and accept only an enrollment whose frozen
+    # curriculum actually contains the source lesson.
+    if not se and _is_school_homework(hw) and hw.get("source_lesson_id"):
+        candidates = await db.school_enrollments.find(
+            {"dog_id": hw.get("dog_id"), "client_id": hw.get("client_id")}, {"_id": 0}
+        ).sort("enrolled_at", -1).to_list(50)
+        for candidate in candidates:
+            enr = await db.dog_programs.find_one({"id": candidate.get("enrollment_id")}, {"_id": 0})
+            if enr and _find_lesson_in_snapshot(enr, hw.get("source_lesson_id")):
+                se, enrollment = candidate, enr
+                try:
+                    await db.homework.update_one(
+                        {"id": hw.get("id")},
+                        {"$set": {
+                            "school_enrollment_id": se.get("id"),
+                            "school_enrollment_record_id": enrollment.get("id"),
+                        }},
+                    )
+                except Exception:
+                    pass
+                break
+
+    if se and enrollment:
+        snap = enrollment.get("program_snapshot") or {}
+        module = None
+        lesson = None
+        for mod in snap.get("modules") or []:
+            lesson = next((l for l in _effective_lessons(mod) if l.get("id") == hw.get("source_lesson_id")), None)
+            if lesson:
+                module = mod
+                break
+        ctx.update({
+            "enrollment_id": enrollment.get("id"),
+            "school_enrollment_id": se.get("id"),
+            "program_id": enrollment.get("program_id") or se.get("program_id"),
+            "program_name": snap.get("name"),
+            "module_id": (module or {}).get("id"),
+            "module_name": (module or {}).get("name"),
+            "lesson_name": (lesson or {}).get("name") or ctx.get("lesson_name"),
+        })
+    return ctx
 
 
 async def _emit_school_practice_log_event(hw: dict, entry: dict, body, user: dict) -> None:
@@ -12710,7 +12781,7 @@ async def _emit_school_practice_log_event(hw: dict, entry: dict, body, user: dic
     disturbs the already-saved log. Idempotent on the log's own id."""
     if user.get("role") == "admin" or not _is_school_homework(hw):
         return
-    ctx = _school_event_ctx_from_hw(hw)
+    ctx = await _school_event_ctx_from_hw(hw)
     who = ctx["client_name"] or "A student"
     dog = ctx["dog_name"] or ""
     subject = f"{who}" + (f" · {dog}" if dog else "")
@@ -12731,8 +12802,11 @@ async def _emit_school_practice_log_event(hw: dict, entry: dict, body, user: dic
                 actor_type="client", actor_id=user.get("id"), actor_name=user.get("name"),
                 title=f"{subject} couldn't complete practice",
                 summary=reason or f"Reported unable to complete “{title_hw}”.",
-                deep_link={"screen": "school_hq", "tab": "needs_attention", "homework_id": hw.get("id")},
-                metadata={"reason": reason} if reason else {},
+                deep_link={"screen": "school_hq", "tab": "needs_attention", "homework_id": hw.get("id"),
+                           "section_log_id": entry.get("id"), "day_number": day_number,
+                           "video_media_id": video_id},
+                metadata={"reason": reason, "section_log_id": entry.get("id"), "day_number": day_number,
+                          "video_media_id": video_id},
                 dedupe_key=dedupe, **ctx,
             )
         elif video_id:
@@ -12742,8 +12816,9 @@ async def _emit_school_practice_log_event(hw: dict, entry: dict, body, user: dic
                 title=f"{subject} submitted a practice video",
                 summary=f"Video for “{title_hw}” is ready for review.",
                 deep_link={"screen": "school_hq", "tab": "needs_attention",
-                           "homework_id": hw.get("id"), "video_media_id": video_id, "day_number": day_number},
-                metadata={"video_media_id": video_id, "day_number": day_number},
+                           "homework_id": hw.get("id"), "video_media_id": video_id, "day_number": day_number,
+                           "section_log_id": entry.get("id")},
+                metadata={"video_media_id": video_id, "day_number": day_number, "section_log_id": entry.get("id")},
                 dedupe_key=dedupe, **ctx,
             )
         elif getattr(body, "difficulty", None) in ("hard", "very_hard"):
@@ -12774,7 +12849,7 @@ async def _emit_school_question_event(hw: dict, question: dict, user: dict) -> N
     Best-effort, idempotent on the question id, school homework only."""
     if user.get("role") == "admin" or not _is_school_homework(hw):
         return
-    ctx = _school_event_ctx_from_hw(hw)
+    ctx = await _school_event_ctx_from_hw(hw)
     who = ctx["client_name"] or "A student"
     dog = ctx["dog_name"] or ""
     subject = f"{who}" + (f" · {dog}" if dog else "")
@@ -12784,9 +12859,52 @@ async def _emit_school_question_event(hw: dict, question: dict, user: dict) -> N
             actor_type="client", actor_id=user.get("id"), actor_name=user.get("name"),
             title=f"{subject} asked a question",
             summary=(question.get("text") or "").strip()[:280],
-            deep_link={"screen": "school_hq", "tab": "needs_attention", "homework_id": hw.get("id")},
+            deep_link={"screen": "school_hq", "tab": "needs_attention", "homework_id": hw.get("id"),
+                       "question_id": question.get("id")},
             metadata={"question_id": question.get("id")},
             dedupe_key=f"question:{question.get('id')}", **ctx,
+        )
+    except Exception:
+        pass
+
+
+async def _emit_school_simple_completion_event(hw: dict, user: dict) -> None:
+    """Quick/non-Coach School homework completion → routine School activity.
+    Generic homework keeps its legacy admin email; School uses the centralized
+    event policy so a routine completion does not create alert spam.
+    """
+    if user.get("role") == "admin" or not _is_school_homework(hw):
+        return
+    ctx = await _school_event_ctx_from_hw(hw)
+    who = ctx.get("client_name") or "A student"
+    dog = ctx.get("dog_name") or ""
+    subject = who + (f" · {dog}" if dog else "")
+    try:
+        await school_events.emit_event(
+            SchoolEvent.PRACTICE_COMPLETED, actor_type="client", actor_id=user.get("id"), actor_name=user.get("name"),
+            title=f"{subject} completed practice", summary=f"Completed “{hw.get('title') or 'practice'}”.",
+            deep_link={"screen": "homework", "homework_id": hw.get("id")},
+            dedupe_key=f"homework_complete:{hw.get('id')}:{hw.get('completed_at')}", **ctx,
+        )
+    except Exception:
+        pass
+
+
+async def _emit_school_trainer_reply_from_hw(hw: dict, question_id: str, text: str, user: dict) -> None:
+    """Practice-Coach trainer answer → School activity event. The answer still
+    lives in the existing homework question record; this only makes it visible
+    to the School event timeline and native client Feedback/support surfaces."""
+    if not _is_school_homework(hw):
+        return
+    ctx = await _school_event_ctx_from_hw(hw)
+    try:
+        await school_events.emit_event(
+            SchoolEvent.TRAINER_REPLY, actor_type="admin", actor_id=user.get("id"), actor_name=user.get("name"),
+            title=f"{user.get('name') or 'A trainer'} answered a practice question",
+            summary=(text or "").strip()[:280],
+            deep_link={"screen": "school", "view": "feedback", "homework_id": hw.get("id")},
+            metadata={"question_id": question_id},
+            dedupe_key=f"trainer_practice_reply:{question_id}", **ctx,
         )
     except Exception:
         pass
@@ -12837,7 +12955,7 @@ async def log_section(homework_id: str, body: SectionLogIn, user: dict = Depends
     )
     hw["section_logs"] = (hw.get("section_logs") or []) + [entry]
     # Notify the operator when a client logs a session (skip self-logs by admin).
-    if user.get("role") != "admin":
+    if user.get("role") != "admin" and not _is_school_homework(hw):
         try:
             client = await db.clients.find_one({"id": hw.get("client_id")}, {"_id": 0}) or {}
             dog = await db.dogs.find_one({"id": hw.get("dog_id")}, {"_id": 0}) or {}
@@ -13327,7 +13445,7 @@ async def submit_day(
     )
 
     # Best-effort: notify the operator that there's a new review pending
-    if user.get("role") != "admin":
+    if user.get("role") != "admin" and not _is_school_homework(hw):
         try:
             client = await db.clients.find_one({"id": hw.get("client_id")}, {"_id": 0}) or {}
             dog = await db.dogs.find_one({"id": hw.get("dog_id")}, {"_id": 0}) or {}
@@ -13544,6 +13662,7 @@ async def answer_question(
     user: dict = Depends(require_admin),
 ):
     """Admin answers a client's question on a specific day."""
+    hw = await db.homework.find_one({"id": homework_id}, {"_id": 0})
     res = await db.homework.update_one(
         {"id": homework_id, "section_logs.day_number": int(day_number), "section_logs.questions.id": question_id},
         {
@@ -13557,6 +13676,8 @@ async def answer_question(
     )
     if res.matched_count == 0:
         raise HTTPException(status_code=404, detail="Question not found")
+    if hw:
+        await _emit_school_trainer_reply_from_hw(hw, question_id, body.text, user)
     return await get_homework_detail(homework_id, user)
 
 
@@ -13617,6 +13738,7 @@ async def answer_section_question(
     section-log/Coach Mode equivalent of answer_question above. Same shape,
     same fields set, addressed by the log's own stable id rather than a
     day_number."""
+    hw = await db.homework.find_one({"id": homework_id}, {"_id": 0})
     res = await db.homework.update_one(
         {"id": homework_id, "section_logs.id": log_id, "section_logs.questions.id": question_id},
         {
@@ -13630,6 +13752,8 @@ async def answer_section_question(
     )
     if res.matched_count == 0:
         raise HTTPException(status_code=404, detail="Question not found")
+    if hw:
+        await _emit_school_trainer_reply_from_hw(hw, question_id, body.text, user)
     return await get_homework_detail(homework_id, user)
 
 
@@ -13644,7 +13768,7 @@ async def upload_day_video(
     """Upload a short clip (~10s recommended) for a day's check-in. Stored in
     a separate `homework_media` collection so big payloads don't bloat the
     homework doc (Mongo 16 MB per-doc cap)."""
-    hw = await db.homework.find_one({"id": homework_id}, {"_id": 0, "client_id": 1})
+    hw = await db.homework.find_one({"id": homework_id}, {"_id": 0, "client_id": 1, "dog_id": 1, "school_enrollment_id": 1, "source_lesson_id": 1})
     if not hw:
         raise HTTPException(status_code=404, detail="Homework not found")
     if user.get("role") != "admin" and hw.get("client_id") != user.get("client_id"):
@@ -13667,16 +13791,30 @@ async def upload_day_video(
                 detail=f"Video too large ({approx_bytes // (1024 * 1024)} MB). Max is {CHECKPOINT_VIDEO_MAX_BYTES // (1024 * 1024)} MB.",
             )
     media_id = str(uuid.uuid4())
-    await db.homework_media.insert_one({
-        "id": media_id,
-        "homework_id": homework_id,
-        "day_number": int(day_number),
-        "kind": "video",
-        "data": body.photo,
-        "filename": (body.filename or "video"),
-        "uploaded_at": now_iso(),
-        "uploaded_by": user.get("id"),
-    })
+    media_doc = {
+        "id": media_id, "homework_id": homework_id, "day_number": int(day_number),
+        "kind": "video", "filename": (body.filename or "video"),
+        "uploaded_at": now_iso(), "uploaded_by": user.get("id"),
+        "client_id": hw.get("client_id"), "dog_id": hw.get("dog_id"),
+        "school_enrollment_id": hw.get("school_enrollment_id"),
+    }
+    if hw.get("school_enrollment_id"):
+        try:
+            media_doc.update(_persist_school_media_data_url(body.photo, media_id, body.filename or "video"))
+            media_doc["storage_backend"] = "filesystem"
+        except Exception:
+            raise HTTPException(status_code=400, detail="Could not store this video")
+    else:
+        # Generic Homework stays backward-compatible. School videos use the
+        # persistent media directory so growing client video history does not
+        # inflate Mongo documents.
+        media_doc["data"] = body.photo
+    try:
+        await db.homework_media.insert_one(media_doc)
+    except Exception:
+        if hw.get("school_enrollment_id"):
+            _delete_school_media_file(media_doc)
+        raise
     return {"media_id": media_id}
 
 
@@ -13769,7 +13907,7 @@ async def get_resource_file(media_id: str, user: dict = Depends(get_current_user
         "id": m["id"],
         "kind": m.get("resource_kind") or "file",
         "mime": m.get("mime"),
-        "data": m.get("data"),
+        "data": _school_media_data_url(m),
         "filename": m.get("filename"),
     }
 
@@ -13788,7 +13926,7 @@ async def get_day_media(homework_id: str, media_id: str, user: dict = Depends(ge
     m = await db.homework_media.find_one({"id": media_id, "homework_id": homework_id}, {"_id": 0})
     if not m:
         raise HTTPException(status_code=404, detail="Media not found")
-    return {"id": m["id"], "kind": m.get("kind"), "data": m.get("data"), "filename": m.get("filename")}
+    return {"id": m["id"], "kind": m.get("kind"), "data": _school_media_data_url(m), "filename": m.get("filename")}
 
 
 # ────────────────────────── Daily-tracker completion certificate ──────────────────────────
@@ -15174,6 +15312,26 @@ class CheckpointConfigIn(BaseModel):
     assessment_type: Literal["checkpoint", "final_assessment"] = "checkpoint"
 
 
+class LessonContentBlockIn(BaseModel):
+    """Course Builder 2.0 — ordered, client-safe lesson content blocks.
+
+    The old structured lesson fields remain fully supported; blocks are additive
+    and let curriculum authors build richer lessons without creating one-off
+    React screens. Config is intentionally bounded to presentation/activity
+    metadata — progression remains owned by the existing School state machine.
+    """
+    id: Optional[str] = None
+    type: Literal["text", "video", "image", "steps", "trainer_tip", "warning", "checklist", "quiz", "timer", "rep_counter", "download", "practice", "checkpoint"]
+    title: Optional[str] = None
+    body: Optional[str] = None
+    url: Optional[str] = None
+    resource_id: Optional[str] = None
+    items: List[str] = []
+    config: Dict = Field(default_factory=dict)
+    order: int = 0
+    active: bool = True
+
+
 class LessonIn(BaseModel):
     """Training-school expansion (Phase 1) — an organizational/content layer
     sitting between a Module and its Skills. A lesson does NOT own progress
@@ -15202,6 +15360,8 @@ class LessonIn(BaseModel):
     advancement_criteria: Optional[str] = None
     suggested_homework_template_ids: List[str] = []
     skill_ids: List[str] = []  # ids into the parent module's `goals`
+    # Full School Course Builder 2.0 — optional ordered lesson blocks.
+    content_blocks: List[LessonContentBlockIn] = []
     # Online School Phase 2 — Trainer Checkpoints & Grading.
     checkpoint: Optional[CheckpointConfigIn] = None
 
@@ -15288,6 +15448,13 @@ class ProgramIn(BaseModel):
     # in. "online_school" fulfillment requires delivery_mode to actually
     # support self-guided delivery — enforced in create_program/update_program.
     purchase_fulfillment: Literal["credits_only", "online_school"] = "credits_only"
+    # Full Online School product metadata. These fields are ignored by trainer-
+    # led delivery and preserve all legacy defaults when absent.
+    estimated_weeks: Optional[int] = Field(default=None, ge=1, le=104)
+    school_support: Dict = Field(default_factory=lambda: {"trainer_checkpoints_included": None, "trainer_assists_included": None, "response_target_hours": None})
+    school_onboarding: Dict = Field(default_factory=lambda: {"enabled": True, "require_baseline": False, "require_equipment_check": False})
+    school_default_trainer_id: Optional[str] = None
+    recommended_next_program_slugs: List[str] = []
 
 
 # Optional skill-measurement fields carried on a goal/skill — see GoalIn's
@@ -15343,6 +15510,15 @@ def _stamp_ids(modules: List[dict]) -> List[dict]:
             }
             for f in _LESSON_OPTIONAL_FIELDS:
                 lesson[f] = l.get(f)
+            lesson["content_blocks"] = [
+                {
+                    "id": b.get("id") or _gid(), "type": b.get("type"), "title": b.get("title"),
+                    "body": b.get("body"), "url": b.get("url"), "resource_id": b.get("resource_id"),
+                    "items": list(b.get("items") or []), "config": dict(b.get("config") or {}),
+                    "order": b.get("order", bi), "active": bool(b.get("active", True)),
+                }
+                for bi, b in enumerate(l.get("content_blocks") or [])
+            ]
             # Online School Phase 2 — stamp stable ids onto checkpoint
             # criteria the exact same way goals/lessons already are, so
             # criteria have durable ids for scoring even if the author
@@ -15460,6 +15636,28 @@ async def _validate_program_structure(modules: List[dict]) -> Dict[str, Any]:
                 warnings.append({"code": "missing_trainer_instructions", "message": f"Lesson '{l.get('name', '')}' has no trainer instructions.", **where_l})
             _check_homework_refs(l.get("suggested_homework_template_ids") or [], where_l)
 
+            # Course Builder 2.0 — visible content blocks must be usable.
+            # This is presentation validation only; blocks never own or bypass
+            # the School progression state machine.
+            for bi, block in enumerate(l.get("content_blocks") or []):
+                if block.get("active", True) is False:
+                    continue
+                btype = block.get("type")
+                where_b = {**where_l, "content_block_index": bi, "content_block_id": block.get("id") or "?"}
+                if btype in {"video", "image", "download"} and not (block.get("url") or block.get("resource_id")):
+                    errors.append({"code": "content_block_missing_source", "message": f"Lesson '{l.get('name', '')}' has a {btype} block with no URL or School resource.", **where_b})
+                if btype == "quiz":
+                    items = block.get("items") or []
+                    correct = (block.get("config") or {}).get("correct_answer")
+                    if correct and correct not in items:
+                        errors.append({"code": "knowledge_check_invalid_answer", "message": f"Lesson '{l.get('name', '')}' has a knowledge check whose correct answer is no longer one of its answer options.", **where_b})
+                    if items and len(items) < 2:
+                        warnings.append({"code": "knowledge_check_few_options", "message": f"Lesson '{l.get('name', '')}' has a knowledge check with fewer than two answer options.", **where_b})
+                if btype == "timer" and int((block.get("config") or {}).get("seconds") or 0) <= 0:
+                    errors.append({"code": "timer_missing_duration", "message": f"Lesson '{l.get('name', '')}' has a timer block with no duration.", **where_b})
+                if btype == "rep_counter" and int((block.get("config") or {}).get("target") or 0) <= 0:
+                    errors.append({"code": "rep_counter_missing_target", "message": f"Lesson '{l.get('name', '')}' has a rep counter with no target.", **where_b})
+
             # Online School Phase 2 — checkpoint rubric validation. A lesson
             # with no checkpoint, or checkpoint.enabled == false, is
             # completely untouched by these checks (legacy lessons validate
@@ -15500,6 +15698,258 @@ async def _validate_program_structure(modules: List[dict]) -> Dict[str, Any]:
         })
 
     return {"valid": len(errors) == 0, "errors": errors, "warnings": warnings}
+
+
+async def _validate_program_pathways(program_doc: dict, current_program_id: Optional[str] = None) -> Dict[str, Any]:
+    """Validate course-level prerequisite and recommended-next pathways.
+
+    Prerequisites are a real enrollment gate, so broken/self/circular references
+    are hard errors. Recommended-next links are guidance only, so a missing or
+    self link is surfaced as a warning rather than making an otherwise valid
+    curriculum impossible to publish.
+
+    Drafts may be saved with pathway errors so Program Studio can surface them;
+    create/live-update/publish explicitly block on the returned errors.
+    """
+    errors: List[Dict[str, Any]] = []
+    warnings: List[Dict[str, Any]] = []
+    prereq_slugs = [str(x).strip() for x in (program_doc.get("prereq_slugs") or []) if str(x).strip()]
+    next_slugs = [str(x).strip() for x in (program_doc.get("recommended_next_program_slugs") or []) if str(x).strip()]
+    current_slug = (program_doc.get("slug") or "").strip()
+
+    for label, values in (("prerequisite", prereq_slugs), ("recommended_next", next_slugs)):
+        seen = set()
+        for slug in values:
+            if slug in seen:
+                warnings.append({
+                    "code": f"duplicate_{label}_program",
+                    "message": f"Program pathway '{slug}' is listed more than once.",
+                    "slug": slug,
+                })
+            seen.add(slug)
+
+    all_refs = sorted(set(prereq_slugs + next_slugs + ([current_slug] if current_slug else [])))
+    docs = await db.programs.find(
+        {"$or": [
+            {"slug": {"$in": all_refs}},
+            *([{"id": current_program_id}] if current_program_id else []),
+        ]},
+        {"_id": 0, "id": 1, "slug": 1, "name": 1, "prereq_slugs": 1, "active": 1},
+    ).to_list(1000) if all_refs or current_program_id else []
+    by_slug = {d.get("slug"): d for d in docs if d.get("slug")}
+    current_live_doc = next((d for d in docs if current_program_id and d.get("id") == current_program_id), None)
+
+    if current_slug:
+        same_slug = [d for d in docs if d.get("slug") == current_slug and d.get("id") != current_program_id]
+        if same_slug:
+            errors.append({
+                "code": "duplicate_program_slug",
+                "message": f"Another program already uses the pathway slug '{current_slug}'.",
+                "slug": current_slug,
+            })
+
+    # Changing a slug that another course already references would make that
+    # published course's prerequisite path silently break. Block that for hard
+    # prerequisite references and warn for recommended-next guidance.
+    live_slug = (current_live_doc or {}).get("slug")
+    if current_program_id and live_slug and current_slug and live_slug != current_slug:
+        dependents = await db.programs.find(
+            {"id": {"$ne": current_program_id}, "$or": [
+                {"prereq_slugs": live_slug}, {"recommended_next_program_slugs": live_slug},
+            ]},
+            {"_id": 0, "id": 1, "name": 1, "prereq_slugs": 1, "recommended_next_program_slugs": 1},
+        ).to_list(1000)
+        hard = [d.get("name") or d.get("id") for d in dependents if live_slug in (d.get("prereq_slugs") or [])]
+        soft = [d.get("name") or d.get("id") for d in dependents if live_slug in (d.get("recommended_next_program_slugs") or [])]
+        if hard:
+            errors.append({
+                "code": "program_slug_in_use_by_prerequisite",
+                "message": f"Cannot change this program slug because it is required by: {', '.join(hard)}.",
+                "slug": live_slug, "dependent_programs": hard,
+            })
+        if soft:
+            warnings.append({
+                "code": "program_slug_in_use_by_recommendation",
+                "message": f"Changing this slug will break recommended-next links from: {', '.join(soft)}.",
+                "slug": live_slug, "dependent_programs": soft,
+            })
+
+    for slug in prereq_slugs:
+        target = by_slug.get(slug)
+        if not target:
+            errors.append({
+                "code": "broken_program_prerequisite",
+                "message": f"Required prerequisite program '{slug}' no longer exists.",
+                "slug": slug,
+            })
+            continue
+        if (current_program_id and target.get("id") == current_program_id) or (current_slug and slug == current_slug):
+            errors.append({
+                "code": "self_program_prerequisite",
+                "message": "A program cannot require itself as a prerequisite.",
+                "slug": slug,
+            })
+        elif not target.get("active", True):
+            warnings.append({
+                "code": "inactive_program_prerequisite",
+                "message": f"Prerequisite program '{target.get('name') or slug}' is inactive; new students may not be able to satisfy this pathway through the Shop.",
+                "slug": slug,
+            })
+
+    for slug in next_slugs:
+        target = by_slug.get(slug)
+        if not target:
+            warnings.append({
+                "code": "broken_recommended_next_program",
+                "message": f"Recommended next program '{slug}' no longer exists.",
+                "slug": slug,
+            })
+        elif (current_program_id and target.get("id") == current_program_id) or (current_slug and slug == current_slug):
+            warnings.append({
+                "code": "self_recommended_next_program",
+                "message": "A program recommends itself as the next program.",
+                "slug": slug,
+            })
+
+    # Full cycle detection, not just A -> B -> A. Build the live prerequisite
+    # graph, replacing this program's outgoing edges with the proposed draft/
+    # update so a cycle introduced by an unpublished edit is caught before it
+    # can become live.
+    graph_docs = await db.programs.find({}, {"_id": 0, "id": 1, "slug": 1, "prereq_slugs": 1}).to_list(5000)
+    graph: Dict[str, List[str]] = {
+        d.get("slug"): [str(x).strip() for x in (d.get("prereq_slugs") or []) if str(x).strip()]
+        for d in graph_docs if d.get("slug")
+    }
+    proposed_key = current_slug
+    if not proposed_key and current_program_id:
+        current_doc = next((d for d in graph_docs if d.get("id") == current_program_id), None)
+        proposed_key = (current_doc or {}).get("slug")
+    if proposed_key:
+        graph[proposed_key] = prereq_slugs
+        visiting, visited = set(), set()
+        cycle_path: List[str] = []
+
+        def _visit(node: str, path: List[str]) -> bool:
+            nonlocal cycle_path
+            if node in visiting:
+                try:
+                    start = path.index(node)
+                    cycle_path = path[start:] + [node]
+                except ValueError:
+                    cycle_path = path + [node]
+                return True
+            if node in visited:
+                return False
+            visiting.add(node)
+            path.append(node)
+            for nxt in graph.get(node, []):
+                if nxt in graph and _visit(nxt, path):
+                    return True
+            path.pop()
+            visiting.remove(node)
+            visited.add(node)
+            return False
+
+        if _visit(proposed_key, []):
+            errors.append({
+                "code": "circular_program_prerequisite",
+                "message": "Program prerequisites form a circular pathway and cannot be completed.",
+                "path": cycle_path,
+            })
+
+    # A lesson block may explicitly link a School resource. That link grants
+    # enrolled students access to the resource, so the resource itself must
+    # still exist and be active when curriculum is validated/published.
+    linked_resources = []
+    for module in (program_doc.get("modules") or []):
+        for lesson in (module.get("lessons") or []):
+            for block in (lesson.get("content_blocks") or []):
+                if block.get("active", True) is not False and block.get("resource_id"):
+                    linked_resources.append((block.get("resource_id"), module.get("id"), lesson.get("id"), block.get("id")))
+    if linked_resources:
+        resource_ids = sorted({x[0] for x in linked_resources})
+        active_resources = await db.school_resources.find(
+            {"id": {"$in": resource_ids}, "active": {"$ne": False}}, {"_id": 0, "id": 1}
+        ).to_list(len(resource_ids) or 1)
+        active_ids = {x.get("id") for x in active_resources}
+        for rid, mid, lid, bid in linked_resources:
+            if rid not in active_ids:
+                errors.append({
+                    "code": "broken_school_resource_ref",
+                    "message": "A lesson links to a School resource that is missing or archived.",
+                    "resource_id": rid, "module_id": mid, "lesson_id": lid, "content_block_id": bid,
+                })
+
+    return {"valid": len(errors) == 0, "errors": errors, "warnings": warnings}
+
+
+def _merge_program_validations(*results: Dict[str, Any]) -> Dict[str, Any]:
+    errors: List[Dict[str, Any]] = []
+    warnings: List[Dict[str, Any]] = []
+    for result in results:
+        errors.extend(result.get("errors") or [])
+        warnings.extend(result.get("warnings") or [])
+    return {"valid": len(errors) == 0, "errors": errors, "warnings": warnings}
+
+
+async def _missing_program_prerequisites(dog_id: str, program: dict) -> List[dict]:
+    """Return prerequisite programs this dog has not completed.
+
+    Completion is intentionally delivery-channel agnostic: if the same dog
+    already completed Foundations with a trainer in person, that satisfies a
+    Foundations prerequisite for Online School too. This uses the prerequisite
+    program slug as the stable pathway identity while tolerating legacy
+    enrollment snapshots whose live program id may have changed.
+    """
+    prereq_slugs = [str(x).strip() for x in (program.get("prereq_slugs") or []) if str(x).strip()]
+    if not prereq_slugs:
+        return []
+    prereq_docs = await db.programs.find(
+        {"slug": {"$in": prereq_slugs}},
+        {"_id": 0, "id": 1, "slug": 1, "name": 1},
+    ).to_list(1000)
+    by_slug = {d.get("slug"): d for d in prereq_docs if d.get("slug")}
+    prereq_ids = [d.get("id") for d in prereq_docs if d.get("id")]
+    completed = await db.dog_programs.find(
+        {
+            "dog_id": dog_id,
+            "status": "completed",
+            "$or": [
+                {"program_id": {"$in": prereq_ids}},
+                {"program_snapshot.slug": {"$in": prereq_slugs}},
+            ],
+        },
+        {"_id": 0, "program_id": 1, "program_snapshot.slug": 1},
+    ).to_list(5000)
+    completed_ids = {e.get("program_id") for e in completed if e.get("program_id")}
+    completed_slugs = {(e.get("program_snapshot") or {}).get("slug") for e in completed if (e.get("program_snapshot") or {}).get("slug")}
+
+    missing: List[dict] = []
+    for slug in prereq_slugs:
+        doc = by_slug.get(slug)
+        if doc and (doc.get("id") in completed_ids or slug in completed_slugs):
+            continue
+        missing.append({
+            "slug": slug,
+            "program_id": (doc or {}).get("id"),
+            "name": (doc or {}).get("name") or slug,
+        })
+    return missing
+
+
+async def _require_program_prerequisites(dog_id: str, program: dict) -> None:
+    missing = await _missing_program_prerequisites(dog_id, program)
+    if not missing:
+        return
+    names = ", ".join(x.get("name") or x.get("slug") or "required course" for x in missing)
+    raise HTTPException(
+        status_code=422,
+        detail={
+            "code": "school_prerequisites_incomplete",
+            "message": f"Complete {names} for this dog before enrolling in {program.get('name') or 'this program'}.",
+            "missing_prerequisites": missing,
+        },
+    )
 
 
 def _program_publish_impact(live_modules: List[dict], draft_modules: List[dict], enrollments_affected: int, active_goal_progress_ids: set) -> Dict[str, Any]:
@@ -15620,6 +16070,9 @@ async def create_program(body: ProgramIn, _: dict = Depends(require_admin_and_pe
     doc["id"] = _gid()
     doc["slug"] = doc.get("slug") or doc["name"].lower().replace(" ", "_")[:40]
     doc["modules"] = _stamp_ids(doc.get("modules") or [])
+    pathway_validation = await _validate_program_pathways(doc)
+    if not pathway_validation["valid"]:
+        raise HTTPException(status_code=422, detail={"message": "Program has invalid course pathways.", "errors": pathway_validation["errors"]})
     doc["is_default"] = False
     doc["owner_dog_id"] = None
     doc["created_at"] = now_iso()
@@ -15676,6 +16129,10 @@ async def update_program(
         existing["_cascaded_enrollments"] = 0
         return existing
 
+    pathway_validation = await _validate_program_pathways(update, current_program_id=program_id)
+    if not pathway_validation["valid"]:
+        raise HTTPException(status_code=422, detail={"message": "Program has invalid course pathways.", "errors": pathway_validation["errors"]})
+
     await db.programs.update_one({"id": program_id}, {"$set": update})
     existing.update(update)
 
@@ -15693,6 +16150,11 @@ async def update_program(
             "format": update.get("format"),
             "modules": new_modules,
             "completion_rule": update.get("completion_rule") or _default_completion_rule(),
+            "estimated_weeks": update.get("estimated_weeks"),
+            "school_support": update.get("school_support") or {},
+            "school_onboarding": update.get("school_onboarding") or {},
+            "recommended_next_program_slugs": list(update.get("recommended_next_program_slugs") or []),
+            "prereq_slugs": list(update.get("prereq_slugs") or []),
         }
         cursor = db.dog_programs.find({"program_id": program_id, "status": "active"}, {"_id": 0})
         async for enr in cursor:
@@ -15735,10 +16197,13 @@ async def validate_program(program_id: str, target: Literal["live", "draft"] = "
         draft = existing.get("draft")
         if not draft:
             raise HTTPException(status_code=404, detail="No draft saved for this program")
-        modules = draft.get("modules") or []
+        target_doc = draft
     else:
-        modules = existing.get("modules") or []
-    return await _validate_program_structure(modules)
+        target_doc = existing
+    return _merge_program_validations(
+        await _validate_program_structure(target_doc.get("modules") or []),
+        await _validate_program_pathways(target_doc, current_program_id=program_id),
+    )
 
 
 @api.get("/programs/{program_id}/publish-impact")
@@ -15757,7 +16222,10 @@ async def program_publish_impact(program_id: str, _: dict = Depends(require_admi
     active_enrollments = await db.dog_programs.find({"program_id": program_id, "status": "active"}, {"_id": 0, "goal_progress": 1}).to_list(10000)
     active_goal_progress_ids = {gid for enr in active_enrollments for gid in (enr.get("goal_progress") or {}).keys()}
     impact = _program_publish_impact(live_modules, draft_modules, len(active_enrollments), active_goal_progress_ids)
-    impact["validation"] = await _validate_program_structure(draft_modules)
+    impact["validation"] = _merge_program_validations(
+        await _validate_program_structure(draft_modules),
+        await _validate_program_pathways(draft, current_program_id=program_id),
+    )
     return impact
 
 
@@ -15775,9 +16243,12 @@ async def publish_program(program_id: str, cascade: bool = False, _: dict = Depe
     if not draft:
         raise HTTPException(status_code=404, detail="No draft saved for this program")
     draft_modules = draft.get("modules") or []
-    validation = await _validate_program_structure(draft_modules)
+    validation = _merge_program_validations(
+        await _validate_program_structure(draft_modules),
+        await _validate_program_pathways(draft, current_program_id=program_id),
+    )
     if not validation["valid"]:
-        raise HTTPException(status_code=422, detail={"message": "Draft has structural errors and cannot be published.", "errors": validation["errors"]})
+        raise HTTPException(status_code=422, detail={"message": "Draft has validation errors and cannot be published.", "errors": validation["errors"]})
 
     update = {k: v for k, v in draft.items() if k != "saved_at"}
     await db.programs.update_one({"id": program_id}, {"$set": update, "$unset": {"draft": ""}})
@@ -15793,6 +16264,11 @@ async def publish_program(program_id: str, cascade: bool = False, _: dict = Depe
             "description": update.get("description", ""), "focus": update.get("focus", ""),
             "format": update.get("format"), "modules": new_modules,
             "completion_rule": update.get("completion_rule") or _default_completion_rule(),
+            "estimated_weeks": update.get("estimated_weeks"),
+            "school_support": update.get("school_support") or {},
+            "school_onboarding": update.get("school_onboarding") or {},
+            "recommended_next_program_slugs": list(update.get("recommended_next_program_slugs") or []),
+            "prereq_slugs": list(update.get("prereq_slugs") or []),
         }
         cursor = db.dog_programs.find({"program_id": program_id, "status": "active"}, {"_id": 0})
         async for enr in cursor:
@@ -16030,6 +16506,11 @@ async def enroll_dog(dog_id: str, body: EnrollIn, _: dict = Depends(require_admi
             "modules": program.get("modules") or [],
             "completion_rule": program.get("completion_rule") or _default_completion_rule(),
             "welcome_homework_template_id": program.get("welcome_homework_template_id"),
+            "estimated_weeks": program.get("estimated_weeks"),
+            "school_support": program.get("school_support") or {},
+            "school_onboarding": program.get("school_onboarding") or {},
+            "recommended_next_program_slugs": list(program.get("recommended_next_program_slugs") or []),
+            "prereq_slugs": list(program.get("prereq_slugs") or []),
         },
         "status": "active",
         "started_at": started,
@@ -16242,6 +16723,8 @@ async def _create_homework_from_template_internal(
     source_skill_id: Optional[str] = None,
     source_lesson_id: Optional[str] = None,
     source_session_log_id: Optional[str] = None,
+    school_enrollment_id: Optional[str] = None,
+    school_enrollment_record_id: Optional[str] = None,
     trainer_personalized_note: Optional[str] = None,
     practice_frequency: Optional[str] = None,
     minutes_per_session: Optional[int] = None,
@@ -16312,6 +16795,11 @@ async def _create_homework_from_template_internal(
         "source_skill_id": source_skill_id,
         "source_lesson_id": source_lesson_id,
         "source_session_log_id": source_session_log_id,
+        # Explicit Online School ownership marker. source_lesson_id is also used
+        # by trainer-led auto-homework, so it is NOT sufficient to decide that
+        # an assignment belongs to the self-guided School event spine.
+        "school_enrollment_id": school_enrollment_id,
+        "school_enrollment_record_id": school_enrollment_record_id,
         "trainer_personalized_note": trainer_personalized_note or "",
         "practice_frequency": practice_frequency,
         "minutes_per_session": minutes_per_session,
@@ -16550,19 +17038,38 @@ def _effective_lesson_list(module: dict) -> List[dict]:
     return sorted(_effective_lessons(module), key=lambda l: l.get("order", 0))
 
 
-async def _lesson_practice_homework(dog_id: str, lesson_id: str) -> Optional[dict]:
-    """Most recent homework instance created FOR this lesson (via
-    _create_homework_from_template_internal's source_lesson_id — the exact
-    traceability hook Phase 5 personalization already added, reused as-is).
-    Returns None if this lesson's practice has never been assigned yet."""
-    return await db.homework.find_one(
-        {"dog_id": dog_id, "source_lesson_id": lesson_id},
-        {"_id": 0}, sort=[("created_at", -1)],
-    )
+async def _lesson_practice_homework(
+    dog_id: str, lesson_id: str, school_enrollment_record_id: Optional[str] = None,
+) -> Optional[dict]:
+    """Most recent Online School practice assignment for this lesson.
+
+    ``source_lesson_id`` is shared with trainer-led auto-homework, so when the
+    School enrollment record id is known we scope to explicit School ownership
+    markers (plus legacy Online-School assigned_by values). This prevents an
+    in-person/trainer-led assignment for the same dog+lesson from satisfying or
+    hijacking self-guided School progression.
+    """
+    q: Dict[str, Any] = {"dog_id": dog_id, "source_lesson_id": lesson_id}
+    if school_enrollment_record_id:
+        q["$or"] = [
+            {"school_enrollment_record_id": school_enrollment_record_id},
+            {"$and": [
+                {"school_enrollment_record_id": {"$exists": False}},
+                {"school_enrollment_id": {"$exists": False}},
+                {"assigned_by": {"$regex": "^Online School"}},
+            ]},
+            {"$and": [
+                {"school_enrollment_record_id": {"$exists": False}},
+                {"school_enrollment_id": {"$exists": False}},
+                {"assigned_by": "Trainer prescription"},
+            ]},
+        ]
+    return await db.homework.find_one(q, {"_id": 0}, sort=[("created_at", -1)])
 
 
 async def _claim_school_lesson_homework(
     enrollment: dict, dog_id: str, client_id: Optional[str], lesson: dict, assigned_by: str,
+    school_enrollment_id: Optional[str] = None,
 ) -> Optional[dict]:
     """Concurrency-safe, idempotent ensure-homework-exists for a lesson's
     Practice Coach practice. Online School hardening audit — replaces what
@@ -16575,8 +17082,15 @@ async def _claim_school_lesson_homework(
     on the same next lesson, can never create two homework rows for the
     same lesson."""
     lesson_id = lesson.get("id")
-    existing_hw = await _lesson_practice_homework(dog_id, lesson_id)
+    existing_hw = await _lesson_practice_homework(dog_id, lesson_id, enrollment.get("id"))
     if existing_hw:
+        if school_enrollment_id and existing_hw.get("school_enrollment_id") != school_enrollment_id:
+            await db.homework.update_one(
+                {"id": existing_hw["id"]},
+                {"$set": {"school_enrollment_id": school_enrollment_id, "school_enrollment_record_id": enrollment.get("id")}},
+            )
+            existing_hw["school_enrollment_id"] = school_enrollment_id
+            existing_hw["school_enrollment_record_id"] = enrollment.get("id")
         return existing_hw
     tpl_ids = lesson.get("suggested_homework_template_ids") or []
     if not tpl_ids:
@@ -16587,7 +17101,15 @@ async def _claim_school_lesson_homework(
     existing_log = {e.get("trigger"): e for e in (enrollment.get("auto_homework_log") or [])}
     entry = existing_log.get(trigger)
     if entry and entry.get("homework_id"):
-        return await db.homework.find_one({"id": entry["homework_id"]}, {"_id": 0})
+        existing = await db.homework.find_one({"id": entry["homework_id"]}, {"_id": 0})
+        if existing and school_enrollment_id and existing.get("school_enrollment_id") != school_enrollment_id:
+            await db.homework.update_one(
+                {"id": existing["id"]},
+                {"$set": {"school_enrollment_id": school_enrollment_id, "school_enrollment_record_id": enrollment.get("id")}},
+            )
+            existing["school_enrollment_id"] = school_enrollment_id
+            existing["school_enrollment_record_id"] = enrollment.get("id")
+        return existing
     if not entry:
         conflict = await _active_homework_conflict(dog_id, template_id)
         if conflict:
@@ -16601,20 +17123,29 @@ async def _claim_school_lesson_homework(
             # which surfaced a misleading "practice template no longer exists"
             # error and left the practice panel unopened.
             conflict_hw = await db.homework.find_one({"id": conflict["id"]}, {"_id": 0})
-            if conflict_hw and not conflict_hw.get("source_lesson_id"):
-                await db.homework.update_one({"id": conflict["id"]}, {"$set": {"source_lesson_id": lesson_id}})
-                conflict_hw["source_lesson_id"] = lesson_id
+            same_school = bool(conflict_hw and (
+                conflict_hw.get("school_enrollment_record_id") == enrollment.get("id")
+                or conflict_hw.get("school_enrollment_id") == school_enrollment_id
+                or str(conflict_hw.get("assigned_by") or "").startswith("Online School")
+            ))
+            if conflict_hw and same_school and not conflict_hw.get("source_lesson_id"):
+                marker_set = {"source_lesson_id": lesson_id}
+                if school_enrollment_id:
+                    marker_set.update({"school_enrollment_id": school_enrollment_id, "school_enrollment_record_id": enrollment.get("id")})
+                await db.homework.update_one({"id": conflict["id"]}, {"$set": marker_set})
+                conflict_hw.update(marker_set)
                 return conflict_hw
         won = await _claim_auto_homework_trigger(enrollment_id, template_id, trigger)
         if not won:
             # A concurrent caller claimed this trigger first — it is
             # creating (or has just created) the homework. Re-check once
             # rather than erroring or creating a second row.
-            return await _lesson_practice_homework(dog_id, lesson_id)
+            return await _lesson_practice_homework(dog_id, lesson_id, enrollment.get("id"))
     dog = await db.dogs.find_one({"id": dog_id}, {"_id": 0})
     client = await db.clients.find_one({"id": client_id}, {"_id": 0}) if client_id else None
     hw = await _create_homework_from_template_internal(
         dog, client, template_id, assigned_by=assigned_by, source_lesson_id=lesson_id,
+        school_enrollment_id=school_enrollment_id, school_enrollment_record_id=enrollment.get("id"),
     )
     if hw:
         await _finalize_auto_homework_claim(enrollment_id, trigger, hw["id"])
@@ -16713,7 +17244,7 @@ async def _school_roadmap(enrollment: dict, dog_id: str) -> dict:
     # Per-enrollment/dog, so dogs never contaminate each other; absent = none.
     learn_completed_ids = set(enrollment.get("learn_completed_lesson_ids") or [])
 
-    current_hw = await _lesson_practice_homework(dog_id, cur_lesson_id) if cur_lesson_id else None
+    current_hw = await _lesson_practice_homework(dog_id, cur_lesson_id, enrollment.get("id")) if cur_lesson_id else None
     practiced = _lesson_is_practiced(current_hw)
 
     # Phase 2B — a COMPLETED enrollment has no current pointer (current_lesson_id
@@ -17032,6 +17563,7 @@ def _client_safe_checkpoint_submission(sub: Optional[dict]) -> Optional[dict]:
             "prescription": _client_safe_prescription(sub.get("prescription")),
             "graded_at": sub.get("graded_at"),
             "trainer_assist": _client_safe_trainer_assist(sub),
+            "video_annotations": sub.get("video_annotations") or [],
         })
     return out
 
@@ -17042,6 +17574,30 @@ def _school_access_state(row: dict) -> str:
     required for legacy enrollments (see the Phase 6 spec's 'safe default'
     guidance)."""
     return row.get("access_state") or "active"
+
+
+def _effective_school_access_state(enrollment: dict) -> str:
+    """Client-facing lifecycle state including time-based expiry/pause.
+
+    `access_state` remains the durable administrative state. Expiration and a
+    future pause_until are time-derived overlays, so every Student School view
+    should derive them the same way rather than independently reimplementing
+    date comparisons (or, worse, showing an expired course as active).
+    """
+    state = _school_access_state(enrollment)
+    if state == "revoked":
+        return state
+    now_dt = datetime.now(timezone.utc)
+    try:
+        expires = enrollment.get("school_access_expires_at")
+        if expires and datetime.fromisoformat(str(expires).replace("Z", "+00:00")) <= now_dt:
+            return "expired"
+        pause_until = enrollment.get("school_pause_until")
+        if pause_until and datetime.fromisoformat(str(pause_until).replace("Z", "+00:00")) > now_dt:
+            return "paused"
+    except Exception:
+        pass
+    return state
 
 
 # Phase 6 focused pass — multi-document lifecycle consistency. dog_programs
@@ -17130,8 +17686,51 @@ def _require_school_access(enrollment: dict, *, allow_withdrawn_read: bool = Fal
     call sites pass allow_withdrawn_read=False (the default)."""
     if _school_access_state(enrollment) == "revoked":
         raise HTTPException(status_code=403, detail="Access to this course has been revoked. Contact us if you believe this is a mistake.")
+    now_dt = datetime.now(timezone.utc)
+    expires = enrollment.get("school_access_expires_at")
+    if expires:
+        try:
+            if datetime.fromisoformat(str(expires).replace("Z", "+00:00")) <= now_dt:
+                raise HTTPException(status_code=403, detail="Access to this course has expired. Contact Sit Happens if you need an extension.")
+        except HTTPException:
+            raise
+        except Exception:
+            pass
+    pause_until = enrollment.get("school_pause_until")
+    if pause_until and not allow_withdrawn_read:
+        try:
+            if datetime.fromisoformat(str(pause_until).replace("Z", "+00:00")) > now_dt:
+                raise HTTPException(status_code=403, detail="This course is temporarily paused. You can review your history, but new training actions are paused for now.")
+        except HTTPException:
+            raise
+        except Exception:
+            pass
     if _canonical_school_status(enrollment) == "withdrawn" and not allow_withdrawn_read:
         raise HTTPException(status_code=403, detail="This enrollment was withdrawn — no further training actions are available here.")
+
+
+def _require_school_onboarding_ready(se: dict, enrollment: dict) -> None:
+    """Gate new School training actions behind required enrollment onboarding.
+
+    Reading lesson/course history remains available, but when a frozen program
+    snapshot requires a baseline the client must submit it before Learn/Practice/
+    checkpoint/advance writes can begin.  This uses the enrollment snapshot, not
+    the mutable live Program, so the rule cannot change underneath an enrolled
+    student. Legacy courses with onboarding disabled or no baseline requirement
+    are unaffected.
+    """
+    cfg = (enrollment.get("program_snapshot") or {}).get("school_onboarding") or {}
+    if not cfg.get("enabled", True):
+        return
+    baseline = se.get("baseline") or enrollment.get("school_baseline")
+    missing_baseline = bool(cfg.get("require_baseline", False) and not baseline)
+    missing_equipment = bool(cfg.get("require_equipment_check", False) and not ((baseline or {}).get("equipment") or "").strip())
+    if not missing_baseline and not missing_equipment:
+        return
+    raise HTTPException(
+        status_code=409,
+        detail="Complete your Online School setup before starting training.",
+    )
 
 
 class OnlineSchoolAlreadyEnrolledError(Exception):
@@ -17242,8 +17841,19 @@ async def _grant_online_school_enrollment(
             se = await _self_heal_missing_school_enrollment(existing["id"], dog["id"], program["id"], client_id, enrolled_by)
         raise OnlineSchoolAlreadyEnrolledError(se["id"] if se else None, existing["id"], existing.get("status"))
 
+    # Course pathway enforcement belongs at the canonical enrollment boundary,
+    # not only in the Shop UI. Manual admin enrollment, purchase fulfillment,
+    # POS/staff sales, and any future caller therefore obey the same rule.
+    await _require_program_prerequisites(dog["id"], program)
+
     started = business_today().isoformat()
     first_module = program["modules"][0]
+    school_default_trainer_id = program.get("school_default_trainer_id") or None
+    if school_default_trainer_id:
+        _default_trainer = await db.users.find_one({"id": school_default_trainer_id, "active": {"$ne": False}}, {"_id": 0})
+        if not _default_trainer or not _perms_for(_default_trainer).get("manage_school"):
+            school_default_trainer_id = None
+
     dog_program_doc = {
         "id": _gid(),
         "dog_id": dog["id"],
@@ -17254,6 +17864,11 @@ async def _grant_online_school_enrollment(
             "format": program.get("format"), "modules": program.get("modules") or [],
             "completion_rule": program.get("completion_rule") or _default_completion_rule(),
             "welcome_homework_template_id": program.get("welcome_homework_template_id"),
+            "estimated_weeks": program.get("estimated_weeks"),
+            "school_support": program.get("school_support") or {},
+            "school_onboarding": program.get("school_onboarding") or {},
+            "recommended_next_program_slugs": list(program.get("recommended_next_program_slugs") or []),
+            "prereq_slugs": list(program.get("prereq_slugs") or []),
         },
         "status": "active",
         "started_at": started, "target_completion_date": None, "completed_at": None, "on_hold_at": None,
@@ -17278,6 +17893,10 @@ async def _grant_online_school_enrollment(
         # active by every reader (see _school_access_state's absent-is-safe
         # default), never requiring a backfill.
         "access_state": "active",
+        "assigned_trainer_id": school_default_trainer_id,
+        "support_checkpoint_allowance": (program.get("school_support") or {}).get("trainer_checkpoints_included"),
+        "support_assist_allowance": (program.get("school_support") or {}).get("trainer_assists_included"),
+        "school_access_expires_at": None, "school_pause_until": None,
         "withdrawn_at": None, "withdrawn_by": None, "withdrawn_by_name": None, "withdrawal_reason": None,
     }
     # Two-record write: dog_programs then school_enrollments. This
@@ -17326,6 +17945,10 @@ async def _grant_online_school_enrollment(
         "enrolled_at": now_iso(),
         "enrolled_by": enrolled_by,
         "created_at": now_iso(),
+        "assigned_trainer_id": school_default_trainer_id,
+        "support_checkpoint_allowance": (program.get("school_support") or {}).get("trainer_checkpoints_included"),
+        "support_assist_allowance": (program.get("school_support") or {}).get("trainer_assists_included"),
+        "onboarding_status": "required" if (program.get("school_onboarding") or {}).get("enabled", True) else "not_required",
     }
     try:
         await db.school_enrollments.insert_one(school_enrollment)
@@ -17352,6 +17975,7 @@ async def _grant_online_school_enrollment(
                     dog, client, tpl_ids[0],
                     assigned_by=f"Online School · {(first_lesson or {}).get('name', 'Lesson 1')}",
                     source_lesson_id=first_lesson_id,
+                    school_enrollment_id=school_enrollment.get("id"), school_enrollment_record_id=dog_program_doc.get("id"),
                 )
                 if hw:
                     await _record_auto_assign(dog_program_doc["id"], tpl_ids[0], f"school_lesson:{first_lesson_id}", hw["id"])
@@ -17387,7 +18011,7 @@ async def _grant_online_school_enrollment(
 
 
 @api.post("/school/enroll")
-async def school_enroll(body: SchoolEnrollIn, user: dict = Depends(require_admin_and_permission("manage_training_sessions"))):
+async def school_enroll(body: SchoolEnrollIn, user: dict = Depends(require_admin_and_permission("manage_school"))):
     """Manual admin/trainer enrollment into Online School — a thin wrapper
     around the canonical _grant_online_school_enrollment helper Phase 5's
     purchase fulfillment also calls (see that function's docstring)."""
@@ -17412,7 +18036,7 @@ async def school_enroll(body: SchoolEnrollIn, user: dict = Depends(require_admin
 
 
 @api.delete("/school/enrollments/{school_enrollment_id}")
-async def delete_school_enrollment(school_enrollment_id: str, _: dict = Depends(require_admin_and_permission("manage_training_sessions"))):
+async def delete_school_enrollment(school_enrollment_id: str, _: dict = Depends(require_admin_and_permission("manage_school"))):
     """Clean removal — the safe undo for a manual (test or mistaken)
     enrollment. Guarded so this can never touch a trainer-led dog_programs
     row even if called with a stale/wrong id.
@@ -17495,7 +18119,7 @@ class WithdrawStudentIn(BaseModel):
 @api.post("/school/enrollments/{school_enrollment_id}/withdraw")
 async def withdraw_school_enrollment(
     school_enrollment_id: str, body: WithdrawStudentIn,
-    user: dict = Depends(require_admin_and_permission("manage_training_sessions")),
+    user: dict = Depends(require_admin_and_permission("manage_school")),
 ):
     """History-preserving replacement for hard-delete once an enrollment has
     real training history (Phase 6 Case B). Refuses to touch a COMPLETED
@@ -17580,7 +18204,7 @@ class SchoolAccessStateIn(BaseModel):
 @api.post("/school/enrollments/{school_enrollment_id}/access")
 async def set_school_enrollment_access(
     school_enrollment_id: str, body: SchoolAccessStateIn,
-    user: dict = Depends(require_admin_and_permission("manage_training_sessions")),
+    user: dict = Depends(require_admin_and_permission("manage_school")),
 ):
     """Independent access-lifecycle toggle (Phase 6 6.2/6.6) — usable at ANY
     training status (active/completed/withdrawn), most commonly to revoke
@@ -17624,7 +18248,7 @@ async def set_school_enrollment_access(
 
 
 @api.get("/dogs/{dog_id}/school-enrollments")
-async def list_dog_school_enrollments(dog_id: str, _: dict = Depends(require_admin_and_permission("manage_training_sessions"))):
+async def list_dog_school_enrollments(dog_id: str, _: dict = Depends(require_admin_and_permission("manage_school"))):
     """Admin-facing lookup — the dog-profile Training tab already gets the
     underlying dog_programs rows via the existing GET /dogs/{id}/programs
     (both channels are the same collection); this resolves the companion
@@ -17635,7 +18259,7 @@ async def list_dog_school_enrollments(dog_id: str, _: dict = Depends(require_adm
 
 @api.get("/admin/school-enrollments/{school_enrollment_id}/checkpoint-history")
 async def admin_school_enrollment_checkpoint_history(
-    school_enrollment_id: str, _: dict = Depends(require_admin_and_permission("manage_training_sessions")),
+    school_enrollment_id: str, _: dict = Depends(require_admin_and_permission("manage_school")),
 ):
     """Phase 6 admin-operability gap — before this endpoint, staff had NO
     way to review a student's GRADED checkpoint history (Handler vs Dog
@@ -17815,7 +18439,7 @@ async def portal_school_detail(school_enrollment_id: str, user: dict = Depends(g
     # enrollment_for_client has already opportunistically healed `se` too,
     # so these agree either way, but `enrollment` is the one guaranteed
     # correct even in the exact crash window before that heal runs.
-    access_state = _school_access_state(enrollment)
+    access_state = _effective_school_access_state(enrollment)
     status = _canonical_school_status(enrollment)
     summary = _enrollment_summary(enrollment)
     # Phase 6 — a revoked-access enrollment degrades gracefully rather than
@@ -17849,9 +18473,12 @@ def _school_current_action(status: str, access_state: str, roadmap: Optional[dic
 
     Priority (per Phase 2 spec §6): remediation / Trainer Assist → checkpoint
     submit → awaiting review (caught up) → practice → advance → complete."""
-    if access_state == "revoked":
+    if access_state in ("revoked", "expired"):
         return {"type": "access_expired", "label": "Course access ended",
-                "sublabel": "Reach out to restore access to this course.", "target": {"screen": "home"}}
+                "sublabel": "Reach out to restore or extend access to this course.", "target": {"screen": "home"}}
+    if access_state == "paused":
+        return {"type": "course_paused", "label": "Course temporarily paused",
+                "sublabel": "Your training history is safe. New training actions resume when the pause ends.", "target": {"screen": "home"}}
     if status == "completed":
         return {"type": "course_complete", "label": "Review your journey",
                 "sublabel": "You completed the program — see everything your dog learned.",
@@ -17875,24 +18502,40 @@ def _school_current_action(status: str, access_state: str, roadmap: Optional[dic
     # past an un-learned lesson.
     practice_satisfied = practiced or (not has_practice and learn_done)
 
-    # 1a. Trainer Assist (support, never framed as failure)
+    # 1a. Trainer Assist (support, never framed as failure). Completion clears
+    # the hold but intentionally does NOT advance the enrollment; once the case
+    # is complete, the honest next step is a fresh checkpoint submission.
     if cp_state == "graded" and cp.get("outcome") == "trainer_assist_recommended":
         ta = cp.get("trainer_assist") or {}
-        if ta.get("status") == "scheduled":
+        ta_status = ta.get("status")
+        if ta_status == "completed" and not cp.get("on_hold"):
+            return {"type": "submit_checkpoint", "label": "Resubmit your checkpoint",
+                    "sublabel": "Your Trainer Assist is complete — show your trainer the updated skill.",
+                    "target": {"screen": "lesson", "lesson_id": lesson_id, "checkpoint_id": cp.get("id")}}
+        if ta_status == "scheduled":
             return {"type": "trainer_assist", "label": "View your scheduled session",
                     "sublabel": "Your trainer will work through this with you in person.",
+                    "target": {"screen": "feedback", "checkpoint_id": cp.get("id")}}
+        if ta_status == "reschedule_needed":
+            return {"type": "trainer_assist", "label": "Trainer Assist needs rescheduling",
+                    "sublabel": "Your previous appointment was canceled — your trainer will help you get a new time set up.",
                     "target": {"screen": "feedback", "checkpoint_id": cp.get("id")}}
         return {"type": "trainer_assist", "label": "See Trainer Assist",
                 "sublabel": "Your trainer recommended a hands-on session — this is support, not a setback.",
                 "target": {"screen": "feedback", "checkpoint_id": cp.get("id")}}
-    # 1b. Remediation prescribed
+    # 1b. Remediation prescribed. Once the configured practice count reaches
+    # zero, remediation is satisfied and the next real action is checkpoint
+    # resubmission — do not leave the student stuck on an 'open practice plan'
+    # CTA after they have completed the plan.
     if cp_state == "graded" and cp.get("outcome") == "prescribe_practice":
         presc = cp.get("prescription") or {}
         remaining = presc.get("practice_sessions_remaining")
+        if remaining == 0:
+            return {"type": "submit_checkpoint", "label": "Resubmit your checkpoint",
+                    "sublabel": "You've completed the prescribed practice — show your trainer the updated skill.",
+                    "target": {"screen": "lesson", "lesson_id": lesson_id, "checkpoint_id": cp.get("id")}}
         if remaining is not None and remaining > 0:
             sub = f"{remaining} more practice session{'s' if remaining != 1 else ''} before you can resubmit your checkpoint."
-        elif remaining == 0:
-            sub = "You've done the prescribed practice — you're ready to resubmit your checkpoint."
         else:
             sub = "Your trainer prescribed some extra practice for this skill."
         return {"type": "remediation", "label": "Complete remediation", "sublabel": sub,
@@ -18003,8 +18646,9 @@ async def portal_school_home(school_enrollment_id: str, user: dict = Depends(get
     status = _canonical_school_status(enrollment)
     summary = _enrollment_summary(enrollment)
     snap = enrollment.get("program_snapshot") or {}
+    effective_access_state = _effective_school_access_state(enrollment)
 
-    roadmap = None if access_state == "revoked" else _client_safe_school_roadmap(await _school_roadmap(enrollment, se["dog_id"]))
+    roadmap = None if effective_access_state in ("revoked", "expired") else _client_safe_school_roadmap(await _school_roadmap(enrollment, se["dog_id"]))
     current_lesson = (roadmap or {}).get("current_lesson")
     current_module = None
     upcoming = None
@@ -18024,7 +18668,16 @@ async def portal_school_home(school_enrollment_id: str, user: dict = Depends(get
                 if nxt_mod:
                     upcoming = {"kind": "module", "name": nxt_mod.get("name"), "locked": True}
 
-    action = _school_current_action(status, access_state, roadmap)
+    action = _school_current_action(status, effective_access_state, roadmap)
+    onboarding_config = snap.get("school_onboarding") or {}
+    onboarding_baseline = se.get("baseline") or enrollment.get("school_baseline")
+    _needs_baseline = bool(onboarding_config.get("require_baseline", False) and not onboarding_baseline)
+    _needs_equipment = bool(onboarding_config.get("require_equipment_check", False) and not ((onboarding_baseline or {}).get("equipment") or "").strip())
+    if (status == "active" and effective_access_state == "active" and onboarding_config.get("enabled", True)
+            and (_needs_baseline or _needs_equipment)):
+        action = {"type": "onboarding", "label": "Complete your School setup",
+                  "sublabel": "Tell your trainer about your goals, current challenges, equipment, and training routine before you begin.",
+                  "target": {"screen": "home"}}
     if action.get("type") == "setup_required":
         # Malformed legacy curriculum (checkpoint required, no practice
         # configured) — publishing this combo is now blocked, so log enough
@@ -18053,13 +18706,47 @@ async def portal_school_home(school_enrollment_id: str, user: dict = Depends(get
             }
     trainer = {"name": (latest_feedback or {}).get("trainer_name"),
                "role": "Sit Happens Trainer" if (latest_feedback or {}).get("trainer_name") else None,
-               "is_general_support": not (latest_feedback or {}).get("trainer_name")}
+               "is_general_support": not (latest_feedback or {}).get("trainer_name"),
+               "has_unanswered_question": False, "unread_replies": 0}
+    # The Home trainer card used to check has_unanswered_question even though
+    # the backend never supplied it. Reuse the same bounded School support
+    # aggregation as the native Feedback screen so the badge is now real.
+    try:
+        support_state = await _school_support_payload(se["id"], user)
+        trainer["has_unanswered_question"] = bool(support_state.get("unanswered_count"))
+        trainer["unread_replies"] = int(support_state.get("unread_replies") or 0)
+    except Exception:
+        pass
+
+    assigned_trainer_id = se.get("assigned_trainer_id") or enrollment.get("assigned_trainer_id")
+    if assigned_trainer_id:
+        assigned = await db.users.find_one({"id": assigned_trainer_id, "active": {"$ne": False}}, {"_id": 0, "name": 1, "display_name": 1, "staff_role": 1})
+        if assigned:
+            trainer["id"] = assigned_trainer_id
+            trainer["name"] = assigned.get("display_name") or assigned.get("name")
+            trainer["role"] = (assigned.get("staff_role") or "Trainer").replace("_", " ").title()
+            trainer["is_general_support"] = False
 
     course_progress = _school_course_progress(enrollment, status)
     modules = roadmap["modules"] if roadmap else []
     checkpoints_passed = await db.checkpoint_submissions.count_documents(
         {"school_enrollment_id": se["id"], "outcome": "advance"},
     )
+    recommended_next_programs = []
+    next_slugs = snap.get("recommended_next_program_slugs") or []
+    if next_slugs:
+        next_rows = await db.programs.find(
+            {"slug": {"$in": next_slugs}, "active": True},
+            {"_id": 0, "id": 1, "slug": 1, "name": 1, "focus": 1, "price": 1, "available_online": 1, "purchase_fulfillment": 1},
+        ).to_list(30)
+        by_slug = {r.get("slug"): r for r in next_rows}
+        recommended_next_programs = [by_slug[x] for x in next_slugs if x in by_slug]
+
+    support_checkpoint_included = se.get("support_checkpoint_allowance") if se.get("support_checkpoint_allowance") is not None else enrollment.get("support_checkpoint_allowance")
+    support_assist_included = se.get("support_assist_allowance") if se.get("support_assist_allowance") is not None else enrollment.get("support_assist_allowance")
+    support_checkpoint_used = await db.checkpoint_submissions.count_documents({"school_enrollment_id": se["id"], "status": "graded"})
+    support_assist_used = await db.checkpoint_submissions.count_documents({"school_enrollment_id": se["id"], "outcome": "trainer_assist_recommended", "trainer_assist_status": "completed"})
+
     progress = {
         # course_pct is the ONLY number presented as Course Progress —
         # curriculum completion (see _school_course_progress). mastered_pct
@@ -18078,7 +18765,9 @@ async def portal_school_home(school_enrollment_id: str, user: dict = Depends(get
     return {
         "school_enrollment_id": se["id"], "status": status, "access_state": access_state,
         "dog": {"id": se["dog_id"], "name": (dog or {}).get("name"), "photo": (dog or {}).get("photo") or ""},
-        "program": {"name": snap.get("name"), "focus": snap.get("focus")},
+        "program": {"name": snap.get("name"), "focus": snap.get("focus"),
+                    "estimated_weeks": snap.get("estimated_weeks"), "school_support": snap.get("school_support") or {},
+                    "recommended_next_programs": recommended_next_programs},
         "current_module": current_module and {"id": current_module["id"], "name": current_module["name"],
                                               "description": current_module.get("description") or ""},
         "current_lesson": current_lesson,
@@ -18095,6 +18784,19 @@ async def portal_school_home(school_enrollment_id: str, user: dict = Depends(get
         "progress": progress,
         "upcoming": upcoming,
         "completion_summary": await _school_completion_summary(se, enrollment),
+        "onboarding": {
+            "status": se.get("onboarding_status") or ("required" if (snap.get("school_onboarding") or {}).get("enabled", True) else "not_required"),
+            "config": onboarding_config,
+            "baseline": onboarding_baseline,
+        },
+        "support": {
+            "checkpoint_allowance": support_checkpoint_included, "checkpoint_used": support_checkpoint_used,
+            "checkpoint_remaining": max(0, support_checkpoint_included - support_checkpoint_used) if support_checkpoint_included is not None else None,
+            "assist_allowance": support_assist_included, "assist_used": support_assist_used,
+            "assist_remaining": max(0, support_assist_included - support_assist_used) if support_assist_included is not None else None,
+        },
+        "access_expires_at": enrollment.get("school_access_expires_at"),
+        "pause_until": enrollment.get("school_pause_until"),
     }
 
 
@@ -18200,6 +18902,38 @@ async def portal_school_lesson_detail(school_enrollment_id: str, lesson_id: str,
     }
 
 
+async def _emit_school_learn_completed_event(se: dict, enrollment: dict, lesson: dict, user: dict) -> None:
+    """Activity-only event for the Learn -> next-step boundary. Both explicit
+    Complete Lesson (no-practice lesson) and Start Practice (practice-bearing
+    lesson) call this helper with the same dedupe key, so the semantic event is
+    exactly-once even if the client retries the transition."""
+    try:
+        client = await db.clients.find_one({"id": se.get("client_id")}, {"_id": 0, "name": 1}) or {}
+        dog = await db.dogs.find_one({"id": se.get("dog_id")}, {"_id": 0, "name": 1}) or {}
+        snap = enrollment.get("program_snapshot") or {}
+        module_id = None
+        module_name = None
+        for mod in snap.get("modules") or []:
+            if any(l.get("id") == lesson.get("id") for l in _effective_lessons(mod)):
+                module_id, module_name = mod.get("id"), mod.get("name")
+                break
+        await school_events.emit_event(
+            SchoolEvent.LESSON_LEARN_COMPLETED, actor_type="client", actor_id=user.get("id"),
+            actor_name=user.get("name"), client_id=se.get("client_id"), client_name=client.get("name"),
+            dog_id=se.get("dog_id"), dog_name=dog.get("name"),
+            enrollment_id=enrollment.get("id"), school_enrollment_id=se.get("id"),
+            program_id=enrollment.get("program_id"), program_name=snap.get("name"),
+            module_id=module_id, module_name=module_name,
+            lesson_id=lesson.get("id"), lesson_name=lesson.get("name"),
+            title=f"{client.get('name') or 'A student'} completed the Learn step",
+            summary=f"Completed the learning for “{lesson.get('name') or 'a lesson'}”.",
+            deep_link={"screen": "school_hq", "tab": "activity"},
+            dedupe_key=f"lesson_learned:{enrollment.get('id')}:{lesson.get('id')}",
+        )
+    except Exception:
+        pass
+
+
 @api.post("/portal/school/{school_enrollment_id}/lessons/{lesson_id}/start-practice")
 async def portal_school_start_practice(school_enrollment_id: str, lesson_id: str, user: dict = Depends(get_current_user)):
     """Idempotently ensures this lesson's Practice Coach homework exists,
@@ -18208,6 +18942,7 @@ async def portal_school_start_practice(school_enrollment_id: str, lesson_id: str
     never forks the practice engine, it only launches it."""
     se, enrollment = await _school_enrollment_for_client(school_enrollment_id, user)
     _require_school_access(enrollment, allow_withdrawn_read=False)
+    _require_school_onboarding_ready(se, enrollment)
     roadmap = await _school_roadmap(enrollment, se["dog_id"])
     lesson = next((l for m in roadmap["modules"] for l in m["lessons"] if l.get("id") == lesson_id), None)
     if not lesson or lesson.get("status") == "locked":
@@ -18229,6 +18964,7 @@ async def portal_school_start_practice(school_enrollment_id: str, lesson_id: str
     hw = await _claim_school_lesson_homework(
         enrollment, se["dog_id"], se.get("client_id"), lesson,
         assigned_by=f"Online School · {lesson.get('name', 'Lesson')}",
+        school_enrollment_id=se.get("id"),
     )
     if not hw:
         raise HTTPException(status_code=422, detail="This lesson's practice template no longer exists.")
@@ -18244,6 +18980,7 @@ async def portal_school_start_practice(school_enrollment_id: str, lesson_id: str
     await db.dog_programs.update_one(
         {"id": enrollment["id"]}, {"$addToSet": {"learn_completed_lesson_ids": lesson_id}},
     )
+    await _emit_school_learn_completed_event(se, enrollment, lesson, user)
     return {"homework_id": hw["id"]}
 
 
@@ -18259,6 +18996,7 @@ async def portal_school_complete_lesson(school_enrollment_id: str, lesson_id: st
     and no fabricated Practice record."""
     se, enrollment = await _school_enrollment_for_client(school_enrollment_id, user)
     _require_school_access(enrollment, allow_withdrawn_read=False)
+    _require_school_onboarding_ready(se, enrollment)
     roadmap = await _school_roadmap(enrollment, se["dog_id"])
     if roadmap.get("current_lesson_id") != lesson_id:
         raise HTTPException(status_code=422, detail="You can only complete your current lesson.")
@@ -18268,39 +19006,166 @@ async def portal_school_complete_lesson(school_enrollment_id: str, lesson_id: st
     await db.dog_programs.update_one(
         {"id": enrollment["id"]}, {"$addToSet": {"learn_completed_lesson_ids": lesson_id}},
     )
-    # Routine progress signal on the Phase-1 spine (activity only, no admin
-    # alert) — gives a no-practice lesson some activity-feed presence it would
-    # otherwise never produce. Best-effort, idempotent per enrollment+lesson.
-    try:
-        _cli = await db.clients.find_one({"id": se.get("client_id")}, {"_id": 0, "name": 1}) or {}
-        _dog = await db.dogs.find_one({"id": se.get("dog_id")}, {"_id": 0, "name": 1}) or {}
-        await school_events.emit_event(
-            SchoolEvent.LESSON_STARTED, actor_type="client", actor_id=user.get("id"),
-            client_id=se.get("client_id"), client_name=_cli.get("name"),
-            dog_id=se.get("dog_id"), dog_name=_dog.get("name"),
-            enrollment_id=enrollment["id"], school_enrollment_id=se["id"],
-            lesson_id=lesson_id, lesson_name=current_lesson.get("name"),
-            title=f"{_cli.get('name') or 'A student'} completed a lesson",
-            summary=f"Completed the learning for “{current_lesson.get('name') or 'a lesson'}”.",
-            deep_link={"screen": "school_hq", "tab": "activity"},
-            dedupe_key=f"lesson_learned:{enrollment['id']}:{lesson_id}",
-        )
-    except Exception:
-        pass
+    await _emit_school_learn_completed_event(se, enrollment, current_lesson, user)
     return {"learn_completed": True, "lesson_id": lesson_id}
 
 
-# ─── Online School Phase 2 — checkpoint video submission ──────────────────
-# 10 MB raw ceiling: base64 inflates by 4/3, so 10 MB raw -> ~13.3 MB base64
-# (~83% of Mongo's 16 MB per-document BSON limit), leaving comfortable
-# headroom for the document's other fields. Verified against homework_media
-# (server.py's upload_day_video) being a flat, unchunked collection — no
-# GridFS/filesystem/cloud storage anywhere in this codebase — before this
-# ceiling was chosen; enforced server-side here, unlike upload_day_video's
-# existing client-side-only 15MB gate (a separate, pre-existing, out-of-
-# scope gap — not touched by this feature).
-CHECKPOINT_VIDEO_MAX_BYTES = 10 * 1024 * 1024
+async def _school_prescribed_homework_id(enrollment: dict, submission: dict) -> Optional[str]:
+    """Resolve the single homework row a checkpoint remediation plan tracks.
+
+    New grades persist ``tracked_homework_id`` directly. The fallbacks below
+    exist only so a legacy/incomplete prescription can still launch the exact
+    practice the trainer assigned without exposing internal template ids to the
+    browser or fabricating a second assignment.
+    """
+    prescription = submission.get("prescription") or {}
+    tracked = prescription.get("tracked_homework_id")
+    if tracked:
+        return tracked
+
+    action = prescription.get("action")
+    if action == "repeat_current_recipe":
+        hw = await _lesson_practice_homework(submission.get("dog_id"), submission.get("lesson_id"), enrollment.get("id"))
+        return (hw or {}).get("id") or submission.get("homework_id")
+
+    if action == "assign_recipe":
+        trigger = f"checkpoint_prescription:{submission.get('id')}"
+        log = {e.get("trigger"): e for e in (enrollment.get("auto_homework_log") or [])}
+        return (log.get(trigger) or {}).get("homework_id")
+
+    if action == "assign_refresher_lesson":
+        refresher_id = prescription.get("refresher_lesson_id")
+        if refresher_id:
+            hw = await _lesson_practice_homework(submission.get("dog_id"), refresher_id, enrollment.get("id"))
+            return (hw or {}).get("id")
+    return None
+
+
+@api.post("/portal/school/{school_enrollment_id}/remediation/start")
+async def portal_school_start_remediation(school_enrollment_id: str, user: dict = Depends(get_current_user)):
+    """Open the EXACT Practice Coach assignment prescribed by the trainer.
+
+    This is deliberately a bounded action endpoint instead of exposing raw
+    ``tracked_homework_id`` / template ids in the client-safe checkpoint shape.
+    It never creates a new practice plan; grading already did that.
+    """
+    se, enrollment = await _school_enrollment_for_client(school_enrollment_id, user)
+    _require_school_access(enrollment, allow_withdrawn_read=False)
+    roadmap = await _school_roadmap(enrollment, se["dog_id"])
+    lesson_id = roadmap.get("current_lesson_id")
+    if not lesson_id:
+        raise HTTPException(status_code=409, detail="There isn't an active lesson practice plan right now.")
+
+    submission = await db.checkpoint_submissions.find_one(
+        {
+            "school_enrollment_id": se["id"],
+            "lesson_id": lesson_id,
+            "status": "graded",
+            "outcome": "prescribe_practice",
+        },
+        {"_id": 0},
+        sort=[("graded_at", -1)],
+    )
+    if not submission:
+        raise HTTPException(status_code=409, detail="There isn't an active trainer practice plan right now.")
+
+    prescription = submission.get("prescription") or {}
+    homework_id = await _school_prescribed_homework_id(enrollment, submission)
+    min_required = prescription.get("min_practice_sessions_required")
+    if min_required and homework_id:
+        count = await _count_practice_sessions_since(homework_id, prescription.get("practice_count_since"))
+        if count >= min_required:
+            raise HTTPException(status_code=409, detail="Your prescribed practice is complete — you're ready to resubmit your checkpoint.")
+
+    if not homework_id:
+        logger.warning(
+            "School remediation missing tracked homework: school_enrollment=%s enrollment=%s dog=%s lesson=%s checkpoint=%s action=%s",
+            se.get("id"), enrollment.get("id"), se.get("dog_id"), lesson_id, submission.get("id"), prescription.get("action"),
+        )
+        raise HTTPException(status_code=409, detail="Your trainer's practice plan needs attention before you can continue. Please ask your trainer for help.")
+
+    hw = await db.homework.find_one(
+        {"id": homework_id, "client_id": se.get("client_id"), "dog_id": se.get("dog_id")},
+        {"_id": 0, "id": 1},
+    )
+    if not hw:
+        logger.warning(
+            "School remediation homework ownership/missing mismatch: school_enrollment=%s homework=%s dog=%s client=%s",
+            se.get("id"), homework_id, se.get("dog_id"), se.get("client_id"),
+        )
+        raise HTTPException(status_code=409, detail="Your trainer's practice plan needs attention before you can continue. Please ask your trainer for help.")
+
+    return {"homework_id": homework_id}
+
+
+# ─── Online School — checkpoint/practice video submission ──────────────────
+# School media is persisted on the dedicated filesystem media root rather than
+# embedded in Mongo, so normal client training clips can be substantially
+# larger than the old BSON-safe limit. The base64 request body is still capped
+# server-side to protect request memory and disk usage; Mongo stores metadata
+# only. Generic non-School Homework media retains its legacy storage behavior.
+CHECKPOINT_VIDEO_MAX_BYTES = 100 * 1024 * 1024
 ALLOWED_CHECKPOINT_VIDEO_MIME = {"video/mp4", "video/quicktime", "video/webm", "video/x-m4v", "video/3gpp"}
+
+
+SCHOOL_MEDIA_ROOT = Path(os.environ.get("SCHOOL_MEDIA_ROOT", str(ROOT_DIR / "school_media"))).resolve()
+SCHOOL_MEDIA_ROOT.mkdir(parents=True, exist_ok=True)
+
+
+def _persist_school_media_data_url(raw: str, media_id: str, filename: str) -> dict:
+    """Persist School media on disk instead of embedding base64 in Mongo.
+
+    Mongo keeps only metadata + the storage path. Native School readers use an
+    authenticated file endpoint; the data-url helper remains only as a legacy
+    compatibility fallback for older generic readers.
+    """
+    header, b64 = raw.split(",", 1)
+    mime = header.split(";")[0].replace("data:", "").lower().strip()
+    payload = base64.b64decode(b64, validate=False)
+    ext_map = {"video/mp4":".mp4","video/quicktime":".mov","video/webm":".webm","video/x-m4v":".m4v","video/3gpp":".3gp"}
+    ext = ext_map.get(mime) or Path(filename or "").suffix[:10] or ".bin"
+    path = SCHOOL_MEDIA_ROOT / f"{media_id}{ext}"
+    path.write_bytes(payload)
+    return {"storage_path": str(path), "mime": mime, "size_bytes": len(payload)}
+
+
+def _school_media_data_url(row: dict) -> Optional[str]:
+    path = row.get("storage_path")
+    if not path:
+        return row.get("data")
+    try:
+        payload = Path(path).read_bytes()
+        mime = row.get("mime") or "application/octet-stream"
+        return f"data:{mime};base64,{base64.b64encode(payload).decode('ascii')}"
+    except Exception:
+        return None
+
+
+def _school_media_file_path(row: dict) -> Optional[str]:
+    """Return a verified filesystem path for a School media row.
+
+    Database metadata is never trusted as an arbitrary path. Only regular
+    files inside SCHOOL_MEDIA_ROOT may be served by the School media endpoint.
+    """
+    raw = row.get("storage_path")
+    if not raw:
+        return None
+    try:
+        root = SCHOOL_MEDIA_ROOT.resolve()
+        path = Path(raw).resolve()
+        if path == root or root not in path.parents or not path.is_file():
+            return None
+        return str(path)
+    except Exception:
+        return None
+
+
+def _delete_school_media_file(row: Optional[dict]) -> None:
+    try:
+        if row and row.get("storage_path"):
+            Path(row["storage_path"]).unlink(missing_ok=True)
+    except Exception:
+        pass
 
 
 class CheckpointSubmissionIn(BaseModel):
@@ -18386,6 +19251,7 @@ async def portal_school_submit_checkpoint(
     it belongs to."""
     se, enrollment = await _school_enrollment_for_client(school_enrollment_id, user)
     _require_school_access(enrollment, allow_withdrawn_read=False)
+    _require_school_onboarding_ready(se, enrollment)
     roadmap = await _school_roadmap(enrollment, se["dog_id"])
     current_lesson = roadmap.get("current_lesson")
     if not current_lesson or current_lesson.get("id") != lesson_id:
@@ -18408,21 +19274,19 @@ async def portal_school_submit_checkpoint(
 
     approx_bytes = _validate_checkpoint_video(body.video)
 
-    hw = await _lesson_practice_homework(se["dog_id"], lesson_id)
+    hw = await _lesson_practice_homework(se["dog_id"], lesson_id, enrollment.get("id"))
     if not hw:
         raise HTTPException(status_code=422, detail="No practice homework found for this lesson yet.")
 
     media_id = _gid()
-    await db.homework_media.insert_one({
-        "id": media_id,
-        "homework_id": hw["id"],
-        "kind": "checkpoint_video",
-        "data": body.video,
-        "filename": (body.filename or "checkpoint")[:140],
-        "size_bytes": approx_bytes,
-        "uploaded_at": now_iso(),
-        "uploaded_by": user.get("id"),
-    })
+    persisted = _persist_school_media_data_url(body.video, media_id, (body.filename or "checkpoint")[:140])
+    media_doc = {
+        "id": media_id, "homework_id": hw["id"], "kind": "checkpoint_video",
+        "filename": (body.filename or "checkpoint")[:140], "size_bytes": persisted["size_bytes"],
+        "mime": persisted["mime"], "storage_path": persisted["storage_path"], "storage_backend": "filesystem",
+        "uploaded_at": now_iso(), "uploaded_by": user.get("id"),
+    }
+    await db.homework_media.insert_one(dict(media_doc))
 
     submission = {
         "id": _gid(),
@@ -18444,9 +19308,11 @@ async def portal_school_submit_checkpoint(
     try:
         await db.checkpoint_submissions.insert_one(submission)
     except DuplicateKeyError:
+        _delete_school_media_file(media_doc)
         await db.homework_media.delete_one({"id": media_id})
         raise HTTPException(status_code=409, detail="A checkpoint for this lesson is already awaiting review.")
     except Exception:
+        _delete_school_media_file(media_doc)
         await db.homework_media.delete_one({"id": media_id})
         raise HTTPException(status_code=500, detail="Checkpoint submission failed. Please try again.")
     submission.pop("_id", None)
@@ -18557,6 +19423,7 @@ async def _finish_school_advancement(
         await _claim_school_lesson_homework(
             fresh_enrollment, se["dog_id"], se.get("client_id"), next_lesson,
             assigned_by=f"Online School · {next_lesson.get('name', 'Lesson')}",
+            school_enrollment_id=school_enrollment_id,
         )
     except Exception as exc:
         logger.warning("Online School next-lesson homework auto-assign failed: %s", exc)
@@ -18663,6 +19530,7 @@ async def portal_school_advance(school_enrollment_id: str, user: dict = Depends(
     """
     se, enrollment = await _school_enrollment_for_client(school_enrollment_id, user)
     _require_school_access(enrollment, allow_withdrawn_read=False)
+    _require_school_onboarding_ready(se, enrollment)
     roadmap = await _school_roadmap(enrollment, se["dog_id"])
     current_lesson = roadmap.get("current_lesson")
     if not current_lesson:
@@ -18689,6 +19557,31 @@ async def portal_school_advance(school_enrollment_id: str, user: dict = Depends(
 
 
 # ─── Online School Phase 2 — trainer checkpoint review & grading ──────────
+
+class CheckpointVideoAnnotationIn(BaseModel):
+    timestamp_seconds: float = Field(ge=0, le=60 * 60 * 4)
+    note: str = Field(min_length=1, max_length=2000)
+
+
+@api.post("/admin/school/checkpoints/{submission_id}/annotations")
+async def admin_school_checkpoint_annotation(
+    submission_id: str, body: CheckpointVideoAnnotationIn, user: dict = Depends(require_admin_and_permission("manage_school")),
+):
+    """Timestamped trainer notes on a submitted checkpoint video. Notes stay
+    on the canonical checkpoint record and are client-safe after grading."""
+    annotation = {
+        "id": str(uuid.uuid4()), "timestamp_seconds": round(float(body.timestamp_seconds), 2),
+        "note": body.note.strip(), "created_at": now_iso(), "created_by": user.get("id"),
+        "created_by_name": user.get("name") or "Trainer",
+    }
+    row = await db.checkpoint_submissions.find_one_and_update(
+        {"id": submission_id}, {"$push": {"video_annotations": annotation}},
+        projection={"_id": 0}, return_document=ReturnDocument.AFTER,
+    )
+    if not row:
+        raise HTTPException(status_code=404, detail="Checkpoint submission not found")
+    return {"annotations": row.get("video_annotations") or []}
+
 
 class CheckpointGradeIn(BaseModel):
     handler_scores: Dict[str, int]
@@ -18750,7 +19643,7 @@ async def _notify_checkpoint_graded_once(sub: dict) -> None:
 
 
 @api.get("/admin/school/checkpoints/pending")
-async def admin_school_checkpoints_pending(_: dict = Depends(require_admin_and_permission("manage_training_sessions"))):
+async def admin_school_checkpoints_pending(_: dict = Depends(require_admin_and_permission("manage_school"))):
     """Trainer review queue. Returns pending, grading, AND graded-with-an-
     active-Trainer-Assist-hold submissions — a grading operation
     interrupted after its claim must never disappear from staff view, and
@@ -18795,6 +19688,7 @@ async def admin_school_checkpoints_pending(_: dict = Depends(require_admin_and_p
                 "client_note": r.get("client_note") or "",
                 "video_media_id": r.get("video_media_id"), "homework_id": r.get("homework_id"),
                 "rubric_snapshot": r.get("rubric_snapshot"),
+                "video_annotations": r.get("video_annotations") or [],
                 "submitted_at": r.get("submitted_at"),
                 "outcome": r.get("outcome"), "trainer_feedback": r.get("trainer_feedback"),
                 "trainer_assist_hold_active": bool(r.get("trainer_assist_hold_active")),
@@ -18812,7 +19706,7 @@ async def admin_school_checkpoints_pending(_: dict = Depends(require_admin_and_p
 
 @api.post("/admin/school/checkpoints/{submission_id}/grade")
 async def admin_school_checkpoint_grade(
-    submission_id: str, body: CheckpointGradeIn, user: dict = Depends(require_admin_and_permission("manage_training_sessions")),
+    submission_id: str, body: CheckpointGradeIn, user: dict = Depends(require_admin_and_permission("manage_school")),
 ):
     """The durable pending -> grading -> graded state machine (Online
     School Phase 2). The entire resolved grade — including, for
@@ -18944,7 +19838,7 @@ async def admin_school_checkpoint_grade(
             raise HTTPException(status_code=404, detail="Enrollment not found")
         tracked_homework_id = None
         if action == "repeat_current_recipe":
-            hw = await _lesson_practice_homework(sub["dog_id"], sub["lesson_id"])
+            hw = await _lesson_practice_homework(sub["dog_id"], sub["lesson_id"], enrollment.get("id"))
             tracked_homework_id = (hw or {}).get("id") or sub.get("homework_id")
         elif action == "assign_recipe":
             template_id = prescription.get("homework_template_id")
@@ -18963,6 +19857,7 @@ async def admin_school_checkpoint_grade(
                     client = await db.clients.find_one({"id": sub["client_id"]}, {"_id": 0})
                     hw = await _create_homework_from_template_internal(
                         dog, client, template_id, assigned_by="Trainer prescription", source_lesson_id=sub["lesson_id"],
+                        school_enrollment_id=sub.get("school_enrollment_id"), school_enrollment_record_id=enrollment.get("id"),
                     )
                     if hw:
                         await _finalize_auto_homework_claim(enrollment["id"], trigger, hw["id"])
@@ -18977,6 +19872,7 @@ async def admin_school_checkpoint_grade(
                 hw = await _claim_school_lesson_homework(
                     enrollment, sub["dog_id"], sub["client_id"], refresher_lesson,
                     assigned_by=f"Online School · Refresher: {refresher_lesson.get('name', 'Lesson')}",
+                    school_enrollment_id=sub.get("school_enrollment_id"),
                 )
                 tracked_homework_id = (hw or {}).get("id")
         prescription["tracked_homework_id"] = tracked_homework_id
@@ -19049,12 +19945,29 @@ async def admin_school_checkpoint_grade(
         await _notify_checkpoint_graded_once(final_sub)
     except Exception as exc:
         logger.warning("Online School checkpoint-graded notification failed: %s", exc)
+    if finalized is not None:
+        try:
+            _outcome_title = {
+                "advance": "Your checkpoint was approved",
+                "prescribe_practice": "Your trainer assigned more practice",
+                "trainer_assist_recommended": "Your trainer recommends Trainer Assist",
+            }.get(outcome, "Your checkpoint was reviewed")
+            await school_events.create_client_notification(
+                client_id=sub.get("client_id"), notification_type="checkpoint_reviewed", title=_outcome_title,
+                body=(plan.get("feedback") or "Your trainer has reviewed your checkpoint.")[:280],
+                school_enrollment_id=sub.get("school_enrollment_id"), enrollment_id=sub.get("enrollment_id"),
+                dog_id=sub.get("dog_id"), lesson_id=sub.get("lesson_id"), lesson_name=sub.get("lesson_name"), checkpoint_id=submission_id,
+                deep_link={"screen":"school","view":"feedback","checkpoint_id":submission_id}, dedupe_key=f"client_checkpoint_review:{submission_id}",
+                priority="high" if outcome != "advance" else "normal",
+            )
+        except Exception:
+            pass
     return {"checkpoint": _admin_safe_checkpoint(final_sub)}
 
 
 @api.post("/admin/school/checkpoints/{submission_id}/clear-trainer-assist-hold")
 async def admin_school_checkpoint_clear_trainer_assist_hold(
-    submission_id: str, user: dict = Depends(require_admin_and_permission("manage_training_sessions")),
+    submission_id: str, user: dict = Depends(require_admin_and_permission("manage_school")),
 ):
     """'Trainer Assist Complete / Allow Resubmission' — the smallest
     operational action needed to lift a Trainer Assist hold (Online School
@@ -19125,7 +20038,7 @@ def _require_trainer_assist_case(sub: Optional[dict]) -> dict:
 
 
 @api.get("/admin/school/trainer-assist")
-async def admin_school_trainer_assist_queue(_: dict = Depends(require_admin_and_permission("manage_training_sessions"))):
+async def admin_school_trainer_assist_queue(_: dict = Depends(require_admin_and_permission("manage_school"))):
     """Staff queue — every checkpoint ever graded trainer_assist_recommended,
     active hold OR already resolved (so 'Recently Completed' has something
     to show). Always derived straight from checkpoint_submissions, never a
@@ -19180,7 +20093,7 @@ async def admin_school_trainer_assist_queue(_: dict = Depends(require_admin_and_
 
 
 @api.get("/admin/school/trainer-assist/{submission_id}")
-async def admin_school_trainer_assist_detail(submission_id: str, _: dict = Depends(require_admin_and_permission("manage_training_sessions"))):
+async def admin_school_trainer_assist_detail(submission_id: str, _: dict = Depends(require_admin_and_permission("manage_school"))):
     """Everything a trainer needs to help without hunting through five
     screens: student context, why they're here, the actual submitted
     video (reused via the existing homework media endpoint — no
@@ -19219,7 +20132,7 @@ async def admin_school_trainer_assist_detail(submission_id: str, _: dict = Depen
 
 @api.post("/admin/school/trainer-assist/{submission_id}/contact")
 async def admin_trainer_assist_contact(
-    submission_id: str, body: TrainerAssistContactIn, user: dict = Depends(require_admin_and_permission("manage_training_sessions")),
+    submission_id: str, body: TrainerAssistContactIn, user: dict = Depends(require_admin_and_permission("manage_school")),
 ):
     """Explicit 'mark contacted' action. Never inferred from a client
     thread being opened or replied to elsewhere in the app — only this
@@ -19253,7 +20166,7 @@ async def admin_trainer_assist_contact(
 
 @api.post("/admin/school/trainer-assist/{submission_id}/schedule")
 async def admin_trainer_assist_schedule(
-    submission_id: str, body: TrainerAssistScheduleIn, user: dict = Depends(require_admin_and_permission("manage_training_sessions")),
+    submission_id: str, body: TrainerAssistScheduleIn, user: dict = Depends(require_admin_and_permission("manage_school")),
 ):
     """Links an appointment created through the EXISTING booking system
     (AdminBookingModal / POST /bookings) to this Trainer Assist case — no
@@ -19291,12 +20204,22 @@ async def admin_trainer_assist_schedule(
     # availability, or any other booking field. Lets BookingDetailModal show
     # "Online School Trainer Assist" context when this booking is opened.
     await db.bookings.update_one({"id": body.booking_id}, {"$set": {"trainer_assist_case_id": submission_id}})
+    try:
+        await school_events.create_client_notification(
+            client_id=sub.get("client_id"), notification_type="trainer_assist_scheduled", title="Trainer Assist scheduled",
+            body="Your Trainer Assist appointment has been scheduled.", school_enrollment_id=sub.get("school_enrollment_id"),
+            enrollment_id=sub.get("enrollment_id"), dog_id=sub.get("dog_id"), lesson_id=sub.get("lesson_id"), lesson_name=sub.get("lesson_name"),
+            checkpoint_id=submission_id, deep_link={"screen":"school","view":"feedback","checkpoint_id":submission_id},
+            dedupe_key=f"client_ta_schedule:{submission_id}:{body.booking_id}",
+        )
+    except Exception:
+        pass
     return {"checkpoint": _admin_safe_checkpoint(final)}
 
 
 @api.post("/admin/school/trainer-assist/{submission_id}/complete")
 async def admin_trainer_assist_complete(
-    submission_id: str, body: TrainerAssistCompleteIn, user: dict = Depends(require_admin_and_permission("manage_training_sessions")),
+    submission_id: str, body: TrainerAssistCompleteIn, user: dict = Depends(require_admin_and_permission("manage_school")),
 ):
     """The real 'Trainer Assist Complete' workflow — requires a
     client-facing follow-up summary (never fabricated; typed by the
@@ -19329,6 +20252,15 @@ async def admin_trainer_assist_complete(
         projection={"_id": 0}, return_document=ReturnDocument.AFTER,
     )
     if updated is not None:
+        try:
+            await school_events.create_client_notification(
+                client_id=sub.get("client_id"), notification_type="trainer_assist_completed", title="Trainer Assist complete",
+                body=body.client_summary.strip()[:280], school_enrollment_id=sub.get("school_enrollment_id"), enrollment_id=sub.get("enrollment_id"),
+                dog_id=sub.get("dog_id"), lesson_id=sub.get("lesson_id"), lesson_name=sub.get("lesson_name"), checkpoint_id=submission_id,
+                deep_link={"screen":"school","view":"today"}, dedupe_key=f"client_ta_complete:{submission_id}",
+            )
+        except Exception:
+            pass
         return {"checkpoint": _admin_safe_checkpoint(updated)}
     fresh = await db.checkpoint_submissions.find_one({"id": submission_id}, {"_id": 0}) or sub
     if _trainer_assist_display_status(fresh) == "completed":
@@ -20604,7 +21536,7 @@ _CLIENT_SAFE_LESSON_FIELDS = (
     "client_instructions", "common_mistakes", "safety_notes",
     # UI Phase 4 — already stored on Lesson, same client-appropriate category
     # as common_mistakes/safety_notes above; just not previously surfaced.
-    "estimated_minutes", "troubleshooting", "success_criteria",
+    "estimated_minutes", "troubleshooting", "success_criteria", "content_blocks",
 )
 _CLIENT_SAFE_SKILL_FIELDS = (
     "id", "name", "description", "client_facing_explanation",
@@ -22546,6 +23478,12 @@ BACKUP_COLLECTIONS = [
     "backup_restore_drills",
     # Phase 8B — duplicate merge/archive dry-run + action history
     "duplicate_merge_audit",
+    # Online School — enrollment/progression operations, trainer support,
+    # notifications, resources, and analytics settings. Media bytes themselves
+    # live on persistent disk and are archived alongside automatic backups.
+    "school_enrollments", "checkpoint_submissions", "school_events", "school_notifications",
+    "school_training_plans", "school_student_notes", "school_requests",
+    "school_resources", "school_settings",
 ]
 # Collections whose primary key is a string `_id` (no separate `id` field).
 # These get special handling during export (we preserve `_id`) and restore
@@ -22554,11 +23492,11 @@ BACKUP_COLLECTIONS = [
 #   • `email_settings`         — singleton {_id: "singleton", brand_*, ...}
 #   • `payment_plan_settings`  — singleton {_id: "singleton", agreement_html, ...}
 STRING_ID_COLLECTIONS = {"app_settings", "email_settings", "payment_plan_settings"}
-# Bumped to v8 for uncapped exports plus verified persistent snapshots; v7 added the newer business-critical workflow collections
-# (payment_ledger, waitlist, intake, messages, announcements, etc.). Restore
-# accepts older v1–v5 backups too (missing collections are left untouched rather
-# than wiped).
-BACKUP_VERSION = 8
+# Backup v9 adds Online School operational collections and a verified filesystem
+# media sidecar archive so videos/resources survive disaster recovery. Older
+# backups remain accepted; collections absent from an older payload are left
+# untouched rather than wiped.
+BACKUP_VERSION = 9
 
 # Persistent in-container backup root. docker-compose bind-mounts ./backups here,
 # so files survive backend container rebuilds. Operators may use subfolders,
@@ -22675,6 +23613,7 @@ CONFIG_COLLECTIONS = [
     "email_settings",
     "email_templates",
     "payment_plan_settings",
+    "school_settings",
 ]
 CONFIG_BACKUP_VERSION = 1
 
@@ -22697,6 +23636,7 @@ async def _write_pre_restore_snapshot(kind: str) -> Dict[str, Any]:
     """Atomically write and parse-verify the current state before a restore."""
     snapshot_dir = _safe_backup_dir()
     temp_path: Optional[str] = None
+    media_archive_path: Optional[str] = None
     try:
         os.makedirs(snapshot_dir, exist_ok=True)
         if kind == "config":
@@ -22832,6 +23772,7 @@ _DISK_PROBE_PATHS = [
     ("/app",            "App code & data"),
     ("/app/data",       "App data dir"),
     ("/app/backups",    "Backups"),
+    ("/app/school_media", "Online School media"),
     ("/data",           "Mongo data dir"),
     ("/data/db",        "Mongo db dir"),
     ("/mnt/ext",        "External mount"),
@@ -23012,6 +23953,38 @@ async def _build_backup_payload() -> Dict[str, Any]:
     return payload
 
 
+def _write_school_media_archive(target_dir: str, stamp: str) -> Dict[str, Any]:
+    """Atomically archive filesystem-backed Online School media next to JSON backup.
+
+    Mongo stores only metadata for School videos/resources; this archive is the
+    matching disaster-recovery copy of those bytes. Empty/missing media roots are
+    considered verified with zero files.
+    """
+    import tarfile
+    root = os.path.realpath(SCHOOL_MEDIA_ROOT)
+    if not os.path.isdir(root):
+        return {"path": None, "filename": None, "files": 0, "size_bytes": 0, "verified": True}
+    files = sum(len(names) for _, _, names in os.walk(root))
+    if files == 0:
+        return {"path": None, "filename": None, "files": 0, "size_bytes": 0, "verified": True}
+    filename = f"sit-happens-school-media-{stamp}.tar.gz"
+    final_path = os.path.join(target_dir, filename)
+    temp_path = final_path + f".{os.getpid()}.tmp"
+    try:
+        with tarfile.open(temp_path, "w:gz") as tf:
+            tf.add(root, arcname="school_media", recursive=True)
+        with tarfile.open(temp_path, "r:gz") as tf:
+            archived_files = sum(1 for m in tf.getmembers() if m.isfile())
+        if archived_files != files:
+            raise RuntimeError(f"School media archive verification failed: expected {files} files, found {archived_files}")
+        os.replace(temp_path, final_path)
+        return {"path": final_path, "filename": filename, "files": files, "size_bytes": os.path.getsize(final_path), "verified": True}
+    finally:
+        if os.path.exists(temp_path):
+            try: os.remove(temp_path)
+            except Exception: pass
+
+
 async def _run_auto_backup_once(trigger: str = "scheduled") -> Dict[str, Any]:
     """Write, atomically publish, parse-verify, and prune one backup."""
     cfg = await _get_auto_backup_config()
@@ -23091,6 +24064,8 @@ async def _run_auto_backup_once(trigger: str = "scheduled") -> Dict[str, Any]:
             raise RuntimeError(
                 f"Backup verification failed; missing={missing_critical}, count_mismatches={mismatched_counts}"
             )
+        media_backup = _write_school_media_archive(target_dir, ts)
+        media_archive_path = media_backup.get("path")
         os.replace(temp_path, full_path)
         temp_path = None
         size = os.path.getsize(full_path)
@@ -23118,6 +24093,9 @@ async def _run_auto_backup_once(trigger: str = "scheduled") -> Dict[str, Any]:
             if file_dt < cutoff:
                 try:
                     os.remove(os.path.join(target_dir, old))
+                    media_old = os.path.join(target_dir, f"sit-happens-school-media-{stamp}.tar.gz")
+                    if os.path.exists(media_old):
+                        os.remove(media_old); pruned.append(os.path.basename(media_old))
                     pruned.append(old)
                 except Exception:
                     pass
@@ -23128,6 +24106,9 @@ async def _run_auto_backup_once(trigger: str = "scheduled") -> Dict[str, Any]:
             if day_key in seen_days:
                 try:
                     os.remove(os.path.join(target_dir, old))
+                    media_old = os.path.join(target_dir, f"sit-happens-school-media-{stamp}.tar.gz")
+                    if os.path.exists(media_old):
+                        os.remove(media_old); pruned.append(os.path.basename(media_old))
                     pruned.append(old)
                 except Exception:
                     pass
@@ -23144,6 +24125,10 @@ async def _run_auto_backup_once(trigger: str = "scheduled") -> Dict[str, Any]:
             "path": full_path,
             "size_bytes": size,
             "sha256": body_sha256,
+            "school_media_archive": media_backup.get("path"),
+            "school_media_verified": media_backup.get("verified", False),
+            "school_media_files": media_backup.get("files", 0),
+            "school_media_size_bytes": media_backup.get("size_bytes", 0),
             "collections": len(payload["collections"]),
             "collection_counts": expected_counts,
             "total_docs": payload.get("total_docs", 0),
@@ -23163,6 +24148,9 @@ async def _run_auto_backup_once(trigger: str = "scheduled") -> Dict[str, Any]:
         })
         return run_row
     except Exception as e:
+        if media_archive_path and os.path.exists(media_archive_path):
+            try: os.remove(media_archive_path)
+            except Exception: pass
         if temp_path and os.path.exists(temp_path):
             try:
                 os.remove(temp_path)
@@ -23332,6 +24320,7 @@ _CRITICAL_BACKUP_COLLECTIONS = [
     "credit_lots", "credit_adjustments", "payment_ledger", "checkout_groups", "retail_sales",
     "expenses", "daily_closeouts", "cash_drawer_sessions", "till_adjustments",
     "vaccine_uploads", "referrals", "rewards_ledger", "audit_log", "duplicate_merge_audit",
+    "school_enrollments", "checkpoint_submissions", "school_events", "school_notifications",
 ]
 
 
@@ -23382,6 +24371,12 @@ async def admin_backup_safety_report(_: dict = Depends(require_admin_and_permiss
 
     if latest_ok and not file_info.get("exists"):
         warn("backup_file_missing", "danger", "Latest backup file is missing", f"Expected file: {latest_file}")
+    if latest_ok and int((latest_ok or {}).get("school_media_files") or 0) > 0:
+        media_path = (latest_ok or {}).get("school_media_archive")
+        if not media_path or not os.path.isfile(str(media_path)):
+            warn("school_media_backup_missing", "danger", "School media backup is missing", "The latest database backup references School videos/resources, but its matching media archive is not present.")
+        elif not (latest_ok or {}).get("school_media_verified", False):
+            warn("school_media_backup_unverified", "danger", "School media backup was not verified", "Run a fresh Auto-Backup before an update or restore.")
     if file_info.get("exists") and file_info.get("size_bytes", 0) < 10_000 and (counts.get("clients", 0) or counts.get("dogs", 0)):
         warn("backup_tiny", "danger", "Latest backup file looks suspiciously small", f"File size is only {file_info.get('size_mb')} MB.")
     if danger_paths:
@@ -23491,6 +24486,26 @@ async def admin_backup_safety_validate_latest(_: dict = Depends(require_admin_an
         warnings.append({"severity": "warn", "title": "Backup missing newer known collections", "detail": ", ".join(missing_known[:20]) + ("…" if len(missing_known) > 20 else "")})
     if total_docs == 0:
         warnings.append({"severity": "danger", "title": "Backup contains zero documents", "detail": "This does not look like a usable business backup."})
+    media_validation = {"required": False, "verified": True, "files": 0, "archive": None, "error": None}
+    if int((latest or {}).get("school_media_files") or 0) > 0:
+        import tarfile
+        media_validation["required"] = True
+        media_validation["archive"] = (latest or {}).get("school_media_archive")
+        media_validation["files"] = int((latest or {}).get("school_media_files") or 0)
+        try:
+            media_path = str(media_validation["archive"] or "")
+            if not media_path or not os.path.isfile(media_path):
+                raise RuntimeError("Matching School media archive is missing")
+            with tarfile.open(media_path, "r:gz") as tf:
+                members = _validated_school_media_members(tf)
+                archived_files = sum(1 for m in members if m.isfile())
+            if archived_files != media_validation["files"]:
+                raise RuntimeError(f"Expected {media_validation['files']} School media files but archive contains {archived_files}")
+            media_validation["verified"] = True
+        except Exception as exc:
+            media_validation["verified"] = False
+            media_validation["error"] = str(getattr(exc, "detail", exc))
+            warnings.append({"severity": "danger", "title": "School media backup is not restorable", "detail": media_validation["error"]})
     ok = not any(w.get("severity") == "danger" for w in warnings)
     run_row = {
         "id": str(uuid.uuid4()),
@@ -23505,6 +24520,7 @@ async def admin_backup_safety_validate_latest(_: dict = Depends(require_admin_an
         "exported_at": payload.get("exported_at"),
         "collections": len(collections),
         "total_docs": total_docs,
+        "school_media": media_validation,
         "warnings": warnings,
     }
     try:
@@ -23525,6 +24541,7 @@ async def admin_backup_safety_validate_latest(_: dict = Depends(require_admin_an
         "counts": counts,
         "missing_critical": missing_critical,
         "missing_known": missing_known,
+        "school_media": media_validation,
         "warnings": warnings,
         "validated_at": run_row["created_at"],
     }
@@ -23534,6 +24551,162 @@ async def admin_backup_safety_validate_latest(_: dict = Depends(require_admin_an
 async def admin_backup_safety_validations(limit: int = 10, _: dict = Depends(require_admin_and_permission("data_export"))):
     rows = await db.backup_restore_drills.find({}, {"_id": 0}).sort("created_at", -1).to_list(limit)
     return rows
+
+
+class SchoolMediaRestoreIn(BaseModel):
+    filename: str = Field(min_length=1, max_length=255)
+
+
+def _school_media_archive_path(filename: str) -> str:
+    """Resolve a School-media backup archive strictly inside BACKUP_ROOT."""
+    name = os.path.basename(str(filename or "").strip())
+    if name != filename or not name.startswith("sit-happens-school-media-") or not name.endswith(".tar.gz"):
+        raise HTTPException(status_code=400, detail="Choose a valid School media backup archive")
+    path = os.path.realpath(os.path.join(_safe_backup_dir(), name))
+    try:
+        common = os.path.commonpath([BACKUP_ROOT, path])
+    except ValueError:
+        common = ""
+    if common != BACKUP_ROOT:
+        raise HTTPException(status_code=400, detail="Backup archive must be inside the configured backup folder")
+    if not os.path.isfile(path):
+        raise HTTPException(status_code=404, detail="School media backup archive not found")
+    return path
+
+
+def _validated_school_media_members(tf) -> List[Any]:
+    """Reject traversal, links, devices, and anything outside school_media/."""
+    members = tf.getmembers()
+    for member in members:
+        raw = str(member.name or "").replace("\\", "/")
+        norm = os.path.normpath(raw).replace("\\", "/")
+        if (
+            not raw
+            or raw.startswith("/")
+            or norm == ".."
+            or norm.startswith("../")
+            or (norm != "school_media" and not norm.startswith("school_media/"))
+            or member.issym()
+            or member.islnk()
+            or member.isdev()
+        ):
+            raise HTTPException(status_code=400, detail="School media archive contains an unsafe path or file type")
+    return members
+
+
+@api.get("/admin/backup-safety/school-media-archives")
+async def admin_school_media_archives(_: dict = Depends(require_admin_and_permission("data_export"))):
+    """List verified-looking School media sidecars available for recovery."""
+    root = _safe_backup_dir()
+    os.makedirs(root, exist_ok=True)
+    rows: List[Dict[str, Any]] = []
+    import tarfile
+    for name in sorted(os.listdir(root), reverse=True):
+        if not (name.startswith("sit-happens-school-media-") and name.endswith(".tar.gz")):
+            continue
+        path = os.path.join(root, name)
+        if not os.path.isfile(path):
+            continue
+        verified = False
+        file_count = 0
+        error = None
+        try:
+            with tarfile.open(path, "r:gz") as tf:
+                members = _validated_school_media_members(tf)
+                file_count = sum(1 for m in members if m.isfile())
+                verified = True
+        except HTTPException as exc:
+            error = str(exc.detail)
+        except Exception as exc:
+            error = f"{type(exc).__name__}: {exc}"
+        rows.append({
+            "filename": name,
+            "size_bytes": os.path.getsize(path),
+            "modified_at": datetime.fromtimestamp(os.path.getmtime(path), timezone.utc).isoformat(),
+            "files": file_count,
+            "verified": verified,
+            "error": error,
+        })
+    return {"archives": rows, "media_root": SCHOOL_MEDIA_ROOT}
+
+
+@api.get("/admin/backup-safety/school-media-archives/{filename}")
+async def admin_download_school_media_archive(filename: str, _: dict = Depends(require_admin_and_permission("data_export"))):
+    """Download one verified-path School media archive for off-machine storage."""
+    path = _school_media_archive_path(filename)
+    return FileResponse(path, filename=os.path.basename(path), media_type="application/gzip")
+
+
+@api.post("/admin/backup-safety/restore-school-media")
+async def admin_restore_school_media(body: SchoolMediaRestoreIn, _: dict = Depends(require_owner)):
+    """Restore filesystem-backed School media from a verified backup sidecar.
+
+    The archive must already live in BACKUP_ROOT. Before replacement we archive
+    the currently-live media, validate every tar member against path traversal,
+    extract alongside the live directory, and then swap directories. Mongo is
+    untouched; pair this with the matching JSON restore when doing full DR.
+    """
+    import tarfile
+    import tempfile
+
+    archive_path = _school_media_archive_path(body.filename)
+    media_root = os.path.realpath(SCHOOL_MEDIA_ROOT)
+    media_parent = os.path.dirname(media_root)
+    os.makedirs(media_parent, exist_ok=True)
+
+    # Preserve the current bytes before touching the live media directory.
+    pre_stamp = "pre-restore-" + datetime.now(timezone.utc).strftime("%Y-%m-%d_%H%M%S_%f")
+    pre_restore = _write_school_media_archive(_safe_backup_dir(), pre_stamp)
+
+    temp_parent = tempfile.mkdtemp(prefix=".school-media-restore-", dir=media_parent)
+    staged_root = os.path.join(temp_parent, "school_media")
+    old_root = media_root + ".pre-restore-" + uuid.uuid4().hex
+    old_moved = False
+    try:
+        with tarfile.open(archive_path, "r:gz") as tf:
+            members = _validated_school_media_members(tf)
+            tf.extractall(temp_parent, members=members)
+        if not os.path.isdir(staged_root):
+            raise HTTPException(status_code=400, detail="Archive does not contain a school_media folder")
+        restored_files = sum(len(names) for _, _, names in os.walk(staged_root))
+
+        if os.path.exists(media_root):
+            os.replace(media_root, old_root)
+            old_moved = True
+        os.replace(staged_root, media_root)
+        if old_moved and os.path.isdir(old_root):
+            shutil.rmtree(old_root, ignore_errors=True)
+            old_moved = False
+
+        run_row = {
+            "id": str(uuid.uuid4()),
+            "type": "restore_school_media",
+            "created_at": now_iso(),
+            "ok": True,
+            "archive": body.filename,
+            "restored_files": restored_files,
+            "pre_restore_archive": pre_restore.get("filename"),
+            "pre_restore_verified": pre_restore.get("verified", False),
+        }
+        try:
+            await db.backup_restore_drills.insert_one(dict(run_row))
+        except Exception:
+            pass
+        run_row.pop("_id", None)
+        return run_row
+    except Exception:
+        # If the live directory was moved but the staged swap failed, put it back.
+        if old_moved and os.path.exists(old_root) and not os.path.exists(media_root):
+            try:
+                os.replace(old_root, media_root)
+                old_moved = False
+            except Exception:
+                logger.exception("Could not roll back School media restore directory swap")
+        raise
+    finally:
+        shutil.rmtree(temp_parent, ignore_errors=True)
+        if old_moved and os.path.isdir(old_root):
+            shutil.rmtree(old_root, ignore_errors=True)
 
 
 # ─────────────── Sprint 110ax · Dog Fact of the Day ───────────────
@@ -25421,7 +26594,7 @@ async def admin_income_csv(
     perms = _perms_for(user)
     if not perms.get("data_export") or not perms.get("finance_reports"):
         raise HTTPException(status_code=403, detail="Missing permission: data_export + finance_reports")
-    from fastapi.responses import Response
+    from fastapi.responses import Response, FileResponse
     yr = year or business_today().year
     start = f"{yr}-01-01"
     end = f"{yr}-12-31"
@@ -25541,7 +26714,7 @@ async def admin_marketing_qr(
     import qrcode
     from qrcode.constants import ERROR_CORRECT_H
     from io import BytesIO
-    from fastapi.responses import Response
+    from fastapi.responses import Response, FileResponse
 
     target_url = (os.environ.get("APP_PUBLIC_URL") or "").rstrip("/")
     if not target_url:
@@ -26940,6 +28113,20 @@ async def startup():
         (db.school_notifications, "dedupe_key",
          {"name": school_events.NOTIF_DEDUPE_INDEX, "unique": True,
           "partialFilterExpression": {"dedupe_key": {"$type": "string"}}}),
+        # Online School full-suite operations — Student Workspace, prescribed plans,
+        # trainer requests, notes, resources.  These are additive operational views
+        # and stay bounded by enrollment/date indexes rather than collection scans.
+        (db.school_training_plans, "id", {"unique": True}),
+        (db.school_training_plans, [("school_enrollment_id", 1), ("status", 1), ("created_at", -1)], {}),
+        (db.school_student_notes, "id", {"unique": True}),
+        (db.school_student_notes, [("school_enrollment_id", 1), ("created_at", -1)], {}),
+        (db.school_requests, "id", {"unique": True}),
+        (db.school_requests, [("school_enrollment_id", 1), ("status", 1), ("created_at", -1)], {}),
+        (db.school_resources, "id", {"unique": True}),
+        (db.school_resources, [("active", 1), ("title", 1)], {}),
+        (db.school_resources, "program_ids", {}),
+        (db.school_resources, "lesson_ids", {}),
+        (db.school_settings, "id", {"unique": True}),
     ]
     for coll, key, opts in perf_indexes:
         try:
@@ -28031,7 +29218,7 @@ async def pl_report_pdf(
 ):
     """Download a printable Profit & Loss PDF for the given range."""
     import pl_report
-    from fastapi.responses import Response
+    from fastapi.responses import Response, FileResponse
     settings = await get_settings()
     brand_name = settings.get("brand_name") or "Sit Happens"
     data = await pl_report.build_pl_data(db, start_date, end_date)
@@ -33139,6 +34326,10 @@ async def _build_shop_catalog(client_id: Optional[str]) -> dict:
             # Phase 5 — client-facing so the Shop item detail page knows
             # whether to show a dog selector / real ownership CTA states.
             "purchase_fulfillment": prog.get("purchase_fulfillment") or "credits_only",
+            "estimated_weeks": prog.get("estimated_weeks"),
+            "school_support": prog.get("school_support") or {},
+            "school_onboarding": prog.get("school_onboarding") or {},
+            "recommended_next_program_slugs": prog.get("recommended_next_program_slugs") or [],
             **_shop_org_fields(prog.get("category_id"), prog.get("subcategory_id")),
         })
 
@@ -33294,6 +34485,10 @@ async def _build_register_catalog(client_id: Optional[str]) -> dict:
             # Phase 5 — client-facing so the Shop item detail page knows
             # whether to show a dog selector / real ownership CTA states.
             "purchase_fulfillment": prog.get("purchase_fulfillment") or "credits_only",
+            "estimated_weeks": prog.get("estimated_weeks"),
+            "school_support": prog.get("school_support") or {},
+            "school_onboarding": prog.get("school_onboarding") or {},
+            "recommended_next_program_slugs": prog.get("recommended_next_program_slugs") or [],
             **_shop_org_fields(prog.get("category_id"), prog.get("subcategory_id")),
         })
 
@@ -33352,13 +34547,38 @@ async def get_shop_item_detail(kind: str, item_id: str, user: dict = Depends(get
     item["section"] = section
     item["section_label"] = SHOP_SECTION_LABELS[section]
     if kind == "training_program":
-        prog = await db.programs.find_one({"id": item_id}, {"_id": 0, "prereq_slugs": 1})
+        prog = await db.programs.find_one({"id": item_id}, {"_id": 0})
         prereq_slugs = (prog or {}).get("prereq_slugs") or []
         if prereq_slugs:
-            prereq_docs = await db.programs.find({"slug": {"$in": prereq_slugs}}, {"_id": 0, "name": 1}).to_list(20)
-            item["prerequisite_names"] = [p["name"] for p in prereq_docs]
+            prereq_docs = await db.programs.find({"slug": {"$in": prereq_slugs}}, {"_id": 0, "name": 1, "slug": 1}).to_list(20)
+            prereq_by_slug = {p.get("slug"): p.get("name") for p in prereq_docs}
+            item["prerequisite_names"] = [prereq_by_slug.get(slug) or slug for slug in prereq_slugs]
         else:
             item["prerequisite_names"] = []
+
+        # Online School prerequisites are per DOG, not merely per account.
+        # Return an explicit server-derived eligibility row for each of this
+        # client's dogs so the detail page can guide the customer before cart/
+        # checkout while the checkout endpoint remains the final authority.
+        item["school_prerequisite_eligibility"] = []
+        if (prog or {}).get("purchase_fulfillment") == "online_school":
+            client_dogs = await db.dogs.find(
+                {"owner_id": user.get("client_id")}, {"_id": 0, "id": 1, "name": 1}
+            ).to_list(200)
+            for dog in client_dogs:
+                missing = await _missing_program_prerequisites(dog["id"], prog or {})
+                item["school_prerequisite_eligibility"].append({
+                    "dog_id": dog["id"], "dog_name": dog.get("name"),
+                    "eligible": len(missing) == 0, "missing": missing,
+                })
+
+        next_slugs = (prog or {}).get("recommended_next_program_slugs") or []
+        if next_slugs:
+            next_docs = await db.programs.find({"slug": {"$in": next_slugs}, "active": True}, {"_id": 0, "name": 1, "slug": 1}).to_list(20)
+            by_slug = {x.get("slug"): x.get("name") for x in next_docs}
+            item["recommended_next_programs"] = [{"slug": slug, "name": by_slug.get(slug) or slug} for slug in next_slugs]
+        else:
+            item["recommended_next_programs"] = []
     return item
 
 
@@ -33456,7 +34676,7 @@ _PUBLIC_FIELDS_PRODUCT = {"sales_destination", "shopify_product_url"}
 # describe QUANTITY, not price (same precedent as raw `qty` below, already
 # unconditionally public) — safe to show even when pricing is hidden.
 _PUBLIC_FIELDS_PACK = {"service_type", "qty", "display_quantity", "display_unit", "display_dog_count", "credits_per_display_unit"}
-_PUBLIC_FIELDS_PROGRAM = {"focus", "program_type", "format_count", "format_unit", "min_age_months"}
+_PUBLIC_FIELDS_PROGRAM = {"focus", "program_type", "format_count", "format_unit", "min_age_months", "estimated_weeks", "school_support", "school_onboarding"}
 
 _PUBLIC_SECTION_FLAG_FOR_SECTION = {"merch": "show_public_merch", "prepaid_visits": "show_public_prepaid", "training": "show_public_training"}
 _PUBLIC_SECTION_FOR_KIND = {"product": "merch", "credit_pack": "prepaid_visits", "training_program": "training"}
@@ -33946,6 +35166,9 @@ async def _validate_shop_item_eligibility(client: dict, kind: str, item_doc: Opt
             if existing_enrollment["status"] == "withdrawn":
                 raise HTTPException(status_code=409, detail=f"This dog's enrollment in {name} was withdrawn — contact us before repurchasing.")
             raise HTTPException(status_code=409, detail=f"This dog is already enrolled in {name} — go to Online School to continue instead of buying it again.")
+        # Prerequisites are checked before an order/Stripe session exists so a
+        # client can never pay for a course this dog is not yet eligible to enter.
+        await _require_program_prerequisites(dog_id, item_doc)
     elif item_doc.get("requires_dog"):
         # No dog-selection-at-cart-line mechanism exists yet for any other
         # requires_dog item kind — conservatively reject rather than
@@ -37909,7 +39132,7 @@ async def payroll_csv(
     """Export a payroll-ready CSV for the given pay period.
     Columns: Employee · Email · Pay period start · Pay period end · Hours ·
     Hourly rate · Gross pay · Shifts · Late/early flags."""
-    from fastapi.responses import Response
+    from fastapi.responses import Response, FileResponse
     entries = await db.time_clock_entries.find(
         {"clock_in_at": {"$gte": f"{start_date}T00:00:00", "$lte": f"{end_date}T23:59:59.999Z"},
          "clock_out_at": {"$ne": None, "$exists": True}},
@@ -40567,6 +41790,13 @@ async def sell_training_program(
             raise HTTPException(404, "Dog not found")
         if dog.get("owner_id") != client_id:
             raise HTTPException(400, "Dog does not belong to this client")
+
+    # Online School pathway eligibility MUST be checked before credit lots,
+    # client balances, revenue rows, or any other financial mutation below.
+    # _grant_online_school_enrollment re-checks as the canonical final guard,
+    # but waiting until fulfillment would be too late for this staff-sale path.
+    if dog and program.get("purchase_fulfillment") == "online_school":
+        await _require_program_prerequisites(dog["id"], program)
 
     lot = {
         "id": str(uuid.uuid4()),
@@ -45897,6 +47127,14 @@ class ClientThreadCreateIn(BaseModel):
     body: str
     dog_id: Optional[str] = None
     booking_id: Optional[str] = None
+    # Optional Online School context. These are ids only; names/course context
+    # are resolved server-side from the client's owned frozen enrollment so a
+    # client cannot spoof another dog/course in a trainer question.
+    school_enrollment_id: Optional[str] = None
+    school_module_id: Optional[str] = None
+    school_lesson_id: Optional[str] = None
+    school_homework_id: Optional[str] = None
+    school_checkpoint_id: Optional[str] = None
 
 
 class ClientReplyIn(BaseModel):
@@ -45922,7 +47160,155 @@ def _thread_shape(t: Dict[str, Any], for_role: str = "admin") -> Dict[str, Any]:
     out = {k: v for k, v in t.items() if k != "_id"}
     if for_role == "client":
         out.pop("internal_notes", None)
+        # Internal dog_program enrollment id is only used by server-side School
+        # event correlation. Clients use the public school_enrollment_id.
+        out.pop("school_enrollment_record_id", None)
     return out
+
+
+async def _school_message_context_for_client(body: ClientThreadCreateIn, user: dict) -> dict:
+    """Resolve and validate a School-native Ask Trainer context from ids.
+    Ownership is enforced through _school_enrollment_for_client; human-readable
+    names always come from the client's frozen program snapshot, never from
+    client-submitted text."""
+    if not body.school_enrollment_id:
+        return {}
+    se, enrollment = await _school_enrollment_for_client(body.school_enrollment_id, user)
+    snap = enrollment.get("program_snapshot") or {}
+    lesson_id = body.school_lesson_id
+    module_id = body.school_module_id
+    lesson_name = None
+    module_name = None
+    found_lesson = None
+    found_module = None
+    if lesson_id:
+        for mod in snap.get("modules") or []:
+            for lesson in _effective_lessons(mod):
+                if lesson.get("id") == lesson_id:
+                    found_lesson, found_module = lesson, mod
+                    break
+            if found_lesson:
+                break
+        if not found_lesson:
+            raise HTTPException(status_code=422, detail="That lesson is not part of this School enrollment.")
+        lesson_name = found_lesson.get("name")
+        module_id = found_module.get("id")
+        module_name = found_module.get("name")
+    elif module_id:
+        found_module = next((m for m in snap.get("modules") or [] if m.get("id") == module_id), None)
+        if not found_module:
+            raise HTTPException(status_code=422, detail="That module is not part of this School enrollment.")
+        module_name = found_module.get("name")
+
+    if body.dog_id and body.dog_id != se.get("dog_id"):
+        raise HTTPException(status_code=422, detail="That dog does not match this School enrollment.")
+
+    if body.school_homework_id:
+        hw = await db.homework.find_one({"id": body.school_homework_id, "client_id": se.get("client_id")}, {"_id": 0})
+        if not hw or hw.get("dog_id") != se.get("dog_id"):
+            raise HTTPException(status_code=422, detail="That practice session does not belong to this School enrollment.")
+        # ``source_lesson_id`` is also used by trainer-led homework, so dog +
+        # lesson alone is not enough to attach a practice record to a School
+        # conversation. New School homework has explicit ownership markers.
+        # Legacy School rows are resolved/self-healed through the same helper
+        # used by the event spine before we accept their context.
+        if hw.get("school_enrollment_id") or hw.get("school_enrollment_record_id"):
+            if (hw.get("school_enrollment_id") and hw.get("school_enrollment_id") != se.get("id")) or \
+               (hw.get("school_enrollment_record_id") and hw.get("school_enrollment_record_id") != enrollment.get("id")):
+                raise HTTPException(status_code=422, detail="That practice session does not belong to this School enrollment.")
+        else:
+            resolved = await _school_event_ctx_from_hw(hw) if _is_school_homework(hw) else {}
+            if resolved.get("school_enrollment_id") != se.get("id"):
+                raise HTTPException(status_code=422, detail="That practice session does not belong to this School enrollment.")
+        if lesson_id and hw.get("source_lesson_id") and hw.get("source_lesson_id") != lesson_id:
+            raise HTTPException(status_code=422, detail="That practice session does not match this lesson.")
+
+    if body.school_checkpoint_id:
+        cp = await db.checkpoint_submissions.find_one(
+            {"id": body.school_checkpoint_id, "school_enrollment_id": se.get("id")}, {"_id": 0, "id": 1, "lesson_id": 1},
+        )
+        if not cp:
+            raise HTTPException(status_code=422, detail="That checkpoint does not belong to this School enrollment.")
+        if lesson_id and cp.get("lesson_id") and cp.get("lesson_id") != lesson_id:
+            raise HTTPException(status_code=422, detail="That checkpoint does not match this lesson.")
+
+    return {
+        "school_enrollment_id": se.get("id"),
+        "school_program_id": enrollment.get("program_id"),
+        "school_program_name": snap.get("name"),
+        "school_module_id": module_id,
+        "school_module_name": module_name,
+        "school_lesson_id": lesson_id,
+        "school_lesson_name": lesson_name,
+        "school_homework_id": body.school_homework_id,
+        "school_checkpoint_id": body.school_checkpoint_id,
+        "school_dog_id": se.get("dog_id"),
+        "school_enrollment_record_id": enrollment.get("id"),
+    }
+
+
+async def _school_support_payload(school_enrollment_id: str, user: dict) -> dict:
+    """Bounded native School conversation/Q&A view. Reuses the existing global
+    message threads and Practice Coach question store; it does not create a
+    second messaging database."""
+    se, enrollment = await _school_enrollment_for_client(school_enrollment_id, user)
+    lesson_names = {}
+    for mod in (enrollment.get("program_snapshot") or {}).get("modules") or []:
+        for lesson in _effective_lessons(mod):
+            lesson_names[lesson.get("id")] = {"lesson_name": lesson.get("name"), "module_name": mod.get("name")}
+
+    threads = await db.client_message_threads.find(
+        {"client_id": se.get("client_id"), "school_enrollment_id": school_enrollment_id}, {"_id": 0},
+    ).sort("last_message_at", -1).to_list(50)
+
+    practice_questions = []
+    if lesson_names:
+        rows = await db.homework.find(
+            {"client_id": se.get("client_id"), "dog_id": se.get("dog_id"),
+             "source_lesson_id": {"$in": list(lesson_names)}},
+            {"_id": 0, "id": 1, "title": 1, "source_lesson_id": 1, "section_logs": 1},
+        ).to_list(200)
+        for hw in rows:
+            # Do not leak trainer-led or another School enrollment's practice
+            # questions merely because it shares a source_lesson_id. Explicit
+            # ownership wins; legacy School rows are resolved/self-healed by
+            # the canonical event-context helper.
+            if not _is_school_homework(hw):
+                continue
+            hw_school_id = hw.get("school_enrollment_id")
+            hw_record_id = hw.get("school_enrollment_record_id")
+            if hw_school_id and hw_school_id != school_enrollment_id:
+                continue
+            if hw_record_id and hw_record_id != enrollment.get("id"):
+                continue
+            if not hw_school_id and not hw_record_id:
+                resolved = await _school_event_ctx_from_hw(hw)
+                if resolved.get("school_enrollment_id") != school_enrollment_id:
+                    continue
+            names = lesson_names.get(hw.get("source_lesson_id")) or {}
+            for log in hw.get("section_logs") or []:
+                for q in log.get("questions") or []:
+                    practice_questions.append({
+                        "id": q.get("id"), "source": "practice", "homework_id": hw.get("id"),
+                        "lesson_id": hw.get("source_lesson_id"), "lesson_name": names.get("lesson_name") or hw.get("title"),
+                        "module_name": names.get("module_name"), "text": q.get("text"),
+                        "asked_at": q.get("asked_at"), "answer": q.get("answer"),
+                        "answered_at": q.get("answered_at"), "answered_by": q.get("answered_by"),
+                    })
+    practice_questions.sort(key=lambda q: q.get("asked_at") or "", reverse=True)
+    unanswered_threads = sum(1 for t in threads if t.get("status") != "resolved" and t.get("last_message_role") == "client")
+    unanswered_practice = sum(1 for q in practice_questions if not q.get("answer"))
+    return {
+        "threads": [_thread_shape(t, "client") for t in threads],
+        "practice_questions": practice_questions[:100],
+        "unanswered_count": unanswered_threads + unanswered_practice,
+        "unread_replies": sum(1 for t in threads if t.get("unread_client")),
+    }
+
+
+@api.get("/portal/school/{school_enrollment_id}/support")
+async def portal_school_support(school_enrollment_id: str, user: dict = Depends(get_current_user)):
+    return await _school_support_payload(school_enrollment_id, user)
 
 
 # ---- Client-side endpoints ----
@@ -45953,9 +47339,11 @@ async def my_create_message(body: ClientThreadCreateIn, user: dict = Depends(get
         raise HTTPException(status_code=400, detail="Message body is required")
     cat = body.category if body.category in MESSAGE_CATEGORIES else "other"
     client = await db.clients.find_one({"id": cid}, {"_id": 0})
+    school_ctx = await _school_message_context_for_client(body, user)
+    effective_dog_id = school_ctx.get("school_dog_id") or body.dog_id
     dog_name = None
-    if body.dog_id:
-        d = await db.dogs.find_one({"id": body.dog_id}, {"_id": 0, "name": 1, "owner_id": 1})
+    if effective_dog_id:
+        d = await db.dogs.find_one({"id": effective_dog_id}, {"_id": 0, "name": 1, "owner_id": 1})
         if d and d.get("owner_id") == cid:
             dog_name = d.get("name")
     item = {
@@ -45971,10 +47359,11 @@ async def my_create_message(body: ClientThreadCreateIn, user: dict = Depends(get
         "client_id": cid,
         "client_name": (client or {}).get("name") or user.get("name") or "Client",
         "client_email": (client or {}).get("email") or user.get("email"),
-        "dog_id": body.dog_id if dog_name else None,
+        "dog_id": effective_dog_id if dog_name else None,
         "dog_name": dog_name,
         "booking_id": body.booking_id,
-        "category": cat,
+        "category": "training" if school_ctx else cat,
+        **school_ctx,
         "subject": (body.subject or "").strip() or _thread_preview(body.body, 60),
         "status": "open",
         "messages": [item],
@@ -45990,20 +47379,41 @@ async def my_create_message(body: ClientThreadCreateIn, user: dict = Depends(get
     await db.client_message_threads.insert_one(thread)
     await _log_message_to_comm(thread, item)
 
-    # Notify admin emails (best-effort, fire-and-forget so the client gets a snappy response).
-    async def _notify_admins_create():
+    if school_ctx:
+        # School-native Ask Trainer uses the Phase-1 event spine for the staff
+        # in-app alert + email. The global Messages thread remains the one
+        # conversation store and provides the client's unread/reply lifecycle.
         try:
-            admin_emails = await _admin_notify_emails()
-            preview = _thread_preview(body.body)
-            for ae in admin_emails:
-                await _send_message_notification_email(
-                    thread, ae,
-                    f"From {thread['client_name']}: {preview}\n\nCategory: {cat}\nSubject: {thread['subject']}",
-                    is_admin_reply=False,
-                )
+            await school_events.emit_event(
+                SchoolEvent.STUDENT_QUESTION, actor_type="client", actor_id=user.get("id"), actor_name=item.get("sender_name"),
+                client_id=cid, client_name=thread.get("client_name"), dog_id=thread.get("dog_id"), dog_name=dog_name,
+                enrollment_id=school_ctx.get("school_enrollment_record_id"), school_enrollment_id=school_ctx.get("school_enrollment_id"),
+                program_id=school_ctx.get("school_program_id"), program_name=school_ctx.get("school_program_name"),
+                module_id=school_ctx.get("school_module_id"), module_name=school_ctx.get("school_module_name"),
+                lesson_id=school_ctx.get("school_lesson_id"), lesson_name=school_ctx.get("school_lesson_name"),
+                homework_id=school_ctx.get("school_homework_id"), checkpoint_id=school_ctx.get("school_checkpoint_id"),
+                thread_id=thread.get("id"), title=f"{thread.get('client_name') or 'A student'} asked their trainer a question",
+                summary=item.get("body", "")[:280],
+                deep_link={"screen": "messages", "thread_id": thread.get("id")},
+                dedupe_key=f"school_message:{thread.get('id')}:{item.get('id')}",
+            )
         except Exception:
             pass
-    asyncio.create_task(_notify_admins_create())
+    else:
+        # Non-School messages keep their existing direct admin email behavior.
+        async def _notify_admins_create():
+            try:
+                admin_emails = await _admin_notify_emails()
+                preview = _thread_preview(body.body)
+                for ae in admin_emails:
+                    await _send_message_notification_email(
+                        thread, ae,
+                        f"From {thread['client_name']}: {preview}\n\nCategory: {cat}\nSubject: {thread['subject']}",
+                        is_admin_reply=False,
+                    )
+            except Exception:
+                pass
+        asyncio.create_task(_notify_admins_create())
     return _thread_shape(thread, "client")
 
 
@@ -46037,16 +47447,33 @@ async def my_reply_message(thread_id: str, body: ClientReplyIn, user: dict = Dep
     )
     t["messages"] = (t.get("messages") or []) + [item]
     await _log_message_to_comm(t, item)
-    async def _notify_admins_reply():
+    if t.get("school_enrollment_id"):
         try:
-            admin_emails = await _admin_notify_emails()
-            for ae in admin_emails:
-                await _send_message_notification_email(
-                    t, ae, f"Reply from {t['client_name']}: {_thread_preview(body.body)}", is_admin_reply=False,
-                )
+            await school_events.emit_event(
+                SchoolEvent.STUDENT_QUESTION, actor_type="client", actor_id=user.get("id"), actor_name=item.get("sender_name"),
+                client_id=t.get("client_id"), client_name=t.get("client_name"), dog_id=t.get("dog_id"), dog_name=t.get("dog_name"),
+                enrollment_id=t.get("school_enrollment_record_id"), school_enrollment_id=t.get("school_enrollment_id"),
+                program_id=t.get("school_program_id"), program_name=t.get("school_program_name"),
+                module_id=t.get("school_module_id"), module_name=t.get("school_module_name"),
+                lesson_id=t.get("school_lesson_id"), lesson_name=t.get("school_lesson_name"),
+                homework_id=t.get("school_homework_id"), checkpoint_id=t.get("school_checkpoint_id"),
+                thread_id=thread_id, title=f"{t.get('client_name') or 'A student'} replied to their trainer",
+                summary=item.get("body", "")[:280], deep_link={"screen": "messages", "thread_id": thread_id},
+                dedupe_key=f"school_message_reply:{item.get('id')}",
+            )
         except Exception:
             pass
-    asyncio.create_task(_notify_admins_reply())
+    else:
+        async def _notify_admins_reply():
+            try:
+                admin_emails = await _admin_notify_emails()
+                for ae in admin_emails:
+                    await _send_message_notification_email(
+                        t, ae, f"Reply from {t['client_name']}: {_thread_preview(body.body)}", is_admin_reply=False,
+                    )
+            except Exception:
+                pass
+        asyncio.create_task(_notify_admins_reply())
     fresh = await db.client_message_threads.find_one({"id": thread_id}, {"_id": 0})
     return _thread_shape(fresh, "client")
 
@@ -46224,6 +47651,32 @@ async def admin_reply_thread(thread_id: str, body: AdminReplyIn, user: dict = De
     )
     t["messages"] = (t.get("messages") or []) + [item]
     await _log_message_to_comm(t, item)
+    if t.get("school_enrollment_id"):
+        try:
+            await school_events.emit_event(
+                SchoolEvent.TRAINER_REPLY, actor_type=role, actor_id=user.get("id"), actor_name=item.get("sender_name"),
+                client_id=t.get("client_id"), client_name=t.get("client_name"), dog_id=t.get("dog_id"), dog_name=t.get("dog_name"),
+                enrollment_id=t.get("school_enrollment_record_id"), school_enrollment_id=t.get("school_enrollment_id"),
+                program_id=t.get("school_program_id"), program_name=t.get("school_program_name"),
+                module_id=t.get("school_module_id"), module_name=t.get("school_module_name"),
+                lesson_id=t.get("school_lesson_id"), lesson_name=t.get("school_lesson_name"),
+                homework_id=t.get("school_homework_id"), checkpoint_id=t.get("school_checkpoint_id"),
+                thread_id=thread_id, title=f"{item.get('sender_name') or 'A trainer'} replied to {t.get('client_name') or 'a student'}",
+                summary=item.get("body", "")[:280], deep_link={"screen": "school", "view": "feedback", "thread_id": thread_id},
+                dedupe_key=f"trainer_reply:{item.get('id')}",
+            )
+            await school_events.create_client_notification(
+                client_id=t.get("client_id"), notification_type="trainer_reply",
+                title=f"{item.get('sender_name') or 'Your trainer'} replied", body=item.get("body", "")[:280],
+                school_enrollment_id=t.get("school_enrollment_id"), enrollment_id=t.get("school_enrollment_record_id"),
+                dog_id=t.get("dog_id"), dog_name=t.get("dog_name"), program_id=t.get("school_program_id"),
+                program_name=t.get("school_program_name"), module_id=t.get("school_module_id"), module_name=t.get("school_module_name"),
+                lesson_id=t.get("school_lesson_id"), lesson_name=t.get("school_lesson_name"), homework_id=t.get("school_homework_id"),
+                checkpoint_id=t.get("school_checkpoint_id"), thread_id=thread_id,
+                deep_link={"screen":"school","view":"feedback","thread_id":thread_id}, dedupe_key=f"client_trainer_reply:{item.get('id')}",
+            )
+        except Exception:
+            pass
     if body.email_notify and t.get("client_email"):
         async def _notify_client_reply():
             try:
@@ -47160,6 +48613,19 @@ def _cors_origins() -> List[str]:
     public = origin_only(os.environ.get("APP_PUBLIC_URL") or "")
     return [public] if public else []
 
+
+# Online School full-suite registration — higher-level student workspace,
+# trainer ownership, plans, resources, notifications, interventions and analytics.
+# Registered only after every shared auth/permission helper above exists, so the
+# module can stay additive and cannot create a second auth/progression system.
+from school_suite import register_school_suite
+register_school_suite(
+    api=api, db=db, get_current_user=get_current_user,
+    manage_school_dep=require_admin_and_permission("manage_school"),
+    perms_for=_perms_for, school_events=school_events,
+    persist_school_media=_persist_school_media_data_url, school_media_data_url=_school_media_data_url,
+    school_media_file_path=_school_media_file_path, require_school_access=_require_school_access,
+)
 
 app.include_router(api)
 _cors = _cors_origins()

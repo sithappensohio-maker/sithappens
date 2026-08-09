@@ -114,6 +114,8 @@ def test_scenario_a_student_question_creates_event_notification_email():
     q_notifs = [n for n in notifs if n["notification_type"] == ET.PRACTICE_QUESTION_ASKED]
     assert len(q_notifs) == 1
     assert q_notifs[0]["resolved_at"] is None and q_notifs[0]["email_status"] == "queued"
+    assert q_notifs[0]["metadata"].get("question_id") == ev["metadata"].get("question_id")
+    assert q_notifs[0]["deep_link"].get("question_id") == ev["metadata"].get("question_id")
 
     # email queued through the outbox (idempotent key)
     n_email = run(server.db.email_outbox.count_documents(
@@ -224,8 +226,30 @@ def test_scenario_f_idempotent_retry():
     )
     first = run(se.emit_event(ET.PRACTICE_QUESTION_ASKED, **kwargs))
     second = run(se.emit_event(ET.PRACTICE_QUESTION_ASKED, **kwargs))
-    assert first is not None and second is None  # second is a no-op
+    assert first is not None and second is not None
+    assert first["id"] == second["id"]  # retry reconciles delivery, never creates a second event
 
+    assert run(server.db.school_events.count_documents({"dedupe_key": key})) == 1
+    assert run(server.db.school_notifications.count_documents({"dedupe_key": f"{key}:notif"})) == 1
+    assert run(server.db.email_outbox.count_documents({"key": f"school_notif:{key}:notif"})) == 1
+
+
+def test_scenario_f_retry_repairs_partial_notification_delivery():
+    key = f"idem-repair:{uuid.uuid4()}"
+    kwargs = dict(
+        actor_type="client", client_id=str(uuid.uuid4()), client_name="Melissa", dog_name="Bolt",
+        homework_id=str(uuid.uuid4()), title="Melissa · Bolt asked a question", summary="repair?",
+        deep_link={"screen": "homework", "homework_id": "hw-repair"}, dedupe_key=key,
+    )
+    first = run(se.emit_event(ET.PRACTICE_QUESTION_ASKED, **kwargs))
+    assert first is not None
+    # Simulate a crash/failure after the event was durable but before delivery
+    # remained durable. Retrying the SAME business request must reconstruct the
+    # idempotent notification + email without duplicating the event.
+    run(server.db.school_notifications.delete_many({"dedupe_key": f"{key}:notif"}))
+    run(server.db.email_outbox.delete_many({"key": f"school_notif:{key}:notif"}))
+    again = run(se.emit_event(ET.PRACTICE_QUESTION_ASKED, **kwargs))
+    assert again and again["id"] == first["id"]
     assert run(server.db.school_events.count_documents({"dedupe_key": key})) == 1
     assert run(server.db.school_notifications.count_documents({"dedupe_key": f"{key}:notif"})) == 1
     assert run(server.db.email_outbox.count_documents({"key": f"school_notif:{key}:notif"})) == 1

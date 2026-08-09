@@ -3392,6 +3392,7 @@ function BackupPanel() {
       <ProductionHealthPanel />
       <DiskUsagePanel />
       <AutoBackupPanel />
+      <SchoolMediaRecoveryPanel confirm={confirm} />
       <div className="border-t border-shBorder pt-6">
         <h4 className="text-sm font-black text-shPrimary uppercase tracking-widest mb-2"><i className="fas fa-download mr-2"/>Download Backup</h4>
         <p className="text-[14px] text-shTextMuted mb-3 leading-relaxed">
@@ -3403,6 +3404,7 @@ function BackupPanel() {
           quote-request inbox, admin tasks and dismissals;
           plus staff scheduling and clocked-in time entries.
           <br/><span className="text-shTextMuted">User logins are migrated separately via Settings → Users → Export-with-hashes.</span>
+          <br/><span className="text-shAccent">Online School videos/resources are filesystem media and are not embedded in this JSON download.</span> Use Auto-Backup/School Media Recovery (or the host backup) to protect those files too.
           <br/>Download one every week or before any major change.
         </p>
         <button onClick={download} disabled={busy} data-testid="backup-download"
@@ -3975,6 +3977,60 @@ function PreUpdateSafetyPanel() {
       <p className="text-[11px] text-shTextMuted mt-3 leading-relaxed"><strong>Host backup still matters:</strong> this validates the in-app JSON backup. For your Bazzite machine, still run <code className="text-shTextMuted">./backup-now.sh</code> before updates because that saves Mongo plus your environment file into <code className="text-shTextMuted">~/sit-happens-backups</code>.</p>
     </div>
   );
+}
+
+function SchoolMediaRecoveryPanel({ confirm }) {
+  const [archives, setArchives] = useState([]);
+  const [busy, setBusy] = useState(false);
+  const [msg, setMsg] = useState("");
+  const load = async () => {
+    setBusy(true); setMsg("");
+    try { const { data } = await api.get("/admin/backup-safety/school-media-archives"); setArchives(data.archives || []); }
+    catch (e) { setMsg(formatErr(e.response?.data?.detail) || "Could not load School media backups"); }
+    finally { setBusy(false); }
+  };
+  useEffect(() => { load(); }, []);
+  const downloadArchive = async (row) => {
+    setBusy(true); setMsg("");
+    try {
+      const resp = await api.get(`/admin/backup-safety/school-media-archives/${encodeURIComponent(row.filename)}`, { responseType: "blob" });
+      const url = URL.createObjectURL(resp.data); const a = document.createElement("a");
+      a.href = url; a.download = row.filename; a.click(); URL.revokeObjectURL(url);
+      setMsg("School media archive downloaded ✓");
+    } catch (e) { setMsg(formatErr(e.response?.data?.detail) || "Media archive download failed"); }
+    finally { setBusy(false); }
+  };
+  const restoreArchive = async (row) => {
+    if (!row.verified) return;
+    if (!(await confirm({
+      title: "Restore School videos & resources?",
+      body: `This replaces the live Online School media folder with ${row.filename} (${row.files || 0} files). The app will create a verified pre-restore media archive first.\n\nUse the matching database JSON backup when performing a full disaster recovery.`,
+      confirmText: "Restore School media",
+      tone: "danger",
+    }))) return;
+    setBusy(true); setMsg("");
+    try {
+      const { data } = await api.post("/admin/backup-safety/restore-school-media", { filename: row.filename });
+      setMsg(`School media restored ✓ ${data.restored_files || 0} files. Pre-restore copy: ${data.pre_restore_archive || "empty media root"}.`);
+      await load();
+    } catch (e) { setMsg(formatErr(e.response?.data?.detail) || "School media restore failed"); }
+    finally { setBusy(false); }
+  };
+  return <div className="border-t border-shBorder pt-6" data-testid="school-media-recovery-panel">
+    <div className="flex flex-wrap items-start justify-between gap-3 mb-2">
+      <div><h4 className="text-sm font-black text-shSecondary uppercase tracking-widest"><i className="fas fa-photo-film mr-2"/>Online School Media Recovery</h4><p className="text-[13px] text-shTextMuted mt-1 max-w-2xl">Checkpoint videos, trainer-request videos, and uploaded School resources live on persistent disk. Nightly backup creates a matching verified media archive beside the database JSON backup.</p></div>
+      <button onClick={load} disabled={busy} className="min-h-[38px] px-3 rounded border border-shBorder text-[11px] font-black uppercase tracking-widest text-shTextMuted"><i className={`fas fa-rotate ${busy ? "fa-spin" : ""} mr-1`}/>Refresh</button>
+    </div>
+    {msg && <p className={`text-[12px] mb-2 ${msg.includes("✓") ? "text-shPrimary" : "text-shAccent"}`}>{msg}</p>}
+    {!archives.length ? <div className="rounded-lg border border-dashed border-shBorder p-3 text-[12px] text-shTextMuted">No School media archives yet. Run Auto-Backup after School media exists.</div> : <div className="space-y-2">
+      {archives.slice(0, 8).map(row => <div key={row.filename} className="rounded-lg border border-shBorder bg-[var(--sh-card-base)]/60 p-3 flex flex-col sm:flex-row sm:items-center gap-3">
+        <div className="min-w-0 flex-1"><p className="text-[12px] font-black text-shText truncate">{row.filename}</p><p className="text-[11px] text-shTextMuted">{row.files || 0} files · {fmtBytes(row.size_bytes)} · {new Date(row.modified_at).toLocaleString()}</p>{row.error && <p className="text-[11px] text-red-300 mt-1">{row.error}</p>}</div>
+        <span className={`text-[10px] font-black uppercase tracking-widest ${row.verified ? "text-shPrimary" : "text-red-300"}`}>{row.verified ? "Verified" : "Unsafe"}</span>
+        <div className="flex gap-2"><button disabled={busy || !row.verified} onClick={() => downloadArchive(row)} className="min-h-[38px] px-3 rounded border border-shSecondary/40 text-shSecondary text-[10px] font-black uppercase tracking-widest disabled:opacity-40">Download</button><button disabled={busy || !row.verified} onClick={() => restoreArchive(row)} className="min-h-[38px] px-3 rounded border border-red-500/35 text-red-300 text-[10px] font-black uppercase tracking-widest disabled:opacity-40">Restore</button></div>
+      </div>)}
+    </div>}
+    <p className="text-[11px] text-shTextMuted mt-2"><strong>Restore is owner-only.</strong> The restore endpoint rejects archives outside the configured backup folder and unsafe tar paths.</p>
+  </div>;
 }
 
 function ProductionHealthPanel() {

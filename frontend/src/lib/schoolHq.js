@@ -7,6 +7,7 @@ export const EVENT_META = {
   school_enrolled:              { icon: "fa-user-plus",           accent: "cyan",    label: "Enrolled" },
   school_started:               { icon: "fa-play",                accent: "cyan",    label: "Started" },
   lesson_started:               { icon: "fa-play",                accent: "neutral", label: "Lesson started" },
+  lesson_learn_completed:       { icon: "fa-book-open",   accent: "cyan",    label: "Learn step complete" },
   lesson_completed:             { icon: "fa-circle-check",        accent: "lime",    label: "Lesson complete" },
   module_completed:             { icon: "fa-layer-group",         accent: "lime",    label: "Module complete" },
   course_completed:             { icon: "fa-graduation-cap",      accent: "lime",    label: "Course complete" },
@@ -24,6 +25,9 @@ export const EVENT_META = {
   trainer_assist_requested:     { icon: "fa-hand-holding-heart",  accent: "purple",  label: "Trainer Assist" },
   trainer_assist_recommended:   { icon: "fa-hand-holding-heart",  accent: "purple",  label: "Trainer Assist" },
   trainer_reply:                { icon: "fa-reply",               accent: "cyan",    label: "Trainer replied" },
+  baseline_submitted:           { icon: "fa-clipboard-list",      accent: "cyan",    label: "Onboarding complete" },
+  training_plan_task_completed: { icon: "fa-list-check",          accent: "lime",    label: "Plan task complete" },
+  trainer_request_completed:    { icon: "fa-inbox",               accent: "purple",  label: "Trainer request ready" },
 };
 
 export function eventMeta(type) {
@@ -38,6 +42,7 @@ const ACTION_LABEL = {
   student_question: "Reply",
   practice_video_submitted: "Review video",
   practice_could_not_complete: "View practice",
+  trainer_request_completed: "Open student",
 };
 
 export function actionLabel(type) {
@@ -79,7 +84,12 @@ export function contextLine(item) {
 
 /** Fire the app-shell nav event so a School HQ deep-link that targets another
  * screen (e.g. the Homework thread for a question) never dead-ends. */
-export function navigateToScreen(screen) {
+export const SCHOOL_HQ_TARGET_KEY = "sh_school_hq_target";
+
+export function navigateToScreen(screen, context = null) {
+  if (context) {
+    try { sessionStorage.setItem(SCHOOL_HQ_TARGET_KEY, JSON.stringify({ screen, ...context })); } catch { /* ignore */ }
+  }
   window.dispatchEvent(new CustomEvent("sh:nav", { detail: screen }));
 }
 

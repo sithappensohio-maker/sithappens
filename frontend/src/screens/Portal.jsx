@@ -15,7 +15,6 @@ import PortalBookWizard from "../components/PortalBookWizard";
 import HomeworkIncentivesPanel from "../components/HomeworkIncentivesPanel";
 import ClientTodayPanel from "../components/training/ClientTodayPanel";
 import PracticePanel from "../components/training/PracticePanel";
-import OnlineSchoolDashboard from "../components/OnlineSchoolDashboard";
 import SchoolApp from "./SchoolApp";
 import { nextActionLabel, formatCompletionPct } from "../lib/onlineSchoolPolish";
 import MultiDateCalendar from "../components/MultiDateCalendar";
@@ -660,7 +659,6 @@ export default function Portal() {
   const [homework, setHomework] = useState([]);
   const [practiceFor, setPracticeFor] = useState(null); // homework doc open in the Homework Practice screen
   const [schoolEntries, setSchoolEntries] = useState([]); // Online School (Phase 1) — /portal/school; empty for any client with no school enrollment
-  const [schoolOpen, setSchoolOpen] = useState(false);
   // Student School (Phase 2A) — real /school* URLs via the same history
   // navigation-swap pattern the Shop view uses, so a refresh while in School
   // lands back in School (not the portal home).
@@ -2483,11 +2481,6 @@ export default function Portal() {
       {practiceFor && (
         <PracticePanel homework={practiceFor} dogPhoto={dogs.find(d => d.id === practiceFor.dog_id)?.photo}
                        onClose={() => setPracticeFor(null)} onChanged={loadAll}/>
-      )}
-      {schoolOpen && (
-        <OnlineSchoolDashboard clientFirstName={user.name?.split(" ")[0] || user.name}
-                                onClose={() => { setSchoolOpen(false); loadAll(); }}
-                                onContactTrainer={() => { setSchoolOpen(false); setMessagesOpen(true); }}/>
       )}
       {lightbox.open && (
         <Lightbox photos={lightbox.photos} index={lightbox.index}

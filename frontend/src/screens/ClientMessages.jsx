@@ -2,6 +2,7 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import { api } from "../lib/api";
 import { toast } from "sonner";
 import PageHero from "../components/PageHero";
+import { SCHOOL_HQ_TARGET_KEY } from "../lib/schoolHq";
 
 const STATUS_PILLS = {
   open:     { label: "Open",     cls: "bg-shPrimary/15 text-shPrimary" },
@@ -64,7 +65,19 @@ export default function ClientMessages() {
     }
   };
 
-  useEffect(() => { load(); }, [load]);
+  useEffect(() => {
+    try {
+      const raw = sessionStorage.getItem(SCHOOL_HQ_TARGET_KEY);
+      if (raw) {
+        const target = JSON.parse(raw);
+        if (target?.screen === "messages" && target.thread_id) {
+          sessionStorage.removeItem(SCHOOL_HQ_TARGET_KEY);
+          setActiveId(target.thread_id);
+        }
+      }
+    } catch { /* ignore */ }
+    load();
+  }, [load]);
   useEffect(() => { loadActive(activeId); }, [activeId]);
 
   const sendReply = async () => {
@@ -210,6 +223,14 @@ export default function ClientMessages() {
                       {active.dog_name && <span> · 🐾 {active.dog_name}</span>}
                       <span className="ml-2 text-shTextMuted">· {CAT_LABEL[active.category] || active.category}</span>
                     </p>
+                    {active.school_enrollment_id && (
+                      <div className="mt-2 inline-flex flex-wrap items-center gap-x-2 gap-y-1 rounded-lg border border-shSecondary/25 bg-shSecondary/[0.05] px-2.5 py-1.5 text-[10px] font-black uppercase tracking-widest text-shSecondary" data-testid="admin-message-school-context">
+                        <span><i className="fas fa-graduation-cap mr-1" />Online School</span>
+                        {active.school_program_name && <span>· {active.school_program_name}</span>}
+                        {active.school_module_name && <span>· {active.school_module_name}</span>}
+                        {active.school_lesson_name && <span>· {active.school_lesson_name}</span>}
+                      </div>
+                    )}
                   </div>
                   <div className="flex gap-1">
                     {["open", "pending", "resolved"].map(s => (

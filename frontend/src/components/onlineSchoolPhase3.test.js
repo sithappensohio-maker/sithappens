@@ -28,8 +28,10 @@ test("the dashboard has an internal 5-tab nav (Home/My Journey/Trainer Feedback/
   });
 });
 
-test("Portal.jsx itself gains no new navigation — only wires the onContactTrainer callback", () => {
-  expect(portalSrc).toMatch(/onContactTrainer=\{\(\) => \{ setSchoolOpen\(false\); setMessagesOpen\(true\); \}\}/);
+test("Portal.jsx enters the native routed School instead of mounting the legacy overlay", () => {
+  expect(portalSrc).toMatch(/const openSchool = \(\) =>/);
+  expect(portalSrc).toMatch(/<SchoolApp/);
+  expect(portalSrc).not.toMatch(/<OnlineSchoolDashboard/);
 });
 
 // ---------------------------------------------------------------------------

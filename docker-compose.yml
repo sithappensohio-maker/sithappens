@@ -47,6 +47,7 @@ services:
       CORS_ORIGINS: "${CORS_ORIGINS:-}"
       ACCESS_TOKEN_EXPIRE_DAYS: "${ACCESS_TOKEN_EXPIRE_DAYS:-7}"
       BACKUP_ROOT: "/app/backups"
+      SCHOOL_MEDIA_ROOT: "/app/school_media"
       # Stripe Online (hosted Checkout) — off unless explicitly turned on.
       # Leave STRIPE_ONLINE_ENABLED unset/false in .env until the secret key
       # and webhook secret below are both configured and verified.
@@ -56,6 +57,7 @@ services:
     volumes:
       # Persistent host bind mount for in-app JSON backups and pre-restore snapshots.
       - ./backups:/app/backups
+      - ./school_media:/app/school_media
 
   email-worker:
     # Reuses the backend image/build — only the command differs. Runs ONLY

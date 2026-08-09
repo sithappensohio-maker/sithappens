@@ -4,6 +4,7 @@ import TrainerCard from "./TrainerCard";
 import LatestFeedbackCard from "./LatestFeedbackCard";
 import ProgressSummary from "./ProgressSummary";
 import UpcomingCard from "./UpcomingCard";
+import CourseCompletionCard from "./CourseCompletionCard";
 
 /* Student Home — the command center. Small composition over the backend
  * view-model (/portal/school/{id}/home); each section is its own component.
@@ -36,7 +37,11 @@ export default function StudentHome({ home, loading, clientName, onPrimaryAction
         )}
       </header>
 
-      <CurrentTrainingCard home={home} onPrimary={onPrimaryAction} />
+      {home.status === "completed" ? (
+        <CourseCompletionCard home={home} onProgress={onViewProgress} onFeedback={onViewFeedback} />
+      ) : (
+        <CurrentTrainingCard home={home} onPrimary={onPrimaryAction} />
+      )}
 
       <div className="grid gap-4 lg:grid-cols-2">
         <div className="space-y-4 min-w-0">
@@ -44,7 +49,8 @@ export default function StudentHome({ home, loading, clientName, onPrimaryAction
           <ProgressSummary progress={home.progress} onView={onViewProgress} />
         </div>
         <div className="space-y-4 min-w-0">
-          <TrainerCard trainer={home.trainer} onAsk={onAsk} hasUnansweredQuestion={hasUnansweredQuestion} />
+          <TrainerCard trainer={home.trainer} onAsk={onAsk} onViewFeedback={onViewFeedback}
+                       hasUnansweredQuestion={hasUnansweredQuestion} unreadReplies={home.trainer?.unread_replies || 0} />
           <UpcomingCard upcoming={home.upcoming} />
         </div>
       </div>

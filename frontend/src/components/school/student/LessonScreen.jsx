@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useState } from "react";
 import { api } from "../../../lib/api";
 import LessonDetailPanel from "../../training/LessonDetailPanel";
+import LessonContentBlocks from "./LessonContentBlocks";
 import EmptyState from "../../training/EmptyState";
 import SectionCard from "../../premium/SectionCard";
 import PremiumButton from "../../premium/PremiumButton";
@@ -18,7 +19,7 @@ import { practiceButtonLabel } from "../../../lib/onlineSchoolPolish";
  * All progression state comes from the backend; nothing is derived here. */
 export default function LessonScreen({
   enrollmentId, lessonId, detail, dogName, dogPhoto,
-  onStartPractice, onAdvanced, onStateChanged, onBackToCourse,
+  onStartPractice, onStartPrescribedPractice, onAdvanced, onStateChanged, onBackToCourse, onAskTrainer,
 }) {
   const [data, setData] = useState(null);
   const [err, setErr] = useState(null);      // {status, message}
@@ -101,6 +102,7 @@ export default function LessonScreen({
   // Legacy malformed config: checkpoint required but no practice configured —
   // submission is impossible. Safe support message; never the checkpoint panel.
   const setupRequired = requiresCp && !hasPractice;
+  const prescribedRemediation = isCurrent && roadmap?.checkpoint_status?.status === "graded" && roadmap?.checkpoint_status?.outcome === "prescribe_practice";
   const isFinal = requiresCp && roadmap?.checkpoint_rubric?.assessment_type === "final_assessment";
 
   return (
@@ -120,10 +122,16 @@ export default function LessonScreen({
             {isFinal ? `${lesson.name} · Final Assessment` : lesson.name}
           </h1>
         </div>
-        <button type="button" onClick={onBackToCourse} aria-label="Back to My Course" data-testid="lesson-back"
-                className="shrink-0 w-10 h-10 rounded-xl border border-shBorder bg-black/15 text-shTextMuted hover:text-shText grid place-items-center">
-          <i className="fas fa-route" />
-        </button>
+        <div className="flex items-center gap-2 shrink-0">
+          <button type="button" onClick={() => onAskTrainer?.({ lesson: data, lessonId })} aria-label="Ask your trainer" data-testid="lesson-ask-trainer"
+                  className="w-10 h-10 rounded-xl border border-shSecondary/30 bg-black/15 text-shSecondary hover:text-shText grid place-items-center">
+            <i className="fas fa-comment-dots" />
+          </button>
+          <button type="button" onClick={onBackToCourse} aria-label="Back to My Course" data-testid="lesson-back"
+                  className="w-10 h-10 rounded-xl border border-shBorder bg-black/15 text-shTextMuted hover:text-shText grid place-items-center">
+            <i className="fas fa-route" />
+          </button>
+        </div>
       </header>
 
       {completedReview && (
@@ -132,8 +140,12 @@ export default function LessonScreen({
         </p>
       )}
 
-      {/* The lesson itself — shared presentation, unchanged content */}
-      <LessonDetailPanel lesson={lesson} testid="lesson-detail" />
+      {/* Course Builder 2.0 blocks become the primary authored lesson when
+          present. Legacy structured fields remain a complete fallback for every
+          existing course, so no migration is required. */}
+      {(lesson.content_blocks || []).some((b) => b?.active !== false)
+        ? <LessonContentBlocks blocks={lesson.content_blocks} enrollmentId={enrollmentId} />
+        : <LessonDetailPanel lesson={lesson} testid="lesson-detail" />}
 
       {data.skills?.length > 0 && (
         <SectionCard accent="cyan" intensity="subtle">
@@ -165,7 +177,7 @@ export default function LessonScreen({
       ) : (
         <>
           {/* Practice-bearing lesson: Start Practice IS the learn boundary. */}
-          {hasPractice && (
+          {hasPractice && !prescribedRemediation && (
             <PremiumButton onClick={() => onStartPractice(lessonId)} disabled={busy} data-testid="lesson-start-practice"
                            className="w-full justify-center min-h-[52px] text-[13px] sm:text-[14px]">
               <i className="fas fa-paw text-[11px]" />{practiceButtonLabel(data.practiced)}
@@ -197,6 +209,7 @@ export default function LessonScreen({
               rubric={roadmap.checkpoint_rubric}
               status={roadmap.checkpoint_status}
               onSubmit={submitCheckpoint}
+              onStartPrescribedPractice={onStartPrescribedPractice}
               onGoToRefresher={(rid) => onStateChanged?.({ openLessonId: rid })}
               busy={busy}
             />
