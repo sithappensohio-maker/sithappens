@@ -12455,7 +12455,11 @@ _CLIENT_SAFE_TEMPLATE_SNAPSHOT_FIELDS = (
 _CLIENT_SAFE_SECTION_LOG_FIELDS = (
     "id", "section_id", "day_number", "date", "field_values", "note",
     "submission_status", "is_rest_day", "is_skipped", "questions",
-    "review_note", "reviewed_at", "reviewed_by", "logged_by", "logged_at",
+    # Practice Reviews — review_status ∈ looks_good/keep_practicing/
+    # trainer_attention is client-visible coaching state; reviewed_by is the
+    # trainer's display name (appropriate to show). reviewed_by_id stays
+    # internal-only.
+    "review_status", "review_note", "reviewed_at", "reviewed_by", "logged_by", "logged_at",
 )
 
 
@@ -12542,6 +12546,13 @@ class SectionLogIn(BaseModel):
     could_not_complete: bool = False
     could_not_complete_reason: Optional[str] = Field(default=None, max_length=300)
     photo: Optional[str] = ""  # base64 data-url (small previews only) — see DaySubmitIn.photo
+    # Practice Reviews — id of a video already uploaded through
+    # POST /homework/{id}/practice-video. Validated server-side against the
+    # SAME homework before it's stored (never a trusted browser value);
+    # mirrors DaySubmitIn.video_media_id and lands in the same
+    # field_values.__video_id convention _emit_school_practice_log_event
+    # already reads.
+    video_media_id: Optional[str] = ""
 
 
 @api.get("/homework-templates")
@@ -12957,6 +12968,18 @@ async def log_section(homework_id: str, body: SectionLogIn, user: dict = Depends
             field_values["__could_not_complete_reason"] = body.could_not_complete_reason.strip()
     if body.photo:
         field_values["__photo"] = body.photo
+    if body.video_media_id:
+        # Never trust an arbitrary browser-supplied media id: the referenced
+        # media row must exist, be a video, and belong to THIS homework (the
+        # upload route already enforced client ownership of the homework at
+        # write time, and this endpoint enforced it again above — the
+        # homework_id match ties the two together).
+        media = await db.homework_media.find_one(
+            {"id": body.video_media_id, "homework_id": homework_id}, {"_id": 0, "id": 1, "kind": 1},
+        )
+        if not media or media.get("kind") != "video":
+            raise HTTPException(status_code=400, detail="Unknown video for this practice — upload it again.")
+        field_values["__video_id"] = body.video_media_id
 
     entry = {
         "id": str(uuid.uuid4()),
@@ -13779,50 +13802,50 @@ async def answer_section_question(
 
 
 # ────────────────────────── Daily-tracker media (video) ──────────────────────────
-@api.post("/homework/{homework_id}/day/{day_number}/video")
-async def upload_day_video(
-    homework_id: str,
-    day_number: int,
-    body: CertificateUploadIn,  # reuse — single base64 payload
-    user: dict = Depends(get_current_user),
-):
-    """Upload a short clip (~10s recommended) for a day's check-in. Stored in
-    a separate `homework_media` collection so big payloads don't bloat the
-    homework doc (Mongo 16 MB per-doc cap)."""
+async def _store_homework_practice_video(
+    homework_id: str, body: CertificateUploadIn, user: dict, *, day_number: Optional[int] = None,
+) -> str:
+    """Shared storage body for BOTH homework video-upload routes (the daily
+    tracker's day-scoped route and the section-log Practice route below) —
+    one implementation of ownership check, size ceiling, School filesystem
+    persistence, and insert-failure cleanup, never two that could drift.
+
+    Phase 6 (6.15) — this upload previously had ONLY a frontend 15 MB
+    gate; nothing server-side stopped a raw payload from landing well
+    past Mongo's 16 MB per-document BSON limit (base64 already inflates
+    by 4/3, and homework_media stores `data` as a single field on one
+    document — same computed-safe principle _validate_checkpoint_video
+    already established for Online School checkpoint video, applied here
+    to close the pre-existing, unrelated-but-real gap this same audit
+    flagged). A frontend bypass (direct API call) could otherwise still
+    write an oversized document even with the client-side cap in place."""
     hw = await db.homework.find_one({"id": homework_id}, {"_id": 0, "client_id": 1, "dog_id": 1, "school_enrollment_id": 1, "source_lesson_id": 1})
     if not hw:
         raise HTTPException(status_code=404, detail="Homework not found")
     if user.get("role") != "admin" and hw.get("client_id") != user.get("client_id"):
         raise HTTPException(status_code=403, detail="Not allowed")
-    # Phase 6 (6.15) — this upload previously had ONLY a frontend 15 MB
-    # gate; nothing server-side stopped a raw payload from landing well
-    # past Mongo's 16 MB per-document BSON limit (base64 already inflates
-    # by 4/3, and homework_media stores `data` as a single field on one
-    # document — same computed-safe principle _validate_checkpoint_video
-    # already established for Online School checkpoint video, applied here
-    # to close the pre-existing, unrelated-but-real gap this same audit
-    # flagged). A frontend bypass (direct API call) could otherwise still
-    # write an oversized document even with the client-side cap in place.
     if "," in (body.photo or ""):
         _, _b64 = body.photo.split(",", 1)
         approx_bytes = (len(_b64) * 3) // 4
         # School homework persists to the filesystem media root and may use
         # the full School ceiling; generic Homework still embeds base64 in a
         # single Mongo document, so it must stay under the 16 MB BSON cap.
-        day_video_limit = CHECKPOINT_VIDEO_MAX_BYTES if hw.get("school_enrollment_id") else GENERIC_DAY_VIDEO_MAX_BYTES
-        if approx_bytes > day_video_limit:
+        video_limit = CHECKPOINT_VIDEO_MAX_BYTES if hw.get("school_enrollment_id") else GENERIC_DAY_VIDEO_MAX_BYTES
+        if approx_bytes > video_limit:
             raise HTTPException(
                 status_code=400,
-                detail=f"Video too large ({approx_bytes // (1024 * 1024)} MB). Max is {day_video_limit // (1024 * 1024)} MB.",
+                detail=f"Video too large ({approx_bytes // (1024 * 1024)} MB). Max is {video_limit // (1024 * 1024)} MB.",
             )
     media_id = str(uuid.uuid4())
     media_doc = {
-        "id": media_id, "homework_id": homework_id, "day_number": int(day_number),
+        "id": media_id, "homework_id": homework_id,
         "kind": "video", "filename": (body.filename or "video"),
         "uploaded_at": now_iso(), "uploaded_by": user.get("id"),
         "client_id": hw.get("client_id"), "dog_id": hw.get("dog_id"),
         "school_enrollment_id": hw.get("school_enrollment_id"),
     }
+    if day_number is not None:
+        media_doc["day_number"] = int(day_number)
     if hw.get("school_enrollment_id"):
         try:
             media_doc.update(_persist_school_media_data_url(body.photo, media_id, body.filename or "video"))
@@ -13840,6 +13863,38 @@ async def upload_day_video(
         if hw.get("school_enrollment_id"):
             _delete_school_media_file(media_doc)
         raise
+    return media_id
+
+
+@api.post("/homework/{homework_id}/day/{day_number}/video")
+async def upload_day_video(
+    homework_id: str,
+    day_number: int,
+    body: CertificateUploadIn,  # reuse — single base64 payload
+    user: dict = Depends(get_current_user),
+):
+    """Upload a short clip (~10s recommended) for a day's check-in. Stored in
+    a separate `homework_media` collection so big payloads don't bloat the
+    homework doc (Mongo 16 MB per-doc cap)."""
+    media_id = await _store_homework_practice_video(homework_id, body, user, day_number=int(day_number))
+    return {"media_id": media_id}
+
+
+@api.post("/homework/{homework_id}/practice-video")
+async def upload_practice_video(
+    homework_id: str,
+    body: CertificateUploadIn,  # reuse — single base64 payload
+    user: dict = Depends(get_current_user),
+):
+    """Section-log (Coach Mode) Practice video upload — the general,
+    non-day-scoped counterpart to upload_day_video. Uploaded BEFORE the final
+    log record exists (the Practice UI attaches the returned media_id to its
+    POST /homework/{id}/section-log as `video_media_id`), so it is keyed to
+    the homework, never to a log id. Storage conventions are identical to the
+    daily route: Online School homework persists to the filesystem media root
+    under the School video ceiling; generic homework stays base64-in-Mongo
+    under the generic cap. No second media system."""
+    media_id = await _store_homework_practice_video(homework_id, body, user)
     return {"media_id": media_id}
 
 
@@ -15391,6 +15446,44 @@ class LessonIn(BaseModel):
     checkpoint: Optional[CheckpointConfigIn] = None
 
 
+class ModuleQuizOptionIn(BaseModel):
+    """One answer option. The option ID — stamped stable by _stamp_ids exactly
+    like modules/goals/lessons/criteria — is the durable answer identity, so
+    editing option wording never silently changes which answer is correct."""
+    id: Optional[str] = None
+    text: str = ""
+
+
+class ModuleQuizQuestionIn(BaseModel):
+    """One auto-gradable Module Quiz question. This phase is deliberately
+    deterministic: multiple choice + true/false only (true/false is just two
+    stable options through the same option-ID grading path — never a second
+    scoring engine). correct_option_id references an option ID, never raw
+    option text. Loose at the model layer so drafts can be saved mid-edit;
+    _validate_program_structure enforces the hard rules at publish time."""
+    id: Optional[str] = None
+    type: Literal["multiple_choice", "true_false"] = "multiple_choice"
+    question: str = ""
+    options: List[ModuleQuizOptionIn] = []
+    correct_option_id: Optional[str] = None
+    explanation: Optional[str] = ""  # client-facing coaching shown AFTER grading
+    review_lesson_id: Optional[str] = None  # optional same-module lesson to review
+
+
+class ModuleQuizConfigIn(BaseModel):
+    """Module Quiz — a persistent, progression-gating knowledge assessment at
+    the END of a module. Completely separate from the lesson-level Knowledge
+    Check content block (which stays local, non-persistent, non-gating).
+    Absent/disabled = the module advances exactly as it always has. The whole
+    config is snapshotted into program_snapshot on enrollment (via _stamp_ids)
+    so editing a live course never changes an existing student's quiz."""
+    enabled: bool = False
+    title: Optional[str] = ""
+    instructions: Optional[str] = ""
+    passing_score: int = 80  # percent, 1-100 (validated at publish)
+    questions: List[ModuleQuizQuestionIn] = []
+
+
 class ModuleIn(BaseModel):
     id: Optional[str] = None
     name: str = Field(min_length=1)
@@ -15404,6 +15497,9 @@ class ModuleIn(BaseModel):
     lessons: List[LessonIn] = []
     # Sprint 110bx — homework auto-assigned when this module flips to "mastered"
     homework_template_id: Optional[str] = None
+    # Module Quiz — optional end-of-module knowledge gate. None/disabled on
+    # every existing module = behavior byte-identical to today.
+    module_quiz: Optional[ModuleQuizConfigIn] = None
 
 
 class ProgramIn(BaseModel):
@@ -15570,6 +15666,47 @@ def _stamp_ids(modules: List[dict]) -> List[dict]:
                 lesson["checkpoint"] = None
             lessons.append(lesson)
 
+        # Module Quiz — stamp stable question/option ids the same way goals/
+        # lessons/criteria are stamped: existing ids survive edits, missing
+        # ids are generated. The stamped quiz rides inside the module, so it
+        # naturally enters program_snapshot.modules[] on enrollment.
+        quiz = m.get("module_quiz")
+        if quiz:
+            questions = []
+            for q in (quiz.get("questions") or []):
+                qtype = q.get("type") or "multiple_choice"
+                raw_options = [o for o in (q.get("options") or []) if isinstance(o, dict)]
+                if qtype == "true_false":
+                    # Canonical two-option shape with stable ids — an existing
+                    # True/False option keeps its id (matched by label) so the
+                    # stored correct_option_id survives re-saves. Grading uses
+                    # the exact same option-id path as multiple choice.
+                    by_label = {(o.get("text") or "").strip().lower(): o for o in raw_options}
+                    options = [
+                        {"id": (by_label.get(label.lower()) or {}).get("id") or _gid(), "text": label}
+                        for label in ("True", "False")
+                    ]
+                else:
+                    options = [{"id": o.get("id") or _gid(), "text": (o.get("text") or "").strip()} for o in raw_options]
+                questions.append({
+                    "id": q.get("id") or _gid(),
+                    "type": qtype,
+                    "question": (q.get("question") or "").strip(),
+                    "options": options,
+                    "correct_option_id": q.get("correct_option_id"),
+                    "explanation": q.get("explanation") or "",
+                    "review_lesson_id": q.get("review_lesson_id"),
+                })
+            stamped_quiz = {
+                "enabled": bool(quiz.get("enabled")),
+                "title": quiz.get("title") or "",
+                "instructions": quiz.get("instructions") or "",
+                "passing_score": int(quiz.get("passing_score") or 80),
+                "questions": questions,
+            }
+        else:
+            stamped_quiz = None
+
         out.append({
             "id": mid,
             "name": m["name"],
@@ -15578,6 +15715,7 @@ def _stamp_ids(modules: List[dict]) -> List[dict]:
             "goals": goals,
             "lessons": lessons,
             "homework_template_id": m.get("homework_template_id"),
+            "module_quiz": stamped_quiz,
         })
     return out
 
@@ -15714,6 +15852,45 @@ async def _validate_program_structure(modules: List[dict]) -> Dict[str, Any]:
                 # assessment_type, never inferred from lesson position).
                 if cp.get("assessment_type") == "final_assessment":
                     final_assessment_lessons.append(where_l)
+
+        # ── Module Quiz validation. A module with no quiz, or with
+        # module_quiz.enabled == false, is completely untouched by these
+        # checks — disabled quiz = valid, exactly like legacy modules.
+        quiz = m.get("module_quiz")
+        if quiz and quiz.get("enabled"):
+            module_lesson_ids = {l.get("id") for l in lessons if l.get("id")}
+            questions = quiz.get("questions") or []
+            mq_name = m.get("name", "")
+            if not questions:
+                errors.append({"code": "module_quiz_no_questions", "message": f"Module '{mq_name}' has an enabled Module Quiz with no questions.", **where_m})
+            elif len(questions) == 1:
+                warnings.append({"code": "module_quiz_single_question", "message": f"Module '{mq_name}' has a Module Quiz with only one question.", **where_m})
+            try:
+                ps = int(quiz.get("passing_score"))
+            except (TypeError, ValueError):
+                ps = None
+            if ps is None or not (1 <= ps <= 100):
+                errors.append({"code": "module_quiz_invalid_passing_score", "message": f"Module '{mq_name}' has a Module Quiz passing score outside 1-100%.", **where_m})
+            for q in questions:
+                where_q = {**where_m, "question_id": q.get("id") or "?"}
+                if not (q.get("question") or "").strip():
+                    errors.append({"code": "module_quiz_blank_question", "message": f"Module '{mq_name}' has a quiz question with no text.", **where_q})
+                opts = q.get("options") or []
+                usable = [o for o in opts if (o.get("text") or "").strip()]
+                if len(usable) < 2:
+                    errors.append({"code": "module_quiz_too_few_options", "message": f"Module '{mq_name}' has a quiz question with fewer than two usable answer options.", **where_q})
+                opt_ids = [o.get("id") for o in opts if o.get("id")]
+                if len(opt_ids) != len(set(opt_ids)):
+                    errors.append({"code": "module_quiz_duplicate_option_id", "message": f"Module '{mq_name}' has a quiz question with duplicate option ids.", **where_q})
+                if q.get("correct_option_id") not in set(opt_ids):
+                    errors.append({"code": "module_quiz_invalid_correct_option", "message": f"Module '{mq_name}' has a quiz question whose correct answer is not one of its options.", **where_q})
+                if not (q.get("explanation") or "").strip():
+                    warnings.append({"code": "module_quiz_no_explanation", "message": f"Module '{mq_name}' has a quiz question with no explanation/coaching note.", **where_q})
+                rl = q.get("review_lesson_id")
+                if rl and rl not in module_lesson_ids:
+                    errors.append({"code": "module_quiz_invalid_review_lesson", "message": f"Module '{mq_name}' has a quiz question pointing at a review lesson that is not in this module.", **where_q})
+            if questions and not any(q.get("review_lesson_id") for q in questions):
+                warnings.append({"code": "module_quiz_no_review_lessons", "message": f"Module '{mq_name}''s quiz has no review-lesson mappings — retry coaching will have nowhere to send the student.", **where_m})
 
     if len(final_assessment_lessons) > 1:
         errors.append({
@@ -17335,6 +17512,12 @@ async def _school_roadmap(enrollment: dict, dog_id: str) -> dict:
     if current_lesson and modules and cur_module_idx == len(modules) - 1:
         last_lessons = _effective_lesson_list(modules[cur_module_idx])
         is_final_lesson = bool(last_lessons) and last_lessons[-1].get("id") == cur_lesson_id
+    # Whether the pointer sits on the LAST lesson of the CURRENT module (any
+    # module, not just the program's final one) — the Module Quiz boundary.
+    at_module_last_lesson = False
+    if current_lesson and modules:
+        cur_mod_lessons = _effective_lesson_list(modules[cur_module_idx])
+        at_module_last_lesson = bool(cur_mod_lessons) and cur_mod_lessons[-1].get("id") == cur_lesson_id
 
     # Online School Phase 2 — checkpoint status for the CURRENT lesson
     # only (mirrors the existing pattern of only enriching the current
@@ -17377,6 +17560,63 @@ async def _school_roadmap(enrollment: dict, dog_id: str) -> dict:
             if checkpoint_status and checkpoint_status.get("trainer_assist"):
                 checkpoint_status["trainer_assist"] = await _enrich_trainer_assist_schedule(checkpoint_status["trainer_assist"])
 
+    # ── Module Quiz state (per module + the current-module gate). Read from
+    # the enrollment's OWN frozen snapshot — never the live program — so an
+    # already-enrolled student's quiz can't silently change. A snapshot with
+    # no module_quiz (every pre-feature enrollment) yields quiz=None on every
+    # module and zero behavior change anywhere downstream.
+    has_practice_now = bool((current_lesson or {}).get("suggested_homework_template_ids"))
+    learn_done_now = bool(cur_lesson_id and cur_lesson_id in learn_completed_ids)
+    if requires_checkpoint:
+        boundary_work_done = bool(checkpoint_status and checkpoint_status.get("status") == "graded"
+                                  and checkpoint_status.get("outcome") == "advance")
+    else:
+        boundary_work_done = practiced or (not has_practice_now and learn_done_now)
+    quiz_boundary_ready = at_module_last_lesson and boundary_work_done and not is_completed_enrollment
+
+    attempts_by_module: Dict[str, List[dict]] = {}
+    if any((m.get("module_quiz") or {}).get("enabled") for m in modules):
+        attempt_rows = await db.school_quiz_attempts.find(
+            {"enrollment_id": enrollment["id"]},
+            {"_id": 0, "module_id": 1, "score_percent": 1, "passed": 1, "submitted_at": 1},
+        ).to_list(1000)
+        for row in attempt_rows:
+            attempts_by_module.setdefault(row.get("module_id"), []).append(row)
+
+    for m_idx, mo in enumerate(modules_out):
+        cfg = modules[m_idx].get("module_quiz") or {}
+        if not cfg.get("enabled"):
+            mo["quiz"] = None
+            continue
+        module_attempts = sorted(attempts_by_module.get(mo["id"]) or [], key=lambda a: a.get("submitted_at") or "")
+        passed_rows = [a for a in module_attempts if a.get("passed")]
+        if passed_rows:
+            q_status = "passed"
+        elif mo["status"] == "current" and quiz_boundary_ready:
+            q_status = "available"
+        else:
+            q_status = "locked"
+        scores = [a.get("score_percent") for a in module_attempts if a.get("score_percent") is not None]
+        mo["quiz"] = {
+            "enabled": True,
+            "status": q_status,
+            "title": cfg.get("title") or f"{mo.get('name') or 'Module'} Quiz",
+            "passing_score": int(cfg.get("passing_score") or 80),
+            "question_count": len(cfg.get("questions") or []),
+            "attempt_count": len(module_attempts),
+            "best_score": max(scores) if scores else None,
+            "passed_at": passed_rows[0].get("submitted_at") if passed_rows else None,
+        }
+
+    current_quiz = None
+    if modules_out and cur_module_idx < len(modules_out) and not is_completed_enrollment:
+        cq = modules_out[cur_module_idx].get("quiz")
+        if cq:
+            cfg = modules[cur_module_idx].get("module_quiz") or {}
+            current_quiz = {**cq, "module_id": cur_module_id,
+                            "module_name": modules_out[cur_module_idx].get("name"),
+                            "instructions": cfg.get("instructions") or ""}
+
     return {
         "modules": modules_out,
         "current_module_id": cur_module_id,
@@ -17390,6 +17630,10 @@ async def _school_roadmap(enrollment: dict, dog_id: str) -> dict:
         "requires_checkpoint": requires_checkpoint,
         "checkpoint_rubric": checkpoint_rubric,
         "checkpoint_status": checkpoint_status,
+        # Module Quiz gate for the CURRENT module (None when no enabled quiz).
+        "module_quiz": current_quiz,
+        "module_quiz_available": bool(current_quiz and current_quiz.get("status") == "available"),
+        "module_quiz_required": bool(current_quiz and current_quiz.get("status") != "passed"),
     }
 
 
@@ -17414,6 +17658,9 @@ def _client_safe_school_roadmap(roadmap: dict) -> dict:
             "id": m["id"], "name": m["name"], "description": m["description"],
             "order": m["order"], "status": m["status"], "locked_reason": m["locked_reason"],
             "lessons": lessons_out,
+            # Module Quiz state is already client-safe (status/scores/counts
+            # only — never questions, never correct answers).
+            "quiz": m.get("quiz"),
         })
     current_lesson = roadmap.get("current_lesson")
     return {
@@ -17428,6 +17675,9 @@ def _client_safe_school_roadmap(roadmap: dict) -> dict:
         "requires_checkpoint": roadmap.get("requires_checkpoint", False),
         "checkpoint_rubric": roadmap.get("checkpoint_rubric"),
         "checkpoint_status": roadmap.get("checkpoint_status"),
+        "module_quiz": roadmap.get("module_quiz"),
+        "module_quiz_available": roadmap.get("module_quiz_available", False),
+        "module_quiz_required": roadmap.get("module_quiz_required", False),
     }
 
 
@@ -18604,6 +18854,16 @@ def _school_current_action(status: str, access_state: str, roadmap: Optional[dic
     if has_practice and not practiced:
         return {"type": "practice", "label": "Start practice", "sublabel": lesson_name,
                 "target": {"screen": "lesson", "lesson_id": lesson_id}}
+    # 6b. Module Quiz gate — the lesson/checkpoint work at this module's
+    #     boundary is done, but the module's quiz hasn't been passed yet.
+    #     The quiz (not "advance") is the honest next step; the backend
+    #     advance endpoint enforces this regardless of what the UI shows.
+    if (roadmap or {}).get("module_quiz_available"):
+        mq = roadmap.get("module_quiz") or {}
+        qcount = mq.get("question_count") or 0
+        return {"type": "module_quiz", "label": "Take the Module Quiz",
+                "sublabel": f"{qcount} question{'s' if qcount != 1 else ''} · Passing score {mq.get('passing_score') or 80}%",
+                "target": {"screen": "quiz", "module_id": mq.get("module_id"), "lesson_id": lesson_id}}
     # 7. Learn done + practice satisfied → move on.
     return {"type": "advance", "label": "Continue to your next lesson",
             "sublabel": f"You've finished {lesson_name}.", "target": {"screen": "course"}}
@@ -19583,7 +19843,382 @@ async def portal_school_advance(school_enrollment_id: str, user: dict = Depends(
             raise HTTPException(status_code=422, detail=f"Practice {current_lesson.get('name')} at least once before continuing.")
         if not roadmap.get("current_lesson_learn_completed"):
             raise HTTPException(status_code=422, detail=f"Complete {current_lesson.get('name')} before continuing.")
+    # ── Module Quiz gate (server-enforced — a direct API call cannot bypass
+    # it). Advancing OFF the last lesson of a quiz-gated module (into the
+    # next module, or into course completion) requires a passed quiz; the
+    # quiz-pass endpoint is then the one thing that advances this boundary.
+    pos = _compute_next_school_position(enrollment, roadmap["current_module_id"], roadmap["current_lesson_id"])
+    if pos["is_final"] or pos["next_module_id"] != roadmap["current_module_id"]:
+        if await _module_quiz_gate_blocks(enrollment, roadmap["current_module_id"]):
+            raise HTTPException(status_code=409, detail={
+                "error_code": "module_quiz_required",
+                "module_id": roadmap["current_module_id"],
+                "quiz_available": bool(roadmap.get("module_quiz_available")),
+            })
     return await _advance_school_enrollment(se, enrollment, roadmap)
+
+
+async def _module_quiz_gate_blocks(enrollment: dict, module_id: str) -> bool:
+    """True when this enrollment's FROZEN snapshot has an enabled Module Quiz
+    on `module_id` that has not yet been passed. Snapshot-only read (never the
+    live program), so pre-quiz enrollments are never gated and a later course
+    edit can't retroactively gate an existing student."""
+    module = next(
+        (m for m in (enrollment.get("program_snapshot") or {}).get("modules") or [] if m.get("id") == module_id),
+        None,
+    )
+    cfg = (module or {}).get("module_quiz") or {}
+    if not cfg.get("enabled"):
+        return False
+    passed = await db.school_quiz_attempts.find_one(
+        {"enrollment_id": enrollment["id"], "module_id": module_id, "passed": True},
+        {"_id": 0, "id": 1},
+    )
+    return passed is None
+
+
+# ─── Module Quiz — persistent, server-graded, progression-gating ──────────
+# Completely separate from the lesson "Knowledge Check" content block (which
+# stays local/non-persistent/non-gating). The quiz definition lives inside
+# the student's frozen program_snapshot module; attempts live in the
+# dedicated school_quiz_attempts collection (backed up with the other School
+# history — see BACKUP_COLLECTIONS).
+
+class ModuleQuizAnswerIn(BaseModel):
+    question_id: str
+    selected_option_id: str
+
+
+class ModuleQuizSubmitIn(BaseModel):
+    answers: List[ModuleQuizAnswerIn]
+    # Explicit idempotency key (client-generated per attempt) so a double
+    # click / network retry can never create two attempts or advance twice —
+    # enforced by a unique index, never by frontend button disabling alone.
+    idempotency_key: str = Field(min_length=8, max_length=100)
+
+
+def _snapshot_module(enrollment: dict, module_id: str) -> Optional[dict]:
+    return next(
+        (m for m in (enrollment.get("program_snapshot") or {}).get("modules") or [] if m.get("id") == module_id),
+        None,
+    )
+
+
+def _client_safe_quiz_questions(cfg: dict) -> List[dict]:
+    """Pre-submission question payload. NEVER includes correct_option_id,
+    explanations, review-lesson mappings, or any other grading metadata —
+    the browser gets question ids, text, and options, nothing else."""
+    out = []
+    for q in cfg.get("questions") or []:
+        out.append({
+            "id": q.get("id"),
+            "type": q.get("type") or "multiple_choice",
+            "question": q.get("question") or "",
+            "options": [{"id": o.get("id"), "text": o.get("text") or ""} for o in (q.get("options") or [])],
+        })
+    return out
+
+
+async def _module_quiz_context(school_enrollment_id: str, module_id: str, user: dict) -> tuple:
+    """Shared GET/POST plumbing: ownership, access, onboarding, snapshot
+    module + enabled quiz config. Returns (se, enrollment, module, cfg)."""
+    se, enrollment = await _school_enrollment_for_client(school_enrollment_id, user)
+    _require_school_access(enrollment, allow_withdrawn_read=False)
+    _require_school_onboarding_ready(se, enrollment)
+    module = _snapshot_module(enrollment, module_id)
+    if not module:
+        raise HTTPException(status_code=404, detail="That module is not part of this course.")
+    cfg = (module.get("module_quiz") or {})
+    if not cfg.get("enabled"):
+        raise HTTPException(status_code=404, detail="This module has no quiz.")
+    return se, enrollment, module, cfg
+
+
+async def _module_quiz_status_block(se: dict, enrollment: dict, module_id: str) -> dict:
+    """Availability/attempt summary computed off the SAME roadmap logic the
+    rest of School progression uses — one implementation, no drift."""
+    roadmap = await _school_roadmap(enrollment, se["dog_id"])
+    per_module = next((m.get("quiz") for m in roadmap["modules"] if m.get("id") == module_id), None)
+    if per_module is None:
+        # Enabled quiz on a module the roadmap didn't decorate (should not
+        # happen — decorated for every module) — treat as locked.
+        per_module = {"status": "locked", "attempt_count": 0, "best_score": None, "passed_at": None}
+    return {"roadmap": roadmap, "quiz": per_module}
+
+
+def _quiz_attempt_result_payload(attempt: dict) -> dict:
+    """Result payload for an attempt — built from the attempt's OWN frozen
+    quiz_snapshot (never the live program, never the current snapshot), so a
+    historical attempt always shows exactly what the student was asked.
+    Correct answers + explanations are revealed here, AFTER grading."""
+    snap = attempt.get("quiz_snapshot") or {}
+    questions = {q.get("id"): q for q in (snap.get("questions") or [])}
+    results = []
+    for ans in attempt.get("answers") or []:
+        q = questions.get(ans.get("question_id")) or {}
+        options = {o.get("id"): (o.get("text") or "") for o in (q.get("options") or [])}
+        results.append({
+            "question_id": ans.get("question_id"),
+            "question": q.get("question") or "",
+            "type": q.get("type") or "multiple_choice",
+            "selected_option_id": ans.get("selected_option_id"),
+            "selected_answer": options.get(ans.get("selected_option_id"), ""),
+            "correct_option_id": q.get("correct_option_id"),
+            "correct_answer": options.get(q.get("correct_option_id"), ""),
+            "correct": bool(ans.get("correct")),
+            "explanation": q.get("explanation") or "",
+            "review_lesson_id": q.get("review_lesson_id"),
+            "review_lesson_name": q.get("review_lesson_name"),
+        })
+    return {
+        "attempt_id": attempt.get("id"),
+        "attempt_number": attempt.get("attempt_number"),
+        "module_id": attempt.get("module_id"),
+        "module_name": attempt.get("module_name"),
+        "correct_count": attempt.get("correct_count"),
+        "question_count": attempt.get("question_count"),
+        "score_percent": attempt.get("score_percent"),
+        "passing_score": (attempt.get("quiz_snapshot") or {}).get("passing_score"),
+        "passed": bool(attempt.get("passed")),
+        "submitted_at": attempt.get("submitted_at"),
+        "results": results,
+    }
+
+
+@api.get("/portal/school/{school_enrollment_id}/modules/{module_id}/quiz")
+async def portal_school_module_quiz(
+    school_enrollment_id: str, module_id: str, user: dict = Depends(get_current_user),
+):
+    """Client quiz view. Questions are included ONLY while the quiz is
+    actually available to take, and are sanitized (no correct answers, no
+    explanations). Locked-module quizzes stay locked — a direct API call
+    for a future module returns state only, never content."""
+    se, enrollment, module, cfg = await _module_quiz_context(school_enrollment_id, module_id, user)
+    state = await _module_quiz_status_block(se, enrollment, module_id)
+    quiz_state = state["quiz"]
+    last_attempt = await db.school_quiz_attempts.find_one(
+        {"school_enrollment_id": se["id"], "module_id": module_id}, {"_id": 0},
+        sort=[("submitted_at", -1)],
+    )
+    out = {
+        "module_id": module_id,
+        "module_name": module.get("name"),
+        "title": cfg.get("title") or f"{module.get('name') or 'Module'} Quiz",
+        "instructions": cfg.get("instructions") or "",
+        "passing_score": int(cfg.get("passing_score") or 80),
+        "question_count": len(cfg.get("questions") or []),
+        "status": quiz_state.get("status"),
+        "attempt_count": quiz_state.get("attempt_count") or 0,
+        "best_score": quiz_state.get("best_score"),
+        "passed_at": quiz_state.get("passed_at"),
+        "last_attempt": None,
+        "questions": None,
+    }
+    if last_attempt:
+        out["last_attempt"] = {
+            "attempt_number": last_attempt.get("attempt_number"),
+            "score_percent": last_attempt.get("score_percent"),
+            "passed": bool(last_attempt.get("passed")),
+            "submitted_at": last_attempt.get("submitted_at"),
+        }
+    if quiz_state.get("status") == "available":
+        out["questions"] = _client_safe_quiz_questions(cfg)
+    return out
+
+
+@api.post("/portal/school/{school_enrollment_id}/modules/{module_id}/quiz/submit")
+async def portal_school_module_quiz_submit(
+    school_enrollment_id: str, module_id: str, body: ModuleQuizSubmitIn,
+    user: dict = Depends(get_current_user),
+):
+    """Server-graded quiz submission. The browser sends ONLY selected option
+    ids; correctness, score, pass/fail, attempt numbering, and advancement
+    are all computed here against the enrollment's frozen snapshot. A
+    client-supplied score/passed flag simply does not exist in the input
+    model. Idempotent on (enrollment, module, idempotency_key); a passing
+    attempt advances the enrollment through the SAME CAS advancement helper
+    every other advance uses, so double submission can never double-move."""
+    se, enrollment, module, cfg = await _module_quiz_context(school_enrollment_id, module_id, user)
+
+    # Retry replay — identical resubmission returns the stored result and
+    # never regrades/re-advances (advancement below is CAS-idempotent too).
+    existing = await db.school_quiz_attempts.find_one(
+        {"school_enrollment_id": se["id"], "module_id": module_id, "idempotency_key": body.idempotency_key},
+        {"_id": 0},
+    )
+    if existing:
+        payload = _quiz_attempt_result_payload(existing)
+        payload["replayed"] = True
+        return payload
+
+    state = await _module_quiz_status_block(se, enrollment, module_id)
+    q_status = state["quiz"].get("status")
+    if q_status == "passed":
+        raise HTTPException(status_code=409, detail={
+            "error_code": "module_quiz_already_passed",
+            "message": "This module quiz is already passed.",
+        })
+    if q_status != "available":
+        raise HTTPException(status_code=409, detail={
+            "error_code": "module_quiz_locked",
+            "message": "This quiz isn't available yet — finish the module's lessons (and any trainer checkpoint) first.",
+        })
+
+    questions = cfg.get("questions") or []
+    questions_by_id = {q.get("id"): q for q in questions}
+    answers_by_qid: Dict[str, str] = {}
+    for ans in body.answers:
+        if ans.question_id not in questions_by_id:
+            raise HTTPException(status_code=422, detail={
+                "error_code": "module_quiz_unknown_question",
+                "message": "One of the submitted answers doesn't belong to this quiz.",
+            })
+        answers_by_qid[ans.question_id] = ans.selected_option_id
+    missing = [qid for qid in questions_by_id if qid not in answers_by_qid]
+    if missing:
+        raise HTTPException(status_code=422, detail={
+            "error_code": "module_quiz_incomplete",
+            "message": f"Answer every question before submitting ({len(missing)} unanswered).",
+        })
+    for qid, oid in answers_by_qid.items():
+        q = questions_by_id[qid]
+        if oid not in {o.get("id") for o in (q.get("options") or [])}:
+            raise HTTPException(status_code=422, detail={
+                "error_code": "module_quiz_invalid_option",
+                "message": "One of the selected answers doesn't belong to its question.",
+            })
+
+    # ── Grade (server-side, against the frozen snapshot) ──
+    lesson_names = {l.get("id"): l.get("name") for l in _effective_lessons(module)}
+    graded_answers = []
+    correct_count = 0
+    for q in questions:  # snapshot order
+        qid = q.get("id")
+        selected = answers_by_qid[qid]
+        is_correct = bool(selected == q.get("correct_option_id"))
+        correct_count += 1 if is_correct else 0
+        graded_answers.append({"question_id": qid, "selected_option_id": selected, "correct": is_correct})
+    question_count = len(questions)
+    score_percent = round(100.0 * correct_count / question_count, 2) if question_count else 0.0
+    passing_score = int(cfg.get("passing_score") or 80)
+    passed = score_percent >= passing_score
+
+    # Attempt snapshot — the quiz AS PRESENTED for this attempt, with review-
+    # lesson names resolved so history renders without re-reading the course.
+    quiz_snapshot = {
+        "title": cfg.get("title") or "",
+        "instructions": cfg.get("instructions") or "",
+        "passing_score": passing_score,
+        "questions": [
+            {**q, "review_lesson_name": lesson_names.get(q.get("review_lesson_id"))}
+            for q in questions
+        ],
+    }
+    attempt_number = 1 + await db.school_quiz_attempts.count_documents(
+        {"school_enrollment_id": se["id"], "module_id": module_id},
+    )
+    attempt = {
+        "id": _gid(),
+        "school_enrollment_id": se["id"],
+        "enrollment_id": enrollment["id"],
+        "client_id": se.get("client_id"),
+        "dog_id": se.get("dog_id"),
+        "program_id": enrollment.get("program_id") or se.get("program_id"),
+        "module_id": module_id,
+        "module_name": module.get("name"),
+        "quiz_snapshot": quiz_snapshot,
+        "answers": graded_answers,
+        "correct_count": correct_count,
+        "question_count": question_count,
+        "score_percent": score_percent,
+        "passed": passed,
+        "attempt_number": attempt_number,
+        "submitted_at": now_iso(),
+        "idempotency_key": body.idempotency_key,
+    }
+    try:
+        await db.school_quiz_attempts.insert_one(dict(attempt))
+    except DuplicateKeyError:
+        stored = await db.school_quiz_attempts.find_one(
+            {"school_enrollment_id": se["id"], "module_id": module_id, "idempotency_key": body.idempotency_key},
+            {"_id": 0},
+        )
+        if stored:
+            payload = _quiz_attempt_result_payload(stored)
+            payload["replayed"] = True
+            return payload
+        raise
+
+    result = _quiz_attempt_result_payload(attempt)
+    result["replayed"] = False
+    result["advanced"] = False
+    result["course_completed"] = False
+
+    # ── Advancement on pass — the canonical CAS helper (same one the client
+    # self-advance and checkpoint grading use), so quiz-pass advancement can
+    # never drift from every other advancement path. Idempotent: a CAS miss
+    # (already moved) simply reports the real current position.
+    if passed:
+        fresh_enrollment = await db.dog_programs.find_one({"id": enrollment["id"]}, {"_id": 0}) or enrollment
+        roadmap = state["roadmap"]
+        if (fresh_enrollment.get("current_module_id") == module_id
+                and fresh_enrollment.get("current_lesson_id") == roadmap.get("current_lesson_id")):
+            adv = await _advance_school_enrollment(se, fresh_enrollment, roadmap)
+            result["advanced"] = True
+            result["course_completed"] = bool(adv.get("finished"))
+
+    # ── Activity events (never a staff alert — learning behavior, not
+    # human-attention work). Idempotent on the attempt id.
+    try:
+        cli = await db.clients.find_one({"id": se.get("client_id")}, {"_id": 0, "name": 1}) or {}
+        dog = await db.dogs.find_one({"id": se.get("dog_id")}, {"_id": 0, "name": 1}) or {}
+        subject = f"{cli.get('name') or 'A student'}" + (f" · {dog.get('name')}" if dog.get("name") else "")
+        common = dict(
+            actor_type="client", actor_id=user.get("id"), actor_name=user.get("name"),
+            client_id=se.get("client_id"), client_name=cli.get("name"),
+            dog_id=se.get("dog_id"), dog_name=dog.get("name"),
+            enrollment_id=enrollment["id"], school_enrollment_id=se["id"],
+            program_id=enrollment.get("program_id"),
+            program_name=(enrollment.get("program_snapshot") or {}).get("name"),
+            module_id=module_id, module_name=module.get("name"),
+            deep_link={"screen": "school_hq", "tab": "activity", "enrollment_id": enrollment["id"]},
+            metadata={"attempt_id": attempt["id"], "score_percent": score_percent,
+                      "attempt_number": attempt_number},
+        )
+        if passed:
+            await school_events.emit_event(
+                SchoolEvent.MODULE_QUIZ_PASSED,
+                title=f"{subject} passed the {module.get('name') or 'module'} quiz",
+                summary=f"Scored {round(score_percent)}% (attempt {attempt_number}).",
+                dedupe_key=f"module_quiz_passed:{attempt['id']}", **common,
+            )
+        else:
+            await school_events.emit_event(
+                SchoolEvent.MODULE_QUIZ_RETRY_NEEDED,
+                title=f"{subject} is retrying the {module.get('name') or 'module'} quiz",
+                summary=f"Scored {round(score_percent)}% (attempt {attempt_number}) — passing is {passing_score}%.",
+                dedupe_key=f"module_quiz_retry:{attempt['id']}", **common,
+            )
+    except Exception:
+        pass
+
+    return result
+
+
+@api.get("/portal/school/{school_enrollment_id}/modules/{module_id}/quiz/attempts")
+async def portal_school_module_quiz_attempts(
+    school_enrollment_id: str, module_id: str, user: dict = Depends(get_current_user),
+):
+    """Attempt history for the client's Progress view — summaries only
+    (scores/pass state), never re-exposing per-question correct answers in a
+    list payload."""
+    se, _enrollment, _module, _cfg = await _module_quiz_context(school_enrollment_id, module_id, user)
+    rows = await db.school_quiz_attempts.find(
+        {"school_enrollment_id": se["id"], "module_id": module_id},
+        {"_id": 0, "id": 1, "attempt_number": 1, "score_percent": 1, "passed": 1, "submitted_at": 1,
+         "correct_count": 1, "question_count": 1},
+    ).sort("attempt_number", 1).to_list(200)
+    return rows
 
 
 # ─── Online School Phase 2 — trainer checkpoint review & grading ──────────
@@ -19759,8 +20394,12 @@ async def admin_school_checkpoint_grade(
             raise HTTPException(status_code=422, detail="handler_scores must have exactly one score per handler criterion.")
         if set(body.dog_scores.keys()) != dog_criteria_ids:
             raise HTTPException(status_code=422, detail="dog_scores must have exactly one score per dog criterion.")
-        if any(not (0 <= v <= 5) for v in list(body.handler_scores.values()) + list(body.dog_scores.values())):
-            raise HTTPException(status_code=422, detail="Scores must be 0-5.")
+        # Checkpoint scale is 1-5 for NEW grades (1 = Needs Significant Work …
+        # 5 = Excellent / Ready). Historical rows that stored a 0 remain
+        # readable/displayable as-is — no migration, no rewrite; this gate
+        # only rejects new submissions.
+        if any(not (1 <= v <= 5) for v in list(body.handler_scores.values()) + list(body.dog_scores.values())):
+            raise HTTPException(status_code=422, detail="Scores must be 1-5 — every criterion needs a deliberate score.")
         if body.outcome == "prescribe_practice" and not body.prescription:
             raise HTTPException(status_code=422, detail="prescription is required when outcome is prescribe_practice.")
         if body.prescription and body.prescription.action == "assign_recipe" and not body.prescription.homework_template_id:
@@ -19787,10 +20426,19 @@ async def admin_school_checkpoint_grade(
             if not enrollment:
                 raise HTTPException(status_code=404, detail="Enrollment not found")
             pos = _compute_next_school_position(enrollment, sub["module_id"], sub["lesson_id"])
+            # Module Quiz gate — decided ONCE at claim time and persisted in
+            # the plan, so a resumed/retried grade can never "suddenly"
+            # advance: if this checkpoint ends a quiz-gated module,
+            # outcome=advance means THE CHECKPOINT PASSED, not "move into the
+            # next module". The pointer stays on this final lesson; passing
+            # the Module Quiz is the advancement event.
+            crosses_module = pos["is_final"] or pos["next_module_id"] != sub["module_id"]
+            deferred_for_quiz = bool(crosses_module and await _module_quiz_gate_blocks(enrollment, sub["module_id"]))
             grading_plan.update({
                 "expected_source_module_id": sub["module_id"], "expected_source_lesson_id": sub["lesson_id"],
                 "intended_target_module_id": pos["next_module_id"], "intended_target_lesson_id": pos["next_lesson_id"],
                 "intended_target_is_final": pos["is_final"],
+                "progression_deferred_for_module_quiz": deferred_for_quiz,
             })
         claimed = await db.checkpoint_submissions.find_one_and_update(
             {"id": submission_id, "status": "pending"},
@@ -19812,7 +20460,16 @@ async def admin_school_checkpoint_grade(
     plan = sub.get("grading_plan") or {}
     outcome = plan.get("outcome")
 
-    if outcome == "advance":
+    if outcome == "advance" and plan.get("progression_deferred_for_module_quiz"):
+        # Quiz-gated module boundary: the checkpoint is formally PASSED
+        # (scores/feedback/outcome finalize below, client is notified), but
+        # current_module_id/current_lesson_id are deliberately NOT moved.
+        # The Module Quiz — now unlocked by this pass — advances the
+        # enrollment when passed. Recorded in the plan at claim time, so a
+        # resumed retry takes this same branch deterministically and can
+        # never double-decide.
+        pass
+    elif outcome == "advance":
         se = await db.school_enrollments.find_one({"id": sub["school_enrollment_id"]}, {"_id": 0})
         enrollment = await db.dog_programs.find_one({"id": sub["enrollment_id"]}, {"_id": 0})
         if not se or not enrollment:
@@ -19913,6 +20570,10 @@ async def admin_school_checkpoint_grade(
         "trainer_feedback": plan.get("feedback"), "outcome": outcome, "prescription": plan.get("prescription"),
         "graded_at": now_iso(), "graded_by": plan.get("graded_by"), "graded_by_name": plan.get("graded_by_name"),
     }
+    if outcome == "advance" and plan.get("progression_deferred_for_module_quiz"):
+        # Durable record that this pass intentionally did NOT move the
+        # enrollment — the Module Quiz owns that advancement.
+        finalize_set["progression_deferred_for_module_quiz"] = True
     if outcome == "trainer_assist_recommended":
         finalize_set["trainer_assist_hold_active"] = True
         # Online School Phase 4 — the queue-visibility guarantee starts
@@ -20307,6 +20968,287 @@ async def admin_trainer_assist_complete(
 _SCHOOL_INACTIVE_DAYS = 14
 
 
+# ─── School HQ Reviews — formal Practice Review system ─────────────────────
+# Practice Review = COACHING on a client's practice log (video, difficulty,
+# could-not-complete, questions). It is deliberately NOT a grade: no Handler/
+# Dog scores (those are checkpoint-only), no progression side effects. Review
+# data lives on the existing homework.section_logs[] entry — never a second
+# "practice submission" collection.
+
+PRACTICE_REVIEW_STATUSES = ("looks_good", "keep_practicing", "trainer_attention")
+
+
+def _practice_log_attention_reasons(log: dict) -> List[str]:
+    """Which attention triggers make this practice log 'Needs Review' work
+    (vs. routine Recent Practice history). Mirrors the notification policy:
+    video / could-not-complete / hard difficulty / unanswered question."""
+    fv = log.get("field_values") or {}
+    reasons: List[str] = []
+    if fv.get("__video_id"):
+        reasons.append("video")
+    if fv.get("__could_not_complete"):
+        reasons.append("could_not_complete")
+    if fv.get("__difficulty") in ("hard", "very_hard"):
+        reasons.append("difficulty")
+    if any(not (q.get("answer") or "") for q in (log.get("questions") or [])):
+        reasons.append("question")
+    return reasons
+
+
+def _practice_pending_log_match() -> Dict[str, Any]:
+    """The ONE per-log $match (post-$unwind) both the pending list and the
+    HQ summary count use, so the badge can never disagree with the queue.
+    A log leaves the pending queue when it gets a Practice Review status OR
+    is handled by the daily tracker's own approve/needs-redo path."""
+    return {
+        "section_logs.review_status": None,
+        "section_logs.logged_by_role": {"$ne": "admin"},
+        "section_logs.is_rest_day": {"$ne": True},
+        "section_logs.submission_status": {"$nin": ["approved", "needs_redo", "rest"]},
+        "$or": [
+            {"section_logs.field_values.__video_id": {"$nin": [None, ""]}},
+            {"section_logs.field_values.__could_not_complete": True},
+            {"section_logs.field_values.__difficulty": {"$in": ["hard", "very_hard"]}},
+            {"section_logs.questions": {"$elemMatch": {"$or": [{"answer": None}, {"answer": ""}]}}},
+        ],
+    }
+
+
+_SCHOOL_HW_MATCH = {"school_enrollment_id": {"$nin": [None, ""]}}
+_PRACTICE_ROW_HW_PROJECTION = {
+    "_id": 0, "id": 1, "title": 1, "client_id": 1, "client_name": 1, "dog_id": 1, "dog_name": 1,
+    "school_enrollment_id": 1, "school_enrollment_record_id": 1, "source_lesson_id": 1,
+    "daily_tracker": 1, "section_logs": 1,
+}
+
+
+async def _count_pending_practice_reviews() -> int:
+    pipeline = [
+        {"$match": _SCHOOL_HW_MATCH},
+        {"$unwind": "$section_logs"},
+        {"$match": _practice_pending_log_match()},
+        {"$count": "n"},
+    ]
+    async for row in db.homework.aggregate(pipeline):
+        return int(row.get("n") or 0)
+    return 0
+
+
+async def _practice_review_rows(*, pending_only: bool, limit: int) -> List[dict]:
+    """Queue rows for School HQ → Reviews → Practice. Each row is one
+    section-log entry with full School context, deep-linkable to the exact
+    homework/log record."""
+    pipeline: List[Dict[str, Any]] = [
+        {"$match": _SCHOOL_HW_MATCH},
+        {"$project": _PRACTICE_ROW_HW_PROJECTION},
+        {"$unwind": "$section_logs"},
+    ]
+    if pending_only:
+        pipeline.append({"$match": _practice_pending_log_match()})
+    else:
+        pipeline.append({"$match": {"section_logs.logged_by_role": {"$ne": "admin"},
+                                    "section_logs.is_rest_day": {"$ne": True}}})
+    pipeline += [
+        {"$sort": {"section_logs.logged_at": 1 if pending_only else -1}},
+        {"$limit": max(1, min(int(limit or 50), 200))},
+    ]
+    raw = [r async for r in db.homework.aggregate(pipeline)]
+    if not raw:
+        return []
+
+    # Resolve School context once per homework (not per log).
+    ctx_by_hw: Dict[str, dict] = {}
+    for r in raw:
+        hw_id = r.get("id")
+        if hw_id and hw_id not in ctx_by_hw:
+            hw_stub = {k: r.get(k) for k in ("id", "title", "client_id", "client_name", "dog_id", "dog_name",
+                                             "school_enrollment_id", "school_enrollment_record_id", "source_lesson_id")}
+            ctx_by_hw[hw_id] = await _school_event_ctx_from_hw(hw_stub)
+    dog_ids = list({c.get("dog_id") for c in ctx_by_hw.values() if c.get("dog_id")})
+    dogs_by_id = {d["id"]: d for d in await db.dogs.find({"id": {"$in": dog_ids}}, {"_id": 0, "id": 1, "name": 1, "photo": 1}).to_list(500)}
+
+    out = []
+    for r in raw:
+        log = r.get("section_logs") or {}
+        ctx = ctx_by_hw.get(r.get("id")) or {}
+        fv = log.get("field_values") or {}
+        dog = dogs_by_id.get(ctx.get("dog_id")) or {}
+        unanswered = sum(1 for q in (log.get("questions") or []) if not (q.get("answer") or ""))
+        out.append({
+            "homework_id": r.get("id"),
+            "log_id": log.get("id"),
+            "school_enrollment_id": ctx.get("school_enrollment_id"),
+            "enrollment_id": ctx.get("enrollment_id"),
+            "client_id": ctx.get("client_id"), "client_name": ctx.get("client_name") or r.get("client_name"),
+            "dog_id": ctx.get("dog_id"), "dog_name": dog.get("name") or ctx.get("dog_name") or r.get("dog_name"),
+            "dog_photo": dog.get("photo") or "",
+            "program_name": ctx.get("program_name"),
+            "module_name": ctx.get("module_name"),
+            "lesson_name": ctx.get("lesson_name") or r.get("title"),
+            "practice_title": r.get("title"),
+            "is_daily_tracker": bool(r.get("daily_tracker")),
+            "day_number": log.get("day_number"),
+            "date": log.get("date"),
+            "logged_at": log.get("logged_at"),
+            "note": log.get("note") or "",
+            "has_video": bool(fv.get("__video_id")),
+            "video_media_id": fv.get("__video_id"),
+            "has_photo": bool(fv.get("__photo")),
+            "difficulty": fv.get("__difficulty"),
+            "could_not_complete": bool(fv.get("__could_not_complete")),
+            "could_not_complete_reason": fv.get("__could_not_complete_reason") or "",
+            "unanswered_questions": unanswered,
+            "metrics": {
+                "reps_attempted": fv.get("__reps_attempted"),
+                "successful_reps": fv.get("__successful_reps"),
+                "success_rate": fv.get("__success_rate"),
+                "rounds_completed": fv.get("__rounds_completed"),
+            },
+            "reasons": _practice_log_attention_reasons(log),
+            "review_status": log.get("review_status"),
+            "review_note": log.get("review_note") or "",
+            "reviewed_at": log.get("reviewed_at"),
+            "reviewed_by": log.get("reviewed_by"),
+        })
+    return out
+
+
+@api.get("/admin/school/practice-reviews/pending")
+async def admin_school_practice_reviews_pending(
+    limit: int = 100, _: dict = Depends(require_admin_and_permission("manage_school")),
+):
+    """Needs Review — School practice logs a human should look at (video /
+    could-not-complete / hard difficulty / unanswered question), oldest
+    first. Routine logs never appear here — see /recent for those."""
+    return await _practice_review_rows(pending_only=True, limit=limit)
+
+
+@api.get("/admin/school/practice-reviews/recent")
+async def admin_school_practice_reviews_recent(
+    limit: int = 30, _: dict = Depends(require_admin_and_permission("manage_school")),
+):
+    """Recent Practice — the broader routine history view (newest first),
+    including already-reviewed and no-trigger logs. Browsing history, not an
+    attention queue."""
+    return await _practice_review_rows(pending_only=False, limit=limit)
+
+
+class PracticeReviewIn(BaseModel):
+    status: Literal["looks_good", "keep_practicing", "trainer_attention"]
+    note: Optional[str] = Field(default="", max_length=4000)
+
+
+@api.post("/admin/school/practice-reviews/{homework_id}/{log_id}")
+async def admin_school_practice_review(
+    homework_id: str, log_id: str, body: PracticeReviewIn,
+    user: dict = Depends(require_admin_and_permission("manage_school")),
+):
+    """Record trainer coaching on ONE practice log. NOT a grade (no Handler/
+    Dog scores) and never a progression mutation — the course position is
+    untouched no matter which status is chosen. `trainer_attention` records
+    the review AND creates a staff follow-up notification; it never creates
+    a Trainer Assist case, an appointment, or a charge by itself.
+
+    Idempotent effects: the per-log staff practice notification is resolved
+    at most once; the client feedback notification and the activity event
+    are deduped on the log id, so a retried/double-clicked review can never
+    double-notify."""
+    hw = await db.homework.find_one({"id": homework_id}, {"_id": 0})
+    if not hw:
+        raise HTTPException(status_code=404, detail="Homework not found")
+    if not _is_school_homework(hw):
+        raise HTTPException(status_code=400, detail="Practice Reviews cover Online School practice only.")
+    log = next((l for l in (hw.get("section_logs") or []) if l.get("id") == log_id), None)
+    if not log:
+        raise HTTPException(status_code=404, detail="Practice log not found")
+
+    now = now_iso()
+    review_set = {
+        "section_logs.$.review_status": body.status,
+        "section_logs.$.review_note": (body.note or "").strip(),
+        "section_logs.$.reviewed_at": now,
+        "section_logs.$.reviewed_by": user.get("name") or "Trainer",
+        "section_logs.$.reviewed_by_id": user.get("id"),
+    }
+    await db.homework.update_one({"id": homework_id, "section_logs.id": log_id}, {"$set": review_set})
+
+    # Resolve THIS log's own practice staff notification (video / could-not-
+    # complete / difficulty — their event dedupe key is section_log:{log_id}).
+    # An unanswered-question notification uses question:{qid} and is
+    # deliberately NOT touched here: watching the video never answers the
+    # question.
+    try:
+        notif = await db.school_notifications.find_one(
+            {"dedupe_key": f"section_log:{log_id}:notif", "audience": "school_staff", "resolved_at": None},
+            {"_id": 0, "id": 1, "notification_type": 1},
+        )
+        if notif and notif.get("notification_type") != SchoolEvent.PRACTICE_QUESTION_ASKED:
+            await school_events.resolve_notification(notif["id"], by=user.get("id"))
+    except Exception as exc:
+        logger.warning("Practice review: notification resolve failed for log %s: %s", log_id, exc)
+
+    ctx = await _school_event_ctx_from_hw(hw)
+    dog_name = ctx.get("dog_name") or ""
+    status_label = {"looks_good": "Looks Good", "keep_practicing": "Keep Practicing",
+                    "trainer_attention": "Needs Trainer Attention"}[body.status]
+
+    # Activity-feed event (never an alert) + optional staff follow-up alert.
+    try:
+        await school_events.emit_event(
+            SchoolEvent.PRACTICE_REVIEWED,
+            actor_type="admin", actor_id=user.get("id"), actor_name=user.get("name"),
+            title=f"{user.get('name') or 'A trainer'} reviewed {dog_name or 'a'} practice — {status_label}",
+            summary=(body.note or "").strip()[:280],
+            deep_link={"screen": "school_hq", "tab": "reviews", "review_type": "practice",
+                       "homework_id": homework_id, "section_log_id": log_id},
+            metadata={"section_log_id": log_id, "review_status": body.status},
+            dedupe_key=f"practice_reviewed:{log_id}", **ctx,
+        )
+        if body.status == "trainer_attention":
+            who = ctx.get("client_name") or "A student"
+            subject = f"{who}" + (f" · {dog_name}" if dog_name else "")
+            await school_events.emit_event(
+                SchoolEvent.PRACTICE_REVIEW_ATTENTION,
+                actor_type="admin", actor_id=user.get("id"), actor_name=user.get("name"),
+                title=f"{subject} — practice flagged for follow-up",
+                summary=(body.note or "").strip()[:280] or f"A trainer flagged “{hw.get('title') or 'practice'}” as needing closer attention.",
+                deep_link={"screen": "school_hq", "tab": "reviews", "review_type": "practice",
+                           "homework_id": homework_id, "section_log_id": log_id},
+                metadata={"section_log_id": log_id},
+                dedupe_key=f"practice_attention:{log_id}", **ctx,
+            )
+    except Exception:
+        pass
+
+    # Client feedback notification — idempotent on the log id, so a retry
+    # never sends a second copy.
+    try:
+        titles = {
+            "looks_good": f"Trainer reviewed {dog_name or 'your dog'}'s practice",
+            "keep_practicing": "Keep practicing — trainer feedback is ready",
+            "trainer_attention": f"Your trainer left feedback on {dog_name or 'your dog'}'s practice",
+        }
+        await school_events.create_client_notification(
+            client_id=hw.get("client_id"), notification_type="practice_reviewed",
+            title=titles[body.status],
+            body=((body.note or "").strip() or "Your trainer reviewed your practice.")[:280],
+            school_enrollment_id=ctx.get("school_enrollment_id"), enrollment_id=ctx.get("enrollment_id"),
+            dog_id=ctx.get("dog_id"), dog_name=dog_name or None,
+            program_id=ctx.get("program_id"), program_name=ctx.get("program_name"),
+            module_id=ctx.get("module_id"), module_name=ctx.get("module_name"),
+            lesson_id=ctx.get("lesson_id"), lesson_name=ctx.get("lesson_name"),
+            homework_id=homework_id,
+            deep_link={"screen": "school", "view": "feedback", "homework_id": homework_id, "section_log_id": log_id},
+            dedupe_key=f"client_practice_review:{log_id}",
+        )
+    except Exception as exc:
+        logger.warning("Practice review: client notification failed for log %s: %s", log_id, exc)
+
+    fresh = await db.homework.find_one({"id": homework_id}, {"_id": 0, "section_logs": 1})
+    fresh_log = next((l for l in (fresh or {}).get("section_logs") or [] if l.get("id") == log_id), None)
+    return {"ok": True, "log": fresh_log}
+
+
 @api.get("/admin/school/hq/summary")
 async def admin_school_hq_summary(_: dict = Depends(require_admin_and_permission("manage_school"))):
     """Overview counters. Sourced from the authoritative collections where one
@@ -20321,6 +21263,7 @@ async def admin_school_hq_summary(_: dict = Depends(require_admin_and_permission
     checkpoints_pending = await db.checkpoint_submissions.count_documents(
         {"status": {"$in": ["pending", "grading"]}}
     )
+    practice_reviews_pending = await _count_pending_practice_reviews()
     trainer_assists = await db.checkpoint_submissions.count_documents(
         {"outcome": "trainer_assist_recommended", "trainer_assist_hold_active": True}
     )
@@ -20348,6 +21291,11 @@ async def admin_school_hq_summary(_: dict = Depends(require_admin_and_permission
         "active_students": len(active_client_ids),
         "needs_attention": needs_attention,
         "checkpoints_pending": checkpoints_pending,
+        # School HQ → Reviews — one consolidated trainer-review workspace.
+        # Existing fields above are kept verbatim (UI/tests depend on them);
+        # these are additive.
+        "practice_reviews_pending": practice_reviews_pending,
+        "reviews_pending": practice_reviews_pending + checkpoints_pending,
         "new_questions": new_questions,
         "trainer_assists": trainer_assists,
         "inactive_students": inactive_students,
@@ -23526,6 +24474,12 @@ BACKUP_COLLECTIONS = [
     "school_enrollments", "checkpoint_submissions", "school_events", "school_notifications",
     "school_training_plans", "school_student_notes", "school_requests",
     "school_resources", "school_settings",
+    # Module Quiz attempt history — real student progress (scores, pass
+    # state, frozen per-attempt quiz snapshots). Deliberately NOT added to
+    # _CRITICAL_BACKUP_COLLECTIONS: that list also validates OLD backup
+    # payloads, which predate this collection and must stay restorable
+    # without a false "missing critical collection" flag.
+    "school_quiz_attempts",
 ]
 # Collections whose primary key is a string `_id` (no separate `id` field).
 # These get special handling during export (we preserve `_id`) and restore
@@ -27986,6 +28940,16 @@ async def startup():
     # them on next query. Each wrapped individually so one failure (e.g.
     # legacy collection with a conflicting index def) never aborts startup.
     perf_indexes = [
+        # Module Quiz attempts — id lookup, per-enrollment/module history, and
+        # the idempotency guarantee (unique triple) that makes double-submit
+        # structurally impossible rather than merely UI-discouraged.
+        (db.school_quiz_attempts, "id", {"unique": True, "name": "school_quiz_attempts_id_unique"}),
+        (db.school_quiz_attempts, [("school_enrollment_id", 1), ("module_id", 1), ("submitted_at", -1)],
+         {"name": "school_quiz_attempts_enrollment_module"}),
+        (db.school_quiz_attempts, [("enrollment_id", 1), ("module_id", 1), ("passed", 1)],
+         {"name": "school_quiz_attempts_gate_lookup"}),
+        (db.school_quiz_attempts, [("school_enrollment_id", 1), ("module_id", 1), ("idempotency_key", 1)],
+         {"unique": True, "name": "school_quiz_attempts_idempotency_unique"}),
         (db.bookings, [("date", 1), ("status", 1)], {}),
         (db.bookings, "dog_id", {}),
         (db.bookings, "client_id", {}),
@@ -47328,11 +48292,18 @@ async def _school_support_payload(school_enrollment_id: str, user: dict) -> dict
     ).sort("last_message_at", -1).to_list(50)
 
     practice_questions = []
+    practice_reviews = []
     if lesson_names:
         rows = await db.homework.find(
             {"client_id": se.get("client_id"), "dog_id": se.get("dog_id"),
              "source_lesson_id": {"$in": list(lesson_names)}},
-            {"_id": 0, "id": 1, "title": 1, "source_lesson_id": 1, "section_logs": 1},
+            # The ownership guards below (_is_school_homework + explicit
+            # marker comparison + ctx self-heal) need the marker fields —
+            # the previous projection omitted them, which silently emptied
+            # this whole loop for marker-bearing School homework.
+            {"_id": 0, "id": 1, "title": 1, "source_lesson_id": 1, "section_logs": 1,
+             "school_enrollment_id": 1, "school_enrollment_record_id": 1, "assigned_by": 1,
+             "client_id": 1, "dog_id": 1, "dog_name": 1, "client_name": 1},
         ).to_list(200)
         for hw in rows:
             # Do not leak trainer-led or another School enrollment's practice
@@ -47361,12 +48332,31 @@ async def _school_support_payload(school_enrollment_id: str, user: dict) -> dict
                         "asked_at": q.get("asked_at"), "answer": q.get("answer"),
                         "answered_at": q.get("answered_at"), "answered_by": q.get("answered_by"),
                     })
+                # Practice Reviews — trainer coaching on this exact log.
+                # Client-safe fields only: status, note, trainer display
+                # name, timestamps. Never internal staff ids.
+                if log.get("review_status") in PRACTICE_REVIEW_STATUSES:
+                    practice_reviews.append({
+                        "id": log.get("id"), "homework_id": hw.get("id"),
+                        "lesson_id": hw.get("source_lesson_id"),
+                        "lesson_name": names.get("lesson_name") or hw.get("title"),
+                        "module_name": names.get("module_name"),
+                        "practice_title": hw.get("title"),
+                        "logged_at": log.get("logged_at"), "date": log.get("date"),
+                        "day_number": log.get("day_number"),
+                        "review_status": log.get("review_status"),
+                        "review_note": log.get("review_note") or "",
+                        "reviewed_at": log.get("reviewed_at"),
+                        "trainer_name": log.get("reviewed_by"),
+                    })
     practice_questions.sort(key=lambda q: q.get("asked_at") or "", reverse=True)
+    practice_reviews.sort(key=lambda r: r.get("reviewed_at") or "", reverse=True)
     unanswered_threads = sum(1 for t in threads if t.get("status") != "resolved" and t.get("last_message_role") == "client")
     unanswered_practice = sum(1 for q in practice_questions if not q.get("answer"))
     return {
         "threads": [_thread_shape(t, "client") for t in threads],
         "practice_questions": practice_questions[:100],
+        "practice_reviews": practice_reviews[:50],
         "unanswered_count": unanswered_threads + unanswered_practice,
         "unread_replies": sum(1 for t in threads if t.get("unread_client")),
     }

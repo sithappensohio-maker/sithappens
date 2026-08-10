@@ -930,6 +930,10 @@ function ModuleEditor({ module: m, updateModule, hwTemplates, reloadHwTemplates 
           </div>
         </SField>
       </div>
+      <ExpandableSection title="Module Quiz" icon="fa-list-check" tone="accent" testid="module-section-quiz">
+        <ModuleQuizEditor module={m} updateModule={updateModule} />
+      </ExpandableSection>
+
       {editingTemplate && (
         <HomeworkTemplateEditor
           templateId={m.homework_template_id || null}
@@ -940,6 +944,153 @@ function ModuleEditor({ module: m, updateModule, hwTemplates, reloadHwTemplates 
             if (!m.homework_template_id && saved?.id) updateModule(m._key, { homework_template_id: saved.id });
           }}
         />
+      )}
+    </div>
+  );
+}
+
+/* ---------------------------------------------------- Module Quiz editor */
+// Module Quiz = a persistent end-of-module knowledge gate (server-enforced).
+// Completely separate from the lesson "Knowledge Check" content block, which
+// stays a lightweight in-lesson teaching tool that never gates progression.
+const EMPTY_QUIZ = { enabled: false, title: "", instructions: "", passing_score: 80, questions: [] };
+
+const newQuizOption = (text = "") => ({ id: uid(), text });
+const newQuizQuestion = () => ({
+  id: uid(), type: "multiple_choice", question: "",
+  options: [newQuizOption(), newQuizOption()],
+  correct_option_id: null, explanation: "", review_lesson_id: null,
+});
+
+function ModuleQuizEditor({ module: m, updateModule }) {
+  const quiz = m.module_quiz || EMPTY_QUIZ;
+  const setQuiz = (patch) => updateModule(m._key, { module_quiz: { ...EMPTY_QUIZ, ...quiz, ...patch } });
+  // Only lessons that already have a server-stamped id are offered as review
+  // targets — an unsaved lesson's local _key would dangle after save (the
+  // server stamps a fresh id). Save the draft once and the lesson appears.
+  const lessons = (m.lessons || []).filter(l => l.id);
+  const questions = quiz.questions || [];
+
+  const setQuestion = (idx, patch) => setQuiz({ questions: questions.map((q, i) => (i === idx ? { ...q, ...patch } : q)) });
+  const removeQuestion = (idx) => setQuiz({ questions: questions.filter((_, i) => i !== idx) });
+  const moveQuestion = (idx, dir) => {
+    const next = [...questions];
+    const j = idx + dir;
+    if (j < 0 || j >= next.length) return;
+    [next[idx], next[j]] = [next[j], next[idx]];
+    setQuiz({ questions: next });
+  };
+  const switchType = (idx, type) => {
+    const q = questions[idx];
+    if ((q.type || "multiple_choice") === type) return;
+    if (type === "true_false") {
+      setQuestion(idx, { type, options: [newQuizOption("True"), newQuizOption("False")], correct_option_id: null });
+    } else {
+      setQuestion(idx, { type, options: [newQuizOption(), newQuizOption()], correct_option_id: null });
+    }
+  };
+
+  return (
+    <div className="space-y-3" data-testid="module-quiz-editor">
+      <label className="flex items-center gap-2 text-[12px] text-shText">
+        <input type="checkbox" checked={!!quiz.enabled}
+               onChange={(e) => setQuiz({ enabled: e.target.checked })}
+               data-testid="module-quiz-enabled-toggle" />
+        Enable Module Quiz — the student must pass this quiz before the next module unlocks (server-enforced)
+      </label>
+      <p className="text-[10px] text-shTextMuted">Separate from lesson Knowledge Checks, which reinforce a lesson and never gate progression. Retakes are unlimited and free.</p>
+
+      {quiz.enabled && (
+        <div className="space-y-3 pl-3 border-l-2 border-shAccent/30 ml-1">
+          <SField label="Quiz title (e.g. “Foundations Knowledge Check”)">
+            <input value={quiz.title || ""} onChange={(e) => setQuiz({ title: e.target.value })} className={inputCls} data-testid="module-quiz-title" />
+          </SField>
+          <SField label="Instructions (shown to the student before starting)">
+            <textarea value={quiz.instructions || ""} onChange={(e) => setQuiz({ instructions: e.target.value })} rows={2} className={inputCls} data-testid="module-quiz-instructions" />
+          </SField>
+          <SField label="Passing score (%)">
+            <input type="number" min="1" max="100" value={quiz.passing_score ?? 80}
+                   onChange={(e) => setQuiz({ passing_score: e.target.value === "" ? "" : parseInt(e.target.value, 10) })}
+                   className={`${inputCls} max-w-[120px]`} data-testid="module-quiz-passing-score" />
+          </SField>
+
+          <div className="space-y-3" data-testid="module-quiz-questions">
+            {questions.map((q, qi) => {
+              const opts = q.options || [];
+              const isTF = q.type === "true_false";
+              return (
+                <div key={q.id || qi} className="rounded-xl border border-shBorder/55 bg-black/12 p-3 space-y-2" data-testid={`module-quiz-question-${qi}`}>
+                  <div className="flex items-center justify-between gap-2 flex-wrap">
+                    <p className="text-[10px] font-black uppercase tracking-widest text-shAccent">Question {qi + 1}</p>
+                    <div className="flex items-center gap-1">
+                      <button type="button" onClick={() => moveQuestion(qi, -1)} disabled={qi === 0} title="Move up"
+                              className="w-9 h-9 rounded-lg border border-shBorder/55 text-shTextMuted hover:text-shText disabled:opacity-30"><i className="fas fa-arrow-up text-[11px]" /></button>
+                      <button type="button" onClick={() => moveQuestion(qi, 1)} disabled={qi === questions.length - 1} title="Move down"
+                              className="w-9 h-9 rounded-lg border border-shBorder/55 text-shTextMuted hover:text-shText disabled:opacity-30"><i className="fas fa-arrow-down text-[11px]" /></button>
+                      <button type="button" onClick={() => removeQuestion(qi)} title="Remove question" data-testid={`module-quiz-remove-question-${qi}`}
+                              className="w-9 h-9 rounded-lg border border-shBorder/55 text-shTextMuted hover:text-shDanger"><i className="fas fa-trash text-[11px]" /></button>
+                    </div>
+                  </div>
+                  <SField label="Question text">
+                    <textarea value={q.question || ""} onChange={(e) => setQuestion(qi, { question: e.target.value })} rows={2} className={inputCls} data-testid={`module-quiz-question-text-${qi}`} />
+                  </SField>
+                  <SField label="Question type">
+                    <select value={q.type || "multiple_choice"} onChange={(e) => switchType(qi, e.target.value)} className={inputCls} data-testid={`module-quiz-question-type-${qi}`}>
+                      <option value="multiple_choice">Multiple choice</option>
+                      <option value="true_false">True / False</option>
+                    </select>
+                  </SField>
+                  <SField label={isTF ? "Correct answer" : "Answer options — select the correct one"}>
+                    <div className="space-y-1.5">
+                      {opts.map((o, oi) => (
+                        <div key={o.id || oi} className="flex items-center gap-2">
+                          <input type="radio" name={`quiz-correct-${q.id || qi}`} checked={q.correct_option_id === o.id}
+                                 onChange={() => setQuestion(qi, { correct_option_id: o.id })}
+                                 title="Correct answer" data-testid={`module-quiz-correct-${qi}-${oi}`} />
+                          {isTF ? (
+                            <span className="text-[13px] text-shText">{o.text}</span>
+                          ) : (
+                            <>
+                              <input value={o.text || ""} onChange={(e) => setQuestion(qi, { options: opts.map((x, xi) => (xi === oi ? { ...x, text: e.target.value } : x)) })}
+                                     placeholder={`Option ${oi + 1}`} className={`${inputCls} flex-1`} data-testid={`module-quiz-option-${qi}-${oi}`} />
+                              <button type="button" disabled={opts.length <= 2}
+                                      onClick={() => setQuestion(qi, {
+                                        options: opts.filter((_, xi) => xi !== oi),
+                                        correct_option_id: q.correct_option_id === o.id ? null : q.correct_option_id,
+                                      })}
+                                      title="Remove option" className="w-9 h-9 rounded-lg border border-shBorder/55 text-shTextMuted hover:text-shDanger disabled:opacity-30 shrink-0">
+                                <i className="fas fa-times text-[11px]" />
+                              </button>
+                            </>
+                          )}
+                        </div>
+                      ))}
+                      {!isTF && (
+                        <button type="button" onClick={() => setQuestion(qi, { options: [...opts, newQuizOption()] })} data-testid={`module-quiz-add-option-${qi}`}
+                                className="min-h-[36px] px-3 rounded-lg border border-dashed border-shBorder/70 text-shTextMuted hover:text-shSecondary text-[11px] font-black">
+                          <i className="fas fa-plus mr-1" />Add option
+                        </button>
+                      )}
+                    </div>
+                  </SField>
+                  <SField label="Explanation / coaching note (shown after grading)">
+                    <textarea value={q.explanation || ""} onChange={(e) => setQuestion(qi, { explanation: e.target.value })} rows={2} className={inputCls} data-testid={`module-quiz-explanation-${qi}`} />
+                  </SField>
+                  <SField label="Review lesson (optional — offered when this question is missed)">
+                    <select value={q.review_lesson_id || ""} onChange={(e) => setQuestion(qi, { review_lesson_id: e.target.value || null })} className={inputCls} data-testid={`module-quiz-review-lesson-${qi}`}>
+                      <option value="">— None —</option>
+                      {lessons.map(l => <option key={l.id || l._key} value={l.id || l._key}>{l.name}</option>)}
+                    </select>
+                  </SField>
+                </div>
+              );
+            })}
+            <button type="button" onClick={() => setQuiz({ questions: [...questions, newQuizQuestion()] })} data-testid="module-quiz-add-question"
+                    className="w-full min-h-[44px] rounded-xl border border-dashed border-shBorder/70 text-shTextMuted hover:text-shPrimary hover:border-shPrimary/40 text-[11px] font-black transition">
+              <i className="fas fa-plus mr-1.5" />Add Question
+            </button>
+          </div>
+        </div>
       )}
     </div>
   );

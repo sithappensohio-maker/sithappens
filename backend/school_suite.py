@@ -471,11 +471,34 @@ def register_school_suite(*, api, db, get_current_user, manage_school_dep, perms
                 "completed_at": old_dp.get("completed_at"),
                 "course_pct": _snapshot_position(old_dp).get("course_pct", 0) if old_dp else 0,
             })
+        # Module Quiz summary — informational for the trainer (quizzes are
+        # auto-graded; nothing here is an action queue). Grouped per module:
+        # attempts, latest/best score, pass state.
+        quiz_rows = await db.school_quiz_attempts.find(
+            {"school_enrollment_id": sid},
+            {"_id": 0, "module_id": 1, "module_name": 1, "score_percent": 1, "passed": 1,
+             "submitted_at": 1, "attempt_number": 1},
+        ).sort("submitted_at", 1).to_list(500)
+        quiz_by_module: Dict[str, Dict[str, Any]] = {}
+        for qa in quiz_rows:
+            entry = quiz_by_module.setdefault(qa.get("module_id"), {
+                "module_id": qa.get("module_id"), "module_name": qa.get("module_name"),
+                "attempt_count": 0, "latest_score": None, "best_score": None,
+                "passed": False, "passed_at": None,
+            })
+            entry["attempt_count"] += 1
+            entry["latest_score"] = qa.get("score_percent")
+            if qa.get("score_percent") is not None:
+                entry["best_score"] = max(entry["best_score"] or 0, qa.get("score_percent"))
+            if qa.get("passed") and not entry["passed"]:
+                entry["passed"] = True
+                entry["passed_at"] = qa.get("submitted_at")
         return {
             "school_enrollment": se, "enrollment": {**dp, "program_snapshot": dp.get("program_snapshot") or {}}, "client": client, "dog": dog,
             "trainer": await _trainer_public(se.get("assigned_trainer_id")), "progress": _snapshot_position(dp),
             "baseline": se.get("baseline") or dp.get("school_baseline"), "events": events, "checkpoints": checkpoints,
             "training_plans": plans, "notes": notes, "requests": requests, "threads": threads,
+            "module_quizzes": list(quiz_by_module.values()),
             "dog_school_history": dog_history,
             "support": {
                 "checkpoint_allowance": cp_allowance, "checkpoint_used": cp_used,

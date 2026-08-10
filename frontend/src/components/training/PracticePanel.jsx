@@ -6,9 +6,12 @@
 //     (field_values, note, mood, difficulty, photo, video_media_id,
 //     could_not_complete/reason)
 //   - single-log (section-based) assignments -> POST /homework/{id}/section-log
-//     (field_values, date, note, and now — see server.py's SectionLogIn —
-//     difficulty, could_not_complete/reason, and photo too; video is still
-//     daily-tracker only, no section-scoped upload endpoint exists yet)
+//     (field_values, date, note, and — see server.py's SectionLogIn —
+//     difficulty, could_not_complete/reason, photo, and video_media_id.
+//     Section video uploads go through POST /homework/{id}/practice-video
+//     and are offered ONLY when the Practice Recipe requests video
+//     (practice_coach.media.request_video); recipes that don't request it
+//     keep exactly the old no-video form.)
 //
 // Client Practice Coach upgrade: when template_snapshot.practice_coach is
 // present and enabled, this renders the structured Coach Mode flow
@@ -87,6 +90,11 @@ export default function PracticePanel({ homework, dogPhoto, onClose, onChanged, 
   const setField = (fid, v) => setValues(s => ({ ...s, [fid]: v }));
   const setEndAnswer = (qid, v) => setEndAnswers(s => ({ ...s, [qid]: v }));
 
+  // Section-log (non-daily) practice offers video ONLY when the Practice
+  // Recipe explicitly requests it — a recipe with no request keeps the old
+  // no-video form. Daily tracker keeps its always-available video control.
+  const sectionVideoAllowed = !isDailyTracker && !!practiceCoach?.media?.request_video;
+
   const uploadVideo = async (file, errText) => {
     if (errText) { toast.error(errText); return; }
     setUploadingVideo(true);
@@ -97,7 +105,10 @@ export default function PracticePanel({ homework, dogPhoto, onClose, onChanged, 
         reader.onerror = reject;
         reader.readAsDataURL(file);
       });
-      const { data } = await api.post(`/homework/${homework.id}/day/${activeDay.day_number}/video`, { photo: dataUrl, filename: file.name });
+      const url = isDailyTracker
+        ? `/homework/${homework.id}/day/${activeDay.day_number}/video`
+        : `/homework/${homework.id}/practice-video`;
+      const { data } = await api.post(url, { photo: dataUrl, filename: file.name });
       setVideoId(data.media_id);
       setVideoName(file.name);
     } catch (e) {
@@ -135,6 +146,7 @@ export default function PracticePanel({ homework, dogPhoto, onClose, onChanged, 
         await api.post(`/homework/${homework.id}/section-log`, {
           section_id: section.id, date: todayISO(), field_values, note,
           difficulty: difficulty || null, photo: photo || "",
+          video_media_id: sectionVideoAllowed ? (videoId || "") : "",
           could_not_complete: couldNotComplete,
           could_not_complete_reason: couldNotComplete ? (couldNotCompleteReason || null) : null,
         });
@@ -299,7 +311,7 @@ export default function PracticePanel({ homework, dogPhoto, onClose, onChanged, 
                 allowDifficulty={true}
                 allowCouldNotComplete={true}
                 allowPhoto={true}
-                allowVideo={isDailyTracker}
+                allowVideo={isDailyTracker || sectionVideoAllowed}
                 fieldsSlot={editableChips.length > 0 ? <MeasurementChips items={editableChips} testid="practice-fields"/> : null}
                 extraSlot={coachEnabled && (practiceCoach?.end_questions || []).length > 0
                   ? <CoachEndQuestions questions={practiceCoach.end_questions} answers={endAnswers} onAnswerChange={setEndAnswer} tokens={tokens} testid="coach-end-questions"/>

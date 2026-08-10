@@ -19,7 +19,7 @@ import { practiceButtonLabel } from "../../../lib/onlineSchoolPolish";
  * All progression state comes from the backend; nothing is derived here. */
 export default function LessonScreen({
   enrollmentId, lessonId, detail, dogName, dogPhoto,
-  onStartPractice, onStartPrescribedPractice, onAdvanced, onStateChanged, onBackToCourse, onAskTrainer,
+  onStartPractice, onStartPrescribedPractice, onAdvanced, onStateChanged, onBackToCourse, onAskTrainer, onTakeQuiz,
 }) {
   const [data, setData] = useState(null);
   const [err, setErr] = useState(null);      // {status, message}
@@ -57,7 +57,14 @@ export default function LessonScreen({
       const { data: res } = await api.post(`/portal/school/${enrollmentId}/advance`);
       onAdvanced?.(res);
     } catch (e) {
-      setActionErr(e.response?.data?.detail || "Couldn't continue yet.");
+      const d = e.response?.data?.detail;
+      // Server-enforced Module Quiz gate — route into the quiz instead of
+      // showing an error (the backend blocks regardless of UI state).
+      if (d && typeof d === "object" && d.error_code === "module_quiz_required") {
+        onTakeQuiz?.(d.module_id);
+        return;
+      }
+      setActionErr(typeof d === "string" ? d : "Couldn't continue yet.");
     } finally { setBusy(false); }
   };
 
@@ -104,6 +111,11 @@ export default function LessonScreen({
   const setupRequired = requiresCp && !hasPractice;
   const prescribedRemediation = isCurrent && roadmap?.checkpoint_status?.status === "graded" && roadmap?.checkpoint_status?.outcome === "prescribe_practice";
   const isFinal = requiresCp && roadmap?.checkpoint_rubric?.assessment_type === "final_assessment";
+  // Module Quiz gate — the server says this module's end-of-module quiz is
+  // ready to take (all lesson/checkpoint work at the boundary is done).
+  const quizAvailable = !!(isCurrent && roadmap?.module_quiz_available);
+  const quizMeta = roadmap?.module_quiz || null;
+  const checkpointPassedForQuiz = requiresCp && roadmap?.checkpoint_status?.outcome === "advance";
 
   return (
     <div className="max-w-3xl mx-auto space-y-4" data-testid="lesson-screen">
@@ -192,9 +204,29 @@ export default function LessonScreen({
             </PremiumButton>
           )}
 
+          {/* Module Quiz gate — at the end of a quiz-gated module the quiz
+              (not "continue") is the next step. Server enforces regardless. */}
+          {quizAvailable && (
+            <SectionCard accent="lime" intensity="subtle" data-testid="lesson-module-quiz-cta">
+              {checkpointPassedForQuiz && (
+                <p className="text-[12px] font-black text-shPrimary mb-1"><i className="fas fa-circle-check mr-1.5" />Trainer Checkpoint Passed</p>
+              )}
+              <p className="text-[14px] font-black text-shText">{quizMeta?.title || "Module Quiz"}</p>
+              <p className="text-[12px] text-shTextMuted mt-1">
+                Before moving on, make sure the important pieces make sense.
+                {" "}{quizMeta?.question_count || 0} question{(quizMeta?.question_count || 0) === 1 ? "" : "s"} · Passing score {quizMeta?.passing_score || 80}%
+              </p>
+              <PremiumButton onClick={() => onTakeQuiz?.(quizMeta?.module_id)} disabled={busy} data-testid="lesson-take-module-quiz"
+                             className="mt-3 w-full justify-center min-h-[50px]">
+                <i className="fas fa-list-check text-[11px]" />Take Module Quiz
+              </PremiumButton>
+            </SectionCard>
+          )}
+
           {/* Advance — only for the current, non-checkpoint lesson once the
-              backend's requirements are met (it enforces regardless). */}
-          {isCurrent && !requiresCp && (data.practiced || (learnDone && !hasPractice)) && (
+              backend's requirements are met (it enforces regardless), and
+              never while a Module Quiz is the required next step. */}
+          {isCurrent && !requiresCp && !quizAvailable && (data.practiced || (learnDone && !hasPractice)) && (
             <PremiumButton variant="secondary" onClick={advance} disabled={busy} data-testid="lesson-advance"
                            className="w-full justify-center min-h-[48px]">
               Continue to next lesson <i className="fas fa-arrow-right text-[10px]" />

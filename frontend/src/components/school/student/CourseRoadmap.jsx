@@ -2,7 +2,13 @@ import ProgramRoadmap from "../../training/ProgramRoadmap";
 import LessonCard from "../../training/LessonCard";
 import EmptyState from "../../training/EmptyState";
 import HuskyDogImage from "../../brand/HuskyDogImage";
-import { buildSchoolRoadmap, buildSchoolLessonCards, formatCompletionPct } from "../../../lib/onlineSchoolPolish";
+import { buildSchoolRoadmap, buildSchoolLessonCards, formatCompletionPct, moduleQuizChip } from "../../../lib/onlineSchoolPolish";
+
+const QUIZ_CHIP_CLS = {
+  passed: "bg-shPrimary/15 text-shPrimary",
+  ready: "bg-shSecondary/15 text-shSecondary",
+  locked: "bg-shBorder/30 text-shTextMuted",
+};
 
 /* My Course — the native roadmap screen (Phase 2B). Answers "where am I in the
  * program?" Reuses the SAME shared roadmap components (ProgramRoadmap /
@@ -90,9 +96,17 @@ export default function CourseRoadmap({ detail, loading, onOpenLesson, onResume 
               return <EmptyState icon="fa-lock" message={m.lockedReason} testid="course-module-locked" />;
             }
             const cards = buildSchoolLessonCards(m);
+            const qChip = moduleQuizChip(m.quiz);
             if (cards.length === 0) return <EmptyState icon="fa-book-open" message="No lessons in this module yet." testid={`course-module-${m.id}-empty`} />;
             return (
               <div>
+                {qChip && (
+                  <div className="flex mb-2" data-testid={`course-module-quiz-${m.id}`}>
+                    <span className={`text-[9px] font-black uppercase tracking-widest px-2 py-0.5 rounded-full ${QUIZ_CHIP_CLS[qChip.tone] || QUIZ_CHIP_CLS.locked}`}>
+                      <i className="fas fa-list-check mr-1" />{qChip.label}
+                    </span>
+                  </div>
+                )}
                 {cards.map((card, i) => {
                   // Checkpoint config is only honestly known for the CURRENT
                   // lesson (the client-safe roadmap strips it elsewhere).

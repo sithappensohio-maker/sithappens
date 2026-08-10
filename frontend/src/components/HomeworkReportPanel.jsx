@@ -78,6 +78,9 @@ export default function HomeworkReportPanel({ homeworkId, focus = null }) {
       date: (lo.date || lo.logged_at || "").slice(0, 16).replace("T", " "),
       sectionTitle: _sectionTitleMap[lo.section_id] || lo.section_id || "Practice log",
       reviewed: !!lo.reviewed_at,
+      reviewStatus: lo.review_status || null,
+      reviewNote: lo.review_note || "",
+      reviewedBy: lo.reviewed_by || "",
       metrics,
       note: lo.note || "",
       questions: lo.questions || [],
@@ -87,6 +90,8 @@ export default function HomeworkReportPanel({ homeworkId, focus = null }) {
       couldNotCompleteReason: fv.__could_not_complete_reason || "",
     };
   });
+
+  const REVIEW_STATUS_LABEL = { looks_good: "Looks Good", keep_practicing: "Keep Practicing", trainer_attention: "Needs Trainer Attention" };
 
   if (report.total_logs === 0 && !daysWithLogs.length && !rawEntries.length) {
     return (
@@ -151,6 +156,18 @@ export default function HomeworkReportPanel({ homeworkId, focus = null }) {
                 <div className="bg-[var(--sh-card-base)]/60 rounded p-2.5 border-l-2 border-shAccent/40">
                   <p className="text-[10px] font-black uppercase tracking-widest text-shTextMuted mb-1"><i className="fas fa-comment mr-1"/>Client's note</p>
                   <p className="text-gray-200 text-[12px] italic whitespace-pre-wrap">"{e.note}"</p>
+                </div>
+              )}
+              {e.videoMediaId && (
+                <div className="mt-2">
+                  <p className="text-[10px] font-black uppercase tracking-widest text-purple-300 mb-1"><i className="fas fa-video mr-1"/>Practice video</p>
+                  <InlineHomeworkVideo homeworkId={homeworkId} mediaId={e.videoMediaId} />
+                </div>
+              )}
+              {e.reviewStatus && (
+                <div className="mt-2 rounded-lg border border-shPrimary/30 bg-shPrimary/[0.05] p-2.5" data-testid={`hw-report-review-${e.id}`}>
+                  <p className="text-[10px] font-black uppercase tracking-widest text-shPrimary"><i className="fas fa-user-tie mr-1" />Trainer review · {REVIEW_STATUS_LABEL[e.reviewStatus] || e.reviewStatus}{e.reviewedBy ? ` · ${e.reviewedBy}` : ""}</p>
+                  {e.reviewNote && <p className="text-[12px] text-gray-200 mt-1 whitespace-pre-wrap">{e.reviewNote}</p>}
                 </div>
               )}
               {e.questions.length > 0 && (

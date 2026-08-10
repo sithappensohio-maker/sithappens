@@ -45,8 +45,10 @@ export default function CheckpointReviewQueue({ onClose, onGraded, initialSubmis
 
   const open = (it) => {
     setActive(it);
-    setHandlerScores(Object.fromEntries((it.rubric_snapshot?.handler_criteria || []).map(c => [c.id, 3])));
-    setDogScores(Object.fromEntries((it.rubric_snapshot?.dog_criteria || []).map(c => [c.id, 3])));
+    // Every criterion must be scored DELIBERATELY — nothing is pre-filled,
+    // and the grade actions stay disabled until every criterion has a value.
+    setHandlerScores({});
+    setDogScores({});
     setFeedback(""); setErr(""); setMode("grade"); setVideoTime(0); setAnnotationNote(""); setSeekTo(null);
     setPrescriptionAction("repeat_current_recipe"); setTemplateId(""); setRefresherLessonId(""); setMinSessions("");
   };
@@ -58,6 +60,12 @@ export default function CheckpointReviewQueue({ onClose, onGraded, initialSubmis
   }, [items, initialSubmissionId]);
 
   const back = () => { setActive(null); setErr(""); };
+
+  // Grading requires a deliberate 1-5 score on EVERY criterion — the action
+  // buttons stay disabled (with a visible message) until then.
+  const allScored = !!active
+    && (active.rubric_snapshot?.handler_criteria || []).every(c => Number.isFinite(handlerScores[c.id]))
+    && (active.rubric_snapshot?.dog_criteria || []).every(c => Number.isFinite(dogScores[c.id]));
 
   const grade = async (outcome) => {
     if (!active) return;
@@ -213,6 +221,13 @@ export default function CheckpointReviewQueue({ onClose, onGraded, initialSubmis
             ) : (
               <>
                 <div className="bg-black/15 border border-shBorder/55 rounded-2xl p-4 sm:p-5 space-y-3">
+                  {active.rubric_snapshot?.pass_readiness_guidance && (
+                    <div className="rounded-xl border border-shAccent/30 bg-shAccent/[0.06] p-3" data-testid="checkpoint-pass-readiness-guidance">
+                      <p className="text-[10px] font-black uppercase tracking-widest text-shAccent mb-1"><i className="fas fa-compass mr-1.5"/>Pass / readiness guidance <span className="normal-case tracking-normal font-bold">(trainer-only)</span></p>
+                      <p className="text-[13px] text-shText leading-relaxed whitespace-pre-wrap">{active.rubric_snapshot.pass_readiness_guidance}</p>
+                    </div>
+                  )}
+                  <ScoreScaleLegend />
                   <p className="text-[13px] font-black uppercase tracking-widest text-shSecondary"><i className="fas fa-user mr-1"/>Handler</p>
                   {(active.rubric_snapshot?.handler_criteria || []).map(c => (
                     <ScoreRow key={c.id} criterion={c} value={handlerScores[c.id]} onChange={(v) => setHandlerScores(s => ({ ...s, [c.id]: v }))}/>
@@ -221,6 +236,10 @@ export default function CheckpointReviewQueue({ onClose, onGraded, initialSubmis
                   {(active.rubric_snapshot?.dog_criteria || []).map(c => (
                     <ScoreRow key={c.id} criterion={c} value={dogScores[c.id]} onChange={(v) => setDogScores(s => ({ ...s, [c.id]: v }))}/>
                   ))}
+                  <div className="pt-2 border-t border-shBorder/40 space-y-1">
+                    <ScoreSummary label="Handler Skills" criteria={active.rubric_snapshot?.handler_criteria} scores={handlerScores} />
+                    <ScoreSummary label="Dog Performance" criteria={active.rubric_snapshot?.dog_criteria} scores={dogScores} />
+                  </div>
                 </div>
 
                 <div className="bg-black/15 border border-shBorder/55 rounded-2xl p-4 sm:p-5 space-y-3">
@@ -251,27 +270,34 @@ export default function CheckpointReviewQueue({ onClose, onGraded, initialSubmis
                         <button onClick={() => setMode("grade")} className="text-[12px] text-shTextMuted hover:text-shText font-black uppercase tracking-widest px-3 py-2">
                           Back
                         </button>
-                        <button onClick={() => grade("prescribe_practice")} disabled={busy} data-testid="checkpoint-review-confirm-prescribe"
+                        <button onClick={() => grade("prescribe_practice")} disabled={busy || !allScored} data-testid="checkpoint-review-confirm-prescribe"
                                 className="bg-shSecondary text-bgHeader px-4 py-2 rounded text-[13px] font-black uppercase tracking-widest disabled:opacity-50">
                           Confirm Prescription
                         </button>
                       </div>
                     </div>
                   ) : (
-                    <div className="grid grid-cols-1 sm:flex gap-2 sm:justify-end pt-3 border-t border-shBorder/50">
-                      <button onClick={() => grade("trainer_assist_recommended")} disabled={busy} data-testid="checkpoint-review-trainer-assist"
-                              className="min-h-[46px] bg-purple-500/10 text-purple-300 border border-purple-400/30 px-4 py-2.5 rounded-xl text-[11px] sm:text-[12px] font-black hover:bg-purple-500/15 disabled:opacity-50">
-                        <i className="fas fa-handshake mr-1"/>Recommend Trainer Assist
-                      </button>
-                      <button onClick={() => setMode("prescribe")} disabled={busy} data-testid="checkpoint-review-prescribe-practice"
-                              className="min-h-[46px] bg-shAccent/10 text-shAccent border border-shAccent/30 px-4 py-2.5 rounded-xl text-[11px] sm:text-[12px] font-black hover:bg-shAccent/15 disabled:opacity-50">
-                        <i className="fas fa-rotate-left mr-1"/>Prescribe Practice
-                      </button>
-                      <button onClick={() => grade("advance")} disabled={busy} data-testid="checkpoint-review-advance"
-                              className="min-h-[46px] bg-shPrimary text-bgHeader px-5 py-2.5 rounded-xl text-[11px] sm:text-[12px] font-black hover:bg-shPrimary/85 disabled:opacity-50">
-                        <i className="fas fa-check mr-1"/>Advance to Next Lesson
-                      </button>
-                    </div>
+                    <>
+                      {!allScored && (
+                        <p className="text-[12px] font-bold text-shAccent pt-3 border-t border-shBorder/50" data-testid="checkpoint-review-incomplete-scores">
+                          <i className="fas fa-circle-info mr-1.5"/>Score every Handler and Dog criterion (1-5) before choosing an outcome — no score is ever assumed.
+                        </p>
+                      )}
+                      <div className={`grid grid-cols-1 sm:flex gap-2 sm:justify-end pt-3 ${allScored ? "border-t border-shBorder/50" : ""}`}>
+                        <button onClick={() => grade("trainer_assist_recommended")} disabled={busy || !allScored} data-testid="checkpoint-review-trainer-assist"
+                                className="min-h-[46px] bg-purple-500/10 text-purple-300 border border-purple-400/30 px-4 py-2.5 rounded-xl text-[11px] sm:text-[12px] font-black hover:bg-purple-500/15 disabled:opacity-50">
+                          <i className="fas fa-handshake mr-1"/>Recommend Trainer Assist
+                        </button>
+                        <button onClick={() => setMode("prescribe")} disabled={busy || !allScored} data-testid="checkpoint-review-prescribe-practice"
+                                className="min-h-[46px] bg-shAccent/10 text-shAccent border border-shAccent/30 px-4 py-2.5 rounded-xl text-[11px] sm:text-[12px] font-black hover:bg-shAccent/15 disabled:opacity-50">
+                          <i className="fas fa-rotate-left mr-1"/>Practice &amp; Resubmit
+                        </button>
+                        <button onClick={() => grade("advance")} disabled={busy || !allScored} data-testid="checkpoint-review-advance"
+                                className="min-h-[46px] bg-shPrimary text-bgHeader px-5 py-2.5 rounded-xl text-[11px] sm:text-[12px] font-black hover:bg-shPrimary/85 disabled:opacity-50">
+                          <i className="fas fa-check mr-1"/>Pass Checkpoint
+                        </button>
+                      </div>
+                    </>
                   )}
                 </div>
               </>
@@ -283,15 +309,72 @@ export default function CheckpointReviewQueue({ onClose, onGraded, initialSubmis
   );
 }
 
+// 1-5 scale meaning (also shown as a legend while grading). New grades are
+// 1-5 only; a historical 0 stored before this scale remains display-only data.
+export const SCORE_SCALE = [
+  [1, "Needs significant work"],
+  [2, "Developing"],
+  [3, "Functional"],
+  [4, "Strong"],
+  [5, "Excellent / ready"],
+];
+
+function ScoreScaleLegend() {
+  return (
+    <div className="rounded-xl border border-shBorder/40 bg-black/10 px-3 py-2.5" data-testid="checkpoint-score-legend">
+      <p className="text-[10px] font-black uppercase tracking-widest text-shTextMuted mb-1.5"><i className="fas fa-ruler mr-1.5" />Score scale</p>
+      <div className="flex flex-wrap gap-x-4 gap-y-1">
+        {SCORE_SCALE.map(([n, label]) => (
+          <span key={n} className="text-[11px] text-shTextMuted"><span className="font-black text-shText">{n}</span> — {label}</span>
+        ))}
+      </div>
+    </div>
+  );
+}
+
 function ScoreRow({ criterion, value, onChange }) {
   return (
-    <div className="flex items-center justify-between gap-3 rounded-xl border border-shBorder/40 bg-black/10 px-3 py-2.5" data-testid={`checkpoint-review-score-${criterion.id}`}>
-      <span className="text-[13px] text-shText">{criterion.name}</span>
-      <select value={value ?? 3} onChange={(e) => onChange(parseInt(e.target.value, 10))}
-              className="bg-black/20 border border-shBorder/55 rounded-lg px-2 py-2 text-shText text-sm w-20 min-h-[40px]">
-        {[0, 1, 2, 3, 4, 5].map(n => <option key={n} value={n}>{n}</option>)}
-      </select>
+    <div className="rounded-xl border border-shBorder/40 bg-black/10 px-3 py-2.5" data-testid={`checkpoint-review-score-${criterion.id}`}>
+      <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-2">
+        <span className="text-[13px] text-shText">{criterion.name}</span>
+        {/* 1-5 segmented buttons — nothing preselected; a grade must be a
+            deliberate choice, never a silent default. */}
+        <div className="flex gap-1" role="radiogroup" aria-label={`${criterion.name} score`}>
+          {[1, 2, 3, 4, 5].map(n => (
+            <button key={n} type="button" role="radio" aria-checked={value === n}
+                    onClick={() => onChange(n)}
+                    title={SCORE_SCALE[n - 1][1]}
+                    data-testid={`checkpoint-review-score-${criterion.id}-${n}`}
+                    className={`w-11 h-11 rounded-lg border text-[13px] font-black transition ${
+                      value === n
+                        ? "bg-shPrimary text-bgHeader border-shPrimary"
+                        : "bg-black/20 border-shBorder/55 text-shTextMuted hover:text-shText hover:border-shSecondary/40"
+                    }`}>
+              {n}
+            </button>
+          ))}
+        </div>
+      </div>
+      {criterion.guidance && (
+        <p className="text-[11px] text-shTextMuted mt-2 leading-relaxed border-l-2 border-shSecondary/30 pl-2" data-testid={`checkpoint-criterion-guidance-${criterion.id}`}>
+          <span className="font-black uppercase tracking-widest text-[9px] text-shSecondary block mb-0.5">Trainer guidance</span>
+          {criterion.guidance}
+        </p>
+      )}
     </div>
+  );
+}
+
+function ScoreSummary({ label, criteria, scores }) {
+  const total = (criteria || []).length;
+  const values = (criteria || []).map(c => scores[c.id]).filter(v => Number.isFinite(v));
+  if (!total || values.length === 0) return null;
+  const mean = values.reduce((a, b) => a + b, 0) / values.length;
+  const partial = values.length < total;
+  return (
+    <p className="text-[12px] font-black text-shText" data-testid={`checkpoint-score-summary-${label.toLowerCase().replace(/\s+/g, "-")}`}>
+      {label} — {mean.toFixed(1)} / 5{partial && <span className="text-shTextMuted font-bold"> (partial · {values.length}/{total} scored)</span>}
+    </p>
   );
 }
 

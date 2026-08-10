@@ -2,6 +2,57 @@ import { useCallback, useEffect, useMemo, useState } from "react";
 import { api } from "../../../lib/api";
 import ScorePair from "./ScorePair";
 import AchievementCard from "../../training/AchievementCard";
+import { moduleQuizChip } from "../../../lib/onlineSchoolPolish";
+
+const QUIZ_TONE_CLS = {
+  passed: "bg-shPrimary/15 text-shPrimary",
+  ready: "bg-shSecondary/15 text-shSecondary",
+  locked: "bg-shBorder/30 text-shTextMuted",
+};
+
+function ModuleQuizProgressRow({ enrollmentId, module }) {
+  const [open, setOpen] = useState(false);
+  const [attempts, setAttempts] = useState(null);
+  const chip = moduleQuizChip(module.quiz);
+  useEffect(() => {
+    if (!open || attempts !== null) return undefined;
+    let live = true;
+    api.get(`/portal/school/${enrollmentId}/modules/${module.id}/quiz/attempts`)
+      .then(({ data }) => { if (live) setAttempts(data || []); })
+      .catch(() => { if (live) setAttempts([]); });
+    return () => { live = false; };
+  }, [open, attempts, enrollmentId, module.id]);
+  if (!chip) return null;
+  const q = module.quiz || {};
+  return (
+    <div className="rounded-xl border border-shBorder bg-[var(--sh-card-base)] p-3" data-testid={`progress-quiz-${module.id}`}>
+      <button type="button" onClick={() => setOpen((v) => !v)} className="w-full flex items-center justify-between gap-2 text-left min-h-[36px]">
+        <div className="min-w-0">
+          <p className="text-[13px] font-black text-shText truncate">{module.name}</p>
+          <p className="text-[11px] text-shTextMuted mt-0.5">{q.title || "Module Quiz"}{q.attempt_count > 0 ? ` · ${q.attempt_count} attempt${q.attempt_count === 1 ? "" : "s"}` : ""}</p>
+        </div>
+        <span className="flex items-center gap-2 shrink-0">
+          <span className={`text-[9px] font-black uppercase tracking-widest px-2 py-1 rounded-full ${QUIZ_TONE_CLS[chip.tone] || QUIZ_TONE_CLS.locked}`}>{chip.label}</span>
+          {q.attempt_count > 0 && <i className={`fas fa-chevron-${open ? "up" : "down"} text-shTextMuted text-[10px]`} />}
+        </span>
+      </button>
+      {open && q.attempt_count > 0 && (
+        <div className="mt-2 space-y-1 border-t border-shBorder/40 pt-2" data-testid={`progress-quiz-attempts-${module.id}`}>
+          {attempts === null ? (
+            <p className="text-[11px] text-shTextMuted"><i className="fas fa-spinner fa-spin mr-1" />Loading attempts…</p>
+          ) : (
+            attempts.map((a) => (
+              <p key={a.id} className="text-[12px] text-shTextMuted">
+                Attempt {a.attempt_number} — <span className={a.passed ? "text-shPrimary font-black" : "text-shText"}>{Math.round(a.score_percent || 0)}%</span>
+                {a.passed && <i className="fas fa-check text-shPrimary ml-1.5" />}
+              </p>
+            ))
+          )}
+        </div>
+      )}
+    </div>
+  );
+}
 
 function avg(values) {
   const xs = values.filter((v) => Number.isFinite(Number(v))).map(Number);
@@ -52,6 +103,15 @@ export default function ProgressScreen({ enrollmentId, home, detail }) {
       </section>
 
       {mastery > 0 && <section className="rounded-2xl border border-shSecondary/25 bg-[var(--sh-card-base)] p-4"><div className="flex items-center justify-between gap-3"><div><p className="text-[10px] font-black uppercase tracking-widest text-shSecondary">Skill mastery</p><p className="text-[12px] text-shTextMuted mt-1">Trainer-scored skill goals — separate from finishing course lessons.</p></div><p className="text-2xl font-black text-shSecondary">{mastery}%</p></div></section>}
+
+      {(detail?.roadmap?.modules || []).some((m) => m.quiz) && (
+        <section className="space-y-2" data-testid="progress-module-quizzes">
+          <div><p className="text-[10px] font-black uppercase tracking-[0.2em] text-shPrimary">Module quizzes</p><p className="text-[12px] text-shTextMuted mt-1">Knowledge checks that unlock each next module — retakes are always free.</p></div>
+          {(detail.roadmap.modules || []).filter((m) => m.quiz).map((m) => (
+            <ModuleQuizProgressRow key={m.id} enrollmentId={enrollmentId} module={m} />
+          ))}
+        </section>
+      )}
 
       <section className="space-y-3" data-testid="progress-checkpoint-history">
         <div><p className="text-[10px] font-black uppercase tracking-[0.2em] text-shSecondary">Checkpoint history</p><p className="text-[12px] text-shTextMuted mt-1">Handler Skills and Dog Performance stay separate so you know what is limiting progress.</p></div>
