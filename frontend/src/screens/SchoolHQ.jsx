@@ -8,6 +8,7 @@ import EmptyState from "../components/premium/EmptyState";
 import { accentRgb } from "../components/premium/tokens";
 import SchoolNeedsAttention from "../components/school/SchoolNeedsAttention";
 import SchoolActivityFeed from "../components/school/SchoolActivityFeed";
+import SchoolReviewsPanel from "../components/school/SchoolReviewsPanel";
 import CheckpointReviewQueue from "../components/CheckpointReviewQueue";
 import TrainerAssistQueue from "../components/TrainerAssistQueue";
 import SchoolStudentsPanel from "../components/school/SchoolStudentsPanel";
@@ -22,7 +23,15 @@ import { navigateToScreen, announceAttentionChanged } from "../lib/schoolHq";
  * Trainer-Assist workflows (reused as-is, launched from their tabs). Broken
  * into small pieces (feed, queue, stat cards) rather than one mega-component. */
 export default function SchoolHQ() {
-  const [tab, setTab] = useState("overview");
+  const [tab, setTabRaw] = useState("overview");
+  // Backward-compatible deep links: old notifications/state that target the
+  // retired standalone "checkpoints" tab land on Reviews → Checkpoints.
+  const [reviewType, setReviewType] = useState(null);
+  const [reviewTarget, setReviewTarget] = useState(null);
+  const setTab = useCallback((t) => {
+    if (t === "checkpoints") { setReviewType("checkpoints"); setTabRaw("reviews"); return; }
+    setTabRaw(t);
+  }, []);
   const tabRef = useRef(tab);
   useEffect(() => { tabRef.current = tab; }, [tab]);
 
@@ -90,6 +99,16 @@ export default function SchoolHQ() {
     if (t.startsWith("checkpoint")) {
       setCheckpointTargetId(item.checkpoint_id || dl.checkpoint_id || null);
       setTab("checkpoints"); setCheckpointOpen(true);
+    } else if ((t === "practice_video_submitted" || t === "practice_could_not_complete" || t === "practice_difficulty_reported" || t === "practice_review_attention") && (dl.section_log_id || item.metadata?.section_log_id)) {
+      // Practice review work lives in Reviews → Practice now; the row opens
+      // the exact submission. Question deep links keep going to the Homework
+      // thread below (that's where the reply box lives).
+      setReviewType("practice");
+      setReviewTarget({
+        section_log_id: dl.section_log_id || item.metadata?.section_log_id,
+        homework_id: item.homework_id || dl.homework_id || null,
+      });
+      setTab("reviews");
     } else if (t.startsWith("trainer_assist")) {
       setTrainerAssistTargetId(item.trainer_assist_id || item.checkpoint_id || dl.trainer_assist_id || dl.checkpoint_id || null);
       setTab("trainer_assist"); setTrainerAssistOpen(true);
@@ -133,9 +152,9 @@ export default function SchoolHQ() {
   const s = summary || {};
   const tabs = [
     { key: "overview", label: "Overview", icon: "fa-gauge", accent: "lime" },
+    { key: "reviews", label: "Reviews", icon: "fa-clipboard-check", accent: "purple", count: s.reviews_pending ?? ((s.checkpoints_pending || 0) + (s.practice_reviews_pending || 0)) },
     { key: "activity", label: "Activity", icon: "fa-stream", accent: "cyan" },
     { key: "needs_attention", label: "Needs Attention", icon: "fa-bell", accent: "orange", count: s.needs_attention || 0 },
-    { key: "checkpoints", label: "Checkpoints", icon: "fa-clipboard-check", accent: "purple", count: s.checkpoints_pending || 0 },
     { key: "trainer_assist", label: "Trainer Assist", icon: "fa-hand-holding-heart", accent: "purple", count: s.trainer_assists || 0 },
     { key: "students", label: "Students", icon: "fa-user-graduate", accent: "cyan" },
     { key: "interventions", label: "Interventions", icon: "fa-shield-heart", accent: "orange" },
@@ -156,7 +175,7 @@ export default function SchoolHQ() {
           <div className="grid grid-cols-2 lg:grid-cols-3 gap-3" data-testid="school-hq-overview-cards">
             <AdminStatCard icon="fa-user-graduate" accent="cyan" value={s.active_students ?? "—"} label="Active students" onClick={() => setTab("activity")} testid="stat-active-students" />
             <AdminStatCard icon="fa-bell" accent="orange" value={s.needs_attention ?? "—"} label="Needs attention" onClick={() => setTab("needs_attention")} testid="stat-needs-attention" />
-            <AdminStatCard icon="fa-clipboard-check" accent="purple" value={s.checkpoints_pending ?? "—"} label="Checkpoints to review" onClick={() => setTab("checkpoints")} testid="stat-checkpoints" />
+            <AdminStatCard icon="fa-clipboard-check" accent="purple" value={s.reviews_pending ?? "—"} label="Reviews to do" detail="Practice + checkpoints" onClick={() => setTab("reviews")} testid="stat-reviews" />
             <AdminStatCard icon="fa-circle-question" accent="orange" value={s.new_questions ?? "—"} label="New questions" onClick={() => setTab("needs_attention")} testid="stat-questions" />
             <AdminStatCard icon="fa-hand-holding-heart" accent="purple" value={s.trainer_assists ?? "—"} label="Trainer assists" onClick={() => setTab("trainer_assist")} testid="stat-trainer-assist" />
             <AdminStatCard icon="fa-user-clock" accent="neutral" value={s.inactive_students ?? "—"} label="Inactive students" detail="No activity for 14+ days" testid="stat-inactive" />
@@ -190,15 +209,13 @@ export default function SchoolHQ() {
                               onOpen={openItem} onRead={markRead} onResolve={resolveItem} />
       )}
 
-      {tab === "checkpoints" && (
-        <QueueLaunchPanel
-          icon="fa-clipboard-check" accent="purple"
-          count={s.checkpoints_pending || 0}
-          title="Checkpoints awaiting review"
-          blurb="Grade Handler Skills and Dog Performance, then advance, prescribe practice, or recommend Trainer Assist."
-          buttonLabel="Open review queue"
-          onOpen={() => setCheckpointOpen(true)}
-          emptyLabel="No checkpoints are waiting for review."
+      {tab === "reviews" && (
+        <SchoolReviewsPanel
+          summary={s}
+          initialReviewType={reviewType}
+          initialTarget={reviewTarget}
+          onOpenCheckpoint={(id) => { setCheckpointTargetId(id); setCheckpointOpen(true); }}
+          onChanged={() => { setReviewTarget(null); refresh(); }}
         />
       )}
 

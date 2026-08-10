@@ -10,6 +10,7 @@ import CourseRoadmap from "../components/school/student/CourseRoadmap";
 import LessonScreen from "../components/school/student/LessonScreen";
 import TodayScreen from "../components/school/student/TodayScreen";
 import PracticePanel from "../components/training/PracticePanel";
+import ModuleQuizPanel from "../components/school/student/ModuleQuizPanel";
 import FeedbackScreen from "../components/school/student/FeedbackScreen";
 import ProgressScreen from "../components/school/student/ProgressScreen";
 import AskTrainerPanel from "../components/school/student/AskTrainerPanel";
@@ -48,6 +49,7 @@ export default function SchoolApp({ path, clientName, onNavigate, onExit }) {
   const [practice, setPractice] = useState(null);  // { homework } → PracticePanel hosted here
   const [practiceDone, setPracticeDone] = useState(false);
   const [askContext, setAskContext] = useState(null);
+  const [quizFor, setQuizFor] = useState(null);    // { moduleId, checkpointPassed } → ModuleQuizPanel
 
   const loadList = useCallback(async () => {
     try { const { data } = await api.get("/portal/school"); setList(data || []); }
@@ -154,6 +156,13 @@ export default function SchoolApp({ path, clientName, onNavigate, onExit }) {
     if (t === "practice" && lessonId) { openPractice(lessonId); return; }
     if (t === "remediation") { openPrescribedPractice(); return; }
     if ((t === "lesson" || t === "submit_checkpoint") && lessonId) { go("lesson", lessonId); return; }
+    if (t === "module_quiz") {
+      const moduleId = action?.target?.module_id || home?.current_module?.id || detail?.roadmap?.module_quiz?.module_id;
+      if (moduleId) {
+        setQuizFor({ moduleId, checkpointPassed: detail?.roadmap?.checkpoint_status?.outcome === "advance" });
+        return;
+      }
+    }
     if (t === "advance") {
       // The existing advancement action — backend moves the pointer exactly
       // once (CAS-guarded); we just refresh and stay on Today for the new task.
@@ -254,6 +263,10 @@ export default function SchoolApp({ path, clientName, onNavigate, onExit }) {
           onStateChanged={(opts) => { refreshAll(); if (opts?.openLessonId) go("lesson", opts.openLessonId); }}
           onBackToCourse={() => go("course")}
           onAskTrainer={(ctx) => openAsk(ctx)}
+          onTakeQuiz={(mid) => setQuizFor({
+            moduleId: mid || detail?.roadmap?.module_quiz?.module_id,
+            checkpointPassed: detail?.roadmap?.checkpoint_status?.outcome === "advance",
+          })}
         />
       );
     } else if (parsed.view === "today") {
@@ -313,6 +326,19 @@ export default function SchoolApp({ path, clientName, onNavigate, onExit }) {
       {practice && (
         <PracticePanel homework={practice.homework} dogPhoto={selectedEntry?.dog_photo}
                        onClose={closePractice} onChanged={refreshAll} onPracticeLogged={practiceLogged} />
+      )}
+
+      {/* Module Quiz — server-graded; a passing submit already advanced the
+          enrollment, so closing/continuing only refreshes and routes. */}
+      {quizFor && (
+        <ModuleQuizPanel
+          enrollmentId={selectedId}
+          moduleId={quizFor.moduleId}
+          checkpointPassed={quizFor.checkpointPassed}
+          onClose={() => { setQuizFor(null); refreshAll(); }}
+          onAdvanced={() => { setQuizFor(null); refreshAll(); go("today"); }}
+          onReviewLesson={(lid) => { setQuizFor(null); go("lesson", lid); }}
+        />
       )}
 
       <AskTrainerPanel open={!!askContext} context={askContext}

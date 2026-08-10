@@ -9,6 +9,13 @@ const OUTCOME = {
   trainer_assist_recommended: { label: "Trainer Assist recommended", cls: "text-purple-300", icon: "fa-hand-holding-heart" },
 };
 
+// Practice Review = coaching, never a grade — wording stays encouraging.
+const PRACTICE_REVIEW_META = {
+  looks_good: { label: "Looks Good", cls: "text-shPrimary", icon: "fa-thumbs-up" },
+  keep_practicing: { label: "Keep Practicing", cls: "text-shSecondary", icon: "fa-rotate" },
+  trainer_attention: { label: "Trainer follow-up", cls: "text-shAccent", icon: "fa-hand-holding-heart" },
+};
+
 function fmt(iso) {
   if (!iso) return "";
   try { return new Date(iso).toLocaleDateString(undefined, { month: "short", day: "numeric", year: "numeric" }); }
@@ -134,6 +141,27 @@ export default function FeedbackScreen({ enrollmentId, onAsk, onChanged }) {
       <header className="flex items-start justify-between gap-3 flex-wrap"><div><p className="text-[10px] font-black uppercase tracking-[0.22em] text-shAccent">Your trainer is part of the course</p><h1 className="text-2xl sm:text-3xl font-black text-shText mt-1">Trainer Feedback</h1><p className="text-[13px] text-shTextMuted mt-1">Checkpoint reviews, trainer guidance, and your School conversations in one place.</p></div><button onClick={() => onAsk?.({})} className="min-h-[42px] px-4 rounded-xl border border-shSecondary/35 text-shSecondary text-[11px] font-black uppercase tracking-widest"><i className="fas fa-comment-dots mr-1.5" />Ask Trainer</button></header>
 
       {history.length === 0 ? <EmptyState icon="fa-comment-dots" message="No trainer feedback yet — checkpoint reviews will appear here as you progress." testid="native-feedback-empty" /> : <section className="space-y-3"><p className="text-[10px] font-black uppercase tracking-[0.2em] text-shTextMuted">Checkpoint reviews · {history.length}</p>{history.map((e) => <FeedbackEntry key={e.id} entry={e} onAsk={onAsk} />)}</section>}
+
+      {(support.practice_reviews || []).length > 0 && (
+        <section className="space-y-2" data-testid="native-practice-reviews">
+          <div><p className="text-[10px] font-black uppercase tracking-[0.2em] text-shPrimary">Practice feedback</p><p className="text-[12px] text-shTextMuted mt-1">Coaching from your trainer on practice you logged — separate from formal checkpoint grades.</p></div>
+          {support.practice_reviews.map((r) => {
+            const meta = PRACTICE_REVIEW_META[r.review_status] || PRACTICE_REVIEW_META.looks_good;
+            return (
+              <article key={r.id} className="rounded-2xl border border-shBorder bg-[var(--sh-card-base)] p-4" data-testid={`practice-review-${r.id}`}>
+                <div className="flex flex-col sm:flex-row sm:items-start sm:justify-between gap-2">
+                  <div className="min-w-0">
+                    <p className="text-[13px] font-black text-shText">{r.practice_title || r.lesson_name || "Practice"}</p>
+                    <p className="text-[11px] text-shTextMuted mt-0.5">{[r.module_name, r.trainer_name, fmt(r.reviewed_at)].filter(Boolean).join(" · ")}</p>
+                  </div>
+                  <span className={`text-[10px] font-black uppercase tracking-widest shrink-0 ${meta.cls}`}><i className={`fas ${meta.icon} mr-1.5`} />{meta.label}</span>
+                </div>
+                {r.review_note && <p className="mt-3 text-[13px] text-gray-200 leading-relaxed border-l-2 border-shPrimary/35 pl-3 whitespace-pre-wrap">“{r.review_note}”</p>}
+              </article>
+            );
+          })}
+        </section>
+      )}
 
       {(support.threads || []).length > 0 && <section className="space-y-3"><div><p className="text-[10px] font-black uppercase tracking-[0.2em] text-shSecondary">Trainer conversations</p><p className="text-[12px] text-shTextMuted mt-1">Questions asked through Online School stay attached to the training context.</p></div>{support.threads.map((t) => <ConversationCard key={t.id} thread={t} onRefresh={load} />)}</section>}
 

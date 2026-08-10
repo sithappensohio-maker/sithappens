@@ -22,7 +22,19 @@ export function buildSchoolRoadmap(roadmap) {
     currentLessonName: m.status === "current" ? (roadmap.current_lesson?.name || null) : null,
     lessons: m.lessons || [],
     lockedReason: m.locked_reason,
+    quiz: m.quiz || null,
   }));
+}
+
+// Module Quiz chip copy — one place so Roadmap/Progress read identically.
+// quiz.status vocabulary is locked|available|passed (server-derived).
+export function moduleQuizChip(quiz) {
+  if (!quiz || !quiz.enabled) return null;
+  if (quiz.status === "passed") {
+    return { label: `Quiz · ${quiz.best_score != null ? `${Math.round(quiz.best_score)}% ` : ""}Passed`, tone: "passed" };
+  }
+  if (quiz.status === "available") return { label: "Quiz · Ready", tone: "ready" };
+  return { label: "Quiz · Not Ready", tone: "locked" };
 }
 
 // LessonCard's status vocabulary is completed|current|available|locked

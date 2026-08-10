@@ -89,6 +89,12 @@ class EventType:
     PRACTICE_DIFFICULTY_REPORTED = "practice_difficulty_reported"
     PRACTICE_COULD_NOT_COMPLETE = "practice_could_not_complete"
     PRACTICE_QUESTION_ASKED = "practice_question_asked"
+    # Practice Reviews (trainer coaching on a practice log)
+    PRACTICE_REVIEWED = "practice_reviewed"
+    PRACTICE_REVIEW_ATTENTION = "practice_review_attention"
+    # Module Quizzes (client learning behavior — activity-only, never an alert)
+    MODULE_QUIZ_PASSED = "module_quiz_passed"
+    MODULE_QUIZ_RETRY_NEEDED = "module_quiz_retry_needed"
     # Checkpoints
     CHECKPOINT_SUBMITTED = "checkpoint_submitted"
     CHECKPOINT_REVIEW_STARTED = "checkpoint_review_started"
@@ -128,6 +134,10 @@ EVENT_POLICY: Dict[str, Dict[str, Any]] = {
     # like the other attention-required School actions.
     EventType.TRAINER_REQUEST_COMPLETED:   {"attention": True, "priority": Priority.HIGH, "email": True},
     EventType.CHECKPOINT_REMEDIATION_REQUIRED:    {"attention": True, "priority": Priority.NORMAL, "email": False},
+    # A trainer explicitly flagged a Practice Review "Needs Trainer Attention"
+    # — staff follow-up work, in-app only (the flagging trainer IS staff, so
+    # no email blast is warranted).
+    EventType.PRACTICE_REVIEW_ATTENTION:          {"attention": True, "priority": Priority.HIGH, "email": False},
     # ── Notable but not a screaming alert (in-app, no email) ─────────────────
     EventType.ACHIEVEMENT_EARNED:          {"attention": False, "priority": Priority.NORMAL, "email": False},
     EventType.COURSE_COMPLETED:            {"attention": False, "priority": Priority.NORMAL, "email": False},
@@ -425,6 +435,7 @@ def _default_title(event: dict) -> str:
         EventType.TRAINER_ASSIST_REQUESTED: "requested Trainer Assist",
         EventType.CHECKPOINT_TRAINER_ASSIST_REQUIRED: "needs Trainer Assist",
         EventType.CHECKPOINT_REMEDIATION_REQUIRED: "needs remediation",
+        EventType.PRACTICE_REVIEW_ATTENTION: "practice flagged for follow-up",
     }
     return f"{subject} {labels.get(et, et.replace('_', ' '))}".strip()
 

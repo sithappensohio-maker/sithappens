@@ -6,9 +6,12 @@
 //     (field_values, note, mood, difficulty, photo, video_media_id,
 //     could_not_complete/reason)
 //   - single-log (section-based) assignments -> POST /homework/{id}/section-log
-//     (field_values, date, note, and now — see server.py's SectionLogIn —
-//     difficulty, could_not_complete/reason, and photo too; video is still
-//     daily-tracker only, no section-scoped upload endpoint exists yet)
+//     (field_values, date, note, and — see server.py's SectionLogIn —
+//     difficulty, could_not_complete/reason, photo, and video_media_id.
+//     Section video uploads go through POST /homework/{id}/practice-video
+//     and are offered ONLY when the Practice Recipe requests video
+//     (practice_coach.media.request_video); recipes that don't request it
+//     keep exactly the old no-video form.)
 //
 // Client Practice Coach upgrade: when template_snapshot.practice_coach is
 // present and enabled, this renders the structured Coach Mode flow
@@ -87,6 +90,11 @@ export default function PracticePanel({ homework, dogPhoto, onClose, onChanged, 
   const setField = (fid, v) => setValues(s => ({ ...s, [fid]: v }));
   const setEndAnswer = (qid, v) => setEndAnswers(s => ({ ...s, [qid]: v }));
 
+  // Section-log (non-daily) practice offers video ONLY when the Practice
+  // Recipe explicitly requests it — a recipe with no request keeps the old
+  // no-video form. Daily tracker keeps its always-available video control.
+  const sectionVideoAllowed = !isDailyTracker && !!practiceCoach?.media?.request_video;
+
   const uploadVideo = async (file, errText) => {
     if (errText) { toast.error(errText); return; }
     setUploadingVideo(true);
@@ -97,7 +105,10 @@ export default function PracticePanel({ homework, dogPhoto, onClose, onChanged, 
         reader.onerror = reject;
         reader.readAsDataURL(file);
       });
-      const { data } = await api.post(`/homework/${homework.id}/day/${activeDay.day_number}/video`, { photo: dataUrl, filename: file.name });
+      const url = isDailyTracker
+        ? `/homework/${homework.id}/day/${activeDay.day_number}/video`
+        : `/homework/${homework.id}/practice-video`;
+      const { data } = await api.post(url, { photo: dataUrl, filename: file.name });
       setVideoId(data.media_id);
       setVideoName(file.name);
     } catch (e) {
@@ -135,6 +146,7 @@ export default function PracticePanel({ homework, dogPhoto, onClose, onChanged, 
         await api.post(`/homework/${homework.id}/section-log`, {
           section_id: section.id, date: todayISO(), field_values, note,
           difficulty: difficulty || null, photo: photo || "",
+          video_media_id: sectionVideoAllowed ? (videoId || "") : "",
           could_not_complete: couldNotComplete,
           could_not_complete_reason: couldNotComplete ? (couldNotCompleteReason || null) : null,
         });
@@ -197,6 +209,24 @@ export default function PracticePanel({ homework, dogPhoto, onClose, onChanged, 
   const startGuided = () => setViewMode("guided");
   const finishGuided = (metrics) => { setGuidedMetrics(metrics); setEntryContext("guided_done"); setViewMode("form"); };
 
+  // Practice Timer — lives WHERE THE REPS HAPPEN: on the guided-practice
+  // screen and on the quick/legacy form (where the client practices with the
+  // form open). After guided practice it only lingers on the completion form
+  // when it was actually used (elapsed context), never as a fresh
+  // start-a-timer prompt for practice that already happened. Timer state
+  // stays up here so the elapsed time survives the guided → form transition.
+  const timerCard = (
+    <SectionCard accent="cyan" intensity="subtle">
+      <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3">
+        <div><p className="text-[9px] font-black uppercase tracking-[0.14em] text-shTextMuted"><i className="fas fa-stopwatch mr-1.5 text-shSecondary"/>Practice Timer <span className="normal-case tracking-normal font-semibold">(optional)</span></p><span className="block text-[30px] font-black text-white tabular-nums mt-1" data-testid="practice-timer-display">{String(Math.floor(timerSec / 60)).padStart(2, "0")}:{String(timerSec % 60).padStart(2, "0")}</span></div>
+        <div className="grid grid-cols-2 gap-2 sm:flex">
+          <button type="button" onClick={() => setTimerRunning(r => !r)} data-testid="practice-timer-toggle" className="min-h-[44px] bg-shSecondary/12 text-shSecondary border border-shSecondary/35 px-4 py-2 rounded-xl text-[11px] font-black">{timerRunning ? "Pause" : "Start"}</button>
+          <button type="button" onClick={() => { setTimerSec(0); setTimerRunning(false); }} data-testid="practice-timer-reset" className="min-h-[44px] border border-shBorder/55 bg-black/10 text-shTextMuted px-4 py-2 rounded-xl text-[11px] font-black">Reset</button>
+        </div>
+      </div>
+    </SectionCard>
+  );
+
   return (
     <div className="fixed inset-0 bg-black/90 backdrop-blur-sm z-50 flex items-end sm:items-center justify-center sm:p-4 lg:p-6" data-testid="practice-panel">
       <div className="relative bg-[var(--sh-card-base)] border border-shBorder/70 rounded-t-3xl sm:rounded-3xl w-full sm:max-w-3xl h-[100dvh] sm:h-auto sm:max-h-[calc(var(--app-height)_-_2rem)] flex flex-col min-h-0 shadow-[0_30px_100px_rgba(0,0,0,0.7)] overflow-hidden">
@@ -235,12 +265,15 @@ export default function PracticePanel({ homework, dogPhoto, onClose, onChanged, 
               testid="coach-overview"
             />
           ) : coachEnabled && viewMode === "guided" ? (
-            <GuidedPracticeFlow
-              practiceCoach={practiceCoach} tokens={tokens}
-              onOpenTroubleshooting={() => setTroubleshootingOpen(true)}
-              onFinish={finishGuided}
-              testid="coach-guided"
-            />
+            <>
+              {timerCard}
+              <GuidedPracticeFlow
+                practiceCoach={practiceCoach} tokens={tokens}
+                onOpenTroubleshooting={() => setTroubleshootingOpen(true)}
+                onFinish={finishGuided}
+                testid="coach-guided"
+              />
+            </>
           ) : (
             <>
               <div className="flex flex-wrap items-center gap-2 text-[12px] text-shTextMuted font-bold">
@@ -285,21 +318,15 @@ export default function PracticePanel({ homework, dogPhoto, onClose, onChanged, 
                 </ExpandableSection>
               )}
 
-              <SectionCard accent="cyan" intensity="subtle">
-                <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3">
-                  <div><p className="text-[9px] font-black uppercase tracking-[0.14em] text-shTextMuted"><i className="fas fa-stopwatch mr-1.5 text-shSecondary"/>Practice Timer <span className="normal-case tracking-normal font-semibold">(optional)</span></p><span className="block text-[30px] font-black text-white tabular-nums mt-1" data-testid="practice-timer-display">{String(Math.floor(timerSec / 60)).padStart(2, "0")}:{String(timerSec % 60).padStart(2, "0")}</span></div>
-                  <div className="grid grid-cols-2 gap-2 sm:flex">
-                    <button type="button" onClick={() => setTimerRunning(r => !r)} data-testid="practice-timer-toggle" className="min-h-[44px] bg-shSecondary/12 text-shSecondary border border-shSecondary/35 px-4 py-2 rounded-xl text-[11px] font-black">{timerRunning ? "Pause" : "Start"}</button>
-                    <button type="button" onClick={() => { setTimerSec(0); setTimerRunning(false); }} data-testid="practice-timer-reset" className="min-h-[44px] border border-shBorder/55 bg-black/10 text-shTextMuted px-4 py-2 rounded-xl text-[11px] font-black">Reset</button>
-                  </div>
-                </div>
-              </SectionCard>
+              {/* During-practice surfaces keep the timer; the after-guided
+                  completion form only shows it when it actually ran. */}
+              {(entryContext !== "guided_done" || timerSec > 0) && timerCard}
 
               <PracticeCompletionPanel
                 allowDifficulty={true}
                 allowCouldNotComplete={true}
                 allowPhoto={true}
-                allowVideo={isDailyTracker}
+                allowVideo={isDailyTracker || sectionVideoAllowed}
                 fieldsSlot={editableChips.length > 0 ? <MeasurementChips items={editableChips} testid="practice-fields"/> : null}
                 extraSlot={coachEnabled && (practiceCoach?.end_questions || []).length > 0
                   ? <CoachEndQuestions questions={practiceCoach.end_questions} answers={endAnswers} onAnswerChange={setEndAnswer} tokens={tokens} testid="coach-end-questions"/>

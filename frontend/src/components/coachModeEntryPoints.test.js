@@ -81,13 +81,17 @@ test("the pre-existing polished practice UI is reused as Quick Practice's founda
 });
 
 // ---------------------------------------------------------------------------
-// Backward-compatible capability gating — video stays daily-tracker only;
-// difficulty/could-not-complete/photo now work for BOTH (see server.py's
-// extended SectionLogIn) — never a control whose value is silently dropped.
+// Backward-compatible capability gating — section-log video now persists
+// through POST /homework/{id}/practice-video, but it is offered ONLY when
+// the Practice Recipe explicitly requests video; recipes that don't request
+// it keep the old no-video form. Difficulty/could-not-complete/photo work
+// for BOTH kinds (see server.py's extended SectionLogIn) — never a control
+// whose value is silently dropped.
 // ---------------------------------------------------------------------------
 
-test("video upload capability is still gated to daily-tracker only — no section-scoped upload endpoint exists yet", () => {
-  expect(practicePanelSrc).toMatch(/allowVideo=\{isDailyTracker\}/);
+test("section-log video is offered only when the recipe requests it; daily tracker keeps its always-on control", () => {
+  expect(practicePanelSrc).toMatch(/const sectionVideoAllowed = !isDailyTracker && !!practiceCoach\?\.media\?\.request_video/);
+  expect(practicePanelSrc).toMatch(/allowVideo=\{isDailyTracker \|\| sectionVideoAllowed\}/);
 });
 
 test("difficulty, could-not-complete, and photo are now offered for BOTH daily-tracker and section-log homework", () => {

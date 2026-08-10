@@ -101,8 +101,12 @@ test("PracticePanel calls onChanged after a successful submit, and Portal.jsx wi
 
 // 11. Existing media upload remains functional — the video upload still
 // posts to the exact same endpoint DailyCheckInCard already used.
-test("PracticePanel's video upload uses the existing day-video endpoint, unchanged", () => {
-  expect(practicePanelSrc).toMatch(/api\.post\(`\/homework\/\$\{homework\.id\}\/day\/\$\{activeDay\.day_number\}\/video`/);
+test("PracticePanel's video upload routes daily-tracker clips to the day-video endpoint and section clips to practice-video", () => {
+  // The Reviews/Module-Quiz build added a section-scoped upload route; the
+  // daily-tracker path is unchanged, it's just selected per homework kind.
+  expect(practicePanelSrc).toMatch(/`\/homework\/\$\{homework\.id\}\/day\/\$\{activeDay\.day_number\}\/video`/);
+  expect(practicePanelSrc).toMatch(/`\/homework\/\$\{homework\.id\}\/practice-video`/);
+  expect(practicePanelSrc).toMatch(/isDailyTracker\s*\?\s*`\/homework/);
 });
 
 // 12 / 13. Trainer feedback is shown without exposing internal notes, and

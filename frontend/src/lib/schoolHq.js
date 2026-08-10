@@ -19,6 +19,10 @@ export const EVENT_META = {
   student_question:             { icon: "fa-circle-question",     accent: "orange",  label: "Question" },
   practice_could_not_complete:  { icon: "fa-triangle-exclamation",accent: "danger",  label: "Couldn't complete" },
   practice_video_submitted:     { icon: "fa-video",               accent: "purple",  label: "Video to review" },
+  practice_reviewed:            { icon: "fa-user-tie",            accent: "lime",    label: "Practice reviewed" },
+  practice_review_attention:    { icon: "fa-hand-holding-heart",  accent: "orange",  label: "Practice follow-up" },
+  module_quiz_passed:           { icon: "fa-circle-check",        accent: "lime",    label: "Module quiz passed" },
+  module_quiz_retry_needed:     { icon: "fa-rotate-left",         accent: "amber",   label: "Quiz retry" },
   checkpoint_submitted:         { icon: "fa-clipboard-check",     accent: "amber",   label: "Checkpoint" },
   checkpoint_passed:            { icon: "fa-award",               accent: "lime",    label: "Checkpoint passed" },
   checkpoint_remediation_required: { icon: "fa-rotate-left",      accent: "amber",   label: "Remediation" },
@@ -42,6 +46,7 @@ const ACTION_LABEL = {
   student_question: "Reply",
   practice_video_submitted: "Review video",
   practice_could_not_complete: "View practice",
+  practice_review_attention: "Open review",
   trainer_request_completed: "Open student",
 };
 
