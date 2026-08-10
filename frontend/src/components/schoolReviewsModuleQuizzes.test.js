@@ -69,6 +69,11 @@ test("non-daily practice uploads through the section practice-video route", () =
   expect(practicePanelSrc).toMatch(/video_media_id: sectionVideoAllowed \? \(videoId \|\| ""\) : ""/);
 });
 
+test("the practice timer lives where the reps happen — guided screen and quick/legacy form, never only the after-guided completion form", () => {
+  expect(practicePanelSrc).toMatch(/\{timerCard\}\s*<GuidedPracticeFlow/);
+  expect(practicePanelSrc).toMatch(/entryContext !== "guided_done" \|\| timerSec > 0\) && timerCard/);
+});
+
 test("section video control appears only when the recipe requests video", () => {
   expect(practicePanelSrc).toMatch(/const sectionVideoAllowed = !isDailyTracker && !!practiceCoach\?\.media\?\.request_video/);
   expect(practicePanelSrc).toMatch(/allowVideo=\{isDailyTracker \|\| sectionVideoAllowed\}/);
