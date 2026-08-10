@@ -21,6 +21,7 @@ import { api, formatErr } from "../lib/api";
 import { useAuth } from "../lib/auth";
 import { toast } from "sonner";
 import PageHero from "../components/PageHero";
+import PendingActionsPanel from "../components/PendingActionsPanel";
 import { CheckoutModal } from "../components/CheckoutModal";
 import TakePaymentModal from "../components/TakePaymentModal";
 import StripeRefundModal from "../components/StripeRefundModal";
@@ -868,6 +869,11 @@ export default function Pos({ onOpenShopManager } = {}) {
           </button>
         </div>
       </div>
+
+      {/* Action Required — same shared panel as the Dashboard. It renders
+          nothing for staff without booking permissions (the API 403s and the
+          panel hides itself), so Front Desk never shows misleading actions. */}
+      <PendingActionsPanel testid="frontdesk-pending-actions" compactWhenEmpty={false} />
 
       {/* Today's Visits — arrival/pickup roster. A focused list, not a
           second dashboard: three status tabs with counts, search, and just

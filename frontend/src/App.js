@@ -85,6 +85,7 @@ function AdminShell() {
   const [messagesUnread, setMessagesUnread] = useState(0);
   const [shopOrdersUnseen, setShopOrdersUnseen] = useState(0);
   const [schoolAttention, setSchoolAttention] = useState(0);
+  const [pendingActions, setPendingActions] = useState(0);
 
   // Poll the admin messages-unread badge every 60s and on tab change so
   // the sidebar dot stays roughly fresh without hammering the API.
@@ -141,6 +142,27 @@ function AdminShell() {
     const onChanged = () => tick();
     window.addEventListener("sh:school-attention-changed", onChanged);
     return () => { alive = false; clearInterval(h); window.removeEventListener("sh:school-attention-changed", onChanged); };
+  }, [can, tab]);
+
+  // Action Required badge — unresolved staff decisions (Meet & Greets,
+  // approval-required bookings, reschedule requests). Reflects the
+  // authoritative pending records, so reading notifications never clears it;
+  // Bookings/Dashboard dispatch "sh:pending-actions-changed" after an
+  // approve/decline so it drops immediately instead of waiting for the poll.
+  useEffect(() => {
+    if (!can || !can("booking_edit")) return;
+    let alive = true;
+    const tick = async () => {
+      try {
+        const { data } = await api.get("/admin/pending-actions/count");
+        if (alive) setPendingActions(data?.total || 0);
+      } catch { /* ignore */ }
+    };
+    tick();
+    const h = setInterval(tick, 60000);
+    const onChanged = () => tick();
+    window.addEventListener("sh:pending-actions-changed", onChanged);
+    return () => { alive = false; clearInterval(h); window.removeEventListener("sh:pending-actions-changed", onChanged); };
   }, [can, tab]);
 
   // Cmd/Ctrl+K to open global search
@@ -555,6 +577,10 @@ function AdminShell() {
                         <span className="ml-2 inline-block bg-shAccent text-white text-[10px] font-bold px-1.5 py-0.5 rounded-full align-middle"
                               data-testid={`${prefix}pinned-pos-badge`}>{shopOrdersUnseen}</span>
                       )}
+                      {(n.id === "bookings" || n.id === "dashboard") && pendingActions > 0 && (
+                        <span className="ml-2 inline-block bg-shAccent text-white text-[10px] font-bold px-1.5 py-0.5 rounded-full align-middle"
+                              data-testid={`${prefix}pinned-${n.id}-pending-badge`}>{pendingActions}</span>
+                      )}
                     </button>
                     <div className="shrink-0 flex items-center">
                       <button onClick={(e) => { e.stopPropagation(); moveFavorite(n.id, -1); }}
@@ -626,6 +652,10 @@ function AdminShell() {
                           {n.id === "school_hq" && schoolAttention > 0 && (
                             <span className={`${collapsed ? "absolute top-0 right-0 -mt-1 -mr-1" : "ml-2"} inline-block bg-shAccent text-white text-[10px] font-bold px-1.5 py-0.5 rounded-full align-middle`}
                                   data-testid={`${prefix}nav-school_hq-badge`}>{collapsed ? "•" : schoolAttention}</span>
+                          )}
+                          {(n.id === "bookings" || n.id === "dashboard") && pendingActions > 0 && (
+                            <span className={`${collapsed ? "absolute top-0 right-0 -mt-1 -mr-1" : "ml-2"} inline-block bg-shAccent text-white text-[10px] font-bold px-1.5 py-0.5 rounded-full align-middle`}
+                                  data-testid={`${prefix}nav-${n.id}-pending-badge`}>{collapsed ? "•" : pendingActions}</span>
                           )}
                         </button>
                         {!collapsed && (

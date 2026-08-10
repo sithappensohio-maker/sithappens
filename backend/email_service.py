@@ -702,6 +702,111 @@ async def notify_admin_new_booking(booking: dict, client: dict) -> None:
     )
 
 
+async def notify_admin_meet_greet_request(booking: dict, client: dict) -> bool:
+    """A Meet & Greet was requested from the public landing page — the
+    operator must know IMMEDIATELY (when the request is CREATED, never on
+    the requested appointment day).
+
+    Durable by design (the production miss this fixes was a fire-and-forget
+    admin email): routed through the email_outbox with a deterministic key,
+    so quiet hours / provider failures leave a retryable row with the real
+    failure reason instead of silently dropping the alert, and a successful
+    send stamps notification_log so delivery is auditable. Returns True when
+    the send succeeded right now; False means \"queued for retry / failed\" —
+    either way the in-app Pending Action exists independently."""
+    if not ADMIN_NOTIFICATION_EMAIL:
+        logger.warning("ADMIN_NOTIFICATION_EMAIL not set — skipping Meet & Greet admin email")
+        return False
+    dog_name = booking.get("dog_name") or "—"
+    client_name = booking.get("client_name") or client.get("name") or "—"
+    when = f"{booking.get('date', '—')} at {booking.get('time', '—')}"
+    rows = [
+        ("Request", "Meet & Greet"),
+        ("Client", client_name),
+        ("Dog", dog_name),
+        ("Phone", client.get("phone") or "—"),
+        ("Email", client.get("email") or "—"),
+        ("Requested for", when),
+        ("Received", _utc_now_iso()),
+    ]
+    if booking.get("notes"):
+        rows.append(("Notes", booking["notes"]))
+    key = f"admin_meet_greet_request:{booking.get('id')}"
+    cta_url = f"{APP_PUBLIC_URL}/" if APP_PUBLIC_URL else None
+    return await _dispatch(
+        slug="admin_meet_greet_request",
+        to_email=ADMIN_NOTIFICATION_EMAIL,
+        ctx={"client_name": client_name, "dog_name": dog_name,
+             "date": booking.get("date", ""), "time": booking.get("time", "")},
+        rows=rows,
+        cta_url=cta_url,
+        show_install=False,
+        fallback_subject=f"New Meet & Greet Request — {dog_name} / {client_name}",
+        fallback_title="🐾 New Meet & Greet request",
+        fallback_intro=(
+            f"{client_name} requested a Meet & Greet for {dog_name} on {when}. "
+            "It's waiting for your review — approve or decline it from Bookings."
+        ),
+        fallback_cta_text="Review the request",
+        outbox_key=key,
+        on_success={"type": "notification_log", "key": key,
+                    "meta": {"kind": "admin_meet_greet_request", "booking_id": booking.get("id")}},
+        queue_on_failure=True,
+    )
+
+
+async def notify_admin_booking_approval(booking: dict, client: dict) -> bool:
+    """A client submitted a booking that REQUIRES APPROVAL — same durable
+    treatment as the Meet & Greet alert above (outbox retry on failure,
+    notification_log stamp on success), because a pending booking that stays
+    quiet is a request the business can miss."""
+    if not ADMIN_NOTIFICATION_EMAIL:
+        logger.warning("ADMIN_NOTIFICATION_EMAIL not set — skipping booking-approval admin email")
+        return False
+    svc_label = _service_label(booking.get("service_type", ""))
+    if booking.get("service_type") == "grooming" and booking.get("grooming_type"):
+        svc_label += " · " + ("Bath" if booking["grooming_type"] == "bath" else "Nail Trim")
+    dog_name = booking.get("dog_name") or "—"
+    client_name = booking.get("client_name") or client.get("name") or "—"
+    rows = [
+        ("Status", "PENDING APPROVAL"),
+        ("Client", client_name),
+        ("Dog", dog_name),
+        ("Service", svc_label),
+        ("Dates", _date_range(booking.get("date", ""), booking.get("end_date"))),
+        ("Phone", client.get("phone") or "—"),
+        ("Email", client.get("email") or "—"),
+        ("Received", _utc_now_iso()),
+    ]
+    if booking.get("time"):
+        rows.insert(5, ("Time", booking["time"]))
+    if booking.get("notes"):
+        rows.append(("Notes", booking["notes"]))
+    key = f"admin_booking_approval:{booking.get('id')}"
+    cta_url = f"{APP_PUBLIC_URL}/" if APP_PUBLIC_URL else None
+    return await _dispatch(
+        slug="admin_booking_approval",
+        to_email=ADMIN_NOTIFICATION_EMAIL,
+        ctx={"client_name": client_name, "dog_name": dog_name, "service_label": svc_label,
+             "date": booking.get("date", "")},
+        rows=rows,
+        cta_url=cta_url,
+        show_install=False,
+        fallback_subject=f"Booking Needs Approval — {dog_name} / {client_name}",
+        fallback_title="⏳ Booking waiting on your approval",
+        fallback_intro=(
+            f"{client_name} requested {svc_label} for {dog_name} "
+            f"({_date_range(booking.get('date', ''), booking.get('end_date'))}). "
+            "It stays pending until you approve or decline it."
+        ),
+        fallback_cta_text="Review the booking",
+        outbox_key=key,
+        on_success={"type": "notification_log", "key": key,
+                    "meta": {"kind": "admin_booking_approval", "booking_id": booking.get("id")}},
+        queue_on_failure=True,
+    )
+
+
 async def queue_school_attention_email(event: dict, *, outbox_key: str) -> bool:
     """Durably queue the operator email for an attention-worthy Online School
     event (question, checkpoint, could-not-complete, Trainer Assist, …).

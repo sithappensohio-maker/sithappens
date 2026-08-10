@@ -21,6 +21,7 @@ import TrainingSessionWorkspace from "../components/TrainingSessionWorkspace";
 import CheckpointReviewQueue from "../components/CheckpointReviewQueue";
 import TrainerAssistQueue from "../components/TrainerAssistQueue";
 import MessageClientModal from "../components/MessageClientModal";
+import PendingActionsPanel from "../components/PendingActionsPanel";
 import NeonEdge from "../components/premium/NeonEdge";
 import HuskyDogImage from "../components/brand/HuskyDogImage";
 import PageHero from "../components/PageHero";
@@ -279,6 +280,14 @@ export default function Dashboard({ onNavigate = () => {}, onJumpToDog = () => {
           testid="dashboard-hero"
         />
       )}
+
+      {/* Action Required — everything waiting on a real staff decision
+          (Meet & Greets, approval-required bookings, reschedule requests).
+          Deliberately ABOVE every other operational widget, especially on
+          mobile: visibility keys off when the request was CREATED, never the
+          requested appointment date. Not widget-gated — a pending request
+          must never be hidden by dashboard customization. */}
+      <PendingActionsPanel testid="dashboard-pending-actions" />
 
       {/* Sprint 110df — Solo-operator owner clock + end-of-day wrap-up
           Sprint 110di-19 — gated by Dashboard Widget Controls */}

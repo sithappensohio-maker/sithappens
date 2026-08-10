@@ -10,6 +10,7 @@ import RescheduleRequestsInbox from "../components/RescheduleRequestsInbox";
 import { useLiveRefresh } from "../lib/useLiveRefresh";
 import { toast } from "sonner";
 import { BOOKING_STATUS } from "../lib/statusDefs";
+import { PendingActionCard, PENDING_ACTION_TARGET_KEY, announcePendingActionsChanged } from "../components/PendingActionsPanel";
 
 // Sprint 110di-38 — Multi-dog group badge. Module-scoped so it isn't
 // re-created on every render of the parent Bookings component.
@@ -42,10 +43,18 @@ export default function Bookings() {
   // Sprint 110ao — toast a new booking the moment it lands in this list.
   const seenIdsRef = useRef(null);
   const seededRef = useRef(false);
+  // Action Required — approval queue rows from the authoritative
+  // pending-actions API (same urgency/wait labels as the Dashboard panel).
+  const [pendingActions, setPendingActions] = useState([]);
+
   const load = async () => {
     try {
       const { data } = await api.get("/bookings");
       setBookings(data);
+      try {
+        const { data: pa } = await api.get("/admin/pending-actions", { params: { limit: 100 } });
+        setPendingActions((pa.items || []).filter(a => a.type === "meet_and_greet_request" || a.type === "booking_approval"));
+      } catch { setPendingActions([]); /* 403 → no approval queue for this role */ }
       // New-arrival detection (skip first load)
       const ids = new Set((data || []).map(b => b.id).filter(Boolean));
       if (seededRef.current && seenIdsRef.current) {
@@ -88,11 +97,31 @@ export default function Bookings() {
     }
   };
 
-  const approve = async (id) => { try { await api.post(`/bookings/${id}/approve`); load(); } catch (e) { setErr(formatErr(e.response?.data?.detail)); } };
+  const approve = async (id) => {
+    try { await api.post(`/bookings/${id}/approve`); announcePendingActionsChanged(); load(); }
+    catch (e) { setErr(formatErr(e.response?.data?.detail)); }
+  };
   const reject = async (id) => {
     if (!(await confirm({ title: "Reject booking?", body: "This immediately declines the request. The client is not automatically notified — follow up with them directly if needed.", confirmText: "Reject", cancelText: "Keep it", tone: "danger" }))) return;
-    try { await api.post(`/bookings/${id}/reject`); load(); } catch (e) { setErr(formatErr(e.response?.data?.detail)); }
+    try { await api.post(`/bookings/${id}/reject`); announcePendingActionsChanged(); load(); }
+    catch (e) { setErr(formatErr(e.response?.data?.detail)); }
   };
+
+  // Deep-link consumption — an Action Required "Review" (Dashboard, Front
+  // Desk, or email CTA) stored the exact target before navigating here; open
+  // that booking's detail the moment its row is available. The target key is
+  // consumed once, never left to re-fire on later visits.
+  useEffect(() => {
+    if (!bookings.length) return;
+    let target = null;
+    try { target = JSON.parse(sessionStorage.getItem(PENDING_ACTION_TARGET_KEY) || "null"); } catch { /* ignore */ }
+    if (!target?.booking_id) return;
+    const b = bookings.find(x => x.id === target.booking_id);
+    if (b) {
+      setDetailFor(b);
+      try { sessionStorage.removeItem(PENDING_ACTION_TARGET_KEY); } catch { /* ignore */ }
+    }
+  }, [bookings]);
   const cancel = async (id) => {
     if (!(await confirm({ title: "Cancel booking?", body: "This will remove the booking. Credits aren't charged until check-out.", confirmText: "Cancel booking", cancelText: "Keep it", tone: "danger" }))) return;
     try { await api.delete(`/bookings/${id}`); load(); } catch (e) { setErr(formatErr(e.response?.data?.detail)); }
@@ -117,8 +146,11 @@ export default function Bookings() {
     : upcomingRows;
   const hiddenCount = bookings.length - upcomingRows.length;
 
+  // Pending must be visually unmistakable — a bordered, high-contrast
+  // "PENDING APPROVAL" chip, never a barely-different gray tag.
+  const statusLabel = (s) => (s === "pending" ? "PENDING APPROVAL" : (BOOKING_STATUS[s]?.label || s));
   const statusStyle = (s) => ({
-    pending: "bg-shAccent/15 text-shAccent",
+    pending: "bg-shAccent/20 text-shAccent border border-shAccent/50",
     approved: "bg-shPrimary/15 text-shPrimary",
     rejected: "bg-red-500/15 text-red-400",
     cancelled: "bg-gray-500/15 text-shTextMuted",
@@ -176,6 +208,43 @@ export default function Bookings() {
         testid="bookings-hero"
       />
       {err && <div className="text-[15px] text-red-400 bg-red-500/10 rounded p-3 uppercase font-black">{err}</div>}
+
+      {/* NEEDS APPROVAL — approval-required bookings and Meet & Greet
+          requests, surfaced BEFORE the ordinary list from the moment they
+          were submitted (sorted by urgency + oldest request first, never
+          buried under their future appointment dates). */}
+      {pendingActions.length > 0 && (
+        <section className="rounded-2xl border border-shAccent/45 bg-shAccent/[0.05] p-4 sm:p-5" data-testid="bookings-needs-approval">
+          <h2 className="text-[15px] sm:text-[17px] font-black text-shText uppercase tracking-wide mb-3">
+            <i className="fas fa-hourglass-half text-shAccent mr-2" />Needs Approval
+            <span className="ml-2 inline-block bg-shAccent text-white text-[12px] font-black px-2 py-0.5 rounded-full align-middle"
+                  data-testid="bookings-needs-approval-count">{pendingActions.length}</span>
+          </h2>
+          <div className="space-y-2.5">
+            {pendingActions.map((a, i) => {
+              const bookingId = a.deep_link?.booking_id;
+              const full = bookings.find(b => b.id === bookingId);
+              return (
+                <div key={a.id} className="space-y-1.5">
+                  <PendingActionCard action={a} testid={`needs-approval-row-${i}`}
+                                     onOpen={() => { if (full) setDetailFor(full); }} />
+                  <div className="flex flex-wrap gap-2 justify-end">
+                    <button onClick={() => reject(bookingId)} data-testid={`needs-approval-reject-${i}`}
+                            className="min-h-[40px] px-3 rounded-lg border border-red-500/40 text-red-300 text-[11px] font-black uppercase tracking-widest hover:bg-red-500/10 transition">
+                      Reject
+                    </button>
+                    <button onClick={() => approve(bookingId)} data-testid={`needs-approval-approve-${i}`}
+                            className="min-h-[40px] px-4 rounded-lg bg-shPrimary text-bgHeader text-[11px] font-black uppercase tracking-widest hover:bg-shPrimary/90 transition">
+                      <i className="fas fa-check mr-1.5" />Approve
+                    </button>
+                  </div>
+                </div>
+              );
+            })}
+          </div>
+        </section>
+      )}
+
       <div className="bg-[var(--sh-card-base)] rounded-xl border border-shBorder overflow-hidden">
         {showHistory ? (
           <div className="p-4">
@@ -203,7 +272,7 @@ export default function Bookings() {
                     </p>
                   </div>
                   <div className="flex items-center flex-wrap gap-x-3 gap-y-1 sm:shrink-0">
-                    <span className={`text-[13px] font-black uppercase px-2 py-1 rounded ${statusStyle(b.status)}`}>{BOOKING_STATUS[b.status]?.label || b.status}</span>
+                    <span className={`text-[13px] font-black uppercase px-2 py-1 rounded ${statusStyle(b.status)}`}>{statusLabel(b.status)}</span>
                     {!b._archived && <button onClick={(e)=>{ e.stopPropagation(); setEditing(b); }} className="text-[13px] font-black uppercase text-shSecondary hover:underline">Open</button>}
                   </div>
                 </div>
@@ -233,7 +302,7 @@ export default function Bookings() {
                     </p>
                   </div>
                   <div className="flex items-center flex-wrap gap-x-3 gap-y-1 sm:shrink-0">
-                    <span className={`text-[13px] font-black uppercase px-2 py-1 rounded ${statusStyle(b.status)}`}>{BOOKING_STATUS[b.status]?.label || b.status}</span>
+                    <span className={`text-[13px] font-black uppercase px-2 py-1 rounded ${statusStyle(b.status)}`}>{statusLabel(b.status)}</span>
                     <button onClick={(e)=>{ e.stopPropagation(); setEditing(b); }} data-testid={`edit-${b.id}-g`} className="text-[13px] font-black uppercase text-shSecondary hover:underline">Edit</button>
                     {b.status === "pending" && <>
                       <button onClick={(e)=>{ e.stopPropagation(); approve(b.id); }} data-testid={`approve-${b.id}-g`} className="text-[13px] font-black uppercase text-shPrimary hover:underline">Approve</button>
@@ -275,7 +344,7 @@ export default function Bookings() {
                   {b.date}{b.end_date && b.end_date !== b.date ? ` → ${b.end_date}` : ""}
                   {b.time && <span className="ml-2 text-shAccent font-black tracking-widest">@ {b.time}</span>}
                 </td>
-                <td className="px-6 py-4"><span className={`text-[14px] font-black uppercase px-2 py-1 rounded border ${statusStyle(b.status)}`}>{BOOKING_STATUS[b.status]?.label || b.status}</span></td>
+                <td className="px-6 py-4"><span className={`text-[14px] font-black uppercase px-2 py-1 rounded border ${statusStyle(b.status)}`}>{statusLabel(b.status)}</span></td>
                 <td className="px-6 py-4 text-right space-x-2">
                   <button onClick={(e)=>{ e.stopPropagation(); setEditing(b); }} data-testid={`edit-${b.id}`} className="text-[14px] font-black uppercase text-shSecondary hover:underline">Edit</button>
                   {b.status === "pending" && <>
@@ -311,7 +380,7 @@ export default function Bookings() {
                   <p className="text-sm font-black uppercase text-shText">{b.dog_name}<GroupBadge gid={b.group_id} counts={groupCounts}/></p>
                   <p className="text-[13px] text-shTextMuted truncate">{b.client_name}</p>
                 </div>
-                <span className={`shrink-0 text-[13px] font-black uppercase px-2 py-1 rounded border ${statusStyle(b.status)}`}>{BOOKING_STATUS[b.status]?.label || b.status}</span>
+                <span className={`shrink-0 text-[13px] font-black uppercase px-2 py-1 rounded border ${statusStyle(b.status)}`}>{statusLabel(b.status)}</span>
               </div>
               <div className="flex flex-wrap items-center gap-x-3 gap-y-1 text-[14px]">
                 <span className="font-black uppercase tracking-widest text-shTextMuted">{b.service_type}{b.service_type==="grooming" && b.grooming_type ? ` · ${b.grooming_type==="bath"?"Bath":"Nail Trim"}` : ""}</span>
