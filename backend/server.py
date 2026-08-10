@@ -31,7 +31,7 @@ from starlette.middleware.cors import CORSMiddleware
 from motor.motor_asyncio import AsyncIOMotorClient
 from pymongo import ReturnDocument
 from pymongo.errors import DuplicateKeyError
-from pydantic import BaseModel, Field, EmailStr, ConfigDict, field_validator, model_validator
+from pydantic import BaseModel, Field, EmailStr, ConfigDict, field_validator, model_validator, ValidationError
 import stripe
 
 from email_service import (
@@ -2973,7 +2973,16 @@ async def list_bookings(
     # model is strict (Literal status enum, required dog_name/client_name),
     # but the DB has older test/seed rows with `status: "checked_out"` and
     # missing display names. Map those to safe defaults rather than reject.
-    _STATUS_REMAP = {"checked_in": "approved", "checked_out": "completed"}
+    _STATUS_REMAP = {
+        "checked_in": "approved",
+        "checked_out": "completed",
+        # Legacy one-l spelling still exists in old rows (the archive job's
+        # ARCHIVE_TERMINAL_STATUSES and the frontend's FINISHED set both
+        # acknowledge it), and no_show predates the current status enum.
+        "canceled": "cancelled",
+        "no_show": "cancelled",
+    }
+    out: List[BookingOut] = []
     for it in items:
         if it.get("status") in _STATUS_REMAP:
             it["status"] = _STATUS_REMAP[it["status"]]
@@ -2981,7 +2990,19 @@ async def list_bookings(
             it["dog_name"] = ""
         if not it.get("client_name"):
             it["client_name"] = ""
-    return items
+        if not it.get("created_at"):
+            it["created_at"] = ""
+        # Per-row salvage: a single malformed row must degrade to a logged
+        # skip, never a 500 for the whole list (the page renders nothing at
+        # all when this endpoint fails).
+        try:
+            out.append(BookingOut.model_validate(it))
+        except ValidationError as ve:
+            logger.warning(
+                "GET /bookings: skipping malformed booking row id=%s (%s)",
+                it.get("id"), str(ve)[:300],
+            )
+    return out
 
 def _service_cost(rules: dict, service_type: str, days: int) -> int:
     # Legacy credit-cost field: ONLY daycare credits. Do not use for dollars.
