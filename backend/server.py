@@ -36,6 +36,8 @@ import stripe
 
 from email_service import (
     notify_admin_new_booking,
+    notify_admin_booking_approval,
+    notify_admin_meet_greet_request,
     queue_admin_new_shop_order,
     queue_receipt_email,
     notify_admin_bulk_booking,
@@ -2500,7 +2502,7 @@ async def request_meet_greet(body: MeetGreetRequestIn, request: Request):
     # switch/enum in checkout, P&L, etc.; `is_meet_greet` is how GET /events
     # and the admin recognize it as a Meet & Greet rather than a generic
     # booking. `dog_id` is intentionally blank — there's no dog record yet.
-    await db.bookings.insert_one({
+    mg_booking = {
         "id": str(uuid.uuid4()),
         "dog_id": "",
         "dog_name": dog_name,
@@ -2514,7 +2516,8 @@ async def request_meet_greet(body: MeetGreetRequestIn, request: Request):
         "notes": "Meet & Greet requested via the public landing page.",
         "created_at": now_iso(),
         "is_meet_greet": True,
-    })
+    }
+    await db.bookings.insert_one(dict(mg_booking))
 
     # Claim token (existing system) — lets them set a portal password, or
     # (if a portal account already exists on this client) reset it.
@@ -2543,14 +2546,23 @@ async def request_meet_greet(body: MeetGreetRequestIn, request: Request):
     except Exception as e:
         logger.warning("meet_greet_request: email dispatch failed for %s: %s", email, e)
 
-    # Best-effort: alert the operator, same path as a self-registered client.
+    # Operator alert — the request is the AUTHORITATIVE record and already
+    # exists as a pending booking (it's in Action Required from this moment);
+    # this email is supplemental. notify_admin_meet_greet_request is durable
+    # (outbox retry on failure, notification_log stamp on success), and the
+    # failure branch below logs loudly instead of the old silent
+    # generic-new-client email that could vanish in quiet hours. The client's
+    # request NEVER fails because the business email did.
     try:
-        await notify_admin_new_client(
-            {"email": email, "name": owner_name},
-            {**client_doc, "_merged": merged},
-        )
-    except Exception:
-        pass
+        sent_now = await notify_admin_meet_greet_request(mg_booking, client_doc)
+        if not sent_now:
+            logger.warning(
+                "meet_greet_request: admin alert email for booking %s not sent immediately "
+                "(queued for retry or skipped — see email_outbox / last error: %s)",
+                mg_booking["id"], email_service.last_send_error,
+            )
+    except Exception as e:
+        logger.error("meet_greet_request: admin alert email dispatch crashed for booking %s: %s", mg_booking["id"], e)
 
     return {"ok": True}
 
@@ -4155,9 +4167,22 @@ async def create_booking(body: BookingIn, user: dict = Depends(get_current_user)
     # bulk endpoint sends ONE summary email after the loop.
     if not is_admin and not _suppress_admin_booking_email.get():
         try:
-            await notify_admin_new_booking(doc, client)
-        except Exception:
-            pass
+            if doc.get("status") == "pending":
+                # Approval-required booking — the durable "needs your
+                # approval" alert (outbox retry on failure, delivery result
+                # stamped in notification_log). The pending booking itself is
+                # already in Action Required regardless of email fate.
+                sent_now = await notify_admin_booking_approval(doc, client)
+                if not sent_now:
+                    logger.warning(
+                        "create_booking: approval alert email for booking %s not sent immediately "
+                        "(queued for retry or skipped — see email_outbox / last error: %s)",
+                        doc.get("id"), email_service.last_send_error,
+                    )
+            else:
+                await notify_admin_new_booking(doc, client)
+        except Exception as exc:
+            logger.error("create_booking: admin booking email dispatch crashed for %s: %s", doc.get("id"), exc)
     # 🎉 First-ever booking for this client? Send a celebratory email to the operator,
     # and if they came in via a referral code, the referrer is auto-credited on
     # this client's FIRST CHECKOUT — see check_out() below.
@@ -4785,7 +4810,11 @@ async def extend_recurring_template(
 
 
 @api.post("/bookings/{booking_id}/approve", response_model=BookingOut)
-async def approve_booking(booking_id: str, _: dict = Depends(require_admin)):
+async def approve_booking(booking_id: str, user: dict = Depends(require_admin)):
+    # Action Required hardening — approving is a booking-management decision;
+    # staff without booking_edit must not be able to do it by direct API call
+    # (matrix-gated the same way booking creation already is).
+    _require_booking_edit(user)
     booking = await db.bookings.find_one({"id": booking_id}, {"_id": 0})
     if not booking:
         raise HTTPException(status_code=404, detail="Booking not found")
@@ -5127,7 +5156,9 @@ async def _mutate_client_credits(
 
 
 @api.post("/bookings/{booking_id}/reject", response_model=BookingOut)
-async def reject_booking(booking_id: str, _: dict = Depends(require_admin)):
+async def reject_booking(booking_id: str, user: dict = Depends(require_admin)):
+    # Same matrix gate as approve_booking — declining is a booking decision.
+    _require_booking_edit(user)
     booking = await db.bookings.find_one({"id": booking_id}, {"_id": 0})
     if not booking:
         raise HTTPException(status_code=404, detail="Booking not found")
@@ -23446,6 +23477,226 @@ async def admin_run_daily_jobs(_: dict = Depends(require_admin)):
 
 
 
+# ─── Action Required / Pending Actions ─────────────────────────────────────
+# One unified view over everything that still needs a real STAFF DECISION —
+# Meet & Greet requests, approval-required bookings, and client reschedule
+# requests. Deliberately DERIVED from the authoritative records (bookings /
+# reschedule_requests) rather than a second queue collection: an item is
+# visible from the moment the underlying record is created (never gated on
+# the requested APPOINTMENT date) and disappears only when the record itself
+# reaches a terminal, business-handled state (approved/rejected/cancelled/
+# resolved). Reading a bell notification, dismissing a Today's Tasks row, or
+# merely opening the request can never resolve one — there is nothing stored
+# to "mark read". Historical unresolved records surface automatically for
+# the same reason (Phase N of the incident fix: no migration needed).
+#
+# Born from a real production miss: a Meet & Greet requested Monday for a
+# Saturday slot only became noticeable when Saturday arrived. The requested
+# date now drives URGENCY only, never visibility.
+
+PENDING_ACTION_TYPES = ("meet_and_greet_request", "booking_approval", "reschedule_request")
+
+_PENDING_ACTION_TYPE_LABELS = {
+    "meet_and_greet_request": "Meet & Greet Request",
+    "booking_approval": "Booking Needs Approval",
+    "reschedule_request": "Reschedule Request",
+}
+
+
+def _pending_action_urgency(created_at: Optional[str], requested_date: Optional[str],
+                            requested_time: Optional[str]) -> dict:
+    """Deterministic escalation — simple rules, no SLA engine.
+
+    Visibility is NEVER decided here (an unresolved item is always visible);
+    this only ranks how loudly it presents:
+      rank 0 · requested time already passed / requested for today
+      rank 1 · requested start within 24h
+      rank 2 · waiting ≥ 48h (OVERDUE)
+      rank 3 · everything else (ACTION REQUIRED / Waiting N day(s))
+    """
+    now_dt = datetime.now(timezone.utc)
+    waiting_minutes = 0
+    if created_at:
+        try:
+            created_dt = datetime.fromisoformat(created_at.replace("Z", "+00:00"))
+            if created_dt.tzinfo is None:
+                created_dt = created_dt.replace(tzinfo=timezone.utc)
+            waiting_minutes = max(0, int((now_dt - created_dt).total_seconds() // 60))
+        except Exception:
+            pass
+    if waiting_minutes < 60:
+        waiting_label = f"Waiting {waiting_minutes}m"
+    elif waiting_minutes < 24 * 60:
+        waiting_label = f"Waiting {waiting_minutes // 60}h"
+    else:
+        d = waiting_minutes // (24 * 60)
+        waiting_label = f"Waiting {d} day{'s' if d != 1 else ''}"
+
+    today = business_today().isoformat()
+    now_hhmm = datetime.now().strftime("%H:%M")
+    requested_passed = False
+    requested_today = False
+    within_24h = False
+    if requested_date:
+        if requested_date < today:
+            requested_passed = True
+        elif requested_date == today:
+            requested_today = True
+            if requested_time and requested_time < now_hhmm:
+                requested_passed = True
+        else:
+            try:
+                days_out = (date.fromisoformat(requested_date) - business_today()).days
+                within_24h = days_out <= 1
+            except Exception:
+                pass
+
+    if requested_passed:
+        urgency, label, rank = "overdue_requested_passed", "OVERDUE — REQUESTED TIME PASSED", 0
+    elif requested_today:
+        urgency, label, rank = "urgent_today", "URGENT — REQUESTED FOR TODAY", 0
+    elif within_24h:
+        urgency, label, rank = "urgent", "URGENT", 1
+    elif waiting_minutes >= 48 * 60:
+        urgency, label, rank = "overdue", "OVERDUE", 2
+    elif waiting_minutes >= 24 * 60:
+        urgency, label, rank = "waiting", waiting_label, 3
+    else:
+        urgency, label, rank = "action_required", "ACTION REQUIRED", 3
+
+    return {
+        "urgency": urgency, "urgency_label": label, "urgency_rank": rank,
+        "waiting_minutes": waiting_minutes, "waiting_label": waiting_label,
+    }
+
+
+def _pending_booking_service_name(b: dict) -> str:
+    if b.get("is_meet_greet"):
+        return "Meet & Greet"
+    st = (b.get("service_type") or "").replace("_", " ").title() or "Booking"
+    if b.get("service_type") == "grooming" and b.get("grooming_type"):
+        st += " · " + ("Bath" if b["grooming_type"] == "bath" else "Nail Trim")
+    return st
+
+
+async def _collect_pending_actions(user: dict, *, type_filter: Optional[str] = None,
+                                   limit: int = 100) -> Dict[str, Any]:
+    """The authoritative Action Required list, permission-filtered server-side.
+    Every action type maps to a required permission; a caller only receives
+    (and is only counted for) items they can actually act on."""
+    perms = _perms_for(user)
+    items: List[dict] = []
+
+    if perms.get("booking_edit"):
+        rows = await db.bookings.find(
+            {"status": "pending"},
+            {"_id": 0, "id": 1, "client_id": 1, "client_name": 1, "dog_id": 1, "dog_name": 1,
+             "date": 1, "end_date": 1, "time": 1, "service_type": 1, "grooming_type": 1,
+             "created_at": 1, "notes": 1, "is_meet_greet": 1},
+        ).sort("created_at", 1).to_list(500)
+        for b in rows:
+            a_type = "meet_and_greet_request" if b.get("is_meet_greet") else "booking_approval"
+            urgency = _pending_action_urgency(b.get("created_at"), b.get("date"), b.get("time"))
+            items.append({
+                "id": f"{a_type}:{b['id']}",
+                "type": a_type,
+                "type_label": _PENDING_ACTION_TYPE_LABELS[a_type],
+                "priority": "action_required",
+                "status": "pending",
+                "created_at": b.get("created_at"),
+                "client_id": b.get("client_id"), "client_name": b.get("client_name"),
+                "dog_id": b.get("dog_id") or None, "dog_name": b.get("dog_name"),
+                "service_name": _pending_booking_service_name(b),
+                "requested_start": (f"{b.get('date')}T{b.get('time')}" if b.get("time") else b.get("date")),
+                "requested_date": b.get("date"), "requested_end_date": b.get("end_date") or None,
+                "requested_time": b.get("time") or None,
+                "notes": (b.get("notes") or "")[:300],
+                "deep_link": {"screen": "bookings", "booking_id": b["id"]},
+                "required_permission": "booking_edit",
+                **urgency,
+            })
+
+        r_rows = await db.reschedule_requests.find(
+            {"status": "pending"},
+            {"_id": 0, "id": 1, "booking_id": 1, "client_id": 1, "client_name": 1,
+             "dog_id": 1, "dog_name": 1, "current_date": 1, "current_time": 1,
+             "proposed_slots": 1, "client_note": 1, "created_at": 1},
+        ).sort("created_at", 1).to_list(200)
+        for r in r_rows:
+            urgency = _pending_action_urgency(r.get("created_at"), r.get("current_date"), r.get("current_time"))
+            items.append({
+                "id": f"reschedule_request:{r['id']}",
+                "type": "reschedule_request",
+                "type_label": _PENDING_ACTION_TYPE_LABELS["reschedule_request"],
+                "priority": "action_required",
+                "status": "pending",
+                "created_at": r.get("created_at"),
+                "client_id": r.get("client_id"), "client_name": r.get("client_name"),
+                "dog_id": r.get("dog_id") or None, "dog_name": r.get("dog_name"),
+                "service_name": "Session Reschedule",
+                "requested_start": (f"{r.get('current_date')}T{r.get('current_time')}" if r.get("current_time") else r.get("current_date")),
+                "requested_date": r.get("current_date"), "requested_end_date": None,
+                "requested_time": r.get("current_time") or None,
+                "notes": (r.get("client_note") or "")[:300],
+                "deep_link": {"screen": "bookings", "reschedule_request_id": r["id"], "booking_id": r.get("booking_id")},
+                "required_permission": "booking_edit",
+                **urgency,
+            })
+
+    if type_filter:
+        items = [it for it in items if it["type"] == type_filter]
+
+    # Operational sort: requested-passed/today first, then within-24h, then
+    # overdue (≥48h), then oldest unresolved first — never "sort by
+    # appointment date and bury old requests".
+    items.sort(key=lambda it: (it["urgency_rank"], it.get("created_at") or ""))
+
+    counts: Dict[str, int] = {t: 0 for t in PENDING_ACTION_TYPES}
+    for it in items:
+        counts[it["type"]] = counts.get(it["type"], 0) + 1
+    counts["total"] = len(items)
+    return {"items": items[: max(1, min(int(limit or 100), 300))], "counts": counts,
+            "generated_at": now_iso()}
+
+
+def _user_can_see_any_pending_actions(user: dict) -> bool:
+    perms = _perms_for(user)
+    return bool(perms.get("booking_edit"))
+
+
+@api.get("/admin/pending-actions")
+async def admin_pending_actions(
+    type: Optional[str] = None, limit: int = 100, user: dict = Depends(require_admin),
+):
+    """Everything that still needs a real staff decision, visible from the
+    moment it was CREATED (the requested appointment date only affects
+    urgency). 403 for staff who can't act on any pending-action type —
+    server-side enforcement, never just UI hiding."""
+    if not _user_can_see_any_pending_actions(user):
+        raise HTTPException(status_code=403, detail="Missing permission: booking_edit")
+    if type and type not in PENDING_ACTION_TYPES:
+        raise HTTPException(status_code=400, detail=f"Unknown pending-action type {type!r}")
+    return await _collect_pending_actions(user, type_filter=type, limit=limit)
+
+
+@api.get("/admin/pending-actions/count")
+async def admin_pending_actions_count(user: dict = Depends(require_admin)):
+    """Cheap badge counts (indexed count_documents — no document scans).
+    Returns zeros rather than 403 so nav badges can poll safely for every
+    staff role; the detailed list endpoint stays permission-enforced."""
+    if not _user_can_see_any_pending_actions(user):
+        return {"total": 0, "meet_and_greet_requests": 0, "booking_approvals": 0, "reschedule_requests": 0}
+    mg = await db.bookings.count_documents({"status": "pending", "is_meet_greet": True})
+    pending_bookings = await db.bookings.count_documents({"status": "pending", "is_meet_greet": {"$ne": True}})
+    resched = await db.reschedule_requests.count_documents({"status": "pending"})
+    return {
+        "total": mg + pending_bookings + resched,
+        "meet_and_greet_requests": mg,
+        "booking_approvals": pending_bookings,
+        "reschedule_requests": resched,
+    }
+
+
 @api.get("/dashboard/stats")
 async def dashboard_stats(_: dict = Depends(require_admin)):
     # Lazy daily-jobs trigger — at most one run per UTC day, fully non-blocking.
@@ -23583,6 +23834,13 @@ async def dashboard_stats(_: dict = Depends(require_admin)):
         "today_roster": roster,
         "upcoming_birthdays": _upcoming_birthdays(dogs, days_ahead=14),
         "first_time_bookings_today": await _first_time_bookings_today(today, dog_map),
+        # Action Required / Pending Actions — additive summary counts (Phase L
+        # of the missed-Meet-&-Greet fix). Existing fields above are untouched.
+        "pending_actions": await db.bookings.count_documents({"status": "pending"})
+                           + await db.reschedule_requests.count_documents({"status": "pending"}),
+        "pending_meet_and_greets": await db.bookings.count_documents({"status": "pending", "is_meet_greet": True}),
+        "pending_booking_approvals": await db.bookings.count_documents({"status": "pending", "is_meet_greet": {"$ne": True}}),
+        "pending_reschedule_requests": await db.reschedule_requests.count_documents({"status": "pending"}),
     }
 
 
@@ -28951,6 +29209,9 @@ async def startup():
         (db.school_quiz_attempts, [("school_enrollment_id", 1), ("module_id", 1), ("idempotency_key", 1)],
          {"unique": True, "name": "school_quiz_attempts_idempotency_unique"}),
         (db.bookings, [("date", 1), ("status", 1)], {}),
+        # Action Required — the pending-actions queue/badges poll pending
+        # bookings by status + creation time (never by appointment date).
+        (db.bookings, [("status", 1), ("created_at", -1)], {"name": "bookings_status_created_at"}),
         (db.bookings, "dog_id", {}),
         (db.bookings, "client_id", {}),
         (db.bookings, "status", {}),
