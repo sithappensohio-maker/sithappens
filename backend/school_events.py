@@ -450,21 +450,49 @@ async def recent_activity(
     *, limit: int = 40, before: Optional[str] = None,
     client_id: Optional[str] = None, event_type: Optional[str] = None,
     attention_only: bool = False,
+    dog_id: Optional[str] = None, program_id: Optional[str] = None,
+    event_types: Optional[List[str]] = None,
+    q_text: Optional[str] = None,
+    date_from: Optional[str] = None, date_to: Optional[str] = None,
 ) -> List[dict]:
     """Chronological activity feed (newest first), paginated by ``before``
-    (an ISO created_at cursor). Bounded — never returns an unbounded set."""
+    (an ISO created_at cursor). Bounded — never returns an unbounded set.
+
+    Real-client-volume upgrade: every filter (search text, student, dog,
+    course, type set, date range, attention-only) is applied HERE, against
+    the full dataset — the frontend never filters merely the loaded rows."""
     if _db is None:
         return []
-    limit = max(1, min(int(limit or 40), 100))
+    limit = max(1, min(int(limit or 40), 200))
     q: Dict[str, Any] = {}
+    created: Dict[str, Any] = {}
     if before:
-        q["created_at"] = {"$lt": before}
+        created["$lt"] = before
+    if date_to:
+        # Inclusive end-date: '~' (0x7E) sorts after every character an ISO
+        # timestamp can contain, so "<date>~" upper-bounds that whole day.
+        upper = f"{date_to}~"
+        created["$lt"] = min(created["$lt"], upper) if "$lt" in created else upper
+    if date_from:
+        created["$gte"] = date_from
+    if created:
+        q["created_at"] = created
     if client_id:
         q["client_id"] = client_id
+    if dog_id:
+        q["dog_id"] = dog_id
+    if program_id:
+        q["program_id"] = program_id
     if event_type:
         q["event_type"] = event_type
+    elif event_types:
+        q["event_type"] = {"$in": list(event_types)}
     if attention_only:
         q["requires_attention"] = True
+    if q_text:
+        import re as _re
+        rx = {"$regex": _re.escape(q_text.strip()), "$options": "i"}
+        q["$or"] = [{"client_name": rx}, {"dog_name": rx}, {"program_name": rx}]
     rows = await _db[EVENTS_COLLECTION].find(q, {"_id": 0}).sort("created_at", DESCENDING).to_list(limit)
     return rows
 

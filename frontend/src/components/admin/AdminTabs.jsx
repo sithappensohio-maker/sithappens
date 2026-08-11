@@ -37,7 +37,9 @@ export default function AdminTabs({
             >
               {item.icon && <i className={`fas ${item.icon} sh-admin-tabs__icon`} />}
               <span>{item.label}</span>
-              {item.count != null && <span className="sh-admin-tabs__count">{item.count}</span>}
+              {/* A "0" badge is pure noise — show the count only when there
+                  is actually something behind the tab. */}
+              {item.count != null && item.count > 0 && <span className="sh-admin-tabs__count">{item.count}</span>}
               {item.external && <i className="fas fa-arrow-up-right-from-square sh-admin-tabs__external" />}
             </button>
           );

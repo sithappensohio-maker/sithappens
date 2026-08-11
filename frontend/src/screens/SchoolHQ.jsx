@@ -9,6 +9,7 @@ import { accentRgb } from "../components/premium/tokens";
 import SchoolNeedsAttention from "../components/school/SchoolNeedsAttention";
 import SchoolActivityFeed from "../components/school/SchoolActivityFeed";
 import SchoolReviewsPanel from "../components/school/SchoolReviewsPanel";
+import SchoolActivityCenter from "../components/school/SchoolActivityCenter";
 import CheckpointReviewQueue from "../components/CheckpointReviewQueue";
 import TrainerAssistQueue from "../components/TrainerAssistQueue";
 import SchoolStudentsPanel from "../components/school/SchoolStudentsPanel";
@@ -37,8 +38,7 @@ export default function SchoolHQ() {
 
   const [summary, setSummary] = useState(null);
   const [attention, setAttention] = useState([]);
-  const [activity, setActivity] = useState([]);
-  const [activityCursor, setActivityCursor] = useState(null);
+  const [activity, setActivity] = useState([]); // Overview strip only — the Activity tab is self-contained
   const [loading, setLoading] = useState(true);
   const [busyId, setBusyId] = useState(null);
   const [checkpointOpen, setCheckpointOpen] = useState(false);
@@ -56,18 +56,18 @@ export default function SchoolHQ() {
     setAttention(data.items || []);
   }, []);
   const loadActivity = useCallback(async () => {
-    const { data } = await api.get("/admin/school/hq/activity", { params: { limit: 40 } });
+    const { data } = await api.get("/admin/school/hq/activity", { params: { limit: 8 } });
     setActivity(data.items || []);
-    setActivityCursor(data.next_before || null);
   }, []);
 
   // One live-refresh loader: summary always (drives cards + tab counts + the
   // sidebar badge stays in sync via its own poll), plus the active tab's list.
+  // The Activity tab manages its own data (SchoolActivityCenter).
   const refresh = useCallback(async () => {
     await loadSummary();
     const t = tabRef.current;
     if (t === "overview" || t === "needs_attention") await loadAttention();
-    if (t === "overview" || t === "activity") await loadActivity();
+    if (t === "overview") await loadActivity();
   }, [loadSummary, loadAttention, loadActivity]);
 
   useEffect(() => {
@@ -78,13 +78,6 @@ export default function SchoolHQ() {
   }, [refresh, tab]);
 
   useLiveRefresh(refresh, { intervalMs: 30000 });
-
-  const loadMoreActivity = useCallback(async () => {
-    if (!activityCursor) return;
-    const { data } = await api.get("/admin/school/hq/activity", { params: { limit: 40, before: activityCursor } });
-    setActivity((prev) => [...prev, ...(data.items || [])]);
-    setActivityCursor(data.next_before || null);
-  }, [activityCursor]);
 
   // Deep-link routing — every actionable item opens the EXACT record/workflow,
   // never a dead end. Checkpoint/Trainer-Assist open their existing queue
@@ -126,7 +119,7 @@ export default function SchoolHQ() {
         day_number: dl.day_number || item.metadata?.day_number || null,
       });
     }
-  }, []);
+  }, [setTab]);
 
   const markRead = useCallback(async (item) => {
     setBusyId(item.id);
@@ -199,9 +192,12 @@ export default function SchoolHQ() {
         </div>
       )}
 
+      {/* Activity — a volume-ready, searchable HISTORY (grouped sessions,
+          server-side filters, summary tiles, Group-by-Student). The Overview
+          keeps its small recent-activity strip; Needs Attention stays the
+          actual work queue. */}
       {tab === "activity" && (
-        <SchoolActivityFeed items={activity} loading={loading} onOpen={openItem}
-                            hasMore={!!activityCursor} onLoadMore={loadMoreActivity} />
+        <SchoolActivityCenter onOpenStudent={(sid) => { setStudentTargetId(sid); setTab("students"); }} />
       )}
 
       {tab === "needs_attention" && (

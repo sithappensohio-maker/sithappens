@@ -687,3 +687,33 @@ def test_attempts_store_snapshot_numbering_and_summaries():
 
 def test_quiz_attempts_participate_in_backups():
     assert "school_quiz_attempts" in server.BACKUP_COLLECTIONS
+
+
+# ---------------------------------------------------------------------------
+# Portal hero card — backend-derived module position (School UX fix)
+# ---------------------------------------------------------------------------
+
+def test_portal_school_list_reports_module_position_and_progress():
+    with _quiz_program(quiz_module_idx=99) as (prog, admin):
+        with _client_and_dog() as (c, dog):
+            se, enr = _enroll(prog, dog, admin)
+            try:
+                cu = _client_user(c["id"])
+                rows = run(server.portal_school_list(cu))
+                mine = next(r for r in rows if r["school_enrollment_id"] == se["id"])
+                assert mine["modules_total"] == 2
+                assert mine["module_number"] == 1
+                assert mine["course_pct"] == 0
+                assert mine["current_lesson_name"] == "Lesson 1.1"
+                # Advance into module 2 — position follows the backend
+                # roadmap, never a frontend index guess.
+                _practice_current_lesson(se, enr, cu)
+                run(server.portal_school_advance(se["id"], cu))
+                _practice_current_lesson(se, enr, cu)
+                run(server.portal_school_advance(se["id"], cu))
+                rows = run(server.portal_school_list(cu))
+                mine = next(r for r in rows if r["school_enrollment_id"] == se["id"])
+                assert mine["module_number"] == 2 and mine["modules_total"] == 2
+                assert mine["course_pct"] == 50
+            finally:
+                _cleanup_school(se["id"], enr["id"])
