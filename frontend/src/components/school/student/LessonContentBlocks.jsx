@@ -59,14 +59,15 @@ export default function LessonContentBlocks({ blocks = [], enrollmentId, preview
   const [resources, setResources] = useState([]);
   const active = [...blocks].filter((b) => b?.active !== false).sort((a, b) => (a.order || 0) - (b.order || 0));
   const resourceIds = useMemo(() => active.map((b) => b.resource_id).filter(Boolean), [active]);
+  const resourceKey = resourceIds.join("|");
   useEffect(() => {
-    if (resourceIds.length === 0) { setResources([]); return undefined; }
+    if (resourceKey === "") { setResources([]); return undefined; }
     let live = true;
     const request = enrollmentId ? api.get(`/portal/school/${enrollmentId}/resources`) : previewMode ? api.get("/admin/school/resources") : null;
     if (!request) { setResources([]); return undefined; }
     request.then(({data}) => { if (live) setResources((data || []).filter((r) => r.active !== false)); }).catch(() => { if (live) setResources([]); });
     return () => { live = false; };
-  }, [enrollmentId, previewMode, resourceIds.join("|")]);
+  }, [enrollmentId, previewMode, resourceKey]);
   const resourceById = Object.fromEntries(resources.map((r) => [r.id, r]));
   const openResource = async (r) => {
     if (!r) return; if (r.url) { window.open(r.url, "_blank", "noopener,noreferrer"); return; }

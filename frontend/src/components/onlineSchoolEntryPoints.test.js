@@ -24,14 +24,17 @@ test("the Online School teaser renders only when schoolEntries is non-empty", ()
   expect(portalSrc).toMatch(/\{schoolEntries\.length > 0 && \(/);
 });
 
-test("the teaser is NOT gated behind the More-toggle wrapper the way secondary sections are", () => {
-  // The teaser block must appear before the first `moreOpen` wrapper div in
-  // source order — i.e. it's prominent, not tucked away.
-  const teaserIdx = portalSrc.indexOf("online-school-teaser");
+test("the School entry point is the full-width HERO above the portal grid — never tucked behind More", () => {
+  // School UX fix: the slim teaser was replaced by OnlineSchoolHeroCard,
+  // rendered full-width BEFORE the column grid (maximum prominence on
+  // desktop and mobile alike).
+  const heroIdx = portalSrc.indexOf("<OnlineSchoolHeroCard");
+  const gridIdx = portalSrc.indexOf('"grid grid-cols-1 md:grid-cols-3 gap-8"');
   const firstMoreWrapperIdx = portalSrc.indexOf('data-testid="portal-more-homeworkstreak-plans"');
-  expect(teaserIdx).toBeGreaterThan(-1);
-  expect(firstMoreWrapperIdx).toBeGreaterThan(-1);
-  expect(teaserIdx).toBeLessThan(firstMoreWrapperIdx);
+  expect(heroIdx).toBeGreaterThan(-1);
+  expect(gridIdx).toBeGreaterThan(-1);
+  expect(heroIdx).toBeLessThan(gridIdx);
+  expect(heroIdx).toBeLessThan(firstMoreWrapperIdx);
 });
 
 test("opening the dashboard fetches the client's own /portal/school data, no second progress store", () => {

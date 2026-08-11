@@ -18635,6 +18635,7 @@ async def portal_school_list(user: dict = Depends(get_current_user)):
         if access_state == "revoked":
             current_module_name = current_lesson_name = None
             current_lesson_practiced = False
+            module_number = modules_total = None
         else:
             roadmap = _client_safe_school_roadmap(await _school_roadmap(enrollment, se["dog_id"]))
             current_module_name = (roadmap.get("current_lesson") and next(
@@ -18642,6 +18643,14 @@ async def portal_school_list(user: dict = Depends(get_current_user)):
             )) or next((m["name"] for m in roadmap["modules"] if m["status"] == "current"), None)
             current_lesson_name = (roadmap.get("current_lesson") or {}).get("name")
             current_lesson_practiced = roadmap.get("current_lesson_practiced", False)
+            # Portal hero card — "Week/Module X of Y". Derived from the same
+            # client-safe roadmap (never a frontend index+1 guess); a
+            # completed course reads Y of Y.
+            modules_total = len(roadmap["modules"]) or None
+            module_number = next(
+                (i + 1 for i, m in enumerate(roadmap["modules"]) if m["status"] == "current"),
+                modules_total if status == "completed" else (1 if modules_total else None),
+            )
         out.append({
             "school_enrollment_id": se["id"], "dog_id": se["dog_id"],
             "dog_name": (dog or {}).get("name"), "dog_photo": (dog or {}).get("photo") or "",
@@ -18653,6 +18662,8 @@ async def portal_school_list(user: dict = Depends(get_current_user)):
             "current_module_name": current_module_name,
             "current_lesson_name": current_lesson_name,
             "current_lesson_practiced": current_lesson_practiced,
+            "module_number": module_number,
+            "modules_total": modules_total,
         })
     # Phase 6 (6.12) — deterministic ordering so "Continue Training" always
     # resolves to the same entry: active-and-accessible first, then other
@@ -21334,6 +21345,97 @@ async def admin_school_hq_summary(_: dict = Depends(require_admin_and_permission
     }
 
 
+# ── Activity for real client volume — friendly type categories, session
+# grouping, summary tiles, per-student rollups. Activity stays a HISTORY /
+# audit surface: Needs Attention remains the work queue, Reviews the grading
+# queue, Trainer Assist its own workflow — nothing here duplicates those.
+
+ACTIVITY_TYPE_CATEGORIES: Dict[str, List[str]] = {
+    "lesson_completed": [SchoolEvent.LESSON_COMPLETED, SchoolEvent.LESSON_LEARN_COMPLETED],
+    "practice_completed": [SchoolEvent.PRACTICE_COMPLETED, SchoolEvent.PRACTICE_STARTED,
+                           SchoolEvent.PRACTICE_VIDEO_SUBMITTED],
+    "practice_problem": [SchoolEvent.PRACTICE_DIFFICULTY_REPORTED, SchoolEvent.PRACTICE_COULD_NOT_COMPLETE,
+                         SchoolEvent.PRACTICE_QUESTION_ASKED, SchoolEvent.STUDENT_QUESTION],
+    "checkpoint_submitted": [SchoolEvent.CHECKPOINT_SUBMITTED],
+    "trainer_review": [SchoolEvent.PRACTICE_REVIEWED, SchoolEvent.CHECKPOINT_PASSED,
+                       SchoolEvent.CHECKPOINT_REMEDIATION_REQUIRED, SchoolEvent.TRAINER_REPLY,
+                       SchoolEvent.CHECKPOINT_REVIEW_STARTED, SchoolEvent.PRACTICE_REVIEW_ATTENTION],
+    "trainer_assist": [SchoolEvent.TRAINER_ASSIST_REQUESTED, SchoolEvent.TRAINER_ASSIST_RECOMMENDED,
+                       SchoolEvent.TRAINER_ASSIST_SCHEDULED, SchoolEvent.TRAINER_ASSIST_COMPLETED,
+                       SchoolEvent.CHECKPOINT_TRAINER_ASSIST_REQUIRED],
+    "course_completed": [SchoolEvent.MODULE_COMPLETED, SchoolEvent.COURSE_COMPLETED,
+                         SchoolEvent.MODULE_QUIZ_PASSED, SchoolEvent.MODULE_QUIZ_RETRY_NEEDED],
+    "enrollment": [SchoolEvent.SCHOOL_ENROLLED, SchoolEvent.SCHOOL_STARTED],
+}
+
+# Which single event best HEADLINES a bundled session — exceptions first,
+# then milestones, then routine work (normal success stays quiet).
+_ACTIVITY_HEADLINE_PRIORITY = [
+    SchoolEvent.TRAINER_ASSIST_REQUESTED, SchoolEvent.CHECKPOINT_TRAINER_ASSIST_REQUIRED,
+    SchoolEvent.PRACTICE_COULD_NOT_COMPLETE, SchoolEvent.PRACTICE_QUESTION_ASKED,
+    SchoolEvent.STUDENT_QUESTION, SchoolEvent.PRACTICE_DIFFICULTY_REPORTED,
+    SchoolEvent.CHECKPOINT_SUBMITTED, SchoolEvent.PRACTICE_VIDEO_SUBMITTED,
+    SchoolEvent.COURSE_COMPLETED, SchoolEvent.MODULE_QUIZ_PASSED, SchoolEvent.MODULE_COMPLETED,
+    SchoolEvent.LESSON_COMPLETED, SchoolEvent.CHECKPOINT_PASSED, SchoolEvent.PRACTICE_REVIEWED,
+    SchoolEvent.PRACTICE_COMPLETED, SchoolEvent.LESSON_LEARN_COMPLETED,
+]
+_ACTIVITY_HEADLINE_RANK = {t: i for i, t in enumerate(_ACTIVITY_HEADLINE_PRIORITY)}
+
+_ACTIVITY_GROUP_WINDOW_MINUTES = 45
+
+
+def _group_school_activity(events: List[dict]) -> List[dict]:
+    """Bundle consecutive events from the same client/dog into one session
+    card (Learn + Practice + Lesson from one sitting = ONE row, expandable to
+    the raw events). Events arrive newest-first; a gap larger than the window
+    starts a new bundle for that student."""
+    groups: List[dict] = []
+    open_by_key: Dict[tuple, dict] = {}
+
+    def _ts(ev):
+        try:
+            return datetime.fromisoformat((ev.get("created_at") or "").replace("Z", "+00:00"))
+        except Exception:
+            return None
+
+    for ev in events:
+        key = (ev.get("client_id"), ev.get("dog_id"))
+        g = open_by_key.get(key)
+        ev_dt = _ts(ev)
+        if g is not None:
+            last_dt = _ts(g["events"][-1])
+            within = bool(ev_dt and last_dt and
+                          (last_dt - ev_dt) <= timedelta(minutes=_ACTIVITY_GROUP_WINDOW_MINUTES))
+        else:
+            within = False
+        if not within:
+            g = {"events": []}
+            groups.append(g)
+        open_by_key[key] = g
+        g["events"].append(ev)
+
+    out = []
+    for g in groups:
+        evs = g["events"]  # newest → oldest inside the bundle
+        head = min(evs, key=lambda e: _ACTIVITY_HEADLINE_RANK.get(e.get("event_type"), 99))
+        first = evs[0]
+        out.append({
+            "id": f"grp:{first.get('client_id')}:{first.get('dog_id')}:{first.get('created_at')}",
+            "client_id": first.get("client_id"), "client_name": first.get("client_name"),
+            "dog_id": first.get("dog_id"), "dog_name": first.get("dog_name"),
+            "school_enrollment_id": head.get("school_enrollment_id") or first.get("school_enrollment_id"),
+            "program_name": head.get("program_name") or first.get("program_name"),
+            "module_name": head.get("module_name") or first.get("module_name"),
+            "headline": head.get("title") or head.get("event_type"),
+            "headline_event_type": head.get("event_type"),
+            "requires_attention": any(e.get("requires_attention") for e in evs),
+            "event_count": len(evs),
+            "started_at": evs[-1].get("created_at"), "ended_at": first.get("created_at"),
+            "events": evs,
+        })
+    return out
+
+
 @api.get("/admin/school/hq/activity")
 async def admin_school_hq_activity(
     limit: int = 40,
@@ -21341,16 +21443,108 @@ async def admin_school_hq_activity(
     client_id: Optional[str] = None,
     event_type: Optional[str] = None,
     attention_only: bool = False,
+    dog_id: Optional[str] = None,
+    program_id: Optional[str] = None,
+    type_category: Optional[str] = None,
+    q: Optional[str] = None,
+    date_from: Optional[str] = None,
+    date_to: Optional[str] = None,
+    grouped: bool = False,
     _: dict = Depends(require_admin_and_permission("manage_school")),
 ):
     """Chronological activity feed (newest first), cursor-paginated by
-    `before` (an ISO created_at). Bounded — never an unbounded collection."""
-    lim = max(1, min(int(limit or 40), 100))
+    `before` (an ISO created_at). Bounded — never an unbounded collection.
+    All filters run server-side against the full dataset; `grouped=true`
+    returns session bundles (same cursor semantics) for the volume-ready
+    Activity view while the plain shape stays byte-compatible for existing
+    consumers."""
+    lim = max(1, min(int(limit or 40), 200))
+    event_types = None
+    if type_category:
+        event_types = ACTIVITY_TYPE_CATEGORIES.get(type_category)
+        if event_types is None:
+            raise HTTPException(status_code=400, detail=f"Unknown activity type {type_category!r}")
     items = await school_events.recent_activity(
         limit=lim, before=before, client_id=client_id,
         event_type=event_type, attention_only=attention_only,
+        dog_id=dog_id, program_id=program_id, event_types=event_types,
+        q_text=q, date_from=date_from, date_to=date_to,
     )
-    return {"items": items, "next_before": items[-1]["created_at"] if len(items) == lim else None}
+    next_before = items[-1]["created_at"] if len(items) == lim else None
+    if not grouped:
+        return {"items": items, "next_before": next_before}
+    return {"groups": _group_school_activity(items), "next_before": next_before}
+
+
+@api.get("/admin/school/hq/activity/summary")
+async def admin_school_hq_activity_summary(_: dict = Depends(require_admin_and_permission("manage_school"))):
+    """Today-at-a-glance numbers above the Activity feed — each is an indexed
+    count, cheap enough for the tab's normal refresh cadence."""
+    today_prefix = business_today().isoformat()
+    base = {"created_at": {"$gte": today_prefix}}
+    active_students = len(await db.school_events.distinct("client_id", {**base, "client_id": {"$nin": [None, ""]}}))
+    practices = await db.school_events.count_documents(
+        {**base, "event_type": {"$in": [SchoolEvent.PRACTICE_COMPLETED, SchoolEvent.PRACTICE_VIDEO_SUBMITTED]}})
+    lessons = await db.school_events.count_documents({**base, "event_type": SchoolEvent.LESSON_COMPLETED})
+    checkpoints = await db.school_events.count_documents({**base, "event_type": SchoolEvent.CHECKPOINT_SUBMITTED})
+    return {
+        "date": today_prefix,
+        "active_students_today": active_students,
+        "practices_today": practices,
+        "lessons_completed_today": lessons,
+        "checkpoints_submitted_today": checkpoints,
+        # The open work queue, not a today-count — clicking it should go to
+        # Needs Attention, which stays the single source for trainer work.
+        "needs_attention": await school_events.attention_count(),
+    }
+
+
+@api.get("/admin/school/hq/activity/students")
+async def admin_school_hq_activity_students(
+    q: Optional[str] = None, limit: int = 60,
+    _: dict = Depends(require_admin_and_permission("manage_school")),
+):
+    """Group-by-Student rollup: one card per dog with last activity, today's
+    counts, and today's Learn/Practice/Lesson flags. Bounded to the last 30
+    days of events and enriched from the enrollments in one batch."""
+    lim = max(1, min(int(limit or 60), 150))
+    since = (datetime.now(timezone.utc) - timedelta(days=30)).isoformat()
+    today_prefix = business_today().isoformat()
+    match: Dict[str, Any] = {"created_at": {"$gte": since}, "dog_id": {"$nin": [None, ""]}}
+    if q:
+        rx = {"$regex": re.escape(q.strip()), "$options": "i"}
+        match["$or"] = [{"client_name": rx}, {"dog_name": rx}, {"program_name": rx}]
+    rows = []
+    async for r in db.school_events.aggregate([
+        {"$match": match},
+        {"$sort": {"created_at": -1}},
+        {"$group": {
+            "_id": {"client_id": "$client_id", "dog_id": "$dog_id"},
+            "client_name": {"$first": "$client_name"}, "dog_name": {"$first": "$dog_name"},
+            "program_name": {"$first": "$program_name"}, "module_name": {"$first": "$module_name"},
+            "school_enrollment_id": {"$first": "$school_enrollment_id"},
+            "last_at": {"$max": "$created_at"},
+            "today_count": {"$sum": {"$cond": [{"$gte": ["$created_at", today_prefix]}, 1, 0]}},
+            "today_types": {"$addToSet": {"$cond": [{"$gte": ["$created_at", today_prefix]}, "$event_type", None]}},
+            "attention_recent": {"$max": {"$cond": ["$requires_attention", "$created_at", None]}},
+        }},
+        {"$sort": {"last_at": -1}},
+        {"$limit": lim},
+    ]):
+        tt = set(t for t in (r.get("today_types") or []) if t)
+        rows.append({
+            "client_id": r["_id"].get("client_id"), "client_name": r.get("client_name"),
+            "dog_id": r["_id"].get("dog_id"), "dog_name": r.get("dog_name"),
+            "school_enrollment_id": r.get("school_enrollment_id"),
+            "program_name": r.get("program_name"), "module_name": r.get("module_name"),
+            "last_activity_at": r.get("last_at"),
+            "activities_today": r.get("today_count") or 0,
+            "today_learn": SchoolEvent.LESSON_LEARN_COMPLETED in tt,
+            "today_practice": bool(tt & {SchoolEvent.PRACTICE_COMPLETED, SchoolEvent.PRACTICE_VIDEO_SUBMITTED}),
+            "today_lesson": SchoolEvent.LESSON_COMPLETED in tt,
+            "recent_attention_at": r.get("attention_recent"),
+        })
+    return {"students": rows}
 
 
 @api.get("/admin/school/hq/notifications")

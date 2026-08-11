@@ -148,6 +148,37 @@ export default function SchoolApp({ path, clientName, onNavigate, onExit }) {
     refreshAll();
   }, [refreshAll]);
 
+  // Finish Practice must LEAD somewhere. After the panel's brief completion
+  // transition, ask the backend what the client's next logical action is
+  // (the SAME current_action ladder that drives Home/Today — practice /
+  // checkpoint / quiz / advance / completed) and route there. Never a
+  // frontend "current lesson + 1" guess, and never an auto-advance: an
+  // "advance"-state lands on Today, whose primary CTA is the explicit
+  // Continue action the progression state machine expects.
+  const practiceCompleted = useCallback(async () => {
+    setPractice(null);
+    let act = null;
+    try {
+      const { data: freshHome } = await api.get(`/portal/school/${selectedId}/home`);
+      setHome(freshHome);
+      loadDetail();
+      act = freshHome?.current_action || null;
+    } catch { /* fall through to Today */ }
+    const t = act?.type;
+    const lessonId = act?.target?.lesson_id;
+    if (t === "practice" && lessonId) { openPractice(lessonId); return; }
+    if (t === "remediation") { openPrescribedPractice(); return; }
+    if (t === "submit_checkpoint" && lessonId) { go("lesson", lessonId); return; }
+    if (t === "module_quiz") {
+      const moduleId = act?.target?.module_id;
+      if (moduleId) { setQuizFor({ moduleId, checkpointPassed: false }); return; }
+    }
+    if (t === "course_complete") { go("progress"); return; }
+    // advance / awaiting_review / everything else → Today's Training with the
+    // completed state and the next step as its primary CTA.
+    go("today");
+  }, [selectedId, loadDetail, openPractice, openPrescribedPractice, go]);
+
   // ── One router for every school action (Home CTA, Today CTA) ──
   const runAction = useCallback(async (action) => {
     const t = action?.type;
@@ -175,7 +206,7 @@ export default function SchoolApp({ path, clientName, onNavigate, onExit }) {
     if (t === "onboarding") { requestAnimationFrame(() => document.querySelector('[data-testid="school-onboarding"]')?.scrollIntoView({ behavior: "smooth", block: "start" })); return; }
     if (t === "course_paused") { go("home"); return; }
     go("today");
-  }, [home, go, openPractice, openPrescribedPractice, selectedId, refreshAll]);
+  }, [home, detail, go, openPractice, openPrescribedPractice, selectedId, refreshAll]);
 
   const goView = useCallback((view) => {
     setPracticeDone(false);
@@ -322,10 +353,13 @@ export default function SchoolApp({ path, clientName, onNavigate, onExit }) {
         {body}
       </div>
 
-      {/* Practice Coach — the exact same engine, hosted with School context. */}
+      {/* Practice Coach — the exact same engine, hosted with School context.
+          onCompleted makes Finish Practice route to the backend-decided next
+          step instead of stranding the client on the finished form. */}
       {practice && (
         <PracticePanel homework={practice.homework} dogPhoto={selectedEntry?.dog_photo}
-                       onClose={closePractice} onChanged={refreshAll} onPracticeLogged={practiceLogged} />
+                       onClose={closePractice} onChanged={refreshAll} onPracticeLogged={practiceLogged}
+                       onCompleted={practiceCompleted} />
       )}
 
       {/* Module Quiz — server-graded; a passing submit already advanced the

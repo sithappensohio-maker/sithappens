@@ -74,6 +74,7 @@ export default function TrainerAssistQueue({ onClose, onChanged, onMessageClient
     if (initialHandled.current || !initialSubmissionId) return;
     initialHandled.current = true;
     open(initialSubmissionId);
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- `open` is a stable local; re-running on its identity would re-open the modal
   }, [initialSubmissionId]);
   const back = () => { setActiveId(null); setDetail(null); setErr(""); };
 

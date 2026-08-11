@@ -53,7 +53,7 @@ export default function ModuleQuizPanel({ enrollmentId, moduleId, checkpointPass
   }, [enrollmentId, moduleId]);
   useEffect(() => { load(); }, [load]);
 
-  const questions = quiz?.questions || [];
+  const questions = useMemo(() => quiz?.questions || [], [quiz]);
   const unanswered = useMemo(() => questions.filter((q) => !answers[q.id]).length, [questions, answers]);
 
   const submit = async () => {
