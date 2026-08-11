@@ -80,7 +80,15 @@ test("PracticePanel submits could_not_complete_reason using the proven null-when
 
 // 8. Practice submit cannot duplicate from double-clicking.
 test("PracticePanel guards submit against double-tap and disables the button while saving", () => {
-  expect(practicePanelSrc).toMatch(/if \(saveState === "saving"\) return;/);
+  // School UX fix strengthened the guard: a SAVED practice can no longer be re-submitted either.
+  expect(practicePanelSrc).toMatch(/if \(saveState === "saving" \|\| saveState === "saved"\) return;/);
+  // …and because setState is async, same-tick rapid clicks all read "idle" —
+  // a synchronous ref must block them (verified live: backend section-log has
+  // no dedupe, so without this a triple-click writes three practice records).
+  expect(practicePanelSrc).toMatch(/if \(submittingRef\.current\) return;/);
+  expect(practicePanelSrc).toMatch(/submittingRef\.current = true;/);
+  // a failed save clears the lock so Retry still works
+  expect(practicePanelSrc).toMatch(/submittingRef\.current = false;/);
 });
 
 // 9. A failed save remains retryable — the submit button is only disabled

@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { api } from "../../../lib/api";
 import LessonDetailPanel from "../../training/LessonDetailPanel";
 import LessonContentBlocks from "./LessonContentBlocks";
@@ -26,16 +26,36 @@ export default function LessonScreen({
   const [busy, setBusy] = useState(false);
   const [actionErr, setActionErr] = useState("");
 
+  // Monotonic request counter: on a hard refresh this screen briefly mounts
+  // with enrollmentId=null (the enrollment list is still resolving), and a
+  // stale 404 from that phantom request must never overwrite the real
+  // lesson response that races past it.
+  const loadSeq = useRef(0);
   const load = useCallback(async () => {
+    if (!enrollmentId || !lessonId) return;
+    const seq = ++loadSeq.current;
     setErr(null);
     try {
       const { data: d } = await api.get(`/portal/school/${enrollmentId}/lessons/${lessonId}`);
-      setData(d);
+      if (seq === loadSeq.current) setData(d);
     } catch (e) {
-      setErr({ status: e.response?.status, message: e.response?.data?.detail || "This lesson isn't available right now." });
+      if (seq === loadSeq.current) setErr({ status: e.response?.status, message: e.response?.data?.detail || "This lesson isn't available right now." });
     }
   }, [enrollmentId, lessonId]);
   useEffect(() => { setData(null); load(); }, [load]);
+
+  // Practice happens in an overlay on TOP of this screen, so finishing it
+  // routes back to the SAME lesson URL — no remount, no reload. The parent
+  // refreshes `detail` (the roadmap) after every practice/checkpoint change;
+  // ride that signal to resync this screen's own lesson data (data.practiced
+  // gates the checkpoint submit form). Skip the initial render — the mount
+  // effect above already loads.
+  const detailRef = useRef(detail);
+  useEffect(() => {
+    if (detailRef.current === detail) return;
+    detailRef.current = detail;
+    load();
+  }, [detail, load]);
 
   const roadmap = detail?.roadmap;
   const requiresCp = !!(data?.is_current && roadmap?.requires_checkpoint);

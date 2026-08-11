@@ -20,7 +20,7 @@
 // straight to the plain completion form — Quick Practice, and every
 // legacy template with no practice_coach, keep using exactly the
 // pre-existing simple flow below, completely unchanged.
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { api, formatErr } from "../../lib/api";
 import { toast } from "sonner";
 import { todayISO } from "../../lib/date";
@@ -46,7 +46,7 @@ const FIELD_ICON = { reps: "fa-rotate", sets: "fa-layer-group", duration_sec: "f
   distance_ft: "fa-ruler", success_rate: "fa-percent", rating_5: "fa-star", checkbox: "fa-square-check", text: "fa-pen", longtext: "fa-pen" };
 const FIELD_UNIT = { duration_sec: "sec", duration_min: "min", distance_ft: "ft", success_rate: "%", rating_5: "/5" };
 
-export default function PracticePanel({ homework, dogPhoto, onClose, onChanged, onPracticeLogged }) {
+export default function PracticePanel({ homework, dogPhoto, onClose, onChanged, onPracticeLogged, onCompleted }) {
   const model = assignmentCardModel(homework);
   const isDailyTracker = !!homework.daily_tracker;
   const readOnly = model.status === "completed" || model.status === "waiting_review";
@@ -77,6 +77,7 @@ export default function PracticePanel({ homework, dogPhoto, onClose, onChanged, 
   const [uploadingVideo, setUploadingVideo] = useState(false);
   const [askText, setAskText] = useState("");
   const [saveState, setSaveState] = useState("idle");
+  const submittingRef = useRef(false); // synchronous double-submit lock (state alone races same-tick clicks)
   const [errorMessage, setErrorMessage] = useState("");
   const [timerSec, setTimerSec] = useState(0);
   const [timerRunning, setTimerRunning] = useState(false);
@@ -116,8 +117,25 @@ export default function PracticePanel({ homework, dogPhoto, onClose, onChanged, 
     } finally { setUploadingVideo(false); }
   };
 
+  // Completion is a WORKFLOW, not a popup: after a successful save the form
+  // is replaced by an inline "Practice Complete" state, then (when hosted by
+  // School) onCompleted routes to the backend-decided next step. The timer
+  // is cleared on unmount so a quick close can't fire a stale navigation.
+  useEffect(() => {
+    if (viewMode !== "complete" || !onCompleted) return undefined;
+    const t = setTimeout(() => onCompleted(), 1400);
+    return () => clearTimeout(t);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [viewMode]);
+
   const submit = async () => {
-    if (saveState === "saving") return; // guard against double-tap/double-click submits
+    if (saveState === "saving" || saveState === "saved") return; // double-click guard
+    // React state updates are async, so rapid same-tick clicks all still see
+    // saveState === "idle" — the ref blocks those synchronously. Backend
+    // section-log has no dedupe; every request that gets through is a
+    // duplicate practice record.
+    if (submittingRef.current) return;
+    submittingRef.current = true;
     setSaveState("saving"); setErrorMessage("");
     try {
       const field_values = {};
@@ -154,8 +172,12 @@ export default function PracticePanel({ homework, dogPhoto, onClose, onChanged, 
       setSaveState("saved");
       onPracticeLogged?.();
       onChanged?.();
-      toast.success("Practice logged");
+      // No popup to dismiss — replace the form with the completion state.
+      // In School the onCompleted effect above then routes to the next step;
+      // for generic homework the state offers one obvious CONTINUE action.
+      setViewMode("complete");
     } catch (e) {
+      submittingRef.current = false; // a failed save must stay retryable
       setSaveState("error");
       setErrorMessage(formatErr(e.response?.data?.detail) || "Couldn't save — try again.");
     }
@@ -243,7 +265,35 @@ export default function PracticePanel({ homework, dogPhoto, onClose, onChanged, 
         </div>
 
         <div className="relative overflow-y-auto flex-1 min-h-0 px-3 sm:px-5 lg:px-6 py-4 sm:py-5 space-y-4 sm:space-y-5 pb-[max(1rem,env(safe-area-inset-bottom))]">
-          {!section ? (
+          {viewMode === "complete" ? (
+            <div className="flex flex-col items-center justify-center text-center py-10 sm:py-14 space-y-4" data-testid="practice-complete-state">
+              <span className="w-16 h-16 rounded-2xl bg-shPrimary/15 border border-shPrimary/40 grid place-items-center">
+                <i className="fas fa-check text-shPrimary text-2xl" />
+              </span>
+              <div>
+                <p className="text-[20px] font-black text-shText uppercase tracking-tight">✓ Practice Complete</p>
+                <p className="text-[13px] text-shTextMuted mt-1" data-testid="practice-complete-subtitle">
+                  {onCompleted ? "Nice work. Updating your training plan…" : "Nice work — it's saved to your training history."}
+                </p>
+              </div>
+              {onCompleted ? (
+                <i className="fas fa-spinner fa-spin text-shSecondary" aria-hidden="true" />
+              ) : (
+                <div className="w-full max-w-sm space-y-2">
+                  <button type="button" onClick={onClose} data-testid="practice-complete-continue"
+                          className="w-full min-h-[50px] bg-shPrimary text-bgHeader rounded-xl font-black text-[13px] uppercase tracking-widest shadow-lg hover:bg-shPrimary/90 transition">
+                    Continue Training <i className="fas fa-arrow-right ml-1.5" />
+                  </button>
+                  {!isDailyTracker && (
+                    <button type="button" onClick={markAssignmentComplete} disabled={markingComplete} data-testid="practice-mark-assignment-complete"
+                            className="w-full min-h-[44px] text-[11px] font-black uppercase tracking-widest text-shTextMuted hover:text-shPrimary disabled:opacity-50">
+                      {markingComplete ? "Marking complete…" : "This assignment is fully done — mark it complete"}
+                    </button>
+                  )}
+                </div>
+              )}
+            </div>
+          ) : !section ? (
             <EmptyState icon="fa-clipboard-check" message="This assignment doesn't have any sessions to log yet." testid="practice-no-section"/>
           ) : readOnly ? (
             <div className="space-y-3">
@@ -346,12 +396,6 @@ export default function PracticePanel({ homework, dogPhoto, onClose, onChanged, 
                 onSubmit={submit}
                 testid="practice-completion"
               />
-              {!isDailyTracker && (
-                <button type="button" onClick={markAssignmentComplete} disabled={markingComplete} data-testid="practice-mark-assignment-complete"
-                        className="w-full min-h-[44px] text-center text-[11px] sm:text-[12px] font-black text-shTextMuted hover:text-shPrimary py-2 disabled:opacity-50">
-                  {markingComplete ? "Marking complete…" : "This assignment is fully done — mark complete"}
-                </button>
-              )}
             </>
           )}
         </div>

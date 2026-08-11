@@ -16,7 +16,7 @@ import HomeworkIncentivesPanel from "../components/HomeworkIncentivesPanel";
 import ClientTodayPanel from "../components/training/ClientTodayPanel";
 import PracticePanel from "../components/training/PracticePanel";
 import SchoolApp from "./SchoolApp";
-import { nextActionLabel, formatCompletionPct } from "../lib/onlineSchoolPolish";
+import OnlineSchoolHeroCard from "../components/school/OnlineSchoolHeroCard";
 import MultiDateCalendar from "../components/MultiDateCalendar";
 import PortalHomeActionCard from "../components/PortalHomeActionCard";
 import PremiumButton from "../components/premium/PremiumButton";
@@ -1255,6 +1255,17 @@ export default function Portal() {
         </header>
 
       <div className="app-scroll-root flex-1 min-h-0 overflow-y-auto overscroll-contain p-3 sm:p-8 max-w-6xl mx-auto w-full pb-24 md:pb-8" data-scroll-root>
+        {/* Sit Happens Online School — the HERO of an enrolled client's
+            portal: the very first card in the scroll, above even the quick
+            actions, so the paid course is the first thing a school client
+            notices on desktop and mobile alike. Renders nothing for clients
+            with no School enrollment — a no-op for everyone else. */}
+        {schoolEntries.length > 0 && (
+          <div className="mb-4 sm:mb-6">
+            <OnlineSchoolHeroCard entries={schoolEntries} onOpen={openSchool} />
+          </div>
+        )}
+
         {/* Above-the-fold quick actions — all 3 cards stay on Home per the
             user's own correction; Book is kept the strongest (emphasized)
             so it doesn't visually compete with Shop, rather than removing
@@ -1889,31 +1900,9 @@ export default function Portal() {
             <ClientTodayPanel dogs={dogs} homework={homework} bookings={bookings} onOpenPractice={setPracticeFor} testid="client-today-panel"/>
           )}
 
-          {/* Sit Happens Online School (Phase 1) — a clear, prominent entry
-              point, never buried in "More". Renders nothing at all for any
-              client with no school enrollment (schoolEntries stays empty),
-              so this is a no-op for every daycare/boarding/trainer-led-only
-              client — same "renders nothing" convention PortalLearn/
-              PortalProgress already use. */}
-          {schoolEntries.length > 0 && (
-            <div className="relative overflow-hidden bg-gradient-to-br from-shBlue/15 via-bgPanel to-shPrimary/10 border border-shBorder rounded-2xl p-4 shadow-xl"
-                 data-testid="online-school-teaser">
-              <div className="flex items-center gap-3">
-                <div className="w-10 h-10 rounded-full bg-shPrimary/15 border border-shPrimary/40 grid place-items-center shrink-0">
-                  <i className="fas fa-graduation-cap text-shPrimary text-lg"/>
-                </div>
-                <div className="min-w-0 flex-1">
-                  <p className="text-[10px] font-black uppercase tracking-[0.3em] text-shBlue">Sit Happens Online School</p>
-                  <p className="text-[14px] font-black text-shText truncate">{schoolEntries[0].program_name} · {schoolEntries[0].status === "completed" ? "Completed" : formatCompletionPct(schoolEntries[0].course_pct ?? schoolEntries[0].mastered_pct)}</p>
-                  <p className="text-[12px] text-shTextMuted truncate">{nextActionLabel(schoolEntries[0])}</p>
-                </div>
-                <button onClick={openSchool} data-testid="online-school-open"
-                        className="shrink-0 bg-shPrimary text-bgHeader px-3 py-2 rounded-lg font-black text-[12px] uppercase tracking-widest shadow">
-                  {schoolEntries[0].status === "completed" ? "Review" : "Continue"}
-                </button>
-              </div>
-            </div>
-          )}
+          {/* Sit Happens Online School — promoted to the full-width hero card
+              ABOVE the grid (see OnlineSchoolHeroCard); the slim teaser that
+              lived here was too easy to overlook for a primary paid feature. */}
 
           {/* Focused Client Usability phase — Homework streak + Payment
               plans are secondary; tucked behind "More". Required intake
