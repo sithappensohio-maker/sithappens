@@ -57,6 +57,23 @@ export function CheckoutModal({ booking, services, onClose, onRequestCancel }) {
   const isGroupCheckout = checkoutBookings.length > 1;
   const groupDogNames = checkoutBookings.map(b => b.dog_name).filter(Boolean);
 
+  // Boarding early checkout — a dog leaving before the booked end_date must
+  // be charged for the stay it actually had (server-quoted: nights through
+  // today + the pickup-day rule at the current clock), not the full booked
+  // span. Defaults ON when applicable; the operator can flip back to the
+  // full booked price, and a manual base-price override always wins.
+  const [earlyQuote, setEarlyQuote] = useState(null);
+  const [chargeFullStay, setChargeFullStay] = useState(false);
+  useEffect(() => {
+    let alive = true;
+    setEarlyQuote(null); setChargeFullStay(false);
+    if (booking.service_type !== "boarding" || !booking.end_date) return undefined;
+    api.get(`/bookings/${booking.id}/early-checkout-quote`)
+      .then(r => { if (alive && r.data?.applicable) setEarlyQuote(r.data); })
+      .catch(() => {});
+    return () => { alive = false; };
+  }, [booking.id, booking.service_type, booking.end_date]);
+
   // Pre-deducted credit info — group bookings normally reserve each dog's
   // fractional credit separately, so add them together for one clear checkout.
   const hadCredit = checkoutBookings.every(b => !!b.credit_value && !b.actual_price);
@@ -312,11 +329,22 @@ export function CheckoutModal({ booking, services, onClose, onRequestCancel }) {
     ? baseCreditShortfallCash + Math.max(0, extraCashOnCredits)
     : 0;
 
+  // Early boarding checkout applies when the server quoted one, the operator
+  // hasn't flipped back to full-stay pricing, and this is a single-dog cash
+  // checkout (group rows and credit deductions still price the booked span).
+  const earlyStayActive = !!earlyQuote && !chargeFullStay && !isGroupCheckout;
+
   let basePreview = 0;
   if (basePrice !== "" && !useCredits) {
     basePreview = Number(basePrice) || 0;
   } else if (useCredits && hadCredit && creditAmt > 0) {
     basePreview = creditAmt;
+  } else if (earlyStayActive && !useCredits) {
+    // Early boarding checkout: charge the server-quoted ACTUAL stay
+    // (nights through today + pickup-day rule at the current clock), not
+    // the full booked span the snapshot/preview endpoints price. Cash path
+    // only — credit deductions are computed server-side from the booked span.
+    basePreview = Number(earlyQuote.base_price || 0);
   } else {
     const defaultSvc = (services || []).find(s => s.is_default && s.service_type === booking.service_type && s.active);
     // Prefer the booking's saved estimate/snapshot. This keeps checkout aligned
@@ -421,6 +449,10 @@ export function CheckoutModal({ booking, services, onClose, onRequestCancel }) {
       if (!useCredits) {
         body.payment_method = payMethod;
         if (basePrice !== "") body.base_price = Number(basePrice);
+        // Early boarding checkout: the backend prices from the booked-span
+        // snapshot, so the actual-stay amount must travel as an explicit
+        // base_price (manual override above still wins when typed).
+        else if (earlyStayActive) body.base_price = Number(earlyQuote.base_price || 0);
         // Sprint 110di-51 — Partial pay / tab. A real bug: this used to send
         // payment_status="paid" unconditionally and only attached amount_paid
         // when the operator typed a non-blank number, so "Partial / on tab"
@@ -679,6 +711,34 @@ export function CheckoutModal({ booking, services, onClose, onRequestCancel }) {
             </p>
           )}
         </div>
+
+        {/* Section 1a½ — Boarding EARLY checkout (leaving before booked end).
+            Cash path only: credit deductions stay booked-span (server-side). */}
+        {earlyQuote && !isGroupCheckout && !useCredits && (
+          <div className="mb-5 border border-shBlue/40 rounded-lg p-4 bg-bgBase" data-testid="checkout-early-panel">
+            <div className="flex items-center justify-between mb-2">
+              <p className="text-[13px] uppercase tracking-widest text-shBlue font-black"><i className="fas fa-person-walking-arrow-right mr-1.5"/>Checking Out Early</p>
+              <span className="text-[12px] text-gray-500">Booked through {earlyQuote.original_end_date}</span>
+            </div>
+            {chargeFullStay ? (
+              <p className="text-[14px] text-gray-300">
+                Charging the <span className="font-black text-white">full booked stay</span>.
+                <button type="button" data-testid="early-use-actual" onClick={()=>setChargeFullStay(false)}
+                        className="block mt-2 min-h-[40px] px-3 rounded bg-shBlue/15 border border-shBlue/40 text-shBlue text-[12px] font-black uppercase tracking-widest">
+                  Charge actual stay instead · ${Number(earlyQuote.base_price).toFixed(2)}
+                </button>
+              </p>
+            ) : (
+              <p className="text-[14px] text-gray-300">
+                Charging the <span className="font-black text-white">actual stay through today</span> — {fmtCredits(earlyQuote.units)} boarding day{Number(earlyQuote.units) === 1 ? "" : "s"} · <span className="font-black text-shGreen">${Number(earlyQuote.base_price).toFixed(2)}</span>
+                <button type="button" data-testid="early-use-full" onClick={()=>setChargeFullStay(true)}
+                        className="block mt-2 min-h-[40px] px-3 rounded bg-bgPanel border border-bgHover text-gray-300 text-[12px] font-black uppercase tracking-widest">
+                  Charge full booked stay instead
+                </button>
+              </p>
+            )}
+          </div>
+        )}
 
         {/* Section 1b — Boarding stay extension (extra nights) */}
         {isBoarding && (

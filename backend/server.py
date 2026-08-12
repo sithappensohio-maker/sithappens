@@ -6615,6 +6615,60 @@ async def discount_preview(booking_id: str, _: dict = Depends(require_employee_o
     }
 
 
+@api.get("/bookings/{booking_id}/early-checkout-quote")
+async def early_checkout_quote(booking_id: str, _: dict = Depends(require_employee_or_admin)):
+    """Boarding early-checkout pricing: what the stay is worth through TODAY.
+
+    A dog leaving before the booked end_date was previously still quoted the
+    full original span (the modal only handled EXTRA nights). This returns the
+    same canonical quote (_quote_base_service_price: client-override rate,
+    snapshot cutoff, nights + pickup-day rule) with end_date = today and the
+    pickup-day rule evaluated at the CURRENT business-local clock — the dog is
+    walking out now, not at the originally planned pickup time.
+    Returns {applicable: false} unless this is a boarding row being ended
+    before its booked end date.
+    """
+    booking = await db.bookings.find_one({"id": booking_id}, {"_id": 0})
+    if not booking:
+        raise HTTPException(status_code=404, detail="Booking not found")
+    today = business_today().isoformat()
+    if (
+        booking.get("service_type") != "boarding"
+        or not booking.get("end_date")
+        or today >= str(booking.get("end_date"))
+        or today < str(booking.get("date") or today)
+    ):
+        return {"applicable": False}
+    ps = booking.get("pricing_snapshot") or {}
+    settings = await get_settings()
+    cutoff_time = ps.get("pickup_cutoff_time") or _boarding_full_day_cutoff_from_rules(settings.get("booking_rules") or {})
+    now_clock = datetime.now(BUSINESS_TZ).strftime("%H:%M")
+    quote = await _quote_base_service_price(
+        client_id=booking.get("client_id"),
+        service_type="boarding",
+        start_date=booking.get("date"),
+        end_date=today,
+        pickup_time=now_clock,
+        pickup_cutoff_time=cutoff_time,
+        service_id=booking.get("service_id"),
+        legacy_boarding_minimum=1,
+    )
+    units = float(quote.get("units") or 1)
+    unit_price = float(quote.get("unit_price") or 0)
+    is_extra_group_dog = ps.get("group_dog_index") not in (None, 0) or bool((booking.get("multi_dog_discount") or {}).get("pre_applied"))
+    base_price = round(unit_price * units * (0.5 if is_extra_group_dog else 1.0), 2)
+    return {
+        "applicable": True,
+        "actual_end_date": today,
+        "original_end_date": booking.get("end_date"),
+        "units": units,
+        "unit_price": unit_price,
+        "base_price": base_price,
+        "pickup_time_used": now_clock,
+        "pickup_cutoff_time": cutoff_time,
+    }
+
+
 @api.get("/bookings/{booking_id}/money-modifier-preview")
 async def money_modifier_preview(
     booking_id: str,
