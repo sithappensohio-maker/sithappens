@@ -8606,8 +8606,14 @@ async def _refresh_booking_price_for_current_override(booking: Dict[str, Any]) -
         return booking
     pricing = await resolve_client_price(client_id, "service", service_id, float(svc.get("base_price") or 0))
     current_override_id = pricing.get("override_id")
-    if not current_override_id:
-        return booking  # no override active right now — never touches a plain-catalog-priced booking, and never retroactively raises the price back up after a revocation
+    if pricing.get("pricing_source") == "standard":
+        # No client-specific pricing active right now (neither an individual
+        # override nor a tier price) — never touches a plain-catalog-priced
+        # booking, and never retroactively raises the price back up after a
+        # revocation. NOTE: keyed off pricing_source, not override_id — tier
+        # pricing resolves with override_id=None and previously fell through
+        # here, leaving tier clients billed the stale snapshot rate.
+        return booking
     old_unit = float(ps.get("unit_price") or booking.get("unit_price") or 0)
     new_unit = round(float(pricing.get("effective_price") or 0), 2)
     if old_unit <= 0 or new_unit == old_unit:
