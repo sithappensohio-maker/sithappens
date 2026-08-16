@@ -30409,14 +30409,30 @@ def _schedule_c_booking_income(booking: dict) -> float:
     return round(max(0.0, _cash_revenue(booking) - _sales_tax_collected_on_booking(booking)), 2)
 
 
+# Step 4B-2 — every source_kind whose rows represent a reversal of previously
+# collected income. Their negative amounts must survive aggregation with sign
+# intact: clamping them to zero (the old behavior for everything except
+# "refund") made a voided $100 sale keep reporting $100 of quarterly income.
+_INCOME_REVERSAL_KINDS = frozenset({
+    "refund",                # register + booking refunds
+    "pos_sale_void",         # full POS void offsets (Step 1/4B-1 rows)
+    "invoice_payment_void",  # reverses an invoice_payment income row
+    "stripe_refund",         # reverses a stripe_online_payment/shop_order income row
+})
+
+
 def _schedule_c_retail_income(row: dict) -> float:
     """Retail/other cash income for Schedule C, net of sales tax collected.
 
-    Normal sale rows cannot contribute negative income, but POS/register refund
-    rows intentionally reduce income in the period they are paid back.
+    Normal sale rows cannot contribute negative income (the clamp guards
+    against malformed rows where recorded tax exceeds the amount), but rows
+    that REVERSE collected income — refunds, POS voids, invoice-payment
+    voids, Stripe refunds — keep their sign so the reversal reduces income
+    in the period the money was paid back. Clamping happens per ordinary
+    row, never on the aggregate, so valid negative activity is never lost.
     """
     net = round(float(row.get("amount") or 0) - float(row.get("tax_amount") or 0), 2)
-    if (row.get("source_kind") or "") == "refund":
+    if (row.get("source_kind") or "") in _INCOME_REVERSAL_KINDS:
         return net
     return round(max(0.0, net), 2)
 
@@ -39592,10 +39608,16 @@ async def admin_quarterly_tax(
     # Step 4B-1 — historical POS void rows carry no tax_amount field; their
     # reversal is reconstructed read-time from the original sale (new void
     # rows store explicit negative tax and are already in the sum above).
-    retail_sales_tax_collected += sum(
-        float(r.get("tax_amount") or 0) for r in await _legacy_void_tax_reversals(start, end)
-    )
+    legacy_void_rows = await _legacy_void_tax_reversals(start, end)
+    retail_sales_tax_collected += sum(float(r.get("tax_amount") or 0) for r in legacy_void_rows)
     retail_income = sum(_schedule_c_retail_income(r) for r in retail_rows)
+    # Step 4B-2 — income correction for the same historical rows: a keyless
+    # taxable void contributes −(full amount incl. tax) above because the row
+    # has no tax field to net out, over-reversing income by the tax portion.
+    # Each reconstructed row carries tax_amount = −(original tax), so adding
+    # −tax_amount restores exactly that portion. New (tax-explicit) void rows
+    # never appear in legacy_void_rows, so this can never double-adjust.
+    retail_income += sum(-float(r.get("tax_amount") or 0) for r in legacy_void_rows)
     sales_tax_collected = round(service_sales_tax_collected + retail_sales_tax_collected, 2)
     gross_cash_collected = round(service_cash_gross + retail_cash_gross, 2)
     gross_income = service_income + retail_income
