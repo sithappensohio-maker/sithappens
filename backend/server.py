@@ -31936,6 +31936,23 @@ def _closeout_rollover_cash(closeout: Optional[Dict[str, Any]]) -> Optional[floa
         return None
 
 
+async def _require_drawer_open_for_cash(payment_method: Optional[str]) -> None:
+    """Shared open-drawer rule for CASH-collecting endpoints.
+
+    Physical cash cannot be taken before today's drawer session exists —
+    the exact check POS checkout, tab payments, and booking checkout
+    already make inline. Centralized so the credit-pack sale paths apply
+    the identical rule instead of quietly skipping it.
+    """
+    if _normalize_payment_method(payment_method, store=True) != "cash":
+        return
+    drawer_open = await db.cash_drawer_sessions.find_one(
+        {"date": business_today().isoformat()}, {"_id": 0, "date": 1}
+    )
+    if not drawer_open:
+        raise HTTPException(status_code=400, detail="Open the register before taking cash payments.")
+
+
 async def _previous_closeout_rollover(date_value: str) -> Optional[Dict[str, Any]]:
     return await db.daily_closeouts.find_one(
         {
@@ -33052,6 +33069,34 @@ async def get_invoice(invoice_id: str, _: dict = Depends(require_admin_and_permi
 async def list_client_invoices(client_id: str, _: dict = Depends(require_admin_and_permission("finance_reports"))):
     invoices = await db.invoices.find({"client_id": client_id}, {"_id": 0}).sort("created_at", -1).to_list(500)
     return invoices
+
+
+@api.get("/clients/{client_id}/open-invoices")
+async def list_client_open_invoices(client_id: str, user: dict = Depends(require_employee_or_admin)):
+    """Operational invoice lookup for the payment workflow — least privilege.
+
+    Front Desk staff hold take_payments (and can POST
+    /invoices/{id}/payments) but not finance_reports, so the full invoice
+    listing above was unreachable and the payment UI mistook the 403 for
+    "no invoice", fell through to the tab-payment path, and was then
+    correctly rejected because an AR-backed invoice existed. This returns
+    ONLY what collecting a payment needs: the client's UNPAID invoices,
+    trimmed to identity/balance fields — no line items, no historical or
+    financial-reporting data. Gated by the same permission as the payment
+    action itself.
+    """
+    if not _perms_for(user).get("take_payments"):
+        raise HTTPException(status_code=403, detail="You don't have permission to take payments.")
+    invoices = await db.invoices.find(
+        {"client_id": client_id, "balance": {"$gt": 0.005}},
+        {"_id": 0, "id": 1, "status": 1, "total": 1, "amount_paid": 1, "balance": 1, "created_at": 1, "due_date": 1},
+    ).sort("created_at", -1).to_list(100)
+    open_rows = [
+        {**inv, "invoice_number": (inv.get("id") or "")[:8].upper()}
+        for inv in invoices
+        if (inv.get("status") or "").upper() not in ("VOID", "REFUNDED", "PARTIALLY_REFUNDED")
+    ]
+    return {"invoices": open_rows}
 
 
 # ── Payment rebuild Phase 2 — Cash + manual payments + register ────────────
@@ -34370,6 +34415,31 @@ async def list_stripe_online_payments(limit: int = 50, q: Optional[str] = None, 
 async def get_register_session(date: Optional[str] = None, _: dict = Depends(require_admin_and_permission("finance_reports"))):
     date_value = _validated_register_date(date, allow_future=False)
     return await _register_session_view(date_value)
+
+
+@api.get("/admin/register/status")
+async def get_register_status(user: dict = Depends(require_employee_or_admin)):
+    """Operational register state — least privilege.
+
+    A cashier authorized to take money (take_payments / sell_credits) must
+    be able to see whether today's register is genuinely OPEN, CLOSED, or
+    NOT_OPEN — the full session view above stays finance_reports because it
+    carries expected/actual cash and over/short figures. This returns the
+    bare state only: no cash amounts, no totals, no closeout numbers.
+    """
+    perms = _perms_for(user)
+    if not (perms.get("take_payments") or perms.get("sell_credits") or perms.get("finance_reports")):
+        raise HTTPException(status_code=403, detail="You don't have permission to operate the register.")
+    date_value = business_today().isoformat()
+    session = await db.cash_drawer_sessions.find_one({"date": date_value}, {"_id": 0, "opened_at": 1, "opened_by_name": 1})
+    active_closeout = await _active_register_closeout(date_value)
+    status = "CLOSED" if active_closeout else ("OPEN" if session else "NOT_OPEN")
+    return {
+        "date": date_value,
+        "status": status,
+        "opened_at": (session or {}).get("opened_at"),
+        "opened_by": (session or {}).get("opened_by_name"),
+    }
 
 
 # ── POS hardware authorization endpoints ────────────────────────────────────
@@ -38416,7 +38486,12 @@ class PosSaleDiscountIn(BaseModel):
 
 
 class PosSaleTenderIn(BaseModel):
-    method: Literal["cash", "check", "venmo", "paypal", "other"]
+    # "card" is the SAME manually-recorded/offline card method used by
+    # checkout, refunds, and tab payments everywhere else in the app — it
+    # reports into the existing card register bucket and never touches
+    # expected drawer cash. It is NOT a processor integration; Stripe
+    # Terminal remains a separate, future step.
+    method: Literal["cash", "card", "check", "venmo", "paypal", "other"]
     amount: float = Field(gt=0)
     tendered_amount: Optional[float] = Field(default=None, ge=0)  # cash only
     notes: Optional[str] = Field(default=None, max_length=500)  # required when method == "other"
@@ -43997,6 +44072,7 @@ async def sell_credit_pack(client_id: str, body: SellCreditPackIn, user: dict = 
     revenue event (income is recognized when each credit is redeemed at
     check-out)."""
     await _require_register_day_open(business_today().isoformat())
+    await _require_drawer_open_for_cash(body.payment_method)
     client = await db.clients.find_one({"id": client_id}, {"_id": 0})
     if not client:
         raise HTTPException(status_code=404, detail="Client not found")
@@ -44102,6 +44178,11 @@ async def sell_credit_packs_bulk(client_id: str, body: SellCreditPacksBulkIn, us
     accounting + redemption logic stays unchanged. Returns the list of new
     lots plus a per-pool totals summary (qty + price)."""
     await _require_register_day_open(business_today().isoformat())
+    # Register-path parity: a CASH pack sale is physical drawer money, so it
+    # follows the exact same open-drawer rule as the Front Desk POS cart and
+    # every other cash-collecting endpoint — the same real-world transaction
+    # must not obey different cash rules depending on which button sold it.
+    await _require_drawer_open_for_cash(body.payment_method)
     client = await db.clients.find_one({"id": client_id}, {"_id": 0})
     if not client:
         raise HTTPException(status_code=404, detail="Client not found")

@@ -2,6 +2,7 @@
 // Manage employees (CRUD), view all timecards, override clock entries.
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { api, formatErr } from "../lib/api";
+import { useAuth } from "../lib/auth";
 import { useConfirm } from "../lib/useConfirm";
 import PageHero from "../components/PageHero";
 import AdminTabs from "../components/admin/AdminTabs";
@@ -1907,8 +1908,24 @@ function CountTile({ label, value = 0, color = "text-shText" }) {
 
 
 // ─── Register / POS / Cash Drawer ─────────────────────────────────────────
+// Least-privilege map for the Register tabs. Mirrors the backend gate on each
+// tab's endpoints: selling packs needs sell_credits, recording a payment needs
+// take_payments, refunds need delete_records, and everything that reads or
+// mutates drawer/closeout/report money needs finance_reports. The backend
+// stays authoritative — this only stops the UI offering actions that would 403.
+const REGISTER_TAB_PERMS = {
+  overview: "finance_reports", sale: "finance_reports", pack: "sell_credits",
+  payment: "take_payments", refund: "delete_records", adjustment: "finance_reports",
+  payout: "finance_reports", expenses: "finance_reports", closeout: "finance_reports",
+  reports: "finance_reports",
+};
+const REGISTER_TAB_ORDER = Object.keys(REGISTER_TAB_PERMS);
+
 export function RegisterTab({ excludeTabs = [] } = {}) {
   const excluded = (k) => excludeTabs.includes(k);
+  const { can } = useAuth();
+  const canFinance = can("finance_reports");
+  const tabAllowed = (k) => can(REGISTER_TAB_PERMS[k] || "finance_reports");
   const [date, setDate] = useState(todayISO());
   const [liveToday, setLiveToday] = useState(todayISO());
   const [data, setData] = useState(null);
@@ -1933,7 +1950,7 @@ export function RegisterTab({ excludeTabs = [] } = {}) {
   const [packs, setPacks] = useState([]);
   const [sale, setSale] = useState({ description: "", quantity: "1", unit_price: "", amount: "", category: "Misc Sale", payment_method: "card", client_id: "", notes: "", apply_tax: false });
   const [packSale, setPackSale] = useState({ client_id: "", pack_id: "", quantity: "1", payment_method: "card", amount_paid: "", note: "" });
-  const [payment, setPayment] = useState({ client_id: "", amount: "", method: "card", notes: "" });
+  const [payment, setPayment] = useState({ client_id: "", amount: "", method: "card", notes: "", tendered_amount: "" });
   const [refund, setRefund] = useState({ client_id: "", amount: "", payment_method: "card", reason: "", notes: "" });
   const [payout, setPayout] = useState({ amount: "", description: "", category: "Supplies", vendor: "", notes: "", tax_deductible: true });
   const [tillAdjustment, setTillAdjustment] = useState({ direction: "remove", amount: "", adjustment_type: "owner_draw", reason: "", notes: "" });
@@ -1958,6 +1975,11 @@ export function RegisterTab({ excludeTabs = [] } = {}) {
 
   const load = useCallback(async () => {
     setErr("");
+    // The day summary is finance data (expected cash, closeout math). A
+    // cashier with only sell_credits/take_payments must still be able to use
+    // their tabs, so skip the call instead of letting it 403 into the error
+    // banner on every load.
+    if (!canFinance) { setData(null); return; }
     try {
       const r = await api.get("/admin/register/day", { params: { date } });
       setData(r.data);
@@ -1965,7 +1987,7 @@ export function RegisterTab({ excludeTabs = [] } = {}) {
       else if (r.data?.totals?.opening_cash != null) setOpeningCash(String(r.data.totals.opening_cash));
       setOpeningOverrideReason(r.data?.opening_rollover?.is_override ? (r.data?.opening_rollover?.override_reason || "") : "");
     } catch (e) { setErr(formatErr(e.response?.data?.detail) || "Failed to load register"); }
-  }, [date]);
+  }, [date, canFinance]);
   const loadChoices = async () => {
     try {
       const [c, p] = await Promise.all([
@@ -1983,13 +2005,23 @@ export function RegisterTab({ excludeTabs = [] } = {}) {
     } catch {}
   };
   const loadExpenses = useCallback(async () => {
+    if (!canFinance) { setExpenseRows([]); return; }  // /expenses is finance-gated
     try {
       const r = await api.get("/expenses", { params: { start_date: date, end_date: date } });
       setExpenseRows(r.data || []);
     } catch {}
-  }, [date]);
+  }, [date, canFinance]);
   useEffect(() => { loadChoices(); loadExpenseChoices(); }, []);
   useEffect(() => { load(); loadExpenses(); }, [load, loadExpenses]);
+  // Permissions load asynchronously (and fail closed while loading). Once
+  // they're known, make sure the active tab is one this user may actually
+  // use — e.g. a cashier landing on the finance-only "overview".
+  useEffect(() => {
+    if (tabAllowed(active)) return;
+    const first = REGISTER_TAB_ORDER.find((k) => !excluded(k) && tabAllowed(k));
+    if (first && first !== active) setActive(first);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [active, canFinance, can]);
   useEffect(() => {
     const syncBusinessDay = () => {
       const nowDay = todayISO();
@@ -2086,8 +2118,13 @@ export function RegisterTab({ excludeTabs = [] } = {}) {
     loadChoices();
   });
   const submitPayment = () => submit(async () => {
-    await api.post(`/clients/${payment.client_id}/payment`, { amount: Number(payment.amount || 0), method: payment.method, notes: payment.notes });
-    setPayment({ client_id: payment.client_id, amount: "", method: payment.method, notes: "" });
+    const body = { amount: Number(payment.amount || 0), method: payment.method, notes: payment.notes };
+    // Backend requires the physical cash handed over for cash payments
+    // ("Cash received (tendered_amount) is required for cash payments.") so
+    // change due is recorded, matching the POS cart and Take Payment modal.
+    if (payment.method === "cash") body.tendered_amount = Number(payment.tendered_amount || 0);
+    await api.post(`/clients/${payment.client_id}/payment`, body);
+    setPayment({ client_id: payment.client_id, amount: "", method: payment.method, notes: "", tendered_amount: "" });
     showDone("Client payment recorded.");
     loadChoices();
   });
@@ -2272,7 +2309,7 @@ export function RegisterTab({ excludeTabs = [] } = {}) {
         {[
           ["overview", "Today", "fa-chart-pie"], ["sale", "New Sale", "fa-cart-plus"], ["pack", "Sell Credits", "fa-ticket"],
           ["payment", "Record Payment", "fa-hand-holding-dollar"], ["refund", "Refund", "fa-rotate-left"], ["adjustment", "Till Adjustment", "fa-scale-balanced"], ["payout", "Cash Expense", "fa-money-bill-transfer"], ["expenses", "Expenses", "fa-receipt"], ["closeout", "Close Day", "fa-clipboard-check"], ["reports", "Reports", "fa-file-csv"],
-        ].filter(([k]) => !excludeTabs.includes(k))
+        ].filter(([k]) => !excludeTabs.includes(k) && tabAllowed(k))
          .map(([k,l,i]) => <button key={k} onClick={()=>setActive(k)} className={`shrink-0 px-3 py-2 text-[12px] font-black uppercase tracking-widest border-b-2 ${active===k ? "border-shPrimary text-shPrimary" : "border-transparent text-shTextMuted hover:text-shText"}`} data-testid={`register-mode-${k}`}><i className={`fas ${i} mr-1.5`}/>{l}</button>)}
       </div>
 
@@ -2293,6 +2330,7 @@ export function RegisterTab({ excludeTabs = [] } = {}) {
         </div>
       )}
 
+      {canFinance && (
       <div className="grid grid-cols-2 md:grid-cols-5 gap-3">
         <AuditTile label="Net incoming" value={totals.net_incoming_total ?? totals.incoming_total} color="text-shPrimary"/>
         <AuditTile label="Cash drawer" value={totals.expected_cash} color="text-shText"/>
@@ -2300,6 +2338,7 @@ export function RegisterTab({ excludeTabs = [] } = {}) {
         <AuditTile label="Venmo + PayPal" value={Number(incoming.venmo || 0) + Number(incoming.paypal || 0)} color="text-shPrimary"/>
         <AuditTile label="Refunds" value={sources.refunds} color="text-red-300"/>
       </div>
+      )}
 
       {active === "overview" && (
         <>
@@ -2440,10 +2479,16 @@ export function RegisterTab({ excludeTabs = [] } = {}) {
           {clientSelect(payment.client_id, v=>setPayment({...payment, client_id:v}), false)}
           <RegisterFormInput label="Amount paid" type="number" step="0.01" value={payment.amount} onChange={v=>setPayment({...payment, amount:v})}/>
           {methodSelect(payment.method, v=>setPayment({...payment, method:v}))}
+          {payment.method === "cash" && (
+            <RegisterFormInput label="Cash received" type="number" step="0.01" value={payment.tendered_amount} onChange={v=>setPayment({...payment, tendered_amount:v})} placeholder="Bills handed over"/>
+          )}
           <RegisterFormInput label="Notes" value={payment.notes} onChange={v=>setPayment({...payment, notes:v})} placeholder="Balance payment, deposit, etc."/>
         </div>
+        {payment.method === "cash" && Number(payment.tendered_amount || 0) > Number(payment.amount || 0) && (
+          <p className="text-[12px] text-shPrimary font-black">Change due: {money(Number(payment.tendered_amount) - Number(payment.amount || 0))}</p>
+        )}
         {selectedClient(payment.client_id) && <p className="text-[12px] text-shTextMuted">Current balance for {selectedClient(payment.client_id).name}: <span className="font-black text-shText">{money(selectedClient(payment.client_id).account_balance)}</span></p>}
-        <button disabled={busy || !payment.client_id || !Number(payment.amount)} onClick={submitPayment} className="bg-shPrimary disabled:opacity-50 text-bgHeader px-4 py-2 rounded text-[12px] font-black uppercase tracking-widest"><i className={`fas ${busy ? "fa-spinner fa-spin" : "fa-check"} mr-1`}/>{busy ? "Saving…" : "Record payment"}</button>
+        <button disabled={busy || !payment.client_id || !Number(payment.amount) || (payment.method === "cash" && Number(payment.tendered_amount || 0) < Number(payment.amount || 0) - 0.005)} onClick={submitPayment} className="bg-shPrimary disabled:opacity-50 text-bgHeader px-4 py-2 rounded text-[12px] font-black uppercase tracking-widest"><i className={`fas ${busy ? "fa-spinner fa-spin" : "fa-check"} mr-1`}/>{busy ? "Saving…" : "Record payment"}</button>
       </div>}
 
       {active === "refund" && <div className="bg-[var(--sh-card-base)] border border-shBorder rounded-xl p-4 space-y-3">

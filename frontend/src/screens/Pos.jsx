@@ -38,7 +38,9 @@ import { useConfirm } from "../lib/useConfirm";
 import { classifyVisit, visitStatusLabel, visitCounts, filterVisits, sortVisits, isMissedCheckout } from "../lib/frontDeskVisits";
 import { creditPackStaffLine } from "../lib/shopPolish";
 
-const TENDER_LABELS = { cash: "Cash", check: "Check", venmo: "Venmo", paypal: "PayPal", other: "Other" };
+// "card" here is a manually-recorded/offline card payment (external reader),
+// not a Stripe Terminal integration.
+const TENDER_LABELS = { cash: "Cash", card: "Card", check: "Check", venmo: "Venmo", paypal: "PayPal", other: "Other" };
 const money = (n) => `$${Number(n || 0).toFixed(2)}`;
 
 export default function Pos({ onOpenShopManager } = {}) {
@@ -65,9 +67,16 @@ export default function Pos({ onOpenShopManager } = {}) {
   const [drawerCustomReason, setDrawerCustomReason] = useState("");
   const [drawerBusy, setDrawerBusy] = useState(false);
   const [openingCash, setOpeningCash] = useState("");
+  const [openingReason, setOpeningReason] = useState("");
+  const [openingNeedsReason, setOpeningNeedsReason] = useState(false);
   const [openBusy, setOpenBusy] = useState(false);
 
-  const loadRegister = () => api.get("/admin/register/session").then(({ data }) => setRegisterStatus(data)).catch(() => {});
+  // Operational status endpoint (take_payments/sell_credits) — bare
+  // OPEN/CLOSED/NOT_OPEN only, no cash figures. A failed request becomes an
+  // explicit UNKNOWN state, never a fake "Register Closed".
+  const loadRegister = () => api.get("/admin/register/status")
+    .then(({ data }) => setRegisterStatus(data))
+    .catch(() => setRegisterStatus({ status: "UNKNOWN", error: true }));
   useEffect(() => {
     loadRegister();
     const t = setInterval(loadRegister, 30000);
@@ -83,12 +92,21 @@ export default function Pos({ onOpenShopManager } = {}) {
   const doOpenRegister = async () => {
     setOpenBusy(true);
     try {
-      await api.post("/admin/register/open-drawer", { opening_cash: Number(openingCash || 0) });
+      await api.post("/admin/register/open-drawer", {
+        opening_cash: Number(openingCash || 0),
+        // Backend enforces the rollover rule: when opening cash differs from
+        // the previous closeout's rollover it requires a written reason.
+        opening_override_reason: openingReason.trim(),
+      });
       toast.success("Register opened");
       setOpeningCash("");
+      setOpeningReason("");
+      setOpeningNeedsReason(false);
       loadRegister();
     } catch (e) {
-      toast.error(e?.response?.data?.detail || "Could not open the register");
+      const detail = e?.response?.data?.detail || "Could not open the register";
+      if (e?.response?.status === 400 && /rollover/i.test(String(detail))) setOpeningNeedsReason(true);
+      toast.error(detail);
     }
     setOpenBusy(false);
   };
@@ -109,6 +127,9 @@ export default function Pos({ onOpenShopManager } = {}) {
   };
 
   const registerOpen = registerStatus?.status === "OPEN";
+  // Show the "closed" banner only when the backend positively says so —
+  // an unreachable/forbidden status check must not masquerade as CLOSED.
+  const registerConfirmedClosed = registerStatus?.status === "NOT_OPEN" || registerStatus?.status === "CLOSED";
 
   // ── Today's Visits — the operational arrival/pickup roster ───────────────
   // A thin front-end over the EXISTING operational roster (GET
@@ -341,13 +362,18 @@ export default function Pos({ onOpenShopManager } = {}) {
     [roster, selectedClient],
   );
   const [clientInvoice, setClientInvoice] = useState(null);
+  const [clientInvoiceError, setClientInvoiceError] = useState(false);
   const refreshClientInvoice = (clientId) => {
-    api.get(`/clients/${clientId}/invoices`)
+    // Operational lookup gated by take_payments (not finance_reports) — a
+    // cashier allowed to collect a payment can always see whether an unpaid
+    // invoice exists. A failed request is an ERROR, never "no invoice".
+    setClientInvoiceError(false);
+    api.get(`/clients/${clientId}/open-invoices`)
       .then(({ data }) => {
-        const invoices = Array.isArray(data) ? data : [];
+        const invoices = Array.isArray(data?.invoices) ? data.invoices : [];
         setClientInvoice(invoices.find((i) => i.balance > 0.005) || null);
       })
-      .catch(() => {});
+      .catch(() => { setClientInvoice(null); setClientInvoiceError(true); });
   };
 
   const pickClient = (c) => {
@@ -825,8 +851,9 @@ export default function Pos({ onOpenShopManager } = {}) {
       {/* Register + hardware status header */}
       <div className="sh-front-desk-statusbar">
         <div className="sh-front-desk-statuses">
-          <span className={`sh-front-desk-status ${registerOpen ? "sh-front-desk-status--good" : "sh-front-desk-status--warn"}`}>
-            Register: {registerStatus?.status || "…"}
+          <span className={`sh-front-desk-status ${registerOpen ? "sh-front-desk-status--good" : "sh-front-desk-status--warn"}`}
+                data-testid="pos-register-status">
+            Register: {registerStatus?.error ? "Status unavailable" : (registerStatus?.status || "…")}
           </span>
           <span className={`sh-front-desk-status ${printerReady ? "sh-front-desk-status--good" : ""}`}>
             Printer: {printerReady === null ? "Checking…" : printerReady ? "Ready" : "Unavailable"}
@@ -983,14 +1010,36 @@ export default function Pos({ onOpenShopManager } = {}) {
         )}
       </div>
 
-      {!registerOpen && (
-        <div className="bg-[var(--sh-card-base)] border border-shAccent/40 rounded-2xl p-4 flex items-center gap-3 flex-wrap">
+      {registerConfirmedClosed && (
+        <div className="bg-[var(--sh-card-base)] border border-shAccent/40 rounded-2xl p-4 flex items-center gap-3 flex-wrap"
+             data-testid="pos-register-closed-banner">
           <span className="text-shAccent font-black uppercase text-sm tracking-widest">Register Closed</span>
-          <input type="number" value={openingCash} onChange={(e) => setOpeningCash(e.target.value)} placeholder="Opening cash"
-                 className="bg-[var(--sh-card-base)] border border-shBorder rounded p-2 text-shText w-40" />
-          <button onClick={doOpenRegister} disabled={openBusy}
-                  className="bg-shPrimary text-bgHeader rounded px-4 py-2 font-black uppercase text-[12px] tracking-widest disabled:opacity-50">
-            {openBusy ? "Opening…" : "Open Register"}
+          {canDrawerAndRefunds ? (
+            <>
+              <input type="number" value={openingCash} onChange={(e) => setOpeningCash(e.target.value)} placeholder="Opening cash"
+                     className="bg-[var(--sh-card-base)] border border-shBorder rounded p-2 text-shText w-40" />
+              {openingNeedsReason && (
+                <input value={openingReason} onChange={(e) => setOpeningReason(e.target.value)}
+                       placeholder="Reason opening differs from rollover" data-testid="pos-open-override-reason"
+                       className="bg-[var(--sh-card-base)] border border-shAccent/40 rounded p-2 text-shText w-72" />
+              )}
+              <button onClick={doOpenRegister} disabled={openBusy}
+                      className="bg-shPrimary text-bgHeader rounded px-4 py-2 font-black uppercase text-[12px] tracking-widest disabled:opacity-50">
+                {openBusy ? "Opening…" : "Open Register"}
+              </button>
+            </>
+          ) : (
+            <span className="text-shTextMuted text-sm">Ask a manager to open the register before taking cash.</span>
+          )}
+        </div>
+      )}
+      {registerStatus?.error && (
+        <div className="bg-[var(--sh-card-base)] border border-shBorder rounded-2xl p-4 flex items-center gap-3 flex-wrap"
+             data-testid="pos-register-status-error">
+          <span className="text-shTextMuted font-black uppercase text-sm tracking-widest">Register status unavailable</span>
+          <button onClick={loadRegister}
+                  className="bg-[var(--sh-card-base)] border border-shBorder text-shText rounded px-4 py-2 font-black uppercase text-[12px] tracking-widest">
+            Retry
           </button>
         </div>
       )}
@@ -1255,7 +1304,13 @@ export default function Pos({ onOpenShopManager } = {}) {
                       Pay Invoice — {money(clientInvoice.balance)}
                     </button>
                   )}
-                  {!clientInvoice && (
+                  {!clientInvoice && clientInvoiceError && (
+                    <div className="w-full border border-shAccent/40 text-shAccent rounded-xl py-3 px-3 text-[12px] font-black uppercase tracking-widest text-center"
+                         data-testid="pos-invoice-lookup-error">
+                      Couldn't check for open invoices — retry before taking payment
+                    </div>
+                  )}
+                  {!clientInvoice && !clientInvoiceError && (
                     <button onClick={() => setShowTakePayment(true)}
                             className="w-full bg-[var(--sh-card-base)] border border-shBorder text-shTextMuted rounded-xl py-3 font-black uppercase tracking-widest text-sm">
                       Pay Account / Tab

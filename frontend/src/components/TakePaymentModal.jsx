@@ -34,6 +34,7 @@ export default function TakePaymentModal({ onClose, onSuccess, presetClientId })
   const [balance, setBalance] = useState(null);
   const [openInvoice, setOpenInvoice] = useState(null);
   const [invoicesLoading, setInvoicesLoading] = useState(false);
+  const [invoiceLookupFailed, setInvoiceLookupFailed] = useState(false);
 
   // Front-desk POS hardware integration — payment already committed by the
   // time any of this runs; a hardware failure here never implies the
@@ -124,20 +125,25 @@ export default function TakePaymentModal({ onClose, onSuccess, presetClientId })
   }, []);
 
   // Look up current balance + any open invoice whenever a client is picked.
+  // Uses the take_payments-gated open-invoices endpoint so cashiers without
+  // finance_reports can still see what they're collecting against. A failed
+  // lookup is a hard error that blocks submit — falling through to the tab
+  // path could double-charge a client whose balance is invoice-backed.
   useEffect(() => {
-    if (!clientId) { setBalance(null); setOpenInvoice(null); return; }
+    if (!clientId) { setBalance(null); setOpenInvoice(null); setInvoiceLookupFailed(false); return; }
     const c = clients.find((x) => x.id === clientId);
     setBalance(c ? Number(c.account_balance || 0) : null);
     setInvoicesLoading(true);
-    api.get(`/clients/${clientId}/invoices`).then(({ data }) => {
-      const invoices = Array.isArray(data) ? data : [];
-      const open = invoices.find((inv) =>
-        Number(inv.balance || 0) > 0.005 &&
-        !["VOID", "REFUNDED", "PARTIALLY_REFUNDED"].includes(inv.status)
-      );
+    setInvoiceLookupFailed(false);
+    api.get(`/clients/${clientId}/open-invoices`).then(({ data }) => {
+      const invoices = Array.isArray(data?.invoices) ? data.invoices : [];
+      const open = invoices.find((inv) => Number(inv.balance || 0) > 0.005);
       setOpenInvoice(open || null);
       if (open) setAmount(String(Number(open.balance).toFixed(2)));
-    }).catch(() => setOpenInvoice(null)).finally(() => setInvoicesLoading(false));
+    }).catch(() => {
+      setOpenInvoice(null);
+      setInvoiceLookupFailed(true);
+    }).finally(() => setInvoicesLoading(false));
   }, [clientId, clients]);
 
   const selected = clients.find((c) => c.id === clientId);
@@ -154,6 +160,11 @@ export default function TakePaymentModal({ onClose, onSuccess, presetClientId })
 
   const submit = async () => {
     if (!clientId) { setErr("Pick a client first"); return; }
+    if (invoicesLoading) { setErr("Still checking for open invoices — one moment"); return; }
+    if (invoiceLookupFailed) {
+      setErr("Couldn't check for open invoices. Reselect the client to retry — payment is blocked until the check succeeds.");
+      return;
+    }
     if (!amount || amountNum <= 0) { setErr("Amount must be greater than 0"); return; }
     if (method === "other" && !notes.trim()) { setErr("A note is required when the method is Other"); return; }
     if (method === "cash" && (!tenderedAmount || tenderedNum < amountNum - 0.005)) {
@@ -323,6 +334,11 @@ export default function TakePaymentModal({ onClose, onSuccess, presetClientId })
             <div>
               <p className="text-shText font-black">{selected.name}</p>
               {invoicesLoading && <p className="text-[12px] text-shTextMuted">Checking open invoices…</p>}
+              {!invoicesLoading && invoiceLookupFailed && (
+                <p className="text-[12px] font-black text-shAccent" data-testid="take-payment-invoice-error">
+                  Couldn't check open invoices — reselect the client to retry
+                </p>
+              )}
               {!invoicesLoading && isInvoiceMode && (
                 <p className="text-[12px] font-black text-shAccent">Open invoice — ${Number(openInvoice.balance).toFixed(2)} due</p>
               )}
