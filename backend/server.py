@@ -27736,6 +27736,63 @@ async def trivia_import_csv(
 # Year-to-date / arbitrary-window tax tally for sales-tax filing. Combines
 # booking-level `tax_amount` and retail-level `tax_amount`.
 
+async def _legacy_void_tax_reversals(start_date: str, end_date: str) -> List[Dict[str, Any]]:
+    """Step 4B-1 — read-time tax reversal for HISTORICAL POS void rows.
+
+    Void offset rows written before this fix reversed the sale amount but
+    physically carry no ``tax_amount``, so tax reports overstated liability
+    on voided taxable sales. New void rows now store the exact negated
+    original tax explicitly (see void_pos_sale); rows from before then are
+    reconstructed here from the authoritative ORIGINAL retail row via the
+    ``reversed_retail_sales_id`` linkage — the stored original tax amount,
+    never today's tax rate. No migration/backfill: history self-heals on read.
+
+    Double-count guard: only rows WITHOUT a ``tax_amount`` key qualify (new
+    rows always write the key, 0.0 included, marking themselves tax-explicit).
+    POS voids are always full reversals, but the amount is verified against
+    the original anyway; anything that doesn't match exactly is skipped
+    rather than guessed. Pure read-time computation — running a report twice
+    can never accumulate a second reversal.
+    """
+    voids = await db.retail_sales.find(
+        {
+            "date": {"$gte": start_date, "$lte": end_date},
+            "source_kind": "pos_sale_void",
+            "tax_amount": {"$exists": False},
+            "reversed_retail_sales_id": {"$nin": [None, ""]},
+        },
+        {"_id": 0, "id": 1, "date": 1, "amount": 1, "reversed_retail_sales_id": 1,
+         "description": 1, "client_name": 1},
+    ).to_list(10000)
+    if not voids:
+        return []
+    originals = {
+        r["id"]: r
+        for r in await db.retail_sales.find(
+            {"id": {"$in": [v["reversed_retail_sales_id"] for v in voids]},
+             "tax_amount": {"$gt": 0}},
+            {"_id": 0, "id": 1, "amount": 1, "tax_amount": 1, "tax_rate_pct": 1},
+        ).to_list(10000)
+    }
+    out: List[Dict[str, Any]] = []
+    for v in voids:
+        o = originals.get(v["reversed_retail_sales_id"])
+        if not o:
+            continue  # original untaxed or missing — nothing to reverse
+        if abs(float(v.get("amount") or 0) + float(o.get("amount") or 0)) > 0.01:
+            continue  # not an exact full reversal — never guess partial tax
+        out.append({
+            "id": f"reconstructed-{v['id']}", "date": v.get("date"),
+            "description": v.get("description") or "POS void (reconstructed tax reversal)",
+            "amount": float(v.get("amount") or 0),
+            "tax_amount": -round(float(o.get("tax_amount") or 0), 2),
+            "tax_rate_pct": float(o.get("tax_rate_pct") or 0),
+            "client_name": v.get("client_name"),
+            "reconstructed": True,
+        })
+    return out
+
+
 @api.get("/admin/sales-tax/summary")
 async def sales_tax_summary(
     start_date: Optional[str] = None,
@@ -27758,10 +27815,16 @@ async def sales_tax_summary(
         limit=50000,
         sort_field="date",
     )
+    # Step 4B-1 — include NEGATIVE tax rows too ($gt: 0 used to silently drop
+    # every reversal: booking-refund tax rows and the new explicit void
+    # reversals). Net tax liability = tax collected − tax reversed.
     rt_rows = await db.retail_sales.find(
-        {"date": {"$gte": sd, "$lte": ed}, "tax_amount": {"$exists": True, "$gt": 0}},
+        {"date": {"$gte": sd, "$lte": ed}, "tax_amount": {"$exists": True, "$nin": [0, None]}},
         {"_id": 0, "id": 1, "date": 1, "description": 1, "amount": 1, "tax_amount": 1, "tax_rate_pct": 1, "client_name": 1},
     ).to_list(10000)
+    # Historical void rows without a stored tax_amount: reconstruct their
+    # reversal from the original sale's stored tax (full-reversal rows only).
+    rt_rows += await _legacy_void_tax_reversals(sd, ed)
     bk_total = round(sum(float(r.get("tax_amount") or 0) for r in bk_rows), 2)
     rt_total = round(sum(float(r.get("tax_amount") or 0) for r in rt_rows), 2)
     # Month breakdown
@@ -39298,14 +39361,28 @@ async def void_pos_sale(sale_id: str, body: PosSaleVoidIn, user: dict = Depends(
             # mixed cart's credit-pack/program lines each write their own
             # separate retail_sales row) can be larger than what this one
             # row ever recorded.
-            retail_row_original = await db.retail_sales.find_one({"id": original["retail_sales_id"]}, {"_id": 0, "amount": 1})
+            retail_row_original = await db.retail_sales.find_one(
+                {"id": original["retail_sales_id"]},
+                {"_id": 0, "amount": 1, "tax_amount": 1, "tax_rate_pct": 1, "pre_tax_amount": 1},
+            )
             amount = float((retail_row_original or {}).get("amount") or 0)
+            # Step 4B-1 — a void returns the customer's money INCLUDING the
+            # sales tax, so the reversal row must carry the exact negated
+            # ORIGINAL tax (never recomputed from today's rate). Explicitly
+            # writing tax_amount (0.0 for non-taxable sales) also marks this
+            # row as "tax-explicit" so the read-time reconstruction for
+            # historical tax-less void rows never double-reverses it — see
+            # _legacy_void_tax_reversals.
+            original_tax = round(float((retail_row_original or {}).get("tax_amount") or 0), 2)
             offset_row = {
                 "id": str(uuid.uuid4()), "date": business_date, "amount": -amount,
                 "payment_method": "void", "client_id": original.get("client_id"),
                 "client_name": original.get("client_name"), "pos_sale_id": sale_id,
                 "reversed_retail_sales_id": original.get("retail_sales_id"),
                 "source_kind": "pos_sale_void",
+                "tax_amount": -original_tax,
+                "tax_rate_pct": float((retail_row_original or {}).get("tax_rate_pct") or 0),
+                "pre_tax_amount": -round(float((retail_row_original or {}).get("pre_tax_amount") or 0), 2),
                 "description": f"Void of POS Sale #{original.get('receipt_number')} · {body.reason.strip()}",
                 "created_at": ts, "created_by": user.get("id"),
                 "logged_by": user.get("name") or user.get("email") or "admin",
@@ -39327,6 +39404,10 @@ async def void_pos_sale(sale_id: str, body: PosSaleVoidIn, user: dict = Depends(
                 "client_name": original.get("client_name"), "pos_sale_id": sale_id,
                 "reversed_retail_sales_id": row["id"],
                 "source_kind": "pos_sale_void",
+                # Same tax-explicit discipline as the retail slice offset —
+                # entitlement rows currently never carry tax, so this is 0.0,
+                # but writing the key keeps the whole void tax-explicit.
+                "tax_amount": -round(float(row.get("tax_amount") or 0), 2),
                 "description": f"Void of POS Sale #{original.get('receipt_number')} · {body.reason.strip()}",
                 "created_at": ts, "created_by": user.get("id"),
                 "logged_by": user.get("name") or user.get("email") or "admin",
@@ -39508,6 +39589,12 @@ async def admin_quarterly_tax(
     ).to_list(20000)
     retail_cash_gross = sum(float(r.get("amount") or 0) for r in retail_rows)
     retail_sales_tax_collected = sum(float(r.get("tax_amount") or 0) for r in retail_rows)
+    # Step 4B-1 — historical POS void rows carry no tax_amount field; their
+    # reversal is reconstructed read-time from the original sale (new void
+    # rows store explicit negative tax and are already in the sum above).
+    retail_sales_tax_collected += sum(
+        float(r.get("tax_amount") or 0) for r in await _legacy_void_tax_reversals(start, end)
+    )
     retail_income = sum(_schedule_c_retail_income(r) for r in retail_rows)
     sales_tax_collected = round(service_sales_tax_collected + retail_sales_tax_collected, 2)
     gross_cash_collected = round(service_cash_gross + retail_cash_gross, 2)
