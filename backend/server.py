@@ -32238,12 +32238,31 @@ async def _register_day_summary(day: Optional[str] = None) -> Dict[str, Any]:
             incoming_sources["manual_sales"] = round(incoming_sources["manual_sales"] + amt, 2)
         else:
             incoming_sources["other_sales"] = round(incoming_sources["other_sales"] + amt, 2)
+        # Display-only tender label (Step 3). When the authoritative
+        # pos_sales.tenders composition is loaded (Step 1 prefetch above),
+        # show the REAL split — "Cash $40.00 + Venmo $60.00" — instead of the
+        # stored single-method placeholder ("split"/"void" → "Other"). Never
+        # mutates stored rows; totals were already fixed in Step 1.
+        is_void_row = row_kind == "pos_sale_void"
+        method_display = REGISTER_METHOD_LABELS.get(
+            _normalize_payment_method(r.get("payment_method")), "Other"
+        )
+        if pos_id and pos_id in pos_tenders_by_sale:
+            method_display = " + ".join(
+                f"{REGISTER_METHOD_LABELS.get(_normalize_payment_method(t.get('method')), 'Other')} ${round(float(t.get('amount') or 0), 2):.2f}"
+                for t in pos_tenders_by_sale[pos_id]
+            )
+        if is_void_row:
+            method_display = f"Void — {method_display}"
         activity.append({
             "id": r.get("id"), "kind": kind or "manual_sale",
-            "label": "Refund" if (kind == "refund" or amt < 0) else ("Credit pack" if kind == "credit_pack_sale" else "Register sale"),
+            # A void is a reversal of a specific sale, not a customer refund —
+            # label it as what it is (display fix; the amount math is Step 1's).
+            "label": "POS void" if is_void_row else ("Refund" if (kind == "refund" or amt < 0) else ("Credit pack" if kind == "credit_pack_sale" else "Register sale")),
             "description": r.get("description") or r.get("pack_name") or r.get("category") or "Register entry",
             "client_name": r.get("client_name") or "", "amount": amt,
             "payment_method": _normalize_payment_method(r.get("payment_method")),
+            "payment_method_label": method_display,
             "created_at": r.get("created_at") or f"{d}T12:00:00",
         })
 
@@ -32332,6 +32351,10 @@ async def _register_day_summary(day: Optional[str] = None) -> Dict[str, Any]:
         totals["cash_over_short"] = round(totals["actual_cash_counted"] - expected_cash, 2)
     totals["refund_total"] = round(float(incoming_sources.get("refunds") or 0), 2)
     totals["net_incoming_total"] = round(sum(float(v or 0) for v in incoming_by_method.values()), 2)
+    # Display-only (Step 3): incoming_total is NET of refunds/voids (negative
+    # rows already subtracted from the method buckets), and refund_total holds
+    # their absolute sum — so gross is recoverable exactly, at read time.
+    totals["gross_incoming_total"] = round(totals["incoming_total"] + totals["refund_total"], 2)
     # Sprint 110ff — was capped at 75, which on a genuinely busy day could
     # make earlier same-day sales/payments quietly scroll out of this list
     # (totals were never affected, just the visible feed). Raised well
@@ -32550,6 +32573,8 @@ async def _register_range_summary(start_date: Optional[str] = None, end_date: Op
     totals["expense_total"] = round(sum(float(v or 0) for v in expenses_by_method.values()), 2)
     totals["refund_total"] = round(float(incoming_sources.get("refunds") or 0), 2)
     totals["net_incoming_total"] = round(totals["incoming_total"], 2)
+    # Same read-time gross recovery as the day summary (Step 3, display-only).
+    totals["gross_incoming_total"] = round(totals["incoming_total"] + totals["refund_total"], 2)
     recent_activity = sorted(recent_activity, key=lambda x: x.get("created_at") or "", reverse=True)[:150]
     return {
         "range": {"start_date": sd, "end_date": ed, "days": len(days)},

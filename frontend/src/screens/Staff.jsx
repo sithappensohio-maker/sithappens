@@ -3,6 +3,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { api, formatErr } from "../lib/api";
 import { useAuth } from "../lib/auth";
+import { emitRegisterChanged, onRegisterChanged } from "../lib/registerBus";
 import { useConfirm } from "../lib/useConfirm";
 import PageHero from "../components/PageHero";
 import AdminTabs from "../components/admin/AdminTabs";
@@ -2013,6 +2014,9 @@ export function RegisterTab({ excludeTabs = [] } = {}) {
   }, [date, canFinance]);
   useEffect(() => { loadChoices(); loadExpenseChoices(); }, []);
   useEffect(() => { load(); loadExpenses(); }, [load, loadExpenses]);
+  // Stay in sync when register money moves elsewhere (POS cart, modals, the
+  // Front Desk hub) — same bus every register-affecting mutation emits on.
+  useEffect(() => onRegisterChanged(() => { load(); loadExpenses(); }), [load, loadExpenses]);
   // Permissions load asynchronously (and fail closed while loading). Once
   // they're known, make sure the active tab is one this user may actually
   // use — e.g. a cashier landing on the finance-only "overview".
@@ -2056,7 +2060,9 @@ export function RegisterTab({ excludeTabs = [] } = {}) {
   const closeoutExpectedCash = Number(data?.totals?.expected_cash || 0);
   const closeoutCountedCash = closeout.cash_counted === "" ? null : Number(closeout.cash_counted);
   const closeoutOverShort = closeoutCountedCash == null || !Number.isFinite(closeoutCountedCash) ? null : closeoutCountedCash - closeoutExpectedCash;
-  const showDone = (text) => { setMsg(text); setErr(""); load(); setTimeout(()=>setMsg(""), 5000); };
+  // Every successful register mutation lands here — one emit point keeps the
+  // Front Desk hub (and any other subscriber) in sync without per-form wiring.
+  const showDone = (text) => { setMsg(text); setErr(""); load(); emitRegisterChanged(); setTimeout(()=>setMsg(""), 5000); };
   const submit = async (fn) => {
     if (busy) return;
     setBusy(true); setErr(""); setMsg("");
@@ -2332,11 +2338,11 @@ export function RegisterTab({ excludeTabs = [] } = {}) {
 
       {canFinance && (
       <div className="grid grid-cols-2 md:grid-cols-5 gap-3">
-        <AuditTile label="Net incoming" value={totals.net_incoming_total ?? totals.incoming_total} color="text-shPrimary"/>
+        <AuditTile label="Net collected" value={totals.net_incoming_total ?? totals.incoming_total} color="text-shPrimary"/>
         <AuditTile label="Cash drawer" value={totals.expected_cash} color="text-shText"/>
         <AuditTile label="Card" value={incoming.card} color="text-shSecondary"/>
         <AuditTile label="Venmo + PayPal" value={Number(incoming.venmo || 0) + Number(incoming.paypal || 0)} color="text-shPrimary"/>
-        <AuditTile label="Refunds" value={sources.refunds} color="text-red-300"/>
+        <AuditTile label="Refunds & reversals" value={sources.refunds} color="text-red-300"/>
       </div>
       )}
 
@@ -2404,7 +2410,7 @@ export function RegisterTab({ excludeTabs = [] } = {}) {
               <AuditTile label="Credit packs" value={sources.credit_pack_sales}/>
               <AuditTile label="Training programs" value={sources.training_program_sales}/>
               <AuditTile label="Tab payments" value={sources.tab_payments}/>
-              <AuditTile label="Refunds" value={sources.refunds} color="text-red-300"/>
+              <AuditTile label="Refunds & reversals" value={sources.refunds} color="text-red-300"/>
             </div>
           </div>
           <div className="bg-[var(--sh-card-base)] border border-shBorder rounded-xl p-4">
@@ -2415,7 +2421,7 @@ export function RegisterTab({ excludeTabs = [] } = {}) {
                 <div key={`${a.id || idx}-${a.kind}`} className="py-2 flex items-center justify-between gap-3 text-sm">
                   <div>
                     <p className="text-shText font-black">{a.label} <span className="text-shTextMuted font-normal">· {a.description}</span></p>
-                    <p className="text-[12px] text-shTextMuted">{a.client_name || "—"} · {a.payment_method || "other"}</p>
+                    <p className="text-[12px] text-shTextMuted">{a.client_name || "—"} · {a.payment_method_label || (data?.method_labels || {})[a.payment_method] || a.payment_method || "other"}</p>
                   </div>
                   <div className="flex items-center gap-3">
                     <p className={`font-black ${Number(a.amount || 0) < 0 ? "text-red-300" : "text-shPrimary"}`}>{money(a.amount)}</p>
@@ -2613,7 +2619,6 @@ export function RegisterTab({ excludeTabs = [] } = {}) {
             <h4 className="text-shText font-black uppercase italic"><i className="fas fa-clipboard-check text-shPrimary mr-2"/>Close Day</h4>
             <p className="text-[12px] text-shTextMuted">Count the physical drawer, review the difference, and confirm the exact amount that opens the next business day.</p>
           </div>
-          {!data?.register_closed && <button onClick={()=>{setCloseout({...closeout, cash_counted: closeoutExpectedCash.toFixed(2)}); setCloseoutReview(false);}} className="bg-[var(--sh-card-base)] border border-shPrimary/40 text-shPrimary px-3 py-2 rounded text-[11px] font-black uppercase tracking-widest">Use expected {money(closeoutExpectedCash)}</button>}
         </div>
         <div className="grid grid-cols-2 md:grid-cols-5 gap-2">
           <AuditTile label="Expected cash" value={totals.expected_cash}/>
@@ -2628,8 +2633,23 @@ export function RegisterTab({ excludeTabs = [] } = {}) {
             <p className="text-[13px] text-shTextMuted mt-1">Actual cash counted: <span className="text-shText font-black">{moneyOrMissing(data.latest_closeout?.cash_counted)}</span>. Reopen the day above before changing anything.</p>
           </div>
         ) : (<>
+          <div className="bg-[var(--sh-card-base)]/60 border border-shBorder rounded-lg p-3 text-[12px] text-shTextMuted">
+            <i className="fas fa-list-check text-shPrimary mr-1.5"/>
+            <span className="font-black text-shTextMuted uppercase tracking-widest text-[10px] mr-2">How this works</span>
+            The system expects <span className="text-shText font-black">{money(closeoutExpectedCash)}</span> in the drawer.
+            Count the physical cash and enter it below — the difference shows live, and the amount you actually counted carries forward as tomorrow's opening cash.
+          </div>
           <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-3">
-            <RegisterFormInput label="Actual cash counted · required" type="number" step="0.01" value={closeout.cash_counted} onChange={v=>{setCloseout({...closeout, cash_counted:v});setCloseoutReview(false);}}/>
+            <div>
+              <RegisterFormInput label="Actual cash counted · required" type="number" step="0.01" value={closeout.cash_counted} onChange={v=>{setCloseout({...closeout, cash_counted:v});setCloseoutReview(false);}}/>
+              {/* Deliberately secondary (Step 3): prefill is a convenience for a
+                  drawer that genuinely matched — it is NOT a physical count. */}
+              <button onClick={()=>{setCloseout({...closeout, cash_counted: closeoutExpectedCash.toFixed(2)}); setCloseoutReview(false);}}
+                      data-testid="closeout-prefill-expected"
+                      className="mt-1 text-shTextMuted hover:text-shText text-[11px] underline underline-offset-2">
+                Prefill expected {money(closeoutExpectedCash)} — still count the drawer to verify
+              </button>
+            </div>
             <RegisterFormInput label="Card batch total" type="number" step="0.01" value={closeout.card_batch} onChange={v=>{setCloseout({...closeout, card_batch:v});setCloseoutReview(false);}}/>
             <RegisterFormInput label="Venmo verified total" type="number" step="0.01" value={closeout.venmo_total} onChange={v=>{setCloseout({...closeout, venmo_total:v});setCloseoutReview(false);}}/>
             <RegisterFormInput label="PayPal verified total" type="number" step="0.01" value={closeout.paypal_total} onChange={v=>{setCloseout({...closeout, paypal_total:v});setCloseoutReview(false);}}/>
@@ -2675,9 +2695,13 @@ export function RegisterTab({ excludeTabs = [] } = {}) {
         </div>
         {!reportData && <div className="text-shTextMuted text-sm p-4 text-center border border-shBorder rounded bg-[var(--sh-card-base)]/40">Run the report to see range totals, closeout history, and warnings.</div>}
         {reportData && <>
-          <div className="grid grid-cols-2 md:grid-cols-6 gap-3">
-            <AuditTile label="Gross collected" value={reportData.totals?.incoming_total}/>
-            <AuditTile label="Refunds" value={reportData.totals?.refund_total} color="text-red-300"/>
+          <div className="grid grid-cols-2 md:grid-cols-4 lg:grid-cols-7 gap-3">
+            {/* incoming_total is NET of refunds/voids (Step 1 bucket math), so
+                it must not wear the "Gross" label. Gross is the backend's
+                read-time recovery: net + refunds/reversals. */}
+            <AuditTile label="Gross collected" value={reportData.totals?.gross_incoming_total ?? ((Number(reportData.totals?.incoming_total || 0) + Number(reportData.totals?.refund_total || 0)))}/>
+            <AuditTile label="Refunds & reversals" value={reportData.totals?.refund_total} color="text-red-300"/>
+            <AuditTile label="Net collected" value={reportData.totals?.incoming_total} color="text-shPrimary"/>
             <AuditTile label="Expenses" value={reportData.totals?.expense_total} color="text-shAccent"/>
             <AuditTile label="Till net" value={reportData.totals?.till_adjustment_net} color="text-shSecondary"/>
             <AuditTile label="Credit packs" value={reportData.incoming_sources?.credit_pack_sales}/>

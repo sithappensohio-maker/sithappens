@@ -19,6 +19,7 @@
 import { useEffect, useState } from "react";
 import { toast } from "sonner";
 import { api } from "../lib/api";
+import { emitRegisterChanged } from "../lib/registerBus";
 import { printReceipt as posPrintReceipt, openDrawer as posOpenDrawer } from "../lib/posAgent";
 
 export default function TakePaymentModal({ onClose, onSuccess, presetClientId }) {
@@ -184,6 +185,7 @@ export default function TakePaymentModal({ onClose, onSuccess, presetClientId })
         // The top-up has ALREADY fully committed by this point — nothing
         // below can affect that. Hardware actions are strictly best-effort
         // and post-hoc.
+        emitRegisterChanged();
         const printToken = data?.pos_print_receipt_token;
         const drawerToken = data?.pos_open_drawer_token;
         setHwInvoiceId(data?.pos_invoice_id || null);
@@ -206,6 +208,7 @@ export default function TakePaymentModal({ onClose, onSuccess, presetClientId })
         });
         // Already fully committed by this point — hardware is best-effort
         // and strictly post-hoc, exactly like the invoice top-up path above.
+        emitRegisterChanged();
         const printToken = data?.pos_print_receipt_token;
         const drawerToken = data?.pos_open_drawer_token;
         setHwLedgerId(data?.row?.id || null);

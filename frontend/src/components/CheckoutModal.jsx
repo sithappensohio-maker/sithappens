@@ -1,6 +1,7 @@
 import { useEffect, useState } from "react";
 import { toast } from "sonner";
 import { api } from "../lib/api";
+import { emitRegisterChanged } from "../lib/registerBus";
 import { useEditLock } from "../lib/useLiveRefresh";
 import { printReceipt as posPrintReceipt, openDrawer as posOpenDrawer } from "../lib/posAgent";
 
@@ -501,6 +502,7 @@ export function CheckoutModal({ booking, services, onClose, onRequestCancel }) {
       // The checkout has ALREADY fully committed by this point — nothing
       // below this line can affect that. Hardware actions are strictly
       // best-effort and post-hoc; failures here never mean the payment failed.
+      emitRegisterChanged();
       const printToken = data?.pos_print_receipt_token;
       const drawerToken = data?.pos_open_drawer_token;
       setHwInvoiceId(data?.pos_invoice_id || null);

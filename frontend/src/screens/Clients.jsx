@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useState, useMemo, useRef } from "react";
 import { createPortal } from "react-dom";
 import { api, formatErr } from "../lib/api";
+import { emitRegisterChanged } from "../lib/registerBus";
 import { useConfirm } from "../lib/useConfirm";
 import { toast } from "sonner";
 import { compressImage } from "../lib/imageCompress";
@@ -872,6 +873,7 @@ function SellPackModal({ client, packs, onClose, onSold }) {
       const body = { items, payment_method: method, note };
       if (payMode === "partial" && amountPaid !== "") body.amount_paid = Number(amountPaid);
       const r = await api.post(`/clients/${client.id}/sell-packs`, body);
+      emitRegisterChanged(); // pack sale committed — refresh register displays
       onSold?.(r.data);
     } catch (e) {
       setErr(e.response?.data?.detail || "Sale failed");
