@@ -32162,11 +32162,52 @@ async def _register_day_summary(day: Optional[str] = None) -> Dict[str, Any]:
     # Retail_sales is the existing cash-basis income ledger for log sales,
     # credit-pack sales, training-program sales, and tab payments.
     retail = await db.retail_sales.find({"date": d}, {"_id": 0}).to_list(10000)
+
+    # ── Register accounting fix: tender-accurate method buckets for POS ──
+    # A Front Desk sale stores its AUTHORITATIVE tender breakdown on
+    # pos_sales.tenders; its retail_sales rows only carry a single label
+    # ("cash", "venmo", … or "split" for multi-tender). Bucketing by that
+    # label sent every split sale — and every "void"-labelled reversal —
+    # into "Other", so the cash portion never reached expected drawer
+    # cash and a voided cash sale never left it. Here, any retail row
+    # linked to a pos_sale is bucketed from the sale's real tenders
+    # instead: positive rows add the tenders once per sale, pos_sale_void
+    # rows subtract them once per sale (voids are all-or-nothing per the
+    # one-void-per-sale invariant, and always land on the same open
+    # business day). Rows whose pos_sales doc is missing fall back to the
+    # old per-row label so historical/foreign rows keep their previous
+    # behavior. Source subtotals and the activity feed still use each
+    # row's own amount — only the payment-METHOD buckets (and therefore
+    # expected cash) switch to the authoritative tender data.
+    pos_sale_ids = sorted({r.get("pos_sale_id") for r in retail if r.get("pos_sale_id")})
+    pos_tenders_by_sale: Dict[str, List[Dict[str, Any]]] = {}
+    if pos_sale_ids:
+        async for s in db.pos_sales.find({"id": {"$in": pos_sale_ids}}, {"_id": 0, "id": 1, "tenders": 1}):
+            tds = [t for t in (s.get("tenders") or []) if abs(float(t.get("amount") or 0)) >= 0.005]
+            if tds:
+                pos_tenders_by_sale[s["id"]] = tds
+    pos_sales_bucketed: set = set()
+    pos_voids_bucketed: set = set()
+
     for r in retail:
         amt = round(float(r.get("amount") or 0), 2)
         if abs(amt) < 0.005:
             continue
-        _add_method_total(incoming_by_method, r.get("payment_method"), amt)
+        pos_id = r.get("pos_sale_id")
+        row_kind = r.get("source_kind") or ""
+        if pos_id and pos_id in pos_tenders_by_sale:
+            if row_kind == "pos_sale_void":
+                if pos_id not in pos_voids_bucketed:
+                    pos_voids_bucketed.add(pos_id)
+                    for t in pos_tenders_by_sale[pos_id]:
+                        _add_method_total(incoming_by_method, t.get("method"), -round(float(t.get("amount") or 0), 2))
+            else:
+                if pos_id not in pos_sales_bucketed:
+                    pos_sales_bucketed.add(pos_id)
+                    for t in pos_tenders_by_sale[pos_id]:
+                        _add_method_total(incoming_by_method, t.get("method"), round(float(t.get("amount") or 0), 2))
+        else:
+            _add_method_total(incoming_by_method, r.get("payment_method"), amt)
         kind = r.get("source_kind") or "manual_sale"
         if kind == "refund" or amt < 0:
             incoming_sources["refunds"] = round(incoming_sources["refunds"] + abs(amt), 2)
