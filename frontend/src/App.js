@@ -229,39 +229,7 @@ function AdminShell() {
     else if (act === "take_payment") { setPendingPaymentPresetClientId(item.client_id); setGlobalModal("take_payment"); }
   };
 
-  const navItems = [
-    { id: "today", label: "Today", icon: "fa-sun" },
-    { id: "dashboard", label: "Dashboard", icon: "fa-chart-line" },
-    { id: "pos", label: "Front Desk", icon: "fa-cash-register", perm: "take_payments" },
-    { id: "action_center", label: "Action Center", icon: "fa-list-check" },
-    { id: "schedule", label: "Schedule", icon: "fa-calendar-alt" },
-    { id: "runsheet", label: "Run Sheet", icon: "fa-clipboard-list" },
-    { id: "care", label: "Care Board", icon: "fa-bowl-food", perm: "care_complete" },
-    { id: "kennel", label: "Kennel Board", icon: "fa-paw", perm: "dogs_view" },
-    { id: "bookings", label: "Bookings", icon: "fa-calendar-check" },
-    { id: "waitlist", label: "Waitlist", icon: "fa-hourglass-half", perm: "booking_edit", feature: "waitlist" },
-    { id: "recurring", label: "Recurring", icon: "fa-rotate" },
-    { id: "clients", label: "Clients", icon: "fa-users", perm: "clients_view" },
-    { id: "dogs", label: "Dogs", icon: "fa-paw", perm: "dogs_view" },
-    { id: "duplicate_check", label: "Duplicate Check", icon: "fa-copy", perm: "settings" },
-    { id: "pipeline", label: "Pipeline", icon: "fa-line-chart" },
-    { id: "school_hq", label: "School HQ", icon: "fa-school", perm: "manage_school" },
-    { id: "homework", label: "Homework", icon: "fa-graduation-cap", feature: "homework" },
-    { id: "rewards_center", label: "Rewards", icon: "fa-gift", feature: "rewards" },
-    { id: "trophies", label: "Trophies", icon: "fa-trophy", feature: "rewards" },
-    { id: "income", label: "Finance", icon: "fa-dollar-sign", perm: "finance_reports" },
-    { id: "credit_reconciliation", label: "Credit Audit", icon: "fa-scale-balanced", perm: "finance_reports" },
-    { id: "shop_manager", label: "Shop Manager", icon: "fa-bag-shopping", perm: "view_shop_categories" },
-    { id: "staff", label: "Staff", icon: "fa-users-gear", perm: "payroll", feature: "staff_portal" },
-    { id: "incidents", label: "Incidents", icon: "fa-triangle-exclamation", perm: "incidents" },
-    { id: "intake", label: "Intake Forms", icon: "fa-clipboard-list", perm: "clients_edit" },
-    { id: "messages", label: "Client Messages", icon: "fa-comments", perm: "messages", feature: "client_messaging" },
-    { id: "announcements", label: "Announcements", icon: "fa-bullhorn", perm: "manage_communications" },
-    { id: "bulkemail", label: "Bulk Email", icon: "fa-paper-plane", perm: "manage_communications" },
-    { id: "audit", label: "Audit Log", icon: "fa-list-check", perm: "audit_log" },
-    { id: "settings", label: "Settings", icon: "fa-cog", perm: "settings" },
-    { id: "tutorials", label: "How to Use", icon: "fa-circle-question" },
-  ];
+  const navItems = NAV_ITEMS;
 
   // Admin IA overhaul — Phase 2: sidebar reorganization. No new routes/ids
   // are introduced; every one of the 30 existing navItems ids appears in
@@ -304,13 +272,7 @@ function AdminShell() {
   // though its nav link is correctly hidden. "register" is a legacy alias
   // for the "pos" nav entry (see the render line below) so it's resolved to
   // the same permission before checking.
-  const navAllowed = (id) => {
-    const n = navById[id === "register" ? "pos" : id];
-    if (!n) return true;
-    if (n.perm && !can(n.perm)) return false;
-    if (n.feature && !featureOn(n.feature)) return false;
-    return true;
-  };
+  const navAllowed = (id) => navItemAllowed(navById[id === "register" ? "pos" : id], can, featureOn);
   const visibleGroups = NAV_GROUPS
     .map(g => ({ ...g, items: g.ids.map(id => navById[id]).filter(n => n && navAllowed(n.id)) }))
     .filter(g => g.items.length > 0);
@@ -890,6 +852,53 @@ function ShopGate() {
   if (!user) return <PublicShop />;
   return <Gate />;
 }
+
+// Flat nav registry — module scope so tests can assert the REAL permission
+// gating data (e.g. Finance ⇒ finance_reports) without rendering the app.
+// Moved verbatim out of App() during the Front Desk navigation-regression
+// fix; contents unchanged.
+// The single gating rule for a nav item: permission first, then feature
+// visibility. Exported so tests exercise the REAL rule with the REAL data.
+export const navItemAllowed = (item, can, featureOn = () => true) => {
+  if (!item) return true;
+  if (item.perm && !can(item.perm)) return false;
+  if (item.feature && !featureOn(item.feature)) return false;
+  return true;
+};
+
+export const NAV_ITEMS = [
+  { id: "today", label: "Today", icon: "fa-sun" },
+    { id: "dashboard", label: "Dashboard", icon: "fa-chart-line" },
+    { id: "pos", label: "Front Desk", icon: "fa-cash-register", perm: "take_payments" },
+    { id: "action_center", label: "Action Center", icon: "fa-list-check" },
+    { id: "schedule", label: "Schedule", icon: "fa-calendar-alt" },
+    { id: "runsheet", label: "Run Sheet", icon: "fa-clipboard-list" },
+    { id: "care", label: "Care Board", icon: "fa-bowl-food", perm: "care_complete" },
+    { id: "kennel", label: "Kennel Board", icon: "fa-paw", perm: "dogs_view" },
+    { id: "bookings", label: "Bookings", icon: "fa-calendar-check" },
+    { id: "waitlist", label: "Waitlist", icon: "fa-hourglass-half", perm: "booking_edit", feature: "waitlist" },
+    { id: "recurring", label: "Recurring", icon: "fa-rotate" },
+    { id: "clients", label: "Clients", icon: "fa-users", perm: "clients_view" },
+    { id: "dogs", label: "Dogs", icon: "fa-paw", perm: "dogs_view" },
+    { id: "duplicate_check", label: "Duplicate Check", icon: "fa-copy", perm: "settings" },
+    { id: "pipeline", label: "Pipeline", icon: "fa-line-chart" },
+    { id: "school_hq", label: "School HQ", icon: "fa-school", perm: "manage_school" },
+    { id: "homework", label: "Homework", icon: "fa-graduation-cap", feature: "homework" },
+    { id: "rewards_center", label: "Rewards", icon: "fa-gift", feature: "rewards" },
+    { id: "trophies", label: "Trophies", icon: "fa-trophy", feature: "rewards" },
+    { id: "income", label: "Finance", icon: "fa-dollar-sign", perm: "finance_reports" },
+    { id: "credit_reconciliation", label: "Credit Audit", icon: "fa-scale-balanced", perm: "finance_reports" },
+    { id: "shop_manager", label: "Shop Manager", icon: "fa-bag-shopping", perm: "view_shop_categories" },
+    { id: "staff", label: "Staff", icon: "fa-users-gear", perm: "payroll", feature: "staff_portal" },
+    { id: "incidents", label: "Incidents", icon: "fa-triangle-exclamation", perm: "incidents" },
+    { id: "intake", label: "Intake Forms", icon: "fa-clipboard-list", perm: "clients_edit" },
+    { id: "messages", label: "Client Messages", icon: "fa-comments", perm: "messages", feature: "client_messaging" },
+    { id: "announcements", label: "Announcements", icon: "fa-bullhorn", perm: "manage_communications" },
+    { id: "bulkemail", label: "Bulk Email", icon: "fa-paper-plane", perm: "manage_communications" },
+    { id: "audit", label: "Audit Log", icon: "fa-list-check", perm: "audit_log" },
+    { id: "settings", label: "Settings", icon: "fa-cog", perm: "settings" },
+    { id: "tutorials", label: "How to Use", icon: "fa-circle-question" },
+];
 
 export default function App() {
   // Public claim/reset link — handled before auth so unauthenticated visitors can land here.

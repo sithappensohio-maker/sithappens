@@ -76,6 +76,22 @@ export default function Pos({ onOpenShopManager } = {}) {
   // sh_register_default_tab preset (its documented deep-link mechanism).
   const [registerToolsKey, setRegisterToolsKey] = useState(0);
   const registerToolsRef = useRef(null);
+  // Navigation-regression fix: the toggled panels (Recent Sales, Register
+  // Tools, Online Payments/Orders, Open Drawer) mount BELOW the Action
+  // Required panel and roster, which on a busy database are thousands of
+  // pixels tall — so a click "did nothing" visually. Opening a panel now
+  // scrolls it into view; a visible button must have a visible outcome.
+  const recentRef = useRef(null);
+  const onlinePaymentsRef = useRef(null);
+  const onlineOrdersRef = useRef(null);
+  const drawerFormRef = useRef(null);
+  const revealPanel = (ref) =>
+    setTimeout(() => ref.current?.scrollIntoView({ behavior: "smooth", block: "start" }), 60);
+  const togglePanel = (isOpen, setOpen, ref) => {
+    const next = !isOpen;
+    setOpen(next);
+    if (next) revealPanel(ref);
+  };
   useEffect(() => {
     const check = () => checkPosHealth().then((r) => setPrinterReady(r.ready));
     check();
@@ -839,12 +855,12 @@ export default function Pos({ onOpenShopManager } = {}) {
         </div>
         <div className="sh-front-desk-tools">
           {canDrawerAndRefunds && (
-            <button onClick={() => setDrawerFormOpen((o) => !o)} data-testid="pos-open-drawer-toggle"
+            <button onClick={() => togglePanel(drawerFormOpen, setDrawerFormOpen, drawerFormRef)} data-testid="pos-open-drawer-toggle"
                     className="sh-front-desk-tool">
               <i className="fas fa-drawer-alt mr-1.5" />Open Drawer
             </button>
           )}
-          <button onClick={() => setRecentOpen((o) => !o)}
+          <button onClick={() => togglePanel(recentOpen, setRecentOpen, recentRef)} data-testid="pos-recent-sales-toggle"
                   className="sh-front-desk-tool">
             Recent Sales
           </button>
@@ -854,17 +870,17 @@ export default function Pos({ onOpenShopManager } = {}) {
               Shop Manager
             </button>
           )}
-          <button onClick={() => setRegisterToolsOpen((o) => !o)} data-testid="pos-register-tools-toggle"
+          <button onClick={() => togglePanel(registerToolsOpen, setRegisterToolsOpen, registerToolsRef)} data-testid="pos-register-tools-toggle"
                   className="sh-front-desk-tool">
             Register Tools
           </button>
           {canDrawerAndRefunds && (
-            <button onClick={() => setOnlinePaymentsOpen((o) => !o)} data-testid="pos-online-payments-toggle"
+            <button onClick={() => togglePanel(onlinePaymentsOpen, setOnlinePaymentsOpen, onlinePaymentsRef)} data-testid="pos-online-payments-toggle"
                     className="sh-front-desk-tool">
               Online Payments
             </button>
           )}
-          <button onClick={() => setOnlineOrdersOpen((o) => !o)} data-testid="pos-online-orders-toggle"
+          <button onClick={() => togglePanel(onlineOrdersOpen, setOnlineOrdersOpen, onlineOrdersRef)} data-testid="pos-online-orders-toggle"
                   className="sh-front-desk-tool">
             Online Orders
             {onlineOrdersUnseenCount > 0 && (
@@ -989,7 +1005,7 @@ export default function Pos({ onOpenShopManager } = {}) {
       </div>
 
       {drawerFormOpen && (
-        <div className="bg-[var(--sh-card-base)] border border-shBorder rounded-2xl p-4 space-y-2">
+        <div ref={drawerFormRef} className="bg-[var(--sh-card-base)] border border-shBorder rounded-2xl p-4 space-y-2">
           <select value={drawerReason} onChange={(e) => setDrawerReason(e.target.value)}
                   className="w-full bg-[var(--sh-card-base)] border border-shBorder rounded p-2 text-shText text-sm">
             {["Make change", "Count drawer", "Register open/close", "Other"].map((r) => <option key={r}>{r}</option>)}
@@ -1006,7 +1022,7 @@ export default function Pos({ onOpenShopManager } = {}) {
       )}
 
       {recentOpen && (
-        <div className="bg-[var(--sh-card-base)] border border-shBorder rounded-2xl p-4">
+        <div ref={recentRef} data-testid="pos-recent-sales-panel" className="bg-[var(--sh-card-base)] border border-shBorder rounded-2xl p-4">
           <p className="text-shTextMuted text-[13px] uppercase tracking-widest font-black mb-2">Recent Sales</p>
           <div className="space-y-1 max-h-64 overflow-y-auto">
             {recentSales.length === 0 && <p className="text-shTextMuted text-sm">No sales yet today.</p>}
@@ -1046,7 +1062,7 @@ export default function Pos({ onOpenShopManager } = {}) {
       )}
 
       {onlinePaymentsOpen && (
-        <div className="bg-[var(--sh-card-base)] border border-shBorder rounded-2xl p-4" data-testid="pos-online-payments-panel">
+        <div ref={onlinePaymentsRef} className="bg-[var(--sh-card-base)] border border-shBorder rounded-2xl p-4" data-testid="pos-online-payments-panel">
           <div className="flex items-center justify-between mb-2">
             <p className="text-shTextMuted text-[13px] uppercase tracking-widest font-black">Online Payments (Stripe)</p>
             <button onClick={loadOnlinePayments} className="text-[11px] uppercase tracking-widest font-black text-shTextMuted hover:text-shSecondary">
@@ -1101,7 +1117,7 @@ export default function Pos({ onOpenShopManager } = {}) {
       )}
 
       {onlineOrdersOpen && (
-        <div className="bg-[var(--sh-card-base)] border border-shBorder rounded-2xl p-4" data-testid="pos-online-orders-panel">
+        <div ref={onlineOrdersRef} className="bg-[var(--sh-card-base)] border border-shBorder rounded-2xl p-4" data-testid="pos-online-orders-panel">
           <div className="flex items-center justify-between mb-2">
             <p className="text-shTextMuted text-[13px] uppercase tracking-widest font-black">Online Orders (Shop)</p>
             <button onClick={loadOnlineOrders} className="text-[11px] uppercase tracking-widest font-black text-shTextMuted hover:text-shPrimary">
