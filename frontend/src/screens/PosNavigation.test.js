@@ -1,13 +1,13 @@
 /**
- * Front Desk top-navigation regression tests.
+ * Front Desk register-area navigation & layout tests.
  *
- * The Step 3 layout left the toggled panels (Recent Sales, Register Tools,
- * Online Orders, …) mounted BELOW the Action Required panel and roster —
- * thousands of pixels down on a busy database — so the buttons looked dead.
- * These tests pin the fixed behavior: every visible top button must open its
- * panel AND scroll it into view; buttons the role can't use are hidden, not
- * dead; the Register Hub survives view switching; Finance nav gating is
- * asserted against the real nav registry.
+ * History: the register panels used to mount ~8,000px below the controls
+ * (below Action Required + Today's Visits), so the top buttons looked dead.
+ * The layout fix moves the ACTIVE register panel directly beneath the
+ * register controls — one panel at a time — independent of how long the
+ * unrelated lists below grow. These tests pin that DOM placement, the
+ * one-active-panel switching, the unchanged role gating, and that the
+ * Register Hub (expected cash + Close Register) survives the layout.
  */
 import { act } from "react";
 import { createRoot } from "react-dom/client";
@@ -26,7 +26,13 @@ jest.mock("../lib/posAgent", () => ({
   openDrawer: jest.fn(),
 }));
 jest.mock("../components/PageHero", () => ({ __esModule: true, default: () => null }));
-jest.mock("../components/PendingActionsPanel", () => ({ __esModule: true, default: () => null }));
+jest.mock("../components/PendingActionsPanel", () => {
+  const React = require("react");
+  return {
+    __esModule: true,
+    default: (props) => React.createElement("section", { "data-testid": props.testid || "pending-actions" }, "action required list"),
+  };
+});
 jest.mock("../components/CheckoutModal", () => ({ CheckoutModal: () => null }));
 jest.mock("../components/TakePaymentModal", () => ({ __esModule: true, default: () => null }));
 jest.mock("../components/StripeRefundModal", () => ({ __esModule: true, default: () => null }));
@@ -43,8 +49,6 @@ const posAgent = require("../lib/posAgent");
 
 global.IS_REACT_ACT_ENVIRONMENT = true;
 
-// jsdom has no scrollIntoView — the mock doubles as our "panel was revealed"
-// assertion hook.
 const scrollSpy = jest.fn();
 beforeAll(() => {
   window.HTMLElement.prototype.scrollIntoView = scrollSpy;
@@ -108,97 +112,136 @@ const click = async (testid) => {
   const el = container.querySelector(`[data-testid="${testid}"]`);
   expect(el).not.toBeNull();
   await act(async () => { el.click(); });
-  await act(async () => { jest.advanceTimersByTime(200); }); // flush the reveal timeout
+  await act(async () => { jest.advanceTimersByTime(200); });
 };
 const q = (testid) => container.querySelector(`[data-testid="${testid}"]`);
+// True when a appears before b in document order.
+const isBefore = (a, b) => !!(a.compareDocumentPosition(b) & Node.DOCUMENT_POSITION_FOLLOWING);
+const pendingActions = () => q("frontdesk-pending-actions");
 
-// 1 — Recent Sales opens its view (and reveals it)
-test("Recent Sales button opens the Recent Sales panel and scrolls to it", async () => {
+// 1 — hub renders before the register action controls
+test("Register Hub renders above the register action controls", async () => {
+  asAdmin();
+  await mountPos();
+  expect(isBefore(q("register-hub"), q("pos-register-tools-toggle"))).toBe(true);
+});
+
+// 2+3 — Recent Sales opens in the register section, before Action Required
+test("Recent Sales opens directly in the register section, above Action Required", async () => {
   asAdmin();
   await mountPos();
   expect(q("pos-recent-sales-panel")).toBeNull();
   await click("pos-recent-sales-toggle");
-  expect(q("pos-recent-sales-panel")).not.toBeNull();
-  expect(q("pos-recent-sales-panel").textContent).toContain("No sales yet today");
-  expect(scrollSpy).toHaveBeenCalled();
+  const panel = q("pos-recent-sales-panel");
+  expect(panel).not.toBeNull();
+  expect(panel.textContent).toContain("No sales yet today");
+  expect(isBefore(q("pos-recent-sales-toggle"), panel)).toBe(true);
+  expect(isBefore(panel, pendingActions())).toBe(true);
+  // Any scroll from a plain toggle must be the minimal mobile "nearest"
+  // nudge — never the old block:"start" page jump.
+  for (const call of scrollSpy.mock.calls) {
+    expect(call[0]?.block).toBe("nearest");
+  }
 });
 
-// 2 — Register Tools opens for Admin
-test("Register Tools button shows Register Tools for admin", async () => {
+// 4 — Register Tools opens in that area
+test("Register Tools opens in the register section for admin", async () => {
   asAdmin();
   await mountPos();
   await click("pos-register-tools-toggle");
   expect(q("register-tab-mock")).not.toBeNull();
-  expect(scrollSpy).toHaveBeenCalled();
+  expect(isBefore(q("register-tab-mock"), pendingActions())).toBe(true);
 });
 
-// 3 — Front Desk Register Tools opens too (its allowed subset is covered by
-// the real-RegisterTab test file alongside this one)
 test("Register Tools opens for the front_desk role as well", async () => {
   asFrontDesk();
   await mountPos();
   await click("pos-register-tools-toggle");
   expect(q("register-tab-mock")).not.toBeNull();
+  expect(isBefore(q("register-tab-mock"), pendingActions())).toBe(true);
 });
 
-// 4 — Online Orders reaches its view when permitted (front_desk has take_payments)
-test("Online Orders button opens the orders panel for front_desk", async () => {
+// 5 — Online Orders opens in that area (front_desk has take_payments)
+test("Online Orders opens in the register section for front_desk", async () => {
   asFrontDesk();
   await mountPos();
   await click("pos-online-orders-toggle");
   expect(q("pos-online-orders-panel")).not.toBeNull();
-  expect(scrollSpy).toHaveBeenCalled();
+  expect(isBefore(q("pos-online-orders-panel"), pendingActions())).toBe(true);
 });
 
-// 5 — inaccessible controls are hidden, never dead
-test("finance-only tools are hidden for front_desk instead of rendering dead", async () => {
+// 6 — one active panel at a time; switching replaces it
+test("switching register controls replaces the active panel instead of stacking", async () => {
+  asAdmin();
+  await mountPos();
+  await click("pos-recent-sales-toggle");
+  expect(q("pos-recent-sales-panel")).not.toBeNull();
+  await click("pos-register-tools-toggle");
+  expect(q("register-tab-mock")).not.toBeNull();
+  expect(q("pos-recent-sales-panel")).toBeNull(); // replaced, not stacked
+  await click("pos-online-orders-toggle");
+  expect(q("pos-online-orders-panel")).not.toBeNull();
+  expect(q("register-tab-mock")).toBeNull();
+  // Clicking the active control again closes it → back to collapsed area.
+  await click("pos-online-orders-toggle");
+  expect(q("pos-online-orders-panel")).toBeNull();
+  expect(q("pos-screen")).not.toBeNull();
+});
+
+// 7 — Action Required stays below the register section
+test("Action Required renders below the whole register section", async () => {
+  asAdmin();
+  await mountPos();
+  expect(isBefore(q("register-hub"), pendingActions())).toBe(true);
+  expect(isBefore(q("pos-register-tools-toggle"), pendingActions())).toBe(true);
+  await click("pos-open-drawer-toggle"); // even with a panel open
+  expect(isBefore(q("pos-register-tools-toggle"), pendingActions())).toBe(true);
+});
+
+// 8 — front_desk subset unchanged: hidden, never dead
+test("finance-only tools stay hidden for front_desk instead of rendering dead", async () => {
   asFrontDesk();
   await mountPos();
   expect(q("pos-open-drawer-toggle")).toBeNull();
   expect(q("pos-online-payments-toggle")).toBeNull();
   expect(q("pos-manage-products-toggle")).toBeNull();
-  // The three visible ones must all be functional (asserted in tests 1–4).
   expect(q("pos-recent-sales-toggle")).not.toBeNull();
   expect(q("pos-register-tools-toggle")).not.toBeNull();
   expect(q("pos-online-orders-toggle")).not.toBeNull();
 });
 
-// 6 — Admin Finance visibility preserved (real nav registry + real gate rule)
-test("Finance nav item exists and is allowed for a finance_reports account", () => {
+// 9 — admin set unchanged
+test("admin keeps every register control", async () => {
+  asAdmin();
+  await mountPos();
+  for (const id of ["pos-open-drawer-toggle", "pos-recent-sales-toggle", "pos-manage-products-toggle",
+                    "pos-register-tools-toggle", "pos-online-payments-toggle", "pos-online-orders-toggle"]) {
+    expect(q(id)).not.toBeNull();
+  }
+});
+
+// Finance nav gating — unchanged (real nav registry + real gate rule)
+test("Finance nav stays finance_reports-gated: allowed for finance, hidden for front_desk", () => {
   const finance = NAV_ITEMS.find((n) => n.label === "Finance");
   expect(finance).toBeTruthy();
   expect(finance.perm).toBe("finance_reports");
   expect(navItemAllowed(finance, () => true)).toBe(true);
-});
-
-// 7 — Front Desk Finance restriction preserved
-test("Finance nav item stays hidden for a role without finance_reports", () => {
-  const finance = NAV_ITEMS.find((n) => n.label === "Finance");
   expect(navItemAllowed(finance, (k) => FRONT_DESK_PERMS.includes(k))).toBe(false);
-  // …while Front Desk itself stays reachable for that same role.
   const pos = NAV_ITEMS.find((n) => n.id === "pos");
   expect(navItemAllowed(pos, (k) => FRONT_DESK_PERMS.includes(k))).toBe(true);
 });
 
-// 8 — Register Hub survives switching between the views
-test("Register Hub keeps rendering expected cash after view switches", async () => {
+// 10 — expected cash + Close Register survive the layout move
+test("expected cash and Close Register survive the layout move", async () => {
   asAdmin();
   await mountPos();
-  await click("pos-register-tools-toggle");
-  await click("pos-recent-sales-toggle");
-  await click("pos-online-orders-toggle");
-  expect(q("register-hub")).not.toBeNull();
   expect(q("register-hub-expected-value").textContent).toBe("$125.00");
-});
-
-// 9 — returning to the main register view works
-test("toggling a panel closed returns to the main register view", async () => {
-  asAdmin();
-  await mountPos();
+  await click("register-hub-close-btn");
+  // Routes into the register section's tools panel — never a mutation.
+  expect(q("register-tab-mock")).not.toBeNull();
+  expect(isBefore(q("register-tab-mock"), pendingActions())).toBe(true);
+  expect(api.post).not.toHaveBeenCalled();
+  // Hub still live after switching around.
   await click("pos-recent-sales-toggle");
-  expect(q("pos-recent-sales-panel")).not.toBeNull();
-  await click("pos-recent-sales-toggle");
-  expect(q("pos-recent-sales-panel")).toBeNull();
-  expect(q("pos-screen")).not.toBeNull();
-  expect(q("register-hub")).not.toBeNull();
+  expect(q("register-hub-expected-value").textContent).toBe("$125.00");
 });

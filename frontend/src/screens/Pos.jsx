@@ -67,7 +67,26 @@ export default function Pos({ onOpenShopManager } = {}) {
   // cash gating below keeps working from the same single fetch.
   const [registerStatus, setRegisterStatus] = useState(null);
   const [printerReady, setPrinterReady] = useState(null);
-  const [drawerFormOpen, setDrawerFormOpen] = useState(false);
+  // One register panel at a time. The active panel renders directly beneath
+  // the register controls (see the render section), so opening one is always
+  // visible regardless of how long Action Required / Today's Visits grow —
+  // the fix for the "buttons look dead" 8,000px-jump regression, done in
+  // layout instead of scrollIntoView.
+  const [activePanel, setActivePanel] = useState(null);
+  const toggleRegisterPanel = (key) => {
+    const next = activePanel === key ? null : key;
+    setActivePanel(next);
+    // Small mobile courtesy only: block "nearest" is a no-op when the panel
+    // (which sits directly beneath the controls) is already on screen, and a
+    // minimal nudge when the stacked mobile header pushes it past the fold.
+    // Never the old thousands-of-pixels jump.
+    if (next) setTimeout(() => document.querySelector("[data-register-panel]")?.scrollIntoView({ behavior: "smooth", block: "nearest" }), 80);
+  };
+  const drawerFormOpen = activePanel === "drawer";
+  const recentOpen = activePanel === "recent";
+  const onlinePaymentsOpen = activePanel === "payments";
+  const onlineOrdersOpen = activePanel === "orders";
+  const registerToolsOpen = activePanel === "tools";
   const [drawerReason, setDrawerReason] = useState("Make change");
   const [drawerCustomReason, setDrawerCustomReason] = useState("");
   const [drawerBusy, setDrawerBusy] = useState(false);
@@ -76,22 +95,6 @@ export default function Pos({ onOpenShopManager } = {}) {
   // sh_register_default_tab preset (its documented deep-link mechanism).
   const [registerToolsKey, setRegisterToolsKey] = useState(0);
   const registerToolsRef = useRef(null);
-  // Navigation-regression fix: the toggled panels (Recent Sales, Register
-  // Tools, Online Payments/Orders, Open Drawer) mount BELOW the Action
-  // Required panel and roster, which on a busy database are thousands of
-  // pixels tall — so a click "did nothing" visually. Opening a panel now
-  // scrolls it into view; a visible button must have a visible outcome.
-  const recentRef = useRef(null);
-  const onlinePaymentsRef = useRef(null);
-  const onlineOrdersRef = useRef(null);
-  const drawerFormRef = useRef(null);
-  const revealPanel = (ref) =>
-    setTimeout(() => ref.current?.scrollIntoView({ behavior: "smooth", block: "start" }), 60);
-  const togglePanel = (isOpen, setOpen, ref) => {
-    const next = !isOpen;
-    setOpen(next);
-    if (next) revealPanel(ref);
-  };
   useEffect(() => {
     const check = () => checkPosHealth().then((r) => setPrinterReady(r.ready));
     check();
@@ -101,9 +104,12 @@ export default function Pos({ onOpenShopManager } = {}) {
 
   const openCloseoutWorkflow = () => {
     try { localStorage.setItem("sh_register_default_tab", "closeout"); } catch { /* ignore */ }
-    setRegisterToolsOpen(true);
+    setActivePanel("tools");
     setRegisterToolsKey((k) => k + 1);
-    setTimeout(() => registerToolsRef.current?.scrollIntoView({ behavior: "smooth", block: "start" }), 60);
+    // The tools panel now lives directly beneath the register controls, so
+    // this is a small "make sure the panel header is on screen" nudge (a
+    // no-op when it's already visible) — not the old 8,000px page jump.
+    setTimeout(() => registerToolsRef.current?.scrollIntoView({ behavior: "smooth", block: "nearest" }), 60);
   };
 
   const submitManualDrawer = async () => {
@@ -113,7 +119,7 @@ export default function Pos({ onOpenShopManager } = {}) {
     try {
       const { data } = await api.post("/admin/pos/open-drawer", { reason });
       const result = await posOpenDrawer(data.open_drawer_token);
-      if (result.ok) { toast.success("Drawer opened"); setDrawerFormOpen(false); setDrawerCustomReason(""); }
+      if (result.ok) { toast.success("Drawer opened"); setActivePanel((cur) => (cur === "drawer" ? null : cur)); setDrawerCustomReason(""); }
       else toast.error(result.error || "Drawer failed to open");
     } catch (e) {
       toast.error(e?.response?.data?.detail || "Could not authorize drawer open");
@@ -562,11 +568,9 @@ export default function Pos({ onOpenShopManager } = {}) {
   // reused unmodified (see RegisterTab in Staff.jsx). Money Hub embeds this
   // directly instead of reimplementing any of it, per the consolidation
   // pass — "New Sale" is hidden here since this screen's own cart replaces it.
-  const [registerToolsOpen, setRegisterToolsOpen] = useState(false);
 
   // ── Recent sales ─────────────────────────────────────────────────────────
   const [recentSales, setRecentSales] = useState([]);
-  const [recentOpen, setRecentOpen] = useState(false);
   const loadRecent = () => api.get("/pos/sales").then(({ data }) => setRecentSales(data || [])).catch(() => {});
   useEffect(() => { if (recentOpen) loadRecent(); }, [recentOpen]);
   useEffect(() => { if (saleResult) loadRecent(); }, [saleResult]);
@@ -577,7 +581,6 @@ export default function Pos({ onOpenShopManager } = {}) {
   // (payments/invoices) entirely, so they get their own panel here rather
   // than being forced into that list. ──
   const [onlinePayments, setOnlinePayments] = useState([]);
-  const [onlinePaymentsOpen, setOnlinePaymentsOpen] = useState(false);
   const loadOnlinePayments = () => api.get("/admin/stripe-online-payments", { params: { limit: 50 } })
     .then(({ data }) => setOnlinePayments(data.payments || [])).catch(() => {});
   useEffect(() => { if (onlinePaymentsOpen) loadOnlinePayments(); }, [onlinePaymentsOpen]);
@@ -588,7 +591,6 @@ export default function Pos({ onOpenShopManager } = {}) {
   // and Online Payments (the raw Stripe payment ledger) — this is the
   // operational "what do I hand the client" view. ──
   const [onlineOrders, setOnlineOrders] = useState([]);
-  const [onlineOrdersOpen, setOnlineOrdersOpen] = useState(false);
   const [orderActionBusyId, setOrderActionBusyId] = useState(null);
   const [onlineOrdersUnseenCount, setOnlineOrdersUnseenCount] = useState(0);
 
@@ -855,12 +857,12 @@ export default function Pos({ onOpenShopManager } = {}) {
         </div>
         <div className="sh-front-desk-tools">
           {canDrawerAndRefunds && (
-            <button onClick={() => togglePanel(drawerFormOpen, setDrawerFormOpen, drawerFormRef)} data-testid="pos-open-drawer-toggle"
+            <button onClick={() => toggleRegisterPanel("drawer")} data-testid="pos-open-drawer-toggle"
                     className="sh-front-desk-tool">
               <i className="fas fa-drawer-alt mr-1.5" />Open Drawer
             </button>
           )}
-          <button onClick={() => togglePanel(recentOpen, setRecentOpen, recentRef)} data-testid="pos-recent-sales-toggle"
+          <button onClick={() => toggleRegisterPanel("recent")} data-testid="pos-recent-sales-toggle"
                   className="sh-front-desk-tool">
             Recent Sales
           </button>
@@ -870,17 +872,17 @@ export default function Pos({ onOpenShopManager } = {}) {
               Shop Manager
             </button>
           )}
-          <button onClick={() => togglePanel(registerToolsOpen, setRegisterToolsOpen, registerToolsRef)} data-testid="pos-register-tools-toggle"
+          <button onClick={() => toggleRegisterPanel("tools")} data-testid="pos-register-tools-toggle"
                   className="sh-front-desk-tool">
             Register Tools
           </button>
           {canDrawerAndRefunds && (
-            <button onClick={() => togglePanel(onlinePaymentsOpen, setOnlinePaymentsOpen, onlinePaymentsRef)} data-testid="pos-online-payments-toggle"
+            <button onClick={() => toggleRegisterPanel("payments")} data-testid="pos-online-payments-toggle"
                     className="sh-front-desk-tool">
               Online Payments
             </button>
           )}
-          <button onClick={() => togglePanel(onlineOrdersOpen, setOnlineOrdersOpen, onlineOrdersRef)} data-testid="pos-online-orders-toggle"
+          <button onClick={() => toggleRegisterPanel("orders")} data-testid="pos-online-orders-toggle"
                   className="sh-front-desk-tool">
             Online Orders
             {onlineOrdersUnseenCount > 0 && (
@@ -890,6 +892,220 @@ export default function Pos({ onOpenShopManager } = {}) {
           </button>
         </div>
       </div>
+
+      {/* Active register panel — exactly one of the register-area
+          panels renders HERE, directly beneath the register controls, so
+          opening one never depends on the length of Action Required or
+          Today's Visits below. */}
+      {drawerFormOpen && (
+        <div data-register-panel="" className="bg-[var(--sh-card-base)] border border-shBorder rounded-2xl p-4 space-y-2">
+          <select value={drawerReason} onChange={(e) => setDrawerReason(e.target.value)}
+                  className="w-full bg-[var(--sh-card-base)] border border-shBorder rounded p-2 text-shText text-sm">
+            {["Make change", "Count drawer", "Register open/close", "Other"].map((r) => <option key={r}>{r}</option>)}
+          </select>
+          {drawerReason === "Other" && (
+            <input value={drawerCustomReason} onChange={(e) => setDrawerCustomReason(e.target.value)} placeholder="Reason"
+                   className="w-full bg-[var(--sh-card-base)] border border-shBorder rounded p-2 text-shText text-sm" />
+          )}
+          <button onClick={submitManualDrawer} disabled={drawerBusy}
+                  className="w-full bg-shPrimary text-bgHeader rounded py-2 font-black uppercase text-[12px] tracking-widest disabled:opacity-50">
+            {drawerBusy ? "Opening…" : "Confirm Open Drawer"}
+          </button>
+        </div>
+      )}
+
+      {recentOpen && (
+        <div data-register-panel="" data-testid="pos-recent-sales-panel" className="bg-[var(--sh-card-base)] border border-shBorder rounded-2xl p-4">
+          <p className="text-shTextMuted text-[13px] uppercase tracking-widest font-black mb-2">Recent Sales</p>
+          <div className="space-y-1 max-h-64 overflow-y-auto">
+            {recentSales.length === 0 && <p className="text-shTextMuted text-sm">No sales yet today.</p>}
+            {recentSales.map((s) => (
+              <div key={s.id} className="border-b border-shBorder py-1.5">
+                <div className="flex items-center justify-between text-sm">
+                  <div>
+                    <span className="text-shText font-bold">#{s.receipt_number}</span>{" "}
+                    <span className="text-shTextMuted">{s.client_name || "Walk-in"} · {s.status === "voided" ? "VOIDED" : new Date(s.created_at).toLocaleTimeString()}</span>
+                  </div>
+                  <div className="flex items-center gap-3">
+                    <span className={s.status === "voided" ? "text-shTextMuted line-through" : "text-shText font-bold"}>{money(s.total)}</span>
+                    <button onClick={() => reprintSale(s)} className="text-shPrimary text-[11px] font-black uppercase tracking-widest">Reprint</button>
+                    {canVoid && s.status !== "voided" && (
+                      <button onClick={() => { setVoidingSaleId(s.id); setVoidReason(""); }}
+                              className="text-shAccent text-[11px] font-black uppercase tracking-widest">Void</button>
+                    )}
+                  </div>
+                </div>
+                {voidingSaleId === s.id && (
+                  <div className="mt-2 flex items-center gap-2">
+                    <input value={voidReason} onChange={(e) => setVoidReason(e.target.value)} placeholder="Reason for void (required)"
+                           className="flex-1 bg-[var(--sh-card-base)] border border-shBorder rounded p-2 text-shText text-sm" />
+                    <button onClick={() => submitVoid(s.id)} disabled={voidBusy}
+                            className="bg-shAccent text-bgHeader rounded px-3 py-2 text-[11px] font-black uppercase tracking-widest disabled:opacity-50">
+                      {voidBusy ? "Voiding…" : "Confirm"}
+                    </button>
+                    <button onClick={() => { setVoidingSaleId(null); setVoidReason(""); }} className="text-shTextMuted text-[11px] font-black uppercase tracking-widest">
+                      Cancel
+                    </button>
+                  </div>
+                )}
+              </div>
+            ))}
+          </div>
+        </div>
+      )}
+
+      {onlinePaymentsOpen && (
+        <div data-register-panel="" className="bg-[var(--sh-card-base)] border border-shBorder rounded-2xl p-4" data-testid="pos-online-payments-panel">
+          <div className="flex items-center justify-between mb-2">
+            <p className="text-shTextMuted text-[13px] uppercase tracking-widest font-black">Online Payments (Stripe)</p>
+            <button onClick={loadOnlinePayments} className="text-[11px] uppercase tracking-widest font-black text-shTextMuted hover:text-shSecondary">
+              <i className="fas fa-rotate-right mr-1" />Refresh
+            </button>
+          </div>
+          <div className="space-y-2 max-h-96 overflow-y-auto">
+            {onlinePayments.length === 0 && <p className="text-shTextMuted text-sm">No Stripe Online payments yet.</p>}
+            {onlinePayments.map((p) => {
+              const fullyRefunded = p.remaining_refundable <= 0.005;
+              const card = p.card_brand ? `${p.card_brand[0].toUpperCase()}${p.card_brand.slice(1)}${p.card_last4 ? ` •••• ${p.card_last4}` : ""}` : null;
+              return (
+                <div key={p.payment_id} className="border border-shBorder rounded-lg p-3" data-testid={`online-payment-${p.payment_id}`}>
+                  <div className="flex items-center justify-between flex-wrap gap-2">
+                    <div>
+                      <p className="text-shText font-bold text-sm">{p.client_name || "Unknown client"}</p>
+                      <p className="text-shTextMuted text-[12px]">
+                        {p.shop_order_id ? `Order #${p.shop_order_id.slice(0, 8)}` : `Invoice #${(p.invoice_id || "").slice(0, 8)}`}
+                        {" · "}{p.created_at ? new Date(p.created_at).toLocaleString() : "—"}
+                        {card ? ` · ${card}` : ""}
+                      </p>
+                    </div>
+                    <div className="text-right text-[12px] text-shTextMuted">
+                      <p>Paid: <span className="text-shText font-bold">{money(p.amount)}</span></p>
+                      <p>Refunded: <span className="text-shText font-bold">{money(p.refunded_amount)}</span></p>
+                      <p>Refundable: <span className="text-shPrimary font-bold">{money(p.remaining_refundable)}</span></p>
+                    </div>
+                    <div>
+                      {p.shop_order_id ? (
+                        // Client Shop Phase 2 — refunds for Shop orders aren't
+                        // built yet (Phase 3). Display-only for now.
+                        <span className="text-shTextMuted text-[11px] font-black uppercase tracking-widest">Shop Order</span>
+                      ) : fullyRefunded ? (
+                        <span className="text-shTextMuted text-[11px] font-black uppercase tracking-widest">Fully Refunded</span>
+                      ) : p.refund_in_progress ? (
+                        <button disabled className="bg-[var(--sh-card-base)] border border-shBorder text-shAccent px-3 py-1.5 rounded text-[11px] font-black uppercase tracking-widest opacity-70 cursor-not-allowed">
+                          <i className="fas fa-circle-notch fa-spin mr-1" />Refund Processing
+                        </button>
+                      ) : (
+                        <button onClick={() => setRefundingPayment(p)} data-testid={`refund-via-stripe-${p.payment_id}`}
+                                className="bg-shSecondary/15 border border-shSecondary/40 text-shSecondary px-3 py-1.5 rounded text-[11px] font-black uppercase tracking-widest hover:bg-shSecondary/25 transition">
+                          Refund via Stripe
+                        </button>
+                      )}
+                    </div>
+                  </div>
+                </div>
+              );
+            })}
+          </div>
+        </div>
+      )}
+
+      {onlineOrdersOpen && (
+        <div data-register-panel="" className="bg-[var(--sh-card-base)] border border-shBorder rounded-2xl p-4" data-testid="pos-online-orders-panel">
+          <div className="flex items-center justify-between mb-2">
+            <p className="text-shTextMuted text-[13px] uppercase tracking-widest font-black">Online Orders (Shop)</p>
+            <button onClick={loadOnlineOrders} className="text-[11px] uppercase tracking-widest font-black text-shTextMuted hover:text-shPrimary">
+              <i className="fas fa-rotate-right mr-1" />Refresh
+            </button>
+          </div>
+          <div className="space-y-2 max-h-96 overflow-y-auto">
+            {onlineOrders.length === 0 && <p className="text-shTextMuted text-sm">No paid Shop orders yet.</p>}
+            {onlineOrders.map((o) => {
+              const busy = orderActionBusyId === o.id;
+              const hasPhysical = (o.lines || []).some((l) => l.kind === "product");
+              return (
+                <div key={o.id} className="border border-shBorder rounded-lg p-3" data-testid={`online-order-${o.id}`}>
+                  <div className="flex items-center justify-between flex-wrap gap-2">
+                    <div>
+                      <p className="text-shText font-bold text-sm">
+                        Order #{o.id.slice(0, 8).toUpperCase()} · {o.client_name || "Unknown client"}
+                        {o.admin_unseen === true && (
+                          <span className="ml-2 inline-block bg-shAccent text-bgHeader text-[10px] font-black px-1.5 py-0.5 rounded-full align-middle"
+                                data-testid={`online-order-new-${o.id}`}>NEW</span>
+                        )}
+                      </p>
+                      <p className="text-shTextMuted text-[12px]">
+                        {o.created_at ? new Date(o.created_at).toLocaleString() : "—"} · {money(o.total)}
+                      </p>
+                      <p className="text-[11px] text-shTextMuted mt-1">
+                        {(o.lines || []).map((l) => `${l.quantity}× ${l.name}`).join(", ")}
+                      </p>
+                    </div>
+                    <div className="text-right">
+                      {/* For physical/mixed orders, pickup_status IS the customer-facing
+                          status — fulfillment_status is an internal detail, never the
+                          prominent label here. Non-physical orders have no pickup concept,
+                          so fulfillment_status stays primary for those. */}
+                      {o.fulfillment_status === "needs_attention" ? (
+                        <span className="text-shAccent text-[11px] font-black uppercase tracking-widest">Needs Attention</span>
+                      ) : hasPhysical ? (
+                        o.pickup_status === "picked_up" ? (
+                          <span className="text-shPrimary text-[11px] font-black uppercase tracking-widest">Completed</span>
+                        ) : o.pickup_status === "ready_for_pickup" ? (
+                          <span className="text-shPrimary text-[11px] font-black uppercase tracking-widest">Ready for Pickup</span>
+                        ) : o.pickup_status === "preparing" ? (
+                          <span className="text-shTextMuted text-[11px] font-black uppercase tracking-widest">Preparing</span>
+                        ) : (
+                          <span className="text-shTextMuted text-[11px] font-black uppercase tracking-widest">Processing</span>
+                        )
+                      ) : o.fulfillment_status === "fulfilled" ? (
+                        <span className="text-shPrimary text-[11px] font-black uppercase tracking-widest">Fulfilled</span>
+                      ) : (
+                        <span className="text-shTextMuted text-[11px] font-black uppercase tracking-widest">Processing</span>
+                      )}
+                      {hasPhysical && (
+                        <p className="text-[10px] text-shTextMuted mt-1">
+                          Payment: Paid · Fulfillment: {o.fulfillment_status === "fulfilled" ? "Complete" : o.fulfillment_status === "needs_attention" ? "Attention" : "Processing"}
+                        </p>
+                      )}
+                    </div>
+                  </div>
+                  <div className="flex items-center gap-2 mt-2 flex-wrap">
+                    {o.fulfillment_status === "needs_attention" && (
+                      <button onClick={() => runOrderAction(o.id, "retry_fulfillment")} disabled={busy}
+                              data-testid={`online-order-retry-${o.id}`}
+                              className="bg-shAccent/15 border border-shAccent/40 text-shAccent px-3 py-1.5 rounded text-[11px] font-black uppercase tracking-widest hover:bg-shAccent/25 transition disabled:opacity-50">
+                        {busy ? "Retrying…" : "Retry Fulfillment"}
+                      </button>
+                    )}
+                    {o.pickup_status === "preparing" && (
+                      <button onClick={() => runOrderAction(o.id, "mark_ready")} disabled={busy}
+                              data-testid={`online-order-mark-ready-${o.id}`}
+                              className="bg-[var(--sh-card-base)] border border-shBorder hover:border-shPrimary/50 text-shText px-3 py-1.5 rounded text-[11px] font-black uppercase tracking-widest disabled:opacity-50">
+                        Mark Ready
+                      </button>
+                    )}
+                    {o.pickup_status === "ready_for_pickup" && (
+                      <button onClick={() => runOrderAction(o.id, "mark_picked_up")} disabled={busy}
+                              data-testid={`online-order-mark-picked-up-${o.id}`}
+                              className="bg-[var(--sh-card-base)] border border-shBorder hover:border-shPrimary/50 text-shText px-3 py-1.5 rounded text-[11px] font-black uppercase tracking-widest disabled:opacity-50">
+                        Mark Picked Up
+                      </button>
+                    )}
+                  </div>
+                </div>
+              );
+            })}
+          </div>
+        </div>
+      )}
+
+      {registerToolsOpen && (
+        <div ref={registerToolsRef} data-register-panel="" className="bg-[var(--sh-card-base)] border border-shBorder rounded-2xl p-4">
+          {/* Remount on key change so a Close Register click re-reads the
+              sh_register_default_tab deep-link even if tools were open. */}
+          <RegisterTab key={registerToolsKey} excludeTabs={["sale"]} />
+        </div>
+      )}
 
       {/* Action Required — same shared panel as the Dashboard. It renders
           nothing for staff without booking permissions (the API 403s and the
@@ -1003,216 +1219,6 @@ export default function Pos({ onOpenShopManager } = {}) {
           </button>
         )}
       </div>
-
-      {drawerFormOpen && (
-        <div ref={drawerFormRef} className="bg-[var(--sh-card-base)] border border-shBorder rounded-2xl p-4 space-y-2">
-          <select value={drawerReason} onChange={(e) => setDrawerReason(e.target.value)}
-                  className="w-full bg-[var(--sh-card-base)] border border-shBorder rounded p-2 text-shText text-sm">
-            {["Make change", "Count drawer", "Register open/close", "Other"].map((r) => <option key={r}>{r}</option>)}
-          </select>
-          {drawerReason === "Other" && (
-            <input value={drawerCustomReason} onChange={(e) => setDrawerCustomReason(e.target.value)} placeholder="Reason"
-                   className="w-full bg-[var(--sh-card-base)] border border-shBorder rounded p-2 text-shText text-sm" />
-          )}
-          <button onClick={submitManualDrawer} disabled={drawerBusy}
-                  className="w-full bg-shPrimary text-bgHeader rounded py-2 font-black uppercase text-[12px] tracking-widest disabled:opacity-50">
-            {drawerBusy ? "Opening…" : "Confirm Open Drawer"}
-          </button>
-        </div>
-      )}
-
-      {recentOpen && (
-        <div ref={recentRef} data-testid="pos-recent-sales-panel" className="bg-[var(--sh-card-base)] border border-shBorder rounded-2xl p-4">
-          <p className="text-shTextMuted text-[13px] uppercase tracking-widest font-black mb-2">Recent Sales</p>
-          <div className="space-y-1 max-h-64 overflow-y-auto">
-            {recentSales.length === 0 && <p className="text-shTextMuted text-sm">No sales yet today.</p>}
-            {recentSales.map((s) => (
-              <div key={s.id} className="border-b border-shBorder py-1.5">
-                <div className="flex items-center justify-between text-sm">
-                  <div>
-                    <span className="text-shText font-bold">#{s.receipt_number}</span>{" "}
-                    <span className="text-shTextMuted">{s.client_name || "Walk-in"} · {s.status === "voided" ? "VOIDED" : new Date(s.created_at).toLocaleTimeString()}</span>
-                  </div>
-                  <div className="flex items-center gap-3">
-                    <span className={s.status === "voided" ? "text-shTextMuted line-through" : "text-shText font-bold"}>{money(s.total)}</span>
-                    <button onClick={() => reprintSale(s)} className="text-shPrimary text-[11px] font-black uppercase tracking-widest">Reprint</button>
-                    {canVoid && s.status !== "voided" && (
-                      <button onClick={() => { setVoidingSaleId(s.id); setVoidReason(""); }}
-                              className="text-shAccent text-[11px] font-black uppercase tracking-widest">Void</button>
-                    )}
-                  </div>
-                </div>
-                {voidingSaleId === s.id && (
-                  <div className="mt-2 flex items-center gap-2">
-                    <input value={voidReason} onChange={(e) => setVoidReason(e.target.value)} placeholder="Reason for void (required)"
-                           className="flex-1 bg-[var(--sh-card-base)] border border-shBorder rounded p-2 text-shText text-sm" />
-                    <button onClick={() => submitVoid(s.id)} disabled={voidBusy}
-                            className="bg-shAccent text-bgHeader rounded px-3 py-2 text-[11px] font-black uppercase tracking-widest disabled:opacity-50">
-                      {voidBusy ? "Voiding…" : "Confirm"}
-                    </button>
-                    <button onClick={() => { setVoidingSaleId(null); setVoidReason(""); }} className="text-shTextMuted text-[11px] font-black uppercase tracking-widest">
-                      Cancel
-                    </button>
-                  </div>
-                )}
-              </div>
-            ))}
-          </div>
-        </div>
-      )}
-
-      {onlinePaymentsOpen && (
-        <div ref={onlinePaymentsRef} className="bg-[var(--sh-card-base)] border border-shBorder rounded-2xl p-4" data-testid="pos-online-payments-panel">
-          <div className="flex items-center justify-between mb-2">
-            <p className="text-shTextMuted text-[13px] uppercase tracking-widest font-black">Online Payments (Stripe)</p>
-            <button onClick={loadOnlinePayments} className="text-[11px] uppercase tracking-widest font-black text-shTextMuted hover:text-shSecondary">
-              <i className="fas fa-rotate-right mr-1" />Refresh
-            </button>
-          </div>
-          <div className="space-y-2 max-h-96 overflow-y-auto">
-            {onlinePayments.length === 0 && <p className="text-shTextMuted text-sm">No Stripe Online payments yet.</p>}
-            {onlinePayments.map((p) => {
-              const fullyRefunded = p.remaining_refundable <= 0.005;
-              const card = p.card_brand ? `${p.card_brand[0].toUpperCase()}${p.card_brand.slice(1)}${p.card_last4 ? ` •••• ${p.card_last4}` : ""}` : null;
-              return (
-                <div key={p.payment_id} className="border border-shBorder rounded-lg p-3" data-testid={`online-payment-${p.payment_id}`}>
-                  <div className="flex items-center justify-between flex-wrap gap-2">
-                    <div>
-                      <p className="text-shText font-bold text-sm">{p.client_name || "Unknown client"}</p>
-                      <p className="text-shTextMuted text-[12px]">
-                        {p.shop_order_id ? `Order #${p.shop_order_id.slice(0, 8)}` : `Invoice #${(p.invoice_id || "").slice(0, 8)}`}
-                        {" · "}{p.created_at ? new Date(p.created_at).toLocaleString() : "—"}
-                        {card ? ` · ${card}` : ""}
-                      </p>
-                    </div>
-                    <div className="text-right text-[12px] text-shTextMuted">
-                      <p>Paid: <span className="text-shText font-bold">{money(p.amount)}</span></p>
-                      <p>Refunded: <span className="text-shText font-bold">{money(p.refunded_amount)}</span></p>
-                      <p>Refundable: <span className="text-shPrimary font-bold">{money(p.remaining_refundable)}</span></p>
-                    </div>
-                    <div>
-                      {p.shop_order_id ? (
-                        // Client Shop Phase 2 — refunds for Shop orders aren't
-                        // built yet (Phase 3). Display-only for now.
-                        <span className="text-shTextMuted text-[11px] font-black uppercase tracking-widest">Shop Order</span>
-                      ) : fullyRefunded ? (
-                        <span className="text-shTextMuted text-[11px] font-black uppercase tracking-widest">Fully Refunded</span>
-                      ) : p.refund_in_progress ? (
-                        <button disabled className="bg-[var(--sh-card-base)] border border-shBorder text-shAccent px-3 py-1.5 rounded text-[11px] font-black uppercase tracking-widest opacity-70 cursor-not-allowed">
-                          <i className="fas fa-circle-notch fa-spin mr-1" />Refund Processing
-                        </button>
-                      ) : (
-                        <button onClick={() => setRefundingPayment(p)} data-testid={`refund-via-stripe-${p.payment_id}`}
-                                className="bg-shSecondary/15 border border-shSecondary/40 text-shSecondary px-3 py-1.5 rounded text-[11px] font-black uppercase tracking-widest hover:bg-shSecondary/25 transition">
-                          Refund via Stripe
-                        </button>
-                      )}
-                    </div>
-                  </div>
-                </div>
-              );
-            })}
-          </div>
-        </div>
-      )}
-
-      {onlineOrdersOpen && (
-        <div ref={onlineOrdersRef} className="bg-[var(--sh-card-base)] border border-shBorder rounded-2xl p-4" data-testid="pos-online-orders-panel">
-          <div className="flex items-center justify-between mb-2">
-            <p className="text-shTextMuted text-[13px] uppercase tracking-widest font-black">Online Orders (Shop)</p>
-            <button onClick={loadOnlineOrders} className="text-[11px] uppercase tracking-widest font-black text-shTextMuted hover:text-shPrimary">
-              <i className="fas fa-rotate-right mr-1" />Refresh
-            </button>
-          </div>
-          <div className="space-y-2 max-h-96 overflow-y-auto">
-            {onlineOrders.length === 0 && <p className="text-shTextMuted text-sm">No paid Shop orders yet.</p>}
-            {onlineOrders.map((o) => {
-              const busy = orderActionBusyId === o.id;
-              const hasPhysical = (o.lines || []).some((l) => l.kind === "product");
-              return (
-                <div key={o.id} className="border border-shBorder rounded-lg p-3" data-testid={`online-order-${o.id}`}>
-                  <div className="flex items-center justify-between flex-wrap gap-2">
-                    <div>
-                      <p className="text-shText font-bold text-sm">
-                        Order #{o.id.slice(0, 8).toUpperCase()} · {o.client_name || "Unknown client"}
-                        {o.admin_unseen === true && (
-                          <span className="ml-2 inline-block bg-shAccent text-bgHeader text-[10px] font-black px-1.5 py-0.5 rounded-full align-middle"
-                                data-testid={`online-order-new-${o.id}`}>NEW</span>
-                        )}
-                      </p>
-                      <p className="text-shTextMuted text-[12px]">
-                        {o.created_at ? new Date(o.created_at).toLocaleString() : "—"} · {money(o.total)}
-                      </p>
-                      <p className="text-[11px] text-shTextMuted mt-1">
-                        {(o.lines || []).map((l) => `${l.quantity}× ${l.name}`).join(", ")}
-                      </p>
-                    </div>
-                    <div className="text-right">
-                      {/* For physical/mixed orders, pickup_status IS the customer-facing
-                          status — fulfillment_status is an internal detail, never the
-                          prominent label here. Non-physical orders have no pickup concept,
-                          so fulfillment_status stays primary for those. */}
-                      {o.fulfillment_status === "needs_attention" ? (
-                        <span className="text-shAccent text-[11px] font-black uppercase tracking-widest">Needs Attention</span>
-                      ) : hasPhysical ? (
-                        o.pickup_status === "picked_up" ? (
-                          <span className="text-shPrimary text-[11px] font-black uppercase tracking-widest">Completed</span>
-                        ) : o.pickup_status === "ready_for_pickup" ? (
-                          <span className="text-shPrimary text-[11px] font-black uppercase tracking-widest">Ready for Pickup</span>
-                        ) : o.pickup_status === "preparing" ? (
-                          <span className="text-shTextMuted text-[11px] font-black uppercase tracking-widest">Preparing</span>
-                        ) : (
-                          <span className="text-shTextMuted text-[11px] font-black uppercase tracking-widest">Processing</span>
-                        )
-                      ) : o.fulfillment_status === "fulfilled" ? (
-                        <span className="text-shPrimary text-[11px] font-black uppercase tracking-widest">Fulfilled</span>
-                      ) : (
-                        <span className="text-shTextMuted text-[11px] font-black uppercase tracking-widest">Processing</span>
-                      )}
-                      {hasPhysical && (
-                        <p className="text-[10px] text-shTextMuted mt-1">
-                          Payment: Paid · Fulfillment: {o.fulfillment_status === "fulfilled" ? "Complete" : o.fulfillment_status === "needs_attention" ? "Attention" : "Processing"}
-                        </p>
-                      )}
-                    </div>
-                  </div>
-                  <div className="flex items-center gap-2 mt-2 flex-wrap">
-                    {o.fulfillment_status === "needs_attention" && (
-                      <button onClick={() => runOrderAction(o.id, "retry_fulfillment")} disabled={busy}
-                              data-testid={`online-order-retry-${o.id}`}
-                              className="bg-shAccent/15 border border-shAccent/40 text-shAccent px-3 py-1.5 rounded text-[11px] font-black uppercase tracking-widest hover:bg-shAccent/25 transition disabled:opacity-50">
-                        {busy ? "Retrying…" : "Retry Fulfillment"}
-                      </button>
-                    )}
-                    {o.pickup_status === "preparing" && (
-                      <button onClick={() => runOrderAction(o.id, "mark_ready")} disabled={busy}
-                              data-testid={`online-order-mark-ready-${o.id}`}
-                              className="bg-[var(--sh-card-base)] border border-shBorder hover:border-shPrimary/50 text-shText px-3 py-1.5 rounded text-[11px] font-black uppercase tracking-widest disabled:opacity-50">
-                        Mark Ready
-                      </button>
-                    )}
-                    {o.pickup_status === "ready_for_pickup" && (
-                      <button onClick={() => runOrderAction(o.id, "mark_picked_up")} disabled={busy}
-                              data-testid={`online-order-mark-picked-up-${o.id}`}
-                              className="bg-[var(--sh-card-base)] border border-shBorder hover:border-shPrimary/50 text-shText px-3 py-1.5 rounded text-[11px] font-black uppercase tracking-widest disabled:opacity-50">
-                        Mark Picked Up
-                      </button>
-                    )}
-                  </div>
-                </div>
-              );
-            })}
-          </div>
-        </div>
-      )}
-
-      {registerToolsOpen && (
-        <div ref={registerToolsRef} className="bg-[var(--sh-card-base)] border border-shBorder rounded-2xl p-4">
-          {/* Remount on key change so a Close Register click re-reads the
-              sh_register_default_tab deep-link even if tools were open. */}
-          <RegisterTab key={registerToolsKey} excludeTabs={["sale"]} />
-        </div>
-      )}
 
       <div className="grid grid-cols-1 lg:grid-cols-5 gap-4">
         {/* Left: client + products */}
