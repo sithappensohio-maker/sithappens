@@ -32710,6 +32710,25 @@ async def admin_register_closeouts(
     return {"range": {"start_date": sd, "end_date": ed}, "closeouts": rows, "count": len(rows)}
 
 
+def _activity_tender_details(a: Dict[str, Any], method_labels: Dict[str, str]) -> str:
+    """Human-readable tender composition for one activity row (Step 4B-3).
+
+    The register day summary already computes the authoritative decomposition
+    (``payment_method_label`` — e.g. "Cash $40.00 + Card $60.00" or
+    "Void — Cash $40.00 + Card $60.00", built read-time from
+    ``pos_sales.tenders``); the CSV must reuse it, never re-derive splits with
+    a second algorithm. Rows without one (expenses, till moves, ordinary
+    single-method sales, historical rows whose pos_sales doc is gone) fall
+    back to the labeled raw method — never a fabricated allocation.
+    """
+    return (
+        a.get("payment_method_label")
+        or method_labels.get(a.get("payment_method") or "", "")
+        or a.get("payment_method")
+        or ""
+    )
+
+
 @api.get("/admin/register/export.csv")
 async def admin_register_export_csv(
     kind: Optional[str] = "activity",
@@ -32725,11 +32744,15 @@ async def admin_register_export_csv(
     stamp = f"{sd}_to_{ed}"
 
     if safe_kind == "activity":
-        rows = [["Date", "Created At", "Kind", "Label", "Description", "Client/Vendor", "Payment Method", "Amount"]]
+        # "Payment Method" keeps the raw normalized value for existing
+        # consumers; "Tender Details" (new, Step 4B-3) carries the true
+        # composition so a split never exports as just "other".
+        rows = [["Date", "Created At", "Kind", "Label", "Description", "Client/Vendor", "Payment Method", "Tender Details", "Amount"]]
         for d in days:
             day = await _register_day_summary(d)
+            labels = day.get("method_labels") or {}
             for a in day.get("activity") or []:
-                rows.append([d, a.get("created_at"), a.get("kind"), a.get("label"), a.get("description"), a.get("client_name"), a.get("payment_method"), f"{float(a.get('amount') or 0):.2f}"])
+                rows.append([d, a.get("created_at"), a.get("kind"), a.get("label"), a.get("description"), a.get("client_name"), a.get("payment_method"), _activity_tender_details(a, labels), f"{float(a.get('amount') or 0):.2f}"])
         return _csv_response(rows, f"sit-happens-register-activity-{stamp}.csv")
 
     if safe_kind == "payment-methods":
@@ -32810,12 +32833,13 @@ async def admin_register_tax_packet_zip(
 
     files: Dict[str, bytes] = {}
 
-    activity_rows = [["Date", "Created At", "Kind", "Label", "Description", "Client/Vendor", "Payment Method", "Amount"]]
+    activity_rows = [["Date", "Created At", "Kind", "Label", "Description", "Client/Vendor", "Payment Method", "Tender Details", "Amount"]]
     methods_rows = [["Date", "Cash", "Check", "Venmo", "PayPal", "Card", "Legacy Transfer", "Other", "Incoming Total", "Refunds", "Expenses", "Cash Payouts", "Till Added", "Till Removed", "Till Net"]]
     for d in days:
         day = await _register_day_summary(d)
+        labels = day.get("method_labels") or {}
         for a in day.get("activity") or []:
-            activity_rows.append([d, a.get("created_at"), a.get("kind"), a.get("label"), a.get("description"), a.get("client_name"), a.get("payment_method"), f"{float(a.get('amount') or 0):.2f}"])
+            activity_rows.append([d, a.get("created_at"), a.get("kind"), a.get("label"), a.get("description"), a.get("client_name"), a.get("payment_method"), _activity_tender_details(a, labels), f"{float(a.get('amount') or 0):.2f}"])
         m = day.get("incoming_by_method") or {}
         t = day.get("totals") or {}
         src = day.get("incoming_sources") or {}
