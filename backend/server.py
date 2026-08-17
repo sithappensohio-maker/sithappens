@@ -34783,7 +34783,74 @@ async def _handle_refund_event(refund_obj: dict) -> None:
     status = refund_obj.get("status")
     attempt = await db.stripe_refund_attempts.find_one({"stripe_refund_id": refund_id}, {"_id": 0})
     if not attempt:
-        return  # unknown refund — e.g. issued directly from the Stripe Dashboard, out of scope this phase
+        # App-initiated refunds stamp their attempt id into the Stripe
+        # metadata at Refund.create time — if the webhook races ahead of the
+        # local stripe_refund_id write, recover the attempt through that
+        # structured link instead of double-processing it as external.
+        meta = refund_obj.get("metadata") or {}
+        app_attempt_id = meta.get("sithappens_refund_attempt_id")
+        if app_attempt_id:
+            attempt = await db.stripe_refund_attempts.find_one({"id": app_attempt_id}, {"_id": 0})
+            if attempt and not attempt.get("stripe_refund_id"):
+                await db.stripe_refund_attempts.update_one(
+                    {"id": app_attempt_id, "stripe_refund_id": None},
+                    {"$set": {"stripe_refund_id": refund_id, "updated_at": now_iso()}},
+                )
+    if not attempt:
+        # Step 4B-10 — externally initiated refund (e.g. Stripe Dashboard).
+        # A refund must produce the same financial result regardless of
+        # where it was initiated, so synthesize the attempt row the app flow
+        # would have created and route it through the SAME
+        # _finalize_stripe_refund (one revenue algorithm, one 4B-9 tax
+        # algorithm, same idempotency). Only a PROVEN-successful refund
+        # creates financial records — pending/failed external events are
+        # ignored until a succeeded event arrives.
+        if status != "succeeded":
+            return
+        intent_id = refund_obj.get("payment_intent")
+        payment = None
+        if intent_id:
+            payment = await db.payments.find_one(
+                {"processor": "stripe", "processor_payment_id": intent_id, "amount": {"$gt": 0}},
+                {"_id": 0},
+            )
+        if not payment:
+            # No reliable structured linkage — never fabricate a reversal.
+            # Stripe receives 200 (the dispatcher returns ok), so this is a
+            # deliberate skip, logged for reconciliation, not a retry loop.
+            logger.warning(
+                "External Stripe refund %s could not be linked to a local payment "
+                "(payment_intent=%s) — no reversal created; reconcile manually.",
+                refund_id, intent_id,
+            )
+            return
+        amount_cents = int(refund_obj.get("amount") or 0)
+        if amount_cents <= 0:
+            logger.warning("External Stripe refund %s has no positive amount — skipped.", refund_id)
+            return
+        ts = now_iso()
+        synthesized = {
+            "id": str(uuid.uuid4()), "payment_id": payment["id"],
+            "invoice_id": payment.get("invoice_id"), "amount_cents": amount_cents,
+            "reason": "Refund issued directly from Stripe",
+            "status": "succeeded", "stripe_refund_id": refund_id,
+            "stripe_payment_intent_id": intent_id,
+            # The refund id IS the financial identity: concurrent deliveries
+            # collide on this unique key and resume the same attempt.
+            "idempotency_key": f"external-stripe-refund:{refund_id}",
+            "request_fingerprint": f"external:{refund_id}",
+            "source": "external_stripe",
+            "applied_refund_payment_id": None, "created_at": ts, "updated_at": ts,
+        }
+        try:
+            await db.stripe_refund_attempts.insert_one(dict(synthesized))
+            attempt = synthesized
+        except DuplicateKeyError:
+            attempt = await db.stripe_refund_attempts.find_one({"stripe_refund_id": refund_id}, {"_id": 0})
+            if not attempt:
+                return
+        await _finalize_stripe_refund(attempt["id"])
+        return
     if attempt.get("status") in STRIPE_REFUND_TERMINAL_STATUSES:
         # Terminal status alone does not mean local application finished —
         # see _finalize_stripe_refund's own docstring. A redelivered webhook
