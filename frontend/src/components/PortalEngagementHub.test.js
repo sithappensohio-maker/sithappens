@@ -1,7 +1,13 @@
 import { buildPortalActivity, buildPortalPriority, getDogPortalSnapshot, isActiveOnPremisesBooking, scopeBookingsToDogs } from "./PortalEngagementHub";
+import { localISOFromDate, todayISO } from "../lib/date";
 
 const dog = { id: "dog-1", name: "Lexi", vaccines: { rabies: "2099-01-01", bordetella: "2099-01-01", dhpp: "2099-01-01" } };
-const today = new Date().toISOString().slice(0, 10);
+// Booking `date` is a LOCAL calendar business date — derive it exactly the
+// way the component does (lib/date's local-part helpers), never via
+// toISOString(), which is UTC: between 8 p.m. and midnight Eastern the UTC
+// date is already tomorrow, and this suite used to fail every evening.
+// checked_in_at & friends stay UTC ISO strings — those are instants.
+const today = todayISO();
 
 test("setup lock never duplicates a card here — the separate Action Needed banner owns that message", () => {
   // buildPortalPriority intentionally ignores setupStatus entirely (see its
@@ -99,7 +105,7 @@ test("boarding is active when today falls inside the scheduled stay", () => {
   tomorrow.setDate(tomorrow.getDate() + 1);
   expect(isActiveOnPremisesBooking({
     checked_in_at: new Date().toISOString(), checked_out_at: null, status: "approved",
-    date: yesterday.toISOString().slice(0, 10), end_date: tomorrow.toISOString().slice(0, 10),
+    date: localISOFromDate(yesterday), end_date: localISOFromDate(tomorrow),
   }, today)).toBe(true);
 });
 
@@ -138,4 +144,38 @@ test("pending booking with a check-in timestamp is not treated as on premises", 
     checked_in_at: new Date().toISOString(), checked_out_at: null,
     status: "pending", date: today,
   }, today)).toBe(false);
+});
+
+// ── Business-date boundary regression (the 8 p.m.–midnight Eastern window) ──
+// These freeze the clock at instants where the UTC calendar date has rolled
+// over but America/New_York has not (on an Eastern-timezone machine — this
+// project's dev/CI machines run US Eastern; on a UTC machine the instants are
+// non-divergent and the tests still pass by fixture/component consistency).
+// One summer (EDT, UTC-4) and one winter (EST, UTC-5) instant prove the
+// derivation is timezone-aware rather than a hard-coded offset.
+describe.each([
+  ["EDT boundary", "2026-08-17T01:30:00Z"],   // Aug 16, 9:30 p.m. Eastern
+  ["EST boundary", "2026-01-15T01:30:00Z"],   // Jan 14, 8:30 p.m. Eastern
+])("checked-in priority at the %s", (_label, instant) => {
+  beforeEach(() => { jest.useFakeTimers(); jest.setSystemTime(new Date(instant)); });
+  afterEach(() => { jest.useRealTimers(); });
+
+  test("local-date fixture and component agree — booking still wins", () => {
+    const frozenToday = todayISO(); // local calendar date at the frozen instant
+    const priority = buildPortalPriority({
+      dogs: [dog],
+      bookings: [{ id: "b-b", dog_id: dog.id, dog_name: dog.name, service_type: "daycare",
+                   checked_in_at: new Date().toISOString(), checked_out_at: null,
+                   status: "approved", date: frozenToday }],
+      homework: [{ id: "h-b", dog_id: dog.id, dog_name: dog.name, title: "Place", status: "assigned" }],
+      setupStatus: { booking_locked: false },
+    });
+    expect(priority.kind).toBe("bookings");
+    // And the old UTC derivation really is a DIFFERENT day at this instant on
+    // an Eastern machine — the exact bug this suite used to have.
+    const utcDate = new Date().toISOString().slice(0, 10);
+    if (new Date().getTimezoneOffset() > 0) {
+      expect(utcDate).not.toBe(frozenToday);
+    }
+  });
 });

@@ -302,8 +302,15 @@ def test_credit_pack_override_shown_in_shop_catalog(admin_headers, fresh_client)
 
 def test_credit_pack_expired_override_ignored_in_shop_catalog(admin_headers, fresh_client):
     from datetime import timedelta
+    from zoneinfo import ZoneInfo
     pack = _create_credit_pack(admin_headers, available_online=True, qty=10, price=400.0)
-    past = (datetime.now(timezone.utc).date() - timedelta(days=1)).isoformat()
+    # expires_on is a BUSINESS calendar date: production _override_is_active
+    # compares it to business_today() in America/New_York (valid through the
+    # expiry date inclusive). Deriving "yesterday" from the UTC clock made
+    # this fixture equal business-TODAY between 8 p.m. and midnight Eastern —
+    # a still-active override — so the test failed every evening. Same
+    # convention as tests/test_register_cash_sales.py.
+    past = (datetime.now(ZoneInfo("America/New_York")).date() - timedelta(days=1)).isoformat()
     override = _create_price_override(admin_headers, fresh_client["id"], "credit_pack", pack["id"], 300.0, expires_on=past)
     try:
         client_hdrs = _client_headers(fresh_client["id"], fresh_client["email"])
