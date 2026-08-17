@@ -8,6 +8,8 @@ import { useConfirm } from "../lib/useConfirm";
 import PageHero from "../components/PageHero";
 import AdminTabs from "../components/admin/AdminTabs";
 import RolesPanel from "../components/RolesPanel";
+import TaxProfilePanel from "../components/TaxProfilePanel";
+import EstimatedTaxPayments from "../components/EstimatedTaxPayments";
 import { todayISO, daysAgoISO } from "../lib/date";
 import TrainerScorecardTab from "../components/TrainerScorecardTab";
 import { compressImage } from "../lib/imageCompress";
@@ -1315,26 +1317,25 @@ function QuarterlyTaxTab() {
   const [data, setData] = useState(null);
   const [settings, setSettings] = useState(null);
   const [defaults, setDefaults] = useState(null);
-  const [payments, setPayments] = useState([]);
+  const [taxProfile, setTaxProfile] = useState(null); // Step 4D-2A — completeness is backend-authoritative
   const [year, setYear] = useState(new Date().getFullYear());
   const [settingsOpen, setSettingsOpen] = useState(false);
-  const [payModal, setPayModal] = useState(null); // {quarter, suggested}
+  const [profileOpen, setProfileOpen] = useState(false);
   const [saving, setSaving] = useState(false);
   const [err, setErr] = useState("");
-  const confirm = useConfirm();
 
   const load = useCallback(async () => {
     setErr("");
     try {
-      const [est, s, p] = await Promise.all([
+      const [est, s, tp] = await Promise.all([
         api.get("/admin/quarterly-tax", { params: { year } }),
         api.get("/admin/quarterly-tax/settings"),
-        api.get("/admin/quarterly-tax/payments", { params: { year } }),
+        api.get(`/admin/tax-profile?year=${year}`),
       ]);
       setData(est.data);
       setSettings(s.data.current);
       setDefaults(s.data.defaults);
-      setPayments(p.data.payments || []);
+      setTaxProfile(tp.data);
     } catch (e) { setErr(formatErr(e.response?.data?.detail)); }
   }, [year]);
   useEffect(() => { load(); }, [load]);
@@ -1346,12 +1347,6 @@ function QuarterlyTaxTab() {
     finally { setSaving(false); }
   };
   const reset = () => setSettings({ ...defaults });
-
-  const deletePayment = async (p) => {
-    if (!(await confirm({ title: `Delete payment?`, body: `$${p.amount.toFixed(2)} on ${p.payment_date} (Q${p.quarter})`, confirmText: "Delete", tone: "danger" }))) return;
-    try { await api.delete(`/admin/quarterly-tax/payments/${p.id}`); await load(); }
-    catch (e) { setErr(formatErr(e.response?.data?.detail)); }
-  };
 
   const downloadCpaPdf = async () => {
     try {
@@ -1383,8 +1378,51 @@ function QuarterlyTaxTab() {
     <div className="space-y-4" data-testid="quarterly-tax-tab">
       <div className="bg-shAccent/10 border border-shAccent/40 rounded p-3 text-[13px] text-shTextMuted" data-testid="qt-disclaimer">
         <i className="fas fa-triangle-exclamation text-shAccent mr-2"/>
-        <strong className="text-shAccent">Sole-Proprietor estimator.</strong> {data.disclaimer}
+        <strong className="text-shAccent">Legacy planning reserve.</strong> {data.disclaimer}
       </div>
+
+      {/* Step 4D-2A — honesty gate: no federal/Ohio payment amount exists yet. */}
+      <div className="grid grid-cols-1 md:grid-cols-2 gap-3" data-testid="qt-jurisdiction-status">
+        {["federal", "ohio"].map((j) => {
+          const c = taxProfile?.completeness?.[j];
+          const label = j === "federal" ? "Federal estimated tax" : "Ohio estimated tax";
+          return (
+            <div key={j} className="bg-[var(--sh-card-base)] border border-shBorder rounded-xl p-3" data-testid={`qt-${j}-card`}>
+              <div className="flex items-center justify-between flex-wrap gap-2">
+                <p className="text-[11px] font-black uppercase tracking-widest text-shSecondary">{label}</p>
+                {c && !c.fields_complete && (
+                  <span className="text-[10px] font-black uppercase tracking-widest text-amber-300 bg-amber-500/10 px-2 py-0.5 rounded-full" data-testid={`qt-${j}-incomplete`}>
+                    Tax profile incomplete
+                  </span>
+                )}
+                {c && c.fields_complete && (
+                  <span className="text-[10px] font-black uppercase tracking-widest text-shGreen bg-shGreen/10 px-2 py-0.5 rounded-full" data-testid={`qt-${j}-ready`}>
+                    Profile complete
+                  </span>
+                )}
+              </div>
+              <p className="text-[13px] text-shTextMuted mt-1" data-testid={`qt-${j}-message`}>
+                {j === "federal"
+                  ? "Federal payment calculation not yet available (arrives in 4D-2B). No amount is shown until the tax profile and the official 1040-ES math are in place."
+                  : "Ohio payment calculation not yet available (arrives in 4D-2C, incl. the Business Income Deduction and school-district tax). The legacy flat 2.75% figure is NOT Ohio tax."}
+              </p>
+              {j === "federal" && data.next_federal_deadline && (
+                <p className="text-[12px] font-black text-shText mt-1" data-testid="qt-next-federal-deadline">
+                  Next federal estimated-tax deadline: {data.next_federal_deadline.due}
+                  <span className="text-shTextMuted font-bold"> · {data.next_federal_deadline.period} · amount not calculated</span>
+                </p>
+              )}
+              <button onClick={() => setProfileOpen(true)} data-testid={`qt-${j}-open-profile`}
+                      className="mt-2 text-[11px] font-black uppercase tracking-widest text-shSecondary hover:underline">
+                <i className="fas fa-id-card mr-1"/>Complete Tax Profile
+              </button>
+            </div>
+          );
+        })}
+      </div>
+      <p className="text-[11px] text-shTextMuted italic" data-testid="qt-municipal-note">
+        Municipal (city) income tax is separate — it is not included in any federal or Ohio estimate here.
+      </p>
 
       <div className="flex flex-wrap items-end gap-2">
         <label className="text-[12px] font-black uppercase tracking-widest text-shTextMuted">
@@ -1399,9 +1437,13 @@ function QuarterlyTaxTab() {
             })}
           </select>
         </label>
+        <button onClick={()=>setProfileOpen(o=>!o)} data-testid="qt-profile-toggle"
+                className="bg-[var(--sh-card-base)] border border-shPrimary/40 px-3 py-2 rounded text-[13px] font-black uppercase tracking-widest text-shPrimary hover:bg-shPrimary/10">
+          <i className="fas fa-id-card mr-1"/>Tax Profile
+        </button>
         <button onClick={()=>setSettingsOpen(s=>!s)} data-testid="qt-settings-toggle"
                 className="bg-[var(--sh-card-base)] border border-shBorder px-3 py-2 rounded text-[13px] font-black uppercase tracking-widest text-shTextMuted hover:border-shPrimary">
-          <i className="fas fa-sliders mr-1"/>Edit Rates
+          <i className="fas fa-sliders mr-1"/>Reserve Rates
         </button>
         <button onClick={downloadCpaPdf} data-testid="qt-cpa-pdf"
                 className="bg-shSecondary text-bgHeader px-3 py-2 rounded text-[13px] font-black uppercase tracking-widest shadow hover:bg-shSecondary/90">
@@ -1415,7 +1457,7 @@ function QuarterlyTaxTab() {
       {settingsOpen && settings && (
         <div className="bg-[var(--sh-card-base)] border border-shPrimary/40 rounded-xl p-4 space-y-4" data-testid="qt-settings-panel">
           <div className="flex justify-between items-center flex-wrap gap-2">
-            <h4 className="text-shText font-black uppercase italic"><i className="fas fa-sliders text-shPrimary mr-2"/>Tax Rates</h4>
+            <h4 className="text-shText font-black uppercase italic"><i className="fas fa-sliders text-shPrimary mr-2"/>Legacy Reserve Rates</h4>
             <div className="flex gap-2">
               <button onClick={reset} data-testid="qt-reset"
                       className="text-[13px] text-shTextMuted hover:text-shAccent font-black uppercase tracking-widest">
@@ -1439,16 +1481,18 @@ function QuarterlyTaxTab() {
               </label>
             ))}
           </div>
-          <p className="text-[11px] text-shTextMuted italic">Tip: log individual quarterly payments below — they automatically reduce your balance owed.</p>
+          <p className="text-[11px] text-shTextMuted italic">Optional budgeting estimate. Not a federal or Ohio estimated-tax payment calculation.</p>
         </div>
       )}
+
+      {profileOpen && <TaxProfilePanel year={year} onChanged={(tp)=>setTaxProfile(tp)} />}
 
       {/* YTD KPIs */}
       <div className="grid grid-cols-2 md:grid-cols-4 gap-3" data-testid="qt-kpis">
         <TaxKpi label="YTD Net Income" value={data.income.gross} color="white"/>
         <TaxKpi label="YTD Expenses" value={data.expenses.total} color="shAccent"/>
         <TaxKpi label="Net Profit (Schedule C)" value={data.net_profit} color="shPrimary" emphasis/>
-        <TaxKpi label="Est. Tax Owed YTD" value={data.balance_owed_ytd} color="shSecondary" emphasis/>
+        <TaxKpi label="Planning Reserve YTD (not tax due)" value={data.balance_owed_ytd} color="shSecondary"/>
       </div>
 
       {Number(data.income?.sales_tax_collected || 0) > 0 && (
@@ -1474,37 +1518,28 @@ function QuarterlyTaxTab() {
         </div>
       )}
 
-      {/* Quarterly cards with Mark-Paid CTA */}
+      {/* Federal payment-period deadline cards. Step 4D-2A — deadlines are
+          official 1040-ES periods; the dollar shown is the LEGACY RESERVE
+          suggestion, never a required payment ("amount not calculated"). */}
       <div className="grid grid-cols-1 md:grid-cols-4 gap-3" data-testid="qt-quarters">
-        {data.quarters.map(q => {
-          const fullyPaid = q.paid >= q.suggested_payment && q.suggested_payment > 0;
-          return (
-            <div key={q.quarter}
-                 data-testid={`qt-quarter-${q.quarter}`}
-                 className={`bg-[var(--sh-card-base)] border rounded-xl p-3 ${q.status === "current" ? "border-shPrimary" : "border-shBorder"} ${fullyPaid ? "opacity-90" : ""}`}>
-              <div className="flex justify-between items-center">
-                <p className="text-[11px] font-black uppercase tracking-widest text-shTextMuted">Q{q.quarter}</p>
-                <span className={`text-[10px] font-black uppercase tracking-widest text-${statusColor(q.status)}`}>{statusLabel(q.status)}</span>
-              </div>
-              <p className="text-shText text-xl font-black mt-1">${q.suggested_payment.toFixed(2)}</p>
-              <p className="text-[11px] text-shTextMuted mt-1">{q.period}</p>
-              <p className={`text-[12px] font-black uppercase tracking-widest text-${statusColor(q.status)} mt-1`}>
-                <i className="fas fa-calendar-day mr-1"/>Due {q.due}
-              </p>
-              {q.paid > 0 && (
-                <p className="text-[11px] text-shPrimary font-black uppercase tracking-widest mt-1" data-testid={`qt-q${q.quarter}-paid`}>
-                  <i className="fas fa-check-circle mr-1"/>${q.paid.toFixed(2)} paid
-                  {q.remaining > 0 && <span className="text-shTextMuted normal-case ml-1">· ${q.remaining.toFixed(2)} left</span>}
-                </p>
-              )}
-              <button onClick={()=>setPayModal({ quarter: q.quarter, suggested: q.remaining || q.suggested_payment })}
-                      data-testid={`qt-q${q.quarter}-mark-paid`}
-                      className="mt-2 w-full bg-shPrimary/10 border border-shPrimary/40 text-shPrimary px-2 py-1.5 rounded text-[11px] font-black uppercase tracking-widest hover:bg-shPrimary/20">
-                {fullyPaid ? <><i className="fas fa-plus mr-1"/>Add payment</> : <><i className="fas fa-check mr-1"/>Mark paid</>}
-              </button>
+        {data.quarters.map(q => (
+          <div key={q.quarter}
+               data-testid={`qt-quarter-${q.quarter}`}
+               className={`bg-[var(--sh-card-base)] border rounded-xl p-3 ${q.status === "current" ? "border-shPrimary" : "border-shBorder"}`}>
+            <div className="flex justify-between items-center">
+              <p className="text-[11px] font-black uppercase tracking-widest text-shTextMuted">Period {q.quarter}</p>
+              <span className={`text-[10px] font-black uppercase tracking-widest text-${statusColor(q.status)}`}>{statusLabel(q.status)}</span>
             </div>
-          );
-        })}
+            <p className="text-[11px] text-shTextMuted mt-1">{q.period}</p>
+            <p className={`text-[12px] font-black uppercase tracking-widest text-${statusColor(q.status)} mt-1`}>
+              <i className="fas fa-calendar-day mr-1"/>Deadline {q.due}
+            </p>
+            <p className="text-[12px] text-shTextMuted mt-1" data-testid={`qt-q${q.quarter}-reserve`}>
+              Required amount: <b className="text-shText">not calculated</b>
+              <span className="block">Reserve suggestion (planning): ${q.suggested_payment.toFixed(2)}</span>
+            </p>
+          </div>
+        ))}
       </div>
 
       {/* Breakdown table */}
@@ -1540,143 +1575,38 @@ function QuarterlyTaxTab() {
         </div>
 
         <div className="bg-[var(--sh-card-base)] border border-shBorder rounded-xl p-4" data-testid="qt-tax-breakdown">
-          <h4 className="text-shText font-black uppercase italic mb-3"><i className="fas fa-receipt text-shSecondary mr-2"/>Tax Breakdown</h4>
+          <h4 className="text-shText font-black uppercase italic mb-3"><i className="fas fa-receipt text-shSecondary mr-2"/>Legacy Planning Reserve</h4>
+          <p className="text-[11px] text-shTextMuted italic mb-2" data-testid="qt-reserve-note">
+            Optional budgeting estimate from flat percentages. Not a federal or Ohio estimated-tax
+            payment calculation — no deductions, brackets, withholding, safe harbor, or Ohio BID.
+          </p>
           <div className="space-y-1 text-[13px]">
-            <p className="text-[11px] font-black uppercase tracking-widest text-shAccent mb-1">Self-Employment Tax</p>
+            <p className="text-[11px] font-black uppercase tracking-widest text-shAccent mb-1">SE-tax reserve component</p>
             <Row label={`Social Security (on $${data.se_tax.taxable_base.toFixed(0)})`} value={data.se_tax.social_security}/>
             <Row label="Medicare" value={data.se_tax.medicare}/>
-            <Row label="SE TAX TOTAL" value={data.se_tax.total} bold color="shAccent"/>
+            <Row label="SE RESERVE TOTAL" value={data.se_tax.total} bold color="shAccent"/>
             <p className="text-[11px] text-shTextMuted italic">Half deductible (${data.se_tax.deductible_half.toFixed(2)})</p>
             <div className="border-t border-shBorder my-2"/>
-            <p className="text-[11px] font-black uppercase tracking-widest text-shSecondary mb-1">Income Tax (on ${data.income_tax.taxable_income.toFixed(0)})</p>
-            <Row label={`Federal (${data.settings.federal_income_pct}%)`} value={data.income_tax.federal}/>
-            <Row label={`State (${data.settings.state_income_pct}%)`} value={data.income_tax.state}/>
-            <Row label={`Local (${data.settings.local_income_pct}%)`} value={data.income_tax.local}/>
-            <Row label="INCOME TAX TOTAL" value={data.income_tax.total} bold color="shSecondary"/>
+            <p className="text-[11px] font-black uppercase tracking-widest text-shSecondary mb-1">Flat-rate reserve (on ${data.income_tax.taxable_income.toFixed(0)})</p>
+            <Row label={`Federal reserve (${data.settings.federal_income_pct}% flat — planning only)`} value={data.income_tax.federal}/>
+            <Row label={`State reserve (${data.settings.state_income_pct}% flat — NOT Ohio tax law)`} value={data.income_tax.state}/>
+            <Row label={`Local reserve (${data.settings.local_income_pct}% flat — municipal is separate)`} value={data.income_tax.local}/>
+            <Row label="RESERVE SUBTOTAL" value={data.income_tax.total} bold color="shSecondary"/>
             <div className="border-t border-shBorder my-2"/>
-            <Row label="TOTAL TAX YTD" value={data.total_tax_ytd} bold color="white"/>
-            <Row label="Payments applied" value={data.payments_applied} neg/>
-            <Row label="BALANCE OWED" value={data.balance_owed_ytd} bold color="shPrimary"/>
+            <Row label="TOTAL PLANNING RESERVE YTD" value={data.total_tax_ytd} bold color="white"/>
+            <Row label="Legacy payments logged" value={data.payments_applied} neg/>
+            <Row label="RESERVE REMAINING (PLANNING — NOT TAX DUE)" value={data.balance_owed_ytd} bold color="shPrimary"/>
           </div>
         </div>
       </div>
 
-      {/* Payment history */}
-      <div className="bg-[var(--sh-card-base)] border border-shBorder rounded-xl p-4" data-testid="qt-payment-history">
-        <h4 className="text-shText font-black uppercase italic mb-3"><i className="fas fa-clock-rotate-left text-shPrimary mr-2"/>Payment history — {year}</h4>
-        {payments.length === 0 ? (
-          <p className="text-shTextMuted text-sm italic">No payments logged yet for this year. Tap "Mark paid" on any quarter to record one.</p>
-        ) : (
-          <table className="w-full text-[13px]">
-            <thead className="text-[11px] font-black uppercase tracking-widest text-shTextMuted border-b border-shBorder">
-              <tr>
-                <th className="px-2 py-1.5 text-left">Date</th>
-                <th className="px-2 py-1.5 text-left">Quarter</th>
-                <th className="px-2 py-1.5 text-right">Amount</th>
-                <th className="px-2 py-1.5 text-left">Method</th>
-                <th className="px-2 py-1.5 text-left">Memo</th>
-                <th className="px-2 py-1.5"></th>
-              </tr>
-            </thead>
-            <tbody>
-              {payments.map(p => (
-                <tr key={p.id} className="border-b border-shBorder/40" data-testid={`qt-pay-row-${p.id}`}>
-                  <td className="px-2 py-2 text-shTextMuted">{p.payment_date}</td>
-                  <td className="px-2 py-2"><span className="bg-[var(--sh-card-base)] px-2 py-0.5 rounded text-shSecondary text-[11px] font-black">Q{p.quarter}</span></td>
-                  <td className="px-2 py-2 text-right text-shPrimary font-black">${p.amount.toFixed(2)}</td>
-                  <td className="px-2 py-2 text-shTextMuted text-[12px]">{p.payment_method}</td>
-                  <td className="px-2 py-2 text-shTextMuted text-[12px] truncate max-w-[200px]">{p.memo}</td>
-                  <td className="px-2 py-2 text-right">
-                    <button onClick={()=>deletePayment(p)} data-testid={`qt-pay-delete-${p.id}`}
-                            className="text-shTextMuted hover:text-red-400 text-[12px]">
-                      <i className="fas fa-trash"/>
-                    </button>
-                  </td>
-                </tr>
-              ))}
-            </tbody>
-          </table>
-        )}
-      </div>
-
-      {payModal && (
-        <TaxPaymentModal year={year} quarter={payModal.quarter} suggested={payModal.suggested}
-                         onClose={()=>setPayModal(null)}
-                         onSaved={()=>{ setPayModal(null); load(); }}/>
-      )}
+      {/* Step 4D-2A — jurisdiction-split, append-only payment history
+          (legacy combined rows shown as "jurisdiction unassigned"). */}
+      <EstimatedTaxPayments year={year} />
     </div>
   );
 }
 
-function TaxPaymentModal({ year, quarter, suggested, onClose, onSaved }) {
-  const [amount, setAmount] = useState(suggested ? suggested.toFixed(2) : "");
-  const [paymentDate, setPaymentDate] = useState(todayISO());
-  const [method, setMethod] = useState("EFTPS");
-  const [memo, setMemo] = useState("");
-  const [err, setErr] = useState("");
-  const [saving, setSaving] = useState(false);
-
-  const save = async () => {
-    if (!amount || Number(amount) <= 0) { setErr("Enter an amount > 0"); return; }
-    setSaving(true);
-    try {
-      await api.post("/admin/quarterly-tax/payments", {
-        year, quarter, amount: Number(amount), payment_date: paymentDate,
-        payment_method: method, memo,
-      });
-      onSaved();
-    } catch (e) { setErr(formatErr(e.response?.data?.detail)); setSaving(false); }
-  };
-
-  return (
-    <div className="fixed inset-0 bg-black/60 z-50 flex items-center justify-center p-4" data-testid="qt-pay-modal" onClick={onClose}>
-      <div className="bg-[var(--sh-card-base)] border border-shPrimary/40 rounded-xl p-5 max-w-md w-full space-y-3" onClick={e=>e.stopPropagation()}>
-        <h3 className="text-shText font-black uppercase italic text-lg"><i className="fas fa-circle-check text-shPrimary mr-2"/>Log Q{quarter} payment</h3>
-        <p className="text-[12px] text-shTextMuted">Tax year {year}</p>
-
-        {err && <div className="text-red-400 bg-red-500/10 rounded p-2 text-[13px]">{err}</div>}
-
-        <label className="block">
-          <span className="text-[12px] font-black uppercase tracking-widest text-shTextMuted">Amount paid ($)</span>
-          <input type="number" step="0.01" value={amount} onChange={e=>setAmount(e.target.value)}
-                 data-testid="qt-pay-amount"
-                 className="w-full bg-[var(--sh-card-base)] border border-shBorder rounded p-2 text-shText text-sm mt-1"/>
-        </label>
-        <label className="block">
-          <span className="text-[12px] font-black uppercase tracking-widest text-shTextMuted">Payment date</span>
-          <input type="date" value={paymentDate} onChange={e=>setPaymentDate(e.target.value)}
-                 style={{colorScheme:"dark"}} data-testid="qt-pay-date"
-                 className="w-full bg-[var(--sh-card-base)] border border-shBorder rounded p-2 text-shText text-sm mt-1"/>
-        </label>
-        <label className="block">
-          <span className="text-[12px] font-black uppercase tracking-widest text-shTextMuted">Method</span>
-          <select value={method} onChange={e=>setMethod(e.target.value)} data-testid="qt-pay-method"
-                  style={{colorScheme:"dark"}}
-                  className="w-full bg-[var(--sh-card-base)] border border-shBorder rounded p-2 text-shText text-sm mt-1">
-            {["EFTPS","Check","Card","ACH","Other"].map(m => <option key={m} value={m}>{m}</option>)}
-          </select>
-        </label>
-        <label className="block">
-          <span className="text-[12px] font-black uppercase tracking-widest text-shTextMuted">Memo (optional)</span>
-          <input type="text" value={memo} onChange={e=>setMemo(e.target.value)} maxLength={120}
-                 data-testid="qt-pay-memo"
-                 className="w-full bg-[var(--sh-card-base)] border border-shBorder rounded p-2 text-shText text-sm mt-1"/>
-        </label>
-
-        <div className="flex justify-end gap-2 pt-2">
-          <button onClick={onClose} data-testid="qt-pay-cancel"
-                  className="bg-[var(--sh-card-base)] border border-shBorder px-4 py-2 rounded text-[13px] font-black uppercase tracking-widest text-shTextMuted hover:border-red-400">
-            Cancel
-          </button>
-          <button onClick={save} disabled={saving} data-testid="qt-pay-save"
-                  className="bg-shPrimary text-bgHeader px-4 py-2 rounded text-[13px] font-black uppercase tracking-widest disabled:opacity-50">
-            {saving ? "Saving…" : "Log payment"}
-          </button>
-        </div>
-      </div>
-    </div>
-  );
-}
 
 // ─── Admin → Time Off Review ────────────────────────────────────────────────
 function TimeOffAdminTab() {

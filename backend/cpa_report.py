@@ -118,7 +118,7 @@ def render_cpa_pdf(
             tile("GROSS INCOME", _fmt_money(data["income"]["gross"]), INK),
             tile("TOTAL EXPENSES", _fmt_money(data["expenses"]["total"]), RED),
             tile("NET PROFIT", _fmt_money(net), net_color),
-            tile("EST. BALANCE OWED", _fmt_money(bal), bal_color),
+            tile("PLANNING RESERVE LESS PAYMENTS", _fmt_money(bal), bal_color),
         ]],
         colWidths=[1.85 * inch] * 4,
         style=TableStyle([("VALIGN", (0, 0), (-1, -1), "MIDDLE")]),
@@ -204,7 +204,7 @@ def render_cpa_pdf(
     story.append(net_table)
 
     # ── Tax breakdown (SE + Income) ──
-    story.append(Paragraph("Estimated Tax Liability (informational — verify with CPA)", h2))
+    story.append(Paragraph("Legacy Planning Reserve — flat-rate budgeting estimate. NOT a federal or Ohio estimated-tax payment calculation.", h2))
     se = data["se_tax"]
     it = data["income_tax"]
     s = data["settings"]
@@ -215,14 +215,14 @@ def render_cpa_pdf(
         [f"Medicare ({_fmt_pct(s['medicare_rate_pct'])})",
          _fmt_pct(s["medicare_rate_pct"]), _fmt_money(se["taxable_base"]), _fmt_money(se["medicare"])],
         ["SELF-EMPLOYMENT TAX SUBTOTAL", "", "", _fmt_money(se["total"])],
-        [f"Federal income tax ({_fmt_pct(s['federal_income_pct'])} of net less ½ SE)",
+        [f"Federal reserve % ({_fmt_pct(s['federal_income_pct'])} of net less ½ SE — planning only)",
          _fmt_pct(s["federal_income_pct"]), _fmt_money(it["taxable_income"]), _fmt_money(it["federal"])],
-        [f"State income tax — Ohio ({_fmt_pct(s['state_income_pct'])})",
+        [f"State reserve % ({_fmt_pct(s['state_income_pct'])} flat — NOT Ohio tax law; Ohio BID/3% rate not applied)",
          _fmt_pct(s["state_income_pct"]), _fmt_money(it["taxable_income"]), _fmt_money(it["state"])],
-        [f"Local income tax — Warren ({_fmt_pct(s['local_income_pct'])})",
+        [f"Local reserve % ({_fmt_pct(s['local_income_pct'])} flat — municipal tax is separate, not included in any federal/Ohio estimate)",
          _fmt_pct(s["local_income_pct"]), _fmt_money(it["taxable_income"]), _fmt_money(it["local"])],
         ["INCOME TAX SUBTOTAL", "", "", _fmt_money(it["total"])],
-        ["TOTAL ESTIMATED TAX (YTD)", "", "", _fmt_money(data["total_tax_ytd"])],
+        ["TOTAL PLANNING RESERVE (YTD — budgeting figure, not tax due)", "", "", _fmt_money(data["total_tax_ytd"])],
     ]
     tax_table = Table(
         tax_rows,
@@ -286,7 +286,7 @@ def render_cpa_pdf(
         story.append(pay_table)
 
     # ── Bottom-line balance ──
-    bal_label = "BALANCE STILL OWED (YTD)"
+    bal_label = "PLANNING RESERVE REMAINING (YTD) — not a tax-due amount"
     bal_box = Table(
         [[
             Paragraph(f"<b>{bal_label}</b>", ParagraphStyle("bl", parent=styles["Normal"], fontSize=10, textColor=INK)),
@@ -308,9 +308,10 @@ def render_cpa_pdf(
     # ── Footer disclaimer ──
     story.append(Paragraph(
         f"Generated {datetime.now().strftime('%b %-d, %Y at %-I:%M %p')} from Sit Happens CRM. "
-        "This is an estimate based on bookkeeping data — not a tax filing. "
-        "Self-employment and income tax rates are configurable defaults; please "
-        "verify all figures against your CPA's calculations and your W-4/1040-ES history.",
+        "Business income/expense figures come from bookkeeping data. The reserve rows are a flat-rate "
+        "PLANNING estimate only — they are not a federal or Ohio estimated-tax calculation (no filing status, "
+        "deductions, brackets, withholding, safe harbor, Ohio Business Income Deduction, or school-district tax). "
+        "Not a tax filing; verify all figures with your CPA.",
         foot,
     ))
 

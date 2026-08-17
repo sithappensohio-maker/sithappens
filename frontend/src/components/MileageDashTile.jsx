@@ -57,13 +57,10 @@ export function MileageDashTile({ onNavTax }) {
         purpose: purpose.trim(),
         destination: destination.trim(),
       });
+      // Step 4D-2A — only the DEDUCTION itself is supportable; the removed
+      // savings figure multiplied it by an unsupportable flat-rate guess.
       const ded = r.data.miles * (data?.rate_per_mile || 0.7);
-      const savings = ded * ((data?.combined_tax_rate_pct || 0) / 100);
-      toast.success(
-        savings > 0
-          ? `Logged ${r.data.miles} mi · +$${ded.toFixed(2)} deduction · ~$${savings.toFixed(2)} tax saved`
-          : `Logged ${r.data.miles} mi · +$${ded.toFixed(2)} deduction`
-      );
+      toast.success(`Logged ${r.data.miles} mi · +$${ded.toFixed(2)} deduction recorded`);
       setMiles(""); setPurpose(""); setDestination("");
       setDate(todayISO());
       await load();
@@ -79,12 +76,12 @@ export function MileageDashTile({ onNavTax }) {
           <i className="fas fa-car-side mr-2"/>Business Mileage
         </p>
         <div className="flex items-center gap-2 flex-wrap">
-          {data && data.ytd_tax_savings > 0 && (
-            <span data-testid="mileage-tax-savings-chip"
-                  title={`Approx ${data.combined_tax_rate_pct}% combined marginal rate`}
+          {data && data.ytd_deduction > 0 && (
+            <span data-testid="mileage-deduction-chip"
+                  title="IRS standard-mileage deduction recorded from your logged business miles"
                   className="bg-shPrimary/10 border border-shPrimary/40 text-shPrimary px-2.5 py-1 rounded-full text-[11px] font-black uppercase tracking-widest">
-              <i className="fas fa-piggy-bank mr-1"/>
-              YTD tax savings ${data.ytd_tax_savings.toFixed(2)}
+              <i className="fas fa-road mr-1"/>
+              Mileage deduction recorded ${data.ytd_deduction.toFixed(2)}
             </span>
           )}
           {data && (

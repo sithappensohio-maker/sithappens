@@ -40441,17 +40441,102 @@ async def _get_quarterly_tax_settings() -> Dict[str, Any]:
 
 
 def _quarter_for(month: int) -> int:
+    """CALENDAR quarter for a month — kept only for non-tax display uses.
+
+    Step 4D-2A: federal estimated-tax periods are NOT calendar quarters
+    (Pub 505: Jan–Mar, Apr–May, Jun–Aug, Sep–Dec). Deadline navigation now
+    uses _next_federal_es_deadline / _federal_es_period_for below; this
+    function must never again decide which installment is 'next'."""
     return (month - 1) // 3 + 1
 
 
+# ── Step 4D-2A — official deadline helpers ──────────────────────────────────
+# Federal legal holidays (5 U.S.C. 6103) that can collide with estimated-tax
+# due dates, plus DC Emancipation Day which the IRS treats as a legal holiday
+# for deadlines. Only the statutory, well-defined holidays are modeled —
+# nothing is invented. Both the IRS (Pub 505) and Ohio (2026 IT 1040ES
+# instructions) shift a due date falling on a Saturday, Sunday, or legal
+# holiday to the next business day. The rules are kept as SEPARATE callables
+# so federal and Ohio can diverge if their official treatment ever differs.
+
+def _nth_weekday(year: int, month: int, weekday: int, n: int) -> date:
+    d = date(year, month, 1)
+    offset = (weekday - d.weekday()) % 7
+    return date(year, month, 1 + offset + 7 * (n - 1))
+
+
+def _federal_legal_holidays(year: int) -> set:
+    days = {
+        date(year, 1, 1),                       # New Year's Day
+        _nth_weekday(year, 1, 0, 3),            # MLK Day (3rd Mon Jan) — hits Jan 15 cycles
+        _nth_weekday(year, 2, 0, 3),            # Washington's Birthday
+        date(year, 6, 19),                      # Juneteenth
+        date(year, 7, 4),                       # Independence Day
+        _nth_weekday(year, 9, 0, 1),            # Labor Day
+        _nth_weekday(year, 10, 0, 2),           # Columbus Day
+        date(year, 11, 11),                     # Veterans Day
+        _nth_weekday(year, 11, 3, 4),           # Thanksgiving (4th Thu Nov)
+        date(year, 12, 25),                     # Christmas
+        date(year, 4, 16),                      # DC Emancipation Day (IRS-observed)
+    }
+    # In-lieu observation (holiday on Sat → Fri, Sun → Mon) for fixed-date ones
+    extra = set()
+    for d in days:
+        if d.weekday() == 5:
+            extra.add(d - timedelta(days=1))
+        elif d.weekday() == 6:
+            extra.add(d + timedelta(days=1))
+    return days | extra
+
+
+def _shift_federal_deadline(d: date) -> date:
+    while d.weekday() >= 5 or d in _federal_legal_holidays(d.year):
+        d = d + timedelta(days=1)
+    return d
+
+
+def _shift_ohio_deadline(d: date) -> date:
+    """Ohio's ES instructions state the same next-business-day rule; kept
+    separate so an official divergence never requires touching federal."""
+    return _shift_federal_deadline(d)
+
+
 def _quarter_due_dates(year: int) -> List[Dict[str, str]]:
-    """IRS estimated payment deadlines. Q4 deadline lands in *next* January."""
-    return [
-        {"quarter": 1, "due": f"{year}-04-15", "period": f"Jan 1 – Mar 31, {year}"},
-        {"quarter": 2, "due": f"{year}-06-15", "period": f"Apr 1 – May 31, {year}"},
-        {"quarter": 3, "due": f"{year}-09-15", "period": f"Jun 1 – Aug 31, {year}"},
-        {"quarter": 4, "due": f"{year + 1}-01-15", "period": f"Sep 1 – Dec 31, {year}"},
+    """IRS estimated payment deadlines. Q4 deadline lands in *next* January.
+    Periods verbatim from Pub 505 (3/2/3/4 months — NOT calendar quarters);
+    statutory 15ths shifted for weekends/legal holidays."""
+    raw = [
+        (1, date(year, 4, 15), f"Jan 1 – Mar 31, {year}", f"{year}-01-01", f"{year}-03-31"),
+        (2, date(year, 6, 15), f"Apr 1 – May 31, {year}", f"{year}-04-01", f"{year}-05-31"),
+        (3, date(year, 9, 15), f"Jun 1 – Aug 31, {year}", f"{year}-06-01", f"{year}-08-31"),
+        (4, date(year + 1, 1, 15), f"Sep 1 – Dec 31, {year}", f"{year}-09-01", f"{year}-12-31"),
     ]
+    return [
+        {"quarter": q, "due": _shift_federal_deadline(d).isoformat(),
+         "statutory_due": d.isoformat(), "period": label,
+         "period_start": ps, "period_end": pe}
+        for q, d, label, ps, pe in raw
+    ]
+
+
+def _federal_es_period_for(d: date) -> Dict[str, Any]:
+    """The federal installment PERIOD containing date d (income period, per
+    Pub 505): Jan–Mar → 1, Apr–May → 2, Jun–Aug → 3, Sep–Dec → 4."""
+    q = 1 if d.month <= 3 else 2 if d.month <= 5 else 3 if d.month <= 8 else 4
+    row = _quarter_due_dates(d.year)[q - 1]
+    return {"tax_year": d.year, **row}
+
+
+def _next_federal_es_deadline(today: date) -> Dict[str, Any]:
+    """The next UNPASSED federal estimated-tax deadline as of `today`,
+    correctly including the PRIOR tax year's Q4 installment in early
+    January (its deadline belongs to last year's fourth period — Jan 1–15
+    must never jump straight to the new year's Q1/Apr 15)."""
+    for yr in (today.year - 1, today.year, today.year + 1):
+        for row in _quarter_due_dates(yr):
+            if date.fromisoformat(row["due"]) >= today:
+                return {"tax_year": yr, **row}
+    return {"tax_year": today.year, **_quarter_due_dates(today.year)[0]}  # pragma: no cover
 
 
 @api.get("/admin/quarterly-tax")
@@ -40604,19 +40689,30 @@ async def admin_quarterly_tax(
     balance_owed_ytd = max(0.0, total_tax_ytd - estimated_payments)
 
     # ---- Quarterly breakdown -------------------------------------------------
-    # Split YTD owed evenly into 4 buckets. Mark quarters that are "past due"
-    # vs "upcoming" based on today's calendar quarter.
+    # Step 4D-2A — the per-period dollars below are a LEGACY PLANNING RESERVE
+    # (YTD reserve ÷ 4), NOT a federal/Ohio required-installment calculation
+    # (that arrives with the 4D-2B/2C engines). Period navigation now follows
+    # the OFFICIAL Pub 505 payment periods: "current" is the period whose due
+    # date is the next one not yet passed (never the calendar quarter), so
+    # June 16–30 and Sept 16–30 no longer point at an already-passed deadline.
     quarters = _quarter_due_dates(yr)
     per_quarter = round(total_tax_ytd / 4.0, 2)
-    current_q = _quarter_for(today.month) if yr == today.year else 4
+    if yr == today.year:
+        current_q = next((q["quarter"] for q in quarters
+                          if date.fromisoformat(q["due"]) >= today), 4)
+    else:
+        current_q = 4
     for q in quarters:
         q["suggested_payment"] = per_quarter
         q["status"] = (
             "current" if q["quarter"] == current_q
-            else "past" if q["quarter"] < current_q
+            else "past" if date.fromisoformat(q["due"]) < today
             else "upcoming"
         )
     next_q = next((q for q in quarters if q["status"] in ("current", "upcoming")), quarters[-1])
+    # The truly-next FEDERAL deadline across tax years — in Jan 1–15 this is
+    # the PRIOR year's 4th installment, never the new year's Q1.
+    next_federal_deadline = _next_federal_es_deadline(today)
 
     # Recorded payments override the legacy settings field — sum what's been
     # actually logged via /admin/quarterly-tax/payments for this tax year.
@@ -40694,11 +40790,18 @@ async def admin_quarterly_tax(
         "quarters": quarters,
         "current_quarter": current_q,
         "next_quarter_due": next_q,
+        "next_federal_deadline": next_federal_deadline,
         "settings": settings,
+        # Step 4D-2A — honesty gate: this endpoint's dollar figures are a
+        # flat-rate PLANNING RESERVE, never a federal or Ohio payment amount.
+        "legacy_reserve": True,
         "disclaimer": (
-            "Estimator only. Cash-basis sole-proprietor Schedule C math with 2026 default "
-            "rates. Sales tax collected is tracked separately and excluded from Schedule C income. "
-            "Adjust federal/state/local % to match your actual bracket. Not a substitute for a CPA."
+            "Legacy planning reserve — an optional budgeting estimate built from "
+            "flat percentages of Schedule C-style business profit. It is NOT a "
+            "federal or Ohio estimated-tax payment calculation (no filing status, "
+            "deductions, brackets, withholding, safe harbor, Ohio business-income "
+            "deduction, or school-district tax). Sales tax is tracked separately "
+            "and excluded from business income. Not a substitute for a CPA."
         ),
     }
 
@@ -40788,10 +40891,367 @@ async def add_tax_payment(
 
 @api.delete("/admin/quarterly-tax/payments/{pid}")
 async def delete_tax_payment(pid: str, _: dict = Depends(require_admin_and_permission("delete_records"))):
+    """LEGACY combined-ledger delete. Kept only for the pre-4D-2A rows; the
+    jurisdiction-aware estimated_tax_payments ledger below is append-only
+    (void events, never hard deletes)."""
     res = await db.tax_payments.delete_one({"id": pid})
     if not res.deleted_count:
         raise HTTPException(404, "Payment not found")
     return {"ok": True}
+
+
+# ═══════════════ Step 4D-2A · Tax Profile foundation + honesty gate ═══════════
+# The owner-entered personal tax information the future 4D-2B (federal) and
+# 4D-2C (Ohio) engines need before ANY estimated-payment amount may be shown.
+# One profile per tax year. Numeric fields use explicit null/unset semantics:
+# None = "not provided yet"; 0.0 = "owner confirmed zero". The backend is
+# authoritative for completeness — React never infers it. No SSNs, portal
+# credentials, bank details, or return PDFs are ever stored here.
+
+# Confirmed business classification (owner-confirmed fact, not a guess):
+TAX_ENTITY_TYPE = "single_member_llc"
+TAX_FEDERAL_TREATMENT = "disregarded_entity_schedule_c"
+
+FEDERAL_FILING_STATUSES = (
+    # Verbatim the five 2026 Form 1040 / 1040-ES filing statuses.
+    "single", "married_filing_jointly", "married_filing_separately",
+    "head_of_household", "qualifying_surviving_spouse",
+)
+
+# Numeric profile fields, grouped. Each is Optional[float] (None = unset).
+_TAX_PROFILE_NUMERIC_FIELDS = {
+    "federal": (
+        "prior_year_agi", "prior_year_total_tax", "prior_year_overpayment_applied",
+        "withholding_ytd", "withholding_expected_remaining",
+        "w2_wages", "w2_ss_wages", "spouse_wages",
+        "other_taxable_income", "other_se_income",
+        "itemized_deduction_amount", "other_adjustments",
+        "se_health_insurance", "retirement_hsa_adjustments", "credits_estimate",
+    ),
+    "ohio": (
+        "prior_year_tax", "prior_year_overpayment_applied",
+        "withholding_ytd", "withholding_expected_remaining",
+    ),
+    "school_district": ("rate_pct", "withholding_ytd"),
+}
+
+# Human labels for missing-field reporting (backend-authoritative honesty).
+_TAX_PROFILE_FIELD_LABELS = {
+    "federal.filing_status": "Federal filing status",
+    "federal.prior_year_agi": "Prior-year federal AGI (for the safe-harbor 110% test)",
+    "federal.prior_year_total_tax": "Prior-year federal total tax (for safe-harbor comparison)",
+    "federal.prior_year_full_12_months": "Whether the prior-year return covered a full 12 months",
+    "federal.withholding_ytd": "Federal withholding so far this year (enter 0 if none)",
+    "federal.withholding_expected_remaining": "Expected additional federal withholding this year (enter 0 if none)",
+    "ohio.resident": "Ohio residency status",
+    "ohio.prior_year_tax": "Prior-year Ohio tax liability (for safe-harbor comparison)",
+    "ohio.withholding_ytd": "Ohio withholding so far this year (enter 0 if none)",
+    "ohio.withholding_expected_remaining": "Expected additional Ohio withholding this year (enter 0 if none)",
+    "school_district.applicable": "Whether an Ohio school-district income tax applies to your home district",
+}
+
+_FEDERAL_REQUIRED_FIELDS = (
+    "federal.filing_status", "federal.prior_year_agi", "federal.prior_year_total_tax",
+    "federal.prior_year_full_12_months", "federal.withholding_ytd",
+    "federal.withholding_expected_remaining",
+)
+# Ohio's estimated-payment threshold is on COMBINED state + school-district
+# liability (R.C. 5747.09), so the SD applicability question is part of the
+# Ohio readiness gate.
+_OHIO_REQUIRED_FIELDS = (
+    "ohio.resident", "ohio.prior_year_tax", "ohio.withholding_ytd",
+    "ohio.withholding_expected_remaining", "school_district.applicable",
+)
+
+
+def _empty_tax_profile(tax_year: int) -> Dict[str, Any]:
+    return {
+        "id": str(uuid.uuid4()),
+        "tax_year": int(tax_year),
+        "entity": {
+            "entity_type": TAX_ENTITY_TYPE,
+            "federal_tax_treatment": TAX_FEDERAL_TREATMENT,
+            "entity_label": "Single-Member LLC",
+            "treatment_label": "Disregarded Entity / Schedule C",
+            "confirmed": True,
+            # Explicitly NOT S-corp / C-corp / partnership — no corporate or
+            # S-corp calculation path exists for this profile.
+            "s_corp_election": False,
+            "c_corp_election": False,
+            "partnership": False,
+        },
+        "federal": {"filing_status": None, "prior_year_full_12_months": None,
+                    "deduction_method": None,
+                    **{k: None for k in _TAX_PROFILE_NUMERIC_FIELDS["federal"]}},
+        "ohio": {"resident": None,
+                 **{k: None for k in _TAX_PROFILE_NUMERIC_FIELDS["ohio"]}},
+        "school_district": {"applicable": None, "district_name": None,
+                            "district_number": None, "tax_base_type": None,
+                            **{k: None for k in _TAX_PROFILE_NUMERIC_FIELDS["school_district"]}},
+        "notes": None,
+        "created_at": now_iso(),
+        "updated_at": now_iso(),
+        "updated_by": None,
+        "audit_log": [],
+    }
+
+
+def _tax_profile_completeness(profile: Dict[str, Any]) -> Dict[str, Any]:
+    """Backend-authoritative readiness. A field is PROVIDED when it is not
+    None — an explicit 0.0 / False counts as provided (zero is a valid,
+    owner-confirmed value; 'unknown' is never treated as zero)."""
+    def provided(path: str) -> bool:
+        section, key = path.split(".")
+        return ((profile or {}).get(section) or {}).get(key) is not None
+
+    def state(required):
+        missing = [_TAX_PROFILE_FIELD_LABELS[p] for p in required if not provided(p)]
+        return {
+            "fields_complete": not missing,
+            "missing_fields": missing,
+            # The calculation engines land in 4D-2B (federal) / 4D-2C (Ohio):
+            # until then NOTHING is ready for an authoritative payment amount.
+            "ready_for_calculation": False,
+            "engine": "not_yet_available",
+        }
+
+    return {"federal": state(_FEDERAL_REQUIRED_FIELDS),
+            "ohio": state(_OHIO_REQUIRED_FIELDS)}
+
+
+class TaxProfilePatchIn(BaseModel):
+    """Patch semantics: ONLY keys present in the request are written, so an
+    omitted field stays unset while an explicit 0 / false is stored as a
+    confirmed value. Entity classification is NOT editable here — changing
+    federal tax treatment is a deliberate future flow, never a casual PUT."""
+    federal: Optional[Dict[str, Any]] = None
+    ohio: Optional[Dict[str, Any]] = None
+    school_district: Optional[Dict[str, Any]] = None
+    notes: Optional[str] = None
+
+
+_TAX_PROFILE_ENUM_FIELDS = {
+    ("federal", "filing_status"): set(FEDERAL_FILING_STATUSES),
+    ("federal", "deduction_method"): {"standard", "itemized"},
+    ("ohio", "resident"): None,           # bool
+    ("federal", "prior_year_full_12_months"): None,  # bool
+    ("school_district", "applicable"): {"yes", "no", "unknown"},
+    ("school_district", "tax_base_type"): {"traditional", "earned_income"},
+}
+
+
+def _clean_profile_patch(section: str, patch: Dict[str, Any]) -> Dict[str, Any]:
+    out: Dict[str, Any] = {}
+    numeric = set(_TAX_PROFILE_NUMERIC_FIELDS.get(section, ()))
+    for key, val in (patch or {}).items():
+        if (section, key) in _TAX_PROFILE_ENUM_FIELDS:
+            allowed = _TAX_PROFILE_ENUM_FIELDS[(section, key)]
+            if allowed is None:  # boolean field
+                if val is None:
+                    out[key] = None
+                elif isinstance(val, bool):
+                    out[key] = val
+                else:
+                    raise HTTPException(400, f"{section}.{key} must be true/false")
+            else:
+                if val is None:
+                    out[key] = None
+                elif str(val) in allowed:
+                    out[key] = str(val)
+                else:
+                    raise HTTPException(400, f"Invalid value for {section}.{key}")
+        elif key in numeric:
+            if val is None or val == "":
+                out[key] = None  # explicit clear back to unset
+            else:
+                try:
+                    out[key] = round(float(val), 2)
+                except (TypeError, ValueError):
+                    raise HTTPException(400, f"{section}.{key} must be a number")
+        elif key in ("district_name", "district_number"):
+            out[key] = (str(val).strip() or None) if val is not None else None
+        # unknown keys are ignored, never stored
+    return out
+
+
+async def _get_tax_profile(tax_year: int) -> Dict[str, Any]:
+    row = await db.tax_profiles.find_one({"tax_year": int(tax_year)}, {"_id": 0})
+    return row or _empty_tax_profile(tax_year)
+
+
+@api.get("/admin/tax-profile")
+async def get_tax_profile(
+    year: Optional[int] = None,
+    _: dict = Depends(require_admin_and_permission("finance_reports")),
+):
+    yr = int(year or business_today().year)
+    profile = await _get_tax_profile(yr)
+    return {"profile": profile, "completeness": _tax_profile_completeness(profile),
+            "filing_statuses": list(FEDERAL_FILING_STATUSES)}
+
+
+@api.put("/admin/tax-profile/{year}")
+async def put_tax_profile(
+    year: int,
+    body: TaxProfilePatchIn,
+    user: dict = Depends(require_admin_and_permission("finance_reports")),
+):
+    """Patch the tax profile for ONE tax year. Profiles are strictly
+    year-scoped — 2026 values never silently become 2027 values; a new year
+    starts from a fresh profile (entity classification is a constant)."""
+    yr = int(year)
+    existing = await db.tax_profiles.find_one({"tax_year": yr}, {"_id": 0})
+    profile = existing or _empty_tax_profile(yr)
+    changes: List[str] = []
+    for section in ("federal", "ohio", "school_district"):
+        patch = getattr(body, section)
+        if patch is None:
+            continue
+        cleaned = _clean_profile_patch(section, patch)
+        for k, v in cleaned.items():
+            old = profile[section].get(k)
+            if old != v:
+                changes.append(f"{section}.{k}: {old!r} → {v!r}")
+            profile[section][k] = v
+    if body.notes is not None:
+        if profile.get("notes") != (body.notes.strip() or None):
+            changes.append("notes updated")
+        profile["notes"] = body.notes.strip() or None
+    now = now_iso()
+    profile["updated_at"] = now
+    profile["updated_by"] = user.get("id")
+    if changes:
+        # Material profile facts are never silently edited — every change is
+        # logged with who/when/what (same Finance audit convention as 4C).
+        profile.setdefault("audit_log", []).append(
+            {"at": now, "by": user.get("id"), "action": "profile_updated",
+             "detail": "; ".join(changes)[:2000]})
+    await db.tax_profiles.update_one({"tax_year": yr}, {"$set": profile}, upsert=True)
+    return {"profile": profile, "completeness": _tax_profile_completeness(profile),
+            "filing_statuses": list(FEDERAL_FILING_STATUSES)}
+
+
+# ── Jurisdiction-split estimated-payment ledger (append-only) ───────────────
+ESTIMATED_TAX_JURISDICTIONS = ("federal", "ohio", "ohio_school_district")
+# Municipal tax is deliberately NOT a jurisdiction here — it is a separate
+# regime (R.C. Ch. 718) and must never be silently folded into Ohio.
+
+
+class EstimatedTaxPaymentIn(BaseModel):
+    tax_year: int
+    jurisdiction: Literal["federal", "ohio", "ohio_school_district"]
+    period: int = Field(ge=1, le=4)     # installment 1-4 of that tax year
+    amount: float = Field(gt=0)
+    payment_date: Optional[str] = None
+    method: Optional[str] = None        # EFTPS / OH ePayment / check…
+    reference: Optional[str] = None     # confirmation number
+    memo: Optional[str] = None
+    allow_duplicate: bool = False
+
+
+@api.get("/admin/estimated-tax/payments")
+async def list_estimated_tax_payments(
+    year: Optional[int] = None,
+    _: dict = Depends(require_admin_and_permission("finance_reports")),
+):
+    """Jurisdiction-split payment history + the LEGACY combined rows.
+
+    Legacy `tax_payments` rows predate jurisdictions: nobody can know today
+    whether an old $500 was federal or Ohio, so they are returned under
+    `legacy_unassigned`, count toward NO jurisdiction's totals, and are never
+    silently reassigned."""
+    yr = int(year or business_today().year)
+    rows = await db.estimated_tax_payments.find(
+        {"tax_year": yr}, {"_id": 0}).sort([("payment_date", 1)]).to_list(2000)
+    by_j: Dict[str, Any] = {j: {"payments": [], "total": 0.0} for j in ESTIMATED_TAX_JURISDICTIONS}
+    for r in rows:
+        slot = by_j[r["jurisdiction"]]
+        slot["payments"].append(r)
+        if not r.get("voided"):
+            slot["total"] = round(slot["total"] + float(r.get("amount") or 0), 2)
+    legacy = await db.tax_payments.find({"year": yr}, {"_id": 0}).sort([("payment_date", 1)]).to_list(2000)
+    for r in legacy:
+        r["jurisdiction"] = "legacy_unassigned"
+    return {
+        "tax_year": yr,
+        "jurisdictions": by_j,
+        "legacy_unassigned": {
+            "payments": legacy,
+            "total": round(sum(float(r.get("amount") or 0) for r in legacy), 2),
+            "note": ("Recorded before jurisdictions existed — not counted toward "
+                     "federal, Ohio, or school-district history."),
+        },
+    }
+
+
+@api.post("/admin/estimated-tax/payments")
+async def record_estimated_tax_payment(
+    body: EstimatedTaxPaymentIn,
+    user: dict = Depends(require_admin_and_permission("finance_reports")),
+):
+    """Append one estimated-payment EVENT (this app never pays anything —
+    the owner documents what they submitted to EFTPS / Ohio themselves)."""
+    pay_date = body.payment_date or business_today().isoformat()
+    try:
+        date.fromisoformat(pay_date)
+    except Exception:
+        raise HTTPException(400, "Invalid payment_date")
+    amount = round(float(body.amount), 2)
+    reference = (body.reference or "").strip() or None
+    # Duplicate-submission guard (same discipline as the 4C sales-tax
+    # filings): an identical live payment for the same jurisdiction/year/
+    # period with the same amount+date+reference is almost always a double
+    # click — require explicit intent to record it twice.
+    if not body.allow_duplicate:
+        dup = await db.estimated_tax_payments.find_one({
+            "tax_year": int(body.tax_year), "jurisdiction": body.jurisdiction,
+            "period": int(body.period), "amount": amount,
+            "payment_date": pay_date, "reference": reference,
+            "voided": {"$ne": True},
+        })
+        if dup:
+            raise HTTPException(409, "An identical payment is already recorded (pass allow_duplicate to record it anyway)")
+    doc = {
+        "id": str(uuid.uuid4()),
+        "tax_year": int(body.tax_year),
+        "jurisdiction": body.jurisdiction,
+        "period": int(body.period),
+        "amount": amount,
+        "payment_date": pay_date,
+        "method": (body.method or "").strip() or None,
+        "reference": reference,
+        "memo": (body.memo or "").strip() or None,
+        "recorded_by": user.get("id"),
+        "recorded_at": now_iso(),
+        "voided": False,
+    }
+    await db.estimated_tax_payments.insert_one(dict(doc))
+    return doc
+
+
+class EstimatedTaxPaymentVoidIn(BaseModel):
+    reason: str = Field(min_length=3, max_length=300)
+
+
+@api.post("/admin/estimated-tax/payments/{pid}/void")
+async def void_estimated_tax_payment(
+    pid: str,
+    body: EstimatedTaxPaymentVoidIn,
+    user: dict = Depends(require_admin_and_permission("finance_reports")),
+):
+    """Append-only correction: the row stays visible, flagged voided with
+    who/when/why. There is NO hard delete on this ledger."""
+    row = await db.estimated_tax_payments.find_one({"id": pid}, {"_id": 0})
+    if not row:
+        raise HTTPException(404, "Payment not found")
+    if row.get("voided"):
+        raise HTTPException(409, "Payment is already voided")
+    await db.estimated_tax_payments.update_one(
+        {"id": pid},
+        {"$set": {"voided": True, "void_reason": body.reason.strip(),
+                  "voided_by": user.get("id"), "voided_at": now_iso()}})
+    out = await db.estimated_tax_payments.find_one({"id": pid}, {"_id": 0})
+    return out
 
 
 # ─── Sprint 110bq · Business mileage log (IRS Schedule C deduction) ──────────
@@ -40874,36 +41334,22 @@ async def mileage_summary(
     mtd_miles = sum(float(r.get("miles") or 0) for r in rows if r.get("date", "") >= month_start)
     ytd_miles = sum(float(r.get("miles") or 0) for r in rows)
 
-    # Combined marginal tax rate so we can show "real dollars saved" per trip.
-    # Formula mirrors the quarterly-tax math:
-    #   SE rate effective on profit  = se_taxable_pct × (SS + Medicare)
-    #   Income tax on profit         = (federal + state + local) × (1 − ½ × SE rate)
-    # Sum = total tax saved per $1 deducted. Good enough for a motivation chip.
-    se_taxable = float(settings.get("se_tax_taxable_pct", 92.35)) / 100.0
-    ss_rate = float(settings.get("ss_rate_pct", 12.4)) / 100.0
-    medi_rate = float(settings.get("medicare_rate_pct", 2.9)) / 100.0
-    fed = float(settings.get("federal_income_pct", 12.0)) / 100.0
-    state = float(settings.get("state_income_pct", 2.75)) / 100.0
-    local = float(settings.get("local_income_pct", 2.5)) / 100.0
-    se_effective = se_taxable * (ss_rate + medi_rate)
-    income_effective = (fed + state + local) * (1.0 - 0.5 * se_effective)
-    combined_rate = se_effective + income_effective  # roughly 0.30 – 0.35 for sole-prop
-
+    # Step 4D-2A — the old "tax savings $X" figure multiplied the deduction
+    # by the legacy combined flat-rate guess, which is not supportable as an
+    # actual tax-savings amount without the owner's real marginal situation
+    # (4D-1 audit). The DEDUCTION itself is real and stays; the fabricated
+    # savings figure is gone.
     today_ded = today_miles * rate
     mtd_ded = mtd_miles * rate
     ytd_ded = ytd_miles * rate
     return {
         "today_miles": round(today_miles, 1),
         "today_deduction": round(today_ded, 2),
-        "today_tax_savings": round(today_ded * combined_rate, 2),
         "mtd_miles": round(mtd_miles, 1),
         "mtd_deduction": round(mtd_ded, 2),
-        "mtd_tax_savings": round(mtd_ded * combined_rate, 2),
         "ytd_miles": round(ytd_miles, 1),
         "ytd_deduction": round(ytd_ded, 2),
-        "ytd_tax_savings": round(ytd_ded * combined_rate, 2),
         "rate_per_mile": round(rate, 3),
-        "combined_tax_rate_pct": round(combined_rate * 100, 1),
         "entry_count_ytd": len(rows),
         "year": yr,
     }
