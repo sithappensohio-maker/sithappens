@@ -30604,34 +30604,36 @@ async def weekly_summary(_: dict = Depends(require_admin_and_permission("finance
         # tile (we still want to show operational burn value).
         nominal_price = float(r.get("actual_price") or r.get("credit_value") or 0)
         price = _cash_revenue(r)
+        # Step 4B-8 — collected booking REVENUE now comes from the
+        # collection-date events below; this service-date loop keeps only
+        # the operational figures (forecasts, unpaid balances, credit burn).
         if r.get("status") == "completed":
-            completed_total += price
-            completed_count += 1
             if is_pos_credit_pack:
                 credit_pack_redeemed_count += 1
                 credit_pack_redeemed_value += nominal_price
         elif r.get("status") in ("approved", "pending"):
             booked_total += price
             booked_count += 1
-        if r.get("payment_status") in ("paid", "paid_partial"):
-            paid_total += price
-        elif r.get("status") == "completed":
+        if r.get("payment_status") not in ("paid", "paid_partial") and r.get("status") == "completed":
             unpaid_total += _booking_balance_due(r)
         credits_redeemed += float(r.get("credits_deducted") or 0)
 
-        # Don't pollute by_service with $0 program-redemption rows.
-        if is_program_credit or is_pos_credit_pack:
-            # …unless there's an add-on / override cash slice above $0
-            # (e.g. credit-redeemed daycare with a $5 nail-trim add-on).
-            if price <= 0:
-                continue
-        svc_key, svc_name = _bucket_key(r)
+    # Step 4B-8 — approved policy: Finance attributes booking revenue to the
+    # America/New_York business date the money was COLLECTED (matching the
+    # register), never the service date. Service dates stay untouched for
+    # the operational figures above.
+    for ev in await _booking_collection_events(monday_iso, sunday_iso):
+        amt = float(ev["amount"])
+        completed_total += amt
+        paid_total += amt
+        completed_count += 1
+        svc_key, svc_name = _bucket_key(ev.get("booking") or {})
         b = by_service.setdefault(svc_key, {"name": svc_name, "count": 0, "total": 0.0})
         # Prefer the catalog-derived display name when one bucket has it
         if svc_name and svc_name != svc_key.title():
             b["name"] = svc_name
         b["count"] += 1
-        b["total"] += price
+        b["total"] += amt
 
     # Retail sales in the same week — Sprint 110cz splits them into three
     # buckets so the Income breakdown can show each as its own row:
@@ -30792,15 +30794,19 @@ async def summary_range(
         is_program_credit = _is_program_credit_redemption(r, program_lot_ids)
         is_pos_credit_pack = _is_pos_credit_pack_redemption(r, pos_lot_ids)
         nominal_price = float(r.get("actual_price") or r.get("credit_value") or 0)
-        price = _cash_revenue(r)
-        if r.get("status") == "completed":
-            completed_total += price
-            by_day[r["date"]] = round(by_day.get(r["date"], 0) + price, 2)
-            if is_pos_credit_pack:
-                credit_pack_redeemed_count += 1
-                credit_pack_redeemed_value += nominal_price
-        if r.get("payment_status") == "paid":
-            paid_total += price
+        # Step 4B-8 — revenue moved to the collection-date events below; this
+        # service-date loop keeps only the operational credit-burn chips.
+        if r.get("status") == "completed" and is_pos_credit_pack:
+            credit_pack_redeemed_count += 1
+            credit_pack_redeemed_value += nominal_price
+
+    # Step 4B-8 — booking revenue by America/New_York COLLECTION date,
+    # matching the register (see _booking_collection_events).
+    for ev in await _booking_collection_events(start_date, end_date):
+        amt = float(ev["amount"])
+        completed_total += amt
+        paid_total += amt
+        by_day[ev["date"]] = round(by_day.get(ev["date"], 0) + amt, 2)
     # Expenses in the same window so the UI can show NET (income - expenses)
     exp_rows = await db.expenses.find(
         {"date": {"$gte": start_date, "$lte": end_date}},
@@ -32157,6 +32163,101 @@ async def _require_drawer_open_for_cash(payment_method: Optional[str]) -> None:
     )
     if not drawer_open:
         raise HTTPException(status_code=400, detail="Open the register before taking cash payments.")
+
+
+async def _booking_collection_events(start_date: str, end_date: str) -> List[Dict[str, Any]]:
+    """Cash-basis booking COLLECTION events inside the America/New_York
+    business dates start_date..end_date (Step 4B-8).
+
+    Finance policy: booking revenue belongs to the day the money was
+    collected — the booking's service date stays untouched for operational
+    reporting. This mirrors the register day summary's three-source
+    priority exactly, windowed over a range:
+
+      1) payment_ledger rows (explicit/partial checkout payments) — the
+         event-level truth, so split payments land on their own dates;
+      2) bookings stamped paid_at (normal single full payments) — skipped
+         whenever the booking has ANY ledger payment rows, so a booking
+         paid through ledger events is never counted twice;
+      3) legacy fallback: completed bookings with no paid_at and no ledger
+         history keep their old service-date attribution — the only date
+         those records have. Documented fallback, never a guess; historical
+         revenue can't disappear.
+
+    Each event: {"booking": <doc>, "date": <NY business date>, "amount": $}.
+    Amounts come from the same _cash_revenue/ledger math the register uses
+    (including the 4B-6 refunded-status guard); pure credit redemptions
+    yield no event. Read-time only — nothing is written.
+    """
+    utc_start, utc_end = _business_range_utc_bounds(start_date, end_date)
+    events: List[Dict[str, Any]] = []
+
+    ledger_payments = await db.payment_ledger.find(
+        {"type": "payment", "booking_id": {"$nin": [None, ""]},
+         "created_at": {"$gte": utc_start, "$lt": utc_end}},
+        {"_id": 0},
+    ).to_list(50000)
+    ledger_ids_in_window = {r.get("booking_id") for r in ledger_payments if r.get("booking_id")}
+    ledger_booking_map: Dict[str, Dict[str, Any]] = {}
+    if ledger_ids_in_window:
+        rows = await _booking_rows_anywhere(
+            {"id": {"$in": list(ledger_ids_in_window)}}, {"_id": 0},
+            limit=max(5000, len(ledger_ids_in_window) * 2),
+        )
+        ledger_booking_map = {b.get("id"): b for b in rows if b.get("id")}
+    for pay in ledger_payments:
+        amt = round(abs(float(pay.get("amount") or 0)), 2)  # stored negative (client credit)
+        if amt <= 0:
+            continue
+        events.append({
+            "booking": ledger_booking_map.get(pay.get("booking_id")) or {},
+            "date": _business_date_from_timestamp(pay.get("created_at")),
+            "amount": amt,
+        })
+
+    paid_bookings = await _booking_rows_anywhere(
+        {"paid_at": {"$gte": utc_start, "$lt": utc_end}}, {"_id": 0},
+        limit=20000, sort_field="paid_at",
+    )
+    paid_ids = [b.get("id") for b in paid_bookings
+                if b.get("id") and b.get("id") not in ledger_ids_in_window]
+    ledger_ever_ids: set = set()
+    if paid_ids:
+        rows = await db.payment_ledger.find(
+            {"type": "payment", "booking_id": {"$in": paid_ids}},
+            {"_id": 0, "booking_id": 1},
+        ).to_list(50000)
+        ledger_ever_ids = {r.get("booking_id") for r in rows if r.get("booking_id")}
+    for b in paid_bookings:
+        if b.get("id") in ledger_ids_in_window or b.get("id") in ledger_ever_ids:
+            continue
+        amt = _cash_revenue(b)
+        if amt <= 0:
+            continue
+        events.append({"booking": b, "date": _business_date_from_timestamp(b.get("paid_at")), "amount": amt})
+
+    legacy_bookings = await _booking_rows_anywhere(
+        {"date": {"$gte": start_date, "$lte": end_date}, "status": "completed",
+         "$or": [{"paid_at": None}, {"paid_at": {"$exists": False}}, {"paid_at": ""}]},
+        {"_id": 0}, limit=20000, sort_field="date",
+    )
+    legacy_ids = [b.get("id") for b in legacy_bookings if b.get("id")]
+    legacy_ledger_ids: set = set()
+    if legacy_ids:
+        rows = await db.payment_ledger.find(
+            {"type": "payment", "booking_id": {"$in": legacy_ids}},
+            {"_id": 0, "booking_id": 1},
+        ).to_list(50000)
+        legacy_ledger_ids = {r.get("booking_id") for r in rows if r.get("booking_id")}
+    for b in legacy_bookings:
+        if b.get("id") in legacy_ledger_ids:
+            continue
+        amt = _cash_revenue(b)
+        if amt <= 0:
+            continue
+        events.append({"booking": b, "date": b.get("date"), "amount": amt})
+
+    return events
 
 
 def _business_range_utc_bounds(start_date: str, end_date: str) -> Tuple[str, str]:
@@ -39762,10 +39863,26 @@ async def admin_quarterly_tax(
     service_unpaid_balance = 0.0
     for r in booking_rows:
         if r.get("status") == "completed":
-            service_cash_gross += _cash_revenue(r)
-            service_sales_tax_collected += _sales_tax_collected_on_booking(r)
-            service_income += _schedule_c_booking_income(r)
             service_unpaid_balance += _booking_balance_due(r)
+    # Step 4B-8 — Schedule-C service income is cash-basis by COLLECTION date
+    # (matching the register and Finance), via the shared events helper.
+    # Events are grouped per booking so the proportional sales-tax slice
+    # (_sales_tax_collected_on_booking is proportional to cash collected)
+    # scales to the amount collected inside THIS window.
+    q_collected: Dict[str, Dict[str, Any]] = {}
+    for ev in await _booking_collection_events(start, end):
+        b = ev.get("booking") or {}
+        key = b.get("id") or f"ledger-{len(q_collected)}"
+        slot = q_collected.setdefault(key, {"booking": b, "collected": 0.0})
+        slot["collected"] = round(slot["collected"] + float(ev["amount"]), 2)
+    for slot in q_collected.values():
+        b, collected = slot["booking"], slot["collected"]
+        service_cash_gross += collected
+        full_cash = _cash_revenue(b)
+        tax_full = _sales_tax_collected_on_booking(b)
+        tax_slice = round(tax_full * (collected / full_cash), 2) if full_cash > 0 else 0.0
+        service_sales_tax_collected += tax_slice
+        service_income += max(0.0, round(collected - tax_slice, 2))
     retail_rows = await db.retail_sales.find(
         {"date": {"$gte": start, "$lte": end}}, {"_id": 0}
     ).to_list(20000)

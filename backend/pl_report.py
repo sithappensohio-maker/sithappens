@@ -282,28 +282,38 @@ async def build_pl_data(db, start_date: str, end_date: str) -> Dict[str, Any]:
     # counts / by_service rows when there's a paid add-on slice.)
     bookings = [b for b in bookings if not _is_program_redemption(b)]
 
-    # ── Income totals
+    # ── Income totals — Step 4B-8: booking REVENUE is attributed to the
+    # America/New_York business date the money was collected (matching the
+    # register), via the shared _booking_collection_events helper. The
+    # service-date booking list still drives the operational figures below
+    # (unpaid balances, visit counts, staff-hours estimates).
+    from server import _booking_collection_events  # lazy — avoids import cycle
+    collection_events = await _booking_collection_events(start_date, end_date)
+    collection_events = [
+        ev for ev in collection_events if not _is_program_redemption(ev.get("booking") or {})
+    ]
+
     completed = [b for b in bookings if b.get("status") == "completed"]
-    paid = [b for b in bookings if b.get("payment_status") in ("paid", "paid_partial")]
     unpaid = [b for b in bookings if b.get("payment_status") in ("unpaid", "paid_partial") and b.get("actual_price")]
 
-    completed_total = round(sum(_cash_revenue(b) for b in completed), 2)
-    paid_total = round(sum(_cash_revenue(b) for b in paid), 2)
+    completed_total = round(sum(float(ev["amount"]) for ev in collection_events), 2)
+    paid_total = completed_total
     unpaid_total = round(sum(_balance_due(b) for b in unpaid), 2)
 
-    # ── Daily revenue (completed bookings + retail sales)
+    # ── Daily revenue (collection events + retail sales)
     by_day_map: Dict[str, float] = defaultdict(float)
-    for b in completed:
-        by_day_map[b["date"]] += _cash_revenue(b)
+    for ev in collection_events:
+        by_day_map[ev["date"]] += float(ev["amount"])
     for r in retail_sales:
         if r.get("date"):
             by_day_map[r["date"]] += float(r.get("amount") or 0)
     by_day = [{"date": d, "total": round(v, 2)} for d, v in sorted(by_day_map.items())]
 
-    # ── Income by service (completed)
+    # ── Income by service (collected)
     by_service_map: Dict[str, Dict[str, Any]] = {}
-    for b in completed:
-        cash = _cash_revenue(b)
+    for ev in collection_events:
+        b = ev.get("booking") or {}
+        cash = float(ev["amount"])
         if cash <= 0:
             continue
         key = b.get("service_name") or b.get("service_type") or "Other"
@@ -312,19 +322,21 @@ async def build_pl_data(db, start_date: str, end_date: str) -> Dict[str, Any]:
         s["total"] = round(s["total"] + cash, 2)
     by_service = sorted(by_service_map.values(), key=lambda x: -x["total"])
 
-    # ── Top 5 clients by completed revenue
+    # ── Top 5 clients by collected revenue
     by_client_map: Dict[str, Dict[str, Any]] = {}
-    for b in completed:
+    for ev in collection_events:
+        b = ev.get("booking") or {}
         cid = b.get("client_id")
         name = b.get("client_name") or "Unknown"
         if not cid:
             continue
         c = by_client_map.setdefault(cid, {"client_id": cid, "name": name, "visits": 0, "total": 0.0})
         c["visits"] += 1
-        c["total"] = round(c["total"] + _cash_revenue(b), 2)
+        c["total"] = round(c["total"] + float(ev["amount"]), 2)
     top_clients = sorted(by_client_map.values(), key=lambda x: -x["total"])[:5]
 
-    # ── Per-dog visit counts (completed daycare/boarding/training)
+    # ── Per-dog visit counts (operational — actual completed visits by
+    # service date, dollars from those visits' cash basis; unchanged rule)
     by_dog_map: Dict[str, Dict[str, Any]] = {}
     for b in completed:
         did = b.get("dog_id")
@@ -447,8 +459,13 @@ async def build_pl_data(db, start_date: str, end_date: str) -> Dict[str, Any]:
         )
         # Sprint 110cj — drop training-program redemptions here too.
         ytd_bookings = [b for b in ytd_bookings if not _is_program_redemption(b)]
-        # Sprint 110eg — universal cash-basis applies to YTD as well.
-        ytd_income = round(sum(_cash_revenue(b) for b in ytd_bookings), 2)
+        # Sprint 110eg / Step 4B-8 — universal cash-basis by COLLECTION date
+        # for YTD as well, via the same shared events helper.
+        ytd_events = await _booking_collection_events(ytd_start, end_date)
+        ytd_income = round(sum(
+            float(ev["amount"]) for ev in ytd_events
+            if not _is_program_redemption(ev.get("booking") or {})
+        ), 2)
         ytd_exp_rows = await db.expenses.find(
             {"date": {"$gte": ytd_start, "$lte": end_date}},
             {"_id": 0, "amount": 1},
