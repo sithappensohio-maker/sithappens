@@ -81,16 +81,14 @@ def test_b_no_corporate_paths():
 
 # ── C — empty profile: neither jurisdiction ready, no amounts exposed ───────
 def test_c_profile_missing_not_ready():
-    # Step 4D-2B contract update: the FEDERAL engine now EXISTS for 2026
-    # (engine "available") but an empty profile is still not ready; Ohio
-    # stays gated until 4D-2C.
+    # Step 4D-2C contract update: BOTH engines now exist for 2026, but an
+    # empty profile is still not ready for either.
     c = _get_profile()["completeness"]
     for j in ("federal", "ohio"):
         assert c[j]["fields_complete"] is False
         assert c[j]["ready_for_calculation"] is False
         assert len(c[j]["missing_fields"]) >= 3
-    assert c["federal"]["engine"] == "available"
-    assert c["ohio"]["engine"] == "not_yet_available"
+        assert c[j]["engine"] == "available"
     # legacy reserve payload is explicitly marked non-authoritative
     r = run(server.admin_quarterly_tax(_=ADMIN, year=YEAR))
     assert r["legacy_reserve"] is True

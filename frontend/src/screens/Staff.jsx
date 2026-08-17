@@ -11,6 +11,7 @@ import RolesPanel from "../components/RolesPanel";
 import TaxProfilePanel from "../components/TaxProfilePanel";
 import EstimatedTaxPayments from "../components/EstimatedTaxPayments";
 import FederalEstimatedTaxCard from "../components/FederalEstimatedTaxCard";
+import OhioEstimatedTaxCard from "../components/OhioEstimatedTaxCard";
 import { todayISO, daysAgoISO } from "../lib/date";
 import TrainerScorecardTab from "../components/TrainerScorecardTab";
 import { compressImage } from "../lib/imageCompress";
@@ -1388,28 +1389,9 @@ function QuarterlyTaxTab() {
         <FederalEstimatedTaxCard year={year} onOpenProfile={() => setProfileOpen(true)}
                                  onPaymentsChanged={() => setPayVersion(v => v + 1)}
                                  refreshKey={`${taxProfile?.profile?.updated_at || ""}:${payVersion}`} />
-        <div className="bg-[var(--sh-card-base)] border border-shBorder rounded-xl p-3" data-testid="qt-ohio-card">
-          <div className="flex items-center justify-between flex-wrap gap-2">
-            <p className="text-[11px] font-black uppercase tracking-widest text-shSecondary">Ohio estimated tax</p>
-            {taxProfile?.completeness?.ohio && !taxProfile.completeness.ohio.fields_complete && (
-              <span className="text-[10px] font-black uppercase tracking-widest text-amber-300 bg-amber-500/10 px-2 py-0.5 rounded-full" data-testid="qt-ohio-incomplete">
-                Tax profile incomplete
-              </span>
-            )}
-            {taxProfile?.completeness?.ohio?.fields_complete && (
-              <span className="text-[10px] font-black uppercase tracking-widest text-shGreen bg-shGreen/10 px-2 py-0.5 rounded-full" data-testid="qt-ohio-ready">
-                Profile complete
-              </span>
-            )}
-          </div>
-          <p className="text-[13px] text-shTextMuted mt-1" data-testid="qt-ohio-message">
-            Ohio payment calculation not yet available (arrives in 4D-2C, incl. the Business Income Deduction and school-district tax). The legacy flat 2.75% figure is NOT Ohio tax.
-          </p>
-          <button onClick={() => setProfileOpen(true)} data-testid="qt-ohio-open-profile"
-                  className="mt-2 text-[11px] font-black uppercase tracking-widest text-shSecondary hover:underline">
-            <i className="fas fa-id-card mr-1"/>Complete Tax Profile
-          </button>
-        </div>
+        <OhioEstimatedTaxCard year={year} onOpenProfile={() => setProfileOpen(true)}
+                              onPaymentsChanged={() => setPayVersion(v => v + 1)}
+                              refreshKey={`${taxProfile?.profile?.updated_at || ""}:${payVersion}`} />
       </div>
       <p className="text-[11px] text-shTextMuted italic" data-testid="qt-municipal-note">
         Municipal (city) income tax is separate — it is not included in any federal or Ohio estimate here.

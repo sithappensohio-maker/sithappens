@@ -31,15 +31,13 @@ describe("quarterly tab honesty gate", () => {
     expect(staff).not.toMatch(/Due \{q\.due\}/);
   });
 
-  test("federal engine card is mounted; Ohio stays gated until 4D-2C", () => {
-    // Step 4D-2B — the federal card is now the real engine component
-    // (FederalEstimatedTaxCard, tested in its own suite); Ohio remains an
-    // honesty-gated placeholder in Staff.jsx.
+  test("both engine cards are mounted (4D-2C)", () => {
+    // Federal and Ohio are now real engine components, each with its own
+    // test suite; no placeholder wording remains in Staff.jsx.
     expect(staff).toMatch(/qt-jurisdiction-status/);
     expect(staff).toMatch(/<FederalEstimatedTaxCard year=\{year\}/);
-    expect(staff).toMatch(/Tax profile incomplete/);
-    expect(staff).toMatch(/arrives in 4D-2C/);
-    expect(staff).toMatch(/The legacy flat 2\.75% figure is NOT Ohio tax/);
+    expect(staff).toMatch(/<OhioEstimatedTaxCard year=\{year\}/);
+    expect(staff).not.toMatch(/arrives in 4D-2C/);
   });
 
   test("municipal tax is explicitly excluded", () => {

@@ -245,7 +245,7 @@ export default function TaxProfilePanel({ year, onChanged }) {
           <TriState label="Ohio resident?" testid="taxprofile-oh-resident"
                     value={val("ohio", "resident")} onChange={set("ohio", "resident")} />
           <div className="grid grid-cols-2 gap-2">
-            <NumField label="Prior-year Ohio tax" hint="From last year's IT 1040" testid="taxprofile-oh-py-tax"
+            <NumField label="Prior-year Ohio STATE tax" hint="From last year's IT 1040 — state only (SD is entered separately)." testid="taxprofile-oh-py-tax"
                       value={val("ohio", "prior_year_tax")} onChange={set("ohio", "prior_year_tax")} />
             <NumField label="Prior-year Ohio overpayment applied" testid="taxprofile-oh-py-over"
                       value={val("ohio", "prior_year_overpayment_applied")} onChange={set("ohio", "prior_year_overpayment_applied")} />
@@ -256,6 +256,21 @@ export default function TaxProfilePanel({ year, onChanged }) {
             <NumField label="Expected additional Ohio withholding" testid="taxprofile-oh-wh-rem"
                       value={val("ohio", "withholding_expected_remaining")} onChange={set("ohio", "withholding_expected_remaining")} />
           </div>
+          <TriState label="Prior-year OHIO return covered a full 12 months?" testid="taxprofile-oh-12mo"
+                    value={val("ohio", "prior_year_full_12_months")} onChange={set("ohio", "prior_year_full_12_months")} />
+          <div className="grid grid-cols-2 gap-2">
+            <NumField label="Expected Ohio adjustments (± lump)" hint="Additions positive, deductions negative. 0 if none."
+                      testid="taxprofile-oh-adjustments"
+                      value={val("ohio", "other_expected_ohio_adjustments")} onChange={set("ohio", "other_expected_ohio_adjustments")} />
+            <NumField label="Expected other Ohio credits" hint="e.g. joint filing credit. 0 if none."
+                      testid="taxprofile-oh-credits"
+                      value={val("ohio", "other_expected_ohio_credits")} onChange={set("ohio", "other_expected_ohio_credits")} />
+          </div>
+          <NumField label="Ohio exemption count" hint="You + spouse if joint + dependents (counts only — no names/SSNs)."
+                    testid="taxprofile-oh-exemptions"
+                    value={val("ohio", "exemption_count")} onChange={set("ohio", "exemption_count")} />
+          <TriState label="Unusual Ohio situation this year?" testid="taxprofile-oh-unusual"
+                    value={val("ohio", "unusual_ohio_situation")} onChange={set("ohio", "unusual_ohio_situation")} />
 
           <p className="text-[11px] font-black uppercase tracking-widest text-shSecondary pt-2">School district income tax</p>
           <Field label="Does an Ohio school-district income tax apply where you live?"
@@ -297,8 +312,18 @@ export default function TaxProfilePanel({ year, onChanged }) {
                 <NumField label="District rate %" hint="From official Ohio district tables" testid="taxprofile-sd-rate"
                           value={val("school_district", "rate_pct")} onChange={set("school_district", "rate_pct")} />
               </div>
-              <NumField label="School-district withholding YTD" testid="taxprofile-sd-wh"
-                        value={val("school_district", "withholding_ytd")} onChange={set("school_district", "withholding_ytd")} />
+              <div className="grid grid-cols-2 gap-2">
+                <NumField label="School-district withholding YTD" testid="taxprofile-sd-wh"
+                          value={val("school_district", "withholding_ytd")} onChange={set("school_district", "withholding_ytd")} />
+                <NumField label="Expected additional SD withholding" testid="taxprofile-sd-wh-rem"
+                          value={val("school_district", "withholding_expected_remaining")} onChange={set("school_district", "withholding_expected_remaining")} />
+              </div>
+              <div className="grid grid-cols-2 gap-2">
+                <NumField label="Prior-year school-district tax (SD 100)" testid="taxprofile-sd-py-tax"
+                          value={val("school_district", "prior_year_tax")} onChange={set("school_district", "prior_year_tax")} />
+                <NumField label="Prior-year SD overpayment applied" testid="taxprofile-sd-py-over"
+                          value={val("school_district", "prior_year_overpayment_applied")} onChange={set("school_district", "prior_year_overpayment_applied")} />
+              </div>
             </>
           )}
         </div>

@@ -40937,8 +40937,15 @@ _TAX_PROFILE_NUMERIC_FIELDS = {
     "ohio": (
         "prior_year_tax", "prior_year_overpayment_applied",
         "withholding_ytd", "withholding_expected_remaining",
+        # Step 4D-2C — Ohio engine inputs:
+        "other_expected_ohio_adjustments",   # signed lump: + additions, − deductions
+        "other_expected_ohio_credits",       # owner-entered lump (e.g. joint filing credit)
+        "exemption_count",                   # taxpayer + spouse + dependents (count only)
     ),
-    "school_district": ("rate_pct", "withholding_ytd"),
+    "school_district": ("rate_pct", "withholding_ytd",
+                        # Step 4D-2C:
+                        "withholding_expected_remaining",
+                        "prior_year_tax", "prior_year_overpayment_applied"),
     # Step 4D-2B — annual business projection: actual YTD profit is derived
     # from the canonical books; the REMAINING-year expectation is an
     # owner-confirmed planning input (never a silent annualization).
@@ -40973,10 +40980,23 @@ _TAX_PROFILE_FIELD_LABELS = {
     "federal.unusual_tax_situation": "Whether this year involves an unusual tax situation",
     "projection.remaining_business_profit": "Expected remaining-year Sit Happens business profit (confirm a number, even 0)",
     "ohio.resident": "Ohio residency status",
-    "ohio.prior_year_tax": "Prior-year Ohio tax liability (for safe-harbor comparison)",
+    "ohio.prior_year_tax": "Prior-year Ohio STATE tax liability (IT 1040 — state only, for safe-harbor comparison)",
+    "ohio.prior_year_full_12_months": "Whether the prior-year OHIO return covered a full 12 months",
+    "ohio.prior_year_overpayment_applied": "Prior-year Ohio overpayment applied to this year (enter 0 if none)",
     "ohio.withholding_ytd": "Ohio withholding so far this year (enter 0 if none)",
     "ohio.withholding_expected_remaining": "Expected additional Ohio withholding this year (enter 0 if none)",
+    "ohio.other_expected_ohio_adjustments": "Expected Ohio income adjustments — additions positive, deductions negative (enter 0 if none)",
+    "ohio.other_expected_ohio_credits": "Expected other Ohio credits, e.g. joint filing credit (enter 0 if none)",
+    "ohio.exemption_count": "Ohio exemption count: you + spouse if joint + dependents",
+    "ohio.unusual_ohio_situation": "Whether this year involves an unusual Ohio situation (multistate, part-year, PTE, district change)",
     "school_district.applicable": "Whether an Ohio school-district income tax applies to your home district",
+    "school_district.district_name": "School district name (owner-confirmed)",
+    "school_district.tax_base_type": "School-district tax base type (traditional or earned income)",
+    "school_district.rate_pct": "School-district tax rate % (owner-confirmed from official Ohio tables)",
+    "school_district.withholding_ytd": "School-district withholding so far this year (enter 0 if none)",
+    "school_district.withholding_expected_remaining": "Expected additional school-district withholding (enter 0 if none)",
+    "school_district.prior_year_tax": "Prior-year school-district tax (SD 100 — for the combined safe harbor)",
+    "school_district.prior_year_overpayment_applied": "Prior-year school-district overpayment applied (enter 0 if none)",
 }
 
 # Step 4D-2B — once the federal engine can produce a DOLLAR figure, every
@@ -41018,11 +41038,37 @@ def _federal_required_fields(profile: Dict[str, Any]) -> tuple:
     return tuple(req)
 # Ohio's estimated-payment threshold is on COMBINED state + school-district
 # liability (R.C. 5747.09), so the SD applicability question is part of the
-# Ohio readiness gate.
+# Ohio readiness gate. Step 4D-2C: every material Ohio-engine input must be
+# provided or confirmed zero — including the household income FACTS shared
+# with the federal profile (Ohio starts from federal AGI).
 _OHIO_REQUIRED_FIELDS = (
-    "ohio.resident", "ohio.prior_year_tax", "ohio.withholding_ytd",
-    "ohio.withholding_expected_remaining", "school_district.applicable",
+    "ohio.resident", "ohio.prior_year_full_12_months",
+    "ohio.prior_year_tax", "ohio.prior_year_overpayment_applied",
+    "ohio.withholding_ytd", "ohio.withholding_expected_remaining",
+    "ohio.other_expected_ohio_adjustments", "ohio.other_expected_ohio_credits",
+    "ohio.exemption_count", "ohio.unusual_ohio_situation",
+    "school_district.applicable",
+    "federal.filing_status", "federal.w2_wages", "federal.w2_ss_wages",
+    "federal.other_taxable_income", "federal.other_se_income",
+    "federal.se_health_insurance", "federal.retirement_hsa_adjustments",
+    "federal.other_adjustments",
+    "projection.remaining_business_profit",
 )
+
+
+def _ohio_required_fields(profile: Dict[str, Any]) -> tuple:
+    req = list(_OHIO_REQUIRED_FIELDS)
+    fed = (profile or {}).get("federal") or {}
+    sd = (profile or {}).get("school_district") or {}
+    if fed.get("filing_status") == "married_filing_jointly":
+        req.append("federal.spouse_wages")
+    if sd.get("applicable") == "yes":
+        req += ["school_district.district_name", "school_district.tax_base_type",
+                "school_district.rate_pct", "school_district.withholding_ytd",
+                "school_district.withholding_expected_remaining",
+                "school_district.prior_year_tax",
+                "school_district.prior_year_overpayment_applied"]
+    return tuple(req)
 
 
 def _empty_tax_profile(tax_year: int) -> Dict[str, Any]:
@@ -41066,7 +41112,14 @@ def _tax_profile_completeness(profile: Dict[str, Any]) -> Dict[str, Any]:
     owner-confirmed value; 'unknown' is never treated as zero)."""
     def provided(path: str) -> bool:
         section, key = path.split(".")
-        return ((profile or {}).get(section) or {}).get(key) is not None
+        val = ((profile or {}).get(section) or {}).get(key)
+        # Step 4D-2C — "unknown" SD applicability is an honest answer but
+        # cannot support a calculation: the Ohio engine stays incomplete
+        # until the owner answers yes or no (R.C. 5747.09 combines SDIT
+        # into the estimated-tax requirement).
+        if path == "school_district.applicable":
+            return val is not None and val != "unknown"
+        return val is not None
 
     def state(required, engine_available: bool):
         missing = [_TAX_PROFILE_FIELD_LABELS[p] for p in required if not provided(p)]
@@ -41080,9 +41133,12 @@ def _tax_profile_completeness(profile: Dict[str, Any]) -> Dict[str, Any]:
     # Step 4D-2B — the federal engine exists (for years with verified
     # constants); Ohio stays gated until 4D-2C.
     from federal_tax_constants import federal_constants_for
-    fed_engine = federal_constants_for(int((profile or {}).get("tax_year") or 0)) is not None
+    from ohio_tax_constants import ohio_constants_for
+    yr = int((profile or {}).get("tax_year") or 0)
+    fed_engine = federal_constants_for(yr) is not None
+    oh_engine = ohio_constants_for(yr) is not None   # Step 4D-2C — Ohio engine exists
     return {"federal": state(_federal_required_fields(profile), fed_engine),
-            "ohio": state(_OHIO_REQUIRED_FIELDS, False)}
+            "ohio": state(_ohio_required_fields(profile), oh_engine)}
 
 
 class TaxProfilePatchIn(BaseModel):
@@ -41101,6 +41157,8 @@ _TAX_PROFILE_ENUM_FIELDS = {
     ("federal", "filing_status"): set(FEDERAL_FILING_STATUSES),
     ("federal", "deduction_method"): {"standard", "itemized"},
     ("ohio", "resident"): None,           # bool
+    ("ohio", "prior_year_full_12_months"): None,     # bool (4D-2C)
+    ("ohio", "unusual_ohio_situation"): None,        # bool (4D-2C)
     ("federal", "prior_year_full_12_months"): None,  # bool
     ("federal", "expects_qualified_investment_income"): None,  # bool (4D-2B)
     ("federal", "unusual_tax_situation"): None,               # bool (4D-2B)
@@ -41341,6 +41399,125 @@ async def federal_estimated_tax_endpoint(
         except Exception:
             raise HTTPException(400, "Invalid as_of date")
     return await _federal_estimated_tax_payload(yr, as_of=frozen)
+
+
+# ═══════════════ Step 4D-2C · Ohio + School-District engine ═══════════════
+import ohio_estimated_tax as oh_engine
+from ohio_tax_constants import ohio_constants_for
+
+
+async def _ohio_estimated_tax_payload(year: int, as_of: Optional[date] = None) -> Dict[str, Any]:
+    """Ohio + SDIT estimate. Independent tax law (R.C. 5747/5748 via
+    ohio_estimated_tax.py); shares only the canonical business projection
+    and household income facts. Same status contract as federal."""
+    yr = int(year)
+    today = as_of or business_today()
+    profile = await _get_tax_profile(yr)
+    completeness = _tax_profile_completeness(profile)
+
+    q = await admin_quarterly_tax(_={"role": "admin"}, year=yr)
+    ytd_profit = float(q["net_profit"])
+    proj = (profile.get("projection") or {})
+    remaining = proj.get("remaining_business_profit")
+    annual_profit = round(ytd_profit + float(remaining), 2) if remaining is not None else None
+
+    base = {
+        "tax_year": yr, "as_of": today.isoformat(),
+        "business_projection": {
+            "actual_ytd_business_profit": round(ytd_profit, 2),
+            "projected_remaining_business_profit": remaining,
+            "projected_annual_business_profit": annual_profit,
+            "projection_confirmed_at": proj.get("confirmed_at"),
+        },
+        "completeness": completeness["ohio"],
+        "municipal_note": ("Municipal (city) income tax is a separate regime and is NOT "
+                           "part of this Ohio/school-district estimate."),
+    }
+    constants = ohio_constants_for(yr)
+    if constants is None:
+        return {**base, "status": "ENGINE_UNAVAILABLE",
+                "message": f"No verified Ohio constants for tax year {yr}."}
+    if not completeness["ohio"]["fields_complete"]:
+        return {**base, "status": "PROFILE_INCOMPLETE",
+                "missing_fields": completeness["ohio"]["missing_fields"]}
+
+    fed = profile["federal"]
+    ohio = profile["ohio"]
+    sd_prof = profile["school_district"]
+    filing_status = fed["filing_status"]
+
+    # Federal AGI (statutory Ohio starting point) from the same facts the
+    # 1040-ES worksheet uses — arithmetic, not federal tax policy.
+    se = fed_engine.compute_se_tax(annual_profit, fed["other_se_income"],
+                                   fed["w2_ss_wages"], federal_constants_for(yr) or
+                                   {"se_earnings_factor": 0.9235, "se_min_net_earnings": 400.0,
+                                    "se_ss_rate": 0.124, "se_medicare_rate": 0.029,
+                                    "ss_wage_base": 184500.0})
+    spouse = float(fed["spouse_wages"] or 0) if filing_status == "married_filing_jointly" else 0.0
+    federal_agi = round(annual_profit + float(fed["other_se_income"]) + float(fed["w2_wages"])
+                        + spouse + float(fed["other_taxable_income"])
+                        - se["deduction_half"] - float(fed["se_health_insurance"])
+                        - float(fed["retirement_hsa_adjustments"]) - float(fed["other_adjustments"]), 2)
+
+    # Ohio's own deadline rule (separate helper; dates statutory to 5747.09).
+    year_rows = [{"quarter": q_i, "due": _shift_ohio_deadline(d).isoformat(),
+                  "statutory_due": d.isoformat()}
+                 for q_i, d in ((1, date(yr, 4, 15)), (2, date(yr, 6, 15)),
+                                (3, date(yr, 9, 15)), (4, date(yr + 1, 1, 15)))]
+    nxt = next((r for r in year_rows if date.fromisoformat(r["due"]) >= today), year_rows[-1])
+    passed_count = sum(1 for r in year_rows if date.fromisoformat(r["due"]) < today)
+
+    # Date-scoped Ohio / SD payments (4D-2B-1 rule; federal/legacy never count)
+    as_of_iso = today.isoformat()
+    async def _jur_payments(jur: str):
+        rows = await db.estimated_tax_payments.find(
+            {"tax_year": yr, "jurisdiction": jur, "voided": {"$ne": True}},
+            {"_id": 0}).to_list(2000)
+        for p in rows:
+            p["future_dated"] = (p.get("payment_date") or "") > as_of_iso
+        total = round(sum(float(p.get("amount") or 0) for p in rows if not p["future_dated"]), 2)
+        future = round(sum(float(p.get("amount") or 0) for p in rows if p["future_dated"]), 2)
+        return rows, total, future
+    oh_rows, oh_paid, oh_future = await _jur_payments("ohio")
+    sd_rows, sd_paid, sd_future = await _jur_payments("ohio_school_district")
+
+    result = oh_engine.compute_ohio_estimate(
+        filing_status=filing_status, federal_agi=federal_agi,
+        annual_business_profit=annual_profit,
+        other_se_income=fed["other_se_income"], w2_wages=fed["w2_wages"],
+        spouse_wages=fed["spouse_wages"] or 0.0,
+        ohio=ohio, school_district=sd_prof, constants=constants,
+        next_deadline={"tax_year": yr, **nxt},
+        ohio_payments_total=oh_paid, sd_payments_total=sd_paid,
+        prior_installments_passed=passed_count)
+
+    flags = oh_engine.ohio_cpa_flags(ohio=ohio, school_district=sd_prof)
+    status = "CPA_REVIEW_REQUIRED" if flags else "READY"
+    if status == "CPA_REVIEW_REQUIRED":
+        result["installments"]["remaining_next_payment"] = None
+        result["threshold"]["payment_required"] = None
+    return {**base, "status": status, "cpa_review_reasons": flags,
+            "federal_agi_starting_point": federal_agi,
+            "estimate": result,
+            "ohio_payments": oh_rows, "sd_payments": sd_rows,
+            "future_dated_payments_total": round(oh_future + sd_future, 2)}
+
+
+@api.get("/admin/ohio-estimated-tax")
+async def ohio_estimated_tax_endpoint(
+    year: Optional[int] = None,
+    as_of: Optional[str] = None,
+    _: dict = Depends(require_admin_and_permission("finance_reports")),
+):
+    """`as_of` (YYYY-MM-DD, optional) freezes the calculation date — QA aid."""
+    yr = int(year or business_today().year)
+    frozen = None
+    if as_of:
+        try:
+            frozen = date.fromisoformat(as_of)
+        except Exception:
+            raise HTTPException(400, "Invalid as_of date")
+    return await _ohio_estimated_tax_payload(yr, as_of=frozen)
 
 
 # ── Jurisdiction-split estimated-payment ledger (append-only) ───────────────
