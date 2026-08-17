@@ -40927,12 +40927,19 @@ _TAX_PROFILE_NUMERIC_FIELDS = {
         "other_taxable_income", "other_se_income",
         "itemized_deduction_amount", "other_adjustments",
         "se_health_insurance", "retirement_hsa_adjustments", "credits_estimate",
+        # Step 4D-2B — worksheet-material additions:
+        "refundable_credits_estimate",   # 1040-ES line 11b-style refundable lump
+        "other_expected_federal_taxes",  # owner-entered lump for line 10
     ),
     "ohio": (
         "prior_year_tax", "prior_year_overpayment_applied",
         "withholding_ytd", "withholding_expected_remaining",
     ),
     "school_district": ("rate_pct", "withholding_ytd"),
+    # Step 4D-2B — annual business projection: actual YTD profit is derived
+    # from the canonical books; the REMAINING-year expectation is an
+    # owner-confirmed planning input (never a silent annualization).
+    "projection": ("remaining_business_profit",),
 }
 
 # Human labels for missing-field reporting (backend-authoritative honesty).
@@ -40941,8 +40948,25 @@ _TAX_PROFILE_FIELD_LABELS = {
     "federal.prior_year_agi": "Prior-year federal AGI (for the safe-harbor 110% test)",
     "federal.prior_year_total_tax": "Prior-year federal total tax (for safe-harbor comparison)",
     "federal.prior_year_full_12_months": "Whether the prior-year return covered a full 12 months",
+    "federal.prior_year_overpayment_applied": "Prior-year federal overpayment applied to this year (enter 0 if none)",
     "federal.withholding_ytd": "Federal withholding so far this year (enter 0 if none)",
     "federal.withholding_expected_remaining": "Expected additional federal withholding this year (enter 0 if none)",
+    "federal.w2_wages": "W-2 wages expected this year (enter 0 if none)",
+    "federal.w2_ss_wages": "W-2 wages subject to Social Security tax (enter 0 if none)",
+    "federal.spouse_wages": "Spouse wages (enter 0 if none)",
+    "federal.other_taxable_income": "Other expected taxable income (enter 0 if none)",
+    "federal.other_se_income": "Other self-employment income (enter 0 if none)",
+    "federal.credits_estimate": "Expected federal credits (enter 0 if none)",
+    "federal.refundable_credits_estimate": "Expected refundable federal credits (enter 0 if none)",
+    "federal.se_health_insurance": "Self-employed health insurance adjustment (enter 0 if none)",
+    "federal.retirement_hsa_adjustments": "Retirement/HSA adjustments (enter 0 if none)",
+    "federal.other_adjustments": "Other income adjustments (enter 0 if none)",
+    "federal.other_expected_federal_taxes": "Other expected federal taxes (enter 0 if none)",
+    "federal.deduction_method": "Deduction approach (standard or itemized)",
+    "federal.itemized_deduction_amount": "Expected itemized deduction amount",
+    "federal.expects_qualified_investment_income": "Whether you expect material qualified dividends / net capital gains",
+    "federal.unusual_tax_situation": "Whether this year involves an unusual tax situation",
+    "projection.remaining_business_profit": "Expected remaining-year Sit Happens business profit (confirm a number, even 0)",
     "ohio.resident": "Ohio residency status",
     "ohio.prior_year_tax": "Prior-year Ohio tax liability (for safe-harbor comparison)",
     "ohio.withholding_ytd": "Ohio withholding so far this year (enter 0 if none)",
@@ -40950,11 +40974,36 @@ _TAX_PROFILE_FIELD_LABELS = {
     "school_district.applicable": "Whether an Ohio school-district income tax applies to your home district",
 }
 
+# Step 4D-2B — once the federal engine can produce a DOLLAR figure, every
+# MATERIAL worksheet input must be provided or explicitly confirmed zero /
+# answered. Unknown is never zero. (Conditional requirements — itemized
+# amount, spouse wages — are added in _federal_required_fields.)
 _FEDERAL_REQUIRED_FIELDS = (
     "federal.filing_status", "federal.prior_year_agi", "federal.prior_year_total_tax",
-    "federal.prior_year_full_12_months", "federal.withholding_ytd",
-    "federal.withholding_expected_remaining",
+    "federal.prior_year_full_12_months", "federal.prior_year_overpayment_applied",
+    "federal.withholding_ytd", "federal.withholding_expected_remaining",
+    "federal.w2_wages", "federal.w2_ss_wages",
+    "federal.other_taxable_income", "federal.other_se_income",
+    "federal.credits_estimate", "federal.refundable_credits_estimate",
+    "federal.se_health_insurance", "federal.retirement_hsa_adjustments",
+    "federal.other_adjustments", "federal.other_expected_federal_taxes",
+    "federal.deduction_method",
+    "federal.expects_qualified_investment_income", "federal.unusual_tax_situation",
+    "projection.remaining_business_profit",
 )
+
+
+def _federal_required_fields(profile: Dict[str, Any]) -> tuple:
+    """Material fields incl. conditionals: the itemized amount only when the
+    itemized method is selected; spouse wages only for MFJ. Irrelevant
+    fields are never required."""
+    req = list(_FEDERAL_REQUIRED_FIELDS)
+    fed = (profile or {}).get("federal") or {}
+    if fed.get("deduction_method") == "itemized":
+        req.append("federal.itemized_deduction_amount")
+    if fed.get("filing_status") == "married_filing_jointly":
+        req.append("federal.spouse_wages")
+    return tuple(req)
 # Ohio's estimated-payment threshold is on COMBINED state + school-district
 # liability (R.C. 5747.09), so the SD applicability question is part of the
 # Ohio readiness gate.
@@ -40982,7 +41031,10 @@ def _empty_tax_profile(tax_year: int) -> Dict[str, Any]:
         },
         "federal": {"filing_status": None, "prior_year_full_12_months": None,
                     "deduction_method": None,
+                    "expects_qualified_investment_income": None,
+                    "unusual_tax_situation": None,
                     **{k: None for k in _TAX_PROFILE_NUMERIC_FIELDS["federal"]}},
+        "projection": {"remaining_business_profit": None, "confirmed_at": None},
         "ohio": {"resident": None,
                  **{k: None for k in _TAX_PROFILE_NUMERIC_FIELDS["ohio"]}},
         "school_district": {"applicable": None, "district_name": None,
@@ -41004,19 +41056,21 @@ def _tax_profile_completeness(profile: Dict[str, Any]) -> Dict[str, Any]:
         section, key = path.split(".")
         return ((profile or {}).get(section) or {}).get(key) is not None
 
-    def state(required):
+    def state(required, engine_available: bool):
         missing = [_TAX_PROFILE_FIELD_LABELS[p] for p in required if not provided(p)]
         return {
             "fields_complete": not missing,
             "missing_fields": missing,
-            # The calculation engines land in 4D-2B (federal) / 4D-2C (Ohio):
-            # until then NOTHING is ready for an authoritative payment amount.
-            "ready_for_calculation": False,
-            "engine": "not_yet_available",
+            "ready_for_calculation": (not missing) and engine_available,
+            "engine": "available" if engine_available else "not_yet_available",
         }
 
-    return {"federal": state(_FEDERAL_REQUIRED_FIELDS),
-            "ohio": state(_OHIO_REQUIRED_FIELDS)}
+    # Step 4D-2B — the federal engine exists (for years with verified
+    # constants); Ohio stays gated until 4D-2C.
+    from federal_tax_constants import federal_constants_for
+    fed_engine = federal_constants_for(int((profile or {}).get("tax_year") or 0)) is not None
+    return {"federal": state(_federal_required_fields(profile), fed_engine),
+            "ohio": state(_OHIO_REQUIRED_FIELDS, False)}
 
 
 class TaxProfilePatchIn(BaseModel):
@@ -41027,6 +41081,7 @@ class TaxProfilePatchIn(BaseModel):
     federal: Optional[Dict[str, Any]] = None
     ohio: Optional[Dict[str, Any]] = None
     school_district: Optional[Dict[str, Any]] = None
+    projection: Optional[Dict[str, Any]] = None  # Step 4D-2B — remaining-year profit
     notes: Optional[str] = None
 
 
@@ -41035,6 +41090,8 @@ _TAX_PROFILE_ENUM_FIELDS = {
     ("federal", "deduction_method"): {"standard", "itemized"},
     ("ohio", "resident"): None,           # bool
     ("federal", "prior_year_full_12_months"): None,  # bool
+    ("federal", "expects_qualified_investment_income"): None,  # bool (4D-2B)
+    ("federal", "unusual_tax_situation"): None,               # bool (4D-2B)
     ("school_district", "applicable"): {"yes", "no", "unknown"},
     ("school_district", "tax_base_type"): {"traditional", "earned_income"},
 }
@@ -41102,8 +41159,11 @@ async def put_tax_profile(
     yr = int(year)
     existing = await db.tax_profiles.find_one({"tax_year": yr}, {"_id": 0})
     profile = existing or _empty_tax_profile(yr)
+    profile.setdefault("projection", {"remaining_business_profit": None, "confirmed_at": None})
+    profile["federal"].setdefault("expects_qualified_investment_income", None)
+    profile["federal"].setdefault("unusual_tax_situation", None)
     changes: List[str] = []
-    for section in ("federal", "ohio", "school_district"):
+    for section in ("federal", "ohio", "school_district", "projection"):
         patch = getattr(body, section)
         if patch is None:
             continue
@@ -41113,6 +41173,11 @@ async def put_tax_profile(
             if old != v:
                 changes.append(f"{section}.{k}: {old!r} → {v!r}")
             profile[section][k] = v
+        # Step 4D-2B — confirming (or re-confirming) the remaining-year
+        # profit stamps the projection; clearing it un-confirms.
+        if section == "projection" and "remaining_business_profit" in cleaned:
+            profile["projection"]["confirmed_at"] = (
+                now_iso() if cleaned["remaining_business_profit"] is not None else None)
     if body.notes is not None:
         if profile.get("notes") != (body.notes.strip() or None):
             changes.append("notes updated")
@@ -41129,6 +41194,116 @@ async def put_tax_profile(
     await db.tax_profiles.update_one({"tax_year": yr}, {"$set": profile}, upsert=True)
     return {"profile": profile, "completeness": _tax_profile_completeness(profile),
             "filing_statuses": list(FEDERAL_FILING_STATUSES)}
+
+
+# ═══════════════ Step 4D-2B · Federal Estimated Tax engine ═══════════════
+# The real 2026 federal calculation (federal_estimated_tax.py, structured on
+# the official 1040-ES worksheet) for the confirmed Schedule-C profile.
+# Business profit comes from the SAME canonical books as the quarterly
+# projection — never a second formula. Statuses:
+#   PROFILE_INCOMPLETE     material worksheet inputs unknown → no dollars
+#   CPA_REVIEW_REQUIRED    deterministic unsupported-situation flags
+#   READY                  full worksheet + safe harbor + next installment
+#   ENGINE_UNAVAILABLE     no verified constants for the tax year
+import federal_estimated_tax as fed_engine
+from federal_tax_constants import federal_constants_for
+
+
+async def _federal_estimated_tax_payload(year: int) -> Dict[str, Any]:
+    yr = int(year)
+    today = business_today()
+    profile = await _get_tax_profile(yr)
+    completeness = _tax_profile_completeness(profile)
+
+    # Canonical YTD business profit — straight from the quarterly projection
+    # endpoint's books (collection-dated, refund-signed, sales-tax-excluded).
+    q = await admin_quarterly_tax(_={"role": "admin"}, year=yr)
+    ytd_profit = float(q["net_profit"])
+
+    proj = (profile.get("projection") or {})
+    remaining = proj.get("remaining_business_profit")
+    annual_profit = round(ytd_profit + float(remaining), 2) if remaining is not None else None
+    # Clearly-labeled run-rate SUGGESTION — never authoritative.
+    day_of_year = (today - date(yr, 1, 1)).days + 1 if yr == today.year else 365
+    run_rate_annual = round(ytd_profit / max(1, day_of_year) * 365, 2) if yr == today.year else ytd_profit
+    suggestion = round(max(0.0, run_rate_annual - ytd_profit), 2)
+
+    base = {
+        "tax_year": yr,
+        "as_of": today.isoformat(),
+        "business_projection": {
+            "actual_ytd_business_profit": round(ytd_profit, 2),
+            "projected_remaining_business_profit": remaining,
+            "projected_annual_business_profit": annual_profit,
+            "projection_confirmed_at": proj.get("confirmed_at"),
+            "run_rate_suggestion_remaining": suggestion,
+            "run_rate_note": ("Straight run-rate of YTD profit — a SUGGESTION only; "
+                              "seasonal businesses should enter their own expectation. "
+                              "Nothing is calculated from it until you confirm a number."),
+        },
+        "completeness": completeness["federal"],
+        "legacy_reserve_is_not_this": True,
+    }
+
+    constants = federal_constants_for(yr)
+    if constants is None:
+        return {**base, "status": "ENGINE_UNAVAILABLE",
+                "message": f"No verified federal constants for tax year {yr}."}
+    if not completeness["federal"]["fields_complete"]:
+        return {**base, "status": "PROFILE_INCOMPLETE",
+                "missing_fields": completeness["federal"]["missing_fields"]}
+
+    fed = profile["federal"]
+    filing_status = fed["filing_status"]
+
+    # Next FEDERAL deadline for THIS tax year (in January the prior year's
+    # Q4 still belongs to that prior tax year — handled by year scoping).
+    year_rows = _quarter_due_dates(yr)
+    nxt = next((r for r in year_rows if date.fromisoformat(r["due"]) >= today), None)
+    all_passed = nxt is None
+    if all_passed:
+        nxt = year_rows[-1]
+    passed_count = sum(1 for r in year_rows if date.fromisoformat(r["due"]) < today)
+
+    pay_rows = await db.estimated_tax_payments.find(
+        {"tax_year": yr, "jurisdiction": "federal", "voided": {"$ne": True}},
+        {"_id": 0}).to_list(2000)
+    federal_paid = round(sum(float(p.get("amount") or 0) for p in pay_rows), 2)
+
+    result = fed_engine.compute_federal_estimate(
+        filing_status=filing_status,
+        annual_business_profit=annual_profit,
+        federal=fed,
+        constants=constants,
+        next_deadline={"tax_year": yr, **nxt},
+        federal_payments_total=federal_paid,
+        prior_installments_pcts_passed=passed_count,
+    )
+    flags = fed_engine.federal_cpa_flags(
+        filing_status=filing_status, federal=fed,
+        projected_agi_hint=result["worksheet"]["line_1_agi"],
+        taxable_before_qbi=round(result["worksheet"]["line_1_agi"]
+                                 - result["worksheet"]["line_2a_deduction"], 2),
+        constants=constants)
+
+    status = "CPA_REVIEW_REQUIRED" if flags else "READY"
+    if status == "CPA_REVIEW_REQUIRED":
+        # Business projection and the safe intermediate lines remain visible,
+        # but NO payment recommendation is made.
+        result["installments"]["remaining_next_payment"] = None
+        result["payment_required"] = None
+    return {**base, "status": status, "cpa_review_reasons": flags,
+            "estimate": result, "federal_payments": pay_rows,
+            "all_installments_passed": all_passed}
+
+
+@api.get("/admin/federal-estimated-tax")
+async def federal_estimated_tax_endpoint(
+    year: Optional[int] = None,
+    _: dict = Depends(require_admin_and_permission("finance_reports")),
+):
+    yr = int(year or business_today().year)
+    return await _federal_estimated_tax_payload(yr)
 
 
 # ── Jurisdiction-split estimated-payment ledger (append-only) ───────────────

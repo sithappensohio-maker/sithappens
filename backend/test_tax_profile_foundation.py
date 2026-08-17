@@ -81,12 +81,16 @@ def test_b_no_corporate_paths():
 
 # ── C — empty profile: neither jurisdiction ready, no amounts exposed ───────
 def test_c_profile_missing_not_ready():
+    # Step 4D-2B contract update: the FEDERAL engine now EXISTS for 2026
+    # (engine "available") but an empty profile is still not ready; Ohio
+    # stays gated until 4D-2C.
     c = _get_profile()["completeness"]
     for j in ("federal", "ohio"):
         assert c[j]["fields_complete"] is False
         assert c[j]["ready_for_calculation"] is False
-        assert c[j]["engine"] == "not_yet_available"
         assert len(c[j]["missing_fields"]) >= 3
+    assert c["federal"]["engine"] == "available"
+    assert c["ohio"]["engine"] == "not_yet_available"
     # legacy reserve payload is explicitly marked non-authoritative
     r = run(server.admin_quarterly_tax(_=ADMIN, year=YEAR))
     assert r["legacy_reserve"] is True
@@ -108,16 +112,29 @@ def test_d_explicit_zero_counts_as_provided():
 
 # ── E — missing prior-year tax is named exactly ─────────────────────────────
 def test_e_missing_field_named():
-    _patch({"federal": {"filing_status": "married_filing_jointly", "prior_year_agi": 80000,
-                        "prior_year_full_12_months": True,
-                        "withholding_ytd": 0, "withholding_expected_remaining": 0}})
+    # Step 4D-2B contract update: the material-input list grew (every
+    # worksheet input must be provided or confirmed zero). This test now
+    # fills EVERYTHING except prior-year total tax, and checks the missing
+    # list names exactly that field — then completing it flips readiness
+    # to TRUE (the engine exists now).
+    full = {"filing_status": "married_filing_jointly", "prior_year_agi": 80000,
+            "prior_year_full_12_months": True, "prior_year_overpayment_applied": 0,
+            "withholding_ytd": 0, "withholding_expected_remaining": 0,
+            "w2_wages": 0, "w2_ss_wages": 0, "spouse_wages": 0,
+            "other_taxable_income": 0, "other_se_income": 0,
+            "credits_estimate": 0, "refundable_credits_estimate": 0,
+            "se_health_insurance": 0, "retirement_hsa_adjustments": 0,
+            "other_adjustments": 0, "other_expected_federal_taxes": 0,
+            "deduction_method": "standard",
+            "expects_qualified_investment_income": False, "unusual_tax_situation": False}
+    _patch({"federal": full, "projection": {"remaining_business_profit": 0}})
     c = _get_profile()["completeness"]["federal"]
     assert c["fields_complete"] is False
     assert c["missing_fields"] == ["Prior-year federal total tax (for safe-harbor comparison)"]
     _patch({"federal": {"prior_year_total_tax": 9500}})
     c2 = _get_profile()["completeness"]["federal"]
     assert c2["fields_complete"] is True
-    assert c2["ready_for_calculation"] is False   # engine still 4D-2B
+    assert c2["ready_for_calculation"] is True    # 4D-2B: engine available
 
 
 # ── F — withholding jurisdictions never mix ─────────────────────────────────

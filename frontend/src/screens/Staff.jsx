@@ -10,6 +10,7 @@ import AdminTabs from "../components/admin/AdminTabs";
 import RolesPanel from "../components/RolesPanel";
 import TaxProfilePanel from "../components/TaxProfilePanel";
 import EstimatedTaxPayments from "../components/EstimatedTaxPayments";
+import FederalEstimatedTaxCard from "../components/FederalEstimatedTaxCard";
 import { todayISO, daysAgoISO } from "../lib/date";
 import TrainerScorecardTab from "../components/TrainerScorecardTab";
 import { compressImage } from "../lib/imageCompress";
@@ -1321,6 +1322,7 @@ function QuarterlyTaxTab() {
   const [year, setYear] = useState(new Date().getFullYear());
   const [settingsOpen, setSettingsOpen] = useState(false);
   const [profileOpen, setProfileOpen] = useState(false);
+  const [payVersion, setPayVersion] = useState(0); // bumps when any payment is recorded/voided
   const [saving, setSaving] = useState(false);
   const [err, setErr] = useState("");
 
@@ -1381,44 +1383,33 @@ function QuarterlyTaxTab() {
         <strong className="text-shAccent">Legacy planning reserve.</strong> {data.disclaimer}
       </div>
 
-      {/* Step 4D-2A — honesty gate: no federal/Ohio payment amount exists yet. */}
-      <div className="grid grid-cols-1 md:grid-cols-2 gap-3" data-testid="qt-jurisdiction-status">
-        {["federal", "ohio"].map((j) => {
-          const c = taxProfile?.completeness?.[j];
-          const label = j === "federal" ? "Federal estimated tax" : "Ohio estimated tax";
-          return (
-            <div key={j} className="bg-[var(--sh-card-base)] border border-shBorder rounded-xl p-3" data-testid={`qt-${j}-card`}>
-              <div className="flex items-center justify-between flex-wrap gap-2">
-                <p className="text-[11px] font-black uppercase tracking-widest text-shSecondary">{label}</p>
-                {c && !c.fields_complete && (
-                  <span className="text-[10px] font-black uppercase tracking-widest text-amber-300 bg-amber-500/10 px-2 py-0.5 rounded-full" data-testid={`qt-${j}-incomplete`}>
-                    Tax profile incomplete
-                  </span>
-                )}
-                {c && c.fields_complete && (
-                  <span className="text-[10px] font-black uppercase tracking-widest text-shGreen bg-shGreen/10 px-2 py-0.5 rounded-full" data-testid={`qt-${j}-ready`}>
-                    Profile complete
-                  </span>
-                )}
-              </div>
-              <p className="text-[13px] text-shTextMuted mt-1" data-testid={`qt-${j}-message`}>
-                {j === "federal"
-                  ? "Federal payment calculation not yet available (arrives in 4D-2B). No amount is shown until the tax profile and the official 1040-ES math are in place."
-                  : "Ohio payment calculation not yet available (arrives in 4D-2C, incl. the Business Income Deduction and school-district tax). The legacy flat 2.75% figure is NOT Ohio tax."}
-              </p>
-              {j === "federal" && data.next_federal_deadline && (
-                <p className="text-[12px] font-black text-shText mt-1" data-testid="qt-next-federal-deadline">
-                  Next federal estimated-tax deadline: {data.next_federal_deadline.due}
-                  <span className="text-shTextMuted font-bold"> · {data.next_federal_deadline.period} · amount not calculated</span>
-                </p>
-              )}
-              <button onClick={() => setProfileOpen(true)} data-testid={`qt-${j}-open-profile`}
-                      className="mt-2 text-[11px] font-black uppercase tracking-widest text-shSecondary hover:underline">
-                <i className="fas fa-id-card mr-1"/>Complete Tax Profile
-              </button>
-            </div>
-          );
-        })}
+      {/* Step 4D-2B — the real federal engine card; Ohio stays gated (4D-2C). */}
+      <div className="grid grid-cols-1 gap-3" data-testid="qt-jurisdiction-status">
+        <FederalEstimatedTaxCard year={year} onOpenProfile={() => setProfileOpen(true)}
+                                 onPaymentsChanged={() => setPayVersion(v => v + 1)}
+                                 refreshKey={`${taxProfile?.profile?.updated_at || ""}:${payVersion}`} />
+        <div className="bg-[var(--sh-card-base)] border border-shBorder rounded-xl p-3" data-testid="qt-ohio-card">
+          <div className="flex items-center justify-between flex-wrap gap-2">
+            <p className="text-[11px] font-black uppercase tracking-widest text-shSecondary">Ohio estimated tax</p>
+            {taxProfile?.completeness?.ohio && !taxProfile.completeness.ohio.fields_complete && (
+              <span className="text-[10px] font-black uppercase tracking-widest text-amber-300 bg-amber-500/10 px-2 py-0.5 rounded-full" data-testid="qt-ohio-incomplete">
+                Tax profile incomplete
+              </span>
+            )}
+            {taxProfile?.completeness?.ohio?.fields_complete && (
+              <span className="text-[10px] font-black uppercase tracking-widest text-shGreen bg-shGreen/10 px-2 py-0.5 rounded-full" data-testid="qt-ohio-ready">
+                Profile complete
+              </span>
+            )}
+          </div>
+          <p className="text-[13px] text-shTextMuted mt-1" data-testid="qt-ohio-message">
+            Ohio payment calculation not yet available (arrives in 4D-2C, incl. the Business Income Deduction and school-district tax). The legacy flat 2.75% figure is NOT Ohio tax.
+          </p>
+          <button onClick={() => setProfileOpen(true)} data-testid="qt-ohio-open-profile"
+                  className="mt-2 text-[11px] font-black uppercase tracking-widest text-shSecondary hover:underline">
+            <i className="fas fa-id-card mr-1"/>Complete Tax Profile
+          </button>
+        </div>
       </div>
       <p className="text-[11px] text-shTextMuted italic" data-testid="qt-municipal-note">
         Municipal (city) income tax is separate — it is not included in any federal or Ohio estimate here.
@@ -1602,7 +1593,7 @@ function QuarterlyTaxTab() {
 
       {/* Step 4D-2A — jurisdiction-split, append-only payment history
           (legacy combined rows shown as "jurisdiction unassigned"). */}
-      <EstimatedTaxPayments year={year} />
+      <EstimatedTaxPayments year={year} refreshKey={payVersion} onChanged={() => setPayVersion(v => v + 1)} />
     </div>
   );
 }

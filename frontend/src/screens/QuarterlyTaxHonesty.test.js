@@ -31,13 +31,15 @@ describe("quarterly tab honesty gate", () => {
     expect(staff).not.toMatch(/Due \{q\.due\}/);
   });
 
-  test("federal and Ohio cards gate on backend completeness", () => {
+  test("federal engine card is mounted; Ohio stays gated until 4D-2C", () => {
+    // Step 4D-2B — the federal card is now the real engine component
+    // (FederalEstimatedTaxCard, tested in its own suite); Ohio remains an
+    // honesty-gated placeholder in Staff.jsx.
     expect(staff).toMatch(/qt-jurisdiction-status/);
+    expect(staff).toMatch(/<FederalEstimatedTaxCard year=\{year\}/);
     expect(staff).toMatch(/Tax profile incomplete/);
-    expect(staff).toMatch(/not yet available \(arrives in 4D-2B\)/);
     expect(staff).toMatch(/arrives in 4D-2C/);
-    expect(staff).toMatch(/next_federal_deadline/);
-    expect(staff).toMatch(/amount not calculated/);
+    expect(staff).toMatch(/The legacy flat 2\.75% figure is NOT Ohio tax/);
   });
 
   test("municipal tax is explicitly excluded", () => {
@@ -45,7 +47,7 @@ describe("quarterly tab honesty gate", () => {
   });
 
   test("jurisdiction-split payments panel replaced the combined ledger UI", () => {
-    expect(staff).toMatch(/<EstimatedTaxPayments year=\{year\} \/>/);
+    expect(staff).toMatch(/<EstimatedTaxPayments year=\{year\} refreshKey=\{payVersion\}/);
     expect(staff).not.toMatch(/TaxPaymentModal/);
   });
 });

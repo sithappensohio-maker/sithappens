@@ -68,7 +68,8 @@ export function CompletenessBadge({ state, testid }) {
   if (!state) return null;
   return state.fields_complete ? (
     <span data-testid={testid} className="inline-flex items-center gap-1 px-2.5 py-1 rounded-full text-[11px] font-black uppercase tracking-widest text-shGreen bg-shGreen/10">
-      <i className="fas fa-check" />Profile complete — engine not yet available
+      <i className="fas fa-check" />
+      {state.ready_for_calculation ? "Profile complete — ready" : "Profile complete — engine not yet available"}
     </span>
   ) : (
     <span data-testid={testid} className="inline-flex items-center gap-1 px-2.5 py-1 rounded-full text-[11px] font-black uppercase tracking-widest text-amber-300 bg-amber-500/10">
@@ -86,7 +87,7 @@ export default function TaxProfilePanel({ year, onChanged }) {
   const load = useCallback(async () => {
     try {
       const r = await api.get(`/admin/tax-profile?year=${year}`);
-      setData(r.data); setDraft({ federal: {}, ohio: {}, school_district: {} }); setErr("");
+      setData(r.data); setDraft({ federal: {}, ohio: {}, school_district: {}, projection: {} }); setErr("");
     } catch (e) {
       setErr(formatErr(e.response?.data?.detail) || "Could not load tax profile");
     }
@@ -97,25 +98,25 @@ export default function TaxProfilePanel({ year, onChanged }) {
   if (!data) return <div className="text-shTextMuted text-sm" data-testid="taxprofile-loading">Loading tax profile…</div>;
 
   const p = data.profile;
-  const val = (section, key) => (draft[section] && key in draft[section]) ? draft[section][key] : p[section][key];
+  const val = (section, key) => (draft[section] && key in draft[section]) ? draft[section][key] : (p[section] || {})[key];
   const set = (section, key) => (v) => setDraft((d) => ({ ...d, [section]: { ...d[section], [key]: v } }));
 
   const save = async () => {
     setSaving(true); setErr("");
     try {
       const body = {};
-      for (const s of ["federal", "ohio", "school_district"]) {
+      for (const s of ["federal", "ohio", "school_district", "projection"]) {
         if (Object.keys(draft[s]).length) body[s] = draft[s];
       }
       const r = await api.put(`/admin/tax-profile/${year}`, body);
-      setData(r.data); setDraft({ federal: {}, ohio: {}, school_district: {} });
+      setData(r.data); setDraft({ federal: {}, ohio: {}, school_district: {}, projection: {} });
       onChanged?.(r.data);
     } catch (e) {
       setErr(formatErr(e.response?.data?.detail) || "Could not save tax profile");
     } finally { setSaving(false); }
   };
 
-  const dirty = ["federal", "ohio", "school_district"].some((s) => Object.keys(draft[s]).length);
+  const dirty = ["federal", "ohio", "school_district", "projection"].some((s) => Object.keys(draft[s] || {}).length);
 
   return (
     <div className="bg-[var(--sh-card-base)] border border-shBorder rounded-xl p-4 space-y-4" data-testid="tax-profile-panel">
@@ -198,8 +199,24 @@ export default function TaxProfilePanel({ year, onChanged }) {
           </div>
           <div className="grid grid-cols-2 gap-2">
             <NumField label="Other adjustments (lump)" testid="taxprofile-adjustments" value={val("federal", "other_adjustments")} onChange={set("federal", "other_adjustments")} />
-            <NumField label="Credits estimate (lump)" testid="taxprofile-credits" value={val("federal", "credits_estimate")} onChange={set("federal", "credits_estimate")} />
+            <NumField label="Expected federal credits (nonrefundable, lump)" testid="taxprofile-credits" value={val("federal", "credits_estimate")} onChange={set("federal", "credits_estimate")} />
           </div>
+          <div className="grid grid-cols-2 gap-2">
+            <NumField label="Expected refundable credits (EIC, ACTC…)" testid="taxprofile-refundable"
+                      value={val("federal", "refundable_credits_estimate")} onChange={set("federal", "refundable_credits_estimate")} />
+            <NumField label="Other expected federal taxes (lump)" testid="taxprofile-other-taxes"
+                      value={val("federal", "other_expected_federal_taxes")} onChange={set("federal", "other_expected_federal_taxes")} />
+          </div>
+          <TriState label="Expect material qualified dividends / net capital gains?" testid="taxprofile-qualified-gains"
+                    value={val("federal", "expects_qualified_investment_income")} onChange={set("federal", "expects_qualified_investment_income")} />
+          <TriState label="Unusual tax situation this year?" testid="taxprofile-unusual"
+                    value={val("federal", "unusual_tax_situation")} onChange={set("federal", "unusual_tax_situation")} />
+
+          <p className="text-[11px] font-black uppercase tracking-widest text-shSecondary pt-2">Business projection ({year})</p>
+          <NumField label="Expected REMAINING-year Sit Happens profit"
+                    hint="Confirm a number (0 is valid). YTD profit is derived from the books automatically; this is your expectation for the rest of the year — a run-rate suggestion may be shown but is never used until you confirm."
+                    testid="taxprofile-remaining-profit"
+                    value={val("projection", "remaining_business_profit")} onChange={set("projection", "remaining_business_profit")} />
         </div>
 
         {/* Ohio + School district */}

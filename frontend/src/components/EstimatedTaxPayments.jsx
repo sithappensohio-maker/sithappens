@@ -21,7 +21,7 @@ const JURISDICTION_META = {
   ohio_school_district: { label: "Ohio School District", icon: "fa-school", hint: "SD 100ES / OUPC school-district payments" },
 };
 
-export default function EstimatedTaxPayments({ year }) {
+export default function EstimatedTaxPayments({ year, refreshKey = null, onChanged = null }) {
   const confirm = useConfirm();
   const [data, setData] = useState(null);
   const [err, setErr] = useState("");
@@ -34,7 +34,9 @@ export default function EstimatedTaxPayments({ year }) {
     } catch (e) {
       setErr(formatErr(e.response?.data?.detail) || "Could not load payment history");
     }
-  }, [year]);
+    // refreshKey re-runs the load when payments are recorded elsewhere
+    // (e.g. the federal card's Record Federal Payment).
+  }, [year, refreshKey]); // eslint-disable-line react-hooks/exhaustive-deps
   useEffect(() => { load(); }, [load]);
 
   const voidPayment = async (p) => {
@@ -46,7 +48,7 @@ export default function EstimatedTaxPayments({ year }) {
     if (!ok) return;
     try {
       await api.post(`/admin/estimated-tax/payments/${p.id}/void`, { reason: "Voided from payment history" });
-      load();
+      load(); onChanged?.();
     } catch (e) { setErr(formatErr(e.response?.data?.detail) || "Could not void"); }
   };
 
@@ -116,17 +118,17 @@ export default function EstimatedTaxPayments({ year }) {
       )}
 
       <p className="text-[11px] text-shTextMuted italic">
-        Required payment amounts are not calculated yet — the federal engine arrives in 4D-2B and the Ohio engine in 4D-2C.
+        Required FEDERAL amounts come from the federal card above; the Ohio engine arrives in 4D-2C.
         Municipal (city) income tax is separate and is not part of any federal or Ohio figure here.
       </p>
 
-      {recOpen && <RecordPaymentModal year={year} onClose={() => setRecOpen(false)} onSaved={() => { setRecOpen(false); load(); }} />}
+      {recOpen && <RecordPaymentModal year={year} onClose={() => setRecOpen(false)} onSaved={() => { setRecOpen(false); load(); onChanged?.(); }} />}
     </div>
   );
 }
 
-function RecordPaymentModal({ year, onClose, onSaved }) {
-  const [jurisdiction, setJurisdiction] = useState("federal");
+export function RecordPaymentModal({ year, onClose, onSaved, lockJurisdiction = null }) {
+  const [jurisdiction, setJurisdiction] = useState(lockJurisdiction || "federal");
   const [period, setPeriod] = useState(1);
   const [amount, setAmount] = useState("");
   const [payDate, setPayDate] = useState("");
@@ -161,7 +163,9 @@ function RecordPaymentModal({ year, onClose, onSaved }) {
         <p className="text-[12px] text-shTextMuted">Documents a payment you already made externally. This app never files or pays anything itself.</p>
         <label className="block">
           <span className="block text-[10px] font-black uppercase tracking-widest text-shTextMuted">Jurisdiction</span>
-          <select value={jurisdiction} onChange={(e) => setJurisdiction(e.target.value)} data-testid="estpay-modal-jurisdiction" className={inputCls}>
+          <select value={jurisdiction} onChange={(e) => setJurisdiction(e.target.value)}
+                  disabled={!!lockJurisdiction}
+                  data-testid="estpay-modal-jurisdiction" className={inputCls}>
             <option value="federal">Federal (IRS)</option>
             <option value="ohio">Ohio</option>
             <option value="ohio_school_district">Ohio School District</option>

@@ -76,10 +76,13 @@ test("legacy combined rows stay visibly unassigned", async () => {
   expect(legacy).toContain("not counted toward federal, Ohio, or school-district history");
 });
 
-test("no required amount is invented; engines are named as pending", async () => {
+test("no required amount is invented; federal points at the engine card", async () => {
+  // Step 4D-2B wording update: federal requirements now come from the
+  // federal card's engine; Ohio remains pending until 4D-2C.
   api.get.mockResolvedValue({ data: payload() });
   await mount();
-  expect(container.textContent).toContain("Required payment amounts are not calculated yet");
+  expect(container.textContent).toContain("Required FEDERAL amounts come from the federal card above");
+  expect(container.textContent).toContain("the Ohio engine arrives in 4D-2C");
   expect(container.textContent).not.toMatch(/you owe|balance owed|required payment: \$/i);
 });
 
