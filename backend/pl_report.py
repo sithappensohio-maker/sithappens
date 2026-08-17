@@ -384,10 +384,23 @@ async def build_pl_data(db, start_date: str, end_date: str) -> Dict[str, Any]:
     # Sprint 110cb — split training-program sales out of "Retail" so the
     # operator can see Training Revenue as its own line on the P&L (it's
     # services revenue, not merchandise revenue).
-    retail_only = [r for r in retail_sales if r.get("source_kind") != "training_program_sale"]
-    training_rows = [r for r in retail_sales if r.get("source_kind") == "training_program_sale"]
+    # Step 4B-5 — classify through the ONE canonical Finance taxonomy so the
+    # P&L's "Retail" means merchandise, not "everything that touched
+    # retail_sales" (invoice/tab payments, packs, refunds, voids…).
+    # Classification only: net/profit math below sums ALL rows regardless of
+    # category, so every dollar total is unchanged.
+    from server import _finance_income_category  # lazy — avoids import cycle
+    pl_cat_rows: Dict[str, list] = {}
+    for r in retail_sales:
+        pl_cat_rows.setdefault(_finance_income_category(r), []).append(r)
+    retail_only = pl_cat_rows.get("retail", [])
+    training_rows = pl_cat_rows.get("training_programs", [])
     retail_total = round(sum(float(r.get("amount") or 0) for r in retail_only), 2)
     training_revenue_total = round(sum(float(r.get("amount") or 0) for r in training_rows), 2)
+    credit_pack_sales_total = round(sum(float(r.get("amount") or 0) for r in pl_cat_rows.get("credit_packs", [])), 2)
+    payment_plans_total = round(sum(float(r.get("amount") or 0) for r in pl_cat_rows.get("payment_plans", [])), 2)
+    account_payments_total = round(sum(float(r.get("amount") or 0) for r in pl_cat_rows.get("account_payments", [])), 2)
+    retail_all_net = round(sum(float(r.get("amount") or 0) for r in retail_sales), 2)
     retail_by_cat_map: Dict[str, Dict[str, Any]] = {}
     for r in retail_only:
         cat = (r.get("category") or "Retail").strip() or "Retail"
@@ -493,7 +506,10 @@ async def build_pl_data(db, start_date: str, end_date: str) -> Dict[str, Any]:
     # (mislabeled) gross_income carried — profit is unchanged.
     refunds_reversals_total = round(
         sum(-float(r.get("amount") or 0) for r in retail_sales if float(r.get("amount") or 0) < 0), 2)
-    net_income = round(completed_total + retail_total + training_revenue_total, 2)
+    # Step 4B-5 — net runs off the sum of ALL retail rows (retail_all_net),
+    # which is identical to the old retail_total + training split, so the
+    # narrower merchandise-only retail_total above cannot move net/profit.
+    net_income = round(completed_total + retail_all_net, 2)
     gross_income = round(net_income + refunds_reversals_total, 2)
     ytd_net = round(ytd_income + ytd_retail, 2)
 
@@ -514,6 +530,10 @@ async def build_pl_data(db, start_date: str, end_date: str) -> Dict[str, Any]:
             "by_day": by_day,
             "retail_total": retail_total,
             "training_revenue_total": training_revenue_total,
+            # Step 4B-5 — canonical categories (previously folded into retail).
+            "credit_pack_sales_total": credit_pack_sales_total,
+            "payment_plans_total": payment_plans_total,
+            "account_payments_total": account_payments_total,
             # gross_total is now TRUE gross (positive collected income before
             # reversals) — every internal consumer audited/updated in 4B-4.
             "gross_total": gross_income,

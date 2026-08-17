@@ -30421,6 +30421,53 @@ _INCOME_REVERSAL_KINDS = frozenset({
 })
 
 
+# ── Step 4B-5 — the ONE canonical Finance income taxonomy ───────────────────
+# Weekly summary, range summary, and the P&L all classify retail_sales rows
+# through _finance_income_category so the same transaction lands in the same
+# Finance category everywhere. Classification only — every row still counts
+# exactly once toward the same totals; no amounts change.
+FINANCE_INCOME_CATEGORY_LABELS = {
+    "retail": "Retail (items)",
+    "credit_packs": "Credit Packs",
+    "training_programs": "Training Programs",
+    "payment_plans": "Payment Plans",
+    "account_payments": "Invoice / Account Payments",
+    "refunds_reversals": "Refunds & reversals",
+}
+
+
+def _finance_income_category(row: Dict[str, Any]) -> str:
+    """Finance reporting category for one retail_sales row.
+
+    Decided from STRUCTURED metadata (source_kind / sign), never description
+    text. Key rules:
+      * reversal kinds — and any negative row, matching the register's
+        long-standing bucketing — are "refunds_reversals", never a
+        misleading negative inside a revenue category;
+      * invoice / tab / online-invoice payments are honest account
+        collections ("Invoice / Account Payments") — the underlying
+        service/product category is not reliably reconstructable from the
+        payment row, so it is NOT guessed and NOT called Retail;
+      * an online SHOP order is merchandise → Retail: the Stripe channel is
+        a tender dimension, not a revenue category;
+      * rows with no source_kind are POS/manual retail — the honest
+        historical fallback for ambiguous rows is Retail (items), the
+        catch-all these rows have always lived in.
+    """
+    kind = (row.get("source_kind") or "").strip()
+    if kind in _INCOME_REVERSAL_KINDS or float(row.get("amount") or 0) < 0:
+        return "refunds_reversals"
+    if kind == "credit_pack_sale":
+        return "credit_packs"
+    if kind == "training_program_sale":
+        return "training_programs"
+    if kind == "payment_plan_installment":
+        return "payment_plans"
+    if kind in ("invoice_payment", "tab_payment", "stripe_online_payment"):
+        return "account_payments"
+    return "retail"  # POS/manual merchandise, incl. shop_order
+
+
 def _schedule_c_retail_income(row: dict) -> float:
     """Retail/other cash income for Schedule C, net of sales tax collected.
 
@@ -30577,25 +30624,38 @@ async def weekly_summary(_: dict = Depends(require_admin_and_permission("finance
         {"date": {"$gte": monday_iso, "$lte": sunday_iso}},
         {"_id": 0, "amount": 1, "source_kind": 1},
     ).to_list(2000)
-    SPECIAL_KINDS = ("training_program_sale", "credit_pack_sale", "payment_plan_installment")
     # Step 4B-4 — magnitude of this week's refund/void/reversal rows (any
     # negative retail row, matching the register's bucketing rule) so the
     # response can expose an honest gross/refunds/net trio.
     retail_reversals_total = round(
         sum(-float(x.get("amount") or 0) for x in retail_rows_all if float(x.get("amount") or 0) < 0), 2)
-    retail_only = [x for x in retail_rows_all if x.get("source_kind") not in SPECIAL_KINDS]
-    credit_pack_rows = [x for x in retail_rows_all if x.get("source_kind") == "credit_pack_sale"]
-    training_rows = [x for x in retail_rows_all if x.get("source_kind") == "training_program_sale"]
-    plan_rows = [x for x in retail_rows_all if x.get("source_kind") == "payment_plan_installment"]
-    retail_total = round(sum(float(x.get("amount") or 0) for x in retail_only), 2)
-    retail_count = len(retail_only)
-    credit_pack_sales_total = round(sum(float(x.get("amount") or 0) for x in credit_pack_rows), 2)
-    credit_pack_sales_count = len(credit_pack_rows)
-    training_revenue_total = round(sum(float(x.get("amount") or 0) for x in training_rows), 2)
-    training_revenue_count = len(training_rows)
-    plan_revenue_total = round(sum(float(x.get("amount") or 0) for x in plan_rows), 2)
-    plan_revenue_count = len(plan_rows)
-    other_revenue_total = round(retail_total + credit_pack_sales_total + training_revenue_total + plan_revenue_total, 2)
+    # Step 4B-5 — categorize through the ONE canonical Finance classifier
+    # (_finance_income_category) instead of a local SPECIAL_KINDS allowlist
+    # whose fall-through called invoice/tab payments, shop orders, refunds,
+    # and voids "Retail (items)". Classification only: every row lands in
+    # exactly ONE category, so the summed totals below are unchanged.
+    cat_rows: Dict[str, List[Dict[str, Any]]] = {}
+    for x in retail_rows_all:
+        cat_rows.setdefault(_finance_income_category(x), []).append(x)
+
+    def _cat_total(key: str) -> float:
+        return round(sum(float(x.get("amount") or 0) for x in cat_rows.get(key, [])), 2)
+
+    retail_total = _cat_total("retail")
+    retail_count = len(cat_rows.get("retail", []))
+    credit_pack_sales_total = _cat_total("credit_packs")
+    credit_pack_sales_count = len(cat_rows.get("credit_packs", []))
+    training_revenue_total = _cat_total("training_programs")
+    training_revenue_count = len(cat_rows.get("training_programs", []))
+    plan_revenue_total = _cat_total("payment_plans")
+    plan_revenue_count = len(cat_rows.get("payment_plans", []))
+    account_payments_total = _cat_total("account_payments")
+    account_payments_count = len(cat_rows.get("account_payments", []))
+    reversals_signed_total = _cat_total("refunds_reversals")
+    reversals_count = len(cat_rows.get("refunds_reversals", []))
+    # Identity: the categories partition retail_rows_all, so this equals the
+    # pre-4B-5 sum of every row — completed/paid totals cannot move.
+    other_revenue_total = round(sum(float(x.get("amount") or 0) for x in retail_rows_all), 2)
 
     # Sprint 110cz — Fold retail / credit-pack-sales / training-program-sales
     # into the SAME `completed_total` and `by_service` breakdown so the
@@ -30609,12 +30669,19 @@ async def weekly_summary(_: dict = Depends(require_admin_and_permission("finance
         by_service["__training"] = {"name": "Training Programs", "count": training_revenue_count, "total": training_revenue_total}
     if plan_revenue_total > 0 or plan_revenue_count > 0:
         by_service["__payment_plans"] = {"name": "Payment Plans", "count": plan_revenue_count, "total": plan_revenue_total}
+    # Step 4B-5 — the money that used to hide inside "Retail (items)" gets
+    # its own honest lines: account collections, and reversals shown as a
+    # NEGATIVE line (never a positive revenue category).
+    if account_payments_total > 0 or account_payments_count > 0:
+        by_service["__account_payments"] = {"name": FINANCE_INCOME_CATEGORY_LABELS["account_payments"], "count": account_payments_count, "total": account_payments_total}
+    if reversals_count > 0:
+        by_service["__refunds_reversals"] = {"name": FINANCE_INCOME_CATEGORY_LABELS["refunds_reversals"], "count": reversals_count, "total": reversals_signed_total}
 
     # Retail/training/pack-sale rows are always "paid in full" at sale time,
     # so roll them into both `completed_total` AND `paid_total` so the
     # Paid/Unpaid split stays mathematically honest.
     completed_total += other_revenue_total
-    completed_count += retail_count + credit_pack_sales_count + training_revenue_count + plan_revenue_count
+    completed_count += retail_count + credit_pack_sales_count + training_revenue_count + plan_revenue_count + account_payments_count + reversals_count
     paid_total += other_revenue_total
 
     # Sprint 110di-68 — Roll Accounts Receivable open balances into the Unpaid
@@ -30659,6 +30726,9 @@ async def weekly_summary(_: dict = Depends(require_admin_and_permission("finance
         "credit_pack_sales_count": credit_pack_sales_count,
         "training_revenue_total": training_revenue_total,
         "training_revenue_count": training_revenue_count,
+        # Step 4B-5 — categories that used to be folded into retail_total.
+        "account_payments_total": account_payments_total,
+        "account_payments_count": account_payments_count,
         "service_total": round(completed_total - other_revenue_total, 2),
         # Step 4B-4 — gross_total used to be a copy of completed_total (net of
         # refunds/voids) wearing the wrong name. It is now TRUE gross: positive
@@ -30735,11 +30805,26 @@ async def summary_range(
         {"date": {"$gte": start_date, "$lte": end_date}},
         {"_id": 0},
     ).to_list(5000)
-    retail_rows = [r for r in retail_rows_all if r.get("source_kind") != "training_program_sale"]
-    training_rows = [r for r in retail_rows_all if r.get("source_kind") == "training_program_sale"]
-    retail_total = round(sum(float(r.get("amount") or 0) for r in retail_rows), 2)
-    training_revenue_total = round(sum(float(r.get("amount") or 0) for r in training_rows), 2)
-    other_revenue_total = round(retail_total + training_revenue_total, 2)
+    # Step 4B-5 — same canonical taxonomy as weekly_summary (this range view
+    # used to fold even credit packs and account payments into "retail").
+    # Classification only: the categories partition the rows, so
+    # other_revenue_total — and with it completed/net/profit — is unchanged.
+    range_cat_rows: Dict[str, List[Dict[str, Any]]] = {}
+    for r in retail_rows_all:
+        range_cat_rows.setdefault(_finance_income_category(r), []).append(r)
+
+    def _range_cat_total(key: str) -> float:
+        return round(sum(float(r.get("amount") or 0) for r in range_cat_rows.get(key, [])), 2)
+
+    retail_rows = range_cat_rows.get("retail", [])
+    retail_total = _range_cat_total("retail")
+    training_rows = range_cat_rows.get("training_programs", [])
+    training_revenue_total = _range_cat_total("training_programs")
+    credit_pack_sales_total = _range_cat_total("credit_packs")
+    payment_plans_total = _range_cat_total("payment_plans")
+    account_payments_total = _range_cat_total("account_payments")
+    refunds_reversals_signed = _range_cat_total("refunds_reversals")
+    other_revenue_total = round(sum(float(r.get("amount") or 0) for r in retail_rows_all), 2)
     for r in retail_rows_all:
         d = r.get("date")
         if d:
@@ -30796,6 +30881,12 @@ async def summary_range(
         "retail_count": len(retail_rows),
         "training_revenue_total": training_revenue_total,
         "training_revenue_count": len(training_rows),
+        # Step 4B-5 — weekly/range taxonomy parity (these used to be folded
+        # into retail_total here).
+        "credit_pack_sales_total": credit_pack_sales_total,
+        "payment_plans_total": payment_plans_total,
+        "account_payments_total": account_payments_total,
+        "refunds_reversals_total": round(-refunds_reversals_signed, 2),
         "credit_pack_redeemed_count": credit_pack_redeemed_count,
         "credit_pack_redeemed_value": round(credit_pack_redeemed_value, 2),
         "paid_total": round(paid_total + other_revenue_total, 2),
