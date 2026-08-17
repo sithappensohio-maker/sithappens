@@ -215,7 +215,15 @@ async def build_pl_data(db, start_date: str, end_date: str) -> Dict[str, Any]:
             return round(max(0.0, paid_amt), 2)
         if status == "paid":
             return round(paid_amt if paid_amt > 0 else actual, 2)
-        if status in ("unpaid", "comped", "refunded"):
+        if status == "refunded":
+            # Step 4B-6 — mirror of server._cash_revenue: a row-based refund
+            # (financial_refund_total > 0, written with the signed reversal
+            # row) keeps the collected amount so the row subtracts it exactly
+            # once; a legacy status-only refund still zeroes.
+            if float(b.get("financial_refund_total") or 0) > 0:
+                return round(paid_amt if paid_amt > 0 else actual, 2)
+            return 0.0
+        if status in ("unpaid", "comped"):
             return 0.0
         if b.get("status") == "completed" and actual > 0:
             return round(actual, 2)

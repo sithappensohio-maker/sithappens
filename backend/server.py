@@ -30367,7 +30367,26 @@ def _cash_revenue(booking: dict) -> float:
     if status == "paid":
         # If amount_paid is present, it is the cleanest cash drawer number.
         return round(paid if paid > 0 else actual, 2)
-    if status in ("unpaid", "comped", "refunded"):
+    if status == "refunded":
+        # Step 4B-6 — two refund representations coexist historically:
+        #   * LEGACY status-only: payment_status flipped to "refunded" with
+        #     no financial reversal row — the status IS the refund, so the
+        #     collected revenue is correctly zeroed (unchanged behavior).
+        #   * MODERN row-based: booking_refund writes a signed negative
+        #     retail row AND stamps financial_refund_total on the booking,
+        #     deliberately WITHOUT touching payment_status. If such a
+        #     booking also carries status "refunded" (historical manual
+        #     edit / raw data), zeroing here would subtract the refund a
+        #     second time on top of the row: +100 −100 → reported −100.
+        # The booking's own financial_refund_total (written atomically with
+        # the reversal row) is the structured signal for which model
+        # applies — keep the collected amount when a row-based reversal
+        # exists so the refund nets exactly once, including partials
+        # (collected 100 − row 25 = 75, never 0 or −25).
+        if float(booking.get("financial_refund_total") or 0) > 0:
+            return round(paid if paid > 0 else actual, 2)
+        return 0.0
+    if status in ("unpaid", "comped"):
         return 0.0
 
     # Legacy rows before payment_status existed: completed + actual_price was
