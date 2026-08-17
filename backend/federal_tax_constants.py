@@ -25,6 +25,18 @@ FEDERAL_TAX_CONSTANTS: Dict[int, Dict[str, Any]] = {
             "head_of_household": 24150.0,
             "qualifying_surviving_spouse": 32200.0,
         },
+        # ── Non-itemizer charitable deduction — Pub 505 (2026) Worksheet 2-1
+        # line 2a, verbatim: "enter your standard deduction plus up to $1,000
+        # ($2,000 for married filing jointly) for charitable contributions
+        # made by cash or check" (§170(p), OBBBA). Joint returns only get the
+        # $2,000 cap; every other status (incl. QSS) is $1,000.
+        "nonitemizer_charitable_cap": {
+            "single": 1000.0,
+            "married_filing_jointly": 2000.0,
+            "married_filing_separately": 1000.0,
+            "head_of_household": 1000.0,
+            "qualifying_surviving_spouse": 1000.0,
+        },
         # ── Tax Rate Schedules — Rev. Proc. 2025-32 §2.01 / 1040-ES p. 10 ──
         # Each bracket: (upper bound of bracket or None for top, rate).
         "brackets": {

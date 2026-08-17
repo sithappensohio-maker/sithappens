@@ -38,8 +38,11 @@ const readyEstimate = (over = {}) => ({
     line_1_agi: 51114.38,
     income_components: { business_profit: 55000, other_se_income: 0, w2_wages: 0, spouse_wages: 0, other_taxable_income: 0, total_income: 55000 },
     adjustments: { se_tax_deduction_half: 3885.62, se_health_insurance: 0, retirement_hsa: 0, other: 0, total: 3885.62 },
-    line_2a_deduction: 16100, deduction_source: "standard deduction (single, 2026)",
-    line_2b_qbi: { deduction: 7002.88 }, line_3_taxable_income: 28011.5,
+    line_2a_deduction: 16600, deduction_source: "standard deduction (single, 2026) + non-itemizer charitable",
+    nonitemizer_charitable: { applicable: true, entered: 500, statutory_cap: 1000, allowed: 500, standard_deduction: 16100 },
+    line_2b_qbi: { deduction: 7002.88 }, line_2c_schedule_1a: 6000,
+    line_2d_total_deductions: 29602.88, taxable_before_qbi: 28514.38,
+    line_3_taxable_income: 28011.5,
     line_4_income_tax: 3113.38, bracket_detail: [], line_7_credits: 0, line_8_after_credits: 3113.38,
     line_9_se_tax: { total: 7771.25 }, line_10_other_taxes: { owner_entered: 0, additional_medicare: { tax: 0 }, total: 0 },
     line_11_refundable_credits: 0, line_11c_total_tax: 10884.63,
@@ -183,4 +186,29 @@ test("record payment posts federal-locked jurisdiction", async () => {
   expect(api.post).toHaveBeenCalledWith("/admin/estimated-tax/payments", expect.objectContaining({
     jurisdiction: "federal", amount: 2300,
   }));
+});
+
+
+test("worksheet shows charity and Schedule 1-A as separate lines (4D-2B-1)", async () => {
+  api.get.mockResolvedValue({ data: basePayload({ status: "READY", cpa_review_reasons: [], estimate: readyEstimate(), federal_payments: [], future_dated_payments_total: 0 }) });
+  await mount();
+  await act(async () => { container.querySelector('[data-testid="fed-details-toggle"]').click(); });
+  const ws = text('[data-testid="fed-worksheet"]');
+  expect(ws).toContain("Standard deduction");
+  expect(ws).toContain("Non-itemizer charitable deduction (cap $1000)");
+  expect(ws).toContain("Schedule 1-A additional deductions (line 2c)");
+});
+
+test("future-dated federal payments are flagged and excluded from crediting (4D-2B-1)", async () => {
+  const est = readyEstimate();
+  est.installments.federal_payments_recorded = 0;
+  est.installments.credited_total = 0;
+  api.get.mockResolvedValue({ data: basePayload({
+    status: "READY", cpa_review_reasons: [], estimate: est,
+    federal_payments: [{ id: "fut1", period: 4, amount: 4000, payment_date: "2026-12-15", voided: false, future_dated: true }],
+    future_dated_payments_total: 4000,
+  })});
+  await mount();
+  expect(text('[data-testid="fed-future-payments-note"]')).toContain("$4000.00");
+  expect(text('[data-testid="fed-remaining-payment"]')).toBe("$6900.00"); // unchanged by the future row
 });

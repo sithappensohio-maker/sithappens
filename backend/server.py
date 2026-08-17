@@ -40930,6 +40930,9 @@ _TAX_PROFILE_NUMERIC_FIELDS = {
         # Step 4D-2B — worksheet-material additions:
         "refundable_credits_estimate",   # 1040-ES line 11b-style refundable lump
         "other_expected_federal_taxes",  # owner-entered lump for line 10
+        # Step 4D-2B-1 — 2026 worksheet completion:
+        "nonitemizer_charitable_contributions",  # line 2a add-on ($1,000/$2,000 MFJ cap)
+        "schedule_1a_deductions",                # line 2c lump (Schedule 1-A, Form 1040)
     ),
     "ohio": (
         "prior_year_tax", "prior_year_overpayment_applied",
@@ -40964,6 +40967,8 @@ _TAX_PROFILE_FIELD_LABELS = {
     "federal.other_expected_federal_taxes": "Other expected federal taxes (enter 0 if none)",
     "federal.deduction_method": "Deduction approach (standard or itemized)",
     "federal.itemized_deduction_amount": "Expected itemized deduction amount",
+    "federal.nonitemizer_charitable_contributions": "Qualifying cash/check charitable contributions while using the standard deduction (enter 0 if none)",
+    "federal.schedule_1a_deductions": "Expected total additional deductions from Schedule 1-A, Form 1040 (enter 0 if none)",
     "federal.expects_qualified_investment_income": "Whether you expect material qualified dividends / net capital gains",
     "federal.unusual_tax_situation": "Whether this year involves an unusual tax situation",
     "projection.remaining_business_profit": "Expected remaining-year Sit Happens business profit (confirm a number, even 0)",
@@ -40989,6 +40994,8 @@ _FEDERAL_REQUIRED_FIELDS = (
     "federal.other_adjustments", "federal.other_expected_federal_taxes",
     "federal.deduction_method",
     "federal.expects_qualified_investment_income", "federal.unusual_tax_situation",
+    # Step 4D-2B-1 — line 2c is material for every 2026 filer:
+    "federal.schedule_1a_deductions",
     "projection.remaining_business_profit",
 )
 
@@ -41001,6 +41008,11 @@ def _federal_required_fields(profile: Dict[str, Any]) -> tuple:
     fed = (profile or {}).get("federal") or {}
     if fed.get("deduction_method") == "itemized":
         req.append("federal.itemized_deduction_amount")
+    else:
+        # Step 4D-2B-1 — the non-itemizer charitable add-on is MATERIAL on
+        # the standard path (unknown ≠ zero); on the itemized path it does
+        # not exist and never blocks readiness.
+        req.append("federal.nonitemizer_charitable_contributions")
     if fed.get("filing_status") == "married_filing_jointly":
         req.append("federal.spouse_wages")
     return tuple(req)
@@ -41209,9 +41221,11 @@ import federal_estimated_tax as fed_engine
 from federal_tax_constants import federal_constants_for
 
 
-async def _federal_estimated_tax_payload(year: int) -> Dict[str, Any]:
+async def _federal_estimated_tax_payload(year: int, as_of: Optional[date] = None) -> Dict[str, Any]:
+    """`as_of` is the deterministic calculation date — the live endpoint uses
+    the business date; tests inject frozen dates (Step 4D-2B-1)."""
     yr = int(year)
-    today = business_today()
+    today = as_of or business_today()
     profile = await _get_tax_profile(yr)
     completeness = _tax_profile_completeness(profile)
 
@@ -41265,10 +41279,24 @@ async def _federal_estimated_tax_payload(year: int) -> Dict[str, Any]:
         nxt = year_rows[-1]
     passed_count = sum(1 for r in year_rows if date.fromisoformat(r["due"]) < today)
 
+    # Step 4D-2B-1 — payments are credited by their ACTUAL payment date:
+    # only non-voided FEDERAL payments made ON OR BEFORE the as-of date
+    # count toward today's cumulative requirement (Pub 505 regular
+    # installment method credits payments when made — a December payment
+    # cannot satisfy September's installment in August). Future-dated rows
+    # stay visible in history, flagged, and start counting exactly once
+    # their payment date arrives. (Prior-year overpayment and withholding
+    # keep their own official treatments — unchanged.)
     pay_rows = await db.estimated_tax_payments.find(
         {"tax_year": yr, "jurisdiction": "federal", "voided": {"$ne": True}},
         {"_id": 0}).to_list(2000)
-    federal_paid = round(sum(float(p.get("amount") or 0) for p in pay_rows), 2)
+    as_of_iso = today.isoformat()
+    for p in pay_rows:
+        p["future_dated"] = (p.get("payment_date") or "") > as_of_iso
+    federal_paid = round(sum(float(p.get("amount") or 0) for p in pay_rows
+                             if not p["future_dated"]), 2)
+    future_total = round(sum(float(p.get("amount") or 0) for p in pay_rows
+                             if p["future_dated"]), 2)
 
     result = fed_engine.compute_federal_estimate(
         filing_status=filing_status,
@@ -41282,8 +41310,7 @@ async def _federal_estimated_tax_payload(year: int) -> Dict[str, Any]:
     flags = fed_engine.federal_cpa_flags(
         filing_status=filing_status, federal=fed,
         projected_agi_hint=result["worksheet"]["line_1_agi"],
-        taxable_before_qbi=round(result["worksheet"]["line_1_agi"]
-                                 - result["worksheet"]["line_2a_deduction"], 2),
+        taxable_before_qbi=result["worksheet"]["taxable_before_qbi"],
         constants=constants)
 
     status = "CPA_REVIEW_REQUIRED" if flags else "READY"
@@ -41294,16 +41321,26 @@ async def _federal_estimated_tax_payload(year: int) -> Dict[str, Any]:
         result["payment_required"] = None
     return {**base, "status": status, "cpa_review_reasons": flags,
             "estimate": result, "federal_payments": pay_rows,
+            "future_dated_payments_total": future_total,
             "all_installments_passed": all_passed}
 
 
 @api.get("/admin/federal-estimated-tax")
 async def federal_estimated_tax_endpoint(
     year: Optional[int] = None,
+    as_of: Optional[str] = None,
     _: dict = Depends(require_admin_and_permission("finance_reports")),
 ):
+    """`as_of` (YYYY-MM-DD, optional) freezes the calculation date — a
+    finance-gated testing/QA aid; live use omits it (business date)."""
     yr = int(year or business_today().year)
-    return await _federal_estimated_tax_payload(yr)
+    frozen = None
+    if as_of:
+        try:
+            frozen = date.fromisoformat(as_of)
+        except Exception:
+            raise HTTPException(400, "Invalid as_of date")
+    return await _federal_estimated_tax_payload(yr, as_of=frozen)
 
 
 # ── Jurisdiction-split estimated-payment ledger (append-only) ───────────────
@@ -41338,8 +41375,12 @@ async def list_estimated_tax_payments(
     yr = int(year or business_today().year)
     rows = await db.estimated_tax_payments.find(
         {"tax_year": yr}, {"_id": 0}).sort([("payment_date", 1)]).to_list(2000)
+    today_iso = business_today().isoformat()
     by_j: Dict[str, Any] = {j: {"payments": [], "total": 0.0} for j in ESTIMATED_TAX_JURISDICTIONS}
     for r in rows:
+        # Step 4D-2B-1 — future-dated rows stay visible/flagged; engines
+        # exclude them from crediting until their payment date arrives.
+        r["future_dated"] = (r.get("payment_date") or "") > today_iso
         slot = by_j[r["jurisdiction"]]
         slot["payments"].append(r)
         if not r.get("voided"):

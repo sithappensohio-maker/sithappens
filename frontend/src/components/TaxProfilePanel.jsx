@@ -193,6 +193,18 @@ export default function TaxProfilePanel({ year, onChanged }) {
             <NumField label="Itemized deduction amount" testid="taxprofile-itemized"
                       value={val("federal", "itemized_deduction_amount")} onChange={set("federal", "itemized_deduction_amount")} />
           )}
+          {val("federal", "deduction_method") !== "itemized" && (
+            <NumField label="Cash/check charitable gifts (standard deduction)"
+                      hint="2026 lets standard-deduction filers add qualifying cash/check gifts, up to $1,000 ($2,000 married filing jointly). Enter 0 if none."
+                      testid="taxprofile-charity"
+                      value={val("federal", "nonitemizer_charitable_contributions")}
+                      onChange={set("federal", "nonitemizer_charitable_contributions")} />
+          )}
+          <NumField label="Expected Schedule 1-A additional deductions"
+                    hint="Expected total additional deductions from Schedule 1-A, Form 1040 (senior deduction, tips, overtime, car-loan interest…). A personal deduction — not a business expense. Enter 0 if none."
+                    testid="taxprofile-schedule1a"
+                    value={val("federal", "schedule_1a_deductions")}
+                    onChange={set("federal", "schedule_1a_deductions")} />
           <div className="grid grid-cols-2 gap-2">
             <NumField label="SE health insurance" testid="taxprofile-se-health" value={val("federal", "se_health_insurance")} onChange={set("federal", "se_health_insurance")} />
             <NumField label="Retirement / HSA adjustments" testid="taxprofile-retirement" value={val("federal", "retirement_hsa_adjustments")} onChange={set("federal", "retirement_hsa_adjustments")} />

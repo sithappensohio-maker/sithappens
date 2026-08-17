@@ -86,6 +86,9 @@ export default function EstimatedTaxPayments({ year, refreshKey = null, onChange
                   <span className="text-shTextMuted">
                     P{p.period} · {fmtDate(p.payment_date)}{p.reference ? ` · ${p.reference}` : ""}
                     {p.voided && <b className="text-red-400 ml-1 uppercase">voided</b>}
+                    {!p.voided && p.future_dated && (
+                      <b className="text-amber-300 ml-1 uppercase" data-testid={`estpay-future-${p.id}`}>future-dated</b>
+                    )}
                   </span>
                   <span className="flex items-center gap-2">
                     <b className={p.voided ? "line-through text-shTextMuted" : "text-shText"}>{money(p.amount)}</b>

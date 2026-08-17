@@ -157,22 +157,48 @@ def compute_federal_estimate(
     agi = _r2(income_total - adjustments)
 
     # ── Line 2a — deductions ────────────────────────────────────────────────
+    # Standard path (Pub 505 2026 Worksheet 2-1, line 2a verbatim): the
+    # statutory standard deduction PLUS up to $1,000 ($2,000 MFJ) of
+    # qualifying cash/check charitable contributions. The owner-entered
+    # amount is CAPPED at the statutory maximum — it can never inflate the
+    # deduction past the allowed amount. On the itemized path the
+    # non-itemizer add-on does not exist (charity, if any, is already part
+    # of the owner-entered itemized total) — never double-counted.
+    charity_cap = C["nonitemizer_charitable_cap"][filing_status]
     if f["deduction_method"] == "itemized":
         deduction = _r2(f["itemized_deduction_amount"])
         deduction_source = "itemized (owner-entered expected amount)"
+        charity_detail = {"applicable": False, "entered": None,
+                          "statutory_cap": charity_cap, "allowed": 0.0,
+                          "note": "Not applicable — itemized deductions selected"}
     else:
-        deduction = C["standard_deduction"][filing_status]
-        deduction_source = f"standard deduction ({filing_status}, 2026)"
+        std = C["standard_deduction"][filing_status]
+        charity_entered = _r2(f["nonitemizer_charitable_contributions"])
+        charity_allowed = _r2(min(max(0.0, charity_entered), charity_cap))
+        deduction = _r2(std + charity_allowed)
+        deduction_source = f"standard deduction ({filing_status}, 2026) + non-itemizer charitable"
+        charity_detail = {"applicable": True, "entered": charity_entered,
+                          "statutory_cap": charity_cap, "allowed": charity_allowed,
+                          "standard_deduction": std}
 
-    taxable_before_qbi = max(0.0, _r2(agi - deduction))
+    # ── Line 2c — expected additional deductions from Schedule 1-A ─────────
+    # Owner-entered LUMP for the 2026 worksheet's Schedule 1-A line (senior
+    # deduction, tips, overtime, car-loan interest…). A personal deduction —
+    # never subtracted from Schedule C profit.
+    schedule_1a = max(0.0, _r2(f["schedule_1a_deductions"]))
+
+    # Taxable income BEFORE the QBI deduction (Form 8995's income-limit
+    # base): AGI minus line 2a AND line 2c.
+    taxable_before_qbi = max(0.0, _r2(agi - deduction - schedule_1a))
 
     # ── Line 2b — QBI deduction ─────────────────────────────────────────────
     qbi = compute_qbi(annual_business_profit, f["other_se_income"], se["deduction_half"],
                       f["se_health_insurance"], f["retirement_hsa_adjustments"],
                       taxable_before_qbi, filing_status, C)
 
-    # ── Line 3 — taxable income (never negative) ────────────────────────────
-    taxable_income = max(0.0, _r2(taxable_before_qbi - qbi["deduction"]))
+    # ── Line 2d / Line 3 — total deductions; taxable income (never negative)
+    line_2d = _r2(deduction + qbi["deduction"] + schedule_1a)
+    taxable_income = max(0.0, _r2(agi - line_2d))
 
     # ── Line 4 — regular income tax (2026 Rate Schedules) ───────────────────
     bracket = compute_bracket_tax(taxable_income, C["brackets"][filing_status])
@@ -259,7 +285,11 @@ def compute_federal_estimate(
             },
             "line_2a_deduction": _r2(deduction),
             "deduction_source": deduction_source,
+            "nonitemizer_charitable": charity_detail,
             "line_2b_qbi": qbi,
+            "line_2c_schedule_1a": schedule_1a,
+            "line_2d_total_deductions": line_2d,
+            "taxable_before_qbi": taxable_before_qbi,
             "line_3_taxable_income": taxable_income,
             "line_4_income_tax": income_tax,
             "bracket_detail": bracket["brackets"],

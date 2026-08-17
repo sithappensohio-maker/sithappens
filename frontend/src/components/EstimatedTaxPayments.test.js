@@ -119,3 +119,14 @@ test("voided rows remain visible and struck through", async () => {
   expect(row).toContain("voided");
   expect(row).toContain("$100.00");
 });
+
+
+test("future-dated rows are chipped but still totaled in history (4D-2B-1)", async () => {
+  const p = payload();
+  p.jurisdictions.federal.payments.push(
+    { id: "fut1", period: 4, amount: 4000, payment_date: "2026-12-15", reference: null, voided: false, future_dated: true });
+  p.jurisdictions.federal.total = 4500;
+  api.get.mockResolvedValue({ data: p });
+  await mount();
+  expect(text('[data-testid="estpay-future-fut1"]')).toBe("future-dated");
+});

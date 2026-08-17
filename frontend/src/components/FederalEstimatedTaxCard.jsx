@@ -124,6 +124,11 @@ export default function FederalEstimatedTaxCard({ year, onOpenProfile, onPayment
                 <p>Safe-harbor target through this installment: <b className="text-shText">{money(inst.required_through_next)}</b></p>
                 <p>Withholding counted (full-year, even): <b className="text-shText">{money(inst.withholding_counted)}</b></p>
                 <p>Prior-year credit + federal payments: <b className="text-shText">{money(inst.credited_total)}</b></p>
+                {(data.future_dated_payments_total || 0) > 0 && (
+                  <p className="text-amber-300" data-testid="fed-future-payments-note">
+                    Future-dated payments not counted yet: <b>{money(data.future_dated_payments_total)}</b>
+                  </p>
+                )}
               </div>
             </div>
           ) : (
@@ -208,8 +213,17 @@ function WorksheetDetails({ est, year }) {
         {w.income_components.other_taxable_income !== 0 && <Line label="Other taxable income" value={w.income_components.other_taxable_income} />}
         <Line label="Adjustments (incl. ½ SE tax)" value={-w.adjustments.total} />
         <Line label="Projected AGI (line 1)" value={w.line_1_agi} bold />
-        <Line label={w.deduction_source} value={-w.line_2a_deduction} />
+        {w.nonitemizer_charitable?.applicable ? (
+          <>
+            <Line label="Standard deduction" value={-(w.nonitemizer_charitable.standard_deduction ?? w.line_2a_deduction)} />
+            <Line label={`Non-itemizer charitable deduction (cap $${(w.nonitemizer_charitable.statutory_cap ?? 0).toFixed(0)})`}
+                  value={-(w.nonitemizer_charitable.allowed ?? 0)} />
+          </>
+        ) : (
+          <Line label={w.deduction_source} value={-w.line_2a_deduction} />
+        )}
         <Line label="QBI deduction (line 2b)" value={-w.line_2b_qbi.deduction} />
+        <Line label="Schedule 1-A additional deductions (line 2c)" value={-(w.line_2c_schedule_1a ?? 0)} />
         <Line label="Taxable income (line 3)" value={w.line_3_taxable_income} bold />
         <Line label="Income tax (2026 rate schedules)" value={w.line_4_income_tax} />
         {w.line_7_credits !== 0 && <Line label="Credits (owner-entered)" value={-w.line_7_credits} />}

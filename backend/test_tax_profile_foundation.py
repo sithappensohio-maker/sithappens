@@ -126,6 +126,7 @@ def test_e_missing_field_named():
             "se_health_insurance": 0, "retirement_hsa_adjustments": 0,
             "other_adjustments": 0, "other_expected_federal_taxes": 0,
             "deduction_method": "standard",
+            "nonitemizer_charitable_contributions": 0, "schedule_1a_deductions": 0,
             "expects_qualified_investment_income": False, "unusual_tax_situation": False}
     _patch({"federal": full, "projection": {"remaining_business_profit": 0}})
     c = _get_profile()["completeness"]["federal"]
