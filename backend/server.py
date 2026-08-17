@@ -27793,6 +27793,78 @@ async def _legacy_void_tax_reversals(start_date: str, end_date: str) -> List[Dic
     return out
 
 
+async def _legacy_stripe_refund_tax_reversals(start_date: str, end_date: str) -> List[Dict[str, Any]]:
+    """Step 4B-9 — read-time tax reversal for HISTORICAL Stripe refund rows.
+
+    Reversal rows written before this fix carry no ``tax_amount``. When the
+    linked original shop-order row has stored tax AND the CUMULATIVE
+    refunded amount across all of that payment's reversal rows covers the
+    full original charge, the exact original tax is reconstructed — once,
+    attributed to the refund row that completed the full reversal (only
+    when that completing row falls inside the report window and is itself
+    keyless). Partials without line-item identity are never guessed.
+    Explicit-era rows (tax_amount key present, incl. 0.0) are the marker
+    that the writer already decided — those payments are skipped, so an
+    explicit reversal can never be doubled. Pure read-time computation.
+    """
+    keyless = await db.retail_sales.find(
+        {"date": {"$gte": start_date, "$lte": end_date},
+         "source_kind": "stripe_refund", "tax_amount": {"$exists": False},
+         "reversed_payment_id": {"$nin": [None, ""]}},
+        {"_id": 0, "id": 1, "date": 1, "amount": 1, "reversed_payment_id": 1, "created_at": 1},
+    ).to_list(10000)
+    if not keyless:
+        return []
+    pay_ids = list({r["reversed_payment_id"] for r in keyless})
+    originals = {
+        r["payment_id"]: r
+        for r in await db.retail_sales.find(
+            {"payment_id": {"$in": pay_ids}, "tax_amount": {"$gt": 0},
+             "amount": {"$gt": 0}},
+            {"_id": 0, "payment_id": 1, "amount": 1, "tax_amount": 1, "tax_rate_pct": 1},
+        ).to_list(10000)
+    }
+    if not originals:
+        return []
+    all_reversals = await db.retail_sales.find(
+        {"source_kind": "stripe_refund", "reversed_payment_id": {"$in": list(originals.keys())}},
+        {"_id": 0, "id": 1, "date": 1, "amount": 1, "tax_amount": 1,
+         "reversed_payment_id": 1, "created_at": 1},
+    ).to_list(10000)
+    by_payment: Dict[str, List[Dict[str, Any]]] = {}
+    for r in all_reversals:
+        by_payment.setdefault(r["reversed_payment_id"], []).append(r)
+
+    out: List[Dict[str, Any]] = []
+    window_keyless_ids = {r["id"] for r in keyless}
+    for pay_id, rows in by_payment.items():
+        if any("tax_amount" in r and abs(float(r.get("tax_amount") or 0)) >= 0.005 for r in rows):
+            continue  # tax already explicitly reversed by the modern writer
+        orig = originals[pay_id]
+        original_amount = round(float(orig.get("amount") or 0), 2)
+        rows.sort(key=lambda r: r.get("created_at") or "")
+        running = 0.0
+        completing = None
+        for r in rows:
+            running = round(running + abs(float(r.get("amount") or 0)), 2)
+            if running >= original_amount - 0.005:
+                completing = r
+                break
+        if completing is None:
+            continue  # cumulative refunds haven't reached full — never guess
+        if completing["id"] not in window_keyless_ids:
+            continue  # completing row outside window, or tax-explicit era
+        out.append({
+            "id": f"reconstructed-stripe-{completing['id']}", "date": completing.get("date"),
+            "description": "Stripe refund (reconstructed tax reversal)",
+            "amount": float(completing.get("amount") or 0),
+            "tax_amount": -round(float(orig.get("tax_amount") or 0), 2),
+            "tax_rate_pct": float(orig.get("tax_rate_pct") or 0),
+            "reconstructed": True,
+        })
+    return out
+
+
 @api.get("/admin/sales-tax/summary")
 async def sales_tax_summary(
     start_date: Optional[str] = None,
@@ -27825,6 +27897,8 @@ async def sales_tax_summary(
     # Historical void rows without a stored tax_amount: reconstruct their
     # reversal from the original sale's stored tax (full-reversal rows only).
     rt_rows += await _legacy_void_tax_reversals(sd, ed)
+    # Step 4B-9 — same treatment for historical FULL Stripe refunds.
+    rt_rows += await _legacy_stripe_refund_tax_reversals(sd, ed)
     bk_total = round(sum(float(r.get("tax_amount") or 0) for r in bk_rows), 2)
     rt_total = round(sum(float(r.get("tax_amount") or 0) for r in rt_rows), 2)
     # Month breakdown
@@ -34657,13 +34731,39 @@ async def _finalize_stripe_refund(refund_attempt_id: str) -> None:
     if not existing_retail_reversal:
         original_retail = await db.retail_sales.find_one({"payment_id": payment["id"]}, {"_id": 0})
         if original_retail:
+            # Step 4B-9 — sales-tax reversal, full-refund-only. Refund
+            # attempts carry no line-item identity, so PARTIAL refunds of a
+            # taxable order never get a guessed tax split; but once the
+            # CUMULATIVE refunded amount covers the full original charge,
+            # the exact stored original tax is reversed — once. Prior
+            # partial reversal rows carry an explicit 0.0 (the tax-explicit
+            # marker, same convention as Step 4B-1's void rows), so the
+            # completing refund's row carries the whole remaining tax and a
+            # webhook replay can never write a second row (payment_id
+            # unique index) or a second reversal.
+            original_tax = round(float(original_retail.get("tax_amount") or 0), 2)
+            tax_component = 0.0
+            if original_tax > 0:
+                fresh_pay = await db.payments.find_one(
+                    {"id": payment["id"]}, {"_id": 0, "refunded_amount": 1})
+                cumulative_refunded = round(float((fresh_pay or {}).get("refunded_amount") or 0), 2)
+                original_amount = round(float(original_retail.get("amount") or payment.get("amount") or 0), 2)
+                prior_rows = await db.retail_sales.find(
+                    {"source_kind": "stripe_refund", "reversed_payment_id": payment["id"],
+                     "tax_amount": {"$exists": True}},
+                    {"_id": 0, "tax_amount": 1},
+                ).to_list(100)
+                already_reversed = round(sum(-float(r.get("tax_amount") or 0) for r in prior_rows), 2)
+                if original_amount > 0 and cumulative_refunded >= original_amount - 0.005:
+                    tax_component = -round(max(0.0, original_tax - already_reversed), 2)
             try:
                 await db.retail_sales.insert_one({
                     "id": str(uuid.uuid4()), "date": business_today().isoformat(), "amount": -amount,
                     "payment_method": "stripe_online", "client_id": payment.get("client_id"),
                     "client_name": original_retail.get("client_name"), "invoice_id": invoice_id,
                     "payment_id": reversal["id"], "reversed_payment_id": payment["id"],
-                    "source_kind": "stripe_refund", "description": f"Stripe refund · {payment['id']}",
+                    "source_kind": "stripe_refund", "tax_amount": tax_component,
+                    "description": f"Stripe refund · {payment['id']}",
                     "created_at": ts, "created_by": "stripe_refund", "logged_by": "Stripe",
                 })
             except DuplicateKeyError:
@@ -39892,6 +39992,8 @@ async def admin_quarterly_tax(
     # reversal is reconstructed read-time from the original sale (new void
     # rows store explicit negative tax and are already in the sum above).
     legacy_void_rows = await _legacy_void_tax_reversals(start, end)
+    # Step 4B-9 — historical full Stripe refunds reconstruct the same way.
+    legacy_void_rows += await _legacy_stripe_refund_tax_reversals(start, end)
     retail_sales_tax_collected += sum(float(r.get("tax_amount") or 0) for r in legacy_void_rows)
     retail_income = sum(_schedule_c_retail_income(r) for r in retail_rows)
     # Step 4B-2 — income correction for the same historical rows: a keyless
