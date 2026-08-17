@@ -2251,7 +2251,7 @@ html, body, #root {
 .sh-shop-manager-workspace [data-testid="sm-category-form"] { border-radius:16px !important; border-color:rgba(0,169,224,.22) !important; background:linear-gradient(145deg,rgba(7,8,13,.99),rgba(5,12,18,.98)) !important; }
 
 /* Finance ---------------------------------------------------------------- */
-.sh-finance-workspace .sh-admin-tabs { max-width:560px; }
+.sh-finance-workspace .sh-admin-tabs { max-width:760px; } /* Step 4C — widened for the third (Sales Tax) tab */
 .sh-finance-workspace table { border-collapse:separate; border-spacing:0; }
 .sh-finance-workspace table thead { background:rgba(255,255,255,.025); }
 .sh-finance-workspace table tbody tr { transition:background .14s ease; }

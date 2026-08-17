@@ -10669,6 +10669,7 @@ def _default_dashboard_widgets() -> dict:
         "quick_links":       True,
         "register":          True,
         "upcoming_bookings": True,
+        "sales_tax":         True,  # Step 4C — Ohio sales-tax due chip
     }
 
 
@@ -27865,17 +27866,17 @@ async def _legacy_stripe_refund_tax_reversals(start_date: str, end_date: str) ->
     return out
 
 
-@api.get("/admin/sales-tax/summary")
-async def sales_tax_summary(
-    start_date: Optional[str] = None,
-    end_date: Optional[str] = None,
-    _: dict = Depends(require_admin_and_permission("finance_reports")),
-):
-    """Return tax collected in the window. Defaults to current calendar year.
-    Splits booking-tax vs retail-tax + breakdown by month."""
-    today = business_today()
-    sd = start_date or f"{today.year}-01-01"
-    ed = end_date or today.isoformat()
+async def _sales_tax_window_summary(sd: str, ed: str) -> Dict[str, Any]:
+    """Canonical net sales-tax liability for a business-date window.
+
+    Step 4C — extracted verbatim from the /admin/sales-tax/summary endpoint
+    so the filing tracker and the summary report can never drift apart.
+    This is THE source of truth for filing-period tax liability: booking tax
+    + signed retail tax rows + the 4B-1/4B-9 read-time reconstructions.
+    total_tax_collected is NET liability (collected − reversed); the
+    gross/reversed split below is derived from the very same rows, never a
+    second formula.
+    """
     # Booking-level tax
     bk_rows = await _booking_rows_anywhere(
         {
@@ -27917,16 +27918,418 @@ async def sales_tax_summary(
          "total_tax": round(v["bookings"] + v["retail"], 2)}
         for k, v in sorted(by_month.items())
     ]
+    # Derived gross/reversal split of the SAME rows (booking tax rows are
+    # all positive by query; retail rows are signed).
+    rt_pos = round(sum(float(r.get("tax_amount") or 0) for r in rt_rows
+                       if float(r.get("tax_amount") or 0) > 0), 2)
+    rt_neg = round(sum(float(r.get("tax_amount") or 0) for r in rt_rows
+                       if float(r.get("tax_amount") or 0) < 0), 2)
     return {
         "start_date": sd,
         "end_date": ed,
         "bookings_tax_total": bk_total,
         "retail_tax_total": rt_total,
         "total_tax_collected": round(bk_total + rt_total, 2),
+        "gross_tax_charged": round(bk_total + rt_pos, 2),
+        "tax_reversed": rt_neg,  # ≤ 0
         "booking_count": len(bk_rows),
         "retail_count": len(rt_rows),
         "by_month": months,
     }
+
+
+@api.get("/admin/sales-tax/summary")
+async def sales_tax_summary(
+    start_date: Optional[str] = None,
+    end_date: Optional[str] = None,
+    _: dict = Depends(require_admin_and_permission("finance_reports")),
+):
+    """Return tax collected in the window. Defaults to current calendar year.
+    Splits booking-tax vs retail-tax + breakdown by month."""
+    today = business_today()
+    sd = start_date or f"{today.year}-01-01"
+    ed = end_date or today.isoformat()
+    return await _sales_tax_window_summary(sd, ed)
+
+
+# ─────────────── Step 4C · Ohio Sales Tax Due & Filing Tracker ───────────────
+# Owner-facing filing-period tracker. Liability dollars ALWAYS come from
+# _sales_tax_window_summary (the 4B-1/4B-9 canonical source); the pure
+# period/deadline/status math lives in sales_tax_tracker.py. Persistent
+# facts: one settings doc (db.settings id "sales_tax_filing") + one
+# sales_tax_filings record per period (snapshot frozen at filing time,
+# payment EVENTS appended, audit log, no destructive deletes).
+import sales_tax_tracker as stt
+
+SALES_TAX_SETTINGS_ID = "sales_tax_filing"
+
+
+async def _get_sales_tax_filing_settings() -> Optional[Dict[str, Any]]:
+    row = await db.settings.find_one({"id": SALES_TAX_SETTINGS_ID}, {"_id": 0})
+    if not row or row.get("filing_frequency") not in stt.FILING_FREQUENCIES:
+        return None
+    return row
+
+
+class SalesTaxSettingsIn(BaseModel):
+    filing_frequency: str  # monthly | semiannual | custom
+    tracking_start_date: Optional[str] = None  # first day of first tracked period
+    effective_date: Optional[str] = None
+    vendor_license_ref: Optional[str] = None
+    timely_discount_enabled: bool = False
+    notes: Optional[str] = None
+    # custom / special Ohio assignment (escape hatch, single explicit period)
+    custom: Optional[Dict[str, Any]] = None
+    # per-period explicit due-date overrides: {period_key: {date, reason}}
+    due_date_overrides: Optional[Dict[str, Dict[str, str]]] = None
+
+
+@api.get("/admin/sales-tax/filing-settings")
+async def get_sales_tax_filing_settings(_: dict = Depends(require_admin_and_permission("finance_reports"))):
+    row = await _get_sales_tax_filing_settings()
+    return {"configured": row is not None, "settings": row,
+            "frequencies": list(stt.FILING_FREQUENCIES),
+            "timely_discount_rate_pct": stt.OHIO_TIMELY_DISCOUNT_RATE_PCT}
+
+
+@api.put("/admin/sales-tax/filing-settings")
+async def put_sales_tax_filing_settings(
+    body: SalesTaxSettingsIn,
+    user: dict = Depends(require_admin_and_permission("finance_reports")),
+):
+    """Save the Ohio-ASSIGNED filing schedule. Never auto-defaulted: the
+    Department of Taxation assigns the interval, so the owner must save it
+    explicitly (the UI may recommend Monthly, but nothing is silently stored)."""
+    if body.filing_frequency not in stt.FILING_FREQUENCIES:
+        raise HTTPException(status_code=400, detail="Invalid filing frequency")
+    if body.filing_frequency == "custom":
+        c = body.custom or {}
+        for k in ("period_start", "period_end", "due_date"):
+            try:
+                date.fromisoformat(str(c.get(k)))
+            except Exception:
+                raise HTTPException(status_code=400, detail=f"Custom schedule needs a valid {k}")
+    else:
+        try:
+            date.fromisoformat(str(body.tracking_start_date))
+        except Exception:
+            raise HTTPException(status_code=400, detail="tracking_start_date (YYYY-MM-DD) is required")
+    for ov in (body.due_date_overrides or {}).values():
+        try:
+            date.fromisoformat(str(ov.get("date")))
+        except Exception:
+            raise HTTPException(status_code=400, detail="Due-date override needs a valid date")
+    existing = await db.settings.find_one({"id": SALES_TAX_SETTINGS_ID}, {"_id": 0}) or {}
+    doc = {
+        "id": SALES_TAX_SETTINGS_ID,
+        "jurisdiction": "OH",
+        "filing_frequency": body.filing_frequency,
+        "tracking_start_date": body.tracking_start_date,
+        "effective_date": body.effective_date,
+        "vendor_license_ref": (body.vendor_license_ref or "").strip() or None,
+        "timely_discount_enabled": bool(body.timely_discount_enabled),
+        "timely_discount_rate_pct": stt.OHIO_TIMELY_DISCOUNT_RATE_PCT,
+        "notes": (body.notes or "").strip() or None,
+        "custom": body.custom if body.filing_frequency == "custom" else None,
+        "due_date_overrides": body.due_date_overrides or {},
+        "created_at": existing.get("created_at") or now_iso(),
+        "updated_at": now_iso(),
+        "updated_by": user.get("id"),
+    }
+    await db.settings.update_one({"id": SALES_TAX_SETTINGS_ID}, {"$set": doc}, upsert=True)
+    return {"configured": True, "settings": doc}
+
+
+async def _sales_tax_period_liability(period: Dict[str, Any]) -> Dict[str, Any]:
+    return await _sales_tax_window_summary(period["period_start"], period["period_end"])
+
+
+def _stt_custom_periods(settings: Dict[str, Any]) -> List[Dict[str, Any]]:
+    c = settings.get("custom") or {}
+    return [{
+        "period_key": f"custom-{c.get('period_start')}",
+        "label": c.get("label") or f"Custom period {c.get('period_start')} – {c.get('period_end')}",
+        "period_start": c.get("period_start"), "period_end": c.get("period_end"),
+        "custom_due_date": c.get("due_date"), "custom_note": c.get("note"),
+    }]
+
+
+async def _sales_tax_tracker_payload() -> Dict[str, Any]:
+    """Assemble the full tracker view: settings, per-period liability
+    (canonical helper), filing records, derived statuses, primary card."""
+    today = business_today()
+    settings = await _get_sales_tax_filing_settings()
+    filings = await db.sales_tax_filings.find({}, {"_id": 0}).to_list(1000)
+    filings_by_key = {f["period_key"]: f for f in filings}
+
+    if not settings:
+        # Setup-required: liability for the current calendar month may still
+        # be shown, but no due date is asserted.
+        cur = stt.period_for_date("monthly", today)
+        liab = await _sales_tax_period_liability(cur)
+        return {
+            "configured": False, "setup_required": True, "today": today.isoformat(),
+            "unconfigured_preview": {
+                **cur, "liability": liab["total_tax_collected"], "detail": liab,
+                "note": "Filing schedule needs setup — due dates are unknown until "
+                        "Ohio's assigned filing frequency is configured.",
+            },
+            "periods": [], "primary": None, "current": None,
+        }
+
+    freq = settings["filing_frequency"]
+    overrides = settings.get("due_date_overrides") or {}
+    if freq == "custom":
+        periods = _stt_custom_periods(settings)
+        tracking_start = periods[0]["period_start"]
+    else:
+        tracking_start = settings["tracking_start_date"]
+        periods = stt.iter_periods(freq, tracking_start, today)
+
+    states: List[Dict[str, Any]] = []
+    for p in periods:
+        liab = await _sales_tax_period_liability(p)
+        ov = overrides.get(p["period_key"])
+        if p.get("custom_due_date") and not ov:
+            ov = {"date": p["custom_due_date"], "reason": settings.get("custom", {}).get("note") or "Ohio special assignment"}
+        st = stt.derive_period_state(
+            p, filings_by_key.get(p["period_key"]), today, tracking_start,
+            due_override=ov, current_liability=liab["total_tax_collected"])
+        st["liability"] = liab["total_tax_collected"]
+        st["liability_detail"] = liab
+        if st["status"] in ("open", "ready_to_file", "overdue"):
+            disc = stt.timely_discount_amount(
+                st["liability"], bool(settings.get("timely_discount_enabled")))
+            st["projected_timely_discount"] = disc
+            st["projected_amount_to_remit"] = stt.amount_to_remit(st["liability"], [], disc)
+        st["urgency"] = stt.urgency_for(st, today)
+        states.append(st)
+
+    primary = stt.pick_primary_period(states)
+    current = next((s for s in states if s["status"] == "open"), None)
+    needs_review = [s["period_key"] for s in states if s.get("needs_review")]
+    return {
+        "configured": True, "setup_required": False, "today": today.isoformat(),
+        "settings": settings, "periods": states,
+        "primary": primary, "current": current,
+        "needs_review_periods": needs_review,
+        "late_warning": ("Late filing/payment may result in penalties or interest."
+                         if any(s["status"] == "overdue" for s in states) else None),
+    }
+
+
+@api.get("/admin/sales-tax/tracker")
+async def sales_tax_tracker(_: dict = Depends(require_admin_and_permission("finance_reports"))):
+    return await _sales_tax_tracker_payload()
+
+
+class SalesTaxFilingIn(BaseModel):
+    period_key: str
+    filed_date: str
+    is_zero_return: bool = False
+    # Owner-entered figures; liability defaults to the canonical ledger number.
+    filed_liability: Optional[float] = None
+    adjustments: List[Dict[str, Any]] = []
+    apply_timely_discount: Optional[bool] = None  # default: setting + timeliness
+    amount_paid: Optional[float] = None  # optional first payment in same action
+    payment_date: Optional[str] = None
+    payment_reference: Optional[str] = None
+    confirmation_ref: Optional[str] = None
+    notes: Optional[str] = None
+
+
+@api.post("/admin/sales-tax/filings")
+async def record_sales_tax_filing(
+    body: SalesTaxFilingIn,
+    user: dict = Depends(require_admin_and_permission("finance_reports")),
+):
+    """Record that the owner filed the Ohio return externally (this app
+    never files with Ohio). Freezes a snapshot of the ledger-calculated
+    liability + adjustments + remit at filing time; later ledger changes
+    surface as needs_review variance, never as silent rewrites."""
+    settings = await _get_sales_tax_filing_settings()
+    if not settings:
+        raise HTTPException(status_code=409, detail="Configure the sales-tax filing schedule first")
+    try:
+        date.fromisoformat(body.filed_date)
+    except Exception:
+        raise HTTPException(status_code=400, detail="Invalid filed_date")
+    freq = settings["filing_frequency"]
+    periods = (_stt_custom_periods(settings) if freq == "custom"
+               else stt.iter_periods(freq, settings["tracking_start_date"], business_today()))
+    # Historical periods before tracking start may also be filed manually:
+    if freq != "custom" and not any(p["period_key"] == body.period_key for p in periods):
+        try:
+            anchor = (f"{body.period_key}-01" if freq == "monthly"
+                      else f"{body.period_key[:4]}-{'01' if body.period_key.endswith('H1') else '07'}-01")
+            p = stt.period_for_date(freq, date.fromisoformat(anchor))
+            assert p["period_key"] == body.period_key
+            periods = [p] + periods
+        except Exception:
+            raise HTTPException(status_code=400, detail="Unknown filing period")
+    period = next((p for p in periods if p["period_key"] == body.period_key), None)
+    if period is None:
+        raise HTTPException(status_code=400, detail="Unknown filing period")
+    if await db.sales_tax_filings.find_one({"period_key": body.period_key}):
+        raise HTTPException(status_code=409, detail="A filing is already recorded for this period")
+
+    liab_detail = await _sales_tax_period_liability(period)
+    ledger_liability = liab_detail["total_tax_collected"]
+    filed_liability = round(float(body.filed_liability), 2) if body.filed_liability is not None else ledger_liability
+
+    ov = (settings.get("due_date_overrides") or {}).get(body.period_key)
+    stat_due = (period.get("custom_due_date") or stt.statutory_due_date(period["period_end"]))
+    effective_due = (ov or {}).get("date") or stat_due
+
+    adjustments = [
+        {"label": str(a.get("label") or "Filing adjustment"),
+         "amount": round(float(a.get("amount") or 0), 2),
+         "note": (str(a.get("note")) if a.get("note") else None)}
+        for a in (body.adjustments or [])
+    ]
+    timely = body.filed_date <= effective_due
+    want_discount = (bool(settings.get("timely_discount_enabled")) and timely
+                     if body.apply_timely_discount is None
+                     else bool(body.apply_timely_discount) and timely)
+    discount = stt.timely_discount_amount(filed_liability, want_discount)
+    remit = 0.0 if body.is_zero_return else stt.amount_to_remit(filed_liability, adjustments, discount)
+
+    now = now_iso()
+    filing = {
+        "id": str(uuid.uuid4()),
+        "period_key": body.period_key,
+        "period_start": period["period_start"], "period_end": period["period_end"],
+        "period_label": period["label"], "frequency": freq,
+        "statutory_due_date": stat_due,
+        "due_date_override": (ov or {}).get("date"),
+        "filed_date": body.filed_date,
+        "is_zero_return": bool(body.is_zero_return),
+        "snapshot": {
+            "liability": filed_liability,
+            "ledger_liability_at_filing": ledger_liability,
+            "ledger_detail_at_filing": {
+                k: liab_detail[k] for k in
+                ("bookings_tax_total", "retail_tax_total", "total_tax_collected",
+                 "gross_tax_charged", "tax_reversed")},
+            "adjustments": adjustments,
+            "timely_discount": discount,
+            "amount_to_remit": remit,
+            "due_date": effective_due,
+            "computed_at": now,
+        },
+        "confirmation_ref": (body.confirmation_ref or "").strip() or None,
+        "notes": (body.notes or "").strip() or None,
+        "payments": [],
+        "recorded_by": user.get("id"),
+        "created_at": now, "updated_at": now,
+        "audit_log": [{"at": now, "by": user.get("id"), "action": "filing_recorded",
+                       "detail": f"liability={filed_liability} remit={remit} zero={body.is_zero_return}"}],
+    }
+    try:
+        await db.sales_tax_filings.insert_one({**filing})
+    except DuplicateKeyError:
+        raise HTTPException(status_code=409, detail="A filing is already recorded for this period")
+    if body.amount_paid is not None and not body.is_zero_return:
+        await _append_sales_tax_payment(
+            filing["id"], float(body.amount_paid),
+            body.payment_date or body.filed_date, body.payment_reference, None, user)
+    return await _sales_tax_tracker_payload()
+
+
+class SalesTaxPaymentIn(BaseModel):
+    amount: float
+    payment_date: str
+    reference: Optional[str] = None
+    note: Optional[str] = None
+    allow_duplicate: bool = False
+
+
+async def _append_sales_tax_payment(filing_id: str, amount: float, payment_date: str,
+                                    reference: Optional[str], note: Optional[str],
+                                    user: dict, allow_duplicate: bool = False) -> Dict[str, Any]:
+    filing = await db.sales_tax_filings.find_one({"id": filing_id}, {"_id": 0})
+    if not filing:
+        raise HTTPException(status_code=404, detail="Filing not found")
+    try:
+        date.fromisoformat(payment_date)
+    except Exception:
+        raise HTTPException(status_code=400, detail="Invalid payment_date")
+    amount = round(float(amount), 2)
+    if amount <= 0:
+        raise HTTPException(status_code=400, detail="Payment amount must be positive")
+    # Duplicate-submission guard: an identical amount+date+reference already
+    # on this filing is almost always a double click — require explicit intent.
+    for p in filing.get("payments") or []:
+        if (abs(float(p.get("amount") or 0) - amount) < 0.005
+                and p.get("payment_date") == payment_date
+                and (p.get("reference") or None) == ((reference or "").strip() or None)
+                and not allow_duplicate):
+            raise HTTPException(status_code=409, detail="An identical payment is already recorded for this filing (pass allow_duplicate to record it anyway)")
+    now = now_iso()
+    event = {"id": str(uuid.uuid4()), "amount": amount, "payment_date": payment_date,
+             "reference": (reference or "").strip() or None,
+             "note": (note or "").strip() or None,
+             "recorded_by": user.get("id"), "recorded_at": now}
+    await db.sales_tax_filings.update_one(
+        {"id": filing_id},
+        {"$push": {"payments": event,
+                   "audit_log": {"at": now, "by": user.get("id"),
+                                 "action": "payment_recorded",
+                                 "detail": f"amount={amount} date={payment_date} ref={event['reference']}"}},
+         "$set": {"updated_at": now}})
+    return event
+
+
+@api.post("/admin/sales-tax/filings/{filing_id}/payments")
+async def record_sales_tax_payment(
+    filing_id: str,
+    body: SalesTaxPaymentIn,
+    user: dict = Depends(require_admin_and_permission("finance_reports")),
+):
+    """Append a payment EVENT to a recorded filing (never overwrites prior
+    payments). Partial payments leave the filing in filed_payment_pending."""
+    await _append_sales_tax_payment(filing_id, body.amount, body.payment_date,
+                                    body.reference, body.note, user,
+                                    allow_duplicate=body.allow_duplicate)
+    return await _sales_tax_tracker_payload()
+
+
+class SalesTaxFilingPatchIn(BaseModel):
+    confirmation_ref: Optional[str] = None
+    notes: Optional[str] = None
+    reason: Optional[str] = None
+
+
+@api.patch("/admin/sales-tax/filings/{filing_id}")
+async def patch_sales_tax_filing(
+    filing_id: str,
+    body: SalesTaxFilingPatchIn,
+    user: dict = Depends(require_admin_and_permission("finance_reports")),
+):
+    """Limited corrections only: confirmation reference and notes, always
+    audit-logged. The filing snapshot and payment history are immutable —
+    financial-record convention (no invisible edits, no destructive deletes)."""
+    filing = await db.sales_tax_filings.find_one({"id": filing_id}, {"_id": 0})
+    if not filing:
+        raise HTTPException(status_code=404, detail="Filing not found")
+    sets: Dict[str, Any] = {}
+    changes = []
+    if body.confirmation_ref is not None:
+        sets["confirmation_ref"] = body.confirmation_ref.strip() or None
+        changes.append(f"confirmation_ref→{sets['confirmation_ref']}")
+    if body.notes is not None:
+        sets["notes"] = body.notes.strip() or None
+        changes.append("notes updated")
+    if not sets:
+        raise HTTPException(status_code=400, detail="Nothing to update")
+    now = now_iso()
+    sets["updated_at"] = now
+    await db.sales_tax_filings.update_one(
+        {"id": filing_id},
+        {"$set": sets,
+         "$push": {"audit_log": {"at": now, "by": user.get("id"), "action": "filing_corrected",
+                                 "detail": "; ".join(changes) + (f" (reason: {body.reason})" if body.reason else "")}}})
+    return await _sales_tax_tracker_payload()
 
 
 # ─────────────── Sprint 110aw · Year-end payroll export (1099/W2 prep) ───────────────
@@ -29600,6 +30003,9 @@ async def startup():
         (db.school_quiz_attempts, [("school_enrollment_id", 1), ("module_id", 1), ("idempotency_key", 1)],
          {"unique": True, "name": "school_quiz_attempts_idempotency_unique"}),
         (db.bookings, [("date", 1), ("status", 1)], {}),
+        # Step 4C — one sales-tax filing per period, structurally enforced.
+        (db.sales_tax_filings, "id", {"unique": True, "name": "sales_tax_filings_id_unique"}),
+        (db.sales_tax_filings, "period_key", {"unique": True, "name": "sales_tax_filings_period_unique"}),
         # Action Required — the pending-actions queue/badges poll pending
         # bookings by status + creation time (never by appointment date).
         (db.bookings, [("status", 1), ("created_at", -1)], {"name": "bookings_status_created_at"}),

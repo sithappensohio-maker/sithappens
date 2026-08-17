@@ -1566,6 +1566,7 @@ const DASHBOARD_WIDGET_META = [
   { id: "closing_routine",   label: "Closing routine",      desc: "End-of-day checklist." },
   { id: "quick_links",       label: "Quick links",          desc: "Tile grid (clients, dogs, bookings, etc.)." },
   { id: "register",          label: "Today's Register",     desc: "Dashboard cash register totals and quick actions." },
+  { id: "sales_tax",         label: "Sales tax due",        desc: "Ohio sales-tax filing obligation chip (amount, due date, overdue alert)." },
 ];
 
 function DashboardWidgetsPanel() {

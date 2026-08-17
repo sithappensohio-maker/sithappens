@@ -8,6 +8,8 @@ import { compressImage } from "../lib/imageCompress";
 import Lightbox from "../components/Lightbox";
 import { todayISO, localISOFromDate, parseLocalISO } from "../lib/date";
 import AccountsReceivableTab from "./AccountsReceivable";
+import SalesTaxFilingTab from "./SalesTaxFiling";
+import { FINANCE_TARGET_KEY } from "../components/SalesTaxDueTile";
 import TakePaymentModal from "../components/TakePaymentModal";
 import FinancialCorrectionModal from "../components/FinancialCorrectionModal";
 
@@ -30,7 +32,17 @@ export default function Income({ openCreateExpenseOnMount = false, onCreateConsu
   // Sprint 110di-51 — Top-level tabs. "transactions" is the existing
   // ledger/range/expenses view. "ar" is the new Accounts Receivable
   // (per-client tab / partial-pay summary) view.
-  const [tab, setTab] = useState("transactions");
+  const [tab, setTab] = useState(() => {
+    // Step 4C — dashboard "Sales Tax due" chip deep-links here via the
+    // sessionStorage handoff convention (see lib/schoolHq.js).
+    try {
+      if (sessionStorage.getItem(FINANCE_TARGET_KEY) === "sales_tax") {
+        sessionStorage.removeItem(FINANCE_TARGET_KEY);
+        return "sales_tax";
+      }
+    } catch { /* ignore */ }
+    return "transactions";
+  });
   const [summary, setSummary] = useState(null);
   const [refDate, setRefDate] = useState(todayISO());
   const [rangeSummary, setRangeSummary] = useState(null);
@@ -332,10 +344,13 @@ export default function Income({ openCreateExpenseOnMount = false, onCreateConsu
         items={[
           { key: "transactions", label: "Transactions", icon: "fa-list", testid: "income-tab-transactions" },
           { key: "ar", label: "Accounts Receivable", icon: "fa-file-invoice-dollar", testid: "income-tab-ar", accent: "orange" },
+          { key: "sales_tax", label: "Sales Tax", icon: "fa-landmark", testid: "income-tab-sales-tax", accent: "orange" },
         ]}
       />
       {tab === "ar" ? (
         <AccountsReceivableTab />
+      ) : tab === "sales_tax" ? (
+        <SalesTaxFilingTab />
       ) : (
       <>
       {plMsg && (

@@ -68,6 +68,18 @@ export const CARE_TASK_STATUS = {
   skipped: { label: "Skipped", short: "Skipped", icon: "fa-forward", cls: "text-amber-300 bg-amber-500/10" },
 };
 
+// Step 4C — Ohio sales-tax filing-period statuses (derived server-side by
+// sales_tax_tracker.derive_period_state; this map is presentation only).
+export const SALES_TAX_FILING_STATUS = {
+  open:                 { label: "Accumulating", short: "Open", icon: "fa-hourglass-half", cls: "text-shBlue bg-shBlue/10" },
+  ready_to_file:        { label: "Ready to File", short: "Ready", icon: "fa-file-signature", cls: "text-amber-300 bg-amber-500/10" },
+  overdue:              { label: "Overdue", short: "Overdue", icon: "fa-triangle-exclamation", cls: "text-red-400 bg-red-500/10" },
+  filed_payment_pending:{ label: "Filed — Payment Pending", short: "Filed", icon: "fa-coins", cls: "text-amber-300 bg-amber-500/10" },
+  filed_paid:           { label: "Filed & Paid", short: "Paid", icon: "fa-check", cls: "text-shGreen bg-shGreen/10" },
+  zero_return_filed:    { label: "Zero Return Filed", short: "$0 Filed", icon: "fa-circle-check", cls: "text-shGreen bg-shGreen/10" },
+  historical_untracked: { label: "Historical — Not Tracked", short: "Untracked", icon: "fa-clock-rotate-left", cls: "text-gray-400 bg-gray-500/10" },
+};
+
 // Vaccine status is derived (no single stored field) — this helper
 // centralizes the derivation so every screen that shows a vaccine badge
 // (Dogs, Dog Hub, Care Board, Front Desk) computes it identically.

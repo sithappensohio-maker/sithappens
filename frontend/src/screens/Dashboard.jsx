@@ -11,6 +11,7 @@ import { DogFactCard } from "../components/DogFactCard";
 import { DailyTriviaCard } from "../components/DailyTriviaCard";
 import AdminTrainingTipCard from "../components/AdminTrainingTipCard";
 import { MileageDashTile } from "../components/MileageDashTile";
+import { SalesTaxDueTile } from "../components/SalesTaxDueTile";
 import usePullToRefresh, { RefreshSpinner } from "../lib/usePullToRefresh";
 import { useConfirm } from "../lib/useConfirm";
 import { useLiveRefresh } from "../lib/useLiveRefresh";
@@ -614,6 +615,9 @@ export default function Dashboard({ onNavigate = () => {}, onJumpToDog = () => {
 
       {/* Sprint 110bq — Daily mileage quick-log */}
       {widgetOn("mileage") && <MileageDashTile onNavTax={()=>onNavigate("staff")} />}
+
+      {/* Step 4C — Ohio sales-tax filing obligation chip */}
+      {widgetOn("sales_tax") && can("finance_reports") && <SalesTaxDueTile onNavigate={onNavigate} />}
 
       {/* Sprint 110bk — Trivia leaderboard moved to top of dashboard (see above). */}
 
