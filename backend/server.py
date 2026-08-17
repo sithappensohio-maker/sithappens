@@ -30578,6 +30578,11 @@ async def weekly_summary(_: dict = Depends(require_admin_and_permission("finance
         {"_id": 0, "amount": 1, "source_kind": 1},
     ).to_list(2000)
     SPECIAL_KINDS = ("training_program_sale", "credit_pack_sale", "payment_plan_installment")
+    # Step 4B-4 — magnitude of this week's refund/void/reversal rows (any
+    # negative retail row, matching the register's bucketing rule) so the
+    # response can expose an honest gross/refunds/net trio.
+    retail_reversals_total = round(
+        sum(-float(x.get("amount") or 0) for x in retail_rows_all if float(x.get("amount") or 0) < 0), 2)
     retail_only = [x for x in retail_rows_all if x.get("source_kind") not in SPECIAL_KINDS]
     credit_pack_rows = [x for x in retail_rows_all if x.get("source_kind") == "credit_pack_sale"]
     training_rows = [x for x in retail_rows_all if x.get("source_kind") == "training_program_sale"]
@@ -30655,7 +30660,15 @@ async def weekly_summary(_: dict = Depends(require_admin_and_permission("finance
         "training_revenue_total": training_revenue_total,
         "training_revenue_count": training_revenue_count,
         "service_total": round(completed_total - other_revenue_total, 2),
-        "gross_total": round(completed_total, 2),
+        # Step 4B-4 — gross_total used to be a copy of completed_total (net of
+        # refunds/voids) wearing the wrong name. It is now TRUE gross: positive
+        # collected income before reversals, computed from IN-WINDOW activity
+        # (net + in-window reversal magnitude ≡ sum of in-window positive rows,
+        # so a refund of a prior week's sale never manufactures gross here).
+        # All consumers audited: nothing read gross_total as net.
+        "gross_total": round(completed_total + retail_reversals_total, 2),
+        "refunds_reversals_total": retail_reversals_total,
+        "net_total": round(completed_total, 2),
     }
 
 
@@ -32789,9 +32802,13 @@ async def admin_register_export_csv(
     if safe_kind == "tax-summary":
         summary = await _register_range_summary(sd, ed)
         rows = [["Metric", "Amount"]]
+        # Step 4B-4 — the old "Gross cash collected" line was doubly wrong:
+        # the number was NET of refunds/voids, and it covered ALL tenders,
+        # not just cash. Export the register's honest trio instead.
         rows += [
-            ["Gross cash collected", f"{summary['totals'].get('incoming_total',0):.2f}"],
-            ["Refunds", f"{summary['totals'].get('refund_total',0):.2f}"],
+            ["Gross collected (all tenders)", f"{summary['totals'].get('gross_incoming_total',0):.2f}"],
+            ["Refunds & reversals", f"{summary['totals'].get('refund_total',0):.2f}"],
+            ["Net collected (all tenders)", f"{summary['totals'].get('incoming_total',0):.2f}"],
             ["Expenses", f"{summary['totals'].get('expense_total',0):.2f}"],
             ["Credit pack sales", f"{summary['incoming_sources'].get('credit_pack_sales',0):.2f}"],
             ["Booking payments", f"{summary['incoming_sources'].get('booking_payments',0):.2f}"],
@@ -32867,9 +32884,11 @@ async def admin_register_tax_packet_zip(
 
     summary = await _register_range_summary(sd, ed)
     tax_rows = [["Metric", "Amount"]]
+    # Step 4B-4 — same honest trio as the direct tax-summary CSV export.
     tax_rows += [
-        ["Gross cash collected", f"{summary['totals'].get('incoming_total',0):.2f}"],
-        ["Refunds", f"{summary['totals'].get('refund_total',0):.2f}"],
+        ["Gross collected (all tenders)", f"{summary['totals'].get('gross_incoming_total',0):.2f}"],
+        ["Refunds & reversals", f"{summary['totals'].get('refund_total',0):.2f}"],
+        ["Net collected (all tenders)", f"{summary['totals'].get('incoming_total',0):.2f}"],
         ["Expenses", f"{summary['totals'].get('expense_total',0):.2f}"],
         ["Credit pack sales", f"{summary['incoming_sources'].get('credit_pack_sales',0):.2f}"],
         ["Booking payments", f"{summary['incoming_sources'].get('booking_payments',0):.2f}"],

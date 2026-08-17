@@ -483,8 +483,19 @@ async def build_pl_data(db, start_date: str, end_date: str) -> Dict[str, Any]:
         },
     }
 
-    gross_income = round(completed_total + retail_total + training_revenue_total, 2)
-    ytd_gross = round(ytd_income + ytd_retail, 2)
+    # Step 4B-4 — honest gross/refunds/net trio. Refunds, POS voids,
+    # invoice-payment voids, and Stripe refunds are negative retail rows in
+    # this same window; their magnitude is separated so "gross" means
+    # positive collected income and "net" means gross − reversals. Both
+    # terms are IN-WINDOW sums, so a refund of a prior-period sale creates
+    # refund activity (and negative net) here — never manufactured gross.
+    # Profit math below uses net_income, which equals the value the old
+    # (mislabeled) gross_income carried — profit is unchanged.
+    refunds_reversals_total = round(
+        sum(-float(r.get("amount") or 0) for r in retail_sales if float(r.get("amount") or 0) < 0), 2)
+    net_income = round(completed_total + retail_total + training_revenue_total, 2)
+    gross_income = round(net_income + refunds_reversals_total, 2)
+    ytd_net = round(ytd_income + ytd_retail, 2)
 
     # YTD payroll cost — uses calendar-year start through end_date so the
     # P&L footer reconciles with the same payroll line on /api/admin/today-pnl.
@@ -503,7 +514,11 @@ async def build_pl_data(db, start_date: str, end_date: str) -> Dict[str, Any]:
             "by_day": by_day,
             "retail_total": retail_total,
             "training_revenue_total": training_revenue_total,
+            # gross_total is now TRUE gross (positive collected income before
+            # reversals) — every internal consumer audited/updated in 4B-4.
             "gross_total": gross_income,
+            "refunds_reversals_total": refunds_reversals_total,
+            "net_total": net_income,
         },
         "retail": {
             "total": retail_total,
@@ -521,8 +536,8 @@ async def build_pl_data(db, start_date: str, end_date: str) -> Dict[str, Any]:
             "by_category": expenses_by_category,
         },
         "payroll": payroll,
-        "net": round(gross_income - expenses_total - payroll["total_cost"], 2),
-        "net_before_payroll": round(gross_income - expenses_total, 2),
+        "net": round(net_income - expenses_total - payroll["total_cost"], 2),
+        "net_before_payroll": round(net_income - expenses_total, 2),
         "cash_flow": cash_flow,
         "top_clients": top_clients,
         "top_dogs": top_dogs,
@@ -539,14 +554,14 @@ async def build_pl_data(db, start_date: str, end_date: str) -> Dict[str, Any]:
         },
         "ytd": {
             "start_date": ytd_start,
-            "income": ytd_gross,
+            "income": ytd_net,
             "service_income": ytd_income,
             "retail_income": ytd_retail,
             "expenses": ytd_expenses,
             "payroll": ytd_payroll["total_cost"],
             "payroll_gross": ytd_payroll["gross"],
             "payroll_burden": ytd_payroll["employer_burden"],
-            "net": round(ytd_gross - ytd_expenses - ytd_payroll["total_cost"], 2),
+            "net": round(ytd_net - ytd_expenses - ytd_payroll["total_cost"], 2),
         },
     }
 
@@ -609,7 +624,13 @@ def render_pl_pdf(data: Dict[str, Any], brand_name: str = "Sit Happens") -> byte
     # backed by real labor cost from clocked-in hours, not just expenses).
     service_income = data["income"]["completed_total"]
     retail_income = float(data.get("retail", {}).get("total") or 0)
-    income_total = data["income"].get("gross_total") or (service_income + retail_income)
+    # Step 4B-4 — the profit stack runs off NET income (gross − refunds);
+    # older snapshots without net_total carried the net value in gross_total.
+    income_total = data["income"].get("net_total")
+    if income_total is None:
+        income_total = data["income"].get("gross_total") or (service_income + retail_income)
+    gross_total = float(data["income"].get("gross_total") or income_total)
+    refunds_total = float(data["income"].get("refunds_reversals_total") or 0)
     exp_total = data["expenses"]["total"]
     payroll_total = float(data.get("payroll", {}).get("total_cost") or 0)
     net = data["net"]
@@ -634,7 +655,7 @@ def render_pl_pdf(data: Dict[str, Any], brand_name: str = "Sit Happens") -> byte
 
     kpi_row = Table(
         [[
-            tile("INCOME (GROSS)", _fmt_money(income_total), BRAND),
+            tile("NET INCOME", _fmt_money(income_total), BRAND),
             tile("EXPENSES", _fmt_money(exp_total), colors.HexColor("#dc2626")),
             tile("PAYROLL COST", _fmt_money(payroll_total), colors.HexColor("#dc2626")),
             tile("NET PROFIT", _fmt_money(net), net_color),
@@ -648,6 +669,8 @@ def render_pl_pdf(data: Dict[str, Any], brand_name: str = "Sit Happens") -> byte
     story.append(Paragraph(
         f"<b>Services:</b> {_fmt_money(service_income)} ({data['income']['completed_count']} bookings) &nbsp;·&nbsp; "
         f"<b>Retail:</b> {_fmt_money(retail_income)} ({data.get('retail',{}).get('count',0)} sales) &nbsp;·&nbsp; "
+        f"<b>Gross collected:</b> {_fmt_money(gross_total)} &nbsp;·&nbsp; "
+        f"<b>Refunds &amp; reversals:</b> {_fmt_money(refunds_total)} &nbsp;·&nbsp; "
         f"<b>{_fmt_money(data['income']['paid_total'])}</b> received · "
         f"<b>{_fmt_money(data['income']['unpaid_total'])}</b> outstanding",
         small,
@@ -886,7 +909,7 @@ def render_pl_pdf(data: Dict[str, Any], brand_name: str = "Sit Happens") -> byte
     ytd_rows = [
         ["YTD service income (since " + ytd["start_date"] + ")", _fmt_money(ytd.get("service_income") or ytd["income"])],
         ["YTD retail income", _fmt_money(ytd.get("retail_income") or 0)],
-        ["YTD gross income", _fmt_money(ytd["income"])],
+        ["YTD net income", _fmt_money(ytd["income"])],
         ["YTD expenses", _fmt_money(ytd["expenses"])],
         ["YTD payroll cost", _fmt_money(ytd.get("payroll") or 0)],
         ["YTD net", _fmt_money(ytd["net"])],

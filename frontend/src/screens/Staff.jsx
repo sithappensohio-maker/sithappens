@@ -1445,7 +1445,7 @@ function QuarterlyTaxTab() {
 
       {/* YTD KPIs */}
       <div className="grid grid-cols-2 md:grid-cols-4 gap-3" data-testid="qt-kpis">
-        <TaxKpi label="YTD Gross Income" value={data.income.gross} color="white"/>
+        <TaxKpi label="YTD Net Income" value={data.income.gross} color="white"/>
         <TaxKpi label="YTD Expenses" value={data.expenses.total} color="shAccent"/>
         <TaxKpi label="Net Profit (Schedule C)" value={data.net_profit} color="shPrimary" emphasis/>
         <TaxKpi label="Est. Tax Owed YTD" value={data.balance_owed_ytd} color="shSecondary" emphasis/>
@@ -1516,7 +1516,11 @@ function QuarterlyTaxTab() {
             <Row label="Retail sales" value={data.income.retail_sales}/>
             {Number(data.income?.sales_tax_collected || 0) > 0 && <Row label="Sales tax collected (excluded)" value={data.income.sales_tax_collected} neg/>}
             {Number(data.income?.service_unpaid_balance || 0) > 0 && <Row label="Unpaid service balances (not income yet)" value={data.income.service_unpaid_balance} neg/>}
-            <Row label="GROSS INCOME" value={data.income.gross} bold/>
+            {/* income.gross is NET of refunds/voids (signed, Step 4B-2) — the
+                label must say so; separating statutory gross receipts vs
+                returns/allowances is a deliberate accounting-format decision
+                deferred per Step 4B-4. */}
+            <Row label="NET INCOME (after refunds & reversals)" value={data.income.gross} bold/>
             <div className="border-t border-shBorder my-2"/>
             <Row label="Deductible expenses" value={data.expenses.recorded} neg/>
             {Number(data.expenses?.non_deductible || 0) > 0 && <Row label="Non-deductible / tracked only" value={data.expenses.non_deductible} color="shAccent"/>}

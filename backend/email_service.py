@@ -2510,7 +2510,13 @@ async def notify_admin_pl_report(pdf_bytes: bytes, start_date: str, end_date: st
 
     service_income = summary.get("income", {}).get("completed_total", 0)
     retail_income = summary.get("retail", {}).get("total", 0)
-    income = summary.get("income", {}).get("gross_total") or (service_income + retail_income)
+    # Step 4B-4 — net income drives the profit stack; gross/refunds shown as
+    # their own honest lines. Older snapshots carried net in gross_total.
+    income = summary.get("income", {}).get("net_total")
+    if income is None:
+        income = summary.get("income", {}).get("gross_total") or (service_income + retail_income)
+    gross = summary.get("income", {}).get("gross_total") or income
+    refunds = summary.get("income", {}).get("refunds_reversals_total", 0)
     expenses = summary.get("expenses", {}).get("total", 0)
     net = summary.get("net", 0)
     net_color = "#16a34a" if net >= 0 else "#dc2626"
@@ -2518,7 +2524,9 @@ async def notify_admin_pl_report(pdf_bytes: bytes, start_date: str, end_date: st
         ("Period", f"{start_date} → {end_date}"),
         ("Service income", f"${service_income:,.2f}"),
         ("Retail income", f"${retail_income:,.2f}"),
-        ("Gross income", f"${income:,.2f}"),
+        ("Gross collected", f"${gross:,.2f}"),
+        ("Refunds & reversals", f"${refunds:,.2f}"),
+        ("Net income", f"${income:,.2f}"),
         ("Expenses", f"${expenses:,.2f}"),
         ("Net profit", f"${net:,.2f}"),
         ("Completed bookings", str(summary.get("income", {}).get("completed_count", 0))),
