@@ -3614,10 +3614,13 @@ function SalesTaxPanel() {
   };
   if (!draft) return null;
   const toggleAt = (k) => setDraft({ ...draft, applies_to: { ...(draft.applies_to||{}), [k]: !draft.applies_to?.[k] } });
+  // Step 4C-1 — Sit Happens services (daycare, boarding, training, credit
+  // packs, programs) are NEVER sales-taxable; the server enforces this
+  // regardless of any saved toggle, so the toggles are no longer offered.
+  // Grooming/photography stay configurable (their Ohio treatment differs).
   const services = [
-    ["daycare", "Daycare"], ["boarding", "Boarding"], ["training", "Training"],
     ["grooming", "Grooming"], ["photography", "Photography"],
-    ["retail", "Retail"], ["credit_packs", "Credit packs"],
+    ["retail", "Retail merchandise"],
   ];
   return (
     <div className="border-t border-shBorder pt-6" data-testid="sales-tax-panel">
@@ -3653,6 +3656,10 @@ function SalesTaxPanel() {
         </div>
         <div>
           <p className="text-[12px] font-black text-shTextMuted uppercase tracking-widest mb-2">Applies to</p>
+          <p className="text-[12px] text-shTextMuted mb-2" data-testid="sales-tax-services-exempt-note">
+            Services — daycare, boarding, training, training programs, and service credit packs — are never
+            charged sales tax. They stay in business income; they just aren't sales-taxable.
+          </p>
           <div className="grid grid-cols-2 md:grid-cols-3 gap-2">
             {services.map(([k, label]) => (
               <label key={k} className={`cursor-pointer rounded px-3 py-2 border text-[13px] font-black uppercase tracking-widest ${

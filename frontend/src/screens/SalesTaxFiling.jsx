@@ -597,8 +597,12 @@ function DetailsModal({ p, onClose }) {
         <p className="flex justify-between"><span className="text-shTextMuted">Gross tax charged</span><b>{money(d.gross_tax_charged)}</b></p>
         <p className="flex justify-between"><span className="text-shTextMuted">Tax reversed (voids / refunds)</span><b>{money(d.tax_reversed)}</b></p>
         <p className="flex justify-between border-t border-shBorder pt-1 mt-1"><span className="text-shTextMuted">Net Sales-Tax Liability</span><b data-testid="stt-details-net">{money(d.total_tax_collected)}</b></p>
-        <p className="flex justify-between mt-2"><span className="text-shTextMuted">· from bookings / services</span><span>{money(d.bookings_tax_total)}</span></p>
-        <p className="flex justify-between"><span className="text-shTextMuted">· from retail / shop / POS (net)</span><span>{money(d.retail_tax_total)}</span></p>
+        {/* Step 4C-1 — these are TAX dollars by source row type, never revenue.
+            Services (daycare/boarding/training/programs/packs) are not
+            sales-taxable, so booking tax can only be grooming/photography
+            (if enabled) or historical rows recorded before the policy fix. */}
+        <p className="flex justify-between mt-2"><span className="text-shTextMuted">· booking tax (grooming/photography or historical)</span><span>{money(d.bookings_tax_total)}</span></p>
+        <p className="flex justify-between"><span className="text-shTextMuted">· merchandise tax — retail / shop / POS (net)</span><span>{money(d.retail_tax_total)}</span></p>
       </div>
       {snap && (
         <div className="border-t border-shBorder pt-2 space-y-0.5 text-sm" data-testid="stt-details-snapshot">

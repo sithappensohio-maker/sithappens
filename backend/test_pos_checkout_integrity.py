@@ -404,11 +404,13 @@ async def _none(*args, **kwargs):
 
 def test_per_line_tax_fields_present_and_configurable():
     """Tax handling requirement: each line retains its own taxable status,
-    rate, amount, and exemption reason — driven by the item's OWN
-    `taxable` field, not hardcoded by kind. A pack explicitly marked
-    taxable=True must actually be taxed even though packs default to
-    non-taxable."""
-    taxable_pack = _pack(price=100.0, qty=5, taxable=True)  # explicit override
+    rate, amount, and exemption reason. Step 4C-1 POLICY CHANGE: credit
+    packs and training programs are SERVICES and are deterministically
+    non-taxable — a stray taxable=True on the pack doc is now ignored
+    (this test used to pin the opposite; the Ohio service-exemption fix
+    deliberately supersedes it). Physical products remain the only
+    taxable POS catalog kind, per their own `taxable` field."""
+    taxable_pack = _pack(price=100.0, qty=5, taxable=True)  # stray flag — must be ignored
     normal_program = _program(price=300.0)  # default non-taxable
     run(server.db.credit_packs.insert_one(dict(taxable_pack)))
     run(server.db.programs.insert_one(dict(normal_program)))
@@ -424,10 +426,10 @@ def test_per_line_tax_fields_present_and_configurable():
         pack_line = next(li for li in priced["line_items"] if li["kind"] == "credit_pack")
         program_line = next(li for li in priced["line_items"] if li["kind"] == "training_program")
 
-        assert pack_line["taxable"] is True
-        assert pack_line["tax_rate_pct"] == 8.0
-        assert pack_line["allocated_tax"] > 0
-        assert pack_line["tax_exempt_reason"] is None
+        assert pack_line["taxable"] is False        # 4C-1: service, never taxed
+        assert pack_line["tax_rate_pct"] == 0.0
+        assert pack_line["allocated_tax"] == 0.0
+        assert pack_line["tax_exempt_reason"]       # real reason string present
 
         assert program_line["taxable"] is False
         assert program_line["tax_rate_pct"] == 0.0

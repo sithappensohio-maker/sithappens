@@ -291,6 +291,10 @@ export default function Pos({ onOpenShopManager } = {}) {
   const resetCart = () => { setCartLines([]); setDiscount(null); setPriced(null); };
 
   const [customOpen, setCustomOpen] = useState(false);
+  // Step 4C-1 — a custom line must say what it IS: merchandise (taxable
+  // retail goods) or a service (never sales-taxable). Structured — the
+  // backend decides tax from this, never from the description text.
+  const [customKind, setCustomKind] = useState("merchandise");
   const [customDesc, setCustomDesc] = useState("");
   const [customAmount, setCustomAmount] = useState("");
   const [customReason, setCustomReason] = useState("");
@@ -302,8 +306,9 @@ export default function Pos({ onOpenShopManager } = {}) {
     setCartLines((lines) => [...lines, {
       kind: "custom", description: customDesc.trim(),
       custom_amount: Number(customAmount), custom_reason: customReason.trim(),
+      custom_kind: customKind,
     }]);
-    setCustomOpen(false); setCustomDesc(""); setCustomAmount(""); setCustomReason("");
+    setCustomOpen(false); setCustomDesc(""); setCustomAmount(""); setCustomReason(""); setCustomKind("merchandise");
   };
 
   const [discountOpen, setDiscountOpen] = useState(false);
@@ -325,7 +330,7 @@ export default function Pos({ onOpenShopManager } = {}) {
   // one financial transaction (one sale, one receipt, one register event)
   // instead of several unrelated ones.
   const cartLinesPayload = () => cartLines.map((l) => {
-    if (l.kind === "custom") return { kind: "custom", description: l.description, custom_amount: l.custom_amount, custom_reason: l.custom_reason };
+    if (l.kind === "custom") return { kind: "custom", description: l.description, custom_amount: l.custom_amount, custom_reason: l.custom_reason, custom_kind: l.custom_kind || "merchandise" };
     if (l.kind === "credit_pack") return { kind: "credit_pack", pack_id: l.pack_id, qty: l.qty };
     if (l.kind === "training_program") return { kind: "training_program", program_id: l.program_id, qty: l.qty };
     return { kind: "retail", product_id: l.product_id, qty: l.qty };
@@ -1404,6 +1409,16 @@ export default function Pos({ onOpenShopManager } = {}) {
                        className="w-full bg-[var(--sh-card-base)] border border-shBorder rounded p-2 text-shText text-sm" />
                 <input value={customReason} onChange={(e) => setCustomReason(e.target.value)} placeholder="Reason (required)"
                        className="w-full bg-[var(--sh-card-base)] border border-shBorder rounded p-2 text-shText text-sm" />
+                <div className="grid grid-cols-2 gap-2" data-testid="pos-custom-kind">
+                  {[["merchandise", "Merchandise — taxable"], ["service", "Service — no sales tax"]].map(([k, label]) => (
+                    <label key={k} className={`cursor-pointer rounded px-2 py-2 border text-[11px] font-black uppercase tracking-widest text-center ${
+                        customKind === k ? "bg-shPrimary/15 border-shPrimary/40 text-shPrimary" : "bg-[var(--sh-card-base)] border-shBorder text-shTextMuted"}`}>
+                      <input type="radio" name="pos-custom-kind" value={k} checked={customKind === k}
+                             onChange={() => setCustomKind(k)} data-testid={`pos-custom-kind-${k}`}
+                             className="mr-1 accent-shPrimary" />{label}
+                    </label>
+                  ))}
+                </div>
                 <button onClick={addCustom} className="w-full bg-shPrimary text-bgHeader rounded py-2 font-black uppercase text-[12px] tracking-widest">
                   Add to Cart
                 </button>

@@ -6669,6 +6669,29 @@ async def early_checkout_quote(booking_id: str, _: dict = Depends(require_employ
     }
 
 
+# Step 4C-1 — Ohio taxability policy: Sit Happens SERVICES are never
+# sales-taxable, no matter how the owner-facing sales_tax.applies_to
+# toggles are (or were) configured. Dog training, daycare, and boarding /
+# kenneling are services under Ohio law for this business — they remain
+# BUSINESS INCOME everywhere (Finance, P&L, Schedule C, quarterly), they
+# just never generate sales tax. Enforced server-side at every booking
+# tax computation; grooming/photography stay owner-configurable because
+# their Ohio treatment differs and was already deliberately toggleable.
+# Assessment/meet-&-greet and any unknown service type fall through to
+# the applies_to lookup, which defaults to NOT taxable.
+SALES_TAX_EXEMPT_SERVICE_TYPES = frozenset({"daycare", "boarding", "training"})
+
+
+def _service_type_sales_taxable(service_type: Optional[str], tax_cfg: Dict[str, Any]) -> bool:
+    """THE booking-service taxability rule: exempt service kinds are
+    deterministically non-taxable; everything else only if explicitly
+    enabled in sales_tax.applies_to (absent → not taxable)."""
+    svc = (service_type or "").strip().lower()
+    if not svc or svc in SALES_TAX_EXEMPT_SERVICE_TYPES:
+        return False
+    return bool(((tax_cfg or {}).get("applies_to") or {}).get(svc))
+
+
 @api.get("/bookings/{booking_id}/money-modifier-preview")
 async def money_modifier_preview(
     booking_id: str,
@@ -6703,7 +6726,7 @@ async def money_modifier_preview(
         base_amount = float(base_preview.get("preview_base_price") or 0)
     result = _money_modifier_breakdown(booking, base_amount, settings, now_iso())
     tax_cfg = (settings.get("sales_tax") or {})
-    applies = bool((tax_cfg.get("applies_to") or {}).get(booking.get("service_type") or ""))
+    applies = _service_type_sales_taxable(booking.get("service_type"), tax_cfg)
     result["sales_tax"] = {
         "enabled": bool(tax_cfg.get("enabled")),
         "rate_pct": float(tax_cfg.get("rate_pct") or 0),
@@ -9752,9 +9775,10 @@ async def _check_out_locked(
             settings_tx = await get_settings()
             tx_cfg = (settings_tx or {}).get("sales_tax") or {}
             if tx_cfg.get("enabled"):
-                applies = (tx_cfg.get("applies_to") or {})
                 svc = booking.get("service_type") or ""
-                if applies.get(svc):
+                # Step 4C-1 — services (daycare/boarding/training) are never
+                # sales-taxable regardless of the applies_to toggles.
+                if _service_type_sales_taxable(svc, tx_cfg):
                     rate_pct = float(tx_cfg.get("rate_pct") or 0)
                     if rate_pct > 0:
                         pre_tax_total = float(update["actual_price"])
@@ -37018,8 +37042,10 @@ async def _build_register_catalog(client_id: Optional[str]) -> dict:
             "has_price_override": has_override,
             "value_each": round(effective_price / max(qty, 1), 2),
             "image_id": pk.get("image_id"),
-            "taxable": bool(pk.get("taxable", False)),
-            "tax_exempt_reason": pk.get("tax_exempt_reason") or ("Prepaid visit credits are a service, not a taxed retail good" if not pk.get("taxable", False) else None),
+            # Step 4C-1 — deterministically non-taxable (service), matching
+            # the pricing paths; a stray taxable=true on the doc is ignored.
+            "taxable": False,
+            "tax_exempt_reason": pk.get("tax_exempt_reason") or "Prepaid visit credits are a service, not a taxed retail good",
             **_credit_pack_display_fields(pk, qty, effective_price),
             **_shop_org_fields(pk.get("category_id"), pk.get("subcategory_id")),
         })
@@ -37056,8 +37082,9 @@ async def _build_register_catalog(client_id: Optional[str]) -> dict:
             "price_override_id": None,
             "has_price_override": False,
             "image_id": prog.get("image_id"),
-            "taxable": bool(prog.get("taxable", False)),
-            "tax_exempt_reason": prog.get("tax_exempt_reason") or ("Training is a service, not a taxed retail good" if not prog.get("taxable", False) else None),
+            # Step 4C-1 — deterministically non-taxable (service).
+            "taxable": False,
+            "tax_exempt_reason": prog.get("tax_exempt_reason") or "Training is a service, not a taxed retail good",
             # Phase 5 — client-facing so the Shop item detail page knows
             # whether to show a dog selector / real ownership CTA states.
             "purchase_fulfillment": prog.get("purchase_fulfillment") or "credits_only",
@@ -37838,6 +37865,11 @@ async def _price_shop_cart(items: List[ShopCartItemIn], client_id: Optional[str]
             "name": name, "unit_price": unit_price, "quantity": qty,
             "line_subtotal": line_subtotal, "allocated_tax": 0.0,
             "line_total": line_subtotal, "fulfillment_status": "pending",
+            # Step 4C-1 — taxability from structured metadata, same rule as
+            # the POS path: only PHYSICAL products can be taxable (honoring a
+            # per-product taxable=false override); credit packs and training
+            # programs are services and never taxable online either.
+            "taxable": bool(org_source.get("taxable", True)) if cart_item.kind == "product" else False,
             **org_snapshot,
         }
         if cart_item.kind == "training_program":
@@ -37909,7 +37941,9 @@ async def _price_shop_cart(items: List[ShopCartItemIn], client_id: Optional[str]
             raise HTTPException(status_code=400, detail=f"Only {stock:g} in stock for {product.get('name')}.")
 
     subtotal = round(sum(l["line_subtotal"] for l in lines), 2)
-    taxable_lines = [l for l in lines if l["kind"] == "product"]
+    # Step 4C-1 — was `kind == "product"` alone, which ignored a product's
+    # own taxable=false override online (the POS path honored it).
+    taxable_lines = [l for l in lines if l.get("taxable")]
     taxable_subtotal = round(sum(l["line_subtotal"] for l in taxable_lines), 2)
 
     tax_amount = 0.0
@@ -39421,6 +39455,12 @@ class PosSaleLineIn(BaseModel):
     # are always qty-of-one conceptually, e.g. "Replacement leash $12.00").
     custom_amount: Optional[float] = Field(default=None, gt=0)
     custom_reason: Optional[str] = Field(default=None, max_length=300)
+    # Step 4C-1 — what a custom line actually IS decides its taxability
+    # (structured, never inferred from the description): "merchandise" is
+    # taxable retail goods, "service" is never sales-taxable. Defaults to
+    # merchandise so existing callers keep today's (taxed) behavior; the
+    # register UI presents the choice explicitly.
+    custom_kind: Literal["merchandise", "service"] = "merchandise"
 
 
 class PosSaleDiscountIn(BaseModel):
@@ -39527,12 +39567,17 @@ async def _price_pos_cart(lines: List[PosSaleLineIn], discount: Optional[PosSale
             if not (line.custom_reason or "").strip():
                 raise HTTPException(status_code=400, detail="Custom items require a reason.")
             amount = round(float(line.custom_amount), 2)
+            # Step 4C-1 — custom lines carry a structured merchandise/service
+            # selection; services are never sales-taxable.
+            custom_is_service = line.custom_kind == "service"
             line_items.append({
                 "kind": "custom", "product_id": None,
+                "custom_kind": line.custom_kind,
                 "description": (line.description or "Custom item").strip(),
                 "qty": 1, "unit_price": amount, "amount": amount,
                 "reason": line.custom_reason.strip(),
-                "taxable": True, "tax_exempt_reason": None,
+                "taxable": not custom_is_service,
+                "tax_exempt_reason": "Service — not sales-taxable" if custom_is_service else None,
             })
         elif line.kind == "retail":
             if not line.product_id:
@@ -39576,7 +39621,10 @@ async def _price_pos_cart(lines: List[PosSaleLineIn], discount: Optional[PosSale
             unit_price = round(float(pricing["effective_price"]), 2)
             has_override = pricing["pricing_source"] != "standard"
             amount = round(qty * unit_price, 2)
-            taxable = bool(pack.get("taxable", False))
+            # Step 4C-1 — credit packs are prepaid SERVICE visits: never
+            # sales-taxable, deterministically (a stray taxable=true on the
+            # pack doc must not tax a service).
+            taxable = False
             line_items.append({
                 "kind": "credit_pack", "pack_id": pack["id"],
                 "description": (line.description or pack["name"]).strip(),
@@ -39620,7 +39668,9 @@ async def _price_pos_cart(lines: List[PosSaleLineIn], discount: Optional[PosSale
             # effective_price always equals list_price.
             unit_price = list_price
             amount = round(qty * unit_price, 2)
-            taxable = bool(program.get("taxable", False))
+            # Step 4C-1 — training programs are services: never sales-taxable,
+            # deterministically.
+            taxable = False
             line_items.append({
                 "kind": "training_program", "program_id": program["id"],
                 "description": (line.description or program["name"]).strip(),
