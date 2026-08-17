@@ -97,12 +97,21 @@ async def _compute_payroll_for_range(db, start_date: str, end_date: str) -> Dict
     rates configured under Admin → Payroll-tax flow through to this report.
     """
     # Lazy import to avoid a circular dependency at module load time.
-    from server import _get_payroll_tax_settings, _compute_payroll_tax  # type: ignore
+    from server import (  # type: ignore
+        _business_day_utc_bounds,
+        _business_range_utc_bounds,
+        _compute_payroll_tax,
+        _get_payroll_tax_settings,
+    )
 
     tax = await _get_payroll_tax_settings()
 
+    # Step 4B-7 — labor is windowed by America/New_York business days (the
+    # same bounds revenue uses), never naive UTC prefixes, so an Ohio
+    # evening shift stays on the day it was worked.
+    labor_start, labor_end = _business_range_utc_bounds(start_date, end_date)
     period_entries = await db.time_clock_entries.find(
-        {"clock_in_at": {"$gte": f"{start_date}T00:00:00", "$lte": f"{end_date}T23:59:59.999Z"},
+        {"clock_in_at": {"$gte": labor_start, "$lt": labor_end},
          "clock_out_at": {"$ne": None, "$exists": True}},
         {"_id": 0, "user_id": 1, "hours": 1},
     ).to_list(50000)
@@ -133,7 +142,7 @@ async def _compute_payroll_for_range(db, start_date: str, end_date: str) -> Dict
         end_year = date.today().year
     ytd_start = f"{end_year}-01-01"
     pre_entries = await db.time_clock_entries.find(
-        {"clock_in_at": {"$gte": f"{ytd_start}T00:00:00", "$lt": f"{start_date}T00:00:00"},
+        {"clock_in_at": {"$gte": _business_day_utc_bounds(ytd_start)[0], "$lt": labor_start},
          "clock_out_at": {"$ne": None, "$exists": True},
          "user_id": {"$in": uids}},
         {"_id": 0, "user_id": 1, "hours": 1},

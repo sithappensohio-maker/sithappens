@@ -30852,8 +30852,12 @@ async def summary_range(
     # Labor cost in the same window — uses the payroll tax estimator so the
     # Income page shows TRUE cost (gross + employer burden), not just gross wages.
     tax = await _get_payroll_tax_settings()
+    # Step 4B-7 — labor belongs to the America/New_York business day it was
+    # worked, exactly like revenue. Naive "T00:00:00" prefixes compared UTC
+    # timestamps, pushing an Ohio evening shift onto the next day's books.
+    labor_start, labor_end = _business_range_utc_bounds(start_date, end_date)
     tc_entries = await db.time_clock_entries.find(
-        {"clock_in_at": {"$gte": f"{start_date}T00:00:00", "$lte": f"{end_date}T23:59:59.999Z"},
+        {"clock_in_at": {"$gte": labor_start, "$lt": labor_end},
          "clock_out_at": {"$ne": None, "$exists": True}},
         {"_id": 0, "user_id": 1, "hours": 1},
     ).to_list(10000)
@@ -30868,7 +30872,7 @@ async def summary_range(
     except Exception:
         ytd_start = f"{business_today().year}-01-01"
     pre = await db.time_clock_entries.find(
-        {"clock_in_at": {"$gte": f"{ytd_start}T00:00:00", "$lt": f"{start_date}T00:00:00"},
+        {"clock_in_at": {"$gte": _business_day_utc_bounds(ytd_start)[0], "$lt": labor_start},
          "clock_out_at": {"$ne": None, "$exists": True}},
         {"_id": 0, "user_id": 1, "hours": 1},
     ).to_list(50000)
@@ -32153,6 +32157,15 @@ async def _require_drawer_open_for_cash(payment_method: Optional[str]) -> None:
     )
     if not drawer_open:
         raise HTTPException(status_code=400, detail="Open the register before taking cash payments.")
+
+
+def _business_range_utc_bounds(start_date: str, end_date: str) -> Tuple[str, str]:
+    """UTC ISO bounds [start, end) covering the America/New_York business
+    dates start_date..end_date inclusive — the labor-query counterpart of
+    _business_day_utc_bounds (Step 4B-7). Timestamps stay stored in UTC;
+    only the query boundary is timezone-aware, so DST days that span 23 or
+    25 UTC hours resolve correctly with no hard-coded offsets."""
+    return _business_day_utc_bounds(start_date)[0], _business_day_utc_bounds(end_date)[1]
 
 
 async def _previous_closeout_rollover(date_value: str) -> Optional[Dict[str, Any]]:
@@ -39793,9 +39806,10 @@ async def admin_quarterly_tax(
 
     # Labor: total YTD gross + employer burden (mirrors summary_range pattern)
     payroll_tax = await _get_payroll_tax_settings()
+    # Step 4B-7 — business-timezone labor bounds (see _business_range_utc_bounds).
+    q_labor_start, q_labor_end = _business_range_utc_bounds(start, end)
     tc_entries = await db.time_clock_entries.find(
-        {"clock_in_at": {"$gte": f"{start}T00:00:00",
-                         "$lte": f"{end}T23:59:59.999Z"},
+        {"clock_in_at": {"$gte": q_labor_start, "$lt": q_labor_end},
          "clock_out_at": {"$ne": None, "$exists": True}},
         {"_id": 0, "user_id": 1, "hours": 1},
     ).to_list(50000)
@@ -41605,10 +41619,13 @@ async def today_pnl(_: dict = Depends(require_admin_and_permission("finance_repo
     retail_count = len(retail_rows)
 
     # ── Labor cost today
-    today_start = f"{today}T00:00:00"
-    today_end = f"{today}T23:59:59.999Z"
+    # Step 4B-7 — labor is bucketed by the America/New_York business day it
+    # was worked (same bounds revenue already uses); a 9 p.m. Ohio shift
+    # stays in TODAY's live P&L even though its stored UTC timestamp has
+    # rolled to tomorrow. Open shifts remain included, as before.
+    today_start, today_end = _business_day_utc_bounds(today)
     entries = await db.time_clock_entries.find(
-        {"clock_in_at": {"$gte": today_start, "$lte": today_end}},
+        {"clock_in_at": {"$gte": today_start, "$lt": today_end}},
         {"_id": 0},
     ).to_list(500)
     user_ids = list({e["user_id"] for e in entries})
