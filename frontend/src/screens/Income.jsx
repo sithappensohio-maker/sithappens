@@ -9,6 +9,7 @@ import Lightbox from "../components/Lightbox";
 import { todayISO, localISOFromDate, parseLocalISO } from "../lib/date";
 import AccountsReceivableTab from "./AccountsReceivable";
 import SalesTaxFilingTab from "./SalesTaxFiling";
+import TaxCenterTab from "../components/TaxCenter";
 import { FINANCE_TARGET_KEY } from "../components/SalesTaxDueTile";
 import TakePaymentModal from "../components/TakePaymentModal";
 import FinancialCorrectionModal from "../components/FinancialCorrectionModal";
@@ -33,12 +34,13 @@ export default function Income({ openCreateExpenseOnMount = false, onCreateConsu
   // ledger/range/expenses view. "ar" is the new Accounts Receivable
   // (per-client tab / partial-pay summary) view.
   const [tab, setTab] = useState(() => {
-    // Step 4C — dashboard "Sales Tax due" chip deep-links here via the
-    // sessionStorage handoff convention (see lib/schoolHq.js).
+    // Step 4C/4D-3 — dashboard chips deep-link here via the sessionStorage
+    // handoff convention (see lib/schoolHq.js): "sales_tax" or "tax_center".
     try {
-      if (sessionStorage.getItem(FINANCE_TARGET_KEY) === "sales_tax") {
+      const stored = sessionStorage.getItem(FINANCE_TARGET_KEY);
+      if (stored === "sales_tax" || stored === "tax_center") {
         sessionStorage.removeItem(FINANCE_TARGET_KEY);
-        return "sales_tax";
+        return stored;
       }
     } catch { /* ignore */ }
     return "transactions";
@@ -345,12 +347,15 @@ export default function Income({ openCreateExpenseOnMount = false, onCreateConsu
           { key: "transactions", label: "Transactions", icon: "fa-list", testid: "income-tab-transactions" },
           { key: "ar", label: "Accounts Receivable", icon: "fa-file-invoice-dollar", testid: "income-tab-ar", accent: "orange" },
           { key: "sales_tax", label: "Sales Tax", icon: "fa-landmark", testid: "income-tab-sales-tax", accent: "orange" },
+          { key: "tax_center", label: "Tax Center", icon: "fa-scale-balanced", testid: "income-tab-tax-center", accent: "orange" },
         ]}
       />
       {tab === "ar" ? (
         <AccountsReceivableTab />
       ) : tab === "sales_tax" ? (
         <SalesTaxFilingTab />
+      ) : tab === "tax_center" ? (
+        <TaxCenterTab onOpenSalesTax={() => setTab("sales_tax")} />
       ) : (
       <>
       {plMsg && (

@@ -40501,6 +40501,16 @@ def _shift_ohio_deadline(d: date) -> date:
     return _shift_federal_deadline(d)
 
 
+def _ohio_quarter_due_dates(year: int) -> List[Dict[str, str]]:
+    """Ohio/SD estimated deadlines (5747.09): Apr/Jun/Sep 15 + next Jan 15,
+    weekend/holiday-shifted. One builder shared by the Ohio payload and the
+    Tax Center aggregator so the dates can never drift apart."""
+    return [{"quarter": q_i, "due": _shift_ohio_deadline(d).isoformat(),
+             "statutory_due": d.isoformat()}
+            for q_i, d in ((1, date(year, 4, 15)), (2, date(year, 6, 15)),
+                           (3, date(year, 9, 15)), (4, date(year + 1, 1, 15)))]
+
+
 def _quarter_due_dates(year: int) -> List[Dict[str, str]]:
     """IRS estimated payment deadlines. Q4 deadline lands in *next* January.
     Periods verbatim from Pub 505 (3/2/3/4 months — NOT calendar quarters);
@@ -41460,10 +41470,7 @@ async def _ohio_estimated_tax_payload(year: int, as_of: Optional[date] = None) -
                         - float(fed["retirement_hsa_adjustments"]) - float(fed["other_adjustments"]), 2)
 
     # Ohio's own deadline rule (separate helper; dates statutory to 5747.09).
-    year_rows = [{"quarter": q_i, "due": _shift_ohio_deadline(d).isoformat(),
-                  "statutory_due": d.isoformat()}
-                 for q_i, d in ((1, date(yr, 4, 15)), (2, date(yr, 6, 15)),
-                                (3, date(yr, 9, 15)), (4, date(yr + 1, 1, 15)))]
+    year_rows = _ohio_quarter_due_dates(yr)
     nxt = next((r for r in year_rows if date.fromisoformat(r["due"]) >= today), year_rows[-1])
     passed_count = sum(1 for r in year_rows if date.fromisoformat(r["due"]) < today)
 
@@ -41518,6 +41525,394 @@ async def ohio_estimated_tax_endpoint(
         except Exception:
             raise HTTPException(400, "Invalid as_of date")
     return await _ohio_estimated_tax_payload(yr, as_of=frozen)
+
+
+# ═══════════════ Step 4D-3 · Tax Center aggregator ═══════════════
+#
+# ONE dashboard over FOUR separate obligations. The aggregator re-USES the
+# authoritative payload helpers (federal, Ohio+SD, sales-tax tracker, tax
+# profile) — it never re-implements a formula, and it never merges the
+# ledgers. Every dollar shown here is byte-identical to the detail
+# endpoint it came from. The legacy planning reserve and legacy
+# jurisdiction-unassigned payments are deliberately ABSENT from every
+# authoritative list.
+
+_TC_STATUS_LABELS = {
+    "OVERDUE": "OVERDUE", "PAYMENT_NEEDED": "PAYMENT NEEDED",
+    "FILING_REQUIRED": "FILING REQUIRED", "NEEDS_REVIEW": "NEEDS REVIEW",
+    "CPA_REVIEW_REQUIRED": "CPA REVIEW REQUIRED",
+    "PROFILE_INCOMPLETE": "PROFILE INCOMPLETE", "UPCOMING": "UPCOMING",
+    "ON_TRACK": "ON TRACK", "NO_PAYMENT_REQUIRED": "NO PAYMENT REQUIRED",
+    "FILED": "FILED", "PAID": "PAID",
+    "ENGINE_UNAVAILABLE": "ENGINE UNAVAILABLE",
+    "NOT_APPLICABLE": "NOT APPLICABLE",
+}
+# Attention-area priority (spec order): overdue → payment/filing due →
+# $0-filing → needs-review → CPA → incomplete → upcoming → resolved.
+_TC_PRIORITY = {
+    "OVERDUE": 1, "PAYMENT_NEEDED": 2, "FILING_REQUIRED": 3,
+    "NEEDS_REVIEW": 4, "CPA_REVIEW_REQUIRED": 5,
+    "PROFILE_INCOMPLETE": 6, "ENGINE_UNAVAILABLE": 6,
+    "UPCOMING": 7, "ON_TRACK": 8, "NO_PAYMENT_REQUIRED": 8,
+    "FILED": 8, "PAID": 8, "NOT_APPLICABLE": 9,
+}
+# Statuses that put an obligation into "Taxes Needing Attention" / make it
+# eligible to be the Next Tax Action. Informational states never qualify.
+_TC_ACTIONABLE = {"OVERDUE", "PAYMENT_NEEDED", "FILING_REQUIRED",
+                  "NEEDS_REVIEW", "CPA_REVIEW_REQUIRED",
+                  "PROFILE_INCOMPLETE", "ENGINE_UNAVAILABLE"}
+
+
+def _tc_entry(**kw) -> Dict[str, Any]:
+    status = kw["status"]
+    kw.setdefault("status_label", _TC_STATUS_LABELS[status])
+    kw.setdefault("priority", _TC_PRIORITY[status])
+    kw.setdefault("actionable", status in _TC_ACTIONABLE)
+    kw.setdefault("due_date", None)
+    kw.setdefault("required_amount", None)
+    kw.setdefault("remaining_amount", None)
+    return kw
+
+
+def _tc_estimated_status(payload: Dict[str, Any], remaining, today_iso: str) -> str:
+    """Normalize an estimated-tax payload (federal or Ohio) to Tax Center
+    vocabulary. React never reverse-engineers status from dollars."""
+    st = payload["status"]
+    if st in ("ENGINE_UNAVAILABLE", "PROFILE_INCOMPLETE", "CPA_REVIEW_REQUIRED"):
+        return st
+    est = payload["estimate"]
+    required = est.get("payment_required")
+    if required is None:  # Ohio nests it under threshold
+        required = (est.get("threshold") or {}).get("payment_required")
+    if required is False:
+        return "NO_PAYMENT_REQUIRED"
+    if remaining is not None and remaining > 0:
+        due = ((est.get("installments") or {}).get("next_deadline") or {}).get("due")
+        # Overdue ONLY when the due date has passed AND the engine says an
+        # unresolved amount remains (incomplete/CPA never reach here).
+        return "OVERDUE" if (due and due < today_iso) else "PAYMENT_NEEDED"
+    return "ON_TRACK"
+
+
+def _tc_next_action_text(e: Dict[str, Any]) -> Dict[str, str]:
+    amt = e.get("remaining_amount")
+    if e["status"] in ("PROFILE_INCOMPLETE", "ENGINE_UNAVAILABLE"):
+        return {"headline": f"{e['label']} — {e['status_label'].lower()}",
+                "sub": "Complete the Tax Profile / configuration to unlock the calculation."}
+    if e["status"] == "CPA_REVIEW_REQUIRED":
+        return {"headline": f"{e['label']} — CPA review required",
+                "sub": "No payment amount is recommended until the flagged situation is reviewed."}
+    if e["status"] == "NEEDS_REVIEW":
+        return {"headline": f"{e['label']} — needs review",
+                "sub": e.get("period_label") or ""}
+    due = e.get("due_date")
+    due_txt = f" by {due}" if due else ""
+    if e["status"] == "FILING_REQUIRED":
+        return {"headline": f"{e['label']} — {e.get('period_label') or ''} return due{due_txt}".replace("  ", " "),
+                "sub": "Filing is required even when the liability is $0."}
+    if e["status"] == "OVERDUE":
+        return {"headline": f"{e['label']} — OVERDUE" + (f" — ${amt:,.2f}" if amt else ""),
+                "sub": (f"Was due {due}. " if due else "") + "Late filing/payment may involve penalties or interest (not calculated here)."}
+    if amt is not None:
+        return {"headline": f"{e['label']} — ${amt:,.2f} remaining{due_txt}",
+                "sub": e.get("period_label") or ""}
+    return {"headline": f"{e['label']} — action needed{due_txt}", "sub": ""}
+
+
+async def _tax_center_payload(year: int, as_of: Optional[date] = None) -> Dict[str, Any]:
+    yr = int(year)
+    today = as_of or business_today()
+    today_iso = today.isoformat()
+
+    fed = await _federal_estimated_tax_payload(yr, as_of=today)
+    oh = await _ohio_estimated_tax_payload(yr, as_of=today)
+    sales = await _sales_tax_tracker_payload()
+    profile = await _get_tax_profile(yr)
+    completeness = _tax_profile_completeness(profile)
+    sd_prof = profile.get("school_district") or {}
+    sd_applicable = sd_prof.get("applicable")
+
+    obligations: List[Dict[str, Any]] = []
+
+    # ── Federal (IRS — its own payment destination) ─────────────────────────
+    fed_est = fed.get("estimate") or {}
+    fed_inst = fed_est.get("installments") or {}
+    fed_remaining = fed_inst.get("remaining_next_payment")
+    fed_status = _tc_estimated_status(fed, fed_remaining, today_iso)
+    obligations.append(_tc_entry(
+        key="federal", jurisdiction="federal", label="Federal Estimated Tax",
+        period_label=f"Tax year {yr}", status=fed_status,
+        due_date=(fed_inst.get("next_deadline") or {}).get("due"),
+        required_amount=fed_inst.get("required_through_next"),
+        credited_amount=fed_inst.get("credited_total"),
+        remaining_amount=fed_remaining,
+        future_dated_total=fed.get("future_dated_payments_total") or 0,
+        catch_up=bool(fed_inst.get("prior_installment_underpaid")),
+        informational={
+            "projected_annual_tax": fed_est.get("projected_total_tax"),
+            "safe_harbor_target": (fed_est.get("safe_harbor") or {}).get("required_annual_payment"),
+            "safe_harbor_path": (fed_est.get("safe_harbor") or {}).get("selected_path"),
+            "withholding_counted": fed_inst.get("withholding_counted"),
+            "prior_year_overpayment": fed_inst.get("prior_year_overpayment_applied"),
+            "payments_recorded": fed_inst.get("federal_payments_recorded"),
+        },
+        missing_fields=fed.get("missing_fields"),
+        cpa_reasons=fed.get("cpa_review_reasons"),
+        action={"type": "record_payment", "lock_jurisdiction": "federal"},
+        detail="federal_card",
+    ))
+
+    # ── Ohio state (IT 1040ES — separate destination from the IRS) ──────────
+    oh_est = oh.get("estimate") or {}
+    oh_inst = oh_est.get("installments") or {}
+    oh_alloc = oh_inst.get("allocation_hint") or {}
+    oh_remaining_combined = oh_inst.get("remaining_next_payment")
+    oh_status = _tc_estimated_status(oh, oh_remaining_combined, today_iso)
+    oh_share = oh_alloc.get("ohio_state_share")
+    # The combined Ohio+SD requirement can be carried entirely by the
+    # school-district share (BID-sheltered state) — the Ohio-STATE entry is
+    # then on track even though the combined remaining is positive.
+    if oh_status in ("PAYMENT_NEEDED", "OVERDUE") and not (oh_share and oh_share > 0):
+        oh_status = "ON_TRACK"
+    obligations.append(_tc_entry(
+        key="ohio", jurisdiction="ohio", label="Ohio Estimated Tax",
+        period_label=f"Tax year {yr}", status=oh_status,
+        due_date=(oh_inst.get("next_deadline") or {}).get("due"),
+        required_amount=oh_inst.get("required_through_next"),
+        credited_amount=oh_inst.get("credited_total"),
+        remaining_amount=(oh_share if oh_status in ("PAYMENT_NEEDED", "OVERDUE") else
+                          (0.0 if oh_status in ("ON_TRACK", "NO_PAYMENT_REQUIRED") else None)),
+        combined_note=("Ohio + school-district share one cumulative statutory "
+                       "requirement (R.C. 5747.09) but are PAID SEPARATELY — "
+                       "this amount is the Ohio-state share of the remaining requirement."),
+        future_dated_total=oh.get("future_dated_payments_total") or 0,
+        catch_up=bool(oh_inst.get("prior_installment_underpaid")),
+        informational={
+            # 4D-2C-1 distinction preserved: return projection ≠ 5747.09 base.
+            "projected_return_liability": oh_est.get("combined_liability"),
+            "estimated_tax_base": (oh_est.get("estimated_tax_base") or {}).get("combined"),
+            "state_return_tax": (oh_est.get("state") or {}).get("state_tax"),
+            "state_estimated_base": (oh_est.get("state") or {}).get("estimated_tax_liability"),
+            "safe_harbor_path": (oh_est.get("safe_harbor") or {}).get("selected_path"),
+            "withholding_counted": oh_inst.get("withholding_counted_through_next"),
+            "payments_recorded": oh_inst.get("ohio_payments_recorded"),
+        },
+        missing_fields=oh.get("missing_fields"),
+        cpa_reasons=oh.get("cpa_review_reasons"),
+        action={"type": "record_payment", "lock_jurisdiction": "ohio"},
+        detail="ohio_card",
+    ))
+
+    # ── Ohio school district (SD 100ES — own obligation + history) ──────────
+    if sd_applicable == "no":
+        obligations.append(_tc_entry(
+            key="school_district", jurisdiction="ohio_school_district",
+            label="School District", period_label=f"Tax year {yr}",
+            status="NOT_APPLICABLE",
+            note=f"No Ohio school-district income tax configured for tax year {yr}.",
+            detail="ohio_card",
+        ))
+    elif sd_applicable in (None, "unknown"):
+        obligations.append(_tc_entry(
+            key="school_district", jurisdiction="ohio_school_district",
+            label="School District", period_label=f"Tax year {yr}",
+            status="PROFILE_INCOMPLETE",
+            note="School-district tax status needs confirmation.",
+            action={"type": "open_profile"}, detail="tax_profile",
+        ))
+    else:
+        sd_est = oh_est.get("school_district") or {}
+        sd_share = oh_alloc.get("school_district_share")
+        if oh["status"] in ("PROFILE_INCOMPLETE", "CPA_REVIEW_REQUIRED", "ENGINE_UNAVAILABLE"):
+            sd_status = oh["status"]
+        elif (oh_est.get("threshold") or {}).get("payment_required") is False:
+            sd_status = "NO_PAYMENT_REQUIRED"
+        elif sd_share and sd_share > 0:
+            sd_status = "OVERDUE" if oh_status == "OVERDUE" else "PAYMENT_NEEDED"
+        else:
+            sd_status = "ON_TRACK"
+        obligations.append(_tc_entry(
+            key="school_district", jurisdiction="ohio_school_district",
+            label="School District", period_label=f"Tax year {yr}",
+            status=sd_status,
+            due_date=(oh_inst.get("next_deadline") or {}).get("due"),
+            remaining_amount=(sd_share if sd_status in ("PAYMENT_NEEDED", "OVERDUE") else
+                              (0.0 if sd_status in ("ON_TRACK", "NO_PAYMENT_REQUIRED") else None)),
+            combined_note=("School-district share of the combined Ohio estimated-tax "
+                           "requirement — paid separately (SD 100ES/OUPC)."),
+            informational={
+                "district_name": sd_prof.get("district_name"),
+                "district_number": sd_prof.get("district_number"),
+                "base_type": sd_est.get("base_type") or sd_prof.get("tax_base_type"),
+                "rate_pct": sd_est.get("rate_pct") if sd_est else sd_prof.get("rate_pct"),
+                "projected_liability": sd_est.get("tax"),
+                "withholding": (oh_est.get("withholding") or {}).get("school_district"),
+                "payments_recorded": oh_inst.get("sd_payments_recorded"),
+            },
+            action={"type": "record_payment", "lock_jurisdiction": "ohio_school_district"},
+            detail="ohio_card",
+        ))
+
+    # ── Ohio sales tax (Ch. 5739 — collected money, NOT income tax) ─────────
+    if sales.get("setup_required"):
+        obligations.append(_tc_entry(
+            key="sales_tax_setup", jurisdiction="sales_tax", label="Ohio Sales Tax",
+            period_label="Filing schedule", status="PROFILE_INCOMPLETE",
+            note="Sales-tax filing schedule needs setup — due dates are unknown "
+                 "until Ohio's assigned filing frequency is configured.",
+            action={"type": "open_sales_tax"}, detail="sales_tax_tab",
+        ))
+    else:
+        for s in sales.get("periods") or []:
+            st = s.get("status")
+            if st == "historical_untracked":
+                continue
+            base = dict(
+                key=f"sales_tax:{s['period_key']}", jurisdiction="sales_tax",
+                label="Ohio Sales Tax", period_label=s.get("label"),
+                due_date=s.get("effective_due_date"),
+                action={"type": "open_sales_tax"}, detail="sales_tax_tab",
+            )
+            if st == "overdue":
+                obligations.append(_tc_entry(
+                    **base, status="OVERDUE",
+                    required_amount=s.get("projected_amount_to_remit"),
+                    remaining_amount=s.get("projected_amount_to_remit"),
+                    late_note="Late filing/payment may result in penalties or interest (not calculated)."))
+            elif st == "ready_to_file":
+                # $0 liability still requires the return — never auto-complete.
+                obligations.append(_tc_entry(
+                    **base, status="FILING_REQUIRED",
+                    required_amount=s.get("projected_amount_to_remit"),
+                    remaining_amount=s.get("projected_amount_to_remit")))
+            elif st == "filed_payment_pending":
+                obligations.append(_tc_entry(
+                    **base, status="PAYMENT_NEEDED",
+                    required_amount=(s.get("snapshot") or {}).get("amount_to_remit"),
+                    credited_amount=s.get("total_paid"),
+                    remaining_amount=s.get("remaining_balance")))
+            elif st == "open":
+                obligations.append(_tc_entry(
+                    **base, status="UPCOMING",
+                    informational={"accrued_liability": s.get("liability")},
+                    note="Current period still accruing — due after the period closes."))
+            elif st in ("filed_paid", "zero_return_filed"):
+                obligations.append(_tc_entry(
+                    **base, status=("FILED" if st == "zero_return_filed" else "PAID"),
+                    credited_amount=s.get("total_paid")))
+            # Post-filing ledger drift is its own attention item.
+            if s.get("needs_review"):
+                obligations.append(_tc_entry(
+                    key=f"sales_tax_review:{s['period_key']}", jurisdiction="sales_tax",
+                    label="Ohio Sales Tax", period_label=f"{s.get('label')} — post-filing variance",
+                    status="NEEDS_REVIEW", due_date=s.get("effective_due_date"),
+                    remaining_amount=None,
+                    variance=s.get("variance"),
+                    action={"type": "open_sales_tax"}, detail="sales_tax_tab"))
+
+    # ── Attention area + Next Tax Action (backend-derived, never React) ─────
+    # Attention list: state-priority first (an overdue sales filing is never
+    # buried under a future federal payment), then deadline within a state.
+    attention = sorted([e for e in obligations if e["actionable"]],
+                       key=lambda e: (e["priority"], e.get("due_date") or "9999-12-31",
+                                      e["jurisdiction"]))
+    # Next Tax Action: the EARLIEST-dated unresolved concrete obligation
+    # (pay/file); blocked/uncertain states (needs-review, CPA, incomplete,
+    # engine-unavailable) become the next action only when nothing dated is
+    # pending. All of it decided here — React never infers from dollars.
+    dated = [e for e in attention
+             if e["status"] in ("OVERDUE", "PAYMENT_NEEDED", "FILING_REQUIRED")
+             and e.get("due_date")]
+    top = (sorted(dated, key=lambda e: (e["due_date"], e["priority"], e["jurisdiction"]))[0]
+           if dated else (attention[0] if attention else None))
+    if top:
+        next_action = {**_tc_next_action_text(top),
+                       "key": top["key"], "status": top["status"],
+                       "status_label": top["status_label"],
+                       "jurisdiction": top["jurisdiction"],
+                       "due_date": top.get("due_date"),
+                       "amount": top.get("remaining_amount"),
+                       "none": False}
+    else:
+        next_action = {"none": True, "headline": "No immediate tax action required",
+                       "sub": "All tracked obligations are on track, resolved, or not yet due."}
+
+    # ── Upcoming tax dates — authoritative deadline builders only ───────────
+    upcoming: List[Dict[str, Any]] = []
+    for r in _quarter_due_dates(yr):
+        if r["due"] >= today_iso:
+            upcoming.append({"date": r["due"], "jurisdiction": "federal",
+                             "label": f"Federal estimated tax — installment {r['quarter']} (1040-ES)"})
+    for r in _ohio_quarter_due_dates(yr):
+        if r["due"] >= today_iso:
+            upcoming.append({"date": r["due"], "jurisdiction": "ohio",
+                             "label": f"Ohio estimated tax — installment {r['quarter']} (IT 1040ES)"})
+            if sd_applicable == "yes":
+                upcoming.append({"date": r["due"], "jurisdiction": "ohio_school_district",
+                                 "label": f"School-district estimated tax — installment {r['quarter']} (SD 100ES)"})
+    for s in (sales.get("periods") or []):
+        due = s.get("effective_due_date")
+        if due and due >= today_iso and s.get("status") in ("open", "ready_to_file", "filed_payment_pending"):
+            upcoming.append({"date": due, "jurisdiction": "sales_tax",
+                             "label": f"Ohio sales tax — {s.get('label')} filing/payment"})
+    upcoming.sort(key=lambda u: (u["date"], u["jurisdiction"]))
+
+    # ── Legacy rows: surfaced ONLY as excluded context ──────────────────────
+    legacy_rows = await db.tax_payments.find({"year": yr}, {"_id": 0}).to_list(500)
+    legacy_total = round(sum(float(p.get("amount") or 0) for p in legacy_rows), 2)
+
+    return {
+        "tax_year": yr, "as_of": today_iso,
+        "obligations": obligations,
+        "attention": attention,
+        "next_action": next_action,
+        "upcoming_dates": upcoming[:16],
+        "profile_readiness": {
+            "federal": {"complete": completeness["federal"]["fields_complete"],
+                        "missing_count": len(completeness["federal"]["missing_fields"]),
+                        "cpa_review": fed["status"] == "CPA_REVIEW_REQUIRED"},
+            "ohio": {"complete": completeness["ohio"]["fields_complete"],
+                     "missing_count": len(completeness["ohio"]["missing_fields"]),
+                     "cpa_review": oh["status"] == "CPA_REVIEW_REQUIRED"},
+            "school_district": {"applicable": sd_applicable or "unknown"},
+        },
+        "legacy_unassigned": {
+            "total": legacy_total, "count": len(legacy_rows),
+            "note": ("Recorded before jurisdictions existed — excluded from every "
+                     "obligation, amount, and status above."),
+        },
+        "notes": {
+            "explainer": ("Sales tax is money collected from taxable merchandise sales "
+                          "and remitted to Ohio. Federal, Ohio, and school-district "
+                          "estimated taxes are income-tax obligations based on the "
+                          "owner's tax situation."),
+            "municipal": "Municipal income tax is not calculated by Sit Happens Tax Center.",
+            "planning_reserve": ("The legacy planning reserve is a budgeting tool only — "
+                                 "it is excluded from every authoritative amount, status, "
+                                 "and deadline shown here."),
+            "recording": ("Recording a payment documents money you already sent "
+                          "externally. Nothing here sends money to the IRS or Ohio."),
+        },
+    }
+
+
+@api.get("/admin/tax-center")
+async def tax_center_endpoint(
+    year: Optional[int] = None,
+    as_of: Optional[str] = None,
+    _: dict = Depends(require_admin_and_permission("finance_reports")),
+):
+    """Owner Tax Center aggregator. `as_of` (YYYY-MM-DD) freezes the
+    calculation date for QA — sales-tax period states always use the live
+    business date (their tracker is snapshot-of-today by design)."""
+    yr = int(year or business_today().year)
+    frozen = None
+    if as_of:
+        try:
+            frozen = date.fromisoformat(as_of)
+        except Exception:
+            raise HTTPException(400, "Invalid as_of date")
+    return await _tax_center_payload(yr, as_of=frozen)
 
 
 # ── Jurisdiction-split estimated-payment ledger (append-only) ───────────────

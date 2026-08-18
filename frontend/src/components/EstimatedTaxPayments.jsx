@@ -121,8 +121,9 @@ export default function EstimatedTaxPayments({ year, refreshKey = null, onChange
       )}
 
       <p className="text-[11px] text-shTextMuted italic">
-        Required FEDERAL amounts come from the federal card above; the Ohio engine arrives in 4D-2C.
-        Municipal (city) income tax is separate and is not part of any federal or Ohio figure here.
+        Required amounts come from the federal and Ohio engine cards — each jurisdiction is paid
+        separately and one ledger never reduces another. Sales-tax filings/payments live on the
+        Sales Tax tab. Municipal (city) income tax is separate and is not part of any figure here.
       </p>
 
       {recOpen && <RecordPaymentModal year={year} onClose={() => setRecOpen(false)} onSaved={() => { setRecOpen(false); load(); onChanged?.(); }} />}

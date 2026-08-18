@@ -78,11 +78,11 @@ test("legacy combined rows stay visibly unassigned", async () => {
 
 test("no required amount is invented; federal points at the engine card", async () => {
   // Step 4D-2B wording update: federal requirements now come from the
-  // federal card's engine; Ohio remains pending until 4D-2C.
+  // engine cards (4D-3 wording: both engines shipped; ledgers never mix).
   api.get.mockResolvedValue({ data: payload() });
   await mount();
-  expect(container.textContent).toContain("Required FEDERAL amounts come from the federal card above");
-  expect(container.textContent).toContain("the Ohio engine arrives in 4D-2C");
+  expect(container.textContent).toContain("Required amounts come from the federal and Ohio engine cards");
+  expect(container.textContent).toContain("one ledger never reduces another");
   expect(container.textContent).not.toMatch(/you owe|balance owed|required payment: \$/i);
 });
 

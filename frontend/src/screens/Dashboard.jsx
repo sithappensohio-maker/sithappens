@@ -12,6 +12,7 @@ import { DailyTriviaCard } from "../components/DailyTriviaCard";
 import AdminTrainingTipCard from "../components/AdminTrainingTipCard";
 import { MileageDashTile } from "../components/MileageDashTile";
 import { SalesTaxDueTile } from "../components/SalesTaxDueTile";
+import { TaxCenterTile } from "../components/TaxCenter";
 import usePullToRefresh, { RefreshSpinner } from "../lib/usePullToRefresh";
 import { useConfirm } from "../lib/useConfirm";
 import { useLiveRefresh } from "../lib/useLiveRefresh";
@@ -618,6 +619,11 @@ export default function Dashboard({ onNavigate = () => {}, onJumpToDog = () => {
 
       {/* Step 4C — Ohio sales-tax filing obligation chip */}
       {widgetOn("sales_tax") && can("finance_reports") && <SalesTaxDueTile onNavigate={onNavigate} />}
+
+      {/* Step 4D-3 — Tax Center next-action chip (owner/finance only; the
+          permission gate means restricted staff never mount it and never
+          fire the aggregator request). */}
+      {widgetOn("tax_center") && can("finance_reports") && <TaxCenterTile onNavigate={onNavigate} />}
 
       {/* Sprint 110bk — Trivia leaderboard moved to top of dashboard (see above). */}
 
