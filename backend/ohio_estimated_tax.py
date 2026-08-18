@@ -7,27 +7,43 @@ AGI is the statutory STARTING POINT for Ohio AGI (R.C. 5747.01(A)), so
 the caller passes the same federally-computed AGI the 1040-ES worksheet
 produced — arithmetic on facts, not federal tax policy.
 
-Structure (IT 1040 / IT BUS ordering, current statutes):
-  OAGI = federal AGI + owner-entered Ohio adjustments (signed lump)
+Structure (IT 1040 / IT BUS ordering, current statutes — corrected in
+Step 4D-2C-1 against the verbatim R.C. text):
+  MAGI = federal AGI + owner-entered Ohio adjustments (signed lump).
+      The BID is itself an Ohio Schedule-of-Adjustments deduction, so
+      OAGI = MAGI − BID and MAGI = OAGI + BID add-back (R.C. 5747.01(II))
+      — the pre-BID figure IS modified AGI; nothing is added twice.
   Ohio business income = Schedule C profit + other SE income (both are
       business income under R.C. 5747.01(B); nothing is guessed)
-  BID  = min(business income, $250,000 / $125,000 MFS)
-  taxable business income = business income − BID → × 3%
-  MAGI = OAGI + BID used (R.C. 5747.01(II))
-  exemptions = count × statutory tier amount (zero at MAGI ≥ $500k)
-  taxable income = max(0, OAGI − BID − exemptions)
-  taxable NONbusiness income = max(0, taxable income − taxable business
-      income) → $0 at/below $26,050 else $332 + 2.75% of the excess
-  state tax = business tax + nonbusiness tax − $20 exemption credit
-      (OAGI ≤ $30k) − owner-entered other Ohio credits (floor 0)
+  BID  = min(business income, $250,000 / $125,000 MFS)  (5747.01(A)(28))
+  preliminary taxable business income = business income − BID
+  exemptions = count × published tier amount by MAGI (zero at ≥ $500k)
+  income tax base = max(0, OAGI − exemptions)            (IT 1040 line 5)
+  taxable business income = min(preliminary, income tax base) — this IS
+      R.C. 5747.02(A)(4)(b): exemptions exceeding OAGI-less-taxable-
+      business-income spill over and reduce taxable business income
+      before the 3% tax (never below zero) → × 3%
+  taxable NONbusiness income = income tax base − taxable business income
+      (i.e. OAGI less taxable business income less exemptions, per
+      5747.02(A)(3)) → $0 at/below $26,050 else $332 + 2.75% of excess
+  projected return tax = business tax + nonbusiness tax − $20 exemption
+      credit (5747.022: only if MAGI − exemptions < $30,000) − owner-
+      entered other Ohio credits (floor 0)
+  ESTIMATED-TAX liability base = business tax + nonbusiness tax − other
+      Ohio credits WITHOUT the 5747.022 credit — that credit "shall not
+      be considered in determining … the estimated taxes required to be
+      paid under section 5747.09" (5747.022, last sentence). The $500
+      threshold, the 90% current-year target, and the current-year
+      installment schedule all use THIS base; the prior-year path uses
+      the owner-entered prior-year liabilities unchanged.
   SDIT: traditional = (MAGI − exemptions) × rate;
         earned income = (wages + spouse wages + SE net earnings ×.9235)
         × rate — NO exemptions, NO BID (R.C. 5748.01) — which is exactly
         why the BID can zero the STATE business tax while SDIT stays
         positive.
-  Combined liability drives the $500 threshold (5747.09(B)) and the
-  dual safe-harbor cumulative installments (22.5/45/67.5/90% current OR
-  25/50/75/100% prior; NO 110% rule).
+  Combined ESTIMATED-tax liability drives the $500 threshold
+  (5747.09(B)) and the dual safe-harbor cumulative installments
+  (22.5/45/67.5/90% current OR 25/50/75/100% prior; NO 110% rule).
 """
 from __future__ import annotations
 
@@ -42,14 +58,17 @@ def compute_ohio_state_tax(*, federal_agi: float, business_income: float,
                            filing_status: str, ohio_adjustments: float,
                            exemption_count: int, other_ohio_credits: float,
                            C: Dict[str, Any]) -> Dict[str, Any]:
-    oagi = _r2(federal_agi + _r2(ohio_adjustments))
+    # Pre-BID income IS modified AGI: the BID is an Ohio Schedule-of-
+    # Adjustments deduction, so OAGI = this − BID and 5747.01(II)'s
+    # "OAGI + BID add-back" lands right back here. (4D-2C-1 fix — the
+    # earlier engine added the BID a second time.)
+    magi = _r2(federal_agi + _r2(ohio_adjustments))
     biz = max(0.0, _r2(business_income))
     bid_cap = C["bid_cap_mfs"] if filing_status == "married_filing_separately" else C["bid_cap"]
     bid_used = _r2(min(biz, bid_cap))
-    taxable_business = _r2(biz - bid_used)
-    business_tax = _r2(taxable_business * C["business_income_rate"])
+    oagi = _r2(magi - bid_used)                      # IT 1040 line 3 (may be < 0)
+    prelim_taxable_business = _r2(biz - bid_used)
 
-    magi = _r2(oagi + bid_used)                      # R.C. 5747.01(II)
     if magi >= C["exemption_zero_magi"]:
         per_exemption = 0.0
     else:
@@ -57,7 +76,16 @@ def compute_ohio_state_tax(*, federal_agi: float, business_income: float,
                              if bound is None or magi <= bound)
     exemptions_total = _r2(max(0, int(exemption_count)) * per_exemption)
 
-    taxable_income = max(0.0, _r2(oagi - bid_used - exemptions_total))
+    # Income tax base (IT 1040 line 5) caps taxable business income:
+    # equivalent to R.C. 5747.02(A)(4)(b) — exemptions left over after the
+    # nonbusiness side spill into taxable business income, never below 0.
+    taxable_income = max(0.0, _r2(oagi - exemptions_total))
+    taxable_business = min(prelim_taxable_business, taxable_income)
+    unused_exemption_reduction = _r2(prelim_taxable_business - taxable_business)
+    business_tax = _r2(taxable_business * C["business_income_rate"])
+
+    # Nonbusiness base per 5747.02(A)(3): OAGI − taxable business income −
+    # exemptions (the taxable-business subtraction, NOT a second BID).
     taxable_nonbusiness = max(0.0, _r2(taxable_income - taxable_business))
     if taxable_nonbusiness <= C["nonbusiness_zero_bracket"]:
         nonbusiness_tax = 0.0
@@ -66,22 +94,34 @@ def compute_ohio_state_tax(*, federal_agi: float, business_income: float,
                               + (taxable_nonbusiness - C["nonbusiness_zero_bracket"])
                               * C["nonbusiness_rate"])
 
+    tax_before_credits = _r2(business_tax + nonbusiness_tax)
+    # 5747.022: $20 × exemptions, only when MAGI − exemptions < $30,000.
+    credit_income = _r2(magi - exemptions_total)
     exemption_credit = (_r2(max(0, int(exemption_count)) * C["exemption_credit_per"])
-                        if oagi <= C["exemption_credit_oagi_limit"] else 0.0)
-    state_tax = max(0.0, _r2(business_tax + nonbusiness_tax
-                             - exemption_credit - _r2(other_ohio_credits)))
+                        if credit_income < C["exemption_credit_income_limit"] else 0.0)
+    other_credits = _r2(other_ohio_credits)
+    # Estimated-tax liability base (5747.09 via 5747.022 last sentence):
+    # the $20 credit is NOT considered; other return credits are.
+    estimated_tax_liability = max(0.0, _r2(tax_before_credits - other_credits))
+    state_tax = max(0.0, _r2(tax_before_credits - exemption_credit - other_credits))
     return {
-        "oagi": oagi, "ohio_adjustments": _r2(ohio_adjustments),
+        "magi": magi, "ohio_adjustments": _r2(ohio_adjustments),
+        "oagi": oagi,
         "business_income": biz, "bid_cap": bid_cap, "bid_used": bid_used,
+        "preliminary_taxable_business_income": prelim_taxable_business,
+        "unused_exemptions_applied_to_business": unused_exemption_reduction,
         "taxable_business_income": taxable_business, "business_tax": business_tax,
-        "magi": magi, "exemption_count": int(exemption_count),
+        "exemption_count": int(exemption_count),
         "per_exemption": per_exemption, "exemptions_total": exemptions_total,
+        "exemption_amounts_basis": C.get("exemption_amounts_basis"),
         "exemption_disallowed_high_magi": magi >= C["exemption_zero_magi"],
         "taxable_income": taxable_income,
         "taxable_nonbusiness_income": taxable_nonbusiness,
         "nonbusiness_tax": nonbusiness_tax,
+        "tax_before_credits": tax_before_credits,
         "exemption_credit": exemption_credit,
-        "other_ohio_credits": _r2(other_ohio_credits),
+        "other_ohio_credits": other_credits,
+        "estimated_tax_liability": estimated_tax_liability,
         "state_tax": state_tax,
     }
 
@@ -135,7 +175,14 @@ def compute_ohio_estimate(
         w2_wages=_r2(w2_wages), spouse_wages=spouse,
         se_profit_total=biz_total, C=C)
 
+    # Projected RETURN liability (5747.022 credit applied) vs the
+    # ESTIMATED-TAX liability base (5747.022 credit excluded — that credit
+    # "shall not be considered in determining … the estimated taxes
+    # required to be paid under section 5747.09"). SDIT has no such
+    # credit, so the school-district share is identical in both.
     combined = _r2(state["state_tax"] + sd["tax"])
+    est_state = state["estimated_tax_liability"]
+    combined_estimated = _r2(est_state + sd["tax"])
 
     # ── Withholding (Ohio + SD; NEVER federal) — default even allocation ────
     oh_wh = _r2(_r2(ohio["withholding_ytd"]) + _r2(ohio["withholding_expected_remaining"]))
@@ -143,12 +190,13 @@ def compute_ohio_estimate(
                 _r2(school_district.get("withholding_expected_remaining"))) if sd["applicable"] else 0.0
     withholding_total = _r2(oh_wh + sd_wh)
 
-    # ── $500 threshold — R.C. 5747.09(B): MORE THAN $500 after withholding ──
-    after_withholding = _r2(combined - withholding_total)
+    # ── $500 threshold — R.C. 5747.09(B): MORE THAN $500 after withholding,
+    #    measured on the ESTIMATED-TAX base (no 5747.022 credit) ───────────
+    after_withholding = _r2(combined_estimated - withholding_total)
     payment_required = after_withholding > C["estimated_tax_threshold"]
 
     # ── Safe harbor — dual statutory paths, NO 110% rule ────────────────────
-    current_target = _r2(combined * C["safe_harbor_current_year_pct"])
+    current_target = _r2(combined_estimated * C["safe_harbor_current_year_pct"])
     prior_valid = bool(ohio["prior_year_full_12_months"])
     prior_state = _r2(ohio["prior_year_tax"])
     prior_sd = _r2(school_district.get("prior_year_tax")) if sd["applicable"] else 0.0
@@ -158,10 +206,12 @@ def compute_ohio_estimate(
     else:
         selected_path = "current_year"
 
-    # ── Cumulative installments — 5747.09(D): lesser of the two schedules ───
+    # ── Cumulative installments — 5747.09(D): lesser of the two schedules
+    #    (current-year leg on the ESTIMATED-TAX base; prior-year leg on the
+    #    owner-entered prior liabilities, unchanged) ────────────────────────
     k = int(next_deadline["quarter"])
     def cum_required(idx: int) -> float:
-        cur = _r2(combined * C["installment_current_year_pcts"][idx - 1])
+        cur = _r2(combined_estimated * C["installment_current_year_pcts"][idx - 1])
         if prior_combined is None:
             return cur
         pri = _r2(prior_combined * C["installment_prior_year_pcts"][idx - 1])
@@ -182,17 +232,29 @@ def compute_ohio_estimate(
     prior_wh = _r2(withholding_total * min(prior_installments_passed, 4) / 4.0)
     prior_underpaid = payment_required and (overpayments + payments + prior_wh) + 0.005 < prior_required
 
-    # Allocation guidance (separately payable obligations):
-    alloc_state = state["state_tax"] / combined if combined > 0 else 0.0
+    # Allocation guidance (separately payable obligations) — shares follow
+    # the estimated-tax base, since that is what the payments satisfy:
+    alloc_state = est_state / combined_estimated if combined_estimated > 0 else 0.0
     return {
         "state": state,
         "school_district": sd,
         "combined_liability": combined,
+        "estimated_tax_base": {
+            "state": est_state,
+            "school_district": sd["tax"],
+            "combined": combined_estimated,
+            "exemption_credit_excluded": state["exemption_credit"],
+            "note": ("R.C. 5747.022: the $20-per-exemption credit is not "
+                     "considered when determining estimated taxes under "
+                     "R.C. 5747.09 — it still reduces the projected return "
+                     "liability."),
+        },
         "withholding": {"ohio": oh_wh, "school_district": sd_wh, "total": withholding_total,
                         "allocation": "even (statutory default; actual-date election not supported)"},
         "threshold": {"amount": C["estimated_tax_threshold"],
                       "after_withholding": after_withholding,
-                      "payment_required": payment_required},
+                      "payment_required": payment_required,
+                      "basis": "estimated-tax liability (5747.022 credit excluded)"},
         "no_payment_reason": (None if payment_required else
                               "Combined Ohio + school-district amount after withholding does not "
                               "exceed the $500 general estimated-payment requirement"),

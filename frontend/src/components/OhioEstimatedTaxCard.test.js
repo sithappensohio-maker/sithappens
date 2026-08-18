@@ -28,18 +28,29 @@ const readyPayload = (over = {}) => ({
   future_dated_payments_total: 0,
   ohio_payments: [], sd_payments: [],
   estimate: {
-    state: { oagi: 126467.61, ohio_adjustments: 0, business_income: 50000, bid_cap: 250000,
-             bid_used: 50000, taxable_business_income: 0, business_tax: 0, magi: 176467.61,
-             exemption_count: 1, per_exemption: 1850, exemptions_total: 1850,
-             exemption_disallowed_high_magi: false, taxable_income: 74617.61,
-             taxable_nonbusiness_income: 74617.61, nonbusiness_tax: 1667.61,
-             exemption_credit: 0, other_ohio_credits: 0, state_tax: 0 },
+    // Coherent Case-D numbers (4D-2C-1): profit 50k only → MAGI 46,467.61,
+    // OAGI −3,532.39 after the BID, state $0, SDIT survives.
+    state: { magi: 46467.61, ohio_adjustments: 0, oagi: -3532.39,
+             business_income: 50000, bid_cap: 250000, bid_used: 50000,
+             preliminary_taxable_business_income: 0,
+             unused_exemptions_applied_to_business: 0,
+             taxable_business_income: 0, business_tax: 0,
+             exemption_count: 1, per_exemption: 2150, exemptions_total: 2150,
+             exemption_amounts_basis: "2026 amounts $2,400/$2,150/$1,900 by MAGI tier — the indexed values frozen for 2025–2026 by H.B. 96 (Section 757.120); $0 at MAGI of $500,000 or more (R.C. 5747.025).",
+             exemption_disallowed_high_magi: false, taxable_income: 0,
+             taxable_nonbusiness_income: 0, nonbusiness_tax: 0,
+             tax_before_credits: 0, exemption_credit: 0, other_ohio_credits: 0,
+             estimated_tax_liability: 0, state_tax: 0 },
     school_district: { applicable: true, base_type: "earned_income", rate_pct: 1.5,
                        taxable_base: 46175, tax: 692.62,
                        note: "Earned-income base: wages + net earnings from self-employment (§1402(a)) — no exemptions, no Business Income Deduction." },
     combined_liability: 692.62,
+    estimated_tax_base: { state: 0, school_district: 692.62, combined: 692.62,
+                          exemption_credit_excluded: 0,
+                          note: "R.C. 5747.022: the $20-per-exemption credit is not considered when determining estimated taxes under R.C. 5747.09 — it still reduces the projected return liability." },
     withholding: { ohio: 0, school_district: 0, total: 0, allocation: "even (statutory default; actual-date election not supported)" },
-    threshold: { amount: 500, after_withholding: 692.62, payment_required: true },
+    threshold: { amount: 500, after_withholding: 692.62, payment_required: true,
+                 basis: "estimated-tax liability (5747.022 credit excluded)" },
     no_payment_reason: null,
     safe_harbor: { current_year_target: 623.36, prior_year_target: 1500, prior_year_valid: true,
                    prior_year_state: 1200, prior_year_sd: 300, no_110_rule: true, selected_path: "current_year" },
@@ -140,10 +151,49 @@ test("drill-down shows BID, statutory nonbusiness formula, and SD base", async (
   await act(async () => { container.querySelector('[data-testid="oh-details-toggle"]').click(); });
   const ws = text('[data-testid="oh-worksheet"]');
   expect(ws).toContain("Business Income Deduction (max $250000.00)");
+  expect(ws).toContain("Ohio AGI (after BID)");
+  expect(ws).toContain("Modified AGI (sets exemption tier)");
   expect(ws).toContain("Business-income tax (3%)");
   expect(ws).toContain("Nonbusiness tax ($332 + 2.75% over $26,050)");
   expect(ws).toContain("no 110% rule in Ohio");
   expect(ws).toContain("Taxable base (earned_income)");
+  // 4D-2C-1: three numbers, never one unexplained "Ohio tax"
+  expect(ws).toContain("Projected Ohio return tax (state + SD)");
+  expect(ws).toContain("Estimated-tax calculation base (R.C. 5747.09)");
+  // frozen-exemption provenance surfaced
+  expect(ws).toContain("H.B. 96");
+});
+
+test("4D-2C-1: $20 credit shown on the return but excluded from the estimated base", async () => {
+  const p = readyPayload();
+  // Case-A-style override: return 525.12 vs estimated base 545.12
+  p.estimate.state = { ...p.estimate.state, magi: 31000, oagi: 31000,
+    per_exemption: 2400, exemptions_total: 2400, taxable_income: 28600,
+    taxable_nonbusiness_income: 28600, nonbusiness_tax: 402.12,
+    tax_before_credits: 402.12, exemption_credit: 20,
+    estimated_tax_liability: 402.12, state_tax: 382.12 };
+  p.estimate.school_district = { ...p.estimate.school_district, base_type: "traditional", rate_pct: 0.5, taxable_base: 28600, tax: 143.0 };
+  p.estimate.combined_liability = 525.12;
+  p.estimate.estimated_tax_base = { ...p.estimate.estimated_tax_base, state: 402.12, school_district: 143.0, combined: 545.12, exemption_credit_excluded: 20 };
+  api.get.mockResolvedValue({ data: p });
+  await mount();
+  await act(async () => { container.querySelector('[data-testid="oh-details-toggle"]').click(); });
+  const ws = text('[data-testid="oh-worksheet"]');
+  expect(ws).toContain("$20 exemption credit (return only)");
+  expect(ws).toContain("$525.12");                       // projected return
+  expect(ws).toContain("$545.12");                       // 5747.09 base
+  expect(text('[data-testid="oh-estbase-note"]')).toContain("5747.09");
+});
+
+test("4D-2C-1: unused-exemption spillover line appears when applied", async () => {
+  const p = readyPayload();
+  p.estimate.state = { ...p.estimate.state, preliminary_taxable_business_income: 10000,
+    unused_exemptions_applied_to_business: 620.59, taxable_business_income: 9379.41,
+    business_tax: 281.38 };
+  api.get.mockResolvedValue({ data: p });
+  await mount();
+  await act(async () => { container.querySelector('[data-testid="oh-details-toggle"]').click(); });
+  expect(text('[data-testid="oh-worksheet"]')).toContain("Unused exemptions applied to business income (R.C. 5747.02(A)(4)(b))");
 });
 
 test("record buttons lock their jurisdiction", async () => {

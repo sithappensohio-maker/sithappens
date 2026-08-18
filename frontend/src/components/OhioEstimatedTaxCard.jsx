@@ -194,23 +194,32 @@ function OhioDetails({ est, agi }) {
   const sd = est.school_district;
   const inst = est.installments;
   const sh = est.safe_harbor;
+  const estBase = est.estimated_tax_base || {};
   return (
     <div className="border-t border-shBorder pt-2 grid grid-cols-1 md:grid-cols-2 gap-4 text-[12px]" data-testid="oh-worksheet">
       <div className="space-y-0.5">
         <p className="text-[10px] font-black uppercase tracking-widest text-shSecondary mb-1">Ohio state calculation</p>
         <Line label="Federal AGI (starting point)" value={agi} />
         {s.ohio_adjustments !== 0 && <Line label="Ohio adjustments (owner-entered)" value={s.ohio_adjustments} />}
-        <Line label="Ohio AGI" value={s.oagi} bold />
+        <Line label="Modified AGI (sets exemption tier)" value={s.magi} />
         <Line label="Ohio business income" value={s.business_income} />
         <Line label={`Business Income Deduction (max ${money(s.bid_cap)})`} value={-s.bid_used} />
+        <Line label="Ohio AGI (after BID)" value={s.oagi} bold />
+        <Line label={`Exemptions (${s.exemption_count} × ${money(s.per_exemption)})`} value={-s.exemptions_total} />
+        {s.unused_exemptions_applied_to_business > 0 && (
+          <Line label="Unused exemptions applied to business income (R.C. 5747.02(A)(4)(b))"
+                value={-s.unused_exemptions_applied_to_business} />
+        )}
         <Line label="Taxable business income" value={s.taxable_business_income} bold />
         <Line label="Business-income tax (3%)" value={s.business_tax} />
-        <Line label={`Exemptions (${s.exemption_count} × ${money(s.per_exemption)})`} value={-s.exemptions_total} />
         <Line label="Taxable nonbusiness income" value={s.taxable_nonbusiness_income} bold />
         <Line label="Nonbusiness tax ($332 + 2.75% over $26,050)" value={s.nonbusiness_tax} />
-        {s.exemption_credit > 0 && <Line label="$20 exemption credit" value={-s.exemption_credit} />}
+        {s.exemption_credit > 0 && <Line label="$20 exemption credit (return only)" value={-s.exemption_credit} />}
         {s.other_ohio_credits > 0 && <Line label="Other Ohio credits (owner-entered)" value={-s.other_ohio_credits} />}
-        <Line label="Projected Ohio state liability" value={s.state_tax} bold />
+        <Line label="Projected Ohio return tax (state)" value={s.state_tax} bold />
+        {s.exemption_amounts_basis && (
+          <p className="text-[10px] text-shTextMuted italic">{s.exemption_amounts_basis}</p>
+        )}
         <p className="text-[10px] font-black uppercase tracking-widest text-shSecondary mt-2 mb-1">School district</p>
         {sd.applicable ? (
           <>
@@ -224,9 +233,13 @@ function OhioDetails({ est, agi }) {
       </div>
       <div className="space-y-0.5">
         <p className="text-[10px] font-black uppercase tracking-widest text-shSecondary mb-1">Combined estimated-tax calculation</p>
-        <Line label="Combined Ohio + SD liability" value={est.combined_liability} bold />
+        <Line label="Projected Ohio return tax (state + SD)" value={est.combined_liability} bold />
+        <Line label="Estimated-tax calculation base (R.C. 5747.09)" value={estBase.combined ?? est.combined_liability} bold />
+        {(estBase.exemption_credit_excluded || 0) > 0 && (
+          <p className="text-[10px] text-shTextMuted italic" data-testid="oh-estbase-note">{estBase.note}</p>
+        )}
         <Line label={`$500 threshold test (after withholding: ${money(est.threshold.after_withholding)})`} value={est.threshold.amount} />
-        <Line label="90% current-year path" value={sh.current_year_target} />
+        <Line label="90% current-year path (on the estimated-tax base)" value={sh.current_year_target} />
         {sh.prior_year_target != null
           ? <Line label="100% prior-year path (no 110% rule in Ohio)" value={sh.prior_year_target} />
           : <p className="text-shTextMuted italic">Prior-year path unavailable (return did not cover 12 months)</p>}
