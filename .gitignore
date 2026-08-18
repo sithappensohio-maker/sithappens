@@ -69,6 +69,7 @@ backend/incident_reports/
 # ── Online School runtime media + QA artefacts (never source) ───────
 backend/school_media/
 backend/_test_release_critical_backups/
+backend/rc_backups/
 backend/_qa_*.log
 frontend/_qa_*.log
 frontend/package-lock.json
