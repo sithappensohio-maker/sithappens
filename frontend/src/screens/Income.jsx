@@ -480,7 +480,13 @@ export default function Income({ openCreateExpenseOnMount = false, onCreateConsu
             </div>
           )}
           <div className="grid grid-cols-2 md:grid-cols-5 gap-3 mb-4">
-            <StatTile label="Income (all sources)" value={fmt(rangeSummary.completed_total)} sub="Services · Training · Retail · Packs" color="text-shPrimary" icon="fa-circle-check" big />
+            {/* RH1 — this is BUSINESS revenue: collected Ohio sales tax is a
+                pass-through liability and is reported separately, never here. */}
+            <StatTile label="Business Revenue" value={fmt(rangeSummary.completed_total)}
+                      sub={Number(rangeSummary.sales_tax_collected || 0) > 0
+                        ? `Services · Training · Retail · Packs — excludes ${fmt(rangeSummary.sales_tax_collected)} sales tax collected for Ohio`
+                        : "Services · Training · Retail · Packs"}
+                      color="text-shPrimary" icon="fa-circle-check" big />
             <StatTile label="Expenses" value={fmt(rangeSummary.expenses_total || 0)} sub={`${rangeSummary.expense_count || 0} item${rangeSummary.expense_count===1?"":"s"}`} color="text-red-300" icon="fa-receipt" />
             <StatTile label="Labor (w/ taxes)" value={fmt(rangeSummary.labor_total || 0)} sub={rangeSummary.labor_burden ? `${fmt(rangeSummary.labor_gross)} + ${fmt(rangeSummary.labor_burden)} taxes` : "no clocked hours"} color="text-shAccent" icon="fa-user-clock" />
             <StatTile label="Net (after labor)" value={fmt(rangeSummary.net_total ?? rangeSummary.completed_total)} sub={(rangeSummary.net_total ?? 0) >= 0 ? "in the black" : "in the red"} color={(rangeSummary.net_total ?? 0) >= 0 ? "text-shSecondary" : "text-red-400"} icon="fa-scale-balanced" big />

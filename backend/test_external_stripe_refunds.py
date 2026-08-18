@@ -249,7 +249,11 @@ def test_jk_categories():
           payment_source="stripe_online_payment")  # invoice payment → account
     try:
         w0 = run(server.weekly_summary(ADMIN, ref_date=d))
-        assert w0["retail_total"] >= 110.0 and w0["account_payments_total"] >= 30.0
+        # RH1 — category totals are BUSINESS REVENUE: the $110 shop order is
+        # $100 of revenue + $10 of Ohio sales tax; the $30 invoice payment
+        # carried no tax. Reversal magnitudes follow the same basis, so the
+        # pair contributes $100 + $30 = $130, not $140.
+        assert w0["retail_total"] >= 100.0 and w0["account_payments_total"] >= 30.0
         _handle(_event("re_ext_j", pi1, 110.0))
         _handle(_event("re_ext_k", pi2, 30.0))
         w = run(server.weekly_summary(ADMIN, ref_date=d))
@@ -257,7 +261,7 @@ def test_jk_categories():
         # signed Refunds & reversals bucket (4B-5 classifier on stripe_refund).
         assert w["retail_total"] == w0["retail_total"]
         assert w["account_payments_total"] == w0["account_payments_total"]
-        assert w["refunds_reversals_total"] >= w0["refunds_reversals_total"] + 140.0
+        assert w["refunds_reversals_total"] >= w0["refunds_reversals_total"] + 130.0
     finally:
         _cleanup()
 

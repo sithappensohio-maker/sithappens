@@ -25017,6 +25017,15 @@ BACKUP_COLLECTIONS = [
     # payloads, which predate this collection and must stay restorable
     # without a false "missing critical collection" flag.
     "school_quiz_attempts",
+    # RH1 — Tax Center records. Real, irreplaceable tax data: the owner's
+    # tax profile (with its audit log), the jurisdiction-split estimated-tax
+    # payment ledger (including voids), and Ohio sales-tax filings (with
+    # their frozen at-filing snapshots and payment events). All three key on
+    # a uuid `id`, so they use the standard restore path. Deliberately NOT
+    # added to _CRITICAL_BACKUP_COLLECTIONS: that list also validates OLD
+    # backup payloads, which predate Tax Center and must stay restorable
+    # without a false "missing critical collection" flag.
+    "tax_profiles", "estimated_tax_payments", "sales_tax_filings",
 ]
 # Collections whose primary key is a string `_id` (no separate `id` field).
 # These get special handling during export (we preserve `_id`) and restore
@@ -28685,15 +28694,13 @@ async def admin_income_csv(
     # per-session checkouts again would double-count.
     program_lot_ids = await _get_training_program_lot_ids()
     paid_bookings = [b for b in paid_bookings if not _is_program_credit_redemption(b, program_lot_ids)]
-    # Credit-pack sales (revenue is recognized at sell-time on these lots).
-    # Sprint 110cj — exclude `pack_kind=training_program` lots here; their
-    # sale is already recorded in `retail_sales` (source_kind=
-    # training_program_sale) and shows up below as a "Training Revenue" row.
-    sold_packs = await db.credit_lots.find(
-        {"sold_at": {"$gte": f"{yr}-01-01T00:00:00", "$lte": f"{yr}-12-31T23:59:59"},
-         "pack_kind": {"$ne": "training_program"}},
-        {"_id": 0},
-    ).to_list(50000)
+    # RH1 — the credit-pack section used to query `credit_lots` on `sold_at`
+    # / `paid_amount`, fields NO current writer sets (lots store
+    # `purchased_at` / `price_paid`), so it always returned zero rows. It is
+    # removed rather than "repaired": a sold credit pack is already recorded
+    # once in `retail_sales` with source_kind="credit_pack_sale" and is
+    # exported below under the canonical "Credit Packs" category. Re-adding
+    # a lot-based section would DOUBLE-COUNT every pack.
     # Expenses in the same year
     expenses = await db.expenses.find(
         {"date": {"$gte": start, "$lte": end}},
@@ -28706,58 +28713,89 @@ async def admin_income_csv(
         {"_id": 0},
     ).to_list(50000)
 
+    # RH1 — the accountant ledger. Business Revenue EXCLUDES collected sales
+    # tax (a pass-through liability, exported in its own column); refunds,
+    # POS voids and Stripe refunds appear as SIGNED NEGATIVE rows and are
+    # never filtered out; categories come from the ONE canonical Finance
+    # taxonomy so a credit pack is never called "Retail".
     out_rows: List[List[str]] = [
-        ["Date", "Type", "Client", "Dog", "Service / Pack", "Amount (USD)", "Payment method", "Payment status", "Booking/Lot ID"]
+        ["Date", "Category", "Client", "Dog", "Description",
+         "Business Revenue (USD)", "Sales Tax Collected (USD)",
+         "Payment method", "Payment status", "Record ID"]
     ]
+    gross = 0.0            # positive business revenue before reversals
+    reversals = 0.0        # positive magnitude of refunds/reversals
+    sales_tax_total = 0.0  # pass-through liability, never income
+    expenses_total_csv = 0.0
+
+    def _add(date_s, category, client, dog, desc, revenue, tax, method, status, rid):
+        nonlocal gross, reversals, sales_tax_total
+        if revenue >= 0:
+            gross += revenue
+        else:
+            reversals += -revenue
+        sales_tax_total += tax
+        out_rows.append([
+            date_s or "", category, client or "", dog or "", desc or "",
+            f"{revenue:.2f}", f"{tax:.2f}", method or "", status or "", rid or "",
+        ])
+
     for b in paid_bookings:
-        # Sprint 110eg — Universal cash-basis: only the cash portion counts.
-        # Credit redemptions produce $0 here; the original pack sale is
-        # already represented via the matching retail_sales row below.
-        amt = _cash_revenue(b)
-        if amt <= 0:
+        # Cash-basis: only the cash portion counts. Credit redemptions produce
+        # $0; the original pack sale is represented by its retail_sales row.
+        cash = _cash_revenue(b)
+        if cash <= 0:
             continue
-        out_rows.append([
-            b.get("date", ""), "Service", b.get("client_name", ""), b.get("dog_name", ""),
-            b.get("service_type", ""), f"{amt:.2f}",
-            b.get("payment_method", "") or "", b.get("payment_status", "") or "", b.get("id", ""),
-        ])
-    for lot in sold_packs:
-        sold_at = (lot.get("sold_at") or "")[:10]
-        out_rows.append([
-            sold_at, "Credit Pack", lot.get("client_name", ""), "",
-            lot.get("pack_name", "") or lot.get("service_type", ""), f"{float(lot.get('paid_amount', 0)):.2f}",
-            lot.get("payment_method", "") or "", "paid", lot.get("id", ""),
-        ])
-    # Expenses as negative-amount rows so the trailing TOTAL line nets correctly.
+        tax = _sales_tax_collected_on_booking(b)
+        _add(b.get("date"), "Services", b.get("client_name"), b.get("dog_name"),
+             b.get("service_type"), round(max(0.0, cash - tax), 2), tax,
+             b.get("payment_method"), b.get("payment_status"), b.get("id"))
+
+    # Retail-ledger rows: EVERY row, including negatives. Category via the
+    # canonical classifier — never "Retail because it touched the register".
+    for s in retail_sales:
+        cat_key = _finance_income_category(s)
+        revenue = _business_revenue_net_of_sales_tax(s)
+        tax = _sales_tax_collected_on_row(s)
+        if revenue == 0 and tax == 0:
+            continue
+        _add(s.get("date"), FINANCE_INCOME_CATEGORY_LABELS.get(cat_key, "Retail (items)"),
+             s.get("client_name"), "",
+             (s.get("description") or "") + (f" ({s.get('category')})" if s.get("category") else ""),
+             revenue, tax, s.get("payment_method"),
+             "reversal" if revenue < 0 else "paid", s.get("id"))
+
+    # Expenses stay negative rows, but they are NOT revenue reversals — they
+    # are tracked separately so Gross − Refunds = Net Business Revenue holds.
     for e in expenses:
         amt = float(e.get("amount") or 0)
         if amt <= 0:
             continue
+        expenses_total_csv += amt
         out_rows.append([
             e.get("date", ""), "Expense", "", "",
-            e.get("description", "") + (f" ({e.get('category')})" if e.get("category") else ""),
-            f"-{amt:.2f}",
+            (e.get("description") or "") + (f" ({e.get('category')})" if e.get("category") else ""),
+            f"-{amt:.2f}", "0.00",
             e.get("payment_method", "") or "", "paid", e.get("id", ""),
         ])
-    # Retail sales — positive revenue rows. Training program sales are split
-    # into their own "Training Revenue" row type so the operator + accountant
-    # can tell merchandise apart from services.
-    for s in retail_sales:
-        amt = float(s.get("amount") or 0)
-        if amt <= 0:
-            continue
-        row_type = "Training Revenue" if s.get("source_kind") == "training_program_sale" else "Retail"
-        out_rows.append([
-            s.get("date", ""), row_type, s.get("client_name", "") or "", "",
-            s.get("description", "") + (f" ({s.get('category')})" if s.get("category") else ""),
-            f"{amt:.2f}",
-            s.get("payment_method", "") or "", "paid", s.get("id", ""),
-        ])
 
-    # Trailing summary row keeps the totals visible in Excel without a pivot.
-    total = sum(float(r[5]) for r in out_rows[1:])
+    gross = round(gross, 2)
+    reversals = round(reversals, 2)
+    net_revenue = round(gross - reversals, 2)
+    sales_tax_total = round(sales_tax_total, 2)
+    expenses_total_csv = round(expenses_total_csv, 2)
+
+    # Honest footer: the accountant sees the same gross/refunds/net trio the
+    # rest of Finance uses, with sales tax and expenses called out separately.
     out_rows.append([])
-    out_rows.append(["", "", "", "", f"{yr} NET TOTAL", f"{total:.2f}", "", "", ""])
+    out_rows.append(["", "", "", "", f"{yr} GROSS BUSINESS REVENUE", f"{gross:.2f}", "", "", "", ""])
+    out_rows.append(["", "", "", "", f"{yr} REFUNDS & REVERSALS", f"-{reversals:.2f}", "", "", "", ""])
+    out_rows.append(["", "", "", "", f"{yr} NET BUSINESS REVENUE", f"{net_revenue:.2f}", "", "", "", ""])
+    out_rows.append(["", "", "", "", f"{yr} SALES TAX COLLECTED (liability — not income)",
+                     "", f"{sales_tax_total:.2f}", "", "", ""])
+    out_rows.append(["", "", "", "", f"{yr} EXPENSES", f"-{expenses_total_csv:.2f}", "", "", "", ""])
+    out_rows.append(["", "", "", "", f"{yr} NET AFTER EXPENSES",
+                     f"{round(net_revenue - expenses_total_csv, 2):.2f}", "", "", "", ""])
 
     # CSV escape — minimal but correct.
     def esc(v: str) -> str:
@@ -30991,20 +31029,87 @@ def _finance_income_category(row: Dict[str, Any]) -> str:
     return "retail"  # POS/manual merchandise, incl. shop_order
 
 
-def _schedule_c_retail_income(row: dict) -> float:
-    """Retail/other cash income for Schedule C, net of sales tax collected.
+def _business_revenue_net_of_sales_tax(row: dict) -> float:
+    """THE canonical business-revenue amount for ONE retail_sales row.
 
-    Normal sale rows cannot contribute negative income (the clamp guards
-    against malformed rows where recorded tax exceeds the amount), but rows
-    that REVERSE collected income — refunds, POS voids, invoice-payment
-    voids, Stripe refunds — keep their sign so the reversal reduces income
-    in the period the money was paid back. Clamping happens per ordinary
-    row, never on the aggregate, so valid negative activity is never lost.
+    Release Hardening 1 — accounting policy, pinned in one place so no
+    Finance surface can drift from another:
+
+      * Sales tax collected for Ohio is a PASS-THROUGH LIABILITY, never
+        business revenue. A $100 merchandise sale that charged $7 tax is
+        $100 of business revenue and $7 owed to Ohio — never $107.
+      * Reversal rows — refunds, POS voids, invoice-payment voids, Stripe
+        refunds, and any negative row (the same union rule the canonical
+        categorizer `_finance_income_category` already applies) — keep
+        their sign, so a reversal reduces revenue in the period the money
+        went back out. The row's OWN stored tax decomposition is used, so
+        the original tax and its reversal each apply exactly once: this
+        never subtracts a refund's tax twice.
+      * Ordinary sale rows are clamped at zero, guarding malformed rows
+        where recorded tax somehow exceeds the amount. Clamping is per
+        row, never on the aggregate, so valid negative activity survives.
+      * Rows with no stored tax detail (legacy) yield `or 0` → the full
+        amount counts as revenue. Historical tax is never fabricated.
+
+    Every Finance surface — weekly summary, range summary, P&L, Schedule C,
+    quarterly projection, and the accountant CSV — calls THIS function, so
+    the same activity can never produce two different revenue numbers.
     """
     net = round(float(row.get("amount") or 0) - float(row.get("tax_amount") or 0), 2)
-    if (row.get("source_kind") or "") in _INCOME_REVERSAL_KINDS:
+    if (row.get("source_kind") or "") in _INCOME_REVERSAL_KINDS or float(row.get("amount") or 0) < 0:
         return net
     return round(max(0.0, net), 2)
+
+
+def _booking_event_tax_slice(ev: dict) -> float:
+    """Sales tax inside ONE booking collection event's collected amount.
+
+    RH1 — the collected amount may be a PARTIAL payment, so only the
+    proportional slice of the booking's stored tax has actually been
+    collected. This is the exact slicing rule the accepted Schedule C /
+    quarterly path already applies (`admin_quarterly_tax`), lifted into a
+    shared helper so Finance cannot drift from it. Bookings with no stored
+    tax detail yield 0 — historical tax is never fabricated.
+    """
+    b = ev.get("booking") or {}
+    collected = round(float(ev.get("amount") or 0), 2)
+    if collected <= 0:
+        return 0.0
+    tax_full = _sales_tax_collected_on_booking(b)
+    if tax_full <= 0:
+        return 0.0
+    full_cash = _cash_revenue(b)
+    if full_cash <= 0:
+        return 0.0
+    return round(tax_full * (min(collected, full_cash) / full_cash), 2)
+
+
+def _business_revenue_from_booking_event(ev: dict) -> float:
+    """Canonical business revenue for ONE booking collection event —
+    collected cash MINUS its proportional slice of collected sales tax.
+
+    The cash DRAWER deliberately keeps using the gross event amount (the
+    customer really did hand over the tax); only REVENUE reporting nets it
+    out. Both readings come from the same event, so neither can drift.
+    """
+    collected = round(float(ev.get("amount") or 0), 2)
+    return round(max(0.0, collected - _booking_event_tax_slice(ev)), 2)
+
+
+def _sales_tax_collected_on_row(row: dict) -> float:
+    """Signed sales tax on ONE retail_sales row — a pass-through liability,
+    reported separately and never folded into business revenue. Reversal
+    rows carry negative stored tax, so a refund reduces the collected
+    figure exactly once. Rows with no tax detail contribute 0 (never
+    fabricated)."""
+    return round(float(row.get("tax_amount") or 0), 2)
+
+
+def _schedule_c_retail_income(row: dict) -> float:
+    """Retail/other cash income for Schedule C — the canonical helper above.
+    Kept as a named alias because the Schedule C / quarterly projection call
+    sites read more clearly with the tax-form name."""
+    return _business_revenue_net_of_sales_tax(row)
 
 def _is_program_credit_redemption(booking: dict, program_lot_ids: set) -> bool:
     """Return True if this booking is paid from a training-program credit lot.
@@ -31086,6 +31191,7 @@ async def weekly_summary(_: dict = Depends(require_admin_and_permission("finance
     paid_total = 0.0
     unpaid_total = 0.0
     credits_redeemed = 0
+    booking_sales_tax_collected = 0.0  # RH1 — reported beside revenue
     completed_count = 0
     booked_count = 0
     credit_pack_redeemed_count = 0
@@ -31127,7 +31233,9 @@ async def weekly_summary(_: dict = Depends(require_admin_and_permission("finance
     # register), never the service date. Service dates stay untouched for
     # the operational figures above.
     for ev in await _booking_collection_events(monday_iso, sunday_iso):
-        amt = float(ev["amount"])
+        # RH1 — business revenue excludes the collected sales-tax slice.
+        amt = _business_revenue_from_booking_event(ev)
+        booking_sales_tax_collected += _booking_event_tax_slice(ev)
         completed_total += amt
         paid_total += amt
         completed_count += 1
@@ -31147,13 +31255,20 @@ async def weekly_summary(_: dict = Depends(require_admin_and_permission("finance
     #   - everything else (treats, toys, items) → "Retail"
     retail_rows_all = await db.retail_sales.find(
         {"date": {"$gte": monday_iso, "$lte": sunday_iso}},
-        {"_id": 0, "amount": 1, "source_kind": 1},
+        # RH1 — tax_amount is required: business revenue EXCLUDES collected
+        # sales tax, so the projection must carry the tax decomposition.
+        {"_id": 0, "amount": 1, "source_kind": 1, "tax_amount": 1},
     ).to_list(2000)
     # Step 4B-4 — magnitude of this week's refund/void/reversal rows (any
     # negative retail row, matching the register's bucketing rule) so the
     # response can expose an honest gross/refunds/net trio.
+    # RH1 — measured on business revenue (net of sales tax), like every
+    # other figure here, so gross − refunds = net holds exactly.
     retail_reversals_total = round(
-        sum(-float(x.get("amount") or 0) for x in retail_rows_all if float(x.get("amount") or 0) < 0), 2)
+        sum(-_business_revenue_net_of_sales_tax(x) for x in retail_rows_all
+            if float(x.get("amount") or 0) < 0), 2)
+    retail_sales_tax_collected = round(
+        sum(_sales_tax_collected_on_row(x) for x in retail_rows_all), 2)
     # Step 4B-5 — categorize through the ONE canonical Finance classifier
     # (_finance_income_category) instead of a local SPECIAL_KINDS allowlist
     # whose fall-through called invoice/tab payments, shop orders, refunds,
@@ -31164,7 +31279,8 @@ async def weekly_summary(_: dict = Depends(require_admin_and_permission("finance
         cat_rows.setdefault(_finance_income_category(x), []).append(x)
 
     def _cat_total(key: str) -> float:
-        return round(sum(float(x.get("amount") or 0) for x in cat_rows.get(key, [])), 2)
+        # RH1 — canonical business revenue (collected sales tax excluded).
+        return round(sum(_business_revenue_net_of_sales_tax(x) for x in cat_rows.get(key, [])), 2)
 
     retail_total = _cat_total("retail")
     retail_count = len(cat_rows.get("retail", []))
@@ -31179,8 +31295,10 @@ async def weekly_summary(_: dict = Depends(require_admin_and_permission("finance
     reversals_signed_total = _cat_total("refunds_reversals")
     reversals_count = len(cat_rows.get("refunds_reversals", []))
     # Identity: the categories partition retail_rows_all, so this equals the
-    # pre-4B-5 sum of every row — completed/paid totals cannot move.
-    other_revenue_total = round(sum(float(x.get("amount") or 0) for x in retail_rows_all), 2)
+    # sum of every row — completed/paid totals stay consistent with the
+    # category tiles. RH1: business revenue, sales tax excluded.
+    other_revenue_total = round(
+        sum(_business_revenue_net_of_sales_tax(x) for x in retail_rows_all), 2)
 
     # Sprint 110cz — Fold retail / credit-pack-sales / training-program-sales
     # into the SAME `completed_total` and `by_service` breakdown so the
@@ -31263,6 +31381,8 @@ async def weekly_summary(_: dict = Depends(require_admin_and_permission("finance
         # All consumers audited: nothing read gross_total as net.
         "gross_total": round(completed_total + retail_reversals_total, 2),
         "refunds_reversals_total": retail_reversals_total,
+        # RH1 — pass-through liability, reported beside revenue, never inside it.
+        "sales_tax_collected": round(retail_sales_tax_collected + booking_sales_tax_collected, 2),
         "net_total": round(completed_total, 2),
     }
 
@@ -31306,8 +31426,11 @@ async def summary_range(
 
     # Step 4B-8 — booking revenue by America/New_York COLLECTION date,
     # matching the register (see _booking_collection_events).
+    booking_sales_tax_collected = 0.0  # RH1 — reported beside revenue
     for ev in await _booking_collection_events(start_date, end_date):
-        amt = float(ev["amount"])
+        # RH1 — business revenue excludes the collected sales-tax slice.
+        amt = _business_revenue_from_booking_event(ev)
+        booking_sales_tax_collected += _booking_event_tax_slice(ev)
         completed_total += amt
         paid_total += amt
         by_day[ev["date"]] = round(by_day.get(ev["date"], 0) + amt, 2)
@@ -31343,7 +31466,8 @@ async def summary_range(
         range_cat_rows.setdefault(_finance_income_category(r), []).append(r)
 
     def _range_cat_total(key: str) -> float:
-        return round(sum(float(r.get("amount") or 0) for r in range_cat_rows.get(key, [])), 2)
+        # RH1 — canonical business revenue (collected sales tax excluded).
+        return round(sum(_business_revenue_net_of_sales_tax(r) for r in range_cat_rows.get(key, [])), 2)
 
     retail_rows = range_cat_rows.get("retail", [])
     retail_total = _range_cat_total("retail")
@@ -31353,11 +31477,15 @@ async def summary_range(
     payment_plans_total = _range_cat_total("payment_plans")
     account_payments_total = _range_cat_total("account_payments")
     refunds_reversals_signed = _range_cat_total("refunds_reversals")
-    other_revenue_total = round(sum(float(r.get("amount") or 0) for r in retail_rows_all), 2)
+    # RH1 — business revenue for the whole window, sales tax excluded.
+    other_revenue_total = round(
+        sum(_business_revenue_net_of_sales_tax(r) for r in retail_rows_all), 2)
+    range_sales_tax_collected = round(
+        sum(_sales_tax_collected_on_row(r) for r in retail_rows_all), 2)
     for r in retail_rows_all:
         d = r.get("date")
         if d:
-            by_day[d] = round(by_day.get(d, 0) + float(r.get("amount") or 0), 2)
+            by_day[d] = round(by_day.get(d, 0) + _business_revenue_net_of_sales_tax(r), 2)
 
     # Labor cost in the same window — uses the payroll tax estimator so the
     # Income page shows TRUE cost (gross + employer burden), not just gross wages.
@@ -31420,6 +31548,8 @@ async def summary_range(
         "payment_plans_total": payment_plans_total,
         "account_payments_total": account_payments_total,
         "refunds_reversals_total": round(-refunds_reversals_signed, 2),
+        # RH1 — pass-through liability, reported beside revenue, never inside it.
+        "sales_tax_collected": round(range_sales_tax_collected + booking_sales_tax_collected, 2),
         "credit_pack_redeemed_count": credit_pack_redeemed_count,
         "credit_pack_redeemed_value": round(credit_pack_redeemed_value, 2),
         "paid_total": round(paid_total + other_revenue_total, 2),
@@ -42237,16 +42367,47 @@ async def quarterly_tax_cpa_pdf(
         b["total"] = round(b["total"] + float(e.get("amount") or 0), 2)
     expenses_by_category = list(cat_buckets.values())
 
-    # Recorded quarterly payments for the year (oldest → newest)
+    # LEGACY quarterly payments for the year (oldest → newest). These predate
+    # jurisdictions and are rendered in their own clearly-labeled section —
+    # never silently assigned to Federal, Ohio, or the school district.
     payments = await db.tax_payments.find(
         {"year": yr}, {"_id": 0},
     ).sort("payment_date", 1).to_list(2000)
+
+    # RH1 — the AUTHORITATIVE Tax Center ledger. Recorded estimated-tax
+    # payments used to be invisible on the CPA hand-off because only the
+    # legacy collection above was read. Grouped by jurisdiction, never
+    # combined into one unexplained total; voided rows stay visible but are
+    # excluded from the paid totals; each row keeps its real payment date so
+    # a future-dated record can never read as already paid.
+    est_rows = await db.estimated_tax_payments.find(
+        {"tax_year": yr}, {"_id": 0},
+    ).sort("payment_date", 1).to_list(5000)
+    today_iso = business_today().isoformat()
+    estimated_payments: Dict[str, Dict[str, Any]] = {}
+    for jur in ESTIMATED_TAX_JURISDICTIONS:
+        rows = [r for r in est_rows if r.get("jurisdiction") == jur]
+        for r in rows:
+            r["future_dated"] = (r.get("payment_date") or "") > today_iso
+        estimated_payments[jur] = {
+            "rows": rows,
+            # Paid = not voided AND its payment date has actually arrived.
+            "total_paid": round(sum(
+                float(r.get("amount") or 0) for r in rows
+                if not r.get("voided") and not r["future_dated"]), 2),
+            "future_dated_total": round(sum(
+                float(r.get("amount") or 0) for r in rows
+                if not r.get("voided") and r["future_dated"]), 2),
+            "voided_total": round(sum(
+                float(r.get("amount") or 0) for r in rows if r.get("voided")), 2),
+        }
 
     # Brand from settings if available
     settings_row = await db.app_settings.find_one({"_id": "brand"}, {"_id": 0}) or {}
     brand_name = settings_row.get("name") or "Sit Happens"
 
-    pdf_bytes = render_cpa_pdf(payload, expenses_by_category, payments, brand_name=brand_name)
+    pdf_bytes = render_cpa_pdf(payload, expenses_by_category, payments, brand_name=brand_name,
+                               estimated_payments=estimated_payments)
     fname = f"cpa-tax-summary-{yr}.pdf"
     return Response(
         content=pdf_bytes,

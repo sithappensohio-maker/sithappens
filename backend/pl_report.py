@@ -287,7 +287,16 @@ async def build_pl_data(db, start_date: str, end_date: str) -> Dict[str, Any]:
     # register), via the shared _booking_collection_events helper. The
     # service-date booking list still drives the operational figures below
     # (unpaid balances, visit counts, staff-hours estimates).
-    from server import _booking_collection_events  # lazy — avoids import cycle
+    # RH1 — the same canonical booking-revenue helpers Finance and Schedule C
+    # use: collected cash minus its proportional slice of collected sales tax.
+    from server import (  # lazy — avoids import cycle
+        _booking_collection_events,
+        _business_revenue_from_booking_event,
+        _booking_event_tax_slice,
+        _business_revenue_net_of_sales_tax,
+        _sales_tax_collected_on_row,
+        _finance_income_category,
+    )
     collection_events = await _booking_collection_events(start_date, end_date)
     collection_events = [
         ev for ev in collection_events if not _is_program_redemption(ev.get("booking") or {})
@@ -296,17 +305,20 @@ async def build_pl_data(db, start_date: str, end_date: str) -> Dict[str, Any]:
     completed = [b for b in bookings if b.get("status") == "completed"]
     unpaid = [b for b in bookings if b.get("payment_status") in ("unpaid", "paid_partial") and b.get("actual_price")]
 
-    completed_total = round(sum(float(ev["amount"]) for ev in collection_events), 2)
+    completed_total = round(
+        sum(_business_revenue_from_booking_event(ev) for ev in collection_events), 2)
+    booking_sales_tax_collected = round(
+        sum(_booking_event_tax_slice(ev) for ev in collection_events), 2)
     paid_total = completed_total
     unpaid_total = round(sum(_balance_due(b) for b in unpaid), 2)
 
-    # ── Daily revenue (collection events + retail sales)
+    # ── Daily revenue (collection events + retail sales), business revenue only
     by_day_map: Dict[str, float] = defaultdict(float)
     for ev in collection_events:
-        by_day_map[ev["date"]] += float(ev["amount"])
+        by_day_map[ev["date"]] += _business_revenue_from_booking_event(ev)
     for r in retail_sales:
         if r.get("date"):
-            by_day_map[r["date"]] += float(r.get("amount") or 0)
+            by_day_map[r["date"]] += _business_revenue_net_of_sales_tax(r)
     by_day = [{"date": d, "total": round(v, 2)} for d, v in sorted(by_day_map.items())]
 
     # ── Income by service (collected)
@@ -418,24 +430,33 @@ async def build_pl_data(db, start_date: str, end_date: str) -> Dict[str, Any]:
     # retail_sales" (invoice/tab payments, packs, refunds, voids…).
     # Classification only: net/profit math below sums ALL rows regardless of
     # category, so every dollar total is unchanged.
-    from server import _finance_income_category  # lazy — avoids import cycle
+    # RH1 — the SAME canonical helpers Finance and Schedule C use, so the
+    # P&L can never report different business revenue than the other
+    # surfaces. Collected sales tax is a pass-through liability and is
+    # excluded from every revenue figure below; it is reported separately.
     pl_cat_rows: Dict[str, list] = {}
     for r in retail_sales:
         pl_cat_rows.setdefault(_finance_income_category(r), []).append(r)
     retail_only = pl_cat_rows.get("retail", [])
     training_rows = pl_cat_rows.get("training_programs", [])
-    retail_total = round(sum(float(r.get("amount") or 0) for r in retail_only), 2)
-    training_revenue_total = round(sum(float(r.get("amount") or 0) for r in training_rows), 2)
-    credit_pack_sales_total = round(sum(float(r.get("amount") or 0) for r in pl_cat_rows.get("credit_packs", [])), 2)
-    payment_plans_total = round(sum(float(r.get("amount") or 0) for r in pl_cat_rows.get("payment_plans", [])), 2)
-    account_payments_total = round(sum(float(r.get("amount") or 0) for r in pl_cat_rows.get("account_payments", [])), 2)
-    retail_all_net = round(sum(float(r.get("amount") or 0) for r in retail_sales), 2)
+
+    def _pl_cat_total(rows: list) -> float:
+        return round(sum(_business_revenue_net_of_sales_tax(r) for r in rows), 2)
+
+    retail_total = _pl_cat_total(retail_only)
+    training_revenue_total = _pl_cat_total(training_rows)
+    credit_pack_sales_total = _pl_cat_total(pl_cat_rows.get("credit_packs", []))
+    payment_plans_total = _pl_cat_total(pl_cat_rows.get("payment_plans", []))
+    account_payments_total = _pl_cat_total(pl_cat_rows.get("account_payments", []))
+    retail_all_net = _pl_cat_total(retail_sales)
+    sales_tax_collected_total = round(
+        sum(_sales_tax_collected_on_row(r) for r in retail_sales), 2)
     retail_by_cat_map: Dict[str, Dict[str, Any]] = {}
     for r in retail_only:
         cat = (r.get("category") or "Retail").strip() or "Retail"
         c = retail_by_cat_map.setdefault(cat, {"name": cat, "count": 0, "total": 0.0})
         c["count"] += 1
-        c["total"] = round(c["total"] + float(r.get("amount") or 0), 2)
+        c["total"] = round(c["total"] + _business_revenue_net_of_sales_tax(r), 2)
     retail_by_category = sorted(retail_by_cat_map.values(), key=lambda x: -x["total"])
     training_by_program_map: Dict[str, Dict[str, Any]] = {}
     for r in training_rows:
@@ -462,8 +483,10 @@ async def build_pl_data(db, start_date: str, end_date: str) -> Dict[str, Any]:
         # Sprint 110eg / Step 4B-8 — universal cash-basis by COLLECTION date
         # for YTD as well, via the same shared events helper.
         ytd_events = await _booking_collection_events(ytd_start, end_date)
+        # RH1 — YTD uses the same canonical business-revenue basis as the
+        # period figures, so the P&L footer cannot contradict its own body.
         ytd_income = round(sum(
-            float(ev["amount"]) for ev in ytd_events
+            _business_revenue_from_booking_event(ev) for ev in ytd_events
             if not _is_program_redemption(ev.get("booking") or {})
         ), 2)
         ytd_exp_rows = await db.expenses.find(
@@ -473,9 +496,11 @@ async def build_pl_data(db, start_date: str, end_date: str) -> Dict[str, Any]:
         ytd_expenses = round(sum(float(e.get("amount") or 0) for e in ytd_exp_rows), 2)
         ytd_retail_rows = await db.retail_sales.find(
             {"date": {"$gte": ytd_start, "$lte": end_date}},
-            {"_id": 0, "amount": 1},
+            # RH1 — tax_amount/source_kind required to net out collected tax.
+            {"_id": 0, "amount": 1, "tax_amount": 1, "source_kind": 1},
         ).to_list(50000)
-        ytd_retail = round(sum(float(r.get("amount") or 0) for r in ytd_retail_rows), 2)
+        ytd_retail = round(
+            sum(_business_revenue_net_of_sales_tax(r) for r in ytd_retail_rows), 2)
     except Exception:
         ytd_start, ytd_income, ytd_expenses, ytd_retail = end_date, 0.0, 0.0, 0.0
 
@@ -538,8 +563,12 @@ async def build_pl_data(db, start_date: str, end_date: str) -> Dict[str, Any]:
     # refund activity (and negative net) here — never manufactured gross.
     # Profit math below uses net_income, which equals the value the old
     # (mislabeled) gross_income carried — profit is unchanged.
+    # RH1 — measured on business revenue (net of collected sales tax), the
+    # same basis as gross/net below, so gross − refunds = net holds exactly
+    # and a refund's tax reversal is never subtracted a second time.
     refunds_reversals_total = round(
-        sum(-float(r.get("amount") or 0) for r in retail_sales if float(r.get("amount") or 0) < 0), 2)
+        sum(-_business_revenue_net_of_sales_tax(r) for r in retail_sales
+            if float(r.get("amount") or 0) < 0), 2)
     # Step 4B-5 — net runs off the sum of ALL retail rows (retail_all_net),
     # which is identical to the old retail_total + training split, so the
     # narrower merchandise-only retail_total above cannot move net/profit.
@@ -573,6 +602,10 @@ async def build_pl_data(db, start_date: str, end_date: str) -> Dict[str, Any]:
             "gross_total": gross_income,
             "refunds_reversals_total": refunds_reversals_total,
             "net_total": net_income,
+            # RH1 — sales tax collected for Ohio is a pass-through liability
+            # reported BESIDE revenue; it is excluded from every figure above.
+            "sales_tax_collected": round(
+                sales_tax_collected_total + booking_sales_tax_collected, 2),
         },
         "retail": {
             "total": retail_total,

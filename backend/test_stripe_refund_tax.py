@@ -222,11 +222,16 @@ def test_jk_revenue_and_category_regression():
         w = run(server.weekly_summary(ADMIN, ref_date=d))
         # 4B-4 trio: gross keeps the sale, reversal magnitude separate, net 0
         # for this pair (delta-safe: our rows are the only TAG rows today).
-        assert w["gross_total"] >= 110.0
-        assert w["refunds_reversals_total"] >= 110.0
+        # RH1 — these figures are now BUSINESS REVENUE: the $110 charge is
+        # $100 of revenue plus $10 of sales tax held for Ohio, so gross and
+        # the reversal are $100, not $110. The $10 is reported separately as
+        # a pass-through liability and nets to $0 across sale + refund.
+        assert w["gross_total"] >= 100.0
+        assert w["refunds_reversals_total"] >= 100.0
+        assert w["sales_tax_collected"] == 0.0   # $10 collected, $10 reversed
         # 4B-5 categories: the shop order is Retail; the refund is a reversal.
         rev_line = next((b for b in w["by_service"] if b["name"] == "Refunds & reversals"), None)
-        assert rev_line is not None and rev_line["total"] <= -110.0
+        assert rev_line is not None and rev_line["total"] <= -100.0
     finally:
         _cleanup()
 

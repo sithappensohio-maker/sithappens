@@ -9,7 +9,14 @@ from __future__ import annotations
 
 import io
 from datetime import datetime
-from typing import Any, Dict, List
+from typing import Any, Dict, List, Optional
+
+
+def _fmt_generated_at(dt: datetime) -> str:
+    """"Aug 18, 2026 at 3:07 PM" — built without the glibc-only `%-d`/`%-I`
+    padding modifiers so the PDF renders on every platform."""
+    return (f"{dt.strftime('%b')} {dt.day}, {dt.year} at "
+            f"{dt.hour % 12 or 12}:{dt.strftime('%M')} {dt.strftime('%p')}")
 
 
 def _fmt_money(n: float) -> str:
@@ -26,14 +33,22 @@ def render_cpa_pdf(
     expenses_by_category: List[Dict[str, Any]],
     payments: List[Dict[str, Any]],
     brand_name: str = "Sit Happens",
+    estimated_payments: Optional[Dict[str, Dict[str, Any]]] = None,
 ) -> bytes:
     """Render the CPA hand-off PDF as raw bytes.
 
     Args:
         data: payload from GET /api/admin/quarterly-tax
         expenses_by_category: [{"name": str, "count": int, "total": float}, ...]
-        payments: full list from tax_payments collection for this year
+        payments: LEGACY tax_payments rows for this year — jurisdiction was
+            never recorded for these, so they get their own clearly-labeled
+            section and are never assigned to Federal/Ohio/school district.
         brand_name: business name for header
+        estimated_payments: RH1 — the authoritative Tax Center ledger keyed
+            by jurisdiction ("federal", "ohio", "ohio_school_district"), each
+            {"rows": [...], "total_paid": float, "future_dated_total": float,
+            "voided_total": float}. Omitted/None renders nothing (older
+            callers keep working).
     """
     from reportlab.lib import colors
     from reportlab.lib.pagesizes import LETTER
@@ -246,13 +261,90 @@ def render_cpa_pdf(
     )
     story.append(tax_table)
 
-    # ── Payments table ──
-    story.append(Paragraph("Quarterly Estimated Payments Made", h2))
+    # ── RH1 — Estimated-tax payments recorded in Tax Center, BY JURISDICTION.
+    # Federal, Ohio, and school-district payments go to different tax
+    # authorities and are never combined into one total.
+    _JUR_TITLES = [
+        ("federal", "Federal Estimated Payments (IRS)"),
+        ("ohio", "Ohio Estimated Payments (IT 1040ES)"),
+        ("ohio_school_district", "Ohio School-District Estimated Payments (SD 100ES)"),
+    ]
+    est = estimated_payments or {}
+    if est:
+        for jur, title in _JUR_TITLES:
+            slot = est.get(jur) or {}
+            rows = slot.get("rows") or []
+            story.append(Paragraph(title, h2))
+            if not rows:
+                story.append(Paragraph("No payments recorded for this tax year.", small))
+                story.append(Spacer(1, 6))
+                continue
+            tbl = [["Date", "Period", "Amount", "Reference", "Memo", "Status"]]
+            for p in rows:
+                if p.get("voided"):
+                    status = "VOIDED"
+                elif p.get("future_dated"):
+                    status = "SCHEDULED (not yet paid)"
+                else:
+                    status = "Paid"
+                tbl.append([
+                    p.get("payment_date", ""),
+                    f"P{p.get('period', '?')}",
+                    _fmt_money(float(p.get("amount") or 0)),
+                    (p.get("reference") or "")[:22],
+                    (p.get("memo") or "")[:28],
+                    status,
+                ])
+            tbl.append(["", "", _fmt_money(float(slot.get("total_paid") or 0)),
+                        "", "TOTAL PAID", ""])
+            story.append(Table(
+                tbl,
+                colWidths=[0.85 * inch, 0.5 * inch, 0.95 * inch, 1.5 * inch, 1.85 * inch, 1.4 * inch],
+                style=TableStyle([
+                    ("FONTNAME", (0, 0), (-1, 0), "Helvetica-Bold"),
+                    ("BACKGROUND", (0, 0), (-1, 0), BG),
+                    ("FONTNAME", (0, -1), (-1, -1), "Helvetica-Bold"),
+                    ("BACKGROUND", (0, -1), (-1, -1), BG),
+                    ("LINEBELOW", (0, 0), (-1, 0), 0.5, LINE),
+                    ("LINEABOVE", (0, -1), (-1, -1), 0.5, LINE),
+                    ("ALIGN", (2, 0), (2, -1), "RIGHT"),
+                    ("ALIGN", (1, 0), (1, -1), "CENTER"),
+                    ("FONTSIZE", (0, 0), (-1, -1), 7.5),
+                    ("TOPPADDING", (0, 0), (-1, -1), 2),
+                    ("BOTTOMPADDING", (0, 0), (-1, -1), 2),
+                ]),
+            ))
+            notes = []
+            if float(slot.get("voided_total") or 0) > 0:
+                notes.append(
+                    f"Voided records shown for audit history only — {_fmt_money(float(slot['voided_total']))} "
+                    "is NOT included in TOTAL PAID.")
+            if float(slot.get("future_dated_total") or 0) > 0:
+                notes.append(
+                    f"{_fmt_money(float(slot['future_dated_total']))} is dated in the future and has NOT "
+                    "been paid yet — it is excluded from TOTAL PAID.")
+            for n in notes:
+                story.append(Paragraph(n, small))
+            story.append(Spacer(1, 8))
+        story.append(Paragraph(
+            "Federal, Ohio, and school-district estimated taxes are separate obligations paid to "
+            "different authorities; they are deliberately not combined into a single total. Ohio "
+            "sales tax is a separate regime and is not included in any figure above.", small))
+        story.append(Spacer(1, 8))
+
+    # ── Legacy payments table (pre-jurisdiction records) ──
+    story.append(Paragraph("Legacy / Unassigned Estimated-Tax Payments", h2))
     if not payments:
         story.append(Paragraph(
-            "No quarterly payments logged for this tax year.", small,
+            "No legacy quarterly payments logged for this tax year.", small,
         ))
     else:
+        story.append(Paragraph(
+            "Jurisdiction was not recorded in the legacy system. These amounts are NOT "
+            "automatically assigned to Federal, Ohio, or the school district, and are not "
+            "included in any jurisdiction total above.", small,
+        ))
+        story.append(Spacer(1, 4))
         pay_rows = [["Date", "Quarter", "Method", "Memo", "Amount"]]
         total = 0.0
         for p in sorted(payments, key=lambda x: x.get("payment_date", "")):
@@ -265,7 +357,7 @@ def render_cpa_pdf(
                 (p.get("memo") or "")[:50],
                 _fmt_money(amt),
             ])
-        pay_rows.append(["", "", "", "TOTAL PAID", _fmt_money(total)])
+        pay_rows.append(["", "", "", "TOTAL (UNASSIGNED)", _fmt_money(total)])
         pay_table = Table(
             pay_rows,
             colWidths=[0.9 * inch, 0.7 * inch, 0.9 * inch, 3.6 * inch, 1.45 * inch],
@@ -307,7 +399,10 @@ def render_cpa_pdf(
 
     # ── Footer disclaimer ──
     story.append(Paragraph(
-        f"Generated {datetime.now().strftime('%b %-d, %Y at %-I:%M %p')} from Sit Happens CRM. "
+        # RH1 — `%-d` / `%-I` are glibc-only and raise ValueError on Windows,
+        # which made the CPA PDF impossible to generate (or test) off-Linux.
+        # Same rendered text, built portably.
+        f"Generated {_fmt_generated_at(datetime.now())} from Sit Happens CRM. "
         "Business income/expense figures come from bookkeeping data. The reserve rows are a flat-rate "
         "PLANNING estimate only — they are not a federal or Ohio estimated-tax calculation (no filing status, "
         "deductions, brackets, withholding, safe harbor, Ohio Business Income Deduction, or school-district tax). "
