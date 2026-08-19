@@ -130,10 +130,15 @@ test("no Online School file contains a literal exercise-specific string used to 
 // Admin: enroll UI + delivery mode control
 // ---------------------------------------------------------------------------
 
-test("DogTrainingTab offers a distinct Online School enroll action separate from trainer-led Enroll", () => {
-  expect(dogTrainingTabSrc).toMatch(/data-testid="enroll-btn"/);
-  expect(dogTrainingTabSrc).toMatch(/data-testid="school-enroll-btn"/);
+test("DogTrainingTab offers ONE unified Assign Program action for every delivery mode", () => {
+  // School consolidation: the old pair of separate trainer-led / Online
+  // School enroll buttons is deliberately replaced by a single Assign
+  // Program flow that chooses the delivery mode inside the modal. The
+  // canonical /school/enroll endpoint still backs all three modes.
+  expect(dogTrainingTabSrc).toMatch(/data-testid="school-assign-btn"/);
+  expect(dogTrainingTabSrc).toMatch(/data-testid="school-program-assign-modal"/);
   expect(dogTrainingTabSrc).toMatch(/api\.post\("\/school\/enroll"/);
+  expect(dogTrainingTabSrc).toMatch(/delivery_mode: deliveryMode/);
 });
 
 test("DogTrainingTab splits active enrollments by delivery_channel so trainer tools never render for a school row", () => {
@@ -141,8 +146,25 @@ test("DogTrainingTab splits active enrollments by delivery_channel so trainer to
   expect(dogTrainingTabSrc).toMatch(/const schoolActive = activeAll\.filter\(e => e\.delivery_channel === "online_school"\)/);
 });
 
-test("the school enroll picker is filtered to delivery_mode self_guided/both, not every program", () => {
-  expect(dogTrainingTabSrc).toMatch(/const schoolCapablePrograms = programs\.filter\(p => \(p\.delivery_mode \|\| "trainer_led"\) !== "trainer_led"\)/);
+test("the no-active empty state is gated on activeAll so an online-only dog is never told it has no program", () => {
+  // Visual QA regression: `active` deliberately excludes online_school rows
+  // (they render in the Online School block), so gating the empty state on
+  // `active` made a dog with a live online enrollment show BOTH
+  // "1 active School program" and "No active training program · Enroll …"
+  // stacked directly above its own active enrollment card.
+  expect(dogTrainingTabSrc).toMatch(/\) : activeAll\.length === 0 \? \(/);
+  expect(dogTrainingTabSrc).not.toMatch(/\{active\.length > 0 \? \([\s\S]*?\) : \(\s*<div[^>]*data-testid="no-active"/);
+});
+
+test("delivery choices are restricted to what each program actually supports", () => {
+  // Same intent as the old program-list filter, relocated: the modal now
+  // offers ONLY the delivery modes a given program is configured for, so a
+  // self_guided course can never be assigned in person and a trainer_led
+  // course can never be assigned online.
+  expect(dogTrainingTabSrc).toMatch(/const modesFor = \(p\) =>/);
+  expect(dogTrainingTabSrc).toMatch(/if \(configured === "self_guided"\) return \[\{ key: "online"/);
+  expect(dogTrainingTabSrc).toMatch(/if \(configured === "both"\) return \[/);
+  expect(dogTrainingTabSrc).toMatch(/modesFor\(selected\)\.map/);
 });
 
 test("removing a school enrollment calls the safe DELETE endpoint, not a raw status update", () => {

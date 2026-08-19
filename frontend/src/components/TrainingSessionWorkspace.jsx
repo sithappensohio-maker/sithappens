@@ -298,7 +298,7 @@ export default function TrainingSessionWorkspace({ bookingId, dogId, enrollmentI
               </p>
               {completionResult.homework_conflicts?.length > 0 && (
                 <div className="mt-2 pt-2 border-t border-shPrimary/20" data-testid="workspace-homework-conflicts">
-                  <p className="text-[11px] font-black uppercase tracking-widest text-shAccent">Homework not created — already assigned</p>
+                  <p className="text-[11px] font-black uppercase tracking-widest text-shAccent">Practice not created — already assigned</p>
                   {completionResult.homework_conflicts.map((c, i) => (
                     <p key={i} className="text-[12px] text-shTextMuted">
                       &ldquo;{c.existing_title}&rdquo; is still {c.existing_status} — skipped to avoid a duplicate.
@@ -323,7 +323,7 @@ export default function TrainingSessionWorkspace({ bookingId, dogId, enrollmentI
                 )}
                 {overview.homework_since_last_session?.length > 0 && (
                   <div>
-                    <p className="text-[11px] font-black uppercase tracking-widest text-shTextMuted">Homework</p>
+                    <p className="text-[11px] font-black uppercase tracking-widest text-shTextMuted">Practice</p>
                     {overview.homework_since_last_session.slice(0, 3).map(hw => (
                       <p key={hw.id} className="text-shText">
                         {hw.title} {hw.daily_tracker && hw.total_days ? `· ${hw.days_completed}/${hw.total_days} days` : `· ${hw.status}`}
@@ -594,7 +594,7 @@ function CompleteSessionModal({ activities, actuals, onCancel, onComplete }) {
           )}
           {eligibleActivities.length > 0 && (
             <div>
-              <p className="text-[11px] font-black uppercase tracking-widest text-shTextMuted mb-2">Homework to assign</p>
+              <p className="text-[11px] font-black uppercase tracking-widest text-shTextMuted mb-2">Practice to assign</p>
               <div className="space-y-1.5">
                 {eligibleActivities.map(a => (
                   <label key={a.id} className="flex items-center gap-2 text-[13px] text-shText">

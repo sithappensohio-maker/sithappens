@@ -1,16 +1,23 @@
-// Online School — the client portal HERO. For an enrolled School client the
+// School — the client portal HERO. In-person, online, and hybrid enrollments
+// share this one entry point. For an enrolled School client the
 // dashboard should essentially say "you have a dog, and here is what you're
 // training today" — so this is a full-width, tall, visually dominant panel,
 // not a slim status strip. Everything shown is backend-derived from
 // /portal/school (course %, Week/Module X of Y, current lesson, practiced
 // state); nothing is computed by guessing indices in the frontend.
 import HuskyDogImage from "../brand/HuskyDogImage";
+import { deliveryIcon, deliveryLabel } from "../../lib/studentSchool";
 
 function ctaFor(entry) {
   if (!entry) return { label: "View Course", icon: "fa-arrow-right" };
   if (entry.status === "completed") return { label: "View Course", icon: "fa-graduation-cap" };
   if (entry.access_state && entry.access_state !== "active") return { label: "View Course", icon: "fa-arrow-right" };
   if (!entry.current_lesson_name) return { label: "View Course", icon: "fa-arrow-right" };
+  if (entry.delivery_mode === "in_person" || entry.delivery_mode === "trainer_led") {
+    return entry.current_lesson_practiced
+      ? { label: "View Training Plan", icon: "fa-arrow-right" }
+      : { label: "Review Today's Training", icon: "fa-book-open" };
+  }
   return entry.current_lesson_practiced
     ? { label: "Continue Training", icon: "fa-arrow-right" }
     : { label: "Start Today's Training", icon: "fa-play" };
@@ -41,12 +48,17 @@ export default function OnlineSchoolHeroCard({ entries = [], onOpen, testid = "o
         {/* ── Left: course identity ── */}
         <div className="min-w-0">
           <p className="text-[11px] font-black uppercase tracking-[0.32em] text-shBlue">
-            <i className="fas fa-graduation-cap mr-2 text-shPrimary" />Sit Happens Online School
+            <i className="fas fa-graduation-cap mr-2 text-shPrimary" />Sit Happens School
           </p>
-          <h2 className="text-[26px] sm:text-[32px] leading-tight font-black text-white uppercase italic tracking-tight mt-2 text-balance"
-              data-testid={`${testid}-course-name`}>
-            {e.program_name}
-          </h2>
+          <div className="flex flex-wrap items-center gap-2 mt-2">
+            <h2 className="text-[26px] sm:text-[32px] leading-tight font-black text-white uppercase italic tracking-tight text-balance"
+                data-testid={`${testid}-course-name`}>
+              {e.program_name}
+            </h2>
+            <span className="shrink-0 text-[9px] font-black uppercase tracking-widest rounded-full border border-shSecondary/30 bg-shSecondary/10 text-shSecondary px-2 py-1" data-testid={`${testid}-delivery`}>
+              <i className={`fas ${deliveryIcon(e.delivery_mode)} mr-1`} />{deliveryLabel(e.delivery_mode)}
+            </span>
+          </div>
           <div className="flex items-center gap-3 mt-3 min-w-0">
             {e.dog_photo !== undefined && (
               <span className="w-11 h-11 rounded-xl overflow-hidden border border-shSecondary/35 bg-black/25 shrink-0">

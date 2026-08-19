@@ -145,7 +145,7 @@ const VAR_LABELS = {
   dog_name_or_dogs: "Dog name(s)",
   business_name: "Your business name",
   program_name: "Program name",
-  homework_title: "Homework title",
+  homework_title: "Practice title",
   total_amount: "Total amount",
   installment_count: "Number of payments",
   installment_amount: "Each payment amount",

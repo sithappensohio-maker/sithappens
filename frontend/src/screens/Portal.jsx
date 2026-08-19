@@ -1255,7 +1255,7 @@ export default function Portal() {
         </header>
 
       <div className="app-scroll-root flex-1 min-h-0 overflow-y-auto overscroll-contain p-3 sm:p-8 max-w-6xl mx-auto w-full pb-24 md:pb-8" data-scroll-root>
-        {/* Sit Happens Online School — the HERO of an enrolled client's
+        {/* Sit Happens School — the HERO of an enrolled client's
             portal: the very first card in the scroll, above even the quick
             actions, so the paid course is the first thing a school client
             notices on desktop and mobile alike. Renders nothing for clients
@@ -1812,7 +1812,7 @@ export default function Portal() {
                       testid="portal-ql-training-files"
                       icon="fa-graduation-cap"
                       color="#a855f7"
-                      title="Training Files & Homework"
+                      title="School & Practice"
                       subtitle={homework.length > 0 ? `${homework.length} active plan${homework.length===1?"":"s"}` : "Progress · files"}
                     />
                   )}
@@ -1900,7 +1900,7 @@ export default function Portal() {
             <ClientTodayPanel dogs={dogs} homework={homework} bookings={bookings} onOpenPractice={setPracticeFor} testid="client-today-panel"/>
           )}
 
-          {/* Sit Happens Online School — promoted to the full-width hero card
+          {/* Sit Happens School — promoted to the full-width hero card
               ABOVE the grid (see OnlineSchoolHeroCard); the slim teaser that
               lived here was too easy to overlook for a primary paid feature. */}
 

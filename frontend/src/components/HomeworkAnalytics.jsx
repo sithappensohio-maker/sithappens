@@ -1,5 +1,5 @@
 /**
- * Sprint 110r — Homework Analytics modal.
+ * Sprint 110r — Practice Analytics modal.
  *
  * Trainer-only dashboard surfacing per-template completion metrics, drop-off
  * day analysis (both stale-plan + engagement-cliff flavors), and per-day mood
@@ -47,7 +47,7 @@ export default function HomeworkAnalytics({ onClose }) {
         <div className="sticky top-0 z-10 flex items-center justify-between gap-3 px-5 sm:px-6 py-4 bg-[var(--sh-card-base)]/95 backdrop-blur border-b border-shBorder">
           <div className="min-w-0">
             <h2 className="text-xl sm:text-2xl font-black text-shText uppercase italic tracking-tight">
-              <i className="fas fa-chart-line text-shPrimary mr-2"/>Homework Analytics
+              <i className="fas fa-chart-line text-shPrimary mr-2"/>Practice Analytics
             </h2>
             <p className="text-[14px] text-shTextMuted truncate">
               {data ? `${data.templates.length} curricul${data.templates.length === 1 ? "um" : "a"} tracked · ${data.global.total_assigned} total plans assigned` : "loading…"}
@@ -86,7 +86,7 @@ export default function HomeworkAnalytics({ onClose }) {
 
                 {data.templates.length === 0 && (
                   <div className="p-8 text-center text-shTextMuted text-[14px]">
-                    No homework plans yet. Once you assign a daily tracker, metrics show up here.
+                    No Practice plans yet. Once you assign a daily tracker, metrics show up here.
                   </div>
                 )}
 

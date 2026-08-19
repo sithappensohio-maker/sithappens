@@ -135,11 +135,11 @@ export default function ClientPortalPreview({ clientId, onClose }) {
               {/* Homework */}
               {data.homework.length > 0 && (
                 <section>
-                  <h4 className="text-xs font-black uppercase tracking-widest text-shSecondary mb-3"><i className="fas fa-graduation-cap mr-2"/>Homework · {data.homework.length}</h4>
+                  <h4 className="text-xs font-black uppercase tracking-widest text-shSecondary mb-3"><i className="fas fa-graduation-cap mr-2"/>Practice · {data.homework.length}</h4>
                   <ul className="space-y-2" data-testid="preview-homework">
                     {data.homework.map(h => (
                       <li key={h.id} className="bg-[var(--sh-card-base)] border border-shBorder rounded p-3 text-[15px]">
-                        <p className="font-black uppercase text-shText">{h.title || h.template_name || "Homework"}</p>
+                        <p className="font-black uppercase text-shText">{h.title || h.template_name || "Practice"}</p>
                         <p className="text-[14px] text-shTextMuted mt-1">Due {h.due_date || "—"} · Status: <span className="text-shSecondary">{h.status}</span></p>
                       </li>
                     ))}

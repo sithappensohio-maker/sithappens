@@ -7,10 +7,30 @@ import NeonEdge from "../../premium/NeonEdge";
 import PremiumButton from "../../premium/PremiumButton";
 import PracticeMediaUploader from "../../training/PracticeMediaUploader";
 
-export default function CheckpointPanel({ lessonId, practiced, rubric, status, onSubmit, onStartPrescribedPractice, onGoToRefresher, busy }) {
+export default function CheckpointPanel({ lessonId, practiced, rubric, status, onSubmit, onStartPrescribedPractice, onGoToRefresher, busy, deliveryMode }) {
   const [returnedToCheckpoint, setReturnedToCheckpoint] = useState(false);
 
+  // In-person School students never submit a checkpoint video — their trainer
+  // scores the same rubric live (server returns 409 for these submissions).
+  // Only the two submission-soliciting states are swapped: awaiting-review,
+  // prescribed-practice and Trainer Assist below stay exactly as they are,
+  // because a live trainer checkpoint can still produce those outcomes.
+  const trainerAssessed = deliveryMode === "in_person" || deliveryMode === "trainer_led";
+  const inPersonPanel = (
+    <NeonEdge accentRgb="0,169,224" intensity="subtle" className="p-4">
+      <div className="flex items-start gap-3">
+        <div className="w-10 h-10 rounded-xl bg-shSecondary/10 border border-shSecondary/25 grid place-items-center shrink-0"><i className="fas fa-chalkboard-user text-shSecondary"/></div>
+        <div>
+          <p className="text-[14px] font-black text-shText">Your trainer checks this one in person</p>
+          <p className="text-[12px] text-shTextMuted mt-1">No video needed — your trainer scores this checkpoint with you at your next session. Keep practising and it will be marked off here.</p>
+        </div>
+      </div>
+      <span className="hidden" data-testid="school-checkpoint-in-person"/>
+    </NeonEdge>
+  );
+
   if (!practiced) {
+    if (trainerAssessed) return inPersonPanel;
     return (
       <NeonEdge accentRgb="0,169,224" intensity="subtle" className="p-4">
         <div className="flex items-start gap-3">
@@ -141,6 +161,8 @@ export default function CheckpointPanel({ lessonId, practiced, rubric, status, o
       </div>
     );
   }
+
+  if (trainerAssessed) return inPersonPanel;
 
   return <CheckpointSubmitForm rubric={rubric} onSubmit={(v, f, n) => onSubmit(lessonId, v, f, n)} busy={busy}/>;
 }

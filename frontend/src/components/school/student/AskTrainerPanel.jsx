@@ -14,7 +14,7 @@ export default function AskTrainerPanel({ open, context, onClose, onSent }) {
 
   if (!open) return null;
   const subjectBits = [context?.dog_name, context?.school_lesson_name || context?.school_program_name].filter(Boolean);
-  const subject = subjectBits.length ? `Online School · ${subjectBits.join(" · ")}` : "Online School question";
+  const subject = subjectBits.length ? `School · ${subjectBits.join(" · ")}` : "School question";
 
   const send = async () => {
     if (!text.trim() || busy) return;
@@ -42,7 +42,7 @@ export default function AskTrainerPanel({ open, context, onClose, onSent }) {
       <div className="w-full sm:max-w-lg rounded-t-3xl sm:rounded-3xl border border-shBorder bg-[var(--sh-card-base)] p-5 sm:p-6 shadow-2xl" onClick={(e) => e.stopPropagation()}>
         <div className="flex items-start justify-between gap-3">
           <div>
-            <p className="text-[10px] font-black uppercase tracking-[0.22em] text-shSecondary">Sit Happens Online School</p>
+            <p className="text-[10px] font-black uppercase tracking-[0.22em] text-shSecondary">Sit Happens School</p>
             <h2 className="text-xl sm:text-2xl font-black text-shText mt-1">Ask Your Trainer</h2>
           </div>
           <button onClick={onClose} className="w-10 h-10 rounded-xl border border-shBorder text-shTextMuted hover:text-shText" aria-label="Close" data-testid="school-ask-close"><i className="fas fa-times" /></button>
@@ -50,7 +50,7 @@ export default function AskTrainerPanel({ open, context, onClose, onSent }) {
 
         <div className="mt-4 rounded-xl border border-shSecondary/25 bg-shSecondary/[0.05] p-3" data-testid="school-ask-context">
           <p className="text-[10px] font-black uppercase tracking-widest text-shSecondary">About</p>
-          <p className="text-[14px] font-black text-shText mt-1">{context?.dog_name || "Your dog"} · {context?.school_program_name || "Online School"}</p>
+          <p className="text-[14px] font-black text-shText mt-1">{context?.dog_name || "Your dog"} · {context?.school_program_name || "School"}</p>
           {(context?.school_module_name || context?.school_lesson_name) && (
             <p className="text-[12px] text-shTextMuted mt-0.5">{[context?.school_module_name, context?.school_lesson_name].filter(Boolean).join(" · ")}</p>
           )}

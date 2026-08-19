@@ -256,7 +256,7 @@ export default function CheckpointReviewQueue({ onClose, onGraded, initialSubmis
                         <option value="assign_refresher_lesson">Assign a refresher lesson</option>
                       </select>
                       {prescriptionAction === "assign_recipe" && (
-                        <input value={templateId} onChange={(e) => setTemplateId(e.target.value)} placeholder="Homework template id" data-testid="checkpoint-review-template-id"
+                        <input value={templateId} onChange={(e) => setTemplateId(e.target.value)} placeholder="Practice template id" data-testid="checkpoint-review-template-id"
                                className="w-full min-h-[96px] bg-black/20 border border-shBorder/55 rounded-xl p-3 text-shText text-sm focus:outline-none focus:border-shSecondary/40"/>
                       )}
                       {prescriptionAction === "assign_refresher_lesson" && (

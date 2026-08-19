@@ -1845,7 +1845,7 @@ function ClientActionsMenu({
     { divider: true },
     { label: "Receipts", icon: "fa-receipt", color: "text-shTextMuted",
       onClick: onReceipts, testId: `menu-receipts-${clientId}` },
-    { label: "Files & Homework", icon: "fa-folder-open", color: "text-shSecondary",
+    { label: "Files & Practice", icon: "fa-folder-open", color: "text-shSecondary",
       onClick: onFiles, testId: `menu-files-${clientId}` },
     { label: "Client-Specific Pricing", icon: "fa-tag", color: "text-amber-400",
       onClick: onLegacy, testId: `menu-legacy-${clientId}` },

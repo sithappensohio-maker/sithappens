@@ -1,5 +1,5 @@
 import { accentRgb } from "../../premium/tokens";
-import { actionMeta, isCaughtUp } from "../../../lib/studentSchool";
+import { actionMeta, deliveryIcon, deliveryLabel, isCaughtUp } from "../../../lib/studentSchool";
 
 /* The Student Home hero — answers "what should I do next?" at a glance, with
  * one obvious primary action. Everything comes from the backend view-model's
@@ -31,7 +31,12 @@ export default function CurrentTrainingCard({ home, onPrimary }) {
       </p>
 
       {home?.program?.name && (
-        <p className="text-[12px] text-shTextMuted mt-2 uppercase tracking-widest font-bold truncate">{home.program.name}</p>
+        <div className="flex flex-wrap items-center gap-2 mt-2">
+          <p className="text-[12px] text-shTextMuted uppercase tracking-widest font-bold truncate">{home.program.name}</p>
+          <span className="text-[9px] font-black uppercase tracking-widest rounded-full border border-shSecondary/25 bg-shSecondary/10 text-shSecondary px-2 py-1" data-testid="school-delivery-mode">
+            <i className={`fas ${deliveryIcon(home.delivery_mode)} mr-1`} />{deliveryLabel(home.delivery_mode)}
+          </span>
+        </div>
       )}
       <h2 className="text-shText font-black text-[20px] sm:text-[24px] leading-tight mt-1 text-balance">
         {lesson?.name || action.label || "Your training"}

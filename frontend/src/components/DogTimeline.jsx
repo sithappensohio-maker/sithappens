@@ -4,8 +4,8 @@ import BehaviorTrendChart from "./BehaviorTrendChart";
 
 const KIND_META = {
   booking:            { color: "bg-shSecondary/15 text-shSecondary",    icon: "fa-calendar",        label: "Visit" },
-  homework_assigned:  { color: "bg-shAccent/15 text-shAccent",icon: "fa-clipboard-list",  label: "Homework assigned" },
-  homework_completed: { color: "bg-shPrimary/15 text-shPrimary",  icon: "fa-flag-checkered",  label: "Homework done" },
+  homework_assigned:  { color: "bg-shAccent/15 text-shAccent",icon: "fa-clipboard-list",  label: "Practice assigned" },
+  homework_completed: { color: "bg-shPrimary/15 text-shPrimary",  icon: "fa-flag-checkered",  label: "Practice done" },
   day_approved:       { color: "bg-shPrimary/15 text-shPrimary",  icon: "fa-circle-check",    label: "Day approved" },
   photos_added:       { color: "bg-purple-500/15 text-purple-300", icon: "fa-camera",     label: "Photos" },
   incident:           { color: "bg-red-500/15 text-red-300",  icon: "fa-triangle-exclamation", label: "Incident" },
@@ -45,7 +45,7 @@ export default function DogTimeline({ dogId, dogName }) {
       {loading ? (
         <p className="text-[14px] text-shTextMuted">Loading timeline…</p>
       ) : events.length === 0 ? (
-        <p className="text-[14px] text-shTextMuted italic">No activity yet — first booking or homework will land here.</p>
+        <p className="text-[14px] text-shTextMuted italic">No activity yet — first booking or Practice will land here.</p>
       ) : (
         <div className="space-y-1.5">
           {events.map(e => {

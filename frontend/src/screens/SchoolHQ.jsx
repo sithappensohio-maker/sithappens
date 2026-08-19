@@ -19,7 +19,7 @@ import SchoolResourcesPanel from "../components/school/SchoolResourcesPanel";
 import SchoolSettingsPanel from "../components/school/SchoolSettingsPanel";
 import { navigateToScreen, announceAttentionChanged } from "../lib/schoolHq";
 
-/* School HQ — the admin operations hub for the Online School. A thin, live
+/* School HQ — the admin operations hub for every School program. A thin, live
  * view over the Phase-1 event/notification spine + the existing checkpoint /
  * Trainer-Assist workflows (reused as-is, launched from their tabs). Broken
  * into small pieces (feed, queue, stat cards) rather than one mega-component. */
@@ -159,7 +159,7 @@ export default function SchoolHQ() {
   return (
     <div className="space-y-4" data-testid="school-hq">
       <AdminPageHeader icon="fa-school" title="School HQ" testid="school-hq-header"
-                       description="Everything happening in your Online School — student activity, items needing attention, checkpoints, and Trainer Assist in one place." />
+                       description="Everything happening across in-person, online, and hybrid School programs — students, Practice, checkpoints, and Trainer Assist in one place." />
 
       <AdminTabs items={tabs} value={tab} onChange={setTab} testid="school-hq-tabs" />
 

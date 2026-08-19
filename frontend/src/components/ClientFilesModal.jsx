@@ -1,4 +1,4 @@
-// Admin-side Files & Homework manager for one client. Upload PDFs / photos /
+// Admin-side Files & Practice manager for one client. Upload PDFs / photos /
 // short videos, optionally tagged to a specific dog, with a note. Listed
 // below in reverse-chronological order. Each row shows file metadata, the
 // note, and download/delete actions. Clients see the same files in their
@@ -93,9 +93,9 @@ export default function ClientFilesModal({ client, onClose }) {
         <div className="flex justify-between items-center px-6 py-4 border-b border-shBorder sticky top-0 bg-[var(--sh-card-base)] rounded-t-2xl z-10">
           <div>
             <h3 className="text-xl font-black text-shText uppercase italic tracking-tight">
-              <i className="fas fa-folder-open text-shSecondary mr-2"/>Files & Homework
+              <i className="fas fa-folder-open text-shSecondary mr-2"/>Files & Practice
             </h3>
-            <p className="text-[15px] text-shTextMuted mt-0.5">Upload training homework, handouts, or videos for {client.name}.</p>
+            <p className="text-[15px] text-shTextMuted mt-0.5">Upload training Practice, handouts, or videos for {client.name}.</p>
           </div>
           <button onClick={onClose} data-testid="client-files-close" className="text-shTextMuted hover:text-shText text-xl px-2"><i className="fas fa-times"/></button>
         </div>

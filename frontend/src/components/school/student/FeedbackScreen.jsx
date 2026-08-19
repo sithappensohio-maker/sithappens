@@ -111,7 +111,7 @@ function ConversationCard({ thread, onRefresh }) {
   return (
     <div className="rounded-2xl border border-shBorder bg-black/15 p-4" data-testid={`school-thread-${thread.id}`}>
       <div className="flex items-start justify-between gap-2">
-        <div><p className="text-[13px] font-black text-shText">{thread.subject}</p><p className="text-[11px] text-shTextMuted mt-0.5">{[thread.school_module_name, thread.school_lesson_name].filter(Boolean).join(" · ") || "Online School"}</p></div>
+        <div><p className="text-[13px] font-black text-shText">{thread.subject}</p><p className="text-[11px] text-shTextMuted mt-0.5">{[thread.school_module_name, thread.school_lesson_name].filter(Boolean).join(" · ") || "School"}</p></div>
         {thread.unread_client && <span className="text-[9px] font-black uppercase tracking-widest bg-shAccent/15 text-shAccent px-2 py-1 rounded">New reply</span>}
       </div>
       <div className="space-y-2 mt-3 max-h-64 overflow-y-auto">
@@ -163,7 +163,7 @@ export default function FeedbackScreen({ enrollmentId, onAsk, onChanged }) {
         </section>
       )}
 
-      {(support.threads || []).length > 0 && <section className="space-y-3"><div><p className="text-[10px] font-black uppercase tracking-[0.2em] text-shSecondary">Trainer conversations</p><p className="text-[12px] text-shTextMuted mt-1">Questions asked through Online School stay attached to the training context.</p></div>{support.threads.map((t) => <ConversationCard key={t.id} thread={t} onRefresh={load} />)}</section>}
+      {(support.threads || []).length > 0 && <section className="space-y-3"><div><p className="text-[10px] font-black uppercase tracking-[0.2em] text-shSecondary">Trainer conversations</p><p className="text-[12px] text-shTextMuted mt-1">Questions asked through School stay attached to the training context.</p></div>{support.threads.map((t) => <ConversationCard key={t.id} thread={t} onRefresh={load} />)}</section>}
 
       {(answeredPractice.length > 0 || pendingPractice.length > 0) && <section className="space-y-2"><p className="text-[10px] font-black uppercase tracking-[0.2em] text-shSecondary">Practice Coach questions</p>{[...pendingPractice, ...answeredPractice].map((q) => <div key={q.id} className="rounded-xl border border-shBorder bg-[var(--sh-card-base)] p-3"><p className="text-[11px] text-shTextMuted">{[q.module_name, q.lesson_name].filter(Boolean).join(" · ")}</p><p className="text-[13px] text-shText mt-1">You asked: “{q.text}”</p>{q.answer ? <p className="text-[13px] text-gray-200 mt-2 border-l-2 border-shSecondary/35 pl-3"><span className="font-black text-shSecondary">{q.answered_by || "Your trainer"}:</span> {q.answer}</p> : <p className="text-[11px] font-black uppercase tracking-widest text-shAccent mt-2">Waiting on a reply</p>}</div>)}</section>}
     </div>

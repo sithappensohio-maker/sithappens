@@ -1,5 +1,6 @@
 import { useState } from "react";
 import HuskyDogImage from "../../brand/HuskyDogImage";
+import { deliveryLabel } from "../../../lib/studentSchool";
 
 /* Dog / course switcher for clients with multiple active School enrollments.
  * Renders nothing for a single enrollment. Switching swaps the entire Home
@@ -24,7 +25,7 @@ export default function EnrollmentSelector({ enrollments = [], selectedId, onSel
         </span>
         <span className="min-w-0 flex-1">
           <span className="block text-shText text-[14px] font-bold truncate">{selected.dog_name}</span>
-          <span className="block text-[12px] text-shTextMuted truncate">{selected.program_name}</span>
+          <span className="block text-[12px] text-shTextMuted truncate">{selected.program_name} · {deliveryLabel(selected.delivery_mode)}</span>
         </span>
         <i className={`fas fa-chevron-${open ? "up" : "down"} text-shTextMuted text-xs`} />
       </button>
@@ -51,7 +52,7 @@ export default function EnrollmentSelector({ enrollments = [], selectedId, onSel
                     </span>
                     <span className="min-w-0 flex-1">
                       <span className="block text-shText text-[13px] font-bold truncate">{e.dog_name}</span>
-                      <span className="block text-[11px] text-shTextMuted truncate">{e.program_name}</span>
+                      <span className="block text-[11px] text-shTextMuted truncate">{e.program_name} · {deliveryLabel(e.delivery_mode)}</span>
                     </span>
                     {active && <i className="fas fa-check text-shPrimary text-xs" />}
                   </button>

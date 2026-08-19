@@ -14,6 +14,7 @@ const HERO_COPY = {
   submit_checkpoint: { eyebrow: "Trainer checkpoint", cta: "Submit checkpoint" },
   remediation:       { eyebrow: "Your trainer's plan", cta: "Open practice plan" },
   trainer_assist:    { eyebrow: "Trainer Assist",     cta: "See details" },
+  trainer_guided:    { eyebrow: "Trainer-led training", cta: "Review training plan" },
   awaiting_review:   { eyebrow: "Submitted",          cta: null },
   advance:           { eyebrow: "Nice work",          cta: "Continue to next lesson" },
   course_complete:   { eyebrow: "Course complete",    cta: "Review your course" },

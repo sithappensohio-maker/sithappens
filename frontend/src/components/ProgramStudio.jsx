@@ -672,7 +672,7 @@ function SetupTab({ program, set, meta, allPrograms, hwTemplates, emailTemplates
 
           <ExpandableSection title="Welcome Communication" icon="fa-envelope-open-text" testid="setup-section-welcome">
             <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
-              <SField label="Welcome homework (auto-sent on enrollment)">
+              <SField label="Welcome Practice (auto-sent on enrollment)">
                 <select value={program.welcome_homework_template_id || ""} onChange={(e) => set({ welcome_homework_template_id: e.target.value || null })} className={inputCls}>
                   <option value="">— None —</option>
                   {hwTemplates.map(t => <option key={t.id} value={t.id}>{t.name}{t.tier ? ` · ${t.tier}` : ""}</option>)}
@@ -915,9 +915,9 @@ function ModuleEditor({ module: m, updateModule, hwTemplates, reloadHwTemplates 
       <div className="rounded-2xl border border-shBorder/50 bg-black/10 p-4">
         <div className="flex items-start gap-3 mb-3">
           <span className="w-9 h-9 rounded-xl grid place-items-center bg-shSecondary/[0.06] border border-shSecondary/20 text-shSecondary shrink-0"><i className="fas fa-graduation-cap text-[11px]"/></span>
-          <div><p className="text-[12px] font-black text-shText">Module homework</p><p className="text-[10px] text-shTextMuted">Automatically send the linked homework when the dog begins this module.</p></div>
+          <div><p className="text-[12px] font-black text-shText">Module Practice</p><p className="text-[10px] text-shTextMuted">Automatically send the linked Practice when the dog begins this module.</p></div>
         </div>
-        <SField label="Homework template">
+        <SField label="Practice template">
           <div className="flex flex-col sm:flex-row gap-2">
             <select value={m.homework_template_id || ""} onChange={(e) => updateModule(m._key, { homework_template_id: e.target.value || null })} className={inputCls}>
               <option value="">— None —</option>
@@ -1357,8 +1357,8 @@ function SkillEditor({ module: m, skill: g, updateSkill }) {
         </div>
       </ExpandableSection>
 
-      <ExpandableSection title="Homework Links" icon="fa-graduation-cap" testid="skill-section-homework">
-        <SField label="Homework template IDs (comma-separated)">
+      <ExpandableSection title="Practice Links" icon="fa-graduation-cap" testid="skill-section-homework">
+        <SField label="Practice template IDs (comma-separated)">
           <input value={(g.homework_template_ids || []).join(", ")}
                  onChange={(e) => set({ homework_template_ids: e.target.value.split(",").map(s => s.trim()).filter(Boolean) })}
                  className={inputCls}/>

@@ -12,12 +12,19 @@ from __future__ import annotations
 
 from datetime import datetime, timezone, timedelta
 from typing import Any, Dict, List, Literal, Optional
+from zoneinfo import ZoneInfo
 import uuid
 
 from fastapi import Depends, HTTPException, Query
 from fastapi.responses import FileResponse
 from pydantic import BaseModel, Field
 from pymongo import DESCENDING, ReturnDocument
+
+
+# School is now the shared training surface for online, in-person and hybrid
+# programs. Legacy Online School keeps its original channel; new staff-led
+# School assignments use the two additive channels below.
+SCHOOL_DELIVERY_CHANNELS = ("online_school", "in_person_school", "hybrid_school")
 
 
 def _now() -> str:
@@ -216,7 +223,21 @@ class ResourceIn(BaseModel):
     active: bool = True
 
 
-def register_school_suite(*, api, db, get_current_user, manage_school_dep, perms_for, school_events, persist_school_media=None, school_media_data_url=None, school_media_file_path=None, require_school_access=None):
+def register_school_suite(*, api, db, get_current_user, manage_school_dep, perms_for, school_events, persist_school_media=None, school_media_data_url=None, school_media_file_path=None, require_school_access=None, checkpoint_overall_scores=None):
+    def _with_overall_scores(rows: List[dict]) -> List[dict]:
+        """Shape the canonical Handler/Dog overall scores onto checkpoint
+        history rows. New grades carry them persisted on the submission;
+        older rows resolve read-time from their own per-criterion scores via
+        server.py's single resolver. Read-only — never writes, never invents
+        a score where the rubric data cannot support one."""
+        if not callable(checkpoint_overall_scores):
+            return rows
+        out = []
+        for r in rows:
+            overall = checkpoint_overall_scores(r)
+            out.append({**r, "handler_overall": overall.get("handler"), "dog_overall": overall.get("dog")})
+        return out
+
     async def _school_settings():
         defaults = SchoolSettingsIn().model_dump()
         row = await db.school_settings.find_one({"id": "online_school"}, {"_id": 0}) or {}
@@ -228,7 +249,7 @@ def register_school_suite(*, api, db, get_current_user, manage_school_dep, perms
         se = await db.school_enrollments.find_one({"id": sid, "client_id": user.get("client_id")}, {"_id": 0})
         if not se:
             raise HTTPException(status_code=404, detail="Enrollment not found")
-        dp = await db.dog_programs.find_one({"id": se.get("enrollment_id"), "delivery_channel": "online_school"}, {"_id": 0})
+        dp = await db.dog_programs.find_one({"id": se.get("enrollment_id"), "delivery_channel": {"$in": list(SCHOOL_DELIVERY_CHANNELS)}}, {"_id": 0})
         if not dp:
             raise HTTPException(status_code=404, detail="Enrollment not found")
         return se, dp
@@ -255,7 +276,7 @@ def register_school_suite(*, api, db, get_current_user, manage_school_dep, perms
             return {"school_enrollment_ids": set(), "program_ids": set(), "lesson_ids": set(), "resource_ids": set()}
         dpids = [x.get("enrollment_id") for x in ses if x.get("enrollment_id")]
         dps = await db.dog_programs.find(
-            {"id": {"$in": dpids}, "delivery_channel": "online_school"},
+            {"id": {"$in": dpids}, "delivery_channel": {"$in": list(SCHOOL_DELIVERY_CHANNELS)}},
             {"_id": 0, "id": 1, "program_snapshot": 1, "current_module_id": 1, "current_lesson_id": 1,
              "status": 1, "access_state": 1, "school_access_expires_at": 1, "school_pause_until": 1},
         ).to_list(len(dpids) or 1)
@@ -347,7 +368,7 @@ def register_school_suite(*, api, db, get_current_user, manage_school_dep, perms
         se = await db.school_enrollments.find_one({"id": sid}, {"_id": 0})
         if not se:
             raise HTTPException(status_code=404, detail="Student not found")
-        dp = await db.dog_programs.find_one({"id": se.get("enrollment_id"), "delivery_channel": "online_school"}, {"_id": 0})
+        dp = await db.dog_programs.find_one({"id": se.get("enrollment_id"), "delivery_channel": {"$in": list(SCHOOL_DELIVERY_CHANNELS)}}, {"_id": 0})
         if not dp:
             raise HTTPException(status_code=404, detail="Student enrollment not found")
         return se, dp
@@ -371,12 +392,16 @@ def register_school_suite(*, api, db, get_current_user, manage_school_dep, perms
         return await _school_settings()
 
     @api.get("/admin/school/trainers")
-    async def school_trainers(_: dict = Depends(manage_school_dep)):
+    async def school_trainers(user: dict = Depends(get_current_user)):
+        caller_perms = perms_for(user)
+        if not (caller_perms.get("manage_school") or caller_perms.get("manage_training_sessions")):
+            raise HTTPException(status_code=403, detail="Training-session or School permission required")
         rows = await db.users.find({"role": {"$in": ["employee", "admin"]}, "active": {"$ne": False}}, {"_id": 0, "password_hash": 0}).sort("name", 1).to_list(500)
         out = []
         for u in rows:
             try:
-                if not perms_for(u).get("manage_school"):
+                p = perms_for(u)
+                if not (p.get("manage_school") or p.get("manage_training_sessions")):
                     continue
             except Exception:
                 continue
@@ -424,6 +449,9 @@ def register_school_suite(*, api, db, get_current_user, manage_school_dep, perms
                 "school_enrollment_id": se.get("id"), "enrollment_id": se.get("enrollment_id"), "status": dp.get("status") or se.get("status"),
                 "access_state": dp.get("access_state") or se.get("access_state") or "active", "enrolled_at": se.get("enrolled_at"),
                 "client": client, "dog": dog, "program_id": se.get("program_id"), "program_name": (dp.get("program_snapshot") or {}).get("name"),
+                "delivery_mode": ({"self_guided": "online", "trainer_led": "in_person", "hybrid": "hybrid"}.get(se.get("delivery_mode"))
+                                  or {"online_school": "online", "in_person_school": "in_person", "hybrid_school": "hybrid"}.get(dp.get("delivery_channel"))
+                                  or "online"),
                 "trainer": trainer, "last_activity_at": latest_events.get(se.get("id")), "attention_count": attn.get(se.get("id"), 0), **pos,
                 "access_expires_at": dp.get("school_access_expires_at"), "pause_until": dp.get("school_pause_until"),
             }
@@ -438,22 +466,57 @@ def register_school_suite(*, api, db, get_current_user, manage_school_dep, perms
         dog = await db.dogs.find_one({"id": se.get("dog_id")}, {"_id": 0})
         client = await db.clients.find_one({"id": se.get("client_id")}, {"_id": 0})
         events = await db.school_events.find({"school_enrollment_id": sid}, {"_id": 0}).sort("created_at", DESCENDING).limit(100).to_list(100)
-        checkpoints = await db.checkpoint_submissions.find({"school_enrollment_id": sid}, {"_id": 0, "video": 0}).sort("submitted_at", DESCENDING).to_list(100)
+        checkpoints = _with_overall_scores(await db.checkpoint_submissions.find({"school_enrollment_id": sid}, {"_id": 0, "video": 0}).sort("submitted_at", DESCENDING).to_list(100))
         plans = await db.school_training_plans.find({"school_enrollment_id": sid}, {"_id": 0}).sort("created_at", DESCENDING).to_list(100)
         notes = await db.school_student_notes.find({"school_enrollment_id": sid}, {"_id": 0}).sort("created_at", DESCENDING).to_list(100)
         requests = await db.school_requests.find({"school_enrollment_id": sid}, {"_id": 0}).sort("created_at", DESCENDING).to_list(100)
         threads = await db.client_message_threads.find({"school_enrollment_id": sid}, {"_id": 0, "messages": {"$slice": -5}}).sort("updated_at", DESCENDING).to_list(50)
+        # Practice is an internal School engine now, not a parallel product.
+        # Explicit ownership markers make this list safe for programs where the
+        # same dog has legacy/general homework outside the current enrollment.
+        practice = await db.homework.find(
+            {"$or": [
+                {"school_enrollment_id": sid},
+                {"school_enrollment_record_id": dp.get("id")},
+            ]},
+            {
+                "_id": 0, "id": 1, "title": 1, "status": 1, "created_at": 1,
+                "completed_at": 1, "due_date": 1, "assigned_by": 1,
+                "trainer_personalized_note": 1, "source_lesson_id": 1,
+                "template_snapshot.template_id": 1, "template_snapshot.name": 1,
+                "section_logs.id": 1,
+            },
+        ).sort("created_at", DESCENDING).to_list(200)
         cp_allowance = se.get("support_checkpoint_allowance") if se.get("support_checkpoint_allowance") is not None else dp.get("support_checkpoint_allowance")
         assist_allowance = se.get("support_assist_allowance") if se.get("support_assist_allowance") is not None else dp.get("support_assist_allowance")
         cp_used = sum(1 for x in checkpoints if x.get("status") == "graded")
         assist_used = sum(1 for x in checkpoints if x.get("outcome") == "trainer_assist_recommended" and x.get("trainer_assist_status") == "completed")
+        # Operational context belongs in the School workspace for trainer-led
+        # students too.  Session logs are scoped to this exact enrollment;
+        # upcoming training bookings are dog-scoped because legacy bookings did
+        # not consistently carry an enrollment id.  No booking/credit mutation
+        # happens here — this is read-only context.
+        session_count = await db.training_session_log.count_documents({"enrollment_id": dp.get("id")})
+        session_history = await db.training_session_log.find(
+            {"enrollment_id": dp.get("id")},
+            {"_id": 0, "id": 1, "booking_id": 1, "at": 1, "by_user": 1,
+             "session_label": 1, "session_note": 1, "client_recap_note": 1,
+             "advancement_action": 1, "current_module_id_after": 1, "current_lesson_id_after": 1},
+        ).sort("at", DESCENDING).limit(25).to_list(25)
+        today = datetime.now(ZoneInfo("America/New_York")).date().isoformat()
+        upcoming_training = await db.bookings.find(
+            {"dog_id": se.get("dog_id"), "service_type": "training",
+             "status": {"$in": ["pending", "approved"]}, "date": {"$gte": today}},
+            {"_id": 0, "id": 1, "date": 1, "time": 1, "status": 1, "service_type": 1,
+             "assigned_to": 1, "training_group": 1, "notes": 1},
+        ).sort([("date", 1), ("time", 1)]).limit(10).to_list(10)
         # Permanent dog-level School record: trainers should see prior School
         # programs without opening each old enrollment one by one. Keep this
         # compact; detailed events/checkpoints above remain scoped to this
         # enrollment so operational actions never cross course boundaries.
         dog_ses = await db.school_enrollments.find(
             {"dog_id": se.get("dog_id"), "client_id": se.get("client_id")},
-            {"_id": 0, "id": 1, "enrollment_id": 1, "enrolled_at": 1},
+            {"_id": 0, "id": 1, "enrollment_id": 1, "enrolled_at": 1, "delivery_mode": 1},
         ).sort("enrolled_at", 1).to_list(100)
         dog_dpids = [x.get("enrollment_id") for x in dog_ses if x.get("enrollment_id")]
         dog_dps = {x.get("id"): x for x in await db.dog_programs.find(
@@ -465,7 +528,10 @@ def register_school_suite(*, api, db, get_current_user, manage_school_dep, perms
             old_dp = dog_dps.get(old_se.get("enrollment_id")) or {}
             dog_history.append({
                 "school_enrollment_id": old_se.get("id"),
-                "name": (old_dp.get("program_snapshot") or {}).get("name") or "Online School program",
+                "name": (old_dp.get("program_snapshot") or {}).get("name") or "School program",
+                "delivery_mode": ({"self_guided": "online", "trainer_led": "in_person", "hybrid": "hybrid"}.get(old_se.get("delivery_mode"))
+                                  or {"online_school": "online", "in_person_school": "in_person", "hybrid_school": "hybrid"}.get(old_dp.get("delivery_channel"))
+                                  or "online"),
                 "status": old_dp.get("status") or "active",
                 "started_at": old_dp.get("started_at") or old_se.get("enrolled_at"),
                 "completed_at": old_dp.get("completed_at"),
@@ -497,9 +563,15 @@ def register_school_suite(*, api, db, get_current_user, manage_school_dep, perms
             "school_enrollment": se, "enrollment": {**dp, "program_snapshot": dp.get("program_snapshot") or {}}, "client": client, "dog": dog,
             "trainer": await _trainer_public(se.get("assigned_trainer_id")), "progress": _snapshot_position(dp),
             "baseline": se.get("baseline") or dp.get("school_baseline"), "events": events, "checkpoints": checkpoints,
-            "training_plans": plans, "notes": notes, "requests": requests, "threads": threads,
+            "training_plans": plans, "practice": practice, "notes": notes, "requests": requests, "threads": threads,
             "module_quizzes": list(quiz_by_module.values()),
             "dog_school_history": dog_history,
+            "operations": {
+                "session_count": session_count,
+                "recent_sessions": session_history,
+                "upcoming_training": upcoming_training,
+                "training_credits": (client or {}).get("training_credits", 0),
+            },
             "support": {
                 "checkpoint_allowance": cp_allowance, "checkpoint_used": cp_used,
                 "checkpoint_remaining": max(0, cp_allowance - cp_used) if cp_allowance is not None else None,
@@ -515,8 +587,9 @@ def register_school_suite(*, api, db, get_current_user, manage_school_dep, perms
         if "assigned_trainer_id" in body.model_fields_set:
             if body.assigned_trainer_id:
                 trainer = await db.users.find_one({"id": body.assigned_trainer_id, "active": {"$ne": False}}, {"_id": 0})
-                if not trainer or not perms_for(trainer).get("manage_school"):
-                    raise HTTPException(status_code=422, detail="Selected trainer cannot manage Online School")
+                tp = perms_for(trainer) if trainer else {}
+                if not trainer or not (tp.get("manage_school") or tp.get("manage_training_sessions")):
+                    raise HTTPException(status_code=422, detail="Selected trainer is not an active training staff member")
             changes["assigned_trainer_id"] = body.assigned_trainer_id
         if "access_expires_at" in body.model_fields_set: changes["school_access_expires_at"] = body.access_expires_at
         if "pause_until" in body.model_fields_set: changes["school_pause_until"] = body.pause_until
@@ -935,7 +1008,7 @@ def register_school_suite(*, api, db, get_current_user, manage_school_dep, perms
         se,dp=await _client_context(sid,user)
         all_ses=await db.school_enrollments.find({"dog_id":se.get("dog_id"),"client_id":se.get("client_id")},{"_id":0}).sort("enrolled_at",1).to_list(100)
         ids=[s.get("id") for s in all_ses]
-        cps=await db.checkpoint_submissions.find({"school_enrollment_id":{"$in":ids},"status":"graded"},{"_id":0}).sort("graded_at",1).to_list(1000)
+        cps=_with_overall_scores(await db.checkpoint_submissions.find({"school_enrollment_id":{"$in":ids},"status":"graded"},{"_id":0}).sort("graded_at",1).to_list(1000))
         programs=[]
         for s in all_ses:
             row=await db.dog_programs.find_one({"id":s.get("enrollment_id")},{"_id":0,"program_snapshot":1,"status":1,"completed_at":1,"started_at":1}) or {}

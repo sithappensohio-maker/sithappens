@@ -7,7 +7,7 @@ const STAGES = [
   { key: "review", label: "Review", icon: "fa-clipboard-list" },
   { key: "train", label: "Train", icon: "fa-dog" },
   { key: "record", label: "Record", icon: "fa-pen" },
-  { key: "homework", label: "Homework", icon: "fa-graduation-cap" },
+  { key: "homework", label: "Practice", icon: "fa-graduation-cap" },
   { key: "complete", label: "Complete", icon: "fa-flag-checkered" },
 ];
 

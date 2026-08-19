@@ -324,7 +324,7 @@ export default function Dashboard({ onNavigate = () => {}, onJumpToDog = () => {
         <div className="bg-shAccent/5 border border-shAccent/25 rounded-xl p-5 shadow-xl" data-testid="pending-homework-reviews">
           <div className="flex items-center justify-between mb-3 gap-3 flex-wrap">
             <h3 className="text-xs font-black text-shAccent uppercase tracking-widest flex items-center gap-2">
-              <i className="fas fa-clipboard-check"/> Homework Awaiting Review · {pendingHomework.length}
+              <i className="fas fa-clipboard-check"/> Practice Awaiting Review · {pendingHomework.length}
             </h3>
             <button onClick={()=>onNavigate("homework")}
                     data-testid="open-homework-queue"

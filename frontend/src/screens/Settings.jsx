@@ -716,8 +716,8 @@ const FEATURE_VISIBILITY_META = [
   { id: "trivia",          label: "Trivia",          icon: "fa-question",       color: "shSecondary",
     desc: "Daily trivia mini-game on the client portal. Disable to hide the trivia widget.",
     affects: ["Portal", "Quick links"] },
-  { id: "homework",        label: "Homework",        icon: "fa-book-open",      color: "purple-400",
-    desc: "Training homework assignments + step tracking. Disable to hide homework nav and portal section.",
+  { id: "homework",        label: "School Practice",        icon: "fa-book-open",      color: "purple-400",
+    desc: "Practice assignments, Practice Coach, and step tracking used by School programs. Disable to hide Practice from School and the portal.",
     affects: ["Admin nav", "Portal", "Quick links"] },
   // portals & comms
   { id: "staff_portal",    label: "Staff Portal",    icon: "fa-id-badge",       color: "shSecondary",

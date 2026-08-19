@@ -45,7 +45,7 @@ export default function SessionRecapCard({ recap, testid }) {
             <p className="text-[13px] text-shText italic bg-black/20 border border-shBorder rounded p-2.5">&ldquo;{recap.recap_note}&rdquo;</p>
           )}
           {(recap.homework_assigned || []).length > 0 && (
-            <p className="text-[12px]"><span className="text-shSecondary font-black uppercase tracking-widest text-[10px]"><i className="fas fa-graduation-cap mr-1"/>Homework: </span><span className="text-shText">{recap.homework_assigned.join(", ")}</span></p>
+            <p className="text-[12px]"><span className="text-shSecondary font-black uppercase tracking-widest text-[10px]"><i className="fas fa-graduation-cap mr-1"/>Practice: </span><span className="text-shText">{recap.homework_assigned.join(", ")}</span></p>
           )}
           {recap.next_focus && (
             <p className="text-[12px]"><span className="text-shTextMuted font-black uppercase tracking-widest text-[10px]">Next focus: </span><span className="text-shText">{recap.next_focus}</span></p>

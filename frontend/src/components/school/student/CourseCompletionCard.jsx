@@ -8,7 +8,7 @@ const fmtDate = (v) => {
 export default function CourseCompletionCard({ home, onProgress, onFeedback }) {
   const c = home?.completion_summary || {};
   const dog = home?.dog?.name || "Your dog";
-  const course = home?.program?.name || "Online School course";
+  const course = home?.program?.name || "School course";
   const completed = fmtDate(c.completed_at);
   const final = c.final_assessment || null;
   return (
