@@ -37414,7 +37414,6 @@ async def _handle_stripe_dispute_event(dispute_obj: dict) -> None:
     amount = round(float(dispute_obj.get("amount") or 0) / 100.0, 2)
     status = dispute_obj.get("status") or "unknown"
     ts = now_iso()
-    existing = await db.stripe_disputes.find_one({"id": dispute_id}, {"_id": 0})
     doc = {
         "id": dispute_id, "status": status, "reason": dispute_obj.get("reason"),
         "amount": amount, "currency": dispute_obj.get("currency"), "charge_id": dispute_obj.get("charge"),
@@ -37425,10 +37424,17 @@ async def _handle_stripe_dispute_event(dispute_obj: dict) -> None:
         "is_charge_refundable": dispute_obj.get("is_charge_refundable"),
         "updated_at": ts,
     }
-    if not existing:
-        doc["created_at"] = ts
-        doc["first_seen_at"] = ts
-    await db.stripe_disputes.update_one({"id": dispute_id}, {"$set": doc, "$setOnInsert": {"created_at": ts, "first_seen_at": ts}}, upsert=True)
+    # created_at/first_seen_at belong to $setOnInsert ALONE. Putting them in
+    # $set as well makes Mongo reject the whole update with "would create a
+    # conflict at 'created_at'" — which fired on the FIRST event for every
+    # dispute, so no dispute was ever recorded. $setOnInsert already gives
+    # the correct semantics: stamped once on insert, never rewritten by a
+    # later replay of the same dispute.
+    await db.stripe_disputes.update_one(
+        {"id": dispute_id},
+        {"$set": doc, "$setOnInsert": {"created_at": ts, "first_seen_at": ts}},
+        upsert=True,
+    )
     if payment:
         await db.payments.update_one(
             {"id": payment["id"]},
@@ -39933,8 +39939,12 @@ async def _validate_shop_item_eligibility(client: dict, kind: str, item_doc: Opt
             if existing_enrollment["status"] == "withdrawn":
                 raise HTTPException(status_code=409, detail=f"This dog's enrollment in {name} was withdrawn — contact us before repurchasing.")
             raise HTTPException(status_code=409, detail=f"This dog is already enrolled in {name} — go to Online School to continue instead of buying it again.")
-        if client_id:
-            await _require_agreements_signed(client_id, program_id=item_doc["id"])
+        # This function receives the client DOCUMENT (`client`), not a
+        # client_id — referencing client_id raised NameError on EVERY Online
+        # School program checkout, so no program could be bought at all.
+        _agreement_client_id = (client or {}).get("id")
+        if _agreement_client_id:
+            await _require_agreements_signed(_agreement_client_id, program_id=item_doc["id"])
         # Prerequisites are checked before an order/Stripe session exists so a
         # client can never pay for a course this dog is not yet eligible to enter.
         await _require_program_prerequisites(dog_id, item_doc)
