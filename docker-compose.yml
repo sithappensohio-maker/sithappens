@@ -41,6 +41,10 @@ services:
       SENDER_EMAIL: "${SENDER_EMAIL:-}"
       ADMIN_NOTIFICATION_EMAIL: "${ADMIN_NOTIFICATION_EMAIL:-}"
       JWT_SECRET: "${JWT_SECRET:-}"
+      # Separate key for authenticator secrets at rest — deliberately NOT
+      # JWT_SECRET, so rotating JWT_SECRET cannot lock out two-factor users.
+      # Empty falls back to the JWT-derived key (existing installs keep working).
+      MFA_ENCRYPTION_KEY: "${MFA_ENCRYPTION_KEY:-}"
       ADMIN_EMAIL: "${ADMIN_EMAIL:-admin@sithappens.com}"
       ADMIN_PASSWORD: "${ADMIN_PASSWORD:-}"
       ADMIN_NAME: "${ADMIN_NAME:-Admin}"

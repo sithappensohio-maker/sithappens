@@ -179,6 +179,7 @@ You'll see all the settings. Use arrow keys to move around. Replace these values
 | Variable | What to put |
 |---|---|
 | `JWT_SECRET` | The long hex string you just generated |
+| `MFA_ENCRYPTION_KEY` | A SECOND, different long hex string. Required before turning on two-factor authentication — see the note below |
 | `ADMIN_PASSWORD` | A unique admin password with at least 8 characters |
 | `CORS_ORIGINS` | Leave blank for the normal same-origin setup; only set explicit trusted origins for split-domain hosting |
 | `RESEND_API_KEY` | Your Resend key (starts with `re_`) |
@@ -186,6 +187,30 @@ You'll see all the settings. Use arrow keys to move around. Replace these values
 | `APP_PUBLIC_URL` | Leave empty for now. You'll set this in Section 5. |
 
 Leave `DB_NAME` and `REACT_APP_BACKEND_URL` alone for now.
+
+> **`MFA_ENCRYPTION_KEY` — set this before anyone enables two-factor login.**
+>
+> This key encrypts the authenticator (TOTP) secrets stored in the database.
+> It must be a *different* value from `JWT_SECRET`, generated the same way:
+>
+> ```bash
+> openssl rand -hex 32
+> ```
+>
+> Why it matters: `JWT_SECRET` is the key you rotate when you want to force
+> everyone to sign in again. If the same value also encrypted the two-factor
+> secrets, that routine rotation would make every stored authenticator secret
+> unreadable and lock every two-factor user out of their own account — the
+> only way back in would be their printed recovery codes. Keeping the two keys
+> separate means you can rotate `JWT_SECRET` whenever you need to without
+> touching anyone's authenticator.
+>
+> If `MFA_ENCRYPTION_KEY` is left empty the app still works and falls back to
+> the old `JWT_SECRET`-derived key, so nothing breaks — but you inherit that
+> lockout risk, so set it before enabling two-factor. Adding it later is safe:
+> secrets enrolled beforehand keep working, and no database migration is
+> needed. **Once two-factor is in use, treat `MFA_ENCRYPTION_KEY` as
+> permanent** — changing it has the same lockout effect described above.
 
 **Save and exit nano:** press `Ctrl+O`, then `Enter`, then `Ctrl+X`.
 

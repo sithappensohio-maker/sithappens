@@ -79,6 +79,7 @@ if [ ! -f .env ]; then
     cat > .env <<'EOF'
 DB_NAME="sit_happens"
 JWT_SECRET="REPLACE_ME"
+MFA_ENCRYPTION_KEY="REPLACE_ME"
 APP_PUBLIC_URL=""
 RESEND_API_KEY=""
 ADMIN_NOTIFICATION_EMAIL=""
@@ -104,6 +105,25 @@ if grep -qE 'JWT_SECRET="(REPLACE_ME|CHANGE_ME[^"]*)"' .env; then
   fi
   sed -i "s|^JWT_SECRET=.*|JWT_SECRET=\"${NEW_SECRET}\"|" .env
   ok "Generated a new JWT_SECRET"
+fi
+
+# MFA_ENCRYPTION_KEY must be its OWN value, never a copy of JWT_SECRET.
+# JWT_SECRET is rotated deliberately to force everyone to sign in again; if the
+# same value also encrypted the stored authenticator secrets, that routine
+# rotation would lock every two-factor user out of their own account. Generated
+# here so a fresh install is safe by default.
+if ! grep -q '^MFA_ENCRYPTION_KEY=' .env || grep -qE 'MFA_ENCRYPTION_KEY="(REPLACE_ME|CHANGE_ME[^"]*)"' .env; then
+  if command -v openssl >/dev/null 2>&1; then
+    NEW_MFA_KEY=$(openssl rand -hex 32)
+  else
+    NEW_MFA_KEY=$(head -c 64 /dev/urandom | base64 | tr -d '/+=' | head -c 64)
+  fi
+  if grep -q '^MFA_ENCRYPTION_KEY=' .env; then
+    sed -i "s|^MFA_ENCRYPTION_KEY=.*|MFA_ENCRYPTION_KEY=\"${NEW_MFA_KEY}\"|" .env
+  else
+    printf 'MFA_ENCRYPTION_KEY="%s"\n' "${NEW_MFA_KEY}" >> .env
+  fi
+  ok "Generated a dedicated MFA_ENCRYPTION_KEY"
 fi
 
 

@@ -78,6 +78,15 @@ from trophies_data import TIER_COLORS
 
 # -------- Config --------
 JWT_SECRET = os.environ["JWT_SECRET"]
+# Dedicated key for TOTP-secret encryption at rest. Kept SEPARATE from
+# JWT_SECRET on purpose: rotating JWT_SECRET is a routine session-invalidation
+# operation, but if it also derived the MFA key it would silently make every
+# stored authenticator secret undecryptable and lock out every MFA-enabled
+# admin. Set MFA_ENCRYPTION_KEY in production before enabling MFA. When it is
+# absent the JWT-derived key is still used, so existing installs keep working
+# unchanged — see _mfa_fernets() for the decrypt-fallback that makes adopting
+# the dedicated key a no-migration change.
+MFA_ENCRYPTION_KEY = (os.environ.get("MFA_ENCRYPTION_KEY") or "").strip()
 JWT_ALG = "HS256"
 ACCESS_TOKEN_EXPIRE_DAYS = max(1, int(os.environ.get("ACCESS_TOKEN_EXPIRE_DAYS", "7")))
 DAYCARE_CAPACITY = int(os.environ.get("DAYCARE_CAPACITY", "30"))
@@ -252,20 +261,41 @@ def create_access_token(user_id: str, email: str, role: str, token_version: int 
     return jwt.encode(payload, JWT_SECRET, algorithm=JWT_ALG)
 
 
-def _mfa_fernet() -> Fernet:
-    key = base64.urlsafe_b64encode(hashlib.sha256((JWT_SECRET + "|mfa-secret-v1").encode()).digest())
+def _mfa_fernet_for(material: str) -> Fernet:
+    """Fernet derived from the given secret material. The derivation string is
+    unchanged from the original so a JWT-derived key still decrypts secrets
+    written before MFA_ENCRYPTION_KEY existed."""
+    key = base64.urlsafe_b64encode(hashlib.sha256((material + "|mfa-secret-v1").encode()).digest())
     return Fernet(key)
 
 
+def _mfa_fernets() -> List[Fernet]:
+    """Keys to try, most-preferred first.
+
+    ENCRYPTION always uses the first entry. DECRYPTION walks the list, which
+    is what makes turning MFA_ENCRYPTION_KEY on a no-migration change: a
+    secret enrolled before the dedicated key existed was written with the
+    JWT-derived key and still decrypts through the fallback, while everything
+    written from now on uses the dedicated key. Once the dedicated key is set,
+    rotating JWT_SECRET no longer touches MFA at all.
+    """
+    if MFA_ENCRYPTION_KEY:
+        return [_mfa_fernet_for(MFA_ENCRYPTION_KEY), _mfa_fernet_for(JWT_SECRET)]
+    return [_mfa_fernet_for(JWT_SECRET)]
+
+
 def _mfa_encrypt_secret(secret: str) -> str:
-    return _mfa_fernet().encrypt(secret.encode()).decode()
+    return _mfa_fernets()[0].encrypt(secret.encode()).decode()
 
 
 def _mfa_decrypt_secret(token: str) -> Optional[str]:
-    try:
-        return _mfa_fernet().decrypt((token or "").encode()).decode()
-    except (InvalidToken, ValueError, TypeError):
-        return None
+    raw = (token or "").encode()
+    for fernet in _mfa_fernets():
+        try:
+            return fernet.decrypt(raw).decode()
+        except (InvalidToken, ValueError, TypeError):
+            continue
+    return None
 
 
 def _totp_code(secret: str, counter: int) -> str:
