@@ -95,3 +95,35 @@ test("the mobile stage switcher fits a 320px viewport", () => {
   expect(studioSrc).toMatch(/grid grid-cols-4 min-w-\[288px\]/);
   expect(studioSrc).not.toMatch(/grid-cols-4 min-w-\[360px\]/);
 });
+
+// ---------------------------------------------------------------------------
+// Programs panel + the Settings shell that sizes it
+// ---------------------------------------------------------------------------
+
+const programsSrc = read("Programs.jsx");
+const settingsSrc = read("..", "screens", "Settings.jsx");
+
+test("the Settings sidebar uses px widths so Text Size cannot inflate the layout budget", () => {
+  // md:w-72 is 18rem, and the app's Text Size preference scales the root font
+  // size — at "M" that sidebar measured 333px, leaving the settings canvas
+  // only 295px at 1024 and forcing panels inside it to overflow.
+  expect(settingsSrc).toMatch(/md:w-\[208px\] lg:w-\[240px\] xl:w-\[276px\] md:shrink-0/);
+  expect(settingsSrc).not.toMatch(/md:block md:w-72 md:shrink-0/);
+});
+
+test("the Programs panel header can wrap and its heading block can shrink", () => {
+  expect(programsSrc).toMatch(/flex flex-wrap items-center justify-between gap-3/);
+  expect(programsSrc).toMatch(/<div className="min-w-0 flex-1">/);
+});
+
+test("the Programs action buttons are not pinned at their max-content width", () => {
+  // shrink-0 kept the group at 386px, so flex-wrap could never engage.
+  expect(programsSrc).toMatch(/flex flex-wrap items-center gap-2 min-w-0/);
+  expect(programsSrc).not.toMatch(/flex items-center gap-2 shrink-0">\s*\n\s*<input ref=\{importInputRef\}/);
+});
+
+test("each program row wraps instead of pushing its price and actions off the panel", () => {
+  expect(programsSrc).toMatch(/className="px-3 py-3 flex flex-wrap items-center gap-3"/);
+  expect(programsSrc).toMatch(/<div className="flex-1 min-w-\[9rem\]">/);
+  expect(programsSrc).toMatch(/text-shGreen font-black text-\[16px\] whitespace-nowrap shrink-0/);
+});

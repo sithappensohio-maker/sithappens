@@ -507,7 +507,12 @@ export default function Settings() {
       <div className="flex flex-col md:flex-row gap-4 md:gap-6 relative">
         {/* Category sidebar */}
         <nav
-          className={`${mobileNavOpen ? "block" : "hidden"} md:block md:w-72 md:shrink-0 space-y-2 sh-settings-sidebar`}
+          /* Fixed px, not rem: w-72 scales with the user's Text Size
+             preference (18rem measured 333px at "M"), so a rem width silently
+             ate the settings canvas — at 1024 the content column was left
+             295px and panels inside it overflowed. px keeps the layout budget
+             predictable regardless of text scaling. */
+          className={`${mobileNavOpen ? "block" : "hidden"} md:block md:w-[208px] lg:w-[240px] xl:w-[276px] md:shrink-0 space-y-2 sh-settings-sidebar`}
           data-testid="settings-sidebar"
         >
           {CATEGORIES.map(cat => {

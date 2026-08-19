@@ -159,13 +159,20 @@ export function ProgramsPanel() {
 
   return (
     <div className="space-y-5 max-w-4xl" data-testid="programs-panel">
-      <div className="flex items-center justify-between">
-        <div>
+      {/* The heading block needs min-w-0 or its description's min-content
+          width keeps the row from shrinking, which pushed the shrink-0 action
+          buttons past the panel's right edge. flex-wrap lets the buttons drop
+          to their own line before that can happen at all. */}
+      <div className="flex flex-wrap items-center justify-between gap-3">
+        <div className="min-w-0 flex-1">
           <h4 className="text-sm font-black text-shBlue uppercase tracking-widest"><i className="fas fa-list-check mr-2"/>Training Programs</h4>
           <p className="text-[14px] text-gray-300 mt-1">Tiers and curricula you offer. Seeded from your website&rsquo;s standard lineup.</p>
         </div>
+        {/* No shrink-0 on the action group: it pinned the group at its 386px
+            max-content width, so flex-wrap could never actually engage and the
+            buttons ran past the panel edge on a narrow canvas. */}
         {canManage && (
-          <div className="flex items-center gap-2 shrink-0">
+          <div className="flex flex-wrap items-center gap-2 min-w-0">
             <input ref={importInputRef} type="file" accept="application/json,.json" className="hidden" data-testid="prog-import-input"
                    onChange={(e)=>{ const f = e.target.files?.[0]; e.target.value = ""; importTemplate(f); }} />
             <button onClick={()=>importInputRef.current?.click()} data-testid="prog-import" disabled={importing}
@@ -191,14 +198,18 @@ export function ProgramsPanel() {
           </div>
           <div className="divide-y divide-bgHover">
             {g.items.length === 0 && <p className="px-3 py-3 text-[15px] text-gray-500 italic">No programs in this category.</p>}
+            {/* Row is flex-wrap with a name floor: at 320px the price and the
+                three icon actions could not fit beside the name, and with no
+                shrink-0 they simply ran past the panel edge. They now drop to
+                a second line instead. */}
             {g.items.map(p => (
-              <div key={p.id} className="px-3 py-3 flex items-center gap-3">
-                <div className="flex-1 min-w-0">
+              <div key={p.id} className="px-3 py-3 flex flex-wrap items-center gap-3">
+                <div className="flex-1 min-w-[9rem]">
                   <p className="text-sm font-black text-white">{p.name} {p.is_default && <span className="text-[13px] text-gray-500 font-black tracking-widest ml-2">DEFAULT</span>} {p.draft && <span className="text-[13px] text-orange-400 font-black tracking-widest ml-2">DRAFT SAVED</span>}</p>
                   <p className="text-[15px] text-gray-400">{p.modules.length} modules · {p.modules.reduce((a,m)=>a+m.goals.length,0)} goals · {p.format?.count} {p.format?.unit}</p>
                   <p className="text-[11px] text-gray-500 uppercase tracking-widest mt-0.5 truncate">{shopCategoryLabel(p)}</p>
                 </div>
-                <p className="text-shGreen font-black text-[16px] whitespace-nowrap">${Number(p.price || 0).toFixed(2)}</p>
+                <p className="text-shGreen font-black text-[16px] whitespace-nowrap shrink-0">${Number(p.price || 0).toFixed(2)}</p>
                 {canManage && (
                   <>
                     <button onClick={()=>exportTemplate(p)} data-testid={`prog-export-${p.id}`} title="Download as reusable template" className="text-gray-400 hover:text-white text-sm px-2"><i className="fas fa-file-export"/></button>
