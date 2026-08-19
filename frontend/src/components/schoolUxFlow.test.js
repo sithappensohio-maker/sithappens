@@ -28,7 +28,8 @@ test("the old slim teaser card is gone", () => {
 });
 
 test("hero shows course name, Week/Module X of Y, big progress bar, percentage, and next lesson", () => {
-  expect(heroSrc).toMatch(/Sit Happens Online School/);
+  // Consolidation rebrand: in-person, online and hybrid share ONE hero.
+  expect(heroSrc).toMatch(/Sit Happens School/);
   expect(heroSrc).toMatch(/-course-name/);
   expect(heroSrc).toMatch(/\$\{unit\} \$\{e\.module_number \?\? 1\} of \$\{e\.modules_total\}/);
   expect(heroSrc).toMatch(/-progress/);

@@ -523,6 +523,38 @@ def require_admin_and_permission(key: str):
     return _dep
 
 
+def require_admin_and_any_permission(*keys: str):
+    """Like ``require_admin_and_permission`` but satisfied by ANY of ``keys``.
+
+    School consolidation (B4): the unified School assignment route needs
+    "manage_school OR manage_training_sessions" — a trainer who runs
+    in-person delivery must be able to assign a program without being handed
+    general Online School administration. That was briefly expressed as
+    ``Depends(get_current_user)`` plus an in-body check, which let clients
+    reach the handler body at all and left authorization resting entirely on
+    that inner check. This restores the OUTER gate: it composes the same
+    ``require_employee_or_admin`` account-type gate (so clients are rejected
+    before the handler runs) with an any-of permission test drawn from the
+    same matrix ``/me/permissions`` exposes.
+
+    Delivery-mode-specific narrowing (e.g. online assignment additionally
+    requiring ``manage_school``) still lives inside the route — this gate is
+    the coarse "may you touch School assignment at all" boundary.
+    """
+    async def _dep(user: dict = Depends(require_employee_or_admin)) -> dict:
+        for key in keys:
+            if key not in PERMISSION_KEYS:
+                raise RuntimeError(f"Unknown permission key '{key}'")
+        perms = _perms_for(user)
+        if not any(perms.get(k) for k in keys):
+            raise HTTPException(
+                status_code=403,
+                detail="Missing permission: " + " or ".join(keys),
+            )
+        return user
+    return _dep
+
+
 def _is_owner(user: Dict[str, Any]) -> bool:
     """True owner per the exact same rule `_perms_for` uses for its
     lockout-protection bypass: role=="admin" AND (no staff_role at all, or
@@ -18521,8 +18553,25 @@ async def _grant_staff_school_enrollment(
     if not modules:
         raise HTTPException(status_code=422, detail="This program has no modules to teach yet")
 
-    # Do not create a second live copy of the same curriculum for one dog.
-    # This catches legacy trainer-led rows as well as every School channel.
+    # ONE active School enrollment per dog+program, regardless of delivery
+    # mode (B5, owner-directed). If a client receives BOTH trainer-led and
+    # online delivery for the same program, the correct model in the unified
+    # School is a single HYBRID enrollment -- never one In Person plus one
+    # Online enrollment.
+    #
+    # LEGACY COMPATIBILITY (deliberate, do not "fix" by widening this):
+    # older data and the legacy enroll path can still hold a simultaneous
+    # trainer-led + online_school pair for one dog+program, and the existing
+    # behavior around those rows is preserved and still covered by
+    # test_online_school_phase1.py::
+    # test_both_delivery_program_supports_trainer_led_and_online_independently.
+    # This gate governs the NEW unified Assign Program workflow only; it does
+    # not rewrite, migrate or invalidate historical dual enrollments.
+    # Deprecating/rerouting legacy enrollment creation is a separate release.
+    #
+    # Uniqueness is additionally enforced per channel at the database level by
+    # _ensure_school_channel_active_unique_indexes(), which closes the
+    # concurrent double-submit window this read-then-write check alone cannot.
     active_existing = await db.dog_programs.find_one(
         {"dog_id": dog["id"], "program_id": program["id"], "status": "active"}, {"_id": 0}
     )
@@ -18665,7 +18714,10 @@ async def _grant_staff_school_enrollment(
 
 
 @api.post("/school/enroll")
-async def school_enroll(body: SchoolEnrollIn, user: dict = Depends(get_current_user)):
+async def school_enroll(
+    body: SchoolEnrollIn,
+    user: dict = Depends(require_admin_and_any_permission("manage_school", "manage_training_sessions")),
+):
     """Unified School program assignment.
 
     Existing callers that omit ``delivery_mode`` remain Online School
@@ -18692,6 +18744,35 @@ async def school_enroll(body: SchoolEnrollIn, user: dict = Depends(get_current_u
             dog, program, delivery_mode=body.delivery_mode, enrolled_by=user.get("id"),
             trainer_notes=body.trainer_notes or "", assigned_trainer_id=body.assigned_trainer_id,
             started_at=body.started_at, target_completion_date=body.target_completion_date,
+        )
+
+    # B5 — ONE active School enrollment per dog+program in the NEW unified
+    # Assign Program workflow, regardless of delivery mode. The staff-led
+    # branch enforces this inside _grant_staff_school_enrollment; the online
+    # branch needs the same guard here, because _grant_online_school_enrollment
+    # is shared with legacy/commerce callers whose dual-enrollment behavior is
+    # deliberately preserved and must NOT be tightened. If a client receives
+    # both trainer-led and online delivery for one program, the correct model
+    # is a single HYBRID enrollment.
+    # Scope: only a DIFFERENT School channel is blocked here. An existing
+    # ACTIVE ONLINE row is left to _grant_online_school_enrollment's canonical
+    # duplicate handling, which additionally SELF-HEALS an orphaned
+    # dog_programs row by recreating its missing companion — preempting that
+    # would silently break the repair path. A legacy row with no School
+    # channel at all is likewise left alone, preserving the documented
+    # legacy trainer-led + online compatibility above.
+    existing_active = await db.dog_programs.find_one(
+        {"dog_id": body.dog_id, "program_id": body.program_id, "status": "active",
+         "delivery_channel": {"$in": [c for c in SCHOOL_DELIVERY_CHANNELS if c != "online_school"]}},
+        {"_id": 0, "delivery_channel": 1},
+    )
+    if existing_active:
+        existing_mode = _school_delivery_mode_for_enrollment(existing_active) or "legacy in-person"
+        raise HTTPException(
+            status_code=409,
+            detail=f"This dog is already actively enrolled in this program "
+                   f"({existing_mode.replace('_', ' ')}). Use Hybrid for combined "
+                   f"trainer-led and online delivery, or repeat the program after it finishes.",
         )
 
     # Validate all requested metadata before creating the two enrollment rows;
@@ -20179,6 +20260,20 @@ async def portal_school_submit_checkpoint(
     se, enrollment = await _school_enrollment_for_client(school_enrollment_id, user)
     _require_school_access(enrollment, allow_withdrawn_read=False)
     _require_school_onboarding_ready(se, enrollment)
+    # School consolidation (B6): on a PURE in-person program the formal module
+    # checkpoint is performed live by the trainer (see the live-checkpoint
+    # route), so the client must not submit one. This restricts ONLY the
+    # formal checkpoint: an in-person client keeps full School access —
+    # reviewing curriculum, completing assigned Practice, Practice Coach,
+    # uploading requested practice media, trainer feedback and progress.
+    # Hybrid deliberately keeps client submission (its online half needs it)
+    # and can ALSO use live trainer checkpoints.
+    if _school_delivery_mode(se, enrollment) == "in_person":
+        raise HTTPException(
+            status_code=409,
+            detail="Your trainer completes this checkpoint with you in person — "
+                   "no video submission is needed for this program.",
+        )
     roadmap = await _school_roadmap(enrollment, se["dog_id"])
     current_lesson = roadmap.get("current_lesson")
     if not current_lesson or current_lesson.get("id") != lesson_id:
@@ -30344,6 +30439,68 @@ async def _ensure_retail_sales_payment_id_unique_index() -> None:
 PRICE_OVERRIDES_ACTIVE_UNIQUE_INDEX_NAME = "price_overrides_client_kind_code_active_unique"
 
 
+DP_STAFF_ACTIVE_UNIQUE_INDEX_NAMES = {
+    "in_person_school": "dp_in_person_active_unique",
+    "hybrid_school": "dp_hybrid_active_unique",
+}
+
+
+async def _ensure_school_channel_active_unique_indexes() -> None:
+    """One ACTIVE enrollment per dog+program WITHIN each School channel.
+
+    The pre-existing ``dp_online_active_unique`` index is partial-filtered to
+    ``delivery_channel="online_school"``. That scoping is deliberate: this
+    product intentionally supports a dog holding an active trainer-led
+    enrollment AND an active online enrollment for the same program at the
+    same time (see test_online_school_phase1.py::
+    test_both_delivery_program_supports_trainer_led_and_online_independently).
+    Uniqueness therefore belongs PER CHANNEL, never across all channels.
+
+    The unified School added ``in_person_school`` and ``hybrid_school`` with no
+    equivalent protection, leaving only an application-level read-then-write
+    check in ``_grant_staff_school_enrollment``. A concurrent double-submit
+    slips through that window and creates TWO active progress ledgers in the
+    same channel (reproduced in test_school_unified_delivery.py::
+    test_concurrent_in_person_enrollment_does_not_create_two_ledgers). These
+    two indexes close that window while preserving cross-channel coexistence.
+
+    NON-DESTRUCTIVE: training history is never rewritten here. If existing data
+    already holds duplicates within a channel, this logs them for human review
+    and declines to create that index. Registered in the BEST-EFFORT startup
+    path (not the critical-index gate), so it can never abort startup.
+    """
+    for channel, index_name in DP_STAFF_ACTIVE_UNIQUE_INDEX_NAMES.items():
+        groups = await db.dog_programs.aggregate([
+            {"$match": {"status": "active", "delivery_channel": channel,
+                        "dog_id": {"$nin": [None, ""]}, "program_id": {"$nin": [None, ""]}}},
+            {"$group": {"_id": {"dog_id": "$dog_id", "program_id": "$program_id"},
+                        "ids": {"$push": "$id"}, "count": {"$sum": 1}}},
+            {"$match": {"count": {"$gt": 1}}},
+        ]).to_list(1000)
+        if groups:
+            logger.warning(
+                "dog_programs: %d dog+program group(s) already hold more than one ACTIVE "
+                "%s enrollment; refusing to add %s so no training record is altered. "
+                "Review manually: %s",
+                len(groups), channel, index_name,
+                [{"key": g["_id"], "enrollment_ids": g["ids"]} for g in groups][:20],
+            )
+            continue
+        try:
+            await db.dog_programs.create_index(
+                [("dog_id", 1), ("program_id", 1)],
+                unique=True,
+                partialFilterExpression={"status": "active", "delivery_channel": channel},
+                name=index_name,
+            )
+            logger.info("dog_programs.%s active — one active %s enrollment per dog+program.",
+                        index_name, channel)
+        except Exception as e:
+            logger.error("Failed to create dog_programs.%s: %s — %s active-enrollment "
+                         "uniqueness is NOT enforced at the database level.",
+                         index_name, e, channel)
+
+
 async def _ensure_price_overrides_active_unique_index() -> None:
     """Never more than one ACTIVE client price override for the same
     (client_id, target_kind, target_code) — enforced at the database level,
@@ -30884,6 +31041,7 @@ async def startup():
     await _ensure_critical_training_indexes()
     await _ensure_retail_sales_payment_id_unique_index()
     await _ensure_price_overrides_active_unique_index()
+    await _ensure_school_channel_active_unique_indexes()
     # Seed admin — Sprint 110di-46 (security hardening):
     #  - On FIRST run (no admin user yet) we seed with ADMIN_PASSWORD if set,
     #    falling back to the dev default "admin123" only when nothing is

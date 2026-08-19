@@ -80,7 +80,8 @@ test("Settings exposes School-media recovery rather than pretending JSON alone b
 
 test("School search covers reached lessons, resources, and trainer feedback without crowding the mobile nav", () => {
   expect(schoolApp).toMatch(/<SearchScreen/);
-  expect(schoolApp).toMatch(/aria-label="Search Online School"/);
+  // Consolidation rebrand: one "School", not "Online School".
+  expect(schoolApp).toMatch(/aria-label="Search School"/);
   expect(search).toMatch(/lessons/);
   expect(search).toMatch(/resources/);
   expect(search).toMatch(/Trainer Feedback/);
