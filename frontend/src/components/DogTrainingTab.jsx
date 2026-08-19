@@ -214,13 +214,17 @@ export default function DogTrainingTab({ dogId, dogName, dogAgeMonths = 0 }) {
                           onGoal={(gid, patch)=>setGoal(e.id, gid, patch)}
                           onOpenWorkspace={()=>setWorkspaceFor({ dog_id: dogId, enrollment_id: e.id })} />
         ))
-      ) : (
+      ) : activeAll.length === 0 ? (
+        // Gate on activeAll, not `active`: an online_school enrollment is filtered
+        // out of `active` (it renders in the Online School block below), so keying
+        // the empty state off `active` told a dog with a live online enrollment it
+        // had "no active training program" right above its own active card.
         <div className="bg-[var(--sh-card-base)]/40 border border-dashed border-shBorder rounded p-6 text-center" data-testid="no-active">
           <i className="fas fa-graduation-cap text-shSecondary text-3xl mb-2"/>
           <p className="text-sm font-black text-shText uppercase tracking-tight">No active training program</p>
           <p className="text-[14px] text-shTextMuted mt-1">Enroll {dogName} in a standard program or build a custom plan.</p>
         </div>
-      )}
+      ) : null}
 
       {/* History */}
       {history.length > 0 && (

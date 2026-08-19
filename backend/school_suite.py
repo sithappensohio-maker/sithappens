@@ -223,7 +223,21 @@ class ResourceIn(BaseModel):
     active: bool = True
 
 
-def register_school_suite(*, api, db, get_current_user, manage_school_dep, perms_for, school_events, persist_school_media=None, school_media_data_url=None, school_media_file_path=None, require_school_access=None):
+def register_school_suite(*, api, db, get_current_user, manage_school_dep, perms_for, school_events, persist_school_media=None, school_media_data_url=None, school_media_file_path=None, require_school_access=None, checkpoint_overall_scores=None):
+    def _with_overall_scores(rows: List[dict]) -> List[dict]:
+        """Shape the canonical Handler/Dog overall scores onto checkpoint
+        history rows. New grades carry them persisted on the submission;
+        older rows resolve read-time from their own per-criterion scores via
+        server.py's single resolver. Read-only — never writes, never invents
+        a score where the rubric data cannot support one."""
+        if not callable(checkpoint_overall_scores):
+            return rows
+        out = []
+        for r in rows:
+            overall = checkpoint_overall_scores(r)
+            out.append({**r, "handler_overall": overall.get("handler"), "dog_overall": overall.get("dog")})
+        return out
+
     async def _school_settings():
         defaults = SchoolSettingsIn().model_dump()
         row = await db.school_settings.find_one({"id": "online_school"}, {"_id": 0}) or {}
@@ -452,7 +466,7 @@ def register_school_suite(*, api, db, get_current_user, manage_school_dep, perms
         dog = await db.dogs.find_one({"id": se.get("dog_id")}, {"_id": 0})
         client = await db.clients.find_one({"id": se.get("client_id")}, {"_id": 0})
         events = await db.school_events.find({"school_enrollment_id": sid}, {"_id": 0}).sort("created_at", DESCENDING).limit(100).to_list(100)
-        checkpoints = await db.checkpoint_submissions.find({"school_enrollment_id": sid}, {"_id": 0, "video": 0}).sort("submitted_at", DESCENDING).to_list(100)
+        checkpoints = _with_overall_scores(await db.checkpoint_submissions.find({"school_enrollment_id": sid}, {"_id": 0, "video": 0}).sort("submitted_at", DESCENDING).to_list(100))
         plans = await db.school_training_plans.find({"school_enrollment_id": sid}, {"_id": 0}).sort("created_at", DESCENDING).to_list(100)
         notes = await db.school_student_notes.find({"school_enrollment_id": sid}, {"_id": 0}).sort("created_at", DESCENDING).to_list(100)
         requests = await db.school_requests.find({"school_enrollment_id": sid}, {"_id": 0}).sort("created_at", DESCENDING).to_list(100)
@@ -994,7 +1008,7 @@ def register_school_suite(*, api, db, get_current_user, manage_school_dep, perms
         se,dp=await _client_context(sid,user)
         all_ses=await db.school_enrollments.find({"dog_id":se.get("dog_id"),"client_id":se.get("client_id")},{"_id":0}).sort("enrolled_at",1).to_list(100)
         ids=[s.get("id") for s in all_ses]
-        cps=await db.checkpoint_submissions.find({"school_enrollment_id":{"$in":ids},"status":"graded"},{"_id":0}).sort("graded_at",1).to_list(1000)
+        cps=_with_overall_scores(await db.checkpoint_submissions.find({"school_enrollment_id":{"$in":ids},"status":"graded"},{"_id":0}).sort("graded_at",1).to_list(1000))
         programs=[]
         for s in all_ses:
             row=await db.dog_programs.find_one({"id":s.get("enrollment_id")},{"_id":0,"program_snapshot":1,"status":1,"completed_at":1,"started_at":1}) or {}

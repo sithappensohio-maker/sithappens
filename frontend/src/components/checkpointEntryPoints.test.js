@@ -182,3 +182,37 @@ test("Pipeline surfaces the checkpoint queue next to Today's Training Dogs, not 
   expect(checkpointButtonIdx).toBeGreaterThan(-1);
   expect(checkpointButtonIdx - todayHeaderIdx).toBeLessThan(600); // physically adjacent, not elsewhere on the screen
 });
+
+// ---------------------------------------------------------------------------
+// B6 — in-person students are never asked for a checkpoint video
+// ---------------------------------------------------------------------------
+
+test("CheckpointPanel replaces BOTH submission-soliciting states for in-person students", () => {
+  // Visual QA regression: the B6 server guard 409s a video checkpoint from an
+  // in-person School student, but the client still told them to "submit a
+  // checkpoint video" and rendered the uploader — instructing the client to do
+  // something the server refuses. Only the two soliciting states are swapped.
+  expect(checkpointPanelSrc).toMatch(/const trainerAssessed = deliveryMode === "in_person" \|\| deliveryMode === "trainer_led"/);
+  expect(checkpointPanelSrc).toMatch(/data-testid="school-checkpoint-in-person"/);
+  // guard on the pre-practice state …
+  expect(checkpointPanelSrc).toMatch(/if \(!practiced\) \{\s*\n\s*if \(trainerAssessed\) return inPersonPanel;/);
+  // … and on the submit form itself
+  expect(checkpointPanelSrc).toMatch(/if \(trainerAssessed\) return inPersonPanel;\s*\n\s*\n\s*return <CheckpointSubmitForm/);
+});
+
+test("awaiting-review / prescribed-practice / Trainer Assist stay reachable for in-person students", () => {
+  // A live trainer checkpoint can still return prescribe_practice or raise a
+  // Trainer Assist hold, so those states must NOT be short-circuited — the
+  // in-person guards sit after them, never at the top of the component.
+  const guardIdx = checkpointPanelSrc.search(/if \(trainerAssessed\) return inPersonPanel;\s*\n\s*\n\s*return <CheckpointSubmitForm/);
+  expect(guardIdx).toBeGreaterThan(checkpointPanelSrc.indexOf('status?.status === "awaiting_review"'));
+  expect(guardIdx).toBeGreaterThan(checkpointPanelSrc.indexOf('status.outcome === "prescribe_practice"'));
+});
+
+test("delivery mode is threaded from SchoolApp through LessonScreen into CheckpointPanel", () => {
+  const schoolApp = read("..", "screens", "SchoolApp.jsx");
+  const lessonScreen = read("school", "student", "LessonScreen.jsx");
+  expect(schoolApp).toMatch(/deliveryMode=\{selectedEntry\?\.delivery_mode\}/);
+  expect(lessonScreen).toMatch(/dogName, dogPhoto, deliveryMode,/);
+  expect(lessonScreen).toMatch(/deliveryMode=\{deliveryMode\}/);
+});

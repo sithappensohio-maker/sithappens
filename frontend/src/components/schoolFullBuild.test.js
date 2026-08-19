@@ -94,3 +94,13 @@ test("School media uses authenticated file blobs and lesson-linked video/image r
   expect(blocks).toMatch(/LinkedResourceMedia/);
   expect(blocks).toMatch(/Loading School media/);
 });
+
+test("the School ownership & access grid pins a base single column so native date inputs cannot overflow 320px", () => {
+  // Visual QA regression: Tailwind only emits `minmax(0, 1fr)` tracks for an
+  // explicit grid-cols-*. Without a base `grid-cols-1` the implicit track was
+  // sized to max-content, and the native <input type="date"> intrinsic width
+  // (~290px) pushed the whole card — including SAVE STUDENT — past a 320px
+  // viewport. The responsive md:/lg: columns are unchanged.
+  expect(students).toMatch(/grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-3 mt-3/);
+  expect(students).not.toMatch(/"grid md:grid-cols-2 lg:grid-cols-3 gap-3 mt-3"/);
+});

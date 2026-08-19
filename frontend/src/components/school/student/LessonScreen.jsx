@@ -18,7 +18,7 @@ import { practiceButtonLabel } from "../../../lib/onlineSchoolPolish";
  *     never touches the current enrollment pointer)
  * All progression state comes from the backend; nothing is derived here. */
 export default function LessonScreen({
-  enrollmentId, lessonId, detail, dogName, dogPhoto,
+  enrollmentId, lessonId, detail, dogName, dogPhoto, deliveryMode,
   onStartPractice, onStartPrescribedPractice, onAdvanced, onStateChanged, onBackToCourse, onAskTrainer, onTakeQuiz,
 }) {
   const [data, setData] = useState(null);
@@ -257,6 +257,7 @@ export default function LessonScreen({
           {isCurrent && requiresCp && hasPractice && (
             <CheckpointPanel
               lessonId={lessonId}
+              deliveryMode={deliveryMode}
               practiced={data.practiced}
               rubric={roadmap.checkpoint_rubric}
               status={roadmap.checkpoint_status}

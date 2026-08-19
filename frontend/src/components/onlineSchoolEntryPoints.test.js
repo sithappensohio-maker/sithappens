@@ -146,6 +146,16 @@ test("DogTrainingTab splits active enrollments by delivery_channel so trainer to
   expect(dogTrainingTabSrc).toMatch(/const schoolActive = activeAll\.filter\(e => e\.delivery_channel === "online_school"\)/);
 });
 
+test("the no-active empty state is gated on activeAll so an online-only dog is never told it has no program", () => {
+  // Visual QA regression: `active` deliberately excludes online_school rows
+  // (they render in the Online School block), so gating the empty state on
+  // `active` made a dog with a live online enrollment show BOTH
+  // "1 active School program" and "No active training program · Enroll …"
+  // stacked directly above its own active enrollment card.
+  expect(dogTrainingTabSrc).toMatch(/\) : activeAll\.length === 0 \? \(/);
+  expect(dogTrainingTabSrc).not.toMatch(/\{active\.length > 0 \? \([\s\S]*?\) : \(\s*<div[^>]*data-testid="no-active"/);
+});
+
 test("delivery choices are restricted to what each program actually supports", () => {
   // Same intent as the old program-list filter, relocated: the modal now
   // offers ONLY the delivery modes a given program is configured for, so a

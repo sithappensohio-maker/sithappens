@@ -17889,13 +17889,33 @@ def _find_lesson_in_snapshot(enrollment: dict, lesson_id: str) -> Optional[dict]
 # ─── Online School Phase 2 — Trainer Checkpoints & Grading ────────────────
 
 def _checkpoint_overall_scores(handler_scores: Optional[dict], dog_scores: Optional[dict]) -> dict:
-    """Derived Handler/Dog summary scores — NEVER stored, always computed
-    fresh from the authoritative per-criterion scores (a simple average).
-    The individual criterion scores remain the real assessment data."""
+    """Handler/Dog summary scores computed from the authoritative
+    per-criterion scores (a simple average). The individual criterion scores
+    remain the real assessment data; this is the one calculation that turns
+    them into the summary pair. Called once at grade-finalize time to persist
+    the result onto the canonical submission, and at read time only as the
+    backward-compatible fallback for rows graded before that (see
+    _resolved_checkpoint_overall_scores)."""
     def _avg(scores):
         vals = list((scores or {}).values())
         return round(sum(vals) / len(vals), 1) if vals else None
     return {"handler": _avg(handler_scores), "dog": _avg(dog_scores)}
+
+
+def _resolved_checkpoint_overall_scores(sub: dict) -> dict:
+    """The single read path for a submission's Handler/Dog overall scores.
+
+    Prefers the values persisted on the canonical checkpoint_submissions row
+    (written by the grade state machine for every outcome and both submission
+    sources). Historical rows graded before those fields existed carry no
+    overalls, so they fall back to deriving from their own per-criterion
+    scores — read-time only, never a write, and never a manufactured number:
+    a row with insufficient rubric detail resolves to None on both sides and
+    callers simply omit the score line, exactly as they did before."""
+    handler, dog = sub.get("handler_overall"), sub.get("dog_overall")
+    if handler is not None or dog is not None:
+        return {"handler": handler, "dog": dog}
+    return _checkpoint_overall_scores(sub.get("handler_scores"), sub.get("dog_scores"))
 
 
 def _client_safe_checkpoint_rubric(checkpoint: Optional[dict]) -> Optional[dict]:
@@ -18023,7 +18043,7 @@ def _client_safe_checkpoint_submission(sub: Optional[dict]) -> Optional[dict]:
         "on_hold": bool(sub.get("trainer_assist_hold_active")),
     }
     if status == "graded":
-        overall = _checkpoint_overall_scores(sub.get("handler_scores"), sub.get("dog_scores"))
+        overall = _resolved_checkpoint_overall_scores(sub)
         out.update({
             "handler_scores": sub.get("handler_scores") or {},
             "dog_scores": sub.get("dog_scores") or {},
@@ -19363,7 +19383,7 @@ async def _school_completion_summary(se: dict, enrollment: dict) -> Optional[dic
         {"_id": 0}, sort=[("graded_at", -1)],
     )
     if final_sub:
-        overall = _checkpoint_overall_scores(final_sub.get("handler_scores"), final_sub.get("dog_scores"))
+        overall = _resolved_checkpoint_overall_scores(final_sub)
         final_assessment = {
             "handler_overall": overall["handler"], "dog_overall": overall["dog"],
             "trainer_feedback": final_sub.get("trainer_feedback"),
@@ -21018,7 +21038,7 @@ def _checkpoint_queue_state(sub: dict) -> str:
 def _admin_safe_checkpoint(sub: dict) -> dict:
     """Trainer-facing view — no allowlist restriction needed (trainers see
     everything), but shapes derived overall scores in consistently."""
-    overall = _checkpoint_overall_scores(sub.get("handler_scores"), sub.get("dog_scores"))
+    overall = _resolved_checkpoint_overall_scores(sub)
     return {**sub, "handler_overall": overall["handler"], "dog_overall": overall["dog"]}
 
 
@@ -21308,8 +21328,17 @@ async def admin_school_checkpoint_grade(
         prescription["tracked_homework_id"] = tracked_homework_id
         plan = {**plan, "prescription": prescription}
 
+    # Derived ONCE here, from the same plan scores being finalized, and stored
+    # on the canonical submission alongside them. This is the only convergence
+    # point for every outcome (advance / prescribe_practice /
+    # trainer_assist_recommended) and for both submission sources (client video
+    # and trainer_live, which reuses this exact state machine) — so there is
+    # still one score model and one checkpoint history, now durable rather than
+    # recomputed on every read.
+    _overall = _checkpoint_overall_scores(plan.get("handler_scores"), plan.get("dog_scores"))
     finalize_set = {
         "status": "graded", "handler_scores": plan.get("handler_scores"), "dog_scores": plan.get("dog_scores"),
+        "handler_overall": _overall["handler"], "dog_overall": _overall["dog"],
         "trainer_feedback": plan.get("feedback"), "outcome": outcome, "prescription": plan.get("prescription"),
         "graded_at": now_iso(), "graded_by": plan.get("graded_by"), "graded_by_name": plan.get("graded_by_name"),
     }
@@ -53539,6 +53568,7 @@ register_school_suite(
     perms_for=_perms_for, school_events=school_events,
     persist_school_media=_persist_school_media_data_url, school_media_data_url=_school_media_data_url,
     school_media_file_path=_school_media_file_path, require_school_access=_require_school_access,
+    checkpoint_overall_scores=_resolved_checkpoint_overall_scores,
 )
 
 app.include_router(api)

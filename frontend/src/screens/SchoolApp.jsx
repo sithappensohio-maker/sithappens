@@ -289,6 +289,7 @@ export default function SchoolApp({ path, clientName, onNavigate, onExit }) {
         <LessonScreen
           enrollmentId={selectedId} lessonId={parsed.lessonId} detail={detail}
           dogName={selectedEntry?.dog_name} dogPhoto={selectedEntry?.dog_photo}
+          deliveryMode={selectedEntry?.delivery_mode}
           onStartPractice={openPractice}
           onStartPrescribedPractice={openPrescribedPractice}
           onAdvanced={() => { refreshAll(); go("today"); }}
