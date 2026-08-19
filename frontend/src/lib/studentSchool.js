@@ -56,7 +56,7 @@ export function isCaughtUp(type) {
 /* Student School routes (Shop-style history.pushState, no react-router).
  * /school · /school/course/:enrollmentId · /school/course/:eid/lesson/:lessonId
  * /school/today · /school/progress · /school/feedback */
-export const SCHOOL_VIEWS = ["home", "course", "today", "progress", "feedback", "resources", "search"];
+export const SCHOOL_VIEWS = ["home", "course", "today", "progress", "feedback", "resources", "search", "lesson_history"];
 
 export function parseSchoolPath(pathname) {
   const m = /^\/school(?:\/([^/?#]+))?(?:\/([^/?#]+))?(?:\/([^/?#]+))?(?:\/([^/?#]+))?/.exec(pathname || "");

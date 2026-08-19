@@ -73,7 +73,7 @@ function Stat({ value, label }) {
   return <div className="rounded-xl border border-shBorder bg-black/15 p-3"><p className="text-xl font-black text-shText">{value}</p><p className="text-[10px] font-black uppercase tracking-widest text-shTextMuted mt-0.5">{label}</p></div>;
 }
 
-export default function ProgressScreen({ enrollmentId, home, detail }) {
+export default function ProgressScreen({ enrollmentId, home, detail, onOpenHistory }) {
   const [history, setHistory] = useState(null);
   const [trophies, setTrophies] = useState(null);
   const [record, setRecord] = useState(null);
@@ -95,6 +95,18 @@ export default function ProgressScreen({ enrollmentId, home, detail }) {
   return (
     <div className="max-w-3xl mx-auto space-y-5" data-testid="native-progress-screen">
       <header><p className="text-[10px] font-black uppercase tracking-[0.22em] text-shPrimary">Your training journey</p><h1 className="text-2xl sm:text-3xl font-black text-shText mt-1">Progress</h1><p className="text-[13px] text-shTextMuted mt-1">Course completion and trainer-scored checkpoint results are separate on purpose.</p></header>
+
+      {onOpenHistory && (
+        <button type="button" onClick={onOpenHistory} data-testid="progress-open-lesson-history"
+                className="w-full flex items-center gap-3 rounded-xl border border-shSecondary/30 bg-shSecondary/[0.05] p-3 text-left min-h-[52px]">
+          <span className="w-9 h-9 rounded-xl bg-shSecondary/10 border border-shSecondary/25 grid place-items-center shrink-0"><i className="fas fa-clipboard-list text-shSecondary" /></span>
+          <span className="min-w-0 flex-1">
+            <span className="block text-[13px] font-black text-shText">Training history</span>
+            <span className="block text-[11.5px] text-shTextMuted">Every lesson recap for this program</span>
+          </span>
+          <i className="fas fa-chevron-right text-shTextMuted text-[11px]" />
+        </button>
+      )}
 
       <section className="rounded-2xl border border-shPrimary/30 bg-shPrimary/[0.055] p-5 sm:p-6" data-testid="progress-course-completion">
         <div className="flex items-end justify-between gap-3"><div><p className="text-[10px] font-black uppercase tracking-widest text-shPrimary">Course progress</p><p className="text-3xl font-black text-shText mt-1">{pct}%</p></div><p className="text-[12px] text-shTextMuted text-right">{home?.program?.name}<br/>{p.current_module_name || (home?.status === "completed" ? "Completed" : "")}</p></div>

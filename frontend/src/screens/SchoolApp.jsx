@@ -13,6 +13,7 @@ import PracticePanel from "../components/training/PracticePanel";
 import ModuleQuizPanel from "../components/school/student/ModuleQuizPanel";
 import FeedbackScreen from "../components/school/student/FeedbackScreen";
 import ProgressScreen from "../components/school/student/ProgressScreen";
+import LessonHistoryScreen from "../components/school/student/LessonHistoryScreen";
 import AskTrainerPanel from "../components/school/student/AskTrainerPanel";
 import StudentWorkspaceExtras from "../components/school/student/StudentWorkspaceExtras";
 import SchoolNotificationBell from "../components/school/student/SchoolNotificationBell";
@@ -315,7 +316,11 @@ export default function SchoolApp({ path, clientName, onNavigate, onExit }) {
     } else if (parsed.view === "feedback") {
       screen = <FeedbackScreen enrollmentId={selectedId} onAsk={openAsk} onChanged={refreshAll} />;
     } else if (parsed.view === "progress") {
-      screen = <ProgressScreen enrollmentId={selectedId} home={home} detail={detail} />;
+      screen = <ProgressScreen enrollmentId={selectedId} home={home} detail={detail} onOpenHistory={() => go("lesson_history")} />;
+    } else if (parsed.view === "lesson_history") {
+      // Per-ATTEMPT training history. selectedId is this School enrollment,
+      // so Repeat Program attempts never show each other's lessons.
+      screen = <LessonHistoryScreen enrollmentId={selectedId} dogName={selectedEntry?.dog_name} />;
     } else if (parsed.view === "resources") {
       screen = <ResourcesScreen enrollmentId={selectedId} />;
     } else if (parsed.view === "search") {
