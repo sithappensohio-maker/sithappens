@@ -25,13 +25,19 @@ export default function CurriculumTreeItem({ type, name, selected, indent = 0, c
       <span className={`w-7 h-7 rounded-lg border border-shBorder/40 bg-black/20 grid place-items-center shrink-0 ${meta.cls}`}>
         <i className={`fas ${meta.icon} text-[10px]`} aria-hidden="true"/>
       </span>
-      <span className="flex-1 min-w-0">
-        <span className={`block text-[11.5px] font-bold truncate ${inactive ? "text-shTextMuted" : "text-shText"}`}>{name}</span>
-        {metaText && <span className="block text-[9px] text-shTextMuted truncate mt-0.5">{metaText}</span>}
+      {/* The name gets a floor, not just min-w-0: the four action buttons are
+          always in the layout, and with a wrapping (non-nowrap) name the
+          flex item would otherwise collapse to 0 width and stack one letter
+          per line. Two lines before ellipsis + the full name as a tooltip
+          keeps long titles identifiable instead of showing "Day …". */}
+      <span className="flex-1 basis-0 min-w-[3.5rem] sm:min-w-[6.5rem]">
+        <span title={name}
+              className={`block text-[11.5px] font-bold leading-snug line-clamp-2 break-words ${inactive ? "text-shTextMuted" : "text-shText"}`}>{name}</span>
+        {metaText && <span title={metaText} className="block text-[9px] text-shTextMuted truncate mt-0.5">{metaText}</span>}
         {inactive && <span className="text-[8px] text-shTextMuted">draft / inactive</span>}
       </span>
       {completeness && <span className={`w-2 h-2 rounded-full shrink-0 ${COMPLETENESS_DOT[completeness] || COMPLETENESS_DOT.optional}`} title={`Content: ${completeness.replace("_", " ")}`}/>} 
-      <span className="flex items-center gap-0.5 opacity-70 sm:opacity-0 sm:group-hover:opacity-100 sm:group-focus-within:opacity-100 transition">{actions}</span>
+      <span className="flex items-center gap-0.5 shrink-0 opacity-70 sm:opacity-0 sm:group-hover:opacity-100 sm:group-focus-within:opacity-100 transition">{actions}</span>
     </div>
   );
 }

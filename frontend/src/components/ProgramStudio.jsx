@@ -742,6 +742,10 @@ function CurriculumTab(props) {
     isNew, draftMeta, impact, loadingImpact, onPublish, saving,
   } = props;
   const [copySource, setCopySource] = useState("");
+  // Below 2xl the Publish Center is an on-demand drawer rather than a
+  // permanent column, so the lesson editor keeps the remaining width. At 2xl
+  // it is always visible and this flag stops mattering.
+  const [publishOpen, setPublishOpen] = useState(false);
   const lessonCount = modules.reduce((sum, m) => sum + (m.lessons || []).length, 0);
   const skillCount = modules.reduce((sum, m) => sum + (m.goals || []).length, 0);
   const selectedType = selectedLesson ? "Lesson" : selectedSkill ? "Skill" : selectedModule ? "Module" : "Nothing selected";
@@ -750,7 +754,10 @@ function CurriculumTab(props) {
   return (
     <div className="flex flex-col min-h-full bg-[radial-gradient(circle_at_40%_0%,rgba(0,169,224,0.035),transparent_32%),transparent]">
       <div className="md:hidden sticky top-0 z-20 px-2 py-2 border-b border-shBorder/70 bg-[var(--sh-card-base)] backdrop-blur overflow-x-auto" data-testid="studio-mobile-stages">
-        <div className="grid grid-cols-4 min-w-[360px] gap-1 rounded-xl border border-shBorder/60 bg-black/30 p-1">
+        {/* 288px is what actually fits a 320px viewport once the strip's own
+            px-2 and the grid's p-1 are taken out, so all four stages are
+            reachable without side-scrolling on the narrowest supported phone. */}
+        <div className="grid grid-cols-4 min-w-[288px] gap-1 rounded-xl border border-shBorder/60 bg-black/30 p-1">
           {MOBILE_STAGES.map(s => (
             <button key={s.key} onClick={() => setMobileStage(s.key)} data-testid={`studio-mobile-stage-${s.key}`}
                     className={`min-h-[44px] px-2 py-2 text-[10px] font-black whitespace-nowrap rounded-lg transition ${mobileStage === s.key ? "bg-shSecondary text-[#031018]" : "text-shTextMuted hover:text-shText"}`}>
@@ -770,6 +777,13 @@ function CurriculumTab(props) {
           </div>
         </div>
         <div className="flex items-center gap-2 shrink-0">
+          {/* Below 2xl the Publish Center is a drawer, so it needs a way in.
+              Hidden at 2xl where it is a permanent column already. */}
+          <button onClick={() => setPublishOpen(v => !v)} data-testid="studio-toggle-publish"
+                  aria-expanded={publishOpen}
+                  className={`2xl:hidden min-h-[38px] px-3 rounded-xl border text-[10px] font-black uppercase tracking-widest transition ${publishOpen ? "border-shPrimary/60 bg-shPrimary/[0.12] text-shPrimary" : "border-shBorder/60 bg-black/20 text-shTextMuted hover:text-shText"}`}>
+            <i className="fas fa-rocket mr-1.5"/>{publishOpen ? "Hide" : "Publish"}
+          </button>
           {[{ icon: "fa-layer-group", v: modules.length, l: "modules", c: "text-shPrimary" }, { icon: "fa-book-open", v: lessonCount, l: "lessons", c: "text-shSecondary" }, { icon: "fa-bullseye", v: skillCount, l: "skills", c: "text-shAccent" }].map(item => (
             <div key={item.l} className="rounded-xl border border-shBorder/50 bg-black/20 px-3 py-2 flex items-center gap-2">
               <i className={`fas ${item.icon} ${item.c} text-[10px]`}/><span className="text-[12px] font-black text-shText">{item.v}</span><span className="text-[9px] text-shTextMuted">{item.l}</span>
@@ -778,8 +792,12 @@ function CurriculumTab(props) {
         </div>
       </div>
 
-      <div className="flex flex-col md:flex-row flex-1 min-h-0">
-        <aside className={`${mobileStage === "outline" ? "block" : "hidden"} md:block md:w-[320px] shrink-0 border-b md:border-b-0 md:border-r border-shBorder/60 bg-black/10 overflow-y-auto`}>
+      {/* `relative` anchors the Publish Center drawer below 2xl; `min-w-0` lets
+          the editor column actually shrink instead of forcing the row wider
+          than the modal (which is overflow-hidden, so the excess was clipped
+          and unreachable rather than scrollable). */}
+      <div className="relative flex flex-col md:flex-row flex-1 min-h-0 min-w-0">
+        <aside className={`${mobileStage === "outline" ? "block" : "hidden"} md:block w-full md:w-[248px] lg:w-[280px] xl:w-[320px] shrink-0 min-w-0 border-b md:border-b-0 md:border-r border-shBorder/60 bg-black/10 overflow-y-auto`}>
           <div className="sticky top-0 z-10 p-3 sm:p-4 border-b border-shBorder/50 bg-[var(--sh-card-base)] backdrop-blur space-y-3">
             <div className="flex items-start justify-between gap-2">
               <div>
@@ -859,7 +877,21 @@ function CurriculumTab(props) {
           </div>
         </main>
 
-        <aside className={`${mobileStage === "preview" || mobileStage === "validate" ? "block" : "hidden"} md:block md:w-[410px] shrink-0 border-t md:border-t-0 md:border-l border-shBorder/60 bg-black/10 flex flex-col min-h-0`}>
+        {/* Publish Center. It used to be a permanent 410px shrink-0 column,
+            which together with the outline reserved 730px before the editor got
+            anything — at 1024 that left the editor 257px and pushed its content
+            past the modal's clipped edge. It is now a real third column only at
+            2xl (where there is genuinely room beside the app's left nav), and an
+            overlay drawer below that, so the editor keeps the full remaining
+            width at every desktop size. Mobile behaviour is unchanged. */}
+        <aside className={[
+          (mobileStage === "preview" || mobileStage === "validate") ? "block" : "hidden",
+          publishOpen
+            ? "md:block md:absolute md:inset-y-0 md:right-0 md:z-20 md:w-[380px] md:shadow-[0_0_60px_rgba(0,0,0,0.7)]"
+            : "md:hidden",
+          "2xl:!block 2xl:!static 2xl:!w-[380px] 2xl:!shadow-none",
+          "w-full shrink-0 border-t md:border-t-0 md:border-l border-shBorder/60 bg-[var(--sh-card-base)] md:bg-black/10 flex flex-col min-h-0",
+        ].join(" ")}>
           <div className="p-3 sm:p-4 border-b border-shBorder/50 bg-black/10">
             <div className="mb-2">
               <p className="text-[9px] font-black uppercase tracking-[0.18em] text-shPrimary">Publish center</p>
