@@ -379,18 +379,18 @@ export function ProgramEditor({ program, setProgram, meta, allPrograms = [], onS
           )}
 
           {/* Sprint 110bx — Welcome homework: auto-sent the moment the dog is enrolled */}
-          <Field label="Welcome homework (auto-sent on enrollment)">
+          <Field label="Welcome Practice (auto-sent on enrollment)">
             <select value={program.welcome_homework_template_id||""}
                     onChange={(e)=>set({welcome_homework_template_id: e.target.value || null})}
                     data-testid="prog-welcome-hw"
                     className="w-full bg-bgBase border border-bgHover rounded p-2 text-white text-sm">
-              <option value="">— None (no welcome homework) —</option>
+              <option value="">— None (no welcome Practice) —</option>
               {hwTemplates.map(t => (
                 <option key={t.id} value={t.id}>{t.name}{t.tier ? ` · ${t.tier}` : ""}</option>
               ))}
             </select>
             <p className="text-[13px] text-gray-500 mt-1 normal-case font-normal tracking-normal">
-              <i className="fas fa-envelope mr-1 text-shGreen"/>Auto-creates a homework row + emails the client the moment a dog is enrolled in this program.
+              <i className="fas fa-envelope mr-1 text-shGreen"/>Auto-assigns Practice + emails the client the moment a dog is enrolled in this program.
             </p>
           </Field>
 
@@ -487,21 +487,21 @@ export function ProgramEditor({ program, setProgram, meta, allPrograms = [], onS
                   <div className="mb-2 bg-shGreen/5 border border-shGreen/30 rounded p-2">
                     <label className="block">
                       <span className="text-[11px] font-black uppercase tracking-widest text-shGreen">
-                        <i className="fas fa-envelope-open-text mr-1"/>Homework for this module
+                        <i className="fas fa-envelope-open-text mr-1"/>Practice for this module
                         {mi === 0 ? " · sent at enrollment" : ` · sent when module ${mi} is mastered`}
                       </span>
                       <select value={m.homework_template_id||""}
                               onChange={(e)=>updateModule(mi, {homework_template_id: e.target.value || null})}
                               data-testid={`prog-module-hw-${mi}`}
                               className="mt-1 w-full bg-bgPanel border border-bgHover rounded p-1.5 text-white text-[13px]">
-                        <option value="">— None (no auto-homework for this module) —</option>
+                        <option value="">— None (no automatic Practice for this module) —</option>
                         {hwTemplates.map(t => (
                           <option key={t.id} value={t.id}>{t.name}{t.tier ? ` · ${t.tier}` : ""}</option>
                         ))}
                       </select>
                       <p className="text-[11px] text-gray-500 mt-1 normal-case font-normal tracking-normal">
                         {mi === 0
-                          ? "This is module 1 — its homework is sent the moment the dog is enrolled in the program."
+                          ? "This is module 1 — its Practice is sent the moment the dog is enrolled in the program."
                           : `Sent automatically when all goals in the previous module ("${(program.modules[mi-1]||{}).name || `Module ${mi}`}") are marked mastered.`}
                       </p>
                     </label>

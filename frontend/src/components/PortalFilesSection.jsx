@@ -43,7 +43,7 @@ export default function PortalFilesSection({ dogs }) {
   return (
     <div data-testid="portal-files-section">
       <h2 className="text-xl font-black text-white uppercase italic tracking-tight mb-4">
-        <i className="fas fa-folder-open text-shBlue mr-2"/>Training Files & Homework
+        <i className="fas fa-folder-open text-shBlue mr-2"/>Training Files & Practice
       </h2>
       <div className="space-y-4">
         {orderedKeys.map(key => {

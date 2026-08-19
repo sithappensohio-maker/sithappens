@@ -13,7 +13,7 @@ const QUICK_TABS = [
   { id: "basics",   label: "Basics",            icon: "fa-paw" },
   { id: "vaccines", label: "Vaccines",          icon: "fa-shield-virus" },
   { id: "care",     label: "Feeding & Meds",    icon: "fa-bowl-food" },
-  { id: "training", label: "Training & Homework", icon: "fa-graduation-cap" },
+  { id: "training", label: "School & Training", icon: "fa-graduation-cap" },
   { id: "gallery",  label: "Gallery",           icon: "fa-images" },
   { id: "notes",    label: "Notes & Vet",       icon: "fa-clipboard" },
   { id: "timeline", label: "Timeline",          icon: "fa-clock-rotate-left" },

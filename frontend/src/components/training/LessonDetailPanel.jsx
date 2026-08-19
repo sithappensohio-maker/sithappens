@@ -84,7 +84,7 @@ export default function LessonDetailPanel({ lesson, nextLessonName, relatedHomew
           </ExpandableSection>
         )}
         {relatedHomeworkTitles.length > 0 && (
-          <ExpandableSection title="Related Homework" icon="fa-graduation-cap" testid={testid ? `${testid}-homework` : undefined}>
+          <ExpandableSection title="Related Practice" icon="fa-graduation-cap" testid={testid ? `${testid}-homework` : undefined}>
             <ul className="space-y-2">
               {relatedHomeworkTitles.map((t, i) => <li key={i} className="text-[13px] text-shText flex items-center gap-2"><i className="fas fa-book text-shSecondary text-[10px]"/>{t}</li>)}
             </ul>

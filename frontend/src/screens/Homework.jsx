@@ -110,7 +110,7 @@ export default function Homework() {
   };
 
   const confirm = useConfirm();
-  const remove = async (id) => { if (!(await confirm({ title: "Delete homework?", body: "This will remove the assignment and all its session logs. This cannot be undone.", confirmText: "Delete", tone: "danger" }))) return; await api.delete(`/homework/${id}`); load(); };
+  const remove = async (id) => { if (!(await confirm({ title: "Delete Practice?", body: "This will remove the assignment and all its session logs. This cannot be undone.", confirmText: "Delete", tone: "danger" }))) return; await api.delete(`/homework/${id}`); load(); };
 
   const filtered = filter === "all" ? list : list.filter(h => h.status === filter);
   const counts = { all: list.length, assigned: list.filter(h=>h.status==="assigned").length, completed: list.filter(h=>h.status==="completed").length };
@@ -119,7 +119,7 @@ export default function Homework() {
     <div className="space-y-6 animate-slide-in" data-testid="homework-screen">
       <PageHero
         eyebrow={{ icon: "fa-graduation-cap", text: "Curriculum control room", color: "text-purple-300" }}
-        title="Training Homework."
+        title="Training Practice."
         highlight="Built around the dog."
         subtitle="Assign exercises, run daily trackers, and review every submission."
         right={(
@@ -166,7 +166,7 @@ export default function Homework() {
       </div>
 
       <div className="space-y-3" data-testid="homework-list">
-        {filtered.length === 0 && <div className="bg-[var(--sh-card-base)] border border-shBorder rounded-xl p-10 text-center text-xs text-shTextMuted uppercase font-black">No homework {filter !== "all" ? `(${filter})` : "yet"}.</div>}
+        {filtered.length === 0 && <div className="bg-[var(--sh-card-base)] border border-shBorder rounded-xl p-10 text-center text-xs text-shTextMuted uppercase font-black">No Practice {filter !== "all" ? `(${filter})` : "yet"}.</div>}
         {filtered.map(h => {
           const snap = h.template_snapshot;
           const tm = snap ? tierMeta(snap.tier) : null;

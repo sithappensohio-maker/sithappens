@@ -883,7 +883,6 @@ export const NAV_ITEMS = [
     { id: "duplicate_check", label: "Duplicate Check", icon: "fa-copy", perm: "settings" },
     { id: "pipeline", label: "Pipeline", icon: "fa-line-chart" },
     { id: "school_hq", label: "School HQ", icon: "fa-school", perm: "manage_school" },
-    { id: "homework", label: "Homework", icon: "fa-graduation-cap", feature: "homework" },
     { id: "rewards_center", label: "Rewards", icon: "fa-gift", feature: "rewards" },
     { id: "trophies", label: "Trophies", icon: "fa-trophy", feature: "rewards" },
     { id: "income", label: "Finance", icon: "fa-dollar-sign", perm: "finance_reports" },

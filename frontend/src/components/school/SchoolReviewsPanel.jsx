@@ -148,7 +148,7 @@ function PracticeDetail({ row, onBack, onReviewed }) {
       {row.unanswered_questions > 0 && (
         <div className="rounded-xl border border-shSecondary/35 bg-shSecondary/[0.05] p-3" data-testid="practice-review-question-note">
           <p className="text-[11px] font-black uppercase tracking-widest text-shSecondary"><i className="fas fa-circle-question mr-1" />{row.unanswered_questions} unanswered client question{row.unanswered_questions === 1 ? "" : "s"}</p>
-          <p className="text-[12px] text-shTextMuted mt-1">Reviewing this practice does not answer their question — reply from the practice record (Homework thread) so it reaches them.</p>
+          <p className="text-[12px] text-shTextMuted mt-1">Reviewing this practice does not answer their question — reply from the Practice record so it reaches them.</p>
         </div>
       )}
 

@@ -84,7 +84,7 @@ export default function TemplatePicker({ dogs, defaultDogId = "", onClose, onAss
       <div className="bg-[var(--sh-card-base)] border border-shBorder rounded-2xl w-full max-w-4xl max-h-[calc(var(--app-height)_-_2rem)] overflow-y-auto shadow-2xl" onClick={(e)=>e.stopPropagation()}>
         <div className="sticky top-0 bg-[var(--sh-card-base)] border-b border-shBorder p-5 flex items-center justify-between z-10">
           <div>
-            <h3 className="text-xl font-black text-shText uppercase italic tracking-tight">{selected ? "Customize & Assign" : "Pick a Homework Template"}</h3>
+            <h3 className="text-xl font-black text-shText uppercase italic tracking-tight">{selected ? "Customize & Assign" : "Pick a Practice Template"}</h3>
             <p className="text-[14px] text-shTextMuted font-black uppercase tracking-widest mt-1">{selected ? selected.name : `${templates.length} ready-to-assign forms`}</p>
           </div>
           <button onClick={onClose} className="text-shTextMuted hover:text-shText text-xl"><i className="fas fa-times" /></button>

@@ -49,7 +49,7 @@ export default function HomeworkStreakTile() {
       />
       <div className="relative">
         <p className="text-[11px] font-black uppercase tracking-[0.3em] text-orange-400 mb-1">
-          <i className="fas fa-fire mr-1.5"/>Homework streak
+          <i className="fas fa-fire mr-1.5"/>Practice streak
         </p>
         <div className="flex items-baseline gap-3 flex-wrap">
           <span
@@ -82,13 +82,13 @@ export default function HomeworkStreakTile() {
         {!completedToday && cur > 0 && (
           <div className="mt-3 inline-block bg-black/30 border border-orange-500/50 rounded-lg px-3 py-1.5 text-xs font-bold text-orange-200">
             <i className="fas fa-clock mr-1.5"/>
-            Log today&apos;s homework to keep the streak alive
+            Log today&apos;s Practice to keep the streak alive
           </div>
         )}
         {completedToday && (
           <div className="mt-3 inline-block bg-black/30 border border-shGreen/50 rounded-lg px-3 py-1.5 text-xs font-bold text-shGreen">
             <i className="fas fa-check-circle mr-1.5"/>
-            Today&apos;s homework is logged · streak safe
+            Today&apos;s Practice is logged · streak safe
           </div>
         )}
       </div>

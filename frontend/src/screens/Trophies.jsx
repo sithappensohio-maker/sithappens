@@ -10,7 +10,7 @@ const TRIGGER_KIND_OPTIONS = [
   { value: "", label: "— manual only —" },
   { value: "goal_score_5_count", label: "Dog: Training goals scored 5" },
   { value: "program_completed", label: "Dog: Programs completed" },
-  { value: "homework_streak_days", label: "Client: Homework streak (days)" },
+  { value: "homework_streak_days", label: "Client: Practice streak (days)" },
   { value: "homework_completed", label: "Client: Homework total completed" },
   { value: "visit_count", label: "Client: Total visits (checkouts)" },
   { value: "successful_referrals", label: "Client: Successful referrals" },

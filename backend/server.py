@@ -12268,7 +12268,10 @@ async def list_homework(user: dict = Depends(get_current_user), dog_id: Optional
             except Exception:
                 pass
     if user.get("role") != "admin":
-        items = [_client_safe_homework(it) for it in items]
+        # School-owned Practice lives inside the School experience now. Keep
+        # legacy/general one-off Practice in the old client list for backward
+        # compatibility, but never duplicate a School assignment in both UIs.
+        items = [_client_safe_homework(it) for it in items if not _is_school_homework(it)]
     return items
 
 @api.post("/homework")
@@ -12837,10 +12840,10 @@ async def create_homework_from_template(body: HomeworkFromTemplateIn, user: dict
 
 
 def _is_school_homework(hw: dict) -> bool:
-    """True only for self-guided Online School practice assignments.
+    """True for practice owned by any School enrollment (in-person, online, or hybrid).
 
-    ``source_lesson_id`` alone is NOT enough: the trainer-led program
-    completion pipeline uses the same traceability field. New School homework
+    ``source_lesson_id`` alone is NOT enough: legacy non-School trainer-led
+    assignments also use the same traceability field. New School practice
     carries explicit ownership markers; the assigned_by fallbacks keep
     pre-marker School rows working without misclassifying ordinary trainer-led
     homework.
@@ -16890,7 +16893,7 @@ async def list_dog_enrollments(dog_id: str, user: dict = Depends(get_current_use
         # School data has its own dedicated, allowlisted /portal/school*
         # endpoints, and this raw endpoint bypasses every one of those
         # allowlists. Staff keep seeing everything (admin-facing).
-        enrollments = [e for e in enrollments if e.get("delivery_channel") != "online_school"]
+        enrollments = [e for e in enrollments if e.get("delivery_channel") not in SCHOOL_DELIVERY_CHANNELS]
     enrollments.sort(key=lambda e: (0 if e.get("status") == "active" else 1, e.get("created_at") or ""), reverse=False)
     # Active first, then by created_at descending for the rest
     active = [e for e in enrollments if e.get("status") == "active"]
@@ -17139,7 +17142,7 @@ async def _create_homework_from_template_internal(
     return doc
 
 
-async def _auto_assign_welcome_homework(enrollment: dict) -> Optional[dict]:
+async def _auto_assign_welcome_homework(enrollment: dict, school_enrollment_id: Optional[str] = None) -> Optional[dict]:
     """Called immediately after a new dog_programs row is inserted.
 
     Assigns BOTH:
@@ -17159,7 +17162,9 @@ async def _auto_assign_welcome_homework(enrollment: dict) -> Optional[dict]:
     if welcome_id and not _already_auto_assigned(enrollment, welcome_id, "enrollment"):
         hw = await _create_homework_from_template_internal(
             dog, client, welcome_id,
-            assigned_by=f"Auto · {snap.get('name', 'Program')} welcome",
+            assigned_by=f"School · {snap.get('name', 'Program')} welcome" if school_enrollment_id else f"Auto · {snap.get('name', 'Program')} welcome",
+            school_enrollment_id=school_enrollment_id,
+            school_enrollment_record_id=enrollment.get("id") if school_enrollment_id else None,
         )
         if hw:
             await _record_auto_assign(enrollment["id"], welcome_id, "enrollment", hw["id"])
@@ -17174,7 +17179,9 @@ async def _auto_assign_welcome_homework(enrollment: dict) -> Optional[dict]:
         if first_module_hw and not _already_auto_assigned(enrollment, first_module_hw, first_trigger):
             hw = await _create_homework_from_template_internal(
                 dog, client, first_module_hw,
-                assigned_by=f"Auto · {first_module.get('name', 'Module 1')} starting",
+                assigned_by=f"School · {first_module.get('name', 'Module 1')} starting" if school_enrollment_id else f"Auto · {first_module.get('name', 'Module 1')} starting",
+                school_enrollment_id=school_enrollment_id,
+                school_enrollment_record_id=enrollment.get("id") if school_enrollment_id else None,
             )
             if hw:
                 await _record_auto_assign(enrollment["id"], first_module_hw, first_trigger, hw["id"])
@@ -17237,9 +17244,12 @@ async def _auto_assign_module_homework(enrollment: dict, just_mastered_goal_id: 
     if not dog:
         return None
     client = await db.clients.find_one({"id": dog.get("owner_id")}, {"_id": 0})
+    school_companion = await db.school_enrollments.find_one({"enrollment_id": enrollment.get("id")}, {"_id": 0, "id": 1})
     hw = await _create_homework_from_template_internal(
         dog, client, template_id,
-        assigned_by=f"Auto · {next_module.get('name', 'Next module')} starting",
+        assigned_by=(f"School · {next_module.get('name', 'Next module')} starting" if school_companion else f"Auto · {next_module.get('name', 'Next module')} starting"),
+        school_enrollment_id=(school_companion or {}).get("id"),
+        school_enrollment_record_id=enrollment.get("id") if school_companion else None,
     )
     if hw:
         await _record_auto_assign(enrollment["id"], template_id, trigger, hw["id"])
@@ -17349,7 +17359,46 @@ SCHOOL_ENROLLMENT_STATUS = (
 class SchoolEnrollIn(BaseModel):
     dog_id: str
     program_id: str
+    # Unified School delivery.  ``online`` is the backward-compatible
+    # default so every existing caller/test that predates the consolidation
+    # keeps the exact Online School behavior it had before.
+    delivery_mode: Literal["in_person", "online", "hybrid"] = "online"
+    assigned_trainer_id: Optional[str] = None
+    started_at: Optional[str] = None
+    target_completion_date: Optional[str] = None
     trainer_notes: Optional[str] = ""
+
+
+class SchoolRetakeIn(BaseModel):
+    """Explicit staff-controlled repeat of a finished School program.
+
+    Retakes always create a new progress ledger and School identity while
+    preserving the completed/withdrawn enrollment as immutable history.
+    """
+    delivery_mode: Optional[Literal["in_person", "online", "hybrid"]] = None
+    assigned_trainer_id: Optional[str] = None
+    started_at: Optional[str] = None
+    target_completion_date: Optional[str] = None
+    trainer_notes: Optional[str] = ""
+
+
+class SchoolPracticeAssignIn(BaseModel):
+    """Staff-assigned Practice owned by one School enrollment.
+
+    The persisted record remains a normal ``homework`` document so Practice
+    Coach, daily trackers, review queues, notifications and existing client
+    completion behavior are reused rather than forked.
+    """
+    template_id: str
+    lesson_id: Optional[str] = None
+    trainer_personalized_note: Optional[str] = ""
+    due_date: Optional[str] = ""
+    practice_frequency: Optional[str] = None
+    minutes_per_session: Optional[int] = Field(default=None, ge=0, le=240)
+    repetition_target: Optional[str] = None
+    environment: Optional[str] = None
+    video_requested: bool = False
+    required: bool = True
 
 
 def _effective_lesson_list(module: dict) -> List[dict]:
@@ -17359,7 +17408,7 @@ def _effective_lesson_list(module: dict) -> List[dict]:
 async def _lesson_practice_homework(
     dog_id: str, lesson_id: str, school_enrollment_record_id: Optional[str] = None,
 ) -> Optional[dict]:
-    """Most recent Online School practice assignment for this lesson.
+    """Most recent School-owned practice assignment for this lesson.
 
     ``source_lesson_id`` is shared with trainer-led auto-homework, so when the
     School enrollment record id is known we scope to explicit School ownership
@@ -18186,7 +18235,9 @@ async def _self_heal_missing_school_enrollment(
 
 async def _grant_online_school_enrollment(
     dog: dict, program: dict, enrolled_by: Optional[str], trainer_notes: str = "",
-    enrollment_source: str = "manual", source_ref: Optional[str] = None,
+    enrollment_source: str = "manual", source_ref: Optional[str] = None, *,
+    allow_retake: bool = False, retake_of_enrollment_id: Optional[str] = None,
+    retake_of_school_enrollment_id: Optional[str] = None,
 ) -> dict:
     """THE canonical Online School enrollment creator. Manual staff
     enrollment (school_enroll) and Shop/POS purchase fulfillment both call
@@ -18221,9 +18272,10 @@ async def _grant_online_school_enrollment(
     # only guards concurrent ACTIVE duplicates, so completed/withdrawn
     # blocking is enforced here in application code — a real future retake
     # is a deliberate, separate staff workflow, not an automatic new row.
+    blocked_statuses = ["active"] if allow_retake else ["active", "completed", "withdrawn"]
     existing = await db.dog_programs.find_one(
         {"dog_id": dog["id"], "program_id": program["id"], "delivery_channel": "online_school",
-         "status": {"$in": ["active", "completed", "withdrawn"]}},
+         "status": {"$in": blocked_statuses}},
         {"_id": 0}, sort=[("created_at", -1)],
     )
     if existing:
@@ -18278,6 +18330,8 @@ async def _grant_online_school_enrollment(
         # line (or POS-sale-line) identity that granted it.
         "enrollment_source": enrollment_source,
         "enrollment_source_ref": source_ref,
+        "retake_of_enrollment_id": retake_of_enrollment_id,
+        "retake_of_school_enrollment_id": retake_of_school_enrollment_id,
         # Phase 6 — access lifecycle, separate from training status (see
         # _require_school_access). Explicit "active" on every newly-created
         # row; a legacy row from before this field existed is treated as
@@ -18336,6 +18390,8 @@ async def _grant_online_school_enrollment(
         "enrolled_at": now_iso(),
         "enrolled_by": enrolled_by,
         "created_at": now_iso(),
+        "retake_of_enrollment_id": retake_of_enrollment_id,
+        "retake_of_school_enrollment_id": retake_of_school_enrollment_id,
         "assigned_trainer_id": school_default_trainer_id,
         "support_checkpoint_allowance": (program.get("school_support") or {}).get("trainer_checkpoints_included"),
         "support_assist_allowance": (program.get("school_support") or {}).get("trainer_assists_included"),
@@ -18351,7 +18407,7 @@ async def _grant_online_school_enrollment(
     school_enrollment.pop("_id", None)
 
     try:
-        await _auto_assign_welcome_homework(dog_program_doc)
+        await _auto_assign_welcome_homework(dog_program_doc, school_enrollment.get("id"))
     except Exception as exc:
         logger.warning("Online School welcome homework auto-assign failed: %s", exc)
 
@@ -18401,29 +18457,364 @@ async def _grant_online_school_enrollment(
     return {"school_enrollment": school_enrollment, "enrollment": _enrollment_summary(dog_program_doc)}
 
 
+SCHOOL_DELIVERY_CHANNEL_BY_MODE = {
+    "online": "online_school",
+    "in_person": "in_person_school",
+    "hybrid": "hybrid_school",
+}
+SCHOOL_DELIVERY_MODE_BY_CHANNEL = {v: k for k, v in SCHOOL_DELIVERY_CHANNEL_BY_MODE.items()}
+SCHOOL_DELIVERY_CHANNELS = tuple(SCHOOL_DELIVERY_MODE_BY_CHANNEL.keys())
+
+
+def _school_delivery_mode_for_enrollment(enrollment: dict) -> Optional[str]:
+    """Return the unified School delivery mode for a dog_programs row.
+
+    Legacy Online School rows only have delivery_channel=online_school; new
+    unified rows use one of the three School channels.  A legacy trainer-led
+    row has no School channel and returns None until intentionally adopted or
+    re-enrolled through the unified School workflow.
+    """
+    return SCHOOL_DELIVERY_MODE_BY_CHANNEL.get((enrollment or {}).get("delivery_channel"))
+
+
+def _school_delivery_mode(se: Optional[dict], enrollment: dict) -> str:
+    """Client/admin-safe normalized delivery label: in_person|online|hybrid."""
+    se_mode = (se or {}).get("delivery_mode")
+    if se_mode == "trainer_led":
+        return "in_person"
+    if se_mode == "self_guided":
+        return "online"
+    if se_mode == "hybrid":
+        return "hybrid"
+    return _school_delivery_mode_for_enrollment(enrollment) or "online"
+
+
+def _school_channel_filter() -> dict:
+    return {"$in": list(SCHOOL_DELIVERY_CHANNELS)}
+
+
+async def _grant_staff_school_enrollment(
+    dog: dict, program: dict, *, delivery_mode: Literal["in_person", "hybrid"],
+    enrolled_by: Optional[str], trainer_notes: str = "", assigned_trainer_id: Optional[str] = None,
+    started_at: Optional[str] = None, target_completion_date: Optional[str] = None,
+    retake_of_enrollment_id: Optional[str] = None, retake_of_school_enrollment_id: Optional[str] = None,
+) -> dict:
+    """Create an in-person or hybrid School enrollment.
+
+    The existing ``dog_programs`` record remains the canonical curriculum and
+    progress ledger.  ``school_enrollments`` is the companion School identity
+    used by HQ, the client School experience, Practice, checkpoints and the
+    permanent School timeline.  This deliberately mirrors the Online School
+    architecture instead of creating a second in-person progress model.
+    """
+    if delivery_mode not in ("in_person", "hybrid"):
+        raise HTTPException(status_code=422, detail="Invalid staff-led School delivery mode")
+    client_id = dog.get("owner_id")
+    if not client_id:
+        raise HTTPException(status_code=422, detail="This dog has no owning client on file")
+    configured = program.get("delivery_mode", "trainer_led")
+    if delivery_mode == "in_person" and configured not in ("trainer_led", "both"):
+        raise HTTPException(status_code=422, detail="This program is not configured for in-person delivery")
+    if delivery_mode == "hybrid" and configured != "both":
+        raise HTTPException(status_code=422, detail="Hybrid delivery requires a program configured for Both")
+    modules = program.get("modules") or []
+    if not modules:
+        raise HTTPException(status_code=422, detail="This program has no modules to teach yet")
+
+    # Do not create a second live copy of the same curriculum for one dog.
+    # This catches legacy trainer-led rows as well as every School channel.
+    active_existing = await db.dog_programs.find_one(
+        {"dog_id": dog["id"], "program_id": program["id"], "status": "active"}, {"_id": 0}
+    )
+    if active_existing:
+        existing_mode = _school_delivery_mode_for_enrollment(active_existing) or "legacy in-person"
+        raise HTTPException(
+            status_code=409,
+            detail=f"This dog is already actively enrolled in this program ({existing_mode.replace('_', ' ')}).",
+        )
+
+    await _require_program_prerequisites(dog["id"], program)
+
+    trainer_id = assigned_trainer_id or program.get("school_default_trainer_id") or None
+    if trainer_id:
+        trainer = await db.users.find_one({"id": trainer_id, "active": {"$ne": False}}, {"_id": 0})
+        if not trainer or not (
+            _perms_for(trainer).get("manage_school") or _perms_for(trainer).get("manage_training_sessions")
+        ):
+            raise HTTPException(status_code=422, detail="Assigned trainer is not an active training staff member")
+
+    started = started_at or business_today().isoformat()
+    target = target_completion_date or _suggest_target_date(started, program.get("format") or {})
+    first_module = modules[0]
+    first_lesson_id = (lambda ls: ls[0]["id"] if ls else None)(_effective_lesson_list(first_module))
+    channel = SCHOOL_DELIVERY_CHANNEL_BY_MODE[delivery_mode]
+    now = now_iso()
+
+    dog_program_doc = {
+        "id": _gid(), "dog_id": dog["id"], "program_id": program["id"],
+        "program_snapshot": {
+            "name": program["name"], "type": program["type"], "slug": program.get("slug"),
+            "description": program.get("description", ""), "focus": program.get("focus", ""),
+            "format": program.get("format"), "modules": modules,
+            "completion_rule": program.get("completion_rule") or _default_completion_rule(),
+            "welcome_homework_template_id": program.get("welcome_homework_template_id"),
+            "estimated_weeks": program.get("estimated_weeks"),
+            "school_support": program.get("school_support") or {},
+            "school_onboarding": program.get("school_onboarding") or {},
+            "recommended_next_program_slugs": list(program.get("recommended_next_program_slugs") or []),
+            "prereq_slugs": list(program.get("prereq_slugs") or []),
+        },
+        "status": "active", "started_at": started, "target_completion_date": target,
+        "completed_at": None, "on_hold_at": None,
+        "goal_progress": _empty_progress(modules),
+        "current_module_id": first_module.get("id"), "current_lesson_id": first_lesson_id,
+        "sessions_count": 0, "trainer_notes": trainer_notes or "", "created_at": now,
+        "delivery_channel": channel,
+        "enrollment_source": "retake" if retake_of_enrollment_id else "manual", "enrollment_source_ref": None,
+        "retake_of_enrollment_id": retake_of_enrollment_id,
+        "retake_of_school_enrollment_id": retake_of_school_enrollment_id,
+        "access_state": "active", "assigned_trainer_id": trainer_id,
+        "support_checkpoint_allowance": (program.get("school_support") or {}).get("trainer_checkpoints_included"),
+        "support_assist_allowance": (program.get("school_support") or {}).get("trainer_assists_included"),
+        "school_access_expires_at": None, "school_pause_until": None,
+        "withdrawn_at": None, "withdrawn_by": None, "withdrawn_by_name": None, "withdrawal_reason": None,
+    }
+    school_enrollment = {
+        "id": _gid(), "client_id": client_id, "dog_id": dog["id"], "program_id": program["id"],
+        "enrollment_id": dog_program_doc["id"],
+        "delivery_mode": "trainer_led" if delivery_mode == "in_person" else "hybrid",
+        "status": "active", "access_state": "active", "enrolled_at": now,
+        "enrolled_by": enrolled_by, "created_at": now, "assigned_trainer_id": trainer_id,
+        "retake_of_enrollment_id": retake_of_enrollment_id,
+        "retake_of_school_enrollment_id": retake_of_school_enrollment_id,
+        "support_checkpoint_allowance": (program.get("school_support") or {}).get("trainer_checkpoints_included"),
+        "support_assist_allowance": (program.get("school_support") or {}).get("trainer_assists_included"),
+        # In-person clients should be able to receive Practice immediately;
+        # the old Online-School-specific onboarding gate is not a prerequisite
+        # for attending a trainer session. Hybrid keeps the online setup step.
+        "onboarding_status": "not_required" if delivery_mode == "in_person" else (
+            "required" if (program.get("school_onboarding") or {}).get("enabled", True) else "not_required"
+        ),
+    }
+
+    try:
+        await db.dog_programs.insert_one(dict(dog_program_doc))
+        try:
+            await db.school_enrollments.insert_one(dict(school_enrollment))
+        except Exception:
+            await db.dog_programs.delete_one({"id": dog_program_doc["id"]})
+            raise
+    except DuplicateKeyError:
+        raise HTTPException(status_code=409, detail="This dog is already actively enrolled in this program")
+    except HTTPException:
+        raise
+    except Exception as exc:
+        logger.exception("Unified School enrollment failed")
+        raise HTTPException(status_code=500, detail="Enrollment failed and was rolled back. Please try again.") from exc
+
+    # The run sheet / Front Desk pointer should include staff-led School
+    # enrollments. Online-only courses intentionally never claim this pointer.
+    if not dog.get("active_program_id"):
+        await db.dogs.update_one({"id": dog["id"]}, {"$set": {"active_program_id": dog_program_doc["id"]}})
+
+    try:
+        await _auto_assign_welcome_homework(dog_program_doc, school_enrollment.get("id"))
+    except Exception as exc:
+        logger.warning("School welcome Practice auto-assign failed: %s", exc)
+
+    # Hybrid students get the self-guided first-lesson Practice immediately;
+    # in-person students receive lesson Practice from the trainer/session flow.
+    client = await db.clients.find_one({"id": client_id}, {"_id": 0})
+    if delivery_mode == "hybrid" and first_lesson_id:
+        first_lesson = _find_lesson_in_snapshot(dog_program_doc, first_lesson_id)
+        tpl_ids = (first_lesson or {}).get("suggested_homework_template_ids") or []
+        if tpl_ids and not await _active_homework_conflict(dog["id"], tpl_ids[0]):
+            try:
+                hw = await _create_homework_from_template_internal(
+                    dog, client, tpl_ids[0],
+                    assigned_by=f"School · {(first_lesson or {}).get('name', 'Lesson 1')}",
+                    source_lesson_id=first_lesson_id,
+                    school_enrollment_id=school_enrollment["id"],
+                    school_enrollment_record_id=dog_program_doc["id"],
+                )
+                if hw:
+                    await _record_auto_assign(dog_program_doc["id"], tpl_ids[0], f"school_lesson:{first_lesson_id}", hw["id"])
+            except Exception as exc:
+                logger.warning("Hybrid first-lesson Practice auto-assign failed: %s", exc)
+
+    try:
+        who = (client or {}).get("name") or "A student"
+        dog_name = dog.get("name") or ""
+        label = "In Person" if delivery_mode == "in_person" else "Hybrid"
+        await school_events.emit_event(
+            SchoolEvent.SCHOOL_ENROLLED,
+            actor_type="system", actor_id=enrolled_by,
+            client_id=client_id, client_name=(client or {}).get("name"),
+            dog_id=dog["id"], dog_name=dog.get("name"),
+            enrollment_id=dog_program_doc["id"], school_enrollment_id=school_enrollment["id"],
+            program_id=program["id"], program_name=program.get("name"),
+            title=f"{who}" + (f" · {dog_name}" if dog_name else "") + f" enrolled in School · {label}",
+            summary=f"Enrolled in “{program.get('name') or 'a program'}” · {label}.",
+            deep_link={"screen": "school_hq", "tab": "students", "enrollment_id": dog_program_doc["id"]},
+            dedupe_key=f"school_enrolled:{school_enrollment['id']}",
+        )
+    except Exception:
+        pass
+
+    return {"school_enrollment": school_enrollment, "enrollment": _enrollment_summary(dog_program_doc)}
+
+
 @api.post("/school/enroll")
-async def school_enroll(body: SchoolEnrollIn, user: dict = Depends(require_admin_and_permission("manage_school"))):
-    """Manual admin/trainer enrollment into Online School — a thin wrapper
-    around the canonical _grant_online_school_enrollment helper Phase 5's
-    purchase fulfillment also calls (see that function's docstring)."""
+async def school_enroll(body: SchoolEnrollIn, user: dict = Depends(get_current_user)):
+    """Unified School program assignment.
+
+    Existing callers that omit ``delivery_mode`` remain Online School
+    enrollments.  Staff can now use the same endpoint for in-person or hybrid
+    clients, creating the same School identity/timeline/Practice relationship
+    while retaining the trainer-led session workflow.
+    """
+    perms = _perms_for(user)
+    if body.delivery_mode == "online":
+        if not perms.get("manage_school"):
+            raise HTTPException(status_code=403, detail="School administration permission required")
+    elif not (perms.get("manage_school") or perms.get("manage_training_sessions")):
+        raise HTTPException(status_code=403, detail="Training-session or School permission required")
+
     dog = await db.dogs.find_one({"id": body.dog_id}, {"_id": 0})
     if not dog:
         raise HTTPException(status_code=404, detail="Dog not found")
     program = await db.programs.find_one({"id": body.program_id}, {"_id": 0})
     if not program:
         raise HTTPException(status_code=404, detail="Program not found")
+
+    if body.delivery_mode in ("in_person", "hybrid"):
+        return await _grant_staff_school_enrollment(
+            dog, program, delivery_mode=body.delivery_mode, enrolled_by=user.get("id"),
+            trainer_notes=body.trainer_notes or "", assigned_trainer_id=body.assigned_trainer_id,
+            started_at=body.started_at, target_completion_date=body.target_completion_date,
+        )
+
+    # Validate all requested metadata before creating the two enrollment rows;
+    # an invalid trainer must never leave behind a successful enrollment.
+    if body.assigned_trainer_id:
+        trainer = await db.users.find_one({"id": body.assigned_trainer_id, "active": {"$ne": False}}, {"_id": 0})
+        if not trainer or not _perms_for(trainer).get("manage_school"):
+            raise HTTPException(status_code=422, detail="Assigned trainer is not an active School trainer")
+
     try:
-        return await _grant_online_school_enrollment(
+        result = await _grant_online_school_enrollment(
             dog, program, enrolled_by=user.get("id"), trainer_notes=body.trainer_notes or "", enrollment_source="manual",
         )
+        # Apply manual schedule/trainer metadata after the canonical creator
+        # succeeds. Everything capable of failing validation was checked above.
+        set_doc = {}
+        if body.assigned_trainer_id:
+            set_doc["assigned_trainer_id"] = body.assigned_trainer_id
+        if body.started_at:
+            set_doc["started_at"] = body.started_at
+        if body.target_completion_date:
+            set_doc["target_completion_date"] = body.target_completion_date
+        if set_doc:
+            await db.dog_programs.update_one({"id": result["enrollment"]["id"]}, {"$set": set_doc})
+            mirror = {k: v for k, v in set_doc.items() if k == "assigned_trainer_id"}
+            if mirror:
+                await db.school_enrollments.update_one({"id": result["school_enrollment"]["id"]}, {"$set": mirror})
+            result["enrollment"].update(set_doc)
+            result["school_enrollment"].update(mirror)
+        return result
     except OnlineSchoolAlreadyEnrolledError as exc:
         if exc.status == "completed":
-            detail = "This dog already completed this Online School program. Repurchase/re-enrollment isn't available yet — a retake would need a dedicated staff workflow (not yet built)."
+            detail = "This dog already completed this Online School program. Use the School retake/re-enrollment workflow rather than creating a silent duplicate."
         elif exc.status == "withdrawn":
-            detail = "This dog was previously withdrawn from this Online School program. Re-enrolling would need a dedicated staff workflow (not yet built) rather than a silent second enrollment."
+            detail = "This dog was previously withdrawn from this Online School program. Use the School retake/re-enrollment workflow rather than creating a silent duplicate."
         else:
             detail = f"Already actively enrolled in Online School for this program (enrollment {exc.school_enrollment_id or exc.dog_program_id})."
         raise HTTPException(status_code=409, detail=detail)
+
+
+@api.post("/admin/school/students/{school_enrollment_id}/retake")
+async def school_retake_enrollment(
+    school_enrollment_id: str, body: SchoolRetakeIn,
+    user: dict = Depends(require_admin_and_permission("manage_school")),
+):
+    """Start an explicit new attempt without mutating School history.
+
+    Only completed or withdrawn enrollments are eligible.  The old
+    ``dog_programs`` progress ledger and companion ``school_enrollments`` row
+    remain untouched; the new attempt records lineage back to both ids.
+    Commerce never calls this endpoint, so a repeat purchase still cannot
+    silently create a retake.
+    """
+    previous_se = await db.school_enrollments.find_one({"id": school_enrollment_id}, {"_id": 0})
+    if not previous_se:
+        raise HTTPException(status_code=404, detail="School enrollment not found")
+    previous = await db.dog_programs.find_one({"id": previous_se.get("enrollment_id")}, {"_id": 0})
+    if not previous:
+        raise HTTPException(status_code=409, detail="The School enrollment is missing its training progress record")
+    if previous.get("status") not in ("completed", "withdrawn"):
+        raise HTTPException(status_code=409, detail="Only completed or withdrawn School programs can be repeated")
+
+    dog = await db.dogs.find_one({"id": previous_se.get("dog_id")}, {"_id": 0})
+    if not dog:
+        raise HTTPException(status_code=404, detail="Dog not found")
+    program = await db.programs.find_one({"id": previous_se.get("program_id") or previous.get("program_id")}, {"_id": 0})
+    if not program:
+        raise HTTPException(status_code=409, detail="The original School program no longer exists and cannot be repeated automatically")
+
+    active = await db.dog_programs.find_one(
+        {"dog_id": dog["id"], "program_id": program["id"], "status": "active"}, {"_id": 0, "id": 1}
+    )
+    if active:
+        raise HTTPException(status_code=409, detail="This dog already has an active attempt for this program")
+
+    delivery_mode = body.delivery_mode or _school_delivery_mode(previous_se, previous)
+    common = dict(
+        enrolled_by=user.get("id"), trainer_notes=body.trainer_notes or "",
+        retake_of_enrollment_id=previous.get("id"),
+        retake_of_school_enrollment_id=previous_se.get("id"),
+    )
+    if delivery_mode in ("in_person", "hybrid"):
+        result = await _grant_staff_school_enrollment(
+            dog, program, delivery_mode=delivery_mode,
+            assigned_trainer_id=body.assigned_trainer_id or previous_se.get("assigned_trainer_id") or previous.get("assigned_trainer_id"),
+            started_at=body.started_at, target_completion_date=body.target_completion_date, **common,
+        )
+    elif delivery_mode == "online":
+        trainer_id = body.assigned_trainer_id or previous_se.get("assigned_trainer_id") or previous.get("assigned_trainer_id")
+        if trainer_id:
+            trainer = await db.users.find_one({"id": trainer_id, "active": {"$ne": False}}, {"_id": 0})
+            if not trainer or not _perms_for(trainer).get("manage_school"):
+                raise HTTPException(status_code=422, detail="Assigned trainer is not an active School trainer")
+        try:
+            result = await _grant_online_school_enrollment(
+                dog, program, enrollment_source="retake", allow_retake=True, **common,
+            )
+        except OnlineSchoolAlreadyEnrolledError as exc:
+            raise HTTPException(status_code=409, detail=f"This dog already has an active Online School attempt ({exc.school_enrollment_id or exc.dog_program_id}).")
+
+        updates = {}
+        if trainer_id:
+            updates["assigned_trainer_id"] = trainer_id
+        if body.started_at:
+            updates["started_at"] = body.started_at
+        if body.target_completion_date:
+            updates["target_completion_date"] = body.target_completion_date
+        if updates:
+            await db.dog_programs.update_one({"id": result["enrollment"]["id"]}, {"$set": updates})
+            mirror = {k: v for k, v in updates.items() if k == "assigned_trainer_id"}
+            if mirror:
+                await db.school_enrollments.update_one({"id": result["school_enrollment"]["id"]}, {"$set": mirror})
+            result["enrollment"].update(updates)
+            result["school_enrollment"].update(mirror)
+    else:
+        raise HTTPException(status_code=422, detail="Invalid School delivery mode")
+
+    result["retake_of"] = {
+        "school_enrollment_id": previous_se.get("id"),
+        "enrollment_id": previous.get("id"),
+        "status": previous.get("status"),
+    }
+    return result
 
 
 @api.delete("/school/enrollments/{school_enrollment_id}")
@@ -18681,6 +19072,95 @@ async def admin_school_enrollment_checkpoint_history(
     return out
 
 
+@api.post("/admin/school/students/{school_enrollment_id}/practice")
+async def assign_school_practice(
+    school_enrollment_id: str,
+    body: SchoolPracticeAssignIn,
+    user: dict = Depends(require_admin_and_permission("manage_school")),
+):
+    """Assign Practice from inside the School Student Workspace.
+
+    This deliberately creates a normal homework row with explicit School
+    ownership markers.  That keeps one proven Practice engine while making
+    School the only user-facing training system.
+    """
+    school_enrollment = await db.school_enrollments.find_one(
+        {"id": school_enrollment_id}, {"_id": 0}
+    )
+    if not school_enrollment:
+        raise HTTPException(status_code=404, detail="School enrollment not found")
+    enrollment = await db.dog_programs.find_one(
+        {
+            "id": school_enrollment.get("enrollment_id"),
+            "delivery_channel": {"$in": list(SCHOOL_DELIVERY_CHANNELS)},
+        },
+        {"_id": 0},
+    )
+    if not enrollment:
+        raise HTTPException(status_code=404, detail="School program enrollment not found")
+    if enrollment.get("status") in {"withdrawn", "completed"}:
+        raise HTTPException(status_code=409, detail="Practice can only be assigned to an active School enrollment")
+
+    template = await db.homework_templates.find_one(
+        {"id": body.template_id, "active": {"$ne": False}}, {"_id": 0, "id": 1, "name": 1}
+    )
+    if not template:
+        raise HTTPException(status_code=404, detail="Practice template not found")
+
+    lesson = None
+    if body.lesson_id:
+        lesson = _find_lesson_in_snapshot(enrollment, body.lesson_id)
+        if not lesson:
+            raise HTTPException(status_code=422, detail="Selected lesson is not part of this student's frozen School program")
+
+    # A School enrollment should never receive two simultaneous active copies
+    # of the exact same recipe.  Reassignment is allowed after completion.
+    existing = await db.homework.find_one(
+        {
+            "school_enrollment_id": school_enrollment_id,
+            "template_snapshot.template_id": body.template_id,
+            "status": {"$ne": "completed"},
+        },
+        {"_id": 0, "id": 1, "title": 1},
+    )
+    if existing:
+        raise HTTPException(
+            status_code=409,
+            detail=f"This Practice is already active for this School enrollment: {existing.get('title') or 'Practice'}",
+        )
+
+    dog = await db.dogs.find_one({"id": enrollment.get("dog_id")}, {"_id": 0})
+    if not dog:
+        raise HTTPException(status_code=404, detail="Dog not found")
+    client = await db.clients.find_one({"id": school_enrollment.get("client_id") or dog.get("owner_id")}, {"_id": 0})
+
+    practice = await _create_homework_from_template_internal(
+        dog, client, body.template_id,
+        assigned_by=f"School · {user.get('name') or 'Trainer'}",
+        source_lesson_id=body.lesson_id,
+        school_enrollment_id=school_enrollment_id,
+        school_enrollment_record_id=enrollment.get("id"),
+        trainer_personalized_note=body.trainer_personalized_note,
+        practice_frequency=body.practice_frequency,
+        minutes_per_session=body.minutes_per_session,
+        repetition_target=body.repetition_target,
+        environment=body.environment,
+        required=body.required,
+        video_requested=body.video_requested,
+        due_date_override=body.due_date,
+    )
+    if not practice:
+        raise HTTPException(status_code=404, detail="Practice template not found")
+
+    # The shared helper defaults this field to True because it was originally
+    # built for automatic curriculum triggers. This endpoint is an intentional
+    # trainer assignment and must remain distinguishable in reports/history.
+    assignment_meta = {"auto_assigned": False, "assignment_source": "school_staff"}
+    await db.homework.update_one({"id": practice["id"]}, {"$set": assignment_meta})
+    practice.update(assignment_meta)
+    return practice
+
+
 @api.get("/portal/school")
 async def portal_school_list(user: dict = Depends(get_current_user)):
     """Client-facing Online School entry point. Returns an empty list (never
@@ -18741,6 +19221,7 @@ async def portal_school_list(user: dict = Depends(get_current_user)):
             "dog_name": (dog or {}).get("name"), "dog_photo": (dog or {}).get("photo") or "",
             "program_id": enrollment.get("program_id"),
             "program_name": (enrollment.get("program_snapshot") or {}).get("name"),
+            "delivery_mode": _school_delivery_mode(se, enrollment),
             "status": status, "access_state": access_state,
             "mastered_pct": summary.get("mastered_pct", 0),
             "course_pct": _school_course_progress(enrollment, status)["course_pct"],
@@ -18858,6 +19339,7 @@ async def portal_school_detail(school_enrollment_id: str, user: dict = Depends(g
     completion_summary = await _school_completion_summary(se, enrollment)
     return {
         "school_enrollment_id": se["id"], "status": status, "access_state": access_state,
+        "delivery_mode": _school_delivery_mode(se, enrollment),
         "dog_id": se["dog_id"], "dog_name": (dog or {}).get("name"), "dog_photo": (dog or {}).get("photo") or "",
         "program_name": (enrollment.get("program_snapshot") or {}).get("name"),
         "program_focus": (enrollment.get("program_snapshot") or {}).get("focus"),
@@ -18868,7 +19350,7 @@ async def portal_school_detail(school_enrollment_id: str, user: dict = Depends(g
     }
 
 
-def _school_current_action(status: str, access_state: str, roadmap: Optional[dict]) -> dict:
+def _school_current_action(status: str, access_state: str, roadmap: Optional[dict], delivery_mode: str = "online") -> dict:
     """THE single derivation of 'what should this student do next?', for the
     Student Home view-model. Pure function of the already-computed roadmap +
     enrollment lifecycle — never a second progression engine (the backend
@@ -18905,6 +19387,21 @@ def _school_current_action(status: str, access_state: str, roadmap: Optional[dic
     # "auto-satisfies" until Learn is explicitly completed, so nothing advances
     # past an un-learned lesson.
     practice_satisfied = practiced or (not has_practice and learn_done)
+
+    # In-person School uses this same roadmap/Practice engine, but curriculum
+    # advancement belongs to the trainer's session-completion workflow rather
+    # than a client-side Continue button.  The client can still learn from the
+    # lesson and log assigned Practice between appointments.
+    if delivery_mode == "in_person":
+        if not learn_done:
+            return {"type": "lesson", "label": "Review your current lesson",
+                    "sublabel": lesson_name, "target": {"screen": "lesson", "lesson_id": lesson_id}}
+        if has_practice and not practiced:
+            return {"type": "practice", "label": "Start your assigned practice",
+                    "sublabel": lesson_name, "target": {"screen": "lesson", "lesson_id": lesson_id}}
+        return {"type": "trainer_guided", "label": "Keep practicing before your next session",
+                "sublabel": f"Your trainer will advance {lesson_name} when you're ready.",
+                "target": {"screen": "course", "lesson_id": lesson_id}}
 
     # 1a. Trainer Assist (support, never framed as failure). Completion clears
     # the hold but intentionally does NOT advance the enrollment; once the case
@@ -19082,7 +19579,8 @@ async def portal_school_home(school_enrollment_id: str, user: dict = Depends(get
                 if nxt_mod:
                     upcoming = {"kind": "module", "name": nxt_mod.get("name"), "locked": True}
 
-    action = _school_current_action(status, effective_access_state, roadmap)
+    delivery_mode = _school_delivery_mode(se, enrollment)
+    action = _school_current_action(status, effective_access_state, roadmap, delivery_mode)
     onboarding_config = snap.get("school_onboarding") or {}
     onboarding_baseline = se.get("baseline") or enrollment.get("school_baseline")
     _needs_baseline = bool(onboarding_config.get("require_baseline", False) and not onboarding_baseline)
@@ -19161,6 +19659,16 @@ async def portal_school_home(school_enrollment_id: str, user: dict = Depends(get
     support_checkpoint_used = await db.checkpoint_submissions.count_documents({"school_enrollment_id": se["id"], "status": "graded"})
     support_assist_used = await db.checkpoint_submissions.count_documents({"school_enrollment_id": se["id"], "outcome": "trainer_assist_recommended", "trainer_assist_status": "completed"})
 
+    # Staff can prescribe lesson-linked or general Practice from the School
+    # Student Workspace. Surface every still-active assignment here so the
+    # client has ONE place to find it, including trainer-led programs whose
+    # progress itself is controlled by the trainer.
+    active_practice_rows = await db.homework.find(
+        {"school_enrollment_id": se["id"], "status": {"$ne": "completed"}},
+        {"_id": 0},
+    ).sort("created_at", -1).to_list(100)
+    active_practice = [_client_safe_homework(hw) for hw in active_practice_rows]
+
     progress = {
         # course_pct is the ONLY number presented as Course Progress —
         # curriculum completion (see _school_course_progress). mastered_pct
@@ -19178,6 +19686,7 @@ async def portal_school_home(school_enrollment_id: str, user: dict = Depends(get
 
     return {
         "school_enrollment_id": se["id"], "status": status, "access_state": access_state,
+        "delivery_mode": delivery_mode,
         "dog": {"id": se["dog_id"], "name": (dog or {}).get("name"), "photo": (dog or {}).get("photo") or ""},
         "program": {"name": snap.get("name"), "focus": snap.get("focus"),
                     "estimated_weeks": snap.get("estimated_weeks"), "school_support": snap.get("school_support") or {},
@@ -19195,6 +19704,7 @@ async def portal_school_home(school_enrollment_id: str, user: dict = Depends(get
         "checkpoint_status": (roadmap or {}).get("checkpoint_status"),
         "latest_feedback": latest_feedback,
         "trainer": trainer,
+        "active_practice": active_practice,
         "progress": progress,
         "upcoming": upcoming,
         "completion_summary": await _school_completion_summary(se, enrollment),
@@ -19830,6 +20340,12 @@ async def _finish_school_advancement(
         return
     if not next_lesson_id:
         return
+    # In-person School advancement is trainer-controlled.  Advancing a live
+    # checkpoint must not silently prescribe the next lesson's Practice; the
+    # trainer/session workflow owns that assignment. Hybrid/online students
+    # keep the existing self-guided next-lesson Practice behavior.
+    if _school_delivery_mode(se, enrollment) == "in_person":
+        return
     next_lesson = _find_lesson_in_snapshot(enrollment, next_lesson_id)
     if not next_lesson:
         return
@@ -19948,6 +20464,11 @@ async def portal_school_advance(school_enrollment_id: str, user: dict = Depends(
     se, enrollment = await _school_enrollment_for_client(school_enrollment_id, user)
     _require_school_access(enrollment, allow_withdrawn_read=False)
     _require_school_onboarding_ready(se, enrollment)
+    if _school_delivery_mode(se, enrollment) == "in_person":
+        raise HTTPException(
+            status_code=409,
+            detail="This is an in-person School program. Your trainer advances the curriculum from the training-session workflow; keep using School for lesson review and Practice between sessions.",
+        )
     roadmap = await _school_roadmap(enrollment, se["dog_id"])
     current_lesson = roadmap.get("current_lesson")
     if not current_lesson:
@@ -20781,6 +21302,72 @@ async def admin_school_checkpoint_grade(
         except Exception:
             pass
     return {"checkpoint": _admin_safe_checkpoint(final_sub)}
+
+
+@api.post("/admin/school/students/{school_enrollment_id}/lessons/{lesson_id}/live-checkpoint")
+async def admin_school_live_checkpoint(
+    school_enrollment_id: str, lesson_id: str, body: CheckpointGradeIn,
+    user: dict = Depends(get_current_user),
+):
+    """Record and grade a checkpoint observed live by a trainer.
+
+    This deliberately creates the same canonical checkpoint_submissions row
+    and then runs the existing durable grading state machine.  The only
+    difference from a client submission is that no uploaded video is required.
+    No second live-assessment progress model exists.
+    """
+    perms = _perms_for(user)
+    if not (perms.get("manage_school") or perms.get("manage_training_sessions")):
+        raise HTTPException(status_code=403, detail="Training-session or School permission required")
+
+    se = await db.school_enrollments.find_one({"id": school_enrollment_id}, {"_id": 0})
+    if not se:
+        raise HTTPException(status_code=404, detail="School enrollment not found")
+    enrollment = await db.dog_programs.find_one({"id": se.get("enrollment_id")}, {"_id": 0})
+    if not enrollment or enrollment.get("delivery_channel") not in SCHOOL_DELIVERY_CHANNELS:
+        raise HTTPException(status_code=404, detail="School training record not found")
+    delivery_mode = _school_delivery_mode(se, enrollment)
+    if delivery_mode == "online" and not perms.get("manage_school"):
+        raise HTTPException(status_code=403, detail="Online School checkpoint administration permission required")
+    if enrollment.get("status") != "active":
+        raise HTTPException(status_code=409, detail="Live checkpoints can only be recorded on an active School program")
+    if enrollment.get("current_lesson_id") != lesson_id:
+        raise HTTPException(status_code=409, detail="Live checkpoints can only be recorded for the student's current lesson")
+
+    lesson = _find_lesson_in_snapshot(enrollment, lesson_id)
+    if not lesson:
+        raise HTTPException(status_code=404, detail="Lesson not found in this School enrollment")
+    checkpoint = lesson.get("checkpoint") or {}
+    if not checkpoint.get("enabled"):
+        raise HTTPException(status_code=422, detail="This lesson does not have a checkpoint configured")
+
+    existing = await db.checkpoint_submissions.find_one(
+        {"school_enrollment_id": school_enrollment_id, "lesson_id": lesson_id, "status": {"$in": ["pending", "grading"]}},
+        {"_id": 0, "id": 1},
+    )
+    if existing:
+        raise HTTPException(status_code=409, detail="A checkpoint for this lesson is already awaiting or undergoing review")
+
+    submission = {
+        "id": _gid(), "school_enrollment_id": school_enrollment_id,
+        "enrollment_id": enrollment["id"], "dog_id": se.get("dog_id"), "client_id": se.get("client_id"),
+        "lesson_id": lesson_id, "module_id": enrollment.get("current_module_id"),
+        "lesson_name": lesson.get("name"), "video_media_id": None,
+        "homework_id": None, "client_note": "", "rubric_snapshot": checkpoint,
+        "status": "pending", "submission_source": "trainer_live",
+        "observed_live_by": user.get("id"), "observed_live_by_name": user.get("name") or "Trainer",
+        "submitted_at": now_iso(), "created_at": now_iso(),
+    }
+    try:
+        await db.checkpoint_submissions.insert_one(dict(submission))
+    except DuplicateKeyError:
+        raise HTTPException(status_code=409, detail="A checkpoint for this lesson is already awaiting or undergoing review")
+
+    # Reuse the exact grading/advance/prescription/Trainer-Assist state machine
+    # instead of duplicating its progression rules for in-person students.
+    result = await admin_school_checkpoint_grade(submission["id"], body, user)
+    result["checkpoint"]["submission_source"] = "trainer_live"
+    return result
 
 
 @api.post("/admin/school/checkpoints/{submission_id}/clear-trainer-assist-hold")
@@ -22449,6 +23036,7 @@ async def _apply_completion_plan(draft_id: str, plan: Dict[str, Any], claim_toke
         dog = await db.dogs.find_one({"id": plan["dog_id"]}, {"_id": 0})
         client = await db.clients.find_one({"id": dog.get("owner_id")}, {"_id": 0}) if dog else None
         current_enrollment = await db.dog_programs.find_one({"id": plan["enrollment_id"]}, {"_id": 0}) or {}
+        school_companion = await db.school_enrollments.find_one({"enrollment_id": plan["enrollment_id"]}, {"_id": 0, "id": 1})
         existing_log_by_trigger = {e.get("trigger"): e for e in (current_enrollment.get("auto_homework_log") or [])}
         for target in plan["homework_targets"]:
             trigger = target["trigger"]
@@ -22476,6 +23064,8 @@ async def _apply_completion_plan(draft_id: str, plan: Dict[str, Any], claim_toke
                 dog, client, target["template_id"], assigned_by=plan["completed_by_name"] or "Trainer",
                 source_skill_id=target["skill_id"], source_lesson_id=target["lesson_id"],
                 source_session_log_id=plan["log_doc"]["id"], trainer_personalized_note=target["trainer_personalized_note"],
+                school_enrollment_id=(school_companion or {}).get("id"),
+                school_enrollment_record_id=plan["enrollment_id"] if school_companion else None,
             )
             if hw:
                 await _finalize_auto_homework_claim(plan["enrollment_id"], trigger, hw["id"])
@@ -22523,6 +23113,38 @@ async def _apply_completion_plan(draft_id: str, plan: Dict[str, Any], claim_toke
         )
     draft = await db.training_session_drafts.find_one({"id": draft_id}, {"_id": 0})
     log_doc = await db.training_session_log.find_one({"id": plan["log_doc"]["id"]}, {"_id": 0})
+
+    # Unified School timeline: a trainer-led session is a first-class School
+    # activity whenever this program enrollment has a School companion.
+    # Event emission is best-effort and deduped by the deterministic session
+    # log id, so retry/reclaim behavior above cannot duplicate the timeline.
+    school_companion = await db.school_enrollments.find_one({"enrollment_id": plan["enrollment_id"]}, {"_id": 0})
+    if school_companion:
+        try:
+            dog_for_event = await db.dogs.find_one({"id": plan["dog_id"]}, {"_id": 0, "name": 1, "owner_id": 1}) or {}
+            client_for_event = await db.clients.find_one({"id": school_companion.get("client_id") or dog_for_event.get("owner_id")}, {"_id": 0, "name": 1}) or {}
+            snap = (enrollment or {}).get("program_snapshot") or {}
+            current_module = next((m for m in (snap.get("modules") or []) if m.get("id") == (enrollment or {}).get("current_module_id")), None)
+            current_lesson = next((l for l in _effective_lessons(current_module or {}) if l.get("id") == (enrollment or {}).get("current_lesson_id")), None) if current_module else None
+            advancement = str((log_doc or {}).get("advancement_action") or "remain").replace("_", " ")
+            await school_events.emit_event(
+                SchoolEvent.TRAINING_SESSION_COMPLETED,
+                actor_type="trainer", actor_id=plan.get("completed_by"), actor_name=plan.get("completed_by_name"),
+                client_id=school_companion.get("client_id"), client_name=client_for_event.get("name"),
+                dog_id=plan["dog_id"], dog_name=dog_for_event.get("name"),
+                enrollment_id=plan["enrollment_id"], school_enrollment_id=school_companion.get("id"),
+                program_id=(enrollment or {}).get("program_id"), program_name=snap.get("name"),
+                module_id=(current_module or {}).get("id"), module_name=(current_module or {}).get("name"),
+                lesson_id=(current_lesson or {}).get("id"), lesson_name=(current_lesson or {}).get("name"),
+                title=f"{dog_for_event.get('name') or 'Student'} completed an in-person training session",
+                summary=f"Trainer session completed · {advancement}" + (f" · {len((log_doc or {}).get('homework_created') or [])} Practice assignment(s)" if (log_doc or {}).get("homework_created") else ""),
+                metadata={"training_session_log_id": plan["log_doc"]["id"], "advancement_action": (log_doc or {}).get("advancement_action")},
+                deep_link={"screen": "school_hq", "tab": "students", "student_id": school_companion.get("id")},
+                source="school", dedupe_key=f"training_session_completed:{plan['log_doc']['id']}",
+            )
+        except Exception as exc:
+            logger.warning("School session timeline event failed for %s: %s", plan["log_doc"]["id"], exc)
+
     return {
         "already_completed": False, "session_log": log_doc, "draft": draft,
         "enrollment": {

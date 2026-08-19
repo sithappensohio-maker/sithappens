@@ -8,7 +8,7 @@ import EmptyState from "./EmptyState";
 
 const GROUP_LABELS = {
   program: "Program", modules: "Modules", lessons: "Lessons", skills: "Skills",
-  homework_links: "Homework Links", prerequisites: "Prerequisites & Advancement",
+  homework_links: "Practice Links", prerequisites: "Prerequisites & Advancement",
 };
 const GROUP_ORDER = ["program", "modules", "lessons", "skills", "homework_links", "prerequisites"];
 

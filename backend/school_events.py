@@ -82,6 +82,7 @@ class EventType:
     BASELINE_SUBMITTED = "baseline_submitted"
     TRAINING_PLAN_TASK_COMPLETED = "training_plan_task_completed"
     TRAINER_REQUEST_COMPLETED = "trainer_request_completed"
+    TRAINING_SESSION_COMPLETED = "training_session_completed"
     # Practice
     PRACTICE_STARTED = "practice_started"
     PRACTICE_COMPLETED = "practice_completed"

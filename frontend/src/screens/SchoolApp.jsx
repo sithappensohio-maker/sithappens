@@ -37,7 +37,7 @@ function AccessEndedState({ onHome, onExit }) {
 /* Student School — the routed client area. Phase 2B: Home, My Course, Lesson,
  * Today's Training, Progress, Feedback, and contextual Ask Trainer are native.
  * Practice Coach is hosted here with full School context and returns to
- * /school/today without exposing generic Homework. Progression/data all come
+ * /school/today without exposing generic Homework as a separate product. Progression/data all come
  * from the backend — no progression logic lives in this shell. */
 export default function SchoolApp({ path, clientName, onNavigate, onExit }) {
   const parsed = parseSchoolPath(path);
@@ -203,6 +203,7 @@ export default function SchoolApp({ path, clientName, onNavigate, onExit }) {
     if (t === "course_complete") { go("progress"); return; }
     if (t === "start") { go("course"); return; }
     if (t === "trainer_assist") { go("feedback"); return; }
+    if (t === "trainer_guided") { go("course"); return; }
     if (t === "onboarding") { requestAnimationFrame(() => document.querySelector('[data-testid="school-onboarding"]')?.scrollIntoView({ behavior: "smooth", block: "start" })); return; }
     if (t === "course_paused") { go("home"); return; }
     go("today");
@@ -254,7 +255,7 @@ export default function SchoolApp({ path, clientName, onNavigate, onExit }) {
       <div className="flex items-center gap-2 text-shText font-black uppercase tracking-widest text-[13px]">
         <i className="fas fa-graduation-cap text-shPrimary" />School
       </div>
-      <div className="flex items-center gap-2"><button type="button" onClick={()=>go("search")} aria-label="Search Online School" title="Search Online School" className="w-10 h-10 rounded-xl border border-shBorder text-shTextMuted hover:text-shSecondary"><i className="fas fa-search"/></button><SchoolNotificationBell onNavigate={navigateFromNotification} /><img src="/logo.png" alt="Sit Happens" className="h-8 sm:h-10 shrink-0" /></div>
+      <div className="flex items-center gap-2"><button type="button" onClick={()=>go("search")} aria-label="Search School" title="Search School" className="w-10 h-10 rounded-xl border border-shBorder text-shTextMuted hover:text-shSecondary"><i className="fas fa-search"/></button><SchoolNotificationBell onNavigate={navigateFromNotification} /><img src="/logo.png" alt="Sit Happens" className="h-8 sm:h-10 shrink-0" /></div>
     </header>
   );
 
@@ -264,8 +265,8 @@ export default function SchoolApp({ path, clientName, onNavigate, onExit }) {
   } else if (list.length === 0) {
     body = (
       <div className="p-6 max-w-md mx-auto">
-        <EmptyState icon="fa-graduation-cap" accent="lime" title="No active course yet"
-                    description="When you enroll in a Sit Happens Online School course, your training home will appear here."
+        <EmptyState icon="fa-graduation-cap" accent="lime" title="No School program yet"
+                    description="When a Sit Happens training program is assigned to you, your in-person, online, or hybrid training home will appear here."
                     ctaLabel="Back to Portal" onClick={onExit} />
       </div>
     );

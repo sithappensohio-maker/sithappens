@@ -1,5 +1,6 @@
-/* Student School (Phase 2A) — shared presentation helpers for the client-facing
- * Online School. Keeps greeting/label/icon logic out of the components so the
+/* Student School — shared presentation helpers for the client-facing
+ * School. The same UI serves in-person, online, and hybrid enrollments. Keeps
+ * greeting/label/icon logic out of the components so the
  * command-center screens stay small and consistent. The backend
  * (/portal/school/{id}/home) remains the source of truth for current_action;
  * this only maps its type to presentation. */
@@ -19,6 +20,7 @@ export const ACTION_META = {
   submit_checkpoint:{ icon: "fa-clipboard-check",     accent: "amber" },
   remediation:      { icon: "fa-rotate-left",         accent: "amber" },
   trainer_assist:   { icon: "fa-hand-holding-heart",  accent: "purple" },
+  trainer_guided:   { icon: "fa-person-chalkboard",   accent: "cyan" },
   awaiting_review:  { icon: "fa-hourglass-half",      accent: "cyan" },
   advance:          { icon: "fa-arrow-right",         accent: "lime" },
   course_complete:  { icon: "fa-graduation-cap",      accent: "lime" },
@@ -28,6 +30,18 @@ export const ACTION_META = {
   course_paused:    { icon: "fa-pause",               accent: "neutral" },
   start:            { icon: "fa-play",                accent: "lime" },
 };
+
+export function deliveryLabel(mode) {
+  if (mode === "in_person" || mode === "trainer_led") return "In Person";
+  if (mode === "hybrid") return "Hybrid";
+  return "Online";
+}
+
+export function deliveryIcon(mode) {
+  if (mode === "in_person" || mode === "trainer_led") return "fa-person-chalkboard";
+  if (mode === "hybrid") return "fa-shuffle";
+  return "fa-laptop";
+}
 
 export function actionMeta(type) {
   return ACTION_META[type] || { icon: "fa-paw", accent: "lime" };

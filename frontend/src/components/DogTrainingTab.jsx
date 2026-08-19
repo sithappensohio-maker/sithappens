@@ -19,8 +19,7 @@ export default function DogTrainingTab({ dogId, dogName, dogAgeMonths = 0 }) {
   const [meta, setMeta] = useState(null);
   const [enrollments, setEnrollments] = useState([]);
   const [programs, setPrograms] = useState([]);
-  const [enrollOpen, setEnrollOpen] = useState(false);
-  const [schoolEnrollOpen, setSchoolEnrollOpen] = useState(false);
+  const [assignOpen, setAssignOpen] = useState(false);
   const [schoolEnrollments, setSchoolEnrollments] = useState([]);
   const [customOpen, setCustomOpen] = useState(false);
   const [activeGoalEdit, setActiveGoalEdit] = useState(null);
@@ -54,6 +53,8 @@ export default function DogTrainingTab({ dogId, dogName, dogAgeMonths = 0 }) {
   // never renders for a school-delivered row — those actions bypass the
   // school's own progression/practice gating and would confuse an admin.
   const activeAll = enrollments.filter(e => e.status === "active");
+  // In-person and hybrid School enrollments still use the trainer-session
+  // workspace; online-only rows use the self-guided School card below.
   const active = activeAll.filter(e => e.delivery_channel !== "online_school");
   const schoolActive = activeAll.filter(e => e.delivery_channel === "online_school");
   const history = enrollments.filter(e => e.status !== "active" && e.delivery_channel !== "online_school");
@@ -65,20 +66,15 @@ export default function DogTrainingTab({ dogId, dogName, dogAgeMonths = 0 }) {
   // controls" — see update_enrollment's own guard).
   const schoolHistory = enrollments.filter(e => e.status !== "active" && e.delivery_channel === "online_school");
   const schoolEnrollmentsById = Object.fromEntries(schoolEnrollments.map(se => [se.enrollment_id, se]));
-  const schoolCapablePrograms = programs.filter(p => (p.delivery_mode || "trainer_led") !== "trainer_led");
-
-  const enrollIn = async (programId) => {
+  const assignSchoolProgram = async ({ programId, deliveryMode, assignedTrainerId, startedAt, targetCompletionDate }) => {
     try {
-      await api.post(`/dogs/${dogId}/programs`, { program_id: programId });
-      setEnrollOpen(false); load();
-    } catch (e) { setErr(formatErr(e.response?.data?.detail) || "Enroll failed"); }
-  };
-
-  const schoolEnrollIn = async (programId) => {
-    try {
-      await api.post("/school/enroll", { dog_id: dogId, program_id: programId });
-      setSchoolEnrollOpen(false); load();
-    } catch (e) { setErr(formatErr(e.response?.data?.detail) || "Online School enroll failed"); }
+      await api.post("/school/enroll", {
+        dog_id: dogId, program_id: programId, delivery_mode: deliveryMode,
+        assigned_trainer_id: assignedTrainerId || null,
+        started_at: startedAt || null, target_completion_date: targetCompletionDate || null,
+      });
+      setAssignOpen(false); load();
+    } catch (e) { setErr(formatErr(e.response?.data?.detail) || "Program assignment failed"); }
   };
 
   // Case A only — a mistaken/test enrollment with zero checkpoint history.
@@ -189,17 +185,16 @@ export default function DogTrainingTab({ dogId, dogName, dogAgeMonths = 0 }) {
     <div className="space-y-4" data-testid="dog-training-tab">
       {err && <div className="text-[15px] text-red-400 bg-red-500/10 rounded p-2 uppercase font-black">{err}</div>}
 
-      {/* Enroll dropdown */}
+      {/* One School assignment workflow for every delivery mode. */}
       <div className="flex items-center justify-between gap-2">
-        <p className="text-[15px] font-black uppercase tracking-widest text-shTextMuted">{active.length>0 ? `${active.length} active enrollment${active.length>1?"s":""}` : "No active programs"}</p>
+        <div>
+          <p className="text-[15px] font-black uppercase tracking-widest text-shTextMuted">{activeAll.length>0 ? `${activeAll.length} active School program${activeAll.length>1?"s":""}` : "No active School programs"}</p>
+          <p className="text-[11px] text-shTextMuted mt-0.5">One curriculum system · in person, online, or hybrid</p>
+        </div>
         <div className="flex gap-2">
-          <button onClick={()=>setEnrollOpen(true)} data-testid="enroll-btn"
+          <button onClick={()=>setAssignOpen(true)} data-testid="school-assign-btn"
                   className="bg-shSecondary text-shText px-4 py-2 rounded font-black text-[15px] uppercase tracking-widest shadow">
-            <i className="fas fa-graduation-cap mr-1"/>Enroll
-          </button>
-          <button onClick={()=>setSchoolEnrollOpen(true)} data-testid="school-enroll-btn"
-                  className="bg-shPrimary/15 text-shPrimary border border-shPrimary/40 px-4 py-2 rounded font-black text-[15px] uppercase tracking-widest">
-            <i className="fas fa-graduation-cap mr-1"/>Online School
+            <i className="fas fa-graduation-cap mr-1"/>Assign Program
           </button>
           <button onClick={()=>setCustomOpen(true)} data-testid="custom-btn"
                   className="bg-pink-500/15 text-pink-300 border border-pink-500/50 px-4 py-2 rounded font-black text-[15px] uppercase tracking-widest">
@@ -294,17 +289,12 @@ export default function DogTrainingTab({ dogId, dogName, dogAgeMonths = 0 }) {
         </NeonEdge>
       )}
 
-      {/* Enroll modal */}
-      {enrollOpen && (
-        <EnrollModal programs={programs.filter(p => p.type !== "custom" || p.owner_dog_id === dogId)}
-                     dogAgeMonths={dogAgeMonths} typeMeta={typeByKey}
-                     onPick={enrollIn} onClose={()=>setEnrollOpen(false)} />
-      )}
-
-      {/* Online School enroll modal */}
-      {schoolEnrollOpen && (
-        <SchoolEnrollModal programs={schoolCapablePrograms} typeMeta={typeByKey}
-                            onPick={schoolEnrollIn} onClose={()=>setSchoolEnrollOpen(false)} />
+      {assignOpen && (
+        <SchoolProgramAssignModal
+          programs={programs.filter(p => p.type !== "custom" || p.owner_dog_id === dogId)}
+          dogAgeMonths={dogAgeMonths} typeMeta={typeByKey}
+          onAssign={assignSchoolProgram} onClose={()=>setAssignOpen(false)}
+        />
       )}
 
       {/* Custom program builder */}
@@ -475,7 +465,11 @@ function EnrollmentCard({ enrollment, typeMeta, dogId, onStatus, onUnenroll, onT
           <ProgressRing percent={enrollment.mastered_pct} size={64} stroke={6} color={color}
                         label={`${enrollment.mastered_goals}/${enrollment.total_goals}`} />
           <div className="flex-1 min-w-0">
-            <p className="text-[13px] sm:text-[14px] font-black uppercase tracking-widest" style={{color}}>{typeMeta?.label || snap.type}</p>
+            <div className="flex items-center gap-2 flex-wrap">
+              <p className="text-[13px] sm:text-[14px] font-black uppercase tracking-widest" style={{color}}>{typeMeta?.label || snap.type}</p>
+              {enrollment.delivery_channel === "in_person_school" && <span className="text-[9px] font-black uppercase tracking-widest px-2 py-0.5 rounded-full bg-shSecondary/10 border border-shSecondary/25 text-shSecondary">School · In Person</span>}
+              {enrollment.delivery_channel === "hybrid_school" && <span className="text-[9px] font-black uppercase tracking-widest px-2 py-0.5 rounded-full bg-shPrimary/10 border border-shPrimary/25 text-shPrimary">School · Hybrid</span>}
+            </div>
             <p className="text-sm sm:text-base font-black text-shText truncate">{snap.name}</p>
           </div>
           <div className="flex flex-col gap-1 shrink-0">
@@ -707,83 +701,111 @@ function GoalRow({ goal, progress, onChange }) {
   );
 }
 
-function EnrollModal({ programs, dogAgeMonths, typeMeta, onPick, onClose }) {
-  const grouped = Object.values(typeMeta).map(t => ({ ...t, items: programs.filter(p => p.type === t.key) }));
-  return (
-    <div className="fixed inset-0 bg-black/80 flex items-center justify-center p-4 z-50" data-testid="enroll-modal">
-      <div className="bg-[var(--sh-card-base)] border border-shBorder rounded-2xl w-full max-w-2xl max-h-[calc(var(--app-height)_-_2rem)] flex flex-col min-h-0 shadow-2xl">
-        <div className="px-6 py-4 border-b border-shBorder flex items-center justify-between shrink-0">
-          <h4 className="text-base font-black text-shText uppercase italic">Enroll in Program</h4>
-          <button onClick={onClose} className="text-shTextMuted hover:text-shText"><i className="fas fa-times text-xl"/></button>
-        </div>
-        <div className="overflow-y-auto flex-1 min-h-0 p-4 space-y-4">
-          {grouped.filter(g => g.items.length > 0).map(g => (
-            <div key={g.key}>
-              <p className="text-[15px] font-black uppercase tracking-widest mb-2" style={{color: g.color}}>{g.label}</p>
-              <div className="space-y-2">
-                {g.items.map(p => {
-                  const tooYoung = dogAgeMonths > 0 && p.min_age_months > dogAgeMonths;
-                  return (
-                    <button key={p.id} onClick={()=>onPick(p.id)} data-testid={`enroll-pick-${p.id}`}
-                            className="w-full text-left bg-[var(--sh-card-base)]/60 border border-shBorder hover:border-shSecondary rounded p-3 transition">
-                      <div className="flex items-start justify-between gap-3">
-                        <div className="flex-1 min-w-0">
-                          <p className="text-sm font-black text-shText">{p.name}</p>
-                          <p className="text-[15px] text-shTextMuted mt-0.5">{p.focus}</p>
-                          <p className="text-[14px] text-shTextMuted font-black uppercase tracking-widest mt-1">
-                            {p.modules.length} modules · {p.modules.reduce((a,m)=>a+m.goals.length,0)} goals · {p.format?.count} {p.format?.unit}
-                          </p>
-                        </div>
-                        {tooYoung && (
-                          <span className="shrink-0 text-[14px] font-black uppercase tracking-widest text-shAccent px-2 py-1 bg-shAccent/15 rounded">
-                            <i className="fas fa-triangle-exclamation mr-1"/>Under {p.min_age_months}mo
-                          </span>
-                        )}
-                      </div>
-                    </button>
-                  );
-                })}
-              </div>
-            </div>
-          ))}
-        </div>
-      </div>
-    </div>
-  );
-}
+function SchoolProgramAssignModal({ programs, dogAgeMonths, typeMeta, onAssign, onClose }) {
+  const [selectedId, setSelectedId] = useState("");
+  const [deliveryMode, setDeliveryMode] = useState("in_person");
+  const [trainerId, setTrainerId] = useState("");
+  const [startedAt, setStartedAt] = useState("");
+  const [targetDate, setTargetDate] = useState("");
+  const [trainers, setTrainers] = useState([]);
+  const selected = programs.find(p => p.id === selectedId) || null;
 
-// Sit Happens Online School (Phase 1) — same picker shell as EnrollModal,
-// filtered upstream to only delivery_mode in (self_guided, both) programs
-// (schoolCapablePrograms). Deliberately simpler than EnrollModal — no
-// age-gate/module-count chrome yet, just name + focus, since Phase 1 is
-// manual-enrollment-only and the picker exists for a trainer who already
-// knows which curriculum they're placing the client into.
-function SchoolEnrollModal({ programs, typeMeta, onPick, onClose }) {
+  useEffect(() => {
+    api.get("/admin/school/trainers").then(r => setTrainers(r.data || [])).catch(() => setTrainers([]));
+  }, []);
+
+  const modesFor = (p) => {
+    const configured = p?.delivery_mode || "trainer_led";
+    if (configured === "self_guided") return [{ key: "online", label: "Online", icon: "fa-laptop" }];
+    if (configured === "both") return [
+      { key: "in_person", label: "In Person", icon: "fa-people-arrows-left-right" },
+      { key: "online", label: "Online", icon: "fa-laptop" },
+      { key: "hybrid", label: "Hybrid", icon: "fa-shuffle" },
+    ];
+    return [{ key: "in_person", label: "In Person", icon: "fa-people-arrows-left-right" }];
+  };
+
+  const chooseProgram = (p) => {
+    setSelectedId(p.id);
+    const modes = modesFor(p);
+    setDeliveryMode(modes[0].key);
+  };
+
+  const submit = () => {
+    if (!selected) return;
+    onAssign({
+      programId: selected.id, deliveryMode,
+      assignedTrainerId: trainerId || null,
+      startedAt: startedAt || null, targetCompletionDate: targetDate || null,
+    });
+  };
+
   return (
-    <div className="fixed inset-0 bg-black/80 flex items-center justify-center p-4 z-50" data-testid="school-enroll-modal">
-      <div className="bg-[var(--sh-card-base)] border border-shBorder rounded-2xl w-full max-w-2xl max-h-[calc(var(--app-height)_-_2rem)] flex flex-col min-h-0 shadow-2xl">
+    <div className="fixed inset-0 bg-black/80 flex items-center justify-center p-4 z-50" data-testid="school-program-assign-modal">
+      <div className="bg-[var(--sh-card-base)] border border-shBorder rounded-2xl w-full max-w-3xl max-h-[calc(var(--app-height)_-_2rem)] flex flex-col min-h-0 shadow-2xl">
         <div className="px-6 py-4 border-b border-shBorder flex items-center justify-between shrink-0">
           <div>
-            <h4 className="text-base font-black text-shText uppercase italic"><i className="fas fa-graduation-cap mr-1.5 text-shPrimary"/>Enroll in Online School</h4>
-            <p className="text-[12px] text-shTextMuted">Only programs configured for Self-Guided or Both delivery are shown.</p>
+            <h4 className="text-base font-black text-shText uppercase italic"><i className="fas fa-graduation-cap mr-1.5 text-shPrimary"/>Assign School Program</h4>
+            <p className="text-[12px] text-shTextMuted">Pick the curriculum once, then choose how this client will take it.</p>
           </div>
           <button onClick={onClose} className="text-shTextMuted hover:text-shText"><i className="fas fa-times text-xl"/></button>
         </div>
-        <div className="overflow-y-auto flex-1 min-h-0 p-4 space-y-2">
-          {programs.length === 0 && (
-            <p className="text-[13px] text-shTextMuted text-center py-8">No programs are configured for Online School yet — set a program's Delivery Mode to Self-Guided or Both in Program Studio.</p>
+
+        <div className="overflow-y-auto flex-1 min-h-0 p-4 sm:p-5">
+          {!selected ? (
+            <div className="space-y-4">
+              {Object.values(typeMeta).map(t => {
+                const items = programs.filter(p => p.type === t.key);
+                if (!items.length) return null;
+                return <div key={t.key}>
+                  <p className="text-[11px] font-black uppercase tracking-widest mb-2" style={{color:t.color}}>{t.label}</p>
+                  <div className="grid sm:grid-cols-2 gap-2">
+                    {items.map(p => {
+                      const tooYoung = dogAgeMonths > 0 && p.min_age_months > dogAgeMonths;
+                      const delivery = p.delivery_mode || "trainer_led";
+                      return <button key={p.id} type="button" onClick={()=>chooseProgram(p)} data-testid={`school-assign-pick-${p.id}`}
+                        className="text-left bg-black/15 border border-shBorder hover:border-shSecondary rounded-xl p-3 transition">
+                        <div className="flex justify-between gap-3"><div className="min-w-0"><p className="text-sm font-black text-shText">{p.name}</p><p className="text-[12px] text-shTextMuted mt-0.5">{p.focus}</p></div>{tooYoung&&<span className="text-[9px] font-black uppercase tracking-widest text-shAccent">Under {p.min_age_months}mo</span>}</div>
+                        <div className="flex items-center gap-1.5 flex-wrap mt-2">
+                          <span className="text-[9px] font-black uppercase tracking-widest px-2 py-1 rounded bg-white/[0.04] border border-shBorder text-shTextMuted">{p.modules?.length || 0} modules</span>
+                          <span className="text-[9px] font-black uppercase tracking-widest px-2 py-1 rounded bg-shPrimary/10 border border-shPrimary/20 text-shPrimary">{delivery === "both" ? "In Person + Online" : delivery === "self_guided" ? "Online" : "In Person"}</span>
+                        </div>
+                      </button>;
+                    })}
+                  </div>
+                </div>;
+              })}
+            </div>
+          ) : (
+            <div className="space-y-5">
+              <button type="button" onClick={()=>setSelectedId("")} className="text-[11px] font-black uppercase tracking-widest text-shSecondary"><i className="fas fa-arrow-left mr-1"/>Choose different program</button>
+              <div className="rounded-2xl border border-shBorder bg-black/15 p-4">
+                <p className="text-[10px] font-black uppercase tracking-widest text-shPrimary">Curriculum</p>
+                <h3 className="text-xl font-black text-shText mt-1">{selected.name}</h3>
+                {selected.focus&&<p className="text-[12px] text-shTextMuted mt-1">{selected.focus}</p>}
+              </div>
+
+              <div>
+                <p className="text-[10px] font-black uppercase tracking-widest text-shTextMuted mb-2">Delivery</p>
+                <div className="grid sm:grid-cols-3 gap-2">
+                  {modesFor(selected).map(m => <button type="button" key={m.key} onClick={()=>setDeliveryMode(m.key)} data-testid={`school-delivery-${m.key}`}
+                    className={`rounded-xl border p-3 text-left transition ${deliveryMode===m.key?"border-shPrimary bg-shPrimary/10":"border-shBorder bg-black/10 hover:border-shSecondary/50"}`}>
+                    <i className={`fas ${m.icon} ${deliveryMode===m.key?"text-shPrimary":"text-shSecondary"}`}/><p className="text-sm font-black text-shText mt-2">{m.label}</p>
+                    <p className="text-[10px] text-shTextMuted mt-1">{m.key==="in_person"?"Trainer sessions + School Practice":m.key==="hybrid"?"Trainer sessions + full online lessons":"Self-guided online lessons + Practice"}</p>
+                  </button>)}
+                </div>
+              </div>
+
+              <div className="grid sm:grid-cols-3 gap-3">
+                <label className="block"><span className="block text-[10px] uppercase tracking-widest font-black text-shTextMuted mb-1">Assigned trainer</span><select value={trainerId} onChange={e=>setTrainerId(e.target.value)} className="w-full bg-black/20 border border-shBorder rounded-xl px-3 py-2.5 text-sm text-shText"><option value="">Program default / unassigned</option>{trainers.map(t=><option key={t.id} value={t.id}>{t.name || t.email}</option>)}</select></label>
+                <label className="block"><span className="block text-[10px] uppercase tracking-widest font-black text-shTextMuted mb-1">Start date</span><input type="date" value={startedAt} onChange={e=>setStartedAt(e.target.value)} className="w-full bg-black/20 border border-shBorder rounded-xl px-3 py-2.5 text-sm text-shText" style={{colorScheme:"dark"}}/></label>
+                <label className="block"><span className="block text-[10px] uppercase tracking-widest font-black text-shTextMuted mb-1">Target date</span><input type="date" value={targetDate} onChange={e=>setTargetDate(e.target.value)} className="w-full bg-black/20 border border-shBorder rounded-xl px-3 py-2.5 text-sm text-shText" style={{colorScheme:"dark"}}/></label>
+              </div>
+            </div>
           )}
-          {programs.map(p => (
-            <button key={p.id} onClick={()=>onPick(p.id)} data-testid={`school-enroll-pick-${p.id}`}
-                    className="w-full text-left bg-[var(--sh-card-base)]/60 border border-shBorder hover:border-shPrimary rounded p-3 transition">
-              <p className="text-sm font-black text-shText">{p.name}</p>
-              <p className="text-[15px] text-shTextMuted mt-0.5">{p.focus}</p>
-              <p className="text-[14px] text-shTextMuted font-black uppercase tracking-widest mt-1">
-                {p.modules.length} modules · {typeMeta[p.type]?.label || p.type}
-              </p>
-            </button>
-          ))}
         </div>
+
+        {selected && <div className="px-5 py-4 border-t border-shBorder flex justify-end gap-2 shrink-0"><button type="button" onClick={onClose} className="px-4 py-2 rounded-xl border border-shBorder text-shTextMuted text-xs font-black">Cancel</button><button type="button" onClick={submit} data-testid="school-assign-confirm" className="px-5 py-2 rounded-xl bg-shPrimary text-bgHeader text-xs font-black uppercase tracking-widest"><i className="fas fa-check mr-1.5"/>Assign {deliveryMode === "in_person" ? "In Person" : deliveryMode === "hybrid" ? "Hybrid" : "Online"}</button></div>}
       </div>
     </div>
   );
