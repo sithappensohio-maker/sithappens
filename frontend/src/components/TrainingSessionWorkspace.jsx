@@ -55,11 +55,16 @@ const RESOLUTION_COPY = {
   },
 };
 
+// Today's assessment of a skill. The original four keys are unchanged so
+// existing drafts/logs keep rendering; "introduced" and "reliable" complete
+// the six-level scale on the same canonical field.
 const OUTCOME_OPTIONS = [
-  { key: "passed", label: "Passed", color: "bg-shPrimary/20 text-shPrimary border-shPrimary/40" },
+  { key: "skipped", label: "Not Worked", color: "bg-gray-500/20 text-shTextMuted border-gray-500/30" },
+  { key: "introduced", label: "Introduced", color: "bg-gray-400/20 text-shText border-gray-400/40" },
+  { key: "needs_more_work", label: "Needs Work", color: "bg-shAccent/20 text-shAccent border-shAccent/40" },
   { key: "improving", label: "Improving", color: "bg-shSecondary/20 text-shSecondary border-shSecondary/40" },
-  { key: "needs_more_work", label: "Needs More Work", color: "bg-shAccent/20 text-shAccent border-shAccent/40" },
-  { key: "skipped", label: "Skipped", color: "bg-gray-500/20 text-shTextMuted border-gray-500/30" },
+  { key: "passed", label: "Good", color: "bg-shPrimary/20 text-shPrimary border-shPrimary/40" },
+  { key: "reliable", label: "Reliable", color: "bg-shPrimary/30 text-shPrimary border-shPrimary/60" },
 ];
 
 const ADVANCEMENT_ACTIONS = [
@@ -98,6 +103,7 @@ export default function TrainingSessionWorkspace({ bookingId, dogId, enrollmentI
   const [savingLabel, setSavingLabel] = useState("");
   const [completing, setCompleting] = useState(false);
   const [completionResult, setCompletionResult] = useState(null);
+  const [checkpointBlock, setCheckpointBlock] = useState("");
   const saveTimer = useRef(null);
   const latestRef = useRef(null);
 
@@ -147,6 +153,9 @@ export default function TrainingSessionWorkspace({ bookingId, dogId, enrollmentI
           actuals: d.actuals,
           session_note: d.session_note,
           client_recap_note: d.client_recap_note,
+          what_went_well: d.what_went_well,
+          needs_work: d.needs_work,
+          next_lesson_focus: d.next_lesson_focus,
         });
         setSavingLabel("Saved");
         setTimeout(() => setSavingLabel(""), 1500);
@@ -313,11 +322,34 @@ export default function TrainingSessionWorkspace({ bookingId, dogId, enrollmentI
             {overview && (
               <div className="space-y-3 text-[13px]">
                 {overview.last_session && (
-                  <div>
-                    <p className="text-[11px] font-black uppercase tracking-widest text-shTextMuted">Last session</p>
-                    <p className="text-shText">{overview.last_session.note || "(no note)"}</p>
+                  <div className="rounded-xl border border-shSecondary/25 bg-shSecondary/[0.04] p-3" data-testid="workspace-last-lesson-handoff">
+                    <p className="text-[11px] font-black uppercase tracking-widest text-shSecondary">
+                      Last lesson{overview.last_session.lesson_name ? ` · ${overview.last_session.lesson_name}` : ""}
+                      {overview.last_session.by ? ` · ${overview.last_session.by}` : ""}
+                    </p>
+                    <div className="grid grid-cols-1 sm:grid-cols-2 gap-x-4 gap-y-1.5 mt-2">
+                      {overview.last_session.strongest_skills?.length > 0 && (
+                        <p className="text-shText"><span className="text-shTextMuted">Strongest: </span>
+                          {overview.last_session.strongest_skills.map(s => `${s.name} ${s.score}/5`).join(" · ")}</p>
+                      )}
+                      {overview.last_session.needs_work_skills?.length > 0 && (
+                        <p className="text-shText"><span className="text-shTextMuted">Needs work: </span>
+                          {overview.last_session.needs_work_skills.map(s => `${s.name} ${s.score}/5`).join(" · ")}</p>
+                      )}
+                      {overview.last_session.practice_assigned?.length > 0 && (
+                        <p className="text-shText"><span className="text-shTextMuted">Practice assigned: </span>
+                          {overview.last_session.practice_assigned.join(", ")}</p>
+                      )}
+                      {overview.last_session.next_lesson_focus && (
+                        <p className="text-shText"><span className="text-shTextMuted">Next focus: </span>
+                          {overview.last_session.next_lesson_focus}</p>
+                      )}
+                    </div>
+                    {overview.last_session.note && (
+                      <p className="text-shTextMuted mt-2 text-[12px]"><i className="fas fa-lock mr-1 text-shAccent"/>{overview.last_session.note}</p>
+                    )}
                     {overview.last_session.skills_worked?.length > 0 && (
-                      <p className="text-shTextMuted mt-0.5">Worked on: {overview.last_session.skills_worked.map(s => s.name).filter(Boolean).join(", ")}</p>
+                      <p className="text-shTextMuted mt-1 text-[12px]">Worked on: {overview.last_session.skills_worked.map(s => s.name).filter(Boolean).join(", ")}</p>
                     )}
                   </div>
                 )}
@@ -380,16 +412,54 @@ export default function TrainingSessionWorkspace({ bookingId, dogId, enrollmentI
             </div>
           </div>
 
-          {/* Notes */}
-          <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
+          {checkpointBlock && (
+            <div className="rounded-xl border border-shAccent/50 bg-shAccent/[0.08] p-3 flex items-start gap-3"
+                 data-testid="workspace-checkpoint-blocked">
+              <i className="fas fa-flag-checkered text-shAccent mt-0.5"/>
+              <div className="min-w-0">
+                <p className="text-[13px] font-black text-shText">Advancement blocked</p>
+                <p className="text-[12.5px] text-shTextMuted mt-0.5">{checkpointBlock}</p>
+                <p className="text-[12px] text-shTextMuted mt-1">
+                  Everything you recorded is saved. You can still complete this lesson without advancing.
+                </p>
+              </div>
+              <button onClick={() => setCheckpointBlock("")} className="ml-auto text-shTextMuted text-xs font-black">✕</button>
+            </div>
+          )}
+
+          {/* Lesson summary — the three structured fields the client recap and
+              the next trainer's handoff are both built from. All client-safe. */}
+          <div className="grid grid-cols-1 md:grid-cols-3 gap-3" data-testid="workspace-lesson-summary">
             <div>
-              <label className="text-[11px] font-black uppercase tracking-widest text-shTextMuted"><i className="fas fa-note-sticky mr-1 text-shSecondary"/>Internal session note (staff only)</label>
+              <label className="text-[11px] font-black uppercase tracking-widest text-shTextMuted"><i className="fas fa-thumbs-up mr-1 text-shPrimary"/>What went well</label>
+              <textarea value={draft.what_went_well || ""} onChange={(e) => updateDraft({ what_went_well: e.target.value })}
+                        rows={3} data-testid="workspace-what-went-well" placeholder="Wins from this lesson…"
+                        className="w-full mt-1 bg-black/20 border border-shBorder rounded p-2 text-shText text-sm"/>
+            </div>
+            <div>
+              <label className="text-[11px] font-black uppercase tracking-widest text-shTextMuted"><i className="fas fa-triangle-exclamation mr-1 text-shAccent"/>Needs work</label>
+              <textarea value={draft.needs_work || ""} onChange={(e) => updateDraft({ needs_work: e.target.value })}
+                        rows={3} data-testid="workspace-needs-work" placeholder="Weak areas, extra reps…"
+                        className="w-full mt-1 bg-black/20 border border-shBorder rounded p-2 text-shText text-sm"/>
+            </div>
+            <div>
+              <label className="text-[11px] font-black uppercase tracking-widest text-shTextMuted"><i className="fas fa-forward mr-1 text-shSecondary"/>Next lesson focus</label>
+              <textarea value={draft.next_lesson_focus || ""} onChange={(e) => updateDraft({ next_lesson_focus: e.target.value })}
+                        rows={3} data-testid="workspace-next-lesson-focus" placeholder="What the next trainer should target…"
+                        className="w-full mt-1 bg-black/20 border border-shBorder rounded p-2 text-shText text-sm"/>
+            </div>
+          </div>
+
+          {/* Notes — staff-only and client-safe kept visibly separate. */}
+          <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
+            <div className="rounded border border-shAccent/30 bg-shAccent/[0.04] p-2">
+              <label className="text-[11px] font-black uppercase tracking-widest text-shAccent"><i className="fas fa-lock mr-1"/>Private trainer note · never shown to the client</label>
               <textarea value={draft.session_note || ""} onChange={(e) => updateDraft({ session_note: e.target.value })}
                         rows={3} data-testid="workspace-session-note"
                         className="w-full mt-1 bg-black/20 border border-shBorder rounded p-2 text-shText text-sm"/>
             </div>
-            <div>
-              <label className="text-[11px] font-black uppercase tracking-widest text-shTextMuted"><i className="fas fa-comment-dots mr-1 text-shPrimary"/>Client recap note (sent after session)</label>
+            <div className="rounded border border-shPrimary/30 bg-shPrimary/[0.04] p-2">
+              <label className="text-[11px] font-black uppercase tracking-widest text-shPrimary"><i className="fas fa-comment-dots mr-1"/>Client recap note · the owner reads this</label>
               <textarea value={draft.client_recap_note || ""} onChange={(e) => updateDraft({ client_recap_note: e.target.value })}
                         rows={3} data-testid="workspace-recap-note"
                         className="w-full mt-1 bg-black/20 border border-shBorder rounded p-2 text-shText text-sm"/>
@@ -430,7 +500,16 @@ export default function TrainingSessionWorkspace({ bookingId, dogId, enrollmentI
               setCompleting(false);
               toast.success("Session completed");
             } catch (e) {
-              toast.error(formatErr(e?.response?.data?.detail) || "Could not complete session");
+              const detail = e?.response?.data?.detail;
+              // The checkpoint gate is a curriculum rule, not a glitch — say
+              // exactly what is blocking and what to do, and keep the
+              // workspace open so nothing the trainer recorded is lost.
+              if (detail?.error_code === "checkpoint_required_before_advancement") {
+                setCheckpointBlock(detail.message);
+                setCompleting(false);
+                return;
+              }
+              toast.error(formatErr(detail) || "Could not complete session");
             }
           }}
         />
@@ -511,10 +590,13 @@ function RecordFields({ activity: a, actual, onChange }) {
       )}
       <div>
         <label className="text-[11px] font-black uppercase tracking-widest text-shTextMuted">Outcome</label>
-        <div className="grid grid-cols-2 sm:grid-cols-4 gap-1 mt-1">
+        {/* 3-up on phones, 6-up on desktop — one tap per assessment, and
+            every target stays at least 38px tall for gloved/outdoor use. */}
+        <div className="grid grid-cols-3 sm:grid-cols-6 gap-1 mt-1" data-testid={`activity-${a.id}-assessment`}>
           {OUTCOME_OPTIONS.map(o => (
             <button key={o.key} onClick={() => onChange({ outcome: o.key })}
-                    className={`py-1.5 rounded text-[11px] font-black uppercase tracking-widest border ${actual.outcome === o.key ? o.color : "border-shBorder text-shTextMuted"}`}>
+                    data-testid={`activity-${a.id}-assessment-${o.key}`}
+                    className={`min-h-[38px] px-1 rounded text-[10px] sm:text-[11px] font-black uppercase tracking-widest border leading-tight ${actual.outcome === o.key ? o.color : "border-shBorder text-shTextMuted"}`}>
               {o.label}
             </button>
           ))}
@@ -526,8 +608,30 @@ function RecordFields({ activity: a, actual, onChange }) {
           <MeasurementChips items={actualChips} testid={`activity-${a.id}-actuals`}/>
         </div>
       </div>
-      <textarea value={actual.notes || ""} onChange={(e) => onChange({ notes: e.target.value })} placeholder="Internal notes for this activity (staff only — not sent to the client)"
-                rows={2} className="w-full bg-black/20 border border-shBorder rounded p-2 text-shText text-[13px]"/>
+      {/* Mastery is its OWN decision — a high score never grants it. Both
+          buttons toggle off, so "no decision today" stays the default. */}
+      <div>
+        <label className="text-[11px] font-black uppercase tracking-widest text-shTextMuted">Mastery decision <span className="text-shTextMuted/70 normal-case font-bold">· optional, never automatic</span></label>
+        <div className="grid grid-cols-2 gap-1 mt-1" data-testid={`activity-${a.id}-mastery`}>
+          <button onClick={() => onChange({ mastery_decision: actual.mastery_decision === "mastered" ? null : "mastered" })}
+                  data-testid={`activity-${a.id}-mastery-mastered`}
+                  className={`min-h-[38px] rounded text-[11px] font-black uppercase tracking-widest border ${actual.mastery_decision === "mastered" ? "bg-shPrimary/25 text-shPrimary border-shPrimary/60" : "border-shBorder text-shTextMuted"}`}>
+            <i className="fas fa-award mr-1"/>Mark mastered
+          </button>
+          <button onClick={() => onChange({ mastery_decision: actual.mastery_decision === "not_yet" ? null : "not_yet" })}
+                  data-testid={`activity-${a.id}-mastery-not-yet`}
+                  className={`min-h-[38px] rounded text-[11px] font-black uppercase tracking-widest border ${actual.mastery_decision === "not_yet" ? "bg-shAccent/25 text-shAccent border-shAccent/60" : "border-shBorder text-shTextMuted"}`}>
+            Not yet
+          </button>
+        </div>
+      </div>
+      <textarea value={actual.client_observation || ""} onChange={(e) => onChange({ client_observation: e.target.value })}
+                placeholder="Client-safe observation — the owner reads this in their recap"
+                data-testid={`activity-${a.id}-client-observation`}
+                rows={2} className="w-full bg-shPrimary/[0.05] border border-shPrimary/30 rounded p-2 text-shText text-[13px]"/>
+      <textarea value={actual.notes || ""} onChange={(e) => onChange({ notes: e.target.value })} placeholder="Private trainer note for this skill (staff only — never sent to the client)"
+                data-testid={`activity-${a.id}-private-note`}
+                rows={2} className="w-full bg-shAccent/[0.05] border border-shAccent/30 rounded p-2 text-shText text-[13px]"/>
       <div className="flex flex-wrap gap-4">
         <label className="flex items-center gap-1.5 text-[12px] text-shText"><input type="checkbox" checked={!!actual.homework_eligible} onChange={(e) => onChange({ homework_eligible: e.target.checked })}/>Assign as homework</label>
         <label className="flex items-center gap-1.5 text-[12px] text-shText"><input type="checkbox" checked={!!actual.needs_reassessment} onChange={(e) => onChange({ needs_reassessment: e.target.checked })}/>Needs reassessment next visit</label>

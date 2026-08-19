@@ -1003,6 +1003,87 @@ def register_school_suite(*, api, db, get_current_user, manage_school_dep, perms
             if len(feedback_results)>=20: break
         return {"query":q,"lessons":lesson_results,"resources":resource_results,"feedback":feedback_results,"total":len(lesson_results)+len(resource_results)+len(feedback_results)}
 
+    @api.get("/portal/school/{sid}/lesson-history")
+    async def portal_school_lesson_history(sid: str, limit: int = 50, user: dict = Depends(get_current_user)):
+        """Client-facing lesson history for ONE School attempt.
+
+        Scoped two ways at once: _client_context proves this enrollment
+        belongs to the caller (another client's session is a 404, not a
+        filtered-empty list), and the log query is keyed on that attempt's
+        own dog_programs id — never dog+program — so Repeat Program attempt 1
+        and attempt 2 can never bleed into each other.
+
+        Every field below is written out explicitly. The raw session log is
+        NEVER spread into the response: it carries session_note and other
+        staff-only content, and an allowlist is the only construction that
+        stays safe when new internal fields are added to the log later.
+        """
+        se, dp = await _client_context(sid, user)
+        _require_readable_school_content(dp)
+
+        snapshot = dp.get("program_snapshot") or {}
+        modules = sorted(snapshot.get("modules") or [], key=lambda m: m.get("order", 0))
+        module_names = {m.get("id"): m.get("name") for m in modules}
+        goal_names = {g["id"]: g.get("name") for m in modules for g in (m.get("goals") or [])}
+        lesson_names = {}
+        for m in modules:
+            for l in (m.get("lessons") or []):
+                lesson_names[l.get("id")] = l.get("name")
+
+        logs = await db.training_session_log.find(
+            {"enrollment_id": dp["id"]}, {"_id": 0},
+        ).sort("at", DESCENDING).to_list(max(1, min(limit, 100)))
+
+        lessons_out = []
+        for log in logs:
+            skills = []
+            for d in (log.get("goal_updates") or []):
+                skills.append({
+                    "skill_id": d.get("goal_id"),
+                    # Prefer the name snapshotted at session time — a later
+                    # curriculum edit must not rewrite what history says.
+                    "name": d.get("skill_name") or goal_names.get(d.get("goal_id")) or "Skill",
+                    "status": d.get("new_status"),
+                    "score": d.get("session_score") if d.get("session_score") is not None else d.get("new_score"),
+                    "assessment": d.get("session_outcome"),
+                    "observation": d.get("client_observation") or "",
+                })
+            practice = []
+            for hid in (log.get("homework_created") or []):
+                hw = await db.homework.find_one({"id": hid}, {"_id": 0, "title": 1})
+                if hw:
+                    practice.append(hw.get("title"))
+            lessons_out.append({
+                "session_id": log.get("id"),
+                "date": log.get("at"),
+                "trainer_name": log.get("by_user"),
+                "program_name": log.get("program_name") or snapshot.get("name"),
+                "module_name": module_names.get(log.get("module_id_at_session")),
+                "lesson_name": log.get("lesson_name_at_session") or lesson_names.get(log.get("lesson_id_at_session")),
+                "skills": skills,
+                "what_went_well": log.get("what_went_well") or "",
+                "needs_work": log.get("needs_work") or "",
+                "trainer_feedback": log.get("client_recap_note") or "",
+                "next_lesson_focus": log.get("next_lesson_focus") or "",
+                "practice_assigned": practice,
+            })
+
+        progress = dp.get("goal_progress") or {}
+        total_goals = len(goal_names)
+        mastered = sum(1 for gid in goal_names if (progress.get(gid) or {}).get("status") == "mastered")
+        return {
+            "school_enrollment_id": se.get("id"),
+            "enrollment_id": dp["id"],
+            "program_name": snapshot.get("name"),
+            "delivery_mode": se.get("delivery_mode"),
+            "status": dp.get("status"),
+            "progress": {
+                "mastered_goals": mastered, "total_goals": total_goals,
+                "mastered_pct": round(mastered * 100 / total_goals) if total_goals else 0,
+            },
+            "lessons": lessons_out,
+        }
+
     @api.get("/portal/school/{sid}/record")
     async def portal_school_record(sid:str,user:dict=Depends(get_current_user)):
         se,dp=await _client_context(sid,user)

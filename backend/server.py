@@ -17290,7 +17290,7 @@ async def _auto_assign_module_homework(enrollment: dict, just_mastered_goal_id: 
 
 
 async def _apply_goal_update_to_enrollment(
-    *, enrollment: dict, goal_id: str, body: "GoalUpdate",
+    *, enrollment: dict, goal_id: str, body: "GoalUpdate", derive_status_from_score: bool = True,
 ) -> dict:
     """Sprint 110di-69 — Extracted from `update_goal` so the new
     training-session batch endpoint can apply many goal updates inside one
@@ -17305,12 +17305,27 @@ async def _apply_goal_update_to_enrollment(
         cur["status"] = body.status
     if body.score is not None:
         cur["score"] = body.score
-        if body.score >= 4:
-            cur["status"] = "mastered"
-        elif body.score >= 1:
-            cur["status"] = "in_progress"
+        if derive_status_from_score:
+            # Legacy/direct behaviour, unchanged: the per-goal editor treats
+            # the score AS the assessment, including moving a skill backward
+            # (see test_trainer_can_move_skill_score_backward).
+            if body.score >= 4:
+                cur["status"] = "mastered"
+            elif body.score >= 1:
+                cur["status"] = "in_progress"
+            else:
+                cur["status"] = "not_started"
         else:
-            cur["status"] = "not_started"
+            # Trainer Lesson Workspace: a session score is an observation of
+            # TODAY, not a verdict on the curriculum. It may record that a
+            # skill has now been WORKED (not_started -> in_progress), because
+            # a skill someone just scored plainly isn't "not started" — but
+            # it can never reach "mastered" (that is an explicit trainer
+            # decision) and can never move a skill backwards. A weak later
+            # rep lives on the session log and in `score`; revoking mastery
+            # requires a deliberate act, handled by the caller.
+            if cur.get("status") in (None, "not_started") and body.score >= 1:
+                cur["status"] = "in_progress"
     if body.notes is not None:
         cur["notes"] = body.notes
     cur["last_session_at"] = datetime.now(timezone.utc).isoformat()
@@ -22513,9 +22528,27 @@ class SessionActivityActualIn(BaseModel):
     environment: Optional[str] = None
     handler_assistance: Optional[str] = None
     leash_off_leash: Optional[str] = None
-    outcome: Optional[Literal["passed", "improving", "needs_more_work", "skipped"]] = None
+    # Today's assessment of this skill. The four original values are
+    # unchanged (existing drafts/logs stay valid); "introduced" and
+    # "reliable" extend the same canonical field to the six-level scale the
+    # Trainer Lesson Workspace needs, rather than introducing a second
+    # status vocabulary alongside goal_progress.status.
+    outcome: Optional[Literal[
+        "passed", "improving", "needs_more_work", "skipped", "introduced", "reliable",
+    ]] = None
     skip_reason: Optional[str] = None
+    # STAFF-ONLY. Never leaves the trainer-facing API — see
+    # _client_safe_session_activity for the client-facing counterpart.
     notes: Optional[str] = None
+    # CLIENT-SAFE. The observation the owner is meant to read for this
+    # skill. Deliberately a separate field from `notes` so internal
+    # assessment language can never become client-visible by accident.
+    client_observation: Optional[str] = None
+    # Explicit mastery decision for this skill, made by the trainer as its
+    # own act. None = "no mastery decision today" — which is NOT the same
+    # as False. A performance score never sets this (see
+    # _apply_goal_update_to_enrollment's derive_status_from_score).
+    mastery_decision: Optional[Literal["mastered", "not_yet"]] = None
     homework_eligible: bool = False
     needs_reassessment: bool = False
 
@@ -22523,8 +22556,17 @@ class SessionActivityActualIn(BaseModel):
 class TrainingSessionDraftUpdateIn(BaseModel):
     plan: Optional[List[SessionActivityIn]] = None
     actuals: Optional[Dict[str, SessionActivityActualIn]] = None
+    # STAFF-ONLY internal note (unchanged meaning).
     session_note: Optional[str] = None
+    # CLIENT-SAFE trainer message (unchanged meaning).
     client_recap_note: Optional[str] = None
+    # Structured lesson summary. All three are CLIENT-SAFE: they are the
+    # owner-facing "how did it go" narrative and feed both the client recap
+    # and the next trainer's handoff. Anything the client must not read
+    # belongs in session_note.
+    what_went_well: Optional[str] = None
+    needs_work: Optional[str] = None
+    next_lesson_focus: Optional[str] = None
 
 
 async def _resolve_active_enrollment_for_dog(dog_id: str, requested_enrollment_id: Optional[str] = None) -> Dict[str, Any]:
@@ -22662,13 +22704,39 @@ async def _build_pre_session_overview(enrollment: dict, dog: dict) -> Dict[str, 
             for m in (enrollment.get("program_snapshot", {}).get("modules") or [])
             for g in (m.get("goals") or [])
         }
+        skills_worked = [
+            {"skill_id": d.get("goal_id"), "name": d.get("skill_name") or goal_names.get(d.get("goal_id"), ""),
+             "new_status": d.get("new_status"), "new_score": d.get("new_score"),
+             "session_score": d.get("session_score"), "assessment": d.get("session_outcome")}
+            for d in (last_log.get("goal_updates") or [])
+        ]
+        # Trainer handoff — the incoming trainer must not have to read old
+        # notes to know where the dog left off. Everything here comes from
+        # the PREVIOUS canonical session log for THIS enrollment attempt
+        # (the query above is keyed on enrollment_id), so Repeat Program
+        # attempts never hand each other's context across.
+        def _score_of(s):
+            v = s.get("session_score")
+            return v if v is not None else (s.get("new_score") or 0)
+        scored = [s for s in skills_worked if _score_of(s) is not None]
+        strongest = sorted(scored, key=_score_of, reverse=True)[:3]
+        weakest = [s for s in sorted(scored, key=_score_of)
+                   if _score_of(s) <= 3 or s.get("assessment") in ("needs_more_work", "introduced")][:3]
+        practice_titles = []
+        for hid in (last_log.get("homework_created") or []):
+            hw_row = await db.homework.find_one({"id": hid}, {"_id": 0, "title": 1})
+            if hw_row:
+                practice_titles.append(hw_row.get("title"))
         last_session = {
             "at": last_log.get("at"), "by": last_log.get("by_user"), "note": last_log.get("session_note"),
-            "skills_worked": [
-                {"skill_id": d.get("goal_id"), "name": d.get("skill_name") or goal_names.get(d.get("goal_id"), ""),
-                 "new_status": d.get("new_status"), "new_score": d.get("new_score")}
-                for d in (last_log.get("goal_updates") or [])
-            ],
+            "skills_worked": skills_worked,
+            "lesson_name": last_log.get("lesson_name_at_session"),
+            "strongest_skills": [{"name": s["name"], "score": _score_of(s)} for s in strongest],
+            "needs_work_skills": [{"name": s["name"], "score": _score_of(s)} for s in weakest],
+            "what_went_well": last_log.get("what_went_well") or "",
+            "needs_work": last_log.get("needs_work") or "",
+            "next_lesson_focus": last_log.get("next_lesson_focus") or "",
+            "practice_assigned": practice_titles,
         }
 
     recent_homework = await db.homework.find(
@@ -22886,6 +22954,10 @@ async def update_training_session_draft(
         update["session_note"] = body.session_note
     if body.client_recap_note is not None:
         update["client_recap_note"] = body.client_recap_note
+    for _field in ("what_went_well", "needs_work", "next_lesson_focus"):
+        _value = getattr(body, _field)
+        if _value is not None:
+            update[_field] = _value
     await db.training_session_drafts.update_one({"id": draft_id}, {"$set": update})
     draft.update(update)
     return draft
@@ -22906,6 +22978,53 @@ class SessionCompletionIn(BaseModel):
 
 class SessionReopenIn(BaseModel):
     reason: str = Field(min_length=3)
+
+
+_ADVANCEMENT_ACTIONS_PAST_LESSON = frozenset({"advance_lesson", "advance_module", "skip_lesson", "complete_program"})
+
+CHECKPOINT_GATE_MESSAGE = (
+    "This lesson requires a formal checkpoint before the program can advance. "
+    "Complete the checkpoint first."
+)
+
+
+async def _required_checkpoint_blocks_advancement(enrollment: dict, action: str) -> bool:
+    """Decision 2 — a required formal checkpoint is a curriculum gate.
+
+    Returns True when this School session is trying to move past a lesson
+    whose checkpoint is enabled and which has no successfully-satisfied
+    checkpoint yet. Deliberately narrow:
+
+    * Only School deliveries are gated. A plain trainer-led enrollment with
+      no School companion keeps its existing behaviour untouched.
+    * Online is not gated here — it never runs trainer sessions; its own
+      checkpoint state machine already owns its progression.
+    * "Satisfied" means a graded checkpoint_submissions row for THIS
+      enrollment and THIS lesson whose outcome advanced the student. That
+      row is produced only by the canonical grading path — the Live Trainer
+      Checkpoint for In Person, either valid path for Hybrid — so a session
+      score can never stand in for one, and nothing here creates, grades or
+      manufactures a checkpoint.
+    * Actions that do not move past the lesson (remain, assign_review,
+      reopen_previous_lesson, mark_for_assessment) are never blocked, so a
+      blocked trainer can still record and save the whole lesson.
+    """
+    if action not in _ADVANCEMENT_ACTIONS_PAST_LESSON:
+        return False
+    if enrollment.get("delivery_channel") not in ("in_person_school", "hybrid_school"):
+        return False
+    lesson_id = enrollment.get("current_lesson_id")
+    if not lesson_id:
+        return False
+    lesson = _find_lesson_in_snapshot(enrollment, lesson_id)
+    if not ((lesson or {}).get("checkpoint") or {}).get("enabled"):
+        return False
+    satisfied = await db.checkpoint_submissions.find_one(
+        {"enrollment_id": enrollment["id"], "lesson_id": lesson_id,
+         "status": "graded", "outcome": "advance"},
+        {"_id": 0, "id": 1},
+    )
+    return satisfied is None
 
 
 async def _claim_auto_homework_trigger(enrollment_id: str, template_id: str, trigger: str) -> bool:
@@ -22952,6 +23071,16 @@ async def _compute_completion_plan(enrollment: dict, draft: dict, draft_id: str,
         key=lambda m: (m.get("order", 0), m.get("name") or ""),
     )
     goal_ids_in_program = {g["id"] for m in modules_sorted for g in (m.get("goals") or [])}
+    # Snapshot of canonical progress BEFORE this session applies anything —
+    # read to answer "was this skill already mastered?" when interpreting an
+    # explicit mastery decision, since the live dict mutates as we iterate.
+    progress_before = {k: dict(v) for k, v in (enrollment.get("goal_progress") or {}).items()}
+    # The School attempt this session belongs to. Stamped on the log so
+    # per-attempt history can be read without re-deriving it later — and so
+    # Repeat Program attempts can never be merged by dog+program alone.
+    _companion = await db.school_enrollments.find_one(
+        {"enrollment_id": enrollment["id"]}, {"_id": 0, "id": 1})
+    school_companion_id = (_companion or {}).get("id")
 
     goal_diffs: List[Dict[str, Any]] = []
     reassessment_ids: set = set()
@@ -22961,15 +23090,37 @@ async def _compute_completion_plan(enrollment: dict, draft: dict, draft_id: str,
             continue
         actual = actuals.get(a["id"]) or {}
         if a.get("source") == "skill" and a.get("skill_id") in goal_ids_in_program:
-            if actual.get("score") is not None or actual.get("status") is not None or actual.get("notes") is not None:
+            if (actual.get("score") is not None or actual.get("status") is not None
+                    or actual.get("notes") is not None or actual.get("mastery_decision") is not None):
+                # Mastery is its OWN decision (Decision 1). An explicit
+                # mastery_decision is the only thing in a session that can
+                # set or clear "mastered"; the 1-5 score is recorded as
+                # today's performance and never promotes or demotes. Passing
+                # derive_status_from_score=False is what separates the two.
+                mastery = actual.get("mastery_decision")
+                explicit_status = actual.get("status")
+                if mastery == "mastered":
+                    explicit_status = "mastered"
+                elif mastery == "not_yet" and (progress_before.get(a["skill_id"]) or {}).get("status") == "mastered":
+                    # Deliberate revocation — allowed, but only ever as an
+                    # explicit act, never as a side effect of a low score.
+                    explicit_status = "in_progress"
                 enrollment = await _apply_goal_update_to_enrollment(
                     enrollment=enrollment, goal_id=a["skill_id"],
-                    body=GoalUpdate(status=actual.get("status"), score=actual.get("score"), notes=actual.get("notes")),
+                    body=GoalUpdate(status=explicit_status, score=actual.get("score"), notes=actual.get("notes")),
+                    derive_status_from_score=False,
                 )
                 diff = enrollment.pop("_goal_diff_" + a["skill_id"], {})
                 diff["goal_id"] = a["skill_id"]
                 diff["activity_id"] = a["id"]
                 diff["note"] = actual.get("notes") or ""
+                # Client-safe per-skill observation + today's assessment,
+                # snapshotted onto the immutable log so the client recap
+                # never has to re-read a live document to render history.
+                diff["client_observation"] = actual.get("client_observation") or ""
+                diff["session_outcome"] = actual.get("outcome")
+                diff["session_score"] = actual.get("score")
+                diff["mastery_decision"] = mastery
                 # Training-school expansion (Phase 10) — snapshot the skill's
                 # name onto the log entry itself. A later curriculum edit
                 # (cascade) can remove this goal from the live program, but
@@ -23068,8 +23219,22 @@ async def _compute_completion_plan(enrollment: dict, draft: dict, draft_id: str,
         "id": log_id, "dog_id": enrollment["dog_id"], "enrollment_id": enrollment["id"],
         "booking_id": draft.get("booking_id"), "draft_id": draft_id,
         "by_user": user.get("name") or user.get("id"), "by_email": user.get("email"), "at": ts,
-        "session_note": draft.get("session_note") or "",
-        "client_recap_note": draft.get("client_recap_note") or "",
+        "session_note": draft.get("session_note") or "",           # STAFF-ONLY
+        "client_recap_note": draft.get("client_recap_note") or "",  # client-safe
+        # Structured lesson summary — client-safe, and the source of the
+        # next trainer's handoff block.
+        "what_went_well": draft.get("what_went_well") or "",
+        "needs_work": draft.get("needs_work") or "",
+        "next_lesson_focus": draft.get("next_lesson_focus") or "",
+        # Position snapshot so six-month-old history renders without
+        # depending on the live enrollment or a since-edited curriculum.
+        "school_enrollment_id": (school_companion_id or None),
+        "program_id": enrollment.get("program_id"),
+        "program_name": (enrollment.get("program_snapshot") or {}).get("name"),
+        "module_id_at_session": enrollment.get("current_module_id"),
+        "lesson_id_at_session": cur_lesson_id,
+        "lesson_name_at_session": next(
+            (l.get("name") for l in lessons if l.get("id") == cur_lesson_id), None),
         "goal_updates": goal_diffs,
         "activities": activities,
         "advancement_action": action,
@@ -23423,6 +23588,16 @@ async def complete_training_session(
         enrollment = await db.dog_programs.find_one({"id": draft["enrollment_id"]}, {"_id": 0})
         if not enrollment:
             raise HTTPException(status_code=404, detail="Enrollment not found")
+        # Decision 2 — the checkpoint gate is checked BEFORE the draft is
+        # claimed, so a blocked completion leaves the draft in "draft" with
+        # every recorded assessment intact and re-completable once the
+        # checkpoint is graded. Nothing is written on this path.
+        if await _required_checkpoint_blocks_advancement(enrollment, body.advancement_action):
+            raise HTTPException(
+                status_code=409,
+                detail={"error_code": "checkpoint_required_before_advancement",
+                        "message": CHECKPOINT_GATE_MESSAGE},
+            )
         plan = await _compute_completion_plan(enrollment, draft, draft_id, body, user)
         claim_token = str(uuid.uuid4())
         claimed = await db.training_session_drafts.find_one_and_update(
