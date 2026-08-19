@@ -11,6 +11,8 @@ import uuid
 import asyncio
 import secrets
 import hashlib
+import hmac
+import struct
 import logging
 import contextvars
 import traceback
@@ -21,11 +23,11 @@ import bcrypt
 import jwt
 from datetime import datetime, timezone, timedelta, date, time
 from zoneinfo import ZoneInfo
-from urllib.parse import urlsplit
+from urllib.parse import urlsplit, quote
 from typing import List, Optional, Literal, Dict, Any, Tuple
 
 from fastapi import FastAPI, APIRouter, Depends, HTTPException, Request, Query, Body, UploadFile, File
-from fastapi.responses import Response, FileResponse
+from fastapi.responses import Response, FileResponse, HTMLResponse
 from fastapi.security import HTTPBearer, HTTPAuthorizationCredentials
 from starlette.middleware.cors import CORSMiddleware
 from motor.motor_asyncio import AsyncIOMotorClient
@@ -33,6 +35,7 @@ from pymongo import ReturnDocument
 from pymongo.errors import DuplicateKeyError
 from pydantic import BaseModel, Field, EmailStr, ConfigDict, field_validator, model_validator, ValidationError
 import stripe
+from cryptography.fernet import Fernet, InvalidToken
 
 from email_service import (
     notify_admin_new_booking,
@@ -247,6 +250,60 @@ def create_access_token(user_id: str, email: str, role: str, token_version: int 
         "type": "access",
     }
     return jwt.encode(payload, JWT_SECRET, algorithm=JWT_ALG)
+
+
+def _mfa_fernet() -> Fernet:
+    key = base64.urlsafe_b64encode(hashlib.sha256((JWT_SECRET + "|mfa-secret-v1").encode()).digest())
+    return Fernet(key)
+
+
+def _mfa_encrypt_secret(secret: str) -> str:
+    return _mfa_fernet().encrypt(secret.encode()).decode()
+
+
+def _mfa_decrypt_secret(token: str) -> Optional[str]:
+    try:
+        return _mfa_fernet().decrypt((token or "").encode()).decode()
+    except (InvalidToken, ValueError, TypeError):
+        return None
+
+
+def _totp_code(secret: str, counter: int) -> str:
+    padded = (secret or "").upper() + "=" * ((8 - len(secret or "") % 8) % 8)
+    key = base64.b32decode(padded, casefold=True)
+    msg = struct.pack(">Q", int(counter))
+    digest = hmac.new(key, msg, hashlib.sha1).digest()
+    offset = digest[-1] & 0x0F
+    binary = struct.unpack(">I", digest[offset:offset + 4])[0] & 0x7FFFFFFF
+    return f"{binary % 1000000:06d}"
+
+
+def _verify_totp(secret: str, code: str, *, at: Optional[int] = None) -> bool:
+    clean = re.sub(r"\D", "", code or "")
+    if len(clean) != 6:
+        return False
+    now_s = int(at if at is not None else datetime.now(timezone.utc).timestamp())
+    counter = now_s // 30
+    return any(hmac.compare_digest(_totp_code(secret, counter + drift), clean) for drift in (-1, 0, 1))
+
+
+def _mfa_recovery_hash(code: str) -> str:
+    normalized = re.sub(r"[^A-Z0-9]", "", (code or "").upper())
+    return hashlib.sha256((JWT_SECRET + "|mfa-recovery|" + normalized).encode()).hexdigest()
+
+
+def _new_recovery_codes() -> list[str]:
+    return [f"{secrets.token_hex(3).upper()}-{secrets.token_hex(3).upper()}" for _ in range(8)]
+
+
+def _create_mfa_challenge(user: dict) -> str:
+    payload = {
+        "sub": user["id"], "email": user.get("email"), "ver": _token_version(user),
+        "iat": datetime.now(timezone.utc), "exp": datetime.now(timezone.utc) + timedelta(minutes=10),
+        "type": "mfa_challenge",
+    }
+    return jwt.encode(payload, JWT_SECRET, algorithm=JWT_ALG)
+
 
 def now_iso() -> str:
     return datetime.now(timezone.utc).isoformat()
@@ -589,6 +646,17 @@ class RegisterIn(BaseModel):
 class LoginIn(BaseModel):
     email: EmailStr
     password: str
+
+class MfaLoginVerifyIn(BaseModel):
+    challenge_token: str = Field(min_length=20, max_length=4096)
+    code: str = Field(min_length=6, max_length=64)
+
+class MfaCodeIn(BaseModel):
+    code: str = Field(min_length=6, max_length=64)
+
+class MfaDisableIn(BaseModel):
+    current_password: str
+    code: str = Field(min_length=6, max_length=64)
 
 class UserOut(BaseModel):
     model_config = ConfigDict(extra="ignore")
@@ -1438,7 +1506,7 @@ async def register(body: RegisterIn, request: Request):
     return {"token": token, "user": {k: user.get(k) for k in ["id", "email", "name", "role", "client_id"]}}
 
 
-@api.post("/auth/login", response_model=AuthOut)
+@api.post("/auth/login")
 async def login(body: LoginIn, request: Request):
     email = body.email.lower()
     ip = _client_ip(request)
@@ -1453,6 +1521,8 @@ async def login(body: LoginIn, request: Request):
     # `active` on legacy users is allowed for backwards compatibility.
     if user.get("active") is False:
         raise HTTPException(status_code=403, detail="Account disabled")
+    if user.get("mfa_enabled"):
+        return {"mfa_required": True, "challenge_token": _create_mfa_challenge(user)}
     # Record last-login timestamp so admin can see who's actually using the app.
     # Best-effort — don't block the login if this fails.
     try:
@@ -1472,6 +1542,93 @@ async def login(body: LoginIn, request: Request):
         "token": token,
         "user": login_user,
     }
+
+
+async def _verify_mfa_user_code(user: dict, code: str, *, consume_recovery: bool = True) -> bool:
+    secret = _mfa_decrypt_secret(user.get("mfa_secret_enc") or "")
+    if secret and _verify_totp(secret, code):
+        return True
+    recovery_hash = _mfa_recovery_hash(code)
+    hashes = list(user.get("mfa_recovery_hashes") or [])
+    if recovery_hash not in hashes:
+        return False
+    if consume_recovery:
+        result = await db.users.update_one(
+            {"id": user["id"], "mfa_recovery_hashes": recovery_hash},
+            {"$pull": {"mfa_recovery_hashes": recovery_hash}, "$set": {"mfa_recovery_used_at": now_iso()}},
+        )
+        return result.modified_count == 1
+    return True
+
+
+@api.post("/auth/mfa/verify-login", response_model=AuthOut)
+async def verify_mfa_login(body: MfaLoginVerifyIn, request: Request):
+    try:
+        payload = jwt.decode(body.challenge_token, JWT_SECRET, algorithms=[JWT_ALG])
+    except Exception:
+        raise HTTPException(status_code=401, detail="MFA challenge expired or invalid")
+    if payload.get("type") != "mfa_challenge":
+        raise HTTPException(status_code=401, detail="Invalid MFA challenge")
+    user = await db.users.find_one({"id": payload.get("sub")})
+    if not user or user.get("active") is False or not user.get("mfa_enabled") or int(payload.get("ver") or 0) != _token_version(user):
+        raise HTTPException(status_code=401, detail="MFA challenge is no longer valid")
+    if not await _verify_mfa_user_code(user, body.code):
+        await _enforce_rate_limit(request, "mfa_login", f"{_client_ip(request)}|{user['id']}", limit=10, window_seconds=900)
+        raise HTTPException(status_code=401, detail="Invalid authenticator or recovery code")
+    await db.users.update_one({"id": user["id"]}, {"$set": {"last_login_at": now_iso(), "mfa_last_used_at": now_iso()}, "$inc": {"login_count": 1}})
+    token = create_access_token(user["id"], user["email"], user["role"], _token_version(user))
+    login_user = {k: user.get(k) for k in ["id", "email", "name", "role", "client_id", "staff_role"]}
+    login_user["must_change_password"] = bool(user.get("must_change_password", False))
+    return {"token": token, "user": login_user}
+
+
+@api.get("/auth/mfa/status")
+async def mfa_status(user: dict = Depends(require_admin)):
+    full = await db.users.find_one({"id": user["id"]}, {"_id": 0, "mfa_enabled": 1, "mfa_recovery_hashes": 1})
+    return {"enabled": bool((full or {}).get("mfa_enabled")), "recovery_codes_remaining": len((full or {}).get("mfa_recovery_hashes") or [])}
+
+
+@api.post("/auth/mfa/setup")
+async def mfa_setup(user: dict = Depends(require_admin)):
+    secret = base64.b32encode(secrets.token_bytes(20)).decode().rstrip("=")
+    await db.users.update_one({"id": user["id"]}, {"$set": {"mfa_pending_secret_enc": _mfa_encrypt_secret(secret), "mfa_setup_started_at": now_iso()}})
+    label = quote(f"Sit Happens:{user.get('email') or user.get('name') or user['id']}")
+    issuer = quote("Sit Happens")
+    uri = f"otpauth://totp/{label}?secret={secret}&issuer={issuer}&digits=6&period=30"
+    return {"secret": secret, "otpauth_uri": uri}
+
+
+@api.post("/auth/mfa/enable")
+async def mfa_enable(body: MfaCodeIn, user: dict = Depends(require_admin)):
+    full = await db.users.find_one({"id": user["id"]}, {"_id": 0})
+    pending = _mfa_decrypt_secret((full or {}).get("mfa_pending_secret_enc") or "")
+    if not pending or not _verify_totp(pending, body.code):
+        raise HTTPException(status_code=400, detail="Authenticator code did not match. Check the app and try again.")
+    codes = _new_recovery_codes()
+    new_ver = _token_version(full or {}) + 1
+    await db.users.update_one(
+        {"id": user["id"]},
+        {"$set": {"mfa_enabled": True, "mfa_secret_enc": _mfa_encrypt_secret(pending), "mfa_recovery_hashes": [_mfa_recovery_hash(c) for c in codes], "mfa_enabled_at": now_iso()},
+         "$unset": {"mfa_pending_secret_enc": "", "mfa_setup_started_at": ""}, "$inc": {"token_version": 1}},
+    )
+    token = create_access_token(user["id"], user["email"], user["role"], new_ver)
+    return {"ok": True, "recovery_codes": codes, "token": token}
+
+
+@api.post("/auth/mfa/disable")
+async def mfa_disable(body: MfaDisableIn, user: dict = Depends(require_admin)):
+    full = await db.users.find_one({"id": user["id"]})
+    if not full or not verify_password(body.current_password, full.get("password_hash") or ""):
+        raise HTTPException(status_code=401, detail="Current password is incorrect")
+    if not await _verify_mfa_user_code(full, body.code, consume_recovery=False):
+        raise HTTPException(status_code=401, detail="Authenticator or recovery code is incorrect")
+    new_ver = _token_version(full) + 1
+    await db.users.update_one(
+        {"id": user["id"]},
+        {"$set": {"mfa_enabled": False, "mfa_disabled_at": now_iso()}, "$unset": {"mfa_secret_enc": "", "mfa_recovery_hashes": "", "mfa_pending_secret_enc": ""}, "$inc": {"token_version": 1}},
+    )
+    token = create_access_token(user["id"], user["email"], user["role"], new_ver)
+    return {"ok": True, "token": token}
 
 
 @api.get("/auth/me", response_model=UserOut)
@@ -1815,24 +1972,55 @@ class ClientFileIn(BaseModel):
     note: Optional[str] = ""
     dog_id: Optional[str] = None  # optional — file tagged to a specific dog
 
+
+class PortalIntakeFileUploadIn(BaseModel):
+    name: str
+    content_type: str
+    data: str
+
+
+PORTAL_INTAKE_UPLOAD_CONTENT_TYPES = {
+    "application/pdf",
+    "text/plain",
+    "application/msword",
+    "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+}
+
 def _strip_data_uri(s: str) -> str:
     """Accept either a raw base64 string or a `data:...;base64,...` URI."""
     if s.startswith("data:") and ";base64," in s:
         return s.split(";base64,", 1)[1]
     return s
 
+
+def _validated_client_file_payload(data: str, *, client_portal: bool = False, content_type: str = "") -> tuple[str, int]:
+    """Validate base64 and enforce the Mongo-safe size cap. Client-originated
+    intake uploads use a deliberately small allowlist (PDF/images/text/Word)
+    so an intake form cannot become an arbitrary binary-upload surface."""
+    raw_b64 = re.sub(r"\s+", "", _strip_data_uri(data or ""))
+    if not raw_b64:
+        raise HTTPException(status_code=400, detail="File is empty.")
+    try:
+        decoded = base64.b64decode(raw_b64, validate=True)
+    except Exception:
+        raise HTTPException(status_code=400, detail="Invalid uploaded file.")
+    size = len(decoded)
+    if size <= 0:
+        raise HTTPException(status_code=400, detail="File is empty.")
+    if size > CLIENT_FILE_MAX_BYTES:
+        raise HTTPException(status_code=413, detail=f"File too large. Max {CLIENT_FILE_MAX_BYTES // (1024*1024)} MB.")
+    if client_portal:
+        ct = (content_type or "").split(";", 1)[0].strip().lower()
+        if not (ct.startswith("image/") or ct in PORTAL_INTAKE_UPLOAD_CONTENT_TYPES):
+            raise HTTPException(status_code=415, detail="Intake uploads must be a PDF, image, text file, or Word document.")
+    return raw_b64, size
+
 @api.post("/clients/{client_id}/files")
 async def upload_client_file(client_id: str, body: ClientFileIn, user: dict = Depends(require_admin)):
     client = await db.clients.find_one({"id": client_id}, {"_id": 0, "id": 1, "name": 1})
     if not client:
         raise HTTPException(status_code=404, detail="Client not found")
-    raw_b64 = _strip_data_uri(body.data or "")
-    if not raw_b64:
-        raise HTTPException(status_code=400, detail="File is empty.")
-    # Approximate byte count from base64 length (4 chars → 3 bytes)
-    approx_bytes = (len(raw_b64) * 3) // 4
-    if approx_bytes > CLIENT_FILE_MAX_BYTES:
-        raise HTTPException(status_code=413, detail=f"File too large. Max {CLIENT_FILE_MAX_BYTES // (1024*1024)} MB.")
+    raw_b64, approx_bytes = _validated_client_file_payload(body.data or "", content_type=body.content_type)
     if body.dog_id:
         # Verify the dog belongs to this client (so admin can't accidentally tag the wrong dog)
         owned = await db.dogs.find_one({"id": body.dog_id, "owner_id": client_id}, {"_id": 0, "id": 1})
@@ -3360,15 +3548,50 @@ def _validate_base64_uploads(photos: List[str], *, max_items: int = 4, max_chars
             raise HTTPException(status_code=400, detail="Uploaded photo is too large. Please use a smaller/compressed image.")
 
 
-async def _validate_dog_vaccines(dog: dict, required: List[str]) -> None:
+def _required_vaccines_for_service(settings: dict, service_type: Optional[str]) -> List[str]:
+    """Resolve the vaccine requirement the same way Settings describes it.
+
+    A non-empty per-service list overrides the global required_vaccines list;
+    an empty/missing per-service list deliberately falls back to the global
+    requirement. This keeps booking-time and check-in-time enforcement aligned
+    with Day-to-Day Controls instead of presenting a decorative setting.
+    """
+    global_required = [str(v).strip().lower() for v in (settings.get("required_vaccines") or ["rabies"]) if str(v).strip()]
+    per_service = (((settings.get("day_to_day") or {}).get("compliance") or {}).get("vaccines_per_service") or {})
+    scoped = per_service.get((service_type or "").strip().lower()) if isinstance(per_service, dict) else None
+    if isinstance(scoped, list):
+        cleaned = [str(v).strip().lower() for v in scoped if str(v).strip()]
+        if cleaned:
+            return cleaned
+    return global_required
+
+
+async def _validate_dog_vaccines(
+    dog: dict,
+    required: List[str],
+    *,
+    block_on_expiry_day: bool = True,
+    document_required: bool = False,
+) -> None:
+    """Validate the canonical approved vaccine record.
+
+    `block_on_expiry_day` and `document_required` are live Day-to-Day
+    compliance controls. Legacy callers keep the historical strict defaults.
+    """
     today = business_today().isoformat()
     vaccines = dog.get("vaccines") or {}
+    certs = dog.get("vaccine_certs") or {}
     for v in required:
         if _pending_vaccine_cert_for(dog, v):
             raise HTTPException(status_code=400, detail=f"{v.title()} vaccine is pending admin review")
-        d = vaccines.get(v, "")
-        if not d or d < today:
+        d = str(vaccines.get(v, "") or "")[:10]
+        expired = bool(d and (d <= today if block_on_expiry_day else d < today))
+        if not d or expired:
             raise HTTPException(status_code=400, detail=f"{v.title()} vaccine missing or expired")
+        if document_required:
+            cert = certs.get(v) or {}
+            if not isinstance(cert, dict) or cert.get("status") != "approved":
+                raise HTTPException(status_code=400, detail=f"{v.title()} vaccine document must be approved before booking")
 
 
 def _dog_vaccine_checkin_warning(dog: dict, required: List[str]) -> Optional[str]:
@@ -3800,7 +4023,7 @@ async def create_booking(body: BookingIn, user: dict = Depends(get_current_user)
 
     settings = await get_settings()
     rules = settings.get("booking_rules", {})
-    required = settings.get("required_vaccines", ["rabies"])
+    required = _required_vaccines_for_service(settings, body.service_type)
 
     # Resolve the exact active catalog service before applying rules. This
     # closes the old category-only API path that could otherwise bypass an
@@ -3880,17 +4103,44 @@ async def create_booking(body: BookingIn, user: dict = Depends(get_current_user)
                 detail="This client needs to complete a Meet-n-Greet evaluation before booking. Please schedule one first.",
             )
 
+    # Day-to-Day money guard — this setting used to be presentation-only.
+    # For client-created bookings, a configured threshold now genuinely blocks
+    # additional booking requests when the client's canonical account_balance
+    # exceeds it. Admin/staff booking remains available so the owner can make
+    # an intentional exception after reviewing the account.
+    if user.get("role") != "admin":
+        money_controls = ((settings.get("day_to_day") or {}).get("money") or {})
+        decline_over = float(money_controls.get("auto_decline_if_balance_over") or 0)
+        current_balance = round(float(client.get("account_balance") or 0), 2)
+        if decline_over > 0 and current_balance > decline_over + 0.005:
+            raise HTTPException(
+                status_code=409,
+                detail=f"New bookings are paused while your account balance is ${current_balance:.2f}. Please contact Sit Happens to review the balance.",
+            )
+
     # Waiver check for clients
     if user.get("role") != "admin" and bool(settings.get("waiver_required_for_booking", True)):
         sig = await db.waiver_signatures.find_one({"client_id": client["id"]}, sort=[("signed_at", -1)])
         current_version = int(settings.get("waiver_version", 1))
         if not sig or int(sig.get("waiver_version", 1)) < current_version:
             raise HTTPException(status_code=400, detail="Waiver must be signed before booking")
+    if user.get("role") != "admin":
+        await _require_agreements_signed(client["id"], service_type=body.service_type)
 
-    # Vaccine check (multi-vaccine via settings)
+    # Vaccine check (multi-vaccine + per-service Day-to-Day policy).
+    # `block_bookings_if_vaccines_expired` used to be decorative; it now
+    # genuinely controls client booking enforcement. Staff can still use the
+    # existing explicit override_vaccines path when authorized.
     is_admin = user.get("role") == "admin"
-    if not (is_admin and body.override_vaccines):
-        await _validate_dog_vaccines(dog, required)
+    compliance = ((settings.get("day_to_day") or {}).get("compliance") or {})
+    guardrails = ((settings.get("day_to_day") or {}).get("guardrails") or {})
+    should_block_vaccines = bool(guardrails.get("block_bookings_if_vaccines_expired", True))
+    if should_block_vaccines and not (is_admin and body.override_vaccines):
+        await _validate_dog_vaccines(
+            dog, required,
+            block_on_expiry_day=bool(compliance.get("block_on_expiry_day", True)),
+            document_required=bool(compliance.get("vaccine_doc_upload_required", False)),
+        )
 
     # Sprint 110ff — Same-dog duplicate-booking guard. GET /bookings/conflicts
     # only ever showed an informational "heads up" banner in one screen and
@@ -6296,7 +6546,7 @@ async def check_in(
         dog = await db.dogs.find_one({"id": booking.get("dog_id")}, {"_id": 0})
         if dog:
             settings = await get_settings()
-            required = settings.get("required_vaccines", ["rabies"])
+            required = _required_vaccines_for_service(settings, booking.get("service_type"))
             warning = _dog_vaccine_checkin_warning(dog, required)
             if warning:
                 raise HTTPException(status_code=409, detail={
@@ -11492,6 +11742,129 @@ async def set_my_prefs(body: PreferencesIn, user: dict = Depends(get_current_use
 
 
 # -------- Waivers --------
+class AgreementTemplateIn(BaseModel):
+    name: str = Field(min_length=1, max_length=120)
+    title: str = Field(min_length=1, max_length=200)
+    body: str = Field(min_length=1, max_length=30000)
+    scope_type: Literal["general", "service_type", "program_id"] = "general"
+    scope_value: Optional[str] = Field(default=None, max_length=200)
+    required: bool = True
+    active: bool = True
+
+
+class AgreementSignIn(BaseModel):
+    typed_name: str = Field(min_length=2, max_length=120)
+    dog_id: Optional[str] = None
+
+
+def _agreement_scope_matches(template: dict, *, service_type: Optional[str] = None, program_id: Optional[str] = None) -> bool:
+    scope_type = template.get("scope_type") or "general"
+    scope_value = str(template.get("scope_value") or "")
+    if scope_type == "general":
+        return True
+    if scope_type == "service_type":
+        return bool(service_type and scope_value == service_type)
+    if scope_type == "program_id":
+        return bool(program_id and scope_value == program_id)
+    return False
+
+
+async def _unsigned_required_agreements(client_id: str, *, service_type: Optional[str] = None, program_id: Optional[str] = None) -> list[dict]:
+    templates = await db.agreement_templates.find({"active": True, "required": True}, {"_id": 0}).to_list(500)
+    applicable = [t for t in templates if _agreement_scope_matches(t, service_type=service_type, program_id=program_id)]
+    if not applicable:
+        return []
+    ids = [t["id"] for t in applicable]
+    sigs = await db.agreement_signatures.find({"client_id": client_id, "template_id": {"$in": ids}}, {"_id": 0}).to_list(1000)
+    signed_versions = {(x.get("template_id"), int(x.get("template_version") or 0)) for x in sigs}
+    return [t for t in applicable if (t["id"], int(t.get("version") or 1)) not in signed_versions]
+
+
+async def _require_agreements_signed(client_id: str, *, service_type: Optional[str] = None, program_id: Optional[str] = None) -> None:
+    missing = await _unsigned_required_agreements(client_id, service_type=service_type, program_id=program_id)
+    if missing:
+        names = ", ".join((t.get("title") or t.get("name") or "agreement") for t in missing[:3])
+        raise HTTPException(status_code=409, detail=f"Required agreement must be signed before continuing: {names}")
+
+
+@api.get("/admin/agreement-templates")
+async def admin_agreement_templates(_: dict = Depends(require_admin_and_permission("settings"))):
+    return await db.agreement_templates.find({}, {"_id": 0}).sort([("active", -1), ("name", 1)]).to_list(500)
+
+
+@api.post("/admin/agreement-templates")
+async def admin_create_agreement_template(body: AgreementTemplateIn, user: dict = Depends(require_admin_and_permission("settings"))):
+    if body.scope_type != "general" and not (body.scope_value or "").strip():
+        raise HTTPException(status_code=400, detail="A service/program scope value is required")
+    ts = now_iso()
+    doc = {"id": str(uuid.uuid4()), **body.model_dump(), "scope_value": (body.scope_value or "").strip() or None,
+           "version": 1, "created_at": ts, "updated_at": ts, "created_by": user.get("id")}
+    await db.agreement_templates.insert_one(doc.copy())
+    doc.pop("_id", None)
+    return doc
+
+
+@api.put("/admin/agreement-templates/{template_id}")
+async def admin_update_agreement_template(template_id: str, body: AgreementTemplateIn, user: dict = Depends(require_admin_and_permission("settings"))):
+    existing = await db.agreement_templates.find_one({"id": template_id}, {"_id": 0})
+    if not existing:
+        raise HTTPException(status_code=404, detail="Agreement template not found")
+    patch = body.model_dump()
+    patch["scope_value"] = (body.scope_value or "").strip() or None
+    signature_meaning_changed = any(existing.get(k) != patch.get(k) for k in ("title", "body", "scope_type", "scope_value"))
+    if signature_meaning_changed:
+        patch["version"] = int(existing.get("version") or 1) + 1
+    patch["updated_at"] = now_iso(); patch["updated_by"] = user.get("id")
+    await db.agreement_templates.update_one({"id": template_id}, {"$set": patch})
+    return await db.agreement_templates.find_one({"id": template_id}, {"_id": 0})
+
+
+@api.get("/portal/agreements")
+async def portal_agreements(user: dict = Depends(get_current_user)):
+    if user.get("role") != "client" or not user.get("client_id"):
+        raise HTTPException(status_code=403, detail="Client account required")
+    templates = await db.agreement_templates.find({"active": True}, {"_id": 0}).sort("name", 1).to_list(500)
+    sigs = await db.agreement_signatures.find({"client_id": user["client_id"]}, {"_id": 0}).sort("signed_at", -1).to_list(1000)
+    sig_by_key = {(x.get("template_id"), int(x.get("template_version") or 0)): x for x in sigs}
+    out = []
+    for t in templates:
+        key = (t["id"], int(t.get("version") or 1))
+        sig = sig_by_key.get(key)
+        out.append({"id": t["id"], "name": t.get("name"), "title": t.get("title"), "body": t.get("body"),
+                    "scope_type": t.get("scope_type"), "scope_value": t.get("scope_value"), "version": t.get("version", 1),
+                    "required": bool(t.get("required")), "signed": bool(sig), "signature": sig})
+    return {"agreements": out}
+
+
+@api.post("/portal/agreements/{template_id}/sign")
+async def portal_sign_agreement(template_id: str, body: AgreementSignIn, request: Request, user: dict = Depends(get_current_user)):
+    if user.get("role") != "client" or not user.get("client_id"):
+        raise HTTPException(status_code=403, detail="Client account required")
+    template = await db.agreement_templates.find_one({"id": template_id, "active": True}, {"_id": 0})
+    if not template:
+        raise HTTPException(status_code=404, detail="Agreement not found")
+    if body.dog_id:
+        dog = await db.dogs.find_one({"id": body.dog_id, "owner_id": user["client_id"]}, {"_id": 0, "id": 1})
+        if not dog:
+            raise HTTPException(status_code=404, detail="Dog not found")
+    version = int(template.get("version") or 1)
+    existing = await db.agreement_signatures.find_one({"client_id": user["client_id"], "template_id": template_id, "template_version": version}, {"_id": 0})
+    if existing:
+        return existing
+    ts = now_iso()
+    doc = {
+        "id": str(uuid.uuid4()), "client_id": user["client_id"], "dog_id": body.dog_id,
+        "template_id": template_id, "template_version": version,
+        "template_snapshot": {"name": template.get("name"), "title": template.get("title"), "body": template.get("body"),
+                              "scope_type": template.get("scope_type"), "scope_value": template.get("scope_value")},
+        "typed_name": body.typed_name.strip(), "signed_at": ts, "ip": _client_ip(request),
+        "user_agent": (request.headers.get("user-agent") or "")[:500],
+    }
+    await db.agreement_signatures.insert_one(doc.copy())
+    doc.pop("_id", None)
+    return doc
+
+
 class WaiverSignIn(BaseModel):
     typed_name: str = Field(min_length=2)
     accepted: bool = True
@@ -24694,12 +25067,15 @@ async def admin_run_daily_jobs(_: dict = Depends(require_admin)):
 # Saturday slot only became noticeable when Saturday arrived. The requested
 # date now drives URGENCY only, never visibility.
 
-PENDING_ACTION_TYPES = ("meet_and_greet_request", "booking_approval", "reschedule_request")
+PENDING_ACTION_TYPES = ("meet_and_greet_request", "booking_approval", "reschedule_request", "stripe_dispute", "shop_refund_reconciliation", "overdue_medication")
 
 _PENDING_ACTION_TYPE_LABELS = {
     "meet_and_greet_request": "Meet & Greet Request",
     "booking_approval": "Booking Needs Approval",
     "reschedule_request": "Reschedule Request",
+    "stripe_dispute": "Stripe Dispute / Chargeback",
+    "shop_refund_reconciliation": "Shop Refund Needs Review",
+    "overdue_medication": "Overdue Medication",
 }
 
 
@@ -24779,6 +25155,75 @@ def _pending_booking_service_name(b: dict) -> str:
     return st
 
 
+async def _collect_overdue_medication_actions(*, limit: int = 500) -> List[dict]:
+    """Derive medication escalation from the canonical booking care schedule.
+    Nothing is copied into an alert collection: completing/skipping the care
+    item makes the Action Required entry disappear on the next refresh.
+
+    Uninitialized care schedules are seeded from the dog's defaults and the
+    exact seeded IDs are persisted before an alert is exposed. This also
+    closes a long-standing first-open race where Care Board could render one
+    set of generated IDs and then completion would generate a different set.
+    """
+    today_local = business_today().isoformat()
+    candidates = await db.bookings.find(
+        {"status": {"$in": ["approved", "completed"]}, "date": {"$lte": today_local}},
+        {"_id": 0, "id": 1, "dog_id": 1, "dog_name": 1, "client_id": 1, "client_name": 1,
+         "service_type": 1, "date": 1, "end_date": 1, "care_items": 1,
+         "checked_in_at": 1, "checked_out_at": 1, "kennel": 1},
+    ).to_list(2000)
+    out: List[dict] = []
+    for b in candidates:
+        if b.get("checked_out_at"):
+            continue
+        start = b.get("date") or ""
+        end = b.get("end_date") or start
+        checked_in = bool(b.get("checked_in_at"))
+        if not checked_in:
+            # An approved booking is not an on-site medication obligation until
+            # the dog has actually checked in. Otherwise a late/no-show arrival
+            # would create a false "missed medication" Action Required alert.
+            continue
+        is_missed_checkout = end < today_local
+        if not ((start <= today_local <= end) or is_missed_checkout):
+            continue
+        items = await _hydrate_booking_care(b, today_local)
+        if b.get("care_items") is None and items:
+            bare = [{k: v for k, v in it.items() if k not in ("derived_status", "due_minutes_delta")} for it in items]
+            await db.bookings.update_one({"id": b["id"], "$or": [{"care_items": {"$exists": False}}, {"care_items": None}]}, {"$set": {"care_items": bare}})
+            b["care_items"] = bare
+        for it in items:
+            if it.get("kind") != "medication" or it.get("derived_status") != "missed":
+                continue
+            overdue_minutes = max(0, int(it.get("due_minutes_delta") or 0))
+            urgency = _pending_action_urgency(None, today_local, it.get("time") or None)
+            urgency["waiting_minutes"] = overdue_minutes
+            if overdue_minutes < 60:
+                urgency["waiting_label"] = f"{overdue_minutes}m overdue"
+            else:
+                h, m = divmod(overdue_minutes, 60)
+                urgency["waiting_label"] = f"{h}h {m}m overdue" if m else f"{h}h overdue"
+            out.append({
+                "id": f"overdue_medication:{b['id']}:{it.get('id')}",
+                "type": "overdue_medication",
+                "type_label": _PENDING_ACTION_TYPE_LABELS["overdue_medication"],
+                "priority": "action_required", "status": "missed",
+                "created_at": None, "client_id": b.get("client_id"), "client_name": b.get("client_name"),
+                "dog_id": b.get("dog_id"), "dog_name": b.get("dog_name"),
+                "service_name": f"{it.get('label') or 'Medication'}{(' · ' + it.get('amount')) if it.get('amount') else ''}",
+                "requested_start": f"{today_local}T{it.get('time')}" if it.get("time") else today_local,
+                "requested_date": today_local, "requested_end_date": None, "requested_time": it.get("time") or None,
+                "notes": ((it.get("instructions") or it.get("notes") or "Medication is past the 30-minute care window.")[:300]),
+                "deep_link": {"screen": "care", "booking_id": b.get("id"), "care_item_id": it.get("id")},
+                "required_permission": "care_complete",
+                **urgency,
+            })
+            if len(out) >= max(1, min(int(limit or 500), 1000)):
+                return out
+    out.sort(key=lambda x: -(x.get("waiting_minutes") or 0))
+    return out
+
+
 async def _collect_pending_actions(user: dict, *, type_filter: Optional[str] = None,
                                    limit: int = 100) -> Dict[str, Any]:
     """The authoritative Action Required list, permission-filtered server-side.
@@ -24843,6 +25288,43 @@ async def _collect_pending_actions(user: dict, *, type_filter: Optional[str] = N
                 **urgency,
             })
 
+    if perms.get("finance_reports"):
+        d_rows = await db.stripe_disputes.find(
+            {"status": {"$in": list(STRIPE_DISPUTE_OPEN_STATUSES)}}, {"_id": 0},
+        ).sort("first_seen_at", 1).to_list(200)
+        for d in d_rows:
+            urgency = _pending_action_urgency(d.get("first_seen_at"), None, None)
+            items.append({
+                "id": f"stripe_dispute:{d['id']}", "type": "stripe_dispute",
+                "type_label": _PENDING_ACTION_TYPE_LABELS["stripe_dispute"], "priority": "action_required",
+                "status": d.get("status"), "created_at": d.get("first_seen_at"), "client_id": d.get("client_id"),
+                "client_name": None, "dog_id": None, "dog_name": None,
+                "service_name": f"${float(d.get('amount') or 0):.2f} · {d.get('reason') or 'Stripe dispute'}",
+                "requested_start": None, "requested_date": None, "requested_end_date": None, "requested_time": None,
+                "notes": f"Stripe status: {d.get('status')}. Evidence due: {d.get('evidence_due_by') or 'see Stripe'}."[:300],
+                "deep_link": {"screen": "front_desk", "panel": "online_payments", "stripe_dispute_id": d["id"]},
+                "required_permission": "finance_reports", **urgency,
+            })
+        rr_rows = await db.shop_orders.find(
+            {"refund_reconciliation_required": True}, {"_id": 0, "id": 1, "client_id": 1, "client_name": 1, "updated_at": 1, "refund_reconciliation_reason": 1},
+        ).sort("updated_at", 1).to_list(200)
+        for o in rr_rows:
+            urgency = _pending_action_urgency(o.get("updated_at"), None, None)
+            items.append({
+                "id": f"shop_refund_reconciliation:{o['id']}", "type": "shop_refund_reconciliation",
+                "type_label": _PENDING_ACTION_TYPE_LABELS["shop_refund_reconciliation"], "priority": "action_required",
+                "status": "needs_review", "created_at": o.get("updated_at"), "client_id": o.get("client_id"),
+                "client_name": o.get("client_name"), "dog_id": None, "dog_name": None,
+                "service_name": f"Shop Order #{o['id'][:8].upper()}", "requested_start": None,
+                "requested_date": None, "requested_end_date": None, "requested_time": None,
+                "notes": (o.get("refund_reconciliation_reason") or "Shop refund needs entitlement review")[:300],
+                "deep_link": {"screen": "front_desk", "panel": "online_orders", "shop_order_id": o["id"]},
+                "required_permission": "finance_reports", **urgency,
+            })
+
+    if perms.get("care_complete"):
+        items.extend(await _collect_overdue_medication_actions(limit=500))
+
     if type_filter:
         items = [it for it in items if it["type"] == type_filter]
 
@@ -24861,7 +25343,7 @@ async def _collect_pending_actions(user: dict, *, type_filter: Optional[str] = N
 
 def _user_can_see_any_pending_actions(user: dict) -> bool:
     perms = _perms_for(user)
-    return bool(perms.get("booking_edit"))
+    return bool(perms.get("booking_edit") or perms.get("finance_reports") or perms.get("care_complete"))
 
 
 @api.get("/admin/pending-actions")
@@ -24873,7 +25355,7 @@ async def admin_pending_actions(
     urgency). 403 for staff who can't act on any pending-action type —
     server-side enforcement, never just UI hiding."""
     if not _user_can_see_any_pending_actions(user):
-        raise HTTPException(status_code=403, detail="Missing permission: booking_edit")
+        raise HTTPException(status_code=403, detail="Missing permission for Action Required items")
     if type and type not in PENDING_ACTION_TYPES:
         raise HTTPException(status_code=400, detail=f"Unknown pending-action type {type!r}")
     return await _collect_pending_actions(user, type_filter=type, limit=limit)
@@ -24881,19 +25363,24 @@ async def admin_pending_actions(
 
 @api.get("/admin/pending-actions/count")
 async def admin_pending_actions_count(user: dict = Depends(require_admin)):
-    """Cheap badge counts (indexed count_documents — no document scans).
-    Returns zeros rather than 403 so nav badges can poll safely for every
-    staff role; the detailed list endpoint stays permission-enforced."""
+    """Badge counts for Action Required. Booking/finance counts use indexed
+    collection counts; overdue medication count is derived from the current
+    canonical care schedule so no second alert ledger can drift. Returns zeros
+    rather than 403 so nav badges can poll safely for every staff role; the
+    detailed list endpoint stays permission-enforced."""
     if not _user_can_see_any_pending_actions(user):
-        return {"total": 0, "meet_and_greet_requests": 0, "booking_approvals": 0, "reschedule_requests": 0}
-    mg = await db.bookings.count_documents({"status": "pending", "is_meet_greet": True})
-    pending_bookings = await db.bookings.count_documents({"status": "pending", "is_meet_greet": {"$ne": True}})
-    resched = await db.reschedule_requests.count_documents({"status": "pending"})
+        return {"total": 0, "meet_and_greet_requests": 0, "booking_approvals": 0, "reschedule_requests": 0, "stripe_disputes": 0, "shop_refund_reconciliations": 0, "overdue_medications": 0}
+    perms = _perms_for(user)
+    mg = await db.bookings.count_documents({"status": "pending", "is_meet_greet": True}) if perms.get("booking_edit") else 0
+    pending_bookings = await db.bookings.count_documents({"status": "pending", "is_meet_greet": {"$ne": True}}) if perms.get("booking_edit") else 0
+    resched = await db.reschedule_requests.count_documents({"status": "pending"}) if perms.get("booking_edit") else 0
+    disputes = await db.stripe_disputes.count_documents({"status": {"$in": list(STRIPE_DISPUTE_OPEN_STATUSES)}}) if perms.get("finance_reports") else 0
+    shop_recon = await db.shop_orders.count_documents({"refund_reconciliation_required": True}) if perms.get("finance_reports") else 0
+    overdue_meds = len(await _collect_overdue_medication_actions(limit=1000)) if perms.get("care_complete") else 0
     return {
-        "total": mg + pending_bookings + resched,
-        "meet_and_greet_requests": mg,
-        "booking_approvals": pending_bookings,
-        "reschedule_requests": resched,
+        "total": mg + pending_bookings + resched + disputes + shop_recon + overdue_meds,
+        "meet_and_greet_requests": mg, "booking_approvals": pending_bookings, "reschedule_requests": resched,
+        "stripe_disputes": disputes, "shop_refund_reconciliations": shop_recon, "overdue_medications": overdue_meds,
     }
 
 
@@ -31133,6 +31620,7 @@ async def startup():
         # this generic best-effort loop — it needs a real duplicate
         # preflight and post-creation verification, not a swallowed warning.
         (db.retail_sales, "invoice_id", {}),
+        (db.retail_sales, "stripe_dispute_key", {"unique": True, "partialFilterExpression": {"stripe_dispute_key": {"$type": "string"}}}),
         # Stripe Online (Phase 3A) — payment_ledger.stripe_attempt_id is a
         # brand-new field (no historical rows ever set it), so this partial
         # unique index carries zero preflight risk. Real duplicate protection
@@ -31146,6 +31634,14 @@ async def startup():
         (db.stripe_refund_attempts, "stripe_refund_id", {}),
         (db.stripe_refund_attempts, "payment_id", {}),
         (db.stripe_webhook_events, "id", {"unique": True}),
+        (db.stripe_disputes, "id", {"unique": True}),
+        (db.stripe_disputes, "payment_id", {}),
+        (db.stripe_disputes, "status", {}),
+        (db.stripe_balance_transactions, "id", {"unique": True}),
+        (db.stripe_payouts, "id", {"unique": True}),
+        (db.agreement_templates, "id", {"unique": True}),
+        (db.agreement_signatures, [("client_id", 1), ("template_id", 1), ("template_version", 1)], {"unique": True}),
+        (db.expenses, "stripe_balance_transaction_id", {"unique": True, "partialFilterExpression": {"stripe_balance_transaction_id": {"$type": "string"}}}),
         # Front-desk POS hardware integration.
         (db.pos_action_tokens, "jti", {"unique": True}),
         (db.pos_action_tokens, "invoice_id", {}),
@@ -35522,6 +36018,18 @@ class StripeRefundIn(BaseModel):
     idempotency_key: str = Field(min_length=8, max_length=128)
 
 
+class ShopRefundLineIn(BaseModel):
+    item_id: str = Field(min_length=1, max_length=128)
+    quantity: int = Field(ge=1, le=50)
+
+
+class ShopStripeRefundIn(BaseModel):
+    lines: List[ShopRefundLineIn] = Field(min_length=1, max_length=40)
+    reason: str = Field(min_length=3, max_length=500)
+    restock_products: bool = True
+    idempotency_key: str = Field(min_length=8, max_length=128)
+
+
 # ── Atomic Invoice-pointer reservation ──────────────────────────────────────
 
 async def _acquire_stripe_reservation(invoice_id: str, attempt_id: str, amount_cents: int) -> Optional[dict]:
@@ -35960,6 +36468,10 @@ async def stripe_webhook(request: Request):
             await _handle_checkout_session_expired_event(obj)
     elif event_type in ("refund.created", "refund.updated", "refund.failed"):
         await _handle_refund_event(obj)
+    elif event_type in ("charge.dispute.created", "charge.dispute.updated", "charge.dispute.closed"):
+        await _handle_stripe_dispute_event(obj)
+    elif event_type in ("charge.succeeded", "payout.paid", "payout.failed", "payout.canceled"):
+        await _handle_stripe_reconciliation_event(event_type, obj)
     return {"ok": True}
 
 
@@ -36085,6 +36597,300 @@ async def _handle_shop_checkout_session_expired_event(session_obj: dict) -> None
 
 
 # ── Stripe refunds — a separate, per-attempt lifecycle (multi-partial-safe) ──
+
+
+def _shop_line_refund_amount(line: dict, qty: int) -> tuple[float, float]:
+    """Return (gross, tax) for the requested additional quantity using the
+    frozen order-line totals. Non-final units use a deterministic rounded
+    unit share; the final refunded unit(s) absorb the exact remaining
+    pennies so a line can never refund above or below its immutable total."""
+    total_qty = int(line.get("quantity") or 0)
+    qty_refunded = int(line.get("quantity_refunded") or 0)
+    amount_refunded = round(float(line.get("amount_refunded") or 0), 2)
+    tax_refunded = round(float(line.get("tax_refunded") or 0), 2)
+    if total_qty <= 0 or qty <= 0 or qty_refunded + qty > total_qty:
+        raise HTTPException(status_code=400, detail=f"Invalid refund quantity for {line.get('name') or 'shop item'}.")
+
+    line_total = round(float(line.get("line_total") or 0), 2)
+    line_tax = round(float(line.get("allocated_tax") or 0), 2)
+    reaches_final = qty_refunded + qty == total_qty
+    if reaches_final:
+        gross = round(max(0.0, line_total - amount_refunded), 2)
+        tax = round(max(0.0, line_tax - tax_refunded), 2)
+    else:
+        gross = round(round(line_total / total_qty, 2) * qty, 2)
+        tax = round(round(line_tax / total_qty, 2) * qty, 2)
+        # Never let a non-final share consume the final penny reserve.
+        gross = min(gross, round(max(0.0, line_total - amount_refunded), 2))
+        tax = min(tax, round(max(0.0, line_tax - tax_refunded), 2))
+    return gross, tax
+
+
+async def _validate_shop_refund_entitlements(order: dict, line_refunds: list[dict]) -> None:
+    """Refuse automatic money refunds when an entitlement cannot be safely
+    reversed. Physical products are always refundable; restocking is an
+    explicit admin choice. Credit-pack/training-credit lines are whole-line
+    refunds only and every backing lot must still be completely unused.
+    Online School access is history-preserving and can always be revoked."""
+    for planned in line_refunds:
+        line = planned["line"]
+        kind = line.get("kind")
+        if kind == "product":
+            continue
+        remaining_qty = int(line.get("quantity") or 0) - int(line.get("quantity_refunded") or 0)
+        if planned["quantity"] != remaining_qty:
+            raise HTTPException(
+                status_code=409,
+                detail=f"{line.get('name') or 'This entitlement'} must be refunded as the whole remaining line.",
+            )
+        if kind == "training_program" and line.get("fulfillment_kind") == "online_school":
+            continue
+        for n in range(int(line.get("quantity") or 0)):
+            ref = f"{_shop_inventory_ref(order['id'], line['item_id'])}:unit:{n}"
+            lot = await db.credit_lots.find_one({"fulfillment_ref": ref}, {"_id": 0})
+            if not lot:
+                raise HTTPException(status_code=409, detail=f"The entitlement backing {line.get('name') or 'this line'} could not be verified. Review it before refunding.")
+            total = round(float(lot.get("qty_total") or 0), 3)
+            remaining = round(float(lot.get("qty_remaining") or 0), 3)
+            if lot.get("refund_status") == "refunded":
+                continue
+            if abs(total - remaining) > 0.0005:
+                raise HTTPException(
+                    status_code=409,
+                    detail=f"{line.get('name') or 'Purchased credits'} has already been used. Automatic refund is blocked so money and credits cannot get out of sync.",
+                )
+
+
+async def _build_shop_refund_plan(order: dict, requested: list[ShopRefundLineIn]) -> dict:
+    by_id = {str(l.get("item_id")): l for l in (order.get("lines") or [])}
+    seen: set[str] = set()
+    planned: list[dict] = []
+    gross_total = 0.0
+    tax_total = 0.0
+    for req in requested:
+        if req.item_id in seen:
+            raise HTTPException(status_code=400, detail="Each shop-order line may appear only once in a refund request.")
+        seen.add(req.item_id)
+        line = by_id.get(req.item_id)
+        if not line:
+            raise HTTPException(status_code=404, detail="One of the selected shop-order lines no longer exists.")
+        remaining_qty = int(line.get("quantity") or 0) - int(line.get("quantity_refunded") or 0)
+        if req.quantity > remaining_qty:
+            raise HTTPException(status_code=400, detail=f"Only {remaining_qty} of {line.get('name') or 'this item'} remain refundable.")
+        amount, tax = _shop_line_refund_amount(line, req.quantity)
+        if amount <= 0.005:
+            raise HTTPException(status_code=400, detail=f"{line.get('name') or 'This line'} has no refundable value remaining.")
+        planned.append({
+            "line": line,
+            "item_id": line["item_id"],
+            "kind": line.get("kind"),
+            "name": line.get("name"),
+            "quantity": int(req.quantity),
+            "amount": amount,
+            "tax_amount": tax,
+        })
+        gross_total = round(gross_total + amount, 2)
+        tax_total = round(tax_total + tax, 2)
+    await _validate_shop_refund_entitlements(order, planned)
+    return {"lines": planned, "amount": gross_total, "tax_amount": tax_total}
+
+
+async def _revoke_shop_credit_line(order: dict, line: dict, attempt_id: str) -> None:
+    svc_default = "training" if line.get("kind") == "training_program" else None
+    for n in range(int(line.get("quantity") or 0)):
+        ref = f"{_shop_inventory_ref(order['id'], line['item_id'])}:unit:{n}"
+        lot = await db.credit_lots.find_one({"fulfillment_ref": ref}, {"_id": 0})
+        if not lot or lot.get("refund_status") == "refunded":
+            continue
+        qty = round(float(lot.get("qty_remaining") or 0), 3)
+        svc_type = lot.get("service_type") or svc_default or "daycare"
+        pool_field = _credit_balance_field(svc_type) or "credits"
+        marker = f"{attempt_id}:{ref}"
+        # Client aggregate and lot document each have their own durable
+        # marker, so a crash between the two converges without double-removal.
+        await db.clients.find_one_and_update(
+            {"id": order.get("client_id"), "shop_refund_credit_adjustments_applied": {"$ne": marker}},
+            {"$inc": {pool_field: -qty}, "$addToSet": {"shop_refund_credit_adjustments_applied": marker}},
+        )
+        await db.credit_lots.update_one(
+            {"fulfillment_ref": ref, "refund_attempts_applied": {"$ne": attempt_id}},
+            {"$set": {"qty_remaining": 0, "refund_status": "refunded", "refunded_at": now_iso(), "refunded_by": "Stripe shop refund"},
+             "$addToSet": {"refund_attempts_applied": attempt_id}},
+        )
+
+
+async def _revoke_refunded_online_school_line(order: dict, line: dict, attempt_id: str) -> None:
+    enrollment_id = line.get("online_school_enrollment_id")
+    if not enrollment_id:
+        return
+    enrollment = await db.dog_programs.find_one({"id": enrollment_id}, {"_id": 0})
+    if not enrollment:
+        return
+    ts = now_iso()
+    set_doc = {
+        "access_state": "revoked",
+        "access_changed_at": ts,
+        "access_changed_by": None,
+        "access_changed_by_name": "Stripe Shop Refund",
+        "access_change_reason": "shop_order_refund",
+        "shop_refund_attempt_id": attempt_id,
+    }
+    if enrollment.get("status") == "active":
+        set_doc.update({
+            "status": "withdrawn", "withdrawn_at": ts, "withdrawn_by": None,
+            "withdrawn_by_name": "Stripe Shop Refund", "withdrawal_reason": "Online Shop purchase refunded",
+            "previous_training_state": "active",
+        })
+    await db.dog_programs.update_one({"id": enrollment_id}, {"$set": set_doc})
+    se = await db.school_enrollments.find_one({"enrollment_id": enrollment_id}, {"_id": 0})
+    fresh = await db.dog_programs.find_one({"id": enrollment_id}, {"_id": 0})
+    if se and fresh:
+        await _reconcile_school_enrollment_mirror(fresh, se)
+
+
+async def _apply_shop_refund_fulfillment(attempt: dict) -> None:
+    """History-preserving entitlement/inventory reversal for a successful,
+    line-aware Shop refund. Every side effect has an independent stable
+    marker so webhook retries and crash recovery can safely re-run it."""
+    if not attempt.get("shop_refund"):
+        if attempt.get("shop_order_id"):
+            # A Dashboard/external refund has money identity but no line
+            # identity. Never guess which inventory/credits to reverse.
+            await db.shop_orders.update_one(
+                {"id": attempt["shop_order_id"]},
+                {"$set": {"refund_reconciliation_required": True, "refund_reconciliation_reason": "External Stripe refund has no shop line allocation", "updated_at": now_iso()}},
+            )
+        return
+    order = await db.shop_orders.find_one({"id": attempt.get("shop_order_id")}, {"_id": 0})
+    if not order:
+        return
+    attempt_id = attempt["id"]
+    for planned in (attempt.get("line_refunds") or []):
+        item_id = planned["item_id"]
+        line = next((l for l in (order.get("lines") or []) if l.get("item_id") == item_id), None)
+        if not line:
+            continue
+        kind = line.get("kind")
+        if kind == "product" and attempt.get("restock_products"):
+            marker = f"shop_refund:{attempt_id}:line:{item_id}"
+            qty = float(planned.get("quantity") or 0)
+            product = await db.pos_products.find_one_and_update(
+                {"id": line.get("ref_id"), "shop_refund_refs_applied": {"$ne": marker}},
+                {"$inc": {"stock_on_hand": qty}, "$addToSet": {"shop_refund_refs_applied": marker}, "$set": {"updated_at": now_iso()}},
+                return_document=ReturnDocument.BEFORE,
+            )
+            if product is not None:
+                try:
+                    await db.inventory_movements.insert_one({
+                        "id": str(uuid.uuid4()), "product_id": line.get("ref_id"), "type": "shop_refund",
+                        "quantity_delta": round(qty, 3), "stock_before": float(product.get("stock_on_hand") or 0),
+                        "stock_after": round(float(product.get("stock_on_hand") or 0) + qty, 3),
+                        "reason": f"Online Shop refund {order['id']}", "pos_sale_id": None, "source_ref": marker,
+                        "user_id": None, "user_name": "Stripe Shop Refund", "created_at": now_iso(),
+                    })
+                except DuplicateKeyError:
+                    pass
+        elif kind == "training_program" and line.get("fulfillment_kind") == "online_school":
+            await _revoke_refunded_online_school_line(order, line, attempt_id)
+        elif kind in ("credit_pack", "training_program"):
+            await _revoke_shop_credit_line(order, line, attempt_id)
+
+        await db.shop_orders.update_one(
+            {"id": order["id"], "lines": {"$elemMatch": {"item_id": item_id, "refund_attempts_applied": {"$ne": attempt_id}}}},
+            {"$inc": {"lines.$.quantity_refunded": int(planned.get("quantity") or 0),
+                      "lines.$.amount_refunded": round(float(planned.get("amount") or 0), 2),
+                      "lines.$.tax_refunded": round(float(planned.get("tax_amount") or 0), 2)},
+             "$addToSet": {"lines.$.refund_attempts_applied": attempt_id},
+             "$set": {"updated_at": now_iso()}},
+        )
+
+    amount = round(float(attempt.get("amount_cents") or 0) / 100.0, 2)
+    await db.shop_orders.update_one(
+        {"id": order["id"], "refund_attempts_applied": {"$ne": attempt_id}},
+        {"$inc": {"refunded_amount": amount}, "$addToSet": {"refund_attempts_applied": attempt_id}, "$set": {"updated_at": now_iso()}},
+    )
+    fresh = await db.shop_orders.find_one({"id": order["id"]}, {"_id": 0, "total": 1, "refunded_amount": 1})
+    if fresh:
+        total = round(float(fresh.get("total") or 0), 2)
+        refunded = round(float(fresh.get("refunded_amount") or 0), 2)
+        await db.shop_orders.update_one(
+            {"id": order["id"]},
+            {"$set": {"refund_status": "full" if total > 0 and refunded >= total - 0.005 else "partial", "updated_at": now_iso()}},
+        )
+
+
+@api.post("/shop-orders/{order_id}/stripe-refund")
+async def create_shop_stripe_refund(
+    order_id: str, body: ShopStripeRefundIn,
+    user: dict = Depends(require_admin_and_permission("delete_records")),
+):
+    """Line-aware Shop refund. Physical products may be quantity-partial;
+    credit/program entitlements must be the whole remaining line. Money is
+    still moved only through the canonical Stripe refund/finalizer path."""
+    _require_stripe_online_enabled()
+    order = await db.shop_orders.find_one({"id": order_id}, {"_id": 0})
+    if not order or order.get("status") != "paid":
+        raise HTTPException(status_code=404, detail="Paid shop order not found")
+    payment = await db.payments.find_one(
+        {"shop_order_id": order_id, "method": "stripe_online", "source.kind": "shop_order_payment", "amount": {"$gt": 0}}, {"_id": 0},
+    )
+    if not payment:
+        raise HTTPException(status_code=409, detail="This order has no canonical Stripe payment to refund.")
+    payment_intent_id = (payment.get("source") or {}).get("stripe_payment_intent_id")
+    if not payment_intent_id:
+        raise HTTPException(status_code=409, detail="This order's Stripe PaymentIntent could not be verified.")
+
+    plan = await _build_shop_refund_plan(order, body.lines)
+    already_refunded = round(float(payment.get("refunded_amount") or 0), 2)
+    remaining = round(float(payment.get("amount") or 0) - already_refunded, 2)
+    amount = round(float(plan["amount"]), 2)
+    if amount <= 0.005 or amount > remaining + 0.005:
+        raise HTTPException(status_code=409, detail=f"Refund exceeds the payment's remaining refundable amount of ${remaining:.2f}.")
+    amount_cents = _stripe_amount_cents(amount)
+    tax_cents = _stripe_amount_cents(plan["tax_amount"])
+    line_snapshot = [{k: v for k, v in row.items() if k != "line"} for row in plan["lines"]]
+    fingerprint = _request_fingerprint(payment["id"], line_snapshot, body.restock_products, body.reason.strip())
+    attempt_id = str(uuid.uuid4())
+    ts = now_iso()
+    attempt_doc = {
+        "id": attempt_id, "idempotency_key": body.idempotency_key, "request_fingerprint": fingerprint,
+        "payment_id": payment["id"], "invoice_id": None, "shop_order_id": order_id,
+        "shop_refund": True, "line_refunds": line_snapshot, "restock_products": bool(body.restock_products),
+        "tax_amount_cents": tax_cents, "amount_cents": amount_cents, "reason": body.reason.strip(),
+        "status": "pending", "stripe_refund_id": None, "stripe_payment_intent_id": payment_intent_id,
+        "applied_refund_payment_id": None, "created_at": ts, "updated_at": ts,
+    }
+    try:
+        await db.stripe_refund_attempts.insert_one(dict(attempt_doc))
+    except DuplicateKeyError:
+        existing = await db.stripe_refund_attempts.find_one({"idempotency_key": body.idempotency_key}, {"_id": 0})
+        if not existing or existing.get("request_fingerprint") != fingerprint or existing.get("shop_order_id") != order_id:
+            raise HTTPException(status_code=409, detail="This idempotency key was already used for a different refund request.")
+        return {"ok": True, "refund_attempt": existing}
+
+    try:
+        refund = stripe.Refund.create(
+            payment_intent=payment_intent_id, amount=amount_cents,
+            metadata={"sithappens_refund_attempt_id": attempt_id, "sithappens_payment_id": payment["id"], "sithappens_shop_order_id": order_id},
+            idempotency_key=f"stripe_shop_refund_create:{attempt_id}",
+        ).to_dict()
+    except Exception as exc:
+        await db.stripe_refund_attempts.update_one({"id": attempt_id}, {"$set": {"status": "failed", "updated_at": now_iso()}})
+        logger.warning("Stripe Shop Refund.create failed for attempt %s: %s", attempt_id, exc)
+        raise HTTPException(status_code=502, detail="Could not create the Stripe shop refund — please try again.")
+
+    await db.stripe_refund_attempts.update_one({"id": attempt_id}, {"$set": {"stripe_refund_id": refund["id"], "updated_at": now_iso()}})
+    stripe_status = refund.get("status") or "pending"
+    if stripe_status == "succeeded":
+        await _finalize_stripe_refund(attempt_id)
+    else:
+        await db.stripe_refund_attempts.update_one(
+            {"id": attempt_id, "status": {"$nin": list(STRIPE_REFUND_TERMINAL_STATUSES)}},
+            {"$set": {"status": stripe_status, "updated_at": now_iso()}},
+        )
+    final = await db.stripe_refund_attempts.find_one({"id": attempt_id}, {"_id": 0})
+    return {"ok": True, "refund_attempt": final}
+
 
 @api.post("/payments/{payment_id}/stripe-refund")
 async def create_stripe_refund(payment_id: str, body: StripeRefundIn, user: dict = Depends(require_admin_and_permission("delete_records"))):
@@ -36287,7 +37093,13 @@ async def _finalize_stripe_refund(refund_attempt_id: str) -> None:
             # unique index) or a second reversal.
             original_tax = round(float(original_retail.get("tax_amount") or 0), 2)
             tax_component = 0.0
-            if original_tax > 0:
+            if attempt.get("shop_refund") and attempt.get("tax_amount_cents") is not None:
+                # Shop refunds carry authoritative line identity and frozen
+                # per-line allocated tax, so partial physical-item refunds
+                # can reverse the exact tax slice instead of waiting for a
+                # full-payment refund. Never estimate this from gross money.
+                tax_component = -round(float(attempt.get("tax_amount_cents") or 0) / 100.0, 2)
+            elif original_tax > 0:
                 fresh_pay = await db.payments.find_one(
                     {"id": payment["id"]}, {"_id": 0, "refunded_amount": 1})
                 cumulative_refunded = round(float((fresh_pay or {}).get("refunded_amount") or 0), 2)
@@ -36313,6 +37125,11 @@ async def _finalize_stripe_refund(refund_attempt_id: str) -> None:
             except DuplicateKeyError:
                 pass  # already applied by a concurrent/prior run
 
+    # Step E — Shop-specific fulfillment reversal, if this payment belongs
+    # to an Online Shop order. This preserves the ONE financial finalizer
+    # while keeping inventory/credit/School side effects line-aware.
+    await _apply_shop_refund_fulfillment(attempt)
+
     # Only after every applicable step above is independently confirmed
     # complete (each is safe to re-run, so simply having executed them
     # again here IS that confirmation) do we mark local application done.
@@ -36325,6 +37142,8 @@ async def _finalize_stripe_refund(refund_attempt_id: str) -> None:
 async def _handle_refund_event(refund_obj: dict) -> None:
     refund_id = refund_obj.get("id")
     status = refund_obj.get("status")
+    if refund_obj.get("balance_transaction"):
+        await _record_stripe_balance_transaction(refund_obj, object_type="refund")
     attempt = await db.stripe_refund_attempts.find_one({"stripe_refund_id": refund_id}, {"_id": 0})
     if not attempt:
         # App-initiated refunds stamp their attempt id into the Stripe
@@ -36375,7 +37194,7 @@ async def _handle_refund_event(refund_obj: dict) -> None:
         ts = now_iso()
         synthesized = {
             "id": str(uuid.uuid4()), "payment_id": payment["id"],
-            "invoice_id": payment.get("invoice_id"), "amount_cents": amount_cents,
+            "invoice_id": payment.get("invoice_id"), "shop_order_id": payment.get("shop_order_id"), "amount_cents": amount_cents,
             "reason": "Refund issued directly from Stripe",
             "status": "succeeded", "stripe_refund_id": refund_id,
             "stripe_payment_intent_id": intent_id,
@@ -36415,6 +37234,223 @@ async def _handle_refund_event(refund_obj: dict) -> None:
         )
 
 
+async def _record_stripe_balance_transaction(obj: dict, *, object_type: str) -> None:
+    bt_id = obj.get("balance_transaction")
+    if not bt_id:
+        return
+    try:
+        bt = stripe.BalanceTransaction.retrieve(bt_id).to_dict()
+    except Exception as exc:
+        logger.warning("Stripe balance transaction %s could not be retrieved: %s", bt_id, exc)
+        return
+    intent_id = obj.get("payment_intent")
+    payment = None
+    if intent_id:
+        payment = await db.payments.find_one(
+            {"$or": [{"processor_payment_id": intent_id}, {"source.stripe_payment_intent_id": intent_id}], "amount": {"$gt": 0}}, {"_id": 0},
+        )
+    created_ts = bt.get("created")
+    if isinstance(created_ts, (int, float)):
+        created_iso = datetime.fromtimestamp(created_ts, tz=timezone.utc).isoformat()
+    else:
+        created_iso = now_iso()
+    fee_amount = round(float(bt.get("fee") or 0) / 100.0, 2)
+    net_amount = round(float(bt.get("net") or 0) / 100.0, 2)
+    gross_amount = round(float(bt.get("amount") or 0) / 100.0, 2)
+    doc = {
+        "id": bt_id, "object_type": object_type, "source_object_id": obj.get("id"),
+        "payment_id": (payment or {}).get("id"), "client_id": (payment or {}).get("client_id"),
+        "invoice_id": (payment or {}).get("invoice_id"), "shop_order_id": (payment or {}).get("shop_order_id"),
+        "stripe_payment_intent_id": intent_id, "type": bt.get("type"), "status": bt.get("status"),
+        "currency": bt.get("currency"), "amount": gross_amount, "fee": fee_amount, "net": net_amount,
+        "available_on": bt.get("available_on"), "reporting_category": bt.get("reporting_category"),
+        "created_at": created_iso, "updated_at": now_iso(),
+    }
+    await db.stripe_balance_transactions.update_one({"id": bt_id}, {"$set": doc}, upsert=True)
+
+    # Processor fees flow into the same expense ledger the P&L already uses.
+    # A negative fee (rare adjustment/fee reversal) is deliberately stored
+    # as a negative expense, reducing processor-fee expense rather than
+    # fabricating revenue.
+    if abs(fee_amount) > 0.0005:
+        existing = await db.expenses.find_one({"stripe_balance_transaction_id": bt_id}, {"_id": 0, "id": 1})
+        if not existing:
+            await db.expenses.insert_one({
+                "id": str(uuid.uuid4()), "date": _business_date_from_timestamp(created_iso),
+                "description": f"Stripe processing fee · {bt_id}", "amount": fee_amount,
+                "quantity": 1, "unit_price": fee_amount, "category": "Merchant fees", "notes": "Automatically reconciled from Stripe",
+                "payment_method": "card", "tax_deductible": True, "from_cash_drawer": False,
+                "vendor": "Stripe", "recurring": False, "source_kind": "stripe_processor_fee",
+                "stripe_balance_transaction_id": bt_id, "stripe_source_object_id": obj.get("id"),
+                "created_at": now_iso(), "created_by": "stripe_webhook",
+            })
+
+
+async def _handle_stripe_reconciliation_event(event_type: str, obj: dict) -> None:
+    if event_type == "charge.succeeded":
+        await _record_stripe_balance_transaction(obj, object_type="charge")
+        return
+    if event_type.startswith("payout."):
+        payout_id = obj.get("id")
+        if not payout_id:
+            return
+        arrival = obj.get("arrival_date")
+        arrival_iso = None
+        if isinstance(arrival, (int, float)):
+            arrival_iso = datetime.fromtimestamp(arrival, tz=timezone.utc).date().isoformat()
+        await db.stripe_payouts.update_one(
+            {"id": payout_id},
+            {"$set": {
+                "id": payout_id, "status": obj.get("status") or event_type.split(".", 1)[1],
+                "amount": round(float(obj.get("amount") or 0) / 100.0, 2), "currency": obj.get("currency"),
+                "arrival_date": arrival_iso, "method": obj.get("method"), "type": obj.get("type"),
+                "description": obj.get("description"), "failure_code": obj.get("failure_code"),
+                "failure_message": obj.get("failure_message"), "balance_transaction": obj.get("balance_transaction"),
+                "updated_at": now_iso(),
+            }, "$setOnInsert": {"created_at": now_iso()}},
+            upsert=True,
+        )
+
+
+@api.get("/admin/stripe/reconciliation")
+async def stripe_reconciliation_summary(_: dict = Depends(require_admin_and_permission("finance_reports"))):
+    txns = await db.stripe_balance_transactions.find({}, {"_id": 0}).sort("created_at", -1).to_list(200)
+    payouts = await db.stripe_payouts.find({}, {"_id": 0}).sort("updated_at", -1).to_list(100)
+    fee_total = round(sum(float(t.get("fee") or 0) for t in txns), 2)
+    net_total = round(sum(float(t.get("net") or 0) for t in txns), 2)
+    return {"balance_transactions": txns, "payouts": payouts, "processor_fees": fee_total, "net_activity": net_total}
+
+
+STRIPE_DISPUTE_OPEN_STATUSES = {
+    "warning_needs_response", "warning_under_review", "needs_response", "under_review",
+}
+
+
+async def _stripe_dispute_payment(dispute_obj: dict) -> tuple[Optional[dict], Optional[str]]:
+    intent_id = dispute_obj.get("payment_intent")
+    if not intent_id and dispute_obj.get("charge"):
+        try:
+            charge = stripe.Charge.retrieve(dispute_obj["charge"]).to_dict()
+            intent_id = charge.get("payment_intent")
+        except Exception as exc:
+            logger.warning("Could not resolve Stripe charge %s for dispute %s: %s", dispute_obj.get("charge"), dispute_obj.get("id"), exc)
+    if not intent_id:
+        return None, None
+    payment = await db.payments.find_one(
+        {"$or": [
+            {"processor": "stripe", "processor_payment_id": intent_id, "amount": {"$gt": 0}},
+            {"source.stripe_payment_intent_id": intent_id, "amount": {"$gt": 0}},
+        ]}, {"_id": 0},
+    )
+    return payment, intent_id
+
+
+async def _apply_dispute_financial_state(dispute: dict) -> None:
+    """Reflect a final lost/won dispute in operating income without mutating
+    the original payment, invoice, entitlements, or tax. Chargeback tax
+    treatment can require jurisdiction-specific evidence, so tax_amount is
+    deliberately 0 here and remains a review item rather than guessed."""
+    payment_id = dispute.get("payment_id")
+    if not payment_id:
+        return
+    payment = await db.payments.find_one({"id": payment_id}, {"_id": 0})
+    if not payment:
+        return
+    amount = round(float(dispute.get("amount") or 0), 2)
+    if amount <= 0:
+        return
+    status = dispute.get("status")
+    did = dispute["id"]
+    ts = now_iso()
+    if status == "lost" and not dispute.get("loss_finance_row_id"):
+        existing = await db.retail_sales.find_one({"stripe_dispute_key": f"{did}:lost"}, {"_id": 0})
+        if existing:
+            row_id = existing["id"]
+        else:
+            row_id = str(uuid.uuid4())
+            try:
+                await db.retail_sales.insert_one({
+                    "id": row_id, "date": business_today().isoformat(), "amount": -amount,
+                    "payment_method": "stripe_online", "client_id": payment.get("client_id"),
+                    "invoice_id": payment.get("invoice_id"), "shop_order_id": payment.get("shop_order_id"),
+                    "reversed_payment_id": payment_id, "source_kind": "stripe_dispute_loss",
+                    "stripe_dispute_id": did, "stripe_dispute_key": f"{did}:lost", "tax_amount": 0.0,
+                    "description": f"Stripe dispute lost · {did}", "created_at": ts,
+                    "created_by": "stripe_webhook", "logged_by": "Stripe",
+                })
+            except DuplicateKeyError:
+                existing = await db.retail_sales.find_one({"stripe_dispute_key": f"{did}:lost"}, {"_id": 0})
+                row_id = (existing or {}).get("id")
+        if row_id:
+            await db.stripe_disputes.update_one({"id": did}, {"$set": {"loss_finance_row_id": row_id, "updated_at": ts}})
+    elif status == "won" and dispute.get("loss_finance_row_id") and not dispute.get("win_finance_row_id"):
+        existing = await db.retail_sales.find_one({"stripe_dispute_key": f"{did}:won"}, {"_id": 0})
+        if existing:
+            row_id = existing["id"]
+        else:
+            row_id = str(uuid.uuid4())
+            try:
+                await db.retail_sales.insert_one({
+                    "id": row_id, "date": business_today().isoformat(), "amount": amount,
+                    "payment_method": "stripe_online", "client_id": payment.get("client_id"),
+                    "invoice_id": payment.get("invoice_id"), "shop_order_id": payment.get("shop_order_id"),
+                    "source_kind": "stripe_dispute_won", "stripe_dispute_id": did,
+                    "stripe_dispute_key": f"{did}:won", "tax_amount": 0.0,
+                    "description": f"Stripe dispute won · {did}", "created_at": ts,
+                    "created_by": "stripe_webhook", "logged_by": "Stripe",
+                })
+            except DuplicateKeyError:
+                existing = await db.retail_sales.find_one({"stripe_dispute_key": f"{did}:won"}, {"_id": 0})
+                row_id = (existing or {}).get("id")
+        if row_id:
+            await db.stripe_disputes.update_one({"id": did}, {"$set": {"win_finance_row_id": row_id, "updated_at": ts}})
+
+
+async def _handle_stripe_dispute_event(dispute_obj: dict) -> None:
+    dispute_id = dispute_obj.get("id")
+    if not dispute_id:
+        return
+    payment, intent_id = await _stripe_dispute_payment(dispute_obj)
+    amount = round(float(dispute_obj.get("amount") or 0) / 100.0, 2)
+    status = dispute_obj.get("status") or "unknown"
+    ts = now_iso()
+    existing = await db.stripe_disputes.find_one({"id": dispute_id}, {"_id": 0})
+    doc = {
+        "id": dispute_id, "status": status, "reason": dispute_obj.get("reason"),
+        "amount": amount, "currency": dispute_obj.get("currency"), "charge_id": dispute_obj.get("charge"),
+        "stripe_payment_intent_id": intent_id, "payment_id": (payment or {}).get("id"),
+        "client_id": (payment or {}).get("client_id"), "invoice_id": (payment or {}).get("invoice_id"),
+        "shop_order_id": (payment or {}).get("shop_order_id"),
+        "evidence_due_by": ((dispute_obj.get("evidence_details") or {}).get("due_by")),
+        "is_charge_refundable": dispute_obj.get("is_charge_refundable"),
+        "updated_at": ts,
+    }
+    if not existing:
+        doc["created_at"] = ts
+        doc["first_seen_at"] = ts
+    await db.stripe_disputes.update_one({"id": dispute_id}, {"$set": doc, "$setOnInsert": {"created_at": ts, "first_seen_at": ts}}, upsert=True)
+    if payment:
+        await db.payments.update_one(
+            {"id": payment["id"]},
+            {"$set": {"stripe_dispute_id": dispute_id, "stripe_dispute_status": status,
+                      "stripe_disputed_amount": amount, "updated_at": ts}},
+        )
+    fresh = await db.stripe_disputes.find_one({"id": dispute_id}, {"_id": 0})
+    if fresh:
+        await _apply_dispute_financial_state(fresh)
+
+
+@api.get("/admin/stripe-disputes")
+async def list_stripe_disputes(
+    status: Optional[str] = None, _: dict = Depends(require_admin_and_permission("finance_reports")),
+):
+    q: dict = {}
+    if status:
+        q["status"] = status
+    rows = await db.stripe_disputes.find(q, {"_id": 0}).sort("updated_at", -1).to_list(500)
+    return {"disputes": rows}
+
+
 @api.get("/admin/stripe-online-payments")
 async def list_stripe_online_payments(limit: int = 50, q: Optional[str] = None, _: dict = Depends(require_admin_and_permission("finance_reports"))):
     """Staff-facing read model for the Front Desk 'Online Payments' panel —
@@ -36433,9 +37469,8 @@ async def list_stripe_online_payments(limit: int = 50, q: Optional[str] = None, 
     # refund reversal row either way — same exclusion convention as
     # _booking_refund_locked's stripe_gross calculation). Included here so
     # staff see ALL online card payments — invoice AND shop order — in one
-    # list, display-only; refunds against a shop_order_payment row are NOT
-    # available yet (Phase 3), so remaining_refundable is reported but the
-    # refund action itself stays invoice-only in the frontend.
+    # list. Shop-order rows expose their immutable line allocation so the
+    # line-aware refund UI can reverse only what was actually purchased.
     payments = await db.payments.find(
         {"method": "stripe_online", "source.kind": {"$in": ["stripe_online_payment", "shop_order_payment"]}}, {"_id": 0},
     ).sort("created_at", -1).to_list(fetch_cap)
@@ -36448,9 +37483,10 @@ async def list_stripe_online_payments(limit: int = 50, q: Optional[str] = None, 
 
     shop_order_ids = list({p["shop_order_id"] for p in payments if p.get("shop_order_id")})
     shop_orders = await db.shop_orders.find(
-        {"id": {"$in": shop_order_ids}}, {"_id": 0, "id": 1, "client_name": 1},
+        {"id": {"$in": shop_order_ids}}, {"_id": 0, "id": 1, "client_name": 1, "lines": 1, "refund_status": 1, "refund_reconciliation_required": 1},
     ).to_list(len(shop_order_ids) or 1) if shop_order_ids else []
     client_name_by_order = {o["id"]: o.get("client_name") or "" for o in shop_orders}
+    shop_order_by_id = {o["id"]: o for o in shop_orders}
 
     payment_ids = [p["id"] for p in payments]
     active_attempts = await db.stripe_refund_attempts.find(
@@ -36487,6 +37523,20 @@ async def list_stripe_online_payments(limit: int = 50, q: Optional[str] = None, 
             "card_last4": source.get("card_last4"),
             "refund_in_progress": refund_status is not None,
             "refund_status": refund_status,
+            "dispute_id": p.get("stripe_dispute_id"),
+            "dispute_status": p.get("stripe_dispute_status"),
+            "disputed_amount": round(float(p.get("stripe_disputed_amount") or 0), 2),
+            "shop_lines": [
+                {
+                    "item_id": l.get("item_id"), "kind": l.get("kind"), "name": l.get("name"),
+                    "quantity": int(l.get("quantity") or 0), "quantity_refunded": int(l.get("quantity_refunded") or 0),
+                    "amount_refunded": round(float(l.get("amount_refunded") or 0), 2),
+                    "line_total": round(float(l.get("line_total") or 0), 2),
+                    "fulfillment_kind": l.get("fulfillment_kind"),
+                } for l in ((shop_order_by_id.get(shop_order_id) or {}).get("lines") or [])
+            ] if shop_order_id else [],
+            "shop_refund_status": (shop_order_by_id.get(shop_order_id) or {}).get("refund_status") if shop_order_id else None,
+            "shop_refund_reconciliation_required": bool((shop_order_by_id.get(shop_order_id) or {}).get("refund_reconciliation_required")) if shop_order_id else False,
         })
         if len(rows) >= limit:
             break
@@ -37046,7 +38096,7 @@ async def delete_photography_photo(photo_id: str, _: dict = Depends(require_admi
     return {"ok": True, "deleted": result.deleted_count}
 
 
-# IMPORTANT — FUTURE MONEY RULE, for whoever builds shop checkout/refunds:
+# IMPORTANT — SHOP REFUND MONEY INVARIANT:
 # For a taxed physical line with quantity > 1, do NOT independently compute
 # each partial refund as round(line_total / qty) — repeated partial refunds
 # computed that way can drift from the frozen line_total via rounding, and
@@ -38883,6 +39933,8 @@ async def _validate_shop_item_eligibility(client: dict, kind: str, item_doc: Opt
             if existing_enrollment["status"] == "withdrawn":
                 raise HTTPException(status_code=409, detail=f"This dog's enrollment in {name} was withdrawn — contact us before repurchasing.")
             raise HTTPException(status_code=409, detail=f"This dog is already enrolled in {name} — go to Online School to continue instead of buying it again.")
+        if client_id:
+            await _require_agreements_signed(client_id, program_id=item_doc["id"])
         # Prerequisites are checked before an order/Stripe session exists so a
         # client can never pay for a course this dog is not yet eligible to enter.
         await _require_program_prerequisites(dog_id, item_doc)
@@ -49103,9 +50155,8 @@ INTAKE_FORM_TYPES = [
 INTAKE_FIELD_TYPES = [
     "short_text", "long_text", "number", "email", "phone", "date",
     "dropdown", "checkbox", "multi_select", "yes_no",
-    "file_upload",          # placeholder — wired to the existing dog/client files
-                            # uploader; admins can attach the resulting URL by hand
-                            # until the dedicated upload widget lands.
+    "file_upload",          # client portal uploads directly into client_files
+                            # and stores a verified file reference in answers.
     "staff_only_note",      # internal-only field; not shown to clients in portal
 ]
 
@@ -49601,7 +50652,7 @@ async def delete_intake_submission(submission_id: str, _: dict = Depends(require
     return {"ok": True}
 
 
-# ── Client-portal completion (placeholder for next phase) ────────────────
+# ── Client-portal completion + intake document upload ───────────────────
 # When a submission is in `sent` status and tied to the calling client, they
 # can fetch the template+blank answers here and POST their completion.
 
@@ -49634,12 +50685,7 @@ async def portal_list_assigned_intake(user: dict = Depends(get_current_user)):
     return {"assigned": out}
 
 
-class PortalIntakeSubmitIn(BaseModel):
-    answers: Dict[str, Any]
-
-
-@api.post("/portal/intake/submissions/{submission_id}/submit")
-async def portal_submit_intake(submission_id: str, body: PortalIntakeSubmitIn, user: dict = Depends(get_current_user)):
+async def _portal_intake_context(submission_id: str, user: dict) -> tuple[dict, dict]:
     if user.get("role") not in ("client",):
         raise HTTPException(status_code=403, detail="Client portal only")
     doc = await db.intake_submissions.find_one({"id": submission_id}, {"_id": 0})
@@ -49649,6 +50695,92 @@ async def portal_submit_intake(submission_id: str, body: PortalIntakeSubmitIn, u
         raise HTTPException(status_code=403, detail="Not yours to submit")
     if doc.get("status") not in ("sent", "needs_follow_up"):
         raise HTTPException(status_code=400, detail="This form isn't open for completion")
+    tpl = await db.intake_form_templates.find_one({"id": doc.get("template_id")}, {"_id": 0})
+    if not tpl:
+        raise HTTPException(status_code=409, detail="This form template is no longer available. Please contact Sit Happens.")
+    return doc, tpl
+
+
+def _intake_public_fields(tpl: dict) -> list[dict]:
+    return [f for f in (tpl.get("fields") or []) if not f.get("staff_only")]
+
+
+def _intake_answer_missing(value: Any) -> bool:
+    if value is None:
+        return True
+    if isinstance(value, str):
+        return not value.strip()
+    if isinstance(value, (list, tuple, dict)):
+        return len(value) == 0
+    return False
+
+
+async def _validate_portal_intake_answers(doc: dict, tpl: dict, answers: dict) -> None:
+    """Server-side validation mirrors the portal form but never trusts React.
+    File answers must reference an actual client_files row created for this
+    exact submission + field, preventing fabricated/cross-client file IDs."""
+    for field in _intake_public_fields(tpl):
+        fid = field.get("id")
+        value = answers.get(fid) if fid else None
+        if field.get("required") and _intake_answer_missing(value):
+            raise HTTPException(status_code=400, detail=f"\"{field.get('label') or 'Required field'}\" is required.")
+        if field.get("field_type") != "file_upload" or _intake_answer_missing(value):
+            continue
+        if not isinstance(value, dict) or not value.get("file_id"):
+            raise HTTPException(status_code=400, detail=f"Upload a file for \"{field.get('label') or 'file'}\" before submitting.")
+        linked = await db.client_files.find_one({
+            "id": value.get("file_id"),
+            "client_id": doc.get("client_id"),
+            "intake_submission_id": doc.get("id"),
+            "intake_field_id": fid,
+            "source": "client_intake_upload",
+        }, {"_id": 0, "id": 1})
+        if not linked:
+            raise HTTPException(status_code=400, detail=f"The uploaded file for \"{field.get('label') or 'file'}\" could not be verified. Please upload it again.")
+
+
+@api.post("/portal/intake/submissions/{submission_id}/files/{field_id}")
+async def portal_upload_intake_file(
+    submission_id: str, field_id: str, body: PortalIntakeFileUploadIn,
+    user: dict = Depends(get_current_user),
+):
+    doc, tpl = await _portal_intake_context(submission_id, user)
+    field = next((f for f in _intake_public_fields(tpl) if f.get("id") == field_id), None)
+    if not field or field.get("field_type") != "file_upload":
+        raise HTTPException(status_code=404, detail="That upload field does not exist on this form.")
+    raw_b64, size_bytes = _validated_client_file_payload(
+        body.data or "", client_portal=True, content_type=body.content_type,
+    )
+    name = Path((body.name or "document").strip()).name[:160] or "document"
+    content_type = (body.content_type or "application/octet-stream").split(";", 1)[0].strip().lower()[:120]
+    file_doc = {
+        "id": str(uuid.uuid4()),
+        "client_id": doc.get("client_id"),
+        "dog_id": doc.get("dog_id"),
+        "name": name,
+        "content_type": content_type,
+        "data": raw_b64,
+        "size_bytes": size_bytes,
+        "note": f"Intake form · {tpl.get('name') or doc.get('template_name') or 'Form'} · {field.get('label') or 'Document'}"[:500],
+        "uploaded_at": now_iso(),
+        "uploaded_by": user.get("name") or user.get("email") or "Client",
+        "uploaded_by_user_id": user.get("id"),
+        "source": "client_intake_upload",
+        "intake_submission_id": submission_id,
+        "intake_field_id": field_id,
+    }
+    await db.client_files.insert_one(file_doc.copy())
+    return {k: v for k, v in file_doc.items() if k not in ("data", "_id")}
+
+
+class PortalIntakeSubmitIn(BaseModel):
+    answers: Dict[str, Any]
+
+
+@api.post("/portal/intake/submissions/{submission_id}/submit")
+async def portal_submit_intake(submission_id: str, body: PortalIntakeSubmitIn, user: dict = Depends(get_current_user)):
+    doc, tpl = await _portal_intake_context(submission_id, user)
+    await _validate_portal_intake_answers(doc, tpl, body.answers or {})
     now = now_iso()
     await db.intake_submissions.update_one(
         {"id": submission_id},
@@ -50000,7 +51132,9 @@ async def care_board_today(user: dict = Depends(require_employee_or_admin)):
         # NOTE: uses `e` (end_date) not `d` — mid-boarding stays never flag.
         checked_in = bool(b.get("checked_in_at"))
         checked_out = bool(b.get("checked_out_at"))
-        is_missed_checkout = checked_in and not checked_out and e < today_local
+        if checked_out:
+            continue
+        is_missed_checkout = checked_in and e < today_local
         if (d <= today_local <= e) or is_missed_checkout:
             on_site.append(b)
     # Hydrate care items for each on-site booking
@@ -50009,6 +51143,12 @@ async def care_board_today(user: dict = Depends(require_employee_or_admin)):
     summary = {"not_due": 0, "due_now": 0, "completed": 0, "missed": 0, "skipped": 0}
     for b in on_site:
         items = await _hydrate_booking_care(b, today_local)
+        if b.get("care_items") is None and items:
+            # Persist the exact IDs shown on the board. Without this, a first
+            # completion could reseed different UUIDs and return "Care item not found".
+            bare = [{k: v for k, v in it.items() if k not in ("derived_status", "due_minutes_delta")} for it in items]
+            await db.bookings.update_one({"id": b["id"], "$or": [{"care_items": {"$exists": False}}, {"care_items": None}]}, {"$set": {"care_items": bare}})
+            b["care_items"] = bare
         for it in items:
             row = {
                 **it,
@@ -51834,12 +52974,56 @@ async def _seed_bulk_email_templates_once() -> None:
         })
 
 
+def _marketing_unsubscribe_token(client_id: str, email: str) -> str:
+    return jwt.encode({
+        "sub": client_id, "email": (email or "").lower(), "type": "marketing_unsubscribe",
+        "iat": datetime.now(timezone.utc), "exp": datetime.now(timezone.utc) + timedelta(days=3650),
+    }, JWT_SECRET, algorithm=JWT_ALG)
+
+
+def _marketing_unsubscribe_url(client_id: str, email: str) -> str:
+    return f"{_app_public_url()}/api/email/unsubscribe?token={quote(_marketing_unsubscribe_token(client_id, email))}"
+
+
+@api.get("/email/unsubscribe", response_class=HTMLResponse)
+async def marketing_email_unsubscribe(token: str):
+    try:
+        payload = jwt.decode(token, JWT_SECRET, algorithms=[JWT_ALG])
+    except Exception:
+        return HTMLResponse("<h2>That unsubscribe link is invalid or expired.</h2>", status_code=400)
+    if payload.get("type") != "marketing_unsubscribe":
+        return HTMLResponse("<h2>That unsubscribe link is invalid.</h2>", status_code=400)
+    cid = payload.get("sub")
+    email = (payload.get("email") or "").lower()
+    client = await db.clients.find_one({"id": cid}, {"_id": 0, "email": 1})
+    if not client or (client.get("email") or "").lower() != email:
+        return HTMLResponse("<h2>That unsubscribe link no longer matches an account.</h2>", status_code=404)
+    await db.clients.update_one({"id": cid}, {"$set": {"marketing_email_opt_out": True, "marketing_email_opt_out_at": now_iso(), "marketing_email_opt_out_source": "unsubscribe_link"}})
+    return HTMLResponse("<html><body style='font-family:sans-serif;padding:32px'><h2>You're unsubscribed from marketing emails.</h2><p>Booking, payment, training, and other account/service messages can still be sent when needed.</p></body></html>")
+
+
+class MarketingEmailPreferenceIn(BaseModel):
+    opted_out: bool
+
+
+@api.put("/portal/marketing-email-preference")
+async def portal_marketing_email_preference(body: MarketingEmailPreferenceIn, user: dict = Depends(get_current_user)):
+    if user.get("role") != "client" or not user.get("client_id"):
+        raise HTTPException(status_code=403, detail="Client account required")
+    await db.clients.update_one({"id": user["client_id"]}, {"$set": {
+        "marketing_email_opt_out": bool(body.opted_out),
+        "marketing_email_opt_out_at": now_iso() if body.opted_out else None,
+        "marketing_email_opt_out_source": "portal" if body.opted_out else None,
+    }})
+    return {"opted_out": bool(body.opted_out)}
+
+
 async def _bulk_email_resolve_recipients(filters: List[str]) -> List[Dict[str, Any]]:
     """Resolve a list of {id, name, email, dog_names} dicts matching ALL of the filters.
 
     Filters are AND-combined. An empty list = "all clients with an email"."""
     filt = {k for k in filters if k in BULK_EMAIL_FILTERS}
-    base_q: Dict[str, Any] = {"email": {"$nin": [None, ""]}}
+    base_q: Dict[str, Any] = {"email": {"$nin": [None, ""]}, "marketing_email_opt_out": {"$ne": True}}
     if "active" in filt:
         base_q["status"] = {"$ne": "inactive"}
     clients = await db.clients.find(base_q, {"_id": 0}).to_list(10000)
@@ -51959,7 +53143,7 @@ async def bulk_email_recipients(body: BulkEmailFiltersIn, _: dict = Depends(requ
         ids = [c for c in (body.client_ids or []) if c]
         if not ids:
             return {"count": 0, "recipients": []}
-        cur = db.clients.find({"id": {"$in": ids}, "email": {"$nin": [None, ""]}}, {"_id": 0})
+        cur = db.clients.find({"id": {"$in": ids}, "email": {"$nin": [None, ""]}, "marketing_email_opt_out": {"$ne": True}}, {"_id": 0})
         rows = []
         async for c in cur:
             rows.append({
@@ -52002,7 +53186,7 @@ async def bulk_email_send(body: BulkEmailSendIn, user: dict = Depends(require_ad
             if d.get("name"):
                 dogs_by_owner.setdefault(d.get("owner_id") or "", []).append(d["name"])
         recipients: List[Dict[str, Any]] = []
-        async for c in db.clients.find({"id": {"$in": ids}, "email": {"$nin": [None, ""]}}, {"_id": 0}):
+        async for c in db.clients.find({"id": {"$in": ids}, "email": {"$nin": [None, ""]}, "marketing_email_opt_out": {"$ne": True}}, {"_id": 0}):
             recipients.append({
                 "id": c.get("id"),
                 "name": c.get("name") or "",
@@ -52046,6 +53230,9 @@ async def bulk_email_send(body: BulkEmailSendIn, user: dict = Depends(require_ad
             )
         except Exception:
             html = f"<html><body>{text_paragraphs or rendered_body}</body></html>"
+        unsubscribe_url = _marketing_unsubscribe_url(r.get("id") or "", r["email"])
+        unsubscribe_html = f"<div style='margin-top:28px;padding-top:14px;border-top:1px solid #ddd;font-size:11px;color:#777'>Marketing email · <a href='{unsubscribe_url}' style='color:#777'>Unsubscribe</a></div>"
+        html = html.replace("</body>", unsubscribe_html + "</body>") if "</body>" in html else html + unsubscribe_html
         try:
             ok = await email_service._send(r["email"], rendered_subj, html)  # type: ignore
         except Exception as e:

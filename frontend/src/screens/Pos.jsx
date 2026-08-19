@@ -27,6 +27,7 @@ import PendingActionsPanel from "../components/PendingActionsPanel";
 import { CheckoutModal } from "../components/CheckoutModal";
 import TakePaymentModal from "../components/TakePaymentModal";
 import StripeRefundModal from "../components/StripeRefundModal";
+import ShopRefundModal from "../components/ShopRefundModal";
 import ItemThumbnail from "../components/ItemThumbnail";
 import AdminBookingModal from "../components/AdminBookingModal";
 import { RegisterTab } from "./Staff";
@@ -590,6 +591,7 @@ export default function Pos({ onOpenShopManager } = {}) {
     .then(({ data }) => setOnlinePayments(data.payments || [])).catch(() => {});
   useEffect(() => { if (onlinePaymentsOpen) loadOnlinePayments(); }, [onlinePaymentsOpen]);
   const [refundingPayment, setRefundingPayment] = useState(null);
+  const [refundingShopPayment, setRefundingShopPayment] = useState(null);
 
   // ── Online Orders (Client Shop Phase 2) — paid shop_orders awaiting
   // pickup/fulfillment follow-up. Separate from both Recent Sales (pos_sales)
@@ -987,12 +989,21 @@ export default function Pos({ onOpenShopManager } = {}) {
                       <p>Paid: <span className="text-shText font-bold">{money(p.amount)}</span></p>
                       <p>Refunded: <span className="text-shText font-bold">{money(p.refunded_amount)}</span></p>
                       <p>Refundable: <span className="text-shPrimary font-bold">{money(p.remaining_refundable)}</span></p>
+                      {p.dispute_status && <p className="text-red-300 font-black uppercase tracking-wider">Dispute: {String(p.dispute_status).replaceAll("_", " ")} · {money(p.disputed_amount)}</p>}
+                      {p.shop_refund_reconciliation_required && <p className="text-amber-300 font-black uppercase tracking-wider">Refund needs entitlement review</p>}
                     </div>
                     <div>
                       {p.shop_order_id ? (
-                        // Client Shop Phase 2 — refunds for Shop orders aren't
-                        // built yet (Phase 3). Display-only for now.
-                        <span className="text-shTextMuted text-[11px] font-black uppercase tracking-widest">Shop Order</span>
+                        fullyRefunded ? (
+                          <span className="text-shTextMuted text-[11px] font-black uppercase tracking-widest">Fully Refunded</span>
+                        ) : p.refund_in_progress ? (
+                          <span className="text-shAccent text-[11px] font-black uppercase tracking-widest">Refund Processing</span>
+                        ) : (
+                          <button onClick={() => setRefundingShopPayment(p)} data-testid={`refund-shop-order-${p.payment_id}`}
+                                  className="bg-shSecondary/15 border border-shSecondary/40 text-shSecondary px-3 py-1.5 rounded text-[11px] font-black uppercase tracking-widest hover:bg-shSecondary/25 transition">
+                            Refund Order
+                          </button>
+                        )
                       ) : fullyRefunded ? (
                         <span className="text-shTextMuted text-[11px] font-black uppercase tracking-widest">Fully Refunded</span>
                       ) : p.refund_in_progress ? (
@@ -1542,6 +1553,14 @@ export default function Pos({ onOpenShopManager } = {}) {
           payment={refundingPayment}
           onClose={() => setRefundingPayment(null)}
           onDone={loadOnlinePayments}
+        />
+      )}
+
+      {refundingShopPayment && (
+        <ShopRefundModal
+          payment={refundingShopPayment}
+          onClose={() => setRefundingShopPayment(null)}
+          onDone={() => { loadOnlinePayments(); loadOnlineOrders(); }}
         />
       )}
     </div>

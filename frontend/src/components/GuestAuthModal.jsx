@@ -10,12 +10,13 @@ import { useAuth } from "../lib/auth";
 // pending destination through login/registration", since the destination
 // was never left in the first place.
 export default function GuestAuthModal({ open, onClose }) {
-  const { login, register, error, setError } = useAuth();
+  const { login, verifyMfa, cancelMfa, mfaChallenge, register, error, setError } = useAuth();
   const [mode, setMode] = useState("login");
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
   const [name, setName] = useState("");
   const [loading, setLoading] = useState(false);
+  const [mfaCode, setMfaCode] = useState("");
 
   if (!open) return null;
 
@@ -23,7 +24,7 @@ export default function GuestAuthModal({ open, onClose }) {
     e.preventDefault();
     setLoading(true);
     setError("");
-    const ok = mode === "login" ? await login(email, password) : await register(email, password, name);
+    const ok = mfaChallenge ? await verifyMfa(mfaCode) : (mode === "login" ? await login(email, password) : await register(email, password, name));
     setLoading(false);
     if (ok) onClose();
   };
@@ -50,6 +51,14 @@ export default function GuestAuthModal({ open, onClose }) {
         </div>
 
         <form onSubmit={onSubmit} className="space-y-3">
+          {mfaChallenge ? (
+            <div>
+              <label className="text-[11px] font-black text-shTextMuted uppercase tracking-widest">Authenticator code</label>
+              <input value={mfaCode} onChange={(e) => setMfaCode(e.target.value)} required autoFocus inputMode="numeric" autoComplete="one-time-code" data-testid="guest-auth-mfa"
+                     className="w-full mt-1 border border-shBorder rounded p-2.5 text-shText text-sm" style={{ background: "var(--sh-card-base)" }} />
+              <button type="button" onClick={() => { cancelMfa(); setMfaCode(""); }} className="mt-2 text-[11px] uppercase tracking-widest text-shTextMuted">Back</button>
+            </div>
+          ) : <>
           {mode === "register" && (
             <div>
               <label className="text-[11px] font-black text-shTextMuted uppercase tracking-widest">Full Name</label>
@@ -74,10 +83,11 @@ export default function GuestAuthModal({ open, onClose }) {
                    style={{ background: "var(--sh-card-base)" }} />
             {mode === "register" && <p className="mt-1 text-[11px] text-shTextMuted">Use at least 8 characters.</p>}
           </div>
+          </>}
           {error && <div data-testid="guest-auth-error" className="text-[13px] text-shDanger bg-shDanger/10 rounded p-2.5">{error}</div>}
           <button type="submit" disabled={loading} data-testid="guest-auth-submit"
                   className="w-full py-3 rounded font-black text-[13px] uppercase tracking-widest bg-shPrimary text-bgHeader disabled:opacity-50 hover:brightness-110 transition">
-            {loading ? "Please wait…" : mode === "login" ? "Sign In" : "Create Account"}
+            {loading ? "Please wait…" : mfaChallenge ? "Verify & Sign In" : mode === "login" ? "Sign In" : "Create Account"}
           </button>
         </form>
       </div>

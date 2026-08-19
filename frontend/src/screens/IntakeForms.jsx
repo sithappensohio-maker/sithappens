@@ -34,7 +34,7 @@ const FIELD_TYPE_LABELS = {
   checkbox: "Checkbox",
   multi_select: "Multi-select",
   yes_no: "Yes / No",
-  file_upload: "File upload (placeholder)",
+  file_upload: "File upload",
   staff_only_note: "Staff-only note",
 };
 
@@ -558,7 +558,8 @@ function SubmissionReviewerModal({ sub, clients, dogs, templates, onClose, onSta
           <div className="space-y-3 mb-4">
             {fields.map((f) => {
               const v = sub.answers?.[f.id];
-              const displayed = Array.isArray(v) ? v.join(", ") : (typeof v === "boolean" ? (v ? "Yes" : "No") : (v ?? ""));
+              const isFile = f.field_type === "file_upload" && v && typeof v === "object" && v.file_id;
+              const displayed = isFile ? (v.name || "Uploaded document") : (Array.isArray(v) ? v.join(", ") : (typeof v === "boolean" ? (v ? "Yes" : "No") : (v ?? "")));
               return (
                 <div key={f.id} className="bg-[var(--sh-card-base)] border border-shBorder rounded p-3">
                   <div className="flex items-center gap-2 mb-1">
@@ -566,7 +567,13 @@ function SubmissionReviewerModal({ sub, clients, dogs, templates, onClose, onSta
                     {f.required && <span className="text-[10px] font-black text-red-300 uppercase tracking-widest">Required</span>}
                     {f.staff_only && <span className="text-[10px] font-black text-shAccent uppercase tracking-widest">Staff-only</span>}
                   </div>
-                  <p className="text-sm text-shText whitespace-pre-wrap">{displayed === "" ? <span className="text-shTextMuted italic">(blank)</span> : displayed}</p>
+                  {isFile ? (
+                    <button type="button" onClick={()=>downloadIntakeFile(v)} className="text-sm font-black text-shSecondary hover:text-shText" data-testid={`intake-review-file-${f.id}`}>
+                      <i className="fas fa-download mr-2"/>{displayed}
+                    </button>
+                  ) : (
+                    <p className="text-sm text-shText whitespace-pre-wrap">{displayed === "" ? <span className="text-shTextMuted italic">(blank)</span> : displayed}</p>
+                  )}
                 </div>
               );
             })}
@@ -637,4 +644,22 @@ function SendModal({ info, setInfo, clients, dogs, templates, onCancel, onConfir
       </div>
     </div>
   );
+}
+
+
+async function downloadIntakeFile(fileRef) {
+  if (!fileRef?.file_id) return;
+  try {
+    const { data } = await api.get(`/files/${fileRef.file_id}/download`);
+    const bin = atob(data.data);
+    const bytes = new Uint8Array(bin.length);
+    for (let i = 0; i < bin.length; i++) bytes[i] = bin.charCodeAt(i);
+    const blob = new Blob([bytes], { type: data.content_type || "application/octet-stream" });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement("a");
+    a.href = url; a.download = data.name || fileRef.name || "document"; a.click();
+    setTimeout(() => URL.revokeObjectURL(url), 5000);
+  } catch {
+    toast.error("Couldn't download that document");
+  }
 }

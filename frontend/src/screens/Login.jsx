@@ -87,13 +87,14 @@ const HOW = [
 ];
 
 export default function Login() {
-  const { login, register, error, setError } = useAuth();
+  const { login, verifyMfa, cancelMfa, mfaChallenge, register, error, setError } = useAuth();
   const [mode, setMode] = useState("login");
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
   const [name, setName] = useState("");
   const [refCode, setRefCode] = useState("");
   const [loading, setLoading] = useState(false);
+  const [mfaCode, setMfaCode] = useState("");
   const [forgotOpen, setForgotOpen] = useState(false);
   const [services, setServices] = useState([]);
   const [browseOpen, setBrowseOpen] = useState(false);
@@ -115,7 +116,8 @@ export default function Login() {
   const onSubmit = async (e) => {
     e.preventDefault();
     setLoading(true); setError("");
-    if (mode === "login") await login(email, password);
+    if (mfaChallenge) await verifyMfa(mfaCode);
+    else if (mode === "login") await login(email, password);
     else await register(email, password, name, refCode || undefined);
     setLoading(false);
   };
@@ -227,6 +229,17 @@ export default function Login() {
                 </div>
 
                 <form onSubmit={onSubmit} className="space-y-3.5">
+                  {mfaChallenge ? (
+                    <>
+                      <div>
+                        <label className="text-[12px] font-black text-gray-500 uppercase tracking-widest">Authenticator code</label>
+                        <input value={mfaCode} onChange={(e)=>setMfaCode(e.target.value)} required autoFocus inputMode="numeric" autoComplete="one-time-code"
+                               placeholder="6-digit code or recovery code" data-testid="login-mfa-input"
+                               className="w-full mt-1 bg-bgBase border border-bgHover rounded p-2.5 text-white text-sm focus:border-shBlue outline-none"/>
+                        <button type="button" onClick={()=>{ cancelMfa(); setMfaCode(""); }} className="mt-2 text-[11px] uppercase tracking-widest font-black text-gray-500 hover:text-white">Back to password</button>
+                      </div>
+                    </>
+                  ) : <>
                   {mode === "register" && (
                     <>
                       <div>
@@ -262,10 +275,11 @@ export default function Login() {
                       </button>
                     )}
                   </div>
+                  </>}
                   {error && <div data-testid="login-error" className="text-[13px] text-red-400 bg-red-500/10 rounded p-2.5 uppercase font-black">{error}</div>}
                   <button type="submit" disabled={loading} data-testid="login-submit-button"
                           className={`w-full py-3 rounded font-black text-[14px] uppercase tracking-widest shadow-lg disabled:opacity-50 transition ${mode==="register" ? "bg-shGreen text-bgHeader hover:bg-shGreen/90" : "bg-shBlue text-white hover:bg-shBlue/90"}`}>
-                    {loading?"Please wait...":(mode==="login"?"Sign In":"Create Account")}
+                    {loading?"Please wait...":(mfaChallenge ? "Verify & Sign In" : (mode==="login"?"Sign In":"Create Account"))}
                   </button>
                 </form>
 

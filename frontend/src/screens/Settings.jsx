@@ -178,6 +178,9 @@ export default function Settings() {
         { id: "waiver", label: "Waiver", icon: "fa-file-signature",
           desc: "Liability waiver content and acceptance settings.",
           badges: ["Live", "Client-facing"] },
+        { id: "agreements", label: "Service & Program Agreements", icon: "fa-file-contract",
+          desc: "Versioned agreements for boarding, services, and training programs. Signed snapshots stay immutable.",
+          badges: ["Live", "Client-facing"] },
         { id: "_d2d_compliance", label: "Compliance Rules", icon: "fa-syringe",
           desc: "Per-service vaccine matrix, block-on-expiry behavior, waiver re-sign frequency & scope.",
           badges: ["Live", "Admin-only"], d2dSection: "compliance" },
@@ -561,6 +564,7 @@ export default function Settings() {
               {tab === "vaccines" && <VaccinesPanel s={s} save={save} saving={saving} />}
               {tab === "tags" && <TagsPanel s={s} save={save} saving={saving} />}
               {tab === "waiver" && <WaiverPanel s={s} save={save} saving={saving} />}
+              {tab === "agreements" && <AgreementTemplatesPanel />}
               {tab === "service_info" && <ServiceInfoPanel s={s} save={save} saving={saving} />}
               {tab === "portal_links" && <PortalLinksPanel s={s} save={save} saving={saving} />}
               {tab === "portal_first_visit" && <PortalFirstVisitPanel s={s} save={save} saving={saving} />}
@@ -584,6 +588,7 @@ export default function Settings() {
                     <p className="text-[14px] font-black text-shTextMuted uppercase tracking-widest">Signed in as</p>
                     <p className="text-sm text-shText font-black mt-1">{user.name} · {user.email}</p>
                   </div>
+                  <MfaSettingsPanel />
                   <div className="border-t border-shBorder pt-5 space-y-3">
                     <h4 className="text-xs font-black text-shSecondary uppercase tracking-widest mb-2">Change Password</h4>
                     <Field label="Current Password" type="password" value={pw.current} onChange={(v)=>setPw({...pw,current:v})} testId="current-pw" />
@@ -600,6 +605,85 @@ export default function Settings() {
       </div>
     </div>
   );
+}
+
+function AgreementTemplatesPanel() {
+  const empty = { name:"", title:"", body:"", scope_type:"general", scope_value:"", required:true, active:true };
+  const [rows,setRows]=useState([]); const [form,setForm]=useState(empty); const [editing,setEditing]=useState(null); const [programs,setPrograms]=useState([]); const [busy,setBusy]=useState(false); const [msg,setMsg]=useState("");
+  const load=useCallback(async()=>{ try { const [a,p]=await Promise.all([api.get("/admin/agreement-templates"),api.get("/programs?include_inactive=true")]); setRows(a.data||[]); setPrograms(p.data||[]);} catch(e){setMsg(formatErr(e.response?.data?.detail)||"Couldn't load agreements");}},[]);
+  useEffect(()=>{load();},[load]);
+  const saveAgreement=async()=>{setBusy(true);setMsg("");try{const payload={...form,scope_value:form.scope_type==="general"?null:form.scope_value}; if(editing) await api.put(`/admin/agreement-templates/${editing}`,payload); else await api.post("/admin/agreement-templates",payload); setForm(empty);setEditing(null);setMsg("Saved");await load();}catch(e){setMsg(formatErr(e.response?.data?.detail)||"Couldn't save agreement");}setBusy(false);};
+  const edit=(r)=>{setEditing(r.id);setForm({name:r.name||"",title:r.title||"",body:r.body||"",scope_type:r.scope_type||"general",scope_value:r.scope_value||"",required:r.required!==false,active:r.active!==false});};
+  return <div className="space-y-5" data-testid="agreement-templates-panel">
+    <div><h2 className="text-xl font-black text-shText uppercase tracking-wider">Service & Program Agreements</h2><p className="text-sm text-shTextMuted mt-1">Changing signed content creates a new version. Old signatures keep the exact document snapshot they signed.</p></div>
+    <div className="grid lg:grid-cols-[1fr_1.2fr] gap-4">
+      <div className="space-y-2">{rows.map(r=><button key={r.id} onClick={()=>edit(r)} className="w-full text-left border border-shBorder rounded-xl p-3 hover:border-shSecondary/50"><div className="flex justify-between gap-2"><p className="font-bold text-shText">{r.name}</p><span className="text-[10px] uppercase font-black text-shTextMuted">v{r.version} · {r.active?"Active":"Off"}</span></div><p className="text-xs text-shTextMuted mt-1">{r.scope_type.replaceAll("_"," ")}{r.scope_value?` · ${r.scope_value}`:""}</p></button>)}{!rows.length&&<p className="text-sm text-shTextMuted">No specific agreements yet.</p>}</div>
+      <div className="border border-shBorder rounded-xl p-4 space-y-3">
+        <input value={form.name} onChange={e=>setForm({...form,name:e.target.value})} placeholder="Internal name (Board & Train Agreement)" className="w-full bg-bgBase border border-shBorder rounded p-2.5 text-shText"/>
+        <input value={form.title} onChange={e=>setForm({...form,title:e.target.value})} placeholder="Client-facing title" className="w-full bg-bgBase border border-shBorder rounded p-2.5 text-shText"/>
+        <div className="grid sm:grid-cols-2 gap-2"><select value={form.scope_type} onChange={e=>setForm({...form,scope_type:e.target.value,scope_value:""})} className="bg-bgBase border border-shBorder rounded p-2.5 text-shText"><option value="general">All clients</option><option value="service_type">Service type</option><option value="program_id">Training program</option></select>{form.scope_type==="service_type"?<select value={form.scope_value} onChange={e=>setForm({...form,scope_value:e.target.value})} className="bg-bgBase border border-shBorder rounded p-2.5 text-shText"><option value="">Choose service</option>{["daycare","boarding","training","grooming"].map(x=><option key={x} value={x}>{x}</option>)}</select>:form.scope_type==="program_id"?<select value={form.scope_value} onChange={e=>setForm({...form,scope_value:e.target.value})} className="bg-bgBase border border-shBorder rounded p-2.5 text-shText"><option value="">Choose program</option>{programs.map(x=><option key={x.id} value={x.id}>{x.name}</option>)}</select>:<div/>}</div>
+        <textarea rows={12} value={form.body} onChange={e=>setForm({...form,body:e.target.value})} placeholder="Agreement terms..." className="w-full bg-bgBase border border-shBorder rounded p-3 text-shText whitespace-pre-wrap"/>
+        <div className="flex gap-4"><label className="text-sm text-shText"><input type="checkbox" checked={form.required} onChange={e=>setForm({...form,required:e.target.checked})} className="mr-2"/>Required</label><label className="text-sm text-shText"><input type="checkbox" checked={form.active} onChange={e=>setForm({...form,active:e.target.checked})} className="mr-2"/>Active</label></div>
+        {msg&&<p className="text-xs font-bold text-shTextMuted">{msg}</p>}<div className="flex gap-2"><button onClick={saveAgreement} disabled={busy||!form.name.trim()||!form.title.trim()||!form.body.trim()||(form.scope_type!=="general"&&!form.scope_value)} className="bg-shSecondary text-shText px-4 py-2 rounded font-black uppercase text-xs disabled:opacity-40">{busy?"Saving…":editing?"Save New Version":"Create Agreement"}</button>{editing&&<button onClick={()=>{setEditing(null);setForm(empty)}} className="border border-shBorder px-4 py-2 rounded text-shTextMuted font-black uppercase text-xs">Cancel Edit</button>}</div>
+      </div>
+    </div>
+  </div>;
+}
+
+function MfaSettingsPanel() {
+  const [status, setStatus] = useState(null);
+  const [setup, setSetup] = useState(null);
+  const [code, setCode] = useState("");
+  const [password, setPassword] = useState("");
+  const [recovery, setRecovery] = useState([]);
+  const [msg, setMsg] = useState("");
+  const load = useCallback(() => api.get("/auth/mfa/status").then((r) => setStatus(r.data)).catch(() => setStatus(null)), []);
+  useEffect(() => { load(); }, [load]);
+  const begin = async () => {
+    setMsg("");
+    try { const { data } = await api.post("/auth/mfa/setup"); setSetup(data); setRecovery([]); }
+    catch (e) { setMsg(formatErr(e.response?.data?.detail) || "Couldn't start MFA setup"); }
+  };
+  const enable = async () => {
+    try {
+      const { data } = await api.post("/auth/mfa/enable", { code });
+      if (data.token) localStorage.setItem("sh_token", data.token);
+      setRecovery(data.recovery_codes || []); setSetup(null); setCode(""); setMsg("MFA enabled"); await load();
+    } catch (e) { setMsg(formatErr(e.response?.data?.detail) || "Code didn't match"); }
+  };
+  const disable = async () => {
+    try {
+      const { data } = await api.post("/auth/mfa/disable", { current_password: password, code });
+      if (data.token) localStorage.setItem("sh_token", data.token);
+      setPassword(""); setCode(""); setRecovery([]); setMsg("MFA disabled"); await load();
+    } catch (e) { setMsg(formatErr(e.response?.data?.detail) || "Couldn't disable MFA"); }
+  };
+  return <div className="border-t border-shBorder pt-5 space-y-3" data-testid="mfa-settings">
+    <div className="flex items-center justify-between gap-3">
+      <div><h4 className="text-xs font-black text-shPrimary uppercase tracking-widest">Authenticator MFA</h4><p className="text-xs text-shTextMuted mt-1">Free authenticator-app protection for this staff login.</p></div>
+      <span className={`text-[11px] font-black uppercase tracking-widest ${status?.enabled ? "text-shPrimary" : "text-shTextMuted"}`}>{status?.enabled ? "Enabled" : "Off"}</span>
+    </div>
+    {!status?.enabled && !setup && <button onClick={begin} className="bg-shPrimary text-bgHeader px-4 py-2 rounded font-black uppercase tracking-widest text-xs">Set up MFA</button>}
+    {setup && <div className="border border-shBorder rounded-xl p-3 space-y-3">
+      <p className="text-sm text-shText">In your authenticator app choose <b>Enter setup key</b>, then use this secret:</p>
+      <code className="block break-all bg-bgBase border border-shBorder rounded p-3 text-shPrimary font-black tracking-wider select-all">{setup.secret}</code>
+      <p className="text-[11px] text-shTextMuted break-all">Authenticator URI: {setup.otpauth_uri}</p>
+      <input value={code} onChange={(e)=>setCode(e.target.value)} placeholder="6-digit code" inputMode="numeric" className="w-full bg-bgBase border border-shBorder rounded p-2.5 text-shText" />
+      <button onClick={enable} className="bg-shPrimary text-bgHeader px-4 py-2 rounded font-black uppercase tracking-widest text-xs">Verify & Enable</button>
+    </div>}
+    {recovery.length > 0 && <div className="border-2 border-amber-400/50 rounded-xl p-3 bg-amber-500/5">
+      <p className="text-amber-300 font-black uppercase tracking-widest text-xs">Save these recovery codes now</p>
+      <p className="text-xs text-shTextMuted mt-1">Each works once. They are not shown again.</p>
+      <div className="grid grid-cols-2 gap-1 mt-2 font-mono text-sm text-shText">{recovery.map((r)=><code key={r}>{r}</code>)}</div>
+    </div>}
+    {status?.enabled && <div className="space-y-2 border border-shBorder rounded-xl p-3">
+      <p className="text-xs text-shTextMuted">Recovery codes remaining: <b className="text-shText">{status.recovery_codes_remaining}</b></p>
+      <input type="password" value={password} onChange={(e)=>setPassword(e.target.value)} placeholder="Current password" className="w-full bg-bgBase border border-shBorder rounded p-2.5 text-shText" />
+      <input value={code} onChange={(e)=>setCode(e.target.value)} placeholder="Authenticator or recovery code" className="w-full bg-bgBase border border-shBorder rounded p-2.5 text-shText" />
+      <button onClick={disable} className="border border-red-500/50 text-red-300 px-4 py-2 rounded font-black uppercase tracking-widest text-xs">Disable MFA</button>
+    </div>}
+    {msg && <p className="text-xs font-bold text-shTextMuted">{msg}</p>}
+  </div>;
 }
 
 // ─────────────── Category overview (card grid) ─────────────────

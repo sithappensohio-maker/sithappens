@@ -2600,7 +2600,7 @@ async def broadcast_announcement_email(announcement: dict) -> dict:
     sent = skipped = 0
     if _db is None:
         return {"sent": 0, "skipped": 0, "reason": "db not bound"}
-    cursor = _db.clients.find({"email": {"$exists": True, "$ne": ""}}, {"_id": 0, "name": 1, "email": 1})
+    cursor = _db.clients.find({"email": {"$exists": True, "$ne": ""}, "marketing_email_opt_out": {"$ne": True}}, {"_id": 0, "name": 1, "email": 1})
     async for c in cursor:
         addr = (c.get("email") or "").strip()
         if not addr:

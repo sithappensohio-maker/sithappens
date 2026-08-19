@@ -39,12 +39,18 @@ const TYPE_ICON = {
   meet_and_greet_request: "fa-handshake",
   booking_approval: "fa-hourglass-half",
   reschedule_request: "fa-rotate",
+  stripe_dispute: "fa-credit-card",
+  shop_refund_reconciliation: "fa-rotate-left",
+  overdue_medication: "fa-pills",
 };
 
 const REVIEW_LABEL = {
   meet_and_greet_request: "Review Request",
   booking_approval: "Review Booking",
   reschedule_request: "Review Request",
+  stripe_dispute: "Review Dispute",
+  shop_refund_reconciliation: "Review Refund",
+  overdue_medication: "Open Care Board",
 };
 
 function fmtDateTime(dateStr, timeStr) {
@@ -87,12 +93,23 @@ export function PendingActionCard({ action, onOpen, testid }) {
             {action.client_name || "Client"}{action.dog_name ? <span className="text-shTextMuted font-bold"> / {action.dog_name}</span> : null}
             <span className="text-shTextMuted font-bold"> · {action.service_name}</span>
           </p>
-          <p className="text-[12px] text-shTextMuted mt-1 break-words">
-            Requested <span className="text-shText font-bold">{dateRange}</span>
-          </p>
-          <p className="text-[12px] text-shTextMuted mt-0.5 break-words">
-            Received {fmtReceived(action.created_at)} · <span className="font-bold">{action.waiting_label}</span>
-          </p>
+          {action.type === "overdue_medication" ? (
+            <>
+              <p className="text-[12px] text-red-300 mt-1 break-words">
+                Due <span className="font-black">{dateRange}</span>
+              </p>
+              <p className="text-[12px] text-red-300 mt-0.5 font-black break-words">{action.waiting_label}</p>
+            </>
+          ) : (
+            <>
+              <p className="text-[12px] text-shTextMuted mt-1 break-words">
+                Requested <span className="text-shText font-bold">{dateRange}</span>
+              </p>
+              <p className="text-[12px] text-shTextMuted mt-0.5 break-words">
+                Received {fmtReceived(action.created_at)} · <span className="font-bold">{action.waiting_label}</span>
+              </p>
+            </>
+          )}
           {action.notes && <p className="text-[12px] text-shTextMuted italic mt-1 break-words line-clamp-2">“{action.notes}”</p>}
         </div>
         <button type="button" onClick={() => onOpen(action)} data-testid={testid ? `${testid}-review` : undefined}

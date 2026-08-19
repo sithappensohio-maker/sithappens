@@ -3,6 +3,7 @@ import { api, formatErr } from "../lib/api";
 import { useAuth } from "../lib/auth";
 import { useFeature, useTheme } from "../lib/theme";
 import WaiverModal from "../components/WaiverModal";
+import PortalAgreements from "../components/PortalAgreements";
 import Lightbox from "../components/Lightbox";
 import PortalDogModal from "../components/PortalDogModal";
 import PortalProfileModal from "../components/PortalProfileModal";
@@ -1687,6 +1688,8 @@ export default function Portal() {
               quick action (see portal-top-quick-actions, above the fold) is
               now the single primary Shop entrance for Home. Keeping this one
               here too would just duplicate that same promotion. */}
+
+          <PortalAgreements />
 
           {sectionOn("waiver_documents") && (
           <div className={`p-5 rounded-xl border shadow-2xl ${waiverNeeded?"bg-red-500/10 border-red-500/40":"bg-shGreen/5 border-shGreen/30"}`} data-testid="waiver-status-card">

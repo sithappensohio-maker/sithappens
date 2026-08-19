@@ -167,7 +167,7 @@ function IntakeFillModal({ sub, onClose, onSubmitted }) {
         ) : (
           <div className="space-y-4 mt-4">
             {fields.map((f) => (
-              <FieldInput key={f.id} f={f} value={answers[f.id]} setValue={(v)=>setA(f.id, v)} />
+              <FieldInput key={f.id} f={f} value={answers[f.id]} setValue={(v)=>setA(f.id, v)} submissionId={sub.id} />
             ))}
           </div>
         )}
@@ -189,7 +189,7 @@ function IntakeFillModal({ sub, onClose, onSubmitted }) {
 }
 
 /* ───── Per-field renderer ───── */
-function FieldInput({ f, value, setValue }) {
+function FieldInput({ f, value, setValue, submissionId }) {
   const inputClass = "w-full mt-1 bg-[var(--sh-card-base)] border border-shBorder rounded p-2 text-shText text-sm focus:border-shSecondary outline-none";
   const baseLabel = (
     <label className="block text-[12px] font-black text-shTextMuted uppercase tracking-widest">
@@ -303,23 +303,7 @@ function FieldInput({ f, value, setValue }) {
       );
     }
     case "file_upload":
-      return (
-        <div>
-          {baseLabel}
-          <div className="mt-1 bg-[var(--sh-card-base)] border border-dashed border-shBorder rounded p-3 text-[12px] text-shTextMuted italic">
-            <i className="fas fa-circle-info mr-1"/>File uploads coming soon. For now, please email any documents to your trainer or note &quot;will bring at drop-off&quot; below.
-          </div>
-          <input
-            type="text"
-            value={value ?? ""}
-            onChange={(e)=>setValue(e.target.value)}
-            placeholder="Note about file (optional)"
-            className={inputClass}
-            data-testid={`intake-field-${f.id}`}
-          />
-          {help}
-        </div>
-      );
+      return <IntakeFileUpload f={f} value={value} setValue={setValue} submissionId={submissionId} help={help} baseLabel={baseLabel} />;
     case "staff_only_note":
       // Backend already strips these from /portal/intake/assigned, but render
       // nothing as a defensive guard in case one ever slips through.
@@ -334,4 +318,76 @@ function FieldInput({ f, value, setValue }) {
         </div>
       );
   }
+}
+
+
+const INTAKE_MAX_FILE_BYTES = 10 * 1024 * 1024;
+
+function IntakeFileUpload({ f, value, setValue, submissionId, help, baseLabel }) {
+  const [uploading, setUploading] = useState(false);
+  const [uploadErr, setUploadErr] = useState("");
+
+  const upload = async (file) => {
+    if (!file) return;
+    if (file.size > INTAKE_MAX_FILE_BYTES) {
+      setUploadErr("File too large — maximum 10 MB.");
+      return;
+    }
+    setUploading(true);
+    setUploadErr("");
+    try {
+      const data = await intakeFileToDataUri(file);
+      const { data: saved } = await api.post(`/portal/intake/submissions/${submissionId}/files/${f.id}`, {
+        name: file.name,
+        content_type: file.type || "application/octet-stream",
+        data,
+      });
+      setValue({ file_id: saved.id, name: saved.name, content_type: saved.content_type, size_bytes: saved.size_bytes });
+      toast.success("Document uploaded");
+    } catch (e) {
+      setUploadErr(formatErr(e.response?.data?.detail) || "Upload failed. Please try again.");
+    }
+    setUploading(false);
+  };
+
+  return (
+    <div>
+      {baseLabel}
+      <div className="mt-1 rounded-lg border border-dashed border-shBorder bg-[var(--sh-card-base)] p-3">
+        {value?.file_id ? (
+          <div className="flex items-center justify-between gap-3">
+            <div className="min-w-0">
+              <p className="text-[13px] font-black text-shText truncate"><i className="fas fa-file-circle-check text-shPrimary mr-2"/>{value.name || "Uploaded document"}</p>
+              <p className="text-[11px] text-shTextMuted mt-0.5">Uploaded and attached to this intake form.</p>
+            </div>
+            <label className="shrink-0 cursor-pointer text-[11px] font-black uppercase tracking-widest text-shSecondary">
+              Replace
+              <input type="file" className="hidden" disabled={uploading}
+                     accept="application/pdf,image/*,text/plain,.doc,.docx"
+                     onChange={(e)=>upload(e.target.files?.[0] || null)} data-testid={`intake-field-${f.id}-file`} />
+            </label>
+          </div>
+        ) : (
+          <label className="flex min-h-[48px] cursor-pointer items-center justify-center rounded border border-shBorder bg-shSurfaceRaised/40 px-3 text-[12px] font-black uppercase tracking-widest text-shSecondary hover:border-shSecondary/60">
+            {uploading ? <><i className="fas fa-spinner fa-spin mr-2"/>Uploading…</> : <><i className="fas fa-paperclip mr-2"/>Choose document</>}
+            <input type="file" className="hidden" disabled={uploading}
+                   accept="application/pdf,image/*,text/plain,.doc,.docx"
+                   onChange={(e)=>upload(e.target.files?.[0] || null)} data-testid={`intake-field-${f.id}-file`} />
+          </label>
+        )}
+        <p className="mt-2 text-[11px] text-shTextMuted">PDF, image, text, or Word document · max 10 MB.</p>
+      </div>
+      {uploadErr && <p className="mt-1 text-[12px] font-bold text-red-300" data-testid={`intake-field-${f.id}-upload-error`}>{uploadErr}</p>}
+      {help}
+    </div>
+  );
+}
+
+function intakeFileToDataUri(file) {
+  return new Promise((resolve, reject) => {
+    const reader = new FileReader();
+    reader.onload = () => resolve(reader.result);
+    reader.onerror = () => reject(new Error("Could not read file"));
+    reader.readAsDataURL(file);
+  });
 }

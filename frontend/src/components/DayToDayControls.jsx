@@ -15,15 +15,16 @@
 // ───────────────────────────────────────────────────────────────────────
 import { useState } from "react";
 
-const Field = ({ label, type = "text", value, onChange, hint, testId, options, placeholder }) => {
+const Field = ({ label, type = "text", value, onChange, hint, testId, options, placeholder, disabled = false, unsupported = false }) => {
   if (type === "select") {
     return (
       <label className="block">
         <span className="block text-[12px] font-black text-shTextMuted uppercase tracking-widest mb-1">{label}</span>
-        <select value={value ?? ""} onChange={(e) => onChange(e.target.value)} data-testid={testId}
-                className="w-full bg-[var(--sh-card-base)] border border-shBorder rounded p-2 text-shText text-sm">
+        <select value={value ?? ""} onChange={(e) => onChange(e.target.value)} data-testid={testId} disabled={disabled}
+                className={`w-full bg-[var(--sh-card-base)] border border-shBorder rounded p-2 text-shText text-sm ${disabled ? "opacity-55 cursor-not-allowed" : ""}`}>
           {(options || []).map((o) => <option key={o.value} value={o.value}>{o.label}</option>)}
         </select>
+        {unsupported && <span className="block text-[10px] font-black uppercase tracking-widest text-shAccent mt-1">Not enforced by the app yet</span>}
         {hint && <span className="block text-[11px] text-shTextMuted mt-1">{hint}</span>}
       </label>
     );
@@ -31,10 +32,13 @@ const Field = ({ label, type = "text", value, onChange, hint, testId, options, p
   if (type === "toggle") {
     return (
       <label className="flex items-center gap-3 cursor-pointer py-1">
-        <input type="checkbox" checked={!!value} onChange={(e) => onChange(e.target.checked)}
-               data-testid={testId} className="accent-shPrimary w-4 h-4" />
+        <input type="checkbox" checked={!!value} onChange={(e) => onChange(e.target.checked)} disabled={disabled}
+               data-testid={testId} className="accent-shPrimary w-4 h-4 disabled:opacity-50 disabled:cursor-not-allowed" />
         <span className="text-[14px] font-black uppercase tracking-widest text-shTextMuted">{label}</span>
-        {hint && <span className="text-[11px] text-shTextMuted normal-case font-normal">{hint}</span>}
+        <span className="min-w-0">
+          {unsupported && <span className="block text-[10px] font-black uppercase tracking-widest text-shAccent">Not enforced by the app yet</span>}
+          {hint && <span className="text-[11px] text-shTextMuted normal-case font-normal">{hint}</span>}
+        </span>
       </label>
     );
   }
@@ -45,8 +49,9 @@ const Field = ({ label, type = "text", value, onChange, hint, testId, options, p
       <input type={type} value={value ?? ""}
              placeholder={placeholder || ""}
              onChange={(e) => onChange(isNum ? (e.target.value === "" ? "" : parseFloat(e.target.value)) : e.target.value)}
-             data-testid={testId}
-             className="w-full bg-[var(--sh-card-base)] border border-shBorder rounded p-2 text-shText text-sm" />
+             data-testid={testId} disabled={disabled}
+             className={`w-full bg-[var(--sh-card-base)] border border-shBorder rounded p-2 text-shText text-sm ${disabled ? "opacity-55 cursor-not-allowed" : ""}`} />
+      {unsupported && <span className="block text-[10px] font-black uppercase tracking-widest text-shAccent mt-1">Not enforced by the app yet</span>}
       {hint && <span className="block text-[11px] text-shTextMuted mt-1">{hint}</span>}
     </label>
   );
@@ -133,11 +138,11 @@ export default function DayToDayControls({ d2d, setD2d, section }) {
       {showSec("money") && (
       <Sub id="money" title="Money rules" icon="fa-dollar-sign" color="text-shPrimary" {...subProps("money")}>
         <Field label="Show tipping prompt at checkout" type="toggle" value={m.tipping_enabled}
-               onChange={(v) => set("money", "tipping_enabled", v)} testId="d2d-tipping-enabled"
+               onChange={(v) => set("money", "tipping_enabled", v)} testId="d2d-tipping-enabled" disabled unsupported
                hint="Adds a tip step in the check-out flow with quick-pick percentages." />
         <Field label="Tip preset percentages (comma-separated)" value={(m.tip_presets_pct || []).join(",")}
                onChange={(val) => set("money", "tip_presets_pct", val.split(",").map(x => parseFloat(x.trim())).filter(x => !isNaN(x)))}
-               testId="d2d-tip-presets" hint="Example: 15,18,20" placeholder="15,18,20" />
+               testId="d2d-tip-presets" disabled unsupported hint="Example: 15,18,20" placeholder="15,18,20" />
         <div className="grid grid-cols-2 gap-3">
           <Field label="Late pickup fee ($/15 min)" type="number" value={m.late_pickup_fee_per_15min}
                  onChange={(v) => set("money", "late_pickup_fee_per_15min", v)} testId="d2d-late-fee"
@@ -160,14 +165,14 @@ export default function DayToDayControls({ d2d, setD2d, section }) {
           <Field label="Tier 2 charge (%)" type="number" value={m.cancellation_tier2_pct}
                  onChange={(v) => set("money", "cancellation_tier2_pct", v)} testId="d2d-cancel-t2p" />
           <Field label="No-show charge (%)" type="number" value={m.no_show_fee_pct}
-                 onChange={(v) => set("money", "no_show_fee_pct", v)} testId="d2d-noshow" />
+                 onChange={(v) => set("money", "no_show_fee_pct", v)} testId="d2d-noshow" disabled unsupported />
         </div>
         <div className="grid grid-cols-3 gap-3">
           <Field label="Boarding deposit (%)" type="number" value={m.boarding_deposit_pct}
-                 onChange={(v) => set("money", "boarding_deposit_pct", v)} testId="d2d-board-dep"
+                 onChange={(v) => set("money", "boarding_deposit_pct", v)} testId="d2d-board-dep" disabled unsupported
                  hint="Required upfront when booking is placed." />
           <Field label="Credit pack expiry (days)" type="number" value={m.credit_pack_expiry_days}
-                 onChange={(v) => set("money", "credit_pack_expiry_days", v)} testId="d2d-pack-exp"
+                 onChange={(v) => set("money", "credit_pack_expiry_days", v)} testId="d2d-pack-exp" disabled unsupported
                  hint="0 = never expire." />
           <Field label="Auto-decline if balance owed >" type="number" value={m.auto_decline_if_balance_over}
                  onChange={(v) => set("money", "auto_decline_if_balance_over", v)} testId="d2d-auto-decline"
@@ -230,20 +235,21 @@ export default function DayToDayControls({ d2d, setD2d, section }) {
           </div>
         </div>
         <Field label="Block bookings within N days before any holiday" type="number" value={s.holiday_lockout_days}
-               onChange={(v) => set("seasonal", "holiday_lockout_days", v)} testId="d2d-holiday-lockout"
+               onChange={(v) => set("seasonal", "holiday_lockout_days", v)} testId="d2d-holiday-lockout" disabled unsupported
                hint="0 = no lockout." />
         <div>
           <span className="block text-[12px] font-black text-shTextMuted uppercase tracking-widest mb-1">Owner vacation auto-message</span>
+          <div className="text-[11px] font-black uppercase tracking-wider text-amber-400 mb-2">Not enforced by the app yet</div>
           <textarea value={s.vacation_message || ""}
-                    onChange={(e) => set("seasonal", "vacation_message", e.target.value)}
+                    disabled
                     data-testid="d2d-vac-msg"
                     placeholder="Closed Aug 1-7. See you Aug 8!"
-                    className="w-full bg-[var(--sh-card-base)] border border-shBorder rounded p-2 text-shText text-sm h-20" />
+                    className="w-full bg-[var(--sh-card-base)] border border-shBorder rounded p-2 text-shText text-sm h-20 opacity-50 cursor-not-allowed" />
           <div className="grid grid-cols-2 gap-3 mt-2">
-            <input type="date" value={s.vacation_start || ""} onChange={(e) => set("seasonal", "vacation_start", e.target.value)}
-                   data-testid="d2d-vac-start" className="bg-[var(--sh-card-base)] border border-shBorder rounded p-2 text-shText text-sm" />
-            <input type="date" value={s.vacation_end || ""} onChange={(e) => set("seasonal", "vacation_end", e.target.value)}
-                   data-testid="d2d-vac-end" className="bg-[var(--sh-card-base)] border border-shBorder rounded p-2 text-shText text-sm" />
+            <input type="date" value={s.vacation_start || ""} disabled
+                   data-testid="d2d-vac-start" className="bg-[var(--sh-card-base)] border border-shBorder rounded p-2 text-shText text-sm opacity-50 cursor-not-allowed" />
+            <input type="date" value={s.vacation_end || ""} disabled
+                   data-testid="d2d-vac-end" className="bg-[var(--sh-card-base)] border border-shBorder rounded p-2 text-shText text-sm opacity-50 cursor-not-allowed" />
           </div>
         </div>
       </Sub>
@@ -274,17 +280,17 @@ export default function DayToDayControls({ d2d, setD2d, section }) {
         <Field label="Block bookings when vaccines expired" type="toggle" value={g.block_bookings_if_vaccines_expired}
                onChange={(v) => set("guardrails", "block_bookings_if_vaccines_expired", v)} testId="d2d-block-vax" />
         <Field label="Setup/cleanup buffer (min)" type="number" value={g.setup_cleanup_buffer_min}
-               onChange={(v) => set("guardrails", "setup_cleanup_buffer_min", v)} testId="d2d-buffer"
+               onChange={(v) => set("guardrails", "setup_cleanup_buffer_min", v)} testId="d2d-buffer" disabled unsupported
                hint="Spacing required between back-to-back training/grooming appointments." />
         <div className="grid grid-cols-2 gap-3">
           <Field label="Check-in window starts" value={g.check_in_window_start || ""}
-                 onChange={(v) => set("guardrails", "check_in_window_start", v)} testId="d2d-ci-start" placeholder="07:00" />
+                 onChange={(v) => set("guardrails", "check_in_window_start", v)} testId="d2d-ci-start" disabled unsupported placeholder="07:00" />
           <Field label="Check-in window ends" value={g.check_in_window_end || ""}
-                 onChange={(v) => set("guardrails", "check_in_window_end", v)} testId="d2d-ci-end" placeholder="10:00" />
+                 onChange={(v) => set("guardrails", "check_in_window_end", v)} testId="d2d-ci-end" disabled unsupported placeholder="10:00" />
           <Field label="Check-out window starts" value={g.check_out_window_start || ""}
-                 onChange={(v) => set("guardrails", "check_out_window_start", v)} testId="d2d-co-start" placeholder="16:00" />
+                 onChange={(v) => set("guardrails", "check_out_window_start", v)} testId="d2d-co-start" disabled unsupported placeholder="16:00" />
           <Field label="Check-out window ends" value={g.check_out_window_end || ""}
-                 onChange={(v) => set("guardrails", "check_out_window_end", v)} testId="d2d-co-end" placeholder="19:00" />
+                 onChange={(v) => set("guardrails", "check_out_window_end", v)} testId="d2d-co-end" disabled unsupported placeholder="19:00" />
         </div>
       </Sub>
       )}
@@ -294,18 +300,18 @@ export default function DayToDayControls({ d2d, setD2d, section }) {
       <Sub id="comms" title="Email automation timing" icon="fa-envelope" color="text-purple-300" {...subProps("comms")}>
         <div className="grid grid-cols-3 gap-3">
           <Field label="Reminder email — hours before" type="number" value={c.reminder_email_hours_before}
-                 onChange={(v) => set("comms", "reminder_email_hours_before", v)} testId="d2d-rmd-hours" />
+                 onChange={(v) => set("comms", "reminder_email_hours_before", v)} testId="d2d-rmd-hours" disabled unsupported />
           <Field label="Vaccine expiry warn (extra days)" type="number" value={c.vaccine_expiry_warn_days_extended}
-                 onChange={(v) => set("comms", "vaccine_expiry_warn_days_extended", v)} testId="d2d-vax-warn" />
+                 onChange={(v) => set("comms", "vaccine_expiry_warn_days_extended", v)} testId="d2d-vax-warn" disabled unsupported />
           <Field label='"We miss you" after N inactive days' type="number" value={c.inactive_client_days}
-                 onChange={(v) => set("comms", "inactive_client_days", v)} testId="d2d-miss-days" />
+                 onChange={(v) => set("comms", "inactive_client_days", v)} testId="d2d-miss-days" disabled unsupported />
           <Field label="Review request — days after visit" type="number" value={c.review_request_days_after_visit}
-                 onChange={(v) => set("comms", "review_request_days_after_visit", v)} testId="d2d-rev-days" />
+                 onChange={(v) => set("comms", "review_request_days_after_visit", v)} testId="d2d-rev-days" disabled unsupported />
           <Field label="Report card auto-send" type="select" value={c.report_card_auto_send}
-                 onChange={(v) => set("comms", "report_card_auto_send", v)} testId="d2d-rc-mode"
+                 onChange={(v) => set("comms", "report_card_auto_send", v)} testId="d2d-rc-mode" disabled unsupported
                  options={[{value:"per_session",label:"After every session"},{value:"weekly_digest",label:"Weekly digest"},{value:"off",label:"Off (manual only)"}]} />
           <Field label="Birthday emails enabled" type="toggle" value={c.birthday_email_enabled}
-                 onChange={(v) => set("comms", "birthday_email_enabled", v)} testId="d2d-bday" />
+                 onChange={(v) => set("comms", "birthday_email_enabled", v)} testId="d2d-bday" disabled unsupported />
         </div>
         <div className="grid grid-cols-3 gap-3 items-end">
           <Field label="Quiet hours enabled" type="toggle" value={c.quiet_hours_enabled}
@@ -316,13 +322,14 @@ export default function DayToDayControls({ d2d, setD2d, section }) {
                  onChange={(v) => set("comms", "quiet_hours_end", v)} testId="d2d-quiet-end" placeholder="08:00" />
         </div>
         <Field label="Reply-to address (blank = system from address)" type="email" value={c.reply_to_address || ""}
-               onChange={(v) => set("comms", "reply_to_address", v)} testId="d2d-replyto" />
+               onChange={(v) => set("comms", "reply_to_address", v)} testId="d2d-replyto" disabled unsupported />
         <div>
           <span className="block text-[12px] font-black text-shTextMuted uppercase tracking-widest mb-1">Email footer signature</span>
+          <div className="text-[11px] font-black uppercase tracking-wider text-amber-400 mb-2">Not enforced by the app yet</div>
           <textarea value={c.email_footer_signature || ""}
-                    onChange={(e) => set("comms", "email_footer_signature", e.target.value)}
+                    disabled
                     data-testid="d2d-footer-sig"
-                    className="w-full bg-[var(--sh-card-base)] border border-shBorder rounded p-2 text-shText text-sm h-20" />
+                    className="w-full bg-[var(--sh-card-base)] border border-shBorder rounded p-2 text-shText text-sm h-20 opacity-50 cursor-not-allowed" />
         </div>
       </Sub>
       )}
@@ -332,31 +339,31 @@ export default function DayToDayControls({ d2d, setD2d, section }) {
       <Sub id="loyalty" title="Trophies, streaks & referrals" icon="fa-trophy" color="text-amber-400" {...subProps("loyalty")}>
         <div className="grid grid-cols-3 gap-3">
           <Field label="Streak target — daycare (days)" type="number" value={l.streak_target_daycare}
-                 onChange={(v) => set("loyalty", "streak_target_daycare", v)} testId="d2d-streak-d" />
+                 onChange={(v) => set("loyalty", "streak_target_daycare", v)} testId="d2d-streak-d" disabled unsupported />
           <Field label="Streak target — training (days)" type="number" value={l.streak_target_training}
-                 onChange={(v) => set("loyalty", "streak_target_training", v)} testId="d2d-streak-t" />
+                 onChange={(v) => set("loyalty", "streak_target_training", v)} testId="d2d-streak-t" disabled unsupported />
           <Field label="Streak target — boarding (visits)" type="number" value={l.streak_target_boarding}
-                 onChange={(v) => set("loyalty", "streak_target_boarding", v)} testId="d2d-streak-b" />
+                 onChange={(v) => set("loyalty", "streak_target_boarding", v)} testId="d2d-streak-b" disabled unsupported />
           <Field label="Bronze tier (visits)" type="number" value={l.loyalty_tier_bronze_visits}
-                 onChange={(v) => set("loyalty", "loyalty_tier_bronze_visits", v)} testId="d2d-bronze" />
+                 onChange={(v) => set("loyalty", "loyalty_tier_bronze_visits", v)} testId="d2d-bronze" disabled unsupported />
           <Field label="Silver tier (visits)" type="number" value={l.loyalty_tier_silver_visits}
-                 onChange={(v) => set("loyalty", "loyalty_tier_silver_visits", v)} testId="d2d-silver" />
+                 onChange={(v) => set("loyalty", "loyalty_tier_silver_visits", v)} testId="d2d-silver" disabled unsupported />
           <Field label="Gold tier (visits)" type="number" value={l.loyalty_tier_gold_visits}
-                 onChange={(v) => set("loyalty", "loyalty_tier_gold_visits", v)} testId="d2d-gold" />
+                 onChange={(v) => set("loyalty", "loyalty_tier_gold_visits", v)} testId="d2d-gold" disabled unsupported />
           <Field label="Platinum tier (visits)" type="number" value={l.loyalty_tier_platinum_visits}
-                 onChange={(v) => set("loyalty", "loyalty_tier_platinum_visits", v)} testId="d2d-platinum" />
+                 onChange={(v) => set("loyalty", "loyalty_tier_platinum_visits", v)} testId="d2d-platinum" disabled unsupported />
           <Field label="Trophy reward value ($)" type="number" value={l.trophy_reward_value_usd}
-                 onChange={(v) => set("loyalty", "trophy_reward_value_usd", v)} testId="d2d-trophy-val"
+                 onChange={(v) => set("loyalty", "trophy_reward_value_usd", v)} testId="d2d-trophy-val" disabled unsupported
                  hint="0 = symbolic only." />
         </div>
         <div className="grid grid-cols-3 gap-3">
           <Field label="Referral reward type" type="select" value={l.referral_reward_type}
-                 onChange={(v) => set("loyalty", "referral_reward_type", v)} testId="d2d-ref-type"
+                 onChange={(v) => set("loyalty", "referral_reward_type", v)} testId="d2d-ref-type" disabled unsupported
                  options={[{value:"credit",label:"Free credit"},{value:"dollar_off",label:"$ off next visit"},{value:"percent_off",label:"% off next visit"},{value:"free_session",label:"Free session"}]} />
           <Field label="Referral reward amount" type="number" value={l.referral_reward_amount}
-                 onChange={(v) => set("loyalty", "referral_reward_amount", v)} testId="d2d-ref-amt" />
+                 onChange={(v) => set("loyalty", "referral_reward_amount", v)} testId="d2d-ref-amt" disabled unsupported />
           <Field label="Referral service (for credits)" type="select" value={l.referral_reward_service}
-                 onChange={(v) => set("loyalty", "referral_reward_service", v)} testId="d2d-ref-svc"
+                 onChange={(v) => set("loyalty", "referral_reward_service", v)} testId="d2d-ref-svc" disabled unsupported
                  options={[{value:"daycare",label:"Daycare"},{value:"boarding",label:"Boarding"},{value:"training",label:"Training"}]} />
         </div>
       </Sub>
@@ -392,10 +399,10 @@ export default function DayToDayControls({ d2d, setD2d, section }) {
           <Field label="Require vaccine doc upload" type="toggle" value={co.vaccine_doc_upload_required}
                  onChange={(v) => set("compliance", "vaccine_doc_upload_required", v)} testId="d2d-doc-req" />
           <Field label="Waiver re-sign frequency" type="select" value={co.waiver_resign_frequency}
-                 onChange={(v) => set("compliance", "waiver_resign_frequency", v)} testId="d2d-waiver-freq"
+                 onChange={(v) => set("compliance", "waiver_resign_frequency", v)} testId="d2d-waiver-freq" disabled unsupported
                  options={[{value:"never",label:"Never (one-time)"},{value:"annual",label:"Annually"},{value:"version_bump",label:"On version bump"}]} />
           <Field label="Waiver required for" type="select" value={co.waiver_scope}
-                 onChange={(v) => set("compliance", "waiver_scope", v)} testId="d2d-waiver-scope"
+                 onChange={(v) => set("compliance", "waiver_scope", v)} testId="d2d-waiver-scope" disabled unsupported
                  options={[{value:"first_visit",label:"First visit only"},{value:"every_visit",label:"Every visit"},{value:"bookings_only",label:"Bookings only"}]} />
         </div>
       </Sub>
@@ -405,25 +412,25 @@ export default function DayToDayControls({ d2d, setD2d, section }) {
       {showSec("services") && (
       <Sub id="services" title="Service-specific defaults" icon="fa-paw" color="text-shPrimary" {...subProps("services")}>
         <Field label="Boarding price includes daycare hours" type="toggle" value={sv.boarding_includes_daycare}
-               onChange={(v) => set("services", "boarding_includes_daycare", v)} testId="d2d-b-inc-d"
+               onChange={(v) => set("services", "boarding_includes_daycare", v)} testId="d2d-b-inc-d" disabled unsupported
                hint="When ON, a boarding night covers daytime daycare too." />
         <div className="grid grid-cols-3 gap-3">
           <Field label="Training session length (min)" type="number" value={sv.training_session_length_min}
-                 onChange={(v) => set("services", "training_session_length_min", v)} testId="d2d-train-len" />
+                 onChange={(v) => set("services", "training_session_length_min", v)} testId="d2d-train-len" disabled unsupported />
           <Field label="Graduation: % mastery" type="number" value={sv.training_graduation_pct_mastery}
-                 onChange={(v) => set("services", "training_graduation_pct_mastery", v)} testId="d2d-grad-pct" />
+                 onChange={(v) => set("services", "training_graduation_pct_mastery", v)} testId="d2d-grad-pct" disabled unsupported />
           <Field label="Graduation: consecutive successes" type="number" value={sv.training_graduation_consecutive_successes}
-                 onChange={(v) => set("services", "training_graduation_consecutive_successes", v)} testId="d2d-grad-streak" />
+                 onChange={(v) => set("services", "training_graduation_consecutive_successes", v)} testId="d2d-grad-streak" disabled unsupported />
           <Field label="Photography default price ($)" type="number" value={sv.photography_default_price}
-                 onChange={(v) => set("services", "photography_default_price", v)} testId="d2d-photo-price" />
+                 onChange={(v) => set("services", "photography_default_price", v)} testId="d2d-photo-price" disabled unsupported />
           <Field label="Photography photos included" type="number" value={sv.photography_edited_photos_included}
-                 onChange={(v) => set("services", "photography_edited_photos_included", v)} testId="d2d-photo-count" />
+                 onChange={(v) => set("services", "photography_edited_photos_included", v)} testId="d2d-photo-count" disabled unsupported />
           <Field label="Photography delivery SLA (days)" type="number" value={sv.photography_delivery_sla_days}
-                 onChange={(v) => set("services", "photography_delivery_sla_days", v)} testId="d2d-photo-sla" />
+                 onChange={(v) => set("services", "photography_delivery_sla_days", v)} testId="d2d-photo-sla" disabled unsupported />
           <Field label="Grooming — bath duration (min)" type="number" value={sv.grooming_bath_duration_min}
-                 onChange={(v) => set("services", "grooming_bath_duration_min", v)} testId="d2d-bath-dur" />
+                 onChange={(v) => set("services", "grooming_bath_duration_min", v)} testId="d2d-bath-dur" disabled unsupported />
           <Field label="Grooming — nail-trim duration (min)" type="number" value={sv.grooming_nailtrim_duration_min}
-                 onChange={(v) => set("services", "grooming_nailtrim_duration_min", v)} testId="d2d-nail-dur" />
+                 onChange={(v) => set("services", "grooming_nailtrim_duration_min", v)} testId="d2d-nail-dur" disabled unsupported />
         </div>
       </Sub>
       )}
@@ -433,15 +440,15 @@ export default function DayToDayControls({ d2d, setD2d, section }) {
       <Sub id="finance" title="Finance & bookkeeping" icon="fa-chart-pie" color="text-shSecondary" {...subProps("finance")}>
         <div className="grid grid-cols-2 gap-3">
           <Field label="Fiscal year start month (1-12)" type="number" value={f.fiscal_year_start_month}
-                 onChange={(v) => set("finance", "fiscal_year_start_month", v)} testId="d2d-fy" />
+                 onChange={(v) => set("finance", "fiscal_year_start_month", v)} testId="d2d-fy" disabled unsupported />
           <Field label="Bookkeeping export format" type="select" value={f.bookkeeping_export_format}
-                 onChange={(v) => set("finance", "bookkeeping_export_format", v)} testId="d2d-export"
+                 onChange={(v) => set("finance", "bookkeeping_export_format", v)} testId="d2d-export" disabled unsupported
                  options={[{value:"csv",label:"Generic CSV"},{value:"quickbooks",label:"QuickBooks"},{value:"wave",label:"Wave"}]} />
           <Field label="Business mileage rate ($/mile)" type="number" value={f.mileage_rate_per_mile}
                  onChange={(v) => set("finance", "mileage_rate_per_mile", v)} testId="d2d-mileage"
                  hint="IRS 2024 standard = $0.67." />
           <Field label="1099 threshold ($)" type="number" value={f.form_1099_threshold_usd}
-                 onChange={(v) => set("finance", "form_1099_threshold_usd", v)} testId="d2d-1099" />
+                 onChange={(v) => set("finance", "form_1099_threshold_usd", v)} testId="d2d-1099" disabled unsupported />
         </div>
       </Sub>
       )}
@@ -541,9 +548,9 @@ function OperatorQuickControls({ d2d }) {
     {
       label: "Money & Checkout",
       lines: [
-        ["Tipping at checkout", m.tipping_enabled ? "On" : "Off", m.tipping_enabled ? "shPrimary" : "shAccent"],
+        ["Tipping at checkout", "Not available yet", "shAccent"],
         ["Late pickup fee", m.late_pickup_fee_per_15min ? `$${m.late_pickup_fee_per_15min}/15min` : "Off"],
-        ["No-show fee", m.no_show_fee_pct ? `${m.no_show_fee_pct}%` : "Off"],
+        ["No-show fee", "Not available yet", "shAccent"],
       ],
       cta: { label: "Configure money rules", cat: "pricing", sub: "_d2d_money" },
       icon: "fa-dollar-sign", color: "shPrimary",

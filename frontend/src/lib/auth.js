@@ -8,6 +8,7 @@ export function AuthProvider({ children }) {
   const [user, setUser] = useState(null); // null = loading, false = guest, obj = logged-in
   const [permissions, setPermissions] = useState(null); // dict of permission key → bool
   const [error, setError] = useState("");
+  const [mfaChallenge, setMfaChallenge] = useState(null);
 
   const loadMe = useCallback(async () => {
     const token = localStorage.getItem("sh_token");
@@ -45,7 +46,12 @@ export function AuthProvider({ children }) {
     setError("");
     try {
       const { data } = await api.post("/auth/login", { email, password });
+      if (data.mfa_required) {
+        setMfaChallenge(data.challenge_token);
+        return false;
+      }
       localStorage.setItem("sh_token", data.token);
+      setMfaChallenge(null);
       setUser(data.user);
       // Sprint 110ex — also fetch permissions after login (separate endpoint
       // so the original /auth/login response stays unchanged).
@@ -59,6 +65,27 @@ export function AuthProvider({ children }) {
       return false;
     }
   };
+
+  const verifyMfa = async (code) => {
+    if (!mfaChallenge) return false;
+    setError("");
+    try {
+      const { data } = await api.post("/auth/mfa/verify-login", { challenge_token: mfaChallenge, code });
+      localStorage.setItem("sh_token", data.token);
+      setMfaChallenge(null);
+      setUser(data.user);
+      try {
+        const { data: p } = await api.get("/me/permissions");
+        setPermissions(p.permissions || null);
+      } catch { setPermissions(null); }
+      return true;
+    } catch (e) {
+      setError(formatErr(e.response?.data?.detail) || "MFA verification failed");
+      return false;
+    }
+  };
+
+  const cancelMfa = () => { setMfaChallenge(null); setError(""); };
 
   const register = async (email, password, name, referredByCode) => {
     setError("");
@@ -79,6 +106,7 @@ export function AuthProvider({ children }) {
     localStorage.removeItem("sh_token");
     setUser(false);
     setPermissions(null);
+    setMfaChallenge(null);
   };
 
   // Sprint 110ex — Phase 7: easy "can()" predicate for UI gating.
@@ -105,7 +133,7 @@ export function AuthProvider({ children }) {
   };
 
   return (
-    <AuthCtx.Provider value={{ user, permissions, can, isOwner: () => isOwner(user), login, register, logout, error, setError, reloadUser: loadMe }}>
+    <AuthCtx.Provider value={{ user, permissions, can, isOwner: () => isOwner(user), login, verifyMfa, cancelMfa, mfaChallenge, register, logout, error, setError, reloadUser: loadMe }}>
       {children}
     </AuthCtx.Provider>
   );
