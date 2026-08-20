@@ -18,6 +18,7 @@ export default function Homework() {
   const [pickerOpen, setPickerOpen] = useState(false);
   const [trackerOpen, setTrackerOpen] = useState(false);
   const [reviewOpen, setReviewOpen] = useState(false);
+  const [attentionCount, setAttentionCount] = useState(0);
   const [analyticsOpen, setAnalyticsOpen] = useState(false);
   const [pendingCount, setPendingCount] = useState(0);
   const [form, setForm] = useState({ dog_id: "", title: "", instructions: "", video_url: "", due_date: "" });
@@ -29,10 +30,16 @@ export default function Homework() {
   const load = async () => {
     const [h, d] = await Promise.all([api.get("/homework"), api.get("/dogs")]);
     setList(h.data); setDogs(d.data);
+    /* The header count must reflect ALL unreviewed practice, not only
+       daily-tracker days awaiting approval. /admin/homework/pending-reviews
+       is filtered to daily_tracker rows, so section-based practice — which
+       is what the real recipes create — never appeared there and the Review
+       button stayed hidden precisely when there was work to do. */
     try {
-      const r = await api.get("/admin/homework/pending-reviews");
-      setPendingCount(Array.isArray(r.data) ? r.data.length : 0);
-    } catch { setPendingCount(0); }
+      const r = await api.get("/admin/homework/unreviewed-count");
+      setPendingCount(Number(r.data?.unreviewed) || 0);
+      setAttentionCount(Number(r.data?.needs_attention) || 0);
+    } catch { setPendingCount(0); setAttentionCount(0); }
   };
   useEffect(() => { load(); }, []);
   useEffect(() => {
@@ -97,6 +104,42 @@ export default function Homework() {
     } finally { setDigestBusy(false); }
   };
 
+  /* NEW / UNREVIEWED is deliberately not the same signal as NEEDS TRAINER
+     ATTENTION. An ordinary log with no video, no reported difficulty and no
+     question is still new until a trainer acknowledges it. Rest days and
+     trainer-entered rows are not client submissions. */
+  const unreviewedLogs = (h) => (h.section_logs || []).filter(
+    (lo) => lo && !lo.reviewed_at && !lo.is_rest_day && lo.logged_by_role !== "admin",
+  ).length;
+
+  /* Complete Assignment — the explicit end to an assignment, separate from
+     reviewing its logs. Reuses the canonical completion state via the
+     trainer endpoint; completing never marks outstanding logs reviewed. */
+  const [completingId, setCompletingId] = useState(null);
+  const completeAssignment = async (h) => {
+    if (completingId) return;                     // double-click guard
+    const outstanding = unreviewedLogs(h);
+    // Unreviewed logs never BLOCK completion — the trainer is told and
+    // decides. Those logs stay unreviewed; completing acknowledges nothing.
+    const body = outstanding > 0
+      ? `This assignment has ${outstanding} unreviewed practice log${outstanding === 1 ? "" : "s"}. They will stay unreviewed. Complete anyway?`
+      : "This ends the assignment. Its logs and history stay available.";
+    if (!(await confirm({
+      title: `Complete ${h.title} for ${h.dog_name}?`,
+      body, confirmText: "Complete assignment",
+    }))) return;
+    setCompletingId(h.id);
+    try {
+      await api.post(`/admin/homework/${h.id}/complete`, { note: "" });
+      await load();
+    } catch (e) {
+      const d = e?.response?.data?.detail;
+      toast.error(typeof d === "string" ? d : "Couldn't complete this assignment — try again.");
+    } finally {
+      setCompletingId(null);
+    }
+  };
+
   const openNew = () => {
     if (dogs.length === 0) { toast.error("Add a dog first"); return; }
     setForm({ dog_id: dogs[0].id, title: "", instructions: "", video_url: "", due_date: "" });
@@ -127,8 +170,11 @@ export default function Homework() {
             {pendingCount > 0 && (
               <button onClick={() => setReviewOpen(true)} data-testid="review-queue-button"
                       className="relative bg-shAccent text-bgHeader px-4 py-2 rounded-lg text-[13px] font-black uppercase tracking-widest shadow-lg hover:bg-shAccent/80 transition">
-                <i className="fas fa-clipboard-check mr-2" />Review · {pendingCount}
-                <span className="absolute -top-1 -right-1 bg-red-500 text-shText rounded-full w-5 h-5 flex items-center justify-center text-[11px] font-black animate-pulse">{pendingCount}</span>
+                <i className="fas fa-clipboard-check mr-2" />Unreviewed · {pendingCount}
+                {attentionCount > 0 && (
+                  <span className="absolute -top-1 -right-1 bg-red-500 text-shText rounded-full w-5 h-5 flex items-center justify-center text-[11px] font-black animate-pulse"
+                        title={`${attentionCount} need trainer attention`} data-testid="review-attention-badge">{attentionCount}</span>
+                )}
               </button>
             )}
             <button onClick={() => setTrackerOpen(true)} data-testid="daily-tracker-button"
@@ -187,6 +233,11 @@ export default function Homework() {
                     {h.template_snapshot && !h.daily_tracker && (() => { const tm = tierMeta(h.template_snapshot.tier); return <span className={`text-[14px] font-black uppercase px-2 py-1 rounded tracking-widest ${tm.bg} ${tm.color}`}><i className={`fas ${h.template_snapshot.icon || "fa-paw"} mr-1`}/>{tm.label}</span>; })()}
                     {h.due_date && <span className="text-[14px] font-black uppercase tracking-widest text-shTextMuted"><i className="fas fa-calendar mr-1"/>Due {h.due_date}</span>}
                     {snap && <span className="text-[14px] font-black uppercase tracking-widest text-shTextMuted"><i className="fas fa-list-check mr-1"/>{logCount} client log{logCount===1?"":"s"}</span>}
+                    {h.status !== "completed" && unreviewedLogs(h) > 0 && (
+                      <span className="text-[14px] font-black uppercase px-2 py-1 rounded tracking-widest bg-shAccent/15 text-shAccent" data-testid={`hw-new-logs-${h.id}`}>
+                        <i className="fas fa-hourglass-half mr-1"/>{unreviewedLogs(h)} new log{unreviewedLogs(h)===1?"":"s"}
+                      </span>
+                    )}
                     {isTracker && streak > 0 && <span className="text-[14px] font-black uppercase px-2 py-1 rounded tracking-widest bg-shPrimary/15 text-shPrimary" data-testid={`hw-streak-${h.id}`}><i className="fas fa-fire mr-1"/>{streak}/{totalDays}</span>}
                   </div>
                   <h4 className="text-lg font-black text-shText uppercase tracking-tight">{h.title}</h4>
@@ -217,6 +268,12 @@ export default function Homework() {
                 </div>
                 <div className="flex flex-col gap-2 items-end">
                   <button onClick={()=>remove(h.id)} className="text-shTextMuted hover:text-red-400 p-2"><i className="fas fa-trash text-sm" /></button>
+                  {h.status !== "completed" && (
+                    <button onClick={()=>completeAssignment(h)} disabled={completingId === h.id} data-testid={`hw-complete-${h.id}`}
+                            className="bg-shPrimary text-bgHeader px-3 py-2 rounded-lg text-[12px] font-black uppercase tracking-widest whitespace-nowrap hover:bg-shPrimary/90 disabled:opacity-50 transition">
+                      <i className="fas fa-check mr-1.5"/>{completingId === h.id ? "Completing…" : "Complete assignment"}
+                    </button>
+                  )}
                   {snap && (
                     <button onClick={()=>setExpandedId(isExpanded ? null : h.id)} data-testid={`hw-toggle-report-${h.id}`}
                             className="text-[14px] font-black uppercase tracking-widest text-shSecondary hover:underline whitespace-nowrap">
@@ -227,7 +284,7 @@ export default function Homework() {
               </div>
               {snap && isExpanded && (
                 <div className="mt-4 pt-4 border-t border-shBorder">
-                  <HomeworkReportPanel homeworkId={h.id} focus={deepLinkTarget?.homework_id === h.id ? deepLinkTarget : null} />
+                  <HomeworkReportPanel homeworkId={h.id} focus={deepLinkTarget?.homework_id === h.id ? deepLinkTarget : null} onReviewed={load} />
                 </div>
               )}
             </div>

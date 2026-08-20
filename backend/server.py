@@ -12743,6 +12743,67 @@ async def delete_homework(homework_id: str, _: dict = Depends(require_admin)):
     await db.homework.delete_one({"id": homework_id})
     return {"ok": True}
 
+def homework_unreviewed_log_count(hw: dict) -> int:
+    """How many of this assignment's practice logs a trainer has not yet
+    acknowledged.
+
+    NEW/UNREVIEWED is deliberately independent of NEEDS ATTENTION: a
+    perfectly ordinary log with no video, no reported difficulty and no
+    question is still something a trainer should be able to acknowledge.
+    Tying reviewability to an attention trigger is what left normal logs
+    permanently badged "New" with nowhere to clear them.
+
+    Rest days and rows the trainer logged themselves are not client
+    submissions and are never counted."""
+    n = 0
+    for lo in hw.get("section_logs") or []:
+        if not isinstance(lo, dict):
+            continue
+        if lo.get("is_rest_day") or lo.get("logged_by_role") == "admin":
+            continue
+        if not lo.get("reviewed_at"):
+            n += 1
+    return n
+
+
+async def _apply_homework_completion(hw: dict, *, note: str = "", photo: str = "") -> dict:
+    """THE canonical homework completion state transition.
+
+    Extracted so the client's own "mark complete" and the trainer's explicit
+    Complete Assignment write the exact same fields — one lifecycle, one set
+    of completion metadata, no second "completed" flag.
+
+    Deliberately does NOT touch section_logs: completing an assignment must
+    never silently mark its outstanding practice logs reviewed. Reviewing and
+    completing are separate decisions a trainer makes for different reasons.
+
+    Idempotent: an already-completed assignment keeps its original
+    completed_at rather than having it rewritten by a retry."""
+    if hw.get("status") == "completed":
+        return hw
+    update = {
+        "status": "completed",
+        "completed_at": now_iso(),
+        "completion_note": note or "",
+        "completion_photo": photo or "",
+    }
+    # Guarded on status so two concurrent completions can't both write — the
+    # loser's update matches nothing and the row keeps one completed_at.
+    await db.homework.update_one(
+        {"id": hw["id"], "status": {"$ne": "completed"}}, {"$set": update},
+    )
+    # Release the assignment claim so a LEGITIMATE next occurrence of the same
+    # practice can be assigned again. This never revives the finished row —
+    # re-assigning creates a brand-new record; only the duplicate guard for
+    # simultaneously-active copies is lifted.
+    tpl_id = (hw.get("template_snapshot") or {}).get("template_id")
+    if tpl_id and hw.get("dog_id"):
+        await db.homework_assignment_claims.delete_one(
+            {"claim_key": f"{hw['dog_id']}:{tpl_id}"})
+    fresh = await db.homework.find_one({"id": hw["id"]}, {"_id": 0})
+    return fresh or {**hw, **update}
+
+
 @api.post("/homework/{homework_id}/complete")
 async def complete_homework(homework_id: str, body: HomeworkCompleteIn, user: dict = Depends(get_current_user)):
     hw = await db.homework.find_one({"id": homework_id}, {"_id": 0})
@@ -12750,14 +12811,10 @@ async def complete_homework(homework_id: str, body: HomeworkCompleteIn, user: di
         raise HTTPException(status_code=404, detail="Homework not found")
     if user.get("role") != "admin" and hw["client_id"] != user.get("client_id"):
         raise HTTPException(status_code=403, detail="Not allowed")
-    update = {
-        "status": "completed",
-        "completed_at": now_iso(),
-        "completion_note": body.note or "",
-        "completion_photo": body.photo or "",
-    }
-    await db.homework.update_one({"id": homework_id}, {"$set": update})
-    hw.update(update)
+    already_completed = hw.get("status") == "completed"
+    hw = await _apply_homework_completion(hw, note=body.note or "", photo=body.photo or "")
+    if already_completed:
+        return hw
     # Generic homework keeps its legacy email. Online School practice routes
     # through the School event spine instead, so routine completion appears in
     # Activity without bypassing the centralized notification policy/email
@@ -12779,6 +12836,48 @@ async def complete_homework(homework_id: str, body: HomeworkCompleteIn, user: di
     except Exception as exc:
         logger.warning("Client trophy check failed: %s", exc)
     return hw
+
+
+class TrainerCompleteHomeworkIn(BaseModel):
+    note: Optional[str] = Field(default="", max_length=4000)
+
+
+@api.post("/admin/homework/{homework_id}/complete")
+async def trainer_complete_homework(
+    homework_id: str, body: TrainerCompleteHomeworkIn,
+    user: dict = Depends(require_admin_and_permission("manage_training_content")),
+):
+    """Complete Assignment — the trainer's explicit end to a practice
+    assignment.
+
+    Before this existed, only the CLIENT could finish an assignment (from the
+    Practice Coach), so a section-based practice a trainer considered done
+    stayed "assigned" forever with no way to close it.
+
+    Reuses _apply_homework_completion, so the lifecycle state and completion
+    metadata are byte-identical to the client's own completion — there is no
+    second completion flag and no parallel state.
+
+    Deliberately NOT blocked by unreviewed logs. A trainer may reasonably end
+    an assignment they never individually acknowledged; the UI warns and asks
+    for confirmation instead of refusing. Those logs stay unreviewed —
+    completing an assignment must never silently mark them reviewed.
+
+    Idempotent: completing an already-completed assignment returns it
+    unchanged, with its original completed_at intact."""
+    hw = await db.homework.find_one({"id": homework_id}, {"_id": 0})
+    if not hw:
+        raise HTTPException(status_code=404, detail="Homework not found")
+    unreviewed_before = homework_unreviewed_log_count(hw)
+    already = hw.get("status") == "completed"
+    fresh = await _apply_homework_completion(hw, note=(body.note or "").strip())
+    return {
+        "homework": fresh,
+        "already_completed": already,
+        # Reported so the UI can be honest about what was left outstanding;
+        # nothing about these logs was changed by completing.
+        "unreviewed_logs": unreviewed_before,
+    }
 
 
 # -------- Homework Templates Library --------
@@ -13202,11 +13301,62 @@ async def seed_homework_templates(_: dict = Depends(require_admin_and_permission
     return {"seeded": seeded, "total_active": total}
 
 
+async def _existing_active_template_assignment(dog_id: str, template_id: str) -> Optional[dict]:
+    """The still-open assignment of this template to this dog, if any.
+
+    One dog should not hold two simultaneous ACTIVE copies of the same
+    practice — that is what produced visually identical duplicate cards. The
+    guard is scoped to active rows on purpose: re-assigning the same template
+    AFTER it has been completed is a legitimate new occurrence and must still
+    create its own new record, never resurrect the finished one."""
+    # The template id is persisted inside template_snapshot (the frozen copy
+    # taken at assignment time), not at the top level — matching the field
+    # that actually exists rather than the one it would be tidy to have.
+    return await db.homework.find_one(
+        {"dog_id": dog_id, "template_snapshot.template_id": template_id,
+         "status": {"$ne": "completed"}},
+        {"_id": 0},
+    )
+
+
 @api.post("/homework/from-template")
 async def create_homework_from_template(body: HomeworkFromTemplateIn, user: dict = Depends(require_admin)):
     dog = await db.dogs.find_one({"id": body.dog_id}, {"_id": 0})
     if not dog:
         raise HTTPException(status_code=404, detail="Dog not found")
+    # Idempotency for the same logical occurrence, claim-first — the same
+    # pattern shop checkout uses. A unique claim on (dog_id, template_id) is
+    # what makes two GENUINELY simultaneous requests converge; a plain
+    # read-then-insert cannot, because both can read "none" before either
+    # insert lands.
+    #
+    # The claim lives in its own collection rather than as a unique index on
+    # `homework` deliberately: that collection can already contain historical
+    # duplicates, and the critical-index machinery refuses startup when an
+    # index cannot be built — adding one there would take the app down until
+    # those rows were cleaned up. A fresh claims collection starts empty and
+    # carries no such risk.
+    claim_key = f"{body.dog_id}:{body.template_id}"
+    existing = await _existing_active_template_assignment(body.dog_id, body.template_id)
+    if existing:
+        return {**existing, "reused": True}
+    try:
+        await db.homework_assignment_claims.insert_one({
+            "claim_key": claim_key, "dog_id": body.dog_id, "template_id": body.template_id,
+            "created_at": now_iso(),
+        })
+    except DuplicateKeyError:
+        # Someone else is mid-create, or finished just now. Their row is the
+        # canonical one; wait for it to be visible and return it.
+        for _ in range(20):
+            winner = await _existing_active_template_assignment(body.dog_id, body.template_id)
+            if winner:
+                return {**winner, "reused": True}
+            await asyncio.sleep(0.05)
+        # The claim exists but no active assignment does — the previous holder
+        # failed after claiming. Take the claim over rather than deadlocking.
+        await db.homework_assignment_claims.delete_one({"claim_key": claim_key})
+        raise HTTPException(status_code=409, detail="This practice is already being assigned — try again.")
     tpl = await db.homework_templates.find_one({"id": body.template_id}, {"_id": 0})
     if not tpl:
         raise HTTPException(status_code=404, detail="Template not found")
@@ -13265,6 +13415,7 @@ async def create_homework_from_template(body: HomeworkFromTemplateIn, user: dict
     }
     await db.homework.insert_one(doc)
     doc.pop("_id", None)
+
     # Best-effort: let the client know they have new homework.
     if client:
         try:
@@ -15264,10 +15415,52 @@ async def _send_per_step_email(hw: dict, day_number: int, step_label: str, total
 
 
 
+@api.get("/admin/homework/unreviewed-count")
+async def homework_unreviewed_count(_: dict = Depends(require_admin)):
+    """How much practice is waiting on a trainer, split into the two things
+    that were previously conflated.
+
+    `unreviewed` counts EVERY client practice log with no reviewed_at —
+    daily-tracker days and ordinary section logs alike. That number is what
+    the Training Practice screen badges as NEW, and it must not depend on an
+    attention trigger: a normal, unremarkable log is still something a
+    trainer acknowledges.
+
+    `needs_attention` is the narrower signal the School review queue already
+    used — a log carrying video, a could-not-complete, a hard difficulty, or
+    an unanswered question. Kept separate so "new" never reads as "problem".
+    """
+    unreviewed = 0
+    attention = 0
+    assignments = 0
+    cursor = db.homework.find({"section_logs.0": {"$exists": True}}, {"_id": 0}).limit(5000)
+    async for hw in cursor:
+        n = homework_unreviewed_log_count(hw)
+        if n:
+            unreviewed += n
+            assignments += 1
+        for lo in hw.get("section_logs") or []:
+            if not isinstance(lo, dict) or lo.get("reviewed_at"):
+                continue
+            if lo.get("is_rest_day") or lo.get("logged_by_role") == "admin":
+                continue
+            fv = lo.get("field_values") or {}
+            if (fv.get("__video_id") or fv.get("__could_not_complete")
+                    or fv.get("__difficulty") in ("hard", "very_hard")
+                    or (lo.get("questions") and any(not (q or {}).get("answer") for q in lo.get("questions") or []))):
+                attention += 1
+    return {"unreviewed": unreviewed, "needs_attention": attention, "assignments": assignments}
+
+
 @api.get("/admin/homework/pending-reviews")
 async def list_pending_reviews(_: dict = Depends(require_admin)):
     """All days across all daily-tracker homework that are awaiting admin
-    review (status=submitted). Ordered oldest-submitted first."""
+    review (status=submitted). Ordered oldest-submitted first.
+
+    Scope note: this is the DAILY-TRACKER day-approval queue, which gates
+    unlocking the next day. Section-based practice has no day gate; its
+    acknowledgement lives in the practice-review path and is counted by
+    /admin/homework/unreviewed-count above."""
     items: List[dict] = []
     cursor = db.homework.find(
         {"daily_tracker": True, "section_logs.submission_status": "submitted"},
@@ -31705,6 +31898,10 @@ async def startup():
         (db.shop_orders, "client_id", {}),
         (db.shop_orders, [("status", 1), ("fulfillment_status", 1)], {}),
         (db.shop_checkout_claims, "idempotency_key", {"unique": True}),
+        # Practice assignment idempotency — one active assignment of a given
+        # template to a given dog. Brand-new collection, so this unique index
+        # can never fail to build against historical data.
+        (db.homework_assignment_claims, "claim_key", {"unique": True}),
         (db.shop_payment_attempts, "idempotency_key", {"unique": True}),
         (db.shop_payment_attempts, "stripe_checkout_session_id", {}),
         (db.shop_payment_attempts, "shop_order_id", {}),

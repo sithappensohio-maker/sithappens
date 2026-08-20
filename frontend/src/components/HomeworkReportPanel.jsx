@@ -1,6 +1,7 @@
 import { useEffect, useState } from "react";
 import { api } from "../lib/api";
 import { loadSchoolMediaUrl } from "../lib/schoolMedia";
+import { toast } from "sonner";
 
 const TREND_META = {
   up:   { icon: "fa-arrow-trend-up",   color: "text-shPrimary", label: "improving" },
@@ -22,10 +23,41 @@ const KIND_UNIT = {
  * metrics, note, photo. The aggregate section tiles (used for session-log
  * templates) still render below for backwards-compatible reporting.
  */
-export default function HomeworkReportPanel({ homeworkId, focus = null }) {
+export default function HomeworkReportPanel({ homeworkId, focus = null, onReviewed }) {
   const [report, setReport] = useState(null);
   const [hw, setHw] = useState(null);
   const [loading, setLoading] = useState(true);
+  /* Inline review — posts to the SAME canonical practice-review endpoint
+     School HQ uses. No second review model and no local "acknowledged"
+     state: the server persists reviewed_at and the panel refetches, so a
+     refresh shows exactly what the database says. */
+  const [reviewingId, setReviewingId] = useState(null);
+  const [reviewNotes, setReviewNotes] = useState({});
+
+  const refetch = async () => {
+    const [rRep, rHw] = await Promise.all([
+      api.get(`/homework/${homeworkId}/report`),
+      api.get(`/homework/${homeworkId}`),
+    ]);
+    setReport(rRep.data);
+    setHw(rHw.data);
+  };
+
+  const reviewLog = async (logId, status) => {
+    if (reviewingId) return;                      // double-click guard
+    setReviewingId(logId);
+    try {
+      await api.post(`/admin/school/practice-reviews/${homeworkId}/${logId}`,
+                     { status, note: (reviewNotes[logId] || "").trim() });
+      await refetch();
+      onReviewed?.();
+    } catch (e) {
+      const d = e?.response?.data?.detail;
+      toast.error(typeof d === "string" ? d : "Couldn't save this review — try again.");
+    } finally {
+      setReviewingId(null);
+    }
+  };
 
   useEffect(() => {
     let mounted = true;
@@ -168,6 +200,41 @@ export default function HomeworkReportPanel({ homeworkId, focus = null }) {
                 <div className="mt-2 rounded-lg border border-shPrimary/30 bg-shPrimary/[0.05] p-2.5" data-testid={`hw-report-review-${e.id}`}>
                   <p className="text-[10px] font-black uppercase tracking-widest text-shPrimary"><i className="fas fa-user-tie mr-1" />Trainer review · {REVIEW_STATUS_LABEL[e.reviewStatus] || e.reviewStatus}{e.reviewedBy ? ` · ${e.reviewedBy}` : ""}</p>
                   {e.reviewNote && <p className="text-[12px] text-gray-200 mt-1 whitespace-pre-wrap">{e.reviewNote}</p>}
+                </div>
+              )}
+
+              {/* Inline review — right where the trainer is already reading
+                  the log. An ordinary log with no attention trigger is
+                  reviewable here too; that is the whole point. */}
+              {!e.reviewed && (
+                <div className="mt-2 rounded-lg border border-shBorder bg-black/15 p-2.5" data-testid={`hw-report-review-actions-${e.id}`}>
+                  <p className="text-[10px] font-black uppercase tracking-widest text-shTextMuted mb-2">
+                    <i className="fas fa-user-tie mr-1" />Acknowledge this log
+                  </p>
+                  <textarea
+                    value={reviewNotes[e.id] || ""}
+                    onChange={(ev) => setReviewNotes((m) => ({ ...m, [e.id]: ev.target.value }))}
+                    rows={2} placeholder="Optional feedback for the client…"
+                    data-testid={`hw-report-review-note-${e.id}`}
+                    className="w-full rounded border border-shBorder bg-black/25 p-2 text-[12px] text-shText mb-2"
+                  />
+                  <div className="grid grid-cols-1 sm:grid-cols-3 gap-2">
+                    <button type="button" disabled={!!reviewingId} onClick={() => reviewLog(e.id, "looks_good")}
+                            data-testid={`hw-report-review-looks-good-${e.id}`}
+                            className="min-h-[40px] rounded-lg border border-shPrimary/45 bg-shPrimary/10 text-shPrimary text-[11px] font-black uppercase tracking-widest disabled:opacity-50">
+                      <i className="fas fa-thumbs-up mr-1.5" />Looks Good
+                    </button>
+                    <button type="button" disabled={!!reviewingId} onClick={() => reviewLog(e.id, "keep_practicing")}
+                            data-testid={`hw-report-review-keep-practicing-${e.id}`}
+                            className="min-h-[40px] rounded-lg border border-shSecondary/45 bg-shSecondary/10 text-shSecondary text-[11px] font-black uppercase tracking-widest disabled:opacity-50">
+                      <i className="fas fa-rotate mr-1.5" />Keep Practicing
+                    </button>
+                    <button type="button" disabled={!!reviewingId} onClick={() => reviewLog(e.id, "trainer_attention")}
+                            data-testid={`hw-report-review-attention-${e.id}`}
+                            className="min-h-[40px] rounded-lg border border-shAccent/45 bg-shAccent/10 text-shAccent text-[11px] font-black uppercase tracking-widest disabled:opacity-50">
+                      <i className="fas fa-hand-holding-heart mr-1.5" />Trainer Attention
+                    </button>
+                  </div>
                 </div>
               )}
               {e.questions.length > 0 && (
