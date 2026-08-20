@@ -1,123 +1,170 @@
-// Online School — client checkpoint state panel (submit / awaiting review /
-// prescribed practice / Trainer Assist hold). Kept as the single native
-// checkpoint UI for the School lesson flow; progression and grading remain
-// backend-owned.
+/* Client School — the checkpoint experience.
+ *
+ * The single native checkpoint UI for the School lesson flow. Redesigned in
+ * phase 4 so a checkpoint reads as the milestone it is rather than another
+ * form: what you're about to show, which skills it covers, what your trainer
+ * scores, and what happens after.
+ *
+ * Progression, grading and permission remain entirely backend-owned. This
+ * file chooses which authored content to show for the state the server
+ * reports — it never decides an outcome, never advances anything, and never
+ * manufactures a score.
+ */
 import { useState } from "react";
 import NeonEdge from "../../premium/NeonEdge";
 import PremiumButton from "../../premium/PremiumButton";
 import PracticeMediaUploader from "../../training/PracticeMediaUploader";
+import {
+  checkpointState, CheckpointHero, ScoredCriteria, SkillsCovered, SubmissionRequirements,
+  WhatHappensNext, PassCelebration, TrainerFeedback, RubricBreakdown, CheckpointScores, nextStepAfter,
+} from "./checkpoint/CheckpointCards";
 
-export default function CheckpointPanel({ lessonId, practiced, rubric, status, onSubmit, onStartPrescribedPractice, onGoToRefresher, busy, deliveryMode }) {
+function fmtWhen(iso) {
+  if (!iso) return "";
+  try { return new Date(iso).toLocaleString(undefined, { month: "short", day: "numeric", hour: "numeric", minute: "2-digit" }); }
+  catch { return ""; }
+}
+
+export default function CheckpointPanel({
+  lessonId, practiced, rubric, status, onSubmit, onStartPrescribedPractice, onGoToRefresher,
+  busy, deliveryMode, moduleName, dogName, skills, roadmap, onContinue,
+}) {
   const [returnedToCheckpoint, setReturnedToCheckpoint] = useState(false);
-
-  // In-person School students never submit a checkpoint video — their trainer
-  // scores the same rubric live (server returns 409 for these submissions).
-  // Only the two submission-soliciting states are swapped: awaiting-review,
-  // prescribed-practice and Trainer Assist below stay exactly as they are,
-  // because a live trainer checkpoint can still produce those outcomes.
-  const trainerAssessed = deliveryMode === "in_person" || deliveryMode === "trainer_led";
-  const inPersonPanel = (
-    <NeonEdge accentRgb="0,169,224" intensity="subtle" className="p-4">
-      <div className="flex items-start gap-3">
-        <div className="w-10 h-10 rounded-xl bg-shSecondary/10 border border-shSecondary/25 grid place-items-center shrink-0"><i className="fas fa-chalkboard-user text-shSecondary"/></div>
-        <div>
-          <p className="text-[14px] font-black text-shText">Your trainer checks this one in person</p>
-          <p className="text-[12px] text-shTextMuted mt-1">No video needed — your trainer scores this checkpoint with you at your next session. Keep practising and it will be marked off here.</p>
-        </div>
-      </div>
-      <span className="hidden" data-testid="school-checkpoint-in-person"/>
-    </NeonEdge>
-  );
-
-  if (!practiced) {
-    if (trainerAssessed) return inPersonPanel;
-    return (
-      <NeonEdge accentRgb="0,169,224" intensity="subtle" className="p-4">
-        <div className="flex items-start gap-3">
-          <div className="w-10 h-10 rounded-xl bg-shSecondary/10 border border-shSecondary/25 grid place-items-center shrink-0"><i className="fas fa-video text-shSecondary"/></div>
-          <div><p className="text-[14px] font-black text-shText">Practice first, then show your trainer</p><p className="text-[12px] text-shTextMuted mt-1">Practice this lesson first, then submit a checkpoint video for your trainer to review.</p></div>
-        </div>
-        <span className="hidden" data-testid="school-checkpoint-needs-practice"/>
-      </NeonEdge>
-    );
-  }
-
+  const state = checkpointState({ status, practiced, deliveryMode });
   const ta = status?.trainer_assist;
 
-  // Online School Phase 4 — real Trainer Assist lifecycle, not just an
-  // on/off hold flag. "This is exactly where having a real trainer
-  // helps" — never scary wording, never a fail screen (spec §20).
-  if (status?.on_hold && ta) {
+  /* ---------------------------------------------------------- in person --- */
+  // B6: an in-person / trainer-led student never submits a checkpoint — the
+  // server returns 409 — so the upload action is not merely hidden, it is
+  // never constructed. This is the polished equivalent, not an apology.
+  if (state === "in_person") {
     return (
-      <NeonEdge accentRgb="168,85,247" intensity="standard" className="p-5" data-testid="school-checkpoint-hold">
-        <div className="flex items-start gap-3.5">
-          <div className="w-11 h-11 rounded-2xl bg-purple-400/10 border border-purple-400/30 grid place-items-center shrink-0"><i className="fas fa-handshake text-purple-300"/></div>
-          <div className="min-w-0 flex-1">
-            <p className="text-[10px] font-black uppercase tracking-[0.15em] text-purple-300">Trainer Assist</p>
-            <h4 className="text-[18px] font-black text-white mt-1">Your trainer wants to help with this one</h4>
-            <p className="text-shTextMuted text-[13px] mt-1.5 leading-relaxed">We've paused this checkpoint so we can work through it with you.</p>
-          </div>
-        </div>
-        {status.trainer_feedback && (
-          <div className="mt-4 rounded-xl bg-black/25 border border-purple-400/15 p-3.5">
-            <p className="text-[10px] font-black uppercase tracking-[0.14em] text-purple-300/80 mb-1">From your trainer</p>
-            <p className="text-shText/90 text-[13px] leading-relaxed">“{status.trainer_feedback}”</p>
-          </div>
-        )}
-        <div className="mt-4 rounded-xl border border-purple-400/20 bg-purple-500/[0.05] p-3.5" data-testid="school-checkpoint-hold-status">
-          {ta.status === "reschedule_needed" ? (
-            <p className="text-purple-300 text-[13px] font-bold"><i className="fas fa-calendar-xmark mr-1.5"/>Trainer Assist needs to be rescheduled</p>
-          ) : ta.status === "scheduled" ? (
-            <p className="text-purple-300 text-[13px] font-bold"><i className="fas fa-calendar-check mr-1.5"/>Trainer Assist scheduled{ta.scheduled_date ? ` for ${ta.scheduled_date}${ta.scheduled_time ? ` · ${ta.scheduled_time}` : ""}` : ""}</p>
-          ) : ta.status === "contacted" ? (
-            <p className="text-purple-300 text-[13px] font-bold"><i className="fas fa-comment-dots mr-1.5"/>Your trainer has reached out</p>
-          ) : (
-            <p className="text-purple-300 text-[13px] font-bold"><i className="fas fa-hourglass-half mr-1.5"/>Trainer is reviewing next steps</p>
-          )}
-          <div className="grid sm:grid-cols-2 gap-2 mt-3 text-[12px] text-shTextMuted">
-            <p><i className="fas fa-check mr-1.5 text-purple-300"/>Your course progress stays exactly where it is</p>
-            <p><i className="fas fa-check mr-1.5 text-purple-300"/>You'll continue from here once cleared</p>
-          </div>
-        </div>
+      <NeonEdge accentRgb="0,169,224" intensity="standard" className="p-5 space-y-4" data-testid="school-checkpoint-in-person-panel">
+        <CheckpointHero rubric={rubric} moduleName={moduleName} icon="fa-chalkboard-user"
+                        eyebrow="Checkpoint · with your trainer"
+                        blurb={`Your trainer checks this one with you in person${dogName ? ` — no video to film, and nothing for you to upload.` : "."}`} />
+        <SkillsCovered skills={skills} />
+        <ScoredCriteria rubric={rubric} />
+        <SubmissionRequirements rubric={rubric} />
+        <WhatHappensNext items={[
+          "Your trainer runs this assessment with you during your session.",
+          "They score Handler Skills and Dog Performance on the same rubric shown above.",
+          "The result and their feedback appear here and in your Feedback inbox.",
+        ]} />
+        <span className="hidden" data-testid="school-checkpoint-in-person" />
       </NeonEdge>
     );
   }
 
-  // Trainer Assist complete — the hold has been lifted, but this same
-  // submission still holds the client-facing follow-up summary until the
-  // client resubmits. "Return to Checkpoint" is a local reveal step, not
-  // a fabricated success — it just opens the same submit form below.
-  if (!status?.on_hold && ta?.status === "completed" && !returnedToCheckpoint) {
+  /* ----------------------------------------------------- trainer assist --- */
+  if (state === "trainer_assist") {
+    const scheduleLine =
+      ta?.status === "reschedule_needed" ? { icon: "fa-calendar-xmark", text: "Trainer Assist needs to be rescheduled" }
+      : ta?.status === "scheduled" ? { icon: "fa-calendar-check", text: `Trainer Assist scheduled${ta.scheduled_date ? ` for ${ta.scheduled_date}${ta.scheduled_time ? ` · ${ta.scheduled_time}` : ""}` : ""}` }
+      : ta?.status === "contacted" ? { icon: "fa-comment-dots", text: "Your trainer has reached out" }
+      : { icon: "fa-hourglass-half", text: "Your trainer is arranging next steps" };
     return (
-      <NeonEdge accentRgb="168,85,247" intensity="standard" className="p-5" data-testid="school-checkpoint-assist-complete">
-        <div className="flex items-start gap-3.5">
-          <div className="w-11 h-11 rounded-2xl bg-purple-400/10 border border-purple-400/30 grid place-items-center shrink-0"><i className="fas fa-circle-check text-purple-300"/></div>
-          <div className="flex-1 min-w-0">
-            <p className="text-[10px] font-black uppercase tracking-[0.15em] text-purple-300">Trainer Assist complete</p>
-            <h4 className="text-[18px] font-black text-white mt-1">You're ready to keep training</h4>
-            {ta.client_summary && <p className="text-shText/90 text-[13px] mt-2 leading-relaxed">{ta.client_summary}</p>}
+      <NeonEdge accentRgb="168,85,247" intensity="standard" className="p-5 space-y-4" data-testid="school-checkpoint-hold">
+        <CheckpointHero rubric={rubric} moduleName={moduleName} tone="purple" icon="fa-handshake"
+                        eyebrow="Trainer Assist"
+                        title="Your trainer wants to work through this with you"
+                        blurb="This is the part where having a real trainer helps. Nothing has gone wrong and nothing is lost." />
+        <TrainerFeedback text={status?.trainer_feedback} trainerName={status?.trainer_name} tone="purple" />
+        <div className="rounded-xl border border-purple-400/20 bg-purple-500/[0.05] p-3.5" data-testid="school-checkpoint-hold-status">
+          <p className="text-purple-300 text-[13px] font-black"><i className={`fas ${scheduleLine.icon} mr-1.5`} />{scheduleLine.text}</p>
+          <div className="grid sm:grid-cols-2 gap-2 mt-3 text-[12px] text-shTextMuted">
+            <p><i className="fas fa-check mr-1.5 text-purple-300" />Your course progress stays exactly where it is</p>
+            <p><i className="fas fa-check mr-1.5 text-purple-300" />You&apos;ll continue from here once your trainer clears it</p>
           </div>
         </div>
-        <PremiumButton onClick={() => setReturnedToCheckpoint(true)} data-testid="school-checkpoint-return-to-checkpoint" className="mt-4 w-full justify-center">
-          Return to checkpoint <i className="fas fa-arrow-right text-[10px]"/>
+        {/* Only genuinely-permitted next steps. No appointment booking is
+            offered, because nothing in this payload can create one. */}
+        <WhatHappensNext items={[
+          "Your trainer will be in touch to arrange the hands-on session.",
+          "Keep working any practice that is still assigned to you.",
+          "This checkpoint reopens once your trainer clears the hold.",
+        ]} testid="checkpoint-assist-next" />
+      </NeonEdge>
+    );
+  }
+
+  /* --------------------------------------------------- assist complete --- */
+  if (state === "assist_complete" && !returnedToCheckpoint) {
+    return (
+      <NeonEdge accentRgb="168,85,247" intensity="standard" className="p-5" data-testid="school-checkpoint-assist-complete">
+        <CheckpointHero rubric={rubric} moduleName={moduleName} tone="purple" icon="fa-circle-check"
+                        eyebrow="Trainer Assist complete" title="You're ready to keep training"
+                        blurb={ta?.client_summary || undefined} />
+        <PremiumButton onClick={() => setReturnedToCheckpoint(true)} data-testid="school-checkpoint-return-to-checkpoint"
+                       className="mt-4 w-full justify-center min-h-[50px]">
+          Return to checkpoint <i className="fas fa-arrow-right text-[10px]" />
         </PremiumButton>
       </NeonEdge>
     );
   }
 
-  if (status?.status === "awaiting_review") {
+  /* ---------------------------------------------------- awaiting review --- */
+  // Deliberately renders no submit control of any kind: the work is with the
+  // trainer, and a second Submit button here is how duplicate submissions
+  // happen. No response time is promised — the app doesn't store one.
+  if (state === "awaiting_review") {
     return (
-      <NeonEdge accentRgb="242,101,34" intensity="standard" className="p-5" data-testid="school-checkpoint-awaiting-review">
-        <div className="flex items-center gap-4">
-          <div className="relative w-12 h-12 rounded-2xl bg-shAccent/10 border border-shAccent/30 grid place-items-center shrink-0"><i className="fas fa-hourglass-half text-shAccent"/><span className="absolute inset-0 rounded-2xl border border-shAccent/20 animate-pulse"/></div>
-          <div><p className="text-[10px] font-black uppercase tracking-[0.15em] text-shAccent">Checkpoint submitted</p><h4 className="text-[18px] font-black text-white mt-1">Your video is with your trainer</h4><p className="text-shTextMuted text-[12px] mt-1">You'll get an email when your review is ready.</p></div>
-        </div>
+      <NeonEdge accentRgb="0,169,224" intensity="standard" className="p-5 space-y-4" data-testid="school-checkpoint-awaiting-review">
+        <CheckpointHero rubric={rubric} moduleName={moduleName} icon="fa-paper-plane"
+                        eyebrow="Checkpoint submitted" title="Your trainer is reviewing it"
+                        blurb={status?.submitted_at ? `Sent ${fmtWhen(status.submitted_at)}.` : "It's with your trainer now."} />
+        <WhatHappensNext items={[
+          "Your trainer watches your submission and scores the rubric above.",
+          "You'll be notified here and by email when the review is ready.",
+          "Handler Skills and Dog Performance are scored separately, so you'll know exactly what to work on.",
+        ]} testid="checkpoint-awaiting-next" />
+        <ScoredCriteria rubric={rubric} />
       </NeonEdge>
     );
   }
 
-  if (status?.status === "graded" && status.outcome === "prescribe_practice") {
-    const p = status.prescription || {};
+  /* ---------------------------------------------------------- passed --- */
+  if (state === "passed") {
+    return (
+      <NeonEdge accentRgb="140,198,63" intensity="strong" className="relative overflow-hidden p-5 space-y-4" data-testid="school-checkpoint-passed">
+        <PassCelebration />
+        <div className="relative">
+          <CheckpointHero rubric={rubric} moduleName={moduleName} tone="lime" icon="fa-award"
+                          eyebrow="Passed" title={rubric?.title || "Checkpoint passed"}
+                          blurb={dogName ? `You and ${dogName} showed it. Your trainer signed this one off.` : "Your trainer signed this one off."} />
+        </div>
+        <CheckpointScores handler={status?.handler_overall} dog={status?.dog_overall} />
+        <TrainerFeedback text={status?.trainer_feedback} trainerName={status?.trainer_name} tone="lime" />
+        <RubricBreakdown rubric={rubric} handlerScores={status?.handler_scores} dogScores={status?.dog_scores} />
+        {/* What actually unlocked — the real next lesson, never a claim about
+            what the dog is now permitted to do off-leash or in public. */}
+        <div className="rounded-xl border border-shPrimary/25 bg-shPrimary/[0.06] p-3.5" data-testid="checkpoint-unlocked">
+          <p className="text-[9.5px] font-black uppercase tracking-[0.16em] text-shPrimary mb-1">
+            <i className="fas fa-lock-open mr-1.5" />Unlocked
+          </p>
+          <p className="text-[13px] text-shText leading-relaxed">
+            {(() => {
+              const next = nextStepAfter(roadmap);
+              if (!next) return "The next step in your course is ready.";
+              return next.kind === "lesson"
+                ? `Your next lesson is ready: ${next.name}.`
+                : `The next module is open: ${next.name}.`;
+            })()}
+          </p>
+        </div>
+        {onContinue && (
+          <PremiumButton onClick={onContinue} disabled={busy} data-testid="school-checkpoint-continue"
+                         className="w-full justify-center min-h-[52px]">
+            Continue training <i className="fas fa-arrow-right text-[11px]" />
+          </PremiumButton>
+        )}
+      </NeonEdge>
+    );
+  }
+
+  /* --------------------------------------------------- more practice --- */
+  if (state === "more_practice") {
+    const p = status?.prescription || {};
     const remaining = p.practice_sessions_remaining;
     const canResubmit = !remaining || remaining <= 0;
     const actionLabel = p.action === "assign_refresher_lesson" && p.refresher_lesson_name
@@ -126,52 +173,89 @@ export default function CheckpointPanel({ lessonId, practiced, rubric, status, o
       : "Repeat this lesson's practice";
     return (
       <div className="space-y-3" data-testid="school-checkpoint-prescribed">
-        <NeonEdge accentRgb="242,101,34" intensity="standard" className="p-5">
-          <div className="flex items-start gap-3.5">
-            <div className="w-11 h-11 rounded-2xl bg-shAccent/10 border border-shAccent/30 grid place-items-center shrink-0"><i className="fas fa-clipboard-list text-shAccent"/></div>
-            <div className="min-w-0 flex-1">
-              <p className="text-[10px] font-black uppercase tracking-[0.15em] text-shAccent">Your trainer's plan</p>
-              <h4 className="text-[18px] font-black text-white mt-1">You're making progress</h4>
-              <p className="text-shTextMuted text-[12px] mt-1">Let's clean up one piece before moving on.</p>
-            </div>
-          </div>
-          {status.trainer_feedback && <div className="mt-4 rounded-xl border border-shAccent/15 bg-black/25 p-3.5"><p className="text-[10px] font-black uppercase tracking-[0.14em] text-shAccent/80 mb-1">Trainer feedback</p><p className="text-shText/90 text-[13px] leading-relaxed">“{status.trainer_feedback}”</p></div>}
-          <div className="mt-4 rounded-xl border border-shAccent/20 bg-shAccent/[0.055] p-3.5">
-            <p className="text-[13px] text-shText font-black"><i className="fas fa-arrow-right mr-1.5 text-shAccent"/>{actionLabel}</p>
+        <NeonEdge accentRgb="242,101,34" intensity="standard" className="p-5 space-y-4">
+          <CheckpointHero rubric={rubric} moduleName={moduleName} tone="orange" icon="fa-clipboard-list"
+                          eyebrow="More practice" title="You're close — let's tighten up a few things"
+                          blurb="This isn't a fail. Your trainer wants a bit more consistency before you move on." />
+          <CheckpointScores handler={status?.handler_overall} dog={status?.dog_overall} />
+          <TrainerFeedback text={status?.trainer_feedback} trainerName={status?.trainer_name} tone="orange" />
+          <RubricBreakdown rubric={rubric} handlerScores={status?.handler_scores} dogScores={status?.dog_scores} />
+
+          <div className="rounded-xl border border-shAccent/20 bg-shAccent/[0.055] p-3.5">
+            <p className="text-[13px] text-shText font-black"><i className="fas fa-arrow-right mr-1.5 text-shAccent" />{actionLabel}</p>
             {p.min_practice_sessions_required > 0 && (
               <div className="mt-3" data-testid="school-checkpoint-remaining">
-                <div className="flex items-center justify-between text-[11px] text-shTextMuted mb-1.5"><span>Required practice</span><span>{remaining > 0 ? `${remaining} remaining` : "Complete"}</span></div>
-                <div className="h-1.5 rounded-full bg-white/[0.06] overflow-hidden"><div className="h-full rounded-full bg-shAccent" style={{ width: remaining > 0 ? "45%" : "100%" }}/></div>
-                <p className="text-shTextMuted text-[11px] mt-2">{remaining > 0 ? `Practice ${remaining} more time${remaining !== 1 ? "s" : ""} before resubmitting.` : "You're ready to resubmit."}</p>
+                <div className="flex items-center justify-between text-[11px] text-shTextMuted mb-1.5">
+                  <span>Required practice</span><span>{remaining > 0 ? `${remaining} remaining` : "Complete"}</span>
+                </div>
+                <div className="h-1.5 rounded-full bg-white/[0.06] overflow-hidden">
+                  <div className="h-full rounded-full bg-shAccent" style={{ width: remaining > 0 ? "45%" : "100%" }} />
+                </div>
+                <p className="text-shTextMuted text-[11px] mt-2">
+                  {remaining > 0 ? `Practice ${remaining} more time${remaining !== 1 ? "s" : ""} before resubmitting.` : "You're ready to resubmit."}
+                </p>
               </div>
             )}
             {remaining !== 0 && onStartPrescribedPractice && (
-              <PremiumButton onClick={onStartPrescribedPractice} data-testid="school-checkpoint-start-prescribed" className="mt-3 w-full justify-center">
-                <i className="fas fa-paw text-[10px]" />Start prescribed practice
+              <PremiumButton onClick={onStartPrescribedPractice} data-testid="school-checkpoint-start-prescribed"
+                             className="mt-3 w-full justify-center min-h-[52px]">
+                <i className="fas fa-paw text-[10px]" />Start practice
               </PremiumButton>
             )}
             {p.action === "assign_refresher_lesson" && p.refresher_lesson_id && (
-              <button onClick={() => onGoToRefresher(p.refresher_lesson_id)} data-testid="school-checkpoint-go-to-refresher" className="mt-3 text-shAccent font-black text-[12px]">
-                Review refresher lesson <i className="fas fa-arrow-right ml-1 text-[10px]"/>
+              <button onClick={() => onGoToRefresher(p.refresher_lesson_id)} data-testid="school-checkpoint-go-to-refresher"
+                      className="mt-3 min-h-[44px] inline-flex items-center text-shAccent font-black text-[12px]">
+                Review refresher lesson <i className="fas fa-arrow-right ml-1 text-[10px]" />
               </button>
             )}
           </div>
+
+          {/* Why advancement is held, and what clears it. Stated plainly so
+              nobody thinks the app is stuck. */}
+          <WhatHappensNext items={[
+            "Your course stays on this lesson until the checkpoint passes — that's what keeps the next module honest.",
+            canResubmit
+              ? "Work the practice above, then submit this checkpoint again."
+              : "Log the required practice sessions, then this checkpoint reopens for another submission.",
+            "Your trainer reviews the new submission and scores the same rubric.",
+          ]} testid="checkpoint-prescribed-next" />
         </NeonEdge>
-        {canResubmit && <CheckpointSubmitForm rubric={rubric} onSubmit={(v, f, n) => onSubmit(lessonId, v, f, n)} busy={busy} resubmit/>}
+        {canResubmit && (
+          <CheckpointSubmitForm rubric={rubric} skills={skills} moduleName={moduleName}
+                                onSubmit={(v, f, n) => onSubmit(lessonId, v, f, n)} busy={busy} resubmit />
+        )}
       </div>
     );
   }
 
-  if (trainerAssessed) return inPersonPanel;
+  /* -------------------------------------------------------- not ready --- */
+  if (state === "not_ready") {
+    return (
+      <NeonEdge accentRgb="0,169,224" intensity="subtle" className="p-5 space-y-4" data-testid="school-checkpoint-needs-practice-panel">
+        <CheckpointHero rubric={rubric} moduleName={moduleName} icon="fa-flag-checkered"
+                        eyebrow="Checkpoint ahead"
+                        blurb="Practice this lesson first — then you'll show your trainer what it looks like." />
+        <SkillsCovered skills={skills} />
+        <ScoredCriteria rubric={rubric} />
+        <SubmissionRequirements rubric={rubric} />
+        <span className="hidden" data-testid="school-checkpoint-needs-practice" />
+      </NeonEdge>
+    );
+  }
 
-  return <CheckpointSubmitForm rubric={rubric} onSubmit={(v, f, n) => onSubmit(lessonId, v, f, n)} busy={busy}/>;
+  /* ------------------------------------------------------------ ready --- */
+  return (
+    <CheckpointSubmitForm rubric={rubric} skills={skills} moduleName={moduleName} dogName={dogName}
+                          onSubmit={(v, f, n) => onSubmit(lessonId, v, f, n)} busy={busy} />
+  );
 }
 
-function CheckpointSubmitForm({ rubric, onSubmit, busy, resubmit }) {
+function CheckpointSubmitForm({ rubric, skills, moduleName, dogName, onSubmit, busy, resubmit }) {
   const [videoFile, setVideoFile] = useState(null);
   const [videoDataUrl, setVideoDataUrl] = useState("");
   const [videoErr, setVideoErr] = useState("");
   const [note, setNote] = useState("");
+  const [sent, setSent] = useState(false);
   const isFinal = rubric?.assessment_type === "final_assessment";
 
   const onVideoUpload = (file, err) => {
@@ -184,53 +268,59 @@ function CheckpointSubmitForm({ rubric, onSubmit, busy, resubmit }) {
   };
 
   return (
-    <NeonEdge accentRgb={isFinal ? "242,101,34" : "0,169,224"} intensity="standard" className="p-5" data-testid="school-checkpoint-submit-form">
-      <div className="flex items-start gap-3.5 mb-4">
-        <div className={`w-11 h-11 rounded-2xl grid place-items-center border shrink-0 ${isFinal ? "bg-shAccent/10 border-shAccent/30" : "bg-shSecondary/10 border-shSecondary/30"}`}>
-          <i className={`fas ${isFinal ? "fa-award text-shAccent" : "fa-video text-shSecondary"}`}/>
-        </div>
-        <div className="min-w-0">
-          <p className={`text-[10px] font-black uppercase tracking-[0.15em] ${isFinal ? "text-shAccent" : "text-shSecondary"}`}>{resubmit ? "Ready to try again" : isFinal ? "Final Assessment" : "Trainer Checkpoint"}</p>
-          <h4 className="text-[18px] font-black text-white mt-1">{resubmit ? "Show your trainer the progress" : "Show us you can do it"}</h4>
-          <p className="text-[12px] text-shTextMuted mt-1">Your trainer will review your handling AND your dog's performance.</p>
-        </div>
+    <NeonEdge accentRgb={isFinal ? "242,101,34" : "0,169,224"} intensity="standard" className="p-5 space-y-4"
+              data-testid="school-checkpoint-submit-form">
+      <CheckpointHero rubric={rubric} moduleName={moduleName} icon={isFinal ? "fa-award" : "fa-flag-checkered"}
+                      tone={isFinal ? "orange" : "cyan"}
+                      eyebrow={resubmit ? "Ready to try again" : isFinal ? "Final assessment" : "Checkpoint"}
+                      blurb={resubmit
+                        ? "Show your trainer the progress you've made since last time."
+                        : `You've practised it. Now let's see it in action${dogName ? ` — you and ${dogName}, one continuous take.` : "."}`} />
+
+      <SkillsCovered skills={skills} />
+      <ScoredCriteria rubric={rubric} />
+      <SubmissionRequirements rubric={rubric} />
+
+      <div>
+        <PracticeMediaUploader
+          photo="" onPhotoChange={() => {}} allowPhoto={false} allowVideo videoMaxMb={10}
+          videoId={videoFile ? "ready" : ""} videoName={videoFile?.name}
+          onVideoUpload={onVideoUpload}
+          onVideoClear={() => { setVideoFile(null); setVideoDataUrl(""); }}
+          testid="school-checkpoint-video"
+        />
+        {videoErr && <p className="text-shDanger text-[12px] font-bold mt-2" role="alert">{videoErr}</p>}
       </div>
 
-      {rubric?.submission_instructions && (
-        <div className="rounded-xl border border-shSecondary/20 bg-shSecondary/[0.05] p-3.5 mb-4">
-          <p className="text-[10px] font-black uppercase tracking-[0.14em] text-shSecondary mb-1.5"><i className="fas fa-circle-info mr-1.5"/>Filming instructions</p>
-          <p className="text-[13px] text-shText/90 whitespace-pre-wrap leading-relaxed">{rubric.submission_instructions}</p>
-        </div>
-      )}
-
-      <PracticeMediaUploader
-        photo="" onPhotoChange={() => {}} allowPhoto={false} allowVideo videoMaxMb={10}
-        videoId={videoFile ? "ready" : ""} videoName={videoFile?.name}
-        onVideoUpload={onVideoUpload}
-        onVideoClear={() => { setVideoFile(null); setVideoDataUrl(""); }}
-        testid="school-checkpoint-video"
-      />
-      {videoErr && <p className="text-shDanger text-[12px] font-bold mt-2">{videoErr}</p>}
-
-      <div className="mt-4">
-        <label className="text-[10px] font-black uppercase tracking-[0.14em] text-shTextMuted">Anything your trainer should know?</label>
+      <div>
+        <label className="text-[10px] font-black uppercase tracking-[0.14em] text-shTextMuted" htmlFor="cp-note">
+          Anything your trainer should know?
+        </label>
         <textarea
-          value={note}
-          onChange={(e) => setNote(e.target.value)}
-          rows={3}
+          id="cp-note" value={note} onChange={(e) => setNote(e.target.value)} rows={3}
           placeholder="Optional note about the session, distractions, or anything that felt different."
           data-testid="school-checkpoint-note"
           className="mt-1.5 w-full bg-black/25 border border-shBorder/70 rounded-xl p-3 text-shText text-sm outline-none transition"
         />
       </div>
 
+      <WhatHappensNext items={[
+        "Your trainer watches the whole submission, not just the best repetition.",
+        "They score Handler Skills and Dog Performance separately on the rubric above.",
+        "You'll see the result, their feedback and what's next right here.",
+      ]} testid="checkpoint-submit-next" />
+
+      {/* `sent` latches on the first click so a double tap cannot produce a
+          second submission while the request is still in flight. */}
       <PremiumButton
-        onClick={() => onSubmit(videoDataUrl, videoFile?.name || "", note)}
-        disabled={!videoDataUrl || busy}
+        onClick={() => { if (sent || busy) return; setSent(true); onSubmit(videoDataUrl, videoFile?.name || "", note); }}
+        disabled={!videoDataUrl || busy || sent}
         data-testid="school-checkpoint-submit"
-        className="mt-4 w-full justify-center"
+        aria-label={resubmit ? "Submit checkpoint again for trainer review" : "Submit checkpoint for trainer review"}
+        className="w-full justify-center min-h-[52px]"
       >
-        <i className="fas fa-paper-plane text-[11px]"/>Submit for trainer review
+        <i className="fas fa-paper-plane text-[11px]" />
+        {sent || busy ? "Sending…" : resubmit ? "Submit checkpoint again" : "Submit checkpoint"}
       </PremiumButton>
     </NeonEdge>
   );

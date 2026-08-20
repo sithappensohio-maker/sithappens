@@ -45,17 +45,89 @@ function LinkedResourceMedia({ resource, type, title }) {
   return null;
 }
 
+/* The lesson's Quick Knowledge Check.
+ *
+ * Unlike the Module Quiz (server-graded, authoritative, gates advancement),
+ * this block's correct answer and explanation are ALREADY in the authored
+ * payload — so the client can be told immediately, which is what the redesign
+ * asks for wherever existing behaviour permits it. No scoring rule is invented
+ * here: this remains reinforcement and never unlocks or blocks anything.
+ */
 function QuizBlock({ block }) {
   const [answer, setAnswer] = useState("");
-  const [checked, setChecked] = useState(false);
   const options = block.items || [];
   const correct = block.config?.correct_answer || null;
+  // Free-text reflection has no right answer, so it keeps an explicit submit;
+  // a multiple choice question resolves the moment it is answered.
+  const [reflected, setReflected] = useState(false);
+  const checked = options.length ? !!answer : reflected;
   const isCorrect = correct ? answer === correct : null;
-  const choose = (value) => { setAnswer(value); setChecked(false); };
-  return <div className="space-y-2">{block.body && <p className="text-[13px] text-shText leading-relaxed">{block.body}</p>}{options.length ? <div className="grid gap-2">{options.map((o) => <label key={o} className={`rounded-xl border p-3 flex items-center gap-2 text-[13px] text-shText ${checked && correct === o ? "border-shPrimary/45 bg-shPrimary/[0.06]" : checked && answer === o && isCorrect === false ? "border-shAccent/40 bg-shAccent/[0.05]" : "border-shBorder bg-black/10"}`}><input type="radio" name={`quiz-${block.id}`} value={o} checked={answer === o} onChange={() => choose(o)} />{o}</label>)}</div> : <textarea value={answer} onChange={(e) => choose(e.target.value)} rows={2} className="w-full rounded-xl border border-shBorder bg-black/15 p-3 text-shText" placeholder="Your answer" />}{answer && <button onClick={() => setChecked(true)} className="min-h-[40px] px-3 rounded-xl border border-shSecondary/30 text-shSecondary text-[11px] font-black uppercase tracking-widest">Check answer</button>}{checked && <div className={`rounded-xl border p-3 ${isCorrect === true ? "border-shPrimary/30 bg-shPrimary/[0.045]" : isCorrect === false ? "border-shAccent/30 bg-shAccent/[0.04]" : "border-shBorder bg-black/10"}`}><p className={`text-[12px] font-black ${isCorrect === true ? "text-shPrimary" : isCorrect === false ? "text-shAccent" : "text-shText"}`}>{isCorrect === true ? "That’s it." : isCorrect === false ? "Not quite — review this point and try again." : "Response recorded for your own reflection."}</p>{block.config?.explanation && <p className="text-[11px] text-shTextMuted mt-1">{block.config.explanation}</p>}<p className="text-[10px] text-shTextMuted mt-2">Knowledge checks reinforce the lesson; they do not unlock or block course progression.</p></div>}</div>;
+
+  return (
+    <div className="space-y-3">
+      {block.body && <p className="text-[14px] sm:text-[15px] font-black text-shText leading-snug">{block.body}</p>}
+      {options.length ? (
+        <div className="grid gap-2.5">
+          {options.map((o) => {
+            const on = answer === o;
+            const right = checked && correct === o;
+            const wrong = checked && on && isCorrect === false;
+            return (
+              <button key={o} type="button" data-testid={`quick-check-option-${block.id}-${options.indexOf(o)}`}
+                      data-selected={on ? "true" : "false"} data-correct={right ? "true" : undefined}
+                      onClick={() => setAnswer(o)}
+                      className={`w-full text-left rounded-xl border p-3.5 flex items-start gap-3 text-[13.5px] min-h-[56px] transition ${
+                        right ? "border-shPrimary/55 bg-shPrimary/[0.09]"
+                        : wrong ? "border-shAccent/45 bg-shAccent/[0.06]"
+                        : on ? "border-shSecondary/50 bg-shSecondary/[0.07]"
+                        : "border-shBorder bg-black/10 hover:border-shSecondary/35"}`}>
+                <span className={`w-6 h-6 rounded-full grid place-items-center shrink-0 border text-[10px] mt-0.5 ${
+                  right ? "border-shPrimary bg-shPrimary text-[#071018]"
+                  : wrong ? "border-shAccent bg-shAccent text-[#071018]"
+                  : on ? "border-shSecondary bg-shSecondary text-[#031018]"
+                  : "border-shBorder text-transparent"}`}>
+                  <i className={`fas ${wrong ? "fa-xmark" : "fa-check"}`} />
+                </span>
+                <span className="leading-relaxed break-words min-w-0 flex-1 text-shText">{o}</span>
+              </button>
+            );
+          })}
+        </div>
+      ) : (
+        <>
+          <textarea value={answer} onChange={(e) => { setAnswer(e.target.value); setReflected(false); }} rows={3}
+                    className="w-full rounded-xl border border-shBorder bg-black/15 p-3 text-shText text-[13.5px]" placeholder="Your answer" />
+          {answer && !reflected && (
+            <button type="button" onClick={() => setReflected(true)} data-testid={`quick-check-submit-${block.id}`}
+                    className="min-h-[44px] px-4 rounded-xl border border-shSecondary/35 text-shSecondary text-[11px] font-black uppercase tracking-widest">
+              Check answer
+            </button>
+          )}
+        </>
+      )}
+
+      {checked && (
+        <div className={`rounded-xl border p-3.5 ${isCorrect === true ? "border-shPrimary/30 bg-shPrimary/[0.045]" : isCorrect === false ? "border-shAccent/30 bg-shAccent/[0.04]" : "border-shBorder bg-black/10"}`}
+             data-testid={`quick-check-feedback-${block.id}`}>
+          <p className={`text-[13px] font-black ${isCorrect === true ? "text-shPrimary" : isCorrect === false ? "text-shAccent" : "text-shText"}`}>
+            {isCorrect === true ? "That’s it." : isCorrect === false ? "Not quite — here’s why." : "Response recorded for your own reflection."}
+          </p>
+          {isCorrect === false && correct && (
+            <p className="text-[12.5px] text-shText mt-1.5"><i className="fas fa-circle-check text-shPrimary mr-1.5" />{correct}</p>
+          )}
+          {block.config?.explanation && <p className="text-[12.5px] text-shTextMuted mt-2 leading-relaxed">{block.config.explanation}</p>}
+          <p className="text-[10px] text-shTextMuted mt-2.5">Knowledge checks reinforce the lesson; they do not unlock or block course progression.</p>
+          {isCorrect === false && (
+            <button type="button" onClick={() => setAnswer("")} data-testid={`quick-check-retry-${block.id}`}
+                    className="mt-2.5 text-[11px] font-black text-shSecondary underline underline-offset-2">Try again</button>
+          )}
+        </div>
+      )}
+    </div>
+  );
 }
 
-export default function LessonContentBlocks({ blocks = [], enrollmentId, previewMode = false }) {
+export default function LessonContentBlocks({ blocks = [], enrollmentId, previewMode = false, hideTitles = false }) {
   const [resources, setResources] = useState([]);
   const active = [...blocks].filter((b) => b?.active !== false).sort((a, b) => (a.order || 0) - (b.order || 0));
   const resourceIds = useMemo(() => active.map((b) => b.resource_id).filter(Boolean), [active]);
@@ -77,7 +149,7 @@ export default function LessonContentBlocks({ blocks = [], enrollmentId, preview
   return <div className="space-y-4" data-testid="lesson-content-blocks">{active.map((b, i) => {
     const tone = b.type === "warning" ? "border-red-400/30 bg-red-500/[0.055]" : b.type === "trainer_tip" ? "border-shPrimary/30 bg-shPrimary/[0.055]" : "border-shBorder bg-[var(--sh-card-base)]";
     return <section key={b.id || i} className={`rounded-2xl border p-4 sm:p-5 ${tone}`} data-testid={`lesson-content-block-${b.type}`}>
-      {b.title && <p className={`text-[10px] font-black uppercase tracking-[0.18em] mb-2 ${b.type === "warning" ? "text-red-300" : b.type === "trainer_tip" ? "text-shPrimary" : "text-shSecondary"}`}>{b.title}</p>}
+      {b.title && !hideTitles && <p className={`text-[10px] font-black uppercase tracking-[0.18em] mb-2 ${b.type === "warning" ? "text-red-300" : b.type === "trainer_tip" ? "text-shPrimary" : "text-shSecondary"}`}>{b.title}</p>}
       {b.type === "video" && b.url && <div className="aspect-video rounded-xl overflow-hidden bg-black"><video src={b.url} controls playsInline preload="metadata" className="w-full h-full object-contain" /></div>}
       {b.type === "image" && b.url && <img src={b.url} alt={b.title || "Lesson visual"} className="w-full max-h-[520px] object-contain rounded-xl bg-black/20" />}
       {b.resource_id && resourceById[b.resource_id] && ["video","image"].includes(b.type) && <LinkedResourceMedia resource={resourceById[b.resource_id]} type={b.type} title={b.title} />}

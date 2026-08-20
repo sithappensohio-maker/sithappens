@@ -221,3 +221,55 @@ export function sessionMetricsFromGuidedState(state) {
     success_rate: repsAttempted > 0 ? Math.round((successfulReps / repsAttempted) * 100) : null,
   };
 }
+
+// ---------------------------------------------------------------------------
+// Reactive troubleshooting (client redesign, phase 3).
+//
+// The authored recipe already tags each troubleshooting entry with a `trigger`
+// — no_response, over_aroused, repeated_misses, handler_frustrated. Until now
+// all of them lived behind a drawer the client had to think to open, which is
+// the one thing nobody does mid-session with a dog on the end of a leash.
+//
+// These selectors map the guided-practice state the reducer ALREADY tracks
+// onto those triggers, so the relevant tip surfaces itself at the moment it
+// applies. Pure, additive, and authored-content-only: when a recipe has no
+// entry for a trigger, nothing is shown rather than something invented.
+// ---------------------------------------------------------------------------
+
+// Two misses in a row is the point where the authored advice ("reduce one
+// variable, get one clean rep") is worth interrupting for. Three consecutive
+// misses is already the stop rule above, so this deliberately fires first.
+export const REACTIVE_TIP_MISS_THRESHOLD = 2;
+
+export function troubleshootingByTrigger(practiceCoach, trigger) {
+  const items = (practiceCoach && practiceCoach.troubleshooting) || [];
+  return items.find((t) => t && t.trigger === trigger) || null;
+}
+
+/** The authored troubleshooting entry that fits the CURRENT practice state, or
+ *  null when nothing applies. Never invents guidance: every field shown comes
+ *  from the recipe. */
+export function troubleshootingForState(practiceCoach, state) {
+  if (!practiceCoach || !state) return null;
+  // A stopped round is the most urgent state, and the recipe's own stop-round
+  // entries are the ones written for it.
+  if (state.phase === "stopped") {
+    const items = (practiceCoach.troubleshooting || []).filter((t) => t && t.stop_round);
+    return items[0] || troubleshootingByTrigger(practiceCoach, "over_aroused");
+  }
+  if (state.phase !== "active") return null;
+  if ((state.missesInARow || 0) >= REACTIVE_TIP_MISS_THRESHOLD) {
+    return troubleshootingByTrigger(practiceCoach, "repeated_misses")
+        || troubleshootingByTrigger(practiceCoach, "no_response");
+  }
+  return null;
+}
+
+/** Progress through the whole practice session — every round, not just the
+ *  current one — so the client can see how much is left. */
+export function guidedSessionProgress(state) {
+  if (!state) return { done: 0, total: 0, pct: 0 };
+  const total = Math.max(1, (state.roundsPerDay || 1) * (state.repsPerRound || 1));
+  const done = Math.min(total, (state.roundIndex || 0) * (state.repsPerRound || 1) + (state.repIndex || 0));
+  return { done, total, pct: Math.round((done / total) * 100) };
+}

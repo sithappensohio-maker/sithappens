@@ -16552,6 +16552,15 @@ class ProgramIn(BaseModel):
     school_onboarding: Dict = Field(default_factory=lambda: {"enabled": True, "require_baseline": False, "require_equipment_check": False})
     school_default_trainer_id: Optional[str] = None
     recommended_next_program_slugs: List[str] = []
+    # Free Online School claim — an EXPLICIT opt-in, deliberately not
+    # inferred from price == 0. Imported drafts and not-yet-priced programs
+    # also sit at $0 as a safe default, so treating zero price as "anyone may
+    # claim this" would silently publish unfinished curricula to the world.
+    # A program is only freely claimable when a curriculum author turns this
+    # on AND the program independently satisfies every normal Online School
+    # requirement (see claim_free_program). Defaults False so every existing
+    # program keeps its exact current behaviour with no migration.
+    free_enrollment_enabled: bool = False
 
 
 # Optional skill-measurement fields carried on a goal/skill — see GoalIn's
@@ -39411,9 +39420,17 @@ def _public_purchase_state(kind: str, item_doc: dict, *, global_show_public_pric
     # must actually be visible — any one of these overrides the stored flag.
     guest_cart_allowed = stored_guest_cart_allowed and not has_account_requirement and price_visible
     account_required = (not is_product) or has_account_requirement or not stored_guest_cart_allowed
+    # Free Online School claim eligibility is COMPUTED here for the same
+    # reason account_required is: a storefront must never decide that
+    # something is claimable just because a stored flag says so. This mirrors
+    # the server's own claim gate exactly (_free_claim_program_blockers), so
+    # the CTA a visitor sees and the rule the claim endpoint enforces can
+    # never drift apart. A $0 program with no explicit opt-in returns False.
+    free_claim_available = kind == "training_program" and _free_claim_program_blockers(item_doc) is None
     return {
         "publicly_visible": bool(publicly_visible),
         "account_required": account_required,
+        "free_claim_available": free_claim_available,
         "guest_cart_allowed": guest_cart_allowed,
         "show_public_price": price_visible,
         "requires_dog": requires_dog,
@@ -39652,6 +39669,11 @@ async def _build_shop_catalog(client_id: Optional[str]) -> dict:
             # Phase 5 — client-facing so the Shop item detail page knows
             # whether to show a dog selector / real ownership CTA states.
             "purchase_fulfillment": prog.get("purchase_fulfillment") or "credits_only",
+            # Free Online School claim — COMPUTED from the stored program by
+            # the same helper the claim endpoint enforces, never a passthrough
+            # of the raw flag. A $0 program with no explicit opt-in resolves
+            # False here, so the Shop can never offer to claim one.
+            "free_claim_available": _free_claim_program_blockers(prog) is None,
             "estimated_weeks": prog.get("estimated_weeks"),
             "school_support": prog.get("school_support") or {},
             "school_onboarding": prog.get("school_onboarding") or {},
@@ -39814,6 +39836,11 @@ async def _build_register_catalog(client_id: Optional[str]) -> dict:
             # Phase 5 — client-facing so the Shop item detail page knows
             # whether to show a dog selector / real ownership CTA states.
             "purchase_fulfillment": prog.get("purchase_fulfillment") or "credits_only",
+            # Free Online School claim — COMPUTED from the stored program by
+            # the same helper the claim endpoint enforces, never a passthrough
+            # of the raw flag. A $0 program with no explicit opt-in resolves
+            # False here, so the Shop can never offer to claim one.
+            "free_claim_available": _free_claim_program_blockers(prog) is None,
             "estimated_weeks": prog.get("estimated_weeks"),
             "school_support": prog.get("school_support") or {},
             "school_onboarding": prog.get("school_onboarding") or {},
@@ -41336,6 +41363,154 @@ async def _verify_and_reconcile_shop_session(attempt: dict) -> dict:
                 {"$set": {"status": "canceled", "updated_at": now_iso()}},
             )
     return await db.shop_payment_attempts.find_one({"id": attempt["id"]}, {"_id": 0})
+
+
+# ── Free Online School claim ────────────────────────────────────────────────
+#
+# A genuinely free course grants Online School access WITHOUT money moving.
+# It therefore does not — and must not — travel the checkout path: no Stripe
+# session, no PaymentIntent, no shop_order, no payment, no revenue, no tax, no
+# merchant fee, no drawer movement. The $0 cart guard in create_shop_checkout
+# stays exactly as it is; this is a different door, not a hole in that one.
+#
+# What it DOES share with a paid purchase is everything that matters for
+# correctness:
+#   • _validate_shop_item_eligibility — the same canonical purchase gate
+#     (active, online, section/category visibility, approval, dog ownership,
+#     one-enrollment-per-dog, prerequisites, completed-onboarding). Routing
+#     through it rather than reimplementing means any gate added there later
+#     — a program agreement requirement, for one — applies here automatically.
+#   • _grant_online_school_enrollment — THE canonical enrollment creator. A
+#     free enrollment is byte-identical in shape to a paid or staff-created
+#     one, differing only in enrollment_source provenance.
+#
+# Free changes how entitlement is OBTAINED. It changes nothing about how
+# School works afterwards.
+
+
+class FreeCourseClaimIn(BaseModel):
+    program_id: str
+    dog_id: Optional[str] = None
+
+
+def _free_claim_program_blockers(program: Optional[dict]) -> Optional[str]:
+    """Why this program may NOT be claimed for free, or None when it may.
+
+    Every condition is read from the STORED program document, never from
+    anything the client sent. Deliberately independent of price alone: an
+    imported draft sitting at $0 is not a free course, it is an unpriced one,
+    and the difference is the explicit opt-in flag."""
+    if not program:
+        return "This course is no longer available."
+    if not program.get("free_enrollment_enabled"):
+        # Covers the dangerous case: price == 0 with no deliberate opt-in.
+        return "This course isn't available as a free course."
+    if not program.get("active", True):
+        return "This course is no longer available."
+    if float(program.get("price") or 0) > 0.005:
+        # Belt and braces: a priced program must never be claimable even if
+        # the flag was left on by mistake after a price was added.
+        return "This course isn't free — please purchase it from the shop."
+    if program.get("purchase_fulfillment") != "online_school":
+        return "This course isn't set up for Online School access."
+    if program.get("delivery_mode", "trainer_led") not in ("self_guided", "both"):
+        return "This course isn't set up for self-guided delivery."
+    return None
+
+
+@api.post("/shop/free-course/claim")
+async def claim_free_program(body: FreeCourseClaimIn, user: dict = Depends(get_current_user)):
+    """Start Free Course — grant a client Online School access to a program
+    explicitly configured for free enrollment, for one of their own dogs.
+
+    Idempotent by construction. The canonical creator raises
+    OnlineSchoolAlreadyEnrolledError for an existing active enrollment (and
+    self-heals an orphaned dog_programs row while doing so), which is
+    converged onto here rather than surfaced as an error — a double-click or
+    a retry lands the client on the course they already have. Genuine
+    concurrency is caught by the dp_online_active_unique partial index inside
+    the creator, so two simultaneous claims still produce exactly one
+    enrollment."""
+    if user.get("role") != "client":
+        raise HTTPException(status_code=403, detail="Client account required")
+    client_id = user.get("client_id")
+    client = await db.clients.find_one({"id": client_id}, {"_id": 0})
+    if not client:
+        raise HTTPException(status_code=404, detail="Client not found")
+
+    program = await db.programs.find_one({"id": body.program_id}, {"_id": 0})
+    blocker = _free_claim_program_blockers(program)
+    if blocker:
+        # 404 for "doesn't exist", 409 for "exists but isn't claimable" — a
+        # probing client learns nothing about programs they can't see.
+        raise HTTPException(status_code=404 if not program else 409, detail=blocker)
+
+    # School progress belongs to a dog; never invent one.
+    if not body.dog_id:
+        raise HTTPException(status_code=422, detail={
+            "code": "free_course_dog_required",
+            "message": f"Choose which dog is taking {program.get('name') or 'this course'}.",
+        })
+    dog = await db.dogs.find_one({"id": body.dog_id}, {"_id": 0})
+    if not dog or dog.get("owner_id") != client_id:
+        # Same message for missing and not-yours: a client must not be able to
+        # probe for other people's dog ids.
+        raise HTTPException(status_code=404, detail="Selected dog was not found on this account.")
+
+    # Already actively enrolled? Converge and hand back the existing course.
+    # This runs BEFORE the purchase gate on purpose: that gate correctly 409s
+    # a repeat PURCHASE ("you already own this, don't pay twice"), but a
+    # repeat free CLAIM is a double-click, and the right answer to a
+    # double-click is the course they already have, not an error.
+    existing = await db.dog_programs.find_one(
+        {"dog_id": body.dog_id, "program_id": program["id"],
+         "delivery_channel": "online_school", "status": "active"},
+        {"_id": 0, "id": 1},
+    )
+    if existing:
+        companion = await _self_heal_missing_school_enrollment(
+            existing["id"], body.dog_id, program["id"], client_id, None,
+        )
+        return {
+            "school_enrollment_id": companion["id"],
+            "program_id": program["id"],
+            "program_name": program.get("name") or "",
+            "dog_id": body.dog_id,
+            "dog_name": dog.get("name") or "",
+            "created": False,
+        }
+
+    # THE canonical purchase gate, reused verbatim. Completed/withdrawn
+    # enrollments still get its clear no-retake messages, and every other
+    # requirement it enforces applies here unchanged.
+    await _validate_shop_item_eligibility(client, "training_program", program, 1, dog_id=body.dog_id)
+
+    try:
+        result = await _grant_online_school_enrollment(
+            dog, program, enrolled_by=None,
+            enrollment_source="free_claim", source_ref=f"free_claim:client:{client_id}",
+        )
+        school_enrollment_id = result["school_enrollment"]["id"]
+        created = True
+    except OnlineSchoolAlreadyEnrolledError as exc:
+        # Converge, never error: this is a retry, a double-click, or a lost
+        # concurrency race, and in all three the client should simply arrive
+        # at the enrollment that exists.
+        if exc.status in ("completed", "withdrawn"):
+            raise HTTPException(status_code=409, detail=(
+                f"This dog has already taken {program.get('name') or 'this course'}."
+            ))
+        school_enrollment_id = exc.school_enrollment_id
+        created = False
+
+    return {
+        "school_enrollment_id": school_enrollment_id,
+        "program_id": program["id"],
+        "program_name": program.get("name") or "",
+        "dog_id": body.dog_id,
+        "dog_name": dog.get("name") or "",
+        "created": created,
+    }
 
 
 @api.post("/shop/checkout")
