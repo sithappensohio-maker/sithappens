@@ -7,6 +7,7 @@
 // the release report.
 import fs from "fs";
 import path from "path";
+import { checkpointState } from "./school/student/checkpoint/CheckpointCards";
 
 const read = (...p) => fs.readFileSync(path.join(__dirname, ...p), "utf8");
 
@@ -16,6 +17,7 @@ const dashboardSrc = read("OnlineSchoolDashboard.jsx");
 // legacy dashboard above is dormant. Checkpoint-state guards read the
 // canonical native panel instead.
 const checkpointPanelSrc = read("school", "student", "CheckpointPanel.jsx");
+const cardsSrc = read("school", "student", "checkpoint", "CheckpointCards.jsx");
 const reviewQueueSrc = read("CheckpointReviewQueue.jsx");
 const uploaderSrc = read("training", "PracticeMediaUploader.jsx");
 const dashboardScreenSrc = read("..", "screens", "Dashboard.jsx");
@@ -79,7 +81,7 @@ test("CheckpointPanel covers not-practiced, awaiting-review, prescribed-practice
 test("the prescribed-practice state shows the live remaining-practice count, not a static message", () => {
   // Phase 3 renamed the local alias (const p = status.prescription || {})
   // but reads the exact same live field — not a static message.
-  expect(checkpointPanelSrc).toMatch(/const p = status\.prescription \|\| \{\}/);
+  expect(checkpointPanelSrc).toMatch(/const p = status\??\.prescription \|\| \{\}/);
   expect(checkpointPanelSrc).toMatch(/p\.practice_sessions_remaining/);
   expect(checkpointPanelSrc).toMatch(/data-testid="school-checkpoint-remaining"/);
 });
@@ -192,21 +194,32 @@ test("CheckpointPanel replaces BOTH submission-soliciting states for in-person s
   // in-person School student, but the client still told them to "submit a
   // checkpoint video" and rendered the uploader — instructing the client to do
   // something the server refuses. Only the two soliciting states are swapped.
-  expect(checkpointPanelSrc).toMatch(/const trainerAssessed = deliveryMode === "in_person" \|\| deliveryMode === "trainer_led"/);
+  // Phase 4 replaced the inline guards with a derived state, so this is now
+  // asserted BEHAVIOURALLY — a stronger check than matching the old source
+  // shape: neither submission-soliciting state can be reached at all.
+  expect(cardsSrc).toMatch(/const trainerAssessed = deliveryMode === "in_person" \|\| deliveryMode === "trainer_led"/);
   expect(checkpointPanelSrc).toMatch(/data-testid="school-checkpoint-in-person"/);
-  // guard on the pre-practice state …
-  expect(checkpointPanelSrc).toMatch(/if \(!practiced\) \{\s*\n\s*if \(trainerAssessed\) return inPersonPanel;/);
-  // … and on the submit form itself
-  expect(checkpointPanelSrc).toMatch(/if \(trainerAssessed\) return inPersonPanel;\s*\n\s*\n\s*return <CheckpointSubmitForm/);
+  for (const mode of ["in_person", "trainer_led"]) {
+    expect(checkpointState({ deliveryMode: mode, practiced: false })).toBe("in_person");
+    expect(checkpointState({ deliveryMode: mode, practiced: true })).toBe("in_person");
+  }
+  expect(checkpointState({ deliveryMode: "online", practiced: false })).toBe("not_ready");
+  expect(checkpointState({ deliveryMode: "online", practiced: true })).toBe("ready");
 });
 
 test("awaiting-review / prescribed-practice / Trainer Assist stay reachable for in-person students", () => {
   // A live trainer checkpoint can still return prescribe_practice or raise a
   // Trainer Assist hold, so those states must NOT be short-circuited — the
   // in-person guards sit after them, never at the top of the component.
-  const guardIdx = checkpointPanelSrc.search(/if \(trainerAssessed\) return inPersonPanel;\s*\n\s*\n\s*return <CheckpointSubmitForm/);
-  expect(guardIdx).toBeGreaterThan(checkpointPanelSrc.indexOf('status?.status === "awaiting_review"'));
-  expect(guardIdx).toBeGreaterThan(checkpointPanelSrc.indexOf('status.outcome === "prescribe_practice"'));
+  // Asserted behaviourally in phase 4: an in-person student whose live
+  // trainer checkpoint produced one of these outcomes still lands in that
+  // state, never short-circuited to the in-person placeholder.
+  const inPerson = (status) => checkpointState({ deliveryMode: "in_person", practiced: true, status });
+  expect(inPerson({ status: "awaiting_review" })).toBe("awaiting_review");
+  expect(inPerson({ status: "graded", outcome: "prescribe_practice" })).toBe("more_practice");
+  expect(inPerson({ status: "graded", outcome: "trainer_assist_recommended" })).toBe("trainer_assist");
+  expect(inPerson({ status: "graded", outcome: "advance" })).toBe("passed");
+  expect(inPerson({ on_hold: true, trainer_assist: { status: "scheduled" } })).toBe("trainer_assist");
 });
 
 test("delivery mode is threaded from SchoolApp through LessonScreen into CheckpointPanel", () => {

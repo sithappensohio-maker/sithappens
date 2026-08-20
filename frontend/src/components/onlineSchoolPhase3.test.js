@@ -92,7 +92,10 @@ test("a prescribed refresher lesson gets a real Go-to-Refresher affordance sourc
 });
 
 test("the trainer-assist hold never renders a submit control and explains progress is preserved", () => {
-  const holdBlock = checkpointPanelSrc.slice(checkpointPanelSrc.indexOf('status?.on_hold'), checkpointPanelSrc.indexOf('status?.on_hold') + 2500);
+  // Phase 4 derives the state first, so the hold branch is keyed on the
+  // derived name rather than on the raw flag.
+  const holdStart = checkpointPanelSrc.indexOf('state === "trainer_assist"');
+  const holdBlock = checkpointPanelSrc.slice(holdStart, checkpointPanelSrc.indexOf('state === "assist_complete"'));
   expect(holdBlock).not.toMatch(/CheckpointSubmitForm/);
   expect(holdBlock).toMatch(/course progress stays exactly where it is/);
 });

@@ -8,6 +8,7 @@ import PremiumButton from "../../premium/PremiumButton";
 import HuskyDogImage from "../../brand/HuskyDogImage";
 import CheckpointPanel from "./CheckpointPanel";
 import LessonGuide, { LessonSectionBody, buildGuide } from "./lesson/LessonGuide";
+import { CheckpointResultPanel } from "./checkpoint/CheckpointCards";
 import { practiceButtonLabel } from "../../../lib/onlineSchoolPolish";
 
 /* Native School Lesson screen (Phase 2B). Presents existing lesson content via
@@ -48,6 +49,25 @@ export default function LessonScreen({
     }
   }, [enrollmentId, lessonId]);
   useEffect(() => { setData(null); load(); }, [load]);
+
+  /* A PASSED checkpoint auto-advances the enrolment server-side, so the live
+     checkpoint_status is already gone by the time the client looks at the
+     lesson they earned it on. The persisted record in checkpoint-history is
+     the canonical source, so the milestone is read back from there rather
+     than being lost — or, worse, reconstructed from session data. */
+  const [cpResult, setCpResult] = useState(null);
+  useEffect(() => {
+    if (!enrollmentId || !lessonId) return undefined;
+    let live = true;
+    setCpResult(null);
+    api.get(`/portal/school/${enrollmentId}/checkpoint-history`)
+      .then(({ data: rows }) => {
+        if (!live) return;
+        setCpResult((rows || []).find((r) => r.lesson_id === lessonId) || null);
+      })
+      .catch(() => { if (live) setCpResult(null); });
+    return () => { live = false; };
+  }, [enrollmentId, lessonId, detail]);
 
   // Practice happens in an overlay on TOP of this screen, so finishing it
   // routes back to the SAME lesson URL — no remount, no reload. The parent
@@ -178,7 +198,16 @@ export default function LessonScreen({
         </div>
       </header>
 
-      {completedReview && (
+      {/* The durable result for a checkpoint lesson the client has already
+          finished — ABOVE the lesson content, because on a checkpoint lesson
+          the result is the thing they came back for. The live CheckpointPanel
+          further down owns the CURRENT lesson. */}
+      {!isCurrent && cpResult && (
+        <CheckpointResultPanel entry={cpResult} dogName={dogName}
+                               onContinue={onBackToCourse} continueLabel="Back to my course" />
+      )}
+
+      {completedReview && !cpResult && (
         <p className="text-[12.5px] text-shTextMuted rounded-xl border border-shBorder bg-[var(--sh-card-base)] px-3.5 py-2.5" data-testid="lesson-review-note">
           <i className="fas fa-book-open mr-1.5 text-shSecondary" />You've completed this lesson — it stays open for review any time.
         </p>
@@ -305,6 +334,14 @@ export default function LessonScreen({
               onStartPrescribedPractice={onStartPrescribedPractice}
               onGoToRefresher={(rid) => onStateChanged?.({ openLessonId: rid })}
               busy={busy}
+              /* Context the checkpoint needs to read as a milestone rather
+                 than a form. All of it is already on this screen's payload —
+                 no extra request, no new field. */
+              moduleName={data.module_name}
+              dogName={dogName}
+              skills={data.skills}
+              roadmap={roadmap}
+              onContinue={advance}
             />
           )}
         </>

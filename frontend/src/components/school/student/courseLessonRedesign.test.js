@@ -9,6 +9,7 @@ import path from "path";
 import { parseSchoolPath, schoolPathFor, SCHOOL_DEFAULT_VIEW } from "../../../lib/studentSchool";
 import { buildGuide, splitSteps, GUIDE_SECTIONS, groupBlocks, classifyBlock, asideBlocks } from "./lesson/LessonGuide";
 import { groupCourseModules } from "./course/CourseCards";
+import { checkpointState } from "./checkpoint/CheckpointCards";
 import { NAV_ITEMS } from "./SchoolNav";
 
 const read = (...p) => fs.readFileSync(path.join(__dirname, ...p), "utf8");
@@ -251,9 +252,12 @@ test("the redesign does not touch the lesson action state machine", () => {
 
 test("In Person students are still never offered a client checkpoint upload", () => {
   // The B6 rule from the School consolidation must survive the redesign.
-  const panel = read("CheckpointPanel.jsx");
-  expect(panel).toMatch(/const trainerAssessed = deliveryMode === "in_person" \|\| deliveryMode === "trainer_led"/);
-  expect(panel).toMatch(/if \(trainerAssessed\) return inPersonPanel;/);
+  // Phase 4 moved this to a derived state, so it is asserted behaviourally:
+  // an in-person student can never reach a state that offers the upload.
+  const cards = read("checkpoint", "CheckpointCards.jsx");
+  expect(cards).toMatch(/const trainerAssessed = deliveryMode === "in_person" \|\| deliveryMode === "trainer_led"/);
+  expect(checkpointState({ deliveryMode: "in_person", practiced: true })).toBe("in_person");
+  expect(checkpointState({ deliveryMode: "trainer_led", practiced: false })).toBe("in_person");
   expect(lessonSrc).toMatch(/deliveryMode=\{deliveryMode\}/);
 });
 

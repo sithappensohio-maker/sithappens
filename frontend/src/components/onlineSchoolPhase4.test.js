@@ -158,8 +158,10 @@ test("Message Client is gated by the messages permission, not manage_training_se
 
 test("the held checkpoint panel shows the real lifecycle sub-status (needs_attention/contacted/scheduled), not just a single hold message", () => {
   expect(checkpointPanelSrc).toMatch(/data-testid="school-checkpoint-hold-status"/);
-  expect(checkpointPanelSrc).toMatch(/ta\.status === "scheduled"/);
-  expect(checkpointPanelSrc).toMatch(/ta\.status === "contacted"/);
+  // Phase 4 reads the same field through optional chaining, because the
+  // panel now derives its state before touching the assist block.
+  expect(checkpointPanelSrc).toMatch(/ta\??\.status === "scheduled"/);
+  expect(checkpointPanelSrc).toMatch(/ta\??\.status === "contacted"/);
 });
 
 test("scheduled status shows the REAL date from stored data, never an invented ETA", () => {
@@ -174,13 +176,16 @@ test("Trainer Assist complete shows the client-facing summary and a Return to Ch
 });
 
 test("the hold and completed states never show scary fail/warning copy to the client — this reads as help, not failure", () => {
-  const start = checkpointPanelSrc.indexOf("function CheckpointPanel");
-  const panelSrc = checkpointPanelSrc.slice(start, start + 4000);
+  const start = checkpointPanelSrc.indexOf("export default function CheckpointPanel");
+  const panelSrc = checkpointPanelSrc.slice(start, start + 6000);
   // Renderable JSX text only — excludes source comments (which legitimately
   // discuss the word "fail" while explaining what NOT to render).
   const jsxText = panelSrc.replace(/\/\/.*$/gm, "").replace(/\/\*[\s\S]*?\*\//g, "");
   expect(jsxText).not.toMatch(/YOU FAILED|failed the (course|checkpoint|program)/i);
-  expect(panelSrc).toMatch(/wants to help with this one/);
+  // Phase 4 reworded this to be warmer still; the guarantee is unchanged —
+  // the hold reads as help, and says so explicitly.
+  expect(checkpointPanelSrc).toMatch(/wants to work through this with you/);
+  expect(checkpointPanelSrc).toMatch(/Nothing has gone wrong and nothing is lost/);
 });
 
 test("Student Home Trainer Status reflects the real Trainer Assist sub-status, no invented response-time promise", () => {
@@ -203,7 +208,7 @@ test("Trainer Feedback history renders Trainer Assist as a later chapter, never 
 // ---------------------------------------------------------------------------
 
 test("client held-checkpoint panel has a distinct reschedule-needed sub-state, not a stale scheduled date", () => {
-  expect(checkpointPanelSrc).toMatch(/ta\.status === "reschedule_needed"/);
+  expect(checkpointPanelSrc).toMatch(/ta\??\.status === "reschedule_needed"/);
   expect(checkpointPanelSrc).toMatch(/Trainer Assist needs to be rescheduled/);
 });
 

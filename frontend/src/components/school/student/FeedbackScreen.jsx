@@ -60,7 +60,17 @@ function FeedbackEntry({ entry, onAsk }) {
         <span className={`text-[10px] font-black uppercase tracking-widest ${meta.cls}`}><i className={`fas ${meta.icon} mr-1.5`} />{meta.label}</span>
       </div>
 
-      <div className="mt-4"><ScorePair handler={entry.handler_overall} dog={entry.dog_overall} /></div>
+      <div className="mt-4" data-testid={`feedback-scores-${entry.id}`} data-scored={(entry.handler_overall != null || entry.dog_overall != null) ? "true" : "false"}>
+        <ScorePair handler={entry.handler_overall} dog={entry.dog_overall} />
+        {/* A legacy row from before checkpoint scoring existed keeps its place
+            in the record; the em dashes are explained rather than left to look
+            like a bug. */}
+        {entry.handler_overall == null && entry.dog_overall == null && (
+          <p className="text-[11.5px] text-shTextMuted mt-2.5 leading-snug" data-testid={`feedback-unscored-${entry.id}`}>
+            Scores weren&apos;t recorded for this one — your trainer&apos;s note is the record.
+          </p>
+        )}
+      </div>
       {entry.trainer_feedback && <p className="mt-4 text-[13px] text-gray-200 leading-relaxed border-l-2 border-shSecondary/35 pl-3 whitespace-pre-wrap">“{entry.trainer_feedback}”</p>}
       {(entry.video_annotations || []).length > 0 && <div className="mt-4 rounded-xl border border-shSecondary/20 bg-shSecondary/[0.04] p-3"><p className="text-[10px] font-black uppercase tracking-widest text-shSecondary">Trainer video notes</p><div className="space-y-2 mt-2">{entry.video_annotations.map((a)=><p key={a.id} className="text-[12px] text-shText"><span className="font-black text-shSecondary mr-2">{Math.floor(Number(a.timestamp_seconds||0)/60)}:{String(Math.floor(Number(a.timestamp_seconds||0)%60)).padStart(2,'0')}</span>{a.note}</p>)}</div></div>}
 
@@ -159,7 +169,7 @@ export default function FeedbackScreen({ enrollmentId, onAsk, onChanged, onOpenH
             </div>
             {onOpenHistory && (
               <button type="button" onClick={onOpenHistory} data-testid="feedback-view-all-recaps"
-                      className="text-[11px] font-black text-shSecondary shrink-0 underline underline-offset-2">View all</button>
+                      className="-my-2 px-1 min-h-[44px] inline-flex items-center text-[11px] font-black text-shSecondary shrink-0 underline underline-offset-2">View all</button>
             )}
           </div>
           {recaps.slice(0, 3).map((l) => (
