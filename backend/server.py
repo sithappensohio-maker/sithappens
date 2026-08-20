@@ -12740,7 +12740,12 @@ async def create_homework(body: HomeworkIn, user: dict = Depends(require_admin))
 
 @api.delete("/homework/{homework_id}")
 async def delete_homework(homework_id: str, _: dict = Depends(require_admin)):
+    # Deletion is the other way an assignment leaves the active state (there
+    # is no cancel/archive path). Release its idempotency claim too, or the
+    # dog and template stay locked with nothing left to point at.
+    hw = await db.homework.find_one({"id": homework_id}, {"_id": 0})
     await db.homework.delete_one({"id": homework_id})
+    await _release_manual_assignment_claim(hw)
     return {"ok": True}
 
 def homework_unreviewed_log_count(hw: dict) -> int:
@@ -12796,10 +12801,7 @@ async def _apply_homework_completion(hw: dict, *, note: str = "", photo: str = "
     # practice can be assigned again. This never revives the finished row —
     # re-assigning creates a brand-new record; only the duplicate guard for
     # simultaneously-active copies is lifted.
-    tpl_id = (hw.get("template_snapshot") or {}).get("template_id")
-    if tpl_id and hw.get("dog_id"):
-        await db.homework_assignment_claims.delete_one(
-            {"claim_key": f"{hw['dog_id']}:{tpl_id}"})
+    await _release_manual_assignment_claim(hw)
     fresh = await db.homework.find_one({"id": hw["id"]}, {"_id": 0})
     return fresh or {**hw, **update}
 
@@ -13301,22 +13303,64 @@ async def seed_homework_templates(_: dict = Depends(require_admin_and_permission
     return {"seeded": seeded, "total_active": total}
 
 
-async def _existing_active_template_assignment(dog_id: str, template_id: str) -> Optional[dict]:
-    """The still-open assignment of this template to this dog, if any.
+MANUAL_ASSIGNMENT_CLAIM_PREFIX = "manual"
 
-    One dog should not hold two simultaneous ACTIVE copies of the same
-    practice — that is what produced visually identical duplicate cards. The
-    guard is scoped to active rows on purpose: re-assigning the same template
-    AFTER it has been completed is a legitimate new occurrence and must still
-    create its own new record, never resurrect the finished one."""
-    # The template id is persisted inside template_snapshot (the frozen copy
-    # taken at assignment time), not at the top level — matching the field
-    # that actually exists rather than the one it would be tidy to have.
+
+def _manual_assignment_claim_key(dog_id: str, template_id: str) -> str:
+    """The logical occurrence a manual FROM TEMPLATE assignment represents.
+
+    Scope is deliberately MANUAL-only, not (dog, template) across everything.
+    The canonical School rule (see assign_school_practice) is
+    `school_enrollment_id + template_id`, NOT dog + template — a dog holding
+    two active School enrollments that share a recipe is legitimately allowed
+    one active copy in each. A dog-wide claim would forbid that, and would
+    also let a manual assignment silently hand back a School-owned row.
+
+    Manual assignments carry no enrollment, so for them the smallest honest
+    occurrence identity is the dog plus the template."""
+    return f"{MANUAL_ASSIGNMENT_CLAIM_PREFIX}:{dog_id}:{template_id}"
+
+
+# A manual assignment is one with no School ownership marker — the same
+# discriminator _is_school_homework uses, expressed as a query so the guard
+# and the classifier can never disagree.
+_MANUAL_HW_MATCH = {
+    "school_enrollment_id": {"$in": [None]},
+    "school_enrollment_record_id": {"$in": [None]},
+}
+
+
+async def _existing_active_manual_assignment(dog_id: str, template_id: str) -> Optional[dict]:
+    """The still-open MANUAL assignment of this template to this dog, if any.
+
+    Scoped to active rows on purpose: re-assigning the same template AFTER it
+    has been completed is a legitimate new occurrence and must still create
+    its own new record, never resurrect the finished one.
+
+    The template id is persisted inside template_snapshot (the frozen copy
+    taken at assignment time), not at the top level — matching the field that
+    actually exists rather than the one it would be tidy to have."""
     return await db.homework.find_one(
         {"dog_id": dog_id, "template_snapshot.template_id": template_id,
-         "status": {"$ne": "completed"}},
+         "status": {"$ne": "completed"}, **_MANUAL_HW_MATCH},
         {"_id": 0},
     )
+
+
+async def _release_manual_assignment_claim(hw: Optional[dict]) -> None:
+    """Free the claim an assignment holds, so the same practice can be
+    assigned again.
+
+    Called from EVERY exit an assignment has from the active state —
+    completion and deletion — plus the failure path in creation. A claim must
+    never outlive the row it stands for, or that dog/template pair is locked
+    forever with nothing to point at."""
+    if not hw or _is_school_homework(hw):
+        return
+    tpl_id = (hw.get("template_snapshot") or {}).get("template_id")
+    if tpl_id and hw.get("dog_id"):
+        await db.homework_assignment_claims.delete_one(
+            {"claim_key": _manual_assignment_claim_key(hw["dog_id"], tpl_id)})
 
 
 @api.post("/homework/from-template")
@@ -13336,8 +13380,8 @@ async def create_homework_from_template(body: HomeworkFromTemplateIn, user: dict
     # index cannot be built — adding one there would take the app down until
     # those rows were cleaned up. A fresh claims collection starts empty and
     # carries no such risk.
-    claim_key = f"{body.dog_id}:{body.template_id}"
-    existing = await _existing_active_template_assignment(body.dog_id, body.template_id)
+    claim_key = _manual_assignment_claim_key(body.dog_id, body.template_id)
+    existing = await _existing_active_manual_assignment(body.dog_id, body.template_id)
     if existing:
         return {**existing, "reused": True}
     try:
@@ -13347,16 +13391,38 @@ async def create_homework_from_template(body: HomeworkFromTemplateIn, user: dict
         })
     except DuplicateKeyError:
         # Someone else is mid-create, or finished just now. Their row is the
-        # canonical one; wait for it to be visible and return it.
+        # canonical one; wait briefly for it to become visible and return it.
         for _ in range(20):
-            winner = await _existing_active_template_assignment(body.dog_id, body.template_id)
+            winner = await _existing_active_manual_assignment(body.dog_id, body.template_id)
             if winner:
                 return {**winner, "reused": True}
             await asyncio.sleep(0.05)
-        # The claim exists but no active assignment does — the previous holder
-        # failed after claiming. Take the claim over rather than deadlocking.
+        # No assignment ever materialised — the previous holder died between
+        # claiming and creating. Self-heal rather than leaving this dog and
+        # template locked forever: atomically TAKE the stale claim (so exactly
+        # one caller wins that right) and carry on to create.
+        stale = await db.homework_assignment_claims.find_one_and_delete({"claim_key": claim_key})
+        if not stale:
+            raise HTTPException(status_code=409, detail="This practice is already being assigned — try again.")
+        await db.homework_assignment_claims.insert_one({
+            "claim_key": claim_key, "dog_id": body.dog_id, "template_id": body.template_id,
+            "created_at": now_iso(), "reclaimed_stale": True,
+        })
+    # From here on the claim is HELD. Everything below runs inside a try so
+    # that any failure — a missing template, a validation error, a database
+    # fault — releases it. A claim that outlives its assignment would lock
+    # this dog and template out of ever being assigned again.
+    try:
+        return await _create_manual_assignment(body, dog, user)
+    except Exception:
         await db.homework_assignment_claims.delete_one({"claim_key": claim_key})
-        raise HTTPException(status_code=409, detail="This practice is already being assigned — try again.")
+        raise
+
+
+async def _create_manual_assignment(body: HomeworkFromTemplateIn, dog: dict, user: dict) -> dict:
+    """The manual FROM TEMPLATE creation itself. Split out so the caller can
+    hold the idempotency claim across the whole of it and release it on any
+    failure."""
     tpl = await db.homework_templates.find_one({"id": body.template_id}, {"_id": 0})
     if not tpl:
         raise HTTPException(status_code=404, detail="Template not found")

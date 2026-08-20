@@ -376,3 +376,122 @@ def test_the_list_endpoint_cannot_return_one_assignment_twice():
         rows = run(server.list_homework(_admin_user(), dog_id=dog["id"]))
         ids = [r["id"] for r in rows]
         assert len(ids) == len(set(ids)), "no id appears twice even with multiple logs"
+
+
+# ---------------------------------------------------------------------------
+# 19-27 — claim scope and claim lifecycle
+# ---------------------------------------------------------------------------
+
+def _claim(dog_id, tpl_id):
+    return run(server.db.homework_assignment_claims.find_one(
+        {"claim_key": server._manual_assignment_claim_key(dog_id, tpl_id)}, {"_id": 0}))
+
+
+def test_the_claim_is_scoped_to_manual_assignments_only():
+    # The canonical School rule is school_enrollment_id + template_id, NOT
+    # dog + template: a dog in two School enrollments that share a recipe is
+    # legitimately allowed one active copy in each. A dog-wide claim would
+    # forbid that, so the manual claim must not reach School-owned rows.
+    assert server._manual_assignment_claim_key("d1", "t1").startswith("manual:")
+    assert "school_enrollment_id" in server._MANUAL_HW_MATCH
+
+
+def test_a_school_owned_assignment_does_not_block_a_manual_one():
+    # A manual assign must never silently hand back a School-owned row.
+    with _client_and_dog() as (c, dog), _template() as tpl:
+        school_row = _assign(dog, tpl)
+        _mark_school_owned(school_row["id"])
+        # the School row is now invisible to the manual guard
+        assert run(server._existing_active_manual_assignment(dog["id"], tpl["id"])) is None
+        run(server.db.homework_assignment_claims.delete_many({"dog_id": dog["id"]}))
+        manual = _assign(dog, tpl)
+        assert manual["id"] != school_row["id"], "a manual assignment of its own"
+        assert not manual.get("reused")
+
+
+def test_a_manual_assignment_takes_and_holds_its_claim():
+    with _client_and_dog() as (c, dog), _template() as tpl:
+        hw = _assign(dog, tpl)
+        held = _claim(dog["id"], tpl["id"])
+        assert held is not None
+        assert held["dog_id"] == dog["id"] and held["template_id"] == tpl["id"]
+        assert hw["status"] == "assigned"
+
+
+def test_completing_releases_the_claim_so_the_next_occurrence_can_be_assigned():
+    with _client_and_dog() as (c, dog), _template() as tpl:
+        first = _assign(dog, tpl)
+        assert _claim(dog["id"], tpl["id"]) is not None
+        run(server.trainer_complete_homework(first["id"], server.TrainerCompleteHomeworkIn(), _admin_user()))
+        assert _claim(dog["id"], tpl["id"]) is None, "claim released on completion"
+        second = _assign(dog, tpl)
+        assert second["id"] != first["id"]
+        assert _hw(first["id"])["status"] == "completed", "the finished row was not revived"
+
+
+def test_deleting_an_assignment_releases_its_claim():
+    # Deletion is the only other exit from active — there is no cancel or
+    # archive path — and a claim must never outlive the row it stands for.
+    with _client_and_dog() as (c, dog), _template() as tpl:
+        hw = _assign(dog, tpl)
+        assert _claim(dog["id"], tpl["id"]) is not None
+        run(server.delete_homework(hw["id"], _admin_user()))
+        assert _claim(dog["id"], tpl["id"]) is None, "claim released on delete"
+        again = _assign(dog, tpl)
+        assert again["id"] != hw["id"]
+        assert not again.get("reused")
+
+
+def test_deleting_a_school_assignment_never_touches_a_manual_claim():
+    with _client_and_dog() as (c, dog), _template() as tpl:
+        manual = _assign(dog, tpl)
+        assert _claim(dog["id"], tpl["id"]) is not None
+        school_row = {**manual, "id": str(uuid.uuid4()), "school_enrollment_id": "se-x"}
+        run(server.db.homework.insert_one(dict(school_row)))
+        run(server.delete_homework(school_row["id"], _admin_user()))
+        assert _claim(dog["id"], tpl["id"]) is not None, "the manual claim survived"
+
+
+def test_a_failure_after_claiming_releases_the_claim():
+    # claim created -> creation fails -> the claim must NOT remain, or this
+    # dog and template would be locked out permanently.
+    with _client_and_dog() as (c, dog), _template() as tpl:
+        bad = server.HomeworkFromTemplateIn(dog_id=dog["id"], template_id=str(uuid.uuid4()))
+        with pytest.raises(server.HTTPException):
+            run(server.create_homework_from_template(bad, _admin_user()))
+        assert _claim(dog["id"], bad.template_id) is None, "claim rolled back"
+        # and the real template is still assignable afterwards
+        ok = _assign(dog, tpl)
+        assert ok["status"] == "assigned"
+
+
+def test_an_abandoned_claim_self_heals_instead_of_locking_forever():
+    # Simulate a holder that died between claiming and creating: the claim
+    # exists but no assignment ever did.
+    with _client_and_dog() as (c, dog), _template() as tpl:
+        run(server.db.homework_assignment_claims.insert_one({
+            "claim_key": server._manual_assignment_claim_key(dog["id"], tpl["id"]),
+            "dog_id": dog["id"], "template_id": tpl["id"], "created_at": server.now_iso(),
+        }))
+        assert run(server._existing_active_manual_assignment(dog["id"], tpl["id"])) is None
+        hw = _assign(dog, tpl)
+        assert hw["status"] == "assigned", "a real assignment was still created"
+        assert not hw.get("reused")
+        claim = _claim(dog["id"], tpl["id"])
+        assert claim is not None and claim.get("reclaimed_stale") is True
+
+
+def test_a_claim_never_outlives_its_assignment():
+    # The invariant behind all of the above, stated directly: whenever a
+    # manual claim exists, an active manual assignment exists for it.
+    with _client_and_dog() as (c, dog), _template() as tpl:
+        for step in ("assign", "complete", "assign", "delete"):
+            if step == "assign":
+                hw = _assign(dog, tpl)
+            elif step == "complete":
+                run(server.trainer_complete_homework(hw["id"], server.TrainerCompleteHomeworkIn(), _admin_user()))
+            else:
+                run(server.delete_homework(hw["id"], _admin_user()))
+            claim = _claim(dog["id"], tpl["id"])
+            active = run(server._existing_active_manual_assignment(dog["id"], tpl["id"]))
+            assert bool(claim) == bool(active), f"claim/assignment disagree after {step}"
