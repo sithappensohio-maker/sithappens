@@ -41,6 +41,10 @@ export default function ModuleQuizPanel({ enrollmentId, moduleId, checkpointPass
   const [busy, setBusy] = useState(false);
   const [submitErr, setSubmitErr] = useState("");
   const [result, setResult] = useState(null);
+  // One question at a time: the brief asks the quiz to feel like part of the
+  // lesson rather than an exam paper. Grading is unchanged — every answer is
+  // still submitted together, and the server remains authoritative.
+  const [qIndex, setQIndex] = useState(0);
 
   const load = useCallback(async () => {
     setLoadErr("");
@@ -78,6 +82,7 @@ export default function ModuleQuizPanel({ enrollmentId, moduleId, checkpointPass
 
   const retry = async () => {
     setAnswers({});
+    setQIndex(0);   // a retake starts at question one, not wherever the last attempt ended
     setResult(null);
     setSubmitErr("");
     setIdemKey(newIdempotencyKey());
@@ -131,7 +136,7 @@ export default function ModuleQuizPanel({ enrollmentId, moduleId, checkpointPass
                     (including any trainer checkpoint).
                   </p>
                 ) : (
-                  <PremiumButton onClick={() => setStage("taking")} data-testid="module-quiz-start" className="mt-4 w-full justify-center min-h-[50px]">
+                  <PremiumButton onClick={() => { setQIndex(0); setStage("taking"); }} data-testid="module-quiz-start" className="mt-4 w-full justify-center min-h-[50px]">
                     <i className="fas fa-list-check text-[11px]" />Take Module Quiz
                   </PremiumButton>
                 )}
@@ -139,32 +144,74 @@ export default function ModuleQuizPanel({ enrollmentId, moduleId, checkpointPass
             </div>
           )}
 
-          {quiz && stage === "taking" && (
-            <div className="space-y-4" data-testid="module-quiz-questions">
-              {questions.map((q, qi) => (
-                <div key={q.id} className="rounded-2xl border border-shBorder bg-black/12 p-4" data-testid={`module-quiz-q-${qi}`}>
-                  <p className="text-[10px] font-black uppercase tracking-widest text-shSecondary mb-1.5">Question {qi + 1} of {questions.length}</p>
-                  <p className="text-[14px] font-black text-shText leading-snug">{q.question}</p>
-                  <div className="grid gap-2 mt-3">
-                    {(q.options || []).map((o) => (
-                      <label key={o.id} className={`rounded-xl border p-3 flex items-start gap-2.5 text-[13px] text-shText cursor-pointer min-h-[44px] transition ${answers[q.id] === o.id ? "border-shPrimary/50 bg-shPrimary/[0.07]" : "border-shBorder bg-black/10 hover:border-shSecondary/35"}`}>
-                        <input type="radio" name={`mq-${q.id}`} value={o.id} checked={answers[q.id] === o.id}
-                               onChange={() => setAnswers((s) => ({ ...s, [q.id]: o.id }))} className="mt-0.5 accent-[var(--sh-primary)]" />
-                        <span className="leading-relaxed break-words min-w-0">{o.text}</span>
-                      </label>
-                    ))}
+          {quiz && stage === "taking" && (() => {
+            const i = Math.min(qIndex, Math.max(0, questions.length - 1));
+            const q = questions[i];
+            if (!q) return null;
+            const chosen = answers[q.id];
+            const isLast = i >= questions.length - 1;
+            return (
+              <div className="space-y-4" data-testid="module-quiz-questions" data-question-index={i}>
+                {/* Progress first: the client should always know where they are
+                    and that the end is in sight. */}
+                <div>
+                  <div className="flex items-center justify-between gap-3">
+                    <p className="text-[10px] font-black uppercase tracking-widest text-shSecondary" data-testid="module-quiz-progress">
+                      Question {i + 1} of {questions.length}
+                    </p>
+                    {unanswered > 0 && <p className="text-[10px] text-shTextMuted">{unanswered} left</p>}
+                  </div>
+                  <div className="h-1.5 rounded-full bg-black/40 overflow-hidden mt-2">
+                    <div className="h-full rounded-full bg-shSecondary transition-all"
+                         style={{ width: `${((i + 1) / Math.max(1, questions.length)) * 100}%` }} />
                   </div>
                 </div>
-              ))}
-              {submitErr && <p className="text-shAccent text-[13px] font-bold" data-testid="module-quiz-submit-error"><i className="fas fa-circle-info mr-1.5" />{submitErr}</p>}
-              <div className="sticky bottom-0 pt-3 pb-1 bg-gradient-to-t from-[var(--sh-card-base)] via-[var(--sh-card-base)]/95 to-transparent">
-                <PremiumButton onClick={submit} disabled={busy} data-testid="module-quiz-submit" className="w-full justify-center min-h-[50px]">
-                  {busy ? <><i className="fas fa-spinner fa-spin" />Grading…</> : <><i className="fas fa-check text-[10px]" />Submit Quiz</>}
-                </PremiumButton>
-                {unanswered > 0 && <p className="text-[11px] text-shTextMuted text-center mt-1.5">{unanswered} question{unanswered === 1 ? "" : "s"} left to answer</p>}
+
+                <div className="rounded-2xl border border-shBorder bg-black/12 p-4" data-testid={`module-quiz-q-${i}`}>
+                  <p className="text-[16px] sm:text-[17px] font-black text-shText leading-snug">{q.question}</p>
+                  <div className="grid gap-2.5 mt-4">
+                    {(q.options || []).map((o) => {
+                      const on = chosen === o.id;
+                      return (
+                        <button key={o.id} type="button" data-testid={`module-quiz-option-${o.id}`} data-selected={on ? "true" : "false"}
+                                onClick={() => setAnswers((s) => ({ ...s, [q.id]: o.id }))}
+                                className={`w-full text-left rounded-xl border p-3.5 flex items-start gap-3 text-[13.5px] min-h-[56px] transition ${
+                                  on ? "border-shPrimary/60 bg-shPrimary/[0.09] text-shText"
+                                     : "border-shBorder bg-black/10 text-shText hover:border-shSecondary/35"}`}>
+                          <span className={`w-6 h-6 rounded-full grid place-items-center shrink-0 border text-[10px] mt-0.5 ${
+                            on ? "border-shPrimary bg-shPrimary text-[#071018]" : "border-shBorder text-transparent"}`}>
+                            <i className="fas fa-check" />
+                          </span>
+                          <span className="leading-relaxed break-words min-w-0 flex-1">{o.text}</span>
+                        </button>
+                      );
+                    })}
+                  </div>
+                </div>
+
+                {submitErr && <p className="text-shAccent text-[13px] font-bold" data-testid="module-quiz-submit-error"><i className="fas fa-circle-info mr-1.5" />{submitErr}</p>}
+
+                <div className="sticky bottom-0 pt-3 pb-1 bg-gradient-to-t from-[var(--sh-card-base)] via-[var(--sh-card-base)]/95 to-transparent space-y-2">
+                  {isLast ? (
+                    <PremiumButton onClick={submit} disabled={busy} data-testid="module-quiz-submit" className="w-full justify-center min-h-[52px]">
+                      {busy ? <><i className="fas fa-spinner fa-spin" />Grading…</> : <><i className="fas fa-check text-[10px]" />Submit quiz</>}
+                    </PremiumButton>
+                  ) : (
+                    <PremiumButton onClick={() => setQIndex(i + 1)} disabled={!chosen} data-testid="module-quiz-next"
+                                   className="w-full justify-center min-h-[52px]">
+                      Next question <i className="fas fa-arrow-right text-[10px]" />
+                    </PremiumButton>
+                  )}
+                  {i > 0 && (
+                    <button type="button" onClick={() => setQIndex(i - 1)} data-testid="module-quiz-back"
+                            className="w-full min-h-[44px] rounded-xl border border-shBorder text-[12px] font-black text-shTextMuted hover:text-shText">
+                      <i className="fas fa-arrow-left mr-1.5 text-[10px]" />Previous question
+                    </button>
+                  )}
+                </div>
               </div>
-            </div>
-          )}
+            );
+          })()}
 
           {result && stage === "result" && (
             <div className="space-y-4" data-testid="module-quiz-result">

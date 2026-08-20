@@ -73,7 +73,7 @@ function Stat({ value, label }) {
   return <div className="rounded-xl border border-shBorder bg-black/15 p-3"><p className="text-xl font-black text-shText">{value}</p><p className="text-[10px] font-black uppercase tracking-widest text-shTextMuted mt-0.5">{label}</p></div>;
 }
 
-export default function ProgressScreen({ enrollmentId, home, detail, onOpenHistory }) {
+export default function ProgressScreen({ enrollmentId, home, detail, onOpenHistory, onPrimaryAction }) {
   const [history, setHistory] = useState(null);
   const [trophies, setTrophies] = useState(null);
   const [record, setRecord] = useState(null);
@@ -85,7 +85,13 @@ export default function ProgressScreen({ enrollmentId, home, detail, onOpenHisto
 
   const p = home?.progress || {};
   const dogTrophies = useMemo(() => (trophies || []).filter((t) => !home?.dog?.id || t.recipient_id === home.dog.id || t.dog_id === home.dog.id), [trophies, home?.dog?.id]);
-  const scored = (history || []).filter((x) => x.handler_overall != null || x.dog_overall != null);
+  /* Every graded checkpoint is part of the record, including legacy rows
+     whose overall scores resolve to null — dropping those told a client with
+     a real passed checkpoint that they had none. `scored` stays separate
+     because an average can only be taken over rows that actually have
+     numbers. */
+  const graded = (history || []).filter((x) => x && x.status === "graded");
+  const scored = graded.filter((x) => x.handler_overall != null || x.dog_overall != null);
   const explain = interpretation(scored, home?.dog?.name);
   const pct = Number(p.course_pct || 0);
   const mastery = Number(p.mastered_pct || 0);
@@ -95,6 +101,22 @@ export default function ProgressScreen({ enrollmentId, home, detail, onOpenHisto
   return (
     <div className="max-w-3xl mx-auto space-y-5" data-testid="native-progress-screen">
       <header><p className="text-[10px] font-black uppercase tracking-[0.22em] text-shPrimary">Your training journey</p><h1 className="text-2xl sm:text-3xl font-black text-shText mt-1">Progress</h1><p className="text-[13px] text-shTextMuted mt-1">Course completion and trainer-scored checkpoint results are separate on purpose.</p></header>
+
+      {/* Keep the momentum — the SAME current_action the rest of School runs
+          on, so Progress ends with something to do rather than a dead end.
+          Suppressed entirely when the server offers no action. */}
+      {onPrimaryAction && home?.current_action?.label && (
+        <section className="rounded-2xl border border-shPrimary/30 bg-shPrimary/[0.05] p-4 sm:p-5" data-testid="progress-momentum">
+          <p className="text-[10px] font-black uppercase tracking-[0.2em] text-shPrimary">Keep the momentum</p>
+          {home.current_action.sublabel && (
+            <p className="text-[13px] text-shTextMuted mt-1.5 leading-relaxed">{home.current_action.sublabel}</p>
+          )}
+          <button type="button" onClick={onPrimaryAction} data-testid="progress-momentum-action"
+                  className="mt-3 w-full sm:w-auto sm:px-6 min-h-[50px] rounded-xl bg-shPrimary text-[#071018] font-black text-[14px] inline-flex items-center justify-center gap-2 hover:brightness-110 transition">
+            {home.current_action.label}<i className="fas fa-arrow-right text-[11px]" />
+          </button>
+        </section>
+      )}
 
       {onOpenHistory && (
         <button type="button" onClick={onOpenHistory} data-testid="progress-open-lesson-history"
@@ -111,7 +133,7 @@ export default function ProgressScreen({ enrollmentId, home, detail, onOpenHisto
       <section className="rounded-2xl border border-shPrimary/30 bg-shPrimary/[0.055] p-5 sm:p-6" data-testid="progress-course-completion">
         <div className="flex items-end justify-between gap-3"><div><p className="text-[10px] font-black uppercase tracking-widest text-shPrimary">Course progress</p><p className="text-3xl font-black text-shText mt-1">{pct}%</p></div><p className="text-[12px] text-shTextMuted text-right">{home?.program?.name}<br/>{p.current_module_name || (home?.status === "completed" ? "Completed" : "")}</p></div>
         <div className="h-2.5 rounded-full bg-black/25 overflow-hidden mt-4"><div className="h-full bg-shPrimary rounded-full" style={{ width: `${Math.max(0, Math.min(100, pct))}%` }} /></div>
-        <div className="grid grid-cols-3 gap-2 mt-4"><Stat value={`${p.lessons_completed || 0}/${p.lessons_total || 0}`} label="Lessons" /><Stat value={`${p.modules_completed || 0}/${p.modules_total || 0}`} label="Modules" /><Stat value={p.checkpoints_passed || 0} label="Checkpoints" /></div>
+        <div className="grid grid-cols-3 gap-2 mt-4"><Stat value={`${p.lessons_completed || 0}/${p.lessons_total || 0}`} label="Lessons" /><Stat value={`${p.modules_completed || 0}/${p.modules_total || 0}`} label="Modules" /><Stat value={p.checkpoints_passed || 0} label="Checkpoints passed" /></div>
       </section>
 
       {mastery > 0 && <section className="rounded-2xl border border-shSecondary/25 bg-[var(--sh-card-base)] p-4"><div className="flex items-center justify-between gap-3"><div><p className="text-[10px] font-black uppercase tracking-widest text-shSecondary">Skill mastery</p><p className="text-[12px] text-shTextMuted mt-1">Trainer-scored skill goals — separate from finishing course lessons.</p></div><p className="text-2xl font-black text-shSecondary">{mastery}%</p></div></section>}
@@ -127,9 +149,29 @@ export default function ProgressScreen({ enrollmentId, home, detail, onOpenHisto
 
       <section className="space-y-3" data-testid="progress-checkpoint-history">
         <div><p className="text-[10px] font-black uppercase tracking-[0.2em] text-shSecondary">Checkpoint history</p><p className="text-[12px] text-shTextMuted mt-1">Handler Skills and Dog Performance stay separate so you know what is limiting progress.</p></div>
-        {scored.length === 0 ? <div className="rounded-2xl border border-shBorder bg-[var(--sh-card-base)] p-5 text-center text-[13px] text-shTextMuted">No trainer-scored checkpoints yet. Your first review will appear here.</div> : (
+        {graded.length === 0 ? <div className="rounded-2xl border border-shBorder bg-[var(--sh-card-base)] p-5 text-center text-[13px] text-shTextMuted">No trainer-scored checkpoints yet. Your first review will appear here.</div> : (
           <>
-            {scored.map((x, i) => <div key={x.id} className="rounded-2xl border border-shBorder bg-[var(--sh-card-base)] p-4"><div className="flex items-start justify-between gap-2 mb-3"><div><p className="text-[13px] font-black text-shText">{x.lesson_name || `Checkpoint ${scored.length - i}`}</p><p className="text-[11px] text-shTextMuted mt-0.5">{[x.module_name, x.graded_at ? new Date(x.graded_at).toLocaleDateString() : null].filter(Boolean).join(" · ")}</p></div><span className="text-[9px] font-black uppercase tracking-widest text-shTextMuted">{(x.outcome || "reviewed").replace(/_/g, " ")}</span></div><ScorePair handler={x.handler_overall} dog={x.dog_overall} compact /></div>)}
+            {graded.map((x, i) => {
+              const hasScore = x.handler_overall != null || x.dog_overall != null;
+              return (
+                <div key={x.id} className="rounded-2xl border border-shBorder bg-[var(--sh-card-base)] p-4" data-testid={`progress-checkpoint-${x.id}`} data-scored={hasScore ? "true" : "false"}>
+                  <div className="flex items-start justify-between gap-2 mb-3">
+                    <div className="min-w-0">
+                      <p className="text-[13px] font-black text-shText">{x.lesson_name || `Checkpoint ${graded.length - i}`}</p>
+                      <p className="text-[11px] text-shTextMuted mt-0.5">{[x.module_name, x.trainer_name, x.graded_at ? new Date(x.graded_at).toLocaleDateString() : null].filter(Boolean).join(" · ")}</p>
+                    </div>
+                    <span className="text-[9px] font-black uppercase tracking-widest text-shTextMuted shrink-0">{(x.outcome || "reviewed").replace(/_/g, " ")}</span>
+                  </div>
+                  <ScorePair handler={x.handler_overall} dog={x.dog_overall} compact />
+                  {!hasScore && (
+                    <p className="text-[11.5px] text-shTextMuted mt-2.5 leading-snug" data-testid={`progress-checkpoint-unscored-${x.id}`}>
+                      Scores weren&apos;t recorded for this one — your trainer&apos;s note is the record.
+                    </p>
+                  )}
+                  {x.trainer_feedback && <p className="text-[12.5px] text-shText/90 mt-2.5 leading-relaxed border-l-2 border-shSecondary/35 pl-2.5 whitespace-pre-wrap">{x.trainer_feedback}</p>}
+                </div>
+              );
+            })}
             {explain && <div className="rounded-2xl border border-shSecondary/25 bg-shSecondary/[0.05] p-4"><p className="text-[13px] font-black text-shText">{explain.title}</p><p className="text-[12px] text-shTextMuted mt-1 leading-relaxed">{explain.body}</p></div>}
           </>
         )}

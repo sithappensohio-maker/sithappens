@@ -19,7 +19,11 @@ const schoolMedia = read("..", "lib", "schoolMedia.js");
 
 test("Student School is fully native and does not mount the legacy dashboard", () => {
   expect(schoolApp).not.toMatch(/OnlineSchoolDashboard/);
-  ["StudentHome", "CourseRoadmap", "LessonScreen", "TodayScreen", "FeedbackScreen", "ProgressScreen", "ResourcesScreen"].forEach((name) => {
+  // TodayScreen was removed in the client redesign (phase 2): it rendered the
+  // same server-derived current_action as StudentHome, so the client had two
+  // competing landing pages. StudentHome IS Today now. PracticeScreen is the
+  // new fifth destination.
+  ["StudentHome", "CourseRoadmap", "LessonScreen", "PracticeScreen", "FeedbackScreen", "ProgressScreen", "ResourcesScreen"].forEach((name) => {
     expect(schoolApp).toMatch(new RegExp(`<${name}`));
   });
 });

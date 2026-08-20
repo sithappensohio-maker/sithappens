@@ -56,23 +56,31 @@ export function isCaughtUp(type) {
 /* Student School routes (Shop-style history.pushState, no react-router).
  * /school · /school/course/:enrollmentId · /school/course/:eid/lesson/:lessonId
  * /school/today · /school/progress · /school/feedback */
-export const SCHOOL_VIEWS = ["home", "course", "today", "progress", "feedback", "resources", "search", "lesson_history"];
+/* Client School views. "today" is the single default landing page; "home" is
+ * retained ONLY as a backward-compatible alias for existing links/bookmarks
+ * and is normalised to "today" by parseSchoolPath, so no client-facing
+ * navigation offers both. */
+export const SCHOOL_VIEWS = ["today", "course", "practice", "progress", "feedback", "resources", "search", "lesson_history", "home"];
+export const SCHOOL_DEFAULT_VIEW = "today";
 
 export function parseSchoolPath(pathname) {
   const m = /^\/school(?:\/([^/?#]+))?(?:\/([^/?#]+))?(?:\/([^/?#]+))?(?:\/([^/?#]+))?/.exec(pathname || "");
-  if (!m) return { view: "home", enrollmentId: null, lessonId: null };
+  if (!m) return { view: SCHOOL_DEFAULT_VIEW, enrollmentId: null, lessonId: null };
   const seg = m[1];
-  if (!seg) return { view: "home", enrollmentId: null, lessonId: null };
+  if (!seg) return { view: SCHOOL_DEFAULT_VIEW, enrollmentId: null, lessonId: null };
   if (seg === "course") {
     if (m[3] === "lesson" && m[4]) return { view: "lesson", enrollmentId: m[2] || null, lessonId: m[4] };
     return { view: "course", enrollmentId: m[2] || null, lessonId: null };
   }
+  // "home" is a legacy alias — normalise it so the app only ever renders,
+  // and only ever highlights, the single Today destination.
+  if (seg === "home") return { view: SCHOOL_DEFAULT_VIEW, enrollmentId: null, lessonId: null };
   if (SCHOOL_VIEWS.includes(seg)) return { view: seg, enrollmentId: null, lessonId: null };
-  return { view: "home", enrollmentId: null, lessonId: null };
+  return { view: SCHOOL_DEFAULT_VIEW, enrollmentId: null, lessonId: null };
 }
 
 export function schoolPathFor(view, enrollmentId, lessonId) {
-  if (view === "home") return "/school";
+  if (view === "home" || view === SCHOOL_DEFAULT_VIEW) return "/school";
   if (view === "lesson" && enrollmentId && lessonId) return `/school/course/${enrollmentId}/lesson/${lessonId}`;
   if (view === "course" && enrollmentId) return `/school/course/${enrollmentId}`;
   return `/school/${view}`;

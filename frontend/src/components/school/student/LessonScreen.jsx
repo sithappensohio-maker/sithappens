@@ -7,6 +7,8 @@ import SectionCard from "../../premium/SectionCard";
 import PremiumButton from "../../premium/PremiumButton";
 import HuskyDogImage from "../../brand/HuskyDogImage";
 import CheckpointPanel from "./CheckpointPanel";
+import LessonGuide, { LessonSectionBody, buildGuide } from "./lesson/LessonGuide";
+import { CheckpointResultPanel } from "./checkpoint/CheckpointCards";
 import { practiceButtonLabel } from "../../../lib/onlineSchoolPolish";
 
 /* Native School Lesson screen (Phase 2B). Presents existing lesson content via
@@ -25,6 +27,10 @@ export default function LessonScreen({
   const [err, setErr] = useState(null);      // {status, message}
   const [busy, setBusy] = useState(false);
   const [actionErr, setActionErr] = useState("");
+  const [guideKey, setGuideKey] = useState(null);
+  // "Next Step" is a signpost, not content: tapping it takes the client to
+  // the real actions this lesson offers rather than opening an empty panel.
+  const actionsRef = useRef(null);
 
   // Monotonic request counter: on a hard refresh this screen briefly mounts
   // with enrollmentId=null (the enrollment list is still resolving), and a
@@ -43,6 +49,25 @@ export default function LessonScreen({
     }
   }, [enrollmentId, lessonId]);
   useEffect(() => { setData(null); load(); }, [load]);
+
+  /* A PASSED checkpoint auto-advances the enrolment server-side, so the live
+     checkpoint_status is already gone by the time the client looks at the
+     lesson they earned it on. The persisted record in checkpoint-history is
+     the canonical source, so the milestone is read back from there rather
+     than being lost — or, worse, reconstructed from session data. */
+  const [cpResult, setCpResult] = useState(null);
+  useEffect(() => {
+    if (!enrollmentId || !lessonId) return undefined;
+    let live = true;
+    setCpResult(null);
+    api.get(`/portal/school/${enrollmentId}/checkpoint-history`)
+      .then(({ data: rows }) => {
+        if (!live) return;
+        setCpResult((rows || []).find((r) => r.lesson_id === lessonId) || null);
+      })
+      .catch(() => { if (live) setCpResult(null); });
+    return () => { live = false; };
+  }, [enrollmentId, lessonId, detail]);
 
   // Practice happens in an overlay on TOP of this screen, so finishing it
   // routes back to the SAME lesson URL — no remount, no reload. The parent
@@ -134,6 +159,13 @@ export default function LessonScreen({
   // Module Quiz gate — the server says this module's end-of-module quiz is
   // ready to take (all lesson/checkpoint work at the boundary is done).
   const quizAvailable = !!(isCurrent && roadmap?.module_quiz_available);
+  // The guided sequence only replaces the flat renderer when the lesson
+  // actually populates at least two steps of its own — a one-field lesson
+  // reads better as plain content than as a one-item checklist. Steps that are
+  // pure hand-offs to Practice / Quick Check / Next Step don't count towards
+  // that, since they carry no lesson content themselves.
+  const guideSections = buildGuide(lesson, { hasPractice, hasQuiz: quizAvailable });
+  const hasGuide = guideSections.filter(sx => !sx.ready).length >= 2;
   const quizMeta = roadmap?.module_quiz || null;
   const checkpointPassedForQuiz = requiresCp && roadmap?.checkpoint_status?.outcome === "advance";
 
@@ -166,16 +198,52 @@ export default function LessonScreen({
         </div>
       </header>
 
-      {completedReview && (
+      {/* The durable result for a checkpoint lesson the client has already
+          finished — ABOVE the lesson content, because on a checkpoint lesson
+          the result is the thing they came back for. The live CheckpointPanel
+          further down owns the CURRENT lesson. */}
+      {!isCurrent && cpResult && (
+        <CheckpointResultPanel entry={cpResult} dogName={dogName}
+                               onContinue={onBackToCourse} continueLabel="Back to my course" />
+      )}
+
+      {completedReview && !cpResult && (
         <p className="text-[12.5px] text-shTextMuted rounded-xl border border-shBorder bg-[var(--sh-card-base)] px-3.5 py-2.5" data-testid="lesson-review-note">
           <i className="fas fa-book-open mr-1.5 text-shSecondary" />You've completed this lesson — it stays open for review any time.
         </p>
       )}
 
-      {/* Course Builder 2.0 blocks become the primary authored lesson when
-          present. Legacy structured fields remain a complete fallback for every
-          existing course, so no migration is required. */}
-      {(lesson.content_blocks || []).some((b) => b?.active !== false)
+      {/* The guided sequence is the lesson. Whether a trainer authored Course
+          Builder blocks or the legacy structured fields, buildGuide maps what
+          exists onto the eight steps and selecting one reveals just that
+          step's content — so the client reads a single thing at a time while
+          handling a dog instead of scrolling five phone screens of continuous
+          copy.
+
+          Blocks are still drawn by LessonContentBlocks, so authored media,
+          checklists, step lists and the knowledge check behave exactly as
+          before; only how much is on screen at once has changed. No authored
+          content is lost — a block matching no rule still lands in a visible
+          step, and a section with nothing authored is omitted rather than
+          shown empty.
+
+          A lesson too thin to fill two steps keeps the flat renderer. */}
+      {hasGuide ? (
+          <div className="space-y-3" data-testid="lesson-guided">
+            <LessonGuide lesson={lesson} hasPractice={hasPractice} hasQuiz={quizAvailable}
+                         activeKey={guideKey} onSelectSection={(k) => {
+                           if (k === "next_step") {
+                             setGuideKey(null);
+                             actionsRef.current?.scrollIntoView({ behavior: "smooth", block: "center" });
+                             return;
+                           }
+                           setGuideKey(k === guideKey ? null : k);
+                         }} />
+            {guideKey && <LessonSectionBody lesson={lesson} sectionKey={guideKey}
+                                            sections={guideSections} enrollmentId={enrollmentId} />}
+          </div>
+        )
+        : (lesson.content_blocks || []).some((b) => b?.active !== false)
         ? <LessonContentBlocks blocks={lesson.content_blocks} enrollmentId={enrollmentId} />
         : <LessonDetailPanel lesson={lesson} testid="lesson-detail" />}
 
@@ -196,6 +264,7 @@ export default function LessonScreen({
       {actionErr && <p className="text-shDanger text-[13px] font-bold" data-testid="lesson-action-error">{actionErr}</p>}
 
       {/* ── Action area — driven entirely by backend state ── */}
+      <div ref={actionsRef} className="space-y-4" data-testid="lesson-actions">
       {setupRequired ? (
         <SectionCard accent="cyan" intensity="subtle" data-testid="lesson-setup-required">
           <div className="flex items-start gap-3">
@@ -265,10 +334,19 @@ export default function LessonScreen({
               onStartPrescribedPractice={onStartPrescribedPractice}
               onGoToRefresher={(rid) => onStateChanged?.({ openLessonId: rid })}
               busy={busy}
+              /* Context the checkpoint needs to read as a milestone rather
+                 than a form. All of it is already on this screen's payload —
+                 no extra request, no new field. */
+              moduleName={data.module_name}
+              dogName={dogName}
+              skills={data.skills}
+              roadmap={roadmap}
+              onContinue={advance}
             />
           )}
         </>
       )}
+      </div>
     </div>
   );
 }

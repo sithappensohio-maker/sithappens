@@ -14,6 +14,7 @@ import ModuleQuizPanel from "../components/school/student/ModuleQuizPanel";
 import FeedbackScreen from "../components/school/student/FeedbackScreen";
 import ProgressScreen from "../components/school/student/ProgressScreen";
 import LessonHistoryScreen from "../components/school/student/LessonHistoryScreen";
+import PracticeScreen from "../components/school/student/PracticeScreen";
 import AskTrainerPanel from "../components/school/student/AskTrainerPanel";
 import StudentWorkspaceExtras from "../components/school/student/StudentWorkspaceExtras";
 import SchoolNotificationBell from "../components/school/student/SchoolNotificationBell";
@@ -281,7 +282,10 @@ export default function SchoolApp({ path, clientName, onNavigate, onExit }) {
       screen = <AccessEndedState onHome={() => go("home")} onExit={onExit} />;
     } else if (parsed.view === "course") {
       screen = (
-        <CourseRoadmap detail={detail} loading={!detail}
+        /* `progress` carries the WHOLE-course totals. The roadmap deliberately
+           withholds lessons inside locked modules, so anything counted from it
+           describes only the unlocked part of the course. */
+        <CourseRoadmap detail={detail} progress={home?.progress} loading={!detail}
                        onOpenLesson={(lid) => go("lesson", lid)}
                        onResume={() => home?.current_action ? runAction(home.current_action) : go("today")} />
       );
@@ -306,17 +310,31 @@ export default function SchoolApp({ path, clientName, onNavigate, onExit }) {
     } else if (parsed.view === "today") {
       screen = (
         <div className="space-y-4">
-          <TodayScreen home={home} loading={homeLoading}
-                       practiceJustCompleted={practiceDone} onAction={runAction}
-                       onAskTrainer={() => openAsk()} />
-          <StudentWorkspaceExtras enrollmentId={selectedId} home={home} mode="today" onChanged={refreshAll}
+          <StudentHome
+            home={home} loading={homeLoading} clientName={clientName}
+            onPrimaryAction={() => runAction(home?.current_action)}
+            onAsk={() => openAsk()}
+            onViewFeedback={() => goView("feedback")}
+            onViewProgress={() => goView("progress")}
+            onViewCourse={() => goView("course")}
+            onOpenPractice={(hw) => openHomework(hw?.id || hw)}
+          />
+          <StudentWorkspaceExtras enrollmentId={selectedId} home={home} mode="home" onChanged={refreshAll}
                                   onOpenLesson={(lid) => go("lesson", lid)} onOpenHomework={openHomework} />
         </div>
       );
+    } else if (parsed.view === "practice") {
+      screen = (
+        <PracticeScreen home={home} loading={homeLoading}
+                        onOpenPractice={(hw) => openHomework(hw?.id || hw)}
+                        onPrimaryAction={() => runAction(home?.current_action)} />
+      );
     } else if (parsed.view === "feedback") {
-      screen = <FeedbackScreen enrollmentId={selectedId} onAsk={openAsk} onChanged={refreshAll} />;
+      screen = <FeedbackScreen enrollmentId={selectedId} onAsk={openAsk} onChanged={refreshAll}
+                               onOpenHistory={() => go("lesson_history")} />;
     } else if (parsed.view === "progress") {
-      screen = <ProgressScreen enrollmentId={selectedId} home={home} detail={detail} onOpenHistory={() => go("lesson_history")} />;
+      screen = <ProgressScreen enrollmentId={selectedId} home={home} detail={detail} onOpenHistory={() => go("lesson_history")}
+                               onPrimaryAction={() => runAction(home?.current_action)} />;
     } else if (parsed.view === "lesson_history") {
       // Per-ATTEMPT training history. selectedId is this School enrollment,
       // so Repeat Program attempts never show each other's lessons.
@@ -334,6 +352,8 @@ export default function SchoolApp({ path, clientName, onNavigate, onExit }) {
             onAsk={() => openAsk()}
             onViewFeedback={() => goView("feedback")}
             onViewProgress={() => goView("progress")}
+            onViewCourse={() => goView("course")}
+            onOpenPractice={(hw) => openHomework(hw?.id || hw)}
           />
           <StudentWorkspaceExtras enrollmentId={selectedId} home={home} mode="home" onChanged={refreshAll}
                                   onOpenLesson={(lid) => go("lesson", lid)} onOpenHomework={openHomework} />
