@@ -14,6 +14,7 @@ import ModuleQuizPanel from "../components/school/student/ModuleQuizPanel";
 import FeedbackScreen from "../components/school/student/FeedbackScreen";
 import ProgressScreen from "../components/school/student/ProgressScreen";
 import LessonHistoryScreen from "../components/school/student/LessonHistoryScreen";
+import PracticeScreen from "../components/school/student/PracticeScreen";
 import AskTrainerPanel from "../components/school/student/AskTrainerPanel";
 import StudentWorkspaceExtras from "../components/school/student/StudentWorkspaceExtras";
 import SchoolNotificationBell from "../components/school/student/SchoolNotificationBell";
@@ -306,12 +307,24 @@ export default function SchoolApp({ path, clientName, onNavigate, onExit }) {
     } else if (parsed.view === "today") {
       screen = (
         <div className="space-y-4">
-          <TodayScreen home={home} loading={homeLoading}
-                       practiceJustCompleted={practiceDone} onAction={runAction}
-                       onAskTrainer={() => openAsk()} />
-          <StudentWorkspaceExtras enrollmentId={selectedId} home={home} mode="today" onChanged={refreshAll}
+          <StudentHome
+            home={home} loading={homeLoading} clientName={clientName}
+            onPrimaryAction={() => runAction(home?.current_action)}
+            onAsk={() => openAsk()}
+            onViewFeedback={() => goView("feedback")}
+            onViewProgress={() => goView("progress")}
+            onViewCourse={() => goView("course")}
+            onOpenPractice={(hw) => openHomework(hw?.id || hw)}
+          />
+          <StudentWorkspaceExtras enrollmentId={selectedId} home={home} mode="home" onChanged={refreshAll}
                                   onOpenLesson={(lid) => go("lesson", lid)} onOpenHomework={openHomework} />
         </div>
+      );
+    } else if (parsed.view === "practice") {
+      screen = (
+        <PracticeScreen home={home} loading={homeLoading}
+                        onOpenPractice={(hw) => openHomework(hw?.id || hw)}
+                        onPrimaryAction={() => runAction(home?.current_action)} />
       );
     } else if (parsed.view === "feedback") {
       screen = <FeedbackScreen enrollmentId={selectedId} onAsk={openAsk} onChanged={refreshAll} />;

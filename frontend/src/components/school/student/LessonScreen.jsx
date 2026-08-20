@@ -7,6 +7,7 @@ import SectionCard from "../../premium/SectionCard";
 import PremiumButton from "../../premium/PremiumButton";
 import HuskyDogImage from "../../brand/HuskyDogImage";
 import CheckpointPanel from "./CheckpointPanel";
+import LessonGuide, { LessonSectionBody, buildGuide } from "./lesson/LessonGuide";
 import { practiceButtonLabel } from "../../../lib/onlineSchoolPolish";
 
 /* Native School Lesson screen (Phase 2B). Presents existing lesson content via
@@ -25,6 +26,7 @@ export default function LessonScreen({
   const [err, setErr] = useState(null);      // {status, message}
   const [busy, setBusy] = useState(false);
   const [actionErr, setActionErr] = useState("");
+  const [guideKey, setGuideKey] = useState(null);
 
   // Monotonic request counter: on a hard refresh this screen briefly mounts
   // with enrollmentId=null (the enrollment list is still resolving), and a
@@ -134,6 +136,11 @@ export default function LessonScreen({
   // Module Quiz gate — the server says this module's end-of-module quiz is
   // ready to take (all lesson/checkpoint work at the boundary is done).
   const quizAvailable = !!(isCurrent && roadmap?.module_quiz_available);
+  // The guided sequence only replaces the flat renderer when the authored
+  // fields actually populate at least two steps — a one-field lesson reads
+  // better as plain content than as a one-item checklist.
+  const guideSections = buildGuide(lesson, { hasPractice, hasQuiz: quizAvailable });
+  const hasGuide = guideSections.filter(sx => sx.body !== "ready").length >= 2;
   const quizMeta = roadmap?.module_quiz || null;
   const checkpointPassedForQuiz = requiresCp && roadmap?.checkpoint_status?.outcome === "advance";
 
@@ -172,11 +179,25 @@ export default function LessonScreen({
         </p>
       )}
 
-      {/* Course Builder 2.0 blocks become the primary authored lesson when
-          present. Legacy structured fields remain a complete fallback for every
-          existing course, so no migration is required. */}
+      {/* Course Builder 2.0 blocks stay the primary authored lesson when a
+          trainer used them — that renderer already presents authored media and
+          ordering, so the guided sequence would duplicate it.
+
+          For the legacy structured fields (still most courses), the redesign
+          maps them onto the eight-step guided sequence instead of dumping
+          every field onto one screen. Selecting a step reveals just that
+          step's content, so the client reads one thing at a time while
+          handling a dog. No authored content is lost: buildGuide only omits a
+          section when its field is genuinely empty. */}
       {(lesson.content_blocks || []).some((b) => b?.active !== false)
         ? <LessonContentBlocks blocks={lesson.content_blocks} enrollmentId={enrollmentId} />
+        : hasGuide ? (
+            <div className="space-y-3" data-testid="lesson-guided">
+              <LessonGuide lesson={lesson} hasPractice={hasPractice} hasQuiz={quizAvailable}
+                           activeKey={guideKey} onSelectSection={(k) => setGuideKey(k === guideKey ? null : k)} />
+              {guideKey && <LessonSectionBody lesson={lesson} sectionKey={guideKey} />}
+            </div>
+          )
         : <LessonDetailPanel lesson={lesson} testid="lesson-detail" />}
 
       {data.skills?.length > 0 && (
