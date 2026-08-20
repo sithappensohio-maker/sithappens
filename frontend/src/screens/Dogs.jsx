@@ -10,6 +10,10 @@ import DogTrainingTab from "../components/DogTrainingTab";
 import DogTimeline from "../components/DogTimeline";
 import TrophyWall, { ManualAwardPicker } from "../components/TrophyWall";
 import PageHero from "../components/PageHero";
+
+// Server page size for the roster. Kept at or below the API's own page cap so
+// one request is one page and "load more" maps to a single server offset.
+const DOG_PAGE_SIZE = 60;
 import HuskyDogImage from "../components/brand/HuskyDogImage";
 import IntakeFormsSection from "../components/IntakeFormsSection";
 import DogManageMenu from "../components/DogManageMenu";
@@ -105,6 +109,11 @@ const PROGRAM_TYPE_COLORS = {
 export default function Dogs({ focusId = null, focusMode = "scroll", onConsumed = () => {}, openCreateOnMount = false, onCreateConsumed = () => {}, userId = null,
   hubTarget = null, can = () => false, onBookForDog = () => {}, onLogIncident = () => {}, onOpenCareBoard = () => {}, onOpenKennelBoard = () => {}, onOpenFrontDesk = () => {}, onMessageOwner = () => {} }) {
   const [dogs, setDogs] = useState([]);
+  const [total, setTotal] = useState(0);          // matches for the CURRENT filter
+  const [rosterTotal, setRosterTotal] = useState(0);  // whole roster, for the headline
+  const [query, setQuery] = useState("");         // searched in the DB, not in this array
+  const queryRef = useRef("");
+  const [loadingMore, setLoadingMore] = useState(false);
   const [clients, setClients] = useState([]);
   const [enrollmentsByDog, setEnrollmentsByDog] = useState({});
   const [open, setOpen] = useState(false);
@@ -132,13 +141,26 @@ export default function Dogs({ focusId = null, focusMode = "scroll", onConsumed 
     } catch (e) { console.warn("Dogs trophy load failed:", e); }
   }, []);
 
+  // The roster is paged on the SERVER. It used to render whatever the first
+  // (silently capped) response contained and print that array's length as the
+  // roll total — 1000 shown, 1000 claimed, 3193 actually on file. Now the
+  // count comes from /dogs/summary and the rows arrive a page at a time.
   const load = useCallback(async () => {
-    const [d, c, p] = await Promise.all([
-      api.get("/dogs"),
+    const params = { limit: DOG_PAGE_SIZE, offset: 0 };
+    if (queryRef.current.trim()) params.search = queryRef.current.trim();
+    const [d, c, p, s] = await Promise.all([
+      api.get("/dogs", { params }),
       api.get("/clients"),
       api.get("/programs/pipeline").catch(() => ({ data: [] })),
+      api.get("/dogs/summary", { params: params.search ? { search: params.search } : {} })
+        .catch(() => ({ data: null })),
     ]);
-    setDogs(d.data); setClients(c.data);
+    setDogs(d.data);
+    setTotal(s.data?.total ?? d.data.length);
+    // The headline is a statement about the roster, so it must not shrink to
+    // the size of a search result.
+    if (!params.search) setRosterTotal(s.data?.total ?? d.data.length);
+    setClients(c.data);
     // Group enrollments by dog_id, keep only active + on_hold (skip completed/withdrawn on cards)
     const map = {};
     (p.data || []).forEach(e => {
@@ -148,6 +170,33 @@ export default function Dogs({ focusId = null, focusMode = "scroll", onConsumed 
     setEnrollmentsByDog(map);
     loadTrophies(d.data);
   }, [loadTrophies]);
+
+  // Load-more appends the NEXT server page. Offset is taken from how many
+  // rows are already held, so a page can never be skipped or repeated.
+  const loadMore = useCallback(async () => {
+    setLoadingMore(true);
+    try {
+      const params = { limit: DOG_PAGE_SIZE, offset: dogs.length };
+      if (queryRef.current.trim()) params.search = queryRef.current.trim();
+      const { data } = await api.get("/dogs", { params });
+      const known = new Set(dogs.map(d => d.id));
+      const fresh = (data || []).filter(d => !known.has(d.id));
+      if (fresh.length) {
+        setDogs(prev => [...prev, ...fresh]);
+        loadTrophies(fresh);
+      }
+    } catch (e) { setErr(formatErr(e.response?.data?.detail) || "Couldn't load more dogs"); }
+    setLoadingMore(false);
+  }, [dogs, loadTrophies]);
+
+  // Search runs against the whole roster on the server, so a dog far past the
+  // first page is reachable. Debounced so typing doesn't hammer the endpoint.
+  const runSearch = useCallback((value) => {
+    setQuery(value);
+    queryRef.current = value;
+    clearTimeout(runSearch._t);
+    runSearch._t = setTimeout(() => { load(); }, 250);
+  }, [load]);
   useEffect(() => { load(); }, [load]);
   // Sprint 110ff — the dog card used to hardcode "Rabies" as the only
   // vaccine shown, so a dog could show "Rabies: Valid" while missing or
@@ -307,7 +356,7 @@ export default function Dogs({ focusId = null, focusMode = "scroll", onConsumed 
   return (
     <div className="space-y-6 animate-slide-in" data-testid="dogs-screen">
       <PageHero
-        eyebrow={{ icon: "fa-paw", text: `${dogs.length} pup${dogs.length === 1 ? "" : "s"} on file`, color: "text-shPrimary" }}
+        eyebrow={{ icon: "fa-paw", text: `${rosterTotal} pup${rosterTotal === 1 ? "" : "s"} on file`, color: "text-shPrimary" }}
         title="Dog Records."
         highlight="The real stars."
         subtitle="Photos, breed, vaccines, feeding, meds, behaviour notes — all here."
@@ -320,8 +369,28 @@ export default function Dogs({ focusId = null, focusMode = "scroll", onConsumed 
         testid="dogs-hero"
       />
 
+      <div className="flex flex-wrap items-center gap-3">
+        <div className="relative flex-1 min-w-[220px]">
+          <i className="fas fa-search absolute left-3 top-1/2 -translate-y-1/2 text-shTextMuted text-xs"/>
+          <input
+            value={query}
+            onChange={(e) => runSearch(e.target.value)}
+            placeholder="Search every dog by name or breed…"
+            data-testid="dog-search-input"
+            className="w-full bg-[var(--sh-card-base)] border border-shBorder rounded-lg pl-9 pr-3 py-2.5 text-sm text-shText"
+          />
+        </div>
+        <p className="text-[11px] font-black uppercase tracking-widest text-shTextMuted" data-testid="dog-count-label">
+          Showing {dogs.length} of {total}
+        </p>
+      </div>
+
       <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6" data-testid="dog-grid">
-        {dogs.length === 0 && <div className="col-span-full text-center text-shTextMuted text-xs font-black uppercase py-16">No dog records yet.</div>}
+        {dogs.length === 0 && (
+          <div className="col-span-full text-center text-shTextMuted text-xs font-black uppercase py-16">
+            {query.trim() ? `No dogs match “${query.trim()}”.` : "No dog records yet."}
+          </div>
+        )}
         {dogs.map(d => {
           const careCount = (d.feeding_schedule?.length || 0) + (d.medications?.length || 0);
           return (
@@ -448,6 +517,15 @@ export default function Dogs({ focusId = null, focusMode = "scroll", onConsumed 
           );
         })}
       </div>
+
+      {dogs.length < total && (
+        <div className="flex justify-center">
+          <button onClick={loadMore} disabled={loadingMore} data-testid="dog-load-more"
+                  className="px-6 py-2.5 rounded-lg border border-shBorder text-shText text-[12px] font-black uppercase tracking-widest disabled:opacity-40">
+            {loadingMore ? "Loading…" : `Load more · ${total - dogs.length} remaining`}
+          </button>
+        </div>
+      )}
 
       {awardPicker && (
         <ManualAwardPicker

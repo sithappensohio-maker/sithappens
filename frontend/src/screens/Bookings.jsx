@@ -38,6 +38,7 @@ export default function Bookings() {
   const [archiveLoaded, setArchiveLoaded] = useState(false);
   const [archiveLoading, setArchiveLoading] = useState(false);
   const [archiveTotal, setArchiveTotal] = useState(0);
+  const [summary, setSummary] = useState(null);   // authoritative counts from /bookings/summary
 
   const confirm = useConfirm();
   // Sprint 110ao — toast a new booking the moment it lands in this list.
@@ -51,6 +52,14 @@ export default function Bookings() {
     try {
       const { data } = await api.get("/bookings");
       setBookings(data);
+      // Counts come from the database, not from this array. The list is
+      // returned under per-category budgets, so measuring it would report the
+      // size of the page — which is how this header once read "0 upcoming"
+      // while 277 upcoming bookings existed.
+      try {
+        const { data: s } = await api.get("/bookings/summary");
+        setSummary(s);
+      } catch { setSummary(null); /* fall back to counting the rows */ }
       try {
         const { data: pa } = await api.get("/admin/pending-actions", { params: { limit: 100 } });
         setPendingActions((pa.items || []).filter(a => a.type === "meet_and_greet_request" || a.type === "booking_approval"));
@@ -165,7 +174,9 @@ export default function Bookings() {
       {/* Sprint 110cf — surface pending client reschedule requests at the top */}
       <RescheduleRequestsInbox onChanged={load} />
       <PageHero
-        eyebrow={{ icon: "fa-calendar-check", text: `${upcomingRows.length} upcoming · ${bookings.length} total`, color: "text-shAccent" }}
+        eyebrow={{ icon: "fa-calendar-check",
+                  text: `${summary?.upcoming ?? upcomingRows.length} upcoming · ${summary?.total_in_window ?? bookings.length} total`,
+                  color: "text-shAccent" }}
         title="Bookings."
         highlight="Every stay, every day."
         subtitle="Daycare, boarding, training & grooming — all in one feed."

@@ -31,7 +31,7 @@ from fastapi.responses import Response, FileResponse, HTMLResponse
 from fastapi.security import HTTPBearer, HTTPAuthorizationCredentials
 from starlette.middleware.cors import CORSMiddleware
 from motor.motor_asyncio import AsyncIOMotorClient
-from pymongo import ReturnDocument
+from pymongo import ASCENDING, DESCENDING, ReturnDocument
 from pymongo.errors import DuplicateKeyError
 from pydantic import BaseModel, Field, EmailStr, ConfigDict, field_validator, model_validator, ValidationError
 import stripe
@@ -2178,6 +2178,13 @@ async def list_archived(skip: int = 0, limit: int = 100, _: dict = Depends(requi
     return {"total": total, "skip": skip, "limit": limit, "items": items}
 
 
+# GET /bookings budgets. Past and future are counted separately so a large
+# history can never consume the rows reserved for current/future bookings.
+_BOOKINGS_UPCOMING_MAX = 5000
+_BOOKINGS_PAST_MAX = 3000
+_BOOKINGS_RANGE_MAX = 20000
+
+
 async def _booking_rows_anywhere(
     query: Optional[Dict[str, Any]] = None,
     projection: Optional[Dict[str, Any]] = None,
@@ -2196,10 +2203,21 @@ async def _booking_rows_anywhere(
     """
     q = query or {}
     proj = projection or {"_id": 0}
-    rows: List[Dict[str, Any]] = await db.bookings.find(q, proj).to_list(limit)
+    # Sort in Mongo BEFORE truncating. `.to_list(limit)` on an UNSORTED
+    # cursor returns whichever rows the scan reached first (natural order),
+    # and the Python sort further down then only reorders that arbitrary
+    # slice. So every sort-dependent caller was silently handed a random
+    # subset the moment its result set outgrew `limit` — which is how a
+    # 3000-row cap on GET /bookings hid all 277 upcoming bookings behind
+    # older rows. Ordering first makes the truncation mean what the caller
+    # actually asked for.
+    direction = DESCENDING if sort_desc else ASCENDING
+    rows: List[Dict[str, Any]] = await (
+        db.bookings.find(q, proj).sort(sort_field, direction).to_list(limit))
     if include_archive:
         try:
-            archived = await db.bookings_archive.find(q, proj).to_list(limit)
+            archived = await (
+                db.bookings_archive.find(q, proj).sort(sort_field, direction).to_list(limit))
         except Exception:
             archived = []
         seen = {r.get("id") for r in rows if r.get("id")}
@@ -2824,16 +2842,63 @@ async def _resolve_client_scope(user: dict) -> Optional[str]:
         return None
     return user.get("client_id")
 
-@api.get("/dogs", response_model=List[DogOut])
-async def list_dogs(user: dict = Depends(get_current_user), include_deleted: bool = False):
+# Dogs list contract. `_DOGS_PAGE_MAX` bounds an explicitly paged request;
+# `_DOGS_SAFETY_CEILING` is a runaway guard for an unpaged read, NOT a product
+# limit — if it is ever reached we log, because a list that quietly stops
+# short is exactly the failure this replaced (1000 of 3193 dogs returned, and
+# the roster screen reporting the page length as the roll total).
+_DOGS_PAGE_MAX = 200
+_DOGS_SAFETY_CEILING = 10000
+
+
+async def _dogs_query(user: dict, include_deleted: bool, search: Optional[str],
+                      owner_id: Optional[str]) -> Dict:
+    """Canonical dog filter. One place so the list and its count can never
+    disagree, and so ownership scoping is applied identically to both."""
     scope = await _resolve_client_scope(user)
-    q = {} if scope is None else {"owner_id": scope}
+    q: Dict = {}
+    if scope is not None:
+        # A client is pinned to their own dogs; an owner_id they supply is
+        # deliberately ignored rather than honoured, so the parameter can
+        # never widen their scope.
+        q["owner_id"] = scope
+    elif owner_id:
+        q["owner_id"] = owner_id
     if not include_deleted:
         q["deleted_at"] = {"$exists": False}
+    term = (search or "").strip()
+    if term:
+        rx = _search_re(term)
+        q["$or"] = [{"name": rx}, {"breed": rx}]
+    return q
+
+
+@api.get("/dogs", response_model=List[DogOut])
+async def list_dogs(user: dict = Depends(get_current_user), include_deleted: bool = False,
+                    search: Optional[str] = None, owner_id: Optional[str] = None,
+                    limit: Optional[int] = None, offset: int = 0):
+    """Dogs the caller may see, by name.
+
+    `search` and `owner_id` are matched in the DATABASE, not by the caller
+    over a truncated array — `owner_id` in particular used to be accepted and
+    silently dropped (FastAPI discards unknown query params), so a caller
+    asking for one client's dogs was quietly handed everyone's.
+
+    Pass `limit`/`offset` to page. Omit them for the full scoped roster.
+    """
+    q = await _dogs_query(user, include_deleted, search, owner_id)
     # Strip gallery photos from list payload — they balloon the response when
     # multiple dogs have 5+ images each. Detail endpoint `/dogs/{id}` returns
     # the full record (with gallery) for the edit modal.
-    items = await db.dogs.find(q, {"_id": 0, "photos": 0}).sort("name", 1).to_list(1000)
+    cap = _DOGS_SAFETY_CEILING if limit is None else max(1, min(int(limit), _DOGS_PAGE_MAX))
+    cursor = db.dogs.find(q, {"_id": 0, "photos": 0}).sort("name", 1)
+    if offset:
+        cursor = cursor.skip(max(0, int(offset)))
+    items = await cursor.to_list(cap)
+    if limit is None and len(items) >= _DOGS_SAFETY_CEILING:
+        logger.warning(
+            "GET /dogs: safety ceiling (%s) reached — the roster is being "
+            "truncated; this endpoint needs a paged caller.", _DOGS_SAFETY_CEILING)
     # Sprint 110di-27 — Boundary coercion so a single legacy/malformed row
     # (e.g. sex='male' lowercase from an old import or hand-edit) can't 500
     # the entire endpoint and lock the client out of their portal. The
@@ -2867,6 +2932,19 @@ def _normalize_dog_doc(d: dict) -> dict:
     if not d.get("created_at"):
         d["created_at"] = now_iso()
     return d
+
+
+@api.get("/dogs/summary")
+async def dogs_summary(user: dict = Depends(get_current_user), include_deleted: bool = False,
+                       search: Optional[str] = None, owner_id: Optional[str] = None):
+    """How many dogs the caller can actually see, for the same filters.
+
+    Counted in the database rather than measured from a returned page, so a
+    roster screen can state a real total instead of restating its page size.
+    """
+    q = await _dogs_query(user, include_deleted, search, owner_id)
+    total = int(await db.dogs.count_documents(q))
+    return {"total": total, "page_max": _DOGS_PAGE_MAX}
 
 
 @api.get("/dogs/{dog_id}", response_model=DogOut)
@@ -3223,13 +3301,49 @@ async def list_bookings(
         q["client_id"] = user.get("client_id")
     elif client_id:
         q["client_id"] = client_id
-    if not include_all:
-        if not start_date:
-            start_date = (business_today() - timedelta(days=90)).isoformat()
-        if not end_date:
-            end_date = (business_today() + timedelta(days=90)).isoformat()
-        q["date"] = {"$gte": start_date, "$lte": end_date}
-    items = await _booking_rows_anywhere(q, {"_id": 0}, include_archive=include_all, limit=3000, sort_field="date")
+    if include_all or start_date or end_date:
+        # An explicitly-bounded read: the caller chose the range, so one
+        # ordered query is right. include_all also pulls the archive.
+        if not include_all:
+            if not start_date:
+                start_date = (business_today() - timedelta(days=90)).isoformat()
+            if not end_date:
+                end_date = (business_today() + timedelta(days=90)).isoformat()
+            q["date"] = {"$gte": start_date, "$lte": end_date}
+        items = await _booking_rows_anywhere(
+            q, {"_id": 0}, include_archive=include_all,
+            limit=_BOOKINGS_RANGE_MAX, sort_field="date")
+        if len(items) >= _BOOKINGS_RANGE_MAX:
+            logger.warning(
+                "GET /bookings: explicit range hit the %s-row ceiling; "
+                "caller should narrow the range or page.", _BOOKINGS_RANGE_MAX)
+    else:
+        # Default rolling window. Past and future are budgeted SEPARATELY.
+        #
+        # A single shared budget lets one temporal category starve another:
+        # with 7954 rows in the window a flat 3000-row cap was consumed by
+        # older bookings, so all 277 upcoming ones were dropped and the
+        # admin feed truthfully rendered what it was sent — "0 upcoming".
+        # Giving each category its own budget makes that impossible: history
+        # volume can no longer displace current/future work, whatever the
+        # ratio between them.
+        today_iso = business_today().isoformat()
+        window_start = (business_today() - timedelta(days=90)).isoformat()
+        window_end = (business_today() + timedelta(days=90)).isoformat()
+        upcoming = await _booking_rows_anywhere(
+            {**q, "date": {"$gte": today_iso, "$lte": window_end}}, {"_id": 0},
+            include_archive=False, limit=_BOOKINGS_UPCOMING_MAX, sort_field="date")
+        # Past reads newest-first so a truncated history keeps the MOST
+        # RECENT days rather than the oldest ones.
+        past = await _booking_rows_anywhere(
+            {**q, "date": {"$gte": window_start, "$lt": today_iso}}, {"_id": 0},
+            include_archive=False, limit=_BOOKINGS_PAST_MAX, sort_field="date",
+            sort_desc=True)
+        if len(upcoming) >= _BOOKINGS_UPCOMING_MAX:
+            logger.warning(
+                "GET /bookings: upcoming budget (%s) exhausted — clients are "
+                "seeing a partial future window.", _BOOKINGS_UPCOMING_MAX)
+        items = sorted(past + upcoming, key=lambda r: str(r.get("date") or ""))
     # Sprint 110di-25 — Defensive coercion at the API boundary so legacy /
     # mid-migration rows don't 500 the entire list endpoint. The response
     # model is strict (Literal status enum, required dog_name/client_name),
@@ -5906,6 +6020,55 @@ async def booking_conflicts(dog_id: str, date_str: str, _: dict = Depends(get_cu
                 "service_type": b["service_type"], "status": b["status"],
             })
     return {"conflicts": conflicts}
+
+
+@api.get("/bookings/summary")
+async def bookings_summary(
+    user: dict = Depends(get_current_user),
+    dog_id: Optional[str] = None,
+    client_id: Optional[str] = None,
+    status_filter: Optional[str] = None,
+):
+    """Accurate counts for the default GET /bookings window.
+
+    The list endpoint returns rows under per-category budgets, so a caller
+    that derives "N upcoming / M total" from the returned array reports the
+    size of the PAGE, not of the data. These counts come from the database
+    itself and stay correct however the budgets are tuned.
+
+    Scoping/ownership is identical to GET /bookings — a client only ever
+    counts their own bookings.
+    """
+    q: Dict = {}
+    if status_filter:
+        q["status"] = status_filter
+    if dog_id:
+        q["dog_id"] = dog_id
+    if user.get("role") == "client":
+        q["client_id"] = user.get("client_id")
+    elif client_id:
+        q["client_id"] = client_id
+
+    today_iso = business_today().isoformat()
+    window_start = (business_today() - timedelta(days=90)).isoformat()
+    window_end = (business_today() + timedelta(days=90)).isoformat()
+
+    async def _count(date_q: Dict) -> int:
+        return int(await db.bookings.count_documents({**q, "date": date_q}))
+
+    upcoming = await _count({"$gte": today_iso, "$lte": window_end})
+    today_count = await _count({"$eq": today_iso})
+    past = await _count({"$gte": window_start, "$lt": today_iso})
+    return {
+        "upcoming": upcoming,
+        "today": today_count,
+        "past_in_window": past,
+        "total_in_window": upcoming + past,
+        "window": {"start": window_start, "end": window_end, "today": today_iso},
+        "budgets": {"upcoming": _BOOKINGS_UPCOMING_MAX, "past": _BOOKINGS_PAST_MAX},
+        "upcoming_truncated": upcoming > _BOOKINGS_UPCOMING_MAX,
+        "past_truncated": past > _BOOKINGS_PAST_MAX,
+    }
 
 
 @api.get("/bookings/{booking_id}", response_model=BookingOut)
@@ -25442,6 +25605,51 @@ def _pending_action_urgency(created_at: Optional[str], requested_date: Optional[
     }
 
 
+def _humanize_enum(value: Optional[str]) -> str:
+    """`needs_response` -> `Needs Response`, for display only.
+
+    Machine values (Stripe status/reason codes) stay untouched in their own
+    fields; this is purely how the same value is spelled to a human.
+    """
+    text = str(value or "").strip()
+    if not text:
+        return ""
+    return " ".join(w.capitalize() for w in text.replace("-", "_").split("_") if w)
+
+
+def _format_due_date(value: Optional[str]) -> str:
+    """A deadline as staff read it, in business time — never a raw ISO stamp.
+
+    Returns "" when the value is missing or unparseable so callers can fall
+    back rather than print half a timestamp.
+    """
+    raw = str(value or "").strip()
+    if not raw:
+        return ""
+    try:
+        parsed = datetime.fromisoformat(raw.replace("Z", "+00:00"))
+    except Exception:
+        return ""
+    if parsed.tzinfo is None:
+        parsed = parsed.replace(tzinfo=timezone.utc)
+    local = parsed.astimezone(BUSINESS_TZ)
+    return f"{local:%b} {local.day}, {local.year}"
+
+
+def _stripe_dispute_notes(d: dict) -> str:
+    """Reader-facing one-liner for a dispute row.
+
+    Presentation only: the raw Stripe `status` still travels untouched in the
+    item's own `status` field, and `evidence_due_by` is unchanged on the
+    record. This just stops the card printing a machine enum and a
+    microsecond ISO timestamp at a human.
+    """
+    status = _humanize_enum(d.get("status")) or "Open"
+    due = _format_due_date(d.get("evidence_due_by"))
+    return f"Stripe status: {status}. Evidence due {due}." if due else (
+        f"Stripe status: {status}. Evidence due date: see Stripe.")
+
+
 def _financial_action_urgency(created_at: Optional[str], due_at: Optional[str] = None) -> dict:
     """Urgency for a MONEY action — a Stripe dispute or a refund awaiting
     reconciliation.
@@ -25629,9 +25837,11 @@ async def _collect_pending_actions(user: dict, *, type_filter: Optional[str] = N
                 "type_label": _PENDING_ACTION_TYPE_LABELS["stripe_dispute"], "priority": "action_required",
                 "status": d.get("status"), "created_at": d.get("first_seen_at"), "client_id": d.get("client_id"),
                 "client_name": None, "dog_id": None, "dog_name": None,
-                "service_name": f"${float(d.get('amount') or 0):.2f} · {d.get('reason') or 'Stripe dispute'}",
+                "service_name": (
+                    f"${float(d.get('amount') or 0):.2f} · "
+                    f"{_humanize_enum(d.get('reason')) or 'Stripe dispute'}"),
                 "requested_start": None, "requested_date": None, "requested_end_date": None, "requested_time": None,
-                "notes": f"Stripe status: {d.get('status')}. Evidence due: {d.get('evidence_due_by') or 'see Stripe'}."[:300],
+                "notes": _stripe_dispute_notes(d)[:300],
                 "deep_link": {"screen": "front_desk", "panel": "online_payments", "stripe_dispute_id": d["id"]},
                 "required_permission": "finance_reports", **urgency,
             })
