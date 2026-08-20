@@ -52,7 +52,7 @@ export function ProgramHeroCard({ home, onViewCourse }) {
           </div>
           {onViewCourse && (
             <button type="button" onClick={onViewCourse} data-testid="today-view-course"
-                    className="mt-3 text-[11.5px] font-black uppercase tracking-widest text-shSecondary hover:text-shText transition">
+                    className="mt-2 -mb-1.5 min-h-[44px] inline-flex items-center text-[11.5px] font-black uppercase tracking-widest text-shSecondary hover:text-shText transition">
               View full course <i className="fas fa-chevron-right text-[9px] ml-0.5" />
             </button>
           )}
@@ -199,7 +199,7 @@ export function ProgressRow({ progress, trophyCount, onViewAll }) {
         <Eyebrow>Your progress</Eyebrow>
         {onViewAll && (
           <button type="button" onClick={onViewAll} data-testid="today-progress-view-all"
-                  className="text-[10.5px] font-black uppercase tracking-widest text-shSecondary hover:text-shText transition">
+                  className="-my-2 px-1 min-h-[44px] inline-flex items-center text-[10.5px] font-black uppercase tracking-widest text-shSecondary hover:text-shText transition">
             View all
           </button>
         )}

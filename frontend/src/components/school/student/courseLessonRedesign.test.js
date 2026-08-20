@@ -7,7 +7,8 @@
 import fs from "fs";
 import path from "path";
 import { parseSchoolPath, schoolPathFor, SCHOOL_DEFAULT_VIEW } from "../../../lib/studentSchool";
-import { buildGuide, splitSteps, GUIDE_SECTIONS } from "./lesson/LessonGuide";
+import { buildGuide, splitSteps, GUIDE_SECTIONS, groupBlocks, classifyBlock, asideBlocks } from "./lesson/LessonGuide";
+import { groupCourseModules } from "./course/CourseCards";
 import { NAV_ITEMS } from "./SchoolNav";
 
 const read = (...p) => fs.readFileSync(path.join(__dirname, ...p), "utf8");
@@ -74,15 +75,26 @@ test("Practice has a real destination rather than only a modal", () => {
 // Course — real metrics, real state
 // ---------------------------------------------------------------------------
 
-test("course progress uses the backend's own values, not recomputed ones", () => {
-  expect(courseCardsSrc).toMatch(/detail\?\.course_pct/);
-  expect(courseCardsSrc).toMatch(/l\.status === "completed"/);
-  expect(courseCardsSrc).toMatch(/detail\?\.checkpoints_passed/);
+test("course progress uses the server's WHOLE-course totals", () => {
+  // Counting the roadmap instead told a client on the 120-lesson Service Dog
+  // program that their course was 5 lessons long, because the roadmap
+  // deliberately withholds lessons inside locked modules. The home
+  // view-model's progress block is the only honest source.
+  expect(courseCardsSrc).toMatch(/progress\?\.lessons_total/);
+  expect(courseCardsSrc).toMatch(/progress\?\.lessons_completed/);
+  expect(courseCardsSrc).toMatch(/progress\?\.course_pct/);
+  // and it must actually be handed down from the app shell
+  expect(appSrc).toMatch(/progress=\{home\?\.progress\}/);
+  expect(courseSrc).toMatch(/progress=\{progress\}/);
 });
 
-test("the checkpoint metric is hidden when the program has no checkpoints", () => {
-  // Showing "0 / 0 checkpoints" would be noise, not progress.
-  expect(courseCardsSrc).toMatch(/\{cpTotal > 0 && \(/);
+test("a metric is shown only when its denominator is real", () => {
+  // "0 / 0" is noise, not progress. Modules replaced checkpoints as the third
+  // metric precisely because a checkpoint TOTAL is not derivable client-side
+  // while locked modules withhold their lessons.
+  expect(courseCardsSrc).toMatch(/\{modulesTotal > 0 && \(/);
+  expect(courseCardsSrc).toMatch(/progress\?\.modules_total/);
+  expect(code(courseCardsSrc)).not.toMatch(/checkpoints_passed/);
 });
 
 test("Continue targets the canonical current lesson", () => {
@@ -112,9 +124,42 @@ test("the current module expands by default and locked modules cannot be opened"
 
 test("Course still reads lock/progression state from the server", () => {
   // buildSchoolRoadmap is the existing projection — the redesign must not
-  // start deciding locks in the client.
+  // start deciding locks in the client. Checked against code with comments
+  // AND user-facing strings removed, since "Unlocks as you finish the work
+  // before it" is copy describing the server's decision, not a client rule.
   expect(courseSrc).toMatch(/buildSchoolRoadmap\(roadmap\)/);
-  expect(code(courseCardsSrc)).not.toMatch(/unlock|canAccess|isAllowed/i);
+  const logic = code(courseCardsSrc).replace(/"[^"]*"/g, '""').replace(/`[^`]*`/g, "``");
+  expect(logic).not.toMatch(/unlock|canAccess|isAllowed/i);
+  // status is read, never computed
+  expect(courseCardsSrc).toMatch(/m\.status === "locked"/);
+});
+
+test("a long run of locked modules folds into one summary", () => {
+  // Service Dog opens with one current module and 23 locked ones; as separate
+  // cards that is 23 near-identical blocks between the client and the page.
+  expect(groupCourseModules([
+    { id: "a", status: "current" },
+    { id: "b", status: "locked" }, { id: "c", status: "locked" },
+    { id: "d", status: "locked" }, { id: "e", status: "locked" },
+  ]).map(x => x.kind)).toEqual(["module", "locked_run"]);
+});
+
+test("a short run of locked modules stays as ordinary cards", () => {
+  // Two locked modules left reads perfectly well; folding would hide more
+  // than it helps.
+  expect(groupCourseModules([
+    { id: "a", status: "current" }, { id: "b", status: "locked" }, { id: "c", status: "locked" },
+  ]).map(x => x.kind)).toEqual(["module", "module", "module"]);
+});
+
+test("folding never drops or reorders a module", () => {
+  const mods = [
+    { id: "m1", status: "completed" }, { id: "m2", status: "current" },
+    { id: "m3", status: "locked" }, { id: "m4", status: "locked" },
+    { id: "m5", status: "locked" }, { id: "m6", status: "locked" },
+  ];
+  const flat = groupCourseModules(mods).flatMap(x => x.kind === "locked_run" ? x.modules : [x.module]);
+  expect(flat.map(m => m.id)).toEqual(mods.map(m => m.id));
 });
 
 // ---------------------------------------------------------------------------
@@ -171,14 +216,23 @@ test("Course Builder blocks still win over the guided sequence", () => {
 });
 
 test("a thin lesson keeps the flat renderer rather than a one-item checklist", () => {
-  expect(lessonSrc).toMatch(/const hasGuide = guideSections\.filter\(sx => sx\.body !== "ready"\)\.length >= 2/);
+  // Hand-off steps (Practice / Quick Check / Next Step) carry no lesson
+  // content of their own, so they must not make a one-field lesson look like
+  // a guided sequence.
+  expect(lessonSrc).toMatch(/const hasGuide = guideSections\.filter\(sx => !sx\.ready\)\.length >= 2/);
   expect(lessonSrc).toMatch(/: <LessonDetailPanel lesson=\{lesson\}/);
+  expect(buildGuide({ client_overview: "Only this." }, { hasPractice: true, hasQuiz: true })
+    .filter(s => !s.ready)).toHaveLength(1);
 });
 
 test("troubleshooting and safety collapse instead of burying the steps", () => {
-  expect(guideSrc).toMatch(/title="Troubleshooting"/);
-  expect(guideSrc).toMatch(/title="Safety notes"/);
+  // Both are long in the real curriculum and neither is what the client needs
+  // first with a dog waiting.
+  expect(guideSrc).toMatch(/title="If it is not working"/);
+  expect(guideSrc).toMatch(/title="Safety &amp; welfare"/);
   expect(guideSrc).toMatch(/const \[open, setOpen\] = useState\(false\)/);
+  expect(guideSrc).toContain("-troubleshooting`}");
+  expect(guideSrc).toContain("-safety`}");
 });
 
 // ---------------------------------------------------------------------------

@@ -27,6 +27,9 @@ export default function LessonScreen({
   const [busy, setBusy] = useState(false);
   const [actionErr, setActionErr] = useState("");
   const [guideKey, setGuideKey] = useState(null);
+  // "Next Step" is a signpost, not content: tapping it takes the client to
+  // the real actions this lesson offers rather than opening an empty panel.
+  const actionsRef = useRef(null);
 
   // Monotonic request counter: on a hard refresh this screen briefly mounts
   // with enrollmentId=null (the enrollment list is still resolving), and a
@@ -136,11 +139,13 @@ export default function LessonScreen({
   // Module Quiz gate — the server says this module's end-of-module quiz is
   // ready to take (all lesson/checkpoint work at the boundary is done).
   const quizAvailable = !!(isCurrent && roadmap?.module_quiz_available);
-  // The guided sequence only replaces the flat renderer when the authored
-  // fields actually populate at least two steps — a one-field lesson reads
-  // better as plain content than as a one-item checklist.
+  // The guided sequence only replaces the flat renderer when the lesson
+  // actually populates at least two steps of its own — a one-field lesson
+  // reads better as plain content than as a one-item checklist. Steps that are
+  // pure hand-offs to Practice / Quick Check / Next Step don't count towards
+  // that, since they carry no lesson content themselves.
   const guideSections = buildGuide(lesson, { hasPractice, hasQuiz: quizAvailable });
-  const hasGuide = guideSections.filter(sx => sx.body !== "ready").length >= 2;
+  const hasGuide = guideSections.filter(sx => !sx.ready).length >= 2;
   const quizMeta = roadmap?.module_quiz || null;
   const checkpointPassedForQuiz = requiresCp && roadmap?.checkpoint_status?.outcome === "advance";
 
@@ -179,25 +184,38 @@ export default function LessonScreen({
         </p>
       )}
 
-      {/* Course Builder 2.0 blocks stay the primary authored lesson when a
-          trainer used them — that renderer already presents authored media and
-          ordering, so the guided sequence would duplicate it.
+      {/* The guided sequence is the lesson. Whether a trainer authored Course
+          Builder blocks or the legacy structured fields, buildGuide maps what
+          exists onto the eight steps and selecting one reveals just that
+          step's content — so the client reads a single thing at a time while
+          handling a dog instead of scrolling five phone screens of continuous
+          copy.
 
-          For the legacy structured fields (still most courses), the redesign
-          maps them onto the eight-step guided sequence instead of dumping
-          every field onto one screen. Selecting a step reveals just that
-          step's content, so the client reads one thing at a time while
-          handling a dog. No authored content is lost: buildGuide only omits a
-          section when its field is genuinely empty. */}
-      {(lesson.content_blocks || []).some((b) => b?.active !== false)
+          Blocks are still drawn by LessonContentBlocks, so authored media,
+          checklists, step lists and the knowledge check behave exactly as
+          before; only how much is on screen at once has changed. No authored
+          content is lost — a block matching no rule still lands in a visible
+          step, and a section with nothing authored is omitted rather than
+          shown empty.
+
+          A lesson too thin to fill two steps keeps the flat renderer. */}
+      {hasGuide ? (
+          <div className="space-y-3" data-testid="lesson-guided">
+            <LessonGuide lesson={lesson} hasPractice={hasPractice} hasQuiz={quizAvailable}
+                         activeKey={guideKey} onSelectSection={(k) => {
+                           if (k === "next_step") {
+                             setGuideKey(null);
+                             actionsRef.current?.scrollIntoView({ behavior: "smooth", block: "center" });
+                             return;
+                           }
+                           setGuideKey(k === guideKey ? null : k);
+                         }} />
+            {guideKey && <LessonSectionBody lesson={lesson} sectionKey={guideKey}
+                                            sections={guideSections} enrollmentId={enrollmentId} />}
+          </div>
+        )
+        : (lesson.content_blocks || []).some((b) => b?.active !== false)
         ? <LessonContentBlocks blocks={lesson.content_blocks} enrollmentId={enrollmentId} />
-        : hasGuide ? (
-            <div className="space-y-3" data-testid="lesson-guided">
-              <LessonGuide lesson={lesson} hasPractice={hasPractice} hasQuiz={quizAvailable}
-                           activeKey={guideKey} onSelectSection={(k) => setGuideKey(k === guideKey ? null : k)} />
-              {guideKey && <LessonSectionBody lesson={lesson} sectionKey={guideKey} />}
-            </div>
-          )
         : <LessonDetailPanel lesson={lesson} testid="lesson-detail" />}
 
       {data.skills?.length > 0 && (
@@ -217,6 +235,7 @@ export default function LessonScreen({
       {actionErr && <p className="text-shDanger text-[13px] font-bold" data-testid="lesson-action-error">{actionErr}</p>}
 
       {/* ── Action area — driven entirely by backend state ── */}
+      <div ref={actionsRef} className="space-y-4" data-testid="lesson-actions">
       {setupRequired ? (
         <SectionCard accent="cyan" intensity="subtle" data-testid="lesson-setup-required">
           <div className="flex items-start gap-3">
@@ -290,6 +309,7 @@ export default function LessonScreen({
           )}
         </>
       )}
+      </div>
     </div>
   );
 }

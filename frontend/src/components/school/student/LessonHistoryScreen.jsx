@@ -10,6 +10,7 @@ import { api, formatErr } from "../../../lib/api";
 import SectionCard from "../../premium/SectionCard";
 import NeonEdge from "../../premium/NeonEdge";
 import EmptyState from "../../training/EmptyState";
+import ScorePair from "./ScorePair";
 
 const ASSESSMENT_LABELS = {
   skipped: "Not worked",
@@ -43,6 +44,7 @@ function ScorePips({ score }) {
 
 export default function LessonHistoryScreen({ enrollmentId, dogName }) {
   const [data, setData] = useState(null);
+  const [checkpoints, setCheckpoints] = useState([]);
   const [err, setErr] = useState("");
 
   const load = useCallback(async () => {
@@ -52,6 +54,13 @@ export default function LessonHistoryScreen({ enrollmentId, dogName }) {
     } catch (e) {
       setErr(formatErr(e?.response?.data?.detail) || "Could not load training history");
     }
+    // Checkpoint results are READ from the canonical checkpoint record, never
+    // copied into session data. A recap that included a checkpoint shows the
+    // persisted score here by joining on the lesson it was graded against.
+    try {
+      const { data: c } = await api.get(`/portal/school/${enrollmentId}/checkpoint-history`);
+      setCheckpoints(c || []);
+    } catch { setCheckpoints([]); }
   }, [enrollmentId]);
   useEffect(() => { if (enrollmentId) load(); }, [enrollmentId, load]);
 
@@ -59,6 +68,11 @@ export default function LessonHistoryScreen({ enrollmentId, dogName }) {
   if (!data) return <p className="text-shTextMuted text-sm py-6 text-center"><i className="fas fa-spinner fa-spin mr-2" />Loading…</p>;
 
   const { progress = {}, lessons = [] } = data;
+  // Match on the lesson the checkpoint was graded against — the same key the
+  // checkpoint record itself is stored under.
+  const checkpointFor = (l) => checkpoints.find(
+    (c) => (c.lesson_name && l.lesson_name && c.lesson_name === l.lesson_name)
+        && (c.handler_overall != null || c.dog_overall != null));
 
   return (
     <div className="space-y-4" data-testid="lesson-history-screen">
@@ -136,6 +150,28 @@ export default function LessonHistoryScreen({ enrollmentId, dogName }) {
                 <p className="text-[13px] text-shText mt-1 leading-relaxed">{l.trainer_feedback}</p>
               </div>
             )}
+            {/* Checkpoint result, read from the canonical checkpoint record. */}
+            {(() => {
+              const cp = checkpointFor(l);
+              if (!cp) return null;
+              return (
+                <div className="mt-3 rounded-xl border border-shPrimary/30 bg-shPrimary/[0.05] p-3" data-testid={`lesson-history-checkpoint-${l.session_id}`}>
+                  <p className="text-[9px] font-black uppercase tracking-[0.14em] text-shPrimary">
+                    <i className="fas fa-clipboard-check mr-1" />Checkpoint
+                    {cp.outcome ? ` · ${String(cp.outcome).replace(/_/g, " ")}` : ""}
+                  </p>
+                  <div className="mt-2"><ScorePair handler={cp.handler_overall} dog={cp.dog_overall} compact /></div>
+                </div>
+              );
+            })()}
+
+            {l.next_lesson_focus && (
+              <div className="mt-3">
+                <p className="text-[9px] font-black uppercase tracking-[0.14em] text-shSecondary"><i className="fas fa-arrow-right mr-1" />Focus for next lesson</p>
+                <p className="text-[13px] text-shText mt-1 leading-relaxed">{l.next_lesson_focus}</p>
+              </div>
+            )}
+
             {l.practice_assigned?.length > 0 && (
               <div className="mt-3">
                 <p className="text-[9px] font-black uppercase tracking-[0.14em] text-shSecondary"><i className="fas fa-paw mr-1" />Practice before next lesson</p>

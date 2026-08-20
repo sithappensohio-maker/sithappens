@@ -1,77 +1,76 @@
-import { PracticeCard } from "./today/TodayCards";
+import { practiceBuckets, PracticeGroup, PracticeAssignmentCard } from "./practice/PracticeCards";
 import EmptyState from "../../training/EmptyState";
 
 /* Practice — the fourth primary destination.
  *
- * Phase 2 introduces the screen so the five-item navigation has a real home
- * for Practice instead of it being reachable only as a modal from Today. The
- * Practice COACH itself (the in-session experience) is untouched and is
- * redesigned in a later phase; opening an assignment still hands off to the
- * existing canonical Practice engine.
+ * Phase 2 gave Practice a real home instead of a modal reachable only from
+ * Today. Phase 3 makes it answer the question a client actually arrives with:
+ * "what should I practice today?" Work is ordered by urgency — overdue, due,
+ * the server's recommended next, then everything else — and recent completions
+ * sit at the bottom as evidence of effort rather than as a to-do list.
  *
- * All data comes from the existing home view-model's active_practice — no new
- * endpoint, no second Practice store.
+ * All data comes from the existing home view-model's active_practice. The
+ * Practice COACH itself is the canonical engine and is untouched here; opening
+ * an assignment hands off to it exactly as before.
  */
 export default function PracticeScreen({ home, loading, onOpenPractice, onPrimaryAction }) {
   if (loading && !home) {
     return (
       <div className="space-y-3" data-testid="practice-screen-loading">
         <div className="h-8 w-40 rounded bg-shBorder/40 animate-pulse" />
-        <div className="h-24 rounded-2xl bg-shBorder/25 animate-pulse" />
-        <div className="h-24 rounded-2xl bg-shBorder/20 animate-pulse" />
+        <div className="h-28 rounded-2xl bg-shBorder/25 animate-pulse" />
+        <div className="h-28 rounded-2xl bg-shBorder/20 animate-pulse" />
       </div>
     );
   }
   if (!home) return null;
 
   const all = home.active_practice || [];
-  const open = all.filter(p => p && p.status !== "completed");
-  const done = all.filter(p => p && p.status === "completed");
-  const practiceIsNext = home.current_action?.type === "practice";
+  const action = home.current_action;
+  const practiceIsNext = action?.type === "practice";
+  // The server already decided what comes next; this screen only labels it.
+  const recommendedId = practiceIsNext ? (action?.target?.homework_id || action?.target?.practice_id || null) : null;
+  const b = practiceBuckets(all, { recommendedId });
+  const openCount = b.overdue.length + b.due.length + b.recommended.length + b.upcoming.length;
+  const dogName = home.dog?.name;
 
   return (
-    <div className="space-y-4" data-testid="practice-screen">
+    <div className="space-y-5" data-testid="practice-screen">
       <header>
         <h1 className="text-shText font-black text-[22px] sm:text-[26px] leading-tight">Practice</h1>
-        <p className="text-[13px] text-shTextMuted mt-0.5">
-          {open.length > 0
-            ? `Short reps between lessons are what make it stick${home.dog?.name ? ` for ${home.dog.name}` : ""}.`
-            : "Nothing outstanding right now — your next lesson will assign more when it's time."}
+        <p className="text-[13px] text-shTextMuted mt-0.5 leading-relaxed">
+          {b.overdue.length > 0
+            ? `Start here — ${b.overdue.length} practice ${b.overdue.length === 1 ? "session is" : "sessions are"} past due.`
+            : openCount > 0
+              ? `Short reps between lessons are what make it stick${dogName ? ` for ${dogName}` : ""}.`
+              : "Nothing outstanding right now — your next lesson will assign more when it's time."}
         </p>
       </header>
 
       {/* When the server says practice IS the next best action, offer it here
           too so the client never has to go back to Today to start. */}
-      {practiceIsNext && home.current_action?.label && (
+      {practiceIsNext && action?.label && (
         <button type="button" onClick={onPrimaryAction} data-testid="practice-primary-action"
-                className="w-full min-h-[50px] rounded-xl bg-shPrimary text-[#071018] font-black text-[14px] inline-flex items-center justify-center gap-2 hover:brightness-110 transition">
-          {home.current_action.label}<i className="fas fa-arrow-right text-[11px]" />
+                className="w-full min-h-[52px] rounded-xl bg-shPrimary text-[#071018] font-black text-[14px] inline-flex items-center justify-center gap-2 hover:brightness-110 transition shadow-[0_10px_30px_-12px_rgba(140,198,63,0.8)]">
+          {action.label}<i className="fas fa-arrow-right text-[11px]" />
         </button>
       )}
 
-      {open.length === 0 ? (
-        <PracticeCard practice={[]} />
-      ) : (
-        <section className="space-y-3" data-testid="practice-open-list">
-          {open.map(hw => (
-            <PracticeCard key={hw.id} practice={[hw]} onOpen={onOpenPractice} />
-          ))}
-        </section>
-      )}
+      <PracticeGroup testid="practice-group-overdue" title="Overdue" state="overdue" items={b.overdue}
+                     hint="Catching up matters more than doing it perfectly." onOpen={onOpenPractice} />
+      <PracticeGroup testid="practice-group-due" title="Due today" state="due" items={b.due}
+                     onOpen={onOpenPractice} />
+      <PracticeGroup testid="practice-group-recommended" title="Recommended next" state="recommended" items={b.recommended}
+                     onOpen={onOpenPractice} />
+      <PracticeGroup testid="practice-group-upcoming" title="Also assigned" state="open" items={b.upcoming}
+                     onOpen={onOpenPractice} />
 
-      {done.length > 0 && (
-        <section data-testid="practice-completed-list">
-          <p className="text-[9.5px] font-black uppercase tracking-[0.18em] text-shTextMuted mb-2">Completed</p>
-          <div className="space-y-2">
-            {done.map(hw => (
-              <div key={hw.id} className="rounded-xl border border-shBorder/40 bg-black/10 p-3 flex items-center gap-3">
-                <span className="w-8 h-8 rounded-lg grid place-items-center shrink-0 bg-shPrimary/10 border border-shPrimary/25 text-shPrimary">
-                  <i className="fas fa-check text-[11px]" />
-                </span>
-                <p className="text-[13px] font-black text-shText truncate min-w-0 flex-1">{hw.title || "Practice"}</p>
-              </div>
-            ))}
-          </div>
+      {b.completed.length > 0 && (
+        <section data-testid="practice-group-completed" className="space-y-2.5">
+          <p className="text-[9.5px] font-black uppercase tracking-[0.18em] text-shTextMuted">Recently completed</p>
+          {b.completed.map(hw => (
+            <PracticeAssignmentCard key={hw.id} hw={hw} state="completed" />
+          ))}
         </section>
       )}
 

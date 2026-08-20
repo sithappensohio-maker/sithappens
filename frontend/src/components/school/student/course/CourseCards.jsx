@@ -29,13 +29,25 @@ function moduleState(m) {
   return MODULE_STATE[m.status] || MODULE_STATE.upcoming;
 }
 
-/** Course hero — program promise, real progress, one Continue CTA. */
-export function CourseHero({ detail, roadmap, onResume }) {
-  const pct = Math.max(0, Math.min(100, Math.round(detail?.course_pct ?? 0)));
-  const lessons = roadmap?.modules?.flatMap(m => m.lessons || []) || [];
-  const lessonsDone = lessons.filter(l => l.status === "completed").length;
-  const cpTotal = lessons.filter(l => l.requires_checkpoint || l.checkpoint_enabled).length;
-  const cpPassed = Math.max(0, Math.min(cpTotal, Number(detail?.checkpoints_passed ?? 0)));
+/** Course hero — program promise, real progress, one Continue CTA.
+ *
+ * `progress` is the server's whole-course tally from the home view-model. It
+ * MUST be preferred over anything counted from the roadmap: the roadmap only
+ * carries lessons for modules the client has unlocked, so counting it told a
+ * client on the 120-lesson Service Dog program that their course was 5
+ * lessons long. The roadmap-derived count survives only as a fallback for a
+ * caller that has no progress payload yet. */
+export function CourseHero({ detail, roadmap, progress, onResume }) {
+  const pct = Math.max(0, Math.min(100, Math.round(progress?.course_pct ?? detail?.course_pct ?? 0)));
+  const visibleLessons = roadmap?.modules?.flatMap(m => m.lessons || []) || [];
+  const lessonsDone = Number(progress?.lessons_completed ?? visibleLessons.filter(l => l.status === "completed").length);
+  const lessonsTotal = Number(progress?.lessons_total ?? visibleLessons.length);
+  /* Modules are the third metric because every module IS present in the
+     roadmap. A checkpoint total is not derivable client-side for the same
+     locked-module reason, and a passed-count with no denominator would be
+     worse than showing nothing. */
+  const modulesDone = Number(progress?.modules_completed ?? 0);
+  const modulesTotal = Number(progress?.modules_total ?? roadmap?.modules?.length ?? 0);
   const completed = detail?.status === "completed";
   const current = roadmap?.current_lesson;
 
@@ -58,16 +70,16 @@ export function CourseHero({ detail, roadmap, onResume }) {
             </div>
             <div className="min-w-0">
               <p className="text-[17px] font-black text-shText leading-none" data-testid="course-lessons">
-                {lessonsDone}<span className="text-shTextMuted"> / {lessons.length}</span>
+                {lessonsDone}<span className="text-shTextMuted"> / {lessonsTotal}</span>
               </p>
               <p className="text-[9.5px] uppercase tracking-widest text-shTextMuted mt-1">Lessons done</p>
             </div>
-            {cpTotal > 0 && (
+            {modulesTotal > 0 && (
               <div className="min-w-0">
-                <p className="text-[17px] font-black text-shText leading-none" data-testid="course-checkpoints">
-                  {cpPassed}<span className="text-shTextMuted"> / {cpTotal}</span>
+                <p className="text-[17px] font-black text-shText leading-none" data-testid="course-modules">
+                  {modulesDone}<span className="text-shTextMuted"> / {modulesTotal}</span>
                 </p>
-                <p className="text-[9.5px] uppercase tracking-widest text-shTextMuted mt-1">Checkpoints</p>
+                <p className="text-[9.5px] uppercase tracking-widest text-shTextMuted mt-1">Modules</p>
               </div>
             )}
           </div>
@@ -175,4 +187,71 @@ export function ModuleCard({ module: m, currentLessonId, onOpenLesson, defaultOp
       )}
     </section>
   );
+}
+
+/* ------------------------------------------------------- Locked run summary */
+
+/** A long program ends in a long tail of locked modules — Service Dog opens
+ *  with ONE current module and twenty-three locked ones. Rendering each as a
+ *  full card buries the part the client can act on under identical "Complete X
+ *  before continuing" copy.
+ *
+ *  The tail is folded into a single honest summary that says how much is
+ *  ahead and can be opened by anyone who wants to read the whole plan. Nothing
+ *  is hidden — this is presentation only, and the modules inside are the same
+ *  cards, still locked, still stating their reason. */
+export function LockedModuleRun({ modules, testid = "course-locked-run" }) {
+  const [open, setOpen] = useState(false);
+  if (!modules?.length) return null;
+  const lessons = modules.reduce((n, m) => n + (m.lessons || []).length, 0);
+
+  return (
+    <section data-testid={testid} data-count={modules.length} className="space-y-3">
+      <button type="button" onClick={() => setOpen(v => !v)} aria-expanded={open}
+              data-testid={`${testid}-toggle`}
+              className="w-full text-left rounded-2xl border border-shBorder/50 bg-black/10 px-4 py-3.5 flex items-center gap-3 min-h-[56px] hover:bg-white/[0.02] transition">
+        <span className="w-9 h-9 rounded-xl grid place-items-center shrink-0 border border-shBorder bg-black/20 text-shTextMuted">
+          <i className="fas fa-road text-[12px]" />
+        </span>
+        <span className="min-w-0 flex-1">
+          <span className="block text-[13.5px] font-black text-shText leading-snug">
+            {modules.length} more module{modules.length === 1 ? "" : "s"} ahead
+          </span>
+          <span className="block text-[11.5px] text-shTextMuted mt-0.5">
+            {open ? "Tap to collapse" : "Unlocks as you finish the work before it"}
+            {lessons > 0 ? ` · ${lessons} lesson${lessons === 1 ? "" : "s"}` : ""}
+          </span>
+        </span>
+        <i className={`fas fa-chevron-${open ? "up" : "down"} text-[11px] text-shTextMuted shrink-0`} />
+      </button>
+
+      {open && (
+        <div className="space-y-3" data-testid={`${testid}-modules`}>
+          {modules.map(m => <ModuleCard key={m.id} module={m} defaultOpen={false} />)}
+        </div>
+      )}
+    </section>
+  );
+}
+
+/** Group a roadmap into render items, folding every RUN of consecutive locked
+ *  modules into one summary. A run is only folded when it is long enough that
+ *  the repetition is the problem — a course with two locked modules left reads
+ *  perfectly well as two cards. */
+export function groupCourseModules(modules, { foldAfter = 3 } = {}) {
+  const out = [];
+  let run = [];
+  const flush = () => {
+    if (!run.length) return;
+    if (run.length >= foldAfter) out.push({ kind: "locked_run", id: `locked-${run[0].id}`, modules: run });
+    else for (const m of run) out.push({ kind: "module", id: m.id, module: m });
+    run = [];
+  };
+  for (const m of modules || []) {
+    if (m.status === "locked") { run.push(m); continue; }
+    flush();
+    out.push({ kind: "module", id: m.id, module: m });
+  }
+  flush();
+  return out;
 }

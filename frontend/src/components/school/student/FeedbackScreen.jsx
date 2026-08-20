@@ -122,15 +122,23 @@ function ConversationCard({ thread, onRefresh }) {
   );
 }
 
-export default function FeedbackScreen({ enrollmentId, onAsk, onChanged }) {
+export default function FeedbackScreen({ enrollmentId, onAsk, onChanged, onOpenHistory }) {
   const [history, setHistory] = useState(null);
   const [support, setSupport] = useState(null);
+  // Lesson recaps are the other half of the client's coaching record. They
+  // come from the SAME allowlisted endpoint the history screen uses — this is
+  // a second view of one record, not a second feedback store.
+  const [recaps, setRecaps] = useState([]);
   const load = useCallback(async () => {
     const [h, s] = await Promise.all([api.get(`/portal/school/${enrollmentId}/checkpoint-history`), api.get(`/portal/school/${enrollmentId}/support`)]);
     setHistory(h.data || []); setSupport(s.data || { threads: [], practice_questions: [] });
+    try {
+      const { data: lh } = await api.get(`/portal/school/${enrollmentId}/lesson-history`);
+      setRecaps(lh?.lessons || []);
+    } catch { setRecaps([]); }
     onChanged?.();
   }, [enrollmentId, onChanged]);
-  useEffect(() => { if (!enrollmentId) return; setHistory(null); setSupport(null); load().catch(() => { setHistory([]); setSupport({ threads: [], practice_questions: [] }); }); }, [load, enrollmentId]);
+  useEffect(() => { if (!enrollmentId) return; setHistory(null); setSupport(null); setRecaps([]); load().catch(() => { setHistory([]); setSupport({ threads: [], practice_questions: [] }); }); }, [load, enrollmentId]);
 
   const answeredPractice = useMemo(() => (support?.practice_questions || []).filter((q) => q.answer), [support]);
   const pendingPractice = useMemo(() => (support?.practice_questions || []).filter((q) => !q.answer), [support]);
@@ -140,7 +148,45 @@ export default function FeedbackScreen({ enrollmentId, onAsk, onChanged }) {
     <div className="max-w-3xl mx-auto space-y-5" data-testid="native-feedback-screen">
       <header className="flex items-start justify-between gap-3 flex-wrap"><div><p className="text-[10px] font-black uppercase tracking-[0.22em] text-shAccent">Your trainer is part of the course</p><h1 className="text-2xl sm:text-3xl font-black text-shText mt-1">Trainer Feedback</h1><p className="text-[13px] text-shTextMuted mt-1">Checkpoint reviews, trainer guidance, and your School conversations in one place.</p></div><button onClick={() => onAsk?.({})} className="min-h-[42px] px-4 rounded-xl border border-shSecondary/35 text-shSecondary text-[11px] font-black uppercase tracking-widest"><i className="fas fa-comment-dots mr-1.5" />Ask Trainer</button></header>
 
-      {history.length === 0 ? <EmptyState icon="fa-comment-dots" message="No trainer feedback yet — checkpoint reviews will appear here as you progress." testid="native-feedback-empty" /> : <section className="space-y-3"><p className="text-[10px] font-black uppercase tracking-[0.2em] text-shTextMuted">Checkpoint reviews · {history.length}</p>{history.map((e) => <FeedbackEntry key={e.id} entry={e} onAsk={onAsk} />)}</section>}
+      {/* Lesson recaps — what a trainer wrote after an in-person or hybrid
+          lesson. Most recent first; the full record stays one tap away. */}
+      {recaps.length > 0 && (
+        <section className="space-y-2.5" data-testid="feedback-lesson-recaps">
+          <div className="flex items-end justify-between gap-3">
+            <div>
+              <p className="text-[10px] font-black uppercase tracking-[0.2em] text-shPrimary">Lesson recaps</p>
+              <p className="text-[12px] text-shTextMuted mt-1">Your trainer&apos;s write-up after each session.</p>
+            </div>
+            {onOpenHistory && (
+              <button type="button" onClick={onOpenHistory} data-testid="feedback-view-all-recaps"
+                      className="text-[11px] font-black text-shSecondary shrink-0 underline underline-offset-2">View all</button>
+            )}
+          </div>
+          {recaps.slice(0, 3).map((l) => (
+            <article key={l.session_id} className="rounded-2xl border border-shBorder bg-[var(--sh-card-base)] p-4" data-testid={`feedback-recap-${l.session_id}`}>
+              <p className="text-[13.5px] font-black text-shText">{l.lesson_name || "Training session"}</p>
+              <p className="text-[11px] text-shTextMuted mt-0.5">{[l.module_name, l.trainer_name ? `with ${l.trainer_name}` : null, fmt(l.date)].filter(Boolean).join(" · ")}</p>
+              {l.trainer_feedback && <p className="mt-2.5 text-[13px] text-gray-200 leading-relaxed border-l-2 border-shPrimary/35 pl-3 whitespace-pre-wrap">{l.trainer_feedback}</p>}
+              {!l.trainer_feedback && l.what_went_well && <p className="mt-2.5 text-[13px] text-shTextMuted leading-relaxed"><span className="font-black text-shPrimary">What went well: </span>{l.what_went_well}</p>}
+            </article>
+          ))}
+        </section>
+      )}
+
+      {history.length > 0 && (
+        <section className="space-y-3">
+          <p className="text-[10px] font-black uppercase tracking-[0.2em] text-shTextMuted">Checkpoint reviews · {history.length}</p>
+          {history.map((e) => <FeedbackEntry key={e.id} entry={e} onAsk={onAsk} />)}
+        </section>
+      )}
+
+      {/* Only claim there is nothing yet when EVERY source is genuinely empty —
+          a client with practice feedback but no checkpoint has still heard
+          from their trainer. */}
+      {history.length === 0 && recaps.length === 0 && (support.practice_reviews || []).length === 0
+        && (support.threads || []).length === 0 && (support.practice_questions || []).length === 0 && (
+        <EmptyState icon="fa-comment-dots" message="No trainer feedback yet — recaps and checkpoint reviews will appear here as you progress." testid="native-feedback-empty" />
+      )}
 
       {(support.practice_reviews || []).length > 0 && (
         <section className="space-y-2" data-testid="native-practice-reviews">

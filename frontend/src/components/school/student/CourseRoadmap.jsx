@@ -1,6 +1,6 @@
 import EmptyState from "../../training/EmptyState";
 import { buildSchoolRoadmap, moduleQuizChip } from "../../../lib/onlineSchoolPolish";
-import { CourseHero, ModuleCard } from "./course/CourseCards";
+import { CourseHero, ModuleCard, LockedModuleRun, groupCourseModules } from "./course/CourseCards";
 
 const QUIZ_CHIP_CLS = {
   passed: "bg-shPrimary/15 text-shPrimary",
@@ -19,7 +19,7 @@ const QUIZ_CHIP_CLS = {
  * progression decision — this screen only presents them. Lesson clicks
  * navigate through the caller exactly as before.
  */
-export default function CourseRoadmap({ detail, loading, onOpenLesson, onResume }) {
+export default function CourseRoadmap({ detail, progress, loading, onOpenLesson, onResume }) {
   if (loading && !detail) {
     return (
       <div className="space-y-3" data-testid="course-roadmap-loading">
@@ -43,7 +43,7 @@ export default function CourseRoadmap({ detail, loading, onOpenLesson, onResume 
 
   return (
     <div className="space-y-4" data-testid="course-roadmap">
-      <CourseHero detail={detail} roadmap={roadmap} onResume={isCompleted ? null : onOpenLesson} />
+      <CourseHero detail={detail} roadmap={roadmap} progress={progress} onResume={isCompleted ? null : onOpenLesson} />
 
       {isCompleted && (
         <p className="text-[13px] font-black text-shPrimary" data-testid="course-completed-banner">
@@ -55,7 +55,16 @@ export default function CourseRoadmap({ detail, loading, onOpenLesson, onResume 
         <EmptyState icon="fa-book-open" message="This course doesn't have any modules yet." testid="course-roadmap-empty" />
       ) : (
         <div className="space-y-3" data-testid="course-roadmap-modules">
-          {modules.map((m) => {
+          {/* A long run of consecutive LOCKED modules folds into one summary.
+              Service Dog opens with one current module and twenty-three locked
+              ones; as separate cards that is twenty-three near-identical
+              "Complete X before continuing" blocks between the client and the
+              rest of the page. Nothing is removed — the run expands. */}
+          {groupCourseModules(modules).map((item) => {
+            if (item.kind === "locked_run") {
+              return <LockedModuleRun key={item.id} modules={item.modules} />;
+            }
+            const m = item.module;
             const chip = moduleQuizChip(m.quiz);
             return (
               <div key={m.id}>

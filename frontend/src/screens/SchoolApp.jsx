@@ -282,7 +282,10 @@ export default function SchoolApp({ path, clientName, onNavigate, onExit }) {
       screen = <AccessEndedState onHome={() => go("home")} onExit={onExit} />;
     } else if (parsed.view === "course") {
       screen = (
-        <CourseRoadmap detail={detail} loading={!detail}
+        /* `progress` carries the WHOLE-course totals. The roadmap deliberately
+           withholds lessons inside locked modules, so anything counted from it
+           describes only the unlocked part of the course. */
+        <CourseRoadmap detail={detail} progress={home?.progress} loading={!detail}
                        onOpenLesson={(lid) => go("lesson", lid)}
                        onResume={() => home?.current_action ? runAction(home.current_action) : go("today")} />
       );
@@ -327,9 +330,11 @@ export default function SchoolApp({ path, clientName, onNavigate, onExit }) {
                         onPrimaryAction={() => runAction(home?.current_action)} />
       );
     } else if (parsed.view === "feedback") {
-      screen = <FeedbackScreen enrollmentId={selectedId} onAsk={openAsk} onChanged={refreshAll} />;
+      screen = <FeedbackScreen enrollmentId={selectedId} onAsk={openAsk} onChanged={refreshAll}
+                               onOpenHistory={() => go("lesson_history")} />;
     } else if (parsed.view === "progress") {
-      screen = <ProgressScreen enrollmentId={selectedId} home={home} detail={detail} onOpenHistory={() => go("lesson_history")} />;
+      screen = <ProgressScreen enrollmentId={selectedId} home={home} detail={detail} onOpenHistory={() => go("lesson_history")}
+                               onPrimaryAction={() => runAction(home?.current_action)} />;
     } else if (parsed.view === "lesson_history") {
       // Per-ATTEMPT training history. selectedId is this School enrollment,
       // so Repeat Program attempts never show each other's lessons.
