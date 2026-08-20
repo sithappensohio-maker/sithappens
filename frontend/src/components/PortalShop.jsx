@@ -6,6 +6,8 @@ import NeonEdge from "./premium/NeonEdge";
 import PremiumButton from "./premium/PremiumButton";
 import { accentRgb } from "./premium/tokens";
 import ItemThumbnail from "./ItemThumbnail";
+import { isFreeClaimable } from "../lib/freeCourseClaim";
+import { SELECTED_ENROLLMENT_KEY } from "../lib/studentSchool";
 import ShopItemDetail from "./ShopItemDetail";
 import HuskyDogImage from "./brand/HuskyDogImage";
 import {
@@ -208,9 +210,18 @@ function ItemCard({ item, cartQty, onAdd, onOpenDetail, mode = "authenticated", 
             </p>
           </div>
         ) : (
-          <p className="text-shPrimary font-black text-[18px]">{money(item.price)}</p>
+          isFreeClaimable(item)
+            ? <p className="text-shPrimary font-black text-[18px]" data-testid={`shop-free-badge-${item.id}`}>FREE</p>
+            : <p className="text-shPrimary font-black text-[18px]">{money(item.price)}</p>
         )}
-        {isShopifyMerch ? (
+        {/* A free course never gets a cart CTA on the grid. It opens its own
+            detail view, which is where dog selection and the claim live. */}
+        {isFreeClaimable(item) ? (
+          <PremiumButton variant="primary" onClick={(e) => { e.stopPropagation(); onOpenDetail?.(item); }}
+                         data-testid={`shop-start-free-${item.id}`} className="w-full justify-center">
+            Start Free Course
+          </PremiumButton>
+        ) : isShopifyMerch ? (
           <PremiumButton variant="primary" onClick={(e) => { e.stopPropagation(); openShopifyListing(item); }} data-testid={`shop-view-options-${item.id}`} className="w-full justify-center">
             View Options <i className="fas fa-arrow-up-right-from-square ml-1 text-[11px]" />
           </PremiumButton>
@@ -579,6 +590,10 @@ export default function PortalShop({
   // online_school-fulfillment program's detail view; Portal.jsx wires this
   // to closing the Shop overlay and opening the Online School dashboard.
   onGoToOnlineSchool,
+  // Free Online School claim — Portal.jsx wires this to opening the
+  // client's add-dog workflow, so a client with no dog is routed into the
+  // real onboarding rather than being offered a placeholder.
+  onAddDog,
 }) {
   const [items, setItems] = useState([]);
   const [loading, setLoading] = useState(true);
@@ -610,6 +625,27 @@ export default function PortalShop({
   // same endpoint Portal.jsx itself uses) — needed for the dog-selection
   // step on an online_school-fulfillment program and to label cart lines.
   const [dogs, setDogs] = useState([]);
+
+  /* Start Free Course — the claim path. Deliberately NOT the cart: a free
+     course has no line, no total and no order, so nothing here touches
+     checkout. The server does every eligibility check and is idempotent, so
+     a double-click converges on the enrollment that already exists rather
+     than creating a second one. */
+  const [freeClaim, setFreeClaim] = useState(null);      // success card payload
+  const [claiming, setClaiming] = useState(false);
+  const claimFreeCourse = async (item, dogId) => {
+    if (claiming) return;                                 // local double-click guard
+    setClaiming(true);
+    try {
+      const { data } = await api.post("/shop/free-course/claim", { program_id: item.id, dog_id: dogId });
+      setFreeClaim({ ...data, program: item });
+    } catch (e) {
+      const d = e?.response?.data?.detail;
+      toast.error(typeof d === "string" ? d : d?.message || "Couldn't start this course — try again.");
+    } finally {
+      setClaiming(false);
+    }
+  };
   useEffect(() => {
     if (mode !== "authenticated") return;
     api.get("/dogs").then(({ data }) => setDogs(data || [])).catch(() => {});
@@ -1096,7 +1132,42 @@ export default function PortalShop({
         </div>
       )}
 
-      {detail ? (
+      {/* You're in! — a free claim ends in School, never in a $0 receipt. */}
+      {freeClaim ? (
+        <div className="max-w-lg mx-auto text-center py-10" data-testid="free-course-success">
+          <div className="w-16 h-16 rounded-2xl mx-auto grid place-items-center border border-shPrimary/35 bg-shPrimary/10">
+            <i className="fas fa-graduation-cap text-shPrimary text-[22px]" />
+          </div>
+          <p className="text-[10px] font-black uppercase tracking-[0.22em] text-shPrimary mt-4">
+            {freeClaim.created ? "You're in!" : "Already yours"}
+          </p>
+          <h2 className="text-[22px] sm:text-[26px] font-black text-shText mt-1.5 leading-tight text-balance">
+            {freeClaim.program_name || freeClaim.program?.name}
+          </h2>
+          <p className="text-[13px] text-shTextMuted mt-2 leading-relaxed">
+            {freeClaim.dog_name
+              ? `${freeClaim.dog_name}'s course is ready in School.`
+              : "Your course is ready in School."}
+          </p>
+          <PremiumButton variant="primary" data-testid="free-course-start-lesson"
+                         onClick={() => {
+                           /* Land on the course they just claimed, not on
+                              whichever enrollment School last had selected.
+                              Uses School's OWN selection key rather than a
+                              second routing mechanism. */
+                           try { sessionStorage.setItem(SELECTED_ENROLLMENT_KEY, freeClaim.school_enrollment_id); } catch { /* ignore */ }
+                           setFreeClaim(null);
+                           onGoToOnlineSchool?.();
+                         }}
+                         className="w-full sm:w-auto sm:px-8 justify-center py-3 mt-6">
+            <i className="fas fa-play mr-1.5 text-[11px]" />Start Lesson 1
+          </PremiumButton>
+          <button type="button" onClick={() => setFreeClaim(null)} data-testid="free-course-back-to-shop"
+                  className="block mx-auto mt-4 min-h-[44px] text-[12px] font-black uppercase tracking-widest text-shTextMuted hover:text-shText">
+            Back to Shop
+          </button>
+        </div>
+      ) : detail ? (
         <ShopItemDetail
           kind={detail.kind}
           itemId={detail.id}
@@ -1108,6 +1179,8 @@ export default function PortalShop({
           mode={mode}
           onRequireAccount={onRequireAccount}
           onGoToOnlineSchool={onGoToOnlineSchool}
+          onClaimFreeCourse={claimFreeCourse}
+          onAddDog={onAddDog}
           dogs={dogs}
         />
       ) : (

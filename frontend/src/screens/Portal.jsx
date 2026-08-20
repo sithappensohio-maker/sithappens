@@ -36,6 +36,7 @@ import NeedsPasswordCard from "../components/NeedsPasswordCard";
 import PaymentOptionsCard from "../components/PaymentOptionsCard";
 import PortalInvoices from "../components/PortalInvoices";
 import PortalShop from "../components/PortalShop";
+import { consumeFreeClaimIntent } from "../lib/freeCourseClaim";
 import GuestCartMergeReview from "../components/GuestCartMergeReview";
 import { readGuestCart, consumePendingShopRedirect } from "../lib/shopGuestCart";
 import PortalPhotography from "../components/PortalPhotography";
@@ -602,6 +603,20 @@ export default function Portal() {
   // comment, but this covers any real navigation elsewhere and back), and
   // (2) whether a non-empty guest cart exists at all, which decides whether
   // the merge-review dialog below ever mounts.
+  /* Free-course continuation. A visitor who pressed Start Free Course while
+     logged out had a real intent; signing in must return them to that course
+     rather than dropping them on the dashboard. GuestAuthModal normally keeps
+     them on the item page already, so this only fires when authentication
+     actually navigated away. Consumed exactly once. */
+  useEffect(() => {
+    const intent = consumeFreeClaimIntent();
+    if (!intent) return;
+    const path = `/shop/item/training_program/${encodeURIComponent(intent.program_id)}`;
+    if (window.location.pathname === path) return;
+    window.history.pushState({}, "", path);
+    setShopOpen(true);
+  }, []);
+
   const [showGuestMergeReview, setShowGuestMergeReview] = useState(false);
   // Tracks whether a non-empty guest cart still exists in localStorage —
   // "Not Now" on the review deliberately leaves it there (never cleared
@@ -1041,7 +1056,8 @@ export default function Portal() {
         <div className="app-scroll-root flex-1 min-h-0 overflow-y-auto overscroll-contain p-3 sm:p-6" data-scroll-root>
           <PortalShop initialTab={shopInitialTab} fullScreen shopifyStoreUrl={pubSettings?.client_portal_links?.shopify_store_url}
                       cart={shopCart} onCartChange={setShopCart}
-                      onGoToOnlineSchool={() => { setShopOpen(false); openSchool(); }} />
+                      onGoToOnlineSchool={() => { setShopOpen(false); openSchool(); }}
+                      onAddDog={() => { setShopOpen(false); setDogModal({ open: true, dog: null }); }} />
         </div>
         {showGuestMergeReview && (
           <GuestCartMergeReview

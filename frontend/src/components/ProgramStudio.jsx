@@ -577,6 +577,53 @@ function SetupTab({ program, set, meta, allPrograms, hwTemplates, emailTemplates
                     {program.purchase_fulfillment === "online_school" && (
                       <p className="text-[11px] text-shAccent"><i className="fas fa-circle-info mr-1"/>Buying this program enrolls the selected dog directly into Online School — no training credits are involved.</p>
                     )}
+
+                    {/* Free client enrollment. Deliberately an explicit
+                        opt-in and NOT inferred from a $0 price: an imported
+                        draft or a program you haven't priced yet also sits at
+                        $0, and those must never become claimable. Only
+                        offered once the program can actually deliver Online
+                        School access. */}
+                    {(() => {
+                      const priced = Number(program.price || 0) > 0;
+                      const canBeFree = program.purchase_fulfillment === "online_school" && canOnlineSchool;
+                      const on = !!program.free_enrollment_enabled;
+                      return (
+                        <div className="rounded-xl border border-shBorder/50 bg-black/10 p-3" data-testid="prog-free-enrollment-block">
+                          <label className={`flex items-start justify-between gap-3 ${canBeFree && !priced ? "" : "opacity-50"}`}>
+                            <span>
+                              <span className="block text-[12px] font-black text-shText">Free client enrollment</span>
+                              <span className="block text-[10px] text-shTextMuted mt-0.5">Allow clients to start this program without payment.</span>
+                            </span>
+                            <input type="checkbox" className="w-5 h-5 mt-0.5 shrink-0"
+                                   checked={on} disabled={!canBeFree || priced}
+                                   onChange={(e) => set({ free_enrollment_enabled: e.target.checked })}
+                                   data-testid="prog-free-enrollment-enabled"/>
+                          </label>
+                          {!canBeFree && (
+                            <p className="text-[10.5px] text-shTextMuted mt-2" data-testid="prog-free-enrollment-needs-school">
+                              <i className="fas fa-circle-info mr-1"/>Set this program to grant Online School access first.
+                            </p>
+                          )}
+                          {canBeFree && priced && (
+                            <p className="text-[10.5px] text-shTextMuted mt-2" data-testid="prog-free-enrollment-priced">
+                              <i className="fas fa-circle-info mr-1"/>This program has a price, so it is sold rather than claimed. Set the price to $0 to offer it free.
+                            </p>
+                          )}
+                          {/* The distinction that matters most: a $0 program
+                              is either deliberately FREE or simply not priced
+                              yet, and staff must be able to tell instantly. */}
+                          {canBeFree && !priced && (
+                            <p className={`text-[10.5px] mt-2 ${on ? "text-shPrimary" : "text-shAccent"}`} data-testid="prog-free-enrollment-state">
+                              <i className={`fas ${on ? "fa-gift" : "fa-triangle-exclamation"} mr-1`}/>
+                              {on
+                                ? "FREE — clients can start this course themselves without paying."
+                                : "Price not configured — $0 but NOT claimable. Clients cannot buy or start it."}
+                            </p>
+                          )}
+                        </div>
+                      );
+                    })()}
                   </div>
                 );
               })()}
@@ -710,6 +757,7 @@ function SetupTab({ program, set, meta, allPrograms, hwTemplates, emailTemplates
               <SetupSummaryRow label="Price" value={`$${Number(program.price || 0).toFixed(2)}`}/>
               <SetupSummaryRow label="Shop" value={program.available_online ? "Available online" : "Staff / manual only"}/>
               <SetupSummaryRow label="Purchase grants" value={program.purchase_fulfillment === "online_school" ? "Online School access" : "Training credits"}/>
+              <SetupSummaryRow label="Client price" value={program.free_enrollment_enabled ? "Free — clients can start it themselves" : Number(program.price || 0) > 0 ? `$${Number(program.price).toFixed(2)}` : "Price not configured"}/>
             </div>
             <div className="rounded-xl border border-shPrimary/20 bg-shPrimary/[0.04] p-3">
               <p className="text-[10px] font-black text-shPrimary">Next best move</p>
