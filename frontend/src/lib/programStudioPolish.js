@@ -178,3 +178,130 @@ export function remapProgramHomework(program, idMap) {
   }));
   return { ...program, welcome_homework_template_id: one(program?.welcome_homework_template_id), modules };
 }
+
+// ---------------------------------------------------------------------------
+// Program Studio UX polish — outline scale, lesson navigation, readiness.
+// Everything below is PURE and reads the same in-memory draft the editors
+// already use. No new stored field, no second readiness model: the counts
+// roll up computeLessonCompleteness / computeSkillCompleteness verbatim.
+// ---------------------------------------------------------------------------
+
+// A checkpoint counts as "ready" only when it is switched on AND actually
+// gradeable — a rubric with no criteria cannot be scored, and a submission
+// with no instructions cannot be filmed. Lessons WITHOUT a checkpoint are not
+// counted at all (they are not incomplete, they simply have none).
+export function computeCheckpointCompleteness(lesson) {
+  const cp = (lesson || {}).checkpoint || {};
+  return [
+    { key: "handler_criteria", label: "Handler criteria", state: (cp.handler_criteria || []).length > 0 ? "complete" : "needs_attention" },
+    { key: "dog_criteria", label: "Dog criteria", state: (cp.dog_criteria || []).length > 0 ? "complete" : "needs_attention" },
+    { key: "submission_instructions", label: "Submission instructions", state: (cp.submission_instructions || "").trim() ? "complete" : "needs_attention" },
+  ];
+}
+
+export function lessonHasCheckpoint(lesson) {
+  return !!((lesson || {}).checkpoint || {}).enabled;
+}
+
+/** Curriculum order, flattened. The single source of truth for "what is the
+ *  next lesson" — walks modules in order, then lessons within each module, so
+ *  Previous/Next crosses module boundaries exactly the way the outline reads. */
+export function flattenLessons(modules) {
+  const out = [];
+  for (const m of modules || []) {
+    for (const l of m.lessons || []) {
+      out.push({ moduleKey: m._key, lessonKey: l._key, moduleName: m.name, lessonName: l.name });
+    }
+  }
+  return out;
+}
+
+/** Neighbours of the currently-selected lesson in curriculum order.
+ *  Returns {prev, next, index, total}; prev/next are null at the ends. */
+export function lessonNeighbours(modules, selected) {
+  const flat = flattenLessons(modules);
+  const idx = selected?.lessonKey ? flat.findIndex(x => x.lessonKey === selected.lessonKey) : -1;
+  if (idx === -1) return { prev: null, next: null, index: -1, total: flat.length };
+  return {
+    prev: idx > 0 ? flat[idx - 1] : null,
+    next: idx < flat.length - 1 ? flat[idx + 1] : null,
+    index: idx, total: flat.length,
+  };
+}
+
+/** Readiness rollup for the header metrics. Reuses the existing completeness
+ *  dimensions so Studio can never disagree with the per-item checklists. */
+export function computeProgramReadiness(modules) {
+  const mods = modules || [];
+  let lessonsReady = 0, lessonsTotal = 0;
+  let skillsReady = 0, skillsTotal = 0;
+  let cpReady = 0, cpTotal = 0;
+  for (const m of mods) {
+    for (const l of m.lessons || []) {
+      lessonsTotal += 1;
+      if (rollUpCompleteness(computeLessonCompleteness(l)) === "complete") lessonsReady += 1;
+      if (lessonHasCheckpoint(l)) {
+        cpTotal += 1;
+        if (rollUpCompleteness(computeCheckpointCompleteness(l)) === "complete") cpReady += 1;
+      }
+    }
+    for (const g of m.goals || []) {
+      skillsTotal += 1;
+      if (rollUpCompleteness(computeSkillCompleteness(g)) === "complete") skillsReady += 1;
+    }
+  }
+  return {
+    modules: { total: mods.length },
+    lessons: { ready: lessonsReady, total: lessonsTotal },
+    skills: { ready: skillsReady, total: skillsTotal },
+    checkpoints: { ready: cpReady, total: cpTotal },
+  };
+}
+
+/** First item still needing attention, for the "click a metric to jump"
+ *  affordance. Returns a `selected`-shaped object or null. */
+export function firstIncomplete(modules, kind) {
+  for (const m of modules || []) {
+    if (kind === "skills") {
+      for (const g of m.goals || []) {
+        if (rollUpCompleteness(computeSkillCompleteness(g)) !== "complete") return { moduleKey: m._key, skillKey: g._key };
+      }
+      continue;
+    }
+    for (const l of m.lessons || []) {
+      if (kind === "lessons" && rollUpCompleteness(computeLessonCompleteness(l)) !== "complete") {
+        return { moduleKey: m._key, lessonKey: l._key };
+      }
+      if (kind === "checkpoints" && lessonHasCheckpoint(l)
+          && rollUpCompleteness(computeCheckpointCompleteness(l)) !== "complete") {
+        return { moduleKey: m._key, lessonKey: l._key };
+      }
+    }
+  }
+  return null;
+}
+
+/** Case-insensitive outline filter across module, lesson and skill names.
+ *  READ-ONLY: returns a filtered VIEW of the same objects (never a copy that
+ *  could be edited and lost, and never a mutation of the draft). A module is
+ *  kept when its own name matches (with all children) or when any child
+ *  matches (with only the matching children). */
+export function filterCurriculum(modules, query) {
+  const q = (query || "").trim().toLowerCase();
+  if (!q) return { modules: modules || [], filtered: false, matchCount: 0 };
+  const hit = (s) => (s || "").toLowerCase().includes(q);
+  const out = [];
+  let matchCount = 0;
+  for (const m of modules || []) {
+    const lessons = (m.lessons || []).filter(l => hit(l.name));
+    const goals = (m.goals || []).filter(g => hit(g.name));
+    if (hit(m.name)) {
+      matchCount += 1 + (m.lessons || []).length + (m.goals || []).length;
+      out.push(m);
+    } else if (lessons.length || goals.length) {
+      matchCount += lessons.length + goals.length;
+      out.push({ ...m, lessons, goals });
+    }
+  }
+  return { modules: out, filtered: true, matchCount };
+}

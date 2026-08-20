@@ -8,9 +8,9 @@
 import CurriculumTreeItem from "./CurriculumTreeItem";
 import { computeLessonCompleteness, computeSkillCompleteness, rollUpCompleteness } from "../../lib/programStudioPolish";
 
-function TreeBtn({ icon, onClick, disabled, title, danger, tiny }) {
+function TreeBtn({ icon, onClick, disabled, title, danger, tiny, testid }) {
   return (
-    <button onClick={onClick} disabled={disabled} title={title} aria-label={title}
+    <button onClick={onClick} disabled={disabled} title={title} aria-label={title} data-testid={testid}
             className={`shrink-0 ${tiny ? "w-7 h-7 text-[9px]" : "w-8 h-8 text-[10px]"} rounded-lg flex items-center justify-center transition ${danger ? "text-red-400/75 hover:text-red-300 hover:bg-red-500/10" : "text-shTextMuted hover:text-shText hover:bg-white/[0.05]"} disabled:opacity-20`}>
       <i className={`fas ${icon}`}/>
     </button>
@@ -34,13 +34,21 @@ export default function CurriculumTree({
   moveModule, duplicateModule, removeModule,
   addSkill, addLesson, moveSkill, moveLesson, removeSkill, removeLesson,
   testid,
+  // Collapse state is owned by the caller so Collapse All / Expand All and
+  // the auto-expand of the selected module stay in one place. A module is
+  // collapsed only when its key is in this set AND it is not the selected
+  // one — selection always wins, so collapsing can never hide what you are
+  // editing. Purely presentational: nothing here mutates the draft.
+  collapsedModules, onToggleModule,
 }) {
+  const isCollapsed = (m) => !!collapsedModules?.has?.(m._key) && selected?.moduleKey !== m._key;
   return (
     <div role="tree" aria-label="Curriculum outline" className="space-y-2.5" data-testid={testid}>
       {modules.map((m, mi) => {
         const isModSel = selected?.moduleKey === m._key && !selected.lessonKey && !selected.skillKey;
         const lessonCount = (m.lessons || []).length;
         const skillCount = (m.goals || []).length;
+        const collapsed = isCollapsed(m);
         return (
           <div key={m._key} className={`overflow-hidden rounded-2xl border transition ${selected?.moduleKey === m._key ? "border-shPrimary/30 bg-shPrimary/[0.025]" : "border-shBorder/60 bg-black/20"}`}>
             <div className="px-2 pt-2">
@@ -50,6 +58,10 @@ export default function CurriculumTree({
                 testid={testid ? `${testid}-module-${m._key}` : undefined}
                 actions={(
                   <>
+                    <TreeBtn icon={collapsed ? "fa-plus" : "fa-minus"}
+                             onClick={(e) => { e.stopPropagation(); onToggleModule?.(m._key); }}
+                             title={collapsed ? "Expand module" : "Collapse module"}
+                             testid={testid ? `${testid}-toggle-${m._key}` : undefined}/>
                     <TreeBtn icon="fa-chevron-up" onClick={(e) => { e.stopPropagation(); moveModule(m._key, -1); }} disabled={mi === 0} title="Move module up"/>
                     <TreeBtn icon="fa-chevron-down" onClick={(e) => { e.stopPropagation(); moveModule(m._key, 1); }} disabled={mi === modules.length - 1} title="Move module down"/>
                     <TreeBtn icon="fa-copy" onClick={(e) => { e.stopPropagation(); duplicateModule(m._key); }} title="Duplicate module"/>
@@ -59,7 +71,7 @@ export default function CurriculumTree({
               />
             </div>
 
-            <div className="px-2 pb-2.5 pt-1.5 space-y-2">
+            {!collapsed && <div className="px-2 pb-2.5 pt-1.5 space-y-2">
               <div className="rounded-xl border border-shBorder/40 bg-black/10 overflow-hidden">
                 <div className="px-2.5 py-2 flex items-center justify-between gap-2 border-b border-shBorder/30">
                   <span className="text-[9px] font-black uppercase tracking-[0.16em] text-shSecondary">Lessons</span>
@@ -111,7 +123,7 @@ export default function CurriculumTree({
                   <AddRowButton tone="accent" onClick={() => addSkill(m._key)} testid={testid ? `${testid}-add-skill-${m._key}` : undefined} icon="fa-plus">Add skill</AddRowButton>
                 </div>
               </div>
-            </div>
+            </div>}
           </div>
         );
       })}

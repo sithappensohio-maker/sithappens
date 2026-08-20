@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { api, formatErr } from "../lib/api";
 import { useConfirm } from "../lib/useConfirm";
 import CsvImportButton from "./CsvImportButton";
@@ -10,7 +10,8 @@ import CurriculumTree from "./training/CurriculumTree";
 import ContentCompleteness from "./training/ContentCompleteness";
 import ProgramPreviewPanel from "./training/ProgramPreviewPanel";
 import PublishReadinessPanel from "./training/PublishReadinessPanel";
-import { computeLessonCompleteness, computeSkillCompleteness, resolveValidationTarget } from "../lib/programStudioPolish";
+import { computeLessonCompleteness, computeSkillCompleteness, resolveValidationTarget,
+         computeProgramReadiness, filterCurriculum, lessonNeighbours, firstIncomplete } from "../lib/programStudioPolish";
 import HomeworkTemplateEditor from "./HomeworkTemplateEditor";
 import HuskyDogImage from "./brand/HuskyDogImage";
 
@@ -246,6 +247,16 @@ export default function ProgramStudio({ programId, initialProgram, meta, allProg
   // ---- save / draft / publish -----------------------------------------
   const buildPayload = () => stripKeys(program);
 
+  // Program Studio does NOT autosave — it has two explicit buttons (Save Draft
+  // and Save Live). So the honest signal is "unsaved changes", never a fake
+  // "Saved". The baseline is the serialized payload as last persisted (or as
+  // loaded); anything that differs from it is genuinely unsaved work.
+  const [savedBaseline, setSavedBaseline] = useState(() => JSON.stringify(stripKeys(withKeys(initialProgram))));
+  const currentSerialized = JSON.stringify(stripKeys(program));
+  const dirty = currentSerialized !== savedBaseline;
+  const markSaved = () => setSavedBaseline(JSON.stringify(stripKeys(program)));
+  const saveState = saving ? "saving" : dirty ? "unsaved" : "saved";
+
   const saveLive = async () => {
     setErr(""); setSaving(true);
     try {
@@ -280,6 +291,7 @@ export default function ProgramStudio({ programId, initialProgram, meta, allProg
       const { data } = await api.put(`/programs/${programId}?save_as_draft=true`, buildPayload());
       setDraftMeta({ saved_at: data.draft?.saved_at });
       setValidation(null);
+      markSaved();
     } catch (e) { setErr(formatErr(e.response?.data?.detail) || "Draft save failed"); }
     finally { setSaving(false); }
   };
@@ -340,7 +352,14 @@ export default function ProgramStudio({ programId, initialProgram, meta, allProg
     finally { setValidating(false); }
   };
 
-  const handleCancel = () => {
+  const handleCancel = async () => {
+    // Closing is the one place unsaved curriculum work can actually be lost —
+    // paging between lessons keeps everything in the same in-memory draft.
+    if (dirty && !(await confirm({
+      title: "Discard unsaved changes?",
+      body: "This program has edits that have not been saved as a draft or published. Closing now loses them.",
+      confirmText: "Discard changes", cancelText: "Keep editing", tone: "danger",
+    }))) return;
     // Drop any not-yet-saved photo upload from this session (mirrors the
     // old ProgramEditor's cleanup — but must live here now, since only the
     // Studio's own live state knows the current in-progress image_id).
@@ -413,14 +432,27 @@ export default function ProgramStudio({ programId, initialProgram, meta, allProg
               validation={validation} validating={validating} onRunValidation={runValidation} onValidationNavigate={handleValidationNavigate}
               previewTab={previewTab} setPreviewTab={setPreviewTab}
               mobileStage={mobileStage} setMobileStage={setMobileStage}
+              saveState={saveState}
               isNew={isNew} draftMeta={draftMeta} impact={impact} loadingImpact={loadingImpact} onPublish={publish} saving={saving}
             />
           )}
         </div>
 
         <div className="relative px-3 sm:px-6 py-2.5 sm:py-3 border-t border-shBorder/70 bg-black/30 flex flex-col-reverse sm:flex-row sm:flex-wrap justify-between items-stretch sm:items-center gap-2 sm:gap-3 shrink-0">
-          {err ? <p className="text-red-400 text-[12px] font-bold flex-1 min-w-[200px] rounded-xl border border-red-500/20 bg-red-500/[0.06] px-3 py-2" data-testid="studio-err">{err}</p> : <span className="flex-1"/>}
-          <div className="grid grid-cols-2 sm:flex sm:flex-wrap gap-2 shrink-0">
+          {err
+            ? <p className="text-red-400 text-[12px] font-bold flex-1 min-w-[200px] rounded-xl border border-red-500/20 bg-red-500/[0.06] px-3 py-2" data-testid="studio-err">{err}</p>
+            : (
+              /* Honest save state. There is no autosave here, so "Saved" is
+                 only ever shown when the current draft genuinely matches what
+                 was last persisted. */
+              <p className={`flex-1 min-w-0 text-[11.5px] font-black uppercase tracking-widest ${saveState === "unsaved" ? "text-shAccent" : saveState === "saving" ? "text-shSecondary" : "text-shTextMuted"}`}
+                 data-testid="studio-save-state" data-state={saveState}>
+                {saveState === "saving" && <><i className="fas fa-spinner fa-spin mr-1.5"/>Saving…</>}
+                {saveState === "unsaved" && <><i className="fas fa-circle-dot mr-1.5"/>Unsaved changes</>}
+                {saveState === "saved" && <><i className="fas fa-check mr-1.5"/>Saved</>}
+              </p>
+            )}
+          <div className="grid grid-cols-3 sm:flex sm:flex-wrap gap-2 shrink-0">
             <button onClick={handleCancel} className="text-shTextMuted hover:text-shText font-bold text-[12px] px-3 py-2.5 rounded-lg hover:bg-white/[0.04] transition min-h-[44px]">Cancel</button>
             {!isNew && draftMeta && (
               <button onClick={discardDraft} className="bg-red-500/[0.08] text-red-400 border border-red-500/25 px-3 py-2 rounded-lg font-black text-[11px] uppercase tracking-[0.1em] hover:bg-red-500/[0.13] transition">
@@ -733,12 +765,43 @@ function SetupSummaryRow({ label, value }) {
 // column below is always in the DOM, just hidden/shown per breakpoint and
 // mobileStage, so state (scroll position, unsaved edits) never resets when
 // switching stages.
+// A search result is always fully expanded — collapsing a filtered view would
+// hide the very matches the search surfaced. Module-level identity keeps the
+// prop stable across renders.
+const EMPTY_COLLAPSED = new Set();
+
+/* Previous / Next lesson. Order comes from flattenLessons, which walks modules
+   then lessons — so paging crosses module boundaries exactly the way the
+   outline reads, and the ends are genuinely disabled rather than wrapping. */
+function LessonPager({ neighbours, onGo, testid }) {
+  const { prev, next, index, total } = neighbours;
+  return (
+    <div className="flex items-center justify-between gap-2 mb-3" data-testid={testid}>
+      <button type="button" onClick={() => onGo(prev)} disabled={!prev}
+              data-testid={`${testid}-prev`} title={prev ? `Previous: ${prev.lessonName}` : "This is the first lesson"}
+              className="min-h-[38px] min-w-0 px-3 rounded-xl border border-shBorder/60 bg-black/20 text-[10.5px] font-black uppercase tracking-widest text-shTextMuted hover:text-shText hover:border-shTextMuted/50 disabled:opacity-30 disabled:hover:text-shTextMuted disabled:hover:border-shBorder/60">
+        <i className="fas fa-arrow-left mr-1.5"/><span className="hidden sm:inline">Previous lesson</span><span className="sm:hidden">Prev</span>
+      </button>
+      <span className="text-[10px] text-shTextMuted whitespace-nowrap shrink-0" data-testid={`${testid}-position`}>
+        Lesson {index + 1} of {total}
+      </span>
+      <button type="button" onClick={() => onGo(next)} disabled={!next}
+              data-testid={`${testid}-next`} title={next ? `Next: ${next.lessonName}` : "This is the last lesson"}
+              className="min-h-[38px] min-w-0 px-3 rounded-xl border border-shBorder/60 bg-black/20 text-[10.5px] font-black uppercase tracking-widest text-shTextMuted hover:text-shText hover:border-shTextMuted/50 disabled:opacity-30 disabled:hover:text-shTextMuted disabled:hover:border-shBorder/60">
+        <span className="hidden sm:inline">Next lesson</span><span className="sm:hidden">Next</span><i className="fas fa-arrow-right ml-1.5"/>
+      </button>
+    </div>
+  );
+}
+
+
 function CurriculumTab(props) {
   const {
     modules, selected, setSelected, addModule, allPrograms, copyFromProgram,
     selectedModule, selectedLesson, selectedSkill,
     validation, validating, onRunValidation, onValidationNavigate,
     previewTab, setPreviewTab, mobileStage, setMobileStage,
+    saveState,
     isNew, draftMeta, impact, loadingImpact, onPublish, saving,
   } = props;
   const [copySource, setCopySource] = useState("");
@@ -746,6 +809,44 @@ function CurriculumTab(props) {
   // permanent column, so the lesson editor keeps the remaining width. At 2xl
   // it is always visible and this flag stops mattering.
   const [publishOpen, setPublishOpen] = useState(false);
+  // Outline scale state. All three are VIEW state — none of them ever writes
+  // to the draft, so searching or collapsing can never lose an edit.
+  const [search, setSearch] = useState("");
+  const [collapsedModules, setCollapsedModules] = useState(() => new Set());
+  const [importOpen, setImportOpen] = useState(false);
+
+  const searchView = useMemo(() => filterCurriculum(modules, search), [modules, search]);
+  const readiness = useMemo(() => computeProgramReadiness(modules), [modules]);
+  const neighbours = useMemo(() => lessonNeighbours(modules, selected), [modules, selected]);
+
+  const collapseAll = () => setCollapsedModules(new Set(modules.map(m => m._key)));
+  const expandAll = () => setCollapsedModules(new Set());
+  const toggleModule = (key) => setCollapsedModules(prev => {
+    const next = new Set(prev);
+    if (next.has(key)) next.delete(key); else next.add(key);
+    return next;
+  });
+  // Expanding on jump/selection is explicit rather than implicit: CurriculumTree
+  // also refuses to collapse the SELECTED module, so the two together mean the
+  // thing you are editing is always visible.
+  const revealModule = (key) => setCollapsedModules(prev => {
+    if (!prev.has(key)) return prev;
+    const next = new Set(prev); next.delete(key); return next;
+  });
+  const jumpToModule = (key) => { revealModule(key); setSelected({ moduleKey: key }); setMobileStage("edit"); };
+  const goToLesson = (target) => {
+    if (!target) return;
+    revealModule(target.moduleKey);
+    setSelected({ moduleKey: target.moduleKey, lessonKey: target.lessonKey });
+    setMobileStage("edit");
+  };
+  const jumpToIncomplete = (kind) => {
+    const target = firstIncomplete(modules, kind);
+    if (!target) return;
+    revealModule(target.moduleKey);
+    setSelected(target);
+    setMobileStage("edit");
+  };
   const lessonCount = modules.reduce((sum, m) => sum + (m.lessons || []).length, 0);
   const skillCount = modules.reduce((sum, m) => sum + (m.goals || []).length, 0);
   const selectedType = selectedLesson ? "Lesson" : selectedSkill ? "Skill" : selectedModule ? "Module" : "Nothing selected";
@@ -753,6 +854,17 @@ function CurriculumTab(props) {
 
   return (
     <div className="flex flex-col min-h-full bg-[radial-gradient(circle_at_40%_0%,rgba(0,169,224,0.035),transparent_32%),transparent]">
+      {/* Save state also lives up here on mobile. The footer copy can fall
+          below the fold on short screens, and "is my work safe?" must never be
+          the thing that scrolls away — this row is sticky and always in view. */}
+      <div className="md:hidden sticky top-0 z-20 px-2 pt-2 flex items-center justify-end bg-[var(--sh-card-base)]">
+        <span data-testid="studio-save-state-mobile" data-state={saveState}
+              className={`text-[9.5px] font-black uppercase tracking-widest ${saveState === "unsaved" ? "text-shAccent" : saveState === "saving" ? "text-shSecondary" : "text-shTextMuted"}`}>
+          {saveState === "saving" && <><i className="fas fa-spinner fa-spin mr-1"/>Saving…</>}
+          {saveState === "unsaved" && <><i className="fas fa-circle-dot mr-1"/>Unsaved</>}
+          {saveState === "saved" && <><i className="fas fa-check mr-1"/>Saved</>}
+        </span>
+      </div>
       <div className="md:hidden sticky top-0 z-20 px-2 py-2 border-b border-shBorder/70 bg-[var(--sh-card-base)] backdrop-blur overflow-x-auto" data-testid="studio-mobile-stages">
         {/* 288px is what actually fits a 320px viewport once the strip's own
             px-2 and the grid's p-1 are taken out, so all four stages are
@@ -784,11 +896,28 @@ function CurriculumTab(props) {
                   className={`2xl:hidden min-h-[38px] px-3 rounded-xl border text-[10px] font-black uppercase tracking-widest transition ${publishOpen ? "border-shPrimary/60 bg-shPrimary/[0.12] text-shPrimary" : "border-shBorder/60 bg-black/20 text-shTextMuted hover:text-shText"}`}>
             <i className="fas fa-rocket mr-1.5"/>{publishOpen ? "Hide" : "Publish"}
           </button>
-          {[{ icon: "fa-layer-group", v: modules.length, l: "modules", c: "text-shPrimary" }, { icon: "fa-book-open", v: lessonCount, l: "lessons", c: "text-shSecondary" }, { icon: "fa-bullseye", v: skillCount, l: "skills", c: "text-shAccent" }].map(item => (
-            <div key={item.l} className="rounded-xl border border-shBorder/50 bg-black/20 px-3 py-2 flex items-center gap-2">
-              <i className={`fas ${item.icon} ${item.c} text-[10px]`}/><span className="text-[12px] font-black text-shText">{item.v}</span><span className="text-[9px] text-shTextMuted">{item.l}</span>
-            </div>
-          ))}
+          {[
+            { key: "modules", icon: "fa-layer-group", label: "modules", ready: null, total: readiness.modules.total, c: "text-shPrimary" },
+            { key: "lessons", icon: "fa-book-open", label: "lessons ready", ready: readiness.lessons.ready, total: readiness.lessons.total, c: "text-shSecondary" },
+            { key: "skills", icon: "fa-bullseye", label: "skills ready", ready: readiness.skills.ready, total: readiness.skills.total, c: "text-shAccent" },
+            { key: "checkpoints", icon: "fa-flag-checkered", label: "checkpoints ready", ready: readiness.checkpoints.ready, total: readiness.checkpoints.total, c: "text-shPrimary" },
+          ].filter(item => item.key !== "checkpoints" || item.total > 0).map(item => {
+            const incomplete = item.ready !== null && item.ready < item.total;
+            return (
+              <button key={item.key} type="button"
+                      onClick={() => incomplete && jumpToIncomplete(item.key)}
+                      disabled={!incomplete}
+                      data-testid={`studio-readiness-${item.key}`}
+                      title={incomplete ? `Go to the first ${item.key.replace(/s$/, "")} needing attention` : undefined}
+                      className={`rounded-xl border px-3 py-2 flex items-center gap-2 text-left transition ${incomplete ? "border-shAccent/40 bg-shAccent/[0.06] hover:border-shAccent/70 cursor-pointer" : "border-shBorder/50 bg-black/20 cursor-default"}`}>
+                <i className={`fas ${item.icon} ${incomplete ? "text-shAccent" : item.c} text-[10px]`}/>
+                <span className="text-[12px] font-black text-shText whitespace-nowrap">
+                  {item.ready === null ? item.total : `${item.ready} / ${item.total}`}
+                </span>
+                <span className="text-[9px] text-shTextMuted whitespace-nowrap">{item.label}</span>
+              </button>
+            );
+          })}
         </div>
       </div>
 
@@ -808,7 +937,19 @@ function CurriculumTab(props) {
                 <i className="fas fa-plus mr-1"/>Module
               </button>
             </div>
-            <div className="flex items-center gap-1.5">
+            {/* Import / Export is collapsed by default: the CSV button,
+                sample download, column guidance and copy-from control used a
+                large slice of the outline before a single module was visible.
+                Every feature is preserved, just behind one disclosure. */}
+            <div className="rounded-lg border border-shBorder/50 bg-black/20">
+              <button onClick={() => setImportOpen(v => !v)} data-testid="studio-import-export-toggle"
+                      aria-expanded={importOpen}
+                      className="w-full min-h-[36px] px-2.5 flex items-center justify-between gap-2 text-[10px] font-black uppercase tracking-widest text-shTextMuted hover:text-shText">
+                <span><i className="fas fa-file-arrow-down mr-1.5 text-shSecondary"/>Import / Export</span>
+                <i className={`fas fa-chevron-${importOpen ? "up" : "down"} text-[9px]`}/>
+              </button>
+              {importOpen && (
+                <div className="px-2 pb-2 pt-1 flex items-center gap-1.5 flex-wrap" data-testid="studio-import-export-body">
               <CsvImportButton label="CSV" parse={parseProgramCsv} sampleText={PROGRAM_CSV_SAMPLE} sampleFilename="program-template.csv"
                                 testIdPrefix="studio-csv" helpText="Columns: module_name, module_description, goal_name, goal_description."
                                 onImport={(parsed) => { if (parsed?.modules?.length) props.set({ modules: [...modules, ...parsed.modules] }); }}/>
@@ -822,8 +963,52 @@ function CurriculumTab(props) {
                           className="min-h-[38px] bg-shSecondary/[0.08] text-shSecondary border border-shSecondary/25 px-2.5 rounded-lg text-[10px] font-black disabled:opacity-40">Copy</button>
                 </>
               )}
+                </div>
+              )}
             </div>
-          </div>
+
+            {/* Outline scale controls. Search and collapse are view-only —
+                neither ever writes to the draft. */}
+            <div className="space-y-1.5" data-testid="studio-outline-tools">
+              <div className="relative">
+                <i className="fas fa-magnifying-glass absolute left-2.5 top-1/2 -translate-y-1/2 text-[10px] text-shTextMuted"/>
+                <input value={search} onChange={(e) => setSearch(e.target.value)}
+                       data-testid="studio-outline-search" placeholder="Search curriculum…"
+                       className="w-full min-h-[36px] bg-black/30 border border-shBorder/70 rounded-lg pl-7 pr-7 text-[11px] text-shText focus:outline-none focus:border-shSecondary/50"/>
+                {search && (
+                  <button onClick={() => setSearch("")} data-testid="studio-outline-search-clear" aria-label="Clear search"
+                          className="absolute right-1.5 top-1/2 -translate-y-1/2 w-6 h-6 rounded text-shTextMuted hover:text-shText text-[10px]">
+                    <i className="fas fa-times"/>
+                  </button>
+                )}
+              </div>
+              <div className="flex items-center gap-1.5 flex-wrap">
+                <button onClick={collapseAll} data-testid="studio-collapse-all"
+                        className="min-h-[32px] px-2 rounded-lg border border-shBorder/60 bg-black/20 text-[9.5px] font-black uppercase tracking-widest text-shTextMuted hover:text-shText">
+                  <i className="fas fa-minus mr-1"/>Collapse all
+                </button>
+                <button onClick={expandAll} data-testid="studio-expand-all"
+                        className="min-h-[32px] px-2 rounded-lg border border-shBorder/60 bg-black/20 text-[9.5px] font-black uppercase tracking-widest text-shTextMuted hover:text-shText">
+                  <i className="fas fa-plus mr-1"/>Expand all
+                </button>
+                {modules.length > 3 && (
+                  <select value="" onChange={(e) => { if (e.target.value) jumpToModule(e.target.value); }}
+                          data-testid="studio-jump-to-module" aria-label="Jump to module"
+                          className="min-w-0 flex-1 min-h-[32px] bg-black/30 border border-shBorder/70 rounded-lg px-1.5 text-[9.5px] text-shTextMuted focus:outline-none focus:border-shSecondary/50">
+                    <option value="">Jump to module…</option>
+                    {modules.map(m => <option key={m._key} value={m._key}>{m.name || "Untitled module"}</option>)}
+                  </select>
+                )}
+              </div>
+              {searchView.filtered && (
+                <p className="text-[9.5px] text-shTextMuted" data-testid="studio-outline-search-count">
+                  {searchView.modules.length === 0
+                    ? "No curriculum matches that search."
+                    : `${searchView.matchCount} match${searchView.matchCount === 1 ? "" : "es"} in ${searchView.modules.length} module${searchView.modules.length === 1 ? "" : "s"}`}
+                </p>
+              )}
+            </div>
+            </div>
           <div className="p-3 sm:p-4">
             {modules.length === 0 && (
               <div className="rounded-2xl border border-dashed border-shBorder bg-black/10 px-4 py-10 text-center">
@@ -833,7 +1018,9 @@ function CurriculumTab(props) {
               </div>
             )}
             <CurriculumTree
-              modules={modules} selected={selected}
+              modules={searchView.modules} selected={selected}
+              collapsedModules={searchView.filtered ? EMPTY_COLLAPSED : collapsedModules}
+              onToggleModule={toggleModule}
               setSelected={(sel) => { setSelected(sel); setMobileStage("edit"); }}
               moveModule={props.moveModule} duplicateModule={props.duplicateModule} removeModule={props.removeModule}
               addSkill={props.addSkill} addLesson={props.addLesson} moveSkill={props.moveSkill} moveLesson={props.moveLesson}
@@ -845,6 +1032,9 @@ function CurriculumTab(props) {
 
         <main className={`${mobileStage === "edit" ? "block" : "hidden"} md:block flex-1 min-w-0 overflow-y-auto`}>
           <div className="p-3 sm:p-5 lg:p-6 max-w-[820px] mx-auto">
+            {neighbours.index !== -1 && (
+              <LessonPager neighbours={neighbours} onGo={goToLesson} testid="studio-lesson-pager-top"/>
+            )}
             {!selected && (
               <div className="min-h-[420px] flex items-center justify-center">
                 <div className="max-w-md text-center rounded-2xl border border-shBorder/50 bg-black/10 p-6 sm:p-8">
