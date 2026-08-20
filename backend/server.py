@@ -25368,6 +25368,13 @@ _PENDING_ACTION_TYPE_LABELS = {
 }
 
 
+# Action Required types that must survive list truncation. Both are money
+# actions with an external consequence for being ignored (a dispute has an
+# evidence deadline; an unreconciled refund is real money already returned),
+# and both are naturally few — a business does not accumulate hundreds.
+_ALWAYS_VISIBLE_ACTION_TYPES = frozenset({"stripe_dispute", "shop_refund_reconciliation"})
+
+
 def _pending_action_urgency(created_at: Optional[str], requested_date: Optional[str],
                             requested_time: Optional[str]) -> dict:
     """Deterministic escalation — simple rules, no SLA engine.
@@ -25433,6 +25440,40 @@ def _pending_action_urgency(created_at: Optional[str], requested_date: Optional[
         "urgency": urgency, "urgency_label": label, "urgency_rank": rank,
         "waiting_minutes": waiting_minutes, "waiting_label": waiting_label,
     }
+
+
+def _financial_action_urgency(created_at: Optional[str], due_at: Optional[str] = None) -> dict:
+    """Urgency for a MONEY action — a Stripe dispute or a refund awaiting
+    reconciliation.
+
+    _pending_action_urgency was written for bookings: it ranks by how close a
+    REQUESTED APPOINTMENT is, and everything with no requested date lands in
+    the bottom band (rank 3). Financial items have no requested date, so they
+    were sorting dead last — behind every meet-and-greet — while the Action
+    Required list truncates. On a busy queue an open dispute was counted in
+    the badge but never actually rendered.
+
+    Two corrections, both using the existing escalation rather than a new one:
+      * a dispute's evidence deadline IS its "requested date", so it escalates
+        through the normal bands as that deadline approaches;
+      * money items never sit in the bottom band, because unlike a booking
+        request they carry a real external consequence for being ignored.
+    """
+    due_date = None
+    if due_at:
+        try:
+            due_date = datetime.fromisoformat(str(due_at).replace("Z", "+00:00")).date().isoformat()
+        except Exception:
+            due_date = None
+    out = _pending_action_urgency(created_at, due_date, None)
+    # Relabel: the booking wording ("REQUESTED FOR TODAY") is meaningless on a
+    # dispute. The RANK is reused; only the words change.
+    if due_date and out["urgency_rank"] <= 1:
+        label = "OVERDUE — EVIDENCE DUE" if out["urgency_rank"] == 0 else "URGENT — EVIDENCE DUE"
+        out = {**out, "urgency": "overdue", "urgency_label": label}
+    elif out["urgency_rank"] >= 3:
+        out = {**out, "urgency": "overdue", "urgency_label": "ACTION REQUIRED — MONEY", "urgency_rank": 2}
+    return out
 
 
 def _pending_booking_service_name(b: dict) -> str:
@@ -25582,7 +25623,7 @@ async def _collect_pending_actions(user: dict, *, type_filter: Optional[str] = N
             {"status": {"$in": list(STRIPE_DISPUTE_OPEN_STATUSES)}}, {"_id": 0},
         ).sort("first_seen_at", 1).to_list(200)
         for d in d_rows:
-            urgency = _pending_action_urgency(d.get("first_seen_at"), None, None)
+            urgency = _financial_action_urgency(d.get("first_seen_at"), d.get("evidence_due_by"))
             items.append({
                 "id": f"stripe_dispute:{d['id']}", "type": "stripe_dispute",
                 "type_label": _PENDING_ACTION_TYPE_LABELS["stripe_dispute"], "priority": "action_required",
@@ -25598,7 +25639,7 @@ async def _collect_pending_actions(user: dict, *, type_filter: Optional[str] = N
             {"refund_reconciliation_required": True}, {"_id": 0, "id": 1, "client_id": 1, "client_name": 1, "updated_at": 1, "refund_reconciliation_reason": 1},
         ).sort("updated_at", 1).to_list(200)
         for o in rr_rows:
-            urgency = _pending_action_urgency(o.get("updated_at"), None, None)
+            urgency = _financial_action_urgency(o.get("updated_at"))
             items.append({
                 "id": f"shop_refund_reconciliation:{o['id']}", "type": "shop_refund_reconciliation",
                 "type_label": _PENDING_ACTION_TYPE_LABELS["shop_refund_reconciliation"], "priority": "action_required",
@@ -25626,8 +25667,20 @@ async def _collect_pending_actions(user: dict, *, type_filter: Optional[str] = N
     for it in items:
         counts[it["type"]] = counts.get(it["type"], 0) + 1
     counts["total"] = len(items)
-    return {"items": items[: max(1, min(int(limit or 100), 300))], "counts": counts,
-            "generated_at": now_iso()}
+
+    # Truncation must never make a whole CATEGORY disappear. Ranking alone is
+    # not enough: a busy day can put 160+ same-rank bookings and medications
+    # ahead of an open dispute, so the badge counted it while the list never
+    # rendered it. Money items are bounded in number and carry an external
+    # deadline, so they are always carried into the page; everything else
+    # fills the remaining room in its normal sorted order.
+    cap = max(1, min(int(limit or 100), 300))
+    must_show = [it for it in items if it["type"] in _ALWAYS_VISIBLE_ACTION_TYPES]
+    rest = [it for it in items if it["type"] not in _ALWAYS_VISIBLE_ACTION_TYPES]
+    page = (must_show + rest)[:cap] if len(must_show) < cap else must_show[:cap]
+    # Restore the operational order within the page itself.
+    page.sort(key=lambda it: (it["urgency_rank"], it.get("created_at") or ""))
+    return {"items": page, "counts": counts, "generated_at": now_iso()}
 
 
 def _user_can_see_any_pending_actions(user: dict) -> bool:
