@@ -1,6 +1,7 @@
 import { useEffect, useState } from "react";
 import { api } from "../lib/api";
 import { toast } from "sonner";
+import { isFreeClaimable, freePriceLabel, freeCourseCta, rememberFreeClaimIntent } from "../lib/freeCourseClaim";
 import PremiumButton from "./premium/PremiumButton";
 import NeonEdge from "./premium/NeonEdge";
 import HuskyDogImage from "./brand/HuskyDogImage";
@@ -53,6 +54,11 @@ function PriceBlock({ item, hiddenPriceMessage }) {
   // Public no-account storefront — price fields are simply ABSENT from the
   // response when hidden (never a zero/malformed value), so this must be
   // checked before falling through to money(undefined) → "$0.00".
+  // A deliberately free course reads FREE. A $0 program that is NOT
+  // claimable is unpriced, not free, and must never advertise itself as such.
+  if (freePriceLabel(item)) {
+    return <p className="text-shPrimary font-black text-[26px]" data-testid="shop-detail-free-price">FREE</p>;
+  }
   const hasPrice = item.price != null || item.effective_price != null;
   if (!hasPrice) {
     return hiddenPriceMessage ? (
@@ -121,7 +127,11 @@ function RelatedItems({ item, allItems, onOpenItem, isPublic }) {
                   className="text-left border border-shBorder rounded-lg p-2 hover:border-shPrimary/50 transition" style={{ background: "var(--sh-card-base)" }}>
             <ImgOrPlaceholder imageId={r.image_id} alt={r.name} isPublic={isPublic} />
             <p className="text-shText font-bold text-[12px] mt-1.5 truncate">{r.name}</p>
-            {(r.price ?? r.effective_price) != null && (
+            {/* A claimable free course reads FREE here too, so the label a
+                client sees never depends on which strip they found it in. */}
+            {isFreeClaimable(r) ? (
+              <p className="text-shPrimary font-black text-[13px]" data-testid={`shop-related-free-${r.id}`}>FREE</p>
+            ) : (r.price ?? r.effective_price) != null && (
               <p className="text-shPrimary font-black text-[13px]">{money(r.price ?? r.effective_price)}</p>
             )}
           </button>
@@ -170,7 +180,7 @@ function HeroImage({ imageId, alt, isPublic, fallbackSrc }) {
   );
 }
 
-export default function ShopItemDetail({ kind, itemId, cart, onAddToCart, onBack, allItems, onOpenItem, mode = "authenticated", onRequireAccount, onGoToOnlineSchool, dogs = [] }) {
+export default function ShopItemDetail({ kind, itemId, cart, onAddToCart, onBack, allItems, onOpenItem, mode = "authenticated", onRequireAccount, onGoToOnlineSchool, onClaimFreeCourse, onAddDog, dogs = [] }) {
   const [item, setItem] = useState(null);
   const [loading, setLoading] = useState(true);
   const [notFound, setNotFound] = useState(false);
@@ -198,6 +208,7 @@ export default function ShopItemDetail({ kind, itemId, cart, onAddToCart, onBack
   // Online School dashboard itself reads) — never guessed or cached
   // stale across items.
   const isOnlineSchoolProgram = !isGuest && item?.kind === "training_program" && item.purchase_fulfillment === "online_school";
+  const freeClaim = isFreeClaimable(item);
   const [schoolEnrollments, setSchoolEnrollments] = useState(null);
   useEffect(() => {
     if (!isOnlineSchoolProgram) { setSchoolEnrollments(null); return; }
@@ -421,7 +432,59 @@ export default function ShopItemDetail({ kind, itemId, cart, onAddToCart, onBack
               </div>
             )}
 
-            {isShopifyMerch ? (
+            {/* A deliberately free course never enters the cart: no line, no
+                $0 total, no order. This branch is checked before every
+                purchase CTA so a free course can never fall through to
+                checkout, and the guest case routes through the SAME sign-in
+                flow with the intent remembered. */}
+            {freeClaim ? (() => {
+              const cta = freeCourseCta({ item, isGuest, dogs, selectedDogId, enrollments: schoolEnrollments });
+              if (!cta) return null;
+              if (cta.type === "sign_in") {
+                return (
+                  <PremiumButton variant="primary" data-testid="shop-detail-free-signin" className="w-full justify-center py-3"
+                                 onClick={() => { rememberFreeClaimIntent(item); onRequireAccount?.(item, "free_course"); }}>
+                    {cta.label}
+                  </PremiumButton>
+                );
+              }
+              if (cta.type === "continue" || cta.type === "completed") {
+                return (
+                  <PremiumButton variant="secondary" onClick={() => onGoToOnlineSchool?.()} data-testid="shop-detail-free-continue" className="w-full justify-center py-3">
+                    <i className="fas fa-graduation-cap mr-1.5" />{cta.label}
+                  </PremiumButton>
+                );
+              }
+              if (cta.type === "blocked") {
+                return (
+                  <PremiumButton variant="secondary" disabled data-testid="shop-detail-free-blocked" className="w-full justify-center py-3 opacity-60 cursor-not-allowed">
+                    {cta.label}
+                  </PremiumButton>
+                );
+              }
+              if (cta.type === "add_dog") {
+                // Never manufacture a placeholder dog — route into the real
+                // add-dog workflow.
+                return (
+                  <PremiumButton variant="primary" onClick={() => onAddDog?.()} data-testid="shop-detail-free-add-dog" className="w-full justify-center py-3">
+                    <i className="fas fa-dog mr-1.5" />{cta.label}
+                  </PremiumButton>
+                );
+              }
+              if (cta.type === "choose_dog") {
+                return (
+                  <PremiumButton variant="primary" disabled data-testid="shop-detail-free-choose-dog" className="w-full justify-center py-3 opacity-50 cursor-not-allowed">
+                    {cta.label}
+                  </PremiumButton>
+                );
+              }
+              return (
+                <PremiumButton variant="primary" onClick={() => onClaimFreeCourse?.(item, selectedDogId)}
+                               data-testid="shop-detail-start-free-course" className="w-full justify-center py-3">
+                  <i className="fas fa-play mr-1.5 text-[11px]" />{cta.label}
+                </PremiumButton>
+              );
+            })() : isShopifyMerch ? (
               <PremiumButton variant="primary" onClick={handleShopifyClick} data-testid="shop-detail-view-options" className="w-full justify-center py-3">
                 View Options <i className="fas fa-arrow-up-right-from-square ml-1 text-[11px]" />
               </PremiumButton>
