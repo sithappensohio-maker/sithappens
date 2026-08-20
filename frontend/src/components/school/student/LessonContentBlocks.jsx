@@ -4,7 +4,33 @@ import { loadSchoolMediaUrl, openSchoolMedia } from "../../../lib/schoolMedia";
 
 function SplitLines({ body }) {
   const lines = String(body || "").split(/\r?\n/).map((x) => x.trim()).filter(Boolean);
-  return <div className="space-y-2">{lines.map((x, i) => <div key={i} className="flex gap-2 text-[13px] text-shText"><span className="w-6 h-6 rounded-full bg-shSecondary/10 border border-shSecondary/25 text-shSecondary text-[10px] font-black grid place-items-center shrink-0">{i + 1}</span><p className="leading-relaxed pt-0.5">{x}</p></div>)}</div>;
+  return <ol className="space-y-3">{lines.map((x, i) => <li key={i} className="flex gap-3 text-[17px] sm:text-[18px] text-shText"><span className="w-7 h-7 rounded-full bg-shSecondary/10 border border-shSecondary/25 text-shSecondary text-[12px] font-black grid place-items-center shrink-0">{i + 1}</span><p className="leading-[1.55] pt-0.5">{x}</p></li>)}</ol>;
+}
+
+/* A prep checklist the client uses one-handed while a dog waits, so the tap
+   target is a real one and the text is readable at arm's length. Ticking a
+   box is a personal aid — it deliberately does NOT report progress anywhere,
+   because the lesson model does not define these as completion criteria. */
+function ChecklistBlock({ block }) {
+  const items = block?.items || [];
+  const base = block?.id || "checklist";
+  return (
+    <ul className="space-y-1">
+      {items.map((x, i) => {
+        const id = `chk-${base}-${i}`;
+        return (
+          <li key={id}>
+            <label htmlFor={id}
+                   className="flex items-start gap-3.5 py-2.5 cursor-pointer group">
+              <input id={id} type="checkbox"
+                     className="mt-0.5 w-6 h-6 shrink-0 rounded-md border-2 border-shSecondary/50 bg-black/25 accent-shPrimary cursor-pointer focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-shPrimary focus-visible:ring-offset-2 focus-visible:ring-offset-bgBase" />
+              <span className="min-w-0 flex-1 text-[17px] sm:text-[18px] text-shText leading-[1.5] group-hover:text-white">{x}</span>
+            </label>
+          </li>
+        );
+      })}
+    </ul>
+  );
 }
 
 function TimerBlock({ block }) {
@@ -149,19 +175,19 @@ export default function LessonContentBlocks({ blocks = [], enrollmentId, preview
   return <div className="space-y-4" data-testid="lesson-content-blocks">{active.map((b, i) => {
     const tone = b.type === "warning" ? "border-red-400/30 bg-red-500/[0.055]" : b.type === "trainer_tip" ? "border-shPrimary/30 bg-shPrimary/[0.055]" : "border-shBorder bg-[var(--sh-card-base)]";
     return <section key={b.id || i} className={`rounded-2xl border p-4 sm:p-5 ${tone}`} data-testid={`lesson-content-block-${b.type}`}>
-      {b.title && !hideTitles && <p className={`text-[10px] font-black uppercase tracking-[0.18em] mb-2 ${b.type === "warning" ? "text-red-300" : b.type === "trainer_tip" ? "text-shPrimary" : "text-shSecondary"}`}>{b.title}</p>}
+      {b.title && !hideTitles && <h3 className={`text-[18px] sm:text-[20px] font-black leading-snug mb-2.5 ${b.type === "warning" ? "text-red-300" : b.type === "trainer_tip" ? "text-shPrimary" : "text-shText"}`}>{b.title}</h3>}
       {b.type === "video" && b.url && <div className="aspect-video rounded-xl overflow-hidden bg-black"><video src={b.url} controls playsInline preload="metadata" className="w-full h-full object-contain" /></div>}
       {b.type === "image" && b.url && <img src={b.url} alt={b.title || "Lesson visual"} className="w-full max-h-[520px] object-contain rounded-xl bg-black/20" />}
       {b.resource_id && resourceById[b.resource_id] && ["video","image"].includes(b.type) && <LinkedResourceMedia resource={resourceById[b.resource_id]} type={b.type} title={b.title} />}
       {b.resource_id && resourceById[b.resource_id] && b.type === "download" && <button type="button" onClick={() => openResource(resourceById[b.resource_id])} className="w-full text-left rounded-xl border border-shSecondary/20 bg-shSecondary/[0.035] p-3"><i className="fas fa-download text-shSecondary mr-2"/><span className="text-[13px] font-black text-shText">{resourceById[b.resource_id].title}</span><span className="block text-[11px] text-shTextMuted mt-1">Open School resource</span></button>}
       {previewMode && b.resource_id && !resourceById[b.resource_id] && ["video","image","download"].includes(b.type) && <div className="rounded-xl border border-dashed border-shSecondary/25 bg-shSecondary/[0.025] p-3"><i className={`fas ${b.type === "video" ? "fa-video" : b.type === "image" ? "fa-image" : "fa-download"} text-shSecondary mr-2`}/><span className="text-[13px] font-black text-shText">{b.title || "Linked School resource"}</span><span className="block text-[11px] text-shTextMuted mt-1">The selected resource will appear here for enrolled students.</span></div>}
       {b.type === "steps" && <SplitLines body={(b.items || []).length ? b.items.join("\n") : b.body} />}
-      {b.type === "checklist" && <div className="space-y-2">{(b.items || []).map((x) => <label key={x} className="flex items-start gap-2 text-[13px] text-shText"><input type="checkbox" className="mt-1" />{x}</label>)}</div>}
+      {b.type === "checklist" && <ChecklistBlock block={b} />}
       {b.type === "quiz" && <QuizBlock block={b} />}
       {b.type === "timer" && <TimerBlock block={b} />}
       {b.type === "rep_counter" && <RepBlock block={b} />}
       {b.type === "download" && !b.resource_id && <a href={b.url || "#"} target="_blank" rel="noreferrer" className="inline-flex min-h-[42px] items-center px-4 rounded-xl border border-shSecondary/35 text-shSecondary text-[11px] font-black uppercase tracking-widest"><i className="fas fa-download mr-2"/>Open resource</a>}
-      {["text","trainer_tip","warning","practice","checkpoint"].includes(b.type) && b.body && <p className="text-[13px] sm:text-[14px] text-shText leading-relaxed whitespace-pre-line">{b.body}</p>}
+      {["text","trainer_tip","warning","practice","checkpoint"].includes(b.type) && b.body && <p className="text-[17px] sm:text-[18px] text-shText leading-[1.55] whitespace-pre-line">{b.body}</p>}
     </section>;
   })}</div>;
 }

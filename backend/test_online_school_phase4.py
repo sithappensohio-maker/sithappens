@@ -23,6 +23,7 @@ import httpx
 
 import _test_env  # noqa: F401 — must run before `import server`, see its docstring
 import server
+import _school_client_flow
 from _test_loop import run
 
 TAG = "TEST_SCHOOL_P4"
@@ -187,7 +188,7 @@ def _enroll(prog, dog, admin):
 
 def _submit_checkpoint_for_current_lesson(se, enr, client_user):
     lesson_id = run(server.db.dog_programs.find_one({"id": enr["id"]}, {"_id": 0, "current_lesson_id": 1}))["current_lesson_id"]
-    started = run(server.portal_school_start_practice(se["id"], lesson_id, client_user))
+    started = run(_school_client_flow.start_practice(se["id"], lesson_id, client_user))
     run(server.log_section(started["homework_id"], server.SectionLogIn(section_id="practice"), client_user))
     out = run(server.portal_school_submit_checkpoint(se["id"], lesson_id, server.CheckpointSubmissionIn(video=_tiny_video(), note="Client note here"), client_user))
     sub_id = out["checkpoint"]["id"]

@@ -38,6 +38,7 @@ from motor.motor_asyncio import AsyncIOMotorCollection
 
 import _test_env  # noqa: F401 — must run before `import server`, see its docstring
 import server
+import _school_client_flow
 from _test_loop import run
 
 TAG = "TEST_SCHOOL_HARDENING"
@@ -449,7 +450,7 @@ def test_critical_school_indexes_present_with_expected_definition():
 # ---------------------------------------------------------------------------
 
 def _practice_and_advance(se, enr, client_user, lesson_id):
-    started = run(server.portal_school_start_practice(se["id"], lesson_id, client_user))
+    started = run(_school_client_flow.start_practice(se["id"], lesson_id, client_user))
     run(server.log_section(started["homework_id"], server.SectionLogIn(section_id="practice"), client_user))
     return run(server.portal_school_advance(se["id"], client_user))
 
@@ -489,7 +490,7 @@ def test_concurrent_advance_requests_produce_only_one_logical_advancement():
                 client_user = _client_user(c["id"])
                 lesson1_id = prog["modules"][0]["lessons"][0]["id"]
                 lesson2_id = prog["modules"][0]["lessons"][1]["id"]
-                started = run(server.portal_school_start_practice(se["id"], lesson1_id, client_user))
+                started = run(_school_client_flow.start_practice(se["id"], lesson1_id, client_user))
                 run(server.log_section(started["homework_id"], server.SectionLogIn(section_id="practice"), client_user))
 
                 async def _go():
@@ -546,7 +547,7 @@ def test_advance_never_writes_goal_progress_or_mastery():
                 client_user = _client_user(c["id"])
                 lesson1_id = prog["modules"][0]["lessons"][0]["id"]
                 before = run(server.db.dog_programs.find_one({"id": enr["id"]}, {"_id": 0, "goal_progress": 1}))
-                started = run(server.portal_school_start_practice(se["id"], lesson1_id, client_user))
+                started = run(_school_client_flow.start_practice(se["id"], lesson1_id, client_user))
                 run(server.log_section(started["homework_id"], server.SectionLogIn(section_id="practice"), client_user))
                 run(server.portal_school_advance(se["id"], client_user))
                 after = run(server.db.dog_programs.find_one({"id": enr["id"]}, {"_id": 0, "goal_progress": 1}))

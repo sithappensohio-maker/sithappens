@@ -23,6 +23,7 @@ import httpx
 
 import _test_env  # noqa: F401 — must run before `import server`
 import server
+import _school_client_flow
 from _test_loop import run
 
 se = server.school_events
@@ -443,7 +444,7 @@ def test_scenario_lesson_completed_is_activity_only():
             cu = _p4_client_user(client_doc["id"])
             lesson_id = run(server.db.dog_programs.find_one(
                 {"id": enr["id"]}, {"_id": 0, "current_lesson_id": 1}))["current_lesson_id"]
-            started = run(server.portal_school_start_practice(se_row["id"], lesson_id, cu))
+            started = run(_school_client_flow.start_practice(se_row["id"], lesson_id, cu))
             run(server.log_section(started["homework_id"], server.SectionLogIn(section_id="practice"), cu))
             run(server.portal_school_advance(se_row["id"], cu))
 

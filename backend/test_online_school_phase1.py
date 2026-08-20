@@ -20,6 +20,7 @@ import httpx
 
 import _test_env  # noqa: F401 — must run before `import server`, see its docstring
 import server
+import _school_client_flow
 from _test_loop import run
 
 TAG = "TEST_ONLINE_SCHOOL"
@@ -415,12 +416,12 @@ def test_start_practice_launches_generic_coach_mode_homework_and_is_idempotent()
             try:
                 client_user = _client_user(c["id"])
                 lesson1_id = prog["modules"][0]["lessons"][0]["id"]
-                out1 = run(server.portal_school_start_practice(se["id"], lesson1_id, client_user))
+                out1 = run(_school_client_flow.start_practice(se["id"], lesson1_id, client_user))
                 hw = run(server.db.homework.find_one({"id": out1["homework_id"]}))
                 assert hw["source_lesson_id"] == lesson1_id
                 assert hw["template_snapshot"]["practice_coach"]["enabled"] is True
                 assert hw["template_snapshot"]["practice_coach"]["goal"] == COACH_RECIPE["goal"]  # not exercise-hardcoded — comes straight from the template
-                out2 = run(server.portal_school_start_practice(se["id"], lesson1_id, client_user))
+                out2 = run(_school_client_flow.start_practice(se["id"], lesson1_id, client_user))
                 assert out2["homework_id"] == out1["homework_id"]  # idempotent find-or-create
             finally:
                 _cleanup_school(se["id"], enr["id"])
@@ -451,7 +452,7 @@ def test_progression_unlocks_next_lesson_after_practice_and_advance():
                 client_user = _client_user(c["id"])
                 lesson1_id = prog["modules"][0]["lessons"][0]["id"]
                 lesson2_id = prog["modules"][0]["lessons"][1]["id"]
-                started = run(server.portal_school_start_practice(se["id"], lesson1_id, client_user))
+                started = run(_school_client_flow.start_practice(se["id"], lesson1_id, client_user))
                 run(server.log_section(started["homework_id"], server.SectionLogIn(section_id="practice"), client_user))
 
                 # Now "in_progress" (practiced but not yet advanced).
@@ -483,7 +484,7 @@ def test_advance_through_entire_program_marks_school_enrollment_completed():
             try:
                 client_user = _client_user(c["id"])
                 lesson1_id = prog["modules"][0]["lessons"][0]["id"]
-                started = run(server.portal_school_start_practice(se["id"], lesson1_id, client_user))
+                started = run(_school_client_flow.start_practice(se["id"], lesson1_id, client_user))
                 run(server.log_section(started["homework_id"], server.SectionLogIn(section_id="practice"), client_user))
                 adv = run(server.portal_school_advance(se["id"], client_user))
                 assert adv["finished"] is True

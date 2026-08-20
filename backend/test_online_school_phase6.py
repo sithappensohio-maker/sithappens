@@ -40,6 +40,7 @@ import httpx
 
 import _test_env  # noqa: F401 — must run before `import server`, see its docstring
 import server
+import _school_client_flow
 from _test_loop import run
 
 from test_online_school_phase5 import (
@@ -277,7 +278,7 @@ def test_revoked_access_blocks_start_practice_and_advance():
             user = _client_user(c["id"])
             lesson_id = enr["program_snapshot"]["modules"][0]["lessons"][0]["id"]
             try:
-                run(server.portal_school_start_practice(se["id"], lesson_id, user))
+                run(_school_client_flow.start_practice(se["id"], lesson_id, user))
                 assert False, "expected 403"
             except server.HTTPException as exc:
                 assert exc.status_code == 403
@@ -305,7 +306,7 @@ def test_withdrawn_with_active_access_allows_read_blocks_write():
             assert history == []  # no submissions yet, but no error either
             # New protected actions are blocked.
             try:
-                run(server.portal_school_start_practice(se["id"], lesson_id, user))
+                run(_school_client_flow.start_practice(se["id"], lesson_id, user))
                 assert False, "expected 403 — withdrawn blocks new practice"
             except server.HTTPException as exc:
                 assert exc.status_code == 403

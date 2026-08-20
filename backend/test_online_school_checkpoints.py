@@ -25,6 +25,7 @@ from motor.motor_asyncio import AsyncIOMotorCollection
 
 import _test_env  # noqa: F401 — must run before `import server`, see its docstring
 import server
+import _school_client_flow
 from _test_loop import run
 
 TAG = "TEST_SCHOOL_CHECKPOINTS"
@@ -200,7 +201,7 @@ def _submit_checkpoint_for_current_lesson(se, enr, client_user):
     """Practices + submits a checkpoint for whatever lesson is CURRENT.
     Returns (submission_id, handler_criterion_id, dog_criterion_id, lesson_id)."""
     lesson_id = run(server.db.dog_programs.find_one({"id": enr["id"]}, {"_id": 0, "current_lesson_id": 1}))["current_lesson_id"]
-    started = run(server.portal_school_start_practice(se["id"], lesson_id, client_user))
+    started = run(_school_client_flow.start_practice(se["id"], lesson_id, client_user))
     run(server.log_section(started["homework_id"], server.SectionLogIn(section_id="practice"), client_user))
     out = run(server.portal_school_submit_checkpoint(se["id"], lesson_id, server.CheckpointSubmissionIn(video=_tiny_video()), client_user))
     sub_id = out["checkpoint"]["id"]
@@ -247,7 +248,7 @@ def test_non_checkpoint_lesson_advance_behaves_as_phase1():
                 client_user = _client_user(c["id"])
                 lesson1_id = prog["modules"][0]["lessons"][0]["id"]
                 lesson2_id = prog["modules"][0]["lessons"][1]["id"]
-                started = run(server.portal_school_start_practice(se["id"], lesson1_id, client_user))
+                started = run(_school_client_flow.start_practice(se["id"], lesson1_id, client_user))
                 run(server.log_section(started["homework_id"], server.SectionLogIn(section_id="practice"), client_user))
                 adv = run(server.portal_school_advance(se["id"], client_user))
                 assert adv["finished"] is False
@@ -272,7 +273,7 @@ def test_checkpoint_lesson_advance_always_422s_regardless_of_practice_state():
 
                 # Now practiced — still 422, same reason (checkpoint gate fires first).
                 lesson1_id = prog["modules"][0]["lessons"][0]["id"]
-                started = run(server.portal_school_start_practice(se["id"], lesson1_id, client_user))
+                started = run(_school_client_flow.start_practice(se["id"], lesson1_id, client_user))
                 run(server.log_section(started["homework_id"], server.SectionLogIn(section_id="practice"), client_user))
                 try:
                     run(server.portal_school_advance(se["id"], client_user))
@@ -310,7 +311,7 @@ def test_checkpoint_submit_succeeds_and_returns_client_safe_view():
             try:
                 client_user = _client_user(c["id"])
                 lesson1_id = prog["modules"][0]["lessons"][0]["id"]
-                started = run(server.portal_school_start_practice(se["id"], lesson1_id, client_user))
+                started = run(_school_client_flow.start_practice(se["id"], lesson1_id, client_user))
                 run(server.log_section(started["homework_id"], server.SectionLogIn(section_id="practice"), client_user))
                 out = run(server.portal_school_submit_checkpoint(
                     se["id"], lesson1_id, server.CheckpointSubmissionIn(video=_tiny_video(), note="here goes"), client_user,
@@ -339,7 +340,7 @@ def test_checkpoint_submit_blocked_while_pending_submission_exists():
             try:
                 client_user = _client_user(c["id"])
                 lesson1_id = prog["modules"][0]["lessons"][0]["id"]
-                started = run(server.portal_school_start_practice(se["id"], lesson1_id, client_user))
+                started = run(_school_client_flow.start_practice(se["id"], lesson1_id, client_user))
                 run(server.log_section(started["homework_id"], server.SectionLogIn(section_id="practice"), client_user))
                 run(server.portal_school_submit_checkpoint(se["id"], lesson1_id, server.CheckpointSubmissionIn(video=_tiny_video()), client_user))
                 try:
@@ -358,7 +359,7 @@ def test_concurrent_checkpoint_submission_only_one_survives():
             try:
                 client_user = _client_user(c["id"])
                 lesson1_id = prog["modules"][0]["lessons"][0]["id"]
-                started = run(server.portal_school_start_practice(se["id"], lesson1_id, client_user))
+                started = run(_school_client_flow.start_practice(se["id"], lesson1_id, client_user))
                 run(server.log_section(started["homework_id"], server.SectionLogIn(section_id="practice"), client_user))
 
                 async def _go():
@@ -389,7 +390,7 @@ def test_checkpoint_video_oversized_rejected():
             try:
                 client_user = _client_user(c["id"])
                 lesson1_id = prog["modules"][0]["lessons"][0]["id"]
-                started = run(server.portal_school_start_practice(se["id"], lesson1_id, client_user))
+                started = run(_school_client_flow.start_practice(se["id"], lesson1_id, client_user))
                 run(server.log_section(started["homework_id"], server.SectionLogIn(section_id="practice"), client_user))
                 try:
                     run(server.portal_school_submit_checkpoint(se["id"], lesson1_id, server.CheckpointSubmissionIn(video=_oversized_video()), client_user))
@@ -410,7 +411,7 @@ def test_checkpoint_video_bad_mime_rejected():
             try:
                 client_user = _client_user(c["id"])
                 lesson1_id = prog["modules"][0]["lessons"][0]["id"]
-                started = run(server.portal_school_start_practice(se["id"], lesson1_id, client_user))
+                started = run(_school_client_flow.start_practice(se["id"], lesson1_id, client_user))
                 run(server.log_section(started["homework_id"], server.SectionLogIn(section_id="practice"), client_user))
                 try:
                     run(server.portal_school_submit_checkpoint(se["id"], lesson1_id, server.CheckpointSubmissionIn(video=_tiny_video(mime="application/pdf")), client_user))
@@ -445,7 +446,7 @@ def test_checkpoint_rubric_snapshot_immutable_after_curriculum_edit():
             try:
                 client_user = _client_user(c["id"])
                 lesson1_id = prog["modules"][0]["lessons"][0]["id"]
-                started = run(server.portal_school_start_practice(se["id"], lesson1_id, client_user))
+                started = run(_school_client_flow.start_practice(se["id"], lesson1_id, client_user))
                 run(server.log_section(started["homework_id"], server.SectionLogIn(section_id="practice"), client_user))
                 out = run(server.portal_school_submit_checkpoint(se["id"], lesson1_id, server.CheckpointSubmissionIn(video=_tiny_video()), client_user))
                 sub_id = out["checkpoint"]["id"]
@@ -508,7 +509,7 @@ def test_checkpoint_submission_sentinel_field_never_leaks_through_real_flow():
             try:
                 client_user = _client_user(c["id"])
                 lesson1_id = prog["modules"][0]["lessons"][0]["id"]
-                started = run(server.portal_school_start_practice(se["id"], lesson1_id, client_user))
+                started = run(_school_client_flow.start_practice(se["id"], lesson1_id, client_user))
                 run(server.log_section(started["homework_id"], server.SectionLogIn(section_id="practice"), client_user))
                 out = run(server.portal_school_submit_checkpoint(se["id"], lesson1_id, server.CheckpointSubmissionIn(video=_tiny_video()), client_user))
                 sub_id = out["checkpoint"]["id"]
@@ -652,7 +653,7 @@ def test_delete_school_enrollment_blocked_once_checkpoint_history_exists():
             try:
                 client_user = _client_user(c["id"])
                 lesson1_id = prog["modules"][0]["lessons"][0]["id"]
-                started = run(server.portal_school_start_practice(se["id"], lesson1_id, client_user))
+                started = run(_school_client_flow.start_practice(se["id"], lesson1_id, client_user))
                 run(server.log_section(started["homework_id"], server.SectionLogIn(section_id="practice"), client_user))
                 run(server.portal_school_submit_checkpoint(se["id"], lesson1_id, server.CheckpointSubmissionIn(video=_tiny_video()), client_user))
 
@@ -1212,7 +1213,7 @@ def test_prescribe_practice_assign_refresher_lesson_grants_narrow_access_without
                 # Explicitly prescribed refresher lesson: now accessible.
                 detail = run(server.portal_school_lesson_detail(se["id"], lesson2_id, client_user))
                 assert detail["lesson"]["id"] == lesson2_id
-                practice = run(server.portal_school_start_practice(se["id"], lesson2_id, client_user))
+                practice = run(_school_client_flow.start_practice(se["id"], lesson2_id, client_user))
                 assert practice["homework_id"]
 
                 # A DIFFERENT locked lesson remains inaccessible.

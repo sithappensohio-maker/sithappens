@@ -7,7 +7,7 @@
 import fs from "fs";
 import path from "path";
 import { parseSchoolPath, schoolPathFor, SCHOOL_DEFAULT_VIEW } from "../../../lib/studentSchool";
-import { buildGuide, splitSteps, GUIDE_SECTIONS, groupBlocks, classifyBlock, asideBlocks } from "./lesson/LessonGuide";
+import { buildGuide, splitSteps, GUIDE_SECTIONS, groupBlocks, classifyBlock, asideBlocks, GUIDE_MIN_CONTENT_STEPS } from "./lesson/LessonGuide";
 import { groupCourseModules } from "./course/CourseCards";
 import { checkpointState } from "./checkpoint/CheckpointCards";
 import { NAV_ITEMS } from "./SchoolNav";
@@ -220,7 +220,11 @@ test("a thin lesson keeps the flat renderer rather than a one-item checklist", (
   // Hand-off steps (Practice / Quick Check / Next Step) carry no lesson
   // content of their own, so they must not make a one-field lesson look like
   // a guided sequence.
-  expect(lessonSrc).toMatch(/const hasGuide = guideSections\.filter\(sx => !sx\.ready\)\.length >= 2/);
+  // The threshold is a named constant because the SERVER shares it: the
+  // Practice gate must not bind on a lesson that renders flat, or the client
+  // would be locked out with no Continue action anywhere to unlock it.
+  expect(lessonSrc).toMatch(/const hasGuide = guideSections\.filter\(sx => !sx\.ready\)\.length >= GUIDE_MIN_CONTENT_STEPS/);
+  expect(GUIDE_MIN_CONTENT_STEPS).toBe(2);
   expect(lessonSrc).toMatch(/: <LessonDetailPanel lesson=\{lesson\}/);
   expect(buildGuide({ client_overview: "Only this." }, { hasPractice: true, hasQuiz: true })
     .filter(s => !s.ready)).toHaveLength(1);

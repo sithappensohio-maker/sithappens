@@ -7,7 +7,10 @@ import SectionCard from "../../premium/SectionCard";
 import PremiumButton from "../../premium/PremiumButton";
 import HuskyDogImage from "../../brand/HuskyDogImage";
 import CheckpointPanel from "./CheckpointPanel";
-import LessonGuide, { LessonSectionBody, buildGuide } from "./lesson/LessonGuide";
+import LessonGuide, {
+  LessonSectionBody, buildGuide, LessonHowItWorks, PracticeUnlockedCard,
+  currentStepKey, instructionalKeys, GUIDE_MIN_CONTENT_STEPS,
+} from "./lesson/LessonGuide";
 import { CheckpointResultPanel } from "./checkpoint/CheckpointCards";
 import { practiceButtonLabel } from "../../../lib/onlineSchoolPolish";
 
@@ -84,6 +87,24 @@ export default function LessonScreen({
 
   const roadmap = detail?.roadmap;
   const requiresCp = !!(data?.is_current && roadmap?.requires_checkpoint);
+
+  /* Finishing one instructional step. The client pressed the action at the
+     END of the step's content, which is what "reached the end and continued"
+     means here — no timer, no scroll heuristic. The write is idempotent
+     server-side, and `busy` stops a double-tap firing twice. */
+  const [stepBusy, setStepBusy] = useState(false);
+  const completeStep = async (stepKey) => {
+    if (stepBusy) return;
+    setStepBusy(true); setActionErr("");
+    try {
+      await api.post(`/portal/school/${enrollmentId}/lessons/${lessonId}/steps/${stepKey}/complete`);
+      await load();
+      onStateChanged?.();
+    } catch (e) {
+      setActionErr(e.response?.data?.detail?.message || e.response?.data?.detail
+        || "Couldn't save your progress — try again.");
+    } finally { setStepBusy(false); }
+  };
 
   const completeLesson = async () => {
     setBusy(true); setActionErr("");
@@ -165,7 +186,30 @@ export default function LessonScreen({
   // pure hand-offs to Practice / Quick Check / Next Step don't count towards
   // that, since they carry no lesson content themselves.
   const guideSections = buildGuide(lesson, { hasPractice, hasQuiz: quizAvailable });
-  const hasGuide = guideSections.filter(sx => !sx.ready).length >= 2;
+  const hasGuide = guideSections.filter(sx => !sx.ready).length >= GUIDE_MIN_CONTENT_STEPS;
+  /* Progression state comes from the SERVER — the same computation the portal
+     endpoints enforce, so what the tracker shows and what the API allows can
+     never disagree. Older payloads (absent fields) fall back to "open", which
+     is exactly how the lesson behaved before this existed. */
+  const stepsCompleted = data.steps_completed || [];
+  const instructionalStepKeys = data.instructional_steps || instructionalKeys(guideSections);
+  const practiceUnlocked = data.practice_unlocked !== false;
+  const quickCheckUnlocked = data.quick_check_unlocked !== false;
+  const guideCtx = {
+    completed: stepsCompleted, practiceUnlocked, quickCheckUnlocked,
+    practiceLockedReason: data.practice_locked_reason, practiced: !!data.practiced,
+  };
+  const currentKey = currentStepKey(guideSections, guideCtx);
+  const openKey = guideKey || currentKey;
+  const openSection = guideSections.find(sx => sx.key === openKey);
+  const remainingInstructional = instructionalStepKeys.filter(k => !stepsCompleted.includes(k));
+  const isLastInstructional = remainingInstructional.length === 1
+    && remainingInstructional[0] === openKey;
+  const nextSection = guideSections[guideSections.findIndex(sx => sx.key === openKey) + 1];
+  // The unlock moment: material just finished, practice open, not yet started.
+  const showUnlockMoment = hasGuide && hasPractice && practiceUnlocked
+    && !data.practiced && instructionalStepKeys.length > 0
+    && instructionalStepKeys.every(k => stepsCompleted.includes(k));
   const quizMeta = roadmap?.module_quiz || null;
   const checkpointPassedForQuiz = requiresCp && roadmap?.checkpoint_status?.outcome === "advance";
 
@@ -182,7 +226,7 @@ export default function LessonScreen({
             {isCurrent && <span className="text-[9px] font-black uppercase tracking-widest px-2 py-0.5 rounded-md bg-shPrimary/10 border border-shPrimary/25 text-shPrimary shrink-0">Current</span>}
             {completedReview && <span className="text-[9px] font-black uppercase tracking-widest px-2 py-0.5 rounded-md bg-shBorder/40 text-shTextMuted shrink-0"><i className="fas fa-check mr-1" />Completed</span>}
           </div>
-          <h1 className="text-shText font-black text-[19px] sm:text-[22px] leading-tight text-balance mt-0.5">
+          <h1 className="text-shText font-black text-[24px] sm:text-[32px] leading-[1.12] tracking-tight text-balance mt-1">
             {isFinal ? `${lesson.name} · Final Assessment` : lesson.name}
           </h1>
         </div>
@@ -229,18 +273,30 @@ export default function LessonScreen({
 
           A lesson too thin to fill two steps keeps the flat renderer. */}
       {hasGuide ? (
-          <div className="space-y-3" data-testid="lesson-guided">
+          <div className="space-y-4" data-testid="lesson-guided">
+            {/* A first-time client should not have to guess what this page is. */}
+            {!completedReview && <LessonHowItWorks hasPractice={hasPractice} />}
             <LessonGuide lesson={lesson} hasPractice={hasPractice} hasQuiz={quizAvailable}
-                         activeKey={guideKey} onSelectSection={(k) => {
-                           if (k === "next_step") {
+                         sections={guideSections} activeKey={openKey}
+                         completed={stepsCompleted}
+                         practiceUnlocked={practiceUnlocked}
+                         practiceLockedReason={data.practice_locked_reason}
+                         quickCheckUnlocked={quickCheckUnlocked}
+                         practiced={!!data.practiced}
+                         onSelectSection={(k) => {
+                           if (k === "next_step" || k === "practice" || k === "quick_check") {
                              setGuideKey(null);
                              actionsRef.current?.scrollIntoView({ behavior: "smooth", block: "center" });
                              return;
                            }
-                           setGuideKey(k === guideKey ? null : k);
+                           setGuideKey(k === openKey ? null : k);
                          }} />
-            {guideKey && <LessonSectionBody lesson={lesson} sectionKey={guideKey}
-                                            sections={guideSections} enrollmentId={enrollmentId} />}
+            {openSection && <LessonSectionBody lesson={lesson} sectionKey={openKey}
+                                               sections={guideSections} enrollmentId={enrollmentId}
+                                               onComplete={completeStep} busy={stepBusy}
+                                               completed={stepsCompleted.includes(openKey)}
+                                               nextLabel={nextSection?.label}
+                                               isLastInstructional={isLastInstructional} />}
           </div>
         )
         : (lesson.content_blocks || []).some((b) => b?.active !== false)
@@ -277,12 +333,33 @@ export default function LessonScreen({
         </SectionCard>
       ) : (
         <>
-          {/* Practice-bearing lesson: Start Practice IS the learn boundary. */}
-          {hasPractice && !prescribedRemediation && (
-            <PremiumButton onClick={() => onStartPractice(lessonId)} disabled={busy} data-testid="lesson-start-practice"
-                           className="w-full justify-center min-h-[52px] text-[13px] sm:text-[14px]">
-              <i className="fas fa-paw text-[11px]" />{practiceButtonLabel(data.practiced)}
-            </PremiumButton>
+          {/* The unlock moment — finishing the material is an achievement, so
+              a locked row must not just quietly become an enabled one. */}
+          {showUnlockMoment && !prescribedRemediation && (
+            <PracticeUnlockedCard dogName={dogName} busy={busy}
+                                  onStartPractice={() => onStartPractice(lessonId)} />
+          )}
+
+          {/* Practice-bearing lesson: Start Practice IS the learn boundary.
+              Locked until the lesson material is done — and the server refuses
+              the same call, so this is a signpost, not the security. */}
+          {hasPractice && !prescribedRemediation && !showUnlockMoment && (
+            practiceUnlocked ? (
+              <PremiumButton onClick={() => onStartPractice(lessonId)} disabled={busy} data-testid="lesson-start-practice"
+                             className="w-full justify-center min-h-[52px] text-[13px] sm:text-[14px]">
+                <i className="fas fa-paw text-[11px]" />{practiceButtonLabel(data.practiced)}
+              </PremiumButton>
+            ) : (
+              <div className="rounded-xl border border-shBorder bg-black/15 p-4 text-center"
+                   data-testid="lesson-practice-locked">
+                <p className="text-[15px] font-black text-shTextMuted">
+                  <i className="fas fa-lock mr-2" aria-hidden="true" />Practice is locked
+                </p>
+                <p className="text-[15px] text-shTextMuted mt-1.5 leading-relaxed">
+                  {data.practice_locked_reason || "Finish the lesson material to unlock Practice."}
+                </p>
+              </div>
+            )
           )}
 
           {/* No-practice lesson: explicit Complete Lesson (never auto). */}

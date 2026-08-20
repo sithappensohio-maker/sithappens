@@ -12,6 +12,7 @@ import uuid
 
 import _test_env  # noqa: F401 — must run before `import server`
 import server
+import _school_client_flow
 from _test_loop import run
 
 ca = server._school_current_action
@@ -124,7 +125,7 @@ def _home(se_id, cu):
 
 def _start_and_practice(se_row, enr, cu):
     lesson_id = run(server.db.dog_programs.find_one({"id": enr["id"]}, {"_id": 0, "current_lesson_id": 1}))["current_lesson_id"]
-    started = run(server.portal_school_start_practice(se_row["id"], lesson_id, cu))
+    started = run(_school_client_flow.start_practice(se_row["id"], lesson_id, cu))
     run(server.log_section(started["homework_id"], server.SectionLogIn(section_id="practice"), cu))
     return lesson_id
 
@@ -158,7 +159,7 @@ def test_learn_then_practice_via_start_practice():
             cu = _p4_client_user(client_doc["id"])
             lesson_id = run(server.db.dog_programs.find_one({"id": enr["id"]}, {"_id": 0, "current_lesson_id": 1}))["current_lesson_id"]
             assert _home(se_row["id"], cu)["current_action"]["type"] == "lesson"
-            started = run(server.portal_school_start_practice(se_row["id"], lesson_id, cu))
+            started = run(_school_client_flow.start_practice(se_row["id"], lesson_id, cu))
             h = _home(se_row["id"], cu)
             assert h["current_action"]["type"] == "practice"
             assert h["lesson_state"]["learn_completed"] is True and h["lesson_state"]["practiced"] is False
@@ -181,7 +182,7 @@ def test_learn_completed_is_per_dog():
         try:
             cu = _p4_client_user(client_doc["id"])
             l1 = run(server.db.dog_programs.find_one({"id": enr1["id"]}, {"_id": 0, "current_lesson_id": 1}))["current_lesson_id"]
-            run(server.portal_school_start_practice(se1["id"], l1, cu))
+            run(_school_client_flow.start_practice(se1["id"], l1, cu))
             assert _home(se1["id"], cu)["current_action"]["type"] == "practice"      # dog1 learn done
             assert _home(se2_id, cu)["current_action"]["type"] == "lesson"           # dog2 untouched
         finally:

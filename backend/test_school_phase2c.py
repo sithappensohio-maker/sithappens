@@ -11,6 +11,7 @@ import uuid
 
 import _test_env  # noqa: F401 — must run before `import server`
 import server
+import _school_client_flow
 from _test_loop import run
 from test_online_school_phase4 import (
     _school_program as _p4_program,
@@ -201,7 +202,7 @@ def test_school_practice_has_explicit_ownership_context_and_no_legacy_email_bypa
         try:
             cu = _p4_client_user(client_doc["id"])
             lesson_id = _current_lesson(enr["id"])["current_lesson_id"]
-            started = run(server.portal_school_start_practice(se_row["id"], lesson_id, cu))
+            started = run(_school_client_flow.start_practice(se_row["id"], lesson_id, cu))
             raw_hw = run(server.db.homework.find_one({"id": started["homework_id"]}, {"_id": 0}))
             assert raw_hw["school_enrollment_id"] == se_row["id"]
             assert raw_hw["school_enrollment_record_id"] == enr["id"]

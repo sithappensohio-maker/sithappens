@@ -18,6 +18,7 @@ import httpx
 
 import _test_env  # noqa: F401 — must run before `import server`, see its docstring
 import server
+import _school_client_flow
 from _test_loop import run
 
 TAG = "TEST_PRACTICE_REVIEWS"
@@ -125,7 +126,7 @@ def _enrolled_practice():
             se, enr = res["school_enrollment"], res["enrollment"]
             cu = _client_user(c["id"])
             lesson_id = prog["modules"][0]["lessons"][0]["id"]
-            started = run(server.portal_school_start_practice(se["id"], lesson_id, cu))
+            started = run(_school_client_flow.start_practice(se["id"], lesson_id, cu))
             try:
                 yield se, enr, cu, admin, started["homework_id"]
             finally:

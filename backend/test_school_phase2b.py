@@ -21,6 +21,7 @@ import pytest
 
 import _test_env  # noqa: F401 — must run before `import server`
 import server
+import _school_client_flow
 from _test_loop import run
 
 from test_online_school_phase4 import (  # noqa: E402
@@ -51,7 +52,7 @@ def test_lesson_detail_learn_practice_boundary():
             assert d["has_practice"] is True
             assert d["learn_completed"] is False and d["practiced"] is False
             # the real Start-Practice transition completes the Learn step
-            run(server.portal_school_start_practice(se_row["id"], lid, cu))
+            run(_school_client_flow.start_practice(se_row["id"], lid, cu))
             d2 = _lesson_detail(se_row["id"], lid, cu)
             assert d2["learn_completed"] is True and d2["practiced"] is False
         finally:
@@ -103,7 +104,7 @@ def test_course_pct_tracks_curriculum_completion():
 
             # complete lesson 1 → 50%
             lid = _current_lesson_id(enr["id"])
-            started = run(server.portal_school_start_practice(se_row["id"], lid, cu))
+            started = run(_school_client_flow.start_practice(se_row["id"], lid, cu))
             run(server.log_section(started["homework_id"], server.SectionLogIn(section_id="practice"), cu))
             run(server.portal_school_advance(se_row["id"], cu))
             home = run(server.portal_school_home(se_row["id"], cu))
@@ -114,7 +115,7 @@ def test_course_pct_tracks_curriculum_completion():
 
             # complete lesson 2 → course completed → exactly 100, counts 2/2
             lid2 = _current_lesson_id(enr["id"])
-            started2 = run(server.portal_school_start_practice(se_row["id"], lid2, cu))
+            started2 = run(_school_client_flow.start_practice(se_row["id"], lid2, cu))
             run(server.log_section(started2["homework_id"], server.SectionLogIn(section_id="practice"), cu))
             run(server.portal_school_advance(se_row["id"], cu))
             home = run(server.portal_school_home(se_row["id"], cu))
@@ -138,7 +139,7 @@ def test_completed_course_roadmap_fully_reviewable():
             cu = _p4_client_user(client_doc["id"])
             for _ in range(2):  # two lessons, no checkpoints → practice + advance both
                 lid = _current_lesson_id(enr["id"])
-                started = run(server.portal_school_start_practice(se_row["id"], lid, cu))
+                started = run(_school_client_flow.start_practice(se_row["id"], lid, cu))
                 run(server.log_section(started["homework_id"], server.SectionLogIn(section_id="practice"), cu))
                 run(server.portal_school_advance(se_row["id"], cu))
             detail = run(server.portal_school_detail(se_row["id"], cu))
@@ -160,7 +161,7 @@ def test_review_completed_lesson_is_side_effect_free():
         try:
             cu = _p4_client_user(client_doc["id"])
             l1 = _current_lesson_id(enr["id"])
-            started = run(server.portal_school_start_practice(se_row["id"], l1, cu))
+            started = run(_school_client_flow.start_practice(se_row["id"], l1, cu))
             run(server.log_section(started["homework_id"], server.SectionLogIn(section_id="practice"), cu))
             run(server.portal_school_advance(se_row["id"], cu))
             l2 = _current_lesson_id(enr["id"])

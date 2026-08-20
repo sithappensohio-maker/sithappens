@@ -12,6 +12,7 @@ import uuid
 
 import _test_env  # noqa: F401 — must run before `import server`, see its docstring
 import server
+import _school_client_flow
 from _test_loop import run
 
 TAG = "TEST_MODULE_QUIZ"
@@ -161,7 +162,7 @@ def _cleanup_school(school_id, enrollment_id):
 
 def _practice_current_lesson(se, enr, client_user):
     lesson_id = run(server.db.dog_programs.find_one({"id": enr["id"]}, {"_id": 0, "current_lesson_id": 1}))["current_lesson_id"]
-    started = run(server.portal_school_start_practice(se["id"], lesson_id, client_user))
+    started = run(_school_client_flow.start_practice(se["id"], lesson_id, client_user))
     run(server.log_section(started["homework_id"], server.SectionLogIn(section_id="practice"), client_user))
     return lesson_id, started["homework_id"]
 

@@ -65,6 +65,7 @@ from email_service import (
 )
 import email_service
 import school_events
+import school_lesson_guide
 from school_events import EventType as SchoolEvent
 
 from trophy_service import (
@@ -18400,6 +18401,59 @@ async def _claim_school_lesson_homework(
     return hw
 
 
+def _lesson_step_progress(enrollment: dict, lesson_id: str) -> list:
+    """Instructional steps this enrollment has explicitly finished for a
+    lesson. Per enrollment/dog, so two dogs on the same program never
+    contaminate each other. Absent = none done yet."""
+    return list(((enrollment.get("lesson_step_progress") or {}).get(lesson_id)) or [])
+
+
+def _lesson_guide_payload(lesson: dict, *, has_practice: bool, has_quiz: bool) -> list:
+    return school_lesson_guide.build_guide(
+        lesson, has_practice=has_practice, has_quiz=has_quiz)
+
+
+def _lesson_steps_satisfied(enrollment: dict, lesson_id: str, lesson: dict, *,
+                           has_practice: bool, has_quiz: bool,
+                           practiced: bool = False) -> bool:
+    """Has this client finished the instructional material that precedes
+    Practice for this lesson?
+
+    BACKWARD COMPATIBILITY (deliberate, and the whole rule):  per-step
+    tracking did not exist before this change, so an enrollment that already
+    passed the OLD learn boundary — or has already practised the lesson — is
+    treated as satisfied. Without this, every student mid-course would be
+    locked out of Practice they had already earned by a requirement that did
+    not exist when they did the work. Nothing is migrated or rewritten; the
+    old signal is simply honoured.
+    """
+    if practiced:
+        return True
+    if lesson_id in set(enrollment.get("learn_completed_lesson_ids") or []):
+        return True
+    if (lesson or {}).get("status") == "completed":
+        return True
+    # A lesson that does not present the guided sequence has no per-step
+    # Continue action anywhere on screen, so there is nothing for the client
+    # to complete — gating it would lock Practice permanently.
+    if not school_lesson_guide.guide_is_active(
+            lesson, has_practice=has_practice, has_quiz=has_quiz):
+        return True
+    return not school_lesson_guide.missing_instructional_steps(
+        lesson, _lesson_step_progress(enrollment, lesson_id),
+        has_practice=has_practice, has_quiz=has_quiz)
+
+
+def _practice_lock_reason(lesson: dict, missing: list) -> str:
+    """Why Practice is locked, in words a client can act on."""
+    if not missing:
+        return ""
+    labels = [school_lesson_guide.step_label(k) for k in missing]
+    if len(labels) == 1:
+        return f"Finish {labels[0]} to unlock Practice."
+    return "Finish the lesson material to unlock Practice: " + ", ".join(labels) + "."
+
+
 def _lesson_is_practiced(hw: Optional[dict]) -> bool:
     """Honest, non-fabricated signal: the client logged at least one real
     Practice Coach session against this lesson's homework, OR (for a
@@ -20716,6 +20770,40 @@ async def portal_school_checkpoint_history(school_enrollment_id: str, user: dict
     return out
 
 
+async def _accessible_school_lesson(enrollment: dict, roadmap: dict, lesson_id: str):
+    """The lesson if this client may open it, else 404/403.
+
+    One implementation, shared by every per-lesson portal route, so a new
+    route can never accidentally be more permissive than the lesson view.
+    Returns (lesson, module_name).
+    """
+    lesson = next((l for m in roadmap["modules"] for l in m["lessons"]
+                   if l.get("id") == lesson_id), None)
+    module_name = None
+    if not lesson or lesson.get("status") == "locked":
+        # Online School Phase 2 — narrow remediation entitlement: a lesson the
+        # trainer explicitly prescribed as a refresher is accessible even if
+        # roadmap-locked (or inside an entirely locked future module, where
+        # the roadmap doesn't list it at all). Every other lesson's locked
+        # state is completely unaffected.
+        entitled_lesson_id = await _active_refresher_entitlement(enrollment)
+        if entitled_lesson_id == lesson_id:
+            full_lesson = _find_lesson_in_snapshot(enrollment, lesson_id)
+            if full_lesson:
+                lesson = {**full_lesson, "status": "available", "locked_reason": None,
+                          "is_current": False}
+                for m in (enrollment.get("program_snapshot") or {}).get("modules") or []:
+                    if any(l.get("id") == lesson_id for l in _effective_lessons(m)):
+                        module_name = m.get("name")
+                        break
+    if not lesson:
+        raise HTTPException(status_code=404, detail="Lesson not found")
+    if lesson.get("status") == "locked":
+        raise HTTPException(status_code=403,
+                            detail=lesson.get("locked_reason") or "This lesson is locked.")
+    return lesson, module_name
+
+
 @api.get("/portal/school/{school_enrollment_id}/lessons/{lesson_id}")
 async def portal_school_lesson_detail(school_enrollment_id: str, lesson_id: str, user: dict = Depends(get_current_user)):
     """Direct single-lesson fetch — enforced server-side against the SAME
@@ -20724,27 +20812,7 @@ async def portal_school_lesson_detail(school_enrollment_id: str, lesson_id: str,
     se, enrollment = await _school_enrollment_for_client(school_enrollment_id, user)
     _require_school_access(enrollment, allow_withdrawn_read=True)
     roadmap = await _school_roadmap(enrollment, se["dog_id"])
-    lesson = next((l for m in roadmap["modules"] for l in m["lessons"] if l.get("id") == lesson_id), None)
-    module_name = None
-    if not lesson or lesson.get("status") == "locked":
-        # Online School Phase 2 — narrow remediation entitlement: a lesson
-        # the trainer explicitly prescribed as a refresher is accessible
-        # even if roadmap-locked (or inside an entirely locked future
-        # module, where the roadmap doesn't list it at all). Every other
-        # lesson's locked state is completely unaffected.
-        entitled_lesson_id = await _active_refresher_entitlement(enrollment)
-        if entitled_lesson_id == lesson_id:
-            full_lesson = _find_lesson_in_snapshot(enrollment, lesson_id)
-            if full_lesson:
-                lesson = {**full_lesson, "status": "available", "locked_reason": None, "is_current": False}
-                for m in (enrollment.get("program_snapshot") or {}).get("modules") or []:
-                    if any(l.get("id") == lesson_id for l in _effective_lessons(m)):
-                        module_name = m.get("name")
-                        break
-    if not lesson:
-        raise HTTPException(status_code=404, detail="Lesson not found")
-    if lesson.get("status") == "locked":
-        raise HTTPException(status_code=403, detail=lesson.get("locked_reason") or "This lesson is locked.")
+    lesson, module_name = await _accessible_school_lesson(enrollment, roadmap, lesson_id)
     if module_name is None:
         module = next((m for m in roadmap["modules"] for l in m["lessons"] if l.get("id") == lesson_id), {})
         module_name = module.get("name")
@@ -20760,8 +20828,22 @@ async def portal_school_lesson_detail(school_enrollment_id: str, lesson_id: str,
     if tpl_ids:
         tpl = await db.homework_templates.find_one({"id": tpl_ids[0]}, {"_id": 0, "practice_coach.enabled": 1})
         has_practice_recipe = bool((tpl or {}).get("practice_coach", {}).get("enabled"))
+    has_practice_configured = bool(tpl_ids)
+    practiced = (roadmap["current_lesson_practiced"] if lesson.get("is_current")
+                 else (lesson.get("status") == "completed"))
+    safe_lesson = _client_safe_lesson(lesson)
+    quiz_available = bool(roadmap.get("module_quiz_available")) and bool(lesson.get("is_current"))
+    guide_steps = _lesson_guide_payload(safe_lesson, has_practice=has_practice_configured,
+                                        has_quiz=quiz_available)
+    steps_done = _lesson_step_progress(enrollment, lesson_id)
+    instructional = school_lesson_guide.instructional_step_keys(
+        safe_lesson, has_practice=has_practice_configured, has_quiz=quiz_available)
+    missing_steps = [k for k in instructional if k not in set(steps_done)]
+    practice_unlocked = _lesson_steps_satisfied(
+        enrollment, lesson_id, lesson, has_practice=has_practice_configured,
+        has_quiz=quiz_available, practiced=practiced)
     return {
-        "lesson": _client_safe_lesson(lesson),
+        "lesson": safe_lesson,
         "status": lesson.get("status"), "is_current": bool(lesson.get("is_current")),
         "module_name": module_name,
         "skills": skills,
@@ -20772,7 +20854,22 @@ async def portal_school_lesson_detail(school_enrollment_id: str, lesson_id: str,
         "has_practice": bool(tpl_ids),
         "learn_completed": bool(lesson.get("learn_completed")) or (
             lesson_id in set(enrollment.get("learn_completed_lesson_ids") or [])),
-        "practiced": roadmap["current_lesson_practiced"] if lesson.get("is_current") else (lesson.get("status") == "completed"),
+        "practiced": practiced,
+        # The guided sequence, computed HERE so the browser renders what the
+        # server will also enforce. Steps carry no authored content of their
+        # own beyond what LessonContentBlocks already draws.
+        "guide_steps": guide_steps,
+        "steps_completed": steps_done,
+        "instructional_steps": instructional,
+        "practice_unlocked": practice_unlocked,
+        "practice_locked_reason": (
+            None if practice_unlocked else _practice_lock_reason(lesson, missing_steps)),
+        # Quick Check follows Practice: on a practice-bearing lesson the
+        # in-lesson knowledge check opens once the client has actually
+        # practised. `practiced` is the canonical signal already used across
+        # School — it is NOT trainer approval, which the checkpoint flow owns
+        # separately where the curriculum requires it.
+        "quick_check_unlocked": (not has_practice_configured) or bool(practiced),
     }
 
 
@@ -20835,6 +20932,25 @@ async def portal_school_start_practice(school_enrollment_id: str, lesson_id: str
         raise HTTPException(status_code=403, detail=lesson.get("locked_reason") or "This lesson is locked.")
     if not (lesson.get("suggested_homework_template_ids") or []):
         raise HTTPException(status_code=422, detail="This lesson has no practice configured yet.")
+    # Instructional gate, enforced HERE and not merely as a disabled button:
+    # a client who deep-links, edits the route, or calls this endpoint
+    # directly is refused exactly like one who never saw the UI. Admin and
+    # trainer flows do not come through this client route at all, so their
+    # access is untouched.
+    _quiz_available = bool(roadmap.get("module_quiz_available")) and bool(lesson.get("is_current"))
+    _practiced_now = (roadmap["current_lesson_practiced"] if lesson.get("is_current")
+                      else (lesson.get("status") == "completed"))
+    if not _lesson_steps_satisfied(enrollment, lesson_id, lesson,
+                                   has_practice=True, has_quiz=_quiz_available,
+                                   practiced=_practiced_now):
+        _missing = school_lesson_guide.missing_instructional_steps(
+            _client_safe_lesson(lesson), _lesson_step_progress(enrollment, lesson_id),
+            has_practice=True, has_quiz=_quiz_available)
+        raise HTTPException(status_code=403, detail={
+            "error_code": "instructional_steps_incomplete",
+            "message": _practice_lock_reason(lesson, _missing),
+            "missing_steps": _missing,
+        })
     hw = await _claim_school_lesson_homework(
         enrollment, se["dog_id"], se.get("client_id"), lesson,
         assigned_by=f"Online School · {lesson.get('name', 'Lesson')}",
@@ -20856,6 +20972,52 @@ async def portal_school_start_practice(school_enrollment_id: str, lesson_id: str
     )
     await _emit_school_learn_completed_event(se, enrollment, lesson, user)
     return {"homework_id": hw["id"]}
+
+
+@api.post("/portal/school/{school_enrollment_id}/lessons/{lesson_id}/steps/{step_key}/complete")
+async def portal_school_complete_lesson_step(school_enrollment_id: str, lesson_id: str,
+                                             step_key: str,
+                                             user: dict = Depends(get_current_user)):
+    """Record that the client reached the end of one instructional step and
+    explicitly continued.
+
+    This is what unlocks Practice, so it is deliberately narrow: the step has
+    to be a real INSTRUCTIONAL step of THIS lesson (a client cannot invent a
+    key, nor "complete" Practice or Quick Check to skip them), the lesson has
+    to be one this client may open, and the write is idempotent — a
+    double-tap or a retried request records the step once.
+    """
+    se, enrollment = await _school_enrollment_for_client(school_enrollment_id, user)
+    _require_school_access(enrollment, allow_withdrawn_read=False)
+    _require_school_onboarding_ready(se, enrollment)
+    roadmap = await _school_roadmap(enrollment, se["dog_id"])
+    lesson, _module_name = await _accessible_school_lesson(enrollment, roadmap, lesson_id)
+
+    has_practice = bool(lesson.get("suggested_homework_template_ids"))
+    quiz_available = bool(roadmap.get("module_quiz_available")) and bool(lesson.get("is_current"))
+    safe_lesson = _client_safe_lesson(lesson)
+    if not school_lesson_guide.is_instructional_step(
+            safe_lesson, step_key, has_practice=has_practice, has_quiz=quiz_available):
+        raise HTTPException(status_code=422,
+                            detail="That is not a step you can complete on this lesson.")
+
+    await db.dog_programs.update_one(
+        {"id": enrollment["id"]},
+        {"$addToSet": {f"lesson_step_progress.{lesson_id}": step_key}},
+    )
+
+    fresh = await db.dog_programs.find_one({"id": enrollment["id"]}, {"_id": 0}) or enrollment
+    done = _lesson_step_progress(fresh, lesson_id)
+    missing = school_lesson_guide.missing_instructional_steps(
+        safe_lesson, done, has_practice=has_practice, has_quiz=quiz_available)
+    unlocked = _lesson_steps_satisfied(fresh, lesson_id, lesson, has_practice=has_practice,
+                                       has_quiz=quiz_available)
+    return {
+        "lesson_id": lesson_id, "step_key": step_key,
+        "steps_completed": done, "missing_steps": missing,
+        "practice_unlocked": unlocked,
+        "practice_locked_reason": None if unlocked else _practice_lock_reason(lesson, missing),
+    }
 
 
 @api.post("/portal/school/{school_enrollment_id}/lessons/{lesson_id}/complete-lesson")
