@@ -30,7 +30,12 @@ export default function DogTrainingTab({ dogId, dogName, dogAgeMonths = 0 }) {
   // instead of the old score-only modal's direct goal_progress write.
   const [workspaceFor, setWorkspaceFor] = useState(null);
 
+  // Distinguishes "still loading" from "loaded and genuinely empty" from
+  // "failed to load" — the assign picker needs all three, and a single
+  // `programs = []` cannot tell them apart.
+  const [loadState, setLoadState] = useState("loading");   // loading | ready | error
   const load = useCallback(async () => {
+    setLoadState("loading");
     try {
       const [m, e, p, se] = await Promise.all([
         api.get("/programs/meta"),
@@ -39,10 +44,23 @@ export default function DogTrainingTab({ dogId, dogName, dogAgeMonths = 0 }) {
         api.get(`/dogs/${dogId}/school-enrollments`).catch(() => ({ data: [] })),
       ]);
       setMeta(m.data); setEnrollments(e.data); setPrograms(p.data); setSchoolEnrollments(se.data);
-    } catch (er) { setErr(formatErr(er.response?.data?.detail) || "Load failed"); }
+      setLoadState("ready");
+    } catch (er) {
+      setErr(formatErr(er.response?.data?.detail) || "Load failed");
+      setLoadState("error");
+    }
   }, [dogId]);
   useEffect(() => { if (dogId) load(); }, [dogId, load]);
 
+  if (!meta && loadState === "error") return (
+    <div className="py-8 text-center space-y-3" data-testid="dog-training-load-error">
+      <p className="text-shText text-sm font-black"><i className="fas fa-triangle-exclamation mr-2 text-shAccent"/>Couldn&apos;t load training programs.</p>
+      <p className="text-shTextMuted text-[12px]">{err || "The server didn't respond."}</p>
+      <button type="button" onClick={load} data-testid="dog-training-retry"
+              className="px-4 py-2 rounded-xl border border-shSecondary/40 text-shSecondary text-[11px] font-black uppercase tracking-widest">
+        <i className="fas fa-rotate-right mr-1.5"/>Try again</button>
+    </div>
+  );
   if (!meta) return <p className="text-shTextMuted text-sm py-6 text-center"><i className="fas fa-spinner fa-spin mr-2"/>Loading…</p>;
 
   const typeByKey = Object.fromEntries(meta.types.map(t => [t.key, t]));
@@ -297,6 +315,7 @@ export default function DogTrainingTab({ dogId, dogName, dogAgeMonths = 0 }) {
         <SchoolProgramAssignModal
           programs={programs.filter(p => p.type !== "custom" || p.owner_dog_id === dogId)}
           dogAgeMonths={dogAgeMonths} typeMeta={typeByKey}
+          loadState={loadState} loadError={err} onRetry={load}
           onAssign={assignSchoolProgram} onClose={()=>setAssignOpen(false)}
         />
       )}
@@ -705,7 +724,8 @@ function GoalRow({ goal, progress, onChange }) {
   );
 }
 
-function SchoolProgramAssignModal({ programs, dogAgeMonths, typeMeta, onAssign, onClose }) {
+function SchoolProgramAssignModal({ programs, dogAgeMonths, typeMeta, onAssign, onClose,
+                                   loadState = "ready", loadError, onRetry }) {
   const [selectedId, setSelectedId] = useState("");
   const [deliveryMode, setDeliveryMode] = useState("in_person");
   const [trainerId, setTrainerId] = useState("");
@@ -713,6 +733,21 @@ function SchoolProgramAssignModal({ programs, dogAgeMonths, typeMeta, onAssign, 
   const [targetDate, setTargetDate] = useState("");
   const [trainers, setTrainers] = useState([]);
   const selected = programs.find(p => p.id === selectedId) || null;
+
+  /* Group by curriculum type, but NEVER lose a program to an unrecognised
+     one. The picker used to render a group per known type and `null` for
+     each empty one, so a program whose type was not in /programs/meta —
+     or simply no programs at all — produced an entirely blank body with
+     nothing to explain it. Anything unmatched now falls into "Other". */
+  const known = Object.values(typeMeta || {});
+  const groups = known
+    .map(t => ({ key: t.key, label: t.label, color: t.color,
+                 items: programs.filter(p => p.type === t.key) }))
+    .filter(g => g.items.length > 0);
+  const knownKeys = new Set(known.map(t => t.key));
+  const orphans = programs.filter(p => !knownKeys.has(p.type));
+  if (orphans.length) groups.push({ key: "__other", label: "Other programs",
+                                    color: "#94a3b8", items: orphans });
 
   useEffect(() => {
     api.get("/admin/school/trainers").then(r => setTrainers(r.data || [])).catch(() => setTrainers([]));
@@ -756,11 +791,30 @@ function SchoolProgramAssignModal({ programs, dogAgeMonths, typeMeta, onAssign, 
         </div>
 
         <div className="overflow-y-auto flex-1 min-h-0 p-4 sm:p-5">
-          {!selected ? (
+          {loadState === "loading" ? (
+            <div className="py-14 text-center" data-testid="school-assign-loading">
+              <p className="text-shTextMuted text-sm"><i className="fas fa-spinner fa-spin mr-2"/>Loading programs…</p>
+            </div>
+          ) : loadState === "error" ? (
+            <div className="py-12 text-center space-y-3" data-testid="school-assign-error">
+              <p className="text-shText text-sm font-black"><i className="fas fa-triangle-exclamation mr-2 text-shAccent"/>Unable to load programs</p>
+              <p className="text-shTextMuted text-[12px] max-w-md mx-auto">{loadError || "The server didn't respond. Nothing has been assigned."}</p>
+              {onRetry && <button type="button" onClick={onRetry} data-testid="school-assign-retry"
+                      className="px-4 py-2 rounded-xl border border-shSecondary/40 text-shSecondary text-[11px] font-black uppercase tracking-widest">
+                <i className="fas fa-rotate-right mr-1.5"/>Try again</button>}
+            </div>
+          ) : !groups.length ? (
+            <div className="py-12 text-center space-y-3" data-testid="school-assign-empty">
+              <p className="text-shText text-sm font-black"><i className="fas fa-folder-open mr-2 text-shSecondary"/>No assignable programs</p>
+              <p className="text-shTextMuted text-[12px] max-w-md mx-auto">
+                Only <strong className="text-shText">active</strong> programs can be assigned. If a curriculum exists but is
+                archived or still a draft, activate it in Program Studio and it will appear here.
+              </p>
+            </div>
+          ) : !selected ? (
             <div className="space-y-4">
-              {Object.values(typeMeta).map(t => {
-                const items = programs.filter(p => p.type === t.key);
-                if (!items.length) return null;
+              {groups.map(t => {
+                const items = t.items;
                 return <div key={t.key}>
                   <p className="text-[11px] font-black uppercase tracking-widest mb-2" style={{color:t.color}}>{t.label}</p>
                   <div className="grid sm:grid-cols-2 gap-2">

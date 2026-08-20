@@ -41,3 +41,14 @@ async def start_practice(school_enrollment_id: str, lesson_id: str, user: dict):
     """Complete the lesson material, then open Practice — a full client run."""
     await complete_instructional_steps(school_enrollment_id, lesson_id, user)
     return await server.portal_school_start_practice(school_enrollment_id, lesson_id, user)
+
+
+async def complete_lesson(school_enrollment_id: str, lesson_id: str, user: dict):
+    """Finish the lesson material, then complete a no-practice lesson.
+
+    Complete is that lesson's terminal action, so it answers to the same
+    progression rule as Practice does elsewhere. Tests that assert the rule
+    itself should call ``server.portal_school_complete_lesson`` directly.
+    """
+    await complete_instructional_steps(school_enrollment_id, lesson_id, user)
+    return await server.portal_school_complete_lesson(school_enrollment_id, lesson_id, user)

@@ -21039,6 +21039,31 @@ async def portal_school_complete_lesson(school_enrollment_id: str, lesson_id: st
     current_lesson = roadmap.get("current_lesson")
     if not current_lesson or current_lesson.get("status") == "locked":
         raise HTTPException(status_code=403, detail="This lesson is locked.")
+    # This route is ONLY the boundary for a lesson with no Practice step; a
+    # practice-bearing lesson uses Start-Practice for the same purpose. That
+    # was documented but never enforced, and once learn completion began
+    # unlocking Practice for pre-feature enrollments, the gap became a way to
+    # unlock Practice on a practice-bearing lesson without doing any of the
+    # lesson material. Refusing here means the ONLY writer of the legacy
+    # signal on a practice lesson is Start-Practice, which is gated.
+    if current_lesson.get("suggested_homework_template_ids"):
+        raise HTTPException(status_code=422, detail={
+            "error_code": "lesson_has_practice",
+            "message": "This lesson finishes with Practice, not a Complete action.",
+        })
+    # A no-practice lesson still has instructional material, and Complete is
+    # its terminal action — so it answers to the same progression rule.
+    _quiz_avail = bool(roadmap.get("module_quiz_available"))
+    if not _lesson_steps_satisfied(enrollment, lesson_id, current_lesson,
+                                   has_practice=False, has_quiz=_quiz_avail):
+        _missing = school_lesson_guide.missing_instructional_steps(
+            _client_safe_lesson(current_lesson), _lesson_step_progress(enrollment, lesson_id),
+            has_practice=False, has_quiz=_quiz_avail)
+        raise HTTPException(status_code=403, detail={
+            "error_code": "instructional_steps_incomplete",
+            "message": "Finish the lesson material before completing the lesson.",
+            "missing_steps": _missing,
+        })
     await db.dog_programs.update_one(
         {"id": enrollment["id"]}, {"$addToSet": {"learn_completed_lesson_ids": lesson_id}},
     )

@@ -168,7 +168,7 @@ test("finishing the material produces an explicit unlock moment", () => {
 test("the guided threshold is shared with the server", () => {
   // A lesson that renders flat has no Continue action, so the Practice gate
   // must not bind on it — backend/school_lesson_guide.py uses the same number.
-  expect(GUIDE_MIN_CONTENT_STEPS).toBe(2);
+  expect(GUIDE_MIN_CONTENT_STEPS).toBe(1);
   expect(lessonSrc).toMatch(/>= GUIDE_MIN_CONTENT_STEPS/);
 });
 

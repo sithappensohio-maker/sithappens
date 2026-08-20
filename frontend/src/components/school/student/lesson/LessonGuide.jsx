@@ -43,13 +43,19 @@ export const GUIDE_SECTIONS = [
   { key: "next_step", n: 8, label: "Next Step", icon: "fa-arrow-right", blurb: "What's coming next", kind: "next_step" },
 ];
 
-/* A lesson only presents the sequence when it has at least this many steps
-   carrying content of their own. Below it the lesson reads better as ordinary
-   flowing content — and, critically, there is no per-step Continue action on
-   screen, so the Practice gate must not bind either. `school_lesson_guide.py`
-   uses the same threshold; the two must agree or a client could be locked out
-   of Practice with no control anywhere to unlock it. */
-export const GUIDE_MIN_CONTENT_STEPS = 2;
+/* A lesson presents the sequence as soon as it has this many steps carrying
+   content of their own.
+
+   This is 1 deliberately. At 2, a lesson with exactly one authored
+   instructional step rendered flat — no Continue action — and so could not
+   be gated, leaving an exemption to reason about every time the gate moved.
+   At 1 the only ungated shape is a lesson with no instructional content at
+   all, where there is nothing to complete in the first place.
+
+   `school_lesson_guide.py` holds the same number and a test asserts they
+   agree: if this rendered flat while the server gated, Practice would be
+   locked with no control on screen to unlock it. */
+export const GUIDE_MIN_CONTENT_STEPS = 1;
 
 const text = (v) => (typeof v === "string" ? v.trim() : "");
 

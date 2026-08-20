@@ -68,7 +68,7 @@ def test_lesson_detail_no_practice_lesson():
             lid = _current_lesson_id(enr["id"])
             d = _lesson_detail(se_row["id"], lid, cu)
             assert d["has_practice"] is False and d["learn_completed"] is False
-            run(server.portal_school_complete_lesson(se_row["id"], lid, cu))
+            run(_school_client_flow.complete_lesson(se_row["id"], lid, cu))
             assert _lesson_detail(se_row["id"], lid, cu)["learn_completed"] is True
         finally:
             _p4_cleanup(se_row["id"], enr["id"])

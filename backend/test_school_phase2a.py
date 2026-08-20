@@ -222,7 +222,7 @@ def test_no_practice_lesson_learn_then_advance():
             with pytest.raises(server.HTTPException):
                 run(server.portal_school_advance(se_row["id"], cu))
             # explicit Complete Lesson → learn done → advance action, and it advances
-            run(server.portal_school_complete_lesson(se_row["id"], lesson_id, cu))
+            run(_school_client_flow.complete_lesson(se_row["id"], lesson_id, cu))
             assert _home(se_row["id"], cu)["current_action"]["type"] == "advance"
             run(server.portal_school_advance(se_row["id"], cu))
             assert run(server.db.dog_programs.find_one({"id": enr["id"]}, {"_id": 0, "current_lesson_id": 1}))["current_lesson_id"] != lesson_id
@@ -246,7 +246,7 @@ def test_legacy_checkpoint_without_practice_is_safe():
             assert "trainer needs to update" in act["sublabel"].lower()
             # even after the learn step, still setup_required — never submit_checkpoint
             lesson_id = run(server.db.dog_programs.find_one({"id": enr["id"]}, {"_id": 0, "current_lesson_id": 1}))["current_lesson_id"]
-            run(server.portal_school_complete_lesson(se_row["id"], lesson_id, cu))
+            run(_school_client_flow.complete_lesson(se_row["id"], lesson_id, cu))
             assert _home(se_row["id"], cu)["current_action"]["type"] == "setup_required"
             # cannot self-advance around the problem (checkpoint gate holds)
             import pytest
@@ -315,7 +315,7 @@ def test_complete_lesson_current_only_and_per_dog():
             # a non-current lesson id is rejected
             with pytest.raises(server.HTTPException):
                 run(server.portal_school_complete_lesson(se1["id"], "not-the-current-lesson", cu))
-            run(server.portal_school_complete_lesson(se1["id"], l1, cu))
+            run(_school_client_flow.complete_lesson(se1["id"], l1, cu))
             assert run(server.db.dog_programs.find_one({"id": enr1["id"]}, {"_id": 0, "learn_completed_lesson_ids": 1}))["learn_completed_lesson_ids"] == [l1]
             # dog2 untouched
             assert not (run(server.db.dog_programs.find_one({"id": enr2_id}, {"_id": 0, "learn_completed_lesson_ids": 1})) or {}).get("learn_completed_lesson_ids")

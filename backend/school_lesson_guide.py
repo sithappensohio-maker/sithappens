@@ -54,15 +54,20 @@ GUIDE_SECTIONS: tuple = (
 
 INSTRUCTIONAL_KINDS = frozenset({"instructional"})
 
-# A lesson only presents the guided sequence when it has at least this many
-# steps carrying content of their own; below it, the client sees the lesson as
-# ordinary flowing content with no per-step Continue action.
+# A lesson presents the guided sequence as soon as it has this many steps
+# carrying content of their own.
 #
-# The Practice gate uses the SAME threshold, and must: a client can only be
-# required to work through a sequence they are actually shown. Gating a lesson
-# that renders flat would lock Practice with no control anywhere on screen to
-# unlock it. `LessonScreen`'s own `hasGuide` check mirrors this exactly.
-GUIDE_MIN_CONTENT_STEPS = 2
+# This is 1 deliberately. At 2 there was a class of lesson — exactly one
+# authored instructional step — that rendered flat, had no Continue action,
+# and therefore could not be gated: an exemption you had to reason about
+# every time you touched the gate. At 1 the only ungated shape is a lesson
+# with NO instructional content at all, which is a tautology rather than a
+# bypass: there is nothing a client could complete.
+#
+# The client mirrors this constant, and a test asserts the two agree — if
+# the browser rendered flat while the server gated, the client would be
+# locked out with no control anywhere to unlock it.
+GUIDE_MIN_CONTENT_STEPS = 1
 
 # Steps that ride inside Train rather than owning a row of their own.
 _ASIDE_KEYS = frozenset({"troubleshooting", "safety"})

@@ -99,12 +99,39 @@ def test_only_instructional_steps_gate_practice():
         "learn", "get_ready", "train", "watch_for", "know_got_it"]
 
 
-def test_a_lesson_too_thin_to_show_the_sequence_gates_nothing():
-    # It renders as ordinary content with no Continue action anywhere, so a
-    # gate would be unsatisfiable rather than merely strict.
-    thin = {"client_overview": "Just this."}
-    assert guide.guide_is_active(thin, has_practice=True) is False
+def test_only_a_lesson_with_no_instructional_content_is_ungated():
+    """The exemption is a tautology, not a bypass.
 
+    A lesson with even ONE authored instructional step presents the guided
+    sequence and is gated. Only a lesson with nothing instructional to
+    complete is exempt — because there is nothing a client could do to
+    satisfy a gate there.
+    """
+    one_step = {"client_overview": "Just this."}
+    assert guide.instructional_step_keys(one_step, has_practice=True) == ["learn"]
+    assert guide.guide_is_active(one_step, has_practice=True) is True
+
+    for empty in ({}, {"content_blocks": [{"type": "practice", "order": 1}]},
+                  {"content_blocks": [{"type": "quiz", "order": 1}]}):
+        assert guide.instructional_step_keys(empty, has_practice=True) == []
+        assert guide.missing_instructional_steps(empty, [], has_practice=True) == []
+
+
+def test_a_single_step_lesson_is_gated_and_completable():
+    # Option A from review: no lesson shape can be gated without also
+    # offering the client a way to satisfy it.
+    with _course() as (se, enr, cu, lid):
+        run(server.db.dog_programs.update_one(
+            {"id": enr["id"]},
+            {"$set": {"program_snapshot.modules.0.lessons.0.success_criteria": "",
+                      "program_snapshot.modules.0.lessons.0.why_it_matters": ""}}))
+        d = _detail(se, lid, cu)
+        assert d["instructional_steps"] == ["learn"], d["instructional_steps"]
+        assert d["practice_unlocked"] is False, "a one-step lesson slipped the gate"
+        with pytest.raises(server.HTTPException):
+            _start_practice_raw(se, lid, cu)
+        _complete_step(se, lid, "learn", cu)
+        assert _detail(se, lid, cu)["practice_unlocked"] is True
 
 def test_authored_content_is_never_dropped():
     # A text block matching no keyword still lands in a visible step.
@@ -231,17 +258,16 @@ def test_the_gate_is_enforced_on_the_endpoint_not_only_in_the_payload():
         assert _enrollment(enr).get("learn_completed_lesson_ids") in (None, [])
 
 
-def test_a_thin_lesson_is_not_gated():
-    # Nothing on screen could satisfy a gate here, so there must not be one.
-    with _course() as (se, enr, cu, lid):
-        run(server.db.dog_programs.update_one(
-            {"id": enr["id"]},
-            {"$set": {"program_snapshot.modules.0.lessons.0.success_criteria": "",
-                      "program_snapshot.modules.0.lessons.0.why_it_matters": ""}}))
-        d = _detail(se, lid, cu)
-        if not d["instructional_steps"] or len(d["instructional_steps"]) < 2:
-            assert d["practice_unlocked"] is True, "an ungated lesson reported locked"
-
+def test_the_client_and_server_agree_on_when_the_sequence_is_shown():
+    # If they disagreed in the unsafe direction — server gates, browser
+    # renders flat — Practice would lock with no control to unlock it.
+    import pathlib, re
+    assert guide.GUIDE_MIN_CONTENT_STEPS == 1
+    js = (pathlib.Path(__file__).resolve().parents[1] / "frontend" / "src" /
+          "components" / "school" / "student" / "lesson" / "LessonGuide.jsx")
+    m = re.search(r"GUIDE_MIN_CONTENT_STEPS = (\d+)", js.read_text(encoding="utf-8"))
+    assert m and int(m.group(1)) == guide.GUIDE_MIN_CONTENT_STEPS, (
+        "client and server disagree on when the guided sequence is shown")
 
 # ---------------------------------------------------------------------------
 # Quick Check follows Practice
@@ -356,3 +382,68 @@ def test_starting_practice_twice_returns_the_same_assignment():
         a = run(_school_client_flow.start_practice(se["id"], lid, cu))
         b = run(_school_client_flow.start_practice(se["id"], lid, cu))
         assert a["homework_id"] == b["homework_id"]
+
+
+# ---------------------------------------------------------------------------
+# The compatibility shortcut must never become a new-user bypass
+# ---------------------------------------------------------------------------
+
+def test_a_new_student_cannot_trigger_the_legacy_shortcut_via_complete_lesson():
+    """The regression that made this section exist.
+
+    `learn_completed_lesson_ids` is what marks a pre-feature enrollment as
+    already past the old boundary. `complete-lesson` also writes it, and used
+    to accept ANY current lesson — so a brand-new student could call it on a
+    practice-bearing lesson, land in the compatibility branch, and open
+    Practice having read nothing.
+    """
+    with _course() as (se, enr, cu, lid):
+        assert _detail(se, lid, cu)["practice_unlocked"] is False
+        with pytest.raises(server.HTTPException) as e:
+            run(server.portal_school_complete_lesson(se["id"], lid, cu))
+        assert e.value.status_code == 422
+        assert e.value.detail["error_code"] == "lesson_has_practice"
+        # nothing was written, so the shortcut was never armed
+        assert _enrollment(enr).get("learn_completed_lesson_ids") in (None, [])
+        assert _detail(se, lid, cu)["practice_unlocked"] is False
+        with pytest.raises(server.HTTPException) as e2:
+            _start_practice_raw(se, lid, cu)
+        assert e2.value.status_code == 403
+
+
+def test_the_only_writer_of_the_legacy_signal_on_a_practice_lesson_is_gated():
+    # Start-Practice is the sole remaining writer, and it runs the gate first.
+    with _course() as (se, enr, cu, lid):
+        with pytest.raises(server.HTTPException):
+            _start_practice_raw(se, lid, cu)
+        assert _enrollment(enr).get("learn_completed_lesson_ids") in (None, [])
+        for key in _detail(se, lid, cu)["instructional_steps"]:
+            _complete_step(se, lid, key, cu)
+        _start_practice_raw(se, lid, cu)
+        assert lid in _enrollment(enr)["learn_completed_lesson_ids"]
+
+
+def test_a_no_practice_lesson_still_answers_to_the_progression():
+    # Complete is that lesson's terminal action, so it needs the material too.
+    with _course() as (se, enr, cu, lid):
+        run(server.db.dog_programs.update_one(
+            {"id": enr["id"]},
+            {"$set": {"program_snapshot.modules.0.lessons.0.suggested_homework_template_ids": []}}))
+        with pytest.raises(server.HTTPException) as e:
+            run(server.portal_school_complete_lesson(se["id"], lid, cu))
+        assert e.value.status_code == 403
+        assert e.value.detail["error_code"] == "instructional_steps_incomplete"
+        for key in _detail(se, lid, cu)["instructional_steps"]:
+            _complete_step(se, lid, key, cu)
+        out = run(server.portal_school_complete_lesson(se["id"], lid, cu))
+        assert out["learn_completed"] is True
+
+
+def test_a_genuine_pre_feature_enrollment_is_still_honoured():
+    # The compatibility rule must keep working for data written before this
+    # feature existed — that is the whole reason it is there.
+    with _course() as (se, enr, cu, lid):
+        run(server.db.dog_programs.update_one(
+            {"id": enr["id"]}, {"$addToSet": {"learn_completed_lesson_ids": lid}}))
+        assert _detail(se, lid, cu)["practice_unlocked"] is True
+        assert _start_practice_raw(se, lid, cu)["homework_id"]

@@ -216,18 +216,19 @@ test("Course Builder blocks still win over the guided sequence", () => {
   expect(lessonSrc).toMatch(/\(lesson\.content_blocks \|\| \[\]\)\.some\(\(b\) => b\?\.active !== false\)\s*\n?\s*\? <LessonContentBlocks/);
 });
 
-test("a thin lesson keeps the flat renderer rather than a one-item checklist", () => {
-  // Hand-off steps (Practice / Quick Check / Next Step) carry no lesson
-  // content of their own, so they must not make a one-field lesson look like
-  // a guided sequence.
-  // The threshold is a named constant because the SERVER shares it: the
-  // Practice gate must not bind on a lesson that renders flat, or the client
-  // would be locked out with no Continue action anywhere to unlock it.
+test("a lesson with any instructional content is guided, so it can be completed", () => {
+  // Reviewed after the first pass: at a threshold of 2, a lesson with ONE
+  // authored instructional step rendered flat — no Continue action — and so
+  // could not be gated. The threshold is now 1, which leaves only a lesson
+  // with nothing instructional to complete outside the sequence.
   expect(lessonSrc).toMatch(/const hasGuide = guideSections\.filter\(sx => !sx\.ready\)\.length >= GUIDE_MIN_CONTENT_STEPS/);
-  expect(GUIDE_MIN_CONTENT_STEPS).toBe(2);
-  expect(lessonSrc).toMatch(/: <LessonDetailPanel lesson=\{lesson\}/);
+  expect(GUIDE_MIN_CONTENT_STEPS).toBe(1);
   expect(buildGuide({ client_overview: "Only this." }, { hasPractice: true, hasQuiz: true })
     .filter(s => !s.ready)).toHaveLength(1);
+  // a lesson with nothing authored still falls back to the flat renderer
+  expect(lessonSrc).toMatch(/: <LessonDetailPanel lesson=\{lesson\}/);
+  expect(buildGuide({}, { hasPractice: true, hasQuiz: true })
+    .filter(s => !s.ready)).toHaveLength(0);
 });
 
 test("troubleshooting and safety collapse instead of burying the steps", () => {
