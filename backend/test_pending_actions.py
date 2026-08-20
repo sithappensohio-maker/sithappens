@@ -66,6 +66,24 @@ def _future(days):
     return (date.today() + timedelta(days=days)).isoformat()
 
 
+def _future_open(days, service_type="daycare", limit=14):
+    """A future date that is genuinely OPEN for `service_type`.
+
+    A fixed offset silently lands on a different weekday depending on the
+    day the suite runs, so a booking test using one passes or fails by
+    calendar luck once that weekday is closed. Ask the app's own hours
+    resolver instead: a legitimately closed day is still honoured, the
+    test just starts from the next open one.
+    """
+    settings = run(server.get_settings())
+    for extra in range(limit):
+        target = date.today() + timedelta(days=days + extra)
+        if not server._service_hours_for_date(settings, service_type, target).get("closed"):
+            return target.isoformat()
+    raise AssertionError(
+        f"no open {service_type} day within {limit} days of +{days}")
+
+
 def _seed_meet_greet_settings():
     """Every day open 09:00-17:00, no lead time — so any near-future slot the
     tests pick is genuinely available."""
@@ -331,7 +349,7 @@ def test_booking_approval_lifecycle():
         with _email_success() as sent:
             cu = _client_user(c["id"])
             booking = run(server.create_booking(server.BookingIn(
-                dog_id=dog_id, date=_future(10), service_type="daycare"), cu))
+                dog_id=dog_id, date=_future_open(10), service_type="daycare"), cu))
             assert booking["status"] == "pending", "approval-required service must create a PENDING booking"
 
             res = _actions()
@@ -361,7 +379,7 @@ def test_auto_approved_and_confirmed_bookings_never_appear():
         run(server.db.settings.update_one({"id": "global"}, {"$unset": {"booking_flow_controls.per_catalog_service": 1}}))
         cu = _client_user(c["id"])
         booking = run(server.create_booking(server.BookingIn(
-            dog_id=dog_id, date=_future(9), service_type="daycare"), cu))
+            dog_id=dog_id, date=_future_open(9), service_type="daycare"), cu))
         assert booking["status"] == "approved", "instant-book path auto-approves"
         assert not [x for x in _actions()["items"] if x["deep_link"].get("booking_id") == booking["id"]]
 
