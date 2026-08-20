@@ -334,6 +334,8 @@ export default function SchoolApp({ path, clientName, onNavigate, onExit }) {
             onAsk={() => openAsk()}
             onViewFeedback={() => goView("feedback")}
             onViewProgress={() => goView("progress")}
+            onViewCourse={() => goView("course")}
+            onOpenPractice={(hw) => openHomework(hw?.id || hw)}
           />
           <StudentWorkspaceExtras enrollmentId={selectedId} home={home} mode="home" onChanged={refreshAll}
                                   onOpenLesson={(lid) => go("lesson", lid)} onOpenHomework={openHomework} />
