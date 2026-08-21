@@ -60,8 +60,21 @@ services:
       STRIPE_WEBHOOK_SECRET: "${STRIPE_WEBHOOK_SECRET:-}"
     volumes:
       # Persistent host bind mount for in-app JSON backups and pre-restore snapshots.
+      # NOTE: ./backups is deliberately UNLABELLED - it is shared with the mongo
+      # service below (mongodump writes there too), and :Z would relabel it
+      # private to one container and lock the other out. If it ever needs a
+      # label on an SELinux host it must be the shared :z, never :Z.
       - ./backups:/app/backups
-      - ./school_media:/app/school_media
+      # :Z = relabel this bind mount for THIS container, privately.
+      #
+      # Without it, an SELinux host (Fedora, and therefore Bazzite) denies the
+      # container write access to a host directory, and School media uploads
+      # fail with EACCES even though the directory looks world-readable and the
+      # process is root - DAC allows it, MAC does not. Private :Z rather than
+      # shared :z because the backend is the only service that mounts this
+      # directory. The suffix is ignored on non-SELinux hosts, so the same file
+      # stays correct on the Windows/macOS dev machines.
+      - ./school_media:/app/school_media:Z
 
   email-worker:
     # Reuses the backend image/build — only the command differs. Runs ONLY

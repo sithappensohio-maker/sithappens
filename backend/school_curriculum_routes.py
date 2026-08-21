@@ -9,6 +9,8 @@ is the write path — turning a validated plan into ordinary curriculum through
 the SAME `create_program` / `update_program` the Studio uses, so an imported
 course is indistinguishable from a hand-built one.
 """
+import logging
+import os
 import posixpath
 import uuid
 from typing import Optional
@@ -17,6 +19,23 @@ from fastapi import Depends, HTTPException
 from pydantic import BaseModel
 
 import school_curriculum_import as pkg
+
+logger = logging.getLogger("sithappens")
+
+
+class MediaStorageError(Exception):
+    """School media could not be written to disk.
+
+    A misconfigured server, not a bad package: the author did nothing wrong
+    and no amount of re-editing their .zip will help. Carries the real cause
+    and path for the server log; the client is told what is wrong in terms it
+    can act on, without being handed the server's filesystem layout.
+    """
+
+    def __init__(self, path: str, cause: BaseException):
+        super().__init__(str(cause))
+        self.path = path
+        self.cause = cause
 
 
 class CurriculumPackageIn(BaseModel):
@@ -66,7 +85,8 @@ def register_curriculum_import(*, api, db, manage_dep, persist_school_media,
                                program_model, create_program, update_program, now_iso,
                                homework_template_model=None, create_homework_template=None):
 
-    async def _ingest(path: str, blob: bytes, mime: str, user: dict, cache: dict) -> str:
+    async def _ingest(path: str, blob: bytes, mime: str, user: dict, cache: dict,
+                      created: list) -> str:
         """One packaged file -> one School Resource, reusing an identical one.
 
         Identity is the file CONTENT, not its name, so re-importing the same
@@ -91,7 +111,12 @@ def register_curriculum_import(*, api, db, manage_dep, persist_school_media,
         blob, mime = pkg.optimize_lesson_image(blob, mime)
         filename = path.rsplit("/", 1)[-1]
         media_id = str(uuid.uuid4())
-        stored = persist_school_media(pkg.data_url(blob, mime), media_id, filename)
+        try:
+            stored = persist_school_media(pkg.data_url(blob, mime), media_id, filename)
+        except OSError as e:
+            # Permission denied, read-only mount, missing directory, disk full:
+            # all the same story to a caller — this server cannot store media.
+            raise MediaStorageError(path, e) from e
         await db.homework_media.insert_one({
             "id": media_id, "homework_id": None, "kind": "school_resource",
             "filename": filename, "uploaded_at": now_iso(), "uploaded_by": user.get("id"),
@@ -105,7 +130,29 @@ def register_curriculum_import(*, api, db, manage_dep, persist_school_media,
             "created_by": user.get("id"), "import_digest": digest,
         })
         cache[digest] = resource_id
+        # Only what THIS request created, so a rollback can undo its own work
+        # without touching resources an earlier import already established.
+        created.append({"media_id": media_id, "resource_id": resource_id,
+                        "storage_path": stored.get("storage_path")})
         return resource_id
+
+
+    async def _rollback_media(created: list) -> None:
+        """Undo this request's media writes.
+
+        Media is ingested before the course is written, so a storage failure
+        half way through would otherwise leave orphan School Resources
+        pointing at files that were never finished — visible in the media
+        library, attached to no lesson, and impossible to explain later.
+        """
+        for item in created:
+            try:
+                if item.get("storage_path") and os.path.exists(item["storage_path"]):
+                    os.remove(item["storage_path"])
+            except OSError:
+                pass
+            await db.homework_media.delete_one({"id": item["media_id"]})
+            await db.school_resources.delete_one({"id": item["resource_id"]})
 
     @api.post("/admin/school/curriculum/import")
     async def import_curriculum_package(body: CurriculumPackageIn,
@@ -151,18 +198,35 @@ def register_curriculum_import(*, api, db, manage_dep, persist_school_media,
         # ---- media first: every reference resolves before the course is written
         cache: dict = {}
         resource_by_path: dict = {}
-        for item in plan["media_plan"]:
-            path = item["path"]
-            if path not in resource_by_path:
-                resource_by_path[path] = await _ingest(path, files[path], item["mime"], user, cache)
+        created: list = []
+        try:
+            for item in plan["media_plan"]:
+                path = item["path"]
+                if path not in resource_by_path:
+                    resource_by_path[path] = await _ingest(
+                        path, files[path], item["mime"], user, cache, created)
 
-        # Media shipped in the package that no block references is imported into
-        # the School library and reported — never silently dropped.
-        for path in plan["unplaced"]:
-            ext = posixpath.splitext(path)[1].lower()
-            mime = pkg.MEDIA_EXT_MIME.get(ext)
-            if mime:
-                await _ingest(path, files[path], mime, user, cache)
+            # Media shipped in the package that no block references is imported
+            # into the School library and reported — never silently dropped.
+            for path in plan["unplaced"]:
+                ext = posixpath.splitext(path)[1].lower()
+                mime = pkg.MEDIA_EXT_MIME.get(ext)
+                if mime:
+                    await _ingest(path, files[path], mime, user, cache, created)
+        except MediaStorageError as e:
+            # The course is written last, so nothing of it exists yet; undo the
+            # media already stored and the import is as if it never ran.
+            await _rollback_media(created)
+            logger.exception(
+                "School curriculum import failed: cannot store media for %r at %s",
+                e.path, getattr(e.cause, "filename", None) or "the media directory")
+            # `msg` is the key the client's formatErr renders, so the owner
+            # reads the sentence rather than "[object Object]".
+            raise HTTPException(status_code=503, detail={
+                "error_code": "school_media_unwritable",
+                "msg": ("School media storage is not writable. "
+                        "Check server storage configuration."),
+            })
 
         # ---- bundled Practice recipes, mirroring the .json template path
         #

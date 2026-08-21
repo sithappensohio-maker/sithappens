@@ -46,7 +46,17 @@ docker compose up -d
 echo "⏳  Waiting for backend to come online..."
 for i in {1..60}; do
   if curl -fsS http://localhost:8080/api/health >/dev/null 2>&1; then
-    echo "✅  Update complete — backend is healthy."
+    # Healthy means "process up, Mongo reachable". It does NOT mean the
+    # backend can store a lesson image: a bind mount the container cannot
+    # write to passes every health check and then fails the first upload.
+    echo "🗂️   Checking School media storage is writable..."
+    if ! docker compose exec -T backend python school_media_preflight.py; then
+      echo "❌ Update finished, but School media storage is NOT writable."
+      echo "   Course images, dog photos and lesson media uploads will fail."
+      echo "   On an SELinux host the bind mount needs :Z in docker-compose.yml."
+      exit 1
+    fi
+    echo "✅  Update complete — backend is healthy and media storage is writable."
     docker compose ps
     exit 0
   fi

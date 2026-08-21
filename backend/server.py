@@ -67,6 +67,7 @@ import email_service
 import school_events
 import school_lesson_guide
 from school_curriculum_routes import register_curriculum_import
+from school_media_preflight import check_school_media_writable
 from school_events import EventType as SchoolEvent
 
 from trophy_service import (
@@ -32290,6 +32291,21 @@ async def _ensure_critical_training_indexes() -> None:
 # -------- Startup --------
 @app.on_event("startup")
 async def startup():
+    # Storage preflight. /api/health answers "is the process up and is Mongo
+    # reachable" — it has never answered "can this container store a lesson
+    # image", and production ran green for weeks with a media directory the
+    # backend could not write to. Logged loudly rather than fatally: unusable
+    # media must be impossible to miss in the logs, but it must not take
+    # bookings, invoicing and the client portal down with it.
+    _media_ok, _media_detail = check_school_media_writable(SCHOOL_MEDIA_ROOT)
+    if _media_ok:
+        logger.info("School media storage writable: %s", _media_detail)
+    else:
+        logger.critical(
+            "SCHOOL MEDIA STORAGE IS NOT WRITABLE — %s. Lesson images and course "
+            "media uploads WILL fail. On an SELinux host (Fedora/Bazzite) the "
+            "bind mount needs the :Z suffix in docker-compose.yml.", _media_detail)
+
     await db.users.create_index("email", unique=True)
     await db.clients.create_index("id", unique=True)
     await db.dogs.create_index("id", unique=True)
@@ -55886,7 +55902,12 @@ from school_suite import register_school_suite
 register_curriculum_import(
     api=api, db=db,
     manage_dep=require_admin_and_permission("manage_training_content"),
-    persist_school_media=_persist_school_media_data_url,
+    # Late-bound on purpose: the importer resolves the storage function when
+    # it actually stores something, rather than capturing it at registration.
+    # That keeps storage behaviour swappable — by a future backend, or by a
+    # test that needs the write to fail — without re-registering the route.
+    persist_school_media=lambda raw, media_id, filename: _persist_school_media_data_url(
+        raw, media_id, filename),
     program_model=ProgramIn, create_program=create_program,
     update_program=update_program, now_iso=now_iso,
     homework_template_model=HomeworkTemplateIn,

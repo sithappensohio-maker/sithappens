@@ -939,3 +939,175 @@ def test_re_import_still_dedupes_after_optimisation():
     _post(admin, pkg_data)
     second = run(server.db.school_resources.count_documents({"import_digest": {"$exists": True}}))
     assert first == second == 1, (first, second)
+
+
+# ---------------------------------------------------------------------------
+# Unwritable media storage — a misconfigured server, not a bad package
+#
+# Production shipped with a bind mount the container could not write to. The
+# health check stayed green, the importer got EACCES out of write_bytes, and
+# the owner was shown a bare "Internal server error" that told them nothing
+# and blamed nothing. These tests hold that shut from both ends: the failure
+# is reported as what it is, and it leaves NOTHING behind.
+# ---------------------------------------------------------------------------
+
+import contextlib
+import tempfile
+from pathlib import Path
+
+
+@contextlib.contextmanager
+def _media_root_unwritable():
+    """Point School media at a FILE, so a real write raises a real OSError.
+
+    Deliberately not a stubbed persistence function: the failure has to come
+    out of `path.write_bytes` the way it did in production, or the test is
+    only checking that mocks work.
+    """
+    fd, name = tempfile.mkstemp(prefix="not-a-directory-")
+    os.close(fd)
+    original = server.SCHOOL_MEDIA_ROOT
+    server.SCHOOL_MEDIA_ROOT = Path(name)
+    try:
+        yield name
+    finally:
+        server.SCHOOL_MEDIA_ROOT = original
+        with contextlib.suppress(OSError):
+            os.unlink(name)
+
+
+def _import_residue():
+    return {
+        "programs": run(server.db.programs.count_documents({"name": {"$regex": f"^{TAG}"}})),
+        "resources": run(server.db.school_resources.count_documents(
+            {"import_digest": {"$exists": True}})),
+        "media": run(server.db.homework_media.count_documents({"kind": "school_resource"})),
+        "recipes": run(server.db.homework_templates.count_documents(
+            {"name": {"$regex": f"^{TAG}"}})),
+    }
+
+
+def test_unwritable_media_storage_is_reported_as_a_storage_problem():
+    admin = _admin()
+    with _media_root_unwritable():
+        r = _post(admin, _zip(_manifest(), _MEDIA))
+    assert r.status_code == 503, f"{r.status_code}: {r.text[:300]}"
+    detail = r.json()["detail"]
+    assert detail["error_code"] == "school_media_unwritable"
+    assert "not writable" in detail["msg"]
+    assert "server storage configuration" in detail["msg"]
+
+
+def test_the_storage_error_does_not_leak_the_servers_filesystem():
+    # An owner needs to know what to fix, not where the server keeps its files.
+    admin = _admin()
+    with _media_root_unwritable() as root:
+        r = _post(admin, _zip(_manifest(), _MEDIA))
+    body = r.text
+    # The real path the write failed on, in either slash convention.
+    assert root not in body, f"the response leaked the media path: {body[:300]}"
+    assert root.replace("\\", "/") not in body
+    assert os.path.basename(root) not in body
+    for leak in ("Traceback", "PermissionError", "NotADirectoryError",
+                 "FileNotFoundError", "Errno", "write_bytes"):
+        assert leak not in body, f"the response leaked {leak!r}: {body[:300]}"
+
+
+def test_unwritable_media_storage_creates_no_program():
+    admin = _admin()
+    with _media_root_unwritable():
+        _post(admin, _zip(_manifest(), _MEDIA))
+    assert _program() is None, "a half-built program survived a storage failure"
+
+
+def test_unwritable_media_storage_creates_no_practice_recipes():
+    admin = _admin()
+    with _media_root_unwritable():
+        r = _post(admin, _zip(_with_practice(), _MEDIA))
+    assert r.status_code == 503
+    assert run(server.db.homework_templates.count_documents(
+        {"name": f"{TAG} Clean Sit Practice"})) == 0
+
+
+def test_unwritable_media_storage_leaves_no_dangling_resources_or_media():
+    admin = _admin()
+    before = _import_residue()
+    with _media_root_unwritable():
+        _post(admin, _zip(_manifest(), _MEDIA))
+    assert _import_residue() == before, "a storage failure left rows behind"
+
+
+def test_a_storage_failure_part_way_through_rolls_back_the_earlier_writes():
+    """The nastier case: the FIRST image stores, the second cannot.
+
+    Nothing is rolled back by ordering here — the importer has to undo its own
+    completed work, or the media library fills with orphan resources attached
+    to no lesson.
+    """
+    admin = _admin()
+    before = _import_residue()
+    real = server._persist_school_media_data_url
+    stored_paths = []
+
+    def flaky(raw, media_id, filename):
+        if stored_paths:
+            raise PermissionError(13, "Permission denied")
+        out = real(raw, media_id, filename)
+        stored_paths.append(out["storage_path"])
+        return out
+
+    server._persist_school_media_data_url = flaky
+    try:
+        r = _post(admin, _zip(_manifest(), _MEDIA))
+    finally:
+        server._persist_school_media_data_url = real
+
+    assert r.status_code == 503, r.text[:200]
+    assert len(stored_paths) == 1, "the test never got past the first image"
+    assert _import_residue() == before, "the first image's rows were not rolled back"
+    assert not os.path.exists(stored_paths[0]), "the orphan file was left on disk"
+
+
+def test_a_successful_import_is_unaffected_by_the_new_guard():
+    # The whole point of the rollback is that it never fires on a good import.
+    admin = _admin()
+    r = _post(admin, _zip(_manifest(), _MEDIA))
+    assert r.status_code == 200, r.text[:300]
+    assert r.json()["images"] == 2
+    imgs = [b for b in _blocks_of(_program()) if b["type"] == "image"]
+    assert len(imgs) == 2
+    for b in imgs:
+        res = run(server.db.school_resources.find_one({"id": b["resource_id"]}, {"_id": 0}))
+        med = run(server.db.homework_media.find_one({"id": res["media_id"]}, {"_id": 0}))
+        assert os.path.exists(med["storage_path"]), "an image was not actually stored"
+
+
+# ---------------------------------------------------------------------------
+# The deployment preflight
+# ---------------------------------------------------------------------------
+
+def test_the_preflight_passes_on_a_writable_directory(tmp_path):
+    from school_media_preflight import check_school_media_writable
+    ok, detail = check_school_media_writable(tmp_path / "media")
+    assert ok, detail
+    assert (tmp_path / "media").is_dir()
+
+
+def test_the_preflight_fails_when_storage_cannot_be_written():
+    from school_media_preflight import check_school_media_writable
+    fd, name = tempfile.mkstemp(prefix="not-a-directory-")
+    os.close(fd)
+    try:
+        ok, detail = check_school_media_writable(name)
+        assert not ok
+        assert detail
+    finally:
+        with contextlib.suppress(OSError):
+            os.unlink(name)
+
+
+def test_the_preflight_leaves_no_probe_file_behind(tmp_path):
+    from school_media_preflight import check_school_media_writable
+    ok, _ = check_school_media_writable(tmp_path)
+    assert ok
+    assert list(tmp_path.iterdir()) == [], "the preflight left litter in the media directory"
