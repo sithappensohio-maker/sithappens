@@ -17,6 +17,7 @@ The three things that matter most here:
     matched by content so the same picture is never uploaded twice.
 """
 import base64
+import os
 import datetime
 import io
 import json
@@ -140,7 +141,7 @@ def _admin():
     return doc
 
 
-def _post(user, data, dry_run=False):
+def _post(user, data, dry_run=False, mode=None):
     async def go():
         transport = httpx.ASGITransport(app=server.app)
         async with httpx.AsyncClient(transport=transport, base_url="http://test",
@@ -148,7 +149,8 @@ def _post(user, data, dry_run=False):
             headers = {"Authorization": f"Bearer {user['_token']}"} if user else {}
             return await c.post("/api/admin/school/curriculum/import", headers=headers,
                                 json={"data": data, "filename": "course.zip",
-                                      "dry_run": dry_run})
+                                      "dry_run": dry_run,
+                                      **({"mode": mode} if mode else {})})
     return run(go())
 
 
@@ -330,7 +332,7 @@ def test_a_zip_entry_that_escapes_the_package_is_refused():
     data = "data:application/zip;base64," + base64.b64encode(buf.getvalue()).decode()
     r = _post(admin, data)
     assert r.status_code == 422
-    assert any("Unsafe" in e for e in r.json()["detail"]["errors"])
+    assert any("escapes the package" in e for e in r.json()["detail"]["errors"])
 
 
 def test_duplicate_source_keys_are_refused():
@@ -438,14 +440,126 @@ def test_a_different_source_key_is_a_different_course():
     assert run(server.db.programs.count_documents({"name": {"$regex": f"^{TAG}"}})) == 2
 
 
-def test_an_updated_package_changes_the_course_in_place():
+def test_an_ordinary_re_import_does_not_overwrite_an_existing_lesson():
+    """MERGE is the default, and merge protects the author.
+
+    The workflow is import -> polish in Program Studio -> maybe import an
+    updated package later. If the second import replaced everything it
+    declared, the polishing would be thrown away every single time.
+    """
     admin = _admin()
     first = _post(admin, _zip(_manifest(), _MEDIA)).json()
     man = _manifest()
-    man["program"]["modules"][0]["lessons"][0]["name"] = "Lesson 1 — Teach a Square Sit"
+    man["program"]["modules"][0]["lessons"][0]["name"] = "Lesson 1 - Teach a Square Sit"
     second = _post(admin, _zip(man, _MEDIA)).json()
     assert second["program_id"] == first["program_id"]
+    assert second["mode"] == "merge"
+    assert _program()["modules"][0]["lessons"][0]["name"].endswith("Clean Sit"), (
+        "an ordinary re-import silently renamed a lesson the author may have edited")
+
+
+def test_replace_mode_deliberately_refreshes_from_the_package():
+    # The escape hatch: destructive refresh exists, but you ask for it.
+    admin = _admin()
+    _post(admin, _zip(_manifest(), _MEDIA))
+    man = _manifest()
+    man["program"]["modules"][0]["lessons"][0]["name"] = "Lesson 1 - Teach a Square Sit"
+    r = _post(admin, _zip(man, _MEDIA), mode="replace")
+    assert r.status_code == 200, r.text[:300]
+    assert r.json()["mode"] == "replace"
     assert _program()["modules"][0]["lessons"][0]["name"].endswith("Square Sit")
+
+
+def test_a_re_import_adds_genuinely_new_material():
+    # Merge is not "do nothing" - a new lesson in the package still arrives.
+    admin = _admin()
+    _post(admin, _zip(_manifest(), _MEDIA))
+    man = _manifest()
+    man["program"]["modules"][0]["lessons"].append({
+        "source_key": "m1l2", "name": "Lesson 2 - Sit Without a Lure", "order": 1,
+        "active": True, "client_overview": "Fade the food.",
+        "content_blocks": [_block("text", 0, source_key="l2-b0", body="Empty hand.")],
+    })
+    _post(admin, _zip(man, _MEDIA))
+    names = [l["name"] for l in _program()["modules"][0]["lessons"]]
+    assert len(names) == 2, names
+    assert any("Without a Lure" in n for n in names)
+
+
+def test_manual_edits_survive_the_whole_documented_sequence():
+    """The exact sequence from review: import, polish, re-import.
+
+    Position, picture, caption, alt text and lesson prose are all edited by
+    hand between the two imports, and every one of them must still be there
+    afterwards.
+    """
+    admin = _admin()
+    _post(admin, _zip(_manifest(), _MEDIA))
+    prog = _program()
+    lesson = prog["modules"][0]["lessons"][0]
+    blocks = lesson["content_blocks"]
+
+    # 2. move the first image to the front   3. replace its picture
+    img = next(b for b in blocks if b["type"] == "image")
+    blocks.remove(img)
+    img["resource_id"] = "author-picked-resource"
+    #    4. edit the caption                 5. edit the alt text
+    img["config"] = {**img["config"], "caption": "AUTHOR CAPTION",
+                     "alt": "AUTHOR ALT"}
+    blocks.insert(0, img)
+    #    6. edit some lesson text
+    txt = next(b for b in blocks if b["type"] == "text")
+    txt["body"] = "AUTHOR REWROTE THIS."
+    for i, b in enumerate(blocks):
+        b["order"] = i
+    run(server.db.programs.update_one(
+        {"id": prog["id"]},
+        {"$set": {"modules.0.lessons.0.content_blocks": blocks,
+                  "modules.0.lessons.0.client_overview": "AUTHOR OVERVIEW."}}))
+
+    # 7. re-import the SAME package
+    _post(admin, _zip(_manifest(), _MEDIA))
+    after = _program()["modules"][0]["lessons"][0]
+    a_img = next(b for b in after["content_blocks"] if b["type"] == "image")
+    assert after["content_blocks"][0]["type"] == "image", "the author reorder was undone"
+    assert a_img["resource_id"] == "author-picked-resource", "the replaced image was reverted"
+    assert a_img["config"]["caption"] == "AUTHOR CAPTION"
+    assert a_img["config"]["alt"] == "AUTHOR ALT"
+    assert any(b.get("body") == "AUTHOR REWROTE THIS." for b in after["content_blocks"])
+    assert after["client_overview"] == "AUTHOR OVERVIEW."
+
+    # 8. re-import a CHANGED package - still non-destructive by default
+    man = _manifest()
+    man["program"]["modules"][0]["lessons"][0]["content_blocks"][0]["body"] = "PACKAGE V2 TEXT."
+    _post(admin, _zip(man, _MEDIA))
+    after2 = _program()["modules"][0]["lessons"][0]
+    assert any(b.get("body") == "AUTHOR REWROTE THIS." for b in after2["content_blocks"])
+    assert not any(b.get("body") == "PACKAGE V2 TEXT." for b in after2["content_blocks"])
+
+
+def test_neither_mode_deletes_a_block_the_author_added():
+    admin = _admin()
+    _post(admin, _zip(_manifest(), _MEDIA))
+    prog = _program()
+    blocks = prog["modules"][0]["lessons"][0]["content_blocks"]
+    blocks.append({"id": "author-block", "type": "text", "title": "Author note",
+                   "body": "Added by hand.", "url": None, "resource_id": None,
+                   "items": [], "config": {}, "order": len(blocks), "active": True})
+    run(server.db.programs.update_one(
+        {"id": prog["id"]}, {"$set": {"modules.0.lessons.0.content_blocks": blocks}}))
+    for mode in ("merge", "replace"):
+        _post(admin, _zip(_manifest(), _MEDIA), mode=mode)
+        bodies = [b.get("body") for b in _program()["modules"][0]["lessons"][0]["content_blocks"]]
+        assert "Added by hand." in bodies, f"{mode} deleted an author-added block"
+
+
+def test_an_invalid_mode_falls_back_to_the_safe_one():
+    admin = _admin()
+    _post(admin, _zip(_manifest(), _MEDIA))
+    man = _manifest()
+    man["program"]["modules"][0]["lessons"][0]["name"] = "Renamed"
+    _post(admin, _zip(man, _MEDIA), mode="obliterate")
+    assert _program()["modules"][0]["lessons"][0]["name"].endswith("Clean Sit")
 
 
 # ---------------------------------------------------------------------------
@@ -576,3 +690,252 @@ def test_a_practice_link_the_package_did_not_bundle_is_left_alone():
     assert _post(admin, _zip(man, _MEDIA)).status_code == 200
     lesson = _program(f"{TAG} Keep Links")["modules"][0]["lessons"][0]
     assert lesson["suggested_homework_template_ids"] == ["already-here"]
+
+
+# ---------------------------------------------------------------------------
+# Archive resource limits — a package is untrusted input
+# ---------------------------------------------------------------------------
+
+def _raw_zip(build) -> str:
+    buf = io.BytesIO()
+    with zipfile.ZipFile(buf, "w", zipfile.ZIP_DEFLATED) as zf:
+        build(zf)
+    return "data:application/zip;base64," + base64.b64encode(buf.getvalue()).decode()
+
+
+def test_a_decompression_bomb_is_refused_without_being_expanded():
+    # A few kB of zeros that expand to ~40 MB: the ratio gives it away before
+    # anything is read.
+    admin = _admin()
+
+    def build(zf):
+        zf.writestr("manifest.json", json.dumps(_manifest(blocks=[])))
+        zf.writestr("media/bomb.png", b"\x00" * (40 * 1024 * 1024))
+
+    r = _post(admin, _raw_zip(build))
+    assert r.status_code == 422
+    assert any("expands far more" in e for e in r.json()["detail"]["errors"]), \
+        r.json()["detail"]["errors"]
+    assert _program() is None
+
+
+def test_a_member_larger_than_the_ceiling_is_refused():
+    admin = _admin()
+
+    def build(zf):
+        zf.writestr("manifest.json", json.dumps(_manifest(blocks=[])))
+        # incompressible, so it is genuinely oversized rather than a bomb
+        zf.writestr("media/huge.png", os.urandom(2 * 1024 * 1024))
+
+    import school_curriculum_import as p2
+    original = p2.MAX_MEDIA_BYTES
+    p2.MAX_MEDIA_BYTES = 1024 * 1024        # 1 MB, so the test stays fast
+    try:
+        r = _post(admin, _raw_zip(build))
+        assert r.status_code == 422
+        assert any("larger than" in e for e in r.json()["detail"]["errors"])
+        assert _program() is None
+    finally:
+        p2.MAX_MEDIA_BYTES = original
+
+
+def test_too_many_members_is_refused():
+    admin = _admin()
+
+    def build(zf):
+        zf.writestr("manifest.json", json.dumps(_manifest(blocks=[])))
+        for i in range(30):
+            zf.writestr(f"media/f{i}.png", b"x")
+
+    import school_curriculum_import as p2
+    original = p2.MAX_ENTRIES
+    p2.MAX_ENTRIES = 10
+    try:
+        r = _post(admin, _raw_zip(build))
+        assert r.status_code == 422
+        assert any("too many files" in e for e in r.json()["detail"]["errors"])
+        assert _program() is None
+    finally:
+        p2.MAX_ENTRIES = original
+
+
+def test_the_total_uncompressed_size_is_bounded():
+    admin = _admin()
+
+    # Compressible enough that the ZIP itself stays small, but not so
+    # compressible that it reads as a bomb — this has to reach the
+    # per-member accumulation rather than tripping an earlier guard.
+    chunk = os.urandom(30 * 1024) * 10          # 300 KB, ratio about 10x
+
+    def build(zf):
+        zf.writestr("manifest.json", json.dumps(_manifest(blocks=[])))
+        for i in range(6):
+            zf.writestr(f"media/p{i}.png", chunk)
+
+    import school_curriculum_import as p2
+    original = p2.MAX_PACKAGE_BYTES
+    p2.MAX_PACKAGE_BYTES = 1024 * 1024
+    try:
+        r = _post(admin, _raw_zip(build))
+        assert r.status_code == 422
+        errs = r.json()["detail"]["errors"]
+        # Either total guard is correct: the encoded package or its expanded
+        # contents. Both say the same thing to an author.
+        assert any("expand beyond" in e or "too large" in e for e in errs), errs
+        assert _program() is None
+    finally:
+        p2.MAX_PACKAGE_BYTES = original
+
+
+def test_a_symlink_member_is_refused():
+    admin = _admin()
+
+    def build(zf):
+        zf.writestr("manifest.json", json.dumps(_manifest(blocks=[])))
+        info = zipfile.ZipInfo("media/link.png")
+        info.external_attr = (0o120777 << 16)      # S_IFLNK
+        zf.writestr(info, "/etc/passwd")
+
+    r = _post(admin, _raw_zip(build))
+    assert r.status_code == 422
+    assert any("symlink" in e for e in r.json()["detail"]["errors"])
+    assert _program() is None
+
+
+def test_a_non_regular_member_is_refused():
+    admin = _admin()
+
+    def build(zf):
+        zf.writestr("manifest.json", json.dumps(_manifest(blocks=[])))
+        info = zipfile.ZipInfo("media/dev.png")
+        info.external_attr = (0o020666 << 16)      # character device
+        zf.writestr(info, "x")
+
+    r = _post(admin, _raw_zip(build))
+    assert r.status_code == 422
+    assert any("not a regular file" in e for e in r.json()["detail"]["errors"])
+
+
+def test_an_ordinary_package_is_not_tripped_by_any_of_these_limits():
+    # The guards must not inconvenience a legitimate curriculum.
+    admin = _admin()
+    r = _post(admin, _zip(_manifest(), _MEDIA))
+    assert r.status_code == 200, r.text[:300]
+
+
+# ---------------------------------------------------------------------------
+# Imported images are web assets, like Studio uploads
+# ---------------------------------------------------------------------------
+
+def _big_jpeg(w=2600, h=2000):
+    """A photograph-shaped image: smooth gradients with some texture, which is
+    what a real demonstration photo looks like to a JPEG encoder."""
+    from PIL import Image
+    import random
+    random.seed(3)
+    img = Image.new("RGB", (w, h))
+    px = img.load()
+    for y in range(h):
+        for x in range(w):
+            px[x, y] = ((x * 255) // w, (y * 255) // h,
+                        ((x + y) // 3 + random.randint(0, 12)) % 256)
+    out = io.BytesIO()
+    img.save(out, format="JPEG", quality=95)
+    return out.getvalue()
+
+
+def _big_transparent_png(w=2400, h=1800):
+    from PIL import Image
+    img = Image.new("RGBA", (w, h), (0, 0, 0, 0))
+    px = img.load()
+    for y in range(h):
+        for x in range(0, w, 150):
+            for dx in range(60):
+                if x + dx < w:
+                    px[x + dx, y] = (30, 170, 90, 255)
+    out = io.BytesIO()
+    img.save(out, format="PNG")
+    return out.getvalue()
+
+
+def _stored_bytes_and_image(block):
+    res = run(server.db.school_resources.find_one({"id": block["resource_id"]}, {"_id": 0}))
+    med = run(server.db.homework_media.find_one({"id": res["media_id"]}, {"_id": 0}))
+    path = med.get("path") or med.get("storage_path")
+    from PIL import Image
+    img = Image.open(path)
+    return os.path.getsize(path), img, med
+
+
+def test_a_huge_packaged_photo_cannot_become_a_huge_lesson_payload():
+    # The regression this section exists for: the importer used to store the
+    # original bytes, so a 10 MB photograph reached every student intact.
+    admin = _admin()
+    big = _big_jpeg()
+    assert len(big) > 500_000, len(big)   # a realistically hefty demo photo
+    blocks = [_block("text", 0, source_key="t", body="Read."),
+              _block("image", 1, source_key="i", media="media/big.jpg",
+                     config={"caption": "Big.", "alt": "A large photograph."})]
+    r = _post(admin, _zip(_manifest(blocks=blocks), {"media/big.jpg": big}))
+    assert r.status_code == 200, r.text[:300]
+    img_block = [b for b in _blocks_of(_program()) if b["type"] == "image"][0]
+    size, stored, med = _stored_bytes_and_image(img_block)
+    assert max(stored.width, stored.height) <= 1600, (stored.width, stored.height)
+    assert size < len(big) / 2, f"{size} vs original {len(big)}"
+    assert med["mime"] == "image/jpeg", "a photograph should stay a photograph"
+
+
+def test_a_transparent_diagram_keeps_its_format_and_transparency():
+    # Flattening a diagram to JPEG would paste it on white and soften every
+    # label, so format is preserved rather than normalised.
+    admin = _admin()
+    png = _big_transparent_png()
+    blocks = [_block("image", 0, source_key="d", media="media/diagram.png",
+                     config={"caption": "Setup.", "alt": "A room layout diagram."})]
+    r = _post(admin, _zip(_manifest(blocks=blocks), {"media/diagram.png": png}))
+    assert r.status_code == 200, r.text[:300]
+    img_block = [b for b in _blocks_of(_program()) if b["type"] == "image"][0]
+    size, stored, med = _stored_bytes_and_image(img_block)
+    assert med["mime"] == "image/png", "a diagram was converted away from PNG"
+    assert stored.mode in ("RGBA", "LA", "P"), f"transparency was lost (mode={stored.mode})"
+    assert max(stored.width, stored.height) <= 1600
+
+
+def test_an_already_web_sized_image_is_left_alone():
+    admin = _admin()
+    small = _png(64, 64)
+    blocks = [_block("image", 0, source_key="s", media="media/small.png")]
+    r = _post(admin, _zip(_manifest(blocks=blocks), {"media/small.png": small}))
+    assert r.status_code == 200
+    img_block = [b for b in _blocks_of(_program()) if b["type"] == "image"][0]
+    size, stored, _med = _stored_bytes_and_image(img_block)
+    assert (stored.width, stored.height) == (64, 64)
+    assert size == len(small), "a small image was needlessly re-encoded"
+
+
+def test_video_is_not_run_through_the_image_optimizer():
+    admin = _admin()
+    clip = b"\x00\x00\x00\x18ftypmp42" + os.urandom(4096)
+    blocks = [_block("video", 0, source_key="v", media="media/clip.mp4")]
+    r = _post(admin, _zip(_manifest(blocks=blocks), {"media/clip.mp4": clip}))
+    assert r.status_code == 200, r.text[:300]
+    blk = [b for b in _blocks_of(_program()) if b["type"] == "video"][0]
+    size, _i, med = (None, None, None)
+    res = run(server.db.school_resources.find_one({"id": blk["resource_id"]}, {"_id": 0}))
+    med = run(server.db.homework_media.find_one({"id": res["media_id"]}, {"_id": 0}))
+    path = med.get("path") or med.get("storage_path")
+    assert os.path.getsize(path) == len(clip), "the video was altered"
+
+
+def test_re_import_still_dedupes_after_optimisation():
+    # The digest is taken on the ORIGINAL bytes, so optimisation cannot make
+    # the same source file look new.
+    admin = _admin()
+    big = _big_jpeg(1800, 1400)
+    blocks = [_block("image", 0, source_key="i", media="media/big.jpg")]
+    pkg_data = _zip(_manifest(blocks=blocks), {"media/big.jpg": big})
+    _post(admin, pkg_data)
+    first = run(server.db.school_resources.count_documents({"import_digest": {"$exists": True}}))
+    _post(admin, pkg_data)
+    second = run(server.db.school_resources.count_documents({"import_digest": {"$exists": True}}))
+    assert first == second == 1, (first, second)

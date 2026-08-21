@@ -55,9 +55,26 @@ VIDEO_EXT_MIME = {
 }
 MEDIA_EXT_MIME = {**IMAGE_EXT_MIME, **VIDEO_EXT_MIME}
 
-MAX_MEDIA_BYTES = 50 * 1024 * 1024        # matches the School Resource ceiling
-MAX_PACKAGE_BYTES = 200 * 1024 * 1024
-MAX_ENTRIES = 2000
+# Bounds for an untrusted archive. Sized for a REAL course: a 24-module
+# curriculum with a few images per lesson and the odd video sits comfortably
+# inside these, so a legitimate package is never inconvenienced.
+MAX_MEDIA_BYTES = 50 * 1024 * 1024        # per member; matches the School Resource ceiling
+MAX_PACKAGE_BYTES = 200 * 1024 * 1024     # total uncompressed
+MAX_ENTRIES = 2000                        # members
+
+# A zip bomb is a tiny archive that claims to expand enormously. Real lesson
+# media barely compresses at all (JPEG, PNG and MP4 are already compressed),
+# and even JSON rarely beats about 20x, so a member expanding by more than
+# this is not curriculum. Only applied above a floor, because a handful of
+# highly-compressible bytes can hit a big ratio innocently.
+MAX_COMPRESSION_RATIO = 200
+COMPRESSION_RATIO_FLOOR = 4096            # bytes of compressed data
+
+# Unix mode bits carried in a ZIP entry's external attributes.
+_S_IFMT = 0o170000
+_S_IFREG = 0o100000
+_S_IFLNK = 0o120000
+_S_IFDIR = 0o040000
 
 # Block types the curriculum schema already supports. The importer does not get
 # to invent one.
@@ -118,6 +135,25 @@ def _safe_member(name: str) -> Optional[str]:
     return normalised
 
 
+def _entry_problem(info) -> Optional[str]:
+    """Why this archive member must not be read, or None if it is fine.
+
+    Checked BEFORE any decompression, so a hostile archive is refused rather
+    than absorbed.
+    """
+    mode = (info.external_attr >> 16) & _S_IFMT
+    if mode == _S_IFLNK:
+        return "is a symlink"
+    if mode and mode not in (_S_IFREG, _S_IFDIR):
+        return "is not a regular file"
+    if info.file_size > MAX_MEDIA_BYTES:
+        return f"is larger than {MAX_MEDIA_BYTES // (1024 * 1024)} MB"
+    if (info.compress_size >= COMPRESSION_RATIO_FLOOR
+            and info.file_size > info.compress_size * MAX_COMPRESSION_RATIO):
+        return "expands far more than any real curriculum file would"
+    return None
+
+
 def open_package(data: str) -> Tuple[dict, Dict[str, bytes]]:
     """Return (manifest, files-by-normalised-path). Raises ImportError_."""
     blob = _decode_package(data)
@@ -138,18 +174,28 @@ def open_package(data: str) -> Tuple[dict, Dict[str, bytes]]:
             continue
         safe = _safe_member(info.filename)
         if safe is None:
-            rejected.append(info.filename)
+            rejected.append(f"{info.filename} (escapes the package)")
             continue
-        if info.file_size > MAX_MEDIA_BYTES:
-            rejected.append(f"{safe} (too large)")
+        problem = _entry_problem(info)
+        if problem:
+            rejected.append(f"{safe} ({problem})")
             continue
         total += info.file_size
         if total > MAX_PACKAGE_BYTES:
-            raise ImportError_(["Package contents exceed the size limit."])
-        files[safe] = zf.read(info)
+            raise ImportError_([
+                f"Package contents expand beyond "
+                f"{MAX_PACKAGE_BYTES // (1024 * 1024)} MB."])
+        # The header's declared size is a claim, not a fact, so read with a
+        # hard cap and refuse anything that keeps going past it.
+        with zf.open(info) as fh:
+            blob = fh.read(MAX_MEDIA_BYTES + 1)
+        if len(blob) > MAX_MEDIA_BYTES:
+            rejected.append(f"{safe} (larger than it declared)")
+            continue
+        files[safe] = blob
 
     if rejected:
-        raise ImportError_([f"Unsafe or oversized entry rejected: {r}" for r in rejected[:5]])
+        raise ImportError_([f"Rejected archive entry: {r}" for r in rejected[:5]])
 
     manifest_path = next((p for p in files if posixpath.basename(p) == MANIFEST_NAME
                           and p.count("/") <= 1), None)
@@ -293,6 +339,209 @@ def validate(manifest: dict, files: Dict[str, bytes]) -> dict:
     return {"program": program, "counts": counts, "media_plan": media_plan,
             "unplaced": unplaced, "warnings": warnings,
             "version": version, "source_key": _txt(program.get("source_key"))}
+
+
+# ---------------------------------------------------------------------------
+# Inline lesson images are web assets, wherever they came from
+# ---------------------------------------------------------------------------
+
+# The same numbers the browser-side compressor uses for a Program Studio
+# upload (frontend/src/lib/imageCompress.js) and the same ones photo_backfill
+# already applies server-side. An inline demonstration image should be
+# web-appropriate whether an author dragged it into the Studio or shipped it
+# inside a package — 1600px is still more than double the ~755px a lesson
+# actually renders, so hand position and lure height survive intact.
+# A decompression bomb can be a few kilobytes that claim a 60000x60000
+# canvas. 80 megapixels is far beyond any demonstration photograph.
+MAX_IMAGE_PIXELS = 80_000_000
+IMAGE_MAX_DIM = 1600
+JPEG_QUALITY = 82
+WEBP_QUALITY = 82
+
+
+def optimize_lesson_image(blob: bytes, mime: str) -> Tuple[bytes, str]:
+    """Bound an inline lesson image, without wrecking what it is.
+
+    Format is PRESERVED rather than flattened to JPEG. A photograph and a
+    diagram need different things: re-encoding a transparent PNG of a body
+    -position diagram as JPEG would paste it onto white and soften every
+    edge and label. So a JPEG stays a JPEG, a PNG stays a PNG with its alpha,
+    and a WebP stays a WebP.
+
+    Returns the original untouched when it is already fine, when the result
+    would be no smaller, or when the bytes cannot be decoded at all — a
+    lesson image that survives import slightly too large is a far better
+    outcome than one that fails to import.
+    """
+    if mime not in IMAGE_EXT_MIME.values():
+        return blob, mime            # video and anything else: untouched
+    try:
+        from PIL import Image
+    except Exception:                # pragma: no cover - Pillow is pinned
+        return blob, mime
+    try:
+        # Pillow's own guard against a small file that declares an enormous
+        # canvas; without it, .load() would try to allocate all of it.
+        Image.MAX_IMAGE_PIXELS = MAX_IMAGE_PIXELS
+        img = Image.open(io.BytesIO(blob))
+        img.load()
+    except Exception:
+        return blob, mime
+
+    oversized = img.width > IMAGE_MAX_DIM or img.height > IMAGE_MAX_DIM
+    if not oversized and len(blob) < 350_000:
+        return blob, mime            # already a sensible web asset
+
+    try:
+        if oversized:
+            img.thumbnail((IMAGE_MAX_DIM, IMAGE_MAX_DIM), Image.LANCZOS)
+        out = io.BytesIO()
+        if mime == "image/png":
+            # Keep transparency and the crisp flat colour a diagram needs.
+            img.save(out, format="PNG", optimize=True)
+        elif mime == "image/webp":
+            img.save(out, format="WEBP", quality=WEBP_QUALITY, method=4)
+        else:
+            if img.mode in ("RGBA", "LA", "P"):
+                bg = Image.new("RGB", img.size, (255, 255, 255))
+                if img.mode == "P":
+                    img = img.convert("RGBA")
+                bg.paste(img, mask=img.split()[-1] if img.mode in ("RGBA", "LA") else None)
+                img = bg
+            elif img.mode != "RGB":
+                img = img.convert("RGB")
+            img.save(out, format="JPEG", quality=JPEG_QUALITY, optimize=True,
+                     progressive=True)
+        processed = out.getvalue()
+    except Exception:
+        return blob, mime
+
+    # Shrinking the pixels is the point, so a resized image wins even if the
+    # byte count barely moved. An unresized re-encode only wins if smaller.
+    if oversized or len(processed) < len(blob):
+        return processed, mime
+    return blob, mime
+
+
+# ---------------------------------------------------------------------------
+# Re-import: add what is new, never quietly overwrite an author
+# ---------------------------------------------------------------------------
+
+# The intended workflow is import -> polish in Program Studio -> maybe import
+# an updated package later. If a re-import replaced everything it declares,
+# that middle step would be thrown away every time, so MERGE is the default
+# and refreshing from source is something you ask for.
+#
+#   merge   (default) — a node the package has seen before is left exactly as
+#                       it is locally; only genuinely NEW modules, lessons and
+#                       blocks are added.
+#   replace           — declared nodes are refreshed from the package.
+#
+# NEITHER mode deletes. A lesson or block an author added by hand is never
+# removed just because the package does not mention it.
+IMPORT_MODES = ("merge", "replace")
+
+
+def _block_key(block: dict) -> str:
+    return ((block or {}).get("config") or {}).get("import_source_key") or ""
+
+
+def merge_curriculum(existing_modules: List[dict], incoming: List[dict],
+                     key_map: Dict[str, str], mode: str = "merge") -> Tuple[List[dict], Dict[str, str]]:
+    """Combine a package with what is already stored.
+
+    Identity comes from `source_key`. Modules and lessons cannot carry an
+    extra field through the curriculum models, so their keys live in
+    `key_map` on the program document; blocks keep theirs in `config`, which
+    is a free dict and survives the round trip.
+
+    Returns (modules_to_save, key_map_additions).
+    """
+    mode = mode if mode in IMPORT_MODES else "merge"
+    existing_modules = list(existing_modules or [])
+    additions: Dict[str, str] = {}
+
+    by_id = {m.get("id"): m for m in existing_modules if m.get("id")}
+    used_module_ids = set()
+    out: List[dict] = []
+
+    for inc_m in incoming:
+        m_key = (inc_m.get("__source_key") or "").strip()
+        local_m = by_id.get(key_map.get(f"module:{m_key}")) if m_key else None
+        if local_m is None:
+            out.append({k: v for k, v in inc_m.items() if k != "__source_key"})
+            continue
+        used_module_ids.add(local_m.get("id"))
+        merged = dict(local_m) if mode == "merge" else {
+            **{k: v for k, v in inc_m.items() if k != "__source_key"},
+            "id": local_m.get("id"),
+        }
+        merged["lessons"] = _merge_lessons(
+            local_m.get("lessons") or [], inc_m.get("lessons") or [], key_map, mode)
+        out.append(merged)
+
+    # Anything already stored that this package never mentioned stays put.
+    for m in existing_modules:
+        if m.get("id") not in used_module_ids and m not in out:
+            if not any(o.get("id") == m.get("id") for o in out):
+                out.append(m)
+
+    for i, m in enumerate(out):
+        m["order"] = i
+    return out, additions
+
+
+def _merge_lessons(local_lessons: List[dict], incoming_lessons: List[dict],
+                   key_map: Dict[str, str], mode: str) -> List[dict]:
+    by_id = {l.get("id"): l for l in local_lessons if l.get("id")}
+    used = set()
+    out: List[dict] = []
+    for inc_l in incoming_lessons:
+        l_key = (inc_l.get("__source_key") or "").strip()
+        local_l = by_id.get(key_map.get(f"lesson:{l_key}")) if l_key else None
+        if local_l is None:
+            out.append({k: v for k, v in inc_l.items() if k != "__source_key"})
+            continue
+        used.add(local_l.get("id"))
+        merged = dict(local_l) if mode == "merge" else {
+            **{k: v for k, v in inc_l.items() if k != "__source_key"},
+            "id": local_l.get("id"),
+        }
+        merged["content_blocks"] = _merge_blocks(
+            local_l.get("content_blocks") or [], inc_l.get("content_blocks") or [], mode)
+        out.append(merged)
+    for l in local_lessons:
+        if l.get("id") not in used and not any(o.get("id") == l.get("id") for o in out):
+            out.append(l)
+    for i, l in enumerate(out):
+        l["order"] = i
+    return out
+
+
+def _merge_blocks(local_blocks: List[dict], incoming_blocks: List[dict],
+                  mode: str) -> List[dict]:
+    """Blocks carry their own source key, so this needs no map.
+
+    In merge mode a block the package has placed before keeps whatever the
+    author did to it — its position, its caption, its picture. Only a block
+    the package has never placed here is added, and it is appended rather
+    than inserted, because an author who has reordered a lesson should not
+    have new material pushed into the middle of it.
+    """
+    local_by_key = {_block_key(b): b for b in local_blocks if _block_key(b)}
+    out = list(local_blocks)
+    for inc_b in incoming_blocks:
+        key = _block_key(inc_b)
+        local_b = local_by_key.get(key) if key else None
+        if local_b is None:
+            out.append(inc_b)
+            continue
+        if mode == "replace":
+            idx = out.index(local_b)
+            out[idx] = {**inc_b, "id": local_b.get("id")}
+    for i, b in enumerate(out):
+        b["order"] = i
+    return out
 
 
 def media_digest(blob: bytes) -> str:

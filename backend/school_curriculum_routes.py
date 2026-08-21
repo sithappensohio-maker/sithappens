@@ -23,7 +23,44 @@ class CurriculumPackageIn(BaseModel):
     data: str
     filename: Optional[str] = None
     dry_run: bool = False
+    # "merge" (default) adds what is new and leaves anything an author has
+    # already touched alone. "replace" deliberately refreshes declared nodes
+    # from the package. Neither deletes.
+    mode: str = "merge"
 
+
+def _strip_source_keys(modules):
+    """Remove the transient __source_key markers before the curriculum models
+    ever see them."""
+    out = []
+    for m in modules:
+        m2 = {k: v for k, v in m.items() if k != "__source_key"}
+        m2["lessons"] = [{k: v for k, v in l.items() if k != "__source_key"}
+                         for l in (m.get("lessons") or [])]
+        out.append(m2)
+    return out
+
+
+def _rebuild_key_map(program_src, saved_modules, previous):
+    """Map each package source key to the id the server assigned.
+
+    Modules and lessons cannot carry an extra field through the curriculum
+    models, so their identity is remembered here on the program instead.
+    Matching is positional against what was just saved, which is exact
+    because the merge above produced that very list.
+    """
+    key_map = dict(previous or {})
+    src_modules = program_src.get("modules") or []
+    for i, src_m in enumerate(src_modules):
+        mk = (src_m.get("source_key") or "").strip()
+        if mk and f"module:{mk}" not in key_map and i < len(saved_modules):
+            key_map[f"module:{mk}"] = saved_modules[i].get("id")
+        saved_lessons = (saved_modules[i].get("lessons") or []) if i < len(saved_modules) else []
+        for j, src_l in enumerate(src_m.get("lessons") or []):
+            lk = (src_l.get("source_key") or "").strip()
+            if lk and f"lesson:{lk}" not in key_map and j < len(saved_lessons):
+                key_map[f"lesson:{lk}"] = saved_lessons[j].get("id")
+    return key_map
 
 def register_curriculum_import(*, api, db, manage_dep, persist_school_media,
                                program_model, create_program, update_program, now_iso,
@@ -36,6 +73,9 @@ def register_curriculum_import(*, api, db, manage_dep, persist_school_media,
         package — or two lessons sharing one diagram — yields a single
         resource instead of a growing pile of duplicates.
         """
+        # Digest the ORIGINAL bytes, not the optimised ones: that keeps
+        # re-import dedupe anchored to the source file even if the
+        # optimisation policy is ever tuned.
         digest = pkg.media_digest(blob)
         if digest in cache:
             return cache[digest]
@@ -45,6 +85,10 @@ def register_curriculum_import(*, api, db, manage_dep, persist_school_media,
             cache[digest] = existing["id"]
             return existing["id"]
 
+        # An inline demonstration image is a web asset wherever it came from,
+        # so a packaged one gets the same treatment a Studio upload does
+        # instead of shipping a 10 MB photograph to every student.
+        blob, mime = pkg.optimize_lesson_image(blob, mime)
         filename = path.rsplit("/", 1)[-1]
         media_id = str(uuid.uuid4())
         stored = persist_school_media(pkg.data_url(blob, mime), media_id, filename)
@@ -170,17 +214,32 @@ def register_curriculum_import(*, api, db, manage_dep, persist_school_media,
                                          "import_source_key": block["source_key"]}
                     blocks_out.append(out)
                 l_out = {k: v for k, v in lesson.items() if k != "source_key"}
+                l_out["__source_key"] = lesson.get("source_key") or ""
                 l_out["content_blocks"] = blocks_out
                 if l_out.get("suggested_homework_template_ids"):
                     l_out["suggested_homework_template_ids"] = _remap(
                         l_out["suggested_homework_template_ids"])
                 lessons_out.append(l_out)
             m_out = {k: v for k, v in module.items() if k != "source_key"}
+            m_out["__source_key"] = module.get("source_key") or ""
             m_out["lessons"] = lessons_out
             modules_out.append(m_out)
 
+        key_map = dict((existing or {}).get("import_key_map") or {})
+        if existing:
+            modules_out, _add = pkg.merge_curriculum(
+                existing.get("modules") or [], modules_out, key_map, body.mode)
+        modules_out = _strip_source_keys(modules_out)
+
         payload = {k: v for k, v in program_src.items()
                    if k not in ("source_key", "modules", "id")}
+        if existing and body.mode == "merge":
+            # A course an author has been polishing keeps its own name and
+            # settings on an ordinary re-import; "replace" is how you push
+            # those from the package.
+            for field in ("name", "focus", "description", "price", "delivery_mode"):
+                if field in existing:
+                    payload[field] = existing[field]
         payload["modules"] = modules_out
         payload.setdefault("type", "private_lessons")
         payload.setdefault("price", 0)
@@ -194,9 +253,13 @@ def register_curriculum_import(*, api, db, manage_dep, persist_school_media,
             saved = await create_program(model, user)
             summary["program_action"] = "created"
         if source_key:
-            await db.programs.update_one({"id": saved["id"]},
-                                         {"$set": {"import_source_key": source_key}})
+            fresh = await db.programs.find_one({"id": saved["id"]}, {"_id": 0, "modules": 1})
+            new_map = _rebuild_key_map(program_src, (fresh or {}).get("modules") or [], key_map)
+            await db.programs.update_one(
+                {"id": saved["id"]},
+                {"$set": {"import_source_key": source_key, "import_key_map": new_map}})
         summary["practice_recipes"] = len(hw_map)
+        summary["mode"] = body.mode
         summary["program_id"] = saved["id"]
         return summary
 
