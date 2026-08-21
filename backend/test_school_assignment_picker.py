@@ -86,6 +86,21 @@ def test_an_inactive_program_is_absent_and_that_is_the_blank_modals_cause():
         assert prog["id"] in [p["id"] for p in _programs_for(admin, include_inactive=True)]
 
 
+def test_direct_admin_assignment_cannot_bypass_archived_program_filter():
+    """The picker hides inactive programs, but the server is the authority. A
+    guessed/direct POST must not newly enroll a dog in an archived course."""
+    with _school_program() as (prog, admin):
+        run(server.db.programs.update_one({"id": prog["id"]}, {"$set": {"active": False}}))
+        with _client_and_dog() as (_client, dog):
+            with _cleanup(dog["id"]):
+                with pytest.raises(server.HTTPException) as e:
+                    _enroll_via_endpoint(dog["id"], prog["id"], admin)
+                assert e.value.status_code == 422
+                assert "archived" in str(e.value.detail).lower() or "inactive" in str(e.value.detail).lower()
+                assert run(server.db.dog_programs.count_documents(
+                    {"dog_id": dog["id"], "program_id": prog["id"]})) == 0
+
+
 def test_every_offered_program_carries_what_the_picker_groups_by():
     # The picker groups by `type` and labels with /programs/meta. A program
     # whose type is outside that set used to disappear silently.
@@ -157,7 +172,6 @@ def test_assigning_twice_does_not_duplicate_anything():
                 assert run(server.db.school_enrollments.count_documents(
                     {"dog_id": dog["id"], "status": {"$ne": "withdrawn"}})) == 1
 
-
 def test_a_repeat_assignment_never_resets_progress():
     with _school_program(n_lessons_per_module=2) as (prog, admin):
         with _client_and_dog() as (client, dog):
@@ -177,7 +191,6 @@ def test_a_repeat_assignment_never_resets_progress():
                 after = run(server.db.dog_programs.find_one({"id": enr_id}, {"_id": 0}))
                 assert after["lesson_step_progress"] == before["lesson_step_progress"]
                 assert after["current_lesson_id"] == before["current_lesson_id"]
-
 
 # ---------------------------------------------------------------------------
 # A complimentary assignment must not invent money
@@ -258,3 +271,66 @@ def test_online_assignment_requires_school_permission_specifically():
                     with pytest.raises(server.HTTPException) as e:
                         _enroll_via_endpoint(dog["id"], prog["id"], trainer, delivery_mode="online")
                     assert e.value.status_code == 403
+
+# ---------------------------------------------------------------------------
+# Dog eligibility is enforced server-side, not merely labelled in the picker
+# ---------------------------------------------------------------------------
+
+def test_admin_assignment_enforces_program_minimum_age():
+    with _school_program() as (prog, admin):
+        run(server.db.programs.update_one(
+            {"id": prog["id"]}, {"$set": {"min_age_months": 12}}))
+        with _client_and_dog() as (_client, dog):
+            with _cleanup(dog["id"]):
+                # Explicit legacy age fields are accepted when birthday is not
+                # present, but the server — not the UI badge — is authoritative.
+                run(server.db.dogs.update_one(
+                    {"id": dog["id"]},
+                    {"$set": {"birthday": "", "age_y": 0, "age_m": 6}}))
+                with pytest.raises(server.HTTPException) as e:
+                    _enroll_via_endpoint(dog["id"], prog["id"], admin)
+                assert e.value.status_code == 422
+                assert e.value.detail["code"] == "school_dog_too_young"
+                assert run(server.db.dog_programs.count_documents(
+                    {"dog_id": dog["id"], "program_id": prog["id"]})) == 0
+
+
+def test_admin_assignment_requires_known_age_when_program_has_minimum():
+    with _school_program() as (prog, admin):
+        run(server.db.programs.update_one(
+            {"id": prog["id"]}, {"$set": {"min_age_months": 4}}))
+        with _client_and_dog() as (_client, dog):
+            with _cleanup(dog["id"]):
+                run(server.db.dogs.update_one(
+                    {"id": dog["id"]},
+                    {"$set": {"birthday": "", "age_y": 0, "age_m": 0}}))
+                with pytest.raises(server.HTTPException) as e:
+                    _enroll_via_endpoint(dog["id"], prog["id"], admin)
+                assert e.value.status_code == 422
+                assert e.value.detail["code"] == "school_dog_age_required"
+                assert run(server.db.dog_programs.count_documents(
+                    {"dog_id": dog["id"], "program_id": prog["id"]})) == 0
+
+
+def test_birthday_is_used_for_minimum_age_instead_of_stale_age_fields():
+    with _school_program() as (prog, admin):
+        run(server.db.programs.update_one(
+            {"id": prog["id"]}, {"$set": {"min_age_months": 12}}))
+        with _client_and_dog() as (_client, dog):
+            with _cleanup(dog["id"]):
+                today = server.business_today()
+                # Six-month-old birthday but stale age_y says 5. Birthday must
+                # win, otherwise the requirement is meaningless over time.
+                month = today.month - 6
+                year = today.year
+                while month <= 0:
+                    month += 12
+                    year -= 1
+                day = min(today.day, 28)
+                birthday = f"{year:04d}-{month:02d}-{day:02d}"
+                run(server.db.dogs.update_one(
+                    {"id": dog["id"]},
+                    {"$set": {"birthday": birthday, "age_y": 5, "age_m": 0}}))
+                with pytest.raises(server.HTTPException) as e:
+                    _enroll_via_endpoint(dog["id"], prog["id"], admin)
+                assert e.value.detail["code"] == "school_dog_too_young"

@@ -77,7 +77,7 @@ def _text(value: Any) -> str:
     return value.strip() if isinstance(value, str) else ""
 
 
-def classify_block(block: Optional[dict], *, seen_steps: bool) -> Optional[str]:
+def classify_block(block: Optional[dict], *, seen_steps: bool, previous_key: Optional[str] = None) -> Optional[str]:
     """Which step a content block belongs to.
 
     Block *type* decides wherever type is unambiguous. Only plain ``text``
@@ -106,7 +106,10 @@ def classify_block(block: Optional[dict], *, seen_steps: bool) -> Optional[str]:
     if t == "checkpoint":
         return None
     if t in ("video", "image", "download"):
-        return "train" if seen_steps else "learn"
+        # Media is instructional content in its authored position. Keep it with
+        # the nearest preceding semantic section instead of collapsing every
+        # post-Steps image into Train.
+        return previous_key or ("train" if seen_steps else "learn")
     if t in ("timer", "rep_counter"):
         return "train"
 
@@ -130,13 +133,15 @@ def group_blocks(blocks: Optional[List[dict]]) -> Dict[str, List[dict]]:
         [b for b in (blocks or []) if isinstance(b, dict) and b.get("active") is not False],
         key=lambda b: b.get("order") or 0,
     )
+    previous_key: Optional[str] = None
     for b in active:
-        key = classify_block(b, seen_steps=seen_steps)
+        key = classify_block(b, seen_steps=seen_steps, previous_key=previous_key)
         if b.get("type") == "steps":
             seen_steps = True
         if not key:
             continue
         buckets.setdefault(key, []).append(b)
+        previous_key = key
     return buckets
 
 
@@ -231,6 +236,45 @@ def missing_instructional_steps(lesson: Optional[dict], completed: Any, *,
     done = set(completed or [])
     return [k for k in instructional_step_keys(lesson, has_practice=has_practice, has_quiz=has_quiz)
             if k not in done]
+
+
+def contiguous_completed_steps(lesson: Optional[dict], completed: Any, *,
+                               has_practice: bool = False, has_quiz: bool = False) -> List[str]:
+    """The completed instructional PREFIX that is safe to present as progress.
+
+    Older builds allowed a later step (for example Train) to be marked complete
+    while Learn/Get Ready were still unfinished. Do not present that impossible
+    state. The completion endpoint canonicalises the stored ledger back to this
+    legitimate prefix on the learner's next explicit step completion.
+    """
+    keys = instructional_step_keys(lesson, has_practice=has_practice, has_quiz=has_quiz)
+    done = set(completed or [])
+    out: List[str] = []
+    for key in keys:
+        if key not in done:
+            break
+        out.append(key)
+    return out
+
+
+def next_instructional_step(lesson: Optional[dict], completed: Any, *,
+                            has_practice: bool = False, has_quiz: bool = False) -> Optional[str]:
+    """The ONE instructional step a client may newly complete right now."""
+    missing = missing_instructional_steps(
+        lesson, completed, has_practice=has_practice, has_quiz=has_quiz)
+    return missing[0] if missing else None
+
+
+def instructional_step_blockers(lesson: Optional[dict], step_key: str, completed: Any, *,
+                                has_practice: bool = False, has_quiz: bool = False) -> List[str]:
+    """Earlier instructional steps that still block ``step_key``."""
+    keys = instructional_step_keys(lesson, has_practice=has_practice, has_quiz=has_quiz)
+    try:
+        idx = keys.index(step_key)
+    except ValueError:
+        return []
+    done = set(completed or [])
+    return [k for k in keys[:idx] if k not in done]
 
 
 def step_label(step_key: str) -> str:

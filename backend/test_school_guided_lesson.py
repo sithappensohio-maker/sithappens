@@ -72,6 +72,26 @@ def _enrollment(enr):
     return run(server.db.dog_programs.find_one({"id": enr["id"]}, {"_id": 0}))
 
 
+def _make_block_lesson(enr, lesson_id):
+    """Give the current fixture the real Course Builder shape, including one
+    authored Quick Check, without changing its Practice template."""
+    blocks = [
+        {"id": "learn-block", "type": "text", "title": "Why this matters", "body": "Understand the goal.", "order": 1, "active": True},
+        {"id": "ready-block", "type": "checklist", "title": "Before you begin", "items": ["Treats ready"], "order": 2, "active": True},
+        {"id": "train-block", "type": "steps", "title": "Step-by-step lesson", "items": ["Lure", "Mark"], "order": 3, "active": True},
+        {"id": "watch-block", "type": "text", "title": "Common mistakes to avoid", "body": "Do not repeat the cue.", "order": 4, "active": True},
+        {"id": "success-block", "type": "text", "title": "What success looks like", "body": "Five clean repetitions.", "order": 5, "active": True},
+        {"id": "quick-one", "type": "quiz", "title": "Quick Check", "body": "When should you mark?",
+         "items": ["When the rear touches the floor", "Before the dog moves"],
+         "config": {"correct_answer": "When the rear touches the floor", "explanation": "Mark the completed behavior."},
+         "order": 6, "active": True},
+    ]
+    run(server.db.dog_programs.update_one(
+        {"id": enr["id"], "program_snapshot.modules.lessons.id": lesson_id},
+        {"$set": {"program_snapshot.modules.0.lessons.0.content_blocks": blocks}},
+    ))
+
+
 # ---------------------------------------------------------------------------
 # The sequence itself (pure)
 # ---------------------------------------------------------------------------
@@ -89,6 +109,15 @@ def test_steps_are_renumbered_so_the_client_never_sees_a_gap():
     steps = guide.build_guide(lesson, has_practice=True)
     assert [s["n"] for s in steps] == [1, 2, 3, 4]
     assert all(s["total"] == 4 for s in steps)
+
+
+def test_out_of_order_historical_markers_do_not_present_as_completed_until_prerequisites_exist():
+    lesson = {"client_overview": "Why.", "equipment_needed": "Treats.",
+              "client_instructions": "Lure."}
+    assert guide.contiguous_completed_steps(lesson, ["train"], has_practice=True) == []
+    assert guide.contiguous_completed_steps(lesson, ["learn", "train"], has_practice=True) == ["learn"]
+    assert guide.contiguous_completed_steps(lesson, ["train", "get_ready", "learn"], has_practice=True) == [
+        "learn", "get_ready", "train"]
 
 
 def test_only_instructional_steps_gate_practice():
@@ -185,6 +214,67 @@ def test_completing_the_same_step_twice_is_idempotent():
         _complete_step(se, lid, "learn", cu)
         _complete_step(se, lid, "learn", cu)
         assert _enrollment(enr)["lesson_step_progress"][lid] == ["learn"]
+
+
+def test_a_client_cannot_complete_train_before_learn_and_get_ready():
+    """The old implementation only validated that Train was a real key; it
+    did not validate its POSITION, so clients could complete steps 1-5 in any
+    order. The server now owns that order too."""
+    with _course() as (se, enr, cu, lid):
+        _make_block_lesson(enr, lid)
+        d = _detail(se, lid, cu)
+        assert d["instructional_steps"][:3] == ["learn", "get_ready", "train"]
+        with pytest.raises(server.HTTPException) as e:
+            _complete_step(se, lid, "train", cu)
+        assert e.value.status_code == 409
+        assert e.value.detail["error_code"] == "instructional_step_out_of_order"
+        assert e.value.detail["required_step"] == "learn"
+        assert _detail(se, lid, cu)["steps_completed"] == []
+
+        _complete_step(se, lid, "learn", cu)
+        with pytest.raises(server.HTTPException) as e2:
+            _complete_step(se, lid, "train", cu)
+        assert e2.value.detail["required_step"] == "get_ready"
+        assert _detail(se, lid, cu)["steps_completed"] == ["learn"]
+
+
+def test_an_old_out_of_order_marker_is_repaired_instead_of_skipping_the_step_later():
+    """Production briefly allowed Train to be completed before Learn/Get Ready.
+
+    Hiding that bad marker is not enough: if it remains in storage, completing
+    the missing prerequisites later would make Train silently become complete
+    and the student would still skip it. The next legitimate completion repairs
+    the per-lesson ledger back to the canonical prefix.
+    """
+    with _course() as (se, enr, cu, lid):
+        _make_block_lesson(enr, lid)
+        run(server.db.dog_programs.update_one(
+            {"id": enr["id"]},
+            {"$set": {f"lesson_step_progress.{lid}": ["train"]}},
+        ))
+        d = _detail(se, lid, cu)
+        assert "train" in _enrollment(enr)["lesson_step_progress"][lid]
+        assert "train" not in d["steps_completed"]
+        # The server gate must use the SAME legitimate prefix, not the raw
+        # corrupt set. A stale Train marker cannot disappear from the lock
+        # reason or make Practice closer to unlocked than the tracker shows.
+        with pytest.raises(server.HTTPException) as practice_err:
+            _start_practice_raw(se, lid, cu)
+        assert practice_err.value.detail["error_code"] == "instructional_steps_incomplete"
+        assert "train" in practice_err.value.detail["missing_steps"]
+        with pytest.raises(server.HTTPException) as e:
+            _complete_step(se, lid, "watch_for", cu)
+        assert e.value.detail["required_step"] == "learn"
+
+        _complete_step(se, lid, "learn", cu)
+        assert _enrollment(enr)["lesson_step_progress"][lid] == ["learn"]
+        _complete_step(se, lid, "get_ready", cu)
+        assert _enrollment(enr)["lesson_step_progress"][lid] == ["learn", "get_ready"]
+        # Train must still be the next real action; the stale marker cannot
+        # resurrect itself after its prerequisites are satisfied.
+        assert "train" not in _detail(se, lid, cu)["steps_completed"]
+        _complete_step(se, lid, "train", cu)
+        assert _detail(se, lid, cu)["steps_completed"][:3] == ["learn", "get_ready", "train"]
 
 
 def test_completed_steps_stay_readable():
@@ -284,11 +374,6 @@ def test_quick_check_is_locked_until_the_lesson_has_been_practised():
         run(server.log_section(started["homework_id"],
                                server.SectionLogIn(section_id="practice"), cu))
         assert _detail(se, lid, cu)["quick_check_unlocked"] is True
-
-
-# ---------------------------------------------------------------------------
-# Nobody mid-course gets stranded
-# ---------------------------------------------------------------------------
 
 def test_an_enrollment_from_before_this_rule_keeps_its_practice():
     # They passed the OLD learn boundary; the new one must not re-lock them.
@@ -447,3 +532,288 @@ def test_a_genuine_pre_feature_enrollment_is_still_honoured():
             {"id": enr["id"]}, {"$addToSet": {"learn_completed_lesson_ids": lid}}))
         assert _detail(se, lid, cu)["practice_unlocked"] is True
         assert _start_practice_raw(se, lid, cu)["homework_id"]
+
+
+def test_genuine_pre_feature_boundary_displays_material_as_complete_not_contradictory():
+    """If old progress is being honoured, the tracker must not say Learn is
+    current while Practice is already unlocked. With no guided ledger, the old
+    boundary grants the whole instructional prefix for display purposes."""
+    with _course() as (se, enr, cu, lid):
+        run(server.db.dog_programs.update_one(
+            {"id": enr["id"]}, {"$addToSet": {"learn_completed_lesson_ids": lid}}))
+        d = _detail(se, lid, cu)
+        assert d["practice_unlocked"] is True
+        assert d["steps_completed"] == d["instructional_steps"]
+
+
+def test_legacy_signal_cannot_bypass_a_lesson_once_guided_tracking_has_started():
+    """Legacy compatibility is only for a lesson with NO per-step ledger. Once
+    the student enters the guided model, missing steps are authoritative even
+    if an old/bad learn marker also exists."""
+    with _course() as (se, enr, cu, lid):
+        run(server.db.dog_programs.update_one(
+            {"id": enr["id"]},
+            {"$set": {f"lesson_step_progress.{lid}": ["learn"]},
+             "$addToSet": {"learn_completed_lesson_ids": lid}},
+        ))
+        d = _detail(se, lid, cu)
+        assert d["steps_completed"] == ["learn"]
+        assert d["practice_unlocked"] is False
+        with pytest.raises(server.HTTPException) as blocked:
+            _start_practice_raw(se, lid, cu)
+        assert blocked.value.status_code == 403
+        assert blocked.value.detail["error_code"] == "instructional_steps_incomplete"
+
+def test_preprovisioned_practice_is_not_a_side_door_around_the_lesson_gate():
+    """Online School pre-creates the current lesson's homework so Practice is
+    instant when it unlocks. That implementation detail must not expose a
+    second route through the School Practice screen or the generic homework
+    API before Learn/Get Ready/Train/etc. are complete."""
+    with _course() as (se, enr, cu, lid):
+        hw = run(server._lesson_practice_homework(se["dog_id"], lid, enr["id"]))
+        assert hw, "fixture should pre-provision the first lesson Practice"
+
+        home = run(server.portal_school_home(se["id"], cu))
+        assert hw["id"] not in {x["id"] for x in (home.get("active_practice") or [])}
+
+        with pytest.raises(server.HTTPException) as open_err:
+            run(server.get_homework_detail(hw["id"], cu))
+        assert open_err.value.status_code == 409
+        assert open_err.value.detail["error_code"] == "instructional_steps_incomplete"
+
+        with pytest.raises(server.HTTPException) as log_err:
+            run(server.log_section(hw["id"], server.SectionLogIn(section_id="practice"), cu))
+        assert log_err.value.status_code == 409
+        assert log_err.value.detail["error_code"] == "instructional_steps_incomplete"
+
+        # Less-obvious generic Practice endpoints must not become side doors
+        # either. Asking a Coach-mode question used to create a draft
+        # section_log, and any non-empty section_logs list was then counted as
+        # "practised". Video upload similarly interacted with Practice before
+        # the lesson gate. Both are refused before writing anything.
+        with pytest.raises(server.HTTPException) as ask_err:
+            run(server.ask_section_question(
+                hw["id"], "practice", server.DayQuestionIn(text="Can you help?"), cu))
+        assert ask_err.value.status_code == 409
+        assert ask_err.value.detail["error_code"] == "instructional_steps_incomplete"
+
+        with pytest.raises(server.HTTPException) as video_err:
+            run(server.upload_practice_video(
+                hw["id"],
+                server.CertificateUploadIn(photo="data:video/mp4;base64,AAAA", filename="practice.mp4"),
+                cu))
+        assert video_err.value.status_code == 409
+        assert video_err.value.detail["error_code"] == "instructional_steps_incomplete"
+
+        untouched = run(server.db.homework.find_one({"id": hw["id"]}, {"_id": 0}))
+        assert untouched.get("section_logs") in (None, [])
+        assert _detail(se, lid, cu)["practiced"] is False
+
+        for key in _detail(se, lid, cu)["instructional_steps"]:
+            _complete_step(se, lid, key, cu)
+        home2 = run(server.portal_school_home(se["id"], cu))
+        assert hw["id"] in {x["id"] for x in (home2.get("active_practice") or [])}
+        assert run(server.get_homework_detail(hw["id"], cu))["id"] == hw["id"]
+        run(server.log_section(hw["id"], server.SectionLogIn(section_id="practice"), cu))
+        assert _detail(se, lid, cu)["practiced"] is True
+
+
+def test_client_cannot_mark_school_practice_complete_without_logging_a_session():
+    """The generic Homework complete endpoint used to become a post-material
+    shortcut: mark the pre-provisioned assignment completed -> practiced=True ->
+    Quick Check unlocked, with no Practice log at all."""
+    with _course() as (se, enr, cu, lid):
+        d = _detail(se, lid, cu)
+        for key in d["instructional_steps"]:
+            _complete_step(se, lid, key, cu)
+        started = _start_practice_raw(se, lid, cu)
+
+        with pytest.raises(server.HTTPException) as bypass:
+            run(server.complete_homework(
+                started["homework_id"], server.HomeworkCompleteIn(), cu))
+        assert bypass.value.status_code == 409
+        assert bypass.value.detail["error_code"] == "practice_session_required"
+        assert _detail(se, lid, cu)["practiced"] is False
+
+        run(server.log_section(started["homework_id"],
+                               server.SectionLogIn(section_id="practice"), cu))
+        completed = run(server.complete_homework(
+            started["homework_id"], server.HomeworkCompleteIn(), cu))
+        assert completed["status"] == "completed"
+        assert _detail(se, lid, cu)["practiced"] is True
+
+
+def test_practice_session_counts_ignore_question_placeholders_too():
+    """Checkpoint remediation uses a numeric practice-session requirement. It
+    must use the same definition as the lesson Practice gate."""
+    with _course() as (se, enr, cu, lid):
+        for key in _detail(se, lid, cu)["instructional_steps"]:
+            _complete_step(se, lid, key, cu)
+        started = _start_practice_raw(se, lid, cu)
+        hw_id = started["homework_id"]
+
+        run(server.ask_section_question(
+            hw_id, "practice", server.DayQuestionIn(text="Can you check this?"), cu))
+        assert run(server._count_practice_sessions_since(hw_id, None)) == 0
+        assert _detail(se, lid, cu)["practiced"] is False
+
+        run(server.log_section(hw_id, server.SectionLogIn(section_id="practice"), cu))
+        assert run(server._count_practice_sessions_since(hw_id, None)) == 1
+        assert _detail(se, lid, cu)["practiced"] is True
+
+
+def test_draft_question_placeholder_is_not_a_practice_session():
+    # Coach-mode questions may need a placeholder log to hold the thread. That
+    # container is not evidence the dog was trained. A normal submitted
+    # section log (no draft status) still counts exactly as before.
+    base = {"daily_tracker": False, "status": "assigned"}
+    assert server._lesson_is_practiced({**base, "section_logs": [
+        {"submission_status": "draft", "questions": [{"text": "help"}]}
+    ]}) is False
+    assert server._lesson_is_practiced({**base, "section_logs": [
+        {"section_id": "practice", "logged_at": "now"}
+    ]}) is True
+
+
+def test_daily_tracker_drafts_rest_and_skip_do_not_count_as_practice():
+    base = {"daily_tracker": True, "status": "assigned"}
+    assert server._lesson_is_practiced({**base, "section_logs": [
+        {"submission_status": "in_progress"}
+    ]}) is False
+    assert server._lesson_is_practiced({**base, "section_logs": [
+        {"submission_status": "rest", "is_rest_day": True}
+    ]}) is False
+    assert server._lesson_is_practiced({**base, "section_logs": [
+        {"submission_status": "skipped", "is_skipped": True}
+    ]}) is False
+    assert server._lesson_is_practiced({**base, "section_logs": [
+        {"submission_status": "submitted"}
+    ]}) is True
+    assert server._lesson_is_practiced({**base, "section_logs": [], "status": "completed"}) is True
+
+
+def test_home_action_moves_to_practice_as_soon_as_instructional_steps_are_done():
+    """The legacy learn_completed signal is written by Start Practice, so Home
+    must use the real guided-step state or it sends a student who just finished
+    Step 5 back to 'Start lesson' instead of forward to Practice."""
+    with _course() as (se, enr, cu, lid):
+        d = _detail(se, lid, cu)
+        for key in d["instructional_steps"]:
+            _complete_step(se, lid, key, cu)
+        fresh = _enrollment(enr)
+        assert lid not in set(fresh.get("learn_completed_lesson_ids") or [])
+        home = run(server.portal_school_home(se["id"], cu))
+        assert home["lesson_state"]["instructional_complete"] is True
+        assert home["current_action"]["type"] == "practice"
+
+# ---------------------------------------------------------------------------
+# Final state-machine edge cases found in the consolidation audit
+# ---------------------------------------------------------------------------
+
+def test_completed_lesson_progress_is_review_only_even_by_direct_api_call():
+    with _course(n_lessons=2) as (se, enr, cu, lid):
+        _make_block_lesson(enr, lid)
+        fresh = _enrollment(enr)
+        second = fresh["program_snapshot"]["modules"][0]["lessons"][1]["id"]
+        run(server.db.dog_programs.update_one(
+            {"id": enr["id"]}, {"$set": {"current_lesson_id": second}}))
+
+        with pytest.raises(server.HTTPException) as step_err:
+            _complete_step(se, lid, "learn", cu)
+        assert step_err.value.status_code == 409
+        assert step_err.value.detail["error_code"] == "completed_lesson_read_only"
+
+
+
+
+def test_inline_images_stay_with_the_authored_section_instead_of_all_falling_into_train():
+    """The real free-course manifest puts a demonstration after Steps, a
+    finished-position image after success criteria, and a mistake image after
+    common mistakes. Guided grouping must preserve those semantic placements."""
+    lesson = {"content_blocks": [
+        {"id": "intro", "type": "text", "title": "What you are teaching", "body": "x", "order": 0},
+        {"id": "steps", "type": "steps", "title": "Step-by-step lesson", "items": ["x"], "order": 1},
+        {"id": "demo", "type": "image", "title": "Demonstration", "resource_id": "r1", "order": 2},
+        {"id": "success", "type": "text", "title": "What a good repetition looks like", "body": "x", "order": 3},
+        {"id": "finished", "type": "image", "title": "Finished position", "resource_id": "r2", "order": 4},
+        {"id": "mistakes", "type": "text", "title": "Common mistakes to avoid", "body": "x", "order": 5},
+        {"id": "wrong", "type": "image", "title": "Common mistake", "resource_id": "r3", "order": 6},
+    ]}
+    grouped = guide.group_blocks(lesson["content_blocks"])
+    assert [b["id"] for b in grouped["train"]] == ["steps", "demo"]
+    assert [b["id"] for b in grouped["know_got_it"]] == ["success", "finished"]
+    assert [b["id"] for b in grouped["watch_for"]] == ["mistakes", "wrong"]
+
+
+def test_historical_practice_log_cannot_override_an_incomplete_guided_ledger_for_advance_or_module_quiz():
+    """Once a lesson has entered per-step tracking, an old Practice log is not
+    permission to skip the remaining lesson material. This pins the downstream
+    gates too, not only Start Practice."""
+    with _course(n_lessons=1) as (se, enr, cu, lid):
+        d = _detail(se, lid, cu)
+        for key in d["instructional_steps"]:
+            _complete_step(se, lid, key, cu)
+        started = _start_practice_raw(se, lid, cu)
+        run(server.log_section(started["homework_id"], server.SectionLogIn(section_id="practice"), cu))
+        assert _detail(se, lid, cu)["practiced"] is True
+
+        # Simulate the production-shaped inconsistent history: Practice exists,
+        # but this lesson's new guided ledger says only Learn is legitimately done.
+        run(server.db.dog_programs.update_one(
+            {"id": enr["id"]}, {"$set": {f"lesson_step_progress.{lid}": ["learn"]}}))
+        d2 = _detail(se, lid, cu)
+        assert d2["practiced"] is True
+        assert d2["steps_completed"] == ["learn"]
+        assert d2["practice_unlocked"] is False
+
+        with pytest.raises(server.HTTPException) as adv:
+            run(server.portal_school_advance(se["id"], cu))
+        assert adv.value.status_code == 422
+        assert adv.value.detail["error_code"] == "instructional_steps_incomplete"
+
+        module_id = _enrollment(enr)["current_module_id"]
+        quiz_cfg = {
+            "enabled": True, "title": "Boundary Quiz", "passing_score": 80,
+            "questions": [{
+                "id": "q", "type": "multiple_choice", "question": "Ready?",
+                "options": [{"id": "yes", "text": "Yes"}, {"id": "no", "text": "No"}],
+                "correct_option_id": "yes",
+            }],
+        }
+        run(server.db.dog_programs.update_one(
+            {"id": enr["id"]}, {"$set": {"program_snapshot.modules.0.module_quiz": quiz_cfg}}))
+        roadmap = run(server._school_roadmap(_enrollment(enr), se["dog_id"]))
+        assert roadmap["current_lesson_instructional_complete"] is False
+        assert roadmap["module_quiz_available"] is False
+        quiz = run(server.portal_school_module_quiz(se["id"], module_id, cu))
+        assert quiz["status"] == "locked"
+        assert quiz["questions"] is None
+
+
+def test_historical_practice_log_cannot_override_incomplete_material_for_checkpoint():
+    """Checkpoint is downstream of material AND Practice. A stale real Practice
+    log from an older build cannot make the checkpoint upload a side door."""
+    with _school_program(n_modules=1, n_lessons_per_module=1,
+                         checkpoint_lesson_idx=0) as (prog, admin):
+        with _client_and_dog() as (client, dog):
+            se, enr = _enroll(prog, dog, admin)
+            cu = _client_user(client["id"])
+            try:
+                lid = _enrollment(enr)["current_lesson_id"]
+                d = _detail(se, lid, cu)
+                for key in d["instructional_steps"]:
+                    _complete_step(se, lid, key, cu)
+                started = _start_practice_raw(se, lid, cu)
+                run(server.log_section(started["homework_id"], server.SectionLogIn(section_id="practice"), cu))
+                run(server.db.dog_programs.update_one(
+                    {"id": enr["id"]}, {"$set": {f"lesson_step_progress.{lid}": ["learn"]}}))
+
+                with pytest.raises(server.HTTPException) as blocked:
+                    run(server.portal_school_submit_checkpoint(
+                        se["id"], lid,
+                        server.CheckpointSubmissionIn(
+                            video="data:video/mp4;base64,AAAA", filename="proof.mp4"), cu))
+                assert blocked.value.status_code == 422
+                assert blocked.value.detail["error_code"] == "instructional_steps_incomplete"
+            finally:
+                _cleanup_school(se["id"], enr["id"])

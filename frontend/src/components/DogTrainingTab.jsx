@@ -20,6 +20,8 @@ export default function DogTrainingTab({ dogId, dogName, dogAgeMonths = 0 }) {
   const [enrollments, setEnrollments] = useState([]);
   const [programs, setPrograms] = useState([]);
   const [assignOpen, setAssignOpen] = useState(false);
+  const [assignErr, setAssignErr] = useState("");
+  const [assignBusy, setAssignBusy] = useState(false);
   const [schoolEnrollments, setSchoolEnrollments] = useState([]);
   const [customOpen, setCustomOpen] = useState(false);
   const [activeGoalEdit, setActiveGoalEdit] = useState(null);
@@ -85,14 +87,21 @@ export default function DogTrainingTab({ dogId, dogName, dogAgeMonths = 0 }) {
   const schoolHistory = enrollments.filter(e => e.status !== "active" && e.delivery_channel === "online_school");
   const schoolEnrollmentsById = Object.fromEntries(schoolEnrollments.map(se => [se.enrollment_id, se]));
   const assignSchoolProgram = async ({ programId, deliveryMode, assignedTrainerId, startedAt, targetCompletionDate }) => {
+    if (assignBusy) return;
+    setAssignBusy(true); setAssignErr("");
     try {
       await api.post("/school/enroll", {
         dog_id: dogId, program_id: programId, delivery_mode: deliveryMode,
         assigned_trainer_id: assignedTrainerId || null,
         started_at: startedAt || null, target_completion_date: targetCompletionDate || null,
       });
-      setAssignOpen(false); load();
-    } catch (e) { setErr(formatErr(e.response?.data?.detail) || "Program assignment failed"); }
+      setAssignOpen(false);
+      await load();
+    } catch (e) {
+      setAssignErr(formatErr(e.response?.data?.detail) || "Program assignment failed");
+    } finally {
+      setAssignBusy(false);
+    }
   };
 
   // Case A only — a mistaken/test enrollment with zero checkpoint history.
@@ -210,7 +219,7 @@ export default function DogTrainingTab({ dogId, dogName, dogAgeMonths = 0 }) {
           <p className="text-[11px] text-shTextMuted mt-0.5">One curriculum system · in person, online, or hybrid</p>
         </div>
         <div className="flex gap-2">
-          <button onClick={()=>setAssignOpen(true)} data-testid="school-assign-btn"
+          <button onClick={()=>{ setAssignErr(""); setAssignOpen(true); }} data-testid="school-assign-btn"
                   className="bg-shSecondary text-shText px-4 py-2 rounded font-black text-[15px] uppercase tracking-widest shadow">
             <i className="fas fa-graduation-cap mr-1"/>Assign Program
           </button>
@@ -316,7 +325,8 @@ export default function DogTrainingTab({ dogId, dogName, dogAgeMonths = 0 }) {
           programs={programs.filter(p => p.type !== "custom" || p.owner_dog_id === dogId)}
           dogAgeMonths={dogAgeMonths} typeMeta={typeByKey}
           loadState={loadState} loadError={err} onRetry={load}
-          onAssign={assignSchoolProgram} onClose={()=>setAssignOpen(false)}
+          assignError={assignErr} assignBusy={assignBusy}
+          onAssign={assignSchoolProgram} onClose={()=>{ setAssignErr(""); setAssignOpen(false); }}
         />
       )}
 
@@ -725,7 +735,8 @@ function GoalRow({ goal, progress, onChange }) {
 }
 
 function SchoolProgramAssignModal({ programs, dogAgeMonths, typeMeta, onAssign, onClose,
-                                   loadState = "ready", loadError, onRetry }) {
+                                   loadState = "ready", loadError, onRetry,
+                                   assignError = "", assignBusy = false }) {
   const [selectedId, setSelectedId] = useState("");
   const [deliveryMode, setDeliveryMode] = useState("in_person");
   const [trainerId, setTrainerId] = useState("");
@@ -771,7 +782,7 @@ function SchoolProgramAssignModal({ programs, dogAgeMonths, typeMeta, onAssign, 
   };
 
   const submit = () => {
-    if (!selected) return;
+    if (!selected || assignBusy) return;
     onAssign({
       programId: selected.id, deliveryMode,
       assignedTrainerId: trainerId || null,
@@ -843,6 +854,13 @@ function SchoolProgramAssignModal({ programs, dogAgeMonths, typeMeta, onAssign, 
                 {selected.focus&&<p className="text-[12px] text-shTextMuted mt-1">{selected.focus}</p>}
               </div>
 
+              {assignError && (
+                <div className="rounded-xl border border-red-400/35 bg-red-500/10 p-3 text-[13px] font-bold text-red-300"
+                     role="alert" data-testid="school-assign-submit-error">
+                  <i className="fas fa-triangle-exclamation mr-2" />{assignError}
+                </div>
+              )}
+
               <div>
                 <p className="text-[10px] font-black uppercase tracking-widest text-shTextMuted mb-2">Delivery</p>
                 <div className="grid sm:grid-cols-3 gap-2">
@@ -863,7 +881,7 @@ function SchoolProgramAssignModal({ programs, dogAgeMonths, typeMeta, onAssign, 
           )}
         </div>
 
-        {selected && <div className="px-5 py-4 border-t border-shBorder flex justify-end gap-2 shrink-0"><button type="button" onClick={onClose} className="px-4 py-2 rounded-xl border border-shBorder text-shTextMuted text-xs font-black">Cancel</button><button type="button" onClick={submit} data-testid="school-assign-confirm" className="px-5 py-2 rounded-xl bg-shPrimary text-bgHeader text-xs font-black uppercase tracking-widest"><i className="fas fa-check mr-1.5"/>Assign {deliveryMode === "in_person" ? "In Person" : deliveryMode === "hybrid" ? "Hybrid" : "Online"}</button></div>}
+        {selected && <div className="px-5 py-4 border-t border-shBorder flex justify-end gap-2 shrink-0"><button type="button" onClick={onClose} disabled={assignBusy} className="px-4 py-2 rounded-xl border border-shBorder text-shTextMuted text-xs font-black disabled:opacity-50">Cancel</button><button type="button" onClick={submit} disabled={assignBusy} data-testid="school-assign-confirm" className="px-5 py-2 rounded-xl bg-shPrimary text-bgHeader text-xs font-black uppercase tracking-widest disabled:opacity-50"><i className={`fas ${assignBusy ? "fa-spinner fa-spin" : "fa-check"} mr-1.5`}/>{assignBusy ? "Assigning…" : `Assign ${deliveryMode === "in_person" ? "In Person" : deliveryMode === "hybrid" ? "Hybrid" : "Online"}`}</button></div>}
       </div>
     </div>
   );

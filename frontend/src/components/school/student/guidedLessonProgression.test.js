@@ -15,7 +15,7 @@
 import fs from "fs";
 import path from "path";
 import {
-  buildGuide, stepState, currentStepKey, lockReason, instructionalKeys,
+  buildGuide, groupBlocks, stepState, currentStepKey, lockReason, instructionalKeys,
   GUIDE_SECTIONS, GUIDE_MIN_CONTENT_STEPS,
 } from "./lesson/LessonGuide";
 
@@ -121,7 +121,7 @@ test("a locked step always says what would unlock it", () => {
 
 test("progression state is read from the server payload", () => {
   expect(lessonSrc).toMatch(/const stepsCompleted = data\.steps_completed \|\| \[\]/);
-  expect(lessonSrc).toMatch(/const practiceUnlocked = data\.practice_unlocked !== false/);
+  expect(lessonSrc).toMatch(/const practiceUnlocked = data\.practice_unlocked === true/);
   expect(lessonSrc).toMatch(/const quickCheckUnlocked = data\.quick_check_unlocked !== false/);
   // the client must not compute its own unlock rule
   const logic = code(lessonSrc).replace(/"[^"]*"/g, '""').replace(/`[^`]*`/g, "``");
@@ -280,4 +280,56 @@ test("a lesson with different content still produces a coherent sequence", () =>
                             { hasPractice: true, hasQuiz: false });
   expect(sparse.map(s => s.key)).toEqual(["learn", "know_got_it", "practice", "next_step"]);
   expect(currentStepKey(sparse, { completed: ["learn"] })).toBe("know_got_it");
+});
+
+// ---------------------------------------------------------------------------
+// Strict instructional sequencing + presentation hardening
+// ---------------------------------------------------------------------------
+
+test("future instructional steps are locked until the current one is complete", () => {
+  const s = sections();
+  const learn = s.find(x => x.key === "learn");
+  const train = s.find(x => x.key === "train");
+  const cur = currentStepKey(s, { completed: [] });
+  expect(cur).toBe("learn");
+  expect(stepState(learn, { completed: [], currentKey: cur })).toBe("current");
+  expect(stepState(train, { completed: [], currentKey: cur })).toBe("locked");
+  expect(lockReason(train, { currentInstructionalLabel: "Learn" })).toMatch(/Complete Learn first/i);
+});
+
+test("inline media follows the authored semantic section rather than collapsing into Train", () => {
+  const lesson = { content_blocks: [
+    { id: "intro", type: "text", title: "What you are teaching", body: "x", order: 0 },
+    { id: "steps", type: "steps", title: "Step-by-step lesson", items: ["x"], order: 1 },
+    { id: "demo", type: "image", title: "Demo", order: 2 },
+    { id: "success", type: "text", title: "What a good repetition looks like", body: "x", order: 3 },
+    { id: "finished", type: "image", title: "Finished", order: 4 },
+    { id: "mistakes", type: "text", title: "Common mistakes to avoid", body: "x", order: 5 },
+    { id: "wrong", type: "image", title: "Wrong", order: 6 },
+  ] };
+  const grouped = groupBlocks(lesson.content_blocks);
+  expect(grouped.train.map(b => b.id)).toEqual(["steps", "demo"]);
+  expect(grouped.know_got_it.map(b => b.id)).toEqual(["success", "finished"]);
+  expect(grouped.watch_for.map(b => b.id)).toEqual(["mistakes", "wrong"]);
+});
+
+test("stale local section selection cannot reveal a locked future section", () => {
+  expect(lessonSrc).toMatch(/setGuideKey\(null\);[\s\S]*setData\(null\);[\s\S]*load\(\);/);
+  expect(lessonSrc).toMatch(/const requestedState = requestedSection/);
+  expect(lessonSrc).toMatch(/stepState\(requestedSection, \{ \.\.\.guideCtx, currentKey \}\)/);
+  expect(lessonSrc).toMatch(/guideKey && requestedState !== "locked" \? guideKey : currentKey/);
+});
+
+test("an old Practice log cannot visually outrank unfinished guided material", () => {
+  const s = sections();
+  const practice = s.find(x => x.key === "practice");
+  expect(stepState(practice, {
+    completed: ["learn"], practiceUnlocked: false, practiced: true,
+    quickCheckUnlocked: false, currentKey: "get_ready",
+  })).toBe("locked");
+});
+
+test("Quick Check remains established non-gating reinforcement", () => {
+  expect(blocksSrc).toMatch(/Knowledge checks reinforce the lesson; they do not unlock or block course progression/);
+  expect(lessonSrc).not.toMatch(/quick-check\/\$\{blockId\}\/complete/);
 });

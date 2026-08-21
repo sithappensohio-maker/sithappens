@@ -9,7 +9,7 @@ import HuskyDogImage from "../../brand/HuskyDogImage";
 import CheckpointPanel from "./CheckpointPanel";
 import LessonGuide, {
   LessonSectionBody, buildGuide, LessonHowItWorks, PracticeUnlockedCard,
-  currentStepKey, instructionalKeys, GUIDE_MIN_CONTENT_STEPS,
+  currentStepKey, instructionalKeys, stepState, GUIDE_MIN_CONTENT_STEPS,
 } from "./lesson/LessonGuide";
 import { CheckpointResultPanel } from "./checkpoint/CheckpointCards";
 import { practiceButtonLabel } from "../../../lib/onlineSchoolPolish";
@@ -51,7 +51,13 @@ export default function LessonScreen({
       if (seq === loadSeq.current) setErr({ status: e.response?.status, message: e.response?.data?.detail || "This lesson isn't available right now." });
     }
   }, [enrollmentId, lessonId]);
-  useEffect(() => { setData(null); load(); }, [load]);
+  useEffect(() => {
+    // Section selection is local UI state, not progression. Never carry a
+    // selection from one lesson/enrollment into the next lesson.
+    setGuideKey(null);
+    setData(null);
+    load();
+  }, [load]);
 
   /* A PASSED checkpoint auto-advances the enrolment server-side, so the live
      checkpoint_status is already gone by the time the client looks at the
@@ -98,6 +104,7 @@ export default function LessonScreen({
     setStepBusy(true); setActionErr("");
     try {
       await api.post(`/portal/school/${enrollmentId}/lessons/${lessonId}/steps/${stepKey}/complete`);
+      setGuideKey(null);
       await load();
       onStateChanged?.();
     } catch (e) {
@@ -193,14 +200,23 @@ export default function LessonScreen({
      is exactly how the lesson behaved before this existed. */
   const stepsCompleted = data.steps_completed || [];
   const instructionalStepKeys = data.instructional_steps || instructionalKeys(guideSections);
-  const practiceUnlocked = data.practice_unlocked !== false;
+  const practiceUnlocked = data.practice_unlocked === true;
+  // Quick Check keeps its established non-gating semantics. Missing legacy
+  // payload state therefore preserves the old open behaviour; Practice is the
+  // security-sensitive transition and fails closed above.
   const quickCheckUnlocked = data.quick_check_unlocked !== false;
   const guideCtx = {
     completed: stepsCompleted, practiceUnlocked, quickCheckUnlocked,
     practiceLockedReason: data.practice_locked_reason, practiced: !!data.practiced,
   };
   const currentKey = currentStepKey(guideSections, guideCtx);
-  const openKey = guideKey || currentKey;
+  // A stale local selection/devtools value must never reveal a future teaching
+  // step that the same state machine marks locked. The backend separately
+  // enforces step completion, so this is presentation defense-in-depth.
+  const requestedSection = guideSections.find(sx => sx.key === guideKey);
+  const requestedState = requestedSection
+    ? stepState(requestedSection, { ...guideCtx, currentKey }) : null;
+  const openKey = guideKey && requestedState !== "locked" ? guideKey : currentKey;
   const openSection = guideSections.find(sx => sx.key === openKey);
   const remainingInstructional = instructionalStepKeys.filter(k => !stepsCompleted.includes(k));
   const isLastInstructional = remainingInstructional.length === 1
@@ -212,6 +228,8 @@ export default function LessonScreen({
     && instructionalStepKeys.every(k => stepsCompleted.includes(k));
   const quizMeta = roadmap?.module_quiz || null;
   const checkpointPassedForQuiz = requiresCp && roadmap?.checkpoint_status?.outcome === "advance";
+  const checkpointAlreadyInFlight = requiresCp && roadmap?.checkpoint_status
+    && roadmap.checkpoint_status.status !== "not_submitted";
 
   return (
     <div className="max-w-3xl mx-auto space-y-4" data-testid="lesson-screen">
@@ -363,7 +381,7 @@ export default function LessonScreen({
           )}
 
           {/* No-practice lesson: explicit Complete Lesson (never auto). */}
-          {!hasPractice && isCurrent && !learnDone && (
+          {!hasPractice && isCurrent && !learnDone && (!hasGuide || instructionalStepKeys.length === 0) && (
             <PremiumButton onClick={completeLesson} disabled={busy} data-testid="lesson-complete"
                            className="w-full justify-center min-h-[52px] text-[13px] sm:text-[14px]">
               <i className="fas fa-check text-[11px]" />Complete lesson
@@ -392,15 +410,24 @@ export default function LessonScreen({
           {/* Advance — only for the current, non-checkpoint lesson once the
               backend's requirements are met (it enforces regardless), and
               never while a Module Quiz is the required next step. */}
-          {isCurrent && !requiresCp && !quizAvailable && (data.practiced || (learnDone && !hasPractice)) && (
+          {isCurrent && !requiresCp && !quizAvailable
+            && ((hasPractice && practiceUnlocked && data.practiced) || (!hasPractice && learnDone)) && (
             <PremiumButton variant="secondary" onClick={advance} disabled={busy} data-testid="lesson-advance"
                            className="w-full justify-center min-h-[48px]">
               Continue to next lesson <i className="fas fa-arrow-right text-[10px]" />
             </PremiumButton>
           )}
 
-          {/* Checkpoint — the one shared panel (submit/awaiting/prescribed/hold). */}
-          {isCurrent && requiresCp && hasPractice && (
+          {/* Checkpoint is downstream of the instructional material and
+              Practice. Keep an existing in-flight review visible, but do not
+              present a fresh submit form while the lesson material is locked. */}
+          {isCurrent && requiresCp && hasPractice && !practiceUnlocked && !checkpointAlreadyInFlight && (
+            <SectionCard accent="cyan" intensity="subtle" data-testid="lesson-checkpoint-locked-by-material">
+              <p className="text-[14px] font-black text-shText"><i className="fas fa-lock mr-2 text-shSecondary" />Checkpoint locked</p>
+              <p className="text-[12.5px] text-shTextMuted mt-1">Finish the lesson material and Practice before submitting your checkpoint.</p>
+            </SectionCard>
+          )}
+          {isCurrent && requiresCp && hasPractice && (practiceUnlocked || checkpointAlreadyInFlight) && (
             <CheckpointPanel
               lessonId={lessonId}
               deliveryMode={deliveryMode}

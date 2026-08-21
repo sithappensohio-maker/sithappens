@@ -104,3 +104,15 @@ test("the picker invents no payment, sale or invoice", () => {
                           src.indexOf("function CustomProgramBuilder"));
   expect(modal).not.toMatch(/stripe|checkout|payment|invoice|pos_sale|charge/i);
 });
+
+test("assignment failures are shown inside the open modal", () => {
+  expect(src).toMatch(/data-testid="school-assign-submit-error"/);
+  expect(src).toMatch(/assignError=\{assignErr\}/);
+  expect(src).toMatch(/setAssignErr\(formatErr\(e\.response\?\.data\?\.detail\)/);
+});
+
+test("assignment cannot be double-submitted while the request is running", () => {
+  expect(src).toMatch(/if \(assignBusy\) return/);
+  expect(src).toMatch(/disabled=\{assignBusy\}/);
+  expect(src).toMatch(/Assigning…/);
+});

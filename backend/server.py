@@ -12979,6 +12979,19 @@ async def complete_homework(homework_id: str, body: HomeworkCompleteIn, user: di
         raise HTTPException(status_code=404, detail="Homework not found")
     if user.get("role") != "admin" and hw["client_id"] != user.get("client_id"):
         raise HTTPException(status_code=403, detail="Not allowed")
+    await _require_school_practice_unlocked_for_client(hw, user)
+    # School Practice is a real phase, not a checkbox. The generic Homework
+    # endpoint used to let a client mark the whole pre-provisioned assignment
+    # complete immediately after the lesson material unlocked, which made
+    # _lesson_is_practiced true without a single Practice log and opened the
+    # Quick Check. Admin/trainer completion remains authoritative; clients must
+    # first submit/log one legitimate Practice session.
+    if user.get("role") != "admin" and _is_school_homework(hw) \
+            and hw.get("status") != "completed" and not _lesson_is_practiced(hw):
+        raise HTTPException(status_code=409, detail={
+            "error_code": "practice_session_required",
+            "message": "Log at least one Practice session before marking this Practice complete.",
+        })
     already_completed = hw.get("status") == "completed"
     hw = await _apply_homework_completion(hw, note=body.note or "", photo=body.photo or "")
     if already_completed:
@@ -13743,6 +13756,95 @@ async def _school_event_ctx_from_hw(hw: dict) -> dict:
     return ctx
 
 
+async def _school_practice_gate_state(hw: dict) -> dict:
+    """Whether a School-owned homework row is allowed to count as Practice NOW.
+
+    Online/Hybrid lesson Practice is provisioned ahead of time so it is ready
+    the instant the student finishes the reading. That pre-provisioning must
+    never become a side door around the lesson gate via the separate Practice
+    screen or a direct generic homework API call.
+
+    Only the CURRENT lesson's School-linked Practice is gated here. Prior
+    lesson/remediation homework stays usable, and non-School homework is
+    completely untouched. Crucially, this check passes ``practiced=False`` so
+    a practice log created by an older buggy build cannot bootstrap its own
+    authorization. Genuine legacy learn-completion remains honoured by the
+    canonical lesson helper.
+    """
+    if not _is_school_homework(hw) or not hw.get("source_lesson_id"):
+        return {"applies": False, "unlocked": True, "missing_steps": []}
+
+    ctx = await _school_event_ctx_from_hw(hw)
+    enrollment_id = ctx.get("enrollment_id") or hw.get("school_enrollment_record_id")
+    school_enrollment_id = ctx.get("school_enrollment_id") or hw.get("school_enrollment_id")
+    if not enrollment_id:
+        # Some legacy School-event homework intentionally exists without a
+        # canonical enrollment (for example activity/question fixtures and
+        # old trainer-created School practice). Such a row cannot advance a
+        # current course because no enrollment resolves from it, so keep the
+        # generic Practice/event workflow available. If a real matching
+        # enrollment exists, _school_event_ctx_from_hw resolves/self-heals it
+        # above and the current-lesson gate below applies normally.
+        return {"applies": False, "unlocked": True, "missing_steps": []}
+
+    enrollment = await db.dog_programs.find_one({"id": enrollment_id}, {"_id": 0})
+    if not enrollment:
+        return {"applies": False, "unlocked": True, "missing_steps": []}
+    lesson_id = hw.get("source_lesson_id")
+    if lesson_id != enrollment.get("current_lesson_id"):
+        return {"applies": False, "unlocked": True, "missing_steps": []}
+    lesson = _find_lesson_in_snapshot(enrollment, lesson_id)
+    if not lesson or not (lesson.get("suggested_homework_template_ids") or []):
+        return {"applies": False, "unlocked": True, "missing_steps": []}
+
+    se = None
+    if school_enrollment_id:
+        se = await db.school_enrollments.find_one({"id": school_enrollment_id}, {"_id": 0})
+    if not se:
+        se = await db.school_enrollments.find_one({"enrollment_id": enrollment_id}, {"_id": 0})
+    # Pure in-person School is trainer-paced. Its assigned Practice must remain
+    # usable without forcing the client to click through an online reading
+    # sequence first. Hybrid keeps the online lesson gate; Online obviously
+    # does too.
+    if _school_delivery_mode(se, enrollment) == "in_person":
+        return {"applies": False, "unlocked": True, "missing_steps": []}
+    if se:
+        _require_school_access(enrollment, allow_withdrawn_read=False)
+        _require_school_onboarding_ready(se, enrollment)
+
+    safe_lesson = _client_safe_lesson(lesson)
+    satisfied = _lesson_steps_satisfied(
+        enrollment, lesson_id, lesson, has_practice=True, has_quiz=False,
+        practiced=False,
+    )
+    completed_prefix = school_lesson_guide.contiguous_completed_steps(
+        safe_lesson, _lesson_step_progress(enrollment, lesson_id), has_practice=True, has_quiz=False)
+    missing = school_lesson_guide.missing_instructional_steps(
+        safe_lesson, completed_prefix, has_practice=True, has_quiz=False)
+    return {
+        "applies": True, "unlocked": bool(satisfied), "missing_steps": missing,
+        "enrollment_id": enrollment_id, "school_enrollment_id": (se or {}).get("id"),
+        "lesson_id": lesson_id,
+    }
+
+
+async def _require_school_practice_unlocked_for_client(hw: dict, user: dict) -> None:
+    """Server guard for every generic homework write that can make School
+    Practice look started/completed. Admin-side trainer operations remain
+    deliberate overrides; a client must come through the lesson sequence."""
+    if user.get("role") == "admin" or not _is_school_homework(hw):
+        return
+    state = await _school_practice_gate_state(hw)
+    if state.get("applies") and not state.get("unlocked"):
+        missing = state.get("missing_steps") or []
+        raise HTTPException(status_code=409, detail={
+            "error_code": "instructional_steps_incomplete",
+            "message": _practice_lock_reason({}, missing) or "Finish the lesson material before starting Practice.",
+            "missing_steps": missing,
+            "lesson_id": state.get("lesson_id"),
+        })
+
+
 async def _emit_school_practice_log_event(hw: dict, entry: dict, body, user: dict) -> None:
     """Turn a client's practice section-log into exactly ONE School event:
     a could-not-complete report (attention alert), a hard-difficulty report,
@@ -13886,6 +13988,7 @@ async def log_section(homework_id: str, body: SectionLogIn, user: dict = Depends
         raise HTTPException(status_code=404, detail="Homework not found")
     if user.get("role") != "admin" and hw["client_id"] != user.get("client_id"):
         raise HTTPException(status_code=403, detail="Not allowed")
+    await _require_school_practice_unlocked_for_client(hw, user)
     if not hw.get("template_snapshot"):
         raise HTTPException(status_code=400, detail="This homework has no template sections to log against")
     # Validate section_id exists in snapshot
@@ -14224,6 +14327,7 @@ async def get_homework_detail(homework_id: str, user: dict = Depends(get_current
         raise HTTPException(status_code=404, detail="Homework not found")
     if user.get("role") != "admin" and hw.get("client_id") != user.get("client_id"):
         raise HTTPException(status_code=403, detail="Not allowed")
+    await _require_school_practice_unlocked_for_client(hw, user)
     if hw.get("daily_tracker"):
         prog = _compute_daily_progress(hw)
         hw["daily_progress"] = prog
@@ -14366,6 +14470,7 @@ async def submit_day(
         raise HTTPException(status_code=403, detail="Not allowed")
     if not hw.get("daily_tracker"):
         raise HTTPException(status_code=400, detail="Not a daily-tracker homework")
+    await _require_school_practice_unlocked_for_client(hw, user)
     prog = _compute_daily_progress(hw)
     cur = next((p for p in prog if p["day_number"] == day_number), None)
     if not cur:
@@ -14521,6 +14626,7 @@ async def mark_rest_day(
         raise HTTPException(status_code=403, detail="Not allowed")
     if not hw.get("daily_tracker"):
         raise HTTPException(status_code=400, detail="Not a daily-tracker homework")
+    await _require_school_practice_unlocked_for_client(hw, user)
     prog = _compute_daily_progress(hw)
     cur = next((p for p in prog if p["day_number"] == day_number), None)
     if not cur:
@@ -14597,6 +14703,7 @@ async def ask_question(
         raise HTTPException(status_code=404, detail="Homework not found")
     if user.get("role") != "admin" and hw.get("client_id") != user.get("client_id"):
         raise HTTPException(status_code=403, detail="Not allowed")
+    await _require_school_practice_unlocked_for_client(hw, user)
     if not hw.get("daily_tracker"):
         raise HTTPException(status_code=400, detail="Not a daily-tracker homework")
 
@@ -14682,6 +14789,7 @@ async def ask_section_question(
         raise HTTPException(status_code=404, detail="Homework not found")
     if user.get("role") != "admin" and hw.get("client_id") != user.get("client_id"):
         raise HTTPException(status_code=403, detail="Not allowed")
+    await _require_school_practice_unlocked_for_client(hw, user)
     if hw.get("daily_tracker"):
         raise HTTPException(status_code=400, detail="This is a daily-tracker homework — use the day-scoped ask endpoint")
     section_ids = {s["id"] for s in (hw.get("template_snapshot") or {}).get("sections", [])}
@@ -14761,6 +14869,7 @@ async def _store_homework_practice_video(
         raise HTTPException(status_code=404, detail="Homework not found")
     if user.get("role") != "admin" and hw.get("client_id") != user.get("client_id"):
         raise HTTPException(status_code=403, detail="Not allowed")
+    await _require_school_practice_unlocked_for_client(hw, user)
     if "," in (body.photo or ""):
         _, _b64 = body.photo.split(",", 1)
         approx_bytes = (len(_b64) * 3) // 4
@@ -15220,6 +15329,7 @@ async def toggle_day_step(homework_id: str, day_number: int, body: StepToggleIn,
         raise HTTPException(status_code=403, detail="Not allowed")
     if not hw.get("daily_tracker"):
         raise HTTPException(status_code=400, detail="Not a daily-tracker homework")
+    await _require_school_practice_unlocked_for_client(hw, user)
 
     snap = hw.get("template_snapshot") or {}
     section = next(
@@ -15350,6 +15460,7 @@ async def homework_catch_up(homework_id: str, body: CatchUpIn, user: dict = Depe
         raise HTTPException(status_code=403, detail="Not allowed")
     if not hw.get("daily_tracker"):
         raise HTTPException(status_code=400, detail="Not a daily-tracker homework")
+    await _require_school_practice_unlocked_for_client(hw, user)
 
     snap = hw.get("template_snapshot") or {}
     sections = sorted(
@@ -17172,6 +17283,66 @@ async def _require_program_prerequisites(dog_id: str, program: dict) -> None:
     )
 
 
+def _dog_age_months_for_program(dog: dict) -> Optional[int]:
+    """Best-known whole-month age for a program eligibility check.
+
+    Birthday is the strongest signal when present because stored age_y/age_m
+    inevitably gets stale. Legacy dogs without a birthday may still carry the
+    explicit age fields, so those remain the fallback. Unknown age stays
+    unknown rather than being silently treated as old enough.
+    """
+    birthday = str((dog or {}).get("birthday") or (dog or {}).get("date_of_birth") or "").strip()
+    if birthday:
+        try:
+            born = date.fromisoformat(birthday[:10])
+            today = business_today()
+            if born <= today:
+                months = (today.year - born.year) * 12 + (today.month - born.month)
+                if today.day < born.day:
+                    months -= 1
+                return max(0, months)
+        except Exception:
+            pass
+    try:
+        years = int((dog or {}).get("age_y") or 0)
+        months = int((dog or {}).get("age_m") or 0)
+    except (TypeError, ValueError):
+        return None
+    if years > 0 or months > 0:
+        return max(0, years * 12 + months)
+    return None
+
+
+def _require_program_min_age(dog: dict, program: dict) -> None:
+    """Canonical dog-age eligibility for every School entitlement path."""
+    try:
+        minimum = max(0, int((program or {}).get("min_age_months") or 0))
+    except (TypeError, ValueError):
+        minimum = 0
+    if minimum <= 0:
+        return
+    age = _dog_age_months_for_program(dog)
+    if age is None:
+        raise HTTPException(status_code=422, detail={
+            "code": "school_dog_age_required",
+            "message": (
+                f"Add this dog's birthday or age before enrolling in "
+                f"{program.get('name') or 'this program'} (minimum {minimum} months)."
+            ),
+            "min_age_months": minimum,
+        })
+    if age < minimum:
+        raise HTTPException(status_code=422, detail={
+            "code": "school_dog_too_young",
+            "message": (
+                f"This dog is {age} month{'s' if age != 1 else ''} old; "
+                f"{program.get('name') or 'this program'} requires at least {minimum} months."
+            ),
+            "dog_age_months": age,
+            "min_age_months": minimum,
+        })
+
+
 def _program_publish_impact(live_modules: List[dict], draft_modules: List[dict], enrollments_affected: int, active_goal_progress_ids: set) -> Dict[str, Any]:
     """Read-only diff for the publish impact-preview — never writes
     anything. Independent of (does not share code with) the actual
@@ -18440,6 +18611,18 @@ def _lesson_step_progress(enrollment: dict, lesson_id: str) -> list:
     return list(((enrollment.get("lesson_step_progress") or {}).get(lesson_id)) or [])
 
 
+def _lesson_has_step_tracking(enrollment: dict, lesson_id: str) -> bool:
+    """Whether this lesson has EVER entered the new guided-step model.
+
+    This is intentionally based on key presence, not truthiness: once a lesson
+    has a per-step ledger, legacy `learn_completed`/old Practice signals must
+    never become a shortcut around missing guided steps. Genuine pre-feature
+    enrollments have no key at all and retain their compatibility path.
+    """
+    progress = enrollment.get("lesson_step_progress") or {}
+    return isinstance(progress, dict) and lesson_id in progress
+
+
 def _lesson_guide_payload(lesson: dict, *, has_practice: bool, has_quiz: bool) -> list:
     return school_lesson_guide.build_guide(
         lesson, has_practice=has_practice, has_quiz=has_quiz)
@@ -18451,29 +18634,55 @@ def _lesson_steps_satisfied(enrollment: dict, lesson_id: str, lesson: dict, *,
     """Has this client finished the instructional material that precedes
     Practice for this lesson?
 
-    BACKWARD COMPATIBILITY (deliberate, and the whole rule):  per-step
-    tracking did not exist before this change, so an enrollment that already
-    passed the OLD learn boundary — or has already practised the lesson — is
-    treated as satisfied. Without this, every student mid-course would be
-    locked out of Practice they had already earned by a requirement that did
-    not exist when they did the work. Nothing is migrated or rewritten; the
-    old signal is simply honoured.
+    Compatibility is deliberately NARROW. A genuine pre-feature enrollment
+    has no `lesson_step_progress[lesson_id]` key, so its old learn/practice
+    boundary is honoured and the student is not stranded. The instant a
+    lesson has entered the guided-step model, however, ONLY the guided steps
+    satisfy the material gate. That prevents an old/bad learn/practice marker
+    from reopening Practice while the new UI still shows required steps
+    unfinished.
     """
-    if practiced:
-        return True
-    if lesson_id in set(enrollment.get("learn_completed_lesson_ids") or []):
-        return True
     if (lesson or {}).get("status") == "completed":
         return True
+
+    # Material gating is ONLY about instructional steps. A legitimate lesson
+    # can contain just Practice and/or a Quick Check; there is then no Learn /
+    # Get Ready / Train action for the client to press, so "material complete"
+    # is vacuously true and the next real phase must be allowed to open. This
+    # also prevents quiz-only lessons from deadlocking with their Quick Check
+    # locked behind nonexistent reading steps.
+    instructional = school_lesson_guide.instructional_step_keys(
+        lesson, has_practice=has_practice, has_quiz=has_quiz)
+    if not instructional:
+        return True
+
     # A lesson that does not present the guided sequence has no per-step
     # Continue action anywhere on screen, so there is nothing for the client
     # to complete — gating it would lock Practice permanently.
     if not school_lesson_guide.guide_is_active(
             lesson, has_practice=has_practice, has_quiz=has_quiz):
         return True
-    return not school_lesson_guide.missing_instructional_steps(
-        lesson, _lesson_step_progress(enrollment, lesson_id),
-        has_practice=has_practice, has_quiz=has_quiz)
+
+    if _lesson_has_step_tracking(enrollment, lesson_id):
+        # Only the legitimate completed PREFIX counts. Older builds could
+        # persist a future marker (for example Train while Learn was still
+        # unfinished). Treating the raw set as completion would keep that
+        # impossible state alive in the server gate even though the UI masks
+        # it. The step-completion endpoint repairs the stored ledger on the
+        # next legitimate Continue action.
+        completed_prefix = school_lesson_guide.contiguous_completed_steps(
+            lesson, _lesson_step_progress(enrollment, lesson_id),
+            has_practice=has_practice, has_quiz=has_quiz)
+        return len(completed_prefix) == len(instructional)
+
+    # Genuine pre-feature compatibility: there is no guided ledger for this
+    # lesson at all. These were the only durable signals available before the
+    # guided sequence existed.
+    if practiced:
+        return True
+    if lesson_id in set(enrollment.get("learn_completed_lesson_ids") or []):
+        return True
+    return False
 
 
 def _practice_lock_reason(lesson: dict, missing: list) -> str:
@@ -18486,24 +18695,49 @@ def _practice_lock_reason(lesson: dict, missing: list) -> str:
     return "Finish the lesson material to unlock Practice: " + ", ".join(labels) + "."
 
 
+def _practice_log_counts_as_session(hw: Optional[dict], log: Optional[dict]) -> bool:
+    """One definition of a REAL Practice session, reused by every School gate.
+
+    Question placeholders, half-filled daily drafts, rest days and skipped
+    days are bookkeeping — not training. Section-based Practice keeps its
+    legacy append-only shape (an ordinary log has no submission_status), while
+    daily trackers count only an explicit submitted/approved day. Keeping this
+    predicate shared matters: the first-practice gate, checkpoint remediation
+    counts and graduation totals must never disagree about whether training
+    actually happened.
+    """
+    if not isinstance(log, dict):
+        return False
+    if log.get("is_rest_day") or log.get("is_skipped"):
+        return False
+    status = log.get("submission_status")
+    if (hw or {}).get("daily_tracker"):
+        return status in ("submitted", "approved")
+    return status not in ("draft", "in_progress", "rest", "skipped")
+
+
 def _lesson_is_practiced(hw: Optional[dict]) -> bool:
-    """Honest, non-fabricated signal: the client logged at least one real
-    Practice Coach session against this lesson's homework, OR (for a
-    lesson whose homework isn't Coach-Mode-enabled) marked it complete the
-    ordinary way. Never infers practice from a score/mastery value — Phase
-    1 explicitly does not grade handler/dog performance."""
+    """Honest, non-fabricated signal that a Practice session actually happened.
+
+    A trainer/admin may explicitly complete an assignment, which remains a
+    legitimate authoritative completion signal. A CLIENT cannot use that
+    generic completion endpoint as a shortcut — complete_homework requires a
+    real session first for School-owned Practice.
+    """
     if not hw:
         return False
-    return bool(hw.get("section_logs")) or hw.get("status") == "completed"
+    if hw.get("status") == "completed":
+        return True
+    return any(_practice_log_counts_as_session(hw, log)
+               for log in (hw.get("section_logs") or []))
 
 
 async def _count_practice_sessions_since(homework_id: Optional[str], since_iso: Optional[str]) -> int:
     """Online School Phase 2 — canonical, flavor-aware 'how many times has
     this been practiced since X' count, used by the checkpoint resubmission
     minimum-practice gate (and reusable by any future caller with the same
-    question). Non-daily-tracker homework: every section_logs entry logged
-    after since_iso counts — matches _lesson_is_practiced's own philosophy
-    for this flavor. Daily-tracker homework: only a day the client actually
+    question). Non-daily-tracker homework: only real append-only Practice logs
+    count; draft question containers do not. Daily-tracker homework: only a day the client actually
     completed and submitted counts (submission_status in submitted/
     approved — the exact predicate already used elsewhere in this codebase
     for daily-tracker progress, e.g. the pending-reviews/progress-summary
@@ -18513,16 +18747,16 @@ async def _count_practice_sessions_since(homework_id: Optional[str], since_iso: 
     hw = await db.homework.find_one({"id": homework_id}, {"_id": 0, "section_logs": 1, "daily_tracker": 1})
     if not hw:
         return 0
-    is_daily_tracker = bool(hw.get("daily_tracker"))
     count = 0
     # Online School Phase 3 — since_iso may be None (no lower bound: every
     # legitimate practice session ever logged for this homework), reused
     # as-is by graduation's practice-session total rather than adding a
-    # second counting definition.
+    # second counting definition. Use the SAME predicate as _lesson_is_practiced
+    # so asking a question can never satisfy a remediation practice count.
     for log in (hw.get("section_logs") or []):
         if since_iso and (log.get("logged_at") or "") <= since_iso:
             continue
-        if is_daily_tracker and log.get("submission_status") not in ("submitted", "approved"):
+        if not _practice_log_counts_as_session(hw, log):
             continue
         count += 1
     return count
@@ -18692,6 +18926,18 @@ async def _school_roadmap(enrollment: dict, dog_id: str) -> dict:
             if checkpoint_status and checkpoint_status.get("trainer_assist"):
                 checkpoint_status["trainer_assist"] = await _enrich_trainer_assist_schedule(checkpoint_status["trainer_assist"])
 
+    # Material completion is the canonical first boundary. An old Practice
+    # log must not erase an incomplete guided-step ledger; genuine pre-feature
+    # enrollments are still credited by _lesson_steps_satisfied when no guided
+    # ledger exists.
+    current_has_practice = bool((current_lesson or {}).get("suggested_homework_template_ids"))
+    current_instructional_complete = bool(
+        current_lesson and cur_lesson_id and _lesson_steps_satisfied(
+            enrollment, cur_lesson_id, current_lesson,
+            has_practice=current_has_practice, has_quiz=False, practiced=practiced,
+        )
+    )
+
     # ── Module Quiz state (per module + the current-module gate). Read from
     # the enrollment's OWN frozen snapshot — never the live program — so an
     # already-enrolled student's quiz can't silently change. A snapshot with
@@ -18700,10 +18946,19 @@ async def _school_roadmap(enrollment: dict, dog_id: str) -> dict:
     has_practice_now = bool((current_lesson or {}).get("suggested_homework_template_ids"))
     learn_done_now = bool(cur_lesson_id and cur_lesson_id in learn_completed_ids)
     if requires_checkpoint:
-        boundary_work_done = bool(checkpoint_status and checkpoint_status.get("status") == "graded"
-                                  and checkpoint_status.get("outcome") == "advance")
+        boundary_work_done = bool(
+            current_instructional_complete
+            and checkpoint_status and checkpoint_status.get("status") == "graded"
+            and checkpoint_status.get("outcome") == "advance")
     else:
-        boundary_work_done = practiced or (not has_practice_now and learn_done_now)
+        # Material is ALWAYS the first phase. Practice being present/done must
+        # not erase an incomplete guided ledger (for example a historical log
+        # created by an older buggy build). Genuine pre-feature Practice still
+        # works because current_instructional_complete applies the narrow legacy
+        # compatibility rule when no guided ledger exists.
+        boundary_work_done = bool(
+            current_instructional_complete
+            and ((not has_practice_now) or practiced))
     quiz_boundary_ready = at_module_last_lesson and boundary_work_done and not is_completed_enrollment
 
     attempts_by_module: Dict[str, List[dict]] = {}
@@ -18756,7 +19011,8 @@ async def _school_roadmap(enrollment: dict, dog_id: str) -> dict:
         "current_lesson": current_lesson,
         "current_lesson_practiced": practiced,
         "current_lesson_learn_completed": bool(cur_lesson_id and cur_lesson_id in learn_completed_ids),
-        "current_lesson_has_practice": bool((current_lesson or {}).get("suggested_homework_template_ids")),
+        "current_lesson_instructional_complete": current_instructional_complete,
+        "current_lesson_has_practice": current_has_practice,
         "current_homework_id": (current_hw or {}).get("id"),
         "is_final_lesson": is_final_lesson,
         "requires_checkpoint": requires_checkpoint,
@@ -18802,6 +19058,7 @@ def _client_safe_school_roadmap(roadmap: dict) -> dict:
         "current_lesson": _client_safe_lesson(current_lesson) if current_lesson else None,
         "current_lesson_practiced": roadmap["current_lesson_practiced"],
         "current_lesson_learn_completed": roadmap.get("current_lesson_learn_completed", False),
+        "current_lesson_instructional_complete": roadmap.get("current_lesson_instructional_complete", False),
         "current_lesson_has_practice": roadmap.get("current_lesson_has_practice", False),
         "is_final_lesson": roadmap["is_final_lesson"],
         "requires_checkpoint": roadmap.get("requires_checkpoint", False),
@@ -19162,11 +19419,11 @@ def _require_school_onboarding_ready(se: dict, enrollment: dict) -> None:
 
 class OnlineSchoolAlreadyEnrolledError(Exception):
     """Raised by _grant_online_school_enrollment instead of an HTTPException
-    — this can mean two very different things to two different callers.
-    To a human hitting the manual enroll endpoint it's a real 409. To
-    purchase fulfillment replaying an already-successful purchase (or
-    racing a concurrent retry) it's the expected, successful outcome:
-    access already exists, converge onto it, never error.
+    — this can mean different things to different callers. Manual admin
+    assignment treats an ACTIVE row idempotently and surfaces the existing
+    enrollment; completed/withdrawn rows still require the explicit retake
+    workflow. Purchase fulfillment replaying an already-successful purchase
+    (or racing a concurrent retry) likewise converges onto existing access.
 
     Phase 6 — `status` carries the EXISTING row's training status
     ("active", "completed", or "withdrawn") so callers can give a
@@ -19242,6 +19499,9 @@ async def _grant_online_school_enrollment(
     client_id = dog.get("owner_id")
     if not client_id:
         raise HTTPException(status_code=422, detail="This dog has no owning client on file")
+    if program.get("active") is False:
+        raise HTTPException(status_code=422, detail="This program is archived/inactive and cannot be newly assigned.")
+    _require_program_min_age(dog, program)
     if program.get("delivery_mode", "trainer_led") not in ("self_guided", "both"):
         raise HTTPException(status_code=422, detail="This program is not configured for Online School delivery")
     if not (program.get("modules") or []):
@@ -19499,6 +19759,9 @@ async def _grant_staff_school_enrollment(
     client_id = dog.get("owner_id")
     if not client_id:
         raise HTTPException(status_code=422, detail="This dog has no owning client on file")
+    if program.get("active") is False:
+        raise HTTPException(status_code=422, detail="This program is archived/inactive and cannot be newly assigned.")
+    _require_program_min_age(dog, program)
     configured = program.get("delivery_mode", "trainer_led")
     if delivery_mode == "in_person" and configured not in ("trainer_led", "both"):
         raise HTTPException(status_code=422, detail="This program is not configured for in-person delivery")
@@ -19693,6 +19956,11 @@ async def school_enroll(
     program = await db.programs.find_one({"id": body.program_id}, {"_id": 0})
     if not program:
         raise HTTPException(status_code=404, detail="Program not found")
+    if program.get("active") is False:
+        raise HTTPException(
+            status_code=422,
+            detail="This program is archived/inactive and cannot be newly assigned. Reactivate it in Program Studio first.",
+        )
 
     if body.delivery_mode in ("in_person", "hybrid"):
         return await _grant_staff_school_enrollment(
@@ -20415,21 +20683,21 @@ def _school_current_action(status: str, access_state: str, roadmap: Optional[dic
     cp = roadmap.get("checkpoint_status") or {}
     practiced = bool(roadmap.get("current_lesson_practiced"))
     learn_done = bool(roadmap.get("current_lesson_learn_completed"))
+    material_done = bool(roadmap.get("current_lesson_instructional_complete", learn_done))
     has_practice = bool(roadmap.get("current_lesson_has_practice"))
     requires_cp = bool(roadmap.get("requires_checkpoint"))
     cp_state = cp.get("status")  # not_submitted | awaiting_review | graded
-    # The practice requirement is met by practicing, OR — for a lesson with no
-    # Practice step — by completing its Learn step. A no-practice lesson never
-    # "auto-satisfies" until Learn is explicitly completed, so nothing advances
-    # past an un-learned lesson.
-    practice_satisfied = practiced or (not has_practice and learn_done)
+    # Practice is a real phase only when the lesson actually has Practice. For
+    # a no-Practice lesson, the analogous boundary is the canonical material
+    # gate.
+    practice_satisfied = practiced if has_practice else material_done
 
     # In-person School uses this same roadmap/Practice engine, but curriculum
     # advancement belongs to the trainer's session-completion workflow rather
     # than a client-side Continue button.  The client can still learn from the
     # lesson and log assigned Practice between appointments.
     if delivery_mode == "in_person":
-        if not learn_done:
+        if not material_done:
             return {"type": "lesson", "label": "Review your current lesson",
                     "sublabel": lesson_name, "target": {"screen": "lesson", "lesson_id": lesson_id}}
         if has_practice and not practiced:
@@ -20497,7 +20765,7 @@ def _school_current_action(status: str, access_state: str, roadmap: Optional[dic
     # 3. Learn done + practice satisfied + checkpoint required, not yet
     #    submitted → submit. `practice_satisfied` (never just `practiced`) keeps
     #    a no-practice checkpoint lesson from bypassing its checkpoint.
-    if requires_cp and learn_done and practice_satisfied and cp_state in (None, "not_submitted"):
+    if requires_cp and material_done and practice_satisfied and cp_state in (None, "not_submitted"):
         return {"type": "submit_checkpoint", "label": "Submit your checkpoint",
                 "sublabel": f"Record your checkpoint video for “{lesson_name}” so your trainer can review it.",
                 "target": {"screen": "lesson", "lesson_id": lesson_id}}
@@ -20505,7 +20773,7 @@ def _school_current_action(status: str, access_state: str, roadmap: Optional[dic
     # 5. Learn step first — EVERY lesson (with or without practice) starts here
     #    until its Learn step is explicitly completed. No lesson advances until
     #    learn_completed == True.
-    if not learn_done:
+    if not material_done:
         return {"type": "lesson", "label": "Start lesson",
                 "sublabel": (f"Learn {lesson_name} before you practice." if has_practice
                              else f"Work through {lesson_name}, then mark it complete."),
@@ -20703,7 +20971,16 @@ async def portal_school_home(school_enrollment_id: str, user: dict = Depends(get
         {"school_enrollment_id": se["id"], "status": {"$ne": "completed"}},
         {"_id": 0},
     ).sort("created_at", -1).to_list(100)
-    active_practice = [_client_safe_homework(hw) for hw in active_practice_rows]
+    active_practice = []
+    for hw in active_practice_rows:
+        gate = await _school_practice_gate_state(hw)
+        # The current lesson's Practice may be pre-provisioned for reliability,
+        # but it is not a client-visible destination until the lesson material
+        # has actually unlocked it. Other staff-prescribed/remediation Practice
+        # remains visible exactly as before.
+        if gate.get("applies") and not gate.get("unlocked"):
+            continue
+        active_practice.append(_client_safe_homework(hw))
 
     progress = {
         # course_pct is the ONLY number presented as Course Progress —
@@ -20733,6 +21010,7 @@ async def portal_school_home(school_enrollment_id: str, user: dict = Depends(get
         "current_action": action,
         "lesson_state": {
             "learn_completed": (roadmap or {}).get("current_lesson_learn_completed", False),
+            "instructional_complete": (roadmap or {}).get("current_lesson_instructional_complete", False),
             "practiced": (roadmap or {}).get("current_lesson_practiced", False),
             "has_practice": (roadmap or {}).get("current_lesson_has_practice", False),
             "requires_checkpoint": (roadmap or {}).get("requires_checkpoint", False),
@@ -20867,13 +21145,31 @@ async def portal_school_lesson_detail(school_enrollment_id: str, lesson_id: str,
     quiz_available = bool(roadmap.get("module_quiz_available")) and bool(lesson.get("is_current"))
     guide_steps = _lesson_guide_payload(safe_lesson, has_practice=has_practice_configured,
                                         has_quiz=quiz_available)
-    steps_done = _lesson_step_progress(enrollment, lesson_id)
+    raw_steps_done = _lesson_step_progress(enrollment, lesson_id)
     instructional = school_lesson_guide.instructional_step_keys(
         safe_lesson, has_practice=has_practice_configured, has_quiz=quiz_available)
+    learn_completed_signal = bool(lesson.get("learn_completed")) or (
+        lesson_id in set(enrollment.get("learn_completed_lesson_ids") or []))
+    # Genuine pre-feature students have no guided per-step ledger. If they had
+    # already crossed the old Learn/Practice boundary, show the instructional
+    # material as satisfied rather than the contradictory state "Learn current
+    # + Practice unlocked". Once a per-step key exists, only the real
+    # contiguous guided progress is displayed/enforced.
+    legacy_material_credit = (
+        not _lesson_has_step_tracking(enrollment, lesson_id)
+        and bool(instructional)
+        and (bool(practiced) or learn_completed_signal or lesson.get("status") == "completed")
+    )
+    steps_done = (list(instructional) if (lesson.get("status") == "completed" or legacy_material_credit) else
+                  school_lesson_guide.contiguous_completed_steps(
+                      safe_lesson, raw_steps_done, has_practice=has_practice_configured,
+                      has_quiz=quiz_available))
     missing_steps = [k for k in instructional if k not in set(steps_done)]
     practice_unlocked = _lesson_steps_satisfied(
         enrollment, lesson_id, lesson, has_practice=has_practice_configured,
         has_quiz=quiz_available, practiced=practiced)
+
+
     return {
         "lesson": safe_lesson,
         "status": lesson.get("status"), "is_current": bool(lesson.get("is_current")),
@@ -20896,11 +21192,8 @@ async def portal_school_lesson_detail(school_enrollment_id: str, lesson_id: str,
         "practice_unlocked": practice_unlocked,
         "practice_locked_reason": (
             None if practice_unlocked else _practice_lock_reason(lesson, missing_steps)),
-        # Quick Check follows Practice: on a practice-bearing lesson the
-        # in-lesson knowledge check opens once the client has actually
-        # practised. `practiced` is the canonical signal already used across
-        # School — it is NOT trainer approval, which the checkpoint flow owns
-        # separately where the curriculum requires it.
+        # In-lesson knowledge checks remain reinforcement, not a progression
+        # gate. They open after Practice when the lesson has a Practice phase.
         "quick_check_unlocked": (not has_practice_configured) or bool(practiced),
     }
 
@@ -20975,9 +21268,12 @@ async def portal_school_start_practice(school_enrollment_id: str, lesson_id: str
     if not _lesson_steps_satisfied(enrollment, lesson_id, lesson,
                                    has_practice=True, has_quiz=_quiz_available,
                                    practiced=_practiced_now):
-        _missing = school_lesson_guide.missing_instructional_steps(
-            _client_safe_lesson(lesson), _lesson_step_progress(enrollment, lesson_id),
+        _safe = _client_safe_lesson(lesson)
+        _prefix = school_lesson_guide.contiguous_completed_steps(
+            _safe, _lesson_step_progress(enrollment, lesson_id),
             has_practice=True, has_quiz=_quiz_available)
+        _missing = school_lesson_guide.missing_instructional_steps(
+            _safe, _prefix, has_practice=True, has_quiz=_quiz_available)
         raise HTTPException(status_code=403, detail={
             "error_code": "instructional_steps_incomplete",
             "message": _practice_lock_reason(lesson, _missing),
@@ -21024,6 +21320,11 @@ async def portal_school_complete_lesson_step(school_enrollment_id: str, lesson_i
     _require_school_onboarding_ready(se, enrollment)
     roadmap = await _school_roadmap(enrollment, se["dog_id"])
     lesson, _module_name = await _accessible_school_lesson(enrollment, roadmap, lesson_id)
+    if lesson.get("status") == "completed":
+        raise HTTPException(status_code=409, detail={
+            "error_code": "completed_lesson_read_only",
+            "message": "This lesson is already complete and is available for review only.",
+        })
 
     has_practice = bool(lesson.get("suggested_homework_template_ids"))
     quiz_available = bool(roadmap.get("module_quiz_available")) and bool(lesson.get("is_current"))
@@ -21033,22 +21334,69 @@ async def portal_school_complete_lesson_step(school_enrollment_id: str, lesson_i
         raise HTTPException(status_code=422,
                             detail="That is not a step you can complete on this lesson.")
 
-    await db.dog_programs.update_one(
-        {"id": enrollment["id"]},
-        {"$addToSet": {f"lesson_step_progress.{lesson_id}": step_key}},
-    )
+    raw_done_before = _lesson_step_progress(enrollment, lesson_id)
+    done_before = school_lesson_guide.contiguous_completed_steps(
+        safe_lesson, raw_done_before, has_practice=has_practice, has_quiz=quiz_available)
+    if step_key not in set(done_before):
+        blockers = school_lesson_guide.instructional_step_blockers(
+            safe_lesson, step_key, done_before,
+            has_practice=has_practice, has_quiz=quiz_available)
+        if blockers:
+            required = blockers[0]
+            raise HTTPException(status_code=409, detail={
+                "error_code": "instructional_step_out_of_order",
+                "message": f"Complete {school_lesson_guide.step_label(required)} before {school_lesson_guide.step_label(step_key)}.",
+                "required_step": required,
+                "required_step_label": school_lesson_guide.step_label(required),
+                "blocked_step": step_key,
+            })
+
+    # Canonicalise the ledger to the legitimate completed PREFIX whenever the
+    # client explicitly completes a step. Older builds could write future
+    # markers (e.g. Train before Learn). Merely hiding those markers was not
+    # enough: after Learn/Get Ready were later completed, the stale Train flag
+    # would silently rejoin the prefix and skip Train again. Rewriting to the
+    # prefix + the one currently-authorised step repairs that historical bad
+    # state without a bulk migration, while duplicate taps remain idempotent.
+    canonical_done = list(done_before)
+    if step_key not in canonical_done:
+        canonical_done.append(step_key)
+    if raw_done_before != canonical_done:
+        await db.dog_programs.update_one(
+            {"id": enrollment["id"]},
+            {"$set": {f"lesson_step_progress.{lesson_id}": canonical_done}},
+        )
 
     fresh = await db.dog_programs.find_one({"id": enrollment["id"]}, {"_id": 0}) or enrollment
-    done = _lesson_step_progress(fresh, lesson_id)
+    raw_done = _lesson_step_progress(fresh, lesson_id)
+    done = school_lesson_guide.contiguous_completed_steps(
+        safe_lesson, raw_done, has_practice=has_practice, has_quiz=quiz_available)
     missing = school_lesson_guide.missing_instructional_steps(
         safe_lesson, done, has_practice=has_practice, has_quiz=quiz_available)
     unlocked = _lesson_steps_satisfied(fresh, lesson_id, lesson, has_practice=has_practice,
                                        has_quiz=quiz_available)
+
+    # For a guided lesson with no Practice phase, finishing the final
+    # instructional step IS the explicit learn boundary. Persist the existing
+    # canonical signal here so the client does not need a second redundant
+    # "Complete lesson" button before its Quick Check / Next Step.
+    learn_completed = lesson_id in set(fresh.get("learn_completed_lesson_ids") or [])
+    if not missing and not has_practice and not learn_completed:
+        await db.dog_programs.update_one(
+            {"id": enrollment["id"]},
+            {"$addToSet": {"learn_completed_lesson_ids": lesson_id}},
+        )
+        learn_completed = True
+        await _emit_school_learn_completed_event(se, fresh, lesson, user)
+
     return {
         "lesson_id": lesson_id, "step_key": step_key,
         "steps_completed": done, "missing_steps": missing,
+        "next_instructional_step": school_lesson_guide.next_instructional_step(
+            safe_lesson, done, has_practice=has_practice, has_quiz=quiz_available),
         "practice_unlocked": unlocked,
         "practice_locked_reason": None if unlocked else _practice_lock_reason(lesson, missing),
+        "learn_completed": learn_completed,
     }
 
 
@@ -21088,9 +21436,12 @@ async def portal_school_complete_lesson(school_enrollment_id: str, lesson_id: st
     _quiz_avail = bool(roadmap.get("module_quiz_available"))
     if not _lesson_steps_satisfied(enrollment, lesson_id, current_lesson,
                                    has_practice=False, has_quiz=_quiz_avail):
-        _missing = school_lesson_guide.missing_instructional_steps(
-            _client_safe_lesson(current_lesson), _lesson_step_progress(enrollment, lesson_id),
+        _safe = _client_safe_lesson(current_lesson)
+        _prefix = school_lesson_guide.contiguous_completed_steps(
+            _safe, _lesson_step_progress(enrollment, lesson_id),
             has_practice=False, has_quiz=_quiz_avail)
+        _missing = school_lesson_guide.missing_instructional_steps(
+            _safe, _prefix, has_practice=False, has_quiz=_quiz_avail)
         raise HTTPException(status_code=403, detail={
             "error_code": "instructional_steps_incomplete",
             "message": "Finish the lesson material before completing the lesson.",
@@ -21369,6 +21720,22 @@ async def portal_school_submit_checkpoint(
     cp = current_lesson.get("checkpoint")
     if not cp or not cp.get("enabled"):
         raise HTTPException(status_code=422, detail="This lesson does not require a checkpoint.")
+    has_practice = bool(current_lesson.get("suggested_homework_template_ids"))
+    if not _lesson_steps_satisfied(
+            enrollment, lesson_id, current_lesson, has_practice=has_practice,
+            has_quiz=False, practiced=bool(roadmap.get("current_lesson_practiced"))):
+        safe = _client_safe_lesson(current_lesson)
+        prefix = school_lesson_guide.contiguous_completed_steps(
+            safe, _lesson_step_progress(enrollment, lesson_id),
+            has_practice=has_practice, has_quiz=False)
+        missing = school_lesson_guide.missing_instructional_steps(
+            safe, prefix, has_practice=has_practice, has_quiz=False)
+        raise HTTPException(status_code=422, detail={
+            "error_code": "instructional_steps_incomplete",
+            "message": _practice_lock_reason(current_lesson, missing)
+                       or "Finish the lesson material before submitting a checkpoint.",
+            "missing_steps": missing,
+        })
     if not roadmap["current_lesson_practiced"]:
         raise HTTPException(status_code=422, detail=f"Practice {current_lesson.get('name')} at least once before submitting a checkpoint.")
     await _check_checkpoint_resubmission_allowed(school_enrollment_id, lesson_id)
@@ -21663,17 +22030,32 @@ async def portal_school_advance(school_enrollment_id: str, user: dict = Depends(
     cp = current_lesson.get("checkpoint")
     if cp and cp.get("enabled"):
         raise HTTPException(status_code=422, detail="This lesson requires trainer review before continuing — submit a checkpoint video.")
-    if not roadmap["current_lesson_practiced"]:
-        # A lesson WITH a Practice step must be practiced before advancing. A
-        # lesson with NO practice step advances once its Learn step is
-        # EXPLICITLY completed (POST .../complete-lesson) — never on a page
-        # view. This keeps the Learn → (optional Practice) → advance invariant
-        # for both kinds of lesson without weakening the practice gate for
-        # normal (practice-bearing) lessons.
-        if roadmap.get("current_lesson_has_practice"):
-            raise HTTPException(status_code=422, detail=f"Practice {current_lesson.get('name')} at least once before continuing.")
-        if not roadmap.get("current_lesson_learn_completed"):
-            raise HTTPException(status_code=422, detail=f"Complete {current_lesson.get('name')} before continuing.")
+    # Material is ALWAYS the first phase, regardless of whether an old Practice
+    # log exists. `_lesson_steps_satisfied` itself preserves genuine pre-feature
+    # compatibility only when this lesson has never entered guided-step tracking.
+    material_ok = _lesson_steps_satisfied(
+        enrollment, roadmap["current_lesson_id"], current_lesson,
+        has_practice=bool(roadmap.get("current_lesson_has_practice")),
+        has_quiz=False, practiced=bool(roadmap.get("current_lesson_practiced")),
+    )
+    if not material_ok:
+        safe = _client_safe_lesson(current_lesson)
+        prefix = school_lesson_guide.contiguous_completed_steps(
+            safe, _lesson_step_progress(enrollment, roadmap["current_lesson_id"]),
+            has_practice=bool(roadmap.get("current_lesson_has_practice")),
+            has_quiz=False)
+        missing = school_lesson_guide.missing_instructional_steps(
+            safe, prefix, has_practice=bool(roadmap.get("current_lesson_has_practice")),
+            has_quiz=False)
+        raise HTTPException(status_code=422, detail={
+            "error_code": "instructional_steps_incomplete",
+            "message": _practice_lock_reason(current_lesson, missing)
+                       or f"Complete {current_lesson.get('name')} before continuing.",
+            "missing_steps": missing,
+        })
+    if roadmap.get("current_lesson_has_practice") and not roadmap["current_lesson_practiced"]:
+        raise HTTPException(status_code=422, detail=f"Practice {current_lesson.get('name')} at least once before continuing.")
+
     # ── Module Quiz gate (server-enforced — a direct API call cannot bypass
     # it). Advancing OFF the last lesson of a quiz-gated module (into the
     # next module, or into course completion) requires a passed quiz; the
@@ -40762,8 +41144,9 @@ async def _validate_shop_item_eligibility(client: dict, kind: str, item_doc: Opt
         _agreement_client_id = (client or {}).get("id")
         if _agreement_client_id:
             await _require_agreements_signed(_agreement_client_id, program_id=item_doc["id"])
-        # Prerequisites are checked before an order/Stripe session exists so a
-        # client can never pay for a course this dog is not yet eligible to enter.
+        # Age + prerequisites are checked before an order/Stripe session exists
+        # so a client can never pay for a course this dog is not eligible to enter.
+        _require_program_min_age(dog, item_doc)
         await _require_program_prerequisites(dog_id, item_doc)
     elif item_doc.get("requires_dog"):
         # No dog-selection-at-cart-line mechanism exists yet for any other
@@ -48904,10 +49287,12 @@ async def sell_training_program(
         if dog.get("owner_id") != client_id:
             raise HTTPException(400, "Dog does not belong to this client")
 
-    # Online School pathway eligibility MUST be checked before credit lots,
-    # client balances, revenue rows, or any other financial mutation below.
-    # _grant_online_school_enrollment re-checks as the canonical final guard,
-    # but waiting until fulfillment would be too late for this staff-sale path.
+    # Dog eligibility MUST be checked before credit lots, client balances,
+    # revenue rows, or any other financial mutation below. Minimum age applies
+    # to every dog-targeted program sale; Online School also enforces pathway
+    # prerequisites here (and again at the canonical grant boundary).
+    if dog:
+        _require_program_min_age(dog, program)
     if dog and program.get("purchase_fulfillment") == "online_school":
         await _require_program_prerequisites(dog["id"], program)
 

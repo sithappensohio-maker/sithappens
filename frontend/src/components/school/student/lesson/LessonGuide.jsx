@@ -70,7 +70,7 @@ const text = (v) => (typeof v === "string" ? v.trim() : "");
  *  the authored title, and ANY text block that matches nothing falls through
  *  to a visible step rather than being discarded.
  */
-export function classifyBlock(block, { seenSteps }) {
+export function classifyBlock(block, { seenSteps, previousKey = null }) {
   const t = block?.type;
   if (t === "checklist") return "get_ready";
   if (t === "steps") return "train";
@@ -81,7 +81,12 @@ export function classifyBlock(block, { seenSteps }) {
   // The checkpoint block is presentation of something CheckpointPanel already
   // owns end to end; showing it here would state the rules twice.
   if (t === "checkpoint") return null;
-  if (t === "video" || t === "image" || t === "download") return seenSteps ? "train" : "learn";
+  if (t === "video" || t === "image" || t === "download") {
+    // Keep media with the nearest preceding authored section. Otherwise every
+    // image after the Steps block collapses into Train, even when Program
+    // Studio/manifest placed it after success criteria or a common mistake.
+    return previousKey || (seenSteps ? "train" : "learn");
+  }
   if (t === "timer" || t === "rep_counter") return "train";
 
   const title = text(block?.title).toLowerCase();
@@ -97,14 +102,16 @@ export function classifyBlock(block, { seenSteps }) {
 export function groupBlocks(blocks) {
   const buckets = {};
   let seenSteps = false;
+  let previousKey = null;
   const active = [...(blocks || [])]
     .filter((b) => b && b.active !== false)
     .sort((a, b) => (a.order || 0) - (b.order || 0));
   for (const b of active) {
-    const key = classifyBlock(b, { seenSteps });
+    const key = classifyBlock(b, { seenSteps, previousKey });
     if (b.type === "steps") seenSteps = true;
     if (!key) continue;
     (buckets[key] = buckets[key] || []).push(b);
+    previousKey = key;
   }
   return buckets;
 }
@@ -195,11 +202,14 @@ export function stepState(section, ctx) {
 
   if (kind === "instructional") {
     if (done.has(section.key)) return "completed";
-    return section.key === currentKey ? "current" : "available";
+    // Exactly one unfinished teaching step is current. Every later unfinished
+    // step is locked; completed earlier material stays available for review.
+    return section.key === currentKey ? "current" : "locked";
   }
   if (kind === "practice") {
-    if (practiced) return "completed";
+    // Material comes first even if an older build left a Practice log behind.
     if (!practiceUnlocked) return "locked";
+    if (practiced) return "completed";
     return section.key === currentKey ? "current" : "available";
   }
   if (kind === "quick_check") {
@@ -230,6 +240,11 @@ export function currentStepKey(sections, ctx) {
 /** Why a row is locked, in words the client can act on. */
 export function lockReason(section, ctx) {
   const kind = section.kind || "instructional";
+  if (kind === "instructional") {
+    return ctx?.currentInstructionalLabel
+      ? `Complete ${ctx.currentInstructionalLabel} first.`
+      : "Complete the earlier lesson step first.";
+  }
   if (kind === "practice") return ctx?.practiceLockedReason || "Finish the lesson material to unlock Practice.";
   if (kind === "quick_check") return "Complete your Practice to unlock Quick Check.";
   return "Finish the earlier steps to unlock this.";
@@ -295,8 +310,11 @@ export default function LessonGuide({
   const sections = sectionsProp || buildGuide(lesson, { hasPractice, hasQuiz });
   if (sections.length === 0) return null;
 
-  const ctx = { completed, practiceUnlocked, practiceLockedReason, quickCheckUnlocked, practiced };
-  const cur = currentStepKey(sections, ctx);
+  const baseCtx = { completed, practiceUnlocked, practiceLockedReason, quickCheckUnlocked, practiced };
+  const cur = currentStepKey(sections, baseCtx);
+  const currentInstructionalLabel = sections.find(
+    s => s.key === cur && (s.kind || "instructional") === "instructional")?.label;
+  const ctx = { ...baseCtx, currentInstructionalLabel };
   const instructional = instructionalKeys(sections);
   const doneCount = instructional.filter(k => completed.includes(k)).length;
 
