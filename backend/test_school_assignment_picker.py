@@ -334,3 +334,117 @@ def test_birthday_is_used_for_minimum_age_instead_of_stale_age_fields():
                 with pytest.raises(server.HTTPException) as e:
                     _enroll_via_endpoint(dog["id"], prog["id"], admin)
                 assert e.value.detail["code"] == "school_dog_too_young"
+
+
+# ---------------------------------------------------------------------------
+# A "custom" program is not automatically one dog's private plan
+#
+# Production had a global catalog course stored with type "custom" and no
+# `owner_dog_id`. GET /programs returned it correctly, but Assign Program
+# filtered it out of every dog's list on type alone, so a real, active,
+# assignable course was invisible. The type does not decide ownership -
+# `owner_dog_id` does.
+# ---------------------------------------------------------------------------
+
+def _make_custom(prog_id, owner_dog_id=None):
+    """Turn the fixture program into a custom one, optionally dog-owned."""
+    patch = {"type": "custom", "owner_dog_id": owner_dog_id}
+    run(server.db.programs.update_one({"id": prog_id}, {"$set": patch}))
+
+
+def test_a_global_custom_program_is_still_listed_for_assignment():
+    with _school_program() as (prog, admin):
+        _make_custom(prog["id"], owner_dog_id=None)
+        listed = _programs_for(admin)
+        row = next((p for p in listed if p["id"] == prog["id"]), None)
+        assert row is not None, "a global custom course vanished from the catalogue"
+        assert row["type"] == "custom"
+        assert not row.get("owner_dog_id")
+
+
+def test_a_global_custom_program_can_be_assigned_directly():
+    # Requirement 6: the server must accept it, not merely list it.
+    with _school_program() as (prog, admin):
+        _make_custom(prog["id"], owner_dog_id=None)
+        with _client_and_dog() as (_client, dog):
+            with _cleanup(dog["id"]):
+                res = _enroll_via_endpoint(dog["id"], prog["id"], admin)
+                assert res["school_enrollment"]["dog_id"] == dog["id"]
+                assert run(server.db.dog_programs.count_documents(
+                    {"dog_id": dog["id"], "program_id": prog["id"], "status": "active"})) == 1
+
+
+def test_a_custom_program_owned_by_this_dog_can_be_assigned():
+    with _school_program() as (prog, admin):
+        with _client_and_dog() as (_client, dog):
+            _make_custom(prog["id"], owner_dog_id=dog["id"])
+            with _cleanup(dog["id"]):
+                res = _enroll_via_endpoint(dog["id"], prog["id"], admin)
+                assert res["school_enrollment"]["dog_id"] == dog["id"]
+
+
+def test_a_custom_program_owned_by_another_dog_is_refused():
+    """Requirement 5 — the server is the authority, not the picker.
+
+    The frontend hides another dog's one-off plan; a guessed or stale direct
+    POST must be refused too, or the filter is decoration.
+    """
+    with _school_program() as (prog, admin):
+        with _client_and_dog() as (_c1, dog_a):
+            with _client_and_dog() as (_c2, dog_b):
+                _make_custom(prog["id"], owner_dog_id=dog_a["id"])
+                with _cleanup(dog_b["id"]):
+                    with pytest.raises(server.HTTPException) as e:
+                        _enroll_via_endpoint(dog_b["id"], prog["id"], admin)
+                    assert e.value.status_code == 403
+                    assert "another dog" in str(e.value.detail).lower()
+                    assert run(server.db.dog_programs.count_documents(
+                        {"dog_id": dog_b["id"], "program_id": prog["id"]})) == 0
+
+
+def test_the_owner_guard_also_covers_staff_led_assignment():
+    # /school/enroll serves online, in-person and hybrid; the guard sits before
+    # the delivery branch so no mode is a way around it.
+    with _school_program() as (prog, admin):
+        with _client_and_dog() as (_c1, dog_a):
+            with _client_and_dog() as (_c2, dog_b):
+                run(server.db.programs.update_one(
+                    {"id": prog["id"]},
+                    {"$set": {"type": "custom", "owner_dog_id": dog_a["id"],
+                              "delivery_mode": "both"}}))
+                with _cleanup(dog_b["id"]):
+                    for mode in ("in_person", "hybrid"):
+                        with pytest.raises(server.HTTPException) as e:
+                            _enroll_via_endpoint(dog_b["id"], prog["id"], admin,
+                                                 delivery_mode=mode)
+                        assert e.value.status_code == 403, mode
+                    assert run(server.db.dog_programs.count_documents(
+                        {"dog_id": dog_b["id"], "program_id": prog["id"]})) == 0
+
+
+def test_an_ordinary_program_is_unaffected_by_the_owner_guard():
+    # Requirement 1, and a guard against over-blocking: nothing about a normal
+    # catalog program changed.
+    with _school_program() as (prog, admin):
+        assert prog["id"] in [p["id"] for p in _programs_for(admin)]
+        with _client_and_dog() as (_client, dog):
+            with _cleanup(dog["id"]):
+                res = _enroll_via_endpoint(dog["id"], prog["id"], admin)
+                assert res["school_enrollment"]["dog_id"] == dog["id"]
+
+
+def test_opening_a_custom_program_in_the_editor_does_not_change_its_type():
+    """Requirement 8 — reading a program must never rewrite it.
+
+    Program Studio loads through the ordinary program read; if that (or the
+    editor's own save-on-open) coerced the type, a legacy custom course would
+    quietly become Private Lessons.
+    """
+    with _school_program() as (prog, admin):
+        _make_custom(prog["id"], owner_dog_id=None)
+        before = run(server.db.programs.find_one({"id": prog["id"]}, {"_id": 0}))
+        fetched = run(server.get_program(prog["id"], admin))
+        assert fetched["type"] == "custom", "the read coerced the stored type"
+        after = run(server.db.programs.find_one({"id": prog["id"]}, {"_id": 0}))
+        assert after["type"] == "custom"
+        assert after == before, "reading the program mutated the stored document"

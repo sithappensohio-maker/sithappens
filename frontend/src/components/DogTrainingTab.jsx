@@ -13,6 +13,17 @@ import HuskyDogImage from "./brand/HuskyDogImage";
  *  Replaces the old Training tab inside the dog edit modal.
  *  Shows active enrollment, history, and enroll/custom controls.
  * ============================================================ */
+// A `custom` program is a one-off plan for ONE dog only when it actually
+// names that dog. A global catalog course may legitimately carry
+// type: "custom" with no `owner_dog_id` — filtering on the type alone hid
+// such a course from every dog's Assign Program list even though the server
+// returned it and would have accepted the assignment.
+export function isAssignableProgram(p, dogId) {
+  if (!p || p.type !== "custom") return true;   // ordinary catalog program
+  if (!p.owner_dog_id) return true;             // global course that happens to be "custom"
+  return p.owner_dog_id === dogId;              // this dog's own one-off plan
+}
+
 export default function DogTrainingTab({ dogId, dogName, dogAgeMonths = 0 }) {
   const confirm = useConfirm();
   const promptDialog = usePromptDialog();
@@ -322,7 +333,7 @@ export default function DogTrainingTab({ dogId, dogName, dogAgeMonths = 0 }) {
 
       {assignOpen && (
         <SchoolProgramAssignModal
-          programs={programs.filter(p => p.type !== "custom" || p.owner_dog_id === dogId)}
+          programs={programs.filter(p => isAssignableProgram(p, dogId))}
           dogAgeMonths={dogAgeMonths} typeMeta={typeByKey}
           loadState={loadState} loadError={err} onRetry={load}
           assignError={assignErr} assignBusy={assignBusy}

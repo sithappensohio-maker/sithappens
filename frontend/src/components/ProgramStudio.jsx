@@ -514,7 +514,13 @@ function SetupTab({ program, set, meta, allPrograms, hwTemplates, emailTemplates
                 <SField label="Name *"><input value={program.name} onChange={(e) => set({ name: e.target.value })} data-testid="prog-name" className={inputCls} /></SField>
                 <SField label="Type">
                   <select value={program.type} onChange={(e) => set({ type: e.target.value })} className={inputCls}>
-                    {meta.types.filter(t => t.key !== "custom").map(t => <option key={t.key} value={t.key}>{t.label}</option>)}
+                    {/* "Custom" is not offered as a NEW choice, but a program already
+                        stored as custom must show its real type. Hiding the option made
+                        the <select> fall back to the first entry, so a custom program
+                        silently displayed as "Private Lessons" while still stored as
+                        custom. Opening the editor changes nothing on its own. */}
+                    {meta.types.filter(t => t.key !== "custom" || program.type === "custom")
+                      .map(t => <option key={t.key} value={t.key}>{t.label}</option>)}
                   </select>
                 </SField>
               </div>

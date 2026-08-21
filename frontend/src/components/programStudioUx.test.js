@@ -224,3 +224,33 @@ test("the lesson pager is reachable and labelled at both ends", () => {
   // compact labels so the controls survive a 320px viewport
   expect(studioSrc).toMatch(/<span className="sm:hidden">Prev<\/span>/);
 });
+
+
+// ---------------------------------------------------------------------------
+// The Type dropdown must tell the truth about what is stored
+//
+// "Custom" is deliberately not offered as a NEW type, but filtering it out
+// unconditionally meant a program already stored as custom rendered the
+// <select> with no matching option — so the browser displayed the FIRST
+// option ("Private Lessons") while the stored value was still custom. The
+// editor looked like it had silently changed the program's type.
+// ---------------------------------------------------------------------------
+
+test("a stored custom type stays in the options so it can be displayed", () => {
+  expect(studioSrc).toMatch(
+    /meta\.types\.filter\(t => t\.key !== "custom" \|\| program\.type === "custom"\)/);
+});
+
+test("custom is still not offered as a new choice", () => {
+  // the option only appears BECAUSE the program is already custom
+  expect(studioSrc).toMatch(/t\.key !== "custom" \|\| program\.type === "custom"/);
+  expect(studioSrc).not.toMatch(/meta\.types\.map\(t => <option/);
+});
+
+test("opening the editor does not rewrite the type", () => {
+  // the select is a controlled input bound to the stored value; the only
+  // writer is the user's own onChange
+  expect(studioSrc).toMatch(/<select value=\{program\.type\} onChange=\{\(e\) => set\(\{ type: e\.target\.value \}\)\}/);
+  // nothing coerces the type on load
+  expect(studioSrc).not.toMatch(/set\(\{ type: "private_lessons" \}\)/);
+});

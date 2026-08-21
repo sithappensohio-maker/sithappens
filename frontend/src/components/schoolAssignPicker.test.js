@@ -116,3 +116,55 @@ test("assignment cannot be double-submitted while the request is running", () =>
   expect(src).toMatch(/disabled=\{assignBusy\}/);
   expect(src).toMatch(/Assigning…/);
 });
+
+
+// ---------------------------------------------------------------------------
+// A "custom" program is not automatically one dog's private plan
+//
+// Production had a global catalog course stored with type "custom" and no
+// `owner_dog_id`. It was active and GET /programs returned it, but Assign
+// Program filtered it out for every dog because the rule keyed on the TYPE
+// rather than on ownership. These run the real predicate, not its source
+// text, because the previous rule read perfectly and was still wrong.
+// ---------------------------------------------------------------------------
+
+const { isAssignableProgram } = require("./DogTrainingTab");
+
+const DOG = "dog-1";
+const OTHER = "dog-2";
+
+test("an ordinary catalog program is offered", () => {
+  expect(isAssignableProgram({ type: "private_lessons" }, DOG)).toBe(true);
+  expect(isAssignableProgram({ type: "board_train" }, DOG)).toBe(true);
+  expect(isAssignableProgram({ type: "service_dog" }, DOG)).toBe(true);
+});
+
+test("a global custom program with no owner_dog_id is offered", () => {
+  // the exact production shape
+  expect(isAssignableProgram({ type: "custom" }, DOG)).toBe(true);
+  expect(isAssignableProgram({ type: "custom", owner_dog_id: null }, DOG)).toBe(true);
+  expect(isAssignableProgram({ type: "custom", owner_dog_id: "" }, DOG)).toBe(true);
+});
+
+test("a custom program owned by this dog is offered", () => {
+  expect(isAssignableProgram({ type: "custom", owner_dog_id: DOG }, DOG)).toBe(true);
+});
+
+test("a custom program owned by another dog is hidden", () => {
+  expect(isAssignableProgram({ type: "custom", owner_dog_id: OTHER }, DOG)).toBe(false);
+});
+
+test("the picker filters with the predicate rather than on type alone", () => {
+  expect(src).toMatch(/programs\.filter\(p => isAssignableProgram\(p, dogId\)\)/);
+  // the old rule must be gone: it hid every global custom course
+  expect(code).not.toMatch(/p\.type !== "custom" \|\| p\.owner_dog_id === dogId/);
+});
+
+test("hiding another dog's plan is not left to the client alone", () => {
+  // The server owns this too — proven in
+  // backend/test_school_assignment_picker.py; asserted here so the two halves
+  // are not silently decoupled.
+  const backend = fs.readFileSync(
+    path.join(__dirname, "..", "..", "..", "backend", "server.py"), "utf8");
+  expect(backend).toMatch(/belongs to another dog and cannot be assigned here/);
+});

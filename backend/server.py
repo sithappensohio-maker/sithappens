@@ -19961,6 +19961,16 @@ async def school_enroll(
             status_code=422,
             detail="This program is archived/inactive and cannot be newly assigned. Reactivate it in Program Studio first.",
         )
+    # A `custom` program is a one-off plan for ONE dog only when it names that
+    # dog. A global catalog course may legitimately be type "custom" with no
+    # `owner_dog_id` and stays assignable to anyone; one that belongs to
+    # another dog must not be assignable here, whatever the UI offered.
+    owner_dog_id = program.get("owner_dog_id")
+    if program.get("type") == "custom" and owner_dog_id and owner_dog_id != body.dog_id:
+        raise HTTPException(
+            status_code=403,
+            detail="This custom program belongs to another dog and cannot be assigned here.",
+        )
 
     if body.delivery_mode in ("in_person", "hybrid"):
         return await _grant_staff_school_enrollment(
