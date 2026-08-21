@@ -46,6 +46,23 @@ class CurriculumPackageIn(BaseModel):
     # already touched alone. "replace" deliberately refreshes declared nodes
     # from the package. Neither deletes.
     mode: str = "merge"
+    # An admin's answer to "an archived course already owns this pathway — is
+    # this package that course?". Absent, the import refuses to guess.
+    adopt_program_id: Optional[str] = None
+
+
+def _pathway_slug(program_src: dict) -> str:
+    """The pathway slug `create_program` would derive for this package.
+
+    Mirrors server.py on purpose: the point is to find the course that already
+    owns the slug this import WOULD claim, and a near-miss would silently stop
+    finding it.
+    """
+    slug = (program_src.get("slug") or "").strip()
+    if slug:
+        return slug
+    name = (program_src.get("name") or "").strip()
+    return name.lower().replace(" ", "_")[:40] if name else ""
 
 
 def _strip_source_keys(modules):
@@ -182,9 +199,62 @@ def register_curriculum_import(*, api, db, manage_dep, persist_school_media,
             existing = await db.programs.find_one({"import_source_key": source_key}, {"_id": 0})
 
         counts = plan["counts"]
+
+        # ---- an archived course may already own this pathway
+        #
+        # A pathway slug is unique across the catalogue, and an ARCHIVED course
+        # still owns its own — which is exactly why importing a course that ran
+        # here before is refused rather than duplicated. The honest resolution
+        # is not to weaken that uniqueness but to ask the one question that
+        # settles it: is this package that course?
+        #
+        # Only asked when the answer is unambiguous: exactly one course owns
+        # the slug, it is archived, and no package has claimed it yet. An
+        # ACTIVE course is never offered — adopting one would quietly rewrite a
+        # course clients are working through.
+        adoption = None
+        pathway_slug = _pathway_slug(program_src)
+        if existing is None and pathway_slug:
+            owners = await db.programs.find(
+                {"slug": pathway_slug}, {"_id": 0}).to_list(5)
+            if (len(owners) == 1 and not owners[0].get("active")
+                    and not owners[0].get("import_source_key")):
+                adoption = owners[0]
+
+        if adoption is not None and body.adopt_program_id != adoption["id"]:
+            # Not an error the author can fix by editing the package, so it is
+            # a question, not a failure: nothing is written until it is answered.
+            raise HTTPException(status_code=409, detail={
+                "error_code": "archived_course_adoption_required",
+                "msg": ("An archived course already uses this pathway. Confirm "
+                        "whether to use it for the imported curriculum."),
+                "program_id": adoption["id"],
+                "program_name": adoption.get("name"),
+                "pathway_slug": pathway_slug,
+                # The package declares active: true, so adopting an archived
+                # course also brings it back. Said out loud rather than done
+                # quietly.
+                "will_reactivate": bool(program_src.get("active", True)),
+                "modules": counts["modules"], "lessons": counts["lessons"],
+                "images": counts["images"],
+                "practice_recipes": len(manifest.get("homework_templates") or []),
+            })
+        if body.adopt_program_id:
+            if adoption is None:
+                # The catalogue moved between asking and answering — someone
+                # reactivated or renamed the course, or a package claimed it.
+                # Adopting on a stale answer could overwrite the wrong course.
+                raise HTTPException(status_code=409, detail={
+                    "error_code": "adoption_no_longer_available",
+                    "msg": ("That archived course can no longer be adopted. "
+                            "Re-run the import to see the current options."),
+                })
+            existing = adoption
+
         summary = {
             "program_name": program_src.get("name"),
-            "program_action": "would_update" if existing else "would_create",
+            "program_action": ("would_adopt" if adoption is not None
+                               else "would_update" if existing else "would_create"),
             "modules": counts["modules"], "lessons": counts["lessons"],
             "blocks": counts["blocks"], "images": counts["images"],
             "videos": counts["videos"],
@@ -304,6 +374,15 @@ def register_curriculum_import(*, api, db, manage_dep, persist_school_media,
             for field in ("name", "focus", "description", "price", "delivery_mode"):
                 if field in existing:
                     payload[field] = existing[field]
+        # The pathway slug is IDENTITY, not content: it is what other courses'
+        # prerequisites point at, and what makes duplicate-pathway detection
+        # mean anything. `create_program` derives one from the name, but
+        # `update_program` writes the body verbatim - so a package that does
+        # not declare a slug would blank it on every re-import, silently
+        # breaking any course whose prerequisite pointed here and leaving this
+        # course no longer defending its own pathway. Carry it over instead.
+        if existing and not (payload.get("slug") or "").strip():
+            payload["slug"] = existing.get("slug") or ""
         payload["modules"] = modules_out
         payload.setdefault("type", "private_lessons")
         payload.setdefault("price", 0)
@@ -312,7 +391,10 @@ def register_curriculum_import(*, api, db, manage_dep, persist_school_media,
         if existing:
             saved = await update_program(existing["id"], model, cascade=False,
                                          save_as_draft=False, _=user)
-            summary["program_action"] = "updated"
+            # cascade=False on purpose: adopting a course must not rewrite the
+            # snapshot held by anyone already enrolled in it. Reusing the id is
+            # what preserves their enrollments, progress and history.
+            summary["program_action"] = "adopted" if adoption is not None else "updated"
         else:
             saved = await create_program(model, user)
             summary["program_action"] = "created"

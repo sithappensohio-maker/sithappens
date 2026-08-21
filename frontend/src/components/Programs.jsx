@@ -45,6 +45,9 @@ export function ProgramsPanel() {
   const [err, setErr] = useState("");
   const [importing, setImporting] = useState(false);
   const [zipResult, setZipResult] = useState(null);   // last curriculum-package result
+  // The one question an import can ask: an archived course already owns this
+  // pathway — is this package that course? Holds the server's offer.
+  const [adoptPrompt, setAdoptPrompt] = useState(null);
   // Practice Coach recipes, loaded so an exported template can bundle the ones
   // its lessons link to (import recreates them and relinks — see below).
   const [hwTemplates, setHwTemplates] = useState([]);
@@ -76,6 +79,9 @@ export function ProgramsPanel() {
 
   const importInputRef = useRef(null);
   const zipInputRef = useRef(null);
+  // The package the admin is being asked about. A ref, not state: it is a
+  // 15 MB data URL and re-rendering the page with it would be wasteful.
+  const pendingZipRef = useRef(null);
 
   const startNew = (type = "private_lessons") => {
     setEdit({
@@ -114,32 +120,68 @@ export function ProgramsPanel() {
    * validates the WHOLE package before writing anything, so a broken package
    * cannot leave half a course behind.
    */
-  const importCurriculumZip = async (file) => {
+  const sendCurriculumZip = async (data, filename, adoptProgramId) => {
     setErr(""); setZipResult(null);
-    if (!file) return;
     setImporting(true);
     try {
-      const data = await new Promise((res, rej) => {
-        const fr = new FileReader();
-        fr.onload = () => res(fr.result);
-        fr.onerror = () => rej(new Error("Could not read that file"));
-        fr.readAsDataURL(file);
-      });
-      const { data: summary } = await api.post("/admin/school/curriculum/import",
-                                               { data, filename: file.name });
+      const body = { data, filename };
+      if (adoptProgramId) body.adopt_program_id = adoptProgramId;
+      const { data: summary } = await api.post("/admin/school/curriculum/import", body);
       setZipResult(summary);
+      setAdoptPrompt(null);
+      pendingZipRef.current = null;
       await load();
     } catch (e) {
       const detail = e.response?.data?.detail;
       if (detail && detail.error_code === "invalid_curriculum_package") {
         // Show every problem, not just the first — an author fixing a package
         // wants the whole list in one go.
+        setAdoptPrompt(null);
         setZipResult({ errors: detail.errors || [] });
+      } else if (detail && detail.error_code === "archived_course_adoption_required") {
+        // Not a failure — a question. Nothing was written, so hold onto the
+        // package and ask before doing anything to an archived course.
+        pendingZipRef.current = { data, filename };
+        setAdoptPrompt(detail);
       } else {
+        setAdoptPrompt(null);
+        pendingZipRef.current = null;
         setErr(formatErr(detail) || "Curriculum import failed");
       }
     }
     setImporting(false);
+  };
+
+  const importCurriculumZip = async (file) => {
+    setErr(""); setZipResult(null); setAdoptPrompt(null);
+    pendingZipRef.current = null;
+    if (!file) return;
+    setImporting(true);
+    let data;
+    try {
+      data = await new Promise((res, rej) => {
+        const fr = new FileReader();
+        fr.onload = () => res(fr.result);
+        fr.onerror = () => rej(new Error("Could not read that file"));
+        fr.readAsDataURL(file);
+      });
+    } catch (e) {
+      setErr(e.message || "Could not read that file");
+      setImporting(false);
+      return;
+    }
+    await sendCurriculumZip(data, file.name);
+  };
+
+  const confirmAdoption = async () => {
+    const pending = pendingZipRef.current;
+    if (!pending || !adoptPrompt || importing) return;
+    await sendCurriculumZip(pending.data, pending.filename, adoptPrompt.program_id);
+  };
+
+  const cancelAdoption = () => {
+    setAdoptPrompt(null);
+    pendingZipRef.current = null;
   };
 
   const exportTemplate = (p) => {
@@ -233,6 +275,41 @@ export function ProgramsPanel() {
 
       {err && <div className="text-[15px] text-red-400 bg-red-500/10 rounded p-2 uppercase font-black">{err}</div>}
 
+      {adoptPrompt && (
+        <div className="rounded-xl border border-shAccent/50 bg-shAccent/[0.07] p-4" data-testid="zip-adopt-prompt">
+          <p className="text-[13px] font-black text-shAccent uppercase tracking-widest">
+            Existing archived course found
+          </p>
+          <p className="text-[15px] font-black text-shText mt-1" data-testid="zip-adopt-name">
+            {adoptPrompt.program_name}
+          </p>
+          <p className="text-[14px] text-shText mt-2">
+            Use this course for the imported curriculum?
+          </p>
+          <p className="text-[12px] text-shTextMuted mt-1">
+            Nothing has been imported yet. Choosing this course keeps its enrollments,
+            progress and history, and adds {adoptPrompt.lessons} lesson{adoptPrompt.lessons === 1 ? "" : "s"},
+            {" "}{adoptPrompt.images} demonstration image{adoptPrompt.images === 1 ? "" : "s"} and
+            {" "}{adoptPrompt.practice_recipes} Practice recipe{adoptPrompt.practice_recipes === 1 ? "" : "s"} to it.
+          </p>
+          {adoptPrompt.will_reactivate && (
+            <p className="text-[13px] font-black text-shAccent mt-2" data-testid="zip-adopt-reactivate">
+              This import will reactivate the course.
+            </p>
+          )}
+          <div className="flex flex-wrap gap-2 mt-3">
+            <button onClick={confirmAdoption} disabled={importing} data-testid="zip-adopt-confirm"
+                    className="bg-shGreen text-bgHeader px-4 py-2 rounded font-black text-[13px] uppercase tracking-widest disabled:opacity-60">
+              {importing ? "Importing…" : "Use this course"}
+            </button>
+            <button onClick={cancelAdoption} disabled={importing} data-testid="zip-adopt-cancel"
+                    className="border border-bgHover text-shTextMuted px-4 py-2 rounded font-black text-[13px] uppercase tracking-widest disabled:opacity-60">
+              Cancel
+            </button>
+          </div>
+        </div>
+      )}
+
       {zipResult && (zipResult.errors?.length ? (
         <div className="rounded-xl border border-red-500/40 bg-red-500/[0.06] p-4" data-testid="zip-import-errors">
           <p className="text-[13px] font-black text-red-300 uppercase tracking-widest">Package not imported</p>
@@ -244,7 +321,9 @@ export function ProgramsPanel() {
       ) : (
         <div className="rounded-xl border border-shGreen/40 bg-shGreen/[0.06] p-4" data-testid="zip-import-summary">
           <p className="text-[13px] font-black text-shGreen uppercase tracking-widest">
-            Curriculum {zipResult.program_action === "updated" ? "updated" : "imported"}
+            Curriculum {zipResult.program_action === "updated" ? "updated"
+              : zipResult.program_action === "adopted" ? "added to the existing course"
+              : "imported"}
           </p>
           <p className="text-[14px] font-black text-shText mt-1">{zipResult.program_name}</p>
           <ul className="mt-2 grid sm:grid-cols-2 gap-x-6 gap-y-1 text-[13px] text-shTextMuted">

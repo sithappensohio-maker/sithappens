@@ -141,7 +141,7 @@ def _admin():
     return doc
 
 
-def _post(user, data, dry_run=False, mode=None):
+def _post(user, data, dry_run=False, mode=None, adopt=None):
     async def go():
         transport = httpx.ASGITransport(app=server.app)
         async with httpx.AsyncClient(transport=transport, base_url="http://test",
@@ -150,7 +150,8 @@ def _post(user, data, dry_run=False, mode=None):
             return await c.post("/api/admin/school/curriculum/import", headers=headers,
                                 json={"data": data, "filename": "course.zip",
                                       "dry_run": dry_run,
-                                      **({"mode": mode} if mode else {})})
+                                      **({"mode": mode} if mode else {}),
+                                      **({"adopt_program_id": adopt} if adopt else {})})
     return run(go())
 
 
@@ -1111,3 +1112,261 @@ def test_the_preflight_leaves_no_probe_file_behind(tmp_path):
     ok, _ = check_school_media_writable(tmp_path)
     assert ok
     assert list(tmp_path.iterdir()) == [], "the preflight left litter in the media directory"
+
+
+# ---------------------------------------------------------------------------
+# Adopting an archived course that already owns the pathway
+#
+# The real case: a FREE mini course ran here before, was archived, and still
+# owns its pathway slug. Importing that course as a package is therefore
+# refused - correctly, because two courses cannot share a pathway. Duplicating
+# it or quietly relaxing the rule would both be wrong; the fix is to ask the
+# one question that settles it, and to say out loud that answering yes brings
+# an archived course back to life.
+# ---------------------------------------------------------------------------
+
+FREE_NAME = f"{TAG} FREE Mini Course Sit and Down"
+FREE_SLUG = FREE_NAME.lower().replace(" ", "_")[:40]
+
+
+def _full_course(source_key=f"{TAG}-free-course", name=FREE_NAME):
+    """Three lessons, six demonstration images, three Practice recipes."""
+    media, recipes, lessons = {}, [], []
+    for i in (1, 2, 3):
+        blocks = [_block("text", 0, source_key=f"l{i}-t", title=f"Lesson {i}",
+                         body="What to do and why it works.")]
+        for j in (1, 2):
+            path = f"media/l{i}-{j}.png"
+            media[path] = _png(rgb=(10 * i, 40 * j, 90))
+            blocks.append(_block("image", j, source_key=f"l{i}-i{j}", media=path,
+                                 config={"caption": f"Step {j}.",
+                                         "alt": f"A dog demonstrating step {j}."}))
+        blocks.append(_block("practice", 3, source_key=f"l{i}-p", title="Practice"))
+        lessons.append({
+            "source_key": f"l{i}", "name": f"Lesson {i}", "order": i - 1,
+            "active": True, "client_overview": f"Lesson {i} overview.",
+            "content_blocks": blocks,
+            "suggested_homework_template_ids": [f"recipe-{i}"],
+        })
+        recipes.append({"source_key": f"recipe-{i}", "name": f"{TAG} Recipe {i}",
+                        "tier": "foundation", "description": "Daily reps.",
+                        "default_duration_days": 7})
+    man = {
+        "sit_happens_template": "online_school_program", "version": 3,
+        "program": {
+            "source_key": source_key, "name": name, "type": "custom",
+            "delivery_mode": "self_guided", "purchase_fulfillment": "online_school",
+            "price": 0, "active": True,
+            "format": {"count": 3, "unit": "lessons"},
+            "modules": [{"source_key": "m1", "name": f"{TAG} Foundations",
+                         "order": 0, "goals": [], "lessons": lessons}],
+        },
+        "homework_templates": recipes,
+    }
+    return man, media
+
+
+def _archived_legacy_course(name=FREE_NAME, slug=FREE_SLUG, **over):
+    """The course as it exists before the import: archived, no package key."""
+    doc = {"id": str(uuid.uuid4()), "name": name, "slug": slug, "type": "custom",
+           "active": False, "price": 0, "delivery_mode": "self_guided",
+           "modules": [], "created_at": "2026-01-01T00:00:00Z"}
+    doc.update(over)
+    run(server.db.programs.insert_one(dict(doc)))
+    return doc
+
+
+def _by_id(pid):
+    return run(server.db.programs.find_one({"id": pid}, {"_id": 0}))
+
+
+def test_an_archived_course_owning_the_pathway_is_offered_not_duplicated():
+    legacy = _archived_legacy_course()
+    admin = _admin()
+    man, media = _full_course()
+    r = _post(admin, _zip(man, media))
+    assert r.status_code == 409, f"{r.status_code}: {r.text[:300]}"
+    d = r.json()["detail"]
+    assert d["error_code"] == "archived_course_adoption_required"
+    assert d["program_id"] == legacy["id"]
+    assert d["program_name"] == FREE_NAME
+    assert d["pathway_slug"] == FREE_SLUG
+    # Nothing is written while the question is outstanding.
+    assert run(server.db.programs.count_documents({"slug": FREE_SLUG})) == 1
+    assert run(server.db.school_resources.count_documents(
+        {"import_digest": {"$exists": True}})) == 0
+
+
+def test_the_offer_says_the_course_will_be_reactivated():
+    # The package declares active: true. Bringing an archived course back is a
+    # real change to the catalogue and must not happen quietly.
+    _archived_legacy_course()
+    admin = _admin()
+    man, media = _full_course()
+    d = _post(admin, _zip(man, media)).json()["detail"]
+    assert d["will_reactivate"] is True
+    assert (d["modules"], d["lessons"], d["images"]) == (1, 3, 6), d
+    assert d["practice_recipes"] == 3
+
+
+def test_adopting_reuses_the_archived_course_and_creates_no_duplicate():
+    legacy = _archived_legacy_course()
+    admin = _admin()
+    man, media = _full_course()
+    r = _post(admin, _zip(man, media), adopt=legacy["id"])
+    assert r.status_code == 200, r.text[:400]
+    summary = r.json()
+    assert summary["program_action"] == "adopted"
+    assert summary["program_id"] == legacy["id"], "adoption created a different program"
+    assert run(server.db.programs.count_documents({"slug": FREE_SLUG})) == 1, "duplicate course"
+
+    prog = _by_id(legacy["id"])
+    lessons = prog["modules"][0]["lessons"]
+    assert len(lessons) == 3, [l["name"] for l in lessons]
+    imgs = [b for l in lessons for b in l["content_blocks"] if b["type"] == "image"]
+    assert len(imgs) == 6, len(imgs)
+    assert all(b.get("resource_id") for b in imgs), "an image block has no resource"
+    linked = [t for l in lessons for t in (l.get("suggested_homework_template_ids") or [])]
+    assert len(linked) == 3
+    assert not any(t.startswith("recipe-") for t in linked), "source keys were never remapped"
+    assert run(server.db.homework_templates.count_documents(
+        {"id": {"$in": linked}})) == 3, "the Practice recipes were not created"
+
+
+def test_adopting_reactivates_the_course_and_attaches_the_package_key():
+    legacy = _archived_legacy_course()
+    admin = _admin()
+    man, media = _full_course()
+    _post(admin, _zip(man, media), adopt=legacy["id"])
+    prog = _by_id(legacy["id"])
+    assert prog["active"] is True, "the adopted course was left archived"
+    assert prog["import_source_key"] == f"{TAG}-free-course"
+    assert prog["slug"] == FREE_SLUG, "the pathway slug moved"
+
+
+def test_adopting_preserves_enrollments_progress_and_history():
+    legacy = _archived_legacy_course()
+    dog_prog = {"id": str(uuid.uuid4()), "dog_id": "dog-1", "program_id": legacy["id"],
+                "status": "active", "delivery_channel": "online_school",
+                "learn_completed_lesson_ids": ["old-lesson-1"],
+                "lesson_step_progress": {"old-lesson-1": {"steps": ["intro"]}}}
+    run(server.db.dog_programs.insert_one(dict(dog_prog)))
+    try:
+        admin = _admin()
+        man, media = _full_course()
+        assert _post(admin, _zip(man, media), adopt=legacy["id"]).status_code == 200
+        after = run(server.db.dog_programs.find_one({"id": dog_prog["id"]}, {"_id": 0}))
+        assert after is not None, "the enrollment was destroyed"
+        assert after["program_id"] == legacy["id"]
+        assert after["learn_completed_lesson_ids"] == ["old-lesson-1"]
+        assert after["lesson_step_progress"] == {"old-lesson-1": {"steps": ["intro"]}}
+        assert after["status"] == "active"
+    finally:
+        run(server.db.dog_programs.delete_one({"id": dog_prog["id"]}))
+
+
+def test_after_adoption_re_import_matches_by_key_and_is_idempotent():
+    legacy = _archived_legacy_course()
+    admin = _admin()
+    man, media = _full_course()
+    _post(admin, _zip(man, media), adopt=legacy["id"])
+    # No adoption answer this time: the package key now identifies the course.
+    r = _post(admin, _zip(man, media))
+    assert r.status_code == 200, r.text[:300]
+    assert r.json()["program_action"] == "updated"
+    assert r.json()["program_id"] == legacy["id"]
+    assert run(server.db.programs.count_documents({"slug": FREE_SLUG})) == 1
+    prog = _by_id(legacy["id"])
+    assert len(prog["modules"][0]["lessons"]) == 3, "re-import duplicated lessons"
+    imgs = [b for l in prog["modules"][0]["lessons"]
+            for b in l["content_blocks"] if b["type"] == "image"]
+    assert len(imgs) == 6
+    assert run(server.db.homework_templates.count_documents(
+        {"name": {"$regex": f"^{TAG} Recipe"}})) == 3, "recipes were duplicated"
+
+
+def test_an_active_course_owning_the_pathway_is_never_offered():
+    # Adopting a live course would rewrite something clients are working
+    # through. The import stays refused instead.
+    _archived_legacy_course(active=True)
+    admin = _admin()
+    man, media = _full_course()
+    r = _post(admin, _zip(man, media))
+    assert r.status_code == 422, f"{r.status_code}: {r.text[:300]}"
+    assert "adoption" not in r.text.lower()
+
+
+def test_a_course_already_claimed_by_another_package_is_not_offered():
+    _archived_legacy_course(import_source_key="some-other-package")
+    admin = _admin()
+    man, media = _full_course()
+    r = _post(admin, _zip(man, media))
+    assert r.status_code == 422, f"{r.status_code}: {r.text[:300]}"
+
+
+def test_an_ambiguous_pathway_owner_is_not_offered():
+    # Two archived courses sharing a slug is already broken data; guessing
+    # between them would make it worse.
+    _archived_legacy_course()
+    _archived_legacy_course(name=f"{FREE_NAME} (copy)")
+    admin = _admin()
+    man, media = _full_course()
+    r = _post(admin, _zip(man, media))
+    assert r.status_code == 422, f"{r.status_code}: {r.text[:300]}"
+
+
+def test_a_stale_adoption_answer_is_refused():
+    legacy = _archived_legacy_course()
+    admin = _admin()
+    man, media = _full_course()
+    # Someone reactivates the course between the question and the answer.
+    run(server.db.programs.update_one({"id": legacy["id"]}, {"$set": {"active": True}}))
+    r = _post(admin, _zip(man, media), adopt=legacy["id"])
+    assert r.status_code == 409
+    assert r.json()["detail"]["error_code"] == "adoption_no_longer_available"
+    assert run(server.db.programs.count_documents({"slug": FREE_SLUG})) == 1
+
+
+def test_adopting_a_program_the_import_never_offered_is_refused():
+    # A pointed attempt to overwrite an unrelated live course.
+    victim = _archived_legacy_course(name=f"{TAG} Unrelated Live Course",
+                                     slug=f"{TAG.lower()}_unrelated", active=True)
+    admin = _admin()
+    man, media = _full_course()
+    r = _post(admin, _zip(man, media), adopt=victim["id"])
+    assert r.status_code == 409
+    assert _by_id(victim["id"])["modules"] == [], "an unrelated course was overwritten"
+
+
+def test_an_ordinary_import_with_no_pathway_clash_never_asks():
+    admin = _admin()
+    man, media = _full_course()
+    r = _post(admin, _zip(man, media))
+    assert r.status_code == 200, r.text[:300]
+    assert r.json()["program_action"] == "created"
+
+
+def test_re_import_does_not_blank_the_pathway_slug():
+    """A package declares no slug; the course must keep the one it owns.
+
+    `create_program` derives a slug from the name, `update_program` writes the
+    body as given. Without carrying it across, every ordinary re-import blanked
+    the pathway - breaking any course whose prerequisite pointed at it, and
+    quietly dropping this course out of the duplicate-pathway check that is
+    supposed to stop a second copy being created.
+    """
+    admin = _admin()
+    _post(admin, _zip(_manifest(), _MEDIA))
+    slug = _program()["slug"]
+    assert slug, "the first import never gave the course a pathway slug"
+    for mode in (None, "merge", "replace"):
+        _post(admin, _zip(_manifest(), _MEDIA), mode=mode)
+        assert _program()["slug"] == slug, f"{mode or 'default'} blanked the pathway slug"
+
+
+def test_a_package_that_declares_a_slug_still_sets_it():
+    admin = _admin()
+    man = _manifest()
+    man["program"]["slug"] = f"{TAG.lower()}_declared_pathway"
+    _post(admin, _zip(man, _MEDIA))
+    assert _program()["slug"] == f"{TAG.lower()}_declared_pathway"
