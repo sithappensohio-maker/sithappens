@@ -44,6 +44,7 @@ export function ProgramsPanel() {
   const [edit, setEdit] = useState(null);
   const [err, setErr] = useState("");
   const [importing, setImporting] = useState(false);
+  const [zipResult, setZipResult] = useState(null);   // last curriculum-package result
   // Practice Coach recipes, loaded so an exported template can bundle the ones
   // its lessons link to (import recreates them and relinks — see below).
   const [hwTemplates, setHwTemplates] = useState([]);
@@ -74,6 +75,7 @@ export function ProgramsPanel() {
   };
 
   const importInputRef = useRef(null);
+  const zipInputRef = useRef(null);
 
   const startNew = (type = "private_lessons") => {
     setEdit({
@@ -104,6 +106,42 @@ export function ProgramsPanel() {
   // NEW program: import first recreates the bundled recipes, relinks each
   // lesson to the fresh ids, then opens the editor for review + Save through
   // the normal create path (never a silent import).
+  /* Full curriculum package (.zip of manifest.json + media).
+   *
+   * Distinct from the .json template above, which carries structure only: a
+   * package also carries the demonstration images, and the server places them
+   * as ordinary image blocks in the order the manifest declares. The server
+   * validates the WHOLE package before writing anything, so a broken package
+   * cannot leave half a course behind.
+   */
+  const importCurriculumZip = async (file) => {
+    setErr(""); setZipResult(null);
+    if (!file) return;
+    setImporting(true);
+    try {
+      const data = await new Promise((res, rej) => {
+        const fr = new FileReader();
+        fr.onload = () => res(fr.result);
+        fr.onerror = () => rej(new Error("Could not read that file"));
+        fr.readAsDataURL(file);
+      });
+      const { data: summary } = await api.post("/admin/school/curriculum/import",
+                                               { data, filename: file.name });
+      setZipResult(summary);
+      await load();
+    } catch (e) {
+      const detail = e.response?.data?.detail;
+      if (detail && detail.error_code === "invalid_curriculum_package") {
+        // Show every problem, not just the first — an author fixing a package
+        // wants the whole list in one go.
+        setZipResult({ errors: detail.errors || [] });
+      } else {
+        setErr(formatErr(detail) || "Curriculum import failed");
+      }
+    }
+    setImporting(false);
+  };
+
   const exportTemplate = (p) => {
     const blob = new Blob([JSON.stringify(programToTemplate(p, hwTemplates), null, 2)], { type: "application/json" });
     const url = URL.createObjectURL(blob);
@@ -175,6 +213,10 @@ export function ProgramsPanel() {
           <div className="flex flex-wrap items-center gap-2 min-w-0">
             <input ref={importInputRef} type="file" accept="application/json,.json" className="hidden" data-testid="prog-import-input"
                    onChange={(e)=>{ const f = e.target.files?.[0]; e.target.value = ""; importTemplate(f); }} />
+            <input ref={zipInputRef} type="file" accept=".zip,application/zip" className="hidden" data-testid="prog-import-zip-input"
+                   onChange={(e)=>{ const f = e.target.files?.[0]; e.target.value = ""; importCurriculumZip(f); }} />
+            <button onClick={()=>zipInputRef.current?.click()} data-testid="prog-import-zip" disabled={importing}
+                    className="border border-shGreen/60 text-shGreen px-3 py-2 rounded font-black text-[13px] uppercase tracking-widest hover:bg-shGreen/10 disabled:opacity-60"><i className={`fas ${importing ? "fa-spinner fa-spin" : "fa-file-zipper"} mr-1`}/>{importing ? "Importing…" : "Import Curriculum"}</button>
             <button onClick={()=>importInputRef.current?.click()} data-testid="prog-import" disabled={importing}
                     className="border border-shBlue/60 text-shBlue px-3 py-2 rounded font-black text-[13px] uppercase tracking-widest hover:bg-shBlue/10 disabled:opacity-60"><i className={`fas ${importing ? "fa-spinner fa-spin" : "fa-file-import"} mr-1`}/>{importing ? "Importing…" : "Import Template"}</button>
             <button onClick={()=>startNew()} data-testid="prog-new"
@@ -190,6 +232,38 @@ export function ProgramsPanel() {
       )}
 
       {err && <div className="text-[15px] text-red-400 bg-red-500/10 rounded p-2 uppercase font-black">{err}</div>}
+
+      {zipResult && (zipResult.errors?.length ? (
+        <div className="rounded-xl border border-red-500/40 bg-red-500/[0.06] p-4" data-testid="zip-import-errors">
+          <p className="text-[13px] font-black text-red-300 uppercase tracking-widest">Package not imported</p>
+          <p className="text-[12px] text-shTextMuted mt-1">Nothing was created — fix these and upload again.</p>
+          <ul className="mt-2 space-y-1 list-disc pl-5">
+            {zipResult.errors.map((e, i) => <li key={i} className="text-[13px] text-shText">{e}</li>)}
+          </ul>
+        </div>
+      ) : (
+        <div className="rounded-xl border border-shGreen/40 bg-shGreen/[0.06] p-4" data-testid="zip-import-summary">
+          <p className="text-[13px] font-black text-shGreen uppercase tracking-widest">
+            Curriculum {zipResult.program_action === "updated" ? "updated" : "imported"}
+          </p>
+          <p className="text-[14px] font-black text-shText mt-1">{zipResult.program_name}</p>
+          <ul className="mt-2 grid sm:grid-cols-2 gap-x-6 gap-y-1 text-[13px] text-shTextMuted">
+            <li>{zipResult.modules} module{zipResult.modules === 1 ? "" : "s"}</li>
+            <li>{zipResult.lessons} lesson{zipResult.lessons === 1 ? "" : "s"}</li>
+            <li>{zipResult.blocks} content block{zipResult.blocks === 1 ? "" : "s"}</li>
+            <li>{zipResult.images} demonstration image{zipResult.images === 1 ? "" : "s"} placed</li>
+            {zipResult.videos > 0 && <li>{zipResult.videos} video{zipResult.videos === 1 ? "" : "s"}</li>}
+            <li className={zipResult.unplaced_media ? "text-shAccent" : ""}>
+              {zipResult.unplaced_media} image{zipResult.unplaced_media === 1 ? " needs" : "s need"} placement
+            </li>
+          </ul>
+          {zipResult.unplaced_media > 0 && (
+            <p className="text-[12px] text-shTextMuted mt-2">
+              Kept in School Resources so you can drop {zipResult.unplaced_media === 1 ? "it" : "them"} into a lesson yourself.
+            </p>
+          )}
+        </div>
+      ))}
 
       {grouped.filter(g => g.items.length > 0 || g.key !== "custom").map(g => (
         <div key={g.key} className="bg-bgBase/40 border border-bgHover rounded">

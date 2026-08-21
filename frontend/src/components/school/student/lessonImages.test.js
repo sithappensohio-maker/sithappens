@@ -169,7 +169,9 @@ test("upload reuses the School Resources pipeline rather than a new store", () =
   expect(fn).toMatch(/api\.post\("\/admin\/school\/resources\/upload"/);
   expect(fn).toMatch(/api\.post\("\/admin\/school\/resources"/);
   // the block ends up with an ordinary resource_id, like a library pick
-  expect(studioSrc).toMatch(/onUploaded=\{\(rid\)=>update\(idx,\{resource_id:rid,url:""\}\)\}/);
+  expect(studioSrc).toMatch(/onUploaded=\{\(rid\)=>\{update\(idx,\{resource_id:rid,url:""\}\)/);
+  // ...and the picker reloads so the new image is immediately selectable
+  expect(studioSrc).toMatch(/loadResources\(\);\}\}/);
 });
 
 test("only the image types the media pipeline already accepts are offered", () => {
@@ -206,4 +208,43 @@ test("the upload control has an accessible name", () => {
 test("an upload failure is reported rather than swallowed", () => {
   expect(studioSrc).toMatch(/onError=\{setUploadErr\}/);
   expect(studioSrc).toMatch(/\{uploadErr && <p/);
+});
+
+// ---------------------------------------------------------------------------
+// Delivery weight and format reality
+// ---------------------------------------------------------------------------
+
+test("a lesson image is compressed before upload, like every other image in the app", () => {
+  // The School Resource ceiling is 50 MB and a phone photo is 3-5 MB, so
+  // without this a lesson could hand students tens of megabytes of pictures.
+  expect(studioSrc).toMatch(/import \{ compressImage \} from "\.\.\/lib\/imageCompress"/);
+  const fn = studioSrc.slice(studioSrc.indexOf("function BlockImageUpload"),
+                             studioSrc.indexOf("function LessonBlocksEditor"));
+  expect(fn).toMatch(/await compressImage\(file\)/);
+  // ...and the raw FileReader path it replaced is gone
+  expect(fn).not.toMatch(/readAsDataURL/);
+});
+
+test("the compressor keeps demonstration detail rather than shrinking to a thumbnail", () => {
+  const compress = fs.readFileSync(
+    path.join(__dirname, "..", "..", "..", "lib", "imageCompress.js"), "utf8");
+  expect(compress).toMatch(/DEFAULT_MAX_WIDTH = 1600/);
+  expect(compress).toMatch(/DEFAULT_QUALITY = 0\.82/);
+});
+
+test("an HEIC that the browser cannot decode is refused, not silently accepted", () => {
+  // Chrome reports image/heic unsupported, so it would render broken for most
+  // students. On Safari compressImage has already transcoded it to JPEG.
+  const fn = studioSrc.slice(studioSrc.indexOf("function BlockImageUpload"),
+                             studioSrc.indexOf("function LessonBlocksEditor"));
+  expect(fn).toContain("data:image");
+  expect(fn).toContain("hei[cf]");
+  expect(fn).toMatch(/HEIC images don't display in most browsers/);
+});
+
+test("HEIC is only restricted for inline lesson images, not for School Resources at large", () => {
+  // The resource pipeline's own allow-list is untouched.
+  const suite = fs.readFileSync(
+    path.join(__dirname, "..", "..", "..", "..", "..", "backend", "school_suite.py"), "utf8");
+  expect(suite).toMatch(/"image\/heic"/);
 });

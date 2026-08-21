@@ -66,6 +66,7 @@ from email_service import (
 import email_service
 import school_events
 import school_lesson_guide
+from school_curriculum_routes import register_curriculum_import
 from school_events import EventType as SchoolEvent
 
 from trophy_service import (
@@ -55882,6 +55883,16 @@ def _cors_origins() -> List[str]:
 # Registered only after every shared auth/permission helper above exists, so the
 # module can stay additive and cannot create a second auth/progression system.
 from school_suite import register_school_suite
+register_curriculum_import(
+    api=api, db=db,
+    manage_dep=require_admin_and_permission("manage_training_content"),
+    persist_school_media=_persist_school_media_data_url,
+    program_model=ProgramIn, create_program=create_program,
+    update_program=update_program, now_iso=now_iso,
+    homework_template_model=HomeworkTemplateIn,
+    create_homework_template=create_homework_template,
+)
+
 register_school_suite(
     api=api, db=db, get_current_user=get_current_user,
     manage_school_dep=require_admin_and_permission("manage_school"),
