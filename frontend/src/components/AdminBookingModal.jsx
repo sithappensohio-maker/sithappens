@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { api, formatErr } from "../lib/api";
 import MultiDatePicker from "./MultiDatePicker";
 import { useEditLock } from "../lib/useLiveRefresh";
@@ -56,6 +56,38 @@ const calcDiscountAmount = (rawAdditionalDogBase, cfg, additionalDogs) => {
   return raw * (Math.min(100, Math.max(0, value)) / 100);
 };
 
+// Quick Check-In picks the service for the operator. An individual client
+// price is keyed to ONE exact `services.id`, so picking the catalogue default
+// when the client's rate lives on a different service of the same type books
+// them onto a service they have no override for — and they ring at full
+// price. The resolver is not wrong; the wrong service was chosen before
+// pricing ever ran, and checkout cannot repair it because the booking now
+// legitimately holds that service's id.
+//
+// This chooses a service IDENTITY only. What the client pays is still decided
+// server-side by resolve_client_price at quote, booking and checkout.
+//
+//   exactly one override match -> that service
+//   none                       -> unchanged: catalogue default, else first
+//   more than one              -> choose nothing; the operator must decide
+//
+// `prices` is GET /clients/{id}/service-prices, keyed by service id.
+export function pickCheckInService(services, prices, wantedType) {
+  const ofType = (services || []).filter(s => s && s.service_type === wantedType);
+  const matches = ofType.filter(
+    s => (prices || {})[s.id]?.pricing_source === "client_override");
+  if (matches.length === 1) {
+    return { serviceId: matches[0].id, reason: "client_override", options: matches };
+  }
+  if (matches.length > 1) {
+    // Never guess between two client-priced services — they can be different
+    // amounts, and picking one would silently charge the wrong rate.
+    return { serviceId: null, reason: "ambiguous", options: matches };
+  }
+  const fallback = ofType.find(s => s.is_default) || ofType[0] || null;
+  return { serviceId: fallback ? fallback.id : null, reason: "default", options: [] };
+}
+
 export default function AdminBookingModal({ defaultCheckIn = false, defaultDate = null, existing = null, presetClientId = null, presetDogId = null, presetServiceType = null, presetNotes = null, onClose, onCreated }) {
   useEditLock(true);
   const [clients, setClients] = useState([]);
@@ -70,6 +102,13 @@ export default function AdminBookingModal({ defaultCheckIn = false, defaultDate 
   const [serviceType, setServiceType] = useState(existing?.service_type || presetServiceType || "daycare");
   const [serviceId, setServiceId] = useState(existing?.service_id || "");
   const [catalogServices, setCatalogServices] = useState([]);
+  // Per-service effective prices for THIS client, straight from the server's
+  // resolve_client_price. Used to pick the right service and to show staff
+  // what the client will actually be charged.
+  const [clientServicePrices, setClientServicePrices] = useState(null);
+  // Set once the operator picks a service by hand, so auto-selection never
+  // fights them afterwards.
+  const serviceTouchedRef = useRef(false);
   const [date, setDate] = useState(existing?.date || defaultDate || todayISO());
   const [endDate, setEndDate] = useState(existing?.end_date || "");
   // Multi-date mode: book several non-consecutive days at once (daycare /
@@ -248,6 +287,39 @@ export default function AdminBookingModal({ defaultCheckIn = false, defaultDate 
   }, [dogs, clients]);
 
   const selectedClient = useMemo(() => clients.find(c => c.id === clientId) || null, [clients, clientId]);
+
+  // Quick Check-In only: what does THIS client actually pay for each service?
+  useEffect(() => {
+    if (!isQuickCheckin || !clientId) { setClientServicePrices(null); return; }
+    let cancelled = false;
+    api.get(`/clients/${clientId}/service-prices`)
+      .then(({ data }) => { if (!cancelled) setClientServicePrices(data?.prices || {}); })
+      .catch(() => { if (!cancelled) setClientServicePrices({}); });
+    return () => { cancelled = true; };
+  }, [isQuickCheckin, clientId]);
+
+  // ...and once we know, select the service that carries their price.
+  useEffect(() => {
+    if (!isQuickCheckin || !clientServicePrices || serviceTouchedRef.current) return;
+    if (!catalogServices.length) return;
+    const pick = pickCheckInService(catalogServices, clientServicePrices, serviceType);
+    if (pick.reason === "ambiguous") { setServiceId(""); return; }
+    if (pick.serviceId && pick.serviceId !== serviceId) setServiceId(pick.serviceId);
+  }, [isQuickCheckin, clientServicePrices, catalogServices, serviceType]);  // eslint-disable-line react-hooks/exhaustive-deps
+
+  // What the picker is telling the operator right now.
+  const checkInPricing = useMemo(() => {
+    if (!isQuickCheckin || !clientServicePrices) return null;
+    const pick = pickCheckInService(catalogServices, clientServicePrices, serviceType);
+    const selected = serviceId ? clientServicePrices[serviceId] : null;
+    return {
+      pick,
+      selected,
+      // an override exists for this service type, but not for what is selected
+      mismatch: pick.options.length > 0 && pick.reason !== "ambiguous"
+        && selected?.pricing_source !== "client_override",
+    };
+  }, [isQuickCheckin, clientServicePrices, catalogServices, serviceType, serviceId]);
   const selectedDog = dogs.find(d => d.id === dogId);
   const rabies = selectedDog?.vaccines?.rabies || "";
   const rabiesOk = rabies && rabies >= todayISO();
@@ -643,6 +715,7 @@ export default function AdminBookingModal({ defaultCheckIn = false, defaultDate 
             <select value={serviceId} onChange={(e) => {
                       const id = e.target.value;
                       const svc = catalogServices.find(s => s.id === id);
+                      serviceTouchedRef.current = true;
                       setServiceId(id);
                       if (svc) {
                         setServiceType(svc.service_type);
@@ -662,6 +735,50 @@ export default function AdminBookingModal({ defaultCheckIn = false, defaultDate 
                 .map(s => <option key={s.id} value={s.id}>{s.name} · {s.service_type} · ${Number(s.base_price || 0).toFixed(2)}</option>)}
             </select>
             <p className="text-[11px] text-shTextMuted mt-1">Selecting the exact catalog service applies its own price, duration, and booking rules.</p>
+
+            {checkInPricing?.pick?.reason === "ambiguous" && (
+              <div className="mt-2 rounded border border-amber-500/60 bg-amber-500/10 p-2"
+                   data-testid="ab-price-ambiguous">
+                <p className="text-[13px] font-black text-amber-300 uppercase tracking-widest">
+                  Choose the exact service
+                </p>
+                <p className="text-[12px] text-shText mt-1">
+                  This client has special pricing on more than one {serviceType} service.
+                  Pick the right one before check-in.
+                </p>
+                <ul className="mt-1 text-[12px] text-shTextMuted">
+                  {checkInPricing.pick.options.map(o => (
+                    <li key={o.id}>
+                      {o.name} — ${Number(clientServicePrices?.[o.id]?.effective_price ?? 0).toFixed(2)}
+                      {" "}<span className="line-through">${Number(clientServicePrices?.[o.id]?.list_price ?? 0).toFixed(2)}</span>
+                    </li>
+                  ))}
+                </ul>
+              </div>
+            )}
+
+            {checkInPricing?.mismatch && (
+              <div className="mt-2 rounded border border-amber-500/60 bg-amber-500/10 p-2"
+                   data-testid="ab-price-mismatch">
+                <p className="text-[12px] text-amber-200">
+                  This client has special pricing for another {serviceType} service.
+                  Choose the correct service before check-in.
+                </p>
+              </div>
+            )}
+
+            {checkInPricing?.selected?.pricing_source === "client_override" && (
+              <div className="mt-2 rounded border border-shGreen/50 bg-shGreen/10 p-2"
+                   data-testid="ab-client-price">
+                <p className="text-[12px] font-black text-shGreen uppercase tracking-widest">Client price</p>
+                <p className="text-[19px] font-black text-shText leading-tight">
+                  ${Number(checkInPricing.selected.effective_price || 0).toFixed(2)}
+                </p>
+                <p className="text-[12px] text-shTextMuted">
+                  Standard ${Number(checkInPricing.selected.list_price || 0).toFixed(2)}
+                </p>
+              </div>
+            )}
           </div>
 
           {serviceType === "grooming" && !serviceId && !isEdit && (

@@ -48316,6 +48316,53 @@ async def client_credit_pack_prices(client_id: str, _: dict = Depends(require_ad
     return {"prices": out}
 
 
+@api.get("/clients/{client_id}/service-prices")
+async def client_service_prices(client_id: str, _: dict = Depends(require_employee_or_admin)):
+    """Effective per-SERVICE prices for ONE client, straight from
+    resolve_client_price — the exact sibling of client_credit_pack_prices
+    above, for the booking/check-in screens instead of the sell-packs one.
+
+    Quick Check-In needs this because an individual client price is keyed to
+    ONE exact `services.id`, while Quick Check-In picks the service for the
+    operator. If it picks the catalogue default when the client's rate lives
+    on a different service of the same type, the resolver correctly finds no
+    override and the walk-in rings at full price. Knowing WHICH service
+    carries the client's price is what lets the picker choose the right one.
+
+    Read-only, and deliberately not a second pricing formula: every number
+    here is resolve_client_price's own answer. The frontend uses it to choose
+    a service IDENTITY; what the client actually pays is still decided
+    server-side at quote, booking and checkout.
+
+    Gated by employee-or-admin rather than the `pricing` permission: anyone
+    allowed to check a dog in needs to see the price they are about to
+    charge, exactly as sell_credits gates the credit-pack twin.
+    """
+    client = await db.clients.find_one({"id": client_id}, {"_id": 0, "id": 1})
+    if not client:
+        raise HTTPException(status_code=404, detail="Client not found")
+    services = await db.services.find(
+        {"active": True, "is_addon": {"$ne": True}},
+        {"_id": 0, "id": 1, "name": 1, "service_type": 1, "base_price": 1, "is_default": 1},
+    ).to_list(500)
+    out = {}
+    for svc in services:
+        pricing = await resolve_client_price(
+            client_id, "service", svc["id"], float(svc.get("base_price") or 0))
+        out[svc["id"]] = {
+            "service_id": svc["id"],
+            "service_name": svc.get("name"),
+            "service_type": svc.get("service_type"),
+            "is_default": bool(svc.get("is_default")),
+            "list_price": pricing["list_price"],
+            "effective_price": pricing["effective_price"],
+            "pricing_source": pricing["pricing_source"],
+            "override_id": pricing["override_id"],
+            "tier_name": pricing["tier_name"],
+        }
+    return {"prices": out}
+
+
 @api.post("/clients/{client_id}/price-overrides")
 async def create_client_price_override(client_id: str, body: PriceOverrideIn, user: dict = Depends(require_admin_and_permission("pricing"))):
     client = await db.clients.find_one({"id": client_id}, {"_id": 0, "id": 1, "name": 1})
