@@ -165,6 +165,11 @@ def _cleanup():
     for r in res:
         run(server.db.homework_media.delete_one({"id": r.get("media_id")}))
         run(server.db.school_resources.delete_one({"id": r["id"]}))
+    # Practice recipes a package brought with it. Without this, a test that
+    # asserts "nothing was created" fails on another test's leftovers rather
+    # than on the behaviour it is actually checking.
+    run(server.db.homework_templates.delete_many({"import_source_key": {"$exists": True}}))
+    run(server.db.homework_templates.delete_many({"name": {"$regex": f"^{TAG}"}}))
     run(server.db.users.delete_many({"name": f"{TAG} admin"}))
 
 
@@ -1370,3 +1375,32 @@ def test_a_package_that_declares_a_slug_still_sets_it():
     man["program"]["slug"] = f"{TAG.lower()}_declared_pathway"
     _post(admin, _zip(man, _MEDIA))
     assert _program()["slug"] == f"{TAG.lower()}_declared_pathway"
+
+
+def test_cancelling_the_offer_changes_absolutely_nothing():
+    """Cancel is simply never sending the answer, so it must be a true no-op.
+
+    An admin who declines has to be able to trust that declining cost them
+    nothing: the archived course is left exactly as it was found, and no media,
+    recipes or program rows are left lying around from the attempt.
+    """
+    legacy = _archived_legacy_course()
+    before = _by_id(legacy["id"])
+    admin = _admin()
+    man, media = _full_course()
+
+    r = _post(admin, _zip(man, media))          # the question
+    assert r.status_code == 409
+    # ...and then the admin clicks Cancel, which sends nothing at all.
+
+    after = _by_id(legacy["id"])
+    assert after == before, "the archived course was modified by an unanswered import"
+    assert after["active"] is False, "the course was reactivated without an answer"
+    assert after["modules"] == []
+    assert "import_source_key" not in after
+    assert run(server.db.school_resources.count_documents(
+        {"import_digest": {"$exists": True}})) == 0
+    assert run(server.db.homework_media.count_documents({"kind": "school_resource"})) == 0
+    assert run(server.db.homework_templates.count_documents(
+        {"name": {"$regex": f"^{TAG} Recipe"}})) == 0
+    assert run(server.db.programs.count_documents({"slug": FREE_SLUG})) == 1

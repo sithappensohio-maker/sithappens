@@ -113,6 +113,17 @@ api.interceptors.response.use(
         return loc ? `${loc}: ${e.msg || "invalid"}` : (e.msg || JSON.stringify(e));
       }).join("; ");
     } else if (d && typeof d === "object") {
+      // Flattening `detail` to a string is what keeps legacy JSX renderers
+      // from crashing on an object — but it also destroys every structured
+      // error the backend sends, so a caller that needs to BRANCH on one
+      // (an error_code, a list of validation problems, an id to confirm)
+      // silently gets a sentence instead and falls through to a generic
+      // banner. That is how the curriculum importer's own error list and
+      // its archived-course confirmation both ended up unreachable.
+      //
+      // Keep the original object reachable alongside the flattened string,
+      // so nothing existing changes and structured handling becomes possible.
+      err.response.data.detail_object = d;
       // Preserve machine-readable capacity metadata for the booking wizard,
       // while still exposing a plain string to legacy JSX error renderers.
       if (d.code === "capacity_full" || d.code === "capacity_busy") {

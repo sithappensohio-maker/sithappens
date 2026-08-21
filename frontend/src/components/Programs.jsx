@@ -132,7 +132,10 @@ export function ProgramsPanel() {
       pendingZipRef.current = null;
       await load();
     } catch (e) {
-      const detail = e.response?.data?.detail;
+      // `detail_object` is the unflattened body: the response interceptor
+      // turns an object `detail` into a plain string for legacy renderers,
+      // which would leave every branch below unreachable.
+      const detail = e.response?.data?.detail_object || e.response?.data?.detail;
       if (detail && detail.error_code === "invalid_curriculum_package") {
         // Show every problem, not just the first — an author fixing a package
         // wants the whole list in one go.
@@ -276,36 +279,51 @@ export function ProgramsPanel() {
       {err && <div className="text-[15px] text-red-400 bg-red-500/10 rounded p-2 uppercase font-black">{err}</div>}
 
       {adoptPrompt && (
-        <div className="rounded-xl border border-shAccent/50 bg-shAccent/[0.07] p-4" data-testid="zip-adopt-prompt">
-          <p className="text-[13px] font-black text-shAccent uppercase tracking-widest">
-            Existing archived course found
-          </p>
-          <p className="text-[15px] font-black text-shText mt-1" data-testid="zip-adopt-name">
-            {adoptPrompt.program_name}
-          </p>
-          <p className="text-[14px] text-shText mt-2">
-            Use this course for the imported curriculum?
-          </p>
-          <p className="text-[12px] text-shTextMuted mt-1">
-            Nothing has been imported yet. Choosing this course keeps its enrollments,
-            progress and history, and adds {adoptPrompt.lessons} lesson{adoptPrompt.lessons === 1 ? "" : "s"},
-            {" "}{adoptPrompt.images} demonstration image{adoptPrompt.images === 1 ? "" : "s"} and
-            {" "}{adoptPrompt.practice_recipes} Practice recipe{adoptPrompt.practice_recipes === 1 ? "" : "s"} to it.
-          </p>
-          {adoptPrompt.will_reactivate && (
-            <p className="text-[13px] font-black text-shAccent mt-2" data-testid="zip-adopt-reactivate">
-              This import will reactivate the course.
+        <div className="fixed inset-0 bg-black/80 flex items-center justify-center p-4 z-50"
+             data-testid="zip-adopt-modal" role="dialog" aria-modal="true"
+             aria-labelledby="zip-adopt-title">
+          <div className="bg-bgPanel border border-shAccent/50 rounded-2xl w-full max-w-lg p-5 sm:p-6 shadow-2xl max-h-[calc(var(--app-height)_-_2rem)] overflow-y-auto animate-slide-in">
+            <p id="zip-adopt-title" className="text-[13px] font-black text-shAccent uppercase tracking-widest">
+              Existing Archived Course Found
             </p>
-          )}
-          <div className="flex flex-wrap gap-2 mt-3">
-            <button onClick={confirmAdoption} disabled={importing} data-testid="zip-adopt-confirm"
-                    className="bg-shGreen text-bgHeader px-4 py-2 rounded font-black text-[13px] uppercase tracking-widest disabled:opacity-60">
-              {importing ? "Importing…" : "Use this course"}
-            </button>
-            <button onClick={cancelAdoption} disabled={importing} data-testid="zip-adopt-cancel"
-                    className="border border-bgHover text-shTextMuted px-4 py-2 rounded font-black text-[13px] uppercase tracking-widest disabled:opacity-60">
-              Cancel
-            </button>
+            <p className="text-[19px] font-black text-shText mt-1 break-words" data-testid="zip-adopt-name">
+              {adoptPrompt.program_name}
+            </p>
+            <p className="text-[14px] text-shText mt-3">
+              This imported curriculum matches an archived course already in Sit Happens.
+            </p>
+            <p className="text-[15px] font-black text-shText mt-2">
+              Use this existing course and reactivate it?
+            </p>
+            <ul className="mt-3 space-y-2 list-disc pl-5 text-[13px] text-shTextMuted"
+                data-testid="zip-adopt-effects">
+              <li>The existing program ID will be preserved.</li>
+              <li>Existing enrollments, progress and history will be preserved.</li>
+              <li>
+                The imported {adoptPrompt.lessons} lesson{adoptPrompt.lessons === 1 ? "" : "s"},
+                {" "}{adoptPrompt.images} demonstration image{adoptPrompt.images === 1 ? "" : "s"} and
+                {" "}{adoptPrompt.practice_recipes} Practice recipe{adoptPrompt.practice_recipes === 1 ? "" : "s"}
+                {" "}will be merged into it.
+              </li>
+              {adoptPrompt.will_reactivate && (
+                <li className="text-shAccent font-black" data-testid="zip-adopt-reactivate">
+                  The course will be reactivated, because the package declares it active.
+                </li>
+              )}
+            </ul>
+            <p className="text-[12px] text-shTextMuted mt-3">
+              Nothing has been imported yet. Cancelling leaves the archived course exactly as it is.
+            </p>
+            <div className="flex flex-wrap justify-end gap-2 mt-5">
+              <button onClick={cancelAdoption} disabled={importing} data-testid="zip-adopt-cancel"
+                      className="border border-bgHover text-shTextMuted px-4 py-2 rounded font-black text-[13px] uppercase tracking-widest hover:text-shText disabled:opacity-60">
+                Cancel
+              </button>
+              <button onClick={confirmAdoption} disabled={importing} data-testid="zip-adopt-confirm"
+                      className="bg-shGreen text-bgHeader px-4 py-2 rounded font-black text-[13px] uppercase tracking-widest shadow disabled:opacity-60">
+                {importing ? "Importing…" : "Use existing course"}
+              </button>
+            </div>
           </div>
         </div>
       )}

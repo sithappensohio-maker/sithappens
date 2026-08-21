@@ -108,64 +108,146 @@ test("a previous result never lingers over a new attempt", () => {
 //
 // A course that ran here before still owns its pathway slug even when
 // archived, so re-importing it is refused rather than duplicated. That is a
-// question, not a failure, and the client must ask it rather than guess — and
-// must say plainly that answering yes brings an archived course back.
+// QUESTION, not a failure - and the first cut got this wrong: the server's
+// sentence fell through to the generic red error banner, which named a
+// problem and offered no way out of it. It has to be a confirmation the admin
+// can actually act on.
 // ---------------------------------------------------------------------------
 
-test("the adoption offer is a confirmation, not an error banner", () => {
-  expect(src).toMatch(/data-testid="zip-adopt-prompt"/);
-  expect(src).toMatch(/Existing archived course found/);
-  expect(src).toMatch(/Use this course for the imported curriculum\?/);
-  expect(src).toMatch(/data-testid="zip-adopt-name"/);
+const modal = () => src.slice(src.indexOf('data-testid="zip-adopt-modal"'),
+                              src.indexOf("{zipResult &&"));
+const importBlock = () => src.slice(src.indexOf("const sendCurriculumZip"),
+                                    src.indexOf("const exportTemplate"));
+
+test("the conflict is a modal, not a dead-end banner", () => {
+  const m = modal();
+  expect(m).toBeTruthy();
+  expect(src).toMatch(/data-testid="zip-adopt-modal"/);
+  // a real overlay, not a line of text among the page content
+  expect(src).toMatch(/fixed inset-0[^"]*z-50"\s*\n?\s*data-testid="zip-adopt-modal"/);
+  expect(m).toMatch(/role="dialog"/);
+  expect(m).toMatch(/aria-modal="true"/);
 });
 
-test("the offer says nothing has been imported yet", () => {
-  expect(src).toMatch(/Nothing has been imported yet/);
+test("the modal says what was found and asks the question", () => {
+  const m = modal();
+  expect(m).toMatch(/Existing Archived Course Found/);
+  expect(m).toMatch(/data-testid="zip-adopt-name"/);
+  expect(m).toMatch(/adoptPrompt\.program_name/);
+  expect(m).toMatch(/This imported curriculum matches an archived course already in Sit Happens\./);
+  expect(m).toMatch(/Use this existing course and reactivate it\?/);
+});
+
+test("the modal explains every consequence before the admin agrees", () => {
+  const m = modal();
+  expect(m).toMatch(/data-testid="zip-adopt-effects"/);
+  expect(m).toMatch(/existing program ID will be preserved/i);
+  expect(m).toMatch(/enrollments, progress and history will be preserved/i);
+  expect(m).toMatch(/will be merged into it/i);
+  // and the counts come from the server rather than being guessed here
+  expect(m).toMatch(/adoptPrompt\.lessons/);
+  expect(m).toMatch(/adoptPrompt\.images/);
+  expect(m).toMatch(/adoptPrompt\.practice_recipes/);
 });
 
 test("reactivating an archived course is stated, not silent", () => {
-  expect(src).toMatch(/data-testid="zip-adopt-reactivate"/);
-  expect(src).toMatch(/This import will reactivate the course\./);
-  expect(src).toMatch(/adoptPrompt\.will_reactivate/);
+  const m = modal();
+  expect(m).toMatch(/data-testid="zip-adopt-reactivate"/);
+  expect(m).toMatch(/reactivated, because the package declares it active/i);
+  expect(m).toMatch(/adoptPrompt\.will_reactivate/);
 });
 
-test("the admin can confirm or cancel", () => {
-  expect(src).toMatch(/data-testid="zip-adopt-confirm"/);
-  expect(src).toMatch(/data-testid="zip-adopt-cancel"/);
-  expect(src).toMatch(/Use this course/);
-  expect(src).toMatch(/const cancelAdoption/);
+test("the modal offers cancel and use existing course", () => {
+  const m = modal();
+  expect(m).toMatch(/data-testid="zip-adopt-cancel"/);
+  expect(m).toMatch(/data-testid="zip-adopt-confirm"/);
+  expect(m).toMatch(/>\s*Cancel\s*</);
+  expect(m).toMatch(/Use existing course/);
+  expect(m).toMatch(/Nothing has been imported yet/);
 });
 
-test("confirming re-sends the same package with the admin's answer", () => {
-  const fn = src.slice(src.indexOf("const sendCurriculumZip"),
-                       src.indexOf("const exportTemplate"));
+test("the adoption question never becomes the generic error banner", () => {
+  // The reported bug: the server's message was shown as an unactionable red
+  // banner because this branch did not exist.
+  const fn = importBlock();
+  const branch = fn.slice(fn.indexOf('error_code === "archived_course_adoption_required"'),
+                          fn.indexOf("} else {"));
+  expect(branch).toMatch(/setAdoptPrompt\(detail\)/);
+  expect(branch).not.toMatch(/setErr\(/);
+});
+
+test("confirming re-sends the held package with the admin's answer", () => {
+  const fn = importBlock();
   expect(fn).toMatch(/adopt_program_id/);
   expect(fn).toMatch(/adoptPrompt\.program_id/);
-  // held in a ref so the 15 MB data URL is not re-read or re-rendered
-  expect(fn).toMatch(/pendingZipRef\.current/);
+  // the package is kept in memory so the admin never re-picks the file
+  expect(fn).toMatch(/pendingZipRef\.current = \{ data, filename \}/);
+  expect(fn).toMatch(/const pending = pendingZipRef\.current/);
 });
 
-test("the adoption question is recognised as its own outcome", () => {
-  const fn = src.slice(src.indexOf("const sendCurriculumZip"),
-                       src.indexOf("const exportTemplate"));
-  expect(fn).toMatch(/error_code === "archived_course_adoption_required"/);
-  expect(fn).toMatch(/setAdoptPrompt\(detail\)/);
+test("the answer names one program - there is no blanket force flag", () => {
+  const fn = importBlock();
+  expect(fn).not.toMatch(/force\s*[:=]\s*true/);
+  expect(fn).not.toMatch(/\boverwrite\b/i);
+  // the only thing sent is the id the server itself offered
+  expect(fn).toMatch(/body\.adopt_program_id = adoptProgramId/);
 });
 
-test("a stale offer never survives a new upload or another failure", () => {
-  const fn = src.slice(src.indexOf("const sendCurriculumZip"),
-                       src.indexOf("const exportTemplate"));
-  expect(fn).toMatch(/setAdoptPrompt\(null\)/);
+test("cancelling clears the question and drops the package", () => {
+  const fn = importBlock();
+  const cancel = fn.slice(fn.indexOf("const cancelAdoption"));
+  expect(cancel).toMatch(/setAdoptPrompt\(null\)/);
+  expect(cancel).toMatch(/pendingZipRef\.current = null/);
+  // cancelling posts nothing
+  expect(cancel.slice(0, cancel.indexOf("};"))).not.toMatch(/api\.post/);
+});
+
+test("a stale question never survives a new upload or another failure", () => {
+  expect(importBlock()).toMatch(/setAdoptPrompt\(null\)/);
 });
 
 test("double-confirming is not possible while an import is running", () => {
-  const btn = src.slice(src.indexOf("onClick={confirmAdoption}"),
-                        src.indexOf('data-testid="zip-adopt-cancel"'));
-  expect(btn).toMatch(/disabled=\{importing\}/);
-  // and the handler itself refuses a second run rather than trusting the button
+  const m = modal();
+  expect((m.match(/disabled=\{importing\}/g) || []).length).toBe(2);
+  // and the handler refuses a second run rather than trusting the button
   expect(src).toMatch(/if \(!pending \|\| !adoptPrompt \|\| importing\) return;/);
 });
 
 test("an adopted course reads as added to the existing course", () => {
   expect(src).toMatch(/program_action === "adopted"/);
+});
+
+
+// ---------------------------------------------------------------------------
+// Structured errors have to survive the response interceptor
+//
+// This is what actually broke the flow in production. api.js flattens any
+// object `detail` to a plain string so legacy JSX renderers cannot crash on
+// it - which also destroyed `error_code`, so BOTH the validation-error list
+// and the archived-course confirmation fell through to the generic red
+// banner. The banner named a problem and offered no way out of it.
+// ---------------------------------------------------------------------------
+
+const apiSrc = fs.readFileSync(path.join(__dirname, "..", "lib", "api.js"), "utf8");
+
+test("the interceptor keeps the machine-readable error body", () => {
+  expect(apiSrc).toMatch(/err\.response\.data\.detail_object = d;/);
+  // and it still flattens `detail` itself, so nothing existing changes
+  expect(apiSrc).toMatch(/err\.response\.data\.detail = d\.msg \|\| JSON\.stringify\(d\);/);
+});
+
+test("the importer branches on the structured body, not the flattened string", () => {
+  const fn = importBlock();
+  expect(fn).toMatch(/detail_object/);
+  // the flattened string stays as the fallback for anything unstructured
+  expect(fn).toMatch(/e\.response\?\.data\?\.detail_object \|\| e\.response\?\.data\?\.detail/);
+});
+
+test("a rejected package can still reach its own error list", () => {
+  // Same root cause: without the structured body this branch was unreachable
+  // and a bad package showed a JSON blob in the red banner instead.
+  const fn = importBlock();
+  const branch = fn.slice(fn.indexOf('error_code === "invalid_curriculum_package"'),
+                          fn.indexOf('error_code === "archived_course_adoption_required"'));
+  expect(branch).toMatch(/setZipResult\(\{ errors: detail\.errors \|\| \[\] \}\)/);
 });
