@@ -2,6 +2,35 @@ import { useEffect, useMemo, useState } from "react";
 import { api } from "../../../lib/api";
 import { loadSchoolMediaUrl, openSchoolMedia } from "../../../lib/schoolMedia";
 
+/* An inline demonstration image.
+ *
+ * These carry real instructional weight in dog training — hand position,
+ * lure height, what the wrong shape looks like — so they render as content,
+ * not as an attachment: capped so a portrait photo cannot swallow the page,
+ * aspect ratio preserved, and the caption tied to the image with <figcaption>
+ * rather than floating as a loose paragraph.
+ *
+ * ALT is the authored accessible description. It is deliberately NOT the
+ * caption: a caption adds context a sighted reader also needs, while alt
+ * describes the picture itself. When no alt was authored the image is marked
+ * decorative (alt="") instead of repeating the caption or inventing a
+ * description — a wrong description is worse than none.
+ */
+function InlineImage({ src, alt, caption, testid }) {
+  if (!src) return null;
+  return (
+    <figure className="my-1" data-testid={testid}>
+      <img src={src} alt={alt || ""} loading="lazy"
+           className="w-full max-w-full h-auto max-h-[60vh] sm:max-h-[520px] object-contain rounded-xl border border-shBorder/50 bg-black/25" />
+      {caption && (
+        <figcaption className="mt-2 text-[15px] sm:text-[16px] text-shTextMuted leading-[1.5]">
+          {caption}
+        </figcaption>
+      )}
+    </figure>
+  );
+}
+
 function SplitLines({ body }) {
   const lines = String(body || "").split(/\r?\n/).map((x) => x.trim()).filter(Boolean);
   return <ol className="space-y-3">{lines.map((x, i) => <li key={i} className="flex gap-3 text-[17px] sm:text-[18px] text-shText"><span className="w-7 h-7 rounded-full bg-shSecondary/10 border border-shSecondary/25 text-shSecondary text-[12px] font-black grid place-items-center shrink-0">{i + 1}</span><p className="leading-[1.55] pt-0.5">{x}</p></li>)}</ol>;
@@ -54,7 +83,7 @@ function RepBlock({ block }) {
 }
 
 
-function LinkedResourceMedia({ resource, type, title }) {
+function LinkedResourceMedia({ resource, type, title, alt, caption, testid }) {
   const [src, setSrc] = useState(resource?.url || "");
   useEffect(() => {
     if (!resource?.media_id) { setSrc(resource?.url || ""); return undefined; }
@@ -67,7 +96,7 @@ function LinkedResourceMedia({ resource, type, title }) {
   }, [resource?.media_id, resource?.url]);
   if (!src) return <div className="rounded-xl border border-dashed border-shBorder p-3 text-[11px] text-shTextMuted"><i className="fas fa-spinner fa-spin mr-2"/>Loading School media…</div>;
   if (type === "video") return <div className="aspect-video rounded-xl overflow-hidden bg-black"><video src={src} controls playsInline preload="metadata" className="w-full h-full object-contain" /></div>;
-  if (type === "image") return <img src={src} alt={title || resource?.title || "Lesson visual"} className="w-full max-h-[520px] object-contain rounded-xl bg-black/20" />;
+  if (type === "image") return <InlineImage src={src} alt={alt} caption={caption} testid={testid} />;
   return null;
 }
 
@@ -177,8 +206,8 @@ export default function LessonContentBlocks({ blocks = [], enrollmentId, preview
     return <section key={b.id || i} className={`rounded-2xl border p-4 sm:p-5 ${tone}`} data-testid={`lesson-content-block-${b.type}`}>
       {b.title && !hideTitles && <h3 className={`text-[18px] sm:text-[20px] font-black leading-snug mb-2.5 ${b.type === "warning" ? "text-red-300" : b.type === "trainer_tip" ? "text-shPrimary" : "text-shText"}`}>{b.title}</h3>}
       {b.type === "video" && b.url && <div className="aspect-video rounded-xl overflow-hidden bg-black"><video src={b.url} controls playsInline preload="metadata" className="w-full h-full object-contain" /></div>}
-      {b.type === "image" && b.url && <img src={b.url} alt={b.title || "Lesson visual"} className="w-full max-h-[520px] object-contain rounded-xl bg-black/20" />}
-      {b.resource_id && resourceById[b.resource_id] && ["video","image"].includes(b.type) && <LinkedResourceMedia resource={resourceById[b.resource_id]} type={b.type} title={b.title} />}
+      {b.type === "image" && b.url && <InlineImage src={b.url} alt={b.config?.alt} caption={b.config?.caption} testid={`lesson-image-${b.id || i}`} />}
+      {b.resource_id && resourceById[b.resource_id] && ["video","image"].includes(b.type) && <LinkedResourceMedia resource={resourceById[b.resource_id]} type={b.type} title={b.title} alt={b.config?.alt} caption={b.config?.caption} testid={`lesson-image-${b.id || i}`} />}
       {b.resource_id && resourceById[b.resource_id] && b.type === "download" && <button type="button" onClick={() => openResource(resourceById[b.resource_id])} className="w-full text-left rounded-xl border border-shSecondary/20 bg-shSecondary/[0.035] p-3"><i className="fas fa-download text-shSecondary mr-2"/><span className="text-[13px] font-black text-shText">{resourceById[b.resource_id].title}</span><span className="block text-[11px] text-shTextMuted mt-1">Open School resource</span></button>}
       {previewMode && b.resource_id && !resourceById[b.resource_id] && ["video","image","download"].includes(b.type) && <div className="rounded-xl border border-dashed border-shSecondary/25 bg-shSecondary/[0.025] p-3"><i className={`fas ${b.type === "video" ? "fa-video" : b.type === "image" ? "fa-image" : "fa-download"} text-shSecondary mr-2`}/><span className="text-[13px] font-black text-shText">{b.title || "Linked School resource"}</span><span className="block text-[11px] text-shTextMuted mt-1">The selected resource will appear here for enrolled students.</span></div>}
       {b.type === "steps" && <SplitLines body={(b.items || []).length ? b.items.join("\n") : b.body} />}

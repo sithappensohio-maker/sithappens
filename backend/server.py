@@ -16388,6 +16388,36 @@ class LessonContentBlockIn(BaseModel):
     order: int = 0
     active: bool = True
 
+    @model_validator(mode="after")
+    def _bound_media_text(self):
+        """Caption and alt text ride in `config`, where this schema already
+        keeps per-type presentation metadata (quiz explanation, timer
+        seconds, rep target). They are bounded here because `config` is a
+        free dict and these two are the only parts of it rendered as prose
+        to a client.
+
+        CAPTION is client-visible, printed under the image. ALT is the
+        accessible description and is never shown in the lesson body. They
+        stay separate on purpose: a caption that adds context ("directly
+        above and slightly behind the nose") is not a description of the
+        picture, and using one as the other serves neither reader.
+        """
+        cfg = dict(self.config or {})
+        for key, cap in (("caption", 300), ("alt", 250)):
+            if key not in cfg:
+                continue
+            value = cfg.get(key)
+            if value is None:
+                cfg.pop(key, None)
+                continue
+            text = str(value).strip()[:cap]
+            if text:
+                cfg[key] = text
+            else:
+                cfg.pop(key, None)
+        self.config = cfg
+        return self
+
 
 class LessonIn(BaseModel):
     """Training-school expansion (Phase 1) — an organizational/content layer

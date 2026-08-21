@@ -1515,8 +1515,54 @@ const BLOCK_TYPES = [
   ["rep_counter","Rep Counter"],["download","Download / Resource"],["practice","Practice Prompt"],["checkpoint","Checkpoint Prompt"],
 ];
 
+/* Upload a demonstration image straight from the block being authored.
+ *
+ * It goes through the SAME School Resources pipeline the media library
+ * uses — POST the data URL to /admin/school/resources/upload, then register
+ * the resource — so there is one store, one set of MIME/size rules and one
+ * permission gate. The block ends up holding an ordinary `resource_id`,
+ * indistinguishable from one picked out of the library by hand.
+ */
+function BlockImageUpload({ block, onUploaded, onError }) {
+  const [busy, setBusy] = useState(false);
+  const inputId = `block-image-upload-${block.id || block.order || 0}`;
+  const pick = async (file) => {
+    if (!file) return;
+    setBusy(true);
+    try {
+      const data = await new Promise((res, rej) => {
+        const fr = new FileReader();
+        fr.onload = () => res(fr.result);
+        fr.onerror = () => rej(new Error("Could not read that file"));
+        fr.readAsDataURL(file);
+      });
+      const { data: up } = await api.post("/admin/school/resources/upload", { data, filename: file.name });
+      const { data: resource } = await api.post("/admin/school/resources", {
+        title: block.title || file.name, kind: "image", media_id: up.media_id, active: true,
+      });
+      onUploaded(resource.id);
+    } catch (e) {
+      onError?.(formatErr(e.response?.data?.detail) || "Upload failed");
+    }
+    setBusy(false);
+  };
+  return (
+    <div>
+      <input id={inputId} type="file" accept="image/jpeg,image/png,image/webp,image/heic"
+             className="sr-only" data-testid={`block-image-file-${block.order || 0}`}
+             onChange={(e) => { pick(e.target.files?.[0]); e.target.value = ""; }} />
+      <label htmlFor={inputId}
+             className="inline-flex items-center min-h-[40px] px-3 rounded-xl border border-shSecondary/40 bg-shSecondary/[0.06] text-shSecondary text-[11px] font-black uppercase tracking-widest cursor-pointer">
+        <i className={`fas ${busy ? "fa-spinner fa-spin" : "fa-upload"} mr-1.5`} />
+        {busy ? "Uploading…" : block.resource_id ? "Replace image" : "Upload image"}
+      </label>
+    </div>
+  );
+}
+
 function LessonBlocksEditor({ blocks, onChange }) {
   const [schoolResources, setSchoolResources] = useState([]);
+  const [uploadErr, setUploadErr] = useState("");
   useEffect(() => { let live = true; api.get("/admin/school/resources").then(({data}) => { if (live) setSchoolResources((data || []).filter((r) => r.active !== false)); }).catch(() => {}); return () => { live = false; }; }, []);
   const update = (idx, patch) => onChange(blocks.map((b, i) => i === idx ? { ...b, ...patch } : b));
   const add = () => onChange([...blocks, { id: undefined, type: "text", title: "", body: "", url: "", resource_id: null, items: [], config: {}, order: blocks.length, active: true }]);
@@ -1529,6 +1575,7 @@ function LessonBlocksEditor({ blocks, onChange }) {
       <div className="flex flex-wrap items-center gap-2"><span className="text-[10px] font-black text-shTextMuted">#{idx + 1}</span><select value={b.type || "text"} onChange={(e) => update(idx,{type:e.target.value})} className={`${inputCls} max-w-[190px]`}>{BLOCK_TYPES.map(([k,l]) => <option key={k} value={k}>{l}</option>)}</select><label className="text-[11px] text-shText flex items-center gap-1"><input type="checkbox" checked={b.active !== false} onChange={(e)=>update(idx,{active:e.target.checked})}/>Visible</label><span className="flex-1"/><button type="button" onClick={()=>move(idx,-1)} disabled={idx===0} className="px-2 py-1 text-shTextMuted disabled:opacity-30"><i className="fas fa-arrow-up"/></button><button type="button" onClick={()=>move(idx,1)} disabled={idx===blocks.length-1} className="px-2 py-1 text-shTextMuted disabled:opacity-30"><i className="fas fa-arrow-down"/></button><button type="button" onClick={()=>remove(idx)} className="px-2 py-1 text-shDanger"><i className="fas fa-trash"/></button></div>
       <SField label="Heading (optional)"><input value={b.title || ""} onChange={(e)=>update(idx,{title:e.target.value})} className={inputCls}/></SField>
       {!["video","image","download"].includes(b.type) && <SField label={b.type === "quiz" ? "Question / explanation" : "Content"}><textarea rows={2} value={b.body || ""} onChange={(e)=>update(idx,{body:e.target.value})} className={inputCls}/></SField>}
+      {b.type === "image" && <div className="space-y-2"><BlockImageUpload block={{...b, order: idx}} onUploaded={(rid)=>update(idx,{resource_id:rid,url:""})} onError={setUploadErr}/>{uploadErr && <p className="text-[11px] text-shDanger font-bold">{uploadErr}</p>}<div className="grid sm:grid-cols-2 gap-2"><SField label="Caption (shown to the client, optional)"><input value={b.config?.caption || ""} onChange={(e)=>update(idx,{config:{...(b.config||{}),caption:e.target.value}})} placeholder="Correct treat position: above and slightly behind the nose." className={inputCls}/></SField><SField label="Alt text (describes the image for screen readers)"><input value={b.config?.alt || ""} onChange={(e)=>update(idx,{config:{...(b.config||{}),alt:e.target.value}})} placeholder="Handler holds a treat just above the dog's nose." className={inputCls}/></SField></div></div>}
       {["video","image","download"].includes(b.type) && <div className="grid sm:grid-cols-2 gap-2"><SField label="Direct URL (optional)"><input value={b.url || ""} onChange={(e)=>update(idx,{url:e.target.value,resource_id:e.target.value?null:b.resource_id})} className={inputCls}/></SField><SField label="School resource"><select value={b.resource_id || ""} onChange={(e)=>update(idx,{resource_id:e.target.value || null,url:e.target.value?"":b.url})} className={inputCls}><option value="">— Use URL / none —</option>{schoolResources.map((r)=><option key={r.id} value={r.id}>{r.title} · {r.kind}</option>)}</select></SField></div>}
       {["steps","checklist","quiz"].includes(b.type) && <SField label={b.type === "quiz" ? "Answer options — one per line" : "Items — one per line"}><textarea rows={3} value={(b.items || []).join("\n")} onChange={(e)=>{const items=e.target.value.split("\n").map(x=>x.trim()).filter(Boolean);const correct=(b.config||{}).correct_answer;update(idx,{items,config:{...(b.config||{}),correct_answer:items.includes(correct)?correct:null}})}} className={inputCls}/></SField>}
       {b.type === "quiz" && (b.items || []).length > 0 && <div className="grid sm:grid-cols-2 gap-2"><SField label="Correct answer (optional — leave blank for reflection only)"><select value={b.config?.correct_answer || ""} onChange={(e)=>update(idx,{config:{...(b.config||{}),correct_answer:e.target.value||null}})} className={inputCls}><option value="">Reflection only</option>{(b.items||[]).map(o=><option key={o} value={o}>{o}</option>)}</select></SField><SField label="Answer explanation / coaching note (optional)"><textarea rows={2} value={b.config?.explanation || ""} onChange={(e)=>update(idx,{config:{...(b.config||{}),explanation:e.target.value}})} className={inputCls}/></SField></div>}
