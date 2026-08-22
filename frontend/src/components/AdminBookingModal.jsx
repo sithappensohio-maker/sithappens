@@ -88,6 +88,28 @@ export function pickCheckInService(services, prices, wantedType) {
   return { serviceId: fallback ? fallback.id : null, reason: "default", options: [] };
 }
 
+// What the Exact Service picker should say for one service.
+//
+// The picker used to hardcode the catalogue `base_price`, so a client with a
+// $20 rate on a $30 service saw "Daycare A · daycare · $30.00" in the primary
+// control while a separate badge below said $20. The most prominent number in
+// the form was the one the client would NOT be charged, which reads as
+// "Quick Check-In still brings up the whole price".
+//
+// Every amount here comes from the server's own resolve_client_price answer
+// (`effective_price` / `list_price`). Nothing is computed in React.
+export function serviceOptionLabel(svc, prices) {
+  const head = `${svc.name} · ${svc.service_type}`;
+  const p = prices ? prices[svc.id] : null;
+  if (p && p.pricing_source !== "standard"
+      && Number(p.effective_price) !== Number(p.list_price)) {
+    return `${head} · $${Number(p.effective_price).toFixed(2)} client price `
+      + `(standard $${Number(p.list_price).toFixed(2)})`;
+  }
+  const shown = p ? p.list_price : svc.base_price;
+  return `${head} · $${Number(shown || 0).toFixed(2)}`;
+}
+
 export default function AdminBookingModal({ defaultCheckIn = false, defaultDate = null, existing = null, presetClientId = null, presetDogId = null, presetServiceType = null, presetNotes = null, onClose, onCreated }) {
   useEditLock(true);
   const [clients, setClients] = useState([]);
@@ -106,6 +128,10 @@ export default function AdminBookingModal({ defaultCheckIn = false, defaultDate 
   // resolve_client_price. Used to pick the right service and to show staff
   // what the client will actually be charged.
   const [clientServicePrices, setClientServicePrices] = useState(null);
+  // A pricing lookup that FAILED must never be mistaken for "this client has
+  // no special pricing" — that is how someone gets charged the standard rate
+  // by accident.
+  const [clientPriceError, setClientPriceError] = useState("");
   // Set once the operator picks a service by hand, so auto-selection never
   // fights them afterwards.
   const serviceTouchedRef = useRef(false);
@@ -288,15 +314,48 @@ export default function AdminBookingModal({ defaultCheckIn = false, defaultDate 
 
   const selectedClient = useMemo(() => clients.find(c => c.id === clientId) || null, [clients, clientId]);
 
-  // Quick Check-In only: what does THIS client actually pay for each service?
+  // Dog-first check-in resolves the owner at runtime, but GET /clients is
+  // capped (1,000 rows against many more clients on file), so the owner of the
+  // dog just picked is frequently NOT in the loaded window and the Client
+  // readout showed "—". The file already back-fills an out-of-window client
+  // for `existing`/`presetClientId` at load; do the same for one chosen during
+  // the session, and fold it into the SAME `clients` state so nothing is
+  // duplicated and every consumer (readout, dog labels, credits) agrees.
   useEffect(() => {
-    if (!isQuickCheckin || !clientId) { setClientServicePrices(null); return; }
+    if (!clientId || clients.some(c => c.id === clientId)) return;
     let cancelled = false;
-    api.get(`/clients/${clientId}/service-prices`)
-      .then(({ data }) => { if (!cancelled) setClientServicePrices(data?.prices || {}); })
-      .catch(() => { if (!cancelled) setClientServicePrices({}); });
+    api.get(`/clients/${clientId}`)
+      .then(({ data }) => {
+        if (cancelled || !data?.id) return;
+        setClients(prev => (prev.some(c => c.id === data.id) ? prev : [data, ...prev]));
+      })
+      .catch(() => { /* readout falls back to the dash it already showed */ });
     return () => { cancelled = true; };
-  }, [isQuickCheckin, clientId]);
+  }, [clientId, clients]);
+
+  // What does THIS client actually pay for each service? Needed wherever the
+  // Admin is knowingly booking for a specific existing client — the scheduled
+  // flow showed the same misleading catalogue price the check-in flow did.
+  useEffect(() => {
+    if (!clientId) { setClientServicePrices(null); setClientPriceError(""); return; }
+    let cancelled = false;
+    setClientPriceError("");
+    api.get(`/clients/${clientId}/service-prices`)
+      .then(({ data }) => {
+        if (cancelled) return;
+        setClientServicePrices(data?.prices || {});
+        setClientPriceError("");
+      })
+      .catch((e) => {
+        if (cancelled) return;
+        // Deliberately NOT {}: an empty map would look exactly like "no
+        // overrides exist" and would quietly present standard prices.
+        setClientServicePrices(null);
+        setClientPriceError(
+          formatErr(e?.response?.data?.detail) || "Could not load this client's pricing.");
+      });
+    return () => { cancelled = true; };
+  }, [clientId]);
 
   // ...and once we know, select the service that carries their price.
   useEffect(() => {
@@ -307,7 +366,8 @@ export default function AdminBookingModal({ defaultCheckIn = false, defaultDate 
     if (pick.serviceId && pick.serviceId !== serviceId) setServiceId(pick.serviceId);
   }, [isQuickCheckin, clientServicePrices, catalogServices, serviceType]);  // eslint-disable-line react-hooks/exhaustive-deps
 
-  // What the picker is telling the operator right now.
+  // What the picker is telling the operator right now. Quick Check-In only:
+  // the scheduled flow shows truthful prices but does not auto-pick a service.
   const checkInPricing = useMemo(() => {
     if (!isQuickCheckin || !clientServicePrices) return null;
     const pick = pickCheckInService(catalogServices, clientServicePrices, serviceType);
@@ -732,9 +792,22 @@ export default function AdminBookingModal({ defaultCheckIn = false, defaultDate 
               {catalogServices
                 .slice()
                 .sort((a,b) => String(a.service_type).localeCompare(String(b.service_type)) || String(a.name).localeCompare(String(b.name)))
-                .map(s => <option key={s.id} value={s.id}>{s.name} · {s.service_type} · ${Number(s.base_price || 0).toFixed(2)}</option>)}
+                .map(s => <option key={s.id} value={s.id}>{serviceOptionLabel(s, clientServicePrices)}</option>)}
             </select>
             <p className="text-[11px] text-shTextMuted mt-1">Selecting the exact catalog service applies its own price, duration, and booking rules.</p>
+
+            {clientPriceError && (
+              <div className="mt-2 rounded border border-red-500/60 bg-red-500/10 p-2"
+                   data-testid="ab-price-error">
+                <p className="text-[13px] font-black text-red-300 uppercase tracking-widest">
+                  Client pricing unavailable
+                </p>
+                <p className="text-[12px] text-shText mt-1">
+                  {clientPriceError} Prices shown are standard rates — do not continue until
+                  this loads, or this client may be charged the wrong amount.
+                </p>
+              </div>
+            )}
 
             {checkInPricing?.pick?.reason === "ambiguous" && (
               <div className="mt-2 rounded border border-amber-500/60 bg-amber-500/10 p-2"
@@ -1150,7 +1223,9 @@ export default function AdminBookingModal({ defaultCheckIn = false, defaultDate 
 
           <div className="flex justify-end gap-3 pt-2">
             <button onClick={onClose} className="text-shTextMuted font-black uppercase text-[14px] tracking-widest">Cancel</button>
-            <button onClick={submit} disabled={saving || !dogId || (isMultiDate && multiDates.length === 0)} data-testid="ab-submit"
+            <button onClick={submit}
+                    disabled={saving || !dogId || (isMultiDate && multiDates.length === 0) || !!clientPriceError}
+                    data-testid="ab-submit"
                     className="bg-shPrimary text-bgHeader px-8 py-3 rounded font-black text-[14px] uppercase tracking-widest shadow-xl disabled:opacity-50">
               {saving ? "Saving…" : (isEdit
                 ? "Save Changes"
