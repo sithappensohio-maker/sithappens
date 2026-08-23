@@ -1,0 +1,55 @@
+diff --git a/frontend/src/components/boardTrainScheduling.test.js b/frontend/src/components/boardTrainScheduling.test.js
+new file mode 100644
+index 0000000..16bf801
+--- /dev/null
++++ b/frontend/src/components/boardTrainScheduling.test.js
+@@ -0,0 +1,49 @@
++// Board & Train is priced/enrolled as training, but it occupies the facility
++// for the full linked Program Studio duration. Quick Check-In must therefore
++// render/send a real multi-day span instead of a one-hour training slot.
++import fs from "fs";
++import path from "path";
++import { addDaysISO } from "./AdminBookingModal";
++
++const src = fs.readFileSync(path.join(__dirname, "AdminBookingModal.jsx"), "utf8");
++const backend = fs.readFileSync(
++  path.join(__dirname, "..", "..", "..", "backend", "server.py"), "utf8");
++
++test("1/2/3 week Board & Train pickup dates are full program spans", () => {
++  expect(addDaysISO("2026-08-23", 7)).toBe("2026-08-30");
++  expect(addDaysISO("2026-08-23", 14)).toBe("2026-09-06");
++  expect(addDaysISO("2026-08-23", 21)).toBe("2026-09-13");
++});
++
++test("the modal recognizes linked Board & Train metadata without changing service_type", () => {
++  expect(src).toMatch(/package_program_type === "board_train"/);
++  expect(src).toMatch(/residential_training === true/);
++  expect(src).toMatch(/package_duration_days/);
++  expect(src).toMatch(/const isDateSpanService = serviceType === "boarding" \|\| isBoardTrainStay/);
++});
++
++test("Board & Train computes a pickup date and cannot become a multi-date training appointment", () => {
++  expect(src).toMatch(/addDaysISO\(date, boardTrainDurationDays\)/);
++  expect(src).toMatch(/!isEdit && !isDateSpanService/);
++  expect(src).toMatch(/readOnly=\{isBoardTrainStay\}/);
++  expect(src).toMatch(/Program Pickup Date/);
++});
++
++test("Board & Train suppresses appointment time and submits the residential end date", () => {
++  expect(src).toMatch(/includes\(serviceType\) && !isBoardTrainStay \? \(appointmentTime \|\| ""\) : ""/);
++  expect(src).toMatch(/end_date: isDateSpanService \? \(endDate \|\| date\) : null/);
++  expect(src).toMatch(/dropoff_time: isDateSpanService \? \(dropoffTime \|\| undefined\) : undefined/);
++});
++
++test("the server is still authoritative and derives span from the linked program", () => {
++  expect(backend).toMatch(/async def _board_train_stay_info/);
++  expect(backend).toMatch(/program\.get\("type"\) != "board_train"/);
++  expect(backend).toMatch(/body\.end_date = \(start \+ timedelta\(days=int\(days\)\)\)\.isoformat\(\)/);
++  expect(backend).toMatch(/body\.time = ""/);
++});
++
++test("legacy one-day Board & Train rows are repaired at startup, not by changing history", () => {
++  expect(backend).toMatch(/async def _repair_open_board_train_booking_spans/);
++  expect(backend).toMatch(/"checked_out_at"/);
++  expect(backend).toMatch(/Board & Train scheduling migration: repaired/);
++});
