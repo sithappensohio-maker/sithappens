@@ -70,6 +70,7 @@ def test_duration_helpers_only_recognize_board_train():
 def test_runtime_hook_is_installed_on_canonical_resolver():
     assert getattr(server, "_board_train_scheduling_installed", False) is True
     assert getattr(server._resolve_base_service_for_booking, "_board_train_residential_wrapper", False) is True
+    assert getattr(server._booking_start_local, "_board_train_residential_wrapper", False) is True
 
 
 def test_one_two_three_week_packages_schedule_full_stay_and_charge_package_once():
@@ -79,14 +80,33 @@ def test_one_two_three_week_packages_schedule_full_stay_and_charge_package_once(
             with _program(weeks) as program, _service(program["id"], price=1200.0) as svc:
                 booking = run(server.create_booking(server.BookingIn(
                     dog_id=dog["id"], service_type="training", service_id=svc["id"],
-                    date=start.isoformat(), time="10:00",
-                    override_capacity=True, override_vaccines=True,
+                    date=start.isoformat(), dropoff_time="09:00",
+                    # Reproduce Quick Check-In exactly: no appointment time and
+                    # no capacity override. The old code failed here with
+                    # "Please select a time for this training service."
+                    override_vaccines=True,
                 ), _admin_user()))
                 assert booking["service_type"] == "training"
                 assert booking["end_date"] == (start + timedelta(days=weeks * 7)).isoformat()
                 assert booking["time"] == ""
                 # The price is for the package, not package-price × calendar days.
                 assert float(booking["estimated_price"]) == 1200.0
+
+
+def test_ordinary_training_still_requires_appointment_time():
+    settings = run(server.get_settings())
+    body = server.BookingIn(
+        dog_id="not-used",
+        service_type="training",
+        date=(date.today() + timedelta(days=1)).isoformat(),
+        dropoff_time="09:00",
+    )
+    try:
+        server._booking_start_local(body, settings)
+    except Exception as exc:
+        assert "select a time" in str(exc).lower()
+    else:
+        raise AssertionError("ordinary training unexpectedly bypassed appointment-time validation")
 
 
 def test_stock_legacy_per_week_service_gets_seven_day_span_without_manual_recreation():

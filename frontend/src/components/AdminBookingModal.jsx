@@ -11,6 +11,54 @@ const fmtCredits = (n) => {
   return Number.isInteger(val) ? String(val) : val.toFixed(1);
 };
 
+export const addDaysISO = (iso, days) => {
+  if (!iso || !Number(days)) return "";
+  const d = new Date(`${iso}T12:00:00`);
+  if (Number.isNaN(d.getTime())) return "";
+  d.setDate(d.getDate() + Number(days));
+  const y = d.getFullYear();
+  const m = String(d.getMonth() + 1).padStart(2, "0");
+  const day = String(d.getDate()).padStart(2, "0");
+  return `${y}-${m}-${day}`;
+};
+
+
+export const boardTrainProgramDurationDays = (program) => {
+  if (!program || program.type !== "board_train") return 0;
+  const fmt = program.format || {};
+  const count = Number(fmt.count || 0);
+  const unit = String(fmt.unit || "").toLowerCase();
+  if (count > 0 && ["week", "weeks", "wk", "wks"].includes(unit)) return count * 7;
+  if (count > 0 && ["day", "days"].includes(unit)) return count;
+  const estimatedWeeks = Number(program.estimated_weeks || 0);
+  return estimatedWeeks > 0 ? estimatedWeeks * 7 : 0;
+};
+
+export const legacyBoardTrainDurationDays = (service) => {
+  const hay = `${service?.slug || ""} ${service?.name || ""}`.toLowerCase().replaceAll("_", " ");
+  if (!/board\s*(?:&|and)?\s*train/.test(hay)) return 0;
+  const m = hay.match(/\b(\d{1,2})\s*[- ]?\s*(?:week|weeks|wk|wks)\b/);
+  if (m) return Number(m[1]) * 7;
+  if (/\bper\s+(?:week|wk)\b/.test(hay) || hay.includes("board train week")) return 7;
+  return 0;
+};
+
+export const resolveBoardTrainSchedule = (service, programs = []) => {
+  if (!service) return { isBoardTrain: false, durationDays: 0, program: null };
+  const linked = service.package_program_id
+    ? (programs || []).find(p => p.id === service.package_program_id) || null
+    : null;
+  if (linked?.type === "board_train") {
+    return {
+      isBoardTrain: true,
+      durationDays: boardTrainProgramDurationDays(linked),
+      program: linked,
+    };
+  }
+  const legacyDays = legacyBoardTrainDurationDays(service);
+  return { isBoardTrain: legacyDays > 0, durationDays: legacyDays, program: null };
+};
+
 const creditPoolForService = (serviceType) => {
   if (serviceType === "daycare") return { key: "credits", label: "daycare credits" };
   if (serviceType === "training") return { key: "training_credits", label: "training credits" };
@@ -124,6 +172,7 @@ export default function AdminBookingModal({ defaultCheckIn = false, defaultDate 
   const [serviceType, setServiceType] = useState(existing?.service_type || presetServiceType || "daycare");
   const [serviceId, setServiceId] = useState(existing?.service_id || "");
   const [catalogServices, setCatalogServices] = useState([]);
+  const [catalogPrograms, setCatalogPrograms] = useState([]);
   // Per-service effective prices for THIS client, straight from the server's
   // resolve_client_price. Used to pick the right service and to show staff
   // what the client will actually be charged.
@@ -217,8 +266,16 @@ export default function AdminBookingModal({ defaultCheckIn = false, defaultDate 
   useEffect(() => {
     (async () => {
       try {
-        const [cRes, dRes, sRes, svcRes] = await Promise.all([
-          api.get("/clients"), api.get("/dogs"), api.get("/settings"), api.get("/services"),
+        const [cRes, dRes, sRes, svcRes, progRes] = await Promise.all([
+          api.get("/clients"),
+          api.get("/dogs"),
+          api.get("/settings"),
+          api.get("/services"),
+          // Program Studio carries the authoritative 1/2/3-week Board & Train
+          // duration. Keep the rest of Quick Check-In usable if this optional
+          // read fails; a linked service will then fail closed below instead
+          // of being treated as a one-hour appointment.
+          api.get("/programs").catch(() => ({ data: [] })),
         ]);
         // The list endpoints are capped; a preset/existing client or dog that
         // falls outside the returned window must still resolve, otherwise the
@@ -238,6 +295,7 @@ export default function AdminBookingModal({ defaultCheckIn = false, defaultDate 
         setDogs(dogRows);
         const activeBaseServices = (Array.isArray(svcRes.data) ? svcRes.data : []).filter(s => s.active !== false && !s.is_addon);
         setCatalogServices(activeBaseServices);
+        setCatalogPrograms(Array.isArray(progRes.data) ? progRes.data : []);
         if (existing?.service_id) {
           const chosen = activeBaseServices.find(s => s.id === existing.service_id);
           if (chosen) { setServiceId(chosen.id); setServiceType(chosen.service_type); }
@@ -313,6 +371,21 @@ export default function AdminBookingModal({ defaultCheckIn = false, defaultDate 
   }, [dogs, clients]);
 
   const selectedClient = useMemo(() => clients.find(c => c.id === clientId) || null, [clients, clientId]);
+  const selectedCatalogService = useMemo(
+    () => catalogServices.find(s => s.id === serviceId) || null,
+    [catalogServices, serviceId]
+  );
+  // Board & Train stays remain service_type=training for pricing/credits, but
+  // their linked Program Studio record owns the residential duration. Do NOT
+  // key this off service_type: that is exactly why they were rendered as
+  // one-hour training appointments before.
+  const boardTrainSchedule = useMemo(
+    () => resolveBoardTrainSchedule(selectedCatalogService, catalogPrograms),
+    [selectedCatalogService, catalogPrograms]
+  );
+  const boardTrainDurationDays = Number(boardTrainSchedule.durationDays || 0);
+  const isBoardTrainStay = boardTrainSchedule.isBoardTrain;
+  const isDateSpanService = serviceType === "boarding" || isBoardTrainStay;
 
   // Dog-first check-in resolves the owner at runtime, but GET /clients is
   // capped (1,000 rows against many more clients on file), so the owner of the
@@ -384,13 +457,23 @@ export default function AdminBookingModal({ defaultCheckIn = false, defaultDate 
   const rabies = selectedDog?.vaccines?.rabies || "";
   const rabiesOk = rabies && rabies >= todayISO();
 
-  // Force-off multi-date when service becomes boarding (multi-date isn't valid
-  // for spanning stays) or when editing (you edit a single booking at a time).
+  // A Board & Train package owns its stay length. Changing the start date or
+  // switching between 1/2/3-week programs immediately recomputes pickup so
+  // Quick Check-In cannot accidentally submit a one-day training appointment.
   useEffect(() => {
-    if (serviceType === "boarding" || isEdit) {
+    if (!isBoardTrainStay || !date || boardTrainDurationDays <= 0) return;
+    const computed = addDaysISO(date, boardTrainDurationDays);
+    if (computed && computed !== endDate) setEndDate(computed);
+    if (appointmentTime) setAppointmentTime("");
+  }, [isBoardTrainStay, boardTrainDurationDays, date]); // eslint-disable-line react-hooks/exhaustive-deps
+
+  // Force-off multi-date for any spanning stay (ordinary boarding OR Board &
+  // Train) and when editing (you edit a single booking at a time).
+  useEffect(() => {
+    if (isDateSpanService || isEdit) {
       setIsMultiDate(false);
     }
-  }, [serviceType, isEdit]);
+  }, [isDateSpanService, isEdit]);
 
   // Re-load eligible add-ons whenever the base service type changes.
   useEffect(() => {
@@ -433,16 +516,16 @@ export default function AdminBookingModal({ defaultCheckIn = false, defaultDate 
       return;
     }
 
-    if (serviceType === "boarding") {
+    if (isDateSpanService) {
       if (!endDate) {
         setQuoteLines([]);
-        setQuoteError("Pick a pickup date to see the boarding estimate.");
+        setQuoteError(isBoardTrainStay ? "Board & Train duration is unavailable." : "Pick a pickup date to see the boarding estimate.");
         setQuoteLoading(false);
         return;
       }
       if (endDate <= date) {
         setQuoteLines([]);
-        setQuoteError("Pickup date must be after the drop-off date to calculate boarding nights.");
+        setQuoteError(isBoardTrainStay ? "Board & Train must span at least one day." : "Pickup date must be after the drop-off date to calculate boarding nights.");
         setQuoteLoading(false);
         return;
       }
@@ -474,10 +557,10 @@ export default function AdminBookingModal({ defaultCheckIn = false, defaultDate 
             service_type: serviceType,
             service_id: serviceId || undefined,
             date: d,
-            end_date: serviceType === "boarding" ? endDate : null,
+            end_date: isDateSpanService ? endDate : null,
             dog_id: row.dog_id,
-            dropoff_time: serviceType === "boarding" ? (dropoffTime || undefined) : undefined,
-            pickup_time: serviceType === "boarding" ? (pickupTime || undefined) : undefined,
+            dropoff_time: isDateSpanService ? (dropoffTime || undefined) : undefined,
+            pickup_time: isDateSpanService ? (pickupTime || undefined) : undefined,
             addon_service_ids: row.addon_service_ids || [],
           }).then(({ data }) => ({
             dog_id: row.dog_id,
@@ -516,6 +599,8 @@ export default function AdminBookingModal({ defaultCheckIn = false, defaultDate 
     selectedAddonIds,
     extraDogs,
     dogs,
+    isDateSpanService,
+    isBoardTrainStay,
   ]);
 
   const quoteSummary = useMemo(() => {
@@ -586,6 +671,10 @@ export default function AdminBookingModal({ defaultCheckIn = false, defaultDate 
   const submit = async () => {
     setErr("");
     if (!dogId) { setErr("Pick a dog"); return; }
+    if (isBoardTrainStay && boardTrainDurationDays <= 0) {
+      setErr("Board & Train duration is unavailable. Refresh and verify the linked Program Studio duration before check-in.");
+      return;
+    }
     if (isMultiDate && !isEdit) {
       if (multiDates.length === 0) { setErr("Pick at least one date"); return; }
       setSaving(true);
@@ -596,7 +685,7 @@ export default function AdminBookingModal({ defaultCheckIn = false, defaultDate 
           service_type: serviceType,
           service_id: serviceId || undefined,
           grooming_type: serviceType === "grooming" ? groomingType : null,
-          time: ["training", "grooming", "photography"].includes(serviceType) ? (appointmentTime || "") : "",
+          time: ["training", "grooming", "photography"].includes(serviceType) && !isBoardTrainStay ? (appointmentTime || "") : "",
           notes,
           override_capacity: overrideCapacity,
           override_vaccines: overrideVaccines,
@@ -618,32 +707,32 @@ export default function AdminBookingModal({ defaultCheckIn = false, defaultDate 
       setSaving(false);
       return;
     }
-    if (serviceType === "boarding" && endDate && endDate < date) { setErr("End date must be after start date"); return; }
+    if (isDateSpanService && endDate && endDate <= date) { setErr("End date must be after start date"); return; }
     setSaving(true);
     try {
       if (isEdit) {
         await api.patch(`/bookings/${existing.id}`, {
           notes,
           date,
-          end_date: serviceType === "boarding" ? (endDate || date) : null,
+          end_date: isDateSpanService ? (endDate || date) : null,
           kennel: serviceType === "boarding" ? kennel : "",
           dropoff_time: dropoffTime || "",
           pickup_time: pickupTime || "",
-          time: ["training", "grooming", "photography"].includes(serviceType) ? (appointmentTime || "") : "",
+          time: ["training", "grooming", "photography"].includes(serviceType) && !isBoardTrainStay ? (appointmentTime || "") : "",
         });
         onCreated?.();
       } else {
         const body = {
           dog_id: dogId,
           date,
-          end_date: serviceType === "boarding" ? (endDate || date) : null,
+          end_date: isDateSpanService ? (endDate || date) : null,
           service_type: serviceType,
           service_id: serviceId || undefined,
           grooming_type: serviceType === "grooming" ? groomingType : null,
           kennel: serviceType === "boarding" ? kennel : "",
           dropoff_time: dropoffTime || "",
           pickup_time: pickupTime || "",
-          time: ["training", "grooming", "photography"].includes(serviceType) ? (appointmentTime || "") : "",
+          time: ["training", "grooming", "photography"].includes(serviceType) && !isBoardTrainStay ? (appointmentTime || "") : "",
           notes,
           override_vaccines: overrideVaccines,
           override_capacity: overrideCapacity,
@@ -665,13 +754,13 @@ export default function AdminBookingModal({ defaultCheckIn = false, defaultDate 
               })),
             ],
             date,
-            end_date: serviceType === "boarding" ? (endDate || date) : null,
+            end_date: isDateSpanService ? (endDate || date) : null,
             service_type: serviceType,
             service_id: serviceId || undefined,
             grooming_type: serviceType === "grooming" ? groomingType : null,
             dropoff_time: dropoffTime || "",
             pickup_time: pickupTime || "",
-            time: ["training", "grooming", "photography"].includes(serviceType) ? (appointmentTime || "") : "",
+            time: ["training", "grooming", "photography"].includes(serviceType) && !isBoardTrainStay ? (appointmentTime || "") : "",
             notes,
             override_vaccines: overrideVaccines,
             override_capacity: overrideCapacity,
@@ -795,6 +884,23 @@ export default function AdminBookingModal({ defaultCheckIn = false, defaultDate 
                 .map(s => <option key={s.id} value={s.id}>{serviceOptionLabel(s, clientServicePrices)}</option>)}
             </select>
             <p className="text-[11px] text-shTextMuted mt-1">Selecting the exact catalog service applies its own price, duration, and booking rules.</p>
+            {isBoardTrainStay && (
+              <div className="mt-2 rounded border border-shPrimary/40 bg-shPrimary/10 p-2" data-testid="ab-board-train-stay">
+                <p className="text-[12px] font-black text-shPrimary uppercase tracking-widest">
+                  <i className="fas fa-house-chimney mr-1"/>Board &amp; Train · {boardTrainSchedule.program?.format?.unit?.toLowerCase().startsWith("week")
+                    ? `${boardTrainSchedule.program?.format?.count} week${Number(boardTrainSchedule.program?.format?.count) === 1 ? "" : "s"}`
+                    : `${boardTrainDurationDays} days`}
+                </p>
+                <p className="text-[12px] text-shTextMuted mt-1">This dog will stay scheduled every day through the program pickup date.</p>
+              </div>
+            )}
+
+            {isBoardTrainStay && boardTrainDurationDays <= 0 && (
+              <div className="mt-2 rounded border border-red-500/60 bg-red-500/10 p-2" data-testid="ab-board-train-duration-error">
+                <p className="text-[12px] font-black text-red-300 uppercase tracking-widest">Board &amp; Train duration unavailable</p>
+                <p className="text-[12px] text-red-200 mt-1">This service is linked as Board &amp; Train, but its Program Studio duration could not be loaded. Refresh before checking the dog in.</p>
+              </div>
+            )}
 
             {clientPriceError && (
               <div className="mt-2 rounded border border-red-500/60 bg-red-500/10 p-2"
@@ -872,7 +978,7 @@ export default function AdminBookingModal({ defaultCheckIn = false, defaultDate 
           )}
 
           {/* Multi-date toggle (admin only, non-boarding, not when editing) */}
-          {!isEdit && serviceType !== "boarding" && (
+          {!isEdit && !isDateSpanService && (
             <label className="flex items-center gap-3 cursor-pointer bg-shPrimary/5 border border-shPrimary/30 rounded p-2.5" data-testid="ab-multidate-toggle-row">
               <input type="checkbox" checked={isMultiDate} onChange={(e)=>setIsMultiDate(e.target.checked)}
                      data-testid="ab-multidate-toggle"
@@ -900,21 +1006,28 @@ export default function AdminBookingModal({ defaultCheckIn = false, defaultDate 
           ) : (
             <div className="grid grid-cols-2 gap-3">
               <div>
-                <label className="text-[14px] font-black text-shTextMuted uppercase tracking-widest">{serviceType==="boarding"?"Drop-off Date":"Date"}</label>
+                <label className="text-[14px] font-black text-shTextMuted uppercase tracking-widest">{isDateSpanService?"Drop-off Date":"Date"}</label>
                 <input type="date" value={date} onChange={(e)=>setDate(e.target.value)} data-testid="ab-date"
                        className="w-full mt-1 bg-[var(--sh-card-base)] border border-shBorder rounded p-2 text-shText text-xs" style={{colorScheme:"dark"}} />
               </div>
-              {serviceType==="boarding" && (
+              {isDateSpanService && (
                 <div>
-                  <label className="text-[14px] font-black text-shTextMuted uppercase tracking-widest">Pickup Date</label>
-                  <input type="date" value={endDate} onChange={(e)=>setEndDate(e.target.value)} data-testid="ab-end-date"
-                         className="w-full mt-1 bg-[var(--sh-card-base)] border border-shBorder rounded p-2 text-shText text-xs" style={{colorScheme:"dark"}} />
+                  <label className="text-[14px] font-black text-shTextMuted uppercase tracking-widest">{isBoardTrainStay ? "Program Pickup Date" : "Pickup Date"}</label>
+                  <input type="date" value={endDate} onChange={(e)=>setEndDate(e.target.value)} readOnly={isBoardTrainStay} data-testid="ab-end-date"
+                         className={`w-full mt-1 bg-[var(--sh-card-base)] border border-shBorder rounded p-2 text-shText text-xs ${isBoardTrainStay ? "opacity-80 cursor-not-allowed" : ""}`} style={{colorScheme:"dark"}} />
+                  {isBoardTrainStay && (
+                    <p className="text-[12px] text-shPrimary font-black uppercase tracking-widest mt-1" data-testid="ab-board-train-duration">
+                      <i className="fas fa-house-chimney mr-1"/>{boardTrainSchedule.program?.format?.unit?.toLowerCase().startsWith("week")
+                    ? `${boardTrainSchedule.program?.format?.count} week${Number(boardTrainSchedule.program?.format?.count) === 1 ? "" : "s"}`
+                    : `${boardTrainDurationDays} days`} residential stay · set by Program Studio
+                    </p>
+                  )}
                 </div>
               )}
             </div>
           )}
 
-          {serviceType==="boarding" && kennels.length > 0 && (
+          {serviceType === "boarding" && kennels.length > 0 && (
             <div>
               <label className="text-[14px] font-black text-shTextMuted uppercase tracking-widest">Kennel / Room (optional)</label>
               <select value={kennel} onChange={(e)=>setKennel(e.target.value)} data-testid="ab-kennel"
@@ -925,7 +1038,7 @@ export default function AdminBookingModal({ defaultCheckIn = false, defaultDate 
             </div>
           )}
 
-          {["training", "grooming", "photography"].includes(serviceType) ? (
+          {["training", "grooming", "photography"].includes(serviceType) && !isBoardTrainStay ? (
             <div>
               <label className="text-[14px] font-black text-shAccent uppercase tracking-widest">
                 <i className="fas fa-clock mr-2"/>Appointment Time
