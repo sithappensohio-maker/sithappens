@@ -1,0 +1,214 @@
+diff --git a/backend/test_board_train_residential_scheduling.py b/backend/test_board_train_residential_scheduling.py
+new file mode 100644
+index 0000000..594f960
+--- /dev/null
++++ b/backend/test_board_train_residential_scheduling.py
+@@ -0,0 +1,208 @@
++"""Board & Train is a training PACKAGE for pricing but a residential STAY for scheduling.
++
++Regression: Quick Check-In created 1/2/3-week Board & Train bookings as one-day
++training appointments because the service row correctly remained
++``service_type='training'`` and the generic training path discarded end_date.
++
++The linked Program Studio record is the canonical duration source. These tests
++prove the server derives a multi-day booking span without changing the service
++type or multiplying a package price by the number of days, and that the
++startup migration repairs only still-open legacy one-day rows.
++"""
++import contextlib
++import uuid
++from datetime import date, timedelta
++
++import pytest
++
++import _test_env  # noqa: F401 — must run before `import server`
++import server
++from _test_loop import run
++from test_stale_price_snapshot_fix import _admin_user, _client_and_dog
++
++TAG = "TEST_BOARD_TRAIN_SPAN"
++
++
++@contextlib.contextmanager
++def _board_train_program(weeks: int):
++    pid = str(uuid.uuid4())
++    program = {
++        "id": pid,
++        "name": f"{TAG} {weeks}-Week {uuid.uuid4().hex[:6]}",
++        "slug": f"{TAG.lower()}_{weeks}_{uuid.uuid4().hex[:6]}",
++        "type": "board_train",
++        "format": {"count": weeks, "unit": "weeks"},
++        "modules": [],
++        "completion_rule": {"type": "manual"},
++        "active": True,
++        "created_at": server.now_iso(),
++    }
++    run(server.db.programs.insert_one(program))
++    try:
++        yield program
++    finally:
++        run(server.db.dog_programs.delete_many({"program_id": pid}))
++        run(server.db.programs.delete_one({"id": pid}))
++
++
++@contextlib.contextmanager
++def _board_train_service(program_id: str, price: float = 1200.0, *, service_type: str = "training"):
++    svc = run(server.create_service(server.ServiceIn(
++        name=f"{TAG} Package {uuid.uuid4().hex[:6]}",
++        service_type=service_type,
++        base_price=price,
++        active=True,
++        package_program_id=program_id,
++        duration_minutes=60,
++    ), _admin_user()))
++    try:
++        yield svc
++    finally:
++        run(server.db.bookings.delete_many({"service_id": svc["id"]}))
++        run(server.db.services.delete_one({"id": svc["id"]}))
++
++
++def test_program_duration_uses_program_studio_weeks_as_canonical_span():
++    for weeks in (1, 2, 3):
++        assert server._program_residential_duration_days({
++            "type": "board_train", "format": {"count": weeks, "unit": "weeks"}
++        }) == weeks * 7
++    assert server._program_residential_duration_days({
++        "type": "private_lessons", "format": {"count": 3, "unit": "weeks"}
++    }) is None
++
++
++@pytest.mark.parametrize("weeks", [1, 2, 3])
++def test_training_type_board_train_booking_spans_full_program_without_multiplying_price(weeks):
++    start = date.today()
++    with _client_and_dog() as (_client, dog), \
++         _board_train_program(weeks) as program, \
++         _board_train_service(program["id"], price=1200.0) as svc:
++        booking = run(server.create_booking(server.BookingIn(
++            dog_id=dog["id"],
++            service_type="training",
++            service_id=svc["id"],
++            date=start.isoformat(),
++            time="10:00",  # old bug rendered it as a one-hour appointment
++            override_capacity=True,
++            override_vaccines=True,
++        ), _admin_user()))
++
++        expected_pickup = (start + timedelta(days=weeks * 7)).isoformat()
++        assert booking["service_type"] == "training"  # pricing semantics stay training
++        assert booking["end_date"] == expected_pickup
++        assert booking["time"] == ""                 # residential/all-day, not timed appointment
++        assert booking["residential_training"] is True
++        assert booking["package_program_id"] == program["id"]
++        assert booking["package_duration_days"] == weeks * 7
++        # Whole-package price is charged once. It must NOT become 1200 * 7/14/21.
++        assert float(booking["estimated_price"]) == 1200.0
++
++        stored = run(server.db.bookings.find_one({"id": booking["id"]}, {"_id": 0}))
++        assert stored["end_date"] == expected_pickup
++        assert stored["residential_training"] is True
++
++
++
++def test_legacy_unlinked_per_week_board_train_service_is_still_scheduled_for_one_week():
++    """The stock catalog predates package_program_id and contains a plain
++    ``Board & Train (per week)`` training service. Existing installs must not
++    require the owner to recreate that row just to get a residential span."""
++    start = date.today()
++    with _client_and_dog() as (_client, dog):
++        svc = run(server.create_service(server.ServiceIn(
++            name=f"{TAG} Board & Train (per week)",
++            slug=f"board_train_week_{uuid.uuid4().hex[:6]}",
++            service_type="training",
++            base_price=900.0,
++            active=True,
++        ), _admin_user()))
++        try:
++            booking = run(server.create_booking(server.BookingIn(
++                dog_id=dog["id"], service_type="training", service_id=svc["id"],
++                date=start.isoformat(), time="11:00",
++                override_capacity=True, override_vaccines=True,
++            ), _admin_user()))
++            assert booking["end_date"] == (start + timedelta(days=7)).isoformat()
++            assert booking["time"] == ""
++            assert booking["residential_training"] is True
++            assert booking["package_program_id"] is None
++            assert booking["package_duration_days"] == 7
++            assert float(booking["estimated_price"]) == 900.0
++
++            rows = run(server.list_services(_admin_user()))
++            row = next(r for r in rows if r["id"] == svc["id"])
++            assert row["residential_training"] is True
++            assert row["package_duration_days"] == 7
++            assert row["package_duration_label"] == "1 week"
++            assert row["package_schedule_source"] == "legacy_service_duration"
++        finally:
++            run(server.db.bookings.delete_many({"service_id": svc["id"]}))
++            run(server.db.services.delete_one({"id": svc["id"]}))
++
++def test_services_endpoint_exposes_linked_board_train_duration_to_booking_ui():
++    with _board_train_program(2) as program, _board_train_service(program["id"]) as svc:
++        rows = run(server.list_services(_admin_user()))
++        row = next(r for r in rows if r["id"] == svc["id"])
++        assert row["package_program_type"] == "board_train"
++        assert row["package_program_name"] == program["name"]
++        assert row["package_duration_days"] == 14
++        assert row["package_duration_label"] == "2 weeks"
++
++
++def test_existing_open_one_day_board_train_is_repaired_but_checked_out_history_is_not():
++    start = date.today()
++    with _client_and_dog() as (client, dog), \
++         _board_train_program(1) as program, \
++         _board_train_service(program["id"]) as svc:
++        open_id = str(uuid.uuid4())
++        history_id = str(uuid.uuid4())
++        base = {
++            "dog_id": dog["id"],
++            "client_id": client["id"],
++            "date": start.isoformat(),
++            "service_type": "training",
++            "service_id": svc["id"],
++            "status": "approved",
++            "end_date": None,
++            "time": "10:00",
++            "created_at": server.now_iso(),
++        }
++        run(server.db.bookings.insert_many([
++            {**base, "id": open_id, "checked_in_at": server.now_iso(), "checked_out_at": None},
++            {**base, "id": history_id, "checked_in_at": server.now_iso(), "checked_out_at": server.now_iso()},
++        ]))
++
++        repaired = run(server._repair_open_board_train_booking_spans())
++        assert repaired >= 1
++
++        open_row = run(server.db.bookings.find_one({"id": open_id}, {"_id": 0}))
++        history_row = run(server.db.bookings.find_one({"id": history_id}, {"_id": 0}))
++        assert open_row["end_date"] == (start + timedelta(days=7)).isoformat()
++        assert open_row["time"] == ""
++        assert open_row["residential_training"] is True
++        assert open_row["package_duration_days"] == 7
++        assert history_row.get("end_date") is None
++        assert history_row.get("time") == "10:00"
++
++        # Idempotent: once the open row has an end_date, running again changes nothing.
++        assert run(server._repair_open_board_train_booking_spans()) == 0
++
++
++def test_boarding_type_board_train_preserves_an_explicit_pickup_date():
++    """Some older/custom package services are service_type=boarding. They
++    already have a normal editable boarding span, so do not overwrite a pickup
++    date the operator deliberately chose just because a program is linked."""
++    start = date.today()
++    custom_pickup = (start + timedelta(days=10)).isoformat()
++    with _client_and_dog() as (_client, dog), \
++         _board_train_program(1) as program, \
++         _board_train_service(program["id"], service_type="boarding", price=75.0) as svc:
++        body = server.BookingIn(
++            dog_id=dog["id"], service_type="boarding", service_id=svc["id"],
++            date=start.isoformat(), end_date=custom_pickup,
++            override_capacity=True, override_vaccines=True,
++        )
++        info = run(server._apply_board_train_booking_span(body, svc))
++        assert info["duration_days"] == 7
++        assert body.end_date == custom_pickup
