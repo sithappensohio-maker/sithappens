@@ -1,0 +1,105 @@
+name: Apply Board Train residential scheduling fix bootstrap
+
+on:
+  push:
+    branches:
+      - main
+
+permissions:
+  contents: write
+
+jobs:
+  apply-test-promote:
+    if: github.sha != '6b27ca87435210a1e62f76723edc18117d06b8a9'
+    runs-on: ubuntu-latest
+    services:
+      mongo:
+        image: mongo:7
+        ports:
+          - 27017:27017
+        options: >-
+          --health-cmd "mongosh --eval 'db.runCommand({ ping: 1 })'"
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 10
+    env:
+      MONGO_URL: mongodb://127.0.0.1:27017
+      DB_NAME: sit_happens_test_disposable
+      JWT_SECRET: github-actions-board-train-test-secret-not-production
+      APP_PUBLIC_URL: http://localhost:3000
+      ADMIN_PASSWORD: github-actions-test-admin-password
+    steps:
+      - name: Checkout bootstrap main
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Validate bootstrap ancestry and load exact reviewed patches
+        shell: bash
+        run: |
+          set -euo pipefail
+          test "$(git rev-parse HEAD^)" = "6b27ca87435210a1e62f76723edc18117d06b8a9"
+          test -f .github/workflows/apply-board-train-fix-bootstrap.yml
+          git fetch origin automation/apply-board-train-residential-fix
+          mkdir -p /tmp/board-train-fix
+          for n in 01-server 02-backend-tests 03-frontend 04-frontend-tests; do
+            git show "origin/automation/apply-board-train-residential-fix:.automation/board-train-fix/${n}.patch" > "/tmp/board-train-fix/${n}.patch"
+            git apply --check "/tmp/board-train-fix/${n}.patch"
+            git apply "/tmp/board-train-fix/${n}.patch"
+          done
+          rm .github/workflows/apply-board-train-fix-bootstrap.yml
+          git diff --check
+          git add -A
+          printf '%s\n' \
+            .github/workflows/apply-board-train-fix-bootstrap.yml \
+            backend/server.py \
+            backend/test_board_train_residential_scheduling.py \
+            frontend/src/components/AdminBookingModal.jsx \
+            frontend/src/components/boardTrainScheduling.test.js \
+            | sort > /tmp/expected-files
+          git diff --cached --name-only | sort > /tmp/actual-files
+          diff -u /tmp/expected-files /tmp/actual-files
+          git diff --cached --check
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+          cache: pip
+          cache-dependency-path: backend/requirements.txt
+
+      - name: Install backend dependencies
+        run: python -m pip install -r backend/requirements.txt
+
+      - name: Run Board Train backend regressions
+        shell: bash
+        run: |
+          python -m py_compile backend/server.py backend/test_board_train_residential_scheduling.py
+          cd backend
+          python -m pytest -q test_board_train_residential_scheduling.py test_quick_checkin_client_pricing.py
+
+      - name: Set up Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+          cache: npm
+          cache-dependency-path: frontend/package-lock.json
+
+      - name: Install frontend dependencies
+        working-directory: frontend
+        run: npm ci
+
+      - name: Run Board Train frontend regressions
+        working-directory: frontend
+        env:
+          CI: 'true'
+        run: npm test -- --watchAll=false --runInBand boardTrainScheduling.test.js quickCheckInPricing.test.js
+
+      - name: Commit tested fix and remove bootstrap workflow
+        shell: bash
+        run: |
+          set -euo pipefail
+          git config user.name "sithappensohio-maker"
+          git config user.email "sithappensohio@gmail.com"
+          git commit -m "fix(bookings): schedule Board Train for full program stay" -m "Derive residential Board & Train spans from Program Studio duration while preserving training-package pricing. Repair still-open legacy one-day rows at startup and show the computed pickup date in Quick Check-In."
+          git push origin HEAD:main
