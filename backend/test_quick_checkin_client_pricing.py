@@ -258,3 +258,118 @@ def test_a_revoked_override_stops_steering_selection():
                 assert float(prices[svc_a["id"]]["effective_price"]) == 30.0
                 assert [sid for sid, p in prices.items()
                         if p["pricing_source"] == "client_override"] == []
+
+
+def test_recreated_override_after_revoke_wins_over_retained_history_everywhere():
+    """Production regression: the admin screen can truthfully show a newer
+    ACTIVE $25 service override while the canonical resolver still returns the
+    $30 catalog rate if an older REVOKED row is encountered first by find_one.
+
+    Retained history is intentional; every live pricing path must choose the
+    currently applicable row rather than MongoDB natural order.
+    """
+    with _client_and_dog() as (client, dog):
+        with _service("Lifecycle Daycare", 30.0, is_default=True) as svc:
+            admin = _admin_user()
+            old = run(server.create_client_price_override(
+                client["id"],
+                server.PriceOverrideIn(
+                    target_kind="service", target_code=svc["id"], override_price=20.0,
+                ),
+                admin,
+            ))
+            run(server.delete_price_override(
+                old["id"], server.PriceOverrideRevokeIn(reason="regression setup"), admin,
+            ))
+            new = run(server.create_client_price_override(
+                client["id"],
+                server.PriceOverrideIn(
+                    target_kind="service", target_code=svc["id"], override_price=25.0,
+                ),
+                admin,
+            ))
+
+            history = run(server.db.price_overrides.find(
+                {"client_id": client["id"], "target_kind": "service", "target_code": svc["id"]},
+                {"_id": 0},
+            ).to_list(20))
+            assert len(history) == 2
+            assert next(r for r in history if r["id"] == old["id"])["status"] == "revoked"
+            assert next(r for r in history if r["id"] == new["id"])["status"] == "active"
+
+            canonical = run(server.resolve_client_price(
+                client["id"], "service", svc["id"], 30.0,
+            ))
+            assert canonical["pricing_source"] == "client_override"
+            assert canonical["override_id"] == new["id"]
+            assert float(canonical["effective_price"]) == 25.0
+
+            prices = _prices(client["id"])
+            assert prices[svc["id"]]["pricing_source"] == "client_override"
+            assert prices[svc["id"]]["override_id"] == new["id"]
+            assert float(prices[svc["id"]]["effective_price"]) == 25.0
+
+            quote = run(server.pricing_quote(server.PricingQuoteIn(
+                service_type="daycare",
+                service_id=svc["id"],
+                dog_id=dog["id"],
+                date=date.today().isoformat(),
+            ), admin))
+            assert float(quote["unit_price"]) == 25.0
+            assert float(quote["list_unit_price"]) == 30.0
+            assert quote["preferred_rate_applied"] is True
+            assert quote["price_override_id"] == new["id"]
+
+            with _walkin(dog["id"], svc["id"]) as booking:
+                assert float(booking["estimated_price"]) == 25.0
+                assert booking["price_override_id"] == new["id"]
+                _check_in(booking["id"], hours_ago=9)
+                preview = run(server.checkout_group_preview(booking["id"], admin))
+                assert float(preview["bookings"][0]["checkout_preview_total"]) == 25.0
+
+
+def test_setting_price_again_edits_live_row_even_when_revoked_history_exists():
+    """The write path had the same unrestricted-find_one trap: after revoke
+    + recreate, setting the price again could inspect the old revoked row and
+    try to insert another active override. It must edit the current live row.
+    """
+    with _client_and_dog() as (client, dog):
+        with _service("Lifecycle Edit Daycare", 30.0) as svc:
+            admin = _admin_user()
+            old = run(server.create_client_price_override(
+                client["id"],
+                server.PriceOverrideIn(
+                    target_kind="service", target_code=svc["id"], override_price=20.0,
+                ),
+                admin,
+            ))
+            run(server.delete_price_override(
+                old["id"], server.PriceOverrideRevokeIn(reason="regression setup"), admin,
+            ))
+            live = run(server.create_client_price_override(
+                client["id"],
+                server.PriceOverrideIn(
+                    target_kind="service", target_code=svc["id"], override_price=25.0,
+                ),
+                admin,
+            ))
+
+            edited = run(server.create_client_price_override(
+                client["id"],
+                server.PriceOverrideIn(
+                    target_kind="service", target_code=svc["id"], override_price=27.0,
+                ),
+                admin,
+            ))
+            assert edited["id"] == live["id"]
+            assert float(edited["override_price"]) == 27.0
+
+            history = run(server.db.price_overrides.find(
+                {"client_id": client["id"], "target_kind": "service", "target_code": svc["id"]},
+                {"_id": 0},
+            ).to_list(20))
+            assert len(history) == 2
+            active = [r for r in history if server._override_is_active(r)]
+            assert len(active) == 1
+            assert active[0]["id"] == live["id"]
+            assert float(active[0]["override_price"]) == 27.0
