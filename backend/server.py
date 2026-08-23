@@ -48100,6 +48100,41 @@ def _override_status_label(row: dict) -> str:
     return "Active"
 
 
+def _price_override_precedence_key(row: dict) -> tuple:
+    """Deterministic winner key for rows sharing one client/item key.
+
+    Revoked rows are filtered by the caller.  Explicit ``status=active`` rows
+    outrank legacy rows whose status field predates the lifecycle feature;
+    within the same lifecycle state, the newest edit/create wins.  The final
+    id tie-breaker makes the result stable even for old rows missing timestamps.
+    """
+    row = row or {}
+    return (
+        1 if row.get("status") == "active" else 0,
+        str(row.get("updated_at") or ""),
+        str(row.get("created_at") or ""),
+        str(row.get("id") or ""),
+    )
+
+
+def _pick_applicable_price_override(
+    rows: List[Dict[str, Any]],
+    today: Optional[date] = None,
+) -> Optional[Dict[str, Any]]:
+    """Pick the currently applicable override from retained price history.
+
+    ``price_overrides`` intentionally keeps revoked rows for audit/history.
+    MongoDB natural order is therefore not a lifecycle rule: an unrestricted
+    ``find_one`` can return an older revoked row before the newer active row and
+    incorrectly make the canonical resolver fall back to standard pricing.
+    Examine all rows for the exact key, keep only rows active *today*, and then
+    choose deterministically.
+    """
+    applicable = [row for row in (rows or []) if _override_is_active(row, today)]
+    if not applicable:
+        return None
+    return max(applicable, key=_price_override_precedence_key)
+
 
 async def _apply_client_overrides(
     items: List[Dict[str, Any]],
@@ -48176,11 +48211,17 @@ async def resolve_client_price(
     }
     if not client_id or not target_code:
         return out
-    row = await db.price_overrides.find_one(
+    # A key can legitimately have retained revoked history plus one newer
+    # active row. Never let MongoDB natural order decide which lifecycle row
+    # wins: inspect the exact-key history and choose the currently applicable
+    # row deterministically. This is the canonical path used by Quick Check-In,
+    # booking creation, checkout refresh, packs, and the client-price APIs.
+    override_rows = await db.price_overrides.find(
         {"client_id": client_id, "target_kind": target_kind, "target_code": target_code},
         {"_id": 0},
-    )
-    if row and _override_is_active(row):
+    ).to_list(500)
+    row = _pick_applicable_price_override(override_rows)
+    if row:
         out["effective_price"] = float(row.get("override_price") or 0)
         out["override_id"] = row.get("id")
         out["override_row"] = row
@@ -48405,12 +48446,19 @@ async def create_client_price_override(client_id: str, body: PriceOverrideIn, us
     # and has no status at all), this remains the original upsert-in-place
     # behavior: editing an active override's price is just an edit, not a
     # new lifecycle.
-    existing = await db.price_overrides.find_one(
+    # Do not use an unrestricted find_one here either. Once a client has
+    # returned an item to standard price, retained revoked history may be the
+    # oldest/natural-order row even while a newer active row also exists.
+    # Editing the price must update that live row, not try to insert a second
+    # active row and trip the uniqueness index.
+    existing_rows = await db.price_overrides.find(
         {"client_id": client_id, "target_kind": body.target_kind, "target_code": body.target_code},
         {"_id": 0},
-    )
+    ).to_list(500)
+    non_revoked_rows = [r for r in existing_rows if r.get("status") != "revoked"]
+    existing = max(non_revoked_rows, key=_price_override_precedence_key) if non_revoked_rows else None
     ts = now_iso()
-    reuse_existing_row = bool(existing) and existing.get("status") != "revoked"
+    reuse_existing_row = bool(existing)
     doc = {
         "id": existing["id"] if reuse_existing_row else str(uuid.uuid4()),
         "client_id": client_id,
