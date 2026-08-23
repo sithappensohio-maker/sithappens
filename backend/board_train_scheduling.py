@@ -140,6 +140,11 @@ async def apply_board_train_span(db, body, service: Optional[Dict[str, Any]]) ->
         # A residential training package is an all-day multi-date booking, not
         # a one-hour training slot. Dropoff/pickup times remain separate fields.
         body.time = ""
+        # Internal runtime marker only. The request model does not expose this
+        # field, so an ordinary training caller cannot opt out of appointment
+        # time validation. The downstream start-time wrapper uses it to apply
+        # boarding-style drop-off semantics to verified Board & Train packages.
+        object.__setattr__(body, "_board_train_residential", True)
     return info
 
 
@@ -223,8 +228,11 @@ def install_board_train_scheduling(*, server_module, db) -> None:
     if getattr(server_module, "_board_train_scheduling_installed", False):
         return
     original_resolver = getattr(server_module, "_resolve_base_service_for_booking", None)
+    original_booking_start = getattr(server_module, "_booking_start_local", None)
     if original_resolver is None:
         raise RuntimeError("Board & Train scheduling hook could not find exact service resolver")
+    if original_booking_start is None:
+        raise RuntimeError("Board & Train scheduling hook could not find booking start-time resolver")
 
     async def resolver_with_residential_span(body, user):
         service = await original_resolver(body, user)
@@ -235,6 +243,28 @@ def install_board_train_scheduling(*, server_module, db) -> None:
     resolver_with_residential_span.__doc__ = getattr(original_resolver, "__doc__", None)
     resolver_with_residential_span._board_train_residential_wrapper = True
     server_module._resolve_base_service_for_booking = resolver_with_residential_span
+
+    def booking_start_with_residential_training(body, settings):
+        """Board & Train is residential, not a timed training appointment.
+
+        The canonical resolver above sets the private marker only after it has
+        verified the exact service is a linked/recognized Board & Train. For
+        that one case, reuse the existing boarding start-time rules on a model
+        copy so drop-off time works and the normal training-time requirement
+        stays untouched for every other training service.
+        """
+        if not bool(getattr(body, "_board_train_residential", False)):
+            return original_booking_start(body, settings)
+        try:
+            probe = body.model_copy(update={"service_type": "boarding", "time": ""})
+        except AttributeError:  # Pydantic v1 compatibility for old test envs
+            probe = body.copy(update={"service_type": "boarding", "time": ""})
+        return original_booking_start(probe, settings)
+
+    booking_start_with_residential_training.__name__ = getattr(original_booking_start, "__name__", "_booking_start_local")
+    booking_start_with_residential_training.__doc__ = getattr(original_booking_start, "__doc__", None)
+    booking_start_with_residential_training._board_train_residential_wrapper = True
+    server_module._booking_start_local = booking_start_with_residential_training
 
     app = getattr(server_module, "app", None)
     if app is None:
