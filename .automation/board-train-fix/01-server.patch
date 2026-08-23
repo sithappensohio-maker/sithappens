@@ -1,0 +1,361 @@
+diff --git a/backend/server.py b/backend/server.py
+index be099df..a6eece7 100644
+--- a/backend/server.py
++++ b/backend/server.py
+@@ -840,7 +840,7 @@ class BookingIn(BaseModel):
+     date: str  # YYYY-MM-DD
+     service_type: Literal["daycare", "boarding", "training", "grooming", "photography", "other"] = "daycare"
+     grooming_type: Optional[Literal["bath", "nail_trim"]] = None  # only relevant when service_type=grooming
+-    end_date: Optional[str] = None  # for boarding
++    end_date: Optional[str] = None  # boarding + residential Board & Train span
+     time: Optional[str] = ""  # HH:MM appointment time — used for training/grooming/photography
+     notes: Optional[str] = ""
+     kennel: Optional[str] = ""
+@@ -965,6 +965,13 @@ class BookingOut(BaseModel):
+     # a paid service. Backward-compatible; existing rows return None / "".
+     service_id: Optional[str] = None
+     service_name: Optional[str] = None
++    # Residential Board & Train metadata. These are additive and absent on
++    # ordinary bookings; they let operations/UI distinguish a multi-day
++    # training stay without lying about service_type (which remains training
++    # for package pricing and credits).
++    residential_training: Optional[bool] = False
++    package_program_id: Optional[str] = None
++    package_duration_days: Optional[int] = None
+     actual_price: Optional[float] = None
+     payment_status: Optional[Literal["unpaid", "paid", "paid_partial", "refunded", "comped"]] = None
+     payment_method: Optional[Literal["cash", "card", "transfer", "venmo", "paypal", "credits", "check", "other"]] = None
+@@ -3046,6 +3053,228 @@ def _presence_dates(start: str, end: Optional[str]) -> List[str]:
+     return _dates_in_range(start, end)
+ 
+ 
++def _legacy_board_train_service_duration_days(service: Optional[Dict[str, Any]]) -> Optional[int]:
++    """Backward-compatible duration for old Board & Train service rows.
++
++    The durable relationship is ``package_program_id``. Very old installs,
++    however, seeded ``Board & Train (per week)`` as a plain training service
++    before that field existed. We support only an EXPLICIT Board-&-Train name/
++    slug that also states its duration (``1 week``, ``2-week``, ``3 wk``, or
++    ``per week``). We deliberately do not infer from generic training names.
++    This keeps the fallback narrow while making existing catalog rows safe
++    without requiring the owner to recreate them by hand.
++    """
++    row = service or {}
++    hay = f"{row.get('slug') or ''} {row.get('name') or ''}".lower().replace("_", " ")
++    if not re.search(r"board\s*(?:&|and)?\s*train", hay):
++        return None
++    match = re.search(r"\b(\d{1,2})\s*[- ]?\s*(?:week|weeks|wk|wks)\b", hay)
++    if match:
++        weeks = int(match.group(1))
++        return weeks * 7 if weeks > 0 else None
++    if re.search(r"\bper\s+(?:week|wk)\b", hay) or "board train week" in hay:
++        return 7
++    return None
++
++
++def _program_residential_duration_days(program: Optional[Dict[str, Any]]) -> Optional[int]:
++    """Return the calendar length of a residential Board & Train program.
++
++    Board & Train is sold/priced as a training package, but operationally the
++    dog lives at the facility for the program's full duration.  The Program
++    Studio format is the canonical duration source; ``estimated_weeks`` is a
++    safe fallback for newer/custom curricula whose format is session-based.
++    ``None`` means the program does not contain a trustworthy residential
++    duration and must not be silently treated as a one-day appointment.
++    """
++    if not program or (program.get("type") or "") != "board_train":
++        return None
++    fmt = program.get("format") or {}
++    try:
++        count = int(fmt.get("count") or 0)
++    except Exception:
++        count = 0
++    unit = str(fmt.get("unit") or "").strip().lower()
++    if count > 0:
++        if unit in ("week", "weeks"):
++            return count * 7
++        if unit in ("day", "days"):
++            return count
++        if unit in ("month", "months"):
++            return count * 30
++    try:
++        estimated_weeks = int(program.get("estimated_weeks") or 0)
++    except Exception:
++        estimated_weeks = 0
++    return estimated_weeks * 7 if estimated_weeks > 0 else None
++
++
++async def _board_train_stay_info(service: Optional[Dict[str, Any]]) -> Optional[Dict[str, Any]]:
++    """Resolve residential scheduling metadata for a Board & Train service.
++
++    ``package_program_id`` is the canonical modern relationship. For legacy
++    service rows created before that field existed, a deliberately narrow
++    fallback accepts only an explicit Board-&-Train name/slug that also states
++    its duration (for example ``Board & Train (per week)`` or ``2-Week Board
++    & Train``). That fixes old catalogs without treating ordinary training
++    services as residential stays.
++    """
++    row = service or {}
++    program_id = row.get("package_program_id")
++    if program_id:
++        program = await db.programs.find_one(
++            {"id": program_id},
++            {"_id": 0, "id": 1, "name": 1, "type": 1, "format": 1, "estimated_weeks": 1},
++        )
++        if not program or program.get("type") != "board_train":
++            return None
++        return {
++            "program_id": program_id,
++            "program_name": program.get("name") or "Board & Train",
++            "duration_days": _program_residential_duration_days(program),
++            "source": "linked_program",
++        }
++
++    legacy_days = _legacy_board_train_service_duration_days(row)
++    if legacy_days:
++        return {
++            "program_id": None,
++            "program_name": row.get("name") or "Board & Train",
++            "duration_days": legacy_days,
++            "source": "legacy_service_duration",
++        }
++    return None
++
++
++async def _apply_board_train_booking_span(
++    body: "BookingIn",
++    selected_service: Optional[Dict[str, Any]],
++) -> Optional[Dict[str, Any]]:
++    """Canonicalize a Board & Train booking into its residential date span.
++
++    Historically Board & Train services were ``service_type=training``.  The
++    generic booking modal therefore dropped ``end_date`` and treated them as
++    one-day/time-slot appointments even though the linked program says one,
++    two, or three weeks.  Keep the TRAINING service type (so package pricing
++    and training credits remain correct), but store the real residential span
++    on the booking so Calendar, Today, roster, care board and checkout all see
++    the dog for the full stay.
++    """
++    info = await _board_train_stay_info(selected_service)
++    if not info:
++        return None
++    days = info.get("duration_days")
++    if not days:
++        raise HTTPException(
++            status_code=400,
++            detail=(
++                f'{info.get("program_name") or "Board & Train"} needs a program duration '
++                "(weeks or days) before it can be scheduled as a residential stay."
++            ),
++        )
++    try:
++        start = date.fromisoformat(str(body.date)[:10])
++    except Exception:
++        raise HTTPException(status_code=400, detail="Invalid Board & Train start date")
++
++    # A boarding-type package already participates in the normal boarding
++    # date-span workflow. Preserve an explicit pickup date there; the bug this
++    # helper fixes is the training-type package that had no span at all. If a
++    # boarding package arrives without an end date, the program duration is a
++    # safe default.
++    if (selected_service or {}).get("service_type") != "boarding" or not body.end_date:
++        body.end_date = (start + timedelta(days=int(days))).isoformat()
++
++    # A residential TRAINING stay is an all-day multi-date calendar event, not
++    # a one-hour training appointment. Dropoff/pickup times remain available.
++    if (selected_service or {}).get("service_type") == "training":
++        body.time = ""
++    return info
++
++
++async def _repair_open_board_train_booking_spans(limit: int = 1000) -> int:
++    """Repair only ACTIVE one-day Board & Train rows created by the old bug.
++
++    Before this fix, every training-type Board & Train booking was persisted
++    with ``end_date=None`` even when its linked program was 1/2/3 weeks. Older
++    seeded ``Board & Train (per week)`` services may not have a program link at
++    all, so the same narrow legacy-duration fallback used by new bookings is
++    honored here. Historical/checked-out rows are deliberately untouched; only
++    still-open rows with no end date are repaired, and the operation is
++    idempotent.
++    """
++    services = await db.services.find(
++        {"service_type": {"$in": ["training", "boarding"]}},
++        {"_id": 0, "id": 1, "name": 1, "slug": 1, "service_type": 1, "package_program_id": 1},
++    ).to_list(1000)
++    if not services:
++        return 0
++
++    program_ids = sorted({row.get("package_program_id") for row in services if row.get("package_program_id")})
++    programs = await db.programs.find(
++        {"id": {"$in": program_ids}, "type": "board_train"},
++        {"_id": 0, "id": 1, "type": 1, "format": 1, "estimated_weeks": 1},
++    ).to_list(len(program_ids)) if program_ids else []
++    programs_by_id = {row.get("id"): row for row in programs}
++
++    duration_by_service: Dict[str, int] = {}
++    service_program: Dict[str, Optional[str]] = {}
++    for row in services:
++        days = None
++        program_id = row.get("package_program_id")
++        program = programs_by_id.get(program_id) if program_id else None
++        if program:
++            days = _program_residential_duration_days(program)
++        elif not program_id:
++            days = _legacy_board_train_service_duration_days(row)
++        if row.get("id") and days:
++            duration_by_service[row["id"]] = int(days)
++            service_program[row["id"]] = program_id
++    if not duration_by_service:
++        return 0
++
++    candidates = await db.bookings.find(
++        {
++            "service_type": "training",
++            "status": {"$in": ["pending", "approved", "completed"]},
++            "service_id": {"$in": list(duration_by_service.keys())},
++            "$and": [
++                {"$or": [{"end_date": {"$exists": False}}, {"end_date": None}, {"end_date": ""}]},
++                {"$or": [{"checked_out_at": {"$exists": False}}, {"checked_out_at": None}, {"checked_out_at": ""}]},
++            ],
++        },
++        {"_id": 0, "id": 1, "date": 1, "service_id": 1},
++    ).to_list(limit)
++    repaired = 0
++    for booking in candidates:
++        days = duration_by_service.get(booking.get("service_id"))
++        if not days:
++            continue
++        try:
++            start = date.fromisoformat(str(booking.get("date") or "")[:10])
++        except Exception:
++            continue
++        patch = {
++            "end_date": (start + timedelta(days=days)).isoformat(),
++            "time": "",
++            "residential_training": True,
++            "package_program_id": service_program.get(booking.get("service_id")),
++            "package_duration_days": days,
++        }
++        result = await db.bookings.update_one(
++            {
++                "id": booking.get("id"),
++                "$and": [
++                    {"$or": [{"end_date": {"$exists": False}}, {"end_date": None}, {"end_date": ""}]},
++                    {"$or": [{"checked_out_at": {"$exists": False}}, {"checked_out_at": None}, {"checked_out_at": ""}]},
++                ],
++            },
++            {"$set": patch},
++        )
++        repaired += int(getattr(result, "modified_count", 0) or 0)
++    return repaired
++
++
+ def _billable_boarding_nights(start: str, end: Optional[str], *, legacy_minimum: int = 0) -> int:
+     """Exclusive pickup-date math for overnight boarding nights only.
+ 
+@@ -4176,6 +4405,15 @@ async def create_booking(body: BookingIn, user: dict = Depends(get_current_user)
+     # closes the old category-only API path that could otherwise bypass an
+     # exact service's online-booking, notice, approval, and duration controls.
+     selected_service = await _resolve_base_service_for_booking(body, user)
++
++    # Board & Train is a TRAINING product for pricing/enrollment, but a
++    # residential stay for scheduling. Derive the full stay from the linked
++    # Program Studio duration before any overlap/closed-date/capacity checks
++    # and before we snapshot the booking. This makes Quick Check-In, normal
++    # admin booking, client booking and group booking all land on the same
++    # canonical multi-day date range.
++    board_train_stay = await _apply_board_train_booking_span(body, selected_service)
++
+     svc_rules = _booking_flow_rules_for(settings, body.service_type, body.service_id)
+     if user.get("role") != "admin" and svc_rules.get("client_booking_enabled") is False:
+         label = (selected_service or {}).get("name") or body.service_type.title()
+@@ -4447,6 +4685,9 @@ async def create_booking(body: BookingIn, user: dict = Depends(get_current_user)
+         "estimated_price": round(estimated_price, 2),
+         "service_id": quote.get("service_id"),
+         "service_name": quote.get("service_name"),
++        "residential_training": bool(board_train_stay),
++        "package_program_id": (board_train_stay or {}).get("program_id"),
++        "package_duration_days": (board_train_stay or {}).get("duration_days"),
+         "unit_price": quote.get("unit_price"),
+         "list_unit_price": quote.get("list_unit_price"),
+         "preferred_rate_applied": quote.get("preferred_rate_applied", False),
+@@ -33009,6 +33250,19 @@ async def startup():
+         await _migrate_shop_manager_fields_if_needed()
+     except Exception as exc:
+         logger.warning("Shop Manager field migration failed: %s", exc)
++    # Board & Train residential scheduling repair — versions before this fix
++    # stored training-type package bookings as one-day rows (end_date missing),
++    # even when the linked Program Studio curriculum was 1/2/3 weeks. Repair
++    # only still-open rows, once at startup, so an already-checked-in dog is
++    # scheduled through its real pickup date immediately after deploy.
++    # Historical/checked-out rows are deliberately untouched and reruns are a
++    # no-op because repaired rows now have end_date.
++    try:
++        repaired = await _repair_open_board_train_booking_spans()
++        if repaired:
++            logger.info("Board & Train scheduling migration: repaired %d open booking span(s)", repaired)
++    except Exception as exc:
++        logger.warning("Board & Train scheduling migration skipped (non-fatal): %s", exc)
+ 
+ 
+ async def _migrate_shop_manager_fields_if_needed() -> None:
+@@ -33159,6 +33413,50 @@ class TransactionUpdateIn(BaseModel):
+     service_id: Optional[str] = None
+ 
+ 
++async def _decorate_service_package_schedule(items: List[Dict[str, Any]]) -> None:
++    """Attach read-only Board & Train scheduling metadata to service rows.
++
++    Linked Program Studio records are authoritative. A narrow compatibility
++    path also decorates old explicit-duration Board & Train services that
++    predate ``package_program_id`` so Quick Check-In can show the correct stay
++    immediately after upgrade.
++    """
++    program_ids = sorted({
++        str(row.get("package_program_id"))
++        for row in (items or [])
++        if row.get("package_program_id")
++    })
++    programs = []
++    if program_ids:
++        programs = await db.programs.find(
++            {"id": {"$in": program_ids}},
++            {"_id": 0, "id": 1, "name": 1, "type": 1, "format": 1, "estimated_weeks": 1},
++        ).to_list(len(program_ids))
++    by_id = {p.get("id"): p for p in programs}
++    for row in items:
++        days = None
++        program = by_id.get(row.get("package_program_id"))
++        if program and program.get("type") == "board_train":
++            days = _program_residential_duration_days(program)
++            row["package_program_type"] = "board_train"
++            row["package_program_name"] = program.get("name") or "Board & Train"
++        elif not row.get("package_program_id"):
++            days = _legacy_board_train_service_duration_days(row)
++            if days:
++                row["package_program_type"] = "board_train"
++                row["package_program_name"] = row.get("name") or "Board & Train"
++                row["package_schedule_source"] = "legacy_service_duration"
++        if not days:
++            continue
++        row["residential_training"] = True
++        row["package_duration_days"] = days
++        if days % 7 == 0:
++            weeks = days // 7
++            row["package_duration_label"] = f"{weeks} week" + ("s" if weeks != 1 else "")
++        else:
++            row["package_duration_label"] = f"{days} days"
++
++
+ @api.get("/services")
+ async def list_services(
+     user: dict = Depends(get_current_user),
+@@ -33178,6 +33476,7 @@ async def list_services(
+         if for_service_type:
+             q["addon_for"] = for_service_type
+     items = await db.services.find(q, {"_id": 0}).sort("name", 1).to_list(500)
++    await _decorate_service_package_schedule(items)
+     # Sprint 110bv — when a client browses, rewrite catalog prices to their
+     # locked-in legacy rates so the portal never shows the wrong price.
+     if user.get("role") == "client" and user.get("client_id"):
