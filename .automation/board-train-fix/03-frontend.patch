@@ -1,0 +1,240 @@
+diff --git a/frontend/src/components/AdminBookingModal.jsx b/frontend/src/components/AdminBookingModal.jsx
+index f8cd886..f4f0d83 100644
+--- a/frontend/src/components/AdminBookingModal.jsx
++++ b/frontend/src/components/AdminBookingModal.jsx
+@@ -11,6 +11,17 @@ const fmtCredits = (n) => {
+   return Number.isInteger(val) ? String(val) : val.toFixed(1);
+ };
+ 
++export const addDaysISO = (iso, days) => {
++  if (!iso || !Number(days)) return "";
++  const d = new Date(`${iso}T12:00:00`);
++  if (Number.isNaN(d.getTime())) return "";
++  d.setDate(d.getDate() + Number(days));
++  const y = d.getFullYear();
++  const m = String(d.getMonth() + 1).padStart(2, "0");
++  const day = String(d.getDate()).padStart(2, "0");
++  return `${y}-${m}-${day}`;
++};
++
+ const creditPoolForService = (serviceType) => {
+   if (serviceType === "daycare") return { key: "credits", label: "daycare credits" };
+   if (serviceType === "training") return { key: "training_credits", label: "training credits" };
+@@ -313,6 +324,17 @@ export default function AdminBookingModal({ defaultCheckIn = false, defaultDate
+   }, [dogs, clients]);
+ 
+   const selectedClient = useMemo(() => clients.find(c => c.id === clientId) || null, [clients, clientId]);
++  const selectedCatalogService = useMemo(
++    () => catalogServices.find(s => s.id === serviceId) || null,
++    [catalogServices, serviceId]
++  );
++  // Board & Train stays remain service_type=training for pricing/credits, but
++  // /services decorates linked board_train programs with their residential
++  // duration so this modal can show the real 1/2/3-week stay before submit.
++  const boardTrainDurationDays = Number(selectedCatalogService?.package_duration_days || 0);
++  const isBoardTrainStay = (selectedCatalogService?.residential_training === true
++    || selectedCatalogService?.package_program_type === "board_train") && boardTrainDurationDays > 0;
++  const isDateSpanService = serviceType === "boarding" || isBoardTrainStay;
+ 
+   // Dog-first check-in resolves the owner at runtime, but GET /clients is
+   // capped (1,000 rows against many more clients on file), so the owner of the
+@@ -384,13 +406,23 @@ export default function AdminBookingModal({ defaultCheckIn = false, defaultDate
+   const rabies = selectedDog?.vaccines?.rabies || "";
+   const rabiesOk = rabies && rabies >= todayISO();
+ 
+-  // Force-off multi-date when service becomes boarding (multi-date isn't valid
+-  // for spanning stays) or when editing (you edit a single booking at a time).
++  // A Board & Train package owns its stay length. Changing the start date or
++  // switching between 1/2/3-week programs immediately recomputes pickup so
++  // Quick Check-In cannot accidentally submit a one-day training appointment.
+   useEffect(() => {
+-    if (serviceType === "boarding" || isEdit) {
++    if (!isBoardTrainStay || !date) return;
++    const computed = addDaysISO(date, boardTrainDurationDays);
++    if (computed && computed !== endDate) setEndDate(computed);
++    if (appointmentTime) setAppointmentTime("");
++  }, [isBoardTrainStay, boardTrainDurationDays, date]); // eslint-disable-line react-hooks/exhaustive-deps
++
++  // Force-off multi-date for any spanning stay (ordinary boarding OR Board &
++  // Train) and when editing (you edit a single booking at a time).
++  useEffect(() => {
++    if (isDateSpanService || isEdit) {
+       setIsMultiDate(false);
+     }
+-  }, [serviceType, isEdit]);
++  }, [isDateSpanService, isEdit]);
+ 
+   // Re-load eligible add-ons whenever the base service type changes.
+   useEffect(() => {
+@@ -433,16 +465,16 @@ export default function AdminBookingModal({ defaultCheckIn = false, defaultDate
+       return;
+     }
+ 
+-    if (serviceType === "boarding") {
++    if (isDateSpanService) {
+       if (!endDate) {
+         setQuoteLines([]);
+-        setQuoteError("Pick a pickup date to see the boarding estimate.");
++        setQuoteError(isBoardTrainStay ? "Board & Train duration is unavailable." : "Pick a pickup date to see the boarding estimate.");
+         setQuoteLoading(false);
+         return;
+       }
+       if (endDate <= date) {
+         setQuoteLines([]);
+-        setQuoteError("Pickup date must be after the drop-off date to calculate boarding nights.");
++        setQuoteError(isBoardTrainStay ? "Board & Train must span at least one day." : "Pickup date must be after the drop-off date to calculate boarding nights.");
+         setQuoteLoading(false);
+         return;
+       }
+@@ -474,10 +506,10 @@ export default function AdminBookingModal({ defaultCheckIn = false, defaultDate
+             service_type: serviceType,
+             service_id: serviceId || undefined,
+             date: d,
+-            end_date: serviceType === "boarding" ? endDate : null,
++            end_date: isDateSpanService ? endDate : null,
+             dog_id: row.dog_id,
+-            dropoff_time: serviceType === "boarding" ? (dropoffTime || undefined) : undefined,
+-            pickup_time: serviceType === "boarding" ? (pickupTime || undefined) : undefined,
++            dropoff_time: isDateSpanService ? (dropoffTime || undefined) : undefined,
++            pickup_time: isDateSpanService ? (pickupTime || undefined) : undefined,
+             addon_service_ids: row.addon_service_ids || [],
+           }).then(({ data }) => ({
+             dog_id: row.dog_id,
+@@ -516,6 +548,8 @@ export default function AdminBookingModal({ defaultCheckIn = false, defaultDate
+     selectedAddonIds,
+     extraDogs,
+     dogs,
++    isDateSpanService,
++    isBoardTrainStay,
+   ]);
+ 
+   const quoteSummary = useMemo(() => {
+@@ -596,7 +630,7 @@ export default function AdminBookingModal({ defaultCheckIn = false, defaultDate
+           service_type: serviceType,
+           service_id: serviceId || undefined,
+           grooming_type: serviceType === "grooming" ? groomingType : null,
+-          time: ["training", "grooming", "photography"].includes(serviceType) ? (appointmentTime || "") : "",
++          time: ["training", "grooming", "photography"].includes(serviceType) && !isBoardTrainStay ? (appointmentTime || "") : "",
+           notes,
+           override_capacity: overrideCapacity,
+           override_vaccines: overrideVaccines,
+@@ -618,32 +652,32 @@ export default function AdminBookingModal({ defaultCheckIn = false, defaultDate
+       setSaving(false);
+       return;
+     }
+-    if (serviceType === "boarding" && endDate && endDate < date) { setErr("End date must be after start date"); return; }
++    if (isDateSpanService && endDate && endDate <= date) { setErr("End date must be after start date"); return; }
+     setSaving(true);
+     try {
+       if (isEdit) {
+         await api.patch(`/bookings/${existing.id}`, {
+           notes,
+           date,
+-          end_date: serviceType === "boarding" ? (endDate || date) : null,
++          end_date: isDateSpanService ? (endDate || date) : null,
+           kennel: serviceType === "boarding" ? kennel : "",
+           dropoff_time: dropoffTime || "",
+           pickup_time: pickupTime || "",
+-          time: ["training", "grooming", "photography"].includes(serviceType) ? (appointmentTime || "") : "",
++          time: ["training", "grooming", "photography"].includes(serviceType) && !isBoardTrainStay ? (appointmentTime || "") : "",
+         });
+         onCreated?.();
+       } else {
+         const body = {
+           dog_id: dogId,
+           date,
+-          end_date: serviceType === "boarding" ? (endDate || date) : null,
++          end_date: isDateSpanService ? (endDate || date) : null,
+           service_type: serviceType,
+           service_id: serviceId || undefined,
+           grooming_type: serviceType === "grooming" ? groomingType : null,
+           kennel: serviceType === "boarding" ? kennel : "",
+           dropoff_time: dropoffTime || "",
+           pickup_time: pickupTime || "",
+-          time: ["training", "grooming", "photography"].includes(serviceType) ? (appointmentTime || "") : "",
++          time: ["training", "grooming", "photography"].includes(serviceType) && !isBoardTrainStay ? (appointmentTime || "") : "",
+           notes,
+           override_vaccines: overrideVaccines,
+           override_capacity: overrideCapacity,
+@@ -665,13 +699,13 @@ export default function AdminBookingModal({ defaultCheckIn = false, defaultDate
+               })),
+             ],
+             date,
+-            end_date: serviceType === "boarding" ? (endDate || date) : null,
++            end_date: isDateSpanService ? (endDate || date) : null,
+             service_type: serviceType,
+             service_id: serviceId || undefined,
+             grooming_type: serviceType === "grooming" ? groomingType : null,
+             dropoff_time: dropoffTime || "",
+             pickup_time: pickupTime || "",
+-            time: ["training", "grooming", "photography"].includes(serviceType) ? (appointmentTime || "") : "",
++            time: ["training", "grooming", "photography"].includes(serviceType) && !isBoardTrainStay ? (appointmentTime || "") : "",
+             notes,
+             override_vaccines: overrideVaccines,
+             override_capacity: overrideCapacity,
+@@ -795,6 +829,14 @@ export default function AdminBookingModal({ defaultCheckIn = false, defaultDate
+                 .map(s => <option key={s.id} value={s.id}>{serviceOptionLabel(s, clientServicePrices)}</option>)}
+             </select>
+             <p className="text-[11px] text-shTextMuted mt-1">Selecting the exact catalog service applies its own price, duration, and booking rules.</p>
++            {isBoardTrainStay && (
++              <div className="mt-2 rounded border border-shPrimary/40 bg-shPrimary/10 p-2" data-testid="ab-board-train-stay">
++                <p className="text-[12px] font-black text-shPrimary uppercase tracking-widest">
++                  <i className="fas fa-house-chimney mr-1"/>Board &amp; Train · {selectedCatalogService?.package_duration_label || `${boardTrainDurationDays} days`}
++                </p>
++                <p className="text-[12px] text-shTextMuted mt-1">This dog will stay scheduled every day through the program pickup date.</p>
++              </div>
++            )}
+ 
+             {clientPriceError && (
+               <div className="mt-2 rounded border border-red-500/60 bg-red-500/10 p-2"
+@@ -872,7 +914,7 @@ export default function AdminBookingModal({ defaultCheckIn = false, defaultDate
+           )}
+ 
+           {/* Multi-date toggle (admin only, non-boarding, not when editing) */}
+-          {!isEdit && serviceType !== "boarding" && (
++          {!isEdit && !isDateSpanService && (
+             <label className="flex items-center gap-3 cursor-pointer bg-shPrimary/5 border border-shPrimary/30 rounded p-2.5" data-testid="ab-multidate-toggle-row">
+               <input type="checkbox" checked={isMultiDate} onChange={(e)=>setIsMultiDate(e.target.checked)}
+                      data-testid="ab-multidate-toggle"
+@@ -900,21 +942,26 @@ export default function AdminBookingModal({ defaultCheckIn = false, defaultDate
+           ) : (
+             <div className="grid grid-cols-2 gap-3">
+               <div>
+-                <label className="text-[14px] font-black text-shTextMuted uppercase tracking-widest">{serviceType==="boarding"?"Drop-off Date":"Date"}</label>
++                <label className="text-[14px] font-black text-shTextMuted uppercase tracking-widest">{isDateSpanService?"Drop-off Date":"Date"}</label>
+                 <input type="date" value={date} onChange={(e)=>setDate(e.target.value)} data-testid="ab-date"
+                        className="w-full mt-1 bg-[var(--sh-card-base)] border border-shBorder rounded p-2 text-shText text-xs" style={{colorScheme:"dark"}} />
+               </div>
+-              {serviceType==="boarding" && (
++              {isDateSpanService && (
+                 <div>
+-                  <label className="text-[14px] font-black text-shTextMuted uppercase tracking-widest">Pickup Date</label>
+-                  <input type="date" value={endDate} onChange={(e)=>setEndDate(e.target.value)} data-testid="ab-end-date"
+-                         className="w-full mt-1 bg-[var(--sh-card-base)] border border-shBorder rounded p-2 text-shText text-xs" style={{colorScheme:"dark"}} />
++                  <label className="text-[14px] font-black text-shTextMuted uppercase tracking-widest">{isBoardTrainStay ? "Program Pickup Date" : "Pickup Date"}</label>
++                  <input type="date" value={endDate} onChange={(e)=>setEndDate(e.target.value)} readOnly={isBoardTrainStay} data-testid="ab-end-date"
++                         className={`w-full mt-1 bg-[var(--sh-card-base)] border border-shBorder rounded p-2 text-shText text-xs ${isBoardTrainStay ? "opacity-80 cursor-not-allowed" : ""}`} style={{colorScheme:"dark"}} />
++                  {isBoardTrainStay && (
++                    <p className="text-[12px] text-shPrimary font-black uppercase tracking-widest mt-1" data-testid="ab-board-train-duration">
++                      <i className="fas fa-house-chimney mr-1"/>{selectedCatalogService?.package_duration_label || `${boardTrainDurationDays} days`} residential stay · set by Program Studio
++                    </p>
++                  )}
+                 </div>
+               )}
+             </div>
+           )}
+ 
+-          {serviceType==="boarding" && kennels.length > 0 && (
++          {serviceType === "boarding" && kennels.length > 0 && (
+             <div>
+               <label className="text-[14px] font-black text-shTextMuted uppercase tracking-widest">Kennel / Room (optional)</label>
+               <select value={kennel} onChange={(e)=>setKennel(e.target.value)} data-testid="ab-kennel"
+@@ -925,7 +972,7 @@ export default function AdminBookingModal({ defaultCheckIn = false, defaultDate
+             </div>
+           )}
+ 
+-          {["training", "grooming", "photography"].includes(serviceType) ? (
++          {["training", "grooming", "photography"].includes(serviceType) && !isBoardTrainStay ? (
+             <div>
+               <label className="text-[14px] font-black text-shAccent uppercase tracking-widest">
+                 <i className="fas fa-clock mr-2"/>Appointment Time
