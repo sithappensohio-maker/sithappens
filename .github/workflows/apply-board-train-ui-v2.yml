@@ -52,6 +52,7 @@ jobs:
           git apply --check /tmp/board-train-ui-v2.patch
           git apply /tmp/board-train-ui-v2.patch
           rm .automation/board-train-ui-v2.patch.gz.b64
+          rm -f .automation/retrigger-v2
           git diff --check
 
       - name: Set up Python
@@ -108,9 +109,11 @@ jobs:
           git add frontend/src/components/AdminBookingModal.jsx \
                   frontend/src/components/boardTrainScheduling.test.js \
                   backend/test_board_train_scheduling.py \
-                  .automation/board-train-ui-v2.patch.gz.b64
+                  .automation/board-train-ui-v2.patch.gz.b64 \
+                  .automation/retrigger-v2
           printf '%s\n' \
             .automation/board-train-ui-v2.patch.gz.b64 \
+            .automation/retrigger-v2 \
             backend/test_board_train_scheduling.py \
             frontend/src/components/AdminBookingModal.jsx \
             frontend/src/components/boardTrainScheduling.test.js \
