@@ -51,21 +51,24 @@ export default function StudentHome({ home, loading, clientName, onPrimaryAction
     );
   }
 
-  /* Never leave a beginner staring at an empty School page. A failed Today
-     shortcut should degrade to one obvious safe action: open the course. The
-     course/lesson endpoints remain independently usable and the client's
-     progress is untouched; this is a navigation fallback, not a fake state. */
+  /* Never leave a beginner staring at an empty School page. StudentWorkspaceExtras
+     renders the one-time onboarding form immediately below this card when that
+     is what blocked the Today view-model. Keep this copy aligned with that
+     recovery path instead of sending the student away from the form they need. */
   if (!home) {
     return (
       <div className="space-y-4" data-testid="student-home-unavailable">
         <section className="rounded-3xl border border-shPrimary/35 bg-gradient-to-br from-shPrimary/[0.12] via-black/15 to-shSecondary/[0.05] p-6 sm:p-8">
           <p className="text-[10px] font-black uppercase tracking-[0.22em] text-shPrimary">Start here</p>
-          <h1 className="text-[26px] sm:text-[34px] font-black text-shText mt-1 leading-tight text-balance">Ready to train?</h1>
+          <h1 className="text-[26px] sm:text-[34px] font-black text-shText mt-1 leading-tight text-balance">One quick step before training</h1>
           <p className="text-[15px] sm:text-[17px] text-shTextMuted mt-3 leading-relaxed max-w-2xl">
-            Today&rsquo;s shortcut did not load, so do not guess what to open. Go to your course and start with the first available lesson. School will guide you one step at a time from there.
+            If you see the one-time setup below, complete that first. When you save it, your Today plan will load automatically and School will tell you exactly what to do next.
+          </p>
+          <p className="text-[13px] sm:text-[14px] text-shTextMuted mt-2 leading-relaxed max-w-2xl">
+            Already finished the setup? You can open your course and continue from the first available lesson.
           </p>
           <button type="button" onClick={onViewCourse} data-testid="student-home-open-course-fallback"
-                  className="mt-5 w-full sm:w-auto sm:px-8 min-h-[56px] rounded-xl bg-shPrimary text-[#071018] font-black text-[14px] sm:text-[15px] uppercase tracking-widest inline-flex items-center justify-center gap-2 hover:brightness-110 transition">
+                  className="mt-5 w-full sm:w-auto sm:px-8 min-h-[56px] rounded-xl border border-shBorder bg-black/15 text-shText font-black text-[13px] sm:text-[14px] uppercase tracking-widest inline-flex items-center justify-center gap-2 hover:border-shPrimary/40 transition">
             Open my course <i className="fas fa-arrow-right text-[11px]" />
           </button>
         </section>
