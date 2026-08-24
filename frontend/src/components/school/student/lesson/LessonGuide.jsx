@@ -218,7 +218,9 @@ export default function LessonGuide(props) {
   const sections = props.sections || buildGuide(props.lesson, { hasPractice: props.hasPractice, hasQuiz: props.hasQuiz });
   const firstInstructional = instructionalKeys(sections)[0] || null;
   const [started, setStarted] = useState(() => wasLessonStarted(props.lesson));
-  const fresh = !started
+  const fresh = props.isCurrent === true
+    && !props.reviewOnly
+    && !started
     && (props.completed || []).length === 0
     && !props.practiced
     && !!firstInstructional
@@ -251,7 +253,7 @@ export default function LessonGuide(props) {
   return (
     <>
       {fresh && <FreshLessonStart lesson={props.lesson} sections={sections} hasPractice={props.hasPractice} onStart={begin} />}
-      <style>{`[data-testid="${baseTestid}-progress"]{display:none!important;}`}</style>
+      <style>{`[data-testid="${baseTestid}"] > div:first-child{display:none!important;}`}</style>
       <div className="flex items-center justify-between gap-3 rounded-xl border border-shSecondary/25 bg-shSecondary/[0.045] px-3.5 py-2.5" data-testid="lesson-journey-position">
         <span className="text-[10px] font-black uppercase tracking-[0.16em] text-shSecondary">Lesson journey</span>
         <span className="text-[14px] sm:text-[15px] font-black text-shText">Part {partIndex + 1} of {sections.length}</span>
