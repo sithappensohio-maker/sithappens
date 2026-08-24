@@ -163,6 +163,7 @@ export default function GuidedPracticeFlow({ practiceCoach, tokens, onOpenTroubl
   const schedule = pc.schedule || {};
   const roundDecision = roundCoachDecision(state.successesThisRound, state.repsPerRound);
   const metrics = sessionMetricsFromGuidedState(state);
+  const hasMoreRounds = state.roundIndex + 1 < state.roundsPerDay;
   const nextRepNumber = Math.min(state.repsPerRound, state.repIndex + 1);
   const nextOutcomeButton = state.pendingTransition === "round_summary"
     ? "See Round Result"
@@ -294,7 +295,7 @@ export default function GuidedPracticeFlow({ practiceCoach, tokens, onOpenTroubl
           <ReactiveTip item={tip} tokens={tokens} onOpenTroubleshooting={onOpenTroubleshooting} testid={testid ? `${testid}-stopped-tip` : undefined} />
           <div className="flex flex-col sm:flex-row items-stretch sm:items-center justify-center gap-2.5 mt-5">
             <PremiumButton variant="secondary" onClick={() => dispatch({ type: "RESUME_AFTER_STOP" })} data-testid={testid ? `${testid}-resume` : undefined} className="justify-center min-h-[48px]">Reset & Try Again</PremiumButton>
-            <PremiumButton onClick={() => onFinish(sessionMetricsFromGuidedState(state))} data-testid={testid ? `${testid}-finish-from-stop` : undefined} className="justify-center min-h-[48px]">Finish for Now</PremiumButton>
+            <PremiumButton onClick={() => onFinish(sessionMetricsFromGuidedState(state))} data-testid={testid ? `${testid}-finish-from-stop` : undefined} className="justify-center min-h-[52px]">End Practice Here & Log Today&apos;s Session</PremiumButton>
           </div>
         </section>
       )}
@@ -313,9 +314,23 @@ export default function GuidedPracticeFlow({ practiceCoach, tokens, onOpenTroubl
               <p className="text-[12.5px] text-shTextMuted mt-1 leading-relaxed">{roundDecision.body}</p>
             </div>
           </div>
+
+          <div className={`mt-4 rounded-2xl border p-4 ${hasMoreRounds ? "border-shSecondary/25 bg-shSecondary/[0.045]" : "border-shPrimary/30 bg-shPrimary/[0.055]"}`} data-testid={testid ? `${testid}-round-next-choice` : undefined}>
+            <p className={`text-[9px] font-black uppercase tracking-[0.16em] ${hasMoreRounds ? "text-shSecondary" : "text-shPrimary"}`}>
+              {hasMoreRounds ? "Choose What Happens Next" : "Training Is Finished for Today"}
+            </p>
+            <p className="text-[12.5px] text-shTextMuted mt-1.5 leading-relaxed">
+              {hasMoreRounds
+                ? `You still have Round ${state.roundIndex + 2} planned. Start it if you and your dog are ready, or end practice here and go review/save what you completed.`
+                : "You completed all planned rounds. Do not keep drilling just because the screen is open. The next step is to review today's results and save this practice session."}
+            </p>
+          </div>
+
           <div className="flex flex-col sm:flex-row items-stretch sm:items-center gap-2.5 mt-5">
-            <PremiumButton variant="secondary" onClick={() => onFinish(sessionMetricsFromGuidedState(state))} data-testid={testid ? `${testid}-finish-for-now` : undefined} className="justify-center min-h-[48px]">Finish for Now</PremiumButton>
-            {state.roundIndex + 1 < state.roundsPerDay && <PremiumButton onClick={() => dispatch({ type: "NEXT_ROUND" })} data-testid={testid ? `${testid}-next-round` : undefined} className="justify-center min-h-[48px]">Start Round {state.roundIndex + 2} — {state.repsPerRound} More Reps <i className="fas fa-arrow-right text-[10px]"/></PremiumButton>}
+            <PremiumButton variant={hasMoreRounds ? "secondary" : undefined} onClick={() => onFinish(sessionMetricsFromGuidedState(state))} data-testid={testid ? `${testid}-finish-for-now` : undefined} className="justify-center min-h-[54px]">
+              {hasMoreRounds ? "End Practice Here & Log Today's Session" : "All Rounds Done — Review & Save Session"}
+            </PremiumButton>
+            {hasMoreRounds && <PremiumButton onClick={() => dispatch({ type: "NEXT_ROUND" })} data-testid={testid ? `${testid}-next-round` : undefined} className="justify-center min-h-[54px]">Start Round {state.roundIndex + 2} — {state.repsPerRound} More Reps <i className="fas fa-arrow-right text-[10px]"/></PremiumButton>}
           </div>
         </section>
       )}
@@ -331,8 +346,8 @@ export default function GuidedPracticeFlow({ practiceCoach, tokens, onOpenTroubl
             </div>
           </div>
           {pc.success_today && <p className="mt-4 rounded-xl border border-shBorder/55 bg-black/15 px-4 py-3 text-[12px] text-shTextMuted leading-relaxed"><span className="font-black text-shText">Compare with today&apos;s target: </span>{renderPracticeCoachText(pc.success_today, tokens)}</p>}
-          <p className="text-[12px] text-shTextMuted mt-3">Next, tell School how the session felt and add anything your trainer should know.</p>
-          <PremiumButton onClick={() => onFinish(metrics)} data-testid={testid ? `${testid}-wrap-up` : undefined} className="mt-5 w-full sm:w-auto justify-center min-h-[50px] sm:min-w-[220px]">Log This Practice <i className="fas fa-arrow-right text-[10px]"/></PremiumButton>
+          <p className="text-[12px] text-shTextMuted mt-3">The dog-training part is finished. Next, review what happened, answer the short wrap-up, and save the session.</p>
+          <PremiumButton onClick={() => onFinish(metrics)} data-testid={testid ? `${testid}-wrap-up` : undefined} className="mt-5 w-full sm:w-auto justify-center min-h-[52px] sm:min-w-[260px]">Review & Save Today&apos;s Practice <i className="fas fa-arrow-right text-[10px]"/></PremiumButton>
         </section>
       )}
 
