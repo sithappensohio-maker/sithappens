@@ -3,11 +3,11 @@
 
 function editableHelp(item) {
   const label = String(item?.label || "").toLowerCase();
-  if (label.includes("set") || label.includes("round")) {
-    return "Enter how many rounds you actually completed today.";
-  }
   if (label.includes("rep") || label.includes("repetition") || label.includes("tries")) {
     return "Enter how many complete tries you did in each round.";
+  }
+  if (label.includes("set") || label.includes("round")) {
+    return "Enter how many rounds you actually completed today.";
   }
   if (label.includes("session length") || label.includes("duration") || label.includes("minutes") || label.includes("time")) {
     return "Enter about how many minutes you actually practiced.";
@@ -24,7 +24,7 @@ function editableHelp(item) {
   if (label.includes("success")) {
     return "Enter the result you actually saw today, not the goal.";
   }
-  return "Enter what actually happened during today&apos;s practice.";
+  return "Enter what actually happened during today's practice.";
 }
 
 export default function MeasurementChips({ items, testid }) {
