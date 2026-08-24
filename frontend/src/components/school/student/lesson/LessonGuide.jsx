@@ -5,6 +5,7 @@
  * Course Builder package and legacy structured lesson keep the same authored
  * data, IDs, locks and progression while the client gets much clearer direction.
  */
+import { useState } from "react";
 import BaseLessonGuide, {
   buildGuide as baseBuildGuide,
   classifyBlock,
@@ -61,7 +62,7 @@ export function LessonHowItWorks({ hasPractice, testid = "lesson-how-it-works" }
         ))}
       </p>
       <p className="mt-2 text-[15px] sm:text-[16px] text-shTextMuted leading-relaxed">
-        Open the current step, do exactly what it says, then use the big button at the bottom. School saves your place and chooses the next step for you. Completed steps stay available if you want to read them again.
+        Open the current part, do exactly what it says, then use the big button at the bottom. School saves your place and chooses the next part for you. Finished parts stay available if you want to read them again.
       </p>
     </section>
   );
@@ -91,10 +92,6 @@ const STEP_COACH = {
   know_got_it: { title: "Before you move on", body: "Compare your dog to these signs. You are looking for understanding and repeatable success — not perfection in one lucky repetition.", button: "I KNOW WHAT SUCCESS LOOKS LIKE" },
 };
 
-/* A step lives below a fairly tall tracker. Whenever the student selects or
- * completes a step, make the destination visible instead of making them hunt
- * for what changed. Retry briefly because React may not have painted the next
- * step/action card on the first frame after the API response. */
 function revealSelector(selector, attempts = 12) {
   if (typeof document === "undefined") return;
   const target = document.querySelector(selector);
@@ -115,11 +112,55 @@ function revealStepOrAction(key) {
   revealSelector(`[data-testid="lesson-section-guided-${key}"]`);
 }
 
+function startedStorageKey(lesson) {
+  return `sh_school_lesson_started_${lesson?.id || lesson?.name || "lesson"}`;
+}
+
+function wasLessonStarted(lesson) {
+  if (typeof window === "undefined") return false;
+  try { return window.sessionStorage.getItem(startedStorageKey(lesson)) === "1"; }
+  catch { return false; }
+}
+
+function FreshLessonStart({ lesson, sections, hasPractice, onStart }) {
+  const minutes = Number(lesson?.estimated_minutes || 0) || null;
+  return (
+    <div className="fixed inset-0 z-[75] bg-black/85 backdrop-blur-sm p-3 sm:p-6 grid place-items-center" role="dialog" aria-modal="true" aria-labelledby="fresh-lesson-title" data-testid="fresh-lesson-start">
+      <section className="w-full max-w-2xl max-h-[92vh] overflow-y-auto rounded-3xl border border-shPrimary/40 bg-[var(--sh-card-base)] shadow-2xl p-5 sm:p-8">
+        <p className="text-[10px] font-black uppercase tracking-[0.2em] text-shPrimary">New lesson · Start here</p>
+        <h1 id="fresh-lesson-title" className="text-[27px] sm:text-[36px] font-black text-shText mt-1 leading-tight text-balance">{lesson?.name || "Your next lesson"}</h1>
+        <p className="text-[15px] sm:text-[17px] text-shTextMuted mt-3 leading-relaxed">
+          You have not started this lesson yet. When you tap the button below, School will open Part 1 and guide you one part at a time.
+        </p>
+        <div className="grid gap-2 sm:grid-cols-3 mt-5">
+          <div className="rounded-2xl border border-shBorder/55 bg-black/15 p-4">
+            <p className="text-[9px] font-black uppercase tracking-widest text-shSecondary">Lesson journey</p>
+            <p className="text-[18px] font-black text-shText mt-1">{sections.length} part{sections.length === 1 ? "" : "s"}</p>
+            <p className="text-[11.5px] text-shTextMuted mt-1">School opens them in the right order.</p>
+          </div>
+          <div className="rounded-2xl border border-shBorder/55 bg-black/15 p-4">
+            <p className="text-[9px] font-black uppercase tracking-widest text-shSecondary">Your job</p>
+            <p className="text-[18px] font-black text-shText mt-1">One thing at a time</p>
+            <p className="text-[11.5px] text-shTextMuted mt-1">Read it, do it, then use the big Next button.</p>
+          </div>
+          <div className="rounded-2xl border border-shBorder/55 bg-black/15 p-4">
+            <p className="text-[9px] font-black uppercase tracking-widest text-shSecondary">What happens later</p>
+            <p className="text-[18px] font-black text-shText mt-1">{hasPractice ? "Guided Practice" : "Finish & continue"}</p>
+            <p className="text-[11.5px] text-shTextMuted mt-1">{minutes ? `Plan on about ${minutes} minutes for the lesson.` : "School will tell you when you are finished."}</p>
+          </div>
+        </div>
+        <button type="button" onClick={onStart} autoFocus data-testid="fresh-lesson-start-button"
+                className="mt-6 w-full min-h-[60px] rounded-xl bg-shPrimary text-bgHeader text-[15px] sm:text-[16px] font-black uppercase tracking-widest hover:brightness-110 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-shPrimary focus-visible:ring-offset-2 focus-visible:ring-offset-bgBase">
+          Start Lesson — Show Me Part 1 <i className="fas fa-arrow-right ml-1.5" aria-hidden="true" />
+        </button>
+        <p className="text-[11.5px] text-shTextMuted text-center mt-2">Starting does not lock anything. You can leave and come back, and finished lessons stay available forever.</p>
+      </section>
+    </div>
+  );
+}
+
 export function LessonSectionBody(props) {
-  const {
-    lesson, sectionKey, enrollmentId, onComplete, completed = false,
-    busy = false, testid = "lesson-section",
-  } = props;
+  const { lesson, sectionKey, enrollmentId, onComplete, completed = false, busy = false, testid = "lesson-section" } = props;
   const sections = props.sections || buildGuide(lesson, { hasPractice: true, hasQuiz: true });
   const section = sections.find((s) => s.key === sectionKey);
   if (!section) return null;
@@ -132,8 +173,7 @@ export function LessonSectionBody(props) {
     const next = index >= 0 ? sections[index + 1] : null;
     const result = await Promise.resolve(onComplete(section.key));
     if (result?.ok === false) return;
-    const destination = result?.next_instructional_step
-      || (result?.practice_unlocked ? "practice" : next?.key);
+    const destination = result?.next_instructional_step || (result?.practice_unlocked ? "practice" : next?.key);
     if (destination) revealStepOrAction(destination);
   };
 
@@ -145,14 +185,7 @@ export function LessonSectionBody(props) {
           <p className="text-[16px] sm:text-[17px] text-shText mt-1.5 leading-relaxed">{coach.body}</p>
         </div>
       )}
-
-      <BaseLessonSectionBody
-        {...props}
-        sections={sections}
-        onComplete={null}
-        testid={testid}
-      />
-
+      <BaseLessonSectionBody {...props} sections={sections} onComplete={null} testid={testid} />
       {instructional && onComplete && !completed && (
         <button type="button" onClick={finishAndRevealNext} disabled={busy}
                 data-testid={`${testid}-continue-${section.key}`}
@@ -166,9 +199,49 @@ export function LessonSectionBody(props) {
 
 export default function LessonGuide(props) {
   const sections = props.sections || buildGuide(props.lesson, { hasPractice: props.hasPractice, hasQuiz: props.hasQuiz });
+  const firstInstructional = instructionalKeys(sections)[0] || null;
+  const [started, setStarted] = useState(() => wasLessonStarted(props.lesson));
+  const alreadyPastFreshStart = (props.completed || []).length > 0
+    || !!props.practiced
+    || (props.hasPractice && props.practiceUnlocked === true);
+  const fresh = !started
+    && !alreadyPastFreshStart
+    && !!firstInstructional
+    && (props.activeKey || firstInstructional) === firstInstructional;
+
   const selectAndReveal = (key) => {
     props.onSelectSection?.(key);
     revealStepOrAction(key);
   };
-  return <BaseLessonGuide {...props} sections={sections} onSelectSection={selectAndReveal} />;
+
+  const baseCtx = {
+    completed: props.completed || [],
+    practiceUnlocked: props.practiceUnlocked,
+    practiceLockedReason: props.practiceLockedReason,
+    quickCheckUnlocked: props.quickCheckUnlocked,
+    practiced: props.practiced,
+  };
+  const current = currentStepKey(sections, baseCtx);
+  const visibleKey = props.activeKey || current;
+  const partIndex = Math.max(0, sections.findIndex((s) => s.key === visibleKey));
+  const baseTestid = props.testid || "lesson-guide";
+
+  const begin = () => {
+    try { window.sessionStorage.setItem(startedStorageKey(props.lesson), "1"); } catch { /* storage can be disabled */ }
+    setStarted(true);
+    props.onSelectSection?.(firstInstructional);
+    setTimeout(() => revealStepOrAction(firstInstructional), 60);
+  };
+
+  return (
+    <>
+      {fresh && <FreshLessonStart lesson={props.lesson} sections={sections} hasPractice={props.hasPractice} onStart={begin} />}
+      <style>{`[data-testid="${baseTestid}"] > div:first-child{display:none!important;}`}</style>
+      <div className="flex items-center justify-between gap-3 rounded-xl border border-shSecondary/25 bg-shSecondary/[0.045] px-3.5 py-2.5" data-testid="lesson-journey-position">
+        <span className="text-[10px] font-black uppercase tracking-[0.16em] text-shSecondary">Lesson journey</span>
+        <span className="text-[14px] sm:text-[15px] font-black text-shText">Part {partIndex + 1} of {sections.length}</span>
+      </div>
+      <BaseLessonGuide {...props} sections={sections} onSelectSection={selectAndReveal} />
+    </>
+  );
 }
