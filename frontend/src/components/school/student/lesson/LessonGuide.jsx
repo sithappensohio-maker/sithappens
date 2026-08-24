@@ -91,6 +91,30 @@ const STEP_COACH = {
   know_got_it: { title: "Before you move on", body: "Compare your dog to these signs. You are looking for understanding and repeatable success — not perfection in one lucky repetition.", button: "I KNOW WHAT SUCCESS LOOKS LIKE" },
 };
 
+/* A step lives below a fairly tall tracker. Whenever the student selects or
+ * completes a step, make the destination visible instead of making them hunt
+ * for what changed. Retry briefly because React may not have painted the next
+ * step/action card on the first frame after the API response. */
+function revealSelector(selector, attempts = 12) {
+  if (typeof document === "undefined") return;
+  const target = document.querySelector(selector);
+  if (target) {
+    target.scrollIntoView({ behavior: "smooth", block: "start" });
+    return;
+  }
+  if (attempts <= 0 || typeof setTimeout !== "function") return;
+  setTimeout(() => revealSelector(selector, attempts - 1), 60);
+}
+
+function revealStepOrAction(key) {
+  if (!key) return;
+  if (["practice", "quick_check", "next_step"].includes(key)) {
+    revealSelector('[data-testid="lesson-actions"]');
+    return;
+  }
+  revealSelector(`[data-testid="lesson-section-guided-${key}"]`);
+}
+
 export function LessonSectionBody(props) {
   const {
     lesson, sectionKey, enrollmentId, onComplete, completed = false,
@@ -101,6 +125,14 @@ export function LessonSectionBody(props) {
   if (!section) return null;
   const instructional = (section.kind || "instructional") === "instructional";
   const coach = STEP_COACH[section.key] || null;
+
+  const finishAndRevealNext = async () => {
+    if (!onComplete || busy) return;
+    const index = sections.findIndex((s) => s.key === section.key);
+    const next = index >= 0 ? sections[index + 1] : null;
+    await Promise.resolve(onComplete(section.key));
+    if (next) revealStepOrAction(next.key);
+  };
 
   return (
     <div className="space-y-3" data-testid={`${testid}-guided-${section.key}`}>
@@ -119,7 +151,7 @@ export function LessonSectionBody(props) {
       />
 
       {instructional && onComplete && !completed && (
-        <button type="button" onClick={() => onComplete(section.key)} disabled={busy}
+        <button type="button" onClick={finishAndRevealNext} disabled={busy}
                 data-testid={`${testid}-continue-${section.key}`}
                 className="w-full min-h-[56px] rounded-xl bg-shPrimary text-bgHeader text-[15px] font-black uppercase tracking-widest disabled:opacity-50 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-shPrimary focus-visible:ring-offset-2 focus-visible:ring-offset-bgBase">
           {busy ? "Saving…" : <>{coach?.button || "I'M DONE — NEXT"} <i className="fas fa-arrow-right ml-1.5 text-[12px]" aria-hidden="true" /></>}
@@ -129,31 +161,11 @@ export function LessonSectionBody(props) {
   );
 }
 
-/* Selecting a step changes the content below the tracker. On a long lesson,
- * especially on a phone, leaving the viewport at the tracker makes it look as
- * if nothing happened. After React paints the selected section, take the
- * client directly to the instructions they asked to open. Practice / Quick
- * Check / What's Next are action-area signposts and LessonScreen already
- * scrolls those to the correct controls. */
-function scrollToStepContent(key) {
-  if (!key || ["practice", "quick_check", "next_step"].includes(key)) return;
-  const scroll = () => {
-    if (typeof document === "undefined") return;
-    const target = document.querySelector(`[data-testid="lesson-section-guided-${key}"]`);
-    target?.scrollIntoView({ behavior: "smooth", block: "start" });
-  };
-  if (typeof window !== "undefined" && typeof window.requestAnimationFrame === "function") {
-    window.requestAnimationFrame(() => window.requestAnimationFrame(scroll));
-  } else if (typeof setTimeout === "function") {
-    setTimeout(scroll, 0);
-  }
-}
-
 export default function LessonGuide(props) {
   const sections = props.sections || buildGuide(props.lesson, { hasPractice: props.hasPractice, hasQuiz: props.hasQuiz });
   const selectAndReveal = (key) => {
     props.onSelectSection?.(key);
-    scrollToStepContent(key);
+    revealStepOrAction(key);
   };
   return <BaseLessonGuide {...props} sections={sections} onSelectSection={selectAndReveal} />;
 }

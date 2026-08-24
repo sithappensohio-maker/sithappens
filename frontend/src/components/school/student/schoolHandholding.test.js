@@ -74,6 +74,13 @@ test("Today explains the current server action instead of expecting the client t
   expect(homeSrc).toMatch(/<CurrentActionGuide home=\{home\}/);
 });
 
+test("Today never collapses to a blank page when its shortcut view-model fails", () => {
+  expect(homeSrc).toMatch(/student-home-unavailable/);
+  expect(homeSrc).toMatch(/Today&rsquo;s shortcut did not load/);
+  expect(homeSrc).toMatch(/Open my course/);
+  expect(homeSrc).toMatch(/student-home-open-course-fallback/);
+});
+
 test("first-time School orientation teaches the GPS-style workflow and can be reopened", () => {
   expect(orientationSrc).toMatch(/You do not need to know how to use School/);
   expect(orientationSrc).toMatch(/Use the big next button/);
@@ -82,6 +89,14 @@ test("first-time School orientation teaches the GPS-style workflow and can be re
   expect(orientationSrc).toMatch(/sh_school_orientation_v3/);
   expect(orientationSrc).toMatch(/How School works/);
   expect(homeSrc).toMatch(/<SchoolOrientation dogName=\{home\.dog\?\.name\}/);
+});
+
+test("step completion visibly leads to the next lesson destination", () => {
+  expect(guideSrc).toMatch(/finishAndRevealNext/);
+  expect(guideSrc).toMatch(/await Promise\.resolve\(onComplete\(section\.key\)\)/);
+  expect(guideSrc).toMatch(/revealStepOrAction\(next\.key\)/);
+  expect(guideSrc).toMatch(/lesson-actions/);
+  expect(guideSrc).toMatch(/lesson-section-guided-/);
 });
 
 test("completed courses explicitly become a reusable library without resetting completion", () => {
