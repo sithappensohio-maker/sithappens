@@ -68,7 +68,7 @@ async def _refresh_bundled_recipes(*, manifest: dict, db, model, now_iso) -> Non
     if not model:
         return
     for tpl in manifest.get("homework_templates") or []:
-        key = (tpl.get("source_key") or tpl.get("id" or "").strip()
+        key = (tpl.get("source_key") or tpl.get("id") or "").strip()
         if not key:
             continue
         existing = await db.homework_templates.find_one(
@@ -120,7 +120,7 @@ def register_curriculum_import(**kwargs):
             for tpl in manifest.get("homework_templates") or []:
                 key = (tpl.get("source_key") or tpl.get("id") or "").strip()
                 payload = {k: v for k, v in tpl.items()
-                          if k not in ("source_key", "id", "created_at", "updated_at")}
+                           if k not in ("source_key", "id", "created_at", "updated_at")}
                 _validate_bundled_recipe(model, payload, key)
 
         result = await endpoint(body, user)
@@ -134,4 +134,10 @@ def register_curriculum_import(**kwargs):
     for route in getattr(api, "routes", []):
         dependant = getattr(route, "dependant", None)
         if (getattr(route, "path", None) == "/admin/school/curriculum/import"
-                and dependant…¹‘•Á•¹‘…¹Ğ¹…±°¥Ì•¹‘Á½¥¹Ğ¤è(€€€€€€€€€€€‘•Á•¹‘…¹Ğ¹…±°€ô¡…É‘•¹•‘}¥µÁ½ÉĞ(€€€€€€€€€€€É½ÕÑ”¹•¹‘Á½¥¹Ğ€ô¡…É‘•¹•‘}¥µÁ½ÉĞ(€€€€€€€€€€€‰É•…¬((€€€¥¹ÍÑ…±±}Í¡½½±}ÁÉ…Ñ¥•}¥¹Ñ•É¥Ñä¡‘ˆõ‘ˆ°Í•ÉÙ•É}±½‰…±ÌõÍ•ÉÙ•É}±½‰…±Ì¤(€€€É•ÑÕÉ¸¡…É‘•¹•‘}¥µÁ½ÉĞ
+                and dependant and dependant.call is endpoint):
+            dependant.call = hardened_import
+            route.endpoint = hardened_import
+            break
+
+    install_school_practice_integrity(db=db, server_globals=server_globals)
+    return hardened_import
