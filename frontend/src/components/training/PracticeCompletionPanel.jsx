@@ -1,5 +1,6 @@
 // Practice completion form. Capability flags/API semantics are unchanged;
-// layout is now more readable on desktop and thumb-friendly on phones.
+// the client gets plain-language guidance and a different wrap-up when Guided
+// Practice ended early versus when the planned session was completed.
 import DifficultySelector from "./DifficultySelector";
 import PracticeMediaUploader from "./PracticeMediaUploader";
 import PremiumButton from "../premium/PremiumButton";
@@ -10,6 +11,7 @@ export default function PracticeCompletionPanel({
   allowCouldNotComplete = true,
   allowPhoto = true,
   allowVideo = true,
+  stoppedEarly = false,
   fieldsSlot,
   extraSlot,
   difficulty, onDifficultyChange,
@@ -27,33 +29,37 @@ export default function PracticeCompletionPanel({
 }) {
   return (
     <div className="space-y-4 sm:space-y-5" data-testid={testid}>
-      <section className="rounded-3xl border border-shPrimary/35 bg-gradient-to-br from-shPrimary/[0.08] via-black/15 to-shSecondary/[0.035] p-5 sm:p-6" data-testid={testid ? `${testid}-save-guide` : undefined}>
-        <p className="text-[9px] sm:text-[10px] font-black uppercase tracking-[0.18em] text-shPrimary">Last Step · Save Today&apos;s Session</p>
-        <h3 className="text-[19px] sm:text-[23px] font-black text-shText mt-1.5 leading-tight">The training part is done. Now record how it went.</h3>
+      <section className={`rounded-3xl border p-5 sm:p-6 ${stoppedEarly ? "border-shAccent/35 bg-shAccent/[0.055]" : "border-shPrimary/35 bg-gradient-to-br from-shPrimary/[0.08] via-black/15 to-shSecondary/[0.035]"}`} data-testid={testid ? `${testid}-save-guide` : undefined}>
+        <p className={`text-[9px] sm:text-[10px] font-black uppercase tracking-[0.18em] ${stoppedEarly ? "text-shAccent" : "text-shPrimary"}`}>Last Step · Save Today&apos;s Session</p>
+        <h3 className="text-[19px] sm:text-[23px] font-black text-shText mt-1.5 leading-tight">
+          {stoppedEarly ? "You stopped before the planned practice was finished. That's okay — record what happened." : "The training part is done. Now record how it went."}
+        </h3>
         <p className="text-[12.5px] sm:text-[13.5px] text-shTextMuted mt-2 leading-relaxed max-w-2xl">
-          Take about 30 seconds to review the details below. If School already filled something in, leave it unless it is wrong. If a box is blank, enter what actually happened as best you can.
+          {stoppedEarly
+            ? "Do not restart just to make the numbers look better. Save the repetitions you actually completed and tell your trainer what made you stop."
+            : "Take about 30 seconds to check the results School tracked, answer the short wrap-up, and save the session."}
         </p>
         <div className="grid gap-2 sm:grid-cols-3 mt-4">
           <div className="rounded-xl border border-shBorder/55 bg-black/15 p-3">
-            <p className="text-[9px] font-black uppercase tracking-widest text-shSecondary">1 · Check the details</p>
-            <p className="text-[11.5px] text-shTextMuted mt-1 leading-relaxed">Confirm the rounds, tries, time, or other practice information.</p>
+            <p className="text-[9px] font-black uppercase tracking-widest text-shSecondary">1 · Check the results</p>
+            <p className="text-[11.5px] text-shTextMuted mt-1 leading-relaxed">Confirm the rounds, repetitions, time, or other details from what actually happened.</p>
           </div>
           <div className="rounded-xl border border-shBorder/55 bg-black/15 p-3">
             <p className="text-[9px] font-black uppercase tracking-widest text-shSecondary">2 · Answer the wrap-up</p>
-            <p className="text-[11.5px] text-shTextMuted mt-1 leading-relaxed">Choose the answers that come closest to how today really went.</p>
+            <p className="text-[11.5px] text-shTextMuted mt-1 leading-relaxed">Choose the answers that come closest to how today really felt.</p>
           </div>
           <div className="rounded-xl border border-shBorder/55 bg-black/15 p-3">
-            <p className="text-[9px] font-black uppercase tracking-widest text-shSecondary">3 · Save it</p>
-            <p className="text-[11.5px] text-shTextMuted mt-1 leading-relaxed">Tap the green save button once. School adds this session to the training history.</p>
+            <p className="text-[9px] font-black uppercase tracking-widest text-shSecondary">3 · Save & continue</p>
+            <p className="text-[11.5px] text-shTextMuted mt-1 leading-relaxed">Tap the green button once. School saves the session and then shows the next training step.</p>
           </div>
         </div>
       </section>
 
       {fieldsSlot && (
         <SectionCard accent="cyan" intensity="subtle">
-          <p className="text-[10px] font-black uppercase tracking-[0.14em] text-shSecondary">Check Today&apos;s Details</p>
+          <p className="text-[10px] font-black uppercase tracking-[0.14em] text-shSecondary">Today&apos;s Results</p>
           <p className="text-[12px] text-shTextMuted mt-1 mb-3 leading-relaxed">
-            These boxes describe the practice you just finished. Enter what you actually did today — not what the goal says you were supposed to do.
+            These are about what actually happened today. Guided Practice fills in objective results it already tracked so you do not have to type them again.
           </p>
           {fieldsSlot}
         </SectionCard>
@@ -64,7 +70,7 @@ export default function PracticeCompletionPanel({
         <SectionCard accent="lime" intensity="subtle">
           <p className="text-[10px] font-black uppercase tracking-[0.14em] text-shPrimary mb-1">How did today&apos;s practice feel?</p>
           <p className="text-[12px] text-shTextMuted mb-3 leading-relaxed">
-            Pick the closest answer. This helps your trainer see whether the next practice should stay the same, get easier, or become more challenging.
+            Pick the closest answer. This is different from the success score School tracked — it tells your trainer how manageable the setup felt to you and your dog.
           </p>
           <DifficultySelector value={difficulty} onChange={onDifficultyChange} testid={testid ? `${testid}-difficulty` : undefined}/>
           {difficultyFeedbackSlot && <div className="mt-3">{difficultyFeedbackSlot}</div>}
@@ -75,7 +81,7 @@ export default function PracticeCompletionPanel({
         <label className="text-[10px] font-black uppercase tracking-[0.14em] text-shTextMuted">Anything your trainer should know? <span className="normal-case tracking-normal font-semibold">(optional)</span></label>
         <p className="text-[11.5px] text-shTextMuted mt-1">Use this for a win, something that was difficult, or anything unusual that happened.</p>
         <textarea value={note || ""} onChange={(e) => onNoteChange(e.target.value)} rows={3}
-                  placeholder="Example: The first few tries were hard, but it got easier after we moved to a quieter room." data-testid={testid ? `${testid}-note` : undefined}
+                  placeholder="Example: The first few repetitions were hard, but it got easier after we moved to a quieter room." data-testid={testid ? `${testid}-note` : undefined}
                   className="w-full mt-2 bg-black/20 border border-shBorder/55 rounded-xl p-3 text-shText text-[13px] sm:text-sm min-h-[88px] focus:outline-none focus:border-shSecondary/45 resize-y"/>
       </SectionCard>
 
@@ -95,11 +101,19 @@ export default function PracticeCompletionPanel({
         </SectionCard>
       )}
 
-      {allowCouldNotComplete && (
+      {stoppedEarly ? (
+        <SectionCard accent="orange" intensity="subtle">
+          <label className="text-[10px] font-black uppercase tracking-[0.14em] text-shAccent">What made you stop?</label>
+          <p className="text-[11.5px] text-shTextMuted mt-1">A short answer helps your trainer decide whether the next practice should be easier, shorter, or set up differently.</p>
+          <textarea value={couldNotCompleteReason || ""} onChange={(e) => onCouldNotCompleteReasonChange(e.target.value)}
+                    rows={2} placeholder="Example: My dog stopped taking treats, got distracted, or seemed tired." data-testid={testid ? `${testid}-cnc-reason` : undefined}
+                    className="w-full mt-3 bg-black/20 border border-shAccent/25 rounded-xl p-3 text-shText text-[13px] focus:outline-none focus:border-shAccent/45"/>
+        </SectionCard>
+      ) : allowCouldNotComplete && (
         <div className={`rounded-2xl border p-4 transition ${couldNotComplete ? "border-shAccent/35 bg-shAccent/[0.055]" : "border-shBorder/50 bg-black/12"}`}>
           <label className="flex items-center gap-3 text-[13px] text-shText cursor-pointer min-h-[36px]" data-testid={testid ? `${testid}-cnc-toggle` : undefined}>
             <input type="checkbox" checked={!!couldNotComplete} onChange={(e) => onCouldNotCompleteChange(e.target.checked)} className="w-4 h-4 accent-[var(--sh-accent)]"/>
-            <span><span className="font-black">I couldn&apos;t finish the planned practice today</span><span className="block text-[11px] text-shTextMuted mt-0.5">Check this only if you had to stop before finishing. That is useful training information, not a failure.</span></span>
+            <span><span className="font-black">I couldn&apos;t finish the planned practice today</span><span className="block text-[11px] text-shTextMuted mt-0.5">Use this only when you stopped before finishing the plan. That is useful training information, not a failure.</span></span>
           </label>
           {couldNotComplete && (
             <textarea value={couldNotCompleteReason || ""} onChange={(e) => onCouldNotCompleteReasonChange(e.target.value)}
@@ -126,11 +140,11 @@ export default function PracticeCompletionPanel({
       <div className="sticky bottom-0 -mx-1 pt-3 pb-[max(0.25rem,env(safe-area-inset-bottom))] bg-gradient-to-t from-[var(--sh-card-base)] via-[var(--sh-card-base)]/95 to-transparent">
         <div className="rounded-2xl border border-shPrimary/25 bg-[var(--sh-card-base)]/95 backdrop-blur px-3 py-3 sm:px-4">
           <p className="text-[11.5px] text-shTextMuted text-center sm:text-right mb-2">
-            When everything above looks right, save this session to your training history.
+            When everything above looks right, save this session. School will keep your history and then show you what comes next.
           </p>
           <div className="flex flex-col-reverse sm:flex-row sm:items-center sm:justify-end gap-2.5">
             {saveState === "saved" && <span className="text-[11px] font-black uppercase tracking-[0.12em] text-shPrimary text-center sm:text-left"><i className="fas fa-check mr-1.5"/>Saved</span>}
-            <PremiumButton onClick={onSubmit} disabled={saveState === "saving"} data-testid={testid ? `${testid}-submit` : undefined} className="w-full sm:w-auto justify-center min-h-[54px] sm:min-w-[250px]">
+            <PremiumButton onClick={onSubmit} disabled={saveState === "saving"} data-testid={testid ? `${testid}-submit` : undefined} className="w-full sm:w-auto justify-center min-h-[54px] sm:min-w-[280px]">
               {saveState === "saving" ? <><i className="fas fa-spinner fa-spin"/>Saving Today&apos;s Practice…</> : saveState === "error" ? <>Retry Saving</> : <><i className="fas fa-check text-[10px]"/>{submitLabel}</>}
             </PremiumButton>
           </div>
