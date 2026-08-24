@@ -46,6 +46,49 @@ const FIELD_ICON = { reps: "fa-rotate", sets: "fa-layer-group", duration_sec: "f
   distance_ft: "fa-ruler", success_rate: "fa-percent", rating_5: "fa-star", checkbox: "fa-square-check", text: "fa-pen", longtext: "fa-pen" };
 const FIELD_UNIT = { duration_sec: "sec", duration_min: "min", distance_ft: "ft", success_rate: "%", rating_5: "/5" };
 
+// Guided Practice already knows several objective facts. Put those facts into
+// matching wrap-up fields so a beginner is not asked to retype information
+// the app just tracked. Subjective fields (difficulty/reliability, etc.) are
+// intentionally left for the client to answer.
+export function guidedAutofillValues(fields, metrics, schedule, timerSec = 0, focusText = "") {
+  if (!metrics) return {};
+  const out = {};
+  const rounds = Number(metrics.rounds_completed) || 0;
+  const attempted = Number(metrics.reps_attempted) || 0;
+  const plannedReps = Number(schedule?.reps_per_round) || 0;
+  const fullRoundsOnly = rounds > 0 && plannedReps > 0 && attempted === rounds * plannedReps;
+
+  for (const f of fields || []) {
+    if (!f?.id || f.kind === "checkbox") continue;
+    const label = `${f.id} ${f.label || ""}`.toLowerCase();
+
+    if ((label.includes("reps per set") || label.includes("reps per round") || label.includes("repetitions per")) && fullRoundsOnly) {
+      out[f.id] = plannedReps;
+      continue;
+    }
+    if (label.includes("sets today") || label.includes("rounds today") || label.includes("rounds completed")) {
+      out[f.id] = rounds;
+      continue;
+    }
+    if ((f.kind === "success_rate" || label.includes("success rate")) && metrics.success_rate != null) {
+      out[f.id] = metrics.success_rate;
+      continue;
+    }
+    if ((f.kind === "duration_sec" || label.includes("duration sec")) && timerSec > 0) {
+      out[f.id] = timerSec;
+      continue;
+    }
+    if ((f.kind === "duration_min" || label.includes("session length") || label.includes("minutes practiced")) && timerSec > 0) {
+      out[f.id] = Math.max(1, Math.round(timerSec / 60));
+      continue;
+    }
+    if ((label.includes("what we worked on") || label.includes("practice focus") || label.includes("skill practiced")) && focusText) {
+      out[f.id] = focusText;
+    }
+  }
+  return out;
+}
+
 export default function PracticePanel({ homework, dogPhoto, onClose, onChanged, onPracticeLogged, onCompleted }) {
   const model = assignmentCardModel(homework);
   const isDailyTracker = !!homework.daily_tracker;
@@ -229,7 +272,14 @@ export default function PracticePanel({ homework, dogPhoto, onClose, onChanged, 
 
   const startQuickPractice = () => { setEntryContext("quick"); setViewMode("form"); };
   const startGuided = () => setViewMode("guided");
-  const finishGuided = (metrics) => { setGuidedMetrics(metrics); setEntryContext("guided_done"); setViewMode("form"); };
+  const finishGuided = (metrics) => {
+    const autofill = guidedAutofillValues(section?.fields || [], metrics, practiceCoach?.schedule || {}, timerSec, homework.title || "");
+    setValues(current => ({ ...autofill, ...current }));
+    setGuidedMetrics(metrics);
+    setTimerRunning(false);
+    setEntryContext("guided_done");
+    setViewMode("form");
+  };
 
   // Practice Timer — lives WHERE THE REPS HAPPEN: on the guided-practice
   // screen and on the quick/legacy form (where the client practices with the
