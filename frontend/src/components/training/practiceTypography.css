@@ -1,0 +1,29 @@
+/* Practice Coach readability floor.
+ * The School/Practice experience is intentionally designed for true beginners.
+ * Tiny metadata-sized text makes the coaching harder to follow, especially on
+ * phones, so anything rendered inside the Practice Coach below 13–14px gets a
+ * scoped minimum without changing the rest of the app or icon sizing. */
+[data-testid="practice-panel"] :not(i).text-\[8px\],
+[data-testid="practice-panel"] :not(i).text-\[9px\],
+[data-testid="practice-panel"] :not(i).text-\[10px\] {
+  font-size: 12.5px !important;
+  line-height: 1.35 !important;
+}
+
+[data-testid="practice-panel"] :not(i).text-\[11px\],
+[data-testid="practice-panel"] :not(i).text-\[11\.5px\] {
+  font-size: 13.5px !important;
+  line-height: 1.45 !important;
+}
+
+[data-testid="practice-panel"] :not(i).text-\[12px\],
+[data-testid="practice-panel"] :not(i).text-\[12\.5px\] {
+  font-size: 14px !important;
+  line-height: 1.5 !important;
+}
+
+/* Keep the colored section eyebrows prominent enough to act as real headings. */
+[data-testid="practice-panel"] p.font-black.uppercase,
+[data-testid="practice-panel"] label.font-black.uppercase {
+  letter-spacing: 0.1em !important;
+}

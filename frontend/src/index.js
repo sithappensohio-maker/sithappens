@@ -1,6 +1,7 @@
 import React from "react";
 import ReactDOM from "react-dom/client";
 import "@/index.css";
+import "@/components/training/practiceTypography.css";
 import App from "@/App";
 
 // Keep the app aligned to the *visible* mobile viewport. `100vh` can include

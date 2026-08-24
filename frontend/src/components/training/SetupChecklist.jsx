@@ -12,8 +12,8 @@ export default function SetupChecklist({ items, tokens, testid }) {
             <i className={`fas ${iconKeyToFaClass(item.icon_key)} text-shSecondary text-[13px]`}/>
             {item.required && <i className="fas fa-check-circle text-shPrimary text-[10px] absolute -top-1 -right-1"/>}
           </div>
-          <p className="text-[11px] sm:text-[12px] font-black text-shText leading-tight">{renderPracticeCoachText(item.title, tokens)}</p>
-          {item.description && <p className="text-[10px] text-shTextMuted leading-snug">{renderPracticeCoachText(item.description, tokens)}</p>}
+          <p className="text-[13px] sm:text-[14px] font-black text-shText leading-tight">{renderPracticeCoachText(item.title, tokens)}</p>
+          {item.description && <p className="text-[12.5px] text-shTextMuted leading-snug">{renderPracticeCoachText(item.description, tokens)}</p>}
         </div>
       ))}
     </div>
