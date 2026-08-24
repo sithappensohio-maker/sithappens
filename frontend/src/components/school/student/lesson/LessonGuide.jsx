@@ -130,8 +130,11 @@ export function LessonSectionBody(props) {
     if (!onComplete || busy) return;
     const index = sections.findIndex((s) => s.key === section.key);
     const next = index >= 0 ? sections[index + 1] : null;
-    await Promise.resolve(onComplete(section.key));
-    if (next) revealStepOrAction(next.key);
+    const result = await Promise.resolve(onComplete(section.key));
+    if (result?.ok === false) return;
+    const destination = result?.next_instructional_step
+      || (result?.practice_unlocked ? "practice" : next?.key);
+    if (destination) revealStepOrAction(destination);
   };
 
   return (
