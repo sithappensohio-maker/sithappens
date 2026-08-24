@@ -129,7 +129,31 @@ export function LessonSectionBody(props) {
   );
 }
 
+/* Selecting a step changes the content below the tracker. On a long lesson,
+ * especially on a phone, leaving the viewport at the tracker makes it look as
+ * if nothing happened. After React paints the selected section, take the
+ * client directly to the instructions they asked to open. Practice / Quick
+ * Check / What's Next are action-area signposts and LessonScreen already
+ * scrolls those to the correct controls. */
+function scrollToStepContent(key) {
+  if (!key || ["practice", "quick_check", "next_step"].includes(key)) return;
+  const scroll = () => {
+    if (typeof document === "undefined") return;
+    const target = document.querySelector(`[data-testid="lesson-section-guided-${key}"]`);
+    target?.scrollIntoView({ behavior: "smooth", block: "start" });
+  };
+  if (typeof window !== "undefined" && typeof window.requestAnimationFrame === "function") {
+    window.requestAnimationFrame(() => window.requestAnimationFrame(scroll));
+  } else if (typeof setTimeout === "function") {
+    setTimeout(scroll, 0);
+  }
+}
+
 export default function LessonGuide(props) {
   const sections = props.sections || buildGuide(props.lesson, { hasPractice: props.hasPractice, hasQuiz: props.hasQuiz });
-  return <BaseLessonGuide {...props} sections={sections} />;
+  const selectAndReveal = (key) => {
+    props.onSelectSection?.(key);
+    scrollToStepContent(key);
+  };
+  return <BaseLessonGuide {...props} sections={sections} onSelectSection={selectAndReveal} />;
 }
