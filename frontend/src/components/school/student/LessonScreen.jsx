@@ -94,22 +94,32 @@ export default function LessonScreen({
   const roadmap = detail?.roadmap;
   const requiresCp = !!(data?.is_current && roadmap?.requires_checkpoint);
 
-  /* Finishing one instructional step. The client pressed the action at the
-     END of the step's content, which is what "reached the end and continued"
-     means here — no timer, no scroll heuristic. The write is idempotent
-     server-side, and `busy` stops a double-tap firing twice. */
+  /* Finishing one instructional step. The completion endpoint returns the
+     authoritative next guided state. Apply that response immediately so the
+     button advances on the same click; the follow-up GET only reconciles the
+     rest of the lesson payload in the background. */
   const [stepBusy, setStepBusy] = useState(false);
   const completeStep = async (stepKey) => {
-    if (stepBusy) return;
+    if (stepBusy) return { ok: false, ignored: true };
     setStepBusy(true); setActionErr("");
     try {
-      await api.post(`/portal/school/${enrollmentId}/lessons/${lessonId}/steps/${stepKey}/complete`);
-      setGuideKey(null);
-      await load();
+      const { data: result } = await api.post(`/portal/school/${enrollmentId}/lessons/${lessonId}/steps/${stepKey}/complete`);
+      setData((cur) => cur ? ({
+        ...cur,
+        steps_completed: result?.steps_completed ?? cur.steps_completed,
+        practice_unlocked: result?.practice_unlocked ?? cur.practice_unlocked,
+        practice_locked_reason: result?.practice_locked_reason ?? null,
+        learn_completed: result?.learn_completed ?? cur.learn_completed,
+      }) : cur);
+      setGuideKey(result?.next_instructional_step || null);
       onStateChanged?.();
+      load();
+      return { ok: true, ...(result || {}) };
     } catch (e) {
-      setActionErr(e.response?.data?.detail?.message || e.response?.data?.detail
-        || "Couldn't save your progress — try again.");
+      const message = e.response?.data?.detail?.message || e.response?.data?.detail
+        || "Couldn't save your progress — try again.";
+      setActionErr(typeof message === "string" ? message : "Couldn't save your progress — try again.");
+      return { ok: false, message };
     } finally { setStepBusy(false); }
   };
 
@@ -131,8 +141,6 @@ export default function LessonScreen({
       onAdvanced?.(res);
     } catch (e) {
       const d = e.response?.data?.detail;
-      // Server-enforced Module Quiz gate — route into the quiz instead of
-      // showing an error (the backend blocks regardless of UI state).
       if (d && typeof d === "object" && d.error_code === "module_quiz_required") {
         onTakeQuiz?.(d.module_id);
         return;
@@ -179,40 +187,21 @@ export default function LessonScreen({
   const completedReview = data.status === "completed";
   const learnDone = !!data.learn_completed;
   const hasPractice = !!data.has_practice;
-  // Legacy malformed config: checkpoint required but no practice configured —
-  // submission is impossible. Safe support message; never the checkpoint panel.
   const setupRequired = requiresCp && !hasPractice;
   const prescribedRemediation = isCurrent && roadmap?.checkpoint_status?.status === "graded" && roadmap?.checkpoint_status?.outcome === "prescribe_practice";
   const isFinal = requiresCp && roadmap?.checkpoint_rubric?.assessment_type === "final_assessment";
-  // Module Quiz gate — the server says this module's end-of-module quiz is
-  // ready to take (all lesson/checkpoint work at the boundary is done).
   const quizAvailable = !!(isCurrent && roadmap?.module_quiz_available);
-  // The guided sequence only replaces the flat renderer when the lesson
-  // actually populates at least two steps of its own — a one-field lesson
-  // reads better as plain content than as a one-item checklist. Steps that are
-  // pure hand-offs to Practice / Quick Check / Next Step don't count towards
-  // that, since they carry no lesson content themselves.
   const guideSections = buildGuide(lesson, { hasPractice, hasQuiz: quizAvailable });
   const hasGuide = guideSections.filter(sx => !sx.ready).length >= GUIDE_MIN_CONTENT_STEPS;
-  /* Progression state comes from the SERVER — the same computation the portal
-     endpoints enforce, so what the tracker shows and what the API allows can
-     never disagree. Older payloads (absent fields) fall back to "open", which
-     is exactly how the lesson behaved before this existed. */
   const stepsCompleted = data.steps_completed || [];
   const instructionalStepKeys = data.instructional_steps || instructionalKeys(guideSections);
   const practiceUnlocked = data.practice_unlocked === true;
-  // Quick Check keeps its established non-gating semantics. Missing legacy
-  // payload state therefore preserves the old open behaviour; Practice is the
-  // security-sensitive transition and fails closed above.
   const quickCheckUnlocked = data.quick_check_unlocked !== false;
   const guideCtx = {
     completed: stepsCompleted, practiceUnlocked, quickCheckUnlocked,
     practiceLockedReason: data.practice_locked_reason, practiced: !!data.practiced,
   };
   const currentKey = currentStepKey(guideSections, guideCtx);
-  // A stale local selection/devtools value must never reveal a future teaching
-  // step that the same state machine marks locked. The backend separately
-  // enforces step completion, so this is presentation defense-in-depth.
   const requestedSection = guideSections.find(sx => sx.key === guideKey);
   const requestedState = requestedSection
     ? stepState(requestedSection, { ...guideCtx, currentKey }) : null;
@@ -222,7 +211,6 @@ export default function LessonScreen({
   const isLastInstructional = remainingInstructional.length === 1
     && remainingInstructional[0] === openKey;
   const nextSection = guideSections[guideSections.findIndex(sx => sx.key === openKey) + 1];
-  // The unlock moment: material just finished, practice open, not yet started.
   const showUnlockMoment = hasGuide && hasPractice && practiceUnlocked
     && !data.practiced && instructionalStepKeys.length > 0
     && instructionalStepKeys.every(k => stepsCompleted.includes(k));
@@ -233,7 +221,6 @@ export default function LessonScreen({
 
   return (
     <div className="max-w-3xl mx-auto space-y-4" data-testid="lesson-screen">
-      {/* Context header — dog · module · lesson */}
       <header className="flex items-center gap-3">
         <span className="shrink-0 w-11 h-11 rounded-xl overflow-hidden border border-shSecondary/30 bg-black/25">
           <HuskyDogImage src={dogPhoto} name={dogName} className="w-full h-full object-cover" />
@@ -260,10 +247,6 @@ export default function LessonScreen({
         </div>
       </header>
 
-      {/* The durable result for a checkpoint lesson the client has already
-          finished — ABOVE the lesson content, because on a checkpoint lesson
-          the result is the thing they came back for. The live CheckpointPanel
-          further down owns the CURRENT lesson. */}
       {!isCurrent && cpResult && (
         <CheckpointResultPanel entry={cpResult} dogName={dogName}
                                onContinue={onBackToCourse} continueLabel="Back to my course" />
@@ -275,24 +258,8 @@ export default function LessonScreen({
         </p>
       )}
 
-      {/* The guided sequence is the lesson. Whether a trainer authored Course
-          Builder blocks or the legacy structured fields, buildGuide maps what
-          exists onto the eight steps and selecting one reveals just that
-          step's content — so the client reads a single thing at a time while
-          handling a dog instead of scrolling five phone screens of continuous
-          copy.
-
-          Blocks are still drawn by LessonContentBlocks, so authored media,
-          checklists, step lists and the knowledge check behave exactly as
-          before; only how much is on screen at once has changed. No authored
-          content is lost — a block matching no rule still lands in a visible
-          step, and a section with nothing authored is omitted rather than
-          shown empty.
-
-          A lesson too thin to fill two steps keeps the flat renderer. */}
       {hasGuide ? (
           <div className="space-y-4" data-testid="lesson-guided">
-            {/* A first-time client should not have to guess what this page is. */}
             {!completedReview && <LessonHowItWorks hasPractice={hasPractice} />}
             <LessonGuide lesson={lesson} hasPractice={hasPractice} hasQuiz={quizAvailable}
                          sections={guideSections} activeKey={openKey}
@@ -315,6 +282,12 @@ export default function LessonScreen({
                                                completed={stepsCompleted.includes(openKey)}
                                                nextLabel={nextSection?.label}
                                                isLastInstructional={isLastInstructional} />}
+            {actionErr && (
+              <p className="rounded-xl border border-red-400/35 bg-red-500/[0.07] px-4 py-3 text-[14px] font-bold text-red-300"
+                 data-testid="lesson-step-error">
+                <i className="fas fa-triangle-exclamation mr-2" aria-hidden="true" />{actionErr}
+              </p>
+            )}
           </div>
         )
         : (lesson.content_blocks || []).some((b) => b?.active !== false)
@@ -337,7 +310,6 @@ export default function LessonScreen({
 
       {actionErr && <p className="text-shDanger text-[13px] font-bold" data-testid="lesson-action-error">{actionErr}</p>}
 
-      {/* ── Action area — driven entirely by backend state ── */}
       <div ref={actionsRef} className="space-y-4" data-testid="lesson-actions">
       {setupRequired ? (
         <SectionCard accent="cyan" intensity="subtle" data-testid="lesson-setup-required">
@@ -351,16 +323,11 @@ export default function LessonScreen({
         </SectionCard>
       ) : (
         <>
-          {/* The unlock moment — finishing the material is an achievement, so
-              a locked row must not just quietly become an enabled one. */}
           {showUnlockMoment && !prescribedRemediation && (
             <PracticeUnlockedCard dogName={dogName} busy={busy}
                                   onStartPractice={() => onStartPractice(lessonId)} />
           )}
 
-          {/* Practice-bearing lesson: Start Practice IS the learn boundary.
-              Locked until the lesson material is done — and the server refuses
-              the same call, so this is a signpost, not the security. */}
           {hasPractice && !prescribedRemediation && !showUnlockMoment && (
             practiceUnlocked ? (
               <PremiumButton onClick={() => onStartPractice(lessonId)} disabled={busy} data-testid="lesson-start-practice"
@@ -380,7 +347,6 @@ export default function LessonScreen({
             )
           )}
 
-          {/* No-practice lesson: explicit Complete Lesson (never auto). */}
           {!hasPractice && isCurrent && !learnDone && (!hasGuide || instructionalStepKeys.length === 0) && (
             <PremiumButton onClick={completeLesson} disabled={busy} data-testid="lesson-complete"
                            className="w-full justify-center min-h-[52px] text-[13px] sm:text-[14px]">
@@ -388,8 +354,6 @@ export default function LessonScreen({
             </PremiumButton>
           )}
 
-          {/* Module Quiz gate — at the end of a quiz-gated module the quiz
-              (not "continue") is the next step. Server enforces regardless. */}
           {quizAvailable && (
             <SectionCard accent="lime" intensity="subtle" data-testid="lesson-module-quiz-cta">
               {checkpointPassedForQuiz && (
@@ -407,9 +371,6 @@ export default function LessonScreen({
             </SectionCard>
           )}
 
-          {/* Advance — only for the current, non-checkpoint lesson once the
-              backend's requirements are met (it enforces regardless), and
-              never while a Module Quiz is the required next step. */}
           {isCurrent && !requiresCp && !quizAvailable
             && ((hasPractice && practiceUnlocked && data.practiced) || (!hasPractice && learnDone)) && (
             <PremiumButton variant="secondary" onClick={advance} disabled={busy} data-testid="lesson-advance"
@@ -418,9 +379,6 @@ export default function LessonScreen({
             </PremiumButton>
           )}
 
-          {/* Checkpoint is downstream of the instructional material and
-              Practice. Keep an existing in-flight review visible, but do not
-              present a fresh submit form while the lesson material is locked. */}
           {isCurrent && requiresCp && hasPractice && !practiceUnlocked && !checkpointAlreadyInFlight && (
             <SectionCard accent="cyan" intensity="subtle" data-testid="lesson-checkpoint-locked-by-material">
               <p className="text-[14px] font-black text-shText"><i className="fas fa-lock mr-2 text-shSecondary" />Checkpoint locked</p>
@@ -438,9 +396,6 @@ export default function LessonScreen({
               onStartPrescribedPractice={onStartPrescribedPractice}
               onGoToRefresher={(rid) => onStateChanged?.({ openLessonId: rid })}
               busy={busy}
-              /* Context the checkpoint needs to read as a milestone rather
-                 than a form. All of it is already on this screen's payload —
-                 no extra request, no new field. */
               moduleName={data.module_name}
               dogName={dogName}
               skills={data.skills}
