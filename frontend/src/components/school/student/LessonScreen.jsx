@@ -7,6 +7,7 @@ import SectionCard from "../../premium/SectionCard";
 import PremiumButton from "../../premium/PremiumButton";
 import HuskyDogImage from "../../brand/HuskyDogImage";
 import CheckpointPanel from "./CheckpointPanel";
+import { SchoolOnboarding } from "./StudentWorkspaceExtras";
 import LessonGuide, {
   LessonSectionBody, buildGuide, LessonHowItWorks, PracticeUnlockedCard,
   currentStepKey, instructionalKeys, stepState, GUIDE_MIN_CONTENT_STEPS,
@@ -27,18 +28,13 @@ export default function LessonScreen({
   onStartPractice, onStartPrescribedPractice, onAdvanced, onStateChanged, onBackToCourse, onAskTrainer, onTakeQuiz,
 }) {
   const [data, setData] = useState(null);
-  const [err, setErr] = useState(null);      // {status, message}
+  const [err, setErr] = useState(null);
   const [busy, setBusy] = useState(false);
   const [actionErr, setActionErr] = useState("");
   const [guideKey, setGuideKey] = useState(null);
-  // "Next Step" is a signpost, not content: tapping it takes the client to
-  // the real actions this lesson offers rather than opening an empty panel.
+  const [onboardingGate, setOnboardingGate] = useState(undefined);
   const actionsRef = useRef(null);
 
-  // Monotonic request counter: on a hard refresh this screen briefly mounts
-  // with enrollmentId=null (the enrollment list is still resolving), and a
-  // stale 404 from that phantom request must never overwrite the real
-  // lesson response that races past it.
   const loadSeq = useRef(0);
   const load = useCallback(async () => {
     if (!enrollmentId || !lessonId) return;
@@ -51,19 +47,32 @@ export default function LessonScreen({
       if (seq === loadSeq.current) setErr({ status: e.response?.status, message: e.response?.data?.detail || "This lesson isn't available right now." });
     }
   }, [enrollmentId, lessonId]);
+
+  const checkOnboarding = useCallback(async () => {
+    if (!enrollmentId) return null;
+    try {
+      const { data: schoolHome } = await api.get(`/portal/school/${enrollmentId}/home`);
+      const gate = schoolHome?.current_action?.type === "onboarding"
+        ? (schoolHome?.onboarding || { config: {}, baseline: null })
+        : null;
+      setOnboardingGate(gate);
+      return gate;
+    } catch {
+      // A failed helper read must not hide an otherwise-accessible lesson.
+      // The progression endpoints still enforce the setup server-side.
+      setOnboardingGate(null);
+      return null;
+    }
+  }, [enrollmentId]);
+
   useEffect(() => {
-    // Section selection is local UI state, not progression. Never carry a
-    // selection from one lesson/enrollment into the next lesson.
     setGuideKey(null);
     setData(null);
+    setOnboardingGate(undefined);
     load();
-  }, [load]);
+    checkOnboarding();
+  }, [load, checkOnboarding]);
 
-  /* A PASSED checkpoint auto-advances the enrolment server-side, so the live
-     checkpoint_status is already gone by the time the client looks at the
-     lesson they earned it on. The persisted record in checkpoint-history is
-     the canonical source, so the milestone is read back from there rather
-     than being lost — or, worse, reconstructed from session data. */
   const [cpResult, setCpResult] = useState(null);
   useEffect(() => {
     if (!enrollmentId || !lessonId) return undefined;
@@ -78,12 +87,6 @@ export default function LessonScreen({
     return () => { live = false; };
   }, [enrollmentId, lessonId, detail]);
 
-  // Practice happens in an overlay on TOP of this screen, so finishing it
-  // routes back to the SAME lesson URL — no remount, no reload. The parent
-  // refreshes `detail` (the roadmap) after every practice/checkpoint change;
-  // ride that signal to resync this screen's own lesson data (data.practiced
-  // gates the checkpoint submit form). Skip the initial render — the mount
-  // effect above already loads.
   const detailRef = useRef(detail);
   useEffect(() => {
     if (detailRef.current === detail) return;
@@ -94,10 +97,6 @@ export default function LessonScreen({
   const roadmap = detail?.roadmap;
   const requiresCp = !!(data?.is_current && roadmap?.requires_checkpoint);
 
-  /* Finishing one instructional step. The completion endpoint returns the
-     authoritative next guided state. Apply that response immediately so the
-     button advances on the same click; the follow-up GET only reconciles the
-     rest of the lesson payload in the background. */
   const [stepBusy, setStepBusy] = useState(false);
   const completeStep = async (stepKey) => {
     if (stepBusy) return { ok: false, ignored: true };
@@ -116,9 +115,16 @@ export default function LessonScreen({
       load();
       return { ok: true, ...(result || {}) };
     } catch (e) {
-      const message = e.response?.data?.detail?.message || e.response?.data?.detail
-        || "Couldn't save your progress — try again.";
-      setActionErr(typeof message === "string" ? message : "Couldn't save your progress — try again.");
+      const detailValue = e.response?.data?.detail;
+      const message = detailValue?.message || detailValue || "Couldn't save your progress — try again.";
+      if (typeof message === "string" && message.toLowerCase().includes("online school setup")) {
+        const gate = await checkOnboarding();
+        if (!gate) {
+          setActionErr("Before training starts, complete the one-time setup on your School Today page. It tells your trainer where you and your dog are starting.");
+        }
+      } else {
+        setActionErr(typeof message === "string" ? message : "Couldn't save your progress — try again.");
+      }
       return { ok: false, message };
     } finally { setStepBusy(false); }
   };
@@ -172,7 +178,7 @@ export default function LessonScreen({
       </div>
     );
   }
-  if (!data) {
+  if (!data || onboardingGate === undefined) {
     return (
       <div className="space-y-3" data-testid="lesson-screen-loading">
         <div className="h-16 rounded-2xl bg-shBorder/30 animate-pulse" />
@@ -185,6 +191,34 @@ export default function LessonScreen({
   const lesson = data.lesson;
   const isCurrent = !!data.is_current;
   const completedReview = data.status === "completed";
+
+  // A required baseline is STEP ZERO, not a surprise error after Step 1.
+  // Completed/review lessons stay readable forever; only the current forward
+  // training path is held until the one-time setup is saved.
+  if (isCurrent && onboardingGate) {
+    return (
+      <div className="max-w-3xl mx-auto space-y-4" data-testid="lesson-onboarding-gate">
+        <div className="rounded-2xl border border-shPrimary/30 bg-shPrimary/[0.06] p-4 sm:p-5">
+          <p className="text-[11px] font-black uppercase tracking-[0.18em] text-shPrimary">Start here before Lesson 1</p>
+          <h1 className="text-[24px] sm:text-[30px] font-black text-shText mt-1 leading-tight">One quick setup, then we start training.</h1>
+          <p className="text-[15px] sm:text-[16px] text-shTextMuted mt-2 leading-relaxed">
+            School needs a little information about {dogName || "your dog"} before the first training step. Fill this out once. When you save it, this lesson unlocks automatically.
+          </p>
+        </div>
+        <SchoolOnboarding
+          enrollmentId={enrollmentId}
+          initial={onboardingGate?.baseline}
+          config={onboardingGate?.config || {}}
+          onDone={async () => {
+            await checkOnboarding();
+            await load();
+            onStateChanged?.();
+          }}
+        />
+      </div>
+    );
+  }
+
   const learnDone = !!data.learn_completed;
   const hasPractice = !!data.has_practice;
   const setupRequired = requiresCp && !hasPractice;
@@ -308,7 +342,7 @@ export default function LessonScreen({
         </SectionCard>
       )}
 
-      {actionErr && <p className="text-shDanger text-[13px] font-bold" data-testid="lesson-action-error">{actionErr}</p>}
+      {actionErr && !hasGuide && <p className="text-shDanger text-[13px] font-bold" data-testid="lesson-action-error">{actionErr}</p>}
 
       <div ref={actionsRef} className="space-y-4" data-testid="lesson-actions">
       {setupRequired ? (
