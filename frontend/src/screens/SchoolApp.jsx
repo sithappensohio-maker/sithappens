@@ -43,15 +43,15 @@ function AccessEndedState({ onHome, onExit }) {
  * from the backend — no progression logic lives in this shell. */
 export default function SchoolApp({ path, clientName, onNavigate, onExit }) {
   const parsed = parseSchoolPath(path);
-  const [list, setList] = useState(null);          // enrollments; null = loading
+  const [list, setList] = useState(null);
   const [selectedId, setSelectedId] = useState(null);
   const [home, setHome] = useState(null);
   const [homeLoading, setHomeLoading] = useState(true);
-  const [detail, setDetail] = useState(null);      // roadmap detail for the selected enrollment
-  const [practice, setPractice] = useState(null);  // { homework } → PracticePanel hosted here
+  const [detail, setDetail] = useState(null);
+  const [practice, setPractice] = useState(null);
   const [practiceDone, setPracticeDone] = useState(false);
   const [askContext, setAskContext] = useState(null);
-  const [quizFor, setQuizFor] = useState(null);    // { moduleId, checkpointPassed } → ModuleQuizPanel
+  const [quizFor, setQuizFor] = useState(null);
 
   const loadList = useCallback(async () => {
     try { const { data } = await api.get("/portal/school"); setList(data || []); }
@@ -59,7 +59,6 @@ export default function SchoolApp({ path, clientName, onNavigate, onExit }) {
   }, []);
   useEffect(() => { loadList(); }, [loadList]);
 
-  // Resolve selected enrollment: URL → sessionStorage → first active → first.
   useEffect(() => {
     if (!Array.isArray(list)) return;
     if (list.length === 0) { setSelectedId(null); return; }
@@ -101,15 +100,12 @@ export default function SchoolApp({ path, clientName, onNavigate, onExit }) {
 
   const selectEnrollment = useCallback((id) => {
     setSelectedId(id);
-    // Keep the current screen where it's enrollment-scoped; lesson routes
-    // belong to the previous dog, so fall back to the new dog's course.
     if (parsed.view === "course" || parsed.view === "lesson") onNavigate(schoolPathFor("course", id));
     else onNavigate(schoolPathFor(parsed.view === "lesson" ? "course" : parsed.view, id));
   }, [onNavigate, parsed.view]);
 
   const selectedEntry = Array.isArray(list) ? list.find((e) => e.school_enrollment_id === selectedId) : null;
 
-  // ── Practice Coach hosting (engine reused as-is, School context kept) ──
   const openHomework = useCallback(async (homeworkId) => {
     const { data: hw } = await api.get(`/homework/${homeworkId}`);
     setPractice({ homework: hw });
@@ -120,7 +116,7 @@ export default function SchoolApp({ path, clientName, onNavigate, onExit }) {
     try {
       const { data } = await api.post(`/portal/school/${selectedId}/lessons/${lessonId}/start-practice`);
       await openHomework(data.homework_id);
-      refreshAll(); // Start-Practice completed the Learn step server-side
+      refreshAll();
     } catch (e) {
       const msg = e.response?.data?.detail || "Couldn't start practice — try again.";
       window.alert(typeof msg === "string" ? msg : "Couldn't start practice — try again.");
@@ -150,13 +146,6 @@ export default function SchoolApp({ path, clientName, onNavigate, onExit }) {
     refreshAll();
   }, [refreshAll]);
 
-  // Finish Practice must LEAD somewhere. After the panel's brief completion
-  // transition, ask the backend what the client's next logical action is
-  // (the SAME current_action ladder that drives Home/Today — practice /
-  // checkpoint / quiz / advance / completed) and route there. Never a
-  // frontend "current lesson + 1" guess, and never an auto-advance: an
-  // "advance"-state lands on Today, whose primary CTA is the explicit
-  // Continue action the progression state machine expects.
   const practiceCompleted = useCallback(async () => {
     setPractice(null);
     let act = null;
@@ -176,12 +165,19 @@ export default function SchoolApp({ path, clientName, onNavigate, onExit }) {
       if (moduleId) { setQuizFor({ moduleId, checkpointPassed: false }); return; }
     }
     if (t === "course_complete") { go("progress"); return; }
-    // advance / awaiting_review / everything else → Today's Training with the
-    // completed state and the next step as its primary CTA.
     go("today");
   }, [selectedId, loadDetail, openPractice, openPrescribedPractice, go]);
 
-  // ── One router for every school action (Home CTA, Today CTA) ──
+  const revealOnboarding = useCallback((attempts = 16) => {
+    if (typeof document === "undefined") return;
+    const target = document.querySelector('[data-testid="school-onboarding"]');
+    if (target) {
+      target.scrollIntoView({ behavior: "smooth", block: "start" });
+      return;
+    }
+    if (attempts > 0 && typeof setTimeout === "function") setTimeout(() => revealOnboarding(attempts - 1), 80);
+  }, []);
+
   const runAction = useCallback(async (action) => {
     const t = action?.type;
     const lessonId = action?.target?.lesson_id || home?.current_lesson?.id;
@@ -197,8 +193,6 @@ export default function SchoolApp({ path, clientName, onNavigate, onExit }) {
       }
     }
     if (t === "advance") {
-      // The existing advancement action — backend moves the pointer exactly
-      // once (CAS-guarded); we just refresh and stay on Today for the new task.
       try { await api.post(`/portal/school/${selectedId}/advance`); } catch { /* backend gate holds */ }
       refreshAll(); go("today"); return;
     }
@@ -206,10 +200,14 @@ export default function SchoolApp({ path, clientName, onNavigate, onExit }) {
     if (t === "start") { go("course"); return; }
     if (t === "trainer_assist") { go("feedback"); return; }
     if (t === "trainer_guided") { go("course"); return; }
-    if (t === "onboarding") { requestAnimationFrame(() => document.querySelector('[data-testid="school-onboarding"]')?.scrollIntoView({ behavior: "smooth", block: "start" })); return; }
+    if (t === "onboarding") {
+      go("today");
+      revealOnboarding();
+      return;
+    }
     if (t === "course_paused") { go("home"); return; }
     go("today");
-  }, [home, detail, go, openPractice, openPrescribedPractice, selectedId, refreshAll]);
+  }, [home, detail, go, openPractice, openPrescribedPractice, selectedId, refreshAll, revealOnboarding]);
 
   const goView = useCallback((view) => {
     setPracticeDone(false);
@@ -233,8 +231,6 @@ export default function SchoolApp({ path, clientName, onNavigate, onExit }) {
       school_checkpoint_id: checkpoint?.id || extra.checkpointId || home?.checkpoint_status?.id || null,
     });
   }, [selectedId, home, selectedEntry]);
-
-
 
   const navigateFromNotification = useCallback((view, dl = {}) => {
     const targetId = dl.school_enrollment_id && Array.isArray(list) && list.some((e) => e.school_enrollment_id === dl.school_enrollment_id)
@@ -274,17 +270,10 @@ export default function SchoolApp({ path, clientName, onNavigate, onExit }) {
     );
   } else {
     let screen;
-    // A revoked enrollment keeps a safe School Home/history shell, but its
-    // protected course/feedback/progress endpoints intentionally 403. Catch
-    // that lifecycle state here so direct/refreshed School URLs never flash a
-    // raw API error or empty screen.
     if (home?.current_action?.type === "access_expired" && parsed.view !== "home") {
       screen = <AccessEndedState onHome={() => go("home")} onExit={onExit} />;
     } else if (parsed.view === "course") {
       screen = (
-        /* `progress` carries the WHOLE-course totals. The roadmap deliberately
-           withholds lessons inside locked modules, so anything counted from it
-           describes only the unlocked part of the course. */
         <CourseRoadmap detail={detail} progress={home?.progress} loading={!detail}
                        onOpenLesson={(lid) => go("lesson", lid)}
                        onResume={() => home?.current_action ? runAction(home.current_action) : go("today")} />
@@ -336,8 +325,6 @@ export default function SchoolApp({ path, clientName, onNavigate, onExit }) {
       screen = <ProgressScreen enrollmentId={selectedId} home={home} detail={detail} onOpenHistory={() => go("lesson_history")}
                                onPrimaryAction={() => runAction(home?.current_action)} />;
     } else if (parsed.view === "lesson_history") {
-      // Per-ATTEMPT training history. selectedId is this School enrollment,
-      // so Repeat Program attempts never show each other's lessons.
       screen = <LessonHistoryScreen enrollmentId={selectedId} dogName={selectedEntry?.dog_name} />;
     } else if (parsed.view === "resources") {
       screen = <ResourcesScreen enrollmentId={selectedId} />;
@@ -380,17 +367,12 @@ export default function SchoolApp({ path, clientName, onNavigate, onExit }) {
         {body}
       </div>
 
-      {/* Practice Coach — the exact same engine, hosted with School context.
-          onCompleted makes Finish Practice route to the backend-decided next
-          step instead of stranding the client on the finished form. */}
       {practice && (
         <PracticePanel homework={practice.homework} dogPhoto={selectedEntry?.dog_photo}
                        onClose={closePractice} onChanged={refreshAll} onPracticeLogged={practiceLogged}
                        onCompleted={practiceCompleted} />
       )}
 
-      {/* Module Quiz — server-graded; a passing submit already advanced the
-          enrollment, so closing/continuing only refreshes and routes. */}
       {quizFor && (
         <ModuleQuizPanel
           enrollmentId={selectedId}
