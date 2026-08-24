@@ -4,6 +4,7 @@ import { greeting } from "../../../lib/studentSchool";
 import TrainerCard from "./TrainerCard";
 import LatestFeedbackCard from "./LatestFeedbackCard";
 import CourseCompletionCard from "./CourseCompletionCard";
+import SchoolOrientation, { CurrentActionGuide } from "./SchoolOrientation";
 import { ProgramHeroCard, CurrentLessonCard, PracticeCard, NextMilestoneCard, ProgressRow } from "./today/TodayCards";
 
 /* Student Today — the client's daily plan.
@@ -56,20 +57,20 @@ export default function StudentHome({ home, loading, clientName, onPrimaryAction
 
   return (
     <div className="space-y-4" data-testid="student-home">
-      <header>
-        <h1 className="text-shText font-black text-[22px] sm:text-[26px] leading-tight text-balance">
-          {greeting(clientName)}
-        </h1>
-        {home.dog?.name && (
-          <p className="text-[13px] text-shTextMuted mt-0.5">Here&rsquo;s {home.dog.name}&rsquo;s plan for today.</p>
-        )}
+      <header className="flex items-start justify-between gap-3">
+        <div className="min-w-0">
+          <h1 className="text-shText font-black text-[22px] sm:text-[26px] leading-tight text-balance">{greeting(clientName)}</h1>
+          {home.dog?.name && <p className="text-[13px] text-shTextMuted mt-0.5">Here&rsquo;s {home.dog.name}&rsquo;s plan for today.</p>}
+        </div>
+        <SchoolOrientation dogName={home.dog?.name} />
       </header>
 
       {completed ? (
-        <CourseCompletionCard home={home} onProgress={onViewProgress} onFeedback={onViewFeedback} />
+        <CourseCompletionCard home={home} onCourse={onViewCourse} onProgress={onViewProgress} onFeedback={onViewFeedback} />
       ) : (
         <>
           <ProgramHeroCard home={home} onViewCourse={onViewCourse} />
+          <CurrentActionGuide home={home} />
           <CurrentLessonCard home={home} onPrimary={onPrimaryAction} />
         </>
       )}

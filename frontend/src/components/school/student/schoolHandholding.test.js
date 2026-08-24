@@ -1,0 +1,93 @@
+// School delivery-system handholding — curriculum-agnostic by design.
+//
+// These checks pin the central rule of this redesign: existing Course Builder
+// packages and older structured lessons keep their authored content/data, while
+// the student-facing shell supplies the direction a true beginner needs.
+import fs from "fs";
+import path from "path";
+import { buildGuide, GUIDE_SECTIONS } from "./lesson/LessonGuide";
+import { actionCoachCopy } from "./SchoolOrientation";
+
+const read = (...p) => fs.readFileSync(path.join(__dirname, ...p), "utf8");
+const orientationSrc = read("SchoolOrientation.jsx");
+const homeSrc = read("StudentHome.jsx");
+const guideSrc = read("lesson", "LessonGuide.jsx");
+const completionSrc = read("CourseCompletionCard.jsx");
+
+test("existing legacy lessons are mapped into the new plain-language delivery steps", () => {
+  const lesson = {
+    client_overview: "Why this matters",
+    equipment_needed: "Treats and leash",
+    client_instructions: "1. Do this\n2. Then this",
+    common_mistakes: "Do not repeat the cue",
+    success_criteria: "Five good repetitions",
+  };
+  const steps = buildGuide(lesson, { hasPractice: true });
+  expect(steps.filter(s => s.kind === "instructional").map(s => s.key)).toEqual([
+    "learn", "get_ready", "train", "watch_for", "know_got_it",
+  ]);
+  expect(steps.find(s => s.key === "train").body).toContain("Do this");
+});
+
+test("existing Course Builder blocks keep using their same semantic mapping", () => {
+  const lesson = { content_blocks: [
+    { type: "text", title: "Why this matters", body: "Intro", order: 1 },
+    { type: "checklist", title: "Equipment", items: ["Treats"], order: 2 },
+    { type: "steps", title: "Steps", items: ["One", "Two"], order: 3 },
+    { type: "text", title: "Common mistakes", body: "Mistake", order: 4 },
+    { type: "text", title: "Success criteria", body: "Success", order: 5 },
+  ]};
+  const steps = buildGuide(lesson, { hasPractice: true });
+  expect(steps.find(s => s.key === "learn").blocks[0].body).toBe("Intro");
+  expect(steps.find(s => s.key === "get_ready").blocks[0].type).toBe("checklist");
+  expect(steps.find(s => s.key === "train").blocks[0].type).toBe("steps");
+  expect(steps.find(s => s.key === "watch_for").blocks[0].body).toBe("Mistake");
+  expect(steps.find(s => s.key === "know_got_it").blocks[0].body).toBe("Success");
+});
+
+test("student step labels tell a beginner what to physically do", () => {
+  const labels = Object.fromEntries(GUIDE_SECTIONS.map(s => [s.key, s.label]));
+  expect(labels.learn).toBe("Read This First");
+  expect(labels.get_ready).toBe("Get Your Stuff Ready");
+  expect(labels.train).toBe("Do This With Your Dog");
+  expect(labels.watch_for).toBe("If This Happens, Do This");
+  expect(labels.know_got_it).toBe("How You'll Know It's Working");
+  expect(labels.next_step).toMatch(/What's Next/);
+});
+
+test("each instructional step tells the client what their job is and uses an explicit acknowledgement", () => {
+  expect(guideSrc).toMatch(/Your job right now/);
+  expect(guideSrc).toMatch(/Do not start training yet/);
+  expect(guideSrc).toMatch(/I READ THIS — NEXT/);
+  expect(guideSrc).toMatch(/I'M READY — NEXT/);
+  expect(guideSrc).toMatch(/I DID THESE STEPS — NEXT/);
+  expect(guideSrc).toMatch(/I KNOW WHAT TO WATCH FOR — NEXT/);
+  expect(guideSrc).toMatch(/I KNOW WHAT SUCCESS LOOKS LIKE/);
+});
+
+test("Today explains the current server action instead of expecting the client to interpret it", () => {
+  expect(actionCoachCopy({ type: "lesson" }, "Bella")).toMatch(/one step at a time/i);
+  expect(actionCoachCopy({ type: "practice" }, "Bella")).toMatch(/Bella/);
+  expect(actionCoachCopy({ type: "advance" }, "Bella")).toMatch(/correct next lesson automatically/i);
+  expect(orientationSrc).toMatch(/Do this now/);
+  expect(orientationSrc).toMatch(/School will choose the next step for you/);
+  expect(homeSrc).toMatch(/<CurrentActionGuide home=\{home\}/);
+});
+
+test("first-time School orientation teaches the GPS-style workflow and can be reopened", () => {
+  expect(orientationSrc).toMatch(/You do not need to know how to use School/);
+  expect(orientationSrc).toMatch(/Use the big next button/);
+  expect(orientationSrc).toMatch(/Do one step at a time/);
+  expect(orientationSrc).toMatch(/Go back whenever you want/);
+  expect(orientationSrc).toMatch(/sh_school_orientation_v3/);
+  expect(orientationSrc).toMatch(/How School works/);
+  expect(homeSrc).toMatch(/<SchoolOrientation dogName=\{home\.dog\?\.name\}/);
+});
+
+test("completed courses explicitly become a reusable library without resetting completion", () => {
+  expect(completionSrc).toMatch(/Review any lesson/);
+  expect(completionSrc).toMatch(/original completion stays saved/);
+  // Existing CourseRoadmap and LessonScreen already keep completed lessons
+  // open and expose Practice Again; this delivery pass does not change those
+  // progression/history paths.
+});

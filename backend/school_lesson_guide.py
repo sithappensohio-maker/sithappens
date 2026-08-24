@@ -34,22 +34,22 @@ from typing import Any, Dict, List, Optional
 # key off — `instructional` steps are the ones that must be finished before
 # Practice opens.
 GUIDE_SECTIONS: tuple = (
-    {"key": "learn", "label": "Learn", "icon": "fa-lightbulb",
-     "blurb": "Understand the goal", "kind": "instructional"},
-    {"key": "get_ready", "label": "Get Ready", "icon": "fa-clipboard-check",
-     "blurb": "Set up for success", "kind": "instructional"},
-    {"key": "train", "label": "Train", "icon": "fa-shoe-prints",
-     "blurb": "Step-by-step instructions", "kind": "instructional"},
-    {"key": "watch_for", "label": "Watch For This", "icon": "fa-eye",
-     "blurb": "Common mistakes to avoid", "kind": "instructional"},
-    {"key": "know_got_it", "label": "Know When You've Got It", "icon": "fa-star",
-     "blurb": "Key signs of success", "kind": "instructional"},
-    {"key": "practice", "label": "Practice", "icon": "fa-paw",
-     "blurb": "Work with your dog", "kind": "practice"},
-    {"key": "quick_check", "label": "Quick Check", "icon": "fa-circle-question",
-     "blurb": "Check your knowledge", "kind": "quick_check"},
-    {"key": "next_step", "label": "Next Step", "icon": "fa-arrow-right",
-     "blurb": "What's coming next", "kind": "next_step"},
+    {"key": "learn", "label": "Read This First", "icon": "fa-lightbulb",
+     "blurb": "Learn what you are teaching before you start", "kind": "instructional"},
+    {"key": "get_ready", "label": "Get Your Stuff Ready", "icon": "fa-clipboard-check",
+     "blurb": "Gather what you need and set up your training space", "kind": "instructional"},
+    {"key": "train", "label": "Do This With Your Dog", "icon": "fa-shoe-prints",
+     "blurb": "Follow the directions in order, one step at a time", "kind": "instructional"},
+    {"key": "watch_for", "label": "If This Happens, Do This", "icon": "fa-eye",
+     "blurb": "Know the common mistakes and what to change", "kind": "instructional"},
+    {"key": "know_got_it", "label": "How You'll Know It's Working", "icon": "fa-star",
+     "blurb": "Look for these signs before moving on", "kind": "instructional"},
+    {"key": "practice", "label": "Do Your Practice", "icon": "fa-paw",
+     "blurb": "Now work with your dog using what you just learned", "kind": "practice"},
+    {"key": "quick_check", "label": "Make Sure It Makes Sense", "icon": "fa-circle-question",
+     "blurb": "Do a quick check before you move on", "kind": "quick_check"},
+    {"key": "next_step", "label": "You're Done — What's Next?", "icon": "fa-arrow-right",
+     "blurb": "School will tell you exactly what to do next", "kind": "next_step"},
 )
 
 INSTRUCTIONAL_KINDS = frozenset({"instructional"})
