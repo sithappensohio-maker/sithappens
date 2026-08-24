@@ -1,8 +1,12 @@
 import { useCallback, useEffect, useState } from "react";
 import { api } from "../../../lib/api";
 
-const readAsDataUrl = (file) => new Promise((resolve, reject) => { const r = new FileReader(); r.onload = () => resolve(r.result); r.onerror = reject; r.readAsDataURL(file); });
-
+const readAsDataUrl = (file) => new Promise((resolve, reject) => {
+  const r = new FileReader();
+  r.onload = () => resolve(r.result);
+  r.onerror = reject;
+  r.readAsDataURL(file);
+});
 
 const supportRemaining = (home, workspace, kind) => {
   const key = kind === "checkpoint" ? "checkpoint" : "assist";
@@ -16,34 +20,282 @@ const supportRemaining = (home, workspace, kind) => {
 function TrainerSupportSummary({ home, workspace }) {
   const checkpoints = supportRemaining(home, workspace, "checkpoint");
   const assists = supportRemaining(home, workspace, "assist");
-  return <div className="rounded-xl border border-shBorder bg-black/10 p-3 text-[11px] text-shTextMuted" data-testid="school-trainer-support-summary">
-    <i className="fas fa-handshake-angle text-shSecondary mr-2"/><b className="text-shText">Trainer support:</b>{" "}
-    {checkpoints == null ? "Trainer-reviewed checkpoints at required course milestones" : `${checkpoints} checkpoint review${Number(checkpoints) === 1 ? "" : "s"} remaining`}
-    {" · "}
-    {assists == null ? "Trainer Assist available when direct help is needed" : `${assists} Trainer Assist${Number(assists) === 1 ? "" : "s"} remaining`}
-    {workspace?.access_expires_at && <span className="block mt-1"><i className="fas fa-calendar-xmark mr-1"/>Access through {new Date(workspace.access_expires_at).toLocaleDateString()}</span>}
-  </div>;
+  return (
+    <div className="rounded-xl border border-shBorder bg-black/10 p-3 text-[11px] text-shTextMuted" data-testid="school-trainer-support-summary">
+      <i className="fas fa-handshake-angle text-shSecondary mr-2" />
+      <b className="text-shText">Trainer support:</b>{" "}
+      {checkpoints == null ? "Trainer-reviewed checkpoints at required course milestones" : `${checkpoints} checkpoint review${Number(checkpoints) === 1 ? "" : "s"} remaining`}
+      {" · "}
+      {assists == null ? "Trainer Assist available when direct help is needed" : `${assists} Trainer Assist${Number(assists) === 1 ? "" : "s"} remaining`}
+      {workspace?.access_expires_at && (
+        <span className="block mt-1"><i className="fas fa-calendar-xmark mr-1" />Access through {new Date(workspace.access_expires_at).toLocaleDateString()}</span>
+      )}
+    </div>
+  );
 }
 
 export default function StudentWorkspaceExtras({ enrollmentId, home, mode = "home", onChanged, onOpenLesson, onOpenHomework }) {
-  const [workspace, setWorkspace] = useState(null); const [requests, setRequests] = useState([]); const [busy, setBusy] = useState(false);
-  const load = useCallback(async()=>{if(!enrollmentId)return;const [w,r]=await Promise.all([api.get(`/portal/school/${enrollmentId}/workspace`),api.get(`/portal/school/${enrollmentId}/requests`)]);setWorkspace(w.data||{});setRequests(r.data||[]);},[enrollmentId]);
-  useEffect(()=>{setWorkspace(null);load().catch(()=>setWorkspace({}));},[load]);
+  const [workspace, setWorkspace] = useState(null);
+  const [requests, setRequests] = useState([]);
+
+  const load = useCallback(async () => {
+    if (!enrollmentId) return;
+    const [w, r] = await Promise.all([
+      api.get(`/portal/school/${enrollmentId}/workspace`),
+      api.get(`/portal/school/${enrollmentId}/requests`),
+    ]);
+    setWorkspace(w.data || {});
+    setRequests(r.data || []);
+  }, [enrollmentId]);
+
+  useEffect(() => {
+    setWorkspace(null);
+    load().catch(() => setWorkspace({}));
+  }, [load]);
+
   const baseline = home?.onboarding?.baseline || workspace?.baseline;
-  const needsOnboarding = home?.current_action?.type === "onboarding" || (home?.onboarding?.config?.enabled && home?.onboarding?.config?.require_baseline && !baseline);
+
+  // Home can fail while onboarding is incomplete because its read-model also
+  // inspects pre-provisioned Practice, whose write guard correctly refuses to
+  // start before onboarding. The workspace endpoint is intentionally lighter
+  // and still loads. If that exact circular state happens, use the missing
+  // baseline as the recovery signal and show the one-time setup right here on
+  // Today instead of sending a beginner around in a Course -> Today loop.
+  const recoveringMissingHome = !home && !!workspace && !baseline;
+  const needsOnboarding = home?.current_action?.type === "onboarding"
+    || (home?.onboarding?.config?.enabled && home?.onboarding?.config?.require_baseline && !baseline)
+    || recoveringMissingHome;
+
+  const onboardingConfig = home?.onboarding?.config || (recoveringMissingHome
+    ? { enabled: true, require_baseline: true, require_equipment_check: true }
+    : {});
+
   if (!workspace && !needsOnboarding) return null;
-  const plans=(workspace?.training_plans||[]).filter(p=>p.status==='active'); const openRequests=requests.filter(r=>r.status==='open'); const assignedPractice=home?.active_practice||[];
-  return <div className="space-y-4" data-testid="student-workspace-extras">
-    {needsOnboarding && <SchoolOnboarding enrollmentId={enrollmentId} initial={baseline} config={home?.onboarding?.config || {}} onDone={async()=>{await load();onChanged?.();}}/>}
-    {!needsOnboarding && assignedPractice.length>0 && <section className="rounded-2xl border border-shSecondary/25 bg-shSecondary/[0.035] p-4 sm:p-5" data-testid="school-assigned-practice"><div><p className="text-[10px] font-black uppercase tracking-[0.2em] text-shSecondary">Assigned Practice</p><p className="text-[12px] text-shTextMuted mt-1">Practice from your Sit Happens School program lives here.</p></div><div className="space-y-2 mt-3">{assignedPractice.map(hw=><button key={hw.id} type="button" onClick={()=>onOpenHomework?.(hw.id)} className="w-full text-left rounded-xl border border-shBorder bg-black/10 p-3 hover:border-shSecondary/35"><div className="flex items-start justify-between gap-3"><div><p className="font-black text-[13px] text-shText">{hw.title||"Practice"}</p><p className="text-[11px] text-shTextMuted mt-1">{hw.trainer_personalized_note||hw.instructions||"Open your Practice Coach and log a session."}</p></div><i className="fas fa-arrow-right text-shSecondary mt-1"/></div>{hw.due_date&&<p className="text-[10px] text-shAccent mt-2"><i className="fas fa-calendar mr-1"/>Due {hw.due_date}</p>}</button>)}</div></section>}
-    {!needsOnboarding && plans.length>0 && <section className="rounded-2xl border border-shPrimary/25 bg-shPrimary/[0.04] p-4 sm:p-5"><div className="flex items-center justify-between gap-2"><div><p className="text-[10px] font-black uppercase tracking-[0.2em] text-shPrimary">Trainer-prescribed plan</p><h3 className="text-lg font-black text-shText mt-1">{plans[0].title}</h3></div><span className="text-[10px] text-shTextMuted">{plans[0].starts_on||''}</span></div>{plans[0].summary&&<p className="text-[13px] text-shTextMuted mt-2">{plans[0].summary}</p>}<div className="space-y-2 mt-4">{(plans[0].tasks||[]).map(t=><PlanTask key={t.id} enrollmentId={enrollmentId} planId={plans[0].id} task={t} onDone={load} onOpenLesson={onOpenLesson} onOpenHomework={onOpenHomework}/>)}</div></section>}
-    {!needsOnboarding && openRequests.length>0 && <section className="space-y-2"><div><p className="text-[10px] font-black uppercase tracking-[0.2em] text-shAccent">Your trainer is asking for an update</p><p className="text-[12px] text-shTextMuted mt-1">Complete these requests so your trainer can see how training is going.</p></div>{openRequests.map(r=><TrainerRequest key={r.id} request={r} enrollmentId={enrollmentId} onDone={async()=>{await load();onChanged?.();}}/>)}</section>}
-    {mode==='home' && !needsOnboarding && (home?.support || workspace?.support) && <TrainerSupportSummary home={home} workspace={workspace}/>}
-  </div>;
+
+  const plans = (workspace?.training_plans || []).filter((p) => p.status === "active");
+  const openRequests = requests.filter((r) => r.status === "open");
+  const assignedPractice = home?.active_practice || [];
+
+  return (
+    <div className="space-y-4" data-testid="student-workspace-extras">
+      {needsOnboarding && (
+        <SchoolOnboarding
+          enrollmentId={enrollmentId}
+          initial={baseline}
+          config={onboardingConfig}
+          recoveryMode={recoveringMissingHome}
+          onDone={async () => {
+            await load();
+            onChanged?.();
+          }}
+        />
+      )}
+
+      {!needsOnboarding && assignedPractice.length > 0 && (
+        <section className="rounded-2xl border border-shSecondary/25 bg-shSecondary/[0.035] p-4 sm:p-5" data-testid="school-assigned-practice">
+          <div>
+            <p className="text-[10px] font-black uppercase tracking-[0.2em] text-shSecondary">Assigned Practice</p>
+            <p className="text-[12px] text-shTextMuted mt-1">Practice from your Sit Happens School program lives here.</p>
+          </div>
+          <div className="space-y-2 mt-3">
+            {assignedPractice.map((hw) => (
+              <button key={hw.id} type="button" onClick={() => onOpenHomework?.(hw.id)} className="w-full text-left rounded-xl border border-shBorder bg-black/10 p-3 hover:border-shSecondary/35">
+                <div className="flex items-start justify-between gap-3">
+                  <div>
+                    <p className="font-black text-[13px] text-shText">{hw.title || "Practice"}</p>
+                    <p className="text-[11px] text-shTextMuted mt-1">{hw.trainer_personalized_note || hw.instructions || "Open your Practice Coach and log a session."}</p>
+                  </div>
+                  <i className="fas fa-arrow-right text-shSecondary mt-1" />
+                </div>
+                {hw.due_date && <p className="text-[10px] text-shAccent mt-2"><i className="fas fa-calendar mr-1" />Due {hw.due_date}</p>}
+              </button>
+            ))}
+          </div>
+        </section>
+      )}
+
+      {!needsOnboarding && plans.length > 0 && (
+        <section className="rounded-2xl border border-shPrimary/25 bg-shPrimary/[0.04] p-4 sm:p-5">
+          <div className="flex items-center justify-between gap-2">
+            <div>
+              <p className="text-[10px] font-black uppercase tracking-[0.2em] text-shPrimary">Trainer-prescribed plan</p>
+              <h3 className="text-lg font-black text-shText mt-1">{plans[0].title}</h3>
+            </div>
+            <span className="text-[10px] text-shTextMuted">{plans[0].starts_on || ""}</span>
+          </div>
+          {plans[0].summary && <p className="text-[13px] text-shTextMuted mt-2">{plans[0].summary}</p>}
+          <div className="space-y-2 mt-4">
+            {(plans[0].tasks || []).map((t) => (
+              <PlanTask key={t.id} enrollmentId={enrollmentId} planId={plans[0].id} task={t} onDone={load} onOpenLesson={onOpenLesson} onOpenHomework={onOpenHomework} />
+            ))}
+          </div>
+        </section>
+      )}
+
+      {!needsOnboarding && openRequests.length > 0 && (
+        <section className="space-y-2">
+          <div>
+            <p className="text-[10px] font-black uppercase tracking-[0.2em] text-shAccent">Your trainer is asking for an update</p>
+            <p className="text-[12px] text-shTextMuted mt-1">Complete these requests so your trainer can see how training is going.</p>
+          </div>
+          {openRequests.map((r) => (
+            <TrainerRequest key={r.id} request={r} enrollmentId={enrollmentId} onDone={async () => { await load(); onChanged?.(); }} />
+          ))}
+        </section>
+      )}
+
+      {mode === "home" && !needsOnboarding && (home?.support || workspace?.support) && (
+        <TrainerSupportSummary home={home} workspace={workspace} />
+      )}
+    </div>
+  );
 }
 
-export function SchoolOnboarding({enrollmentId,initial,config,onDone}){const [form,setForm]=useState(initial||{goals:'',current_challenges:'',training_experience:'',equipment:'',preferred_schedule:'',baseline_note:''});const [busy,setBusy]=useState(false);const [error,setError]=useState('');const equipmentRequired=!!config?.require_equipment_check;const save=async()=>{if(equipmentRequired&&!String(form.equipment||'').trim()){setError('Tell us what leash, collar, harness, or other training equipment you currently use.');return;}setBusy(true);setError('');try{await api.post(`/portal/school/${enrollmentId}/baseline`,form);await onDone?.();}catch(e){setError(e.response?.data?.detail||"We couldn't save this yet. Please try again.");}finally{setBusy(false)}};return <section className="rounded-3xl border border-shSecondary/35 bg-gradient-to-br from-shSecondary/[0.09] to-black/10 p-5 sm:p-6" data-testid="school-onboarding"><p className="text-[10px] font-black uppercase tracking-[0.22em] text-shSecondary">Before your first lesson · one-time setup</p><h2 className="text-xl sm:text-2xl font-black text-shText mt-1">Tell us a little about your dog before training starts</h2><p className="text-[14px] sm:text-[15px] text-shText mt-2 leading-relaxed">Answer these once so your trainer knows where you are starting. <strong>This is not a test.</strong> There are no right or wrong answers. When you save this, School unlocks your first lesson.</p><p className="text-[12.5px] text-shTextMuted mt-2">You can keep the answers short. A sentence or two is plenty.</p><div className="grid sm:grid-cols-2 gap-3 mt-5">{[['goals','What do you want your dog to learn or improve?'],['current_challenges','What is hardest with your dog right now?'],['training_experience','What training has your dog already had?'],['equipment',`What leash, collar, harness, or other equipment do you use?${equipmentRequired?' *':''}`],['preferred_schedule','When can you realistically practice?'],['baseline_note','Anything else you want your trainer to know?']].map(([k,l])=><label key={k} className="block"><span className="text-[10px] font-black uppercase tracking-widest text-shTextMuted">{l}</span><textarea value={form[k]||''} onChange={e=>setForm(f=>({...f,[k]:e.target.value}))} className="mt-1 w-full min-h-[82px] rounded-xl border border-shBorder bg-black/20 p-3 text-[13px] text-shText"/></label>)}</div>{equipmentRequired&&<p className="text-[11px] text-shTextMuted mt-2">* Equipment is required for this course so the lesson directions match what you are using.</p>}{error&&<p className="mt-3 rounded-xl border border-red-400/35 bg-red-500/[0.07] px-3 py-2 text-[12.5px] font-bold text-red-300" role="alert">{typeof error==='string'?error:"We couldn't save this yet. Please try again."}</p>}<button onClick={save} disabled={busy||(equipmentRequired&&!String(form.equipment||'').trim())} className="mt-4 w-full min-h-[52px] px-5 rounded-xl bg-shPrimary text-bgHeader text-[12px] sm:text-[13px] font-black uppercase tracking-widest disabled:opacity-50">{busy?'Saving…':'Save & Start My First Lesson'}</button></section>}
+export function SchoolOnboarding({ enrollmentId, initial, config, onDone, recoveryMode = false }) {
+  const [form, setForm] = useState(initial || {
+    goals: "",
+    current_challenges: "",
+    training_experience: "",
+    equipment: "",
+    preferred_schedule: "",
+    baseline_note: "",
+  });
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState("");
+  const equipmentRequired = !!config?.require_equipment_check;
 
-function PlanTask({enrollmentId,planId,task,onDone,onOpenLesson,onOpenHomework}){const [busy,setBusy]=useState(false);const complete=async()=>{setBusy(true);try{await api.post(`/portal/school/${enrollmentId}/plans/${planId}/tasks/${task.id}/complete`);await onDone?.();}finally{setBusy(false)}};return <div className={`rounded-xl border p-3 ${task.completed_at?'border-shPrimary/20 bg-shPrimary/[0.04]':'border-shBorder bg-black/15'}`}><div className="flex items-start gap-3"><button disabled={!!task.completed_at||busy} onClick={complete} className={`w-8 h-8 rounded-full border shrink-0 ${task.completed_at?'border-shPrimary bg-shPrimary text-bgHeader':'border-shBorder text-shTextMuted'}`}><i className={`fas ${task.completed_at?'fa-check':'fa-circle'}`}/></button><div className="min-w-0 flex-1"><p className="font-black text-[13px] text-shText">{task.title}</p>{task.instructions&&<p className="text-[12px] text-shTextMuted mt-1 whitespace-pre-wrap">{task.instructions}</p>}<div className="flex flex-wrap gap-2 mt-2">{task.estimated_minutes!=null&&<span className="text-[10px] text-shTextMuted"><i className="fas fa-clock mr-1"/>{task.estimated_minutes} min</span>}{task.lesson_id&&<button onClick={()=>onOpenLesson?.(task.lesson_id)} className="text-[10px] font-black text-shSecondary uppercase">Open lesson</button>}{task.homework_id&&<button onClick={()=>onOpenHomework?.(task.homework_id)} className="text-[10px] font-black text-shPrimary uppercase">Open practice</button>}</div></div></div></div>}
+  const save = async () => {
+    if (equipmentRequired && !String(form.equipment || "").trim()) {
+      setError("Tell us what leash, collar, harness, or other training equipment you currently use.");
+      return;
+    }
+    setBusy(true);
+    setError("");
+    try {
+      await api.post(`/portal/school/${enrollmentId}/baseline`, form);
+      await onDone?.();
+    } catch (e) {
+      const detail = e.response?.data?.detail;
+      setError(typeof detail === "string" ? detail : "We couldn't save this yet. Please try again.");
+    } finally {
+      setBusy(false);
+    }
+  };
 
-function TrainerRequest({request,enrollmentId,onDone}){const [note,setNote]=useState('');const [file,setFile]=useState(null);const [busy,setBusy]=useState(false);const submit=async()=>{setBusy(true);try{let media_id=null;if(file){const data=await readAsDataUrl(file);const up=await api.post(`/portal/school/${enrollmentId}/requests/${request.id}/media`,{data,filename:file.name});media_id=up.data.media_id;}await api.post(`/portal/school/${enrollmentId}/requests/${request.id}/respond`,{note,media_id});onDone?.();}finally{setBusy(false)}};return <div className="rounded-2xl border border-shAccent/25 bg-shAccent/[0.035] p-4"><div className="flex justify-between gap-2"><div><p className="text-[10px] font-black uppercase tracking-widest text-shAccent">{request.type.replace(/_/g,' ')}</p><h3 className="font-black text-shText mt-1">{request.title}</h3></div>{request.due_at&&<span className="text-[10px] text-shTextMuted">Due {new Date(request.due_at).toLocaleDateString()}</span>}</div>{request.instructions&&<p className="text-[13px] text-shTextMuted mt-2">{request.instructions}</p>}<textarea value={note} onChange={e=>setNote(e.target.value)} placeholder="Add a note for your trainer…" className="w-full min-h-[70px] mt-3 rounded-xl border border-shBorder bg-black/20 p-3 text-[12px] text-shText"/>{request.type==='video'&&<label className="mt-2 block rounded-xl border border-dashed border-shBorder p-3 text-[11px] text-shTextMuted cursor-pointer"><i className="fas fa-video mr-2 text-shSecondary"/>{file?file.name:'Choose a training video'}<input type="file" accept="video/*" className="hidden" onChange={e=>setFile(e.target.files?.[0]||null)}/></label>}<button disabled={busy||(!note.trim()&&!file)} onClick={submit} className="mt-3 min-h-[42px] px-4 rounded-xl bg-shPrimary text-bgHeader text-[11px] font-black uppercase tracking-widest disabled:opacity-40">Send to trainer</button></div>}
+  return (
+    <section className="rounded-3xl border border-shSecondary/35 bg-gradient-to-br from-shSecondary/[0.09] to-black/10 p-5 sm:p-6" data-testid="school-onboarding">
+      <p className="text-[10px] font-black uppercase tracking-[0.22em] text-shSecondary">Before your first lesson · one-time setup</p>
+      <h2 className="text-xl sm:text-2xl font-black text-shText mt-1">Tell us a little about your dog before training starts</h2>
+      <p className="text-[14px] sm:text-[15px] text-shText mt-2 leading-relaxed">
+        Answer these once so your trainer knows where you are starting. <strong>This is not a test.</strong> There are no right or wrong answers. When you save this, School unlocks your first lesson.
+      </p>
+      {recoveryMode && (
+        <p className="mt-3 rounded-xl border border-shPrimary/25 bg-shPrimary/[0.06] px-3 py-2 text-[13px] text-shText leading-relaxed">
+          <i className="fas fa-arrow-down mr-2 text-shPrimary" />This is the step School was waiting for. Finish this box now, then your Today plan will appear automatically.
+        </p>
+      )}
+      <p className="text-[12.5px] text-shTextMuted mt-2">You can keep the answers short. A sentence or two is plenty.</p>
+
+      <div className="grid sm:grid-cols-2 gap-3 mt-5">
+        {[
+          ["goals", "What do you want your dog to learn or improve?"],
+          ["current_challenges", "What is hardest with your dog right now?"],
+          ["training_experience", "What training has your dog already had?"],
+          ["equipment", `What leash, collar, harness, or other equipment do you use?${equipmentRequired ? " *" : ""}`],
+          ["preferred_schedule", "When can you realistically practice?"],
+          ["baseline_note", "Anything else you want your trainer to know?"],
+        ].map(([k, label]) => (
+          <label key={k} className="block">
+            <span className="text-[10px] font-black uppercase tracking-widest text-shTextMuted">{label}</span>
+            <textarea value={form[k] || ""} onChange={(e) => setForm((f) => ({ ...f, [k]: e.target.value }))} className="mt-1 w-full min-h-[82px] rounded-xl border border-shBorder bg-black/20 p-3 text-[13px] text-shText" />
+          </label>
+        ))}
+      </div>
+
+      {equipmentRequired && <p className="text-[11px] text-shTextMuted mt-2">* Tell us what you use now so School can safely satisfy any course equipment check.</p>}
+      {error && (
+        <p className="mt-3 rounded-xl border border-red-400/35 bg-red-500/[0.07] px-3 py-2 text-[12.5px] font-bold text-red-300" role="alert">
+          {error}
+        </p>
+      )}
+      <button onClick={save} disabled={busy || (equipmentRequired && !String(form.equipment || "").trim())} className="mt-4 w-full min-h-[52px] px-5 rounded-xl bg-shPrimary text-bgHeader text-[12px] sm:text-[13px] font-black uppercase tracking-widest disabled:opacity-50">
+        {busy ? "Saving…" : "Save & Start My First Lesson"}
+      </button>
+    </section>
+  );
+}
+
+function PlanTask({ enrollmentId, planId, task, onDone, onOpenLesson, onOpenHomework }) {
+  const [busy, setBusy] = useState(false);
+  const complete = async () => {
+    setBusy(true);
+    try {
+      await api.post(`/portal/school/${enrollmentId}/plans/${planId}/tasks/${task.id}/complete`);
+      await onDone?.();
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  return (
+    <div className={`rounded-xl border p-3 ${task.completed_at ? "border-shPrimary/20 bg-shPrimary/[0.04]" : "border-shBorder bg-black/15"}`}>
+      <div className="flex items-start gap-3">
+        <button disabled={!!task.completed_at || busy} onClick={complete} className={`w-8 h-8 rounded-full border shrink-0 ${task.completed_at ? "border-shPrimary bg-shPrimary text-bgHeader" : "border-shBorder text-shTextMuted"}`}>
+          <i className={`fas ${task.completed_at ? "fa-check" : "fa-circle"}`} />
+        </button>
+        <div className="min-w-0 flex-1">
+          <p className="font-black text-[13px] text-shText">{task.title}</p>
+          {task.instructions && <p className="text-[12px] text-shTextMuted mt-1 whitespace-pre-wrap">{task.instructions}</p>}
+          <div className="flex flex-wrap gap-2 mt-2">
+            {task.estimated_minutes != null && <span className="text-[10px] text-shTextMuted"><i className="fas fa-clock mr-1" />{task.estimated_minutes} min</span>}
+            {task.lesson_id && <button onClick={() => onOpenLesson?.(task.lesson_id)} className="text-[10px] font-black text-shSecondary uppercase">Open lesson</button>}
+            {task.homework_id && <button onClick={() => onOpenHomework?.(task.homework_id)} className="text-[10px] font-black text-shPrimary uppercase">Open practice</button>}
+          </div>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+function TrainerRequest({ request, enrollmentId, onDone }) {
+  const [note, setNote] = useState("");
+  const [file, setFile] = useState(null);
+  const [busy, setBusy] = useState(false);
+
+  const submit = async () => {
+    setBusy(true);
+    try {
+      let media_id = null;
+      if (file) {
+        const data = await readAsDataUrl(file);
+        const up = await api.post(`/portal/school/${enrollmentId}/requests/${request.id}/media`, { data, filename: file.name });
+        media_id = up.data.media_id;
+      }
+      await api.post(`/portal/school/${enrollmentId}/requests/${request.id}/respond`, { note, media_id });
+      onDone?.();
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  return (
+    <div className="rounded-2xl border border-shAccent/25 bg-shAccent/[0.035] p-4">
+      <div className="flex justify-between gap-2">
+        <div>
+          <p className="text-[10px] font-black uppercase tracking-widest text-shAccent">{request.type.replace(/_/g, " ")}</p>
+          <h3 className="font-black text-shText mt-1">{request.title}</h3>
+        </div>
+        {request.due_at && <span className="text-[10px] text-shTextMuted">Due {new Date(request.due_at).toLocaleDateString()}</span>}
+      </div>
+      {request.instructions && <p className="text-[13px] text-shTextMuted mt-2">{request.instructions}</p>}
+      <textarea value={note} onChange={(e) => setNote(e.target.value)} placeholder="Add a note for your trainer…" className="w-full min-h-[70px] mt-3 rounded-xl border border-shBorder bg-black/20 p-3 text-[12px] text-shText" />
+      {request.type === "video" && (
+        <label className="mt-2 block rounded-xl border border-dashed border-shBorder p-3 text-[11px] text-shTextMuted cursor-pointer">
+          <i className="fas fa-video mr-2 text-shSecondary" />{file ? file.name : "Choose a training video"}
+          <input type="file" accept="video/*" className="hidden" onChange={(e) => setFile(e.target.files?.[0] || null)} />
+        </label>
+      )}
+      <button disabled={busy || (!note.trim() && !file)} onClick={submit} className="mt-3 min-h-[42px] px-4 rounded-xl bg-shPrimary text-bgHeader text-[11px] font-black uppercase tracking-widest disabled:opacity-40">Send to trainer</button>
+    </div>
+  );
+}
