@@ -107,7 +107,7 @@ export function ProgramsPanel() {
   const closeEditor = () => setEdit(null);
   const onStudioSaved = () => { setEdit(null); load(); };
 
-  // Program templates — download a program (WITH the Practice Coach recipes its
+  // Program templates — Download a program (WITH the Practice Coach recipes its
   // lessons link to) as one reusable .json blueprint, and upload one to seed a
   // NEW program: import first recreates the bundled recipes, relinks each
   // lesson to the fresh ids, then opens the editor for review + Save through
@@ -124,7 +124,17 @@ export function ProgramsPanel() {
     setErr(""); setZipResult(null);
     setImporting(true);
     try {
-      const body = { data, filename };
+      // Program Studio ZIP uploads are an UPDATE workflow, not a one-shot
+      // seed. Refresh package-owned lessons/blocks/images, keep local commerce
+      // settings (price, Shop visibility, tax, fulfillment), and refresh active
+      // enrollment snapshots through the server's progress-preserving cascade.
+      const body = {
+        data,
+        filename,
+        mode: "replace",
+        preserve_local_settings: true,
+        cascade_active_enrollments: true,
+      };
       if (adoptProgramId) body.adopt_program_id = adoptProgramId;
       const { data: summary } = await api.post("/admin/school/curriculum/import", body);
       setZipResult(summary);
@@ -141,11 +151,24 @@ export function ProgramsPanel() {
         // wants the whole list in one go.
         setAdoptPrompt(null);
         setZipResult({ errors: detail.errors || [] });
-      } else if (detail && detail.error_code === "archived_course_adoption_required") {
+      } else if (detail && (
+        detail.error_code === "course_update_confirmation_required"
+        || detail.error_code === "archived_course_adoption_required"
+      )) {
         // Not a failure — a question. Nothing was written, so hold onto the
-        // package and ask before doing anything to an archived course.
+        // package and ask before rebinding a ZIP whose package key did not
+        // identify the course but whose unique pathway did.
         pendingZipRef.current = { data, filename };
         setAdoptPrompt(detail);
+      } else if (detail && Array.isArray(detail.errors)) {
+        // Server-side program/pathway validation can fail after the ZIP itself
+        // has validated. Render the actual reasons instead of collapsing an
+        // object into a generic "Something went wrong" banner.
+        setAdoptPrompt(null);
+        pendingZipRef.current = null;
+        setZipResult({
+          errors: detail.errors.map((x) => x?.message || x?.msg || String(x)),
+        });
       } else {
         setAdoptPrompt(null);
         pendingZipRef.current = null;
@@ -284,27 +307,35 @@ export function ProgramsPanel() {
              aria-labelledby="zip-adopt-title">
           <div className="bg-bgPanel border border-shAccent/50 rounded-2xl w-full max-w-lg p-5 sm:p-6 shadow-2xl max-h-[calc(var(--app-height)_-_2rem)] overflow-y-auto animate-slide-in">
             <p id="zip-adopt-title" className="text-[13px] font-black text-shAccent uppercase tracking-widest">
-              Existing Archived Course Found
+              {adoptPrompt.existing_active ? "Existing Course Found" : "Existing Archived Course Found"}
             </p>
             <p className="text-[19px] font-black text-shText mt-1 break-words" data-testid="zip-adopt-name">
               {adoptPrompt.program_name}
             </p>
             <p className="text-[14px] text-shText mt-3">
-              This imported curriculum matches an archived course already in Sit Happens.
+              This uploaded curriculum matches a course already in Sit Happens.
             </p>
             <p className="text-[15px] font-black text-shText mt-2">
-              Use this existing course and reactivate it?
+              {adoptPrompt.existing_active
+                ? "Update this existing course with the uploaded curriculum?"
+                : "Update this existing course and reactivate it?"}
             </p>
             <ul className="mt-3 space-y-2 list-disc pl-5 text-[13px] text-shTextMuted"
                 data-testid="zip-adopt-effects">
               <li>The existing program ID will be preserved.</li>
               <li>Existing enrollments, progress and history will be preserved.</li>
               <li>
-                The imported {adoptPrompt.lessons} lesson{adoptPrompt.lessons === 1 ? "" : "s"},
+                The uploaded {adoptPrompt.lessons} lesson{adoptPrompt.lessons === 1 ? "" : "s"},
                 {" "}{adoptPrompt.images} demonstration image{adoptPrompt.images === 1 ? "" : "s"} and
                 {" "}{adoptPrompt.practice_recipes} Practice recipe{adoptPrompt.practice_recipes === 1 ? "" : "s"}
-                {" "}will be merged into it.
+                {" "}will refresh the package-owned course content.
               </li>
+              <li>Local price, Shop visibility, category, tax and fulfillment settings will be kept.</li>
+              {adoptPrompt.source_key_changed && (
+                <li className="text-shBlue font-black" data-testid="zip-adopt-key-change">
+                  This ZIP uses a different package key, but it matches the same unique course pathway.
+                </li>
+              )}
               {adoptPrompt.will_reactivate && (
                 <li className="text-shAccent font-black" data-testid="zip-adopt-reactivate">
                   The course will be reactivated, because the package declares it active.
@@ -312,7 +343,7 @@ export function ProgramsPanel() {
               )}
             </ul>
             <p className="text-[12px] text-shTextMuted mt-3">
-              Nothing has been imported yet. Cancelling leaves the archived course exactly as it is.
+              Nothing has been imported yet. Cancelling leaves the existing course exactly as it is.
             </p>
             <div className="flex flex-wrap justify-end gap-2 mt-5">
               <button onClick={cancelAdoption} disabled={importing} data-testid="zip-adopt-cancel"
@@ -321,7 +352,7 @@ export function ProgramsPanel() {
               </button>
               <button onClick={confirmAdoption} disabled={importing} data-testid="zip-adopt-confirm"
                       className="bg-shGreen text-bgHeader px-4 py-2 rounded font-black text-[13px] uppercase tracking-widest shadow disabled:opacity-60">
-                {importing ? "Importing…" : "Use existing course"}
+                {importing ? "Updating…" : "Update existing course"}
               </button>
             </div>
           </div>
@@ -339,9 +370,8 @@ export function ProgramsPanel() {
       ) : (
         <div className="rounded-xl border border-shGreen/40 bg-shGreen/[0.06] p-4" data-testid="zip-import-summary">
           <p className="text-[13px] font-black text-shGreen uppercase tracking-widest">
-            Curriculum {zipResult.program_action === "updated" ? "updated"
-              : zipResult.program_action === "adopted" ? "added to the existing course"
-              : "imported"}
+            Curriculum {zipResult.program_action === "updated" || zipResult.program_action === "adopted"
+              ? "updated" : "imported"}
           </p>
           <p className="text-[14px] font-black text-shText mt-1">{zipResult.program_name}</p>
           <ul className="mt-2 grid sm:grid-cols-2 gap-x-6 gap-y-1 text-[13px] text-shTextMuted">
@@ -353,6 +383,11 @@ export function ProgramsPanel() {
             <li className={zipResult.unplaced_media ? "text-shAccent" : ""}>
               {zipResult.unplaced_media} image{zipResult.unplaced_media === 1 ? " needs" : "s need"} placement
             </li>
+            {zipResult.active_enrollments_refreshed > 0 && (
+              <li className="text-shGreen">
+                {zipResult.active_enrollments_refreshed} active student enrollment{zipResult.active_enrollments_refreshed === 1 ? "" : "s"} refreshed
+              </li>
+            )}
           </ul>
           {zipResult.unplaced_media > 0 && (
             <p className="text-[12px] text-shTextMuted mt-2">
@@ -406,330 +441,4 @@ export function ProgramEditor({ program, setProgram, meta, allPrograms = [], onS
   // Sprint 110bx — load homework templates so we can pick which one auto-sends
   // on enrollment (welcome) and after a module is mastered.
   const [hwTemplates, setHwTemplates] = useState([]);
-  // Sprint 110di-62 — load all email templates so the operator can bind a custom
-  // welcome email that fires the moment the program is sold.
-  const [emailTemplates, setEmailTemplates] = useState([]);
-  useEffect(() => {
-    api.get("/homework-templates")
-      .then(r => setHwTemplates(r.data || []))
-      .catch(() => setHwTemplates([]));
-    api.get("/admin/email-templates")
-      .then(r => setEmailTemplates((r.data || []).filter(t => t.audience === "client")))
-      .catch(() => setEmailTemplates([]));
-  }, []);
-
-  const set = (patch) => setProgram(p => ({ ...p, ...patch }));
-  const addModule = () => set({ modules: [...(program.modules||[]), { name: "New module", description: "", goals: [] }] });
-  const removeModule = (i) => set({ modules: program.modules.filter((_, j) => j !== i) });
-  const updateModule = (i, patch) => set({ modules: program.modules.map((m, j) => j === i ? { ...m, ...patch } : m) });
-  const addGoal = (mi) => updateModule(mi, { goals: [...(program.modules[mi].goals||[]), { name: "New goal", description: "" }] });
-  const removeGoal = (mi, gi) => updateModule(mi, { goals: program.modules[mi].goals.filter((_, j) => j !== gi) });
-  const updateGoal = (mi, gi, patch) => updateModule(mi, { goals: program.modules[mi].goals.map((g, j) => j === gi ? { ...g, ...patch } : g) });
-
-  return (
-    <div className="fixed inset-0 bg-black/80 flex items-center justify-center p-4 z-50" data-testid="program-editor">
-      <div className="bg-bgPanel border border-bgHover rounded-2xl w-full max-w-3xl max-h-[calc(var(--app-height)_-_2rem)] flex flex-col min-h-0 shadow-2xl">
-        <div className="px-6 py-4 border-b border-bgHover flex items-center justify-between shrink-0">
-          <h4 className="text-base font-black text-white uppercase italic">{program.id?"Edit Program":"New Program"}</h4>
-          <button onClick={onClose} className="text-gray-500 hover:text-white"><i className="fas fa-times text-xl"/></button>
-        </div>
-
-        <div className="px-6 py-4 space-y-3 overflow-y-auto flex-1 min-h-0">
-          <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
-            <Field label="Name *">
-              <input value={program.name} onChange={(e)=>set({name:e.target.value})} data-testid="prog-name"
-                     className="w-full bg-bgBase border border-bgHover rounded p-2 text-white text-sm" />
-            </Field>
-            {!hideTypePicker && (
-              <Field label="Type">
-                <select value={program.type} onChange={(e)=>set({type:e.target.value})}
-                        className="w-full bg-bgBase border border-bgHover rounded p-2 text-white text-sm">
-                  {meta.types.filter(t => t.key !== "custom").map(t => <option key={t.key} value={t.key}>{t.label}</option>)}
-                </select>
-              </Field>
-            )}
-          </div>
-          <Field label="Description"><textarea value={program.description||""} onChange={(e)=>set({description:e.target.value})} rows={2} className="w-full bg-bgBase border border-bgHover rounded p-2 text-white text-sm"/></Field>
-          <Field label="Focus (short summary)"><input value={program.focus||""} onChange={(e)=>set({focus:e.target.value})} className="w-full bg-bgBase border border-bgHover rounded p-2 text-white text-sm"/></Field>
-
-          <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
-            <Field label="Sessions / credits issued">
-              <input type="number" min="1" value={program.format?.count||1} onChange={(e)=>set({format:{...program.format, count: parseInt(e.target.value)||1}})} data-testid="prog-format-count"
-                     className="w-full bg-bgBase border border-bgHover rounded p-2 text-white text-sm"/>
-              <p className="text-[12px] text-gray-500 mt-1 normal-case font-normal tracking-normal">When a client buys this program they get this many credits.</p>
-            </Field>
-            <Field label="Unit">
-              <select value={program.format?.unit||"sessions"} onChange={(e)=>set({format:{...program.format, unit: e.target.value}})}
-                      className="w-full bg-bgBase border border-bgHover rounded p-2 text-white text-sm">
-                <option value="sessions">Sessions</option><option value="weeks">Weeks</option><option value="days">Days</option><option value="months">Months</option>
-              </select>
-            </Field>
-            <Field label="Min age (months)"><input type="number" min="0" value={program.min_age_months||0} onChange={(e)=>set({min_age_months: parseInt(e.target.value)||0})} className="w-full bg-bgBase border border-bgHover rounded p-2 text-white text-sm"/></Field>
-          </div>
-
-          <Field label="Price (USD)">
-            <input type="number" min="0" step="0.01" value={program.price ?? 0}
-                   onChange={(e)=>set({price: parseFloat(e.target.value)||0})} data-testid="prog-price"
-                   placeholder="e.g. 450.00"
-                   className="w-full bg-bgBase border border-bgHover rounded p-2 text-white text-sm"/>
-            <p className="text-[13px] text-gray-500 mt-1 normal-case font-normal tracking-normal">Shown on the client portal so prospects can see what each program costs.</p>
-          </Field>
-
-          {/* Shop Organization — purely organizational, independent of online
-              visibility. A program can be categorized whether or not it's
-              available online. */}
-          <div className="border-t border-bgHover pt-3 space-y-3">
-            <p className="text-[11px] text-gray-500 uppercase tracking-widest font-black">Shop Category</p>
-            <ShopCategoryFields categoryId={program.category_id} subcategoryId={program.subcategory_id} section="training"
-                                onChange={(patch) => set(patch)} />
-          </div>
-
-          {/* Client Shop Phase 1 — additive online-visibility controls. */}
-          <div className="border-t border-bgHover pt-3 space-y-3">
-            <p className="text-[11px] text-gray-500 uppercase tracking-widest font-black">Client Shop</p>
-            <label className="flex items-center gap-2">
-              <input type="checkbox" checked={!!program.available_online}
-                     onChange={(e)=>set({available_online: e.target.checked})}
-                     data-testid="prog-available-online" />
-              <span className="text-white text-sm">Available Online (client Shop)</span>
-            </label>
-            {program.available_online && (
-              <div className="space-y-3">
-                <Field label="Online Description (optional — falls back to Description)">
-                  <input value={program.online_description||""} onChange={(e)=>set({online_description: e.target.value})}
-                         data-testid="prog-online-description"
-                         className="w-full bg-bgBase border border-bgHover rounded p-2 text-white text-sm"/>
-                </Field>
-                <Field label="Program Photo">
-                  <ShopImageUpload imageId={program.image_id} originalImageId={originalImageId}
-                                   onChange={(id)=>set({image_id: id})} />
-                </Field>
-              </div>
-            )}
-          </div>
-
-          {/* Public no-account storefront — training programs always
-              require signing in to buy; these only affect browsing. */}
-          {program.available_online && (
-            <div className="border-t border-bgHover pt-3 space-y-3">
-              <p className="text-[11px] text-gray-500 uppercase tracking-widest font-black">Public Storefront (signed-out visitors)</p>
-              <label className="flex items-center gap-2">
-                <input type="checkbox" checked={!!program.publicly_visible}
-                       onChange={(e)=>set({publicly_visible: e.target.checked})}
-                       data-testid="prog-publicly-visible" />
-                <span className="text-white text-sm">Publicly Visible (shown to signed-out visitors — always requires sign-in to buy)</span>
-              </label>
-              {program.publicly_visible && (
-                <>
-                  <label className="flex items-center gap-2">
-                    <input type="checkbox" checked={program.show_public_price !== false}
-                           onChange={(e)=>set({show_public_price: e.target.checked})}
-                           data-testid="prog-show-public-price" />
-                    <span className="text-white text-sm">Show Price to Guests</span>
-                  </label>
-                  <label className="flex items-center gap-2">
-                    <input type="checkbox" checked={!!program.requires_dog}
-                           onChange={(e)=>set({requires_dog: e.target.checked})}
-                           data-testid="prog-requires-dog" />
-                    <span className="text-white text-sm">Requires Selecting a Dog</span>
-                  </label>
-                  {program.requires_dog && (
-                    <p className="text-[12px] text-amber-400" data-testid="prog-requires-dog-warning">
-                      Until real dog-selection support is built, this blocks online checkout entirely — customers will be directed to contact staff.
-                    </p>
-                  )}
-                  <label className="flex items-center gap-2">
-                    <input type="checkbox" checked={!!program.requires_approval}
-                           onChange={(e)=>set({requires_approval: e.target.checked})}
-                           data-testid="prog-requires-approval" />
-                    <span className="text-white text-sm">Requires Approval</span>
-                  </label>
-                  {program.requires_approval && (
-                    <p className="text-[12px] text-amber-400" data-testid="prog-requires-approval-warning">
-                      Until real approval-workflow support is built, this blocks online checkout entirely — customers will be directed to contact staff.
-                    </p>
-                  )}
-                  <label className="flex items-center gap-2">
-                    <input type="checkbox" checked={!!program.requires_completed_onboarding}
-                           onChange={(e)=>set({requires_completed_onboarding: e.target.checked})}
-                           data-testid="prog-requires-onboarding" />
-                    <span className="text-white text-sm">Requires Completed Account Setup</span>
-                  </label>
-                </>
-              )}
-            </div>
-          )}
-
-          {/* Sprint 110bx — Welcome homework: auto-sent the moment the dog is enrolled */}
-          <Field label="Welcome Practice (auto-sent on enrollment)">
-            <select value={program.welcome_homework_template_id||""}
-                    onChange={(e)=>set({welcome_homework_template_id: e.target.value || null})}
-                    data-testid="prog-welcome-hw"
-                    className="w-full bg-bgBase border border-bgHover rounded p-2 text-white text-sm">
-              <option value="">— None (no welcome Practice) —</option>
-              {hwTemplates.map(t => (
-                <option key={t.id} value={t.id}>{t.name}{t.tier ? ` · ${t.tier}` : ""}</option>
-              ))}
-            </select>
-            <p className="text-[13px] text-gray-500 mt-1 normal-case font-normal tracking-normal">
-              <i className="fas fa-envelope mr-1 text-shGreen"/>Auto-assigns Practice + emails the client the moment a dog is enrolled in this program.
-            </p>
-          </Field>
-
-          {/* Sprint 110di-62 — Welcome email: custom template that fires when the program is sold */}
-          <Field label="Welcome email (auto-sent when program is sold)">
-            <select value={program.welcome_email_template_slug||""}
-                    onChange={(e)=>set({welcome_email_template_slug: e.target.value || null})}
-                    data-testid="prog-welcome-email"
-                    className="w-full bg-bgBase border border-bgHover rounded p-2 text-white text-sm">
-              <option value="">— None (use default sale email) —</option>
-              {emailTemplates.map(t => (
-                <option key={t.slug} value={t.slug}>{t.name}{t.kind === "custom" ? " · Custom" : ""}</option>
-              ))}
-            </select>
-            <p className="text-[13px] text-gray-500 mt-1 normal-case font-normal tracking-normal">
-              <i className="fas fa-paper-plane mr-1 text-shBlue"/>Sends this template (e.g. &ldquo;Welcome to Puppy Basics&rdquo;) the moment a client buys this program. Create new templates from Settings → Email Designer.
-            </p>
-          </Field>
-
-          {allPrograms.length > 0 && !hideTypePicker && (
-            <Field label="Prerequisites (any of these)">
-              <select multiple value={program.prereq_slugs||[]} onChange={(e)=>set({prereq_slugs: Array.from(e.target.selectedOptions, o => o.value)})}
-                      className="w-full bg-bgBase border border-bgHover rounded p-2 text-white text-sm h-24">
-                {allPrograms.filter(p => p.slug && p.id !== program.id).map(p => <option key={p.id} value={p.slug}>{p.name}</option>)}
-              </select>
-            </Field>
-          )}
-
-          {/* Completion rule */}
-          <div className="bg-bgBase/40 border border-bgHover rounded p-3">
-            <p className="text-[15px] font-black uppercase tracking-widest text-shBlue mb-2"><i className="fas fa-flag-checkered mr-2"/>Completion Rule</p>
-            <p className="text-[15px] text-gray-400 mb-2">When is a dog ready to graduate from this program?</p>
-            <div className="grid grid-cols-2 md:grid-cols-4 gap-2">
-              {[
-                { k: "percent", label: "% mastered", icon: "fa-percent" },
-                { k: "all_mastered", label: "All goals", icon: "fa-list-check" },
-                { k: "manual", label: "Manual sign-off", icon: "fa-hand-pointer" },
-                { k: "sessions", label: "Session count", icon: "fa-calendar-check" },
-              ].map(rt => (
-                <button key={rt.k} type="button" onClick={()=>set({completion_rule:{...(program.completion_rule||{}), type: rt.k}})}
-                        data-testid={`rule-${rt.k}`}
-                        className={`py-2 rounded text-[15px] font-black uppercase tracking-widest border ${(program.completion_rule?.type||"percent")===rt.k?"bg-shBlue text-white border-shBlue":"bg-bgPanel border-bgHover text-gray-400"}`}>
-                  <i className={`fas ${rt.icon} mr-1`}/>{rt.label}
-                </button>
-              ))}
-            </div>
-            {((program.completion_rule?.type||"percent")==="percent" || program.completion_rule?.type==="sessions") && (
-              <div className="mt-2 flex items-center gap-2">
-                <label className="text-[15px] font-black text-gray-500 uppercase tracking-widest">{program.completion_rule?.type==="sessions"?"Required sessions":"Threshold %"}:</label>
-                <input type="number" min="1" max={program.completion_rule?.type==="sessions"?100:100}
-                       value={program.completion_rule?.threshold ?? (program.completion_rule?.type==="sessions"?5:80)}
-                       onChange={(e)=>set({completion_rule:{...(program.completion_rule||{type:"percent"}), threshold: parseInt(e.target.value)||0}})}
-                       className="w-24 bg-bgPanel border border-bgHover rounded p-1.5 text-white text-sm" />
-              </div>
-            )}
-          </div>
-
-          {/* Module builder */}
-          <div className="border-t border-bgHover pt-3">
-            <div className="flex items-center justify-between mb-2 flex-wrap gap-2">
-              <p className="text-[15px] font-black uppercase tracking-widest text-shBlue">Modules & Goals</p>
-              <div className="flex items-center gap-2 flex-wrap">
-                <CsvImportButton
-                  label="Import from CSV"
-                  parse={parseProgramCsv}
-                  sampleText={PROGRAM_CSV_SAMPLE}
-                  sampleFilename="program-template.csv"
-                  testIdPrefix="program-csv"
-                  helpText="Columns: module_name, module_description (optional), goal_name, goal_description (optional). Rows append to existing modules."
-                  onImport={(parsed) => {
-                    if (!parsed?.modules?.length) return;
-                    set({ modules: [...(program.modules || []), ...parsed.modules] });
-                  }}
-                />
-                <button onClick={addModule} data-testid="add-module"
-                        className="bg-bgBase border border-shGreen/40 text-shGreen px-3 py-1 rounded text-[15px] font-black uppercase tracking-widest hover:bg-shGreen/15"><i className="fas fa-plus mr-1"/>Add Module</button>
-              </div>
-            </div>
-            {(program.modules||[]).length === 0 && <p className="text-[15px] text-gray-500 italic py-3">No modules yet. Add one to begin.</p>}
-            <div className="space-y-3">
-              {(program.modules||[]).map((m, mi) => (
-                <div key={mi} className="bg-bgBase/50 border border-bgHover rounded p-3">
-                  <div className="flex gap-2 mb-2">
-                    <input value={m.name} onChange={(e)=>updateModule(mi, {name:e.target.value})}
-                           className="flex-1 bg-transparent border-b border-bgHover text-sm font-black text-white outline-none focus:border-shBlue py-1" />
-                    <button onClick={()=>removeModule(mi)} className="text-red-400 hover:text-red-300"><i className="fas fa-trash text-xs"/></button>
-                  </div>
-                  <input value={m.description||""} onChange={(e)=>updateModule(mi, {description:e.target.value})}
-                         placeholder="Module description (optional)"
-                         className="w-full bg-bgBase border border-bgHover rounded p-1.5 text-[15px] text-gray-300 mb-2" />
-                  {/* Sprint 110bz — homework for THIS module: auto-sent the moment
-                      the client begins this module (module 1 → at enrollment;
-                      module 2..N → when the previous module's goals are mastered). */}
-                  <div className="mb-2 bg-shGreen/5 border border-shGreen/30 rounded p-2">
-                    <label className="block">
-                      <span className="text-[11px] font-black uppercase tracking-widest text-shGreen">
-                        <i className="fas fa-envelope-open-text mr-1"/>Practice for this module
-                        {mi === 0 ? " · sent at enrollment" : ` · sent when module ${mi} is mastered`}
-                      </span>
-                      <select value={m.homework_template_id||""}
-                              onChange={(e)=>updateModule(mi, {homework_template_id: e.target.value || null})}
-                              data-testid={`prog-module-hw-${mi}`}
-                              className="mt-1 w-full bg-bgPanel border border-bgHover rounded p-1.5 text-white text-[13px]">
-                        <option value="">— None (no automatic Practice for this module) —</option>
-                        {hwTemplates.map(t => (
-                          <option key={t.id} value={t.id}>{t.name}{t.tier ? ` · ${t.tier}` : ""}</option>
-                        ))}
-                      </select>
-                      <p className="text-[11px] text-gray-500 mt-1 normal-case font-normal tracking-normal">
-                        {mi === 0
-                          ? "This is module 1 — its Practice is sent the moment the dog is enrolled in the program."
-                          : `Sent automatically when all goals in the previous module ("${(program.modules[mi-1]||{}).name || `Module ${mi}`}") are marked mastered.`}
-                      </p>
-                    </label>
-                  </div>
-                  <div className="space-y-1">
-                    {(m.goals||[]).map((g, gi) => (
-                      <div key={gi} className="bg-bgPanel rounded px-2 py-1.5">
-                        <div className="flex gap-2 items-center">
-                          <i className="fas fa-circle-dot text-shGreen text-[12px]"/>
-                          <input value={g.name} onChange={(e)=>updateGoal(mi, gi, {name:e.target.value})}
-                                 className="flex-1 bg-transparent text-[14px] text-white outline-none" />
-                          <input value={g.description||""} onChange={(e)=>updateGoal(mi, gi, {description:e.target.value})}
-                                 placeholder="description"
-                                 className="flex-[2] bg-transparent text-[15px] text-gray-400 outline-none" />
-                          <label className="flex items-center gap-1 text-[13px] text-pink-300 cursor-pointer" title="If on, this goal is a check-off (Done/Reset) instead of a 0-5 score">
-                            <input type="checkbox" checked={!!g.manual_only} onChange={(e)=>updateGoal(mi, gi, {manual_only:e.target.checked})} className="accent-pink-400"/>
-                            Manual
-                          </label>
-                          <button onClick={()=>removeGoal(mi, gi)} className="text-red-400 hover:text-red-300 text-xs"><i className="fas fa-times"/></button>
-                        </div>
-                      </div>
-                    ))}
-                  </div>
-                  <button onClick={()=>addGoal(mi)}
-                          className="mt-2 text-[15px] text-shBlue hover:text-white font-black uppercase tracking-widest">
-                    <i className="fas fa-plus mr-1"/>Add Goal
-                  </button>
-                </div>
-              ))}
-            </div>
-          </div>
-        </div>
-
-        <div className="px-6 py-3 border-t border-bgHover flex justify-between items-center gap-3 shrink-0">
-          {extraError ? <p className="text-red-400 text-[14px] font-bold truncate flex-1" data-testid="program-editor-err">{extraError}</p> : <span className="flex-1"/>}
-          <div className="flex gap-3 shrink-0">
-            <button onClick={onClose} className="text-gray-500 font-black uppercase text-[15px] tracking-widest">Cancel</button>
-            <button onClick={onSave} data-testid="prog-save"
-                    className="bg-shGreen text-bgHeader px-6 py-2 rounded font-black text-[15px] uppercase tracking-widest shadow">Save Program</button>
-          </div>
-        </div>
-      </div>
-    </div>
-  );
-}
-
-function Field({ label, children }) {
-  return <div><label className="text-[15px] font-black text-gray-500 uppercase tracking-widest">{label}</label><div className="mt-1">{children}</div></div>;
-}
+  // Sprint 110di-62 — 

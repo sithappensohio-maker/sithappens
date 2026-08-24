@@ -48,7 +48,16 @@ test("the whole package is sent, media included", () => {
   expect(fn).toMatch(/readAsDataURL/);
   // the file's own name travels with the bytes, whatever the call is shaped like
   expect(fn).toMatch(/file\.name/);
-  expect(fn).toMatch(/const body = \{ data, filename \}/);
+  expect(fn).toMatch(/mode:\s*"replace"/);
+  expect(fn).toMatch(/preserve_local_settings:\s*true/);
+  expect(fn).toMatch(/cascade_active_enrollments:\s*true/);
+});
+
+test("Program Studio ZIP uploads are real in-place course updates", () => {
+  const fn = importBlock();
+  expect(fn).toMatch(/mode:\s*"replace"/);
+  expect(fn).toMatch(/preserve_local_settings:\s*true/);
+  expect(fn).toMatch(/cascade_active_enrollments:\s*true/);
 });
 
 // ---------------------------------------------------------------------------
@@ -132,10 +141,12 @@ test("the conflict is a modal, not a dead-end banner", () => {
 test("the modal says what was found and asks the question", () => {
   const m = modal();
   expect(m).toMatch(/Existing Archived Course Found/);
+  expect(m).toMatch(/Existing Course Found/);
   expect(m).toMatch(/data-testid="zip-adopt-name"/);
   expect(m).toMatch(/adoptPrompt\.program_name/);
-  expect(m).toMatch(/This imported curriculum matches an archived course already in Sit Happens\./);
-  expect(m).toMatch(/Use this existing course and reactivate it\?/);
+  expect(m).toMatch(/This uploaded curriculum matches a course already in Sit Happens\./);
+  expect(m).toMatch(/Update this existing course with the uploaded curriculum\?/);
+  expect(m).toMatch(/Update this existing course and reactivate it\?/);
 });
 
 test("the modal explains every consequence before the admin agrees", () => {
@@ -143,7 +154,8 @@ test("the modal explains every consequence before the admin agrees", () => {
   expect(m).toMatch(/data-testid="zip-adopt-effects"/);
   expect(m).toMatch(/existing program ID will be preserved/i);
   expect(m).toMatch(/enrollments, progress and history will be preserved/i);
-  expect(m).toMatch(/will be merged into it/i);
+  expect(m).toMatch(/refresh the package-owned course content/i);
+  expect(m).toMatch(/Local price, Shop visibility, category, tax and fulfillment settings will be kept/i);
   // and the counts come from the server rather than being guessed here
   expect(m).toMatch(/adoptPrompt\.lessons/);
   expect(m).toMatch(/adoptPrompt\.images/);
@@ -162,7 +174,7 @@ test("the modal offers cancel and use existing course", () => {
   expect(m).toMatch(/data-testid="zip-adopt-cancel"/);
   expect(m).toMatch(/data-testid="zip-adopt-confirm"/);
   expect(m).toMatch(/>\s*Cancel\s*</);
-  expect(m).toMatch(/Use existing course/);
+  expect(m).toMatch(/Update existing course/);
   expect(m).toMatch(/Nothing has been imported yet/);
 });
 
@@ -170,7 +182,7 @@ test("the adoption question never becomes the generic error banner", () => {
   // The reported bug: the server's message was shown as an unactionable red
   // banner because this branch did not exist.
   const fn = importBlock();
-  const branch = fn.slice(fn.indexOf('error_code === "archived_course_adoption_required"'),
+  const branch = fn.slice(fn.indexOf('error_code === "course_update_confirmation_required"'),
                           fn.indexOf("} else {"));
   expect(branch).toMatch(/setAdoptPrompt\(detail\)/);
   expect(branch).not.toMatch(/setErr\(/);
@@ -188,7 +200,6 @@ test("confirming re-sends the held package with the admin's answer", () => {
 test("the answer names one program - there is no blanket force flag", () => {
   const fn = importBlock();
   expect(fn).not.toMatch(/force\s*[:=]\s*true/);
-  expect(fn).not.toMatch(/\boverwrite\b/i);
   // the only thing sent is the id the server itself offered
   expect(fn).toMatch(/body\.adopt_program_id = adoptProgramId/);
 });
@@ -213,8 +224,9 @@ test("double-confirming is not possible while an import is running", () => {
   expect(src).toMatch(/if \(!pending \|\| !adoptPrompt \|\| importing\) return;/);
 });
 
-test("an adopted course reads as added to the existing course", () => {
+test("an explicitly matched existing course reads as an update", () => {
   expect(src).toMatch(/program_action === "adopted"/);
+  expect(src).toMatch(/\? "updated" : "imported"/);
 });
 
 
@@ -248,6 +260,16 @@ test("a rejected package can still reach its own error list", () => {
   // and a bad package showed a JSON blob in the red banner instead.
   const fn = importBlock();
   const branch = fn.slice(fn.indexOf('error_code === "invalid_curriculum_package"'),
-                          fn.indexOf('error_code === "archived_course_adoption_required"'));
+                          fn.indexOf('error_code === "course_update_confirmation_required"'));
   expect(branch).toMatch(/setZipResult\(\{ errors: detail\.errors \|\| \[\] \}\)/);
+});
+
+test("post-package program validation errors show their real messages", () => {
+  const fn = importBlock();
+  expect(fn).toMatch(/Array\.isArray\(detail\.errors\)/);
+  expect(fn).toMatch(/x\?\.message \|\| x\?\.msg/);
+});
+
+test("formatErr also understands backend message fields", () => {
+  expect(apiSrc).toMatch(/if \(detail\?\.message\) return detail\.message;/);
 });

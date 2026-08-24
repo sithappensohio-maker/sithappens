@@ -142,5 +142,6 @@ export function formatErr(detail) {
   if (typeof detail === "string") return detail;
   if (Array.isArray(detail)) return detail.map((e) => e?.msg || JSON.stringify(e)).join(" ");
   if (detail?.msg) return detail.msg;
+  if (detail?.message) return detail.message;
   return String(detail);
 }

@@ -46,9 +46,52 @@ class CurriculumPackageIn(BaseModel):
     # already touched alone. "replace" deliberately refreshes declared nodes
     # from the package. Neither deletes.
     mode: str = "merge"
-    # An admin's answer to "an archived course already owns this pathway — is
-    # this package that course?". Absent, the import refuses to guess.
+    # Program Studio's normal "upload a newer ZIP" workflow refreshes the
+    # curriculum from the package but must not accidentally reset business
+    # settings the owner may have changed after the first import (price, Shop
+    # visibility, tax setup, fulfillment, etc.). API callers can still request
+    # a literal package-owned replace by leaving this false.
+    preserve_local_settings: bool = False
+    # Online School students read their frozen program_snapshot. When an owner
+    # intentionally refreshes a course ZIP, this opt-in updates ACTIVE
+    # snapshots through update_program's existing cascade path, which preserves
+    # progress for surviving skill ids instead of stranding current students on
+    # the old text/images.
+    cascade_active_enrollments: bool = False
+    # An admin's answer to "an existing course already owns this pathway — is
+    # this package that course?". Absent, the import refuses to guess. The
+    # field name is retained for API compatibility with the earlier
+    # archived-course-only confirmation flow.
     adopt_program_id: Optional[str] = None
+
+
+# Fields that belong to the local business/catalog configuration rather than
+# the authored lesson body. A Program Studio ZIP refresh should not silently
+# zero a price, hide/show a product, change tax treatment, or move fulfillment
+# just because the package was rebuilt to replace lesson text/images.
+_LOCAL_SETTINGS_PRESERVED_ON_PACKAGE_UPDATE = (
+    "price",
+    "welcome_homework_template_id",
+    "welcome_email_template_slug",
+    "available_online",
+    "online_description",
+    "image_id",
+    "category_id",
+    "subcategory_id",
+    "publicly_visible",
+    "show_public_price",
+    "requires_dog",
+    "requires_approval",
+    "requires_completed_onboarding",
+    "show_at_register",
+    "featured",
+    "taxable",
+    "tax_exempt_reason",
+    "delivery_mode",
+    "purchase_fulfillment",
+    "school_default_trainer_id",
+    "free_enrollment_enabled",
+)
 
 
 def _pathway_slug(program_src: dict) -> str:
@@ -180,10 +223,13 @@ def register_curriculum_import(*, api, db, manage_dep, persist_school_media,
         package that goes wrong half way down leaves no half-built course
         behind. `dry_run` returns the same summary with no writes at all.
 
-        Re-import is by `source_key`: a program imported from the same key is
-        updated in place rather than duplicated. What the package declares, the
-        package owns; a lesson or block an author added that the package never
-        mentions is left alone.
+        Re-import prefers `source_key`: a program imported from the same key is
+        updated in place rather than duplicated. If a rebuilt package has a new
+        source key but exactly one stored course already owns the same pathway
+        slug, the admin is asked to confirm that exact in-place update instead
+        of being trapped by the slug uniqueness check. What the package
+        declares, the package owns; a lesson or block an author added that the
+        package never mentions is left alone.
         """
         try:
             manifest, files = pkg.open_package(body.data)
@@ -200,60 +246,67 @@ def register_curriculum_import(*, api, db, manage_dep, persist_school_media,
 
         counts = plan["counts"]
 
-        # ---- an archived course may already own this pathway
+        # ---- another stored course may already own this pathway
         #
-        # A pathway slug is unique across the catalogue, and an ARCHIVED course
-        # still owns its own — which is exactly why importing a course that ran
-        # here before is refused rather than duplicated. The honest resolution
-        # is not to weaken that uniqueness but to ask the one question that
-        # settles it: is this package that course?
+        # A re-built ZIP can legitimately arrive with a different source_key
+        # (for example after exporting/re-authoring the package), while the
+        # course's stable pathway slug is still the same. Likewise, "Delete" in
+        # Programs is intentionally a soft archive, so an archived row still
+        # owns its slug and package key. Refusing these cases dead-ends the owner
+        # with a duplicate-slug error even though the safe outcome is obvious:
+        # preserve the existing program id and update that course in place.
         #
-        # Only asked when the answer is unambiguous: exactly one course owns
-        # the slug, it is archived, and no package has claimed it yet. An
-        # ACTIVE course is never offered — adopting one would quietly rewrite a
-        # course clients are working through.
-        adoption = None
+        # We still never GUESS. If source_key did not identify the program, an
+        # unambiguous single slug owner is offered back to the admin and nothing
+        # is written until that exact program id is confirmed. This works for
+        # active or archived courses and for rows previously claimed by an older
+        # package key.
+        pathway_match = None
         pathway_slug = _pathway_slug(program_src)
         if existing is None and pathway_slug:
             owners = await db.programs.find(
                 {"slug": pathway_slug}, {"_id": 0}).to_list(5)
-            if (len(owners) == 1 and not owners[0].get("active")
-                    and not owners[0].get("import_source_key")):
-                adoption = owners[0]
+            if len(owners) == 1:
+                pathway_match = owners[0]
 
-        if adoption is not None and body.adopt_program_id != adoption["id"]:
-            # Not an error the author can fix by editing the package, so it is
-            # a question, not a failure: nothing is written until it is answered.
+        if pathway_match is not None and body.adopt_program_id != pathway_match["id"]:
+            # Not an error the author can fix by editing the package. It is a
+            # confirmation question, not a failure: nothing is written until
+            # the owner confirms the one exact course the server found.
+            prior_key = (pathway_match.get("import_source_key") or "").strip()
             raise HTTPException(status_code=409, detail={
-                "error_code": "archived_course_adoption_required",
-                "msg": ("An archived course already uses this pathway. Confirm "
-                        "whether to use it for the imported curriculum."),
-                "program_id": adoption["id"],
-                "program_name": adoption.get("name"),
+                "error_code": "course_update_confirmation_required",
+                "msg": ("A course already uses this pathway. Confirm whether "
+                        "to update that existing course from this ZIP."),
+                "program_id": pathway_match["id"],
+                "program_name": pathway_match.get("name"),
                 "pathway_slug": pathway_slug,
-                # The package declares active: true, so adopting an archived
-                # course also brings it back. Said out loud rather than done
-                # quietly.
-                "will_reactivate": bool(program_src.get("active", True)),
+                "existing_active": bool(pathway_match.get("active")),
+                "source_key_changed": bool(prior_key and source_key and prior_key != source_key),
+                # If the package declares active: true, confirming an archived
+                # course brings it back. Said out loud rather than done quietly.
+                "will_reactivate": bool(
+                    not pathway_match.get("active") and program_src.get("active", True)),
                 "modules": counts["modules"], "lessons": counts["lessons"],
                 "images": counts["images"],
                 "practice_recipes": len(manifest.get("homework_templates") or []),
             })
         if body.adopt_program_id:
-            if adoption is None:
+            if pathway_match is None or body.adopt_program_id != pathway_match.get("id"):
                 # The catalogue moved between asking and answering — someone
-                # reactivated or renamed the course, or a package claimed it.
-                # Adopting on a stale answer could overwrite the wrong course.
+                # renamed the course, changed its pathway, or a different row
+                # became the unique owner. Applying a stale answer could
+                # overwrite the wrong course.
                 raise HTTPException(status_code=409, detail={
-                    "error_code": "adoption_no_longer_available",
-                    "msg": ("That archived course can no longer be adopted. "
-                            "Re-run the import to see the current options."),
+                    "error_code": "course_update_no_longer_available",
+                    "msg": ("That course can no longer be updated from this "
+                            "confirmation. Re-run the import to see the current options."),
                 })
-            existing = adoption
+            existing = pathway_match
 
         summary = {
             "program_name": program_src.get("name"),
-            "program_action": ("would_adopt" if adoption is not None
+            "program_action": ("would_adopt" if pathway_match is not None
                                else "would_update" if existing else "would_create"),
             "modules": counts["modules"], "lessons": counts["lessons"],
             "blocks": counts["blocks"], "images": counts["images"],
@@ -374,6 +427,13 @@ def register_curriculum_import(*, api, db, manage_dep, persist_school_media,
             for field in ("name", "focus", "description", "price", "delivery_mode"):
                 if field in existing:
                     payload[field] = existing[field]
+        if existing and body.preserve_local_settings:
+            # Program Studio's normal ZIP refresh is about curriculum content.
+            # Preserve the owner's local commerce/operational choices even when
+            # the lesson tree itself is intentionally refreshed from source.
+            for field in _LOCAL_SETTINGS_PRESERVED_ON_PACKAGE_UPDATE:
+                if field in existing:
+                    payload[field] = existing[field]
         # The pathway slug is IDENTITY, not content: it is what other courses'
         # prerequisites point at, and what makes duplicate-pathway detection
         # mean anything. `create_program` derives one from the name, but
@@ -389,15 +449,20 @@ def register_curriculum_import(*, api, db, manage_dep, persist_school_media,
 
         model = program_model(**payload)
         if existing:
-            saved = await update_program(existing["id"], model, cascade=False,
+            saved = await update_program(existing["id"], model,
+                                         cascade=body.cascade_active_enrollments,
                                          save_as_draft=False, _=user)
-            # cascade=False on purpose: adopting a course must not rewrite the
-            # snapshot held by anyone already enrolled in it. Reusing the id is
-            # what preserves their enrollments, progress and history.
-            summary["program_action"] = "adopted" if adoption is not None else "updated"
+            # Reusing the id preserves enrollments/history. When the caller opts
+            # into cascade (the Program Studio ZIP updater does), update_program
+            # refreshes ACTIVE snapshots while preserving progress on surviving
+            # skill ids.
+            summary["program_action"] = "adopted" if pathway_match is not None else "updated"
+            summary["active_enrollments_refreshed"] = int(
+                saved.get("_cascaded_enrollments") or 0)
         else:
             saved = await create_program(model, user)
             summary["program_action"] = "created"
+            summary["active_enrollments_refreshed"] = 0
         if source_key:
             fresh = await db.programs.find_one({"id": saved["id"]}, {"_id": 0, "modules": 1})
             new_map = _rebuild_key_map(program_src, (fresh or {}).get("modules") or [], key_map)
