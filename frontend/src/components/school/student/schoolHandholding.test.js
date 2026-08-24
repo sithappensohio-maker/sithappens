@@ -79,7 +79,8 @@ test("Today explains the current server action instead of expecting the client t
 
 test("Today never collapses to a blank page when its shortcut view-model fails", () => {
   expect(homeSrc).toMatch(/student-home-unavailable/);
-  expect(homeSrc).toMatch(/Today&rsquo;s shortcut did not load/);
+  expect(homeSrc).toMatch(/One quick step before training/);
+  expect(homeSrc).toMatch(/one-time setup below/);
   expect(homeSrc).toMatch(/Open my course/);
   expect(homeSrc).toMatch(/student-home-open-course-fallback/);
 });
@@ -102,6 +103,14 @@ test("required School setup is explained and shown before the current lesson", (
   expect(lessonSrc).toMatch(/lesson-onboarding-gate/);
   expect(lessonSrc).toMatch(/<SchoolOnboarding/);
   expect(schoolAppSrc).toMatch(/go\("today"\);\s*revealOnboarding\(\)/);
+});
+
+test("Today recovers the onboarding form when Home is blocked by pre-created Practice", () => {
+  expect(workspaceSrc).toMatch(/recoveringMissingHome/);
+  expect(workspaceSrc).toMatch(/!home && !!workspace && !baseline/);
+  expect(workspaceSrc).toMatch(/require_equipment_check: true/);
+  expect(workspaceSrc).toMatch(/This is the step School was waiting for/);
+  expect(workspaceSrc).toMatch(/Today plan will appear automatically/);
 });
 
 test("step completion visibly leads to the next lesson destination", () => {
