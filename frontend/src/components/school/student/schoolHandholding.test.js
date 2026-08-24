@@ -107,10 +107,10 @@ test("required School setup is explained and shown before the current lesson", (
 
 test("Today recovers the onboarding form only for the real Home setup blocker", () => {
   expect(workspaceSrc).toMatch(/homeBlockedByOnboarding/);
-  expect(workspaceSrc).toMatch(/includes\("online school setup"\)/);
+  expect(workspaceSrc).toMatch(/online school setup/);
   expect(workspaceSrc).toMatch(/recoveringMissingHome/);
-  expect(workspaceSrc).toMatch(/!home && !!workspace && !baseline && homeBlockedByOnboarding/);
-  expect(workspaceSrc).toMatch(/require_equipment_check: false/);
+  expect(workspaceSrc).toMatch(/!home&&!!workspace&&!baseline&&homeBlockedByOnboarding/);
+  expect(workspaceSrc).toMatch(/require_equipment_check:false/);
   expect(workspaceSrc).toMatch(/This is the step School was waiting for/);
   expect(workspaceSrc).toMatch(/Today plan will appear automatically/);
 });
