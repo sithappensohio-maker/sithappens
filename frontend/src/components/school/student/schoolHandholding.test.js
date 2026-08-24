@@ -1,8 +1,7 @@
 // School delivery-system handholding — curriculum-agnostic by design.
 //
-// These checks pin the central rule of this redesign: existing Course Builder
-// packages and older structured lessons keep their authored content/data, while
-// the student-facing shell supplies the direction a true beginner needs.
+// Existing programs keep their authored curriculum and progression model while
+// the client-facing shell supplies the direction a true beginner needs.
 import fs from "fs";
 import path from "path";
 import { buildGuide, GUIDE_SECTIONS } from "./lesson/LessonGuide";
@@ -48,7 +47,7 @@ test("existing Course Builder blocks keep using their same semantic mapping", ()
   expect(steps.find(s => s.key === "know_got_it").blocks[0].body).toBe("Success");
 });
 
-test("student step labels tell a beginner what to physically do", () => {
+test("student part labels tell a beginner what to physically do", () => {
   const labels = Object.fromEntries(GUIDE_SECTIONS.map(s => [s.key, s.label]));
   expect(labels.learn).toBe("Read This First");
   expect(labels.get_ready).toBe("Get Your Stuff Ready");
@@ -58,7 +57,7 @@ test("student step labels tell a beginner what to physically do", () => {
   expect(labels.next_step).toMatch(/What's Next/);
 });
 
-test("each instructional step tells the client what their job is and uses an explicit acknowledgement", () => {
+test("each instructional part tells the client what their job is and uses an explicit acknowledgement", () => {
   expect(guideSrc).toMatch(/Your job right now/);
   expect(guideSrc).toMatch(/Do not start training yet/);
   expect(guideSrc).toMatch(/I READ THIS — NEXT/);
@@ -68,20 +67,33 @@ test("each instructional step tells the client what their job is and uses an exp
   expect(guideSrc).toMatch(/I KNOW WHAT SUCCESS LOOKS LIKE/);
 });
 
+test("a fresh lesson has an unmistakable Start Lesson moment", () => {
+  expect(guideSrc).toMatch(/fresh-lesson-start/);
+  expect(guideSrc).toMatch(/New lesson · Start here/);
+  expect(guideSrc).toMatch(/Start Lesson — Show Me Part 1/);
+  expect(guideSrc).toMatch(/You have not started this lesson yet/);
+});
+
+test("lesson progress uses the same part count the client can actually see", () => {
+  expect(guideSrc).toMatch(/Lesson journey/);
+  expect(guideSrc).toMatch(/Part \{partIndex \+ 1\} of \{sections\.length\}/);
+  expect(guideSrc).toMatch(/-progress"\]\{display:none!important/);
+});
+
 test("Today explains the current server action instead of expecting the client to interpret it", () => {
   expect(actionCoachCopy({ type: "lesson" }, "Bella")).toMatch(/one step at a time/i);
   expect(actionCoachCopy({ type: "practice" }, "Bella")).toMatch(/Bella/);
   expect(actionCoachCopy({ type: "advance" }, "Bella")).toMatch(/correct next lesson automatically/i);
-  expect(orientationSrc).toMatch(/Do this now/);
-  expect(orientationSrc).toMatch(/School will choose the next step for you/);
-  expect(homeSrc).toMatch(/<CurrentActionGuide home=\{home\}/);
+  expect(homeSrc).toMatch(/data-testid="today-command-center"/);
+  expect(homeSrc).toMatch(/What you do now/);
+  expect(homeSrc).toMatch(/actionCoachCopy\(action, home\?\.dog\?\.name\)/);
 });
 
 test("Today never collapses to a blank page when its shortcut view-model fails", () => {
   expect(homeSrc).toMatch(/student-home-unavailable/);
   expect(homeSrc).toMatch(/One quick step before training/);
   expect(homeSrc).toMatch(/one-time setup below/);
-  expect(homeSrc).toMatch(/Open my course/);
+  expect(homeSrc).toMatch(/Open All Lessons/);
   expect(homeSrc).toMatch(/student-home-open-course-fallback/);
 });
 
@@ -115,10 +127,11 @@ test("Today recovers the onboarding form only for the real Home setup blocker", 
   expect(workspaceSrc).toMatch(/Today plan will appear automatically/);
 });
 
-test("step completion visibly leads to the next lesson destination", () => {
+test("part completion visibly leads to the server-selected next lesson destination", () => {
   expect(guideSrc).toMatch(/finishAndRevealNext/);
   expect(guideSrc).toMatch(/await Promise\.resolve\(onComplete\(section\.key\)\)/);
-  expect(guideSrc).toMatch(/revealStepOrAction\(next\.key\)/);
+  expect(guideSrc).toMatch(/result\?\.next_instructional_step/);
+  expect(guideSrc).toMatch(/revealStepOrAction\(destination\)/);
   expect(guideSrc).toMatch(/lesson-actions/);
   expect(guideSrc).toMatch(/lesson-section-guided-/);
 });
