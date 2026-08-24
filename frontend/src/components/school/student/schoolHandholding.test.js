@@ -72,12 +72,13 @@ test("a fresh lesson has an unmistakable Start Lesson moment", () => {
   expect(guideSrc).toMatch(/New lesson · Start here/);
   expect(guideSrc).toMatch(/Start Lesson — Show Me Part 1/);
   expect(guideSrc).toMatch(/You have not started this lesson yet/);
+  expect(guideSrc).toMatch(/alreadyPastFreshStart/);
 });
 
 test("lesson progress uses the same part count the client can actually see", () => {
   expect(guideSrc).toMatch(/Lesson journey/);
   expect(guideSrc).toMatch(/Part \{partIndex \+ 1\} of \{sections\.length\}/);
-  expect(guideSrc).toMatch(/-progress"\]\{display:none!important/);
+  expect(guideSrc).toMatch(/> div:first-child\{display:none!important/);
 });
 
 test("Today explains the current server action instead of expecting the client to interpret it", () => {
