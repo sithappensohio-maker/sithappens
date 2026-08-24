@@ -12,6 +12,9 @@ const read = (...p) => fs.readFileSync(path.join(__dirname, ...p), "utf8");
 const orientationSrc = read("SchoolOrientation.jsx");
 const homeSrc = read("StudentHome.jsx");
 const guideSrc = read("lesson", "LessonGuide.jsx");
+const lessonSrc = read("LessonScreen.jsx");
+const workspaceSrc = read("StudentWorkspaceExtras.jsx");
+const schoolAppSrc = read("../../../screens/SchoolApp.jsx");
 const completionSrc = read("CourseCompletionCard.jsx");
 
 test("existing legacy lessons are mapped into the new plain-language delivery steps", () => {
@@ -91,6 +94,16 @@ test("first-time School orientation teaches the GPS-style workflow and can be re
   expect(homeSrc).toMatch(/<SchoolOrientation dogName=\{home\.dog\?\.name\}/);
 });
 
+test("required School setup is explained and shown before the current lesson", () => {
+  expect(workspaceSrc).toMatch(/Before your first lesson · one-time setup/);
+  expect(workspaceSrc).toMatch(/This is not a test/);
+  expect(workspaceSrc).toMatch(/Save & Start My First Lesson/);
+  expect(lessonSrc).toMatch(/current_action\?\.type === "onboarding"/);
+  expect(lessonSrc).toMatch(/lesson-onboarding-gate/);
+  expect(lessonSrc).toMatch(/<SchoolOnboarding/);
+  expect(schoolAppSrc).toMatch(/go\("today"\);\s*revealOnboarding\(\)/);
+});
+
 test("step completion visibly leads to the next lesson destination", () => {
   expect(guideSrc).toMatch(/finishAndRevealNext/);
   expect(guideSrc).toMatch(/await Promise\.resolve\(onComplete\(section\.key\)\)/);
@@ -102,7 +115,4 @@ test("step completion visibly leads to the next lesson destination", () => {
 test("completed courses explicitly become a reusable library without resetting completion", () => {
   expect(completionSrc).toMatch(/Review any lesson/);
   expect(completionSrc).toMatch(/original completion stays saved/);
-  // Existing CourseRoadmap and LessonScreen already keep completed lessons
-  // open and expose Practice Again; this delivery pass does not change those
-  // progression/history paths.
 });
