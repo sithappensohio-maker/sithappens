@@ -1,4 +1,4 @@
-import { guidedAutofillValues } from "./PracticePanel";
+import { guidedAutofillValues, guidedPlanComplete } from "./PracticePanel";
 
 const fields = [
   { id: "sets", label: "Sets Today", kind: "sets" },
@@ -39,4 +39,15 @@ test("reps per round is not invented when the client stops with a partial extra 
   expect(out.reps).toBeUndefined();
   expect(out.minutes).toBeUndefined();
   expect(out.reliability).toBeUndefined();
+});
+
+test("the app knows whether guided practice finished the authored plan", () => {
+  const schedule = { rounds_per_day: 2, reps_per_round: 5 };
+  expect(guidedPlanComplete({ rounds_completed: 2, reps_attempted: 10 }, schedule)).toBe(true);
+  expect(guidedPlanComplete({ rounds_completed: 1, reps_attempted: 5 }, schedule)).toBe(false);
+  expect(guidedPlanComplete({ rounds_completed: 1, reps_attempted: 7 }, schedule)).toBe(false);
+});
+
+test("missing schedule data never guesses that a client stopped early", () => {
+  expect(guidedPlanComplete({ rounds_completed: 1, reps_attempted: 5 }, {})).toBeNull();
 });
