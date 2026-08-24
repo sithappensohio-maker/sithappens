@@ -37,6 +37,7 @@ function TrainerSupportSummary({ home, workspace }) {
 export default function StudentWorkspaceExtras({ enrollmentId, home, mode = "home", onChanged, onOpenLesson, onOpenHomework }) {
   const [workspace, setWorkspace] = useState(null);
   const [requests, setRequests] = useState([]);
+  const [homeBlockedByOnboarding, setHomeBlockedByOnboarding] = useState(false);
 
   const load = useCallback(async () => {
     if (!enrollmentId) return;
@@ -53,21 +54,41 @@ export default function StudentWorkspaceExtras({ enrollmentId, home, mode = "hom
     load().catch(() => setWorkspace({}));
   }, [load]);
 
-  const baseline = home?.onboarding?.baseline || workspace?.baseline;
+  // Home can currently hit the onboarding guard while it is merely inspecting
+  // pre-provisioned Practice. Probe the same endpoint only when the parent has
+  // no Home payload, and recover ONLY from the exact setup blocker. An
+  // unrelated Home failure must remain an unrelated failure instead of being
+  // disguised as onboarding.
+  useEffect(() => {
+    let live = true;
+    if (!enrollmentId || home) {
+      setHomeBlockedByOnboarding(false);
+      return () => { live = false; };
+    }
+    api.get(`/portal/school/${enrollmentId}/home`)
+      .then(() => { if (live) setHomeBlockedByOnboarding(false); })
+      .catch((e) => {
+        if (!live) return;
+        const detail = e.response?.data?.detail;
+        setHomeBlockedByOnboarding(
+          typeof detail === "string" && detail.toLowerCase().includes("online school setup")
+        );
+      });
+    return () => { live = false; };
+  }, [enrollmentId, home]);
 
-  // Home can fail while onboarding is incomplete because its read-model also
-  // inspects pre-provisioned Practice, whose write guard correctly refuses to
-  // start before onboarding. The workspace endpoint is intentionally lighter
-  // and still loads. If that exact circular state happens, use the missing
-  // baseline as the recovery signal and show the one-time setup right here on
-  // Today instead of sending a beginner around in a Course -> Today loop.
-  const recoveringMissingHome = !home && !!workspace && !baseline;
+  const baseline = home?.onboarding?.baseline || workspace?.baseline;
+  const recoveringMissingHome = !home && !!workspace && !baseline && homeBlockedByOnboarding;
   const needsOnboarding = home?.current_action?.type === "onboarding"
     || (home?.onboarding?.config?.enabled && home?.onboarding?.config?.require_baseline && !baseline)
     || recoveringMissingHome;
 
+  // In the recovery path Home could not return its config. Do not invent an
+  // equipment requirement. The canonical baseline endpoint still enforces a
+  // real require_equipment_check if this particular frozen course has one and
+  // will put the explanation directly under this form.
   const onboardingConfig = home?.onboarding?.config || (recoveringMissingHome
-    ? { enabled: true, require_baseline: true, require_equipment_check: true }
+    ? { enabled: true, require_baseline: true, require_equipment_check: false }
     : {});
 
   if (!workspace && !needsOnboarding) return null;
@@ -86,6 +107,7 @@ export default function StudentWorkspaceExtras({ enrollmentId, home, mode = "hom
           recoveryMode={recoveringMissingHome}
           onDone={async () => {
             await load();
+            setHomeBlockedByOnboarding(false);
             onChanged?.();
           }}
         />
@@ -212,7 +234,7 @@ export function SchoolOnboarding({ enrollmentId, initial, config, onDone, recove
         ))}
       </div>
 
-      {equipmentRequired && <p className="text-[11px] text-shTextMuted mt-2">* Tell us what you use now so School can safely satisfy any course equipment check.</p>}
+      {equipmentRequired && <p className="text-[11px] text-shTextMuted mt-2">* Equipment is required for this course so the lesson directions match what you are using.</p>}
       {error && (
         <p className="mt-3 rounded-xl border border-red-400/35 bg-red-500/[0.07] px-3 py-2 text-[12.5px] font-bold text-red-300" role="alert">
           {error}
