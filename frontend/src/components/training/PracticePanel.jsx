@@ -357,13 +357,22 @@ export default function PracticePanel({ homework, dogPhoto, onClose, onChanged, 
               ))}
             </div>
           ) : coachEnabled && viewMode === "overview" ? (
-            <CoachPracticeOverview
-              practiceCoach={practiceCoach} tokens={tokens} dogPhoto={dogPhoto}
-              onStartGuided={startGuided}
-              onQuickPractice={quickPracticeAllowed(practiceCoach) ? startQuickPractice : undefined}
-              onOpenTroubleshooting={() => setTroubleshootingOpen(true)}
-              testid="coach-overview"
-            />
+            <>
+              {homework.video_url && (
+                <VideoDemoCard
+                  videoUrl={homework.video_url}
+                  label="Watch Before You Start"
+                  testid="practice-video-before-start"
+                />
+              )}
+              <CoachPracticeOverview
+                practiceCoach={practiceCoach} tokens={tokens} dogPhoto={dogPhoto}
+                onStartGuided={startGuided}
+                onQuickPractice={quickPracticeAllowed(practiceCoach) ? startQuickPractice : undefined}
+                onOpenTroubleshooting={() => setTroubleshootingOpen(true)}
+                testid="coach-overview"
+              />
+            </>
           ) : coachEnabled && viewMode === "guided" ? (
             <>
               {timerCard}
@@ -396,7 +405,9 @@ export default function PracticePanel({ homework, dogPhoto, onClose, onChanged, 
                 </SectionCard>
               )}
 
-              <VideoDemoCard videoUrl={homework.video_url} testid="practice-video"/>
+              {entryContext !== "guided_done" && (
+                <VideoDemoCard videoUrl={homework.video_url} testid="practice-video"/>
+              )}
 
               {section.day_focus && <p className="text-[14px] text-shText font-bold">{section.day_focus}</p>}
               <PracticeInstructionSteps text={section.instructions} testid="practice-steps"/>
