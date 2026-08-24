@@ -4,24 +4,64 @@ import { greeting } from "../../../lib/studentSchool";
 import TrainerCard from "./TrainerCard";
 import LatestFeedbackCard from "./LatestFeedbackCard";
 import CourseCompletionCard from "./CourseCompletionCard";
-import SchoolOrientation, { CurrentActionGuide } from "./SchoolOrientation";
-import { ProgramHeroCard, CurrentLessonCard, PracticeCard, NextMilestoneCard, ProgressRow } from "./today/TodayCards";
+import SchoolOrientation, { actionCoachCopy } from "./SchoolOrientation";
+import { PracticeCard, NextMilestoneCard, ProgressRow } from "./today/TodayCards";
 
-/* Student Today — the client's daily plan.
- *
- * Redesigned per the client-experience brief: guided rather than
- * dashboard-like, one unmistakable primary action, and trainer presence kept
- * prominent instead of buried. The composition order below IS the brief's
- * priority order — program, current lesson + Continue, practice, trainer
- * feedback, next milestone, progress snapshot.
- *
- * The backend view-model (/portal/school/{id}/home) is unchanged and remains
- * the source of truth: current_action decides the primary CTA, so this screen
- * never second-guesses what the student should do next.
- */
+function TodayCommandCard({ home, onPrimaryAction, onViewCourse }) {
+  const action = home?.current_action || {};
+  const lesson = home?.current_lesson || {};
+  const progress = home?.progress || {};
+  const pct = Math.max(0, Math.min(100, Number(progress.course_pct || 0)));
+  const lessonPosition = progress.lessons_total
+    ? `Lesson ${Math.min((progress.lessons_completed || 0) + 1, progress.lessons_total)} of ${progress.lessons_total}`
+    : null;
+  const noButton = ["awaiting_review", "access_expired", "course_paused", "setup_required"].includes(action.type);
+  const title = lesson.name || action.label || "Your next training step";
+
+  return (
+    <section className="rounded-3xl border border-shPrimary/40 bg-gradient-to-br from-shPrimary/[0.11] via-black/18 to-shSecondary/[0.055] overflow-hidden" data-testid="today-command-center">
+      <div className="p-5 sm:p-7">
+        <div className="flex flex-wrap items-center justify-between gap-2">
+          <p className="text-[10px] font-black uppercase tracking-[0.2em] text-shPrimary"><i className="fas fa-location-arrow mr-1.5"/>Today&apos;s Next Step</p>
+          <button type="button" onClick={onViewCourse} className="min-h-[40px] px-2 text-[10.5px] font-black uppercase tracking-widest text-shSecondary hover:text-shText" data-testid="today-command-view-course">
+            All lessons <i className="fas fa-chevron-right ml-1 text-[9px]"/>
+          </button>
+        </div>
+
+        <p className="text-[12px] text-shTextMuted mt-1">{home?.program?.name || "Your training program"}{home?.dog?.name ? ` · ${home.dog.name}` : ""}</p>
+        <h2 className="text-[25px] sm:text-[32px] font-black text-shText leading-tight mt-3 text-balance">{title}</h2>
+        {action.sublabel && <p className="text-[14px] sm:text-[15px] text-shText/90 mt-2 leading-relaxed">{action.sublabel}</p>}
+
+        <div className="mt-4 rounded-2xl border border-white/10 bg-black/18 p-4">
+          <p className="text-[9px] font-black uppercase tracking-[0.18em] text-shSecondary">What you do now</p>
+          <p className="text-[15px] sm:text-[17px] text-shText mt-1.5 leading-relaxed">{actionCoachCopy(action, home?.dog?.name)}</p>
+        </div>
+
+        {!noButton && (
+          <button type="button" onClick={onPrimaryAction} data-testid="today-primary-action"
+                  className="mt-4 w-full min-h-[58px] rounded-xl bg-shPrimary text-[#071018] font-black text-[14px] sm:text-[15px] uppercase tracking-widest inline-flex items-center justify-center gap-2 hover:brightness-110 transition shadow-[0_12px_34px_-12px_rgba(140,198,63,0.8)]">
+            {action.label || "Continue Training"}<i className="fas fa-arrow-right text-[11px]"/>
+          </button>
+        )}
+
+        <div className="mt-4 pt-4 border-t border-white/10">
+          <div className="flex items-center justify-between gap-3 text-[11.5px]">
+            <span className="font-black text-shText">{lessonPosition || "Your program"}</span>
+            <span className="font-black text-shPrimary">{Math.round(pct)}% complete</span>
+          </div>
+          <div className="h-2 rounded-full bg-black/40 overflow-hidden mt-2" aria-hidden="true">
+            <div className="h-full rounded-full bg-shPrimary transition-all" style={{ width: `${pct}%` }}/>
+          </div>
+        </div>
+      </div>
+    </section>
+  );
+}
+
+/* Student Today is the command center, not a dashboard. The backend's
+ * current_action remains the source of truth; this screen turns it into one
+ * unmistakable instruction and one primary button. */
 export default function StudentHome({ home, loading, clientName, onPrimaryAction, onAsk, onViewFeedback, onViewProgress, onViewCourse, onOpenPractice }) {
-  // Real awarded trophies for the badge tile. Failure is silent and the tile
-  // simply shows 0 — a decorative metric must never break the day's plan.
   const [trophyCount, setTrophyCount] = useState(null);
   const dogId = home?.dog?.id;
   useEffect(() => {
@@ -41,8 +81,7 @@ export default function StudentHome({ home, loading, clientName, onPrimaryAction
     return (
       <div className="space-y-4" data-testid="student-home-loading">
         <div className="h-8 w-48 rounded bg-shBorder/40 animate-pulse" />
-        <div className="h-32 rounded-2xl bg-shBorder/30 animate-pulse" />
-        <div className="h-40 rounded-2xl bg-shBorder/20 animate-pulse" />
+        <div className="h-64 rounded-3xl bg-shBorder/25 animate-pulse" />
         <div className="grid gap-4 lg:grid-cols-2">
           <div className="h-24 rounded-2xl bg-shBorder/20 animate-pulse" />
           <div className="h-24 rounded-2xl bg-shBorder/20 animate-pulse" />
@@ -51,10 +90,6 @@ export default function StudentHome({ home, loading, clientName, onPrimaryAction
     );
   }
 
-  /* Never leave a beginner staring at an empty School page. StudentWorkspaceExtras
-     renders the one-time onboarding form immediately below this card when that
-     is what blocked the Today view-model. Keep this copy aligned with that
-     recovery path instead of sending the student away from the form they need. */
   if (!home) {
     return (
       <div className="space-y-4" data-testid="student-home-unavailable">
@@ -65,11 +100,11 @@ export default function StudentHome({ home, loading, clientName, onPrimaryAction
             If you see the one-time setup below, complete that first. When you save it, your Today plan will load automatically and School will tell you exactly what to do next.
           </p>
           <p className="text-[13px] sm:text-[14px] text-shTextMuted mt-2 leading-relaxed max-w-2xl">
-            Already finished the setup? You can open your course and continue from the first available lesson.
+            Already finished the setup? Open All Lessons and continue from the first available lesson.
           </p>
           <button type="button" onClick={onViewCourse} data-testid="student-home-open-course-fallback"
                   className="mt-5 w-full sm:w-auto sm:px-8 min-h-[56px] rounded-xl border border-shBorder bg-black/15 text-shText font-black text-[13px] sm:text-[14px] uppercase tracking-widest inline-flex items-center justify-center gap-2 hover:border-shPrimary/40 transition">
-            Open my course <i className="fas fa-arrow-right text-[11px]" />
+            Open All Lessons <i className="fas fa-arrow-right text-[11px]" />
           </button>
         </section>
       </div>
@@ -84,7 +119,7 @@ export default function StudentHome({ home, loading, clientName, onPrimaryAction
       <header className="flex items-start justify-between gap-3">
         <div className="min-w-0">
           <h1 className="text-shText font-black text-[22px] sm:text-[26px] leading-tight text-balance">{greeting(clientName)}</h1>
-          {home.dog?.name && <p className="text-[13px] text-shTextMuted mt-0.5">Here&rsquo;s {home.dog.name}&rsquo;s plan for today.</p>}
+          {home.dog?.name && <p className="text-[13px] text-shTextMuted mt-0.5">School will tell you exactly what {home.dog.name} needs next.</p>}
         </div>
         <SchoolOrientation dogName={home.dog?.name} />
       </header>
@@ -92,15 +127,9 @@ export default function StudentHome({ home, loading, clientName, onPrimaryAction
       {completed ? (
         <CourseCompletionCard home={home} onCourse={onViewCourse} onProgress={onViewProgress} onFeedback={onViewFeedback} />
       ) : (
-        <>
-          <ProgramHeroCard home={home} onViewCourse={onViewCourse} />
-          <CurrentActionGuide home={home} />
-          <CurrentLessonCard home={home} onPrimary={onPrimaryAction} />
-        </>
+        <TodayCommandCard home={home} onPrimaryAction={onPrimaryAction} onViewCourse={onViewCourse} />
       )}
 
-      {/* Below the fold on mobile, side-by-side from lg. Practice and trainer
-          feedback are the two things a client checks between sessions. */}
       <div className="grid gap-4 lg:grid-cols-2">
         <div className="space-y-4 min-w-0">
           {!completed && <PracticeCard practice={home.active_practice} onOpen={onOpenPractice} />}
