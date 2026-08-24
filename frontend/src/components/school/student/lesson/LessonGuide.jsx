@@ -92,10 +92,6 @@ const STEP_COACH = {
   know_got_it: { title: "Before you move on", body: "Compare your dog to these signs. You are looking for understanding and repeatable success — not perfection in one lucky repetition.", button: "I KNOW WHAT SUCCESS LOOKS LIKE" },
 };
 
-/* A step lives below a fairly tall tracker. Whenever the student selects or
- * completes a step, make the destination visible instead of making them hunt
- * for what changed. Retry briefly because React may not have painted the next
- * step/action card on the first frame after the API response. */
 function revealSelector(selector, attempts = 12) {
   if (typeof document === "undefined") return;
   const target = document.querySelector(selector);
@@ -136,7 +132,6 @@ function FreshLessonStart({ lesson, sections, hasPractice, onStart }) {
         <p className="text-[15px] sm:text-[17px] text-shTextMuted mt-3 leading-relaxed">
           You have not started this lesson yet. When you tap the button below, School will open Part 1 and guide you one part at a time.
         </p>
-
         <div className="grid gap-2 sm:grid-cols-3 mt-5">
           <div className="rounded-2xl border border-shBorder/55 bg-black/15 p-4">
             <p className="text-[9px] font-black uppercase tracking-widest text-shSecondary">Lesson journey</p>
@@ -154,7 +149,6 @@ function FreshLessonStart({ lesson, sections, hasPractice, onStart }) {
             <p className="text-[11.5px] text-shTextMuted mt-1">{minutes ? `Plan on about ${minutes} minutes for the lesson.` : "School will tell you when you are finished."}</p>
           </div>
         </div>
-
         <button type="button" onClick={onStart} autoFocus data-testid="fresh-lesson-start-button"
                 className="mt-6 w-full min-h-[60px] rounded-xl bg-shPrimary text-bgHeader text-[15px] sm:text-[16px] font-black uppercase tracking-widest hover:brightness-110 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-shPrimary focus-visible:ring-offset-2 focus-visible:ring-offset-bgBase">
           Start Lesson — Show Me Part 1 <i className="fas fa-arrow-right ml-1.5" aria-hidden="true" />
@@ -166,10 +160,7 @@ function FreshLessonStart({ lesson, sections, hasPractice, onStart }) {
 }
 
 export function LessonSectionBody(props) {
-  const {
-    lesson, sectionKey, enrollmentId, onComplete, completed = false,
-    busy = false, testid = "lesson-section",
-  } = props;
+  const { lesson, sectionKey, enrollmentId, onComplete, completed = false, busy = false, testid = "lesson-section" } = props;
   const sections = props.sections || buildGuide(lesson, { hasPractice: true, hasQuiz: true });
   const section = sections.find((s) => s.key === sectionKey);
   if (!section) return null;
@@ -182,8 +173,7 @@ export function LessonSectionBody(props) {
     const next = index >= 0 ? sections[index + 1] : null;
     const result = await Promise.resolve(onComplete(section.key));
     if (result?.ok === false) return;
-    const destination = result?.next_instructional_step
-      || (result?.practice_unlocked ? "practice" : next?.key);
+    const destination = result?.next_instructional_step || (result?.practice_unlocked ? "practice" : next?.key);
     if (destination) revealStepOrAction(destination);
   };
 
@@ -195,14 +185,7 @@ export function LessonSectionBody(props) {
           <p className="text-[16px] sm:text-[17px] text-shText mt-1.5 leading-relaxed">{coach.body}</p>
         </div>
       )}
-
-      <BaseLessonSectionBody
-        {...props}
-        sections={sections}
-        onComplete={null}
-        testid={testid}
-      />
-
+      <BaseLessonSectionBody {...props} sections={sections} onComplete={null} testid={testid} />
       {instructional && onComplete && !completed && (
         <button type="button" onClick={finishAndRevealNext} disabled={busy}
                 data-testid={`${testid}-continue-${section.key}`}
@@ -218,11 +201,11 @@ export default function LessonGuide(props) {
   const sections = props.sections || buildGuide(props.lesson, { hasPractice: props.hasPractice, hasQuiz: props.hasQuiz });
   const firstInstructional = instructionalKeys(sections)[0] || null;
   const [started, setStarted] = useState(() => wasLessonStarted(props.lesson));
-  const fresh = props.isCurrent === true
-    && !props.reviewOnly
-    && !started
-    && (props.completed || []).length === 0
-    && !props.practiced
+  const alreadyPastFreshStart = (props.completed || []).length > 0
+    || !!props.practiced
+    || (props.hasPractice && props.practiceUnlocked === true);
+  const fresh = !started
+    && !alreadyPastFreshStart
     && !!firstInstructional
     && (props.activeKey || firstInstructional) === firstInstructional;
 
