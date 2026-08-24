@@ -3,23 +3,9 @@
 // assignment card on Client Today. Submits through the EXISTING
 // homework-log endpoints only:
 //   - daily-tracker assignments -> POST /homework/{id}/day/{n}/submit
-//     (field_values, note, mood, difficulty, photo, video_media_id,
-//     could_not_complete/reason)
 //   - single-log (section-based) assignments -> POST /homework/{id}/section-log
-//     (field_values, date, note, and — see server.py's SectionLogIn —
-//     difficulty, could_not_complete/reason, photo, and video_media_id.
-//     Section video uploads go through POST /homework/{id}/practice-video
-//     and are offered ONLY when the Practice Recipe requests video
-//     (practice_coach.media.request_video); recipes that don't request it
-//     keep exactly the old no-video form.)
 //
-// Client Practice Coach upgrade: when template_snapshot.practice_coach is
-// present and enabled, this renders the structured Coach Mode flow
-// (CoachPracticeOverview -> GuidedPracticeFlow -> the same completion form,
-// now with end_questions + difficulty feedback) INSTEAD of jumping
-// straight to the plain completion form — Quick Practice, and every
-// legacy template with no practice_coach, keep using exactly the
-// pre-existing simple flow below, completely unchanged.
+// Coach Mode is a delivery layer over the same Practice data/logging model.
 import { useEffect, useRef, useState } from "react";
 import { api, formatErr } from "../../lib/api";
 import { toast } from "sonner";
@@ -48,8 +34,7 @@ const FIELD_UNIT = { duration_sec: "sec", duration_min: "min", distance_ft: "ft"
 
 // Guided Practice already knows several objective facts. Put those facts into
 // matching wrap-up fields so a beginner is not asked to retype information
-// the app just tracked. Subjective fields (difficulty/reliability, etc.) are
-// intentionally left for the client to answer.
+// the app just tracked. Subjective fields stay for the client to answer.
 export function guidedAutofillValues(fields, metrics, schedule, timerSec = 0, focusText = "") {
   if (!metrics) return {};
   const out = {};
@@ -89,6 +74,53 @@ export function guidedAutofillValues(fields, metrics, schedule, timerSec = 0, fo
   return out;
 }
 
+// true = every planned round/repetition was completed; false = the client
+// stopped early; null = the recipe does not contain enough schedule data to
+// make that determination safely.
+export function guidedPlanComplete(metrics, schedule) {
+  if (!metrics) return null;
+  const plannedRounds = Number(schedule?.rounds_per_day) || 0;
+  const repsPerRound = Number(schedule?.reps_per_round) || 0;
+  if (!plannedRounds || !repsPerRound) return null;
+  const rounds = Number(metrics.rounds_completed) || 0;
+  const attempted = Number(metrics.reps_attempted) || 0;
+  return rounds >= plannedRounds && attempted >= plannedRounds * repsPerRound;
+}
+
+function fieldLabelText(field) {
+  return `${field?.id || ""} ${field?.label || ""}`.toLowerCase();
+}
+
+function isGuidedObjectiveField(field) {
+  const label = fieldLabelText(field);
+  return field?.kind === "success_rate"
+    || field?.kind === "duration_sec"
+    || field?.kind === "duration_min"
+    || label.includes("reps per set")
+    || label.includes("reps per round")
+    || label.includes("repetitions per")
+    || label.includes("sets today")
+    || label.includes("rounds today")
+    || label.includes("rounds completed")
+    || label.includes("session length")
+    || label.includes("minutes practiced")
+    || label.includes("what we worked on")
+    || label.includes("practice focus")
+    || label.includes("skill practiced");
+}
+
+function guidedResultItems(metrics, timerSec) {
+  if (!metrics) return [];
+  const items = [
+    { key: "guided-rounds", icon: "fa-layer-group", label: "Rounds Completed", value: String(Number(metrics.rounds_completed) || 0) },
+    { key: "guided-reps", icon: "fa-rotate", label: "Repetitions Attempted", value: String(Number(metrics.reps_attempted) || 0) },
+    { key: "guided-successes", icon: "fa-check", label: "Successful Repetitions", value: String(Number(metrics.successful_reps) || 0) },
+  ];
+  if (metrics.success_rate != null) items.push({ key: "guided-rate", icon: "fa-percent", label: "Success Rate", value: `${metrics.success_rate}%` });
+  if (timerSec > 0) items.push({ key: "guided-time", icon: "fa-stopwatch", label: "Practice Time", value: `${Math.max(1, Math.round(timerSec / 60))} min` });
+  return items;
+}
+
 export default function PracticePanel({ homework, dogPhoto, onClose, onChanged, onPracticeLogged, onCompleted }) {
   const model = assignmentCardModel(homework);
   const isDailyTracker = !!homework.daily_tracker;
@@ -120,7 +152,7 @@ export default function PracticePanel({ homework, dogPhoto, onClose, onChanged, 
   const [uploadingVideo, setUploadingVideo] = useState(false);
   const [askText, setAskText] = useState("");
   const [saveState, setSaveState] = useState("idle");
-  const submittingRef = useRef(false); // synchronous double-submit lock (state alone races same-tick clicks)
+  const submittingRef = useRef(false);
   const [errorMessage, setErrorMessage] = useState("");
   const [timerSec, setTimerSec] = useState(0);
   const [timerRunning, setTimerRunning] = useState(false);
@@ -134,9 +166,6 @@ export default function PracticePanel({ homework, dogPhoto, onClose, onChanged, 
   const setField = (fid, v) => setValues(s => ({ ...s, [fid]: v }));
   const setEndAnswer = (qid, v) => setEndAnswers(s => ({ ...s, [qid]: v }));
 
-  // Section-log (non-daily) practice offers video ONLY when the Practice
-  // Recipe explicitly requests it — a recipe with no request keeps the old
-  // no-video form. Daily tracker keeps its always-available video control.
   const sectionVideoAllowed = !isDailyTracker && !!practiceCoach?.media?.request_video;
 
   const uploadVideo = async (file, errText) => {
@@ -160,10 +189,6 @@ export default function PracticePanel({ homework, dogPhoto, onClose, onChanged, 
     } finally { setUploadingVideo(false); }
   };
 
-  // Completion is a WORKFLOW, not a popup: after a successful save the form
-  // is replaced by an inline "Practice Complete" state, then (when hosted by
-  // School) onCompleted routes to the backend-decided next step. The timer
-  // is cleared on unmount so a quick close can't fire a stale navigation.
   useEffect(() => {
     if (viewMode !== "complete" || !onCompleted) return undefined;
     const t = setTimeout(() => onCompleted(), 1400);
@@ -172,11 +197,7 @@ export default function PracticePanel({ homework, dogPhoto, onClose, onChanged, 
   }, [viewMode]);
 
   const submit = async () => {
-    if (saveState === "saving" || saveState === "saved") return; // double-click guard
-    // React state updates are async, so rapid same-tick clicks all still see
-    // saveState === "idle" — the ref blocks those synchronously. Backend
-    // section-log has no dedupe; every request that gets through is a
-    // duplicate practice record.
+    if (saveState === "saving" || saveState === "saved") return;
     if (submittingRef.current) return;
     submittingRef.current = true;
     setSaveState("saving"); setErrorMessage("");
@@ -215,12 +236,9 @@ export default function PracticePanel({ homework, dogPhoto, onClose, onChanged, 
       setSaveState("saved");
       onPracticeLogged?.();
       onChanged?.();
-      // No popup to dismiss — replace the form with the completion state.
-      // In School the onCompleted effect above then routes to the next step;
-      // for generic homework the state offers one obvious CONTINUE action.
       setViewMode("complete");
     } catch (e) {
-      submittingRef.current = false; // a failed save must stay retryable
+      submittingRef.current = false;
       setSaveState("error");
       setErrorMessage(formatErr(e.response?.data?.detail) || "Couldn't save — try again.");
     }
@@ -264,7 +282,23 @@ export default function PracticePanel({ homework, dogPhoto, onClose, onChanged, 
     value: f.target != null ? `${f.target}${FIELD_UNIT[f.kind] || ""}` : null,
   })).filter(c => c.value);
 
-  const editableChips = (section?.fields || []).filter(f => f.kind !== "checkbox").map(f => ({
+  const guidedStatus = entryContext === "guided_done"
+    ? guidedPlanComplete(guidedMetrics, practiceCoach?.schedule || {})
+    : null;
+  const guidedStoppedEarly = entryContext === "guided_done" && guidedStatus === false;
+  const resultChips = entryContext === "guided_done" ? guidedResultItems(guidedMetrics, timerSec) : [];
+
+  const editableFields = (section?.fields || []).filter(f => {
+    if (f.kind === "checkbox") return false;
+    if (entryContext !== "guided_done") return true;
+    if (isGuidedObjectiveField(f)) return false;
+    // Guided Practice already has an objective success rate and the wrap-up
+    // also asks how the setup felt. Do not ask for a second overlapping 1–5
+    // reliability score when School already measured the repetitions.
+    if (f.kind === "rating_5" && guidedMetrics?.success_rate != null) return false;
+    return true;
+  });
+  const editableChips = editableFields.map(f => ({
     key: f.id, icon: FIELD_ICON[f.kind] || "fa-bullseye", label: f.label,
     value: values[f.id] ?? "", placeholder: f.target != null ? `Goal: ${f.target}${FIELD_UNIT[f.kind] || ""}` : undefined,
     onChange: (v) => setField(f.id, v),
@@ -274,19 +308,16 @@ export default function PracticePanel({ homework, dogPhoto, onClose, onChanged, 
   const startGuided = () => setViewMode("guided");
   const finishGuided = (metrics) => {
     const autofill = guidedAutofillValues(section?.fields || [], metrics, practiceCoach?.schedule || {}, timerSec, homework.title || "");
+    const planDone = guidedPlanComplete(metrics, practiceCoach?.schedule || {});
     setValues(current => ({ ...autofill, ...current }));
     setGuidedMetrics(metrics);
+    setCouldNotComplete(planDone === false);
+    if (planDone !== false) setCouldNotCompleteReason("");
     setTimerRunning(false);
     setEntryContext("guided_done");
     setViewMode("form");
   };
 
-  // Practice Timer — lives WHERE THE REPS HAPPEN: on the guided-practice
-  // screen and on the quick/legacy form (where the client practices with the
-  // form open). After guided practice it only lingers on the completion form
-  // when it was actually used (elapsed context), never as a fresh
-  // start-a-timer prompt for practice that already happened. Timer state
-  // stays up here so the elapsed time survives the guided → form transition.
   const timerCard = (
     <SectionCard accent="cyan" intensity="subtle">
       <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3">
@@ -317,13 +348,11 @@ export default function PracticePanel({ homework, dogPhoto, onClose, onChanged, 
         <div className="relative overflow-y-auto flex-1 min-h-0 px-3 sm:px-5 lg:px-6 py-4 sm:py-5 space-y-4 sm:space-y-5 pb-[max(1rem,env(safe-area-inset-bottom))]">
           {viewMode === "complete" ? (
             <div className="flex flex-col items-center justify-center text-center py-10 sm:py-14 space-y-4" data-testid="practice-complete-state">
-              <span className="w-16 h-16 rounded-2xl bg-shPrimary/15 border border-shPrimary/40 grid place-items-center">
-                <i className="fas fa-check text-shPrimary text-2xl" />
-              </span>
+              <span className="w-16 h-16 rounded-2xl bg-shPrimary/15 border border-shPrimary/40 grid place-items-center"><i className="fas fa-check text-shPrimary text-2xl" /></span>
               <div>
-                <p className="text-[20px] font-black text-shText uppercase tracking-tight">✓ Practice Complete</p>
+                <p className="text-[20px] font-black text-shText uppercase tracking-tight">✓ Practice Saved</p>
                 <p className="text-[13px] text-shTextMuted mt-1" data-testid="practice-complete-subtitle">
-                  {onCompleted ? "Nice work. Updating your training plan…" : "Nice work — it's saved to your training history."}
+                  {onCompleted ? "School is checking what comes next…" : "Nice work — it's saved to your training history."}
                 </p>
               </div>
               {onCompleted ? (
@@ -347,9 +376,7 @@ export default function PracticePanel({ homework, dogPhoto, onClose, onChanged, 
             <EmptyState icon="fa-clipboard-check" message="This assignment doesn't have any sessions to log yet." testid="practice-no-section"/>
           ) : readOnly ? (
             <div className="space-y-3">
-              <p className="text-[11px] font-black uppercase tracking-widest text-shTextMuted">
-                {model.status === "completed" ? "Completed" : "Submitted — waiting for your trainer"}
-              </p>
+              <p className="text-[11px] font-black uppercase tracking-widest text-shTextMuted">{model.status === "completed" ? "Completed" : "Submitted — waiting for your trainer"}</p>
               {reviewDay?.log?.note && <p className="text-[13px] text-shText italic">&ldquo;{reviewDay.log.note}&rdquo;</p>}
               {reviewDay?.log?.review_note && <TrainerFeedbackNotice text={reviewDay.log.review_note} testid="practice-review-note"/>}
               {(reviewDay?.questions || []).filter(q => q.answer).map(q => (
@@ -359,11 +386,7 @@ export default function PracticePanel({ homework, dogPhoto, onClose, onChanged, 
           ) : coachEnabled && viewMode === "overview" ? (
             <>
               {homework.video_url && (
-                <VideoDemoCard
-                  videoUrl={homework.video_url}
-                  label="Watch Before You Start"
-                  testid="practice-video-before-start"
-                />
+                <VideoDemoCard videoUrl={homework.video_url} label="Watch Before You Start" testid="practice-video-before-start" />
               )}
               <CoachPracticeOverview
                 practiceCoach={practiceCoach} tokens={tokens} dogPhoto={dogPhoto}
@@ -385,57 +408,74 @@ export default function PracticePanel({ homework, dogPhoto, onClose, onChanged, 
             </>
           ) : (
             <>
-              <div className="flex flex-wrap items-center gap-2 text-[12px] text-shTextMuted font-bold">
-                {estimatedMinutes ? <span><i className="fas fa-clock mr-1"/>{estimatedMinutes} min</span> : null}
-              </div>
-
-              {entryContext === "quick" && practiceCoach?.goal && (
-                <SectionCard accent="lime" intensity="subtle">
-                  <p className="text-[9px] font-black uppercase tracking-[0.15em] text-shPrimary mb-1.5">Quick Practice Goal</p>
-                  <p className="text-[15px] text-shText font-black leading-snug">{renderPracticeCoachText(practiceCoach.goal, tokens)}</p>
-                  {(practiceCoach.steps || []).length > 0 && <p className="text-[11px] text-shTextMuted mt-2 leading-relaxed">{practiceCoach.steps.map(s => renderPracticeCoachText(s.title, tokens)).join(" · ")}</p>}
-                </SectionCard>
-              )}
-              {entryContext === "guided_done" && guidedMetrics && (
-                <SectionCard accent="lime" intensity="subtle">
-                  <div className="flex items-center gap-3">
-                    <span className="w-10 h-10 rounded-xl bg-shPrimary/10 border border-shPrimary/30 grid place-items-center text-shPrimary shrink-0"><i className="fas fa-check"/></span>
-                    <div><p className="text-[9px] font-black uppercase tracking-[0.14em] text-shPrimary">Guided practice complete</p><p className="text-[13px] sm:text-[14px] font-black text-shText mt-1">{guidedMetrics.rounds_completed} round{guidedMetrics.rounds_completed === 1 ? "" : "s"} · {guidedMetrics.successful_reps}/{guidedMetrics.reps_attempted} successful</p></div>
+              {entryContext === "guided_done" && guidedMetrics ? (
+                <SectionCard accent={guidedStoppedEarly ? "orange" : "lime"} intensity="subtle">
+                  <div className="flex items-start gap-3">
+                    <span className={`w-11 h-11 rounded-xl border grid place-items-center shrink-0 ${guidedStoppedEarly ? "border-shAccent/35 bg-shAccent/10 text-shAccent" : "border-shPrimary/35 bg-shPrimary/10 text-shPrimary"}`}>
+                      <i className={`fas ${guidedStoppedEarly ? "fa-pause" : "fa-check"}`}/>
+                    </span>
+                    <div className="min-w-0">
+                      <p className={`text-[9px] font-black uppercase tracking-[0.14em] ${guidedStoppedEarly ? "text-shAccent" : "text-shPrimary"}`}>{guidedStoppedEarly ? "Practice Ended Early" : "Guided Practice Complete"}</p>
+                      <p className="text-[17px] sm:text-[19px] font-black text-shText mt-1 leading-tight">
+                        {guidedStoppedEarly ? "Save what actually happened — do not redo it just to finish the plan." : "The training is finished. Compare the plan with what actually happened."}
+                      </p>
+                    </div>
                   </div>
+                  {targetChips.length > 0 && (
+                    <div className="mt-4">
+                      <p className="text-[9px] font-black uppercase tracking-[0.16em] text-shSecondary mb-2">Today&apos;s Plan</p>
+                      <MeasurementChips items={targetChips} testid="practice-plan"/>
+                    </div>
+                  )}
+                  {resultChips.length > 0 && (
+                    <div className="mt-4">
+                      <p className="text-[9px] font-black uppercase tracking-[0.16em] text-shPrimary mb-2">Today&apos;s Results</p>
+                      <MeasurementChips items={resultChips} testid="practice-results"/>
+                    </div>
+                  )}
                 </SectionCard>
-              )}
+              ) : (
+                <>
+                  <div className="flex flex-wrap items-center gap-2 text-[12px] text-shTextMuted font-bold">
+                    {estimatedMinutes ? <span><i className="fas fa-clock mr-1"/>{estimatedMinutes} min</span> : null}
+                  </div>
 
-              {entryContext !== "guided_done" && (
-                <VideoDemoCard videoUrl={homework.video_url} testid="practice-video"/>
-              )}
+                  {entryContext === "quick" && practiceCoach?.goal && (
+                    <SectionCard accent="lime" intensity="subtle">
+                      <p className="text-[9px] font-black uppercase tracking-[0.15em] text-shPrimary mb-1.5">Quick Practice Goal</p>
+                      <p className="text-[15px] text-shText font-black leading-snug">{renderPracticeCoachText(practiceCoach.goal, tokens)}</p>
+                      {(practiceCoach.steps || []).length > 0 && <p className="text-[11px] text-shTextMuted mt-2 leading-relaxed">{practiceCoach.steps.map(s => renderPracticeCoachText(s.title, tokens)).join(" · ")}</p>}
+                    </SectionCard>
+                  )}
 
-              {section.day_focus && <p className="text-[14px] text-shText font-bold">{section.day_focus}</p>}
-              <PracticeInstructionSteps text={section.instructions} testid="practice-steps"/>
-              <EquipmentChips equipment={(section.equipment || []).join(", ")} testid="practice-equipment"/>
-              {targetChips.length > 0 && <MeasurementChips items={targetChips} testid="practice-targets"/>}
+                  <VideoDemoCard videoUrl={homework.video_url} testid="practice-video"/>
+                  {section.day_focus && <p className="text-[14px] text-shText font-bold">{section.day_focus}</p>}
+                  <PracticeInstructionSteps text={section.instructions} testid="practice-steps"/>
+                  <EquipmentChips equipment={(section.equipment || []).join(", ")} testid="practice-equipment"/>
+                  {targetChips.length > 0 && <MeasurementChips items={targetChips} testid="practice-targets"/>}
 
-              {homework.trainer_personalized_note && (
-                <ExpandableSection title="Trainer's Note" icon="fa-user-tie" tone="secondary" testid="practice-trainer-note">
-                  <p className="text-[13px] text-shText">{homework.trainer_personalized_note}</p>
-                </ExpandableSection>
+                  {homework.trainer_personalized_note && (
+                    <ExpandableSection title="Trainer's Note" icon="fa-user-tie" tone="secondary" testid="practice-trainer-note">
+                      <p className="text-[13px] text-shText">{homework.trainer_personalized_note}</p>
+                    </ExpandableSection>
+                  )}
+                  {(section.resources || []).length > 0 && (
+                    <ExpandableSection title="Resources" icon="fa-paperclip" testid="practice-resources">
+                      <ul className="space-y-1">
+                        {section.resources.map(r => (
+                          <li key={r.id}><a href={r.url || "#"} target="_blank" rel="noopener noreferrer" className="text-[13px] text-shSecondary hover:underline"><i className="fas fa-file mr-1.5"/>{r.name}</a></li>
+                        ))}
+                      </ul>
+                    </ExpandableSection>
+                  )}
+                  {timerCard}
+                </>
               )}
-              {(section.resources || []).length > 0 && (
-                <ExpandableSection title="Resources" icon="fa-paperclip" testid="practice-resources">
-                  <ul className="space-y-1">
-                    {section.resources.map(r => (
-                      <li key={r.id}><a href={r.url || "#"} target="_blank" rel="noopener noreferrer" className="text-[13px] text-shSecondary hover:underline"><i className="fas fa-file mr-1.5"/>{r.name}</a></li>
-                    ))}
-                  </ul>
-                </ExpandableSection>
-              )}
-
-              {/* During-practice surfaces keep the timer; the after-guided
-                  completion form only shows it when it actually ran. */}
-              {(entryContext !== "guided_done" || timerSec > 0) && timerCard}
 
               <PracticeCompletionPanel
                 allowDifficulty={true}
-                allowCouldNotComplete={true}
+                allowCouldNotComplete={entryContext !== "guided_done" || guidedStatus === null}
+                stoppedEarly={guidedStoppedEarly}
                 allowPhoto={true}
                 allowVideo={isDailyTracker || sectionVideoAllowed}
                 fieldsSlot={editableChips.length > 0 ? <MeasurementChips items={editableChips} testid="practice-fields"/> : null}
@@ -455,6 +495,7 @@ export default function PracticePanel({ homework, dogPhoto, onClose, onChanged, 
                 onAskSubmit={askTrainer}
                 saveState={saveState} errorMessage={errorMessage}
                 onSubmit={submit}
+                submitLabel={onCompleted ? "Save Practice & Show Me What's Next" : "Save Today's Practice"}
                 testid="practice-completion"
               />
             </>
