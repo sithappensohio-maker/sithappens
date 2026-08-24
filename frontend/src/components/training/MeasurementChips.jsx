@@ -5,6 +5,8 @@ export function clientMeasurementLabel(item) {
   const raw = String(item?.label || "").trim();
   const label = raw.toLowerCase();
   if (label.includes("reps per set") || label.includes("reps per round") || label.includes("repetitions per")) return "Repetitions Per Round";
+  if (label.includes("repetitions attempted") || label.includes("reps attempted") || label === "repetitions") return "Repetitions Completed";
+  if (label.includes("successful rep") || label.includes("successful repetition")) return "Successful Repetitions";
   if (label.includes("sets today") || label.includes("sets completed") || label.includes("rounds today") || label.includes("rounds completed")) return "Rounds Completed";
   if (label.includes("session length") || label.includes("practice time") || label.includes("minutes practiced")) return "Practice Time";
   if (label.includes("reliability") || label.includes("rating") || label.includes("1-5") || label.includes("1–5")) return "How Well Did It Go? (1–5)";
@@ -41,8 +43,9 @@ function editableHelp(item) {
 export default function MeasurementChips({ items, testid }) {
   const visible = (items || []).filter(it => it.value || it.onChange);
   if (visible.length === 0) return null;
-  const isPlan = String(testid || "").includes("practice-targets");
-  const isResult = String(testid || "").includes("practice-fields");
+  const tid = String(testid || "");
+  const isPlan = tid.includes("practice-targets") || tid.includes("practice-plan");
+  const isResult = tid.includes("practice-fields") || tid.includes("practice-results");
 
   return (
     <div className="grid grid-cols-1 sm:flex sm:flex-wrap gap-2" data-testid={testid}>
