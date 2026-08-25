@@ -11,10 +11,12 @@ from board_train_scheduling import install_board_train_scheduling
 from trainer_delivery import install_trainer_delivery
 from trainer_delivery_indexes import install_trainer_delivery_indexes
 from board_train_client_updates import install_board_train_client_updates
+from trainer_delivery_guard import install_trainer_delivery_guard
 
 install_board_train_scheduling(server_module=server, db=server.db)
 install_trainer_delivery(server_module=server, db=server.db)
 install_trainer_delivery_indexes(app=server.app, db=server.db)
 install_board_train_client_updates(server_module=server, db=server.db)
+install_trainer_delivery_guard(server_module=server, db=server.db)
 
 app = server.app
