@@ -31,7 +31,7 @@ function BoardTrainMeta({ row: r, testid }) {
             ? "border-shPrimary/35 bg-shPrimary/[0.08] text-shPrimary"
             : "border-shAccent/40 bg-shAccent/[0.08] text-shAccent"
         }`}>
-          <i className={`fas ${r.trainer_delivery_closeout_complete ? "fa-circle-check" : "fa-clipboard-list"} mr-1"`}/>
+          <i className={`fas ${r.trainer_delivery_closeout_complete ? "fa-circle-check" : "fa-clipboard-list"} mr-1`}/>
           {r.trainer_delivery_closeout_complete ? "Daily closeout done" : "Closeout required"}
         </span>
       )}
