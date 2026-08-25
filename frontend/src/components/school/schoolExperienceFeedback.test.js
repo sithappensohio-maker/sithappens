@@ -39,6 +39,11 @@ test("survey reads and updates one server-owned experience review", () => {
   expect(form).toContain("Update feedback");
 });
 
+test("in-person-only School enrollments do not show an Online School survey", () => {
+  expect(form).toContain("experience_feedback_eligible");
+  expect(form).toContain("if (!enrollmentId || !loaded || available !== true) return null;");
+});
+
 test("School HQ has a dedicated Client Feedback destination", () => {
   expect(schoolHq).toContain('key: "client_feedback", label: "Client Feedback"');
   expect(schoolHq).toContain('{tab === "client_feedback" && <SchoolExperienceFeedbackAdmin />}');
