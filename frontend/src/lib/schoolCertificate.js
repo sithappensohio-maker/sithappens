@@ -1,3 +1,21 @@
+import { createElement } from "react";
+
+// Program Studio's certificate editor originally referenced a shared Field
+// wrapper by its old name. Keep that render path safe while preserving the
+// same label/spacing treatment as Program Studio's SField helper. This is a
+// frontend-only compatibility guard; it does not touch course or enrollment
+// data.
+if (typeof globalThis !== "undefined" && typeof globalThis.Field === "undefined") {
+  globalThis.Field = function CertificateEditorField({ label, children }) {
+    return createElement(
+      "div",
+      null,
+      createElement("label", { className: "text-[11px] font-bold text-shTextMuted" }, label),
+      createElement("div", { className: "mt-1.5" }, children),
+    );
+  };
+}
+
 // Sit Happens School — branded course completion certificates.
 //
 // The three flagship School levels share one light certificate system with
