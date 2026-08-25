@@ -1,7 +1,7 @@
 """Client experience feedback for Sit Happens School.
 
 Trainer/checkpoint feedback is coaching TO the client. This module records the
-client's feedback ABOUT the School/course experience.
+client's feedback ABOUT the Online School/course experience.
 """
 from __future__ import annotations
 
@@ -15,6 +15,8 @@ from pymongo import DESCENDING, ReturnDocument
 
 
 SCHOOL_CHANNELS = ("online_school", "in_person_school", "hybrid_school")
+ONLINE_EXPERIENCE_MODES = ("self_guided", "hybrid")
+ONLINE_EXPERIENCE_CHANNELS = ("online_school", "hybrid_school")
 
 
 def _now() -> str:
@@ -38,6 +40,13 @@ class SchoolExperienceFeedbackIn(BaseModel):
 
 def _feedback_id(client_id: str, dog_id: str, program_id: str) -> str:
     return f"school-experience:{client_id}:{dog_id}:{program_id}"
+
+
+def _experience_eligible(se: dict, dp: dict) -> bool:
+    return (
+        se.get("delivery_mode") in ONLINE_EXPERIENCE_MODES
+        or dp.get("delivery_channel") in ONLINE_EXPERIENCE_CHANNELS
+    )
 
 
 async def _client_context(db, sid: str, user: dict):
@@ -97,8 +106,9 @@ def install_school_experience_feedback(*, server_module, db) -> None:
         ident = await _identity_snapshot(db, se, dp)
         if not ident.get("program_id"):
             raise HTTPException(status_code=422, detail="This School enrollment has no program identity")
+        eligible = _experience_eligible(se, dp)
         rid = _feedback_id(ident["client_id"], ident["dog_id"], ident["program_id"])
-        row = await db.school_experience_feedback.find_one({"_id": rid}, {"_id": 0})
+        row = await db.school_experience_feedback.find_one({"_id": rid}, {"_id": 0}) if eligible else None
         return {
             "feedback": row,
             "course": {
@@ -107,8 +117,10 @@ def install_school_experience_feedback(*, server_module, db) -> None:
                 "program_name": ident["program_name"],
                 "dog_id": ident["dog_id"],
                 "dog_name": ident["dog_name"],
+                "delivery_mode": se.get("delivery_mode"),
                 "status": dp.get("status") or se.get("status") or "active",
                 "completed": (dp.get("status") or se.get("status")) == "completed",
+                "experience_feedback_eligible": eligible,
             },
         }
 
@@ -117,6 +129,8 @@ def install_school_experience_feedback(*, server_module, db) -> None:
         sid: str, body: SchoolExperienceFeedbackIn, user: dict = Depends(get_current_user)
     ):
         se, dp = await _client_context(db, sid, user)
+        if not _experience_eligible(se, dp):
+            raise HTTPException(status_code=422, detail="Experience feedback is available for Online School and hybrid courses")
         ident = await _identity_snapshot(db, se, dp)
         if not ident.get("program_id"):
             raise HTTPException(status_code=422, detail="This School enrollment has no program identity")
