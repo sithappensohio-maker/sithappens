@@ -9,8 +9,10 @@ import server
 
 from board_train_scheduling import install_board_train_scheduling
 from trainer_delivery import install_trainer_delivery
+from trainer_delivery_indexes import install_trainer_delivery_indexes
 
 install_board_train_scheduling(server_module=server, db=server.db)
 install_trainer_delivery(server_module=server, db=server.db)
+install_trainer_delivery_indexes(app=server.app, db=server.db)
 
 app = server.app
