@@ -16,9 +16,10 @@ export default function ActivityCard({ activity: a, index, total, expanded, onTo
   const meta = a.skipped
     ? { tone: "border-l-shBorder", icon: "fa-forward", iconColor: "text-shTextMuted", label: "Skipped" }
     : (STATUS_META[a.current_status] || STATUS_META.not_started);
+  const skipReasonMissing = a.skipped && (a.skip_reason || "").trim().length < 3;
 
   return (
-    <div className={`bg-black/20 border border-shBorder border-l-4 rounded-lg ${meta.tone} ${a.skipped ? "opacity-60" : ""}`} data-testid={testid}>
+    <div className={`bg-black/20 border border-shBorder border-l-4 rounded-lg ${meta.tone} ${a.skipped ? "opacity-75" : ""}`} data-testid={testid}>
       <div className="flex items-center gap-2 px-3 py-2.5">
         <span className="text-[10px] text-shTextMuted w-5 text-center shrink-0">{index + 1}</span>
         <i className={`fas ${meta.icon} ${meta.iconColor} text-[13px] shrink-0`} title={meta.label}/>
@@ -42,9 +43,12 @@ export default function ActivityCard({ activity: a, index, total, expanded, onTo
       </div>
       {a.skipped && (
         <div className="px-3 pb-2">
-          <input value={a.skip_reason || ""} onChange={(e) => onSkipReason(e.target.value)} placeholder="Reason for skipping (optional)"
+          <label className={`block text-[10px] font-black uppercase tracking-widest mb-1 ${skipReasonMissing ? "text-shAccent" : "text-shTextMuted"}`}>
+            Skip reason · required
+          </label>
+          <input value={a.skip_reason || ""} onChange={(e) => onSkipReason(e.target.value)} placeholder="Why wasn't this worked today?"
                  data-testid={testid ? `${testid}-skip-reason` : undefined}
-                 className="w-full bg-black/20 border border-shBorder rounded p-1.5 text-shText text-[12px]"/>
+                 className={`w-full bg-black/20 border rounded p-1.5 text-shText text-[12px] ${skipReasonMissing ? "border-shAccent/60" : "border-shBorder"}`}/>
         </div>
       )}
       {expanded && <div className="px-3 pb-3 space-y-3 border-t border-shBorder pt-3">{children}</div>}
