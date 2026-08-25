@@ -22,6 +22,7 @@ const blank = {
 export default function SchoolExperienceFeedbackCard({ enrollmentId, source = "feedback_screen", completionPrompt = false }) {
   const [form, setForm] = useState(blank);
   const [loaded, setLoaded] = useState(false);
+  const [available, setAvailable] = useState(null);
   const [saved, setSaved] = useState(false);
   const [busy, setBusy] = useState(false);
   const [course, setCourse] = useState(null);
@@ -31,7 +32,9 @@ export default function SchoolExperienceFeedbackCard({ enrollmentId, source = "f
     if (!enrollmentId) return;
     try {
       const { data } = await api.get(`/portal/school/${enrollmentId}/experience-feedback`);
-      setCourse(data?.course || null);
+      const courseData = data?.course || null;
+      setCourse(courseData);
+      setAvailable(courseData?.experience_feedback_eligible !== false);
       if (data?.feedback) {
         const f = data.feedback;
         setForm({
@@ -49,11 +52,14 @@ export default function SchoolExperienceFeedbackCard({ enrollmentId, source = "f
       }
     } catch {
       // This is a secondary product-feedback surface; School itself should
-      // never crash because the survey could not load.
+      // never crash or show a broken survey because feedback could not load.
+      setAvailable(false);
     } finally { setLoaded(true); }
   }, [enrollmentId]);
 
-  useEffect(() => { setLoaded(false); setExpanded(!completionPrompt); load(); }, [load, completionPrompt]);
+  useEffect(() => {
+    setLoaded(false); setAvailable(null); setExpanded(!completionPrompt); load();
+  }, [load, completionPrompt]);
 
   const valid = useMemo(() => (
     form.overall_rating >= 1 && form.overall_rating <= 5
@@ -78,7 +84,7 @@ export default function SchoolExperienceFeedbackCard({ enrollmentId, source = "f
     } finally { setBusy(false); }
   };
 
-  if (!enrollmentId) return null;
+  if (!enrollmentId || !loaded || available !== true) return null;
 
   return (
     <section className={`rounded-2xl border ${completionPrompt ? "border-shPrimary/35 bg-shPrimary/[0.045]" : "border-shSecondary/30 bg-shSecondary/[0.035]"} p-4 sm:p-5`} data-testid="school-experience-feedback">
@@ -93,7 +99,7 @@ export default function SchoolExperienceFeedbackCard({ enrollmentId, source = "f
           <p className="text-[12.5px] text-shTextMuted mt-1 max-w-2xl">
             {saved
               ? "You can update this anytime. Your latest answers help us improve the course."
-              : "Your feedback helps us make Sit Happens School clearer, easier, and more useful for the next dog-and-human team."}
+              : "Your feedback helps us make Sit Happens Online School clearer, easier, and more useful for the next dog-and-human team."}
           </p>
           {course?.program_name && <p className="text-[11px] text-shTextMuted mt-1"><i className="fas fa-graduation-cap mr-1.5"/>{course.program_name}{course.dog_name ? ` · ${course.dog_name}` : ""}</p>}
         </div>
