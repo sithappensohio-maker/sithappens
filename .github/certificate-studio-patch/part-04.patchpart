@@ -1,0 +1,62 @@
+         {["in_person","hybrid"].includes(currentDelivery) && data.enrollment?.status==="active" && currentLesson?.checkpoint?.enabled && <section className="rounded-2xl border border-shPrimary/30 bg-shPrimary/[0.03] p-4"><div className="flex items-start justify-between gap-3"><div><h3 className="font-black text-shText">Live trainer checkpoint · {currentLesson.name}</h3><p className="text-[11px] text-shTextMuted mt-1">Score the same School rubric while you observe the dog in person. No client video is required; this writes to the normal checkpoint history and progression engine.</p></div><span className="text-[9px] font-black uppercase tracking-widest text-shPrimary shrink-0">{deliveryLabel(currentDelivery)}</span></div><div className="grid lg:grid-cols-2 gap-4 mt-4"><div><p className="text-[10px] font-black uppercase tracking-widest text-shTextMuted mb-2">Handler skills</p><div className="space-y-2">{(currentLesson.checkpoint.handler_criteria||[]).map(c=><label key={c.id} className="grid grid-cols-[1fr_88px] items-center gap-2 rounded-xl bg-black/15 p-2.5"><span className="text-xs text-shText">{c.label||c.name||c.id}</span><select className="input-school" value={liveCheckpoint.handler_scores[c.id]||3} onChange={e=>setLiveCheckpoint(x=>({...x,handler_scores:{...x.handler_scores,[c.id]:Number(e.target.value)}}))}>{[1,2,3,4,5].map(v=><option key={v} value={v}>{v}/5</option>)}</select></label>)}</div></div><div><p className="text-[10px] font-black uppercase tracking-widest text-shTextMuted mb-2">Dog performance</p><div className="space-y-2">{(currentLesson.checkpoint.dog_criteria||[]).map(c=><label key={c.id} className="grid grid-cols-[1fr_88px] items-center gap-2 rounded-xl bg-black/15 p-2.5"><span className="text-xs text-shText">{c.label||c.name||c.id}</span><select className="input-school" value={liveCheckpoint.dog_scores[c.id]||3} onChange={e=>setLiveCheckpoint(x=>({...x,dog_scores:{...x.dog_scores,[c.id]:Number(e.target.value)}}))}>{[1,2,3,4,5].map(v=><option key={v} value={v}>{v}/5</option>)}</select></label>)}</div></div></div><div className="grid sm:grid-cols-[220px_1fr_auto] gap-2 mt-3 items-end"><Field label="Result"><select className="input-school" value={liveCheckpoint.outcome} onChange={e=>setLiveCheckpoint(x=>({...x,outcome:e.target.value}))}><option value="advance">Pass · Advance</option><option value="prescribe_practice">Needs More Practice</option><option value="trainer_assist_recommended">Trainer Assist</option></select></Field><Field label="Trainer feedback"><textarea className="input-school min-h-[64px]" value={liveCheckpoint.feedback} onChange={e=>setLiveCheckpoint(x=>({...x,feedback:e.target.value}))} placeholder="What went well and what to work on next…"/></Field><button disabled={saving} onClick={recordLiveCheckpoint} className="min-h-[42px] px-4 rounded-xl bg-shPrimary text-bgHeader text-xs font-black uppercase tracking-widest">Record Checkpoint</button></div></section>}
+--- a/frontend/src/components/school/student/CourseCompletionCard.jsx
++++ b/frontend/src/components/school/student/CourseCompletionCard.jsx
+@@ -1,4 +1,4 @@
+-import { printSchoolCertificate } from "../../../lib/schoolCertificate";
++import { printSchoolCertificate, resolveSchoolCertificateTemplate } from "../../../lib/schoolCertificate";
+ import { useAuth } from "../../../lib/auth";
+ 
+ const fmtDate = (v) => {
+@@ -13,6 +13,8 @@
+   const course = home?.program?.name || "School course";
+   const completed = fmtDate(c.completed_at);
+   const final = c.final_assessment || null;
++  const certificateConfig = home?.program?.school_support?.certificate || {};
++  const certificateTemplate = resolveSchoolCertificateTemplate(course, certificateConfig);
+   return (
+     <section className="relative overflow-hidden rounded-3xl border border-shPrimary/35 bg-gradient-to-br from-shPrimary/[0.12] via-black/20 to-shSecondary/[0.06] p-6 sm:p-8" data-testid="school-course-complete">
+       <div className="absolute -right-10 -top-10 w-40 h-40 rounded-full bg-shPrimary/10 blur-3xl" />
+@@ -43,13 +45,14 @@
+           <button onClick={onCourse} data-testid="school-course-review-library" className="min-h-[48px] px-4 rounded-xl bg-shPrimary text-bgHeader text-[12px] font-black uppercase tracking-widest"><i className="fas fa-book-open mr-1.5" />Review any lesson</button>
+           <button onClick={onProgress} className="min-h-[44px] px-4 rounded-xl border border-shBorder text-shText text-[12px] font-black uppercase tracking-widest"><i className="fas fa-chart-line mr-1.5" />View progress</button>
+           <button onClick={onFeedback} className="min-h-[44px] px-4 rounded-xl border border-shSecondary/35 text-shSecondary text-[12px] font-black uppercase tracking-widest"><i className="fas fa-comments mr-1.5" />Trainer feedback</button>
+-          <button onClick={() => printSchoolCertificate({
++          {certificateTemplate.enabled && <button onClick={() => printSchoolCertificate({
+             clientName: user?.name || "",
+             dogName: dog,
+             programName: course,
+             completionSummary: c,
+             schoolEnrollmentId: home?.school_enrollment_id,
+-          })} className="min-h-[44px] px-4 rounded-xl border border-shBorder text-shText text-[12px] font-black uppercase tracking-widest"><i className="fas fa-certificate mr-1.5" />Print certificate</button>
++            certificateConfig,
++          })} className="min-h-[44px] px-4 rounded-xl border border-shBorder text-shText text-[12px] font-black uppercase tracking-widest"><i className="fas fa-certificate mr-1.5" />Print certificate</button>}
+         </div>
+       </div>
+     </section>
+--- a/frontend/src/components/school/student/courseCertificateIntegration.test.js
++++ b/frontend/src/components/school/student/courseCertificateIntegration.test.js
+@@ -3,6 +3,8 @@
+ 
+ const read = (...p) => fs.readFileSync(path.join(__dirname, ...p), "utf8");
+ const completionSrc = read("CourseCompletionCard.jsx");
++const adminSrc = read("..", "SchoolStudentsPanel.jsx");
++const studioSrc = read("..", "..", "ProgramStudio.jsx");
+ 
+ test("completed School course personalizes the certificate from real client/course enrollment data", () => {
+   expect(completionSrc).toMatch(/useAuth/);
+@@ -10,4 +12,21 @@
+   expect(completionSrc).toMatch(/dogName:\s*dog/);
+   expect(completionSrc).toMatch(/programName:\s*course/);
+   expect(completionSrc).toMatch(/schoolEnrollmentId:\s*home\?\.school_enrollment_id/);
++  expect(completionSrc).toMatch(/certificateConfig/);
+ });
++
++test("School HQ can print the same completed-course certificate", () => {
++  expect(adminSrc).toMatch(/data-testid="school-admin-course-certificate"/);
++  expect(adminSrc).toMatch(/printSchoolCertificate/);
++  expect(adminSrc).toMatch(/clientName:data\?\.client\?\.name/);
++  expect(adminSrc).toMatch(/dogName:data\?\.dog\?\.name/);
++  expect(adminSrc).toMatch(/schoolEnrollmentId:studentId/);
++});
++
++test("Program Studio exposes an editable certificate tab with a live preview", () => {
