@@ -11,12 +11,11 @@
 // component (with dogId/enrollmentId instead of bookingId), not a
 // second lighter editor. The old TrainingTrackerModal was retired.
 //
-// UI Phase 2 — visual redesign per CLAUDE_TRAINING_UI_BRIEF.md: the draft/
-// autosave/completion pipeline below is UNCHANGED from the pre-redesign
-// version; only presentation changed, built from the shared components in
-// components/training/. The 5-stage stepper is a presentation-only view
-// derived from existing draft/actuals state (computeStage) — it is not a
-// new backend status and never gates anything server-side.
+// Trainer Delivery enforcement keeps this surface usable instead of punitive:
+// the trainer can see what is still required before completion, receives the
+// exact server-side blockers if anything is missing, and has a dedicated
+// Recovery / Unable to Train path that documents the reason without inventing
+// scores or mastery.
 
 import { useCallback, useEffect, useRef, useState } from "react";
 import { api, formatErr } from "../lib/api";
@@ -55,9 +54,6 @@ const RESOLUTION_COPY = {
   },
 };
 
-// Today's assessment of a skill. The original four keys are unchanged so
-// existing drafts/logs keep rendering; "introduced" and "reliable" complete
-// the six-level scale on the same canonical field.
 const OUTCOME_OPTIONS = [
   { key: "skipped", label: "Not Worked", color: "bg-gray-500/20 text-shTextMuted border-gray-500/30" },
   { key: "introduced", label: "Introduced", color: "bg-gray-400/20 text-shText border-gray-400/40" },
@@ -80,8 +76,6 @@ const ADVANCEMENT_ACTIONS = [
 
 function uid() { return window.crypto?.randomUUID ? window.crypto.randomUUID() : `tmp-${Math.random().toString(36).slice(2)}`; }
 
-// Presentation-only stage derived from existing draft/actuals/UI state —
-// never a new backend status, never gates any action.
 function computeStage({ actuals, expandedId, completionResult }) {
   if (completionResult) return "complete";
   const list = Object.values(actuals || {});
@@ -89,6 +83,37 @@ function computeStage({ actuals, expandedId, completionResult }) {
   if (list.some(a => a && (a.score != null || a.outcome))) return "record";
   if (expandedId) return "train";
   return "review";
+}
+
+function trainerRecordState(draft) {
+  const activities = draft?.plan?.activities || [];
+  const actuals = draft?.actuals || {};
+  const allSkipped = activities.length > 0 && activities.every(a => !!a.skipped);
+  const isBoardTrain = /^bt:\d{4}-\d{2}-\d{2}:(am|pm|outing)$/.test(draft?.session_label || "");
+  const isBoardTrainAm = /:am$/.test(draft?.session_label || "");
+  const activityRecordsReady = activities.length > 0 && activities.every(a => {
+    if (a.skipped) return (a.skip_reason || "").trim().length >= 3;
+    const actual = actuals[a.id] || {};
+    return !!actual.outcome && (a.manual_only || actual.score != null);
+  });
+  const worked = activities.filter(a => !a.skipped);
+  const observationReady = allSkipped || isBoardTrain || worked.some(a => (actuals[a.id]?.client_observation || "").trim().length >= 2);
+  const summaryReady = allSkipped || (
+    (draft?.what_went_well || "").trim().length >= 2 &&
+    (draft?.needs_work || "").trim().length >= 2 &&
+    (draft?.next_lesson_focus || "").trim().length >= 2
+  );
+  const recapReady = isBoardTrainAm || (draft?.client_recap_note || "").trim().length >= 5;
+  return {
+    allSkipped,
+    isBoardTrain,
+    isBoardTrainAm,
+    activityRecordsReady,
+    observationReady,
+    summaryReady,
+    recapReady,
+    ready: activityRecordsReady && observationReady && summaryReady && recapReady,
+  };
 }
 
 export default function TrainingSessionWorkspace({ bookingId, dogId, enrollmentId, onClose, onSaved }) {
@@ -102,8 +127,10 @@ export default function TrainingSessionWorkspace({ bookingId, dogId, enrollmentI
   const [expandedId, setExpandedId] = useState(null);
   const [savingLabel, setSavingLabel] = useState("");
   const [completing, setCompleting] = useState(false);
+  const [recoveryOpen, setRecoveryOpen] = useState(false);
   const [completionResult, setCompletionResult] = useState(null);
   const [checkpointBlock, setCheckpointBlock] = useState("");
+  const [completionBlock, setCompletionBlock] = useState([]);
   const saveTimer = useRef(null);
   const latestRef = useRef(null);
 
@@ -138,8 +165,6 @@ export default function TrainingSessionWorkspace({ bookingId, dogId, enrollmentI
 
   useEffect(() => { start(); }, [start]);
 
-  // Debounced autosave — the draft on the server is the source of truth;
-  // this never relies on the browser tab staying open.
   const scheduleSave = useCallback((nextDraft) => {
     latestRef.current = nextDraft;
     if (saveTimer.current) clearTimeout(saveTimer.current);
@@ -203,6 +228,23 @@ export default function TrainingSessionWorkspace({ bookingId, dogId, enrollmentI
     }));
   };
 
+  const applyRecovery = ({ reason, clientUpdate }) => {
+    updateDraft(d => ({
+      ...d,
+      plan: {
+        ...d.plan,
+        activities: (d.plan?.activities || []).map(a => ({ ...a, skipped: true, skip_reason: reason })),
+      },
+      actuals: {},
+      session_note: [d.session_note, `Recovery / unable to train: ${reason}`].filter(Boolean).join("\n"),
+      client_recap_note: clientUpdate,
+    }));
+    setExpandedId(null);
+    setCompletionBlock([]);
+    setRecoveryOpen(false);
+    toast.success("Recovery session documented — no scores were created");
+  };
+
   if (loading) {
     return (
       <div className="fixed inset-0 bg-black/80 z-50 flex items-center justify-center p-4" data-testid="training-session-workspace">
@@ -263,6 +305,7 @@ export default function TrainingSessionWorkspace({ bookingId, dogId, enrollmentI
   if (!draft) return null;
 
   const stage = computeStage({ actuals: draft.actuals, expandedId, completionResult });
+  const recordState = trainerRecordState(draft);
   const breadcrumbParts = [
     overview?.program_name,
     overview?.current_module_name ? `Module: ${overview.current_module_name}` : null,
@@ -276,7 +319,6 @@ export default function TrainingSessionWorkspace({ bookingId, dogId, enrollmentI
   return (
     <div className="fixed inset-0 bg-black/80 z-50 flex items-center justify-center p-2 sm:p-4" data-testid="training-session-workspace">
       <div className="bg-[var(--sh-card-base)] border border-shBorder rounded-2xl w-full max-w-4xl max-h-[calc(var(--app-height)_-_1rem)] flex flex-col min-h-0 shadow-2xl">
-        {/* Header */}
         <div className="px-4 sm:px-6 py-4 border-b border-shBorder shrink-0 space-y-3">
           <div className="flex items-start justify-between gap-2">
             <DogIdentityHeader dogName={dog?.name} dogPhoto={dog?.photo} breadcrumb={breadcrumbParts.join(" · ")} testid="workspace-dog-header"/>
@@ -309,15 +351,26 @@ export default function TrainingSessionWorkspace({ bookingId, dogId, enrollmentI
                 <div className="mt-2 pt-2 border-t border-shPrimary/20" data-testid="workspace-homework-conflicts">
                   <p className="text-[11px] font-black uppercase tracking-widest text-shAccent">Practice not created — already assigned</p>
                   {completionResult.homework_conflicts.map((c, i) => (
-                    <p key={i} className="text-[12px] text-shTextMuted">
-                      &ldquo;{c.existing_title}&rdquo; is still {c.existing_status} — skipped to avoid a duplicate.
-                    </p>
+                    <p key={i} className="text-[12px] text-shTextMuted">&ldquo;{c.existing_title}&rdquo; is still {c.existing_status} — skipped to avoid a duplicate.</p>
                   ))}
                 </div>
               )}
             </div>
           )}
-          {/* Pre-session overview */}
+
+          {!completionResult && (
+            <TrainerRecordChecklist state={recordState} testid="trainer-record-checklist"/>
+          )}
+
+          {completionBlock.length > 0 && (
+            <div className="rounded-xl border border-red-500/45 bg-red-500/[0.07] p-3" data-testid="workspace-completion-blocked">
+              <p className="text-[12px] font-black uppercase tracking-widest text-red-300"><i className="fas fa-clipboard-check mr-1.5"/>Finish the trainer record</p>
+              <ul className="mt-2 space-y-1 text-[12px] text-shTextMuted">
+                {completionBlock.map((item, i) => <li key={`${item}-${i}`}><i className="fas fa-circle-exclamation text-red-400 mr-1.5"/>{item}</li>)}
+              </ul>
+            </div>
+          )}
+
           <ExpandableSection title="Pre-Session Overview" icon="fa-circle-info" tone="secondary" defaultOpen={stage === "review"} testid="workspace-overview">
             {overview && (
               <div className="space-y-3 text-[13px]">
@@ -329,28 +382,20 @@ export default function TrainingSessionWorkspace({ bookingId, dogId, enrollmentI
                     </p>
                     <div className="grid grid-cols-1 sm:grid-cols-2 gap-x-4 gap-y-1.5 mt-2">
                       {overview.last_session.strongest_skills?.length > 0 && (
-                        <p className="text-shText"><span className="text-shTextMuted">Strongest: </span>
-                          {overview.last_session.strongest_skills.map(s => `${s.name} ${s.score}/5`).join(" · ")}</p>
+                        <p className="text-shText"><span className="text-shTextMuted">Strongest: </span>{overview.last_session.strongest_skills.map(s => `${s.name} ${s.score}/5`).join(" · ")}</p>
                       )}
                       {overview.last_session.needs_work_skills?.length > 0 && (
-                        <p className="text-shText"><span className="text-shTextMuted">Needs work: </span>
-                          {overview.last_session.needs_work_skills.map(s => `${s.name} ${s.score}/5`).join(" · ")}</p>
+                        <p className="text-shText"><span className="text-shTextMuted">Needs work: </span>{overview.last_session.needs_work_skills.map(s => `${s.name} ${s.score}/5`).join(" · ")}</p>
                       )}
                       {overview.last_session.practice_assigned?.length > 0 && (
-                        <p className="text-shText"><span className="text-shTextMuted">Practice assigned: </span>
-                          {overview.last_session.practice_assigned.join(", ")}</p>
+                        <p className="text-shText"><span className="text-shTextMuted">Practice assigned: </span>{overview.last_session.practice_assigned.join(", ")}</p>
                       )}
                       {overview.last_session.next_lesson_focus && (
-                        <p className="text-shText"><span className="text-shTextMuted">Next focus: </span>
-                          {overview.last_session.next_lesson_focus}</p>
+                        <p className="text-shText"><span className="text-shTextMuted">Next focus: </span>{overview.last_session.next_lesson_focus}</p>
                       )}
                     </div>
-                    {overview.last_session.note && (
-                      <p className="text-shTextMuted mt-2 text-[12px]"><i className="fas fa-lock mr-1 text-shAccent"/>{overview.last_session.note}</p>
-                    )}
-                    {overview.last_session.skills_worked?.length > 0 && (
-                      <p className="text-shTextMuted mt-1 text-[12px]">Worked on: {overview.last_session.skills_worked.map(s => s.name).filter(Boolean).join(", ")}</p>
-                    )}
+                    {overview.last_session.note && <p className="text-shTextMuted mt-2 text-[12px]"><i className="fas fa-lock mr-1 text-shAccent"/>{overview.last_session.note}</p>}
+                    {overview.last_session.skills_worked?.length > 0 && <p className="text-shTextMuted mt-1 text-[12px]">Worked on: {overview.last_session.skills_worked.map(s => s.name).filter(Boolean).join(", ")}</p>}
                   </div>
                 )}
                 {overview.homework_since_last_session?.length > 0 && (
@@ -365,38 +410,32 @@ export default function TrainingSessionWorkspace({ bookingId, dogId, enrollmentI
                   </div>
                 )}
                 {overview.client_questions?.length > 0 && (
-                  <div>
-                    <p className="text-[11px] font-black uppercase tracking-widest text-shAccent">Unanswered client questions</p>
-                    {overview.client_questions.map((q, i) => <p key={i} className="text-shText">&ldquo;{q.text}&rdquo;</p>)}
-                  </div>
+                  <div><p className="text-[11px] font-black uppercase tracking-widest text-shAccent">Unanswered client questions</p>{overview.client_questions.map((q, i) => <p key={i} className="text-shText">&ldquo;{q.text}&rdquo;</p>)}</div>
                 )}
                 {overview.behavior_safety_flags?.length > 0 && (
-                  <div>
-                    <p className="text-[11px] font-black uppercase tracking-widest text-red-400">Safety flags</p>
-                    <p className="text-red-300">{overview.behavior_safety_flags.join(", ")}</p>
-                  </div>
+                  <div><p className="text-[11px] font-black uppercase tracking-widest text-red-400">Safety flags</p><p className="text-red-300">{overview.behavior_safety_flags.join(", ")}</p></div>
                 )}
                 {overview.equipment_needed?.length > 0 && <EquipmentChips equipment={overview.equipment_needed.join(", ")} testid="workspace-overview-equipment"/>}
                 {overview.internal_trainer_notes && (
-                  <div>
-                    <p className="text-[11px] font-black uppercase tracking-widest text-shTextMuted">Internal trainer notes (staff only)</p>
-                    <p className="text-shText whitespace-pre-wrap">{overview.internal_trainer_notes}</p>
-                  </div>
+                  <div><p className="text-[11px] font-black uppercase tracking-widest text-shTextMuted">Internal trainer notes (staff only)</p><p className="text-shText whitespace-pre-wrap">{overview.internal_trainer_notes}</p></div>
                 )}
               </div>
             )}
           </ExpandableSection>
 
-          {/* Plan */}
           <div>
-            <div className="flex items-center justify-between mb-2">
+            <div className="flex items-center justify-between mb-2 gap-2 flex-wrap">
               <p className="text-[11px] font-black uppercase tracking-widest text-shTextMuted">Today&apos;s Plan ({activities.length})</p>
-              <button onClick={addCustomActivity} data-testid="add-custom-activity" className="text-[11px] text-shPrimary font-black uppercase tracking-widest"><i className="fas fa-plus mr-1"/>Custom Activity</button>
+              <div className="flex items-center gap-2">
+                <button onClick={() => setRecoveryOpen(true)} data-testid="workspace-recovery-action"
+                        className="min-h-[36px] px-3 rounded-lg border border-shAccent/45 bg-shAccent/[0.06] text-shAccent text-[10px] font-black uppercase tracking-widest">
+                  <i className="fas fa-heart-pulse mr-1.5"/>Recovery / Unable to Train
+                </button>
+                <button onClick={addCustomActivity} data-testid="add-custom-activity" className="text-[11px] text-shPrimary font-black uppercase tracking-widest"><i className="fas fa-plus mr-1"/>Custom Activity</button>
+              </div>
             </div>
             <div className="space-y-2">
-              {activities.length === 0 && (
-                <EmptyState icon="fa-list-check" message="No activities planned. Add one above." testid="workspace-no-activities"/>
-              )}
+              {activities.length === 0 && <EmptyState icon="fa-list-check" message="No activities planned. Add one above." testid="workspace-no-activities"/>}
               {activities.map((a, i) => (
                 <ActivityCard key={a.id} activity={a} index={i} total={activities.length}
                                expanded={expandedId === a.id}
@@ -412,82 +451,71 @@ export default function TrainingSessionWorkspace({ bookingId, dogId, enrollmentI
             </div>
           </div>
 
+          {recordState.allSkipped && (
+            <div className="rounded-xl border border-shAccent/40 bg-shAccent/[0.06] p-3" data-testid="workspace-recovery-state">
+              <p className="text-[12px] font-black uppercase tracking-widest text-shAccent"><i className="fas fa-heart-pulse mr-1.5"/>Recovery / no-training session</p>
+              <p className="text-[12px] text-shTextMuted mt-1">No skill scores or mastery will be invented. Confirm the recovery reason when completing the session.</p>
+            </div>
+          )}
+
           {checkpointBlock && (
-            <div className="rounded-xl border border-shAccent/50 bg-shAccent/[0.08] p-3 flex items-start gap-3"
-                 data-testid="workspace-checkpoint-blocked">
+            <div className="rounded-xl border border-shAccent/50 bg-shAccent/[0.08] p-3 flex items-start gap-3" data-testid="workspace-checkpoint-blocked">
               <i className="fas fa-flag-checkered text-shAccent mt-0.5"/>
               <div className="min-w-0">
                 <p className="text-[13px] font-black text-shText">Advancement blocked</p>
                 <p className="text-[12.5px] text-shTextMuted mt-0.5">{checkpointBlock}</p>
-                <p className="text-[12px] text-shTextMuted mt-1">
-                  Everything you recorded is saved. You can still complete this lesson without advancing.
-                </p>
+                <p className="text-[12px] text-shTextMuted mt-1">Everything you recorded is saved. You can still complete this lesson without advancing.</p>
               </div>
               <button onClick={() => setCheckpointBlock("")} className="ml-auto text-shTextMuted text-xs font-black">✕</button>
             </div>
           )}
 
-          {/* Lesson summary — the three structured fields the client recap and
-              the next trainer's handoff are both built from. All client-safe. */}
           <div className="grid grid-cols-1 md:grid-cols-3 gap-3" data-testid="workspace-lesson-summary">
             <div>
               <label className="text-[11px] font-black uppercase tracking-widest text-shTextMuted"><i className="fas fa-thumbs-up mr-1 text-shPrimary"/>What went well</label>
-              <textarea value={draft.what_went_well || ""} onChange={(e) => updateDraft({ what_went_well: e.target.value })}
-                        rows={3} data-testid="workspace-what-went-well" placeholder="Wins from this lesson…"
-                        className="w-full mt-1 bg-black/20 border border-shBorder rounded p-2 text-shText text-sm"/>
+              <textarea value={draft.what_went_well || ""} onChange={(e) => updateDraft({ what_went_well: e.target.value })} rows={3} data-testid="workspace-what-went-well" placeholder="Wins from this lesson…" className="w-full mt-1 bg-black/20 border border-shBorder rounded p-2 text-shText text-sm"/>
             </div>
             <div>
               <label className="text-[11px] font-black uppercase tracking-widest text-shTextMuted"><i className="fas fa-triangle-exclamation mr-1 text-shAccent"/>Needs work</label>
-              <textarea value={draft.needs_work || ""} onChange={(e) => updateDraft({ needs_work: e.target.value })}
-                        rows={3} data-testid="workspace-needs-work" placeholder="Weak areas, extra reps…"
-                        className="w-full mt-1 bg-black/20 border border-shBorder rounded p-2 text-shText text-sm"/>
+              <textarea value={draft.needs_work || ""} onChange={(e) => updateDraft({ needs_work: e.target.value })} rows={3} data-testid="workspace-needs-work" placeholder="Weak areas, extra reps…" className="w-full mt-1 bg-black/20 border border-shBorder rounded p-2 text-shText text-sm"/>
             </div>
             <div>
               <label className="text-[11px] font-black uppercase tracking-widest text-shTextMuted"><i className="fas fa-forward mr-1 text-shSecondary"/>Next lesson focus</label>
-              <textarea value={draft.next_lesson_focus || ""} onChange={(e) => updateDraft({ next_lesson_focus: e.target.value })}
-                        rows={3} data-testid="workspace-next-lesson-focus" placeholder="What the next trainer should target…"
-                        className="w-full mt-1 bg-black/20 border border-shBorder rounded p-2 text-shText text-sm"/>
+              <textarea value={draft.next_lesson_focus || ""} onChange={(e) => updateDraft({ next_lesson_focus: e.target.value })} rows={3} data-testid="workspace-next-lesson-focus" placeholder="What the next trainer should target…" className="w-full mt-1 bg-black/20 border border-shBorder rounded p-2 text-shText text-sm"/>
             </div>
           </div>
 
-          {/* Notes — staff-only and client-safe kept visibly separate. */}
           <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
             <div className="rounded border border-shAccent/30 bg-shAccent/[0.04] p-2">
               <label className="text-[11px] font-black uppercase tracking-widest text-shAccent"><i className="fas fa-lock mr-1"/>Private trainer note · never shown to the client</label>
-              <textarea value={draft.session_note || ""} onChange={(e) => updateDraft({ session_note: e.target.value })}
-                        rows={3} data-testid="workspace-session-note"
-                        className="w-full mt-1 bg-black/20 border border-shBorder rounded p-2 text-shText text-sm"/>
+              <textarea value={draft.session_note || ""} onChange={(e) => updateDraft({ session_note: e.target.value })} rows={3} data-testid="workspace-session-note" className="w-full mt-1 bg-black/20 border border-shBorder rounded p-2 text-shText text-sm"/>
             </div>
             <div className="rounded border border-shPrimary/30 bg-shPrimary/[0.04] p-2">
               <label className="text-[11px] font-black uppercase tracking-widest text-shPrimary"><i className="fas fa-comment-dots mr-1"/>Client recap note · the owner reads this</label>
-              <textarea value={draft.client_recap_note || ""} onChange={(e) => updateDraft({ client_recap_note: e.target.value })}
-                        rows={3} data-testid="workspace-recap-note"
-                        className="w-full mt-1 bg-black/20 border border-shBorder rounded p-2 text-shText text-sm"/>
+              <textarea value={draft.client_recap_note || ""} onChange={(e) => updateDraft({ client_recap_note: e.target.value })} rows={3} data-testid="workspace-recap-note" className="w-full mt-1 bg-black/20 border border-shBorder rounded p-2 text-shText text-sm"/>
             </div>
           </div>
         </div>
 
-        {/* Footer */}
         <div className="px-4 sm:px-6 py-3 border-t border-shBorder flex justify-end gap-2 shrink-0">
           {completionResult ? (
-            <button onClick={() => { onSaved?.(draft); onClose(); }} data-testid="workspace-close-after-complete"
-                    className="bg-shPrimary text-bgHeader px-4 py-2 rounded font-black text-[13px] uppercase tracking-widest shadow">
-              Close
-            </button>
+            <button onClick={() => { onSaved?.(draft); onClose(); }} data-testid="workspace-close-after-complete" className="bg-shPrimary text-bgHeader px-4 py-2 rounded font-black text-[13px] uppercase tracking-widest shadow">Close</button>
           ) : (
             <>
-              <button onClick={() => { onSaved?.(draft); onClose(); }} data-testid="workspace-done"
-                      className="bg-transparent border border-shBorder text-shTextMuted px-4 py-2 rounded font-black text-[13px] uppercase tracking-widest">
-                Save &amp; Close
-              </button>
-              <button onClick={() => setCompleting(true)} data-testid="workspace-complete-session"
-                      className="bg-shPrimary text-bgHeader px-4 py-2 rounded font-black text-[13px] uppercase tracking-widest shadow">
+              <button onClick={() => { onSaved?.(draft); onClose(); }} data-testid="workspace-done" className="bg-transparent border border-shBorder text-shTextMuted px-4 py-2 rounded font-black text-[13px] uppercase tracking-widest">Save &amp; Close</button>
+              <button onClick={() => { setCompletionBlock([]); setCompleting(true); }} data-testid="workspace-complete-session"
+                      className={`px-4 py-2 rounded font-black text-[13px] uppercase tracking-widest shadow ${recordState.ready ? "bg-shPrimary text-bgHeader" : "bg-shPrimary/70 text-bgHeader"}`}>
                 <i className="fas fa-flag-checkered mr-1.5"/>Complete Session
               </button>
             </>
           )}
         </div>
       </div>
+
+      {recoveryOpen && (
+        <RecoveryModal onCancel={() => setRecoveryOpen(false)} onApply={applyRecovery} dogName={dog?.name || "this dog"}/>
+      )}
+
       {completing && (
         <CompleteSessionModal
           activities={activities}
@@ -497,15 +525,19 @@ export default function TrainingSessionWorkspace({ bookingId, dogId, enrollmentI
             try {
               const { data } = await api.post(`/training-session-drafts/${draft.id}/complete`, body);
               setCompletionResult(data);
+              setCompletionBlock([]);
               setCompleting(false);
-              toast.success("Session completed");
+              toast.success(recordState.allSkipped ? "Recovery session documented" : "Session completed");
             } catch (e) {
+              const detailObject = e?.response?.data?.detail_object;
               const detail = e?.response?.data?.detail;
-              // The checkpoint gate is a curriculum rule, not a glitch — say
-              // exactly what is blocking and what to do, and keep the
-              // workspace open so nothing the trainer recorded is lost.
-              if (detail?.error_code === "checkpoint_required_before_advancement") {
-                setCheckpointBlock(detail.message);
+              if (detailObject?.error_code === "checkpoint_required_before_advancement") {
+                setCheckpointBlock(detailObject.message);
+                setCompleting(false);
+                return;
+              }
+              if (detailObject?.code === "trainer_delivery_incomplete") {
+                setCompletionBlock(detailObject.missing || []);
                 setCompleting(false);
                 return;
               }
@@ -518,9 +550,70 @@ export default function TrainingSessionWorkspace({ bookingId, dogId, enrollmentI
   );
 }
 
-// Expanded-card content: goal + demo video + equipment + target measurements
-// stay always visible when expanded (short, essential); the full trainer
-// directions/troubleshooting/safety text stays collapsed until opened.
+function TrainerRecordChecklist({ state, testid }) {
+  const rows = [
+    { ok: state.activityRecordsReady, label: state.allSkipped ? "Recovery reasons documented" : "Planned work scored + outcome recorded" },
+    { ok: state.observationReady, label: state.isBoardTrain ? "Skill observations captured in the session record" : "At least one client-safe skill observation" },
+    { ok: state.summaryReady, label: state.allSkipped ? "Normal training summary not required for recovery" : "What Went Well + Needs Work + Next Focus" },
+    { ok: state.recapReady, label: state.isBoardTrainAm ? "AM session stays staff-only; daily client update comes later" : "Client recap / daily update written" },
+  ];
+  return (
+    <div className={`rounded-xl border p-3 ${state.ready ? "border-shPrimary/40 bg-shPrimary/[0.05]" : "border-shBorder bg-black/15"}`} data-testid={testid}>
+      <div className="flex items-start justify-between gap-3 flex-wrap">
+        <div>
+          <p className="text-[11px] font-black uppercase tracking-widest text-shText"><i className="fas fa-clipboard-check mr-1.5 text-shPrimary"/>Trainer Record Checklist</p>
+          <p className="text-[11px] text-shTextMuted mt-0.5">The server enforces the final record. This shows what you can finish before pressing Complete.</p>
+        </div>
+        <span className={`text-[10px] font-black uppercase tracking-widest px-2 py-1 rounded-full border ${state.ready ? "text-shPrimary border-shPrimary/40 bg-shPrimary/10" : "text-shAccent border-shAccent/35 bg-shAccent/[0.06]"}`}>
+          {state.ready ? "Ready to complete" : "Record still open"}
+        </span>
+      </div>
+      <div className="grid grid-cols-1 sm:grid-cols-2 gap-1.5 mt-3">
+        {rows.map((r, i) => (
+          <div key={i} className="flex items-start gap-2 text-[12px]">
+            <i className={`fas ${r.ok ? "fa-circle-check text-shPrimary" : "fa-circle text-shTextMuted"} mt-0.5`}/>
+            <span className={r.ok ? "text-shText" : "text-shTextMuted"}>{r.label}</span>
+          </div>
+        ))}
+      </div>
+    </div>
+  );
+}
+
+function RecoveryModal({ onCancel, onApply, dogName }) {
+  const [reason, setReason] = useState("");
+  const [clientUpdate, setClientUpdate] = useState("");
+  const valid = reason.trim().length >= 5 && clientUpdate.trim().length >= 5;
+  return (
+    <div className="fixed inset-0 bg-black/85 z-[70] flex items-center justify-center p-3" data-testid="recovery-session-modal">
+      <div className="bg-[var(--sh-card-base)] border border-shAccent/45 rounded-2xl w-full max-w-lg shadow-2xl overflow-hidden">
+        <div className="px-5 py-4 border-b border-shBorder">
+          <p className="text-[10px] font-black uppercase tracking-widest text-shAccent">Safety / Recovery</p>
+          <h4 className="text-lg font-black text-shText mt-1">Unable to train {dogName} normally today?</h4>
+          <p className="text-[12px] text-shTextMuted mt-1">This marks every planned activity as skipped with a documented reason and clears unfinished score entries. It does not create fake progress or mastery.</p>
+        </div>
+        <div className="p-5 space-y-4">
+          <div>
+            <label className="text-[11px] font-black uppercase tracking-widest text-shTextMuted">Internal recovery / safety reason *</label>
+            <textarea value={reason} onChange={e => setReason(e.target.value)} rows={3} data-testid="recovery-reason" placeholder="Example: GI upset — rest, enrichment, and monitoring only." className="w-full mt-1 bg-black/20 border border-shBorder rounded-lg p-2.5 text-shText text-sm"/>
+          </div>
+          <div>
+            <label className="text-[11px] font-black uppercase tracking-widest text-shPrimary">Client-safe update *</label>
+            <textarea value={clientUpdate} onChange={e => setClientUpdate(e.target.value)} rows={3} data-testid="recovery-client-update" placeholder="Tell the owner what happened today and what the plan is next." className="w-full mt-1 bg-shPrimary/[0.04] border border-shPrimary/30 rounded-lg p-2.5 text-shText text-sm"/>
+          </div>
+        </div>
+        <div className="px-5 py-3 border-t border-shBorder flex justify-end gap-2">
+          <button onClick={onCancel} className="px-3 py-2 text-shTextMuted font-black uppercase text-[11px] tracking-widest">Cancel</button>
+          <button onClick={() => onApply({ reason: reason.trim(), clientUpdate: clientUpdate.trim() })} disabled={!valid} data-testid="apply-recovery-session"
+                  className="bg-shAccent text-white px-4 py-2 rounded-lg font-black uppercase text-[11px] tracking-widest disabled:opacity-40">
+            Mark Recovery Session
+          </button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
 function ActivityDetail({ activity: a, actual, onActualChange }) {
   const targetChips = [
     { key: "duration", icon: "fa-stopwatch", label: "Duration", value: a.target_duration },
@@ -541,9 +634,7 @@ function ActivityDetail({ activity: a, actual, onActualChange }) {
 
   return (
     <div className="space-y-3">
-      {a.objective && (
-        <p className="text-[13px]"><span className="text-shTextMuted font-black uppercase text-[11px] tracking-widest">Goal: </span><span className="text-shText">{a.objective}</span></p>
-      )}
+      {a.objective && <p className="text-[13px]"><span className="text-shTextMuted font-black uppercase text-[11px] tracking-widest">Goal: </span><span className="text-shText">{a.objective}</span></p>}
       <VideoDemoCard videoUrl={a.demo_video_url} testid={`activity-${a.id}-video`}/>
       <EquipmentChips equipment={a.equipment} testid={`activity-${a.id}-equipment`}/>
       <MeasurementChips items={targetChips} testid={`activity-${a.id}-targets`}/>
@@ -551,18 +642,13 @@ function ActivityDetail({ activity: a, actual, onActualChange }) {
       {directionRows.length > 0 && (
         <ExpandableSection title="Trainer Directions" icon="fa-book" testid={`activity-${a.id}-directions`}>
           <div className="space-y-1.5 text-[13px]">
-            {directionRows.map(([label, val]) => (
-              <p key={label}><span className="text-shTextMuted font-black uppercase text-[11px] tracking-widest">{label}: </span><span className="text-shText">{val}</span></p>
-            ))}
+            {directionRows.map(([label, val]) => <p key={label}><span className="text-shTextMuted font-black uppercase text-[11px] tracking-widest">{label}: </span><span className="text-shText">{val}</span></p>)}
           </div>
         </ExpandableSection>
       )}
       {a.safety_notes && (
-        <ExpandableSection title="Safety Notes" icon="fa-triangle-exclamation" tone="danger" testid={`activity-${a.id}-safety`}>
-          <p className="text-red-300 text-[13px]">{a.safety_notes}</p>
-        </ExpandableSection>
+        <ExpandableSection title="Safety Notes" icon="fa-triangle-exclamation" tone="danger" testid={`activity-${a.id}-safety`}><p className="text-red-300 text-[13px]">{a.safety_notes}</p></ExpandableSection>
       )}
-
       {!a.skipped && <RecordFields activity={a} actual={actual} onChange={onActualChange}/>}
     </div>
   );
@@ -581,57 +667,29 @@ function RecordFields({ activity: a, actual, onChange }) {
   return (
     <div className="space-y-2 border-t border-shBorder pt-3">
       {!a.manual_only && (
-        <div>
-          <label className="text-[11px] font-black uppercase tracking-widest text-shTextMuted">Skill level (0–5)</label>
-          <div className="mt-1">
-            <SkillLevelIndicator score={actual.score ?? -1} onChange={(n) => onChange({ score: n })} testid={`activity-${a.id}-score-picker`}/>
-          </div>
-        </div>
+        <div><label className="text-[11px] font-black uppercase tracking-widest text-shTextMuted">Skill level (0–5)</label><div className="mt-1"><SkillLevelIndicator score={actual.score ?? -1} onChange={(n) => onChange({ score: n })} testid={`activity-${a.id}-score-picker`}/></div></div>
       )}
       <div>
         <label className="text-[11px] font-black uppercase tracking-widest text-shTextMuted">Outcome</label>
-        {/* 3-up on phones, 6-up on desktop — one tap per assessment, and
-            every target stays at least 38px tall for gloved/outdoor use. */}
         <div className="grid grid-cols-3 sm:grid-cols-6 gap-1 mt-1" data-testid={`activity-${a.id}-assessment`}>
           {OUTCOME_OPTIONS.map(o => (
-            <button key={o.key} onClick={() => onChange({ outcome: o.key })}
-                    data-testid={`activity-${a.id}-assessment-${o.key}`}
-                    className={`min-h-[38px] px-1 rounded text-[10px] sm:text-[11px] font-black uppercase tracking-widest border leading-tight ${actual.outcome === o.key ? o.color : "border-shBorder text-shTextMuted"}`}>
-              {o.label}
-            </button>
+            <button key={o.key} onClick={() => onChange({ outcome: o.key })} data-testid={`activity-${a.id}-assessment-${o.key}`}
+                    className={`min-h-[38px] px-1 rounded text-[10px] sm:text-[11px] font-black uppercase tracking-widest border leading-tight ${actual.outcome === o.key ? o.color : "border-shBorder text-shTextMuted"}`}>{o.label}</button>
           ))}
         </div>
       </div>
-      <div>
-        <label className="text-[11px] font-black uppercase tracking-widest text-shTextMuted">Today&apos;s numbers</label>
-        <div className="mt-1">
-          <MeasurementChips items={actualChips} testid={`activity-${a.id}-actuals`}/>
-        </div>
-      </div>
-      {/* Mastery is its OWN decision — a high score never grants it. Both
-          buttons toggle off, so "no decision today" stays the default. */}
+      <div><label className="text-[11px] font-black uppercase tracking-widest text-shTextMuted">Today&apos;s numbers</label><div className="mt-1"><MeasurementChips items={actualChips} testid={`activity-${a.id}-actuals`}/></div></div>
       <div>
         <label className="text-[11px] font-black uppercase tracking-widest text-shTextMuted">Mastery decision <span className="text-shTextMuted/70 normal-case font-bold">· optional, never automatic</span></label>
         <div className="grid grid-cols-2 gap-1 mt-1" data-testid={`activity-${a.id}-mastery`}>
-          <button onClick={() => onChange({ mastery_decision: actual.mastery_decision === "mastered" ? null : "mastered" })}
-                  data-testid={`activity-${a.id}-mastery-mastered`}
-                  className={`min-h-[38px] rounded text-[11px] font-black uppercase tracking-widest border ${actual.mastery_decision === "mastered" ? "bg-shPrimary/25 text-shPrimary border-shPrimary/60" : "border-shBorder text-shTextMuted"}`}>
-            <i className="fas fa-award mr-1"/>Mark mastered
-          </button>
-          <button onClick={() => onChange({ mastery_decision: actual.mastery_decision === "not_yet" ? null : "not_yet" })}
-                  data-testid={`activity-${a.id}-mastery-not-yet`}
-                  className={`min-h-[38px] rounded text-[11px] font-black uppercase tracking-widest border ${actual.mastery_decision === "not_yet" ? "bg-shAccent/25 text-shAccent border-shAccent/60" : "border-shBorder text-shTextMuted"}`}>
-            Not yet
-          </button>
+          <button onClick={() => onChange({ mastery_decision: actual.mastery_decision === "mastered" ? null : "mastered" })} data-testid={`activity-${a.id}-mastery-mastered`}
+                  className={`min-h-[38px] rounded text-[11px] font-black uppercase tracking-widest border ${actual.mastery_decision === "mastered" ? "bg-shPrimary/25 text-shPrimary border-shPrimary/60" : "border-shBorder text-shTextMuted"}`}><i className="fas fa-award mr-1"/>Mark mastered</button>
+          <button onClick={() => onChange({ mastery_decision: actual.mastery_decision === "not_yet" ? null : "not_yet" })} data-testid={`activity-${a.id}-mastery-not-yet`}
+                  className={`min-h-[38px] rounded text-[11px] font-black uppercase tracking-widest border ${actual.mastery_decision === "not_yet" ? "bg-shAccent/25 text-shAccent border-shAccent/60" : "border-shBorder text-shTextMuted"}`}>Not yet</button>
         </div>
       </div>
-      <textarea value={actual.client_observation || ""} onChange={(e) => onChange({ client_observation: e.target.value })}
-                placeholder="Client-safe observation — the owner reads this in their recap"
-                data-testid={`activity-${a.id}-client-observation`}
-                rows={2} className="w-full bg-shPrimary/[0.05] border border-shPrimary/30 rounded p-2 text-shText text-[13px]"/>
-      <textarea value={actual.notes || ""} onChange={(e) => onChange({ notes: e.target.value })} placeholder="Private trainer note for this skill (staff only — never sent to the client)"
-                data-testid={`activity-${a.id}-private-note`}
-                rows={2} className="w-full bg-shAccent/[0.05] border border-shAccent/30 rounded p-2 text-shText text-[13px]"/>
+      <textarea value={actual.client_observation || ""} onChange={(e) => onChange({ client_observation: e.target.value })} placeholder="Client-safe observation — the owner reads this in their recap" data-testid={`activity-${a.id}-client-observation`} rows={2} className="w-full bg-shPrimary/[0.05] border border-shPrimary/30 rounded p-2 text-shText text-[13px]"/>
+      <textarea value={actual.notes || ""} onChange={(e) => onChange({ notes: e.target.value })} placeholder="Private trainer note for this skill (staff only — never sent to the client)" data-testid={`activity-${a.id}-private-note`} rows={2} className="w-full bg-shAccent/[0.05] border border-shAccent/30 rounded p-2 text-shText text-[13px]"/>
       <div className="flex flex-wrap gap-4">
         <label className="flex items-center gap-1.5 text-[12px] text-shText"><input type="checkbox" checked={!!actual.homework_eligible} onChange={(e) => onChange({ homework_eligible: e.target.checked })}/>Assign as homework</label>
         <label className="flex items-center gap-1.5 text-[12px] text-shText"><input type="checkbox" checked={!!actual.needs_reassessment} onChange={(e) => onChange({ needs_reassessment: e.target.checked })}/>Needs reassessment next visit</label>
@@ -640,15 +698,16 @@ function RecordFields({ activity: a, actual, onChange }) {
   );
 }
 
-/* ------------------------------------------------------------ Completion */
 function CompleteSessionModal({ activities, actuals, onCancel, onComplete }) {
+  const recovery = activities.length > 0 && activities.every(a => a.skipped && (a.skip_reason || "").trim().length >= 3);
+  const defaultRecoveryReason = recovery ? (activities.find(a => a.skip_reason)?.skip_reason || "") : "";
   const [action, setAction] = useState("remain");
-  const [reason, setReason] = useState("");
+  const [reason, setReason] = useState(defaultRecoveryReason);
   const eligibleActivities = activities.filter(a => !a.skipped && (actuals[a.id] || {}).homework_eligible);
   const [homeworkIds, setHomeworkIds] = useState(() => new Set(eligibleActivities.map(a => a.id)));
   const [sendRecap, setSendRecap] = useState(true);
   const [submitting, setSubmitting] = useState(false);
-  const needsReason = action === "skip_lesson";
+  const needsReason = recovery || action === "skip_lesson";
 
   const toggleHomework = (id) => setHomeworkIds(prev => {
     const next = new Set(prev);
@@ -660,9 +719,9 @@ function CompleteSessionModal({ activities, actuals, onCancel, onComplete }) {
     setSubmitting(true);
     try {
       await onComplete({
-        advancement_action: action,
+        advancement_action: recovery ? "remain" : action,
         advancement_reason: reason.trim() || null,
-        homework_activity_ids: Array.from(homeworkIds),
+        homework_activity_ids: recovery ? [] : Array.from(homeworkIds),
         send_recap: sendRecap,
       });
     } finally {
@@ -674,51 +733,47 @@ function CompleteSessionModal({ activities, actuals, onCancel, onComplete }) {
     <div className="fixed inset-0 bg-black/80 z-[60] flex items-center justify-center p-2 sm:p-4" data-testid="complete-session-modal">
       <div className="bg-[var(--sh-card-base)] border border-shBorder rounded-2xl w-full max-w-lg max-h-[calc(var(--app-height)_-_1rem)] flex flex-col min-h-0 shadow-2xl">
         <div className="px-4 sm:px-6 py-4 border-b border-shBorder shrink-0">
-          <h4 className="text-base font-black text-shText uppercase italic">Complete Session</h4>
+          <h4 className="text-base font-black text-shText uppercase italic">{recovery ? "Complete Recovery Session" : "Complete Session"}</h4>
         </div>
         <div className="overflow-y-auto flex-1 min-h-0 px-4 sm:px-6 py-4 space-y-4">
-          <div>
-            <p className="text-[11px] font-black uppercase tracking-widest text-shTextMuted mb-2">Advancement — you decide, not the system</p>
-            <div className="space-y-1.5">
-              {ADVANCEMENT_ACTIONS.map(opt => (
-                <button key={opt.key} onClick={() => setAction(opt.key)} data-testid={`advancement-${opt.key}`}
-                        className={`w-full text-left px-3 py-2 rounded border ${action === opt.key ? "bg-shPrimary/15 border-shPrimary text-shText" : "border-shBorder text-shTextMuted"}`}>
-                  <p className="text-[13px] font-bold">{opt.label}</p>
-                  <p className="text-[11px] opacity-80">{opt.desc}</p>
-                </button>
-              ))}
+          {recovery ? (
+            <div className="rounded-xl border border-shAccent/40 bg-shAccent/[0.06] p-3">
+              <p className="text-[12px] font-black uppercase tracking-widest text-shAccent"><i className="fas fa-heart-pulse mr-1.5"/>No training progress will be invented</p>
+              <p className="text-[12px] text-shTextMuted mt-1">This closes the session as documented recovery/no-training and keeps the dog on the current lesson.</p>
             </div>
-          </div>
-          {(needsReason || action === "reopen_previous_lesson" || action === "assign_review") && (
+          ) : (
             <div>
-              <label className="text-[11px] font-black uppercase tracking-widest text-shTextMuted">Reason {needsReason ? "(required)" : "(optional)"}</label>
-              <input value={reason} onChange={(e) => setReason(e.target.value)} data-testid="advancement-reason"
-                     className="w-full mt-1 bg-black/20 border border-shBorder rounded p-2 text-shText text-sm"/>
-            </div>
-          )}
-          {eligibleActivities.length > 0 && (
-            <div>
-              <p className="text-[11px] font-black uppercase tracking-widest text-shTextMuted mb-2">Practice to assign</p>
+              <p className="text-[11px] font-black uppercase tracking-widest text-shTextMuted mb-2">Advancement — you decide, not the system</p>
               <div className="space-y-1.5">
-                {eligibleActivities.map(a => (
-                  <label key={a.id} className="flex items-center gap-2 text-[13px] text-shText">
-                    <input type="checkbox" checked={homeworkIds.has(a.id)} onChange={() => toggleHomework(a.id)}/>
-                    {a.name}
-                  </label>
+                {ADVANCEMENT_ACTIONS.map(opt => (
+                  <button key={opt.key} onClick={() => setAction(opt.key)} data-testid={`advancement-${opt.key}`}
+                          className={`w-full text-left px-3 py-2 rounded border ${action === opt.key ? "bg-shPrimary/15 border-shPrimary text-shText" : "border-shBorder text-shTextMuted"}`}>
+                    <p className="text-[13px] font-bold">{opt.label}</p><p className="text-[11px] opacity-80">{opt.desc}</p>
+                  </button>
                 ))}
               </div>
             </div>
           )}
-          <label className="flex items-center gap-2 text-[13px] text-shText">
-            <input type="checkbox" checked={sendRecap} onChange={(e) => setSendRecap(e.target.checked)}/>
-            Queue client recap
-          </label>
+          {(needsReason || action === "reopen_previous_lesson" || action === "assign_review") && (
+            <div>
+              <label className="text-[11px] font-black uppercase tracking-widest text-shTextMuted">{recovery ? "Recovery / no-training reason (required)" : `Reason ${needsReason ? "(required)" : "(optional)"}`}</label>
+              <input value={reason} onChange={(e) => setReason(e.target.value)} data-testid="advancement-reason" className="w-full mt-1 bg-black/20 border border-shBorder rounded p-2 text-shText text-sm"/>
+            </div>
+          )}
+          {!recovery && eligibleActivities.length > 0 && (
+            <div>
+              <p className="text-[11px] font-black uppercase tracking-widest text-shTextMuted mb-2">Practice to assign</p>
+              <div className="space-y-1.5">
+                {eligibleActivities.map(a => <label key={a.id} className="flex items-center gap-2 text-[13px] text-shText"><input type="checkbox" checked={homeworkIds.has(a.id)} onChange={() => toggleHomework(a.id)}/>{a.name}</label>)}
+              </div>
+            </div>
+          )}
+          <label className="flex items-center gap-2 text-[13px] text-shText"><input type="checkbox" checked={sendRecap} onChange={(e) => setSendRecap(e.target.checked)}/>Queue client recap</label>
         </div>
         <div className="px-4 sm:px-6 py-3 border-t border-shBorder flex justify-end gap-2 shrink-0">
           <button onClick={onCancel} className="text-shTextMuted hover:text-shText font-black uppercase text-[13px] tracking-widest px-2">Cancel</button>
-          <button onClick={submit} disabled={submitting || (needsReason && !reason.trim())} data-testid="confirm-complete-session"
-                  className="bg-shPrimary text-bgHeader px-4 py-2 rounded font-black text-[13px] uppercase tracking-widest shadow disabled:opacity-50">
-            {submitting ? "Completing…" : "Complete Session"}
+          <button onClick={submit} disabled={submitting || (needsReason && !reason.trim())} data-testid="confirm-complete-session" className="bg-shPrimary text-bgHeader px-4 py-2 rounded font-black text-[13px] uppercase tracking-widest shadow disabled:opacity-50">
+            {submitting ? "Completing…" : recovery ? "Complete Recovery Session" : "Complete Session"}
           </button>
         </div>
       </div>
