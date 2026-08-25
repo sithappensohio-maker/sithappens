@@ -8,7 +8,9 @@ used by Quick Check-In, normal bookings, client bookings, and group bookings.
 import server
 
 from board_train_scheduling import install_board_train_scheduling
+from trainer_delivery import install_trainer_delivery
 
 install_board_train_scheduling(server_module=server, db=server.db)
+install_trainer_delivery(server_module=server, db=server.db)
 
 app = server.app
