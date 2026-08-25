@@ -9,10 +9,10 @@ import RequestMeetGreetModal from "../components/RequestMeetGreetModal";
  *
  * The old single-card login was punching way under its weight as the FIRST
  * thing prospects see. This screen turns it into a real landing page:
- *   • Hero with brand promise + scroll CTA
- *   • Live "What we do" grid (4 hard-coded categories + a "browse all"
- *     modal that pulls from /api/public/services so prospects can see the
- *     real menu and pricing without needing an account)
+ *   • Hero with brand promise + clear in-person / Online School entry paths
+ *   • Live "What we do" grid + a "browse all" modal that pulls from
+ *     /api/public/services so prospects can see the real menu and pricing
+ *     without needing an account
  *   • "Why Sit Happens" pillars
  *   • "How it works" 3-step flow
  *   • Compact sign-in / register card pinned in the hero AND repeated at
@@ -29,6 +29,13 @@ const CATEGORIES = [
     icon: "fa-graduation-cap",
     color: "#a855f7",
     blurb: "Personalised plans, daily homework you can track from your phone, real progress.",
+  },
+  {
+    key: "online_school",
+    label: "Online School",
+    icon: "fa-laptop-file",
+    color: "#00a9e0",
+    blurb: "Step-by-step Sit Happens classes you can work through from home, with guided practice and progress tracking.",
   },
   {
     key: "daycare",
@@ -126,6 +133,10 @@ export default function Login() {
     document.getElementById("landing-auth")?.scrollIntoView({ behavior: "smooth", block: "start" });
   };
 
+  const openOnlineSchool = () => {
+    window.location.href = "/shop?section=online_school";
+  };
+
   const activeServiceCount = services.length;
 
   return (
@@ -140,7 +151,7 @@ export default function Login() {
             <div className="hidden sm:block min-w-0">
               <p className="sh-public-wordmark sh-public-wordmark--header">Sit Happens</p>
               <p className="text-[10px] font-bold tracking-[0.08em] text-shTextMuted truncate mt-0.5">
-                Dog Training · Daycare · Boarding · Photography
+                Dog Training · Online School · Daycare · Boarding · Photography
               </p>
             </div>
           </div>
@@ -159,7 +170,7 @@ export default function Login() {
                "radial-gradient(circle at 12% 18%, #00a9e0 0%, transparent 38%), radial-gradient(circle at 88% 78%, #8cc63f 0%, transparent 42%), radial-gradient(circle at 70% 10%, #f26522 0%, transparent 30%)"
              }}/>
 
-        <div className="relative max-w-3xl mx-auto px-4 sm:px-6 py-12 sm:py-20 sh-splatter">
+        <div className="relative max-w-4xl mx-auto px-4 sm:px-6 py-12 sm:py-20 sh-splatter">
           {/* Hero copy + feature logo */}
           <div data-testid="landing-hero-copy">
             {/* Sprint 110u — feature logo, large and proud at the top of the
@@ -181,37 +192,63 @@ export default function Login() {
               Where every pup<br/>
               <span className="sh-pop-green">finds their happy.</span>
             </h1>
-            <p className="text-base sm:text-lg text-gray-300 leading-relaxed mt-5 max-w-xl">
-              Training, daycare, boarding & photography from a team that actually knows your dog — with a portal that keeps you in the loop every single day.
+            <p className="text-base sm:text-lg text-gray-300 leading-relaxed mt-5 max-w-2xl">
+              Training, Online School, daycare, boarding &amp; photography from a team that actually knows your dog — with a portal that keeps you in the loop every single day.
             </p>
 
-            {/* Primary CTA — this is THE entry point for new visitors: every
-                new pup starts with a free Meet & Greet before anything else. */}
-            <div className="mt-7 relative bg-gradient-to-br from-shOrange/25 via-shOrange/10 to-transparent border-2 border-shOrange rounded-2xl p-5 sm:p-6 shadow-[0_10px_40px_-12px_rgba(242,101,34,0.5)]">
-              <p className="text-[11px] sm:text-[12px] font-black uppercase tracking-[0.3em] text-shOrange mb-2">
-                <i className="fas fa-flag-checkered mr-2"/>How to get started
-              </p>
-              <h2 className="text-xl sm:text-2xl font-black uppercase italic tracking-tight text-white mb-2">
-                Let's get the ball rolling
-              </h2>
-              <p className="text-[14px] text-gray-300 leading-relaxed mb-4 max-w-md">
-                Every new pup starts with a free Meet &amp; Greet. Tell us a bit about you and your dog and we'll reach out to schedule it — no account needed.
-              </p>
-              <button onClick={() => setMeetGreetOpen(true)}
-                      data-testid="landing-hero-meet-greet-cta"
-                      className="w-full sm:w-auto justify-center bg-shOrange text-white px-7 py-3.5 rounded-full font-black text-[15px] uppercase tracking-widest shadow-lg hover:bg-shOrange/90 transition inline-flex items-center gap-2">
-                <i className="fas fa-paw"/>Request a Meet &amp; Greet
-              </button>
+            {/* Two clear entry paths. Local/in-person services keep the free
+                Meet & Greet; Online School can be explored immediately from
+                anywhere without pretending an in-person evaluation is needed. */}
+            <div className="mt-7 grid grid-cols-1 md:grid-cols-2 gap-4" data-testid="landing-get-started-paths">
+              <div className="relative bg-gradient-to-br from-shOrange/25 via-shOrange/10 to-transparent border-2 border-shOrange rounded-2xl p-5 sm:p-6 shadow-[0_10px_40px_-12px_rgba(242,101,34,0.5)] flex flex-col">
+                <p className="text-[11px] sm:text-[12px] font-black uppercase tracking-[0.3em] text-shOrange mb-2">
+                  <i className="fas fa-location-dot mr-2"/>In-person services
+                </p>
+                <h2 className="text-xl sm:text-2xl font-black uppercase italic tracking-tight text-white mb-2">
+                  Let's get the ball rolling
+                </h2>
+                <p className="text-[14px] text-gray-300 leading-relaxed mb-4 flex-1">
+                  For daycare, boarding and in-person training, every new pup starts with a free Meet &amp; Greet. Tell us about your dog and we'll reach out to schedule it — no account needed.
+                </p>
+                <button onClick={() => setMeetGreetOpen(true)}
+                        data-testid="landing-hero-meet-greet-cta"
+                        className="w-full justify-center bg-shOrange text-white px-6 py-3.5 rounded-full font-black text-[14px] uppercase tracking-widest shadow-lg hover:bg-shOrange/90 transition inline-flex items-center gap-2">
+                  <i className="fas fa-paw"/>Request a Meet &amp; Greet
+                </button>
+              </div>
+
+              <div className="relative overflow-hidden bg-gradient-to-br from-shBlue/25 via-shBlue/10 to-shGreen/10 border-2 border-shBlue rounded-2xl p-5 sm:p-6 shadow-[0_10px_40px_-12px_rgba(0,169,224,0.5)] flex flex-col" data-testid="landing-online-school-card">
+                <div className="absolute -right-8 -top-8 w-28 h-28 rounded-full bg-shGreen/10 blur-xl pointer-events-none"/>
+                <div className="relative flex items-center justify-between gap-2 mb-2">
+                  <p className="text-[11px] sm:text-[12px] font-black uppercase tracking-[0.3em] text-shBlue">
+                    <i className="fas fa-graduation-cap mr-2"/>Online School
+                  </p>
+                  <span className="shrink-0 px-2 py-1 rounded-full bg-shGreen text-bgHeader text-[9px] font-black uppercase tracking-widest">Now open</span>
+                </div>
+                <h2 className="relative text-xl sm:text-2xl font-black uppercase italic tracking-tight text-white mb-2">
+                  Train from home
+                </h2>
+                <p className="relative text-[14px] text-gray-300 leading-relaxed mb-3">
+                  Work through real Sit Happens training with step-by-step lessons, guided practice, progress tracking and course certificates — from your phone or computer.
+                </p>
+                <p className="relative text-[11px] font-black uppercase tracking-widest text-shGreen mb-4">
+                  <i className="fas fa-gift mr-1.5"/>Free starter course available
+                </p>
+                <button onClick={openOnlineSchool}
+                        data-testid="landing-hero-online-school-cta"
+                        className="relative mt-auto w-full justify-center bg-shBlue text-white px-6 py-3.5 rounded-full font-black text-[14px] uppercase tracking-widest shadow-lg hover:bg-shBlue/90 transition inline-flex items-center gap-2">
+                  <i className="fas fa-laptop-file"/>Explore Online School
+                </button>
+              </div>
             </div>
 
             <div className="flex flex-wrap items-center gap-x-5 gap-y-2 mt-6 text-[12px] uppercase tracking-widest font-black text-gray-500">
               <span><i className="fas fa-shield-halved text-shGreen mr-1.5"/>Vaccine-checked</span>
               <span><i className="fas fa-camera text-shOrange mr-1.5"/>Daily report cards</span>
-              <span><i className="fas fa-graduation-cap text-shBlue mr-1.5"/>Trainer in-house</span>
+              <span><i className="fas fa-graduation-cap text-shBlue mr-1.5"/>Trainer-built courses</span>
             </div>
 
-            {/* Sign in / register — secondary to the Meet & Greet CTA above,
-                so it sits directly underneath rather than competing beside it. */}
+            {/* Sign in / register — secondary to the service-path choices above. */}
             <div id="landing-auth" className="mt-8 max-w-md scroll-mt-24" data-testid="landing-auth-card">
               <p className="text-[11px] font-black uppercase tracking-[0.3em] text-gray-500 mb-3">
                 Already a client, or ready to sign up now?
@@ -301,7 +338,7 @@ export default function Login() {
                 <i className="fas fa-list-check mr-2"/>What we do
               </p>
               <h2 className="text-3xl sm:text-4xl font-black uppercase italic tracking-tight text-white">
-                Four ways we help your pup.
+                Five ways we help your pup.
               </h2>
             </div>
             {activeServiceCount > 0 && (
@@ -312,7 +349,7 @@ export default function Login() {
             )}
           </div>
 
-          <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
+          <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-5 gap-4">
             {CATEGORIES.map((c) => (
               <div key={c.key}
                    data-testid={`landing-category-${c.key}`}
@@ -323,9 +360,10 @@ export default function Login() {
                 </div>
                 <h3 className="text-lg font-black uppercase italic tracking-tight text-white">{c.label}</h3>
                 <p className="text-[14px] text-gray-300 leading-relaxed mt-1.5 flex-1">{c.blurb}</p>
-                <button onClick={scrollToAuth}
+                <button onClick={c.key === "online_school" ? openOnlineSchool : scrollToAuth}
+                        data-testid={c.key === "online_school" ? "landing-category-online-school-cta" : undefined}
                         className="mt-3 self-start text-[12px] font-black uppercase tracking-widest text-shGreen group-hover:text-white transition">
-                  Get started <i className="fas fa-arrow-right ml-1 group-hover:translate-x-0.5 transition-transform"/>
+                  {c.key === "online_school" ? "Explore classes" : "Get started"} <i className="fas fa-arrow-right ml-1 group-hover:translate-x-0.5 transition-transform"/>
                 </button>
               </div>
             ))}
