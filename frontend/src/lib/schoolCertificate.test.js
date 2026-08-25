@@ -6,6 +6,14 @@ import {
 } from "./schoolCertificate";
 
 describe("Sit Happens School completion certificate templates", () => {
+  test("certificate editor field wrapper is available before Program Studio renders", () => {
+    expect(globalThis.Field).toEqual(expect.any(Function));
+    const field = globalThis.Field({ label: "Graduate banner", children: "preview" });
+    expect(field.type).toBe("div");
+    expect(field.props.children[0].props.children).toBe("Graduate banner");
+    expect(field.props.children[1].props.children).toBe("preview");
+  });
+
   test("each flagship course and the free mini course resolve to their own baseline template", () => {
     expect(resolveSchoolCertificateTemplate("FREE Mini Course: Sit & Down").key).toBe("free-sit-down");
     expect(resolveSchoolCertificateTemplate("Level 1: Basic Manners — Online School").key).toBe("level-1");
