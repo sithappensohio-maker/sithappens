@@ -1,13 +1,22 @@
 // Training UI Phase 5 — pure presentation helpers for the Trainer Daily
 // Dashboard. Every function derives its answer from /admin/training/today
-// rows already loaded by Pipeline.jsx — no second query, no new counters.
+// rows already loaded by Pipeline.jsx — no second query, no duplicate tracker.
 
 const RESOLUTION_REASON_LABELS = {
   no_active_enrollment: "No active training program",
   multiple_active_enrollments: "Multiple active programs — needs selection",
   no_current_module: "No current module set",
   no_lessons_in_module: "Current module is empty",
+  board_train_am_training_overdue: "Board & Train AM session overdue",
+  board_train_pm_training_overdue: "Board & Train PM session overdue",
 };
+
+function _boardTrainCloseoutMissing(r) {
+  return r.trainer_delivery_kind === "board_train"
+    && String(r.trainer_delivery_slot || "").toLowerCase() === "pm"
+    && r.session_status === "completed"
+    && !r.trainer_delivery_closeout_complete;
+}
 
 // Header/summary metrics — a straight reduce over the already-loaded rows.
 export function computeDaySummary(rows) {
@@ -23,15 +32,12 @@ export function computeDaySummary(rows) {
 }
 
 function _needsReview(r) {
-  return !!r.client_question || (r.media_awaiting_review || 0) > 0 || (r.homework_difficulty_flags || 0) > 0;
+  return !!r.client_question
+    || (r.media_awaiting_review || 0) > 0
+    || (r.homework_difficulty_flags || 0) > 0
+    || _boardTrainCloseoutMissing(r);
 }
 
-// Documented status -> action mapping (the one obvious primary action per
-// row). "not_checked_in" splits on the row's own `checked_in` flag: a dog
-// that's physically checked in but has no plan yet should open a plan, not
-// re-offer Check In. `reopen_count` distinguishes "resume a fresh plan"
-// from "resume a reopened one" for plan_ready — both call the same
-// open-workspace action, only the label differs.
 export function resolvePrimaryAction(row) {
   if (row.session_status === "resolution_needed") return { label: "Resolve", kind: "open_workspace" };
   if (row.session_status === "completed") return { label: "View Completed Session", kind: "open_workspace" };
@@ -56,8 +62,6 @@ export function relativeAge(iso) {
   return `${hrs}h ago`;
 }
 
-// A plan_ready draft sitting unstarted for over an hour is worth flagging —
-// draft_created_at is already stored on the draft, just newly surfaced.
 const STALE_DRAFT_MINUTES = 60;
 function _isStaleDraft(row) {
   if (row.session_status !== "plan_ready") return false;
@@ -65,12 +69,6 @@ function _isStaleDraft(row) {
   return mins != null && mins >= STALE_DRAFT_MINUTES;
 }
 
-// Attention queue — compiled entirely from data already on today's rows.
-// Each item: { key, bookingId, dogId, dogName, reason, age, actionLabel,
-// actionKind, tone }. Deliberately scoped to TODAY's roster (the same data
-// already loaded for the dashboard) rather than an all-time trainer-wide
-// scan, which would need new backend aggregation outside this phase's
-// "use existing data" constraint.
 export function buildAttentionQueue(rows) {
   const items = [];
   for (const r of (rows || [])) {
@@ -79,7 +77,12 @@ export function buildAttentionQueue(rows) {
       items.push({ ...base, key: `resolve-${r.booking_id}`,
         reason: RESOLUTION_REASON_LABELS[r.resolution_reason] || "Needs attention",
         age: r.time || "Today", actionLabel: "Resolve", actionKind: "open_workspace", tone: "danger" });
-      continue; // a resolution-needed row has nothing else useful to say yet
+      continue;
+    }
+    if (_boardTrainCloseoutMissing(r)) {
+      items.push({ ...base, key: `bt-closeout-${r.booking_id}`,
+        reason: "Board & Train daily closeout still required",
+        age: `Day ${r.trainer_delivery_day || "—"}`, actionLabel: "Open PM Session", actionKind: "open_workspace", tone: "danger" });
     }
     if (r.client_question) {
       items.push({ ...base, key: `question-${r.booking_id}`, reason: "Client asked a question",
@@ -112,10 +115,6 @@ export function buildAttentionQueue(rows) {
   return items;
 }
 
-// Simple filters — "my_dogs" reads the SAME derived assigned_trainer proxy
-// the rest of the app already uses (last session log's by_user, or the
-// front-desk check-in name) — never a real trainer-assignment field, which
-// doesn't exist. Matched against the viewer's own name or email.
 export function filterTrainingRows(rows, filter, viewer) {
   const list = rows || [];
   switch (filter) {
