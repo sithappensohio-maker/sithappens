@@ -1,9 +1,7 @@
-// Training UI Phase 5 — one visual card per today's training dog, replacing
-// the old dense table row in Pipeline.jsx. Every field comes from
-// /admin/training/today (see backend/server.py:admin_training_today) —
-// this component adds no data of its own. Exactly one primary action button
-// per card (resolvePrimaryAction, lib/trainerDashboardPolish.js) — never a
-// second competing button.
+// Training UI Phase 5 — one visual card per today's training dog. Every
+// field comes from /admin/training/today. Trainer Delivery adds Board & Train
+// day/slot/closeout metadata to those SAME rows; this component only makes
+// that required work obvious to the trainer.
 import Avatar from "../Avatar";
 import StatusChip from "./StatusChip";
 import { resolvePrimaryAction } from "../../lib/trainerDashboardPolish";
@@ -16,6 +14,31 @@ const STATUS_META = {
   resolution_needed: { label: "Needs Attention", icon: "fa-triangle-exclamation", tone: "danger" },
 };
 
+function BoardTrainMeta({ row: r, testid }) {
+  if (r.trainer_delivery_kind !== "board_train") return null;
+  const slot = String(r.trainer_delivery_slot || "").toUpperCase();
+  return (
+    <div className="mt-2 flex flex-wrap gap-1.5" data-testid={testid ? `${testid}-board-train-meta` : undefined}>
+      <span className="rounded-full border border-shSecondary/35 bg-shSecondary/[0.08] px-2 py-0.5 text-[10px] font-black uppercase tracking-widest text-shSecondary">
+        Day {r.trainer_delivery_day || "—"} of {r.trainer_delivery_total_days || "—"}
+      </span>
+      <span className="rounded-full border border-shPrimary/35 bg-shPrimary/[0.08] px-2 py-0.5 text-[10px] font-black uppercase tracking-widest text-shPrimary">
+        {slot || "Training"}
+      </span>
+      {slot === "PM" && (
+        <span className={`rounded-full border px-2 py-0.5 text-[10px] font-black uppercase tracking-widest ${
+          r.trainer_delivery_closeout_complete
+            ? "border-shPrimary/35 bg-shPrimary/[0.08] text-shPrimary"
+            : "border-shAccent/40 bg-shAccent/[0.08] text-shAccent"
+        }`}>
+          <i className={`fas ${r.trainer_delivery_closeout_complete ? "fa-circle-check" : "fa-clipboard-list"} mr-1"`}/>
+          {r.trainer_delivery_closeout_complete ? "Daily closeout done" : "Closeout required"}
+        </span>
+      )}
+    </div>
+  );
+}
+
 export default function TrainingDogRow({ row: r, onPrimaryAction, testid }) {
   const sm = STATUS_META[r.session_status] || STATUS_META.not_checked_in;
   const action = resolvePrimaryAction(r);
@@ -24,7 +47,9 @@ export default function TrainingDogRow({ row: r, onPrimaryAction, testid }) {
     : [r.program_name, r.current_module_name, r.current_lesson_name].filter(Boolean).join(" · ");
 
   return (
-    <div className="bg-black/20 border border-shBorder rounded-lg p-3 flex flex-col sm:flex-row sm:items-center gap-3" data-testid={testid}>
+    <div className={`border rounded-lg p-3 flex flex-col sm:flex-row sm:items-center gap-3 ${
+      r.trainer_delivery_kind === "board_train" ? "bg-shSecondary/[0.035] border-shSecondary/25" : "bg-black/20 border-shBorder"
+    }`} data-testid={testid}>
       <div className="flex items-center gap-3 min-w-0 flex-1">
         <Avatar src={r.dog_photo} icon="fa-paw" size="md" alt={r.dog_name}/>
         <div className="min-w-0 flex-1">
@@ -40,6 +65,7 @@ export default function TrainingDogRow({ row: r, onPrimaryAction, testid }) {
           {r.recommended_focus?.length > 0 && (
             <p className="text-[12px] text-shSecondary mt-0.5 truncate">Focus: {r.recommended_focus.join(", ")}</p>
           )}
+          <BoardTrainMeta row={r} testid={testid}/>
           <div className="flex items-center gap-3 text-[12px] text-shTextMuted mt-1 flex-wrap">
             {r.homework_completion && (
               <span data-testid={testid ? `${testid}-homework` : undefined}><i className="fas fa-graduation-cap mr-1"/>{r.homework_completion.days_completed}/{r.homework_completion.total_days}</span>
