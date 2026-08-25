@@ -1,11 +1,9 @@
 import { useState } from "react";
 
-/* Redesign Phase B — primary mobile bottom navigation. Replaces the old
- * mobile-only sticky "Book Service" bar: Book is now one of five equal
- * bottom-nav destinations instead of a lone floating button, and secondary
- * destinations (My Dogs/Payments/Credits/Rewards/Refer/Help) live in the
- * "More" sheet rather than being unreachable on mobile. Every action here
- * reuses an existing Portal.jsx handler — no new business logic. */
+/* Redesign Phase B — primary mobile bottom navigation. Book and Online School
+ * are permanent primary destinations; lower-frequency destinations live in
+ * the "More" sheet. Every action here reuses an existing Portal.jsx handler
+ * when supplied — no booking/shop/School business logic lives in this file. */
 
 function NavButton({ icon, label, badge, onClick, testid }) {
   return (
@@ -31,10 +29,11 @@ function NavButton({ icon, label, badge, onClick, testid }) {
 export default function ClientMobileNav({
   shopCartCount = 0,
   showPhotography = false,
-  onHome, onBook, onShop, onPhotography,
+  onHome, onBook, onSchool, onShop, onPhotography,
   onMyDogs, onPayments, onCredits, onRewards, onRefer, onHelp, showHelp,
 }) {
   const [moreOpen, setMoreOpen] = useState(false);
+  const openSchool = onSchool || (() => { window.location.href = "/school"; });
 
   return (
     <>
@@ -44,10 +43,8 @@ export default function ClientMobileNav({
       >
         <NavButton icon="fa-house" label="Home" onClick={onHome} testid="mobile-nav-home" />
         <NavButton icon="fa-calendar-plus" label="Book" onClick={onBook} testid="mobile-nav-book" />
+        <NavButton icon="fa-graduation-cap" label="School" onClick={openSchool} testid="mobile-nav-school" />
         <NavButton icon="fa-bag-shopping" label="Shop" badge={shopCartCount} onClick={onShop} testid="mobile-nav-shop" />
-        {showPhotography && (
-          <NavButton icon="fa-camera-retro" label="Photos" onClick={onPhotography} testid="mobile-nav-photos" />
-        )}
         <NavButton icon="fa-ellipsis" label="More" onClick={() => setMoreOpen(true)} testid="mobile-nav-more" />
       </nav>
 
@@ -67,6 +64,7 @@ export default function ClientMobileNav({
             </div>
             <div className="p-2">
               {[
+                ...(showPhotography ? [{ icon: "fa-camera-retro", label: "Photography", onClick: onPhotography }] : []),
                 { icon: "fa-paw", label: "My Dogs", onClick: onMyDogs },
                 { icon: "fa-file-invoice-dollar", label: "Payments", onClick: onPayments },
                 { icon: "fa-wallet", label: "Credits", onClick: onCredits },
