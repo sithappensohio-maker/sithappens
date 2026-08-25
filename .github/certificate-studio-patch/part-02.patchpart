@@ -1,0 +1,71 @@
++        <div className="relative overflow-hidden rounded-xl border-[3px] border-[#071629] bg-[#f8f6ef] text-[#071629] aspect-[1.42/1] shadow-2xl" style={{opacity:enabled?1:.45}}>
++          <div className="absolute inset-[9px] border border-[#087ff5]/70 pointer-events-none"/>
++          <div className="absolute -left-10 -top-6 w-[45%] h-16 -rotate-3 skew-x-[-14deg]" style={{background:`linear-gradient(90deg, ${resolved.accent}, transparent)`}}/>
++          <div className="absolute -right-10 -bottom-5 w-[45%] h-24 -rotate-6 skew-x-[-14deg]" style={{background:`linear-gradient(135deg, transparent, ${resolved.accent2}, ${resolved.accent})`}}/>
++          <div className="absolute left-0 bottom-3 w-[27%] opacity-[0.10]"><HuskyDogImage name={program.name||"Sit Happens"} className="w-full h-auto grayscale"/></div>
++          <div className="relative h-full flex flex-col items-center px-6 pt-6 pb-4 text-center">
++            <img src="/logo.png" alt="Sit Happens" className="w-[27%] max-w-[220px]"/>
++            <div className="mt-2 px-8 py-1 text-[8px] sm:text-[10px] font-black uppercase tracking-[0.18em] -skew-x-6" style={{background:resolved.accent}}><span className="inline-block skew-x-6">{resolved.eyebrow}</span></div>
++            <div className="text-[9px] sm:text-[11px] mt-2 tracking-[0.5em]" style={{color:resolved.accent2}}>★ ★ ★</div>
++            <div className="font-black uppercase leading-none mt-1 text-[25px] sm:text-[42px]" style={{fontFamily:'Impact, "Arial Narrow", sans-serif'}}>Certificate of Completion</div>
++            <p className="text-[9px] sm:text-[12px] mt-3">This certifies that</p>
++            <div className="text-[24px] sm:text-[43px] leading-none mt-1 px-5 border-b-[3px]" style={{fontFamily:'"Brush Script MT", cursive',borderColor:resolved.accent}}>Sample Client &amp; Bella</div>
++            <p className="text-[9px] sm:text-[12px] mt-2">successfully completed</p>
++            <div className="text-[14px] sm:text-[23px] font-black italic mt-0.5">{courseName}</div>
++            <p className="text-[7px] sm:text-[10px] text-[#4e5968] italic mt-1 max-w-[70%]">{resolved.completionNote}</p>
++            <div className="flex gap-2 sm:gap-3 mt-3 text-[7px] sm:text-[9px] font-black">
++              <span className="rounded-md border px-2 py-1 bg-white/70" style={{borderColor:resolved.accent}}>{lessons || "—"} LESSONS</span>
++              <span className="rounded-md border px-2 py-1 bg-white/70" style={{borderColor:resolved.accent2}}>{(program.modules||[]).length || "—"} MODULES</span>
++              {checkpoints>0&&<span className="rounded-md border px-2 py-1 bg-white/70" style={{borderColor:resolved.accent}}>{checkpoints} CHECKPOINTS</span>}
++            </div>
++            <div className="mt-auto w-full grid grid-cols-3 gap-5 items-end px-8 pb-1 text-[7px] sm:text-[9px]">
++              <div><div className="border-t pt-1" style={{borderColor:resolved.accent2}}>Completed</div><b>August 25, 2026</b></div>
++              <div><div className="text-[13px] sm:text-[20px] border-b" style={{fontFamily:'"Brush Script MT", cursive',borderColor:resolved.accent2}}>Sit Happens Trainer</div><span>Trainer</span></div>
++              <div><div className="border-t pt-1" style={{borderColor:resolved.accent2}}>Certificate No.</div><b>SH-{resolved.code}-2026-ABC12345</b></div>
++            </div>
++          </div>
++          <div className="absolute right-5 bottom-14 w-20 h-20 sm:w-28 sm:h-28 rounded-full bg-[#071629] border-[5px] border-white shadow-[0_0_0_3px_#087ff5] grid place-items-center text-white text-center font-black">
++            <div><span className="block text-[8px] sm:text-[11px]">{resolved.level}</span><span className="block text-[22px] sm:text-[38px] leading-none mt-1" style={{color:resolved.accent}}>{resolved.sealMark}</span></div>
++          </div>
++        </div>
++      </section>
++    </div>
++  </div>;
+ }
+ 
+ function SetupSummaryRow({ label, value }) {
+--- a/frontend/src/components/school/SchoolStudentsPanel.jsx
++++ b/frontend/src/components/school/SchoolStudentsPanel.jsx
+@@ -6,6 +6,7 @@
+ import { openSchoolMedia } from "../../lib/schoolMedia";
+ import HomeworkReportPanel from "../HomeworkReportPanel";
+ import TrainingSessionWorkspace from "../TrainingSessionWorkspace";
++import { printSchoolCertificate, resolveSchoolCertificateTemplate } from "../../lib/schoolCertificate";
+ 
+ const isoLocal = (v) => {
+   if (!v) return "";
+@@ -86,6 +87,23 @@
+   const currentDelivery = data?.school_enrollment?.delivery_mode === "trainer_led" ? "in_person" : data?.school_enrollment?.delivery_mode === "hybrid" ? "hybrid" : data?.school_enrollment?.delivery_mode === "self_guided" ? "online" : data?.enrollment?.delivery_channel === "in_person_school" ? "in_person" : data?.enrollment?.delivery_channel === "hybrid_school" ? "hybrid" : "online";
+   const repeatProgram=async()=>{if(!["completed","withdrawn"].includes(data?.enrollment?.status))return;if(!window.confirm(`Start a new ${deliveryLabel(currentDelivery)} attempt of ${data?.enrollment?.program_snapshot?.name||"this program"}? The existing School history will be preserved.`))return;setSaving(true);try{const r=await api.post(`/admin/school/students/${studentId}/retake`,{delivery_mode:currentDelivery,assigned_trainer_id:settings.assigned_trainer_id||null});toast.success("New School attempt created");onChanged?.();onReenrolled?.(r.data?.school_enrollment?.id);}catch(e){toast.error(e?.response?.data?.detail||"Could not repeat this School program");}finally{setSaving(false)}};
+   const snap=data?.enrollment?.program_snapshot||{};
++  const certificateConfig=snap.school_support?.certificate||{};
++  const certificateTemplate=resolveSchoolCertificateTemplate(snap.name||"School course",certificateConfig);
++  const printCurrentCertificate=()=>{
++    const passed=(data?.checkpoints||[]).filter(c=>c.outcome==="advance");
++    const trainerCheckpoint=(data?.checkpoints||[]).find(c=>c.trainer_name)||null;
++    printSchoolCertificate({
++      clientName:data?.client?.name||"", dogName:data?.dog?.name||"Dog", programName:snap.name||"School course",
++      schoolEnrollmentId:studentId, certificateConfig,
++      completionSummary:{
++        completed_at:data?.enrollment?.completed_at,
++        total_modules:(snap.modules||[]).length,
++        total_lessons:(snap.modules||[]).reduce((n,m)=>n+(m.lessons||[]).filter(l=>l.active!==false).length,0),
++        checkpoints_passed:passed.length,
++        final_assessment:trainerCheckpoint?{trainer_name:trainerCheckpoint.trainer_name,handler_overall:trainerCheckpoint.handler_overall,dog_overall:trainerCheckpoint.dog_overall}:null,
++      },
++    });
++  };
+   const currentModule=(snap.modules||[]).find(m=>m.id===data?.enrollment?.current_module_id);
+   const currentLesson=(currentModule?.lessons||[]).find(l=>l.id===data?.enrollment?.current_lesson_id);
+   const lessons=(snap.modules||[]).flatMap(m=>(m.lessons||[]).map(l=>({id:l.id,name:`${m.name} · ${l.name}`})));
+@@ -98,6 +116,7 @@
