@@ -1,4 +1,5 @@
 import { printSchoolCertificate } from "../../../lib/schoolCertificate";
+import { useAuth } from "../../../lib/auth";
 
 const fmtDate = (v) => {
   if (!v) return null;
@@ -6,6 +7,7 @@ const fmtDate = (v) => {
 };
 
 export default function CourseCompletionCard({ home, onCourse, onProgress, onFeedback }) {
+  const { user } = useAuth();
   const c = home?.completion_summary || {};
   const dog = home?.dog?.name || "Your dog";
   const course = home?.program?.name || "School course";
@@ -41,7 +43,13 @@ export default function CourseCompletionCard({ home, onCourse, onProgress, onFee
           <button onClick={onCourse} data-testid="school-course-review-library" className="min-h-[48px] px-4 rounded-xl bg-shPrimary text-bgHeader text-[12px] font-black uppercase tracking-widest"><i className="fas fa-book-open mr-1.5" />Review any lesson</button>
           <button onClick={onProgress} className="min-h-[44px] px-4 rounded-xl border border-shBorder text-shText text-[12px] font-black uppercase tracking-widest"><i className="fas fa-chart-line mr-1.5" />View progress</button>
           <button onClick={onFeedback} className="min-h-[44px] px-4 rounded-xl border border-shSecondary/35 text-shSecondary text-[12px] font-black uppercase tracking-widest"><i className="fas fa-comments mr-1.5" />Trainer feedback</button>
-          <button onClick={() => printSchoolCertificate({ dogName: dog, programName: course, completionSummary: c })} className="min-h-[44px] px-4 rounded-xl border border-shBorder text-shText text-[12px] font-black uppercase tracking-widest"><i className="fas fa-certificate mr-1.5" />Print certificate</button>
+          <button onClick={() => printSchoolCertificate({
+            clientName: user?.name || "",
+            dogName: dog,
+            programName: course,
+            completionSummary: c,
+            schoolEnrollmentId: home?.school_enrollment_id,
+          })} className="min-h-[44px] px-4 rounded-xl border border-shBorder text-shText text-[12px] font-black uppercase tracking-widest"><i className="fas fa-certificate mr-1.5" />Print certificate</button>
         </div>
       </div>
     </section>
