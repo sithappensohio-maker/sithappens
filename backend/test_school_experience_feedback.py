@@ -3,7 +3,7 @@ from pathlib import Path
 import pytest
 from pydantic import ValidationError
 
-from school_experience_feedback import SchoolExperienceFeedbackIn, _feedback_id
+from school_experience_feedback import SchoolExperienceFeedbackIn, _experience_eligible, _feedback_id
 
 
 HERE = Path(__file__).resolve().parent
@@ -14,6 +14,13 @@ ENTRY = (HERE / "app_entry.py").read_text(encoding="utf-8")
 def test_review_identity_is_client_dog_program_not_enrollment_attempt():
     assert _feedback_id("client-1", "dog-1", "program-1") == "school-experience:client-1:dog-1:program-1"
     assert "school_enrollment" not in _feedback_id("client-1", "dog-1", "program-1")
+
+
+def test_feedback_is_only_for_online_or_hybrid_school_experience():
+    assert _experience_eligible({"delivery_mode": "self_guided"}, {"delivery_channel": "online_school"}) is True
+    assert _experience_eligible({"delivery_mode": "hybrid"}, {"delivery_channel": "hybrid_school"}) is True
+    assert _experience_eligible({"delivery_mode": "trainer_led"}, {"delivery_channel": "in_person_school"}) is False
+    assert "Experience feedback is available for Online School and hybrid courses" in SOURCE
 
 
 def test_feedback_model_requires_core_answers_and_bounds_rating():
