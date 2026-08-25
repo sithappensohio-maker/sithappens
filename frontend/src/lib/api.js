@@ -1,4 +1,5 @@
 import axios from "axios";
+import { toast } from "sonner";
 
 // Sprint 110di-46 — Self-hosting safe BACKEND_URL fallback.
 // When REACT_APP_BACKEND_URL is missing/blank (e.g. same-origin Docker
@@ -124,6 +125,13 @@ api.interceptors.response.use(
       // Keep the original object reachable alongside the flattened string,
       // so nothing existing changes and structured handling becomes possible.
       err.response.data.detail_object = d;
+      // Trainer Delivery closes the legacy per-goal direct-write shortcut.
+      // Some older screens intentionally swallow that request in a local
+      // catch, so surface the enforcement message here rather than making
+      // the trainer think their click worked.
+      if (d.code === "trainer_delivery_session_required") {
+        toast.error(d.msg || "Open the Training Session Workspace to record progress.");
+      }
       // Preserve machine-readable capacity metadata for the booking wizard,
       // while still exposing a plain string to legacy JSX error renderers.
       if (d.code === "capacity_full" || d.code === "capacity_busy") {

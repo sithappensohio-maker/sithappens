@@ -1,0 +1,79 @@
+name: Trainer Delivery Verification
+
+on:
+  push:
+    branches:
+      - feature/enforced-trainer-delivery
+  workflow_dispatch:
+
+jobs:
+  backend-focused:
+    runs-on: ubuntu-latest
+    services:
+      mongo:
+        image: mongo:7
+        ports:
+          - 27017:27017
+        options: >-
+          --health-cmd "mongosh --quiet --eval 'db.runCommand({ ping: 1 }).ok'"
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 10
+    defaults:
+      run:
+        working-directory: backend
+    env:
+      MONGO_URL: mongodb://127.0.0.1:27017
+      SIT_HAPPENS_TEST_DB_NAME: sit_happens_test_trainer_delivery_ci
+      DB_NAME: sit_happens_test_trainer_delivery_ci
+      JWT_SECRET: trainer-delivery-ci-only-secret
+      FRONTEND_URL: http://localhost:3000
+      APP_PUBLIC_URL: http://localhost:3000
+      RESEND_API_KEY: ""
+      STRIPE_API_KEY: ""
+      STRIPE_SECRET_KEY: ""
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+          cache-dependency-path: backend/requirements.txt
+      - name: Install backend dependencies
+        run: pip install -r requirements.txt
+      - name: Compile Trainer Delivery modules
+        run: python -m py_compile trainer_delivery.py trainer_delivery_guard.py trainer_delivery_indexes.py board_train_client_updates.py app_entry.py
+      - name: Focused Trainer Delivery regression suite
+        run: >-
+          pytest -q
+          test_trainer_delivery_extension.py
+          test_trainer_delivery_recovery_contract.py
+          test_trainer_delivery_goal_guard.py
+          test_board_train_client_updates.py
+          test_training_session_workspace.py
+          test_training_session_completion.py
+
+  frontend-focused:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: frontend
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+      - name: Install frontend dependencies
+        run: yarn install --non-interactive
+      - name: Trainer Delivery focused Jest
+        env:
+          CI: "true"
+        run: >-
+          yarn test --watchAll=false --runInBand
+          src/components/training/trainerDeliveryClientUpdates.test.js
+          src/components/training/trainerDeliveryEnforcementUx.test.js
+          src/screens/trainerDashboardEntryPoints.test.js
+      - name: Production build
+        env:
+          CI: "false"
+        run: yarn build
