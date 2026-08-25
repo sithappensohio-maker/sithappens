@@ -1,5 +1,6 @@
 import { printSchoolCertificate, resolveSchoolCertificateTemplate } from "../../../lib/schoolCertificate";
 import { useAuth } from "../../../lib/auth";
+import SchoolExperienceFeedbackCard from "./SchoolExperienceFeedbackCard";
 
 const fmtDate = (v) => {
   if (!v) return null;
@@ -53,6 +54,10 @@ export default function CourseCompletionCard({ home, onCourse, onProgress, onFee
             schoolEnrollmentId: home?.school_enrollment_id,
             certificateConfig,
           })} className="min-h-[44px] px-4 rounded-xl border border-shBorder text-shText text-[12px] font-black uppercase tracking-widest"><i className="fas fa-certificate mr-1.5" />Print certificate</button>}
+        </div>
+
+        <div className="mt-6">
+          <SchoolExperienceFeedbackCard enrollmentId={home?.school_enrollment_id} source="course_completion" completionPrompt />
         </div>
       </div>
     </section>
