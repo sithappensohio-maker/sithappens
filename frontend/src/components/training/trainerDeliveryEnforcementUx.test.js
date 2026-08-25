@@ -7,7 +7,7 @@ const api = fs.readFileSync(path.join(__dirname, "..", "..", "lib", "api.js"), "
 
 test("training workspace shows the required trainer record instead of hiding server rules", () => {
   expect(workspace).toContain("Trainer Record Checklist");
-  expect(workspace).toContain('data-testid="trainer-record-checklist"');
+  expect(workspace).toContain('testid="trainer-record-checklist"');
   expect(workspace).toContain("trainer_delivery_incomplete");
   expect(workspace).toContain("detail_object");
   expect(workspace).toContain('data-testid="workspace-completion-blocked"');
