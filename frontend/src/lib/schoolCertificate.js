@@ -28,20 +28,26 @@ export function schoolCertificateCourseName(programName) {
 
 const CERTIFICATE_TEMPLATES = [
   {
+    key: "free-sit-down", code: "FREE", match: /free\s+mini\s+course|sit\s*(?:&|and)\s*down/i,
+    level: "MINI COURSE", sealMark: "FREE", eyebrow: "MINI COURSE GRADUATE",
+    accent: "#b8e300", accent2: "#087ff5", ink: "#071629",
+    completionNote: "Sit & Down foundations completed through the Sit Happens guided training path.",
+  },
+  {
     key: "level-1", code: "L1", match: /\blevel\s*1\b|basic manners/i,
-    level: "LEVEL 1", eyebrow: "FOUNDATION GRADUATE",
+    level: "LEVEL 1", sealMark: "1", eyebrow: "FOUNDATION GRADUATE",
     accent: "#b8e300", accent2: "#087ff5", ink: "#071629",
     completionNote: "Foundation skills completed through the Sit Happens guided training path.",
   },
   {
     key: "level-2", code: "L2", match: /\blevel\s*2\b|intermediate skills/i,
-    level: "LEVEL 2", eyebrow: "INTERMEDIATE GRADUATE",
+    level: "LEVEL 2", sealMark: "2", eyebrow: "INTERMEDIATE GRADUATE",
     accent: "#087ff5", accent2: "#b8e300", ink: "#071629",
     completionNote: "Intermediate skills completed through the Sit Happens guided training path.",
   },
   {
     key: "level-3", code: "L3", match: /\blevel\s*3\b|advanced off[-\s]?leash/i,
-    level: "LEVEL 3", eyebrow: "ADVANCED GRADUATE",
+    level: "LEVEL 3", sealMark: "3", eyebrow: "ADVANCED GRADUATE",
     accent: "#b8e300", accent2: "#087ff5", ink: "#071629",
     completionNote: "Advanced reliability training completed through the Sit Happens guided training path.",
     safetyNote: "Course completion recognizes training progress; it is not a legal off-leash authorization or a guarantee against environmental risk.",
@@ -49,18 +55,45 @@ const CERTIFICATE_TEMPLATES = [
 ];
 
 const GENERIC_TEMPLATE = {
-  key: "school-course", code: "SCH", level: "SCHOOL",
+  key: "school-course", code: "SCH", level: "SCHOOL", sealMark: "✓",
   eyebrow: "SCHOOL GRADUATE", accent: "#b8e300", accent2: "#087ff5", ink: "#071629",
   completionNote: "Course completed through the Sit Happens guided training path.",
 };
 
-export function resolveSchoolCertificateTemplate(programName) {
+const colorOr = (value, fallback) => /^#[0-9a-f]{6}$/i.test(String(value || "")) ? value : fallback;
+const textOr = (value, fallback) => String(value || "").trim() || fallback;
+
+export function resolveSchoolCertificateTemplate(programName, certificateConfig = {}) {
   const name = String(programName || "");
-  return CERTIFICATE_TEMPLATES.find((t) => t.match.test(name)) || GENERIC_TEMPLATE;
+  const base = CERTIFICATE_TEMPLATES.find((t) => t.match.test(name)) || GENERIC_TEMPLATE;
+  const cfg = certificateConfig || {};
+  return {
+    ...base,
+    enabled: cfg.enabled !== false,
+    eyebrow: textOr(cfg.eyebrow, base.eyebrow),
+    completionNote: textOr(cfg.completion_note, base.completionNote),
+    accent: colorOr(cfg.accent, base.accent),
+    accent2: colorOr(cfg.accent2, base.accent2),
+    // Level 3's safety clarification stays present if an editor leaves the
+    // field blank; it may be rewritten, but not accidentally erased.
+    safetyNote: base.safetyNote ? textOr(cfg.safety_note, base.safetyNote) : textOr(cfg.safety_note, ""),
+  };
 }
 
-export function schoolCertificateNumber({ schoolEnrollmentId, programName, completionSummary }) {
-  const template = resolveSchoolCertificateTemplate(programName);
+export function schoolCertificateDefaults(programName) {
+  const t = resolveSchoolCertificateTemplate(programName, {});
+  return {
+    enabled: true,
+    eyebrow: t.eyebrow,
+    completion_note: t.completionNote,
+    accent: t.accent,
+    accent2: t.accent2,
+    safety_note: t.safetyNote || "",
+  };
+}
+
+export function schoolCertificateNumber({ schoolEnrollmentId, programName, completionSummary, certificateConfig }) {
+  const template = resolveSchoolCertificateTemplate(programName, certificateConfig);
   const year = completedYear(completionSummary?.completed_at);
   const raw = String(schoolEnrollmentId || "").replace(/[^a-z0-9]/gi, "").toUpperCase();
   const tail = raw.slice(-8) || "COMPLETE";
@@ -73,11 +106,13 @@ export function printSchoolCertificate({
   programName,
   completionSummary,
   schoolEnrollmentId,
+  certificateConfig,
 }) {
-  const template = resolveSchoolCertificateTemplate(programName);
+  const template = resolveSchoolCertificateTemplate(programName, certificateConfig);
+  if (!template.enabled) return;
   const courseName = schoolCertificateCourseName(programName);
   const completed = fmtDate(completionSummary?.completed_at) || new Date().toLocaleDateString();
-  const certificateNo = schoolCertificateNumber({ schoolEnrollmentId, programName, completionSummary });
+  const certificateNo = schoolCertificateNumber({ schoolEnrollmentId, programName, completionSummary, certificateConfig });
   const client = String(clientName || "").trim();
   const dog = String(dogName || "").trim();
   const graduate = client && dog ? `${client} & ${dog}` : (dog || client || "Student & Dog");
@@ -237,7 +272,7 @@ export function printSchoolCertificate({
           ${checkpoints > 0 ? `<div class="stat"><div class="stat-icon">✓</div><div class="stat-value">${escHtml(checkpoints)}<span class="stat-label">Trainer Checkpoints Passed</span></div></div>` : ""}
         </div>
 
-        <div class="seal"><div class="seal-inner"><span class="seal-small">${escHtml(template.level)}</span><span class="seal-num">${escHtml(template.code.replace(/\D/g,"") || "✓")}</span></div></div>
+        <div class="seal"><div class="seal-inner"><span class="seal-small">${escHtml(template.level)}</span><span class="seal-num" style="font-size:${template.key === "free-sit-down" ? "34px" : "68px"}">${escHtml(template.sealMark || "✓")}</span></div></div>
 
         <div class="footer">
           <div><span class="foot-label">Completed</span><span class="foot-value">${escHtml(completed)}</span></div>

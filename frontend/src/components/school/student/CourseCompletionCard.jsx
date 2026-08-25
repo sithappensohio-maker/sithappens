@@ -1,4 +1,4 @@
-import { printSchoolCertificate } from "../../../lib/schoolCertificate";
+import { printSchoolCertificate, resolveSchoolCertificateTemplate } from "../../../lib/schoolCertificate";
 import { useAuth } from "../../../lib/auth";
 
 const fmtDate = (v) => {
@@ -13,6 +13,8 @@ export default function CourseCompletionCard({ home, onCourse, onProgress, onFee
   const course = home?.program?.name || "School course";
   const completed = fmtDate(c.completed_at);
   const final = c.final_assessment || null;
+  const certificateConfig = home?.program?.school_support?.certificate || {};
+  const certificateTemplate = resolveSchoolCertificateTemplate(course, certificateConfig);
   return (
     <section className="relative overflow-hidden rounded-3xl border border-shPrimary/35 bg-gradient-to-br from-shPrimary/[0.12] via-black/20 to-shSecondary/[0.06] p-6 sm:p-8" data-testid="school-course-complete">
       <div className="absolute -right-10 -top-10 w-40 h-40 rounded-full bg-shPrimary/10 blur-3xl" />
@@ -43,13 +45,14 @@ export default function CourseCompletionCard({ home, onCourse, onProgress, onFee
           <button onClick={onCourse} data-testid="school-course-review-library" className="min-h-[48px] px-4 rounded-xl bg-shPrimary text-bgHeader text-[12px] font-black uppercase tracking-widest"><i className="fas fa-book-open mr-1.5" />Review any lesson</button>
           <button onClick={onProgress} className="min-h-[44px] px-4 rounded-xl border border-shBorder text-shText text-[12px] font-black uppercase tracking-widest"><i className="fas fa-chart-line mr-1.5" />View progress</button>
           <button onClick={onFeedback} className="min-h-[44px] px-4 rounded-xl border border-shSecondary/35 text-shSecondary text-[12px] font-black uppercase tracking-widest"><i className="fas fa-comments mr-1.5" />Trainer feedback</button>
-          <button onClick={() => printSchoolCertificate({
+          {certificateTemplate.enabled && <button onClick={() => printSchoolCertificate({
             clientName: user?.name || "",
             dogName: dog,
             programName: course,
             completionSummary: c,
             schoolEnrollmentId: home?.school_enrollment_id,
-          })} className="min-h-[44px] px-4 rounded-xl border border-shBorder text-shText text-[12px] font-black uppercase tracking-widest"><i className="fas fa-certificate mr-1.5" />Print certificate</button>
+            certificateConfig,
+          })} className="min-h-[44px] px-4 rounded-xl border border-shBorder text-shText text-[12px] font-black uppercase tracking-widest"><i className="fas fa-certificate mr-1.5" />Print certificate</button>}
         </div>
       </div>
     </section>

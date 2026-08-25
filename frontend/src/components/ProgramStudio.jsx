@@ -15,6 +15,7 @@ import { computeLessonCompleteness, computeSkillCompleteness, resolveValidationT
          computeProgramReadiness, filterCurriculum, lessonNeighbours, firstIncomplete } from "../lib/programStudioPolish";
 import HomeworkTemplateEditor from "./HomeworkTemplateEditor";
 import HuskyDogImage from "./brand/HuskyDogImage";
+import { resolveSchoolCertificateTemplate, schoolCertificateDefaults, schoolCertificateCourseName } from "../lib/schoolCertificate";
 
 /* ============================================================
  * Training-school expansion, Phase 2 — Program Studio.
@@ -73,6 +74,7 @@ function stripKeys(program) {
 const TABS = [
   { key: "setup", label: "Setup", icon: "fa-sliders" },
   { key: "curriculum", label: "Curriculum", icon: "fa-diagram-project" },
+  { key: "certificate", label: "Certificate", icon: "fa-certificate" },
 ];
 
 const MOBILE_STAGES = [
@@ -436,6 +438,9 @@ export default function ProgramStudio({ programId, initialProgram, meta, allProg
               saveState={saveState}
               isNew={isNew} draftMeta={draftMeta} impact={impact} loadingImpact={loadingImpact} onPublish={publish} saving={saving}
             />
+          )}
+          {tab === "certificate" && (
+            <CertificateTab program={program} set={set} />
           )}
         </div>
 
@@ -807,6 +812,101 @@ function SetupTab({ program, set, meta, allPrograms, hwTemplates, emailTemplates
       </div>
     </div>
   );
+}
+
+
+function CertificateTab({ program, set }) {
+  const stored = program.school_support?.certificate || {};
+  const resolved = resolveSchoolCertificateTemplate(program.name, stored);
+  const courseName = schoolCertificateCourseName(program.name || "School course");
+  const update = (patch) => set({ school_support: { ...(program.school_support || {}), certificate: { ...stored, ...patch } } });
+  const reset = () => set({ school_support: { ...(program.school_support || {}), certificate: schoolCertificateDefaults(program.name) } });
+  const enabled = stored.enabled !== false;
+  const lessons = (program.modules || []).reduce((n, m) => n + (m.lessons || []).filter(l => l.active !== false).length, 0);
+  const checkpoints = (program.modules || []).reduce((n, m) => n + (m.lessons || []).filter(l => l.active !== false && l.checkpoint?.enabled).length, 0);
+
+  return <div className="p-3 sm:p-6 max-w-[1320px] mx-auto" data-testid="program-certificate-tab">
+    <div className="grid xl:grid-cols-[430px_1fr] gap-5 items-start">
+      <div className="space-y-4">
+        <section className="rounded-2xl border border-shBorder/70 bg-black/15 p-4 sm:p-5">
+          <div className="flex items-start justify-between gap-3">
+            <div>
+              <p className="text-[10px] font-black uppercase tracking-[0.18em] text-shPrimary">Course Certificate</p>
+              <h3 className="text-lg font-black text-shText mt-1">Graduation certificate settings</h3>
+              <p className="text-[12px] text-shTextMuted mt-1 leading-relaxed">One certificate is available when this course is completed. Client name, dog name, course name, completion date, trainer and certificate number are filled automatically.</p>
+            </div>
+            <label className="flex items-center gap-2 text-[11px] font-black text-shText shrink-0"><input type="checkbox" checked={enabled} onChange={e=>update({enabled:e.target.checked})}/> Enabled</label>
+          </div>
+          <div className="mt-4 rounded-xl border border-shSecondary/25 bg-shSecondary/[0.04] p-3">
+            <p className="text-[9px] font-black uppercase tracking-widest text-shSecondary">Detected template</p>
+            <p className="text-sm font-black text-shText mt-1">{resolved.level} · {resolved.eyebrow}</p>
+            <p className="text-[11px] text-shTextMuted mt-1">Template selection is automatic from the course name, including the free Sit &amp; Down mini course.</p>
+          </div>
+        </section>
+
+        <section className={`rounded-2xl border border-shBorder/70 bg-black/15 p-4 sm:p-5 space-y-4 ${enabled?"":"opacity-55"}`}>
+          <Field label="Graduate banner">
+            <input disabled={!enabled} className="input-school" value={stored.eyebrow ?? resolved.eyebrow} onChange={e=>update({eyebrow:e.target.value})} maxLength={80}/>
+          </Field>
+          <Field label="Completion line">
+            <textarea disabled={!enabled} className="input-school min-h-[82px]" value={stored.completion_note ?? resolved.completionNote} onChange={e=>update({completion_note:e.target.value})} maxLength={300}/>
+          </Field>
+          <div className="grid grid-cols-2 gap-3">
+            <Field label="Primary accent">
+              <div className="flex items-center gap-2"><input disabled={!enabled} type="color" className="w-11 h-10 rounded-lg border border-shBorder bg-transparent p-1" value={stored.accent ?? resolved.accent} onChange={e=>update({accent:e.target.value})}/><input disabled={!enabled} className="input-school uppercase" value={stored.accent ?? resolved.accent} onChange={e=>update({accent:e.target.value})} maxLength={7}/></div>
+            </Field>
+            <Field label="Secondary accent">
+              <div className="flex items-center gap-2"><input disabled={!enabled} type="color" className="w-11 h-10 rounded-lg border border-shBorder bg-transparent p-1" value={stored.accent2 ?? resolved.accent2} onChange={e=>update({accent2:e.target.value})}/><input disabled={!enabled} className="input-school uppercase" value={stored.accent2 ?? resolved.accent2} onChange={e=>update({accent2:e.target.value})} maxLength={7}/></div>
+            </Field>
+          </div>
+          {(resolved.key === "level-3" || stored.safety_note) && <Field label="Safety / clarification line">
+            <textarea disabled={!enabled} className="input-school min-h-[82px]" value={stored.safety_note ?? resolved.safetyNote ?? ""} onChange={e=>update({safety_note:e.target.value})} maxLength={500}/>
+          </Field>}
+          <div className="flex flex-wrap gap-2 pt-1">
+            <button type="button" onClick={reset} className="min-h-[40px] px-3 rounded-xl border border-shBorder text-[10px] font-black uppercase tracking-widest text-shText"><i className="fas fa-rotate-left mr-1.5"/>Reset course defaults</button>
+            <span className="text-[10px] text-shTextMuted self-center">Use the normal Save Draft / Publish controls after changing certificate settings.</span>
+          </div>
+        </section>
+      </div>
+
+      <section className="rounded-2xl border border-shBorder/70 bg-black/20 p-3 sm:p-5 sticky top-0">
+        <div className="flex items-center justify-between gap-3 mb-3">
+          <div><p className="text-[10px] font-black uppercase tracking-widest text-shSecondary">Live preview</p><p className="text-[11px] text-shTextMuted mt-0.5">Sample names only — real graduate information is automatic.</p></div>
+          {!enabled && <span className="rounded-full border border-shAccent/30 bg-shAccent/10 px-2.5 py-1 text-[9px] font-black uppercase tracking-widest text-shAccent">Disabled</span>}
+        </div>
+        <div className="relative overflow-hidden rounded-xl border-[3px] border-[#071629] bg-[#f8f6ef] text-[#071629] aspect-[1.42/1] shadow-2xl" style={{opacity:enabled?1:.45}}>
+          <div className="absolute inset-[9px] border border-[#087ff5]/70 pointer-events-none"/>
+          <div className="absolute -left-10 -top-6 w-[45%] h-16 -rotate-3 skew-x-[-14deg]" style={{background:`linear-gradient(90deg, ${resolved.accent}, transparent)`}}/>
+          <div className="absolute -right-10 -bottom-5 w-[45%] h-24 -rotate-6 skew-x-[-14deg]" style={{background:`linear-gradient(135deg, transparent, ${resolved.accent2}, ${resolved.accent})`}}/>
+          <div className="absolute left-0 bottom-3 w-[27%] opacity-[0.10]"><HuskyDogImage name={program.name||"Sit Happens"} className="w-full h-auto grayscale"/></div>
+          <div className="relative h-full flex flex-col items-center px-6 pt-6 pb-4 text-center">
+            <img src="/logo.png" alt="Sit Happens" className="w-[27%] max-w-[220px]"/>
+            <div className="mt-2 px-8 py-1 text-[8px] sm:text-[10px] font-black uppercase tracking-[0.18em] -skew-x-6" style={{background:resolved.accent}}><span className="inline-block skew-x-6">{resolved.eyebrow}</span></div>
+            <div className="text-[9px] sm:text-[11px] mt-2 tracking-[0.5em]" style={{color:resolved.accent2}}>★ ★ ★</div>
+            <div className="font-black uppercase leading-none mt-1 text-[25px] sm:text-[42px]" style={{fontFamily:'Impact, "Arial Narrow", sans-serif'}}>Certificate of Completion</div>
+            <p className="text-[9px] sm:text-[12px] mt-3">This certifies that</p>
+            <div className="text-[24px] sm:text-[43px] leading-none mt-1 px-5 border-b-[3px]" style={{fontFamily:'"Brush Script MT", cursive',borderColor:resolved.accent}}>Sample Client &amp; Bella</div>
+            <p className="text-[9px] sm:text-[12px] mt-2">successfully completed</p>
+            <div className="text-[14px] sm:text-[23px] font-black italic mt-0.5">{courseName}</div>
+            <p className="text-[7px] sm:text-[10px] text-[#4e5968] italic mt-1 max-w-[70%]">{resolved.completionNote}</p>
+            <div className="flex gap-2 sm:gap-3 mt-3 text-[7px] sm:text-[9px] font-black">
+              <span className="rounded-md border px-2 py-1 bg-white/70" style={{borderColor:resolved.accent}}>{lessons || "—"} LESSONS</span>
+              <span className="rounded-md border px-2 py-1 bg-white/70" style={{borderColor:resolved.accent2}}>{(program.modules||[]).length || "—"} MODULES</span>
+              {checkpoints>0&&<span className="rounded-md border px-2 py-1 bg-white/70" style={{borderColor:resolved.accent}}>{checkpoints} CHECKPOINTS</span>}
+            </div>
+            <div className="mt-auto w-full grid grid-cols-3 gap-5 items-end px-8 pb-1 text-[7px] sm:text-[9px]">
+              <div><div className="border-t pt-1" style={{borderColor:resolved.accent2}}>Completed</div><b>August 25, 2026</b></div>
+              <div><div className="text-[13px] sm:text-[20px] border-b" style={{fontFamily:'"Brush Script MT", cursive',borderColor:resolved.accent2}}>Sit Happens Trainer</div><span>Trainer</span></div>
+              <div><div className="border-t pt-1" style={{borderColor:resolved.accent2}}>Certificate No.</div><b>SH-{resolved.code}-2026-ABC12345</b></div>
+            </div>
+          </div>
+          <div className="absolute right-5 bottom-14 w-20 h-20 sm:w-28 sm:h-28 rounded-full bg-[#071629] border-[5px] border-white shadow-[0_0_0_3px_#087ff5] grid place-items-center text-white text-center font-black">
+            <div><span className="block text-[8px] sm:text-[11px]">{resolved.level}</span><span className="block text-[22px] sm:text-[38px] leading-none mt-1" style={{color:resolved.accent}}>{resolved.sealMark}</span></div>
+          </div>
+        </div>
+      </section>
+    </div>
+  </div>;
 }
 
 function SetupSummaryRow({ label, value }) {
