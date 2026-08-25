@@ -4,7 +4,15 @@ import PortalShop from "../components/PortalShop";
 import GuestAuthModal from "../components/GuestAuthModal";
 import PublicBrandShell from "../components/PublicBrandShell";
 import { EmptyState, PremiumButton, SectionCard } from "../components/premium";
+import { isFreeClaimable } from "../lib/freeCourseClaim";
 import { readGuestCart, writeGuestCart, stashPendingShopRedirect } from "../lib/shopGuestCart";
+
+function initialPublicShopTab() {
+  if (typeof window === "undefined") return "all";
+  const params = new URLSearchParams(window.location.search);
+  const requested = params.get("section") || params.get("tab");
+  return requested === "online_school" ? "online_school" : "all";
+}
 
 // Public no-account storefront — the guest-mode entry point mounted by
 // App.js's ShopRouteGate whenever a visitor with no valid session lands on
@@ -22,6 +30,8 @@ export default function PublicShop() {
   };
 
   const [authOpen, setAuthOpen] = useState(false);
+  const [shopTab, setShopTab] = useState(initialPublicShopTab);
+  const [freeCourse, setFreeCourse] = useState(null);
   // null = still checking; true/false once /settings/public resolves.
   // Read directly rather than waiting on PortalShop's own fetch so a
   // disabled shop shows a clean "closed" state instead of a raw 404 error
@@ -39,6 +49,25 @@ export default function PublicShop() {
     return () => { cancelled = true; };
   }, []);
 
+  // Online School discovery — the public hero can send a visitor straight
+  // to the real free-course item when one is deliberately configured as
+  // claimable. The catalog remains the source of truth; no program id/name
+  // is hardcoded into the marketing surface.
+  useEffect(() => {
+    let cancelled = false;
+    api.get("/public/shop/catalog")
+      .then(({ data }) => {
+        if (cancelled) return;
+        const free = (data?.items || []).find((item) =>
+          item.kind === "training_program"
+          && item.purchase_fulfillment === "online_school"
+          && isFreeClaimable(item));
+        setFreeCourse(free || null);
+      })
+      .catch(() => { if (!cancelled) setFreeCourse(null); });
+    return () => { cancelled = true; };
+  }, []);
+
   const handleRequireAccount = () => {
     // Defense in depth — the primary path never navigates away from /shop
     // at all (see GuestAuthModal's doc comment), but stashing the current,
@@ -46,6 +75,26 @@ export default function PublicShop() {
     // the visitor manually leaves and comes back) still returns them here.
     stashPendingShopRedirect(window.location.pathname);
     setAuthOpen(true);
+  };
+
+  const focusOnlineSchool = () => {
+    setShopTab("online_school");
+    const params = new URLSearchParams(window.location.search);
+    params.set("section", "online_school");
+    params.delete("tab");
+    const query = params.toString();
+    window.history.replaceState({}, "", `${window.location.pathname}${query ? `?${query}` : ""}`);
+    setTimeout(() => {
+      document.querySelector('[data-testid="public-online-school-catalog"]')?.scrollIntoView({ behavior: "smooth", block: "start" });
+    }, 0);
+  };
+
+  const startFreeCourse = () => {
+    if (freeCourse?.id) {
+      window.location.href = `/shop/item/training_program/${encodeURIComponent(freeCourse.id)}`;
+      return;
+    }
+    focusOnlineSchool();
   };
 
   const shellAction = (
@@ -91,8 +140,43 @@ export default function PublicShop() {
       homeTestId="public-shop-home-link"
       mascotKey="shop-husky"
     >
-      <section className="sh-public-shop-canvas">
-        <PortalShop mode="guest" fullScreen initialTab="all" cart={cart} onCartChange={setCart} onRequireAccount={handleRequireAccount} />
+      <section
+        data-testid="public-online-school-hero"
+        className="relative overflow-hidden rounded-2xl border border-shSecondary/35 bg-gradient-to-br from-shSecondary/15 via-[var(--sh-card-base)] to-shPrimary/10 p-5 sm:p-7 mb-5 shadow-sh"
+      >
+        <div className="absolute inset-0 pointer-events-none opacity-80"
+             style={{ background: "radial-gradient(circle at 0% 0%, rgba(0,169,224,0.18), transparent 42%), radial-gradient(circle at 100% 100%, rgba(140,198,63,0.13), transparent 44%)" }}/>
+        <div className="relative grid lg:grid-cols-[1fr_auto] gap-5 lg:gap-8 items-center">
+          <div>
+            <p className="text-[10px] sm:text-[11px] font-black uppercase tracking-[0.28em] text-shSecondary">
+              <i className="fas fa-graduation-cap mr-2 text-shPrimary"/>Sit Happens Online School
+            </p>
+            <h2 className="sh-display text-2xl sm:text-4xl text-shText mt-2 leading-tight">TRAIN YOUR DOG. ANYWHERE.</h2>
+            <p className="text-shTextMuted text-sm sm:text-base leading-relaxed mt-2 max-w-2xl">
+              Real Sit Happens training in a guided online format — clear lessons, hands-on practice, progress tracking, and trainer-built programs you can work through at home.
+            </p>
+            <div className="flex flex-wrap gap-2 mt-4 text-[10px] sm:text-[11px] font-black uppercase tracking-widest">
+              <span className="px-2.5 py-1.5 rounded-full border border-shSecondary/30 bg-shSecondary/10 text-shSecondary"><i className="fas fa-circle-play mr-1.5"/>Self-paced</span>
+              <span className="px-2.5 py-1.5 rounded-full border border-shPrimary/30 bg-shPrimary/10 text-shPrimary"><i className="fas fa-list-check mr-1.5"/>Guided practice</span>
+              <span className="px-2.5 py-1.5 rounded-full border border-shBorder bg-black/15 text-shTextMuted"><i className="fas fa-chart-line mr-1.5"/>Track progress</span>
+            </div>
+          </div>
+          <div className="flex flex-col sm:flex-row lg:flex-col gap-2 min-w-[220px]">
+            <PremiumButton variant="primary" onClick={focusOnlineSchool} data-testid="public-online-school-view-classes" className="justify-center py-3">
+              <i className="fas fa-graduation-cap"/>View Online Classes
+            </PremiumButton>
+            <PremiumButton variant="secondary" onClick={startFreeCourse} data-testid="public-online-school-start-free" className="justify-center py-3">
+              <i className="fas fa-gift"/>Start Free Course
+            </PremiumButton>
+            <p className="text-[10px] text-shTextMuted text-center lg:text-left">
+              {freeCourse ? "Free starter course available now — no checkout required." : "Browse Online School to see current classes and free-course availability."}
+            </p>
+          </div>
+        </div>
+      </section>
+
+      <section className="sh-public-shop-canvas" data-testid="public-online-school-catalog">
+        <PortalShop mode="guest" fullScreen initialTab={shopTab} cart={cart} onCartChange={setCart} onRequireAccount={handleRequireAccount} />
       </section>
       <GuestAuthModal open={authOpen} onClose={() => setAuthOpen(false)} />
     </PublicBrandShell>
