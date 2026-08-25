@@ -37,8 +37,6 @@ class SchoolExperienceFeedbackIn(BaseModel):
 
 
 def _feedback_id(client_id: str, dog_id: str, program_id: str) -> str:
-    # Stable identity makes double-click/concurrent upserts converge on one
-    # current review without depending on a separately-managed unique index.
     return f"school-experience:{client_id}:{dog_id}:{program_id}"
 
 
@@ -99,10 +97,8 @@ def install_school_experience_feedback(*, server_module, db) -> None:
         ident = await _identity_snapshot(db, se, dp)
         if not ident.get("program_id"):
             raise HTTPException(status_code=422, detail="This School enrollment has no program identity")
-        row = await db.school_experience_feedback.find_one(
-            {"id": _feedback_id(ident["client_id"], ident["dog_id"], ident["program_id"])},
-            {"_id": 0},
-        )
+        rid = _feedback_id(ident["client_id"], ident["dog_id"], ident["program_id"])
+        row = await db.school_experience_feedback.find_one({"_id": rid}, {"_id": 0})
         return {
             "feedback": row,
             "course": {
@@ -127,8 +123,6 @@ def install_school_experience_feedback(*, server_module, db) -> None:
 
         now = _now()
         rid = _feedback_id(ident["client_id"], ident["dog_id"], ident["program_id"])
-        previous = await db.school_experience_feedback.find_one({"id": rid}, {"_id": 0})
-        revision = int((previous or {}).get("revision") or 0) + 1
         status = dp.get("status") or se.get("status") or "active"
         payload = {
             "id": rid,
@@ -146,27 +140,34 @@ def install_school_experience_feedback(*, server_module, db) -> None:
             "recommend": body.recommend,
             "testimonial_permission": bool(body.testimonial_permission),
             "source": body.source,
-            "revision": revision,
             "updated_at": now,
             "updated_by": user.get("id"),
-            "created_at": (previous or {}).get("created_at") or now,
-            "created_by": (previous or {}).get("created_by") or user.get("id"),
         }
 
+        # The deterministic key is Mongo's real unique _id, not merely a
+        # regular field. Combined with an atomic $inc this guarantees one
+        # current review and monotonically increasing revisions even if a
+        # client double-clicks or two saves arrive at nearly the same time.
         row = await db.school_experience_feedback.find_one_and_update(
-            {"id": rid},
-            {"$set": payload},
+            {"_id": rid},
+            {
+                "$set": payload,
+                "$setOnInsert": {"created_at": now, "created_by": user.get("id")},
+                "$inc": {"revision": 1},
+            },
             upsert=True,
             projection={"_id": 0},
             return_document=ReturnDocument.AFTER,
         )
+        revision = int((row or {}).get("revision") or 1)
         await db.school_experience_feedback_history.insert_one({
-            **payload,
+            **(row or payload),
             "id": str(uuid.uuid4()),
             "feedback_id": rid,
+            "revision": revision,
             "snapshotted_at": now,
         })
-        return {"feedback": row, "saved": True, "updated": bool(previous)}
+        return {"feedback": row, "saved": True, "updated": revision > 1}
 
     @app.get("/api/admin/school/experience-feedback")
     async def admin_experience_feedback(
