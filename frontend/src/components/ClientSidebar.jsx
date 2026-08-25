@@ -36,10 +36,14 @@ export default function ClientSidebar({
   showPhotography = false,
   showMessages = true,
   showHelp = false,
-  onHome, onBook, onShop, onPhotography, onMessages,
+  onHome, onBook, onSchool, onShop, onPhotography, onMessages,
   onMyDogs, onPayments, onCredits, onRewards, onRefer, onHelp,
 }) {
   const [activeKey, setActiveKey] = useState("home");
+  // Portal.jsx can pass its in-app School handler. The fallback keeps this
+  // nav component safe in isolation/tests and still lands an authenticated
+  // client on the routed School area after a normal page load.
+  const openSchool = onSchool || (() => { window.location.href = "/school"; });
 
   return (
     <aside
@@ -55,6 +59,7 @@ export default function ClientSidebar({
       <nav className="flex-1 overflow-y-auto py-3 px-2.5 space-y-0.5">
         <NavItem icon="fa-house" label="Home" itemKey="home" active={activeKey === "home"} onSelect={setActiveKey} onClick={onHome} />
         <NavItem icon="fa-calendar-plus" label="Book" itemKey="book" active={activeKey === "book"} onSelect={setActiveKey} onClick={onBook} />
+        <NavItem icon="fa-graduation-cap" label="Online School" itemKey="school" active={activeKey === "school"} onSelect={setActiveKey} onClick={openSchool} />
         <NavItem icon="fa-bag-shopping" label="Shop" itemKey="shop" active={activeKey === "shop"} onSelect={setActiveKey} badge={shopCartCount} onClick={onShop} />
         {showPhotography && (
           <NavItem icon="fa-camera-retro" label="Photography" itemKey="photography" active={activeKey === "photography"} onSelect={setActiveKey} onClick={onPhotography} />
