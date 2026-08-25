@@ -15,6 +15,7 @@ import TrainerAssistQueue from "../components/TrainerAssistQueue";
 import SchoolStudentsPanel from "../components/school/SchoolStudentsPanel";
 import SchoolInterventionsPanel from "../components/school/SchoolInterventionsPanel";
 import SchoolAnalyticsPanel from "../components/school/SchoolAnalyticsPanel";
+import SchoolExperienceFeedbackAdmin from "../components/school/SchoolExperienceFeedbackAdmin";
 import SchoolResourcesPanel from "../components/school/SchoolResourcesPanel";
 import SchoolSettingsPanel from "../components/school/SchoolSettingsPanel";
 import { navigateToScreen, announceAttentionChanged } from "../lib/schoolHq";
@@ -152,6 +153,7 @@ export default function SchoolHQ() {
     { key: "students", label: "Students", icon: "fa-user-graduate", accent: "cyan" },
     { key: "interventions", label: "Interventions", icon: "fa-shield-heart", accent: "orange" },
     { key: "analytics", label: "Analytics", icon: "fa-chart-column", accent: "lime" },
+    { key: "client_feedback", label: "Client Feedback", icon: "fa-star", accent: "cyan" },
     { key: "resources", label: "Resources", icon: "fa-folder-open", accent: "cyan" },
     { key: "settings", label: "Settings", icon: "fa-sliders", accent: "neutral" },
   ];
@@ -230,6 +232,7 @@ export default function SchoolHQ() {
       {tab === "students" && <SchoolStudentsPanel initialStudentId={studentTargetId} onInitialConsumed={() => setStudentTargetId(null)} />}
       {tab === "interventions" && <SchoolInterventionsPanel onOpenStudent={(id) => { setStudentTargetId(id); setTab("students"); }} />}
       {tab === "analytics" && <SchoolAnalyticsPanel />}
+      {tab === "client_feedback" && <SchoolExperienceFeedbackAdmin />}
       {tab === "resources" && <SchoolResourcesPanel />}
       {tab === "settings" && <SchoolSettingsPanel />}
 
