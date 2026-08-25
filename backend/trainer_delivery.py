@@ -1,24 +1,23 @@
 """Enforced trainer delivery for in-person and Board & Train programs.
 
-This module deliberately sits on top of the existing canonical training spine:
+This module is an additive runtime extension over the canonical training spine:
 training_session_drafts -> complete_training_session -> training_session_log ->
-dog_programs progress.  It does not introduce a second tracker or a second
-progress model.
+dog_programs progress.  It never creates a second progress/training model.
 
-Production installs it from app_entry.py after server.py has registered all of
-its canonical routes.  That lets us add two things safely without duplicating
-those routes:
+It provides three operational guarantees:
 
-* an HTTP enforcement layer around the existing session-completion endpoint;
-* Board & Train daily orchestration that reuses the existing residential
-  booking and session-draft machinery (AM/PM are session labels, not fake
-  bookings).
+1. Staff-led sessions cannot be completed until the trainer records the work,
+   observations, client-safe handoff, summary, and explicit curriculum choice.
+2. A resident Board & Train dog gets two required daily session slots (AM/PM)
+   in the existing Training Hub, using the real residential booking and normal
+   session drafts with distinct labels rather than fake daily bookings.
+3. A staff-led training booking cannot be checked out while required trainer
+   documentation is unresolved.  A true owner can pre-authorize one audited,
+   one-time emergency override with a written reason.
 
-The rules are intentionally strict for staff-led School enrollments.  A trainer
-cannot complete a normal session without documenting the planned work, today’s
-observations, client-safe handoff, session summary, and an explicit advancement
-choice.  A legitimate no-training/recovery day remains possible by explicitly
-skipping planned work with reasons and recording an advancement/recovery reason.
+A legitimate recovery/no-training session is supported: every planned activity
+is explicitly skipped with a reason and the completion carries the recovery or
+safety reason.  The system never asks a trainer to invent a score.
 """
 from __future__ import annotations
 
@@ -39,6 +38,7 @@ STAFF_SCHOOL_CHANNELS = {"in_person_school", "hybrid_school"}
 BOARD_TRAIN_SLOTS = ("am", "pm")
 _SYNTH_RE = re.compile(r"^/api/bookings/([^/]+)~bt~(am|pm|outing)/training-session/draft$")
 _COMPLETE_RE = re.compile(r"^/api/training-session-drafts/([^/]+)/complete$")
+_CHECKOUT_RE = re.compile(r"^/api/bookings/([^/]+)/(check-out|check-out-group)$")
 _BT_LABEL_RE = re.compile(r"^bt:(\d{4}-\d{2}-\d{2}):(am|pm|outing)$")
 
 
@@ -51,6 +51,10 @@ class BoardTrainCloseoutIn(BaseModel):
     biggest_challenge: str = Field(min_length=2, max_length=3000)
     tomorrow_focus: str = Field(min_length=2, max_length=3000)
     client_update: str = Field(min_length=5, max_length=5000)
+
+
+class CheckoutOverrideIn(BaseModel):
+    reason: str = Field(min_length=10, max_length=2000)
 
 
 def _now() -> str:
@@ -79,8 +83,18 @@ def _staff_permission(server_module, user: dict) -> dict:
     return user
 
 
+def _owner_permission(server_module, user: dict) -> dict:
+    try:
+        if callable(getattr(server_module, "_is_owner", None)) and server_module._is_owner(user):
+            return user
+    except Exception:
+        pass
+    if user.get("role") == "admin" and user.get("staff_role") in (None, "", "owner"):
+        return user
+    raise HTTPException(status_code=403, detail="Owner permission required")
+
+
 async def _request_user(server_module, request: Request) -> dict:
-    """Authenticate an intercepted synthetic request with the canonical auth."""
     raw = _clean(request.headers.get("authorization"))
     if not raw.lower().startswith("bearer "):
         raise HTTPException(status_code=401, detail="Not authenticated")
@@ -104,11 +118,16 @@ def _trainer_policy(enrollment: dict) -> dict:
     snap = enrollment.get("program_snapshot") or {}
     cfg = ((snap.get("school_support") or {}).get("trainer_delivery") or {})
     program_type = snap.get("type") or enrollment.get("program_type")
-    staff_led = enrollment.get("delivery_channel") in STAFF_SCHOOL_CHANNELS or program_type == "board_train"
-    enabled = bool(cfg.get("enabled", staff_led))
     is_bt = program_type == "board_train"
-    sessions = _safe_int(cfg.get("required_sessions_per_day"), 2 if is_bt else 1, 1, 4)
-    slots = list(BOARD_TRAIN_SLOTS[:sessions]) if sessions <= 2 else list(BOARD_TRAIN_SLOTS) + [f"session_{i}" for i in range(3, sessions + 1)]
+    staff_led = enrollment.get("delivery_channel") in STAFF_SCHOOL_CHANNELS or is_bt
+    enabled = bool(cfg.get("enabled", staff_led))
+
+    # V1 intentionally supports exactly the operating model we are exposing in
+    # the UI: one staff-led appointment session, or AM+PM for Board & Train.
+    # Do not accept a hidden 3rd/4th required slot that the dashboard cannot
+    # represent and therefore a trainer could never satisfy.
+    sessions = _safe_int(cfg.get("required_sessions_per_day"), 2 if is_bt else 1, 1, 2 if is_bt else 1)
+    slots = list(BOARD_TRAIN_SLOTS[:sessions]) if is_bt else []
     return {
         "enabled": enabled,
         "program_type": program_type,
@@ -137,11 +156,7 @@ def _board_train_label_parts(label: Optional[str]) -> Optional[Tuple[str, str]]:
 
 
 def validate_trainer_session(draft: dict, completion: dict, policy: dict) -> dict:
-    """Return structured completeness result for one canonical draft.
-
-    A trainer either records the planned work or explicitly marks it skipped
-    with a reason.  We never manufacture a score and we never infer mastery.
-    """
+    """Validate the trainer record before the canonical completion route runs."""
     if not policy.get("enabled") or draft.get("status") == "completed":
         return {"ok": True, "missing": [], "excused": False}
 
@@ -179,14 +194,14 @@ def validate_trainer_session(draft: dict, completion: dict, policy: dict) -> dic
 
     if all_skipped and activities and not advancement_reason:
         missing.append("Enter the recovery/safety/no-training reason before completing an excused session")
-
     if not worked and not excused:
         missing.append("Record at least one training activity")
 
     if not excused:
-        if policy.get("require_client_observation"):
-            if not any(len(_clean(a.get("client_observation"))) >= 2 for _, a in worked):
-                missing.append("Add at least one client-safe skill observation")
+        if policy.get("require_client_observation") and not any(
+            len(_clean(actual.get("client_observation"))) >= 2 for _, actual in worked
+        ):
+            missing.append("Add at least one client-safe skill observation")
         if policy.get("require_session_summary"):
             if len(_clean(draft.get("what_went_well"))) < 2:
                 missing.append("Complete What Went Well")
@@ -203,7 +218,6 @@ def validate_trainer_session(draft: dict, completion: dict, policy: dict) -> dic
     if policy.get("require_explicit_advancement") and not advancement:
         missing.append("Choose what happens next for the curriculum")
 
-    # Stable order + no repeated strings keeps the UI message readable.
     deduped = list(dict.fromkeys(missing))
     return {"ok": not deduped, "missing": deduped, "excused": excused}
 
@@ -222,6 +236,7 @@ async def _record_delivery_audit(db, draft: dict, user: Optional[dict], *, excus
             "draft_id": draft.get("id"),
             "enrollment_id": draft.get("enrollment_id"),
             "dog_id": draft.get("dog_id"),
+            "booking_id": draft.get("booking_id"),
             "session_label": draft.get("session_label") or "",
             "occurrence_date": draft.get("occurrence_date"),
             "trainer_id": (user or {}).get("id"),
@@ -246,17 +261,17 @@ async def _required_slot_state(db, enrollment_id: str, session_date: str, policy
     by_slot_excuse = {e.get("slot"): e for e in excuses}
     out = {}
     for slot in policy.get("required_slots") or []:
-        d = by_label.get(_board_train_label(session_date, slot))
+        draft = by_label.get(_board_train_label(session_date, slot))
         excuse = by_slot_excuse.get(slot)
-        if d and d.get("status") == "completed":
+        if draft and draft.get("status") == "completed":
             status = "completed"
         elif excuse:
             status = "excused"
-        elif d:
-            status = "in_progress" if (d.get("actuals") or {}) else "plan_ready"
+        elif draft:
+            status = "in_progress" if (draft.get("actuals") or {}) else "plan_ready"
         else:
             status = "not_started"
-        out[slot] = {"status": status, "draft": d, "excuse": excuse}
+        out[slot] = {"status": status, "draft": draft, "excuse": excuse}
     return out
 
 
@@ -264,7 +279,7 @@ async def _maybe_auto_close_board_train_day(db, enrollment: dict, draft: dict, u
     parts = _board_train_label_parts(draft.get("session_label"))
     if not parts or not policy.get("daily_closeout_required"):
         return
-    session_date, slot = parts
+    session_date, _slot = parts
     states = await _required_slot_state(db, enrollment.get("id"), session_date, policy)
     if not states or not all(v.get("status") in {"completed", "excused"} for v in states.values()):
         return
@@ -275,13 +290,14 @@ async def _maybe_auto_close_board_train_day(db, enrollment: dict, draft: dict, u
     if existing:
         return
 
-    completed_drafts = [v.get("draft") for v in states.values() if v.get("draft") and v.get("draft", {}).get("status") == "completed"]
-    preferred = next((d for d in completed_drafts if _board_train_label_parts(d.get("session_label"))[1] == "pm"), None)
-    preferred = preferred or (completed_drafts[-1] if completed_drafts else draft)
+    completed = [v.get("draft") for v in states.values() if v.get("draft") and v["draft"].get("status") == "completed"]
+    preferred = next(
+        (d for d in completed if (_board_train_label_parts(d.get("session_label")) or (None, None))[1] == "pm"),
+        None,
+    )
+    preferred = preferred or (completed[-1] if completed else draft)
     client_update = _clean((preferred or {}).get("client_recap_note"))
     if len(client_update) < 5:
-        # Do not silently claim the day is closed if there is no usable client
-        # update.  The compliance endpoint will keep it visible as unresolved.
         return
 
     row = {
@@ -326,10 +342,10 @@ async def _board_train_residents(db, clock: datetime) -> List[dict]:
     bookings = await db.bookings.find(
         {
             "service_type": "training",
-            "status": {"nin": ["cancelled", "rejected"]},
+            "status": {"$nin": ["cancelled", "rejected"]},
             "date": {"$lte": today},
             "end_date": {"$gt": today},
-            "checked_in_at": {"$nin": [None, ""]},
+            "checked_in_at": {"$exists": True, "$nin": [None, ""]},
             "$or": [{"checked_out_at": {"$exists": False}}, {"checked_out_at": None}, {"checked_out_at": ""}],
         },
         {"_id": 0},
@@ -350,6 +366,8 @@ async def _board_train_residents(db, clock: datetime) -> List[dict]:
 
     out = []
     for booking in bookings:
+        if not booking.get("checked_in_at"):
+            continue
         service = by_service.get(booking.get("service_id"))
         program = by_program.get((service or {}).get("package_program_id"))
         if not service or not program:
@@ -360,9 +378,13 @@ async def _board_train_residents(db, clock: datetime) -> List[dict]:
         )
         if not enrollment:
             continue
-        se = await db.school_enrollments.find_one({"enrollment_id": enrollment.get("id")}, {"_id": 0})
-        dog = await db.dogs.find_one({"id": booking.get("dog_id")}, {"_id": 0, "id": 1, "name": 1, "photo": 1, "owner_id": 1}) or {}
-        client = await db.clients.find_one({"id": dog.get("owner_id")}, {"_id": 0, "id": 1, "name": 1}) or {}
+        school = await db.school_enrollments.find_one({"enrollment_id": enrollment.get("id")}, {"_id": 0})
+        dog = await db.dogs.find_one(
+            {"id": booking.get("dog_id")}, {"_id": 0, "id": 1, "name": 1, "photo": 1, "owner_id": 1}
+        ) or {}
+        client = await db.clients.find_one(
+            {"id": dog.get("owner_id")}, {"_id": 0, "id": 1, "name": 1}
+        ) or {}
         try:
             start = date.fromisoformat(_clean(booking.get("date"))[:10])
             end = date.fromisoformat(_clean(booking.get("end_date"))[:10])
@@ -371,15 +393,9 @@ async def _board_train_residents(db, clock: datetime) -> List[dict]:
         except Exception:
             day_number, total_days = 1, 1
         out.append({
-            "booking": booking,
-            "service": service,
-            "program": program,
-            "enrollment": enrollment,
-            "school_enrollment": se,
-            "dog": dog,
-            "client": client,
-            "day_number": day_number,
-            "total_days": total_days,
+            "booking": booking, "service": service, "program": program,
+            "enrollment": enrollment, "school_enrollment": school,
+            "dog": dog, "client": client, "day_number": day_number, "total_days": total_days,
         })
     return out
 
@@ -397,9 +413,8 @@ def _recommended_focus(enrollment: dict) -> List[str]:
     progress = enrollment.get("goal_progress") or {}
     names = []
     for goal in module.get("goals") or []:
-        if (progress.get(goal.get("id")) or {}).get("status") != "mastered":
-            if goal.get("name"):
-                names.append(goal.get("name"))
+        if (progress.get(goal.get("id")) or {}).get("status") != "mastered" and goal.get("name"):
+            names.append(goal.get("name"))
     return names[:4]
 
 
@@ -408,8 +423,8 @@ async def _board_train_rows(db, clock: datetime) -> Tuple[List[dict], List[str]]
     residents = await _board_train_residents(db, clock)
     rows: List[dict] = []
     real_booking_ids: List[str] = []
-    for r in residents:
-        booking, enrollment = r["booking"], r["enrollment"]
+    for row in residents:
+        booking, enrollment = row["booking"], row["enrollment"]
         real_booking_ids.append(booking.get("id"))
         policy = _trainer_policy(enrollment)
         states = await _required_slot_state(db, enrollment.get("id"), today, policy)
@@ -418,9 +433,11 @@ async def _board_train_rows(db, clock: datetime) -> Tuple[List[dict], List[str]]
         )
         module_name, lesson_name = _current_names(enrollment)
         assigned = None
-        se = r.get("school_enrollment") or {}
-        if se.get("assigned_trainer_id"):
-            trainer = await db.users.find_one({"id": se.get("assigned_trainer_id")}, {"_id": 0, "name": 1, "display_name": 1}) or {}
+        school = row.get("school_enrollment") or {}
+        if school.get("assigned_trainer_id"):
+            trainer = await db.users.find_one(
+                {"id": school.get("assigned_trainer_id")}, {"_id": 0, "name": 1, "display_name": 1}
+            ) or {}
             assigned = trainer.get("display_name") or trainer.get("name")
 
         for slot in policy.get("required_slots") or list(BOARD_TRAIN_SLOTS):
@@ -434,43 +451,91 @@ async def _board_train_rows(db, clock: datetime) -> Tuple[List[dict], List[str]]
             elif session_status == "excused":
                 session_status = "completed"
 
-            slot_label = "AM Training" if slot == "am" else "PM Training" if slot == "pm" else slot.replace("_", " ").title()
+            slot_label = "AM Training" if slot == "am" else "PM Training"
             if slot == (policy.get("required_slots") or [""])[-1] and policy.get("daily_closeout_required"):
                 slot_label += " + Daily Closeout"
-            reason = None
-            if session_status == "resolution_needed":
-                reason = f"board_train_{slot}_training_overdue"
-
+            reason = f"board_train_{slot}_training_overdue" if session_status == "resolution_needed" else None
             rows.append({
                 "booking_id": f"{booking.get('id')}~bt~{slot}",
                 "real_booking_id": booking.get("id"),
-                "dog_id": r["dog"].get("id"),
-                "dog_name": r["dog"].get("name") or "Dog",
-                "dog_photo": r["dog"].get("photo"),
-                "client_name": r["client"].get("name") or "",
-                "time": "AM" if slot == "am" else "PM" if slot == "pm" else slot_label,
-                "checked_in": True,
-                "session_status": session_status,
-                "resolution_reason": reason,
-                "program_name": f"{(enrollment.get('program_snapshot') or {}).get('name') or r['program'].get('name') or 'Board & Train'} · Day {r['day_number']} of {r['total_days']} · {slot_label}",
-                "current_module_name": module_name,
-                "current_lesson_name": lesson_name,
+                "dog_id": row["dog"].get("id"), "dog_name": row["dog"].get("name") or "Dog",
+                "dog_photo": row["dog"].get("photo"), "client_name": row["client"].get("name") or "",
+                "time": "AM" if slot == "am" else "PM", "checked_in": True,
+                "session_status": session_status, "resolution_reason": reason,
+                "program_name": f"{(enrollment.get('program_snapshot') or {}).get('name') or row['program'].get('name') or 'Board & Train'} · Day {row['day_number']} of {row['total_days']} · {slot_label}",
+                "current_module_name": module_name, "current_lesson_name": lesson_name,
                 "recommended_focus": _recommended_focus(enrollment),
-                "homework_completion": None,
-                "media_awaiting_review": 0,
-                "client_question": None,
+                "homework_completion": None, "media_awaiting_review": 0, "client_question": None,
                 "assigned_trainer": assigned,
                 "reopen_count": int(((state.get("draft") or {}).get("reopen_count") or 0)),
                 "draft_created_at": (state.get("draft") or {}).get("created_at"),
-                "needs_reassessment_count": 0,
-                "homework_difficulty_flags": 0,
-                "trainer_delivery_kind": "board_train",
-                "trainer_delivery_slot": slot,
-                "trainer_delivery_day": r["day_number"],
-                "trainer_delivery_total_days": r["total_days"],
+                "needs_reassessment_count": 0, "homework_difficulty_flags": 0,
+                "trainer_delivery_kind": "board_train", "trainer_delivery_slot": slot,
+                "trainer_delivery_day": row["day_number"], "trainer_delivery_total_days": row["total_days"],
                 "trainer_delivery_closeout_complete": bool(closeout),
             })
     return rows, real_booking_ids
+
+
+async def _staff_led_enrollments_for_dog(db, dog_id: str) -> List[dict]:
+    rows = await db.dog_programs.find(
+        {"dog_id": dog_id, "status": "active", "delivery_channel": {"$in": list(STAFF_SCHOOL_CHANNELS)}},
+        {"_id": 0},
+    ).to_list(50)
+    return [row for row in rows if _trainer_policy(row).get("enabled")]
+
+
+async def _checkout_bookings(db, anchor: dict, group: bool) -> List[dict]:
+    if not group or not anchor.get("group_id"):
+        return [anchor]
+    rows = await db.bookings.find(
+        {
+            "group_id": anchor.get("group_id"), "client_id": anchor.get("client_id"),
+            "service_type": anchor.get("service_type"), "date": anchor.get("date"),
+            "status": {"$ne": "completed"},
+            "checked_in_at": {"$exists": True, "$nin": [None, ""]},
+            "$or": [{"checked_out_at": {"$exists": False}}, {"checked_out_at": None}, {"checked_out_at": ""}],
+        }, {"_id": 0},
+    ).to_list(100)
+    return rows or [anchor]
+
+
+async def _checkout_blockers_for_booking(db, booking: dict, clock: datetime) -> List[str]:
+    if booking.get("service_type") != "training" or not booking.get("checked_in_at"):
+        return []
+
+    _service, program, bt_enrollment = await _board_train_context_for_booking(db, booking)
+    if program and bt_enrollment:
+        policy = _trainer_policy(bt_enrollment)
+        today = clock.date().isoformat()
+        states = await _required_slot_state(db, bt_enrollment.get("id"), today, policy)
+        missing = [slot.upper() for slot, state in states.items() if state.get("status") not in {"completed", "excused"}]
+        blockers = [f"{slot} Board & Train session is not complete or excused" for slot in missing]
+        closeout = await db.trainer_delivery_day_closeouts.find_one(
+            {"enrollment_id": bt_enrollment.get("id"), "session_date": today}, {"_id": 0, "id": 1}
+        )
+        if policy.get("daily_closeout_required") and not closeout:
+            blockers.append("Board & Train daily closeout/client update is not complete")
+        return blockers
+
+    enrollments = await _staff_led_enrollments_for_dog(db, booking.get("dog_id"))
+    if not enrollments:
+        return []
+    enrollment_ids = [e.get("id") for e in enrollments if e.get("id")]
+    completed = await db.training_session_drafts.find_one(
+        {"booking_id": booking.get("id"), "enrollment_id": {"$in": enrollment_ids}, "status": "completed"},
+        {"_id": 0, "id": 1},
+    )
+    if completed:
+        return []
+    return ["Required trainer session record is not complete"]
+
+
+async def _unused_checkout_override(db, booking_id: str) -> Optional[dict]:
+    return await db.trainer_delivery_checkout_overrides.find_one(
+        {"booking_id": booking_id, "$or": [{"used_at": {"$exists": False}}, {"used_at": None}, {"used_at": ""}]},
+        {"_id": 0}, sort=[("created_at", -1)]
+    )
 
 
 async def _response_body(response) -> bytes:
@@ -498,7 +563,7 @@ async def _replay_body(request: Request, body: bytes) -> None:
         sent = True
         return {"type": "http.request", "body": body, "more_body": False}
 
-    request._receive = receive  # Starlette's supported request receive hook internally.
+    request._receive = receive
 
 
 async def _manual_closeout(db, enrollment: dict, session_date: str, body: BoardTrainCloseoutIn, user: dict, policy: dict) -> dict:
@@ -524,7 +589,6 @@ async def _manual_closeout(db, enrollment: dict, session_date: str, body: BoardT
 
 
 def install_trainer_delivery(*, server_module, db) -> None:
-    """Install trainer enforcement + Board & Train daily orchestration once."""
     if getattr(server_module, "_trainer_delivery_installed", False):
         return
     app = server_module.app
@@ -533,10 +597,6 @@ def install_trainer_delivery(*, server_module, db) -> None:
     async def trainer_delivery_middleware(request: Request, call_next):
         path = request.url.path
 
-        # Board & Train rows use a synthetic booking id only as a UI transport
-        # so the existing Training Hub can show AM/PM as separate actionable
-        # cards.  The write still lands in the SAME canonical real booking and
-        # canonical session draft, with only session_label differing.
         synthetic = _SYNTH_RE.match(path) if request.method == "POST" else None
         if synthetic:
             try:
@@ -545,7 +605,9 @@ def install_trainer_delivery(*, server_module, db) -> None:
                 booking = await db.bookings.find_one({"id": real_booking_id}, {"_id": 0})
                 if not booking:
                     raise HTTPException(status_code=404, detail="Board & Train booking not found")
-                _, _, enrollment = await _board_train_context_for_booking(db, booking)
+                if not booking.get("checked_in_at"):
+                    raise HTTPException(status_code=409, detail="Board & Train dog must be checked in before training starts")
+                _service, _program, enrollment = await _board_train_context_for_booking(db, booking)
                 if not enrollment:
                     raise HTTPException(status_code=409, detail="Active Board & Train enrollment not found")
                 clock = await _business_clock(db)
@@ -576,9 +638,6 @@ def install_trainer_delivery(*, server_module, db) -> None:
                         "missing": check.get("missing") or [],
                     }})
 
-                # Board & Train clients receive one polished update, not two
-                # technical recaps.  AM is staff-only; PM is the daily client
-                # update and therefore always queues the existing recap path.
                 bt = _board_train_label_parts(draft.get("session_label"))
                 if bt:
                     completion["send_recap"] = bt[1] == "pm"
@@ -596,10 +655,42 @@ def install_trainer_delivery(*, server_module, db) -> None:
                         await _maybe_auto_close_board_train_day(db, enrollment, refreshed, user, policy)
                 return response
 
-        response = await call_next(request)
+        checkout_match = _CHECKOUT_RE.match(path) if request.method == "POST" else None
+        if checkout_match:
+            booking_id, action = checkout_match.group(1), checkout_match.group(2)
+            anchor = await db.bookings.find_one({"id": booking_id}, {"_id": 0})
+            if anchor:
+                clock = await _business_clock(db)
+                bookings = await _checkout_bookings(db, anchor, action == "check-out-group")
+                blockers = []
+                override_rows = []
+                for booking in bookings:
+                    reasons = await _checkout_blockers_for_booking(db, booking, clock)
+                    if not reasons:
+                        continue
+                    override = await _unused_checkout_override(db, booking.get("id"))
+                    if override:
+                        override_rows.append(override)
+                        continue
+                    dog = await db.dogs.find_one({"id": booking.get("dog_id")}, {"_id": 0, "name": 1}) or {}
+                    dog_name = dog.get("name") or "Dog"
+                    blockers.extend([f"{dog_name}: {reason}" for reason in reasons])
+                if blockers:
+                    return JSONResponse(status_code=409, content={"detail": {
+                        "code": "trainer_delivery_checkout_blocked",
+                        "msg": "Training checkout is blocked until the trainer record is finished: " + "; ".join(blockers),
+                        "blockers": blockers,
+                        "owner_override_available": True,
+                    }})
+                response = await call_next(request)
+                if 200 <= response.status_code < 300:
+                    for override in override_rows:
+                        await db.trainer_delivery_checkout_overrides.update_one(
+                            {"id": override.get("id")}, {"$set": {"used_at": _now(), "used_on_booking_id": booking_id}}
+                        )
+                return response
 
-        # Add resident Board & Train work to the EXISTING Training Hub roster.
-        # This preserves one dashboard and one session workspace.
+        response = await call_next(request)
         if request.method == "GET" and path == "/api/admin/training/today" and response.status_code == 200:
             try:
                 body = await _response_body(response)
@@ -608,21 +699,25 @@ def install_trainer_delivery(*, server_module, db) -> None:
                     return Response(content=body, status_code=response.status_code, headers=_copy_headers(response), media_type=response.media_type)
                 clock = await _business_clock(db)
                 bt_rows, real_ids = await _board_train_rows(db, clock)
-                existing = [row for row in existing if row.get("booking_id") not in set(real_ids)]
-                return JSONResponse(content=jsonable_encoder(existing + bt_rows), headers={k: v for k, v in _copy_headers(response).items() if k.lower() != "content-type"})
+                real_ids = set(real_ids)
+                existing = [row for row in existing if row.get("booking_id") not in real_ids]
+                return JSONResponse(
+                    content=jsonable_encoder(existing + bt_rows),
+                    headers={k: v for k, v in _copy_headers(response).items() if k.lower() != "content-type"},
+                )
             except Exception:
-                # The normal Training Hub must remain available even if the
-                # additive resident aggregation ever encounters malformed data.
                 try:
                     body
                 except UnboundLocalError:
                     body = await _response_body(response)
                 return Response(content=body, status_code=response.status_code, headers=_copy_headers(response), media_type=response.media_type)
-
         return response
 
     def trainer_dep(user: dict = Depends(server_module.get_current_user)):
         return _staff_permission(server_module, user)
+
+    def owner_dep(user: dict = Depends(server_module.get_current_user)):
+        return _owner_permission(server_module, user)
 
     @app.get("/api/admin/trainer-delivery/board-train/today")
     async def board_train_today(user: dict = Depends(trainer_dep)):
@@ -630,36 +725,51 @@ def install_trainer_delivery(*, server_module, db) -> None:
         residents = await _board_train_residents(db, clock)
         today = clock.date().isoformat()
         out = []
-        for r in residents:
-            enrollment = r["enrollment"]
+        for row in residents:
+            enrollment = row["enrollment"]
             policy = _trainer_policy(enrollment)
             states = await _required_slot_state(db, enrollment.get("id"), today, policy)
             closeout = await db.trainer_delivery_day_closeouts.find_one(
                 {"enrollment_id": enrollment.get("id"), "session_date": today}, {"_id": 0}
             )
             out.append({
-                "booking_id": r["booking"].get("id"), "school_enrollment_id": (r.get("school_enrollment") or {}).get("id"),
-                "enrollment_id": enrollment.get("id"), "dog_id": r["dog"].get("id"), "dog_name": r["dog"].get("name"),
-                "client_name": r["client"].get("name"), "program_name": (enrollment.get("program_snapshot") or {}).get("name") or r["program"].get("name"),
-                "day_number": r["day_number"], "total_days": r["total_days"],
-                "required_slots": {slot: {"status": state.get("status"), "reason": (state.get("excuse") or {}).get("reason")} for slot, state in states.items()},
+                "booking_id": row["booking"].get("id"),
+                "school_enrollment_id": (row.get("school_enrollment") or {}).get("id"),
+                "enrollment_id": enrollment.get("id"), "dog_id": row["dog"].get("id"),
+                "dog_name": row["dog"].get("name"), "client_name": row["client"].get("name"),
+                "program_name": (enrollment.get("program_snapshot") or {}).get("name") or row["program"].get("name"),
+                "day_number": row["day_number"], "total_days": row["total_days"],
+                "required_slots": {
+                    slot: {"status": state.get("status"), "reason": (state.get("excuse") or {}).get("reason")}
+                    for slot, state in states.items()
+                },
                 "daily_closeout": closeout, "policy": policy,
             })
         return out
 
     @app.post("/api/admin/trainer-delivery/board-train/{school_enrollment_id}/days/{session_date}/slots/{slot}/excuse")
-    async def excuse_board_train_slot(school_enrollment_id: str, session_date: str, slot: str, body: BoardTrainExcuseIn, user: dict = Depends(trainer_dep)):
+    async def excuse_board_train_slot(
+        school_enrollment_id: str, session_date: str, slot: str,
+        body: BoardTrainExcuseIn, user: dict = Depends(trainer_dep),
+    ):
         if slot not in BOARD_TRAIN_SLOTS:
             raise HTTPException(status_code=400, detail="Only AM or PM required sessions may be excused")
-        se = await db.school_enrollments.find_one({"id": school_enrollment_id}, {"_id": 0})
-        enrollment = await db.dog_programs.find_one({"id": (se or {}).get("enrollment_id")}, {"_id": 0}) if se else None
+        school = await db.school_enrollments.find_one({"id": school_enrollment_id}, {"_id": 0})
+        enrollment = await db.dog_programs.find_one({"id": (school or {}).get("enrollment_id")}, {"_id": 0}) if school else None
         if not enrollment or _trainer_policy(enrollment).get("program_type") != "board_train":
             raise HTTPException(status_code=404, detail="Board & Train enrollment not found")
+        existing = await db.training_session_drafts.find_one(
+            {"enrollment_id": enrollment.get("id"), "session_label": _board_train_label(session_date, slot), "status": "completed"},
+            {"_id": 0, "id": 1},
+        )
+        if existing:
+            raise HTTPException(status_code=409, detail="That required session is already completed and cannot be excused")
         row = {
             "id": str(uuid.uuid4()), "school_enrollment_id": school_enrollment_id,
             "enrollment_id": enrollment.get("id"), "dog_id": enrollment.get("dog_id"),
             "session_date": session_date, "slot": slot, "reason": body.reason.strip(),
-            "excused_by": user.get("id"), "excused_by_name": user.get("display_name") or user.get("name") or user.get("email"),
+            "excused_by": user.get("id"),
+            "excused_by_name": user.get("display_name") or user.get("name") or user.get("email"),
             "excused_at": _now(),
         }
         await db.trainer_delivery_excuses.update_one(
@@ -668,12 +778,31 @@ def install_trainer_delivery(*, server_module, db) -> None:
         return row
 
     @app.post("/api/admin/trainer-delivery/board-train/{school_enrollment_id}/days/{session_date}/closeout")
-    async def close_board_train_day(school_enrollment_id: str, session_date: str, body: BoardTrainCloseoutIn, user: dict = Depends(trainer_dep)):
-        se = await db.school_enrollments.find_one({"id": school_enrollment_id}, {"_id": 0})
-        enrollment = await db.dog_programs.find_one({"id": (se or {}).get("enrollment_id")}, {"_id": 0}) if se else None
+    async def close_board_train_day(
+        school_enrollment_id: str, session_date: str,
+        body: BoardTrainCloseoutIn, user: dict = Depends(trainer_dep),
+    ):
+        school = await db.school_enrollments.find_one({"id": school_enrollment_id}, {"_id": 0})
+        enrollment = await db.dog_programs.find_one({"id": (school or {}).get("enrollment_id")}, {"_id": 0}) if school else None
         if not enrollment or _trainer_policy(enrollment).get("program_type") != "board_train":
             raise HTTPException(status_code=404, detail="Board & Train enrollment not found")
         return await _manual_closeout(db, enrollment, session_date, body, user, _trainer_policy(enrollment))
+
+    @app.post("/api/admin/trainer-delivery/checkout-overrides/{booking_id}")
+    async def trainer_delivery_checkout_override(
+        booking_id: str, body: CheckoutOverrideIn, user: dict = Depends(owner_dep),
+    ):
+        booking = await db.bookings.find_one({"id": booking_id}, {"_id": 0, "id": 1, "dog_id": 1, "service_type": 1})
+        if not booking:
+            raise HTTPException(status_code=404, detail="Booking not found")
+        row = {
+            "id": str(uuid.uuid4()), "booking_id": booking_id, "dog_id": booking.get("dog_id"),
+            "reason": body.reason.strip(), "authorized_by": user.get("id"),
+            "authorized_by_name": user.get("display_name") or user.get("name") or user.get("email"),
+            "created_at": _now(), "used_at": None,
+        }
+        await db.trainer_delivery_checkout_overrides.insert_one(row)
+        return {**row, "_id": None}
 
     @app.get("/api/admin/trainer-delivery/compliance")
     async def trainer_delivery_compliance(user: dict = Depends(trainer_dep)):
@@ -681,25 +810,25 @@ def install_trainer_delivery(*, server_module, db) -> None:
         today = clock.date().isoformat()
         residents = await _board_train_residents(db, clock)
         dogs = []
-        required = completed = excused = 0
-        open_closeouts = 0
-        for r in residents:
-            enrollment = r["enrollment"]
+        required = completed = excused = open_closeouts = 0
+        for row in residents:
+            enrollment = row["enrollment"]
             policy = _trainer_policy(enrollment)
             states = await _required_slot_state(db, enrollment.get("id"), today, policy)
             closeout = await db.trainer_delivery_day_closeouts.find_one(
                 {"enrollment_id": enrollment.get("id"), "session_date": today}, {"_id": 0, "id": 1}
             )
             required += len(states)
-            completed += sum(1 for s in states.values() if s.get("status") == "completed")
-            excused += sum(1 for s in states.values() if s.get("status") == "excused")
+            completed += sum(1 for state in states.values() if state.get("status") == "completed")
+            excused += sum(1 for state in states.values() if state.get("status") == "excused")
             if policy.get("daily_closeout_required") and not closeout:
                 open_closeouts += 1
             dogs.append({
-                "dog_id": r["dog"].get("id"), "dog_name": r["dog"].get("name"),
-                "program_name": (enrollment.get("program_snapshot") or {}).get("name") or r["program"].get("name"),
-                "day_number": r["day_number"], "total_days": r["total_days"],
-                "slots": {k: v.get("status") for k, v in states.items()}, "closeout_complete": bool(closeout),
+                "dog_id": row["dog"].get("id"), "dog_name": row["dog"].get("name"),
+                "program_name": (enrollment.get("program_snapshot") or {}).get("name") or row["program"].get("name"),
+                "day_number": row["day_number"], "total_days": row["total_days"],
+                "slots": {slot: state.get("status") for slot, state in states.items()},
+                "closeout_complete": bool(closeout),
             })
         return {
             "date": today, "board_train_dogs": len(residents), "required_sessions": required,
