@@ -1,0 +1,71 @@
+name: Apply Certificate Studio to main
+
+on:
+  push:
+    branches:
+      - certificates/studio-free-course-push-20260825
+
+permissions:
+  contents: write
+
+jobs:
+  apply:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Assemble patch
+        shell: bash
+        run: |
+          cat .github/certificate-studio-patch/part-01.patchpart \
+              .github/certificate-studio-patch/part-02.patchpart \
+              .github/certificate-studio-patch/part-03.patchpart \
+              .github/certificate-studio-patch/part-04.patchpart \
+              .github/certificate-studio-patch/part-05.patchpart \
+              .github/certificate-studio-patch/part-06.patchpart \
+              > /tmp/certificate-studio.patch
+
+      - name: Apply to exact current main
+        shell: bash
+        run: |
+          set -euo pipefail
+          git fetch origin main
+          git checkout -B certificate-studio-final origin/main
+          test "$(git rev-parse HEAD)" = "140dc056013d8444e0a64ce2a29fe67a1110e586"
+          git apply --check /tmp/certificate-studio.patch
+          git apply /tmp/certificate-studio.patch
+
+      - name: Verify exact change scope and syntax
+        shell: bash
+        run: |
+          set -euo pipefail
+          expected="$(printf '%s\n' \
+            frontend/src/components/ProgramStudio.jsx \
+            frontend/src/components/school/SchoolStudentsPanel.jsx \
+            frontend/src/components/school/student/CourseCompletionCard.jsx \
+            frontend/src/components/school/student/courseCertificateIntegration.test.js \
+            frontend/src/lib/schoolCertificate.js \
+            frontend/src/lib/schoolCertificate.test.js | sort)"
+          actual="$(git diff --name-only | sort)"
+          test "$actual" = "$expected"
+          git diff --check
+          node -c frontend/src/lib/schoolCertificate.js
+          node -c frontend/src/lib/schoolCertificate.test.js
+
+      - name: Commit and fast-forward main
+        shell: bash
+        run: |
+          set -euo pipefail
+          git config user.name "sithappensohio-maker"
+          git config user.email "sithappensohio@gmail.com"
+          git add \
+            frontend/src/components/ProgramStudio.jsx \
+            frontend/src/components/school/SchoolStudentsPanel.jsx \
+            frontend/src/components/school/student/CourseCompletionCard.jsx \
+            frontend/src/components/school/student/courseCertificateIntegration.test.js \
+            frontend/src/lib/schoolCertificate.js \
+            frontend/src/lib/schoolCertificate.test.js
+          git commit -m "feat(school): add certificate studio and free course certificate"
+          git push origin HEAD:main
