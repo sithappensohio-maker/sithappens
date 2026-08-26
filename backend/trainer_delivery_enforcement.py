@@ -1,13 +1,13 @@
 """Trainer Delivery hardening + Board & Train daily session orchestration.
 
-Installed from app_entry.py after server.py is fully imported.  This keeps the
+Installed from app_entry.py after server.py is fully imported. This keeps the
 canonical School enrollment/session/checkout code in server.py authoritative:
-we wrap its existing helpers and enrich its existing Today route rather than
+we wrap existing helpers and enrich the existing Today route rather than
 creating a second progression or booking system.
 """
 from __future__ import annotations
 
-from datetime import date, timedelta
+from datetime import date, datetime, timedelta, timezone
 import logging
 from typing import Any, Dict, Iterable, List, Optional
 
@@ -25,12 +25,6 @@ def _text(value: Any) -> str:
     return str(value or "").strip()
 
 
-def _body_value(body: Any, key: str, default: Any = None) -> Any:
-    if isinstance(body, dict):
-        return body.get(key, default)
-    return getattr(body, key, default)
-
-
 def _activity_id(activity: dict) -> str:
     return _text(activity.get("id") or activity.get("skill_id") or activity.get("goal_id"))
 
@@ -40,9 +34,6 @@ def _actual_for(draft: dict, activity: dict) -> dict:
     aid = _activity_id(activity)
     if aid and isinstance(actuals.get(aid), dict):
         return actuals.get(aid) or {}
-    # Some older drafts keyed actuals by skill/goal id while the activity had
-    # its own generated id. Fall back narrowly so hardening does not strand
-    # an in-progress historical draft.
     for key in ("skill_id", "goal_id"):
         raw = _text(activity.get(key))
         if raw and isinstance(actuals.get(raw), dict):
@@ -54,10 +45,9 @@ def session_completion_gaps(server_module: Any, enrollment: dict, draft: dict, b
     """Return every missing record that prevents a trainer from finalizing.
 
     The canonical server helper remains authoritative for which current-lesson
-    skills require an outcome/score. We add the pieces that were previously
-    optional even on a "Remain" completion: mastery decision, skip reason,
-    structured recap, client recap when requested, and an explicit progression
-    rationale.
+    skills require an outcome/score. This adds the fields the trainer workspace
+    already exposes but previously allowed a "Remain" completion to omit:
+    mastery decision, skip reason, structured recap, and client recap when sent.
     """
     gaps: List[str] = []
 
@@ -72,7 +62,13 @@ def session_completion_gaps(server_module: Any, enrollment: dict, draft: dict, b
         if not isinstance(activity, dict) or not activity.get("required_curriculum"):
             continue
         actual = _actual_for(draft, activity)
-        label = _text(activity.get("title") or activity.get("name") or activity.get("skill_name") or _activity_id(activity) or "Required skill")
+        label = _text(
+            activity.get("title")
+            or activity.get("name")
+            or activity.get("skill_name")
+            or _activity_id(activity)
+            or "Required skill"
+        )
         skipped = bool(activity.get("skipped")) or _text(actual.get("outcome")).lower() == "skipped"
         if skipped:
             reason = _text(actual.get("skip_reason") or activity.get("skip_reason"))
@@ -83,24 +79,20 @@ def session_completion_gaps(server_module: Any, enrollment: dict, draft: dict, b
         if mastery not in {"mastered", "not_yet"}:
             gaps.append(f"{label}: choose Confirm Mastered or Not Yet")
 
-    structured = (
+    for field, message in (
         ("what_went_well", "Add What Went Well"),
         ("needs_work", "Add Needs Work"),
         ("next_lesson_focus", "Add Next Session Focus"),
-    )
-    for field, message in structured:
+    ):
         if not _text(draft.get(field)):
             gaps.append(message)
 
-    if bool(_body_value(body, "send_recap", True)) and not _text(draft.get("client_recap_note")):
+    send_recap = bool(body.get("send_recap", True)) if isinstance(body, dict) else bool(getattr(body, "send_recap", True))
+    if send_recap and not _text(draft.get("client_recap_note")):
         gaps.append("Add the client recap, or turn off Send Recap for this session")
 
-    if not _text(_body_value(body, "advancement_reason")):
-        action = _text(_body_value(body, "advancement_action", "remain")).replace("_", " ")
-        gaps.append(f"Explain why the progression decision is '{action}'")
-
+    out: List[str] = []
     seen = set()
-    out = []
     for gap in gaps:
         if gap not in seen:
             seen.add(gap)
@@ -121,9 +113,6 @@ def _draft_slot(draft: dict) -> Optional[str]:
     label = normalize_bt_label(draft.get("session_label"))
     if label in BOARD_TRAIN_SLOTS:
         return label
-    # Before this hardening, Board & Train used the normal empty session label.
-    # Treat one empty-label historical draft as the AM slot so no recorded work
-    # is discarded and the next session naturally becomes PM.
     if not label:
         return "AM"
     return None
@@ -145,7 +134,7 @@ def _draft_status(draft: Optional[dict]) -> str:
 
 
 def slots_from_drafts(drafts: Iterable[dict]) -> Dict[str, dict]:
-    """Choose the current draft for AM and PM, preserving legacy blank-as-AM."""
+    """Choose the current draft for AM and PM, preserving blank-as-AM legacy."""
     slots: Dict[str, dict] = {}
     for draft in drafts or []:
         slot = _draft_slot(draft)
@@ -174,11 +163,11 @@ def _closed_closeout(booking: dict, day: str) -> Optional[dict]:
 
 
 def required_training_dates(booking: dict, *, through: Optional[str] = None) -> List[str]:
-    """Training days are drop-off through the day before pickup.
+    """Return drop-off through the day before pickup.
 
     Board & Train scheduling stores pickup as start + package duration, so a
-    7-day package has seven required training dates, not eight inclusive dates.
-    A same-day legacy booking still gets one required day.
+    seven-day package has seven required training dates, not eight inclusive
+    dates. A same-day legacy booking still yields one required day.
     """
     try:
         start = date.fromisoformat(_text(booking.get("date"))[:10])
@@ -260,23 +249,34 @@ async def is_board_train_booking(db: Any, booking: dict) -> bool:
         return False
 
 
-async def _booking_drafts_for_day(db: Any, booking: dict, day: str, *, enrollment_id: Optional[str] = None) -> List[dict]:
+async def _booking_drafts_for_day(
+    db: Any,
+    booking: dict,
+    day: str,
+    *,
+    enrollment_id: Optional[str] = None,
+) -> List[dict]:
     booking_id = booking.get("id")
-    by_booking = []
+    by_booking: List[dict] = []
     if booking_id:
         by_booking = await db.training_session_drafts.find(
-            {"booking_id": booking_id, "occurrence_date": day},
-            {"_id": 0},
+            {"booking_id": booking_id, "occurrence_date": day}, {"_id": 0}
         ).to_list(20)
     if by_booking or not enrollment_id:
         return by_booking
     return await db.training_session_drafts.find(
-        {"enrollment_id": enrollment_id, "occurrence_date": day},
-        {"_id": 0},
+        {"enrollment_id": enrollment_id, "occurrence_date": day}, {"_id": 0}
     ).to_list(20)
 
 
-async def _auto_closeout_if_ready(db: Any, booking: dict, day: str, *, actor: Optional[dict] = None, enrollment_id: Optional[str] = None) -> Optional[dict]:
+async def _auto_closeout_if_ready(
+    db: Any,
+    booking: dict,
+    day: str,
+    *,
+    actor: Optional[dict] = None,
+    enrollment_id: Optional[str] = None,
+) -> Optional[dict]:
     drafts = await _booking_drafts_for_day(db, booking, day, enrollment_id=enrollment_id)
     status = daily_status(booking, day, drafts)
     if not status["both_sessions_complete"]:
@@ -287,7 +287,6 @@ async def _auto_closeout_if_ready(db: Any, booking: dict, day: str, *, actor: Op
         return existing
 
     slots = slots_from_drafts(drafts)
-    from datetime import datetime, timezone
     now = datetime.now(timezone.utc).isoformat()
     actor = actor or {}
     closeout = {
@@ -303,42 +302,45 @@ async def _auto_closeout_if_ready(db: Any, booking: dict, day: str, *, actor: Op
         "closed_by_name": actor.get("name") or actor.get("email") or "System",
     }
     field = f"training_daily_closeouts.{day}"
-    event = {
-        **closeout,
-        "business_date": day,
-        "event": "board_train_daily_closeout",
-    }
+    event = {**closeout, "business_date": day, "event": "board_train_daily_closeout"}
     result = await db.bookings.update_one(
         {"id": booking.get("id"), field: {"$exists": False}},
         {"$set": {field: closeout}, "$push": {"training_daily_closeout_history": event}},
     )
     if int(getattr(result, "modified_count", 0) or 0):
         return closeout
-    refreshed = await db.bookings.find_one({"id": booking.get("id")}, {"_id": 0, "training_daily_closeouts": 1}) or {}
+    refreshed = await db.bookings.find_one(
+        {"id": booking.get("id")}, {"_id": 0, "training_daily_closeouts": 1}
+    ) or {}
     return _closed_closeout(refreshed, day)
 
 
-async def board_train_readiness(db: Any, booking: dict, *, through: Optional[str] = None) -> dict:
+async def board_train_readiness(
+    db: Any,
+    booking: dict,
+    *,
+    through: Optional[str] = None,
+    business_day: Optional[str] = None,
+    enrollment_id: Optional[str] = None,
+) -> dict:
     days = required_training_dates(booking, through=through)
     if not days:
         return {"ready": True, "required_days": [], "incomplete_days": [], "overdue_days": []}
 
     all_drafts = await db.training_session_drafts.find(
-        {"booking_id": booking.get("id"), "occurrence_date": {"$in": days}},
-        {"_id": 0},
+        {"booking_id": booking.get("id"), "occurrence_date": {"$in": days}}, {"_id": 0}
     ).to_list(max(20, len(days) * 6))
 
     by_day: Dict[str, List[dict]] = {}
     for draft in all_drafts:
         by_day.setdefault(_text(draft.get("occurrence_date")), []).append(draft)
 
-    enrollment_id = booking.get("training_enrollment_id") or booking.get("enrollment_id")
+    enrollment_id = enrollment_id or booking.get("training_enrollment_id") or booking.get("enrollment_id")
     if enrollment_id:
         missing = [d for d in days if not by_day.get(d)]
         if missing:
             legacy = await db.training_session_drafts.find(
-                {"enrollment_id": enrollment_id, "occurrence_date": {"$in": missing}},
-                {"_id": 0},
+                {"enrollment_id": enrollment_id, "occurrence_date": {"$in": missing}}, {"_id": 0}
             ).to_list(max(20, len(missing) * 6))
             for draft in legacy:
                 by_day.setdefault(_text(draft.get("occurrence_date")), []).append(draft)
@@ -355,8 +357,8 @@ async def board_train_readiness(db: Any, booking: dict, *, through: Optional[str
                 "closeout_complete": st["closeout_complete"],
             })
 
-    today = date.today().isoformat()
-    overdue = [row for row in incomplete if row["date"] < today]
+    today_key = _text(business_day or through) or date.today().isoformat()
+    overdue = [row for row in incomplete if row["date"] < today_key]
     return {
         "ready": not incomplete,
         "required_days": days,
@@ -389,8 +391,13 @@ async def _today_row_board_train_status(db: Any, server_module: Any, row: dict, 
     enrollment_id = row.get("enrollment_id")
     drafts = await _booking_drafts_for_day(db, booking, day, enrollment_id=enrollment_id)
     st = daily_status(booking, day, drafts)
-
-    readiness = await board_train_readiness(db, booking, through=day)
+    readiness = await board_train_readiness(
+        db,
+        booking,
+        through=day,
+        business_day=day,
+        enrollment_id=enrollment_id,
+    )
     overdue = [x for x in readiness.get("overdue_days") or [] if x.get("date") < day]
 
     start = date.fromisoformat(_text(booking.get("date"))[:10])
@@ -439,6 +446,10 @@ def install_trainer_delivery_enforcement(*, server_module: Any, db: Any) -> None
     if not all(callable(x) for x in (original_compute, original_get_draft, original_worker, original_checkout)):
         raise RuntimeError("Trainer Delivery extension could not find canonical session/checkout helpers")
 
+    def business_day() -> str:
+        resolver = getattr(server_module, "business_today", None)
+        return resolver().isoformat() if callable(resolver) else date.today().isoformat()
+
     async def compute_with_required_record(enrollment, draft, draft_id, body, user):
         gaps = session_completion_gaps(server_module, enrollment, draft, body)
         if gaps:
@@ -465,12 +476,16 @@ def install_trainer_delivery_enforcement(*, server_module: Any, db: Any) -> None
         if booking_id:
             booking = await db.bookings.find_one({"id": booking_id}, {"_id": 0})
         if booking and await is_board_train_booking(db, booking):
-            day = server_module.business_today().isoformat() if callable(getattr(server_module, "business_today", None)) else date.today().isoformat()
+            day = business_day()
             if day in set(required_training_dates(booking)):
-                drafts = await _booking_drafts_for_day(db, booking, day, enrollment_id=enrollment.get("id"))
+                drafts = await _booking_drafts_for_day(
+                    db,
+                    booking,
+                    day,
+                    enrollment_id=enrollment.get("id"),
+                )
                 slots = slots_from_drafts(drafts)
                 requested = normalize_bt_label(label)
-
                 if requested and requested not in BOARD_TRAIN_SLOTS:
                     raise HTTPException(status_code=400, detail="Board & Train session_label must be AM or PM")
 
@@ -493,7 +508,7 @@ def install_trainer_delivery_enforcement(*, server_module: Any, db: Any) -> None
                                 "message": "Both AM and PM Board & Train sessions are already complete for today.",
                             },
                         )
-                elif requested == "AM" and slots.get("AM") and not normalize_bt_label((slots["AM"] or {}).get("session_label")):
+                elif requested == "AM" and slots.get("AM") and not normalize_bt_label(slots["AM"].get("session_label")):
                     label = ""
                 else:
                     label = requested
@@ -516,7 +531,10 @@ def install_trainer_delivery_enforcement(*, server_module: Any, db: Any) -> None
                             db,
                             booking,
                             day,
-                            actor={"id": plan.get("completed_by"), "name": plan.get("completed_by_name")},
+                            actor={
+                                "id": plan.get("completed_by"),
+                                "name": plan.get("completed_by_name"),
+                            },
                             enrollment_id=(draft or {}).get("enrollment_id"),
                         )
         except Exception:
@@ -526,7 +544,7 @@ def install_trainer_delivery_enforcement(*, server_module: Any, db: Any) -> None
     async def checkout_with_board_train_gate(booking_id, body=None, user=None, create_invoice=True):
         booking = await db.bookings.find_one({"id": booking_id}, {"_id": 0})
         if booking and await is_board_train_booking(db, booking):
-            readiness = await board_train_readiness(db, booking)
+            readiness = await board_train_readiness(db, booking, business_day=business_day())
             if not readiness.get("ready"):
                 raise HTTPException(
                     status_code=409,
@@ -552,9 +570,11 @@ def install_trainer_delivery_enforcement(*, server_module: Any, db: Any) -> None
             rows = await original(**kwargs)
             if not isinstance(rows, list) or not rows:
                 return rows
-            day = server_module.business_today().isoformat() if callable(getattr(server_module, "business_today", None)) else date.today().isoformat()
+            day = business_day()
             booking_ids = [r.get("booking_id") for r in rows if isinstance(r, dict) and r.get("booking_id")]
-            bookings = await db.bookings.find({"id": {"$in": booking_ids}}, {"_id": 0}).to_list(max(1, len(booking_ids)))
+            bookings = await db.bookings.find(
+                {"id": {"$in": booking_ids}}, {"_id": 0}
+            ).to_list(max(1, len(booking_ids)))
             by_id = {b.get("id"): b for b in bookings}
             out = []
             for row in rows:
@@ -566,6 +586,7 @@ def install_trainer_delivery_enforcement(*, server_module: Any, db: Any) -> None
                         logger.exception("Could not enrich Board & Train Today row for %s", booking.get("id"))
                 out.append(row)
             return out
+
         wrapped.__name__ = getattr(original, "__name__", "admin_training_today")
         return wrapped
 
@@ -580,16 +601,25 @@ def install_trainer_delivery_enforcement(*, server_module: Any, db: Any) -> None
             raise HTTPException(status_code=404, detail="Booking not found")
         if not await is_board_train_booking(db, booking):
             raise HTTPException(status_code=422, detail="Booking is not a Board & Train residential program")
-        today = server_module.business_today().isoformat() if callable(getattr(server_module, "business_today", None)) else date.today().isoformat()
-        readiness = await board_train_readiness(db, booking, through=today)
+        today = business_day()
+        readiness = await board_train_readiness(db, booking, through=today, business_day=today)
         drafts = await _booking_drafts_for_day(db, booking, today)
         return {
             "booking_id": booking_id,
             "today": daily_status(booking, today, drafts),
             "readiness_through_today": readiness,
-            "checkout": await board_train_readiness(db, booking),
+            "checkout": await board_train_readiness(db, booking, business_day=today),
         }
 
     server_module._trainer_delivery_enforcement_installed = True
-    server_module._session_completion_gaps = lambda enrollment, draft, body: session_completion_gaps(server_module, enrollment, draft, body)
-    server_module._board_train_readiness = lambda booking, through=None: board_train_readiness(db, booking, through=through)
+    server_module._session_completion_gaps = (
+        lambda enrollment, draft, body: session_completion_gaps(server_module, enrollment, draft, body)
+    )
+    server_module._board_train_readiness = (
+        lambda booking, through=None: board_train_readiness(
+            db,
+            booking,
+            through=through,
+            business_day=business_day(),
+        )
+    )
