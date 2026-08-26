@@ -257,6 +257,7 @@ async def test_installed_completion_wrapper_blocks_bad_remain_and_marks_good_log
             {"id": "trainer"},
         )
     assert exc.value.status_code == 409
+    assert "Confirm Mastered or Not Yet" in exc.value.detail["msg"]
     assert calls == []
 
     good = await server._compute_completion_plan(
@@ -269,3 +270,20 @@ async def test_installed_completion_wrapper_blocks_bad_remain_and_marks_good_log
     assert calls == [("draft-good", "remain")]
     assert good["trainer_delivery_rule_version"] == 1
     assert good["log_doc"]["completion_requirements_verified"] is True
+
+
+@pytest.mark.asyncio
+async def test_board_train_overdue_uses_business_day_not_host_utc_date():
+    import trainer_delivery_enforcement as mod
+
+    readiness = await mod.board_train_readiness(
+        _NoopDB(),
+        {"id": "b1", "date": "2026-08-25", "end_date": "2026-08-27"},
+        through="2026-08-26",
+        business_day="2026-08-26",
+    )
+    assert [x["date"] for x in readiness["incomplete_days"]] == [
+        "2026-08-25",
+        "2026-08-26",
+    ]
+    assert [x["date"] for x in readiness["overdue_days"]] == ["2026-08-25"]
