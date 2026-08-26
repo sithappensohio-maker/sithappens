@@ -458,6 +458,7 @@ def install_trainer_delivery_enforcement(*, server_module: Any, db: Any) -> None
                 detail={
                     "code": "session_completion_incomplete",
                     "message": "Finish the required trainer record before completing this session.",
+                    "msg": "Finish the required trainer record: " + " · ".join(gaps),
                     "gaps": gaps,
                 },
             )
@@ -506,6 +507,7 @@ def install_trainer_delivery_enforcement(*, server_module: Any, db: Any) -> None
                             detail={
                                 "code": "board_train_day_complete",
                                 "message": "Both AM and PM Board & Train sessions are already complete for today.",
+                                "msg": "Both AM and PM Board & Train sessions are already complete for today.",
                             },
                         )
                 elif requested == "AM" and slots.get("AM") and not normalize_bt_label(slots["AM"].get("session_label")):
@@ -546,12 +548,21 @@ def install_trainer_delivery_enforcement(*, server_module: Any, db: Any) -> None
         if booking and await is_board_train_booking(db, booking):
             readiness = await board_train_readiness(db, booking, business_day=business_day())
             if not readiness.get("ready"):
+                incomplete = readiness.get("incomplete_days") or []
+                missing = "; ".join(
+                    f"{row.get('date')}: AM {row.get('am')}, PM {row.get('pm')}"
+                    for row in incomplete[:8]
+                )
                 raise HTTPException(
                     status_code=409,
                     detail={
                         "code": "board_train_training_incomplete",
                         "message": "Board & Train checkout is blocked until every required AM/PM training day is complete.",
-                        "incomplete_days": readiness.get("incomplete_days") or [],
+                        "msg": (
+                            "Board & Train checkout is blocked until every required AM/PM training day is complete."
+                            + (f" Missing: {missing}" if missing else "")
+                        ),
+                        "incomplete_days": incomplete,
                     },
                 )
         return await original_checkout(booking_id, body, user, create_invoice)
