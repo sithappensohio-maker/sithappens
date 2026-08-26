@@ -49,10 +49,15 @@ def _client_user(client_id):
 
 
 def _program(delivery_mode="both"):
+    skill_id = str(uuid.uuid4())
     body = server.ProgramIn(
         name=f"{TAG} Program {uuid.uuid4().hex[:6]}", type="private_lessons",
         format={"count": 1, "unit": "modules"}, price=0, delivery_mode=delivery_mode,
-        modules=[server.ModuleIn(name="Module 1", order=0, goals=[server.GoalIn(name="Sit")])],
+        modules=[server.ModuleIn(
+            name="Module 1", order=0,
+            goals=[server.GoalIn(id=skill_id, name="Sit")],
+            lessons=[server.LessonIn(name="Day 1 · Sit", order=0, skill_ids=[skill_id])],
+        )],
     )
     return run(server.create_program(body, _admin()))
 
@@ -136,11 +141,11 @@ def test_hybrid_creates_one_ledger():
 
 # ═══════════ program-capability validation ═══════════
 
-def test_self_guided_program_rejects_in_person():
+def test_self_guided_program_can_be_taught_in_person():
     c, dog = _client_and_dog()
-    with pytest.raises(server.HTTPException) as e:
-        _enroll(dog, _program("self_guided"), "in_person")
-    assert e.value.status_code == 422
+    res = _enroll(dog, _program("self_guided"), "in_person")
+    assert res["enrollment"]["delivery_channel"] == "in_person_school"
+    assert res["school_enrollment"]["delivery_mode"] == "trainer_led"
 
 
 def test_trainer_led_program_rejects_hybrid():

@@ -1,13 +1,11 @@
 """Training-school expansion, Phase 5 — personalized homework improvements.
 
-  * "Do not create duplicate assignments when the same module homework has
-    already been assigned and remains active" — session-completion homework
-    creation now checks for an existing non-completed assignment from the
-    same template before creating a new one, and reports the conflict
-    instead of silently duplicating OR silently skipping.
-  * Session-sourced homework carries traceability (source_skill_id/
-    source_lesson_id/source_session_log_id) and a trainer_personalized_note
-    pulled from the activity's own recorded note.
+  * In-person client Practice comes from the exact current School lesson,
+    not a goal/module-level or activity-checkbox homework path.
+  * Repeating the same lesson reuses an already-active Practice assignment;
+    after the client completes it, a later session may assign a fresh round.
+  * Session-sourced Practice carries lesson/session traceability and a
+    trainer_personalized_note from the lesson-level Practice note.
   * Client day-submission gets a labeled difficulty scale (easy/good/okay/
     hard/very_hard) alongside the existing numeric mood, and a structured
     could_not_complete + reason signal distinct from a planned rest day.
@@ -55,11 +53,28 @@ def _client_and_dog():
 def _program_with_template(admin, template_id):
     body = server.ProgramIn(
         name=f"{TAG} {uuid.uuid4().hex[:6]}", type="private_lessons", format={"count": 2, "unit": "sessions"}, price=50,
-        modules=[server.ModuleIn(name="Week 1", order=0, goals=[
-            server.GoalIn(name="Sit", homework_template_ids=[template_id]),
-        ])],
+        modules=[server.ModuleIn(
+            name="Week 1", order=0, goals=[server.GoalIn(name="Sit")],
+            lessons=[server.LessonIn(
+                name="Lesson A", order=0, skill_ids=["__SIT__"],
+                suggested_homework_template_ids=[template_id],
+            )],
+        )],
     )
     prog = run(server.create_program(body, admin))
+    sit_id = next(g["id"] for g in prog["modules"][0]["goals"] if g["name"] == "Sit")
+    fixed = server.ProgramIn(
+        name=prog["name"], type="private_lessons", format=prog["format"], price=50,
+        modules=[server.ModuleIn(
+            id=prog["modules"][0]["id"], name="Week 1", order=0,
+            goals=[server.GoalIn(**g) for g in prog["modules"][0]["goals"]],
+            lessons=[server.LessonIn(
+                name="Lesson A", order=0, skill_ids=[sit_id],
+                suggested_homework_template_ids=[template_id],
+            )],
+        )],
+    )
+    prog = run(server.update_program(prog["id"], fixed, cascade=False, save_as_draft=False, _=admin))
     try:
         yield prog
     finally:
@@ -77,12 +92,13 @@ def _cleanup(booking_id, enr_id):
         run(server.db.bookings.delete_one({"id": booking_id}))
     run(server.db.training_session_drafts.delete_many({"enrollment_id": enr_id}))
     run(server.db.training_session_log.delete_many({"enrollment_id": enr_id}))
+    run(server.db.school_enrollments.delete_many({"enrollment_id": enr_id}))
     run(server.db.dog_programs.delete_one({"id": enr_id}))
 
 
 def _run_session_with_homework(prog, admin, dog, enr=None, notes="Practice daily", session_label=None):
     """Enroll (unless an existing enrollment is passed), run + complete one
-    session with Sit flagged homework_eligible. Returns (enr, booking, result).
+    session on the current School lesson. Returns (enr, booking, result).
 
     Gap-closing pass — a second call for the same enrollment defaults to a
     distinct session_label, since _get_or_create_session_draft now correctly
@@ -98,9 +114,12 @@ def _run_session_with_homework(prog, admin, dog, enr=None, notes="Practice daily
     sit_activity = next(a for a in started["draft"]["plan"]["activities"] if a["name"] == "Sit")
     run(server.update_training_session_draft(
         draft_id,
-        server.TrainingSessionDraftUpdateIn(actuals={
-            sit_activity["id"]: server.SessionActivityActualIn(score=3, outcome="improving", notes=notes, homework_eligible=True),
-        }),
+        server.TrainingSessionDraftUpdateIn(
+            actuals={
+                sit_activity["id"]: server.SessionActivityActualIn(score=3, outcome="improving", notes="Private trainer observation"),
+            },
+            practice_note=notes,
+        ),
         admin,
     ))
     result = run(server.complete_training_session(draft_id, server.SessionCompletionIn(), admin))
@@ -111,7 +130,7 @@ def _run_session_with_homework(prog, admin, dog, enr=None, notes="Practice daily
 # Duplicate-assignment prevention
 # ---------------------------------------------------------------------------
 
-def test_second_session_does_not_duplicate_still_active_homework():
+def test_second_session_reuses_still_active_current_lesson_practice():
     admin_seed = _admin_user()
     tpl = run(server.create_homework_template(server.HomeworkTemplateIn(
         slug=f"{TAG.lower()}-tpl-{uuid.uuid4().hex[:6]}", name="Sit Practice", tier="foundation",
@@ -126,8 +145,8 @@ def test_second_session_does_not_duplicate_still_active_homework():
                 enr2, booking2, r2 = _run_session_with_homework(prog, admin_seed, dog, enr=enr)
                 try:
                     assert r2["homework_created"] == []
-                    assert len(r2["homework_conflicts"]) == 1
-                    assert r2["homework_conflicts"][0]["existing_homework_id"] == r1["homework_created"][0]
+                    assert r2["homework_conflicts"] == []
+                    assert r2["homework_assigned"] == [r1["homework_created"][0]]
 
                     count = run(server.db.homework.count_documents({"dog_id": dog["id"], "template_snapshot.template_id": tpl["id"]}))
                     assert count == 1  # never duplicated
@@ -140,7 +159,7 @@ def test_second_session_does_not_duplicate_still_active_homework():
         run(server.db.homework_templates.delete_one({"id": tpl["id"]}))
 
 
-def test_new_session_can_reassign_once_prior_homework_completed():
+def test_new_session_can_reassign_current_lesson_practice_once_prior_round_completed():
     admin_seed = _admin_user()
     tpl = run(server.create_homework_template(server.HomeworkTemplateIn(
         slug=f"{TAG.lower()}-tpl2-{uuid.uuid4().hex[:6]}", name="Sit Practice 2", tier="foundation",
@@ -169,7 +188,7 @@ def test_new_session_can_reassign_once_prior_homework_completed():
 # Personalization / traceability
 # ---------------------------------------------------------------------------
 
-def test_session_sourced_homework_carries_traceability_and_personalized_note():
+def test_session_sourced_lesson_practice_carries_traceability_and_personalized_note():
     admin_seed = _admin_user()
     tpl = run(server.create_homework_template(server.HomeworkTemplateIn(
         slug=f"{TAG.lower()}-tpl3-{uuid.uuid4().hex[:6]}", name="Sit Practice 3", tier="foundation",
@@ -180,7 +199,8 @@ def test_session_sourced_homework_carries_traceability_and_personalized_note():
                 enr, booking, result = _run_session_with_homework(prog, admin_seed, dog, notes="Watch for jumping")
                 try:
                     hw = run(server.db.homework.find_one({"id": result["homework_created"][0]}, {"_id": 0}))
-                    assert hw["source_skill_id"] == next(g["id"] for g in prog["modules"][0]["goals"] if g["name"] == "Sit")
+                    assert hw.get("source_skill_id") is None
+                    assert hw["source_lesson_id"] == prog["modules"][0]["lessons"][0]["id"]
                     assert hw["source_session_log_id"] == result["session_log"]["id"]
                     assert hw["trainer_personalized_note"] == "Watch for jumping"
                     assert hw["required"] is True

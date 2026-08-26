@@ -238,7 +238,9 @@ export function ProgramsPanel() {
   };
 
   if (!meta) return <p className="text-gray-500 text-sm">Loading…</p>;
-  const grouped = meta.types.map(t => ({ ...t, items: programs.filter(p => p.type === t.key && p.type !== "custom" || (t.key === "custom" && p.type === "custom")) }));
+  const schoolPrograms = programs.filter(p => p.school_curriculum_ready !== false);
+  const legacyPrograms = programs.filter(p => p.school_curriculum_ready === false);
+  const grouped = meta.types.map(t => ({ ...t, items: schoolPrograms.filter(p => p.type === t.key) }));
 
   return (
     <div className="space-y-5 max-w-4xl" data-testid="programs-panel">
@@ -248,8 +250,9 @@ export function ProgramsPanel() {
           to their own line before that can happen at all. */}
       <div className="flex flex-wrap items-center justify-between gap-3">
         <div className="min-w-0 flex-1">
-          <h4 className="text-sm font-black text-shBlue uppercase tracking-widest"><i className="fas fa-list-check mr-2"/>Training Programs</h4>
-          <p className="text-[14px] text-gray-300 mt-1">Tiers and curricula you offer. Seeded from your website&rsquo;s standard lineup.</p>
+          <h4 className="text-sm font-black text-shBlue uppercase tracking-widest"><i className="fas fa-graduation-cap mr-2"/>School Programs</h4>
+          <p className="text-[14px] text-gray-300 mt-1">One lesson-by-lesson curriculum library for in-person, Online School, and Hybrid training.</p>
+          <p className="text-[11px] text-gray-500 mt-1">{schoolPrograms.length} School-ready · {legacyPrograms.length} retired legacy definition{legacyPrograms.length === 1 ? "" : "s"}</p>
         </div>
         {/* No shrink-0 on the action group: it pinned the group at its 386px
             max-content width, so flex-wrap could never actually engage and the
@@ -393,6 +396,22 @@ export function ProgramsPanel() {
           </div>
         </div>
       ))}
+
+      {legacyPrograms.length > 0 && (
+        <details className="rounded-xl border border-amber-400/30 bg-amber-500/[0.04]" data-testid="legacy-program-definitions">
+          <summary className="cursor-pointer px-4 py-3 text-[12px] font-black uppercase tracking-widest text-amber-300">Retired legacy program definitions · {legacyPrograms.length}</summary>
+          <div className="border-t border-amber-400/20 p-3 space-y-2">
+            <p className="text-[12px] text-gray-300 px-1 pb-1">These definitions are not assignable and cannot drive new trainer sessions. Historical enrollments stay intact. Add explicit lessons to every module in Program Studio to convert one into a School curriculum, or archive it if it is no longer needed.</p>
+            {legacyPrograms.map(p => <div key={p.id} className="rounded-lg border border-bgHover bg-bgBase/40 px-3 py-3 flex flex-wrap items-center gap-3">
+              <div className="flex-1 min-w-[10rem]">
+                <p className="text-sm font-black text-white">{p.name}</p>
+                <p className="text-[11px] text-gray-500 mt-1">{(p.legacy_modules || []).length ? `${p.legacy_modules.length} module${p.legacy_modules.length === 1 ? "" : "s"} missing real lessons` : "No School-ready lesson structure"} · {p.active === false ? "ARCHIVED" : "ACTIVE DEFINITION"}</p>
+              </div>
+              {canManage && <><button onClick={()=>openEditProgram(p)} data-testid={`legacy-prog-edit-${p.id}`} className="px-3 py-2 rounded-lg border border-shBlue/40 text-shBlue text-[11px] font-black uppercase tracking-widest"><i className="fas fa-pen mr-1.5"/>Add Lessons</button>{p.active !== false && <button onClick={()=>remove(p.id)} className="px-3 py-2 rounded-lg border border-red-400/30 text-red-300 text-[11px] font-black uppercase tracking-widest"><i className="fas fa-box-archive mr-1.5"/>Archive</button>}</>}
+            </div>)}
+          </div>
+        </details>
+      )}
 
       {edit && <ProgramStudio programId={edit.id || null} initialProgram={edit} meta={meta} allPrograms={programs} onClose={closeEditor} onSaved={onStudioSaved} />}
     </div>

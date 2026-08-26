@@ -16,7 +16,7 @@ const STATUS_META = {
   resolution_needed: { label: "Needs Attention", icon: "fa-triangle-exclamation", tone: "danger" },
 };
 
-export default function TrainingDogRow({ row: r, onPrimaryAction, testid }) {
+export default function TrainingDogRow({ row: r, onPrimaryAction, trainers = [], canAssignTrainer = false, onAssignTrainer, testid }) {
   const sm = STATUS_META[r.session_status] || STATUS_META.not_checked_in;
   const action = resolvePrimaryAction(r);
   const breadcrumb = r.session_status === "resolution_needed"
@@ -32,7 +32,7 @@ export default function TrainingDogRow({ row: r, onPrimaryAction, testid }) {
             <p className="text-[14px] font-black text-shText truncate">{r.dog_name}</p>
             <span className="text-shTextMuted text-[13px]">·</span>
             <p className="text-[13px] text-shTextMuted truncate">{r.client_name}</p>
-            <span className="text-[12px] text-shTextMuted font-black tabular-nums shrink-0">{r.time || "—"}</span>
+            <span className="text-[12px] text-shTextMuted font-black tabular-nums shrink-0">{r.residential_training ? "Residential" : (r.time || "—")}</span>
           </div>
           <p className={`text-[12px] truncate ${r.session_status === "resolution_needed" ? "text-red-400" : "text-shTextMuted"}`}>
             {breadcrumb || "—"}
@@ -50,11 +50,20 @@ export default function TrainingDogRow({ row: r, onPrimaryAction, testid }) {
             {r.client_question && (
               <span className="text-shSecondary" title={r.client_question} data-testid={testid ? `${testid}-question` : undefined}><i className="fas fa-comment-dots mr-1"/>Question</span>
             )}
-            {r.assigned_trainer && <span className="hidden md:inline">{r.assigned_trainer}</span>}
+            {r.assigned_trainer ? <span className="hidden md:inline"><i className="fas fa-user mr-1"/>{r.assigned_trainer}</span> : <span className="text-shAccent font-black uppercase tracking-widest text-[10px]"><i className="fas fa-user-slash mr-1"/>Unassigned</span>}
+            {r.last_trainer && r.last_trainer !== r.assigned_trainer && <span className="hidden lg:inline text-[11px]">Last: {r.last_trainer}</span>}
           </div>
         </div>
       </div>
-      <div className="flex items-center gap-2 shrink-0 justify-between sm:justify-end">
+      <div className="flex items-center gap-2 shrink-0 justify-between sm:justify-end flex-wrap">
+        {canAssignTrainer && (
+          <select value={r.assigned_trainer_id || ""} onChange={(e) => onAssignTrainer?.(r, e.target.value || null)}
+                  data-testid={testid ? `${testid}-trainer` : undefined}
+                  className="max-w-[190px] bg-black/20 border border-shBorder rounded px-2 py-1.5 text-[11px] font-bold text-shText">
+            <option value="">Assign trainer…</option>
+            {trainers.map(t => <option key={t.id} value={t.id}>{t.name}</option>)}
+          </select>
+        )}
         <StatusChip icon={sm.icon} label={sm.label} tone={sm.tone} testid={testid ? `${testid}-status` : undefined}/>
         <button onClick={() => onPrimaryAction(action, r)} data-testid={testid ? `${testid}-action` : undefined}
                 className="bg-shPrimary/15 text-shPrimary border border-shPrimary/40 px-3 py-1.5 rounded text-[12px] font-black uppercase tracking-widest hover:bg-shPrimary/25 whitespace-nowrap">

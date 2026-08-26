@@ -105,7 +105,7 @@ test("TrainingDogRow's primary action button is never hidden at any breakpoint",
 test("TrainingDogRow renders safely when optional fields (recommended_focus, assigned_trainer, module/lesson names) are absent", () => {
   expect(rowSrc).toMatch(/r\.recommended_focus\?\.length > 0/);
   expect(rowSrc).toMatch(/breadcrumb \|\| "—"/);
-  expect(rowSrc).toMatch(/r\.assigned_trainer &&/);
+  expect(rowSrc).toMatch(/r\.assigned_trainer \?/);
 });
 
 // Bonus — summary metrics reuse StatusChip rather than a duplicate chip

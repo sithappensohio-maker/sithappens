@@ -405,7 +405,15 @@ def register_school_suite(*, api, db, get_current_user, manage_school_dep, perms
                     continue
             except Exception:
                 continue
-            out.append({"id": u.get("id"), "name": u.get("display_name") or u.get("name") or u.get("email"), "staff_role": u.get("staff_role") or ("owner" if u.get("role") == "admin" else "staff")})
+            out.append({
+                "id": u.get("id"),
+                "name": u.get("display_name") or u.get("name") or u.get("email"),
+                "staff_role": u.get("staff_role") or ("owner" if u.get("role") == "admin" else "staff"),
+                # Additive capability flag: School screens can still list
+                # School-capable staff, while the daily training roster can
+                # exclude anyone who cannot actually open/run a session.
+                "can_run_training_sessions": bool(p.get("manage_training_sessions")),
+            })
         return out
 
     @api.get("/admin/school/students")

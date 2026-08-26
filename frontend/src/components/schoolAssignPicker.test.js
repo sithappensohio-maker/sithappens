@@ -31,7 +31,7 @@ test("the picker explains an empty catalogue instead of rendering nothing", () =
   expect(src).toMatch(/data-testid="school-assign-empty"/);
   expect(src).toMatch(/No assignable programs/);
   // and the explanation is actionable — it names the real reason
-  expect(src).toMatch(/active<\/strong> programs can be assigned/);
+  expect(src).toMatch(/School curricula/);
   expect(src).toMatch(/Program Studio/);
 });
 
@@ -101,7 +101,7 @@ test("assigning posts to the one canonical School enrol endpoint", () => {
 
 test("the picker invents no payment, sale or invoice", () => {
   const modal = src.slice(src.indexOf("function SchoolProgramAssignModal"),
-                          src.indexOf("function CustomProgramBuilder"));
+                          src.indexOf("function LegacyMigrationModal"));
   expect(modal).not.toMatch(/stripe|checkout|payment|invoice|pos_sale|charge/i);
 });
 
@@ -133,10 +133,14 @@ const { isAssignableProgram } = require("./DogTrainingTab");
 const DOG = "dog-1";
 const OTHER = "dog-2";
 
-test("an ordinary catalog program is offered", () => {
-  expect(isAssignableProgram({ type: "private_lessons" }, DOG)).toBe(true);
-  expect(isAssignableProgram({ type: "board_train" }, DOG)).toBe(true);
-  expect(isAssignableProgram({ type: "service_dog" }, DOG)).toBe(true);
+test("a School-ready ordinary catalog program is offered", () => {
+  expect(isAssignableProgram({ type: "private_lessons", school_curriculum_ready: true }, DOG)).toBe(true);
+  expect(isAssignableProgram({ type: "board_train", school_curriculum_ready: true }, DOG)).toBe(true);
+  expect(isAssignableProgram({ type: "service_dog", school_curriculum_ready: true }, DOG)).toBe(true);
+});
+
+test("a retired legacy definition is never assignable", () => {
+  expect(isAssignableProgram({ type: "private_lessons", school_curriculum_ready: false }, DOG)).toBe(false);
 });
 
 test("a global custom program with no owner_dog_id is offered", () => {

@@ -1,9 +1,9 @@
 import { useCallback, useEffect, useState } from "react";
 import { api, formatErr } from "../lib/api";
+import { useAuth } from "../lib/auth";
 import { useConfirm, usePromptDialog } from "../lib/useConfirm";
 import ProgressRing from "./ProgressRing";
 import CollapsibleText from "./CollapsibleText";
-import { ProgramEditor } from "./Programs";
 import RecentTrainingSessionsPanel from "./RecentTrainingSessionsPanel";
 import TrainingSessionWorkspace from "./TrainingSessionWorkspace";
 import NeonEdge from "./premium/NeonEdge";
@@ -19,12 +19,15 @@ import HuskyDogImage from "./brand/HuskyDogImage";
 // such a course from every dog's Assign Program list even though the server
 // returned it and would have accepted the assignment.
 export function isAssignableProgram(p, dogId) {
-  if (!p || p.type !== "custom") return true;   // ordinary catalog program
-  if (!p.owner_dog_id) return true;             // global course that happens to be "custom"
-  return p.owner_dog_id === dogId;              // this dog's own one-off plan
+  if (!p || p.active === false || p.school_curriculum_ready === false) return false;
+  if (p.type !== "custom") return true;          // ordinary School curriculum
+  if (!p.owner_dog_id) return true;               // global course that happens to be "custom"
+  return p.owner_dog_id === dogId;                // old dog-owned definitions remain scoped
 }
 
 export default function DogTrainingTab({ dogId, dogName, dogAgeMonths = 0 }) {
+  const { user } = useAuth();
+  const isAdmin = user?.role === "admin";
   const confirm = useConfirm();
   const promptDialog = usePromptDialog();
   const [meta, setMeta] = useState(null);
@@ -34,7 +37,7 @@ export default function DogTrainingTab({ dogId, dogName, dogAgeMonths = 0 }) {
   const [assignErr, setAssignErr] = useState("");
   const [assignBusy, setAssignBusy] = useState(false);
   const [schoolEnrollments, setSchoolEnrollments] = useState([]);
-  const [customOpen, setCustomOpen] = useState(false);
+  const [legacyMigration, setLegacyMigration] = useState(null);
   const [activeGoalEdit, setActiveGoalEdit] = useState(null);
   const [err, setErr] = useState("");
   // Gap-closing pass — launch the SAME TrainingSessionWorkspace / server-backed
@@ -53,7 +56,7 @@ export default function DogTrainingTab({ dogId, dogName, dogAgeMonths = 0 }) {
       const [m, e, p, se] = await Promise.all([
         api.get("/programs/meta"),
         api.get(`/dogs/${dogId}/programs`),
-        api.get("/programs"),
+        api.get("/programs", { params: { curriculum_system: "school" } }),
         api.get(`/dogs/${dogId}/school-enrollments`).catch(() => ({ data: [] })),
       ]);
       setMeta(m.data); setEnrollments(e.data); setPrograms(p.data); setSchoolEnrollments(se.data);
@@ -83,19 +86,19 @@ export default function DogTrainingTab({ dogId, dogName, dogAgeMonths = 0 }) {
   // toolset (Log Session/Complete/Set Current Week/manual goal edits)
   // never renders for a school-delivered row — those actions bypass the
   // school's own progression/practice gating and would confuse an admin.
+  const SCHOOL_CHANNELS = ["in_person_school", "online_school", "hybrid_school"];
+  const STAFF_SCHOOL_CHANNELS = ["in_person_school", "hybrid_school"];
   const activeAll = enrollments.filter(e => e.status === "active");
-  // In-person and hybrid School enrollments still use the trainer-session
-  // workspace; online-only rows use the self-guided School card below.
-  const active = activeAll.filter(e => e.delivery_channel !== "online_school");
+  // School is now the only CURRENT curriculum system. Legacy dog_programs rows
+  // are preserved below as read-only history/migration candidates, never mixed
+  // into the trainer session controls.
+  const active = activeAll.filter(e => STAFF_SCHOOL_CHANNELS.includes(e.delivery_channel));
   const schoolActive = activeAll.filter(e => e.delivery_channel === "online_school");
-  const history = enrollments.filter(e => e.status !== "active" && e.delivery_channel !== "online_school");
-  // Phase 6 — completed/withdrawn Online School rows get their OWN section
-  // (below), never the generic trainer-led History block: that block's
-  // "Resume" button calls PUT /dogs/{id}/programs/{id} with status=
-  // "active", which the server explicitly 409s for delivery_channel==
-  // "online_school" (that endpoint has always meant "trainer-led enrollment
-  // controls" — see update_enrollment's own guard).
+  const legacyActive = activeAll.filter(e => !SCHOOL_CHANNELS.includes(e.delivery_channel));
+  const history = enrollments.filter(e => e.status !== "active" && STAFF_SCHOOL_CHANNELS.includes(e.delivery_channel));
   const schoolHistory = enrollments.filter(e => e.status !== "active" && e.delivery_channel === "online_school");
+  const legacyHistory = enrollments.filter(e => e.status !== "active" && !SCHOOL_CHANNELS.includes(e.delivery_channel));
+  const canonicalActiveCount = active.length + schoolActive.length;
   const schoolEnrollmentsById = Object.fromEntries(schoolEnrollments.map(se => [se.enrollment_id, se]));
   const assignSchoolProgram = async ({ programId, deliveryMode, assignedTrainerId, startedAt, targetCompletionDate }) => {
     if (assignBusy) return;
@@ -226,17 +229,13 @@ export default function DogTrainingTab({ dogId, dogName, dogAgeMonths = 0 }) {
       {/* One School assignment workflow for every delivery mode. */}
       <div className="flex items-center justify-between gap-2">
         <div>
-          <p className="text-[15px] font-black uppercase tracking-widest text-shTextMuted">{activeAll.length>0 ? `${activeAll.length} active School program${activeAll.length>1?"s":""}` : "No active School programs"}</p>
+          <p className="text-[15px] font-black uppercase tracking-widest text-shTextMuted">{canonicalActiveCount>0 ? `${canonicalActiveCount} active School program${canonicalActiveCount>1?"s":""}` : "No active School programs"}</p>
           <p className="text-[11px] text-shTextMuted mt-0.5">One curriculum system · in person, online, or hybrid</p>
         </div>
         <div className="flex gap-2">
           <button onClick={()=>{ setAssignErr(""); setAssignOpen(true); }} data-testid="school-assign-btn"
                   className="bg-shSecondary text-shText px-4 py-2 rounded font-black text-[15px] uppercase tracking-widest shadow">
             <i className="fas fa-graduation-cap mr-1"/>Assign Program
-          </button>
-          <button onClick={()=>setCustomOpen(true)} data-testid="custom-btn"
-                  className="bg-pink-500/15 text-pink-300 border border-pink-500/50 px-4 py-2 rounded font-black text-[15px] uppercase tracking-widest">
-            <i className="fas fa-wand-magic-sparkles mr-1"/>Custom
           </button>
         </div>
       </div>
@@ -250,7 +249,8 @@ export default function DogTrainingTab({ dogId, dogName, dogAgeMonths = 0 }) {
                           onTargetDate={(d)=>updateTarget(e.id, d)}
                           onCurrentModule={(mid)=>setCurrentModule(e.id, mid)}
                           onGoal={(gid, patch)=>setGoal(e.id, gid, patch)}
-                          onOpenWorkspace={()=>setWorkspaceFor({ dog_id: dogId, enrollment_id: e.id })} />
+                          onOpenWorkspace={()=>setWorkspaceFor({ dog_id: dogId, enrollment_id: e.id })}
+                          isAdmin={isAdmin} />
         ))
       ) : activeAll.length === 0 ? (
         // Gate on activeAll, not `active`: an online_school enrollment is filtered
@@ -260,7 +260,7 @@ export default function DogTrainingTab({ dogId, dogName, dogAgeMonths = 0 }) {
         <div className="bg-[var(--sh-card-base)]/40 border border-dashed border-shBorder rounded p-6 text-center" data-testid="no-active">
           <i className="fas fa-graduation-cap text-shSecondary text-3xl mb-2"/>
           <p className="text-sm font-black text-shText uppercase tracking-tight">No active training program</p>
-          <p className="text-[14px] text-shTextMuted mt-1">Enroll {dogName} in a standard program or build a custom plan.</p>
+          <p className="text-[14px] text-shTextMuted mt-1">Assign {dogName} a lesson-by-lesson curriculum from Program Studio.</p>
         </div>
       ) : null}
 
@@ -276,15 +276,40 @@ export default function DogTrainingTab({ dogId, dogName, dogAgeMonths = 0 }) {
                     <p className="text-sm font-black text-shText">{h.program_snapshot.name}</p>
                     <p className="text-[15px] text-shTextMuted">{h.status.toUpperCase()} · {h.mastered_goals}/{h.total_goals} mastered ({h.mastered_pct}%)</p>
                   </div>
-                  {h.status !== "active" && (
-                    <button onClick={()=>updateStatus(h.id, "active")} data-testid={`resume-${h.id}`}
-                            className="text-[14px] font-black uppercase tracking-widest text-shSecondary hover:text-shText">Resume</button>
-                  )}
+                  <span className="text-[10px] font-black uppercase tracking-widest text-shTextMuted">School history</span>
                 </div>
               </div>
             ))}
           </div>
         </details>
+      )}
+
+      {(legacyActive.length > 0 || legacyHistory.length > 0) && (
+        <div className="rounded-2xl border border-amber-400/35 bg-amber-500/[0.06] p-4 space-y-3" data-testid="legacy-training-section">
+          <div>
+            <p className="text-[10px] font-black uppercase tracking-[0.16em] text-amber-300">Retired Legacy Training</p>
+            <p className="text-[12px] text-shTextMuted mt-1">Old records are kept for history, but they cannot run new sessions. Move any active record into a School curriculum before training continues.</p>
+          </div>
+          {legacyActive.map(e => (
+            <div key={e.id} className="rounded-xl border border-amber-400/25 bg-black/15 p-3 flex items-center justify-between gap-3 flex-wrap" data-testid={`legacy-active-${e.id}`}>
+              <div>
+                <p className="text-sm font-black text-shText">{e.program_snapshot?.name || "Legacy training program"}</p>
+                <p className="text-[11px] text-amber-200 mt-1"><i className="fas fa-triangle-exclamation mr-1.5"/>Migration required · new training sessions are locked</p>
+              </div>
+              {isAdmin && <button type="button" onClick={()=>setLegacyMigration(e)} data-testid={`legacy-migrate-${e.id}`}
+                className="px-3 py-2 rounded-xl bg-shPrimary text-bgHeader text-[11px] font-black uppercase tracking-widest">
+                <i className="fas fa-arrow-right-arrow-left mr-1.5"/>Move into School
+              </button>}
+            </div>
+          ))}
+          {legacyHistory.length > 0 && <details>
+            <summary className="cursor-pointer text-[11px] font-black uppercase tracking-widest text-shTextMuted">Historical legacy records · {legacyHistory.length}</summary>
+            <div className="mt-2 space-y-2">{legacyHistory.map(e => <div key={e.id} className="rounded-xl border border-shBorder bg-black/10 p-3">
+              <p className="text-sm font-black text-shText">{e.program_snapshot?.name || "Legacy training program"}</p>
+              <p className="text-[11px] text-shTextMuted mt-1">{String(e.status || "history").toUpperCase()} · read-only · {e.mastered_goals || 0}/{e.total_goals || 0} mastered</p>
+            </div>)}</div>
+          </details>}
+        </div>
       )}
 
       {/* Sit Happens Online School — a school-delivered enrollment is a real
@@ -341,11 +366,13 @@ export default function DogTrainingTab({ dogId, dogName, dogAgeMonths = 0 }) {
         />
       )}
 
-      {/* Custom program builder */}
-      {customOpen && (
-        <CustomProgramBuilder dogId={dogId} dogName={dogName} meta={meta}
-                              onClose={()=>setCustomOpen(false)}
-                              onCreated={()=>{ setCustomOpen(false); load(); }} />
+      {legacyMigration && (
+        <LegacyMigrationModal
+          legacy={legacyMigration} programs={programs.filter(p => isAssignableProgram(p, dogId))}
+          dogName={dogName}
+          onClose={()=>setLegacyMigration(null)}
+          onMigrated={async()=>{ setLegacyMigration(null); await load(); }}
+        />
       )}
 
       {/* Gap-closing pass — same TrainingSessionWorkspace instance Pipeline/Dashboard use */}
@@ -493,7 +520,7 @@ function SchoolEnrollmentAdminCard({ enrollment: e, dogName, schoolEnrollmentId,
   );
 }
 
-function EnrollmentCard({ enrollment, typeMeta, dogId, onStatus, onUnenroll, onTargetDate, onCurrentModule, onGoal, onOpenWorkspace }) {
+function EnrollmentCard({ enrollment, typeMeta, dogId, onStatus, onUnenroll, onTargetDate, onCurrentModule, onGoal, onOpenWorkspace, isAdmin }) {
   const color = typeMeta?.color || "#00a9e0";
   const snap = enrollment.program_snapshot;
   const [editTarget, setEditTarget] = useState(false);
@@ -521,12 +548,14 @@ function EnrollmentCard({ enrollment, typeMeta, dogId, onStatus, onUnenroll, onT
                     className="bg-shPrimary/20 text-shPrimary border border-shPrimary/40 px-3 py-1.5 rounded font-black text-[13px] sm:text-[14px] uppercase tracking-widest hover:bg-shPrimary/30 transition whitespace-nowrap shadow">
               <i className="fas fa-paw mr-1"/>Log Session
             </button>
-            <button onClick={()=>onStatus("completed")} data-testid={`complete-${enrollment.id}`}
-                    className="bg-shPrimary text-bgHeader px-3 py-1.5 rounded font-black text-[13px] sm:text-[14px] uppercase tracking-widest shadow whitespace-nowrap"><i className="fas fa-flag-checkered mr-1"/>Complete</button>
-            <button onClick={()=>onStatus("on_hold")} data-testid={`hold-${enrollment.id}`}
-                    className="text-shTextMuted hover:text-shText text-[13px] sm:text-[14px] font-black uppercase tracking-widest whitespace-nowrap"><i className="fas fa-pause mr-1"/>On Hold</button>
-            <button onClick={onUnenroll} data-testid={`unenroll-${enrollment.id}`}
-                    className="text-red-400 hover:text-red-300 text-[13px] sm:text-[14px] font-black uppercase tracking-widest whitespace-nowrap"><i className="fas fa-user-minus mr-1"/>Unenroll</button>
+            {isAdmin && (<>
+              <button onClick={()=>onStatus("completed")} data-testid={`complete-${enrollment.id}`}
+                      className="bg-shPrimary text-bgHeader px-3 py-1.5 rounded font-black text-[13px] sm:text-[14px] uppercase tracking-widest shadow whitespace-nowrap"><i className="fas fa-flag-checkered mr-1"/>Complete</button>
+              <button onClick={()=>onStatus("on_hold")} data-testid={`hold-${enrollment.id}`}
+                      className="text-shTextMuted hover:text-shText text-[13px] sm:text-[14px] font-black uppercase tracking-widest whitespace-nowrap"><i className="fas fa-pause mr-1"/>On Hold</button>
+              <button onClick={onUnenroll} data-testid={`unenroll-${enrollment.id}`}
+                      className="text-red-400 hover:text-red-300 text-[13px] sm:text-[14px] font-black uppercase tracking-widest whitespace-nowrap"><i className="fas fa-user-minus mr-1"/>Unenroll</button>
+            </>)}
           </div>
         </div>
         {snap.focus && (
@@ -535,16 +564,20 @@ function EnrollmentCard({ enrollment, typeMeta, dogId, onStatus, onUnenroll, onT
         )}
         <div className="flex items-center gap-2 flex-wrap mt-2">
           <p className="text-[13px] sm:text-[14px] text-shTextMuted font-black uppercase tracking-widest">Started {enrollment.started_at}</p>
-          {editTarget ? (
+          {isAdmin && editTarget ? (
             <input type="date" defaultValue={enrollment.target_completion_date||""}
                    onBlur={(e)=>{ if (e.target.value !== enrollment.target_completion_date) onTargetDate(e.target.value); setEditTarget(false); }}
                    data-testid={`target-date-input-${enrollment.id}`}
                    className="bg-[var(--sh-card-base)] border border-shBorder rounded px-1 text-[14px] text-shText" style={{colorScheme:"dark"}} autoFocus />
-          ) : (
+          ) : isAdmin ? (
             <button onClick={()=>setEditTarget(true)} data-testid={`target-date-${enrollment.id}`}
                     className={`text-[13px] sm:text-[14px] font-black uppercase tracking-widest hover:text-shText ${overdue?"text-red-400":"text-shTextMuted"}`}>
               <i className="fas fa-calendar-day mr-1"/>Target: {enrollment.target_completion_date || "—"}{overdue && " (overdue)"}
             </button>
+          ) : (
+            <span className={`text-[13px] sm:text-[14px] font-black uppercase tracking-widest ${overdue?"text-red-400":"text-shTextMuted"}`}>
+              <i className="fas fa-calendar-day mr-1"/>Target: {enrollment.target_completion_date || "—"}{overdue && " (overdue)"}
+            </span>
           )}
           {/* Sprint 110di-64 — Trainer's "what week am I focused on" pill */}
           {totalWeeks > 0 && (
@@ -559,7 +592,7 @@ function EnrollmentCard({ enrollment, typeMeta, dogId, onStatus, onUnenroll, onT
 
       <div className="px-2 sm:px-3 py-2 space-y-4">
         <p className="px-2 text-[12px] text-shTextMuted italic">
-          Quick corrections only — use <span className="text-shPrimary font-black not-italic">Log Session</span> above to record an actual training appointment.
+          {isAdmin ? <>Admin corrections only — normal progress belongs in <span className="text-shPrimary font-black not-italic">Log Session</span>.</> : <>Progress is read-only here. Use <span className="text-shPrimary font-black not-italic">Log Session</span> to record today&apos;s training.</>}
         </p>
         {snap.modules.map((m, idx) => (
           <div key={m.id} className={`px-2 py-2 ${idx === 0 ? "" : "mt-1"}`}>
@@ -567,7 +600,7 @@ function EnrollmentCard({ enrollment, typeMeta, dogId, onStatus, onUnenroll, onT
             <div className="space-y-1">
               {m.goals.map(g => {
                 const p = enrollment.goal_progress?.[g.id] || { score: 0, status: "not_started", notes: "" };
-                return <GoalRow key={g.id} goal={g} progress={p} onChange={(patch)=>onGoal(g.id, patch)} />;
+                return <GoalRow key={g.id} goal={g} progress={p} onChange={(patch)=>onGoal(g.id, patch)} canEdit={isAdmin} />;
               })}
             </div>
           </div>
@@ -585,6 +618,7 @@ function EnrollmentCard({ enrollment, typeMeta, dogId, onStatus, onUnenroll, onT
       {planOpen && (
         <LessonPlanTimelineModal enrollment={enrollment} color={color}
                                  onPickModule={(mid)=>{ onCurrentModule(mid); }}
+                                 canEdit={isAdmin}
                                  onClose={()=>setPlanOpen(false)} />
       )}
     </div>
@@ -592,7 +626,7 @@ function EnrollmentCard({ enrollment, typeMeta, dogId, onStatus, onUnenroll, onT
 }
 
 
-function LessonPlanTimelineModal({ enrollment, color, onPickModule, onClose }) {
+function LessonPlanTimelineModal({ enrollment, color, onPickModule, canEdit, onClose }) {
   const snap = enrollment.program_snapshot || {};
   const modules = (snap.modules || []).slice().sort((a,b)=>(a.order??0)-(b.order??0));
   const currentId = enrollment.current_module?.id || enrollment.current_module_id;
@@ -632,11 +666,13 @@ function LessonPlanTimelineModal({ enrollment, color, onPickModule, onClose }) {
                       <p className="text-[12px] font-black uppercase tracking-widest text-shTextMuted">Week {idx + 1}</p>
                       {isCurrent ? (
                         <span className="text-[11px] font-black uppercase tracking-widest text-shPrimary bg-shPrimary/15 px-2 py-0.5 rounded-full"><i className="fas fa-bullseye mr-1"/>Focus this week</span>
-                      ) : (
+                      ) : canEdit ? (
                         <button onClick={()=>onPickModule(m.id)} data-testid={`lesson-week-set-${enrollment.id}-${idx+1}`}
                                 className="text-[11px] font-black uppercase tracking-widest text-shSecondary hover:text-shText">
                           Set as current
                         </button>
+                      ) : (
+                        <span className="text-[11px] font-black uppercase tracking-widest text-shTextMuted">{isPast ? "Completed section" : "Upcoming"}</span>
                       )}
                     </div>
                     <p className="text-sm font-black text-shText mt-0.5">{m.name}</p>
@@ -665,7 +701,7 @@ function LessonPlanTimelineModal({ enrollment, color, onPickModule, onClose }) {
           })}
         </div>
         <div className="px-5 py-3 border-t border-shBorder bg-[var(--sh-card-base)]/40 text-[12px] text-shTextMuted">
-          <i className="fas fa-circle-info mr-1"/>Tap <span className="text-shSecondary font-black">Set as current</span> to bump the week pointer. Skills check off automatically when you mark a goal mastered on the main training tab.
+          <i className="fas fa-circle-info mr-1"/>{canEdit ? <>Admin can use <span className="text-shSecondary font-black">Set as current</span> for corrections. Normal progression happens in the guided session.</> : <>This plan is read-only. Your guided session controls curriculum progression.</>}
         </div>
       </div>
     </div>
@@ -692,13 +728,27 @@ function presetIndex(progress) {
   return 0;
 }
 
-function GoalRow({ goal, progress, onChange }) {
+function GoalRow({ goal, progress, onChange, canEdit }) {
   const [openNote, setOpenNote] = useState(false);
   const [note, setNote] = useState(progress.notes || "");
   useEffect(() => { setNote(progress.notes || ""); }, [progress.notes]);
   const isManual = !!goal.manual_only;
   const isDone = progress.status === "mastered" || progress.score >= 4;
   const activeIdx = presetIndex(progress);
+  if (!canEdit) {
+    return (
+      <div className="bg-[var(--sh-card-base)] rounded px-3 py-2 flex items-center gap-3" data-testid={`goal-${goal.id}`}>
+        <div className="flex-1 min-w-0">
+          <p className="text-[14px] font-black text-shText">{goal.name}</p>
+          {goal.description && <p className="text-[14px] text-shTextMuted">{goal.description}</p>}
+          {progress.notes && <p className="text-[12px] text-shTextMuted italic mt-1">&quot;{progress.notes}&quot;</p>}
+        </div>
+        <span className="text-[11px] font-black uppercase tracking-widest text-shTextMuted shrink-0">
+          {isDone ? "Mastered" : progress.status === "in_progress" ? `Level ${progress.score || 0}` : "Not started"}
+        </span>
+      </div>
+    );
+  }
   return (
     <div className="bg-[var(--sh-card-base)] rounded px-3 py-2" data-testid={`goal-${goal.id}`}>
       <div className="flex flex-col sm:flex-row sm:items-center gap-2">
@@ -772,13 +822,14 @@ function SchoolProgramAssignModal({ programs, dogAgeMonths, typeMeta, onAssign, 
                                     color: "#94a3b8", items: orphans });
 
   useEffect(() => {
-    api.get("/admin/school/trainers").then(r => setTrainers(r.data || [])).catch(() => setTrainers([]));
+    api.get("/admin/school/trainers").then(r => setTrainers((r.data || []).filter(t => t.can_run_training_sessions !== false))).catch(() => setTrainers([]));
   }, []);
 
   const modesFor = (p) => {
     const configured = p?.delivery_mode || "trainer_led";
-    if (configured === "self_guided") return [{ key: "online", label: "Online", icon: "fa-laptop" }];
-    if (configured === "both") return [
+    // Every School-ready curriculum can be followed by a trainer in person.
+    // Online/Hybrid options appear only when the course supports self-guided access.
+    if (configured === "self_guided" || configured === "both") return [
       { key: "in_person", label: "In Person", icon: "fa-people-arrows-left-right" },
       { key: "online", label: "Online", icon: "fa-laptop" },
       { key: "hybrid", label: "Hybrid", icon: "fa-shuffle" },
@@ -829,8 +880,8 @@ function SchoolProgramAssignModal({ programs, dogAgeMonths, typeMeta, onAssign, 
             <div className="py-12 text-center space-y-3" data-testid="school-assign-empty">
               <p className="text-shText text-sm font-black"><i className="fas fa-folder-open mr-2 text-shSecondary"/>No assignable programs</p>
               <p className="text-shTextMuted text-[12px] max-w-md mx-auto">
-                Only <strong className="text-shText">active</strong> programs can be assigned. If a curriculum exists but is
-                archived or still a draft, activate it in Program Studio and it will appear here.
+                Only active, lesson-by-lesson <strong className="text-shText">School curricula</strong> can be assigned.
+                Legacy modules/goals-only definitions stay historical until real lessons are added in Program Studio.
               </p>
             </div>
           ) : !selected ? (
@@ -848,7 +899,7 @@ function SchoolProgramAssignModal({ programs, dogAgeMonths, typeMeta, onAssign, 
                         <div className="flex justify-between gap-3"><div className="min-w-0"><p className="text-sm font-black text-shText">{p.name}</p><p className="text-[12px] text-shTextMuted mt-0.5">{p.focus}</p></div>{tooYoung&&<span className="text-[9px] font-black uppercase tracking-widest text-shAccent">Under {p.min_age_months}mo</span>}</div>
                         <div className="flex items-center gap-1.5 flex-wrap mt-2">
                           <span className="text-[9px] font-black uppercase tracking-widest px-2 py-1 rounded bg-white/[0.04] border border-shBorder text-shTextMuted">{p.modules?.length || 0} modules</span>
-                          <span className="text-[9px] font-black uppercase tracking-widest px-2 py-1 rounded bg-shPrimary/10 border border-shPrimary/20 text-shPrimary">{delivery === "both" ? "In Person + Online" : delivery === "self_guided" ? "Online" : "In Person"}</span>
+                          <span className="text-[9px] font-black uppercase tracking-widest px-2 py-1 rounded bg-shPrimary/10 border border-shPrimary/20 text-shPrimary">{delivery === "both" || delivery === "self_guided" ? "In Person + Online" : "In Person"}</span>
                         </div>
                       </button>;
                     })}
@@ -898,20 +949,69 @@ function SchoolProgramAssignModal({ programs, dogAgeMonths, typeMeta, onAssign, 
   );
 }
 
-function CustomProgramBuilder({ dogId, dogName, meta, onClose, onCreated }) {
-  const [program, setProgram] = useState({
-    name: `${dogName} — Custom Plan`,
-    description: "", focus: "",
-    format: { count: 4, unit: "sessions" },
-    modules: [{ name: "Phase 1", description: "", goals: [{ name: "First goal", description: "" }] }],
-  });
-  const [saveErr, setSaveErr] = useState("");
-  const save = async () => {
-    setSaveErr("");
+
+function LegacyMigrationModal({ legacy, programs, dogName, onClose, onMigrated }) {
+  const matching = programs.find(p => p.id === legacy.program_id);
+  const [programId, setProgramId] = useState(matching?.id || programs[0]?.id || "");
+  const [lessonId, setLessonId] = useState(legacy.current_lesson_id || "");
+  const [deliveryMode, setDeliveryMode] = useState("in_person");
+  const [trainerId, setTrainerId] = useState(legacy.assigned_trainer_id || "");
+  const [trainers, setTrainers] = useState([]);
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState("");
+  const selected = programs.find(p => p.id === programId) || null;
+  const lessons = (selected?.modules || []).flatMap((m, mi) => (m.lessons || [])
+    .filter(l => l.active !== false)
+    .sort((a,b)=>(a.order||0)-(b.order||0))
+    .map((l, li) => ({ ...l, moduleName: m.name || `Module ${mi+1}`, label: `${m.name || `Module ${mi+1}`} · ${l.name || `Lesson ${li+1}`}` })));
+  const onlineCapable = ["self_guided", "both"].includes(selected?.delivery_mode || "trainer_led");
+
+  useEffect(() => {
+    api.get("/admin/school/trainers").then(r => setTrainers((r.data || []).filter(t => t.can_run_training_sessions !== false))).catch(() => setTrainers([]));
+  }, []);
+  useEffect(() => {
+    if (!selected) return;
+    const ids = new Set(lessons.map(l => l.id));
+    if (!ids.has(lessonId)) setLessonId(lessons[0]?.id || "");
+    if (!onlineCapable && deliveryMode === "hybrid") setDeliveryMode("in_person");
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [programId]);
+
+  const submit = async () => {
+    if (!programId || !lessonId || busy) return;
+    setBusy(true); setError("");
     try {
-      await api.post(`/dogs/${dogId}/programs/custom`, program);
-      onCreated?.();
-    } catch (e) { setSaveErr(formatErr(e.response?.data?.detail) || "Save failed"); }
+      await api.post(`/admin/training/legacy-enrollments/${legacy.id}/migrate-to-school`, {
+        target_program_id: programId,
+        target_lesson_id: lessonId,
+        assigned_trainer_id: trainerId || null,
+        delivery_mode: deliveryMode,
+      });
+      await onMigrated?.();
+    } catch (e) {
+      setError(formatErr(e.response?.data?.detail) || "Migration failed");
+    } finally { setBusy(false); }
   };
-  return <ProgramEditor program={program} setProgram={setProgram} meta={meta} hideTypePicker={true} onSave={save} onClose={onClose} extraError={saveErr} />;
+
+  return <div className="fixed inset-0 bg-black/80 flex items-center justify-center p-4 z-[70]" data-testid="legacy-migration-modal">
+    <div className="bg-[var(--sh-card-base)] border border-amber-400/35 rounded-2xl w-full max-w-2xl max-h-[calc(var(--app-height)_-_2rem)] overflow-y-auto shadow-2xl">
+      <div className="p-5 border-b border-shBorder flex justify-between gap-4">
+        <div><p className="text-[10px] font-black uppercase tracking-[0.16em] text-amber-300">One-time migration</p><h3 className="text-xl font-black text-shText mt-1">Move {dogName} into School</h3><p className="text-[12px] text-shTextMuted mt-1">{legacy.program_snapshot?.name || "Legacy program"} remains in history. New training follows one canonical School curriculum.</p></div>
+        <button onClick={onClose} className="text-shTextMuted hover:text-shText"><i className="fas fa-times text-xl"/></button>
+      </div>
+      <div className="p-5 space-y-4">
+        <div className="rounded-xl border border-shSecondary/25 bg-shSecondary/[0.05] p-3 text-[12px] text-shTextMuted">
+          <strong className="text-shText">Nothing is guessed.</strong> Choose the exact School program and lesson where training should continue. If this is a different curriculum, lessons before the selected point are treated as already covered; the old session/notes history remains attached for staff reference.
+        </div>
+        {error && <div className="rounded-xl border border-red-400/35 bg-red-500/10 p-3 text-[12px] font-bold text-red-300" role="alert">{error}</div>}
+        <label className="block"><span className="block text-[10px] font-black uppercase tracking-widest text-shTextMuted mb-1">School curriculum</span><select value={programId} onChange={e=>setProgramId(e.target.value)} className="w-full bg-black/20 border border-shBorder rounded-xl px-3 py-3 text-sm text-shText">{programs.map(p=><option key={p.id} value={p.id}>{p.name}</option>)}</select></label>
+        <label className="block"><span className="block text-[10px] font-black uppercase tracking-widest text-shTextMuted mb-1">Continue at</span><select value={lessonId} onChange={e=>setLessonId(e.target.value)} className="w-full bg-black/20 border border-shBorder rounded-xl px-3 py-3 text-sm text-shText">{lessons.map(l=><option key={l.id} value={l.id}>{l.label}</option>)}</select></label>
+        <div className="grid sm:grid-cols-2 gap-3">
+          <label className="block"><span className="block text-[10px] font-black uppercase tracking-widest text-shTextMuted mb-1">Delivery</span><select value={deliveryMode} onChange={e=>setDeliveryMode(e.target.value)} className="w-full bg-black/20 border border-shBorder rounded-xl px-3 py-3 text-sm text-shText"><option value="in_person">In Person</option>{onlineCapable&&<option value="hybrid">Hybrid</option>}</select></label>
+          <label className="block"><span className="block text-[10px] font-black uppercase tracking-widest text-shTextMuted mb-1">Assigned trainer</span><select value={trainerId} onChange={e=>setTrainerId(e.target.value)} className="w-full bg-black/20 border border-shBorder rounded-xl px-3 py-3 text-sm text-shText"><option value="">Unassigned / program default</option>{trainers.map(t=><option key={t.id} value={t.id}>{t.name || t.email}</option>)}</select></label>
+        </div>
+      </div>
+      <div className="p-5 border-t border-shBorder flex justify-end gap-2"><button onClick={onClose} disabled={busy} className="px-4 py-2 rounded-xl border border-shBorder text-shTextMuted text-xs font-black">Cancel</button><button onClick={submit} disabled={busy || !programId || !lessonId} data-testid="legacy-migration-confirm" className="px-5 py-2 rounded-xl bg-shPrimary text-bgHeader text-xs font-black uppercase tracking-widest disabled:opacity-50"><i className={`fas ${busy?"fa-spinner fa-spin":"fa-arrow-right-arrow-left"} mr-1.5`}/>{busy?"Moving…":"Move into School"}</button></div>
+    </div>
+  </div>;
 }

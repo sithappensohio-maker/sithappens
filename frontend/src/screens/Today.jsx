@@ -54,22 +54,25 @@ export default function Today({ onNavigate = () => {}, onJumpToDog = () => {}, o
   const [brain, setBrain] = useState(null);
   const [registerDay, setRegisterDay] = useState(null);
   const [messagesUnread, setMessagesUnread] = useState(0);
+  const [trainingToday, setTrainingToday] = useState([]);
   const [loading, setLoading] = useState(true);
   const [moreOpen, setMoreOpen] = useState(false);
   const [brainBusy, setBrainBusy] = useState(false);
 
   const load = async () => {
     try {
-      const [s, tb, reg, mu] = await Promise.all([
+      const [s, tb, reg, mu, tr] = await Promise.all([
         api.get("/dashboard/stats"),
         api.get("/admin/today-brain").catch(() => ({ data: null })),
         can("finance_reports") ? api.get("/admin/register/day").catch(() => ({ data: null })) : Promise.resolve({ data: null }),
         api.get("/admin/messages/unread-count").catch(() => ({ data: { unread: 0 } })),
+        can("manage_training_sessions") ? api.get("/admin/training/today").catch(() => ({ data: [] })) : Promise.resolve({ data: [] }),
       ]);
       setStats(s.data);
       setBrain(tb.data);
       setRegisterDay(reg.data);
       setMessagesUnread(mu.data?.unread || 0);
+      setTrainingToday(tr.data || []);
     } finally {
       setLoading(false);
     }
@@ -239,7 +242,50 @@ export default function Today({ onNavigate = () => {}, onJumpToDog = () => {}, o
         )}
       </div>
 
-      {/* 4. Today's Flow */}
+      {/* 4. Today's Training Plan — read-only command center. Assignment
+          and session work stay in the Training Hub so there is still one
+          authoritative workflow, not a second editor on Today. */}
+      {can("manage_training_sessions") && (
+        <div className="rounded-2xl border border-shBorder bg-[var(--sh-card-base)] p-4 sm:p-5" data-testid="today-training-plan">
+          <div className="flex items-center justify-between gap-3 mb-3">
+            <div>
+              <h2 className="text-[15px] font-black uppercase italic tracking-tight text-shText">
+                <i className="fas fa-graduation-cap text-shPrimary mr-2"/>Today&apos;s Training Plan
+              </h2>
+              <p className="text-[11px] text-shTextMuted mt-1">Who is training each dog and exactly where that dog is in the curriculum.</p>
+            </div>
+            <button onClick={() => onNavigate("pipeline")} data-testid="today-open-training-hub"
+                    className="text-[11px] font-black uppercase tracking-widest text-shSecondary hover:underline whitespace-nowrap">
+              Open Training Hub <i className="fas fa-arrow-right ml-1"/>
+            </button>
+          </div>
+          {trainingToday.length === 0 ? (
+            <p className="text-shTextMuted text-[13px] text-center py-4" data-testid="today-training-plan-empty">No training dogs scheduled today.</p>
+          ) : (
+            <div className="space-y-2">
+              {trainingToday.map((r) => (
+                <button key={r.booking_id} onClick={() => onNavigate("pipeline")}
+                        className="w-full text-left rounded-xl border border-shBorder bg-black/10 px-3 py-2.5 hover:border-shPrimary/35 transition"
+                        data-testid={`today-training-plan-${r.booking_id}`}>
+                  <div className="flex flex-wrap items-center gap-x-2 gap-y-1">
+                    <span className="text-[13px] font-black text-shText">{r.dog_name || "Dog"}</span>
+                    <span className="text-[11px] text-shTextMuted">{r.residential_training ? "Residential" : (fmtClock(r.time) || "—")}</span>
+                    <span className={`text-[10px] font-black uppercase tracking-widest ${r.assigned_trainer ? "text-shSecondary" : "text-shAccent"}`}>
+                      <i className={`fas ${r.assigned_trainer ? "fa-user" : "fa-user-slash"} mr-1`}/>{r.assigned_trainer || "Unassigned"}
+                    </span>
+                    <span className="ml-auto text-[10px] font-black uppercase tracking-widest text-shTextMuted">{(r.session_status || "not_checked_in").replace(/_/g, " ")}</span>
+                  </div>
+                  <p className="text-[12px] text-shTextMuted mt-1 truncate">
+                    {[r.program_name, r.current_module_name, r.current_lesson_name].filter(Boolean).join(" · ") || "Training program needs attention"}
+                  </p>
+                </button>
+              ))}
+            </div>
+          )}
+        </div>
+      )}
+
+      {/* 5. Today's Flow */}
       <div className="rounded-2xl border border-shBorder bg-[var(--sh-card-base)] p-4 sm:p-5" data-testid="today-flow">
         <div className="flex items-center justify-between gap-3 mb-3">
           <h2 className="text-[15px] font-black uppercase italic tracking-tight text-shText">
@@ -266,7 +312,7 @@ export default function Today({ onNavigate = () => {}, onJumpToDog = () => {}, o
         )}
       </div>
 
-      {/* 5. Business snapshot */}
+      {/* 6. Business snapshot */}
       {can("finance_reports") && registerDay && (
         <div className="rounded-2xl border border-shBorder bg-[var(--sh-card-base)] p-4 sm:p-5" data-testid="today-business-snapshot">
           <h2 className="text-[15px] font-black uppercase italic tracking-tight text-shText mb-3">
@@ -289,7 +335,7 @@ export default function Today({ onNavigate = () => {}, onJumpToDog = () => {}, o
         </div>
       )}
 
-      {/* 6. More Dashboard Information — collapsed by default, embeds the
+      {/* 7. More Dashboard Information — collapsed by default, embeds the
           EXISTING Dashboard screen wholesale (unchanged) so nothing is
           removed, duplicated, or reimplemented. */}
       <div className="rounded-2xl border border-shBorder overflow-hidden" data-testid="today-more-dashboard-wrap">

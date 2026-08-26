@@ -7,6 +7,8 @@ const RESOLUTION_REASON_LABELS = {
   multiple_active_enrollments: "Multiple active programs — needs selection",
   no_current_module: "No current module set",
   no_lessons_in_module: "Current module is empty",
+  current_lesson_requires_resolution: "Current lesson needs Admin resolution",
+  legacy_curriculum_requires_migration: "Retired legacy curriculum — move into School",
 };
 
 // Header/summary metrics — a straight reduce over the already-loaded rows.
@@ -33,6 +35,8 @@ function _needsReview(r) {
 // from "resume a reopened one" for plan_ready — both call the same
 // open-workspace action, only the label differs.
 export function resolvePrimaryAction(row) {
+  if (row.resolution_reason === "legacy_curriculum_requires_migration") return { label: "Move into School", kind: "migrate_legacy" };
+  if (!row.assigned_trainer_id) return { label: "Assign Trainer", kind: "assign_trainer" };
   if (row.session_status === "resolution_needed") return { label: "Resolve", kind: "open_workspace" };
   if (row.session_status === "completed") return { label: "View Completed Session", kind: "open_workspace" };
   if (row.session_status === "in_progress") return { label: "Continue Session", kind: "open_workspace" };
@@ -78,7 +82,10 @@ export function buildAttentionQueue(rows) {
     if (r.session_status === "resolution_needed") {
       items.push({ ...base, key: `resolve-${r.booking_id}`,
         reason: RESOLUTION_REASON_LABELS[r.resolution_reason] || "Needs attention",
-        age: r.time || "Today", actionLabel: "Resolve", actionKind: "open_workspace", tone: "danger" });
+        age: r.time || "Today",
+        actionLabel: r.resolution_reason === "legacy_curriculum_requires_migration" ? "Move into School" : "Resolve",
+        actionKind: r.resolution_reason === "legacy_curriculum_requires_migration" ? "migrate_legacy" : "open_workspace",
+        tone: "danger" });
       continue; // a resolution-needed row has nothing else useful to say yet
     }
     if (r.client_question) {
@@ -112,17 +119,14 @@ export function buildAttentionQueue(rows) {
   return items;
 }
 
-// Simple filters — "my_dogs" reads the SAME derived assigned_trainer proxy
-// the rest of the app already uses (last session log's by_user, or the
-// front-desk check-in name) — never a real trainer-assignment field, which
-// doesn't exist. Matched against the viewer's own name or email.
+// Simple filters — "my_dogs" now uses the REAL trainer id assigned to
+// today's booking (or the program-level assigned trainer fallback).  No name
+// matching, no "last person who touched the dog" proxy.
 export function filterTrainingRows(rows, filter, viewer) {
   const list = rows || [];
   switch (filter) {
     case "my_dogs":
-      return list.filter(r => r.assigned_trainer && viewer && (
-        r.assigned_trainer === viewer.name || r.assigned_trainer === viewer.email
-      ));
+      return list.filter(r => r.assigned_trainer_id && viewer?.id && r.assigned_trainer_id === viewer.id);
     case "not_checked_in": return list.filter(r => r.session_status === "not_checked_in");
     case "ready": return list.filter(r => r.session_status === "plan_ready");
     case "in_progress": return list.filter(r => r.session_status === "in_progress");

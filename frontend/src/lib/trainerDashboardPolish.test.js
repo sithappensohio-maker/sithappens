@@ -5,7 +5,7 @@ const row = (overrides = {}) => ({
   checked_in: false, session_status: "not_checked_in", resolution_reason: null,
   client_question: null, media_awaiting_review: 0, homework_difficulty_flags: 0,
   needs_reassessment_count: 0, reopen_count: 0, draft_created_at: null,
-  assigned_trainer: null,
+  assigned_trainer_id: "trainer-1", assigned_trainer: "Alex Trainer",
   ...overrides,
 });
 
@@ -27,6 +27,10 @@ test("computeDaySummary reduces rows into the header metrics", () => {
 
 test("resolvePrimaryAction: not checked in and no draft shows Check In", () => {
   expect(resolvePrimaryAction(row())).toEqual({ label: "Check In", kind: "check_in" });
+});
+
+test("resolvePrimaryAction: an unassigned dog must be assigned before training starts", () => {
+  expect(resolvePrimaryAction(row({ assigned_trainer_id: null, assigned_trainer: null }))).toEqual({ label: "Assign Trainer", kind: "assign_trainer" });
 });
 
 test("resolvePrimaryAction: checked in but still not_checked_in status (no draft yet) shows Open Plan", () => {
@@ -77,9 +81,9 @@ test("buildAttentionQueue flags a stale plan_ready draft by age, not a fresh one
   expect(items.find(i => i.key === "stale-b8")).toBeFalsy();
 });
 
-test("filterTrainingRows: my_dogs matches the viewer's derived assigned_trainer identity", () => {
-  const rows = [row({ booking_id: "b1", assigned_trainer: "Alex Trainer" }), row({ booking_id: "b2", assigned_trainer: "Someone Else" })];
-  const result = filterTrainingRows(rows, "my_dogs", { name: "Alex Trainer", email: "alex@example.com" });
+test("filterTrainingRows: my_dogs matches the viewer's real assigned trainer id", () => {
+  const rows = [row({ booking_id: "b1", assigned_trainer_id: "trainer-1" }), row({ booking_id: "b2", assigned_trainer_id: "trainer-2", assigned_trainer: "Someone Else" })];
+  const result = filterTrainingRows(rows, "my_dogs", { id: "trainer-1", name: "Alex Trainer" });
   expect(result.map(r => r.booking_id)).toEqual(["b1"]);
 });
 

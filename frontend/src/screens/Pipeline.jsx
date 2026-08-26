@@ -57,6 +57,7 @@ export default function Pipeline({ onJumpToDog }) {
   const [todayRows, setTodayRows] = useState([]);
   const [todayLoading, setTodayLoading] = useState(true);
   const [todayFilter, setTodayFilter] = useState("all");
+  const [trainers, setTrainers] = useState([]);
   // Gap-closing pass — workspaceFor now covers BOTH entry points, the
   // booking-based "Open Plan" button ({ bookingId }) and the per-row
   // "Log Session" button ({ dogId, enrollmentId }). Every session-writing
@@ -83,7 +84,13 @@ export default function Pipeline({ onJumpToDog }) {
       setPendingCheckpointCount((data || []).length);
     } catch { setPendingCheckpointCount(0); }
   };
-  useEffect(() => { loadToday(); loadPendingCheckpoints(); }, []);
+  useEffect(() => {
+    loadToday(); loadPendingCheckpoints();
+    api.get("/admin/school/trainers").then(r => setTrainers((r.data || []).filter(t => t.can_run_training_sessions !== false))).catch(() => setTrainers([]));
+  }, []);
+  useEffect(() => {
+    if (user?.role && user.role !== "admin") setTodayFilter("my_dogs");
+  }, [user?.role]);
   useLiveRefresh(loadToday, { intervalMs: 30_000 });
 
   const load = async () => {
@@ -133,7 +140,26 @@ export default function Pipeline({ onJumpToDog }) {
     [todayRows, todayFilter, user],
   );
 
+  const assignTrainer = async (r, trainerId) => {
+    try {
+      await api.patch(`/admin/training/today/${r.booking_id}/trainer`, { assigned_trainer_id: trainerId });
+      toast.success(trainerId ? "Trainer assigned" : "Trainer assignment cleared");
+      await loadToday();
+    } catch (e) {
+      toast.error(e?.response?.data?.detail || "Could not assign trainer");
+    }
+  };
+
   const runPrimaryAction = async (action, r) => {
+    if (action.kind === "migrate_legacy") {
+      if (onJumpToDog) onJumpToDog(r.dog_id);
+      else toast.info("Open this dog's Training tab and choose Move into School.");
+      return;
+    }
+    if (action.kind === "assign_trainer") {
+      toast.info(user?.role === "admin" ? "Choose the trainer from this dog's Assigned Trainer menu." : "An Admin needs to assign this dog before training starts.");
+      return;
+    }
     if (action.kind === "check_in") {
       try {
         await api.post(`/bookings/${r.booking_id}/check-in`);
@@ -151,6 +177,10 @@ export default function Pipeline({ onJumpToDog }) {
   };
 
   const runAttentionAction = (item) => {
+    if (item.actionKind === "migrate_legacy") {
+      if (onJumpToDog) onJumpToDog(item.dogId);
+      return;
+    }
     if (item.actionKind === "review_homework") {
       if (onJumpToDog) onJumpToDog(item.dogId);
       return;
@@ -165,7 +195,7 @@ export default function Pipeline({ onJumpToDog }) {
         eyebrow={{ icon: "fa-graduation-cap", text: "Training Hub", color: "text-shPrimary" }}
         title="Training Hub."
         highlight="Every dog. One view."
-        subtitle="Active enrollments, current week, last trainer, stalled dogs — all on one page. Open the tracker without leaving."
+        subtitle="Assign today's trainer, follow the dog's exact current lesson, record the result, and keep every program moving in order."
         right={(
           <div className="flex gap-2 flex-wrap">
             <Stat label="Active" value={stats.active} color="#8cc63f" />
@@ -257,7 +287,9 @@ export default function Pipeline({ onJumpToDog }) {
               {filteredTodayRows.length > 0 && (
                 <div className="space-y-2">
                   {filteredTodayRows.map(r => (
-                    <TrainingDogRow key={r.booking_id} row={r} onPrimaryAction={runPrimaryAction} testid={`today-training-row-${r.booking_id}`}/>
+                    <TrainingDogRow key={r.booking_id} row={r} onPrimaryAction={runPrimaryAction}
+                                    trainers={trainers} canAssignTrainer={user?.role === "admin"} onAssignTrainer={assignTrainer}
+                                    testid={`today-training-row-${r.booking_id}`}/>
                   ))}
                 </div>
               )}
@@ -312,6 +344,7 @@ export default function Pipeline({ onJumpToDog }) {
                 onJumpToDog={onJumpToDog}
                 onOpenWorkspace={() => setWorkspaceFor({ dogId: r.dog_id, enrollmentId: r.id })}
                 onSaved={load}
+                isAdmin={user?.role === "admin"}
               />
             ))}
           </div>
@@ -335,7 +368,7 @@ export default function Pipeline({ onJumpToDog }) {
   );
 }
 
-function Row({ row, expanded, onToggle, onJumpToDog, onOpenWorkspace, onSaved }) {
+function Row({ row, expanded, onToggle, onJumpToDog, onOpenWorkspace, onSaved, isAdmin }) {
   const sm = STATUS_META[row.status] || STATUS_META.active;
   const tm = TYPE_META[row.program_snapshot?.type] || TYPE_META.private_lessons;
   const overdue = row.status === "active" && row.days_to_target != null && row.days_to_target < 0;
@@ -385,7 +418,7 @@ function Row({ row, expanded, onToggle, onJumpToDog, onOpenWorkspace, onSaved })
       </button>
 
       {expanded && (
-        <ExpandedDetail row={row} onJumpToDog={onJumpToDog} onSaved={onSaved} />
+        <ExpandedDetail row={row} onJumpToDog={onJumpToDog} onSaved={onSaved} isAdmin={isAdmin} />
       )}
       {/* Sprint 110di-72 — Quick actions + last-session ribbon */}
       <div className="border-t border-shBorder/60 bg-[var(--sh-card-base)]/40 px-4 py-2 flex flex-wrap items-center gap-2 text-[11px]">
@@ -420,7 +453,7 @@ function Row({ row, expanded, onToggle, onJumpToDog, onOpenWorkspace, onSaved })
   );
 }
 
-function ExpandedDetail({ row, onJumpToDog, onSaved }) {
+function ExpandedDetail({ row, onJumpToDog, onSaved, isAdmin }) {
   const confirm = useConfirm();
   const [notes, setNotes] = useState(row.trainer_notes || "");
   const [savedAt, setSavedAt] = useState(null);
@@ -490,7 +523,7 @@ function ExpandedDetail({ row, onJumpToDog, onSaved }) {
                                clientName={row.client_name || ""} dogName={row.dog_name || ""}
                                source="graduation" />
         )}
-        {row.status === "active" && (
+        {isAdmin && row.status === "active" && (
           <>
             <button
               onClick={() => setStatus("on_hold")}
@@ -508,7 +541,7 @@ function ExpandedDetail({ row, onJumpToDog, onSaved }) {
             </button>
           </>
         )}
-        {row.status === "on_hold" && (
+        {isAdmin && row.status === "on_hold" && (
           <button
             onClick={() => setStatus("active")}
             data-testid={`pipeline-status-resume-${row.id}`}
@@ -543,10 +576,12 @@ function ExpandedDetail({ row, onJumpToDog, onSaved }) {
       {modules.length > 0 ? (
         <div data-testid={`pipeline-goals-${row.id}`}>
           <p className="text-[11px] font-black uppercase tracking-[0.3em] text-shPrimary mb-2">
-            <i className="fas fa-list-check mr-1.5"/>Goals · Click a status to update
+            <i className="fas fa-list-check mr-1.5"/>Goals · {isAdmin ? "Admin corrections" : "Curriculum progress"}
           </p>
           <p className="text-[12px] text-shTextMuted italic mb-2">
-            Quick corrections only — use <span className="text-shPrimary font-black not-italic">Log Session</span> to record an actual training appointment.
+            {isAdmin
+              ? <>Corrections only — normal progress belongs in <span className="text-shPrimary font-black not-italic">Log Session</span>.</>
+              : <>Progress is read-only here. Use <span className="text-shPrimary font-black not-italic">Log Session</span> to record today&apos;s training.</>}
           </p>
           {modules.map((m, mi) => (
             <ModuleBlock
@@ -555,6 +590,7 @@ function ExpandedDetail({ row, onJumpToDog, onSaved }) {
               moduleIndex={mi}
               progress={progress}
               onGoalUpdate={updateGoal}
+              canEdit={isAdmin}
             />
           ))}
         </div>
@@ -565,7 +601,7 @@ function ExpandedDetail({ row, onJumpToDog, onSaved }) {
   );
 }
 
-function ModuleBlock({ module: mod, moduleIndex, progress, onGoalUpdate }) {
+function ModuleBlock({ module: mod, moduleIndex, progress, onGoalUpdate, canEdit }) {
   const goals = mod.goals || [];
   const mastered = goals.filter(g => (progress[g.id] || {}).status === "mastered").length;
   return (
@@ -590,14 +626,20 @@ function ModuleBlock({ module: mod, moduleIndex, progress, onGoalUpdate }) {
                   <p className="text-[13px] text-shText truncate">{g.name}</p>
                   {g.description && <p className="text-[11px] text-shTextMuted truncate">{g.description}</p>}
                 </div>
-                <ScoreSelector
-                  score={p.score || 0}
-                  status={p.status}
-                  manualOnly={!!g.manual_only}
-                  onChange={(score) => onGoalUpdate(g.id, { score })}
-                  onStatusToggle={(newStatus) => onGoalUpdate(g.id, { status: newStatus })}
-                  testIdPrefix={`goal-${g.id}`}
-                />
+                {canEdit ? (
+                  <ScoreSelector
+                    score={p.score || 0}
+                    status={p.status}
+                    manualOnly={!!g.manual_only}
+                    onChange={(score) => onGoalUpdate(g.id, { score })}
+                    onStatusToggle={(newStatus) => onGoalUpdate(g.id, { status: newStatus })}
+                    testIdPrefix={`goal-${g.id}`}
+                  />
+                ) : (
+                  <span className="text-[11px] font-black uppercase tracking-widest text-shTextMuted shrink-0">
+                    {p.status === "mastered" ? "Mastered" : p.status === "in_progress" ? `Level ${p.score || 0}` : "Not started"}
+                  </span>
+                )}
               </li>
             );
           })}

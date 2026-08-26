@@ -2,8 +2,8 @@
 
   * Completing a session is ONE controlled operation: applies recorded
     progress, advances/holds the curriculum per the trainer's EXPLICIT
-    choice (never automatically), creates homework only for flagged
-    activities from real templates, writes exactly one authoritative
+    choice (never automatically), assigns client Practice from the exact
+    current School lesson (never arbitrary activity homework), writes one authoritative
     training_session_log row, and flips the draft to status="completed".
   * Idempotent: retrying an already-completed draft returns the cached
     result — never re-applies progress, never double-creates homework,
@@ -76,10 +76,10 @@ def _make_program_in(name, homework_template_id=None):
         name=name, type="private_lessons", format={"count": 2, "unit": "sessions"}, price=50,
         modules=[
             server.ModuleIn(name="Week 1", order=0, goals=[
-                server.GoalIn(name="Sit", homework_template_ids=[homework_template_id] if homework_template_id else []),
+                server.GoalIn(name="Sit"),
                 server.GoalIn(name="Down"),
             ], lessons=[
-                server.LessonIn(name="Lesson A", order=0, skill_ids=["__SIT__"]),
+                server.LessonIn(name="Lesson A", order=0, skill_ids=["__SIT__"], suggested_homework_template_ids=[homework_template_id] if homework_template_id else []),
                 server.LessonIn(name="Lesson B", order=1, skill_ids=["__DOWN__"]),
             ]),
             server.ModuleIn(name="Week 2", order=1, goals=[server.GoalIn(name="Heel")]),
@@ -103,7 +103,7 @@ def _program(homework_template_id=None):
                 id=prog["modules"][0]["id"], name="Week 1", order=0,
                 goals=[server.GoalIn(**g) for g in prog["modules"][0]["goals"]],
                 lessons=[
-                    server.LessonIn(name="Lesson A", order=0, skill_ids=[sit_id]),
+                    server.LessonIn(name="Lesson A", order=0, skill_ids=[sit_id], suggested_homework_template_ids=[homework_template_id] if homework_template_id else []),
                     server.LessonIn(name="Lesson B", order=1, skill_ids=[down_id]),
                 ],
             ),
@@ -128,6 +128,7 @@ def _cleanup(booking_id, enr_id):
         run(server.db.bookings.delete_one({"id": booking_id}))
     run(server.db.training_session_drafts.delete_many({"enrollment_id": enr_id}))
     run(server.db.training_session_log.delete_many({"enrollment_id": enr_id}))
+    run(server.db.school_enrollments.delete_many({"enrollment_id": enr_id}))
     run(server.db.dog_programs.delete_one({"id": enr_id}))
 
 
@@ -267,6 +268,45 @@ def test_retry_after_completion_is_idempotent_no_duplicates():
 # Advancement — explicit trainer choice only
 # ---------------------------------------------------------------------------
 
+def test_current_lesson_plan_is_locked_to_that_lesson_and_advance_next_is_gated():
+    with _program() as (prog, admin, sit_id, down_id):
+        with _client_and_dog() as (c, dog):
+            enr = run(server.enroll_dog(dog["id"], server.EnrollIn(program_id=prog["id"]), admin))
+            booking = _make_booking(dog["id"], admin)
+            try:
+                started = run(server.start_training_session_draft_for_booking(booking["id"], None, "", admin))
+                activities = started["draft"]["plan"]["activities"]
+                assert [a.get("skill_id") for a in activities] == [sit_id]
+                assert all(a.get("required_curriculum") is True for a in activities)
+                draft_id = started["draft"]["id"]
+
+                try:
+                    run(server.complete_training_session(
+                        draft_id, server.SessionCompletionIn(advancement_action="advance_next"), admin,
+                    ))
+                    assert False, "expected required-assessment gate"
+                except server.HTTPException as exc:
+                    assert exc.status_code == 409
+                    assert exc.detail["error_code"] == "lesson_assessment_incomplete"
+
+                aid = activities[0]["id"]
+                run(server.update_training_session_draft(
+                    draft_id,
+                    server.TrainingSessionDraftUpdateIn(actuals={
+                        aid: server.SessionActivityActualIn(score=4, outcome="passed")
+                    }),
+                    admin,
+                ))
+                result = run(server.complete_training_session(
+                    draft_id, server.SessionCompletionIn(advancement_action="advance_next"), admin,
+                ))
+                assert result["enrollment"]["current_lesson_id"] == prog["modules"][0]["lessons"][1]["id"]
+                assert result["session_log"]["lesson_change"]["action"] == "advance_next"
+            finally:
+                _cleanup(booking["id"], enr["id"])
+
+
+
 def test_advance_module_bumps_module_and_resets_lesson_to_first_of_new_module():
     with _program() as (prog, admin, sit_id, down_id):
         with _client_and_dog() as (c, dog):
@@ -303,7 +343,7 @@ def test_advance_lesson_moves_pointer_within_module_and_noops_at_boundary():
                 # Second session at the LAST lesson of the module — advancing
                 # further must no-op (module boundary), never silently roll
                 # into the next module.
-                booking2, draft_id2, sit_aid2 = _start_and_record_for_enrollment(enr, admin, dog, sit_id, score=3)
+                booking2, draft_id2, sit_aid2 = _start_and_record_for_enrollment(enr, admin, dog, down_id, score=3)
                 result2 = run(server.complete_training_session(
                     draft_id2, server.SessionCompletionIn(advancement_action="advance_lesson"), admin,
                 ))
@@ -324,7 +364,7 @@ def test_reopen_previous_lesson_moves_back():
                 run(server.complete_training_session(draft_id, server.SessionCompletionIn(advancement_action="advance_lesson"), admin))
                 run(server.db.dog_programs.find_one({"id": enr["id"]}, {"_id": 0}))  # sanity load
 
-                booking2, draft_id2, sit_aid2 = _start_and_record_for_enrollment(enr, admin, dog, sit_id, score=2)
+                booking2, draft_id2, sit_aid2 = _start_and_record_for_enrollment(enr, admin, dog, down_id, score=2)
                 result = run(server.complete_training_session(
                     draft_id2, server.SessionCompletionIn(advancement_action="reopen_previous_lesson"), admin,
                 ))
@@ -388,7 +428,7 @@ def test_needs_reassessment_flag_from_actual_persists():
 # Homework creation
 # ---------------------------------------------------------------------------
 
-def test_homework_created_only_for_flagged_activity_from_real_template():
+def test_lesson_practice_created_from_current_lesson_without_activity_flag():
     admin_seed = _admin_user()
     tpl = run(server.create_homework_template(server.HomeworkTemplateIn(
         slug=f"{TAG.lower()}-tpl-{uuid.uuid4().hex[:6]}", name="Sit Practice", tier="foundation",
@@ -396,7 +436,7 @@ def test_homework_created_only_for_flagged_activity_from_real_template():
     try:
         with _program(homework_template_id=tpl["id"]) as (prog, admin, sit_id, down_id):
             with _client_and_dog() as (c, dog):
-                enr, booking, draft_id, sit_aid = _start_and_record(prog, admin, dog, sit_id, score=3, homework_eligible=True)
+                enr, booking, draft_id, sit_aid = _start_and_record(prog, admin, dog, sit_id, score=3, homework_eligible=False)
                 try:
                     result = run(server.complete_training_session(draft_id, server.SessionCompletionIn(), admin))
                     assert len(result["homework_created"]) == 1
@@ -410,7 +450,7 @@ def test_homework_created_only_for_flagged_activity_from_real_template():
         run(server.db.homework_templates.delete_one({"id": tpl["id"]}))
 
 
-def test_homework_not_created_when_not_flagged():
+def test_lesson_practice_can_be_intentionally_withheld_for_the_visit():
     admin_seed = _admin_user()
     tpl = run(server.create_homework_template(server.HomeworkTemplateIn(
         slug=f"{TAG.lower()}-tpl2-{uuid.uuid4().hex[:6]}", name="Sit Practice 2", tier="foundation",
@@ -420,7 +460,7 @@ def test_homework_not_created_when_not_flagged():
             with _client_and_dog() as (c, dog):
                 enr, booking, draft_id, sit_aid = _start_and_record(prog, admin, dog, sit_id, score=3, homework_eligible=False)
                 try:
-                    result = run(server.complete_training_session(draft_id, server.SessionCompletionIn(), admin))
+                    result = run(server.complete_training_session(draft_id, server.SessionCompletionIn(assign_lesson_practice=False), admin))
                     assert result["homework_created"] == []
                 finally:
                     _cleanup(booking["id"], enr["id"])

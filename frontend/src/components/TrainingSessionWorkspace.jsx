@@ -20,6 +20,7 @@
 
 import { useCallback, useEffect, useRef, useState } from "react";
 import { api, formatErr } from "../lib/api";
+import { useAuth } from "../lib/auth";
 import { toast } from "sonner";
 import DogIdentityHeader from "./training/DogIdentityHeader";
 import StatusChip from "./training/StatusChip";
@@ -49,9 +50,25 @@ const RESOLUTION_COPY = {
     title: "No dog on this booking",
     body: "This booking isn't linked to a dog, so a training session can't be started from it.",
   },
+  trainer_unassigned: {
+    title: "Trainer not assigned",
+    body: "An Admin needs to assign this dog to a trainer for today before the training session starts.",
+  },
+  assigned_to_other_trainer: {
+    title: "Assigned to another trainer",
+    body: "This dog is assigned to a different trainer today. Ask an Admin to reassign the dog if you are taking over.",
+  },
   enrollment_not_found: {
     title: "Enrollment not found",
     body: "The selected enrollment could not be found or is no longer active.",
+  },
+  current_lesson_requires_resolution: {
+    title: "Current lesson needs Admin resolution",
+    body: "This School enrollment does not have one valid current lesson. Open the dog's Training tab and set the exact lesson before training continues.",
+  },
+  legacy_curriculum_requires_migration: {
+    title: "Retired legacy curriculum",
+    body: "This dog still has an old training-program record. Training is locked until an Admin opens the dog's Training tab and chooses Move into School. The old session history will be preserved.",
   },
 };
 
@@ -68,30 +85,34 @@ const OUTCOME_OPTIONS = [
 ];
 
 const ADVANCEMENT_ACTIONS = [
-  { key: "remain", label: "Remain on current lesson", desc: "No advancement — keep working the same material next time." },
-  { key: "advance_lesson", label: "Advance to next lesson", desc: "Move to the next lesson within this module." },
-  { key: "advance_module", label: "Advance to next module", desc: "Graduate to the next module (resets to its first lesson)." },
+  { key: "remain", label: "Needs more work — stay on this lesson", desc: "Record today's session and keep this exact lesson as the next training step." },
+  { key: "advance_next", label: "Ready — move to the next step", desc: "Finish this lesson and continue sequentially to the next lesson/module. The final lesson completes the program." },
+  { key: "advance_lesson", label: "Admin override · next lesson", desc: "Manually move to the next lesson within this module." },
+  { key: "advance_module", label: "Admin override · next module", desc: "Jump to the next module and its first lesson." },
   { key: "assign_review", label: "Assign review work", desc: "No forward progress — next session should review this material." },
-  { key: "reopen_previous_lesson", label: "Reopen previous lesson", desc: "Step back to the prior lesson." },
-  { key: "skip_lesson", label: "Skip this lesson", desc: "Move past this lesson without mastering it (reason required)." },
+  { key: "reopen_previous_lesson", label: "Admin override · previous lesson", desc: "Step back to the prior lesson." },
+  { key: "skip_lesson", label: "Admin override · skip lesson", desc: "Move past this lesson without completing the normal sequence. A reason is required." },
   { key: "mark_for_assessment", label: "Mark for formal assessment", desc: "Flag every skill recorded today for reassessment next visit." },
-  { key: "complete_program", label: "Complete the program", desc: "Graduate the dog — ends this enrollment." },
+  { key: "complete_program", label: "Admin override · force complete program", desc: "End this enrollment without the normal sequential final-step flow." },
 ];
 
 function uid() { return window.crypto?.randomUUID ? window.crypto.randomUUID() : `tmp-${Math.random().toString(36).slice(2)}`; }
 
 // Presentation-only stage derived from existing draft/actuals/UI state —
 // never a new backend status, never gates any action.
-function computeStage({ actuals, expandedId, completionResult }) {
+function computeStage({ actuals, expandedId, completionResult, hasLessonPractice = false }) {
   if (completionResult) return "complete";
   const list = Object.values(actuals || {});
-  if (list.some(a => a?.homework_eligible)) return "homework";
-  if (list.some(a => a && (a.score != null || a.outcome))) return "record";
+  const hasRecording = list.some(a => a && (a.score != null || a.outcome));
+  if (hasLessonPractice && hasRecording) return "homework";
+  if (hasRecording) return "record";
   if (expandedId) return "train";
   return "review";
 }
 
 export default function TrainingSessionWorkspace({ bookingId, dogId, enrollmentId, onClose, onSaved }) {
+  const { user } = useAuth();
+  const isAdmin = user?.role === "admin";
   const [loading, setLoading] = useState(true);
   const [err, setErr] = useState("");
   const [resolution, setResolution] = useState(null);
@@ -156,6 +177,7 @@ export default function TrainingSessionWorkspace({ bookingId, dogId, enrollmentI
           what_went_well: d.what_went_well,
           needs_work: d.needs_work,
           next_lesson_focus: d.next_lesson_focus,
+          practice_note: d.practice_note,
         });
         setSavingLabel("Saved");
         setTimeout(() => setSavingLabel(""), 1500);
@@ -262,10 +284,11 @@ export default function TrainingSessionWorkspace({ bookingId, dogId, enrollmentI
 
   if (!draft) return null;
 
-  const stage = computeStage({ actuals: draft.actuals, expandedId, completionResult });
+  const stage = computeStage({ actuals: draft.actuals, expandedId, completionResult, hasLessonPractice: !!overview?.current_lesson_practice?.configured });
   const breadcrumbParts = [
     overview?.program_name,
     overview?.current_module_name ? `Module: ${overview.current_module_name}` : null,
+    overview?.current_lesson_name ? `Lesson: ${overview.current_lesson_name}` : null,
     overview?.current_week ? `Week ${overview.current_week} of ${overview.total_weeks}` : null,
   ].filter(Boolean);
   const plannedMinutes = activities.reduce((sum, a) => sum + (Number(a.estimated_minutes) || 0), 0);
@@ -302,7 +325,7 @@ export default function TrainingSessionWorkspace({ bookingId, dogId, enrollmentI
               <p className="text-[13px] font-black uppercase tracking-widest text-shPrimary"><i className="fas fa-circle-check mr-1.5"/>Session completed</p>
               <p className="text-[12px] text-shTextMuted mt-1">
                 {completionResult.session_log?.goal_updates?.length || 0} skill(s) updated
-                {completionResult.homework_created?.length > 0 && ` · ${completionResult.homework_created.length} homework assignment(s) created`}
+                {(completionResult.homework_assigned?.length || completionResult.homework_created?.length) > 0 && ` · ${completionResult.homework_assigned?.length || completionResult.homework_created?.length} lesson Practice assignment(s) ready`}
                 {completionResult.session_log?.advancement_action && completionResult.session_log.advancement_action !== "remain" && ` · ${ADVANCEMENT_ACTIONS.find(a => a.key === completionResult.session_log.advancement_action)?.label || completionResult.session_log.advancement_action}`}
               </p>
               {completionResult.homework_conflicts?.length > 0 && (
@@ -390,8 +413,11 @@ export default function TrainingSessionWorkspace({ bookingId, dogId, enrollmentI
           {/* Plan */}
           <div>
             <div className="flex items-center justify-between mb-2">
-              <p className="text-[11px] font-black uppercase tracking-widest text-shTextMuted">Today&apos;s Plan ({activities.length})</p>
-              <button onClick={addCustomActivity} data-testid="add-custom-activity" className="text-[11px] text-shPrimary font-black uppercase tracking-widest"><i className="fas fa-plus mr-1"/>Custom Activity</button>
+              <div>
+                <p className="text-[11px] font-black uppercase tracking-widest text-shTextMuted">Current Lesson Plan ({activities.length})</p>
+                <p className="text-[11px] text-shTextMuted mt-0.5">Required curriculum skills are locked in order. Add a custom activity only when the dog needs extra work beyond the lesson.</p>
+              </div>
+              <button onClick={addCustomActivity} data-testid="add-custom-activity" className="text-[11px] text-shPrimary font-black uppercase tracking-widest"><i className="fas fa-plus mr-1"/>Add Extra Activity</button>
             </div>
             <div className="space-y-2">
               {activities.length === 0 && (
@@ -405,6 +431,7 @@ export default function TrainingSessionWorkspace({ bookingId, dogId, enrollmentI
                                onRemove={() => removeActivity(a.id)}
                                onToggleSkip={() => toggleSkip(a.id)}
                                onSkipReason={(r) => setSkipReason(a.id, r)}
+                               locked={!!a.required_curriculum && !isAdmin}
                                testid={`activity-${a.id}`}>
                   <ActivityDetail activity={a} actual={draft.actuals?.[a.id] || {}} onActualChange={(patch) => setActual(a.id, patch)}/>
                 </ActivityCard>
@@ -426,6 +453,31 @@ export default function TrainingSessionWorkspace({ bookingId, dogId, enrollmentI
               <button onClick={() => setCheckpointBlock("")} className="ml-auto text-shTextMuted text-xs font-black">✕</button>
             </div>
           )}
+
+          {/* Lesson Practice — one curriculum-owned recipe, shared with Online School. */}
+          <div className="rounded-xl border border-shSecondary/30 bg-shSecondary/[0.04] p-3" data-testid="workspace-lesson-practice">
+            <div className="flex items-start gap-3">
+              <i className="fas fa-house-chimney-user text-shSecondary mt-0.5"/>
+              <div className="min-w-0 flex-1">
+                <p className="text-[11px] font-black uppercase tracking-widest text-shSecondary">Client Practice · follows this lesson</p>
+                {overview?.current_lesson_practice?.configured ? (
+                  overview.current_lesson_practice.available === false ? (
+                    <p className="text-[12px] text-shAccent mt-1">This lesson points to a Practice recipe that no longer exists. Fix the lesson in Program Studio before assigning client Practice.</p>
+                  ) : (
+                    <>
+                      <p className="text-[13px] font-black text-shText mt-1">{overview.current_lesson_practice.title || "Lesson Practice"}</p>
+                      {overview.current_lesson_practice.description && <p className="text-[12px] text-shTextMuted mt-1">{overview.current_lesson_practice.description}</p>}
+                      <textarea value={draft.practice_note || ""} onChange={(e) => updateDraft({ practice_note: e.target.value })}
+                                rows={2} data-testid="workspace-practice-note" placeholder="Optional client-specific note for this lesson's Practice…"
+                                className="w-full mt-2 bg-black/20 border border-shBorder rounded p-2 text-shText text-[13px]"/>
+                    </>
+                  )
+                ) : (
+                  <p className="text-[12px] text-shTextMuted mt-1">No separate client Practice recipe is configured for this lesson.</p>
+                )}
+              </div>
+            </div>
+          </div>
 
           {/* Lesson summary — the three structured fields the client recap and
               the next trainer's handoff are both built from. All client-safe. */}
@@ -490,8 +542,8 @@ export default function TrainingSessionWorkspace({ bookingId, dogId, enrollmentI
       </div>
       {completing && (
         <CompleteSessionModal
-          activities={activities}
-          actuals={draft.actuals || {}}
+          lessonPractice={overview?.current_lesson_practice}
+          isAdmin={isAdmin}
           onCancel={() => setCompleting(false)}
           onComplete={async (body) => {
             try {
@@ -506,6 +558,12 @@ export default function TrainingSessionWorkspace({ bookingId, dogId, enrollmentI
               // workspace open so nothing the trainer recorded is lost.
               if (detail?.error_code === "checkpoint_required_before_advancement") {
                 setCheckpointBlock(detail.message);
+                setCompleting(false);
+                return;
+              }
+              if (detail?.error_code === "lesson_assessment_incomplete") {
+                const missing = (detail.missing || []).join(" · ");
+                setCheckpointBlock(`${detail.message}${missing ? ` ${missing}` : ""}`);
                 setCompleting(false);
                 return;
               }
@@ -633,7 +691,6 @@ function RecordFields({ activity: a, actual, onChange }) {
                 data-testid={`activity-${a.id}-private-note`}
                 rows={2} className="w-full bg-shAccent/[0.05] border border-shAccent/30 rounded p-2 text-shText text-[13px]"/>
       <div className="flex flex-wrap gap-4">
-        <label className="flex items-center gap-1.5 text-[12px] text-shText"><input type="checkbox" checked={!!actual.homework_eligible} onChange={(e) => onChange({ homework_eligible: e.target.checked })}/>Assign as homework</label>
         <label className="flex items-center gap-1.5 text-[12px] text-shText"><input type="checkbox" checked={!!actual.needs_reassessment} onChange={(e) => onChange({ needs_reassessment: e.target.checked })}/>Needs reassessment next visit</label>
       </div>
     </div>
@@ -641,20 +698,16 @@ function RecordFields({ activity: a, actual, onChange }) {
 }
 
 /* ------------------------------------------------------------ Completion */
-function CompleteSessionModal({ activities, actuals, onCancel, onComplete }) {
+function CompleteSessionModal({ lessonPractice, isAdmin = false, onCancel, onComplete }) {
   const [action, setAction] = useState("remain");
   const [reason, setReason] = useState("");
-  const eligibleActivities = activities.filter(a => !a.skipped && (actuals[a.id] || {}).homework_eligible);
-  const [homeworkIds, setHomeworkIds] = useState(() => new Set(eligibleActivities.map(a => a.id)));
+  const canAssignLessonPractice = !!lessonPractice?.configured && lessonPractice?.available !== false;
+  const [assignLessonPractice, setAssignLessonPractice] = useState(canAssignLessonPractice);
   const [sendRecap, setSendRecap] = useState(true);
   const [submitting, setSubmitting] = useState(false);
   const needsReason = action === "skip_lesson";
-
-  const toggleHomework = (id) => setHomeworkIds(prev => {
-    const next = new Set(prev);
-    if (next.has(id)) next.delete(id); else next.add(id);
-    return next;
-  });
+  const normalActions = ADVANCEMENT_ACTIONS.filter(o => ["remain", "advance_next"].includes(o.key));
+  const adminActions = ADVANCEMENT_ACTIONS.filter(o => !["remain", "advance_next"].includes(o.key));
 
   const submit = async () => {
     setSubmitting(true);
@@ -662,7 +715,7 @@ function CompleteSessionModal({ activities, actuals, onCancel, onComplete }) {
       await onComplete({
         advancement_action: action,
         advancement_reason: reason.trim() || null,
-        homework_activity_ids: Array.from(homeworkIds),
+        assign_lesson_practice: canAssignLessonPractice ? assignLessonPractice : false,
         send_recap: sendRecap,
       });
     } finally {
@@ -678,9 +731,9 @@ function CompleteSessionModal({ activities, actuals, onCancel, onComplete }) {
         </div>
         <div className="overflow-y-auto flex-1 min-h-0 px-4 sm:px-6 py-4 space-y-4">
           <div>
-            <p className="text-[11px] font-black uppercase tracking-widest text-shTextMuted mb-2">Advancement — you decide, not the system</p>
+            <p className="text-[11px] font-black uppercase tracking-widest text-shTextMuted mb-2">Can this dog move on?</p>
             <div className="space-y-1.5">
-              {ADVANCEMENT_ACTIONS.map(opt => (
+              {normalActions.map(opt => (
                 <button key={opt.key} onClick={() => setAction(opt.key)} data-testid={`advancement-${opt.key}`}
                         className={`w-full text-left px-3 py-2 rounded border ${action === opt.key ? "bg-shPrimary/15 border-shPrimary text-shText" : "border-shBorder text-shTextMuted"}`}>
                   <p className="text-[13px] font-bold">{opt.label}</p>
@@ -688,7 +741,23 @@ function CompleteSessionModal({ activities, actuals, onCancel, onComplete }) {
                 </button>
               ))}
             </div>
+            <p className="text-[11px] text-shTextMuted mt-2">Moving forward requires every required curriculum skill in this lesson to have today&apos;s outcome recorded, plus a skill level where applicable.</p>
           </div>
+          {isAdmin && (
+            <details className="rounded-lg border border-shAccent/30 bg-shAccent/[0.03] p-3" data-testid="admin-advancement-overrides">
+              <summary className="cursor-pointer text-[11px] font-black uppercase tracking-widest text-shAccent">Admin overrides</summary>
+              <p className="text-[11px] text-shTextMuted mt-1 mb-2">Use only when correcting or intentionally bypassing the normal curriculum sequence.</p>
+              <div className="space-y-1.5">
+                {adminActions.map(opt => (
+                  <button key={opt.key} onClick={() => setAction(opt.key)} data-testid={`advancement-${opt.key}`}
+                          className={`w-full text-left px-3 py-2 rounded border ${action === opt.key ? "bg-shAccent/15 border-shAccent text-shText" : "border-shBorder text-shTextMuted"}`}>
+                    <p className="text-[13px] font-bold">{opt.label}</p>
+                    <p className="text-[11px] opacity-80">{opt.desc}</p>
+                  </button>
+                ))}
+              </div>
+            </details>
+          )}
           {(needsReason || action === "reopen_previous_lesson" || action === "assign_review") && (
             <div>
               <label className="text-[11px] font-black uppercase tracking-widest text-shTextMuted">Reason {needsReason ? "(required)" : "(optional)"}</label>
@@ -696,19 +765,25 @@ function CompleteSessionModal({ activities, actuals, onCancel, onComplete }) {
                      className="w-full mt-1 bg-black/20 border border-shBorder rounded p-2 text-shText text-sm"/>
             </div>
           )}
-          {eligibleActivities.length > 0 && (
-            <div>
-              <p className="text-[11px] font-black uppercase tracking-widest text-shTextMuted mb-2">Practice to assign</p>
-              <div className="space-y-1.5">
-                {eligibleActivities.map(a => (
-                  <label key={a.id} className="flex items-center gap-2 text-[13px] text-shText">
-                    <input type="checkbox" checked={homeworkIds.has(a.id)} onChange={() => toggleHomework(a.id)}/>
-                    {a.name}
+          <div className="rounded-lg border border-shSecondary/30 bg-shSecondary/[0.04] p-3" data-testid="complete-session-lesson-practice">
+            <p className="text-[11px] font-black uppercase tracking-widest text-shSecondary">Lesson Practice for the client</p>
+            {lessonPractice?.configured ? (
+              lessonPractice.available === false ? (
+                <p className="text-[12px] text-shAccent mt-1">The lesson's configured Practice recipe is missing. The session can be recorded, but no unrelated homework will be substituted.</p>
+              ) : (
+                <>
+                  <p className="text-[13px] font-black text-shText mt-1">{lessonPractice.title || "Lesson Practice"}</p>
+                  {lessonPractice.description && <p className="text-[11px] text-shTextMuted mt-1">{lessonPractice.description}</p>}
+                  <label className="flex items-start gap-2 text-[13px] text-shText mt-3">
+                    <input type="checkbox" className="mt-0.5" checked={assignLessonPractice} onChange={(e) => setAssignLessonPractice(e.target.checked)}/>
+                    <span><b>Send this lesson's Practice</b><br/><span className="text-[11px] text-shTextMuted">Default for normal in-person lessons. Turn it off only when the client should not practice this lesson yet.</span></span>
                   </label>
-                ))}
-              </div>
-            </div>
-          )}
+                </>
+              )
+            ) : (
+              <p className="text-[12px] text-shTextMuted mt-1">This lesson has no separate Practice recipe configured, so completing the session will not create generic homework.</p>
+            )}
+          </div>
           <label className="flex items-center gap-2 text-[13px] text-shText">
             <input type="checkbox" checked={sendRecap} onChange={(e) => setSendRecap(e.target.checked)}/>
             Queue client recap

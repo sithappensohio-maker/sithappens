@@ -360,6 +360,35 @@ def test_completed_draft_rejects_further_edits():
 # Permission enforcement — real HTTP + dependency injection
 # ---------------------------------------------------------------------------
 
+def test_trainer_must_be_assigned_to_todays_dog_and_wrong_trainer_is_blocked():
+    with _program() as (prog, admin):
+        with _client_and_dog() as (c, dog):
+            enr = run(server.enroll_dog(dog["id"], server.EnrollIn(program_id=prog["id"]), admin))
+            booking = _make_booking(dog["id"], admin)
+            trainer1_uid, trainer1_h = _insert_staff("trainer")
+            trainer2_uid, trainer2_h = _insert_staff("trainer")
+            try:
+                unassigned = client.post(f"/api/bookings/{booking['id']}/training-session/draft", headers=trainer1_h)
+                assert unassigned.status_code == 200, unassigned.text
+                assert unassigned.json()["resolution"] == "trainer_unassigned"
+
+                run(server.assign_training_booking_trainer(
+                    booking["id"], server.TrainingDayTrainerAssignmentIn(assigned_trainer_id=trainer1_uid), admin,
+                ))
+                wrong = client.post(f"/api/bookings/{booking['id']}/training-session/draft", headers=trainer2_h)
+                assert wrong.status_code == 200, wrong.text
+                assert wrong.json()["resolution"] == "assigned_to_other_trainer"
+
+                mine = client.post(f"/api/bookings/{booking['id']}/training-session/draft", headers=trainer1_h)
+                assert mine.status_code == 200, mine.text
+                assert mine.json()["resolution"] == "ready"
+            finally:
+                _cleanup_booking(booking["id"])
+                _cleanup_drafts(enr["id"])
+                run(server.db.dog_programs.delete_one({"id": enr["id"]}))
+                run(server.db.users.delete_many({"id": {"$in": [trainer1_uid, trainer2_uid]}}))
+
+
 def test_trainer_can_start_draft_front_desk_cannot():
     with _program() as (prog, admin):
         with _client_and_dog() as (c, dog):
@@ -368,6 +397,12 @@ def test_trainer_can_start_draft_front_desk_cannot():
             trainer_uid, trainer_h = _insert_staff("trainer")
             fd_uid, fd_h = _insert_staff("front_desk")
             try:
+                # Daily Training Workflow — a trainer must own today's dog
+                # before the guided session can start. Admin performs the
+                # assignment; front desk still lacks session permission.
+                run(server.assign_training_booking_trainer(
+                    booking["id"], server.TrainingDayTrainerAssignmentIn(assigned_trainer_id=trainer_uid), admin,
+                ))
                 r_fd = client.post(f"/api/bookings/{booking['id']}/training-session/draft", headers=fd_h)
                 assert r_fd.status_code == 403, r_fd.text
 
@@ -432,3 +467,22 @@ def test_pre_session_overview_includes_last_session_and_recommended_objectives()
                 _cleanup_booking(booking2["id"])
                 _cleanup_drafts(enr["id"])
                 run(server.db.dog_programs.delete_one({"id": enr["id"]}))
+
+
+def test_board_train_roster_and_trainer_assignment_are_date_scoped():
+    """A residential training stay remains on the daily roster for every day
+    and can rotate trainer ownership without overwriting another date."""
+    booking = {
+        "date": "2026-08-25",
+        "end_date": "2026-08-29",
+        "training_daily_assignments": {
+            "2026-08-26": {"assigned_trainer_id": "trainer-a", "assigned_trainer_name": "Trainer A"},
+            "2026-08-27": {"assigned_trainer_id": "trainer-b", "assigned_trainer_name": "Trainer B"},
+        },
+    }
+    assert server._booking_covers_training_day(booking, "2026-08-25") is True
+    assert server._booking_covers_training_day(booking, "2026-08-28") is True
+    assert server._booking_covers_training_day(booking, "2026-08-30") is False
+    assert server._booking_training_assignment_for_day(booking, "2026-08-26")["assigned_trainer_id"] == "trainer-a"
+    assert server._booking_training_assignment_for_day(booking, "2026-08-27")["assigned_trainer_id"] == "trainer-b"
+    assert server._booking_training_assignment_for_day(booking, "2026-08-28") == {}

@@ -2,16 +2,11 @@
 // Filtering itself happens client-side over already-loaded rows
 // (filterTrainingRows, lib/trainerDashboardPolish.js) — no new query per filter.
 //
-// Release-gate correction: there is no real trainer-assignment field in
-// this app — "my_dogs" (internal key, unchanged) matches whoever most
-// recently wrote a training_session_log entry for that dog, a derived
-// proxy shared with the rest of the app (trainer_scorecard, the pipeline
-// list's "last trainer"). The visible label and accessible description
-// say so explicitly, so this can never be misread as real assignment or
-// ownership.
+// Daily Training Workflow: "my_dogs" is true assignment, keyed to the
+// trainer responsible for today's booking (with program assignment fallback).
 const FILTERS = [
   { key: "all", label: "All" },
-  { key: "my_dogs", label: "Recently Trained by Me", title: "Dogs whose most recent training session was logged by you — not a trainer-assignment record." },
+  { key: "my_dogs", label: "My Dogs Today", title: "Dogs assigned to you for today's training." },
   { key: "not_checked_in", label: "Not Checked In" },
   { key: "ready", label: "Ready" },
   { key: "in_progress", label: "In Progress" },
