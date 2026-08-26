@@ -19,7 +19,7 @@ def _body(**kwargs):
     defaults = {
         "send_recap": True,
         "advancement_action": "remain",
-        "advancement_reason": "Dog needs another repetition at this lesson.",
+        "advancement_reason": "",
     }
     defaults.update(kwargs)
     return SimpleNamespace(**defaults)
@@ -64,7 +64,7 @@ def test_skipped_required_skill_needs_reason_but_not_mastery():
     assert not any("Confirm Mastered or Not Yet" in gap for gap in gaps)
 
 
-def test_structured_recap_and_progression_reason_are_required():
+def test_structured_recap_is_required_but_normal_remain_reason_is_not():
     draft = _complete_required_draft()
     draft["what_went_well"] = ""
     draft["needs_work"] = ""
@@ -75,7 +75,17 @@ def test_structured_recap_and_progression_reason_are_required():
     assert "Add Needs Work" in gaps
     assert "Add Next Session Focus" in gaps
     assert any("client recap" in gap.lower() for gap in gaps)
-    assert any("progression decision" in gap.lower() for gap in gaps)
+    assert not any("progression decision" in gap.lower() for gap in gaps)
+
+
+def test_valid_required_record_can_complete_remain_without_hidden_reason_field():
+    gaps = session_completion_gaps(
+        _Server,
+        {},
+        _complete_required_draft(),
+        _body(advancement_reason=""),
+    )
+    assert gaps == []
 
 
 def test_board_train_required_dates_exclude_pickup_day():
@@ -88,8 +98,18 @@ def test_board_train_required_dates_exclude_pickup_day():
 
 def test_legacy_blank_label_is_am_and_pm_remains_independent():
     drafts = [
-        {"draft_id": "legacy-am", "session_label": "", "state": "completed", "completed_at": "2026-08-01T12:00:00Z"},
-        {"draft_id": "pm", "session_label": "PM", "state": "draft", "started_at": "2026-08-01T18:00:00Z"},
+        {
+            "draft_id": "legacy-am",
+            "session_label": "",
+            "state": "completed",
+            "completed_at": "2026-08-01T12:00:00Z",
+        },
+        {
+            "draft_id": "pm",
+            "session_label": "PM",
+            "state": "draft",
+            "started_at": "2026-08-01T18:00:00Z",
+        },
     ]
     slots = slots_from_drafts(drafts)
     assert slots["AM"]["draft_id"] == "legacy-am"
@@ -103,7 +123,10 @@ def test_legacy_blank_label_is_am_and_pm_remains_independent():
 def test_daily_closeout_requires_both_sessions_to_still_be_complete():
     booking = {
         "training_daily_closeouts": {
-            "2026-08-01": {"status": "closed", "closed_at": "2026-08-01T20:00:00Z"},
+            "2026-08-01": {
+                "status": "closed",
+                "closed_at": "2026-08-01T20:00:00Z",
+            },
         },
     }
     both = [
@@ -114,13 +137,18 @@ def test_daily_closeout_requires_both_sessions_to_still_be_complete():
 
     reopened = [
         {"draft_id": "am", "session_label": "AM", "state": "completed"},
-        {"draft_id": "pm", "session_label": "PM", "state": "draft", "started_at": "x"},
+        {
+            "draft_id": "pm",
+            "session_label": "PM",
+            "state": "draft",
+            "started_at": "x",
+        },
     ]
     status = daily_status(booking, "2026-08-01", reopened)
     assert status["closeout_complete"] is False
     assert status["state"] == "pm_due"
 
 
-def test_label_normalization_accepts_explicit_am_pm_only():
+def test_label_normalization_accepts_explicit_am_pm():
     assert normalize_bt_label("am") == "AM"
     assert normalize_bt_label("P.M.") == "PM"
