@@ -152,3 +152,120 @@ def test_daily_closeout_requires_both_sessions_to_still_be_complete():
 def test_label_normalization_accepts_explicit_am_pm():
     assert normalize_bt_label("am") == "AM"
     assert normalize_bt_label("P.M.") == "PM"
+
+
+def _fake_server_for_install():
+    from datetime import date
+    from fastapi import Depends, FastAPI
+    from types import SimpleNamespace
+
+    app = FastAPI()
+
+    async def today_dep():
+        return {"id": "trainer"}
+
+    @app.get("/api/admin/training/today")
+    async def training_today(user=Depends(today_dep)):
+        return []
+
+    calls = []
+
+    async def original_compute(enrollment, draft, draft_id, body, user):
+        calls.append((draft_id, body.advancement_action))
+        return {"log_doc": {"id": "log-1"}, "completed_by": user.get("id")}
+
+    async def original_get_draft(enrollment, booking_id, session_label, actor):
+        return {"session_label": session_label}
+
+    async def original_worker(draft_id, plan, claim_token):
+        return {"ok": True}
+
+    async def original_checkout(booking_id, body=None, user=None, create_invoice=True):
+        return {"checked_out": True}
+
+    def permission_factory(name):
+        async def dep():
+            return {"id": "trainer"}
+        return dep
+
+    server = SimpleNamespace(
+        app=app,
+        _compute_completion_plan=original_compute,
+        _get_or_create_session_draft=original_get_draft,
+        _run_completion_worker=original_worker,
+        _check_out_locked=original_checkout,
+        _current_lesson_assessment_gaps=_Server._current_lesson_assessment_gaps,
+        require_admin_and_permission=permission_factory,
+        business_today=lambda: date(2026, 8, 26),
+    )
+    return server, calls
+
+
+class _NoopCollection:
+    async def find_one(self, *args, **kwargs):
+        return None
+
+    def find(self, *args, **kwargs):
+        return self
+
+    async def to_list(self, *args, **kwargs):
+        return []
+
+
+class _NoopDB:
+    def __init__(self):
+        self.bookings = _NoopCollection()
+        self.training_session_drafts = _NoopCollection()
+        self.services = _NoopCollection()
+
+
+def test_install_preserves_existing_today_dependency_graph():
+    import trainer_delivery_enforcement as mod
+
+    server, _ = _fake_server_for_install()
+    route = next(
+        r
+        for r in server.app.routes
+        if getattr(r, "path", None) == "/api/admin/training/today"
+    )
+    before = [d.call for d in route.dependant.dependencies]
+    mod.install_trainer_delivery_enforcement(server_module=server, db=_NoopDB())
+    after = [d.call for d in route.dependant.dependencies]
+    assert before == after
+    assert getattr(server, "_trainer_delivery_enforcement_installed") is True
+
+
+import pytest
+
+
+@pytest.mark.asyncio
+async def test_installed_completion_wrapper_blocks_bad_remain_and_marks_good_log():
+    import trainer_delivery_enforcement as mod
+    from fastapi import HTTPException
+
+    server, calls = _fake_server_for_install()
+    mod.install_trainer_delivery_enforcement(server_module=server, db=_NoopDB())
+
+    bad = _complete_required_draft()
+    bad["actuals"]["skill-1"].pop("mastery_decision")
+    with pytest.raises(HTTPException) as exc:
+        await server._compute_completion_plan(
+            {},
+            bad,
+            "draft-bad",
+            _body(),
+            {"id": "trainer"},
+        )
+    assert exc.value.status_code == 409
+    assert calls == []
+
+    good = await server._compute_completion_plan(
+        {},
+        _complete_required_draft(),
+        "draft-good",
+        _body(),
+        {"id": "trainer"},
+    )
+    assert calls == [("draft-good", "remain")]
+    assert good["trainer_delivery_rule_version"] == 1
+    assert good["log_doc"]["completion_requirements_verified"] is True
