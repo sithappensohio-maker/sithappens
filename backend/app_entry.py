@@ -9,6 +9,7 @@ import server
 
 from board_train_scheduling import install_board_train_scheduling
 from board_train_workspace_access import install_board_train_workspace_access
+from in_person_session_progression import install_in_person_session_progression
 from school_experience_feedback import install_school_experience_feedback
 from trainer_delivery_enforcement import install_trainer_delivery_enforcement
 
@@ -16,5 +17,6 @@ install_board_train_scheduling(server_module=server, db=server.db)
 install_school_experience_feedback(server_module=server, db=server.db)
 install_trainer_delivery_enforcement(server_module=server, db=server.db)
 install_board_train_workspace_access(server_module=server, db=server.db)
+install_in_person_session_progression(server_module=server)
 
 app = server.app
