@@ -11,7 +11,7 @@ from fastapi import Depends, HTTPException
 from pydantic import BaseModel, Field
 
 from school_suite_base import *  # noqa: F401,F403
-from school_suite_base import register_school_suite as _register_school_suite_base
+from school_suite_base import _gid, _now, register_school_suite as _register_school_suite_base
 
 
 class ManualInPersonProgressIn(BaseModel):
