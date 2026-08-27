@@ -1,0 +1,3622 @@
+[
+  {
+    "method": "GET",
+    "path": "/",
+    "function": "root"
+  },
+  {
+    "method": "GET",
+    "path": "/admin/accounts-receivable",
+    "function": "get_accounts_receivable"
+  },
+  {
+    "method": "GET",
+    "path": "/admin/agreement-templates",
+    "function": "admin_agreement_templates"
+  },
+  {
+    "method": "POST",
+    "path": "/admin/agreement-templates",
+    "function": "admin_create_agreement_template"
+  },
+  {
+    "method": "PUT",
+    "path": "/admin/agreement-templates/{template_id}",
+    "function": "admin_update_agreement_template"
+  },
+  {
+    "method": "GET",
+    "path": "/admin/announcements",
+    "function": "list_admin_announcements"
+  },
+  {
+    "method": "POST",
+    "path": "/admin/announcements",
+    "function": "create_announcement"
+  },
+  {
+    "method": "DELETE",
+    "path": "/admin/announcements/{ann_id}",
+    "function": "delete_announcement"
+  },
+  {
+    "method": "PUT",
+    "path": "/admin/announcements/{ann_id}",
+    "function": "update_announcement"
+  },
+  {
+    "method": "GET",
+    "path": "/admin/auto-backup/config",
+    "function": "get_auto_backup_config"
+  },
+  {
+    "method": "PUT",
+    "path": "/admin/auto-backup/config",
+    "function": "put_auto_backup_config"
+  },
+  {
+    "method": "POST",
+    "path": "/admin/auto-backup/run-now",
+    "function": "run_auto_backup_now"
+  },
+  {
+    "method": "GET",
+    "path": "/admin/auto-backup/runs",
+    "function": "list_auto_backup_runs"
+  },
+  {
+    "method": "GET",
+    "path": "/admin/backup-safety/report",
+    "function": "admin_backup_safety_report"
+  },
+  {
+    "method": "POST",
+    "path": "/admin/backup-safety/restore-school-media",
+    "function": "admin_restore_school_media"
+  },
+  {
+    "method": "GET",
+    "path": "/admin/backup-safety/school-media-archives",
+    "function": "admin_school_media_archives"
+  },
+  {
+    "method": "GET",
+    "path": "/admin/backup-safety/school-media-archives/{filename}",
+    "function": "admin_download_school_media_archive"
+  },
+  {
+    "method": "POST",
+    "path": "/admin/backup-safety/validate-latest",
+    "function": "admin_backup_safety_validate_latest"
+  },
+  {
+    "method": "GET",
+    "path": "/admin/backup-safety/validations",
+    "function": "admin_backup_safety_validations"
+  },
+  {
+    "method": "GET",
+    "path": "/admin/bookings/archive",
+    "function": "list_archived"
+  },
+  {
+    "method": "POST",
+    "path": "/admin/bookings/archive-now",
+    "function": "archive_now"
+  },
+  {
+    "method": "PUT",
+    "path": "/admin/bookings/{booking_id}/assign",
+    "function": "assign_booking"
+  },
+  {
+    "method": "GET",
+    "path": "/admin/bulk-email/filters",
+    "function": "bulk_email_filters_meta"
+  },
+  {
+    "method": "GET",
+    "path": "/admin/bulk-email/history",
+    "function": "bulk_email_history"
+  },
+  {
+    "method": "POST",
+    "path": "/admin/bulk-email/recipients",
+    "function": "bulk_email_recipients"
+  },
+  {
+    "method": "POST",
+    "path": "/admin/bulk-email/send",
+    "function": "bulk_email_send"
+  },
+  {
+    "method": "GET",
+    "path": "/admin/bulk-email/templates",
+    "function": "bulk_email_templates_list"
+  },
+  {
+    "method": "POST",
+    "path": "/admin/bulk-email/templates",
+    "function": "bulk_email_templates_create"
+  },
+  {
+    "method": "DELETE",
+    "path": "/admin/bulk-email/templates/{template_id}",
+    "function": "bulk_email_templates_delete"
+  },
+  {
+    "method": "GET",
+    "path": "/admin/client-trophies-summary",
+    "function": "all_client_trophies_summary"
+  },
+  {
+    "method": "POST",
+    "path": "/admin/clients/{client_id}/impersonation-token",
+    "function": "admin_impersonation_token"
+  },
+  {
+    "method": "GET",
+    "path": "/admin/clients/{client_id}/portal-snapshot",
+    "function": "admin_client_portal_snapshot"
+  },
+  {
+    "method": "GET",
+    "path": "/admin/clients/{client_id}/setup-status",
+    "function": "admin_client_setup_status"
+  },
+  {
+    "method": "GET",
+    "path": "/admin/clients/{client_id}/training-credits",
+    "function": "client_training_credits_breakdown"
+  },
+  {
+    "method": "POST",
+    "path": "/admin/compress-photos",
+    "function": "admin_compress_photos"
+  },
+  {
+    "method": "GET",
+    "path": "/admin/compress-photos/status",
+    "function": "admin_compress_photos_status"
+  },
+  {
+    "method": "GET",
+    "path": "/admin/credit-lots/legacy-migration-preview",
+    "function": "preview_legacy_migration"
+  },
+  {
+    "method": "POST",
+    "path": "/admin/credit-lots/migrate-existing-to-legacy",
+    "function": "migrate_existing_lots_to_legacy"
+  },
+  {
+    "method": "GET",
+    "path": "/admin/credits/reconciliation",
+    "function": "credit_reconciliation_report"
+  },
+  {
+    "method": "GET",
+    "path": "/admin/credits/reconciliation/{client_id}",
+    "function": "credit_reconciliation_detail"
+  },
+  {
+    "method": "POST",
+    "path": "/admin/daily-jobs/run-now",
+    "function": "admin_run_daily_jobs"
+  },
+  {
+    "method": "GET",
+    "path": "/admin/disk-usage",
+    "function": "admin_disk_usage"
+  },
+  {
+    "method": "POST",
+    "path": "/admin/dog-facts/import-csv",
+    "function": "dog_facts_import_csv"
+  },
+  {
+    "method": "GET",
+    "path": "/admin/dog-facts/import-csv/template",
+    "function": "dog_facts_import_csv_template"
+  },
+  {
+    "method": "GET",
+    "path": "/admin/dog-trophies-summary",
+    "function": "all_dog_trophies_summary"
+  },
+  {
+    "method": "DELETE",
+    "path": "/admin/dogs/{dog_id}/vaccine-cert/{vaccine}",
+    "function": "admin_reject_vaccine_cert"
+  },
+  {
+    "method": "POST",
+    "path": "/admin/dogs/{dog_id}/vaccine-cert/{vaccine}/review",
+    "function": "admin_review_vaccine_cert"
+  },
+  {
+    "method": "POST",
+    "path": "/admin/duplicates/dogs/merge",
+    "function": "admin_duplicate_dog_merge"
+  },
+  {
+    "method": "POST",
+    "path": "/admin/duplicates/dogs/merge-preview",
+    "function": "admin_duplicate_dog_merge_preview"
+  },
+  {
+    "method": "GET",
+    "path": "/admin/duplicates/report",
+    "function": "admin_duplicates_report"
+  },
+  {
+    "method": "GET",
+    "path": "/admin/email-health",
+    "function": "email_health"
+  },
+  {
+    "method": "POST",
+    "path": "/admin/email-health/test",
+    "function": "email_health_test"
+  },
+  {
+    "method": "GET",
+    "path": "/admin/email-settings",
+    "function": "get_email_settings"
+  },
+  {
+    "method": "PUT",
+    "path": "/admin/email-settings",
+    "function": "update_email_settings"
+  },
+  {
+    "method": "GET",
+    "path": "/admin/email-templates",
+    "function": "list_email_templates"
+  },
+  {
+    "method": "POST",
+    "path": "/admin/email-templates/custom",
+    "function": "create_custom_email_template"
+  },
+  {
+    "method": "DELETE",
+    "path": "/admin/email-templates/custom/{slug}",
+    "function": "delete_custom_email_template"
+  },
+  {
+    "method": "POST",
+    "path": "/admin/email-templates/test-preview",
+    "function": "preview_custom_email_draft"
+  },
+  {
+    "method": "GET",
+    "path": "/admin/email-templates/{slug}",
+    "function": "get_email_template"
+  },
+  {
+    "method": "PUT",
+    "path": "/admin/email-templates/{slug}",
+    "function": "update_email_template"
+  },
+  {
+    "method": "POST",
+    "path": "/admin/email-templates/{slug}/reset",
+    "function": "reset_email_template"
+  },
+  {
+    "method": "POST",
+    "path": "/admin/email-templates/{slug}/test",
+    "function": "test_email_template"
+  },
+  {
+    "method": "GET",
+    "path": "/admin/employees",
+    "function": "list_employees"
+  },
+  {
+    "method": "POST",
+    "path": "/admin/employees",
+    "function": "create_employee"
+  },
+  {
+    "method": "DELETE",
+    "path": "/admin/employees/{user_id}",
+    "function": "deactivate_employee"
+  },
+  {
+    "method": "PUT",
+    "path": "/admin/employees/{user_id}",
+    "function": "update_employee"
+  },
+  {
+    "method": "POST",
+    "path": "/admin/employees/{user_id}/reset-password",
+    "function": "admin_reset_employee_password"
+  },
+  {
+    "method": "GET",
+    "path": "/admin/end-of-day",
+    "function": "admin_end_of_day"
+  },
+  {
+    "method": "POST",
+    "path": "/admin/end-of-day/closeout",
+    "function": "admin_end_of_day_closeout"
+  },
+  {
+    "method": "GET",
+    "path": "/admin/estimated-tax/payments",
+    "function": "list_estimated_tax_payments"
+  },
+  {
+    "method": "POST",
+    "path": "/admin/estimated-tax/payments",
+    "function": "record_estimated_tax_payment"
+  },
+  {
+    "method": "POST",
+    "path": "/admin/estimated-tax/payments/{pid}/void",
+    "function": "void_estimated_tax_payment"
+  },
+  {
+    "method": "GET",
+    "path": "/admin/federal-estimated-tax",
+    "function": "federal_estimated_tax_endpoint"
+  },
+  {
+    "method": "GET",
+    "path": "/admin/help-requests",
+    "function": "admin_list_help_requests"
+  },
+  {
+    "method": "PUT",
+    "path": "/admin/help-requests/{req_id}",
+    "function": "admin_update_help_request"
+  },
+  {
+    "method": "GET",
+    "path": "/admin/homework/analytics",
+    "function": "homework_analytics"
+  },
+  {
+    "method": "GET",
+    "path": "/admin/homework/pending-reviews",
+    "function": "list_pending_reviews"
+  },
+  {
+    "method": "GET",
+    "path": "/admin/homework/recent-steps",
+    "function": "admin_recent_step_events"
+  },
+  {
+    "method": "POST",
+    "path": "/admin/homework/send-monday-digest",
+    "function": "admin_force_monday_digest"
+  },
+  {
+    "method": "POST",
+    "path": "/admin/homework/send-weekly-digest",
+    "function": "admin_force_weekly_digest"
+  },
+  {
+    "method": "GET",
+    "path": "/admin/homework/stalled",
+    "function": "list_stalled_homework"
+  },
+  {
+    "method": "GET",
+    "path": "/admin/homework/unreviewed-count",
+    "function": "homework_unreviewed_count"
+  },
+  {
+    "method": "POST",
+    "path": "/admin/homework/{homework_id}/complete",
+    "function": "trainer_complete_homework"
+  },
+  {
+    "method": "GET",
+    "path": "/admin/income/export.csv",
+    "function": "admin_income_csv"
+  },
+  {
+    "method": "GET",
+    "path": "/admin/marketing-qr",
+    "function": "admin_marketing_qr"
+  },
+  {
+    "method": "GET",
+    "path": "/admin/messages",
+    "function": "admin_list_messages"
+  },
+  {
+    "method": "POST",
+    "path": "/admin/messages/start",
+    "function": "admin_start_thread"
+  },
+  {
+    "method": "GET",
+    "path": "/admin/messages/unread-count",
+    "function": "admin_unread_count"
+  },
+  {
+    "method": "GET",
+    "path": "/admin/messages/{thread_id}",
+    "function": "admin_get_thread"
+  },
+  {
+    "method": "PATCH",
+    "path": "/admin/messages/{thread_id}",
+    "function": "admin_set_status"
+  },
+  {
+    "method": "POST",
+    "path": "/admin/messages/{thread_id}/note",
+    "function": "admin_add_note"
+  },
+  {
+    "method": "DELETE",
+    "path": "/admin/messages/{thread_id}/note/{note_id}",
+    "function": "admin_delete_note"
+  },
+  {
+    "method": "POST",
+    "path": "/admin/messages/{thread_id}/read",
+    "function": "admin_mark_read"
+  },
+  {
+    "method": "POST",
+    "path": "/admin/messages/{thread_id}/reply",
+    "function": "admin_reply_thread"
+  },
+  {
+    "method": "GET",
+    "path": "/admin/mileage",
+    "function": "list_mileage"
+  },
+  {
+    "method": "POST",
+    "path": "/admin/mileage",
+    "function": "create_mileage"
+  },
+  {
+    "method": "GET",
+    "path": "/admin/mileage/recent-trips",
+    "function": "mileage_recent_trips"
+  },
+  {
+    "method": "GET",
+    "path": "/admin/mileage/summary",
+    "function": "mileage_summary"
+  },
+  {
+    "method": "DELETE",
+    "path": "/admin/mileage/{mid}",
+    "function": "delete_mileage"
+  },
+  {
+    "method": "PUT",
+    "path": "/admin/mileage/{mid}",
+    "function": "update_mileage"
+  },
+  {
+    "method": "GET",
+    "path": "/admin/money-health",
+    "function": "admin_money_health"
+  },
+  {
+    "method": "GET",
+    "path": "/admin/ohio-estimated-tax",
+    "function": "ohio_estimated_tax_endpoint"
+  },
+  {
+    "method": "GET",
+    "path": "/admin/owner",
+    "function": "get_owner"
+  },
+  {
+    "method": "GET",
+    "path": "/admin/owner/draw-summary",
+    "function": "owner_draw_summary"
+  },
+  {
+    "method": "GET",
+    "path": "/admin/payment-plans",
+    "function": "list_payment_plans"
+  },
+  {
+    "method": "POST",
+    "path": "/admin/payment-plans",
+    "function": "create_payment_plan"
+  },
+  {
+    "method": "GET",
+    "path": "/admin/payment-plans/receivables/this-week",
+    "function": "receivables_this_week"
+  },
+  {
+    "method": "GET",
+    "path": "/admin/payment-plans/settings",
+    "function": "get_payment_plan_settings"
+  },
+  {
+    "method": "PUT",
+    "path": "/admin/payment-plans/settings",
+    "function": "update_payment_plan_settings"
+  },
+  {
+    "method": "GET",
+    "path": "/admin/payment-plans/{plan_id}",
+    "function": "get_payment_plan"
+  },
+  {
+    "method": "POST",
+    "path": "/admin/payment-plans/{plan_id}/cancel",
+    "function": "cancel_payment_plan"
+  },
+  {
+    "method": "POST",
+    "path": "/admin/payment-plans/{plan_id}/installments/{inst_id}/mark-paid",
+    "function": "mark_installment_paid"
+  },
+  {
+    "method": "POST",
+    "path": "/admin/payment-plans/{plan_id}/installments/{inst_id}/reverse-payment",
+    "function": "reverse_installment_payment"
+  },
+  {
+    "method": "GET",
+    "path": "/admin/payroll-tax-settings",
+    "function": "get_payroll_tax_settings"
+  },
+  {
+    "method": "PUT",
+    "path": "/admin/payroll-tax-settings",
+    "function": "update_payroll_tax_settings"
+  },
+  {
+    "method": "GET",
+    "path": "/admin/payroll/csv",
+    "function": "payroll_csv"
+  },
+  {
+    "method": "GET",
+    "path": "/admin/payroll/estimate",
+    "function": "payroll_estimate"
+  },
+  {
+    "method": "GET",
+    "path": "/admin/payroll/year-end.csv",
+    "function": "payroll_year_end_csv"
+  },
+  {
+    "method": "GET",
+    "path": "/admin/pending-actions",
+    "function": "admin_pending_actions"
+  },
+  {
+    "method": "GET",
+    "path": "/admin/pending-actions/count",
+    "function": "admin_pending_actions_count"
+  },
+  {
+    "method": "GET",
+    "path": "/admin/pl-monthly-status",
+    "function": "pl_monthly_status"
+  },
+  {
+    "method": "POST",
+    "path": "/admin/pos/open-drawer",
+    "function": "admin_pos_open_drawer"
+  },
+  {
+    "method": "GET",
+    "path": "/admin/production-health",
+    "function": "admin_production_health"
+  },
+  {
+    "method": "GET",
+    "path": "/admin/quarterly-tax",
+    "function": "admin_quarterly_tax"
+  },
+  {
+    "method": "GET",
+    "path": "/admin/quarterly-tax/cpa.pdf",
+    "function": "quarterly_tax_cpa_pdf"
+  },
+  {
+    "method": "GET",
+    "path": "/admin/quarterly-tax/payments",
+    "function": "list_tax_payments"
+  },
+  {
+    "method": "POST",
+    "path": "/admin/quarterly-tax/payments",
+    "function": "add_tax_payment"
+  },
+  {
+    "method": "DELETE",
+    "path": "/admin/quarterly-tax/payments/{pid}",
+    "function": "delete_tax_payment"
+  },
+  {
+    "method": "GET",
+    "path": "/admin/quarterly-tax/settings",
+    "function": "admin_quarterly_tax_settings_get"
+  },
+  {
+    "method": "PUT",
+    "path": "/admin/quarterly-tax/settings",
+    "function": "admin_quarterly_tax_settings"
+  },
+  {
+    "method": "GET",
+    "path": "/admin/quote-requests",
+    "function": "admin_list_quote_requests"
+  },
+  {
+    "method": "POST",
+    "path": "/admin/quote-requests/{request_id}/close",
+    "function": "admin_close_quote_request"
+  },
+  {
+    "method": "GET",
+    "path": "/admin/readiness",
+    "function": "operational_readiness"
+  },
+  {
+    "method": "GET",
+    "path": "/admin/receipt-settings",
+    "function": "get_receipt_settings_endpoint"
+  },
+  {
+    "method": "PUT",
+    "path": "/admin/receipt-settings",
+    "function": "update_receipt_settings_endpoint"
+  },
+  {
+    "method": "GET",
+    "path": "/admin/receipts/preview",
+    "function": "preview_receipt"
+  },
+  {
+    "method": "POST",
+    "path": "/admin/receipts/test-print",
+    "function": "issue_test_receipt_print_token"
+  },
+  {
+    "method": "GET",
+    "path": "/admin/recent-errors",
+    "function": "admin_recent_errors"
+  },
+  {
+    "method": "POST",
+    "path": "/admin/recent-errors/clear",
+    "function": "admin_recent_errors_clear"
+  },
+  {
+    "method": "POST",
+    "path": "/admin/register/cash-payout",
+    "function": "admin_register_cash_payout"
+  },
+  {
+    "method": "GET",
+    "path": "/admin/register/closeouts",
+    "function": "admin_register_closeouts"
+  },
+  {
+    "method": "GET",
+    "path": "/admin/register/day",
+    "function": "admin_register_day"
+  },
+  {
+    "method": "GET",
+    "path": "/admin/register/export.csv",
+    "function": "admin_register_export_csv"
+  },
+  {
+    "method": "POST",
+    "path": "/admin/register/open-drawer",
+    "function": "admin_open_cash_drawer"
+  },
+  {
+    "method": "GET",
+    "path": "/admin/register/range",
+    "function": "admin_register_range"
+  },
+  {
+    "method": "POST",
+    "path": "/admin/register/refund",
+    "function": "admin_register_refund"
+  },
+  {
+    "method": "POST",
+    "path": "/admin/register/reopen-day",
+    "function": "admin_reopen_register_day"
+  },
+  {
+    "method": "GET",
+    "path": "/admin/register/session",
+    "function": "get_register_session"
+  },
+  {
+    "method": "GET",
+    "path": "/admin/register/status",
+    "function": "get_register_status"
+  },
+  {
+    "method": "GET",
+    "path": "/admin/register/tax-packet.zip",
+    "function": "admin_register_tax_packet_zip"
+  },
+  {
+    "method": "POST",
+    "path": "/admin/register/till-adjustment",
+    "function": "admin_register_till_adjustment"
+  },
+  {
+    "method": "DELETE",
+    "path": "/admin/register/till-adjustment/{adjustment_id}",
+    "function": "delete_till_adjustment"
+  },
+  {
+    "method": "GET",
+    "path": "/admin/reschedule-requests",
+    "function": "list_reschedule_requests"
+  },
+  {
+    "method": "POST",
+    "path": "/admin/reschedule-requests/{req_id}/approve",
+    "function": "approve_reschedule_request"
+  },
+  {
+    "method": "POST",
+    "path": "/admin/reschedule-requests/{req_id}/decline",
+    "function": "decline_reschedule_request"
+  },
+  {
+    "method": "GET",
+    "path": "/admin/rewards/center",
+    "function": "admin_rewards_center"
+  },
+  {
+    "method": "GET",
+    "path": "/admin/rewards/credits-audit.csv",
+    "function": "admin_rewards_credits_audit_csv"
+  },
+  {
+    "method": "POST",
+    "path": "/admin/rewards/referrals/{referred_client_id}/grant",
+    "function": "admin_rewards_grant_referral"
+  },
+  {
+    "method": "GET",
+    "path": "/admin/sales-tax/filing-settings",
+    "function": "get_sales_tax_filing_settings"
+  },
+  {
+    "method": "PUT",
+    "path": "/admin/sales-tax/filing-settings",
+    "function": "put_sales_tax_filing_settings"
+  },
+  {
+    "method": "POST",
+    "path": "/admin/sales-tax/filings",
+    "function": "record_sales_tax_filing"
+  },
+  {
+    "method": "PATCH",
+    "path": "/admin/sales-tax/filings/{filing_id}",
+    "function": "patch_sales_tax_filing"
+  },
+  {
+    "method": "POST",
+    "path": "/admin/sales-tax/filings/{filing_id}/payments",
+    "function": "record_sales_tax_payment"
+  },
+  {
+    "method": "GET",
+    "path": "/admin/sales-tax/summary",
+    "function": "sales_tax_summary"
+  },
+  {
+    "method": "GET",
+    "path": "/admin/sales-tax/tracker",
+    "function": "sales_tax_tracker"
+  },
+  {
+    "method": "GET",
+    "path": "/admin/school-enrollments/{school_enrollment_id}/checkpoint-history",
+    "function": "admin_school_enrollment_checkpoint_history"
+  },
+  {
+    "method": "GET",
+    "path": "/admin/school/checkpoints/pending",
+    "function": "admin_school_checkpoints_pending"
+  },
+  {
+    "method": "POST",
+    "path": "/admin/school/checkpoints/{submission_id}/annotations",
+    "function": "admin_school_checkpoint_annotation"
+  },
+  {
+    "method": "POST",
+    "path": "/admin/school/checkpoints/{submission_id}/clear-trainer-assist-hold",
+    "function": "admin_school_checkpoint_clear_trainer_assist_hold"
+  },
+  {
+    "method": "POST",
+    "path": "/admin/school/checkpoints/{submission_id}/grade",
+    "function": "admin_school_checkpoint_grade"
+  },
+  {
+    "method": "GET",
+    "path": "/admin/school/hq/activity",
+    "function": "admin_school_hq_activity"
+  },
+  {
+    "method": "GET",
+    "path": "/admin/school/hq/activity/students",
+    "function": "admin_school_hq_activity_students"
+  },
+  {
+    "method": "GET",
+    "path": "/admin/school/hq/activity/summary",
+    "function": "admin_school_hq_activity_summary"
+  },
+  {
+    "method": "GET",
+    "path": "/admin/school/hq/attention-count",
+    "function": "admin_school_hq_attention_count"
+  },
+  {
+    "method": "GET",
+    "path": "/admin/school/hq/needs-attention",
+    "function": "admin_school_hq_needs_attention"
+  },
+  {
+    "method": "GET",
+    "path": "/admin/school/hq/notifications",
+    "function": "admin_school_hq_notifications"
+  },
+  {
+    "method": "POST",
+    "path": "/admin/school/hq/notifications/{notification_id}/read",
+    "function": "admin_school_hq_notification_read"
+  },
+  {
+    "method": "POST",
+    "path": "/admin/school/hq/notifications/{notification_id}/resolve",
+    "function": "admin_school_hq_notification_resolve"
+  },
+  {
+    "method": "GET",
+    "path": "/admin/school/hq/summary",
+    "function": "admin_school_hq_summary"
+  },
+  {
+    "method": "GET",
+    "path": "/admin/school/practice-reviews/pending",
+    "function": "admin_school_practice_reviews_pending"
+  },
+  {
+    "method": "GET",
+    "path": "/admin/school/practice-reviews/recent",
+    "function": "admin_school_practice_reviews_recent"
+  },
+  {
+    "method": "POST",
+    "path": "/admin/school/practice-reviews/{homework_id}/{log_id}",
+    "function": "admin_school_practice_review"
+  },
+  {
+    "method": "POST",
+    "path": "/admin/school/students/{school_enrollment_id}/lessons/{lesson_id}/live-checkpoint",
+    "function": "admin_school_live_checkpoint"
+  },
+  {
+    "method": "POST",
+    "path": "/admin/school/students/{school_enrollment_id}/practice",
+    "function": "assign_school_practice"
+  },
+  {
+    "method": "POST",
+    "path": "/admin/school/students/{school_enrollment_id}/retake",
+    "function": "school_retake_enrollment"
+  },
+  {
+    "method": "GET",
+    "path": "/admin/school/trainer-assist",
+    "function": "admin_school_trainer_assist_queue"
+  },
+  {
+    "method": "GET",
+    "path": "/admin/school/trainer-assist/{submission_id}",
+    "function": "admin_school_trainer_assist_detail"
+  },
+  {
+    "method": "POST",
+    "path": "/admin/school/trainer-assist/{submission_id}/complete",
+    "function": "admin_trainer_assist_complete"
+  },
+  {
+    "method": "POST",
+    "path": "/admin/school/trainer-assist/{submission_id}/contact",
+    "function": "admin_trainer_assist_contact"
+  },
+  {
+    "method": "POST",
+    "path": "/admin/school/trainer-assist/{submission_id}/schedule",
+    "function": "admin_trainer_assist_schedule"
+  },
+  {
+    "method": "GET",
+    "path": "/admin/shift-templates",
+    "function": "list_shift_templates"
+  },
+  {
+    "method": "POST",
+    "path": "/admin/shift-templates",
+    "function": "create_shift_template"
+  },
+  {
+    "method": "DELETE",
+    "path": "/admin/shift-templates/{tid}",
+    "function": "delete_shift_template"
+  },
+  {
+    "method": "PUT",
+    "path": "/admin/shift-templates/{tid}",
+    "function": "update_shift_template"
+  },
+  {
+    "method": "GET",
+    "path": "/admin/shifts",
+    "function": "list_shifts"
+  },
+  {
+    "method": "POST",
+    "path": "/admin/shifts",
+    "function": "create_shift"
+  },
+  {
+    "method": "POST",
+    "path": "/admin/shifts/generate",
+    "function": "generate_shifts_from_templates"
+  },
+  {
+    "method": "GET",
+    "path": "/admin/shifts/scheduled-vs-actual",
+    "function": "shifts_scheduled_vs_actual"
+  },
+  {
+    "method": "DELETE",
+    "path": "/admin/shifts/{sid}",
+    "function": "delete_shift"
+  },
+  {
+    "method": "PUT",
+    "path": "/admin/shifts/{sid}",
+    "function": "update_shift"
+  },
+  {
+    "method": "GET",
+    "path": "/admin/shop-orders",
+    "function": "list_shop_orders"
+  },
+  {
+    "method": "POST",
+    "path": "/admin/shop-orders/mark-seen",
+    "function": "mark_shop_orders_seen"
+  },
+  {
+    "method": "GET",
+    "path": "/admin/shop-orders/unseen-count",
+    "function": "shop_orders_unseen_count"
+  },
+  {
+    "method": "POST",
+    "path": "/admin/shop-orders/{order_id}/fulfillment",
+    "function": "update_shop_order_fulfillment"
+  },
+  {
+    "method": "GET",
+    "path": "/admin/staff/pay-snapshot",
+    "function": "staff_pay_snapshot"
+  },
+  {
+    "method": "GET",
+    "path": "/admin/staff/readiness",
+    "function": "admin_staff_readiness"
+  },
+  {
+    "method": "GET",
+    "path": "/admin/stripe-disputes",
+    "function": "list_stripe_disputes"
+  },
+  {
+    "method": "GET",
+    "path": "/admin/stripe-online-payments",
+    "function": "list_stripe_online_payments"
+  },
+  {
+    "method": "GET",
+    "path": "/admin/stripe/reconciliation",
+    "function": "stripe_reconciliation_summary"
+  },
+  {
+    "method": "GET",
+    "path": "/admin/tasks",
+    "function": "list_tasks"
+  },
+  {
+    "method": "POST",
+    "path": "/admin/tasks",
+    "function": "create_task"
+  },
+  {
+    "method": "DELETE",
+    "path": "/admin/tasks/{tid}",
+    "function": "delete_task"
+  },
+  {
+    "method": "PUT",
+    "path": "/admin/tasks/{tid}",
+    "function": "update_task"
+  },
+  {
+    "method": "GET",
+    "path": "/admin/tax-center",
+    "function": "tax_center_endpoint"
+  },
+  {
+    "method": "GET",
+    "path": "/admin/tax-profile",
+    "function": "get_tax_profile"
+  },
+  {
+    "method": "PUT",
+    "path": "/admin/tax-profile/{year}",
+    "function": "put_tax_profile"
+  },
+  {
+    "method": "GET",
+    "path": "/admin/time-clock",
+    "function": "admin_time_clock_list"
+  },
+  {
+    "method": "DELETE",
+    "path": "/admin/time-clock/{entry_id}",
+    "function": "admin_delete_time_clock"
+  },
+  {
+    "method": "PUT",
+    "path": "/admin/time-clock/{entry_id}",
+    "function": "admin_edit_time_clock"
+  },
+  {
+    "method": "GET",
+    "path": "/admin/time-off",
+    "function": "admin_list_time_off"
+  },
+  {
+    "method": "PUT",
+    "path": "/admin/time-off/{rid}",
+    "function": "admin_review_time_off"
+  },
+  {
+    "method": "GET",
+    "path": "/admin/today-brain",
+    "function": "admin_today_brain"
+  },
+  {
+    "method": "POST",
+    "path": "/admin/today-brain/clear-all",
+    "function": "admin_today_brain_clear_all"
+  },
+  {
+    "method": "POST",
+    "path": "/admin/today-brain/dismiss",
+    "function": "admin_today_brain_dismiss"
+  },
+  {
+    "method": "POST",
+    "path": "/admin/today-brain/restore",
+    "function": "admin_today_brain_restore"
+  },
+  {
+    "method": "GET",
+    "path": "/admin/today-pnl",
+    "function": "today_pnl"
+  },
+  {
+    "method": "POST",
+    "path": "/admin/training/legacy-enrollments/{legacy_enrollment_id}/migrate-to-school",
+    "function": "migrate_legacy_enrollment_to_school"
+  },
+  {
+    "method": "PATCH",
+    "path": "/admin/training/today/{booking_id}/trainer",
+    "function": "assign_training_booking_trainer"
+  },
+  {
+    "method": "GET",
+    "path": "/admin/training/trainer-scorecard",
+    "function": "trainer_scorecard"
+  },
+  {
+    "method": "POST",
+    "path": "/admin/trivia/import-csv",
+    "function": "trivia_import_csv"
+  },
+  {
+    "method": "GET",
+    "path": "/admin/trivia/import-csv/template",
+    "function": "trivia_import_csv_template"
+  },
+  {
+    "method": "GET",
+    "path": "/admin/trivia/leaderboard",
+    "function": "admin_trivia_leaderboard"
+  },
+  {
+    "method": "POST",
+    "path": "/admin/trivia/milestones/redeem",
+    "function": "admin_trivia_redeem_milestone"
+  },
+  {
+    "method": "GET",
+    "path": "/admin/trivia/questions",
+    "function": "admin_trivia_list"
+  },
+  {
+    "method": "POST",
+    "path": "/admin/trivia/questions",
+    "function": "admin_trivia_create"
+  },
+  {
+    "method": "DELETE",
+    "path": "/admin/trivia/questions/{qid}",
+    "function": "admin_trivia_delete"
+  },
+  {
+    "method": "PUT",
+    "path": "/admin/trivia/questions/{qid}",
+    "function": "admin_trivia_update"
+  },
+  {
+    "method": "PUT",
+    "path": "/admin/trivia/questions/{qid}/active",
+    "function": "admin_trivia_toggle_active"
+  },
+  {
+    "method": "GET",
+    "path": "/admin/trivia/recent-winners",
+    "function": "admin_trivia_recent_winners"
+  },
+  {
+    "method": "GET",
+    "path": "/admin/trivia/rewards",
+    "function": "admin_trivia_rewards_get"
+  },
+  {
+    "method": "PUT",
+    "path": "/admin/trivia/rewards",
+    "function": "admin_trivia_rewards_put"
+  },
+  {
+    "method": "GET",
+    "path": "/admin/users/export-with-hashes",
+    "function": "admin_users_export_with_hashes"
+  },
+  {
+    "method": "POST",
+    "path": "/admin/users/import-with-hashes",
+    "function": "admin_users_import_with_hashes"
+  },
+  {
+    "method": "GET",
+    "path": "/admin/vaccine-cert-uploads",
+    "function": "admin_list_vaccine_uploads"
+  },
+  {
+    "method": "PUT",
+    "path": "/admin/vaccine-cert-uploads/assign",
+    "function": "assign_vaccine_review"
+  },
+  {
+    "method": "GET",
+    "path": "/audit-log",
+    "function": "list_audit_log"
+  },
+  {
+    "method": "POST",
+    "path": "/auth/change-password",
+    "function": "change_password"
+  },
+  {
+    "method": "POST",
+    "path": "/auth/forgot-password",
+    "function": "forgot_password"
+  },
+  {
+    "method": "POST",
+    "path": "/auth/login",
+    "function": "login"
+  },
+  {
+    "method": "GET",
+    "path": "/auth/me",
+    "function": "me"
+  },
+  {
+    "method": "POST",
+    "path": "/auth/mfa/disable",
+    "function": "mfa_disable"
+  },
+  {
+    "method": "POST",
+    "path": "/auth/mfa/enable",
+    "function": "mfa_enable"
+  },
+  {
+    "method": "POST",
+    "path": "/auth/mfa/setup",
+    "function": "mfa_setup"
+  },
+  {
+    "method": "GET",
+    "path": "/auth/mfa/status",
+    "function": "mfa_status"
+  },
+  {
+    "method": "POST",
+    "path": "/auth/mfa/verify-login",
+    "function": "verify_mfa_login"
+  },
+  {
+    "method": "POST",
+    "path": "/auth/register",
+    "function": "register"
+  },
+  {
+    "method": "PATCH",
+    "path": "/auth/set-password",
+    "function": "set_password"
+  },
+  {
+    "method": "GET",
+    "path": "/availability",
+    "function": "get_availability"
+  },
+  {
+    "method": "DELETE",
+    "path": "/awarded-trophies/{awarded_id}",
+    "function": "revoke_awarded_trophy"
+  },
+  {
+    "method": "POST",
+    "path": "/awarded-trophies/{awarded_id}/seen",
+    "function": "mark_awarded_seen"
+  },
+  {
+    "method": "GET",
+    "path": "/backup/export",
+    "function": "backup_export"
+  },
+  {
+    "method": "GET",
+    "path": "/backup/export-config",
+    "function": "backup_export_config"
+  },
+  {
+    "method": "POST",
+    "path": "/backup/restore",
+    "function": "backup_restore"
+  },
+  {
+    "method": "POST",
+    "path": "/backup/restore-config",
+    "function": "backup_restore_config"
+  },
+  {
+    "method": "GET",
+    "path": "/bookings",
+    "function": "list_bookings"
+  },
+  {
+    "method": "POST",
+    "path": "/bookings",
+    "function": "create_booking"
+  },
+  {
+    "method": "GET",
+    "path": "/bookings/availability",
+    "function": "availability"
+  },
+  {
+    "method": "GET",
+    "path": "/bookings/conflicts",
+    "function": "booking_conflicts"
+  },
+  {
+    "method": "POST",
+    "path": "/bookings/group",
+    "function": "create_booking_group"
+  },
+  {
+    "method": "GET",
+    "path": "/bookings/group/{group_id}",
+    "function": "get_booking_group"
+  },
+  {
+    "method": "POST",
+    "path": "/bookings/multi-dates",
+    "function": "create_multi_date_bookings"
+  },
+  {
+    "method": "POST",
+    "path": "/bookings/recurring",
+    "function": "create_recurring"
+  },
+  {
+    "method": "GET",
+    "path": "/bookings/summary",
+    "function": "bookings_summary"
+  },
+  {
+    "method": "GET",
+    "path": "/bookings/time-slots",
+    "function": "list_time_slots"
+  },
+  {
+    "method": "DELETE",
+    "path": "/bookings/{booking_id}",
+    "function": "cancel_booking"
+  },
+  {
+    "method": "GET",
+    "path": "/bookings/{booking_id}",
+    "function": "get_booking"
+  },
+  {
+    "method": "PATCH",
+    "path": "/bookings/{booking_id}",
+    "function": "patch_booking"
+  },
+  {
+    "method": "POST",
+    "path": "/bookings/{booking_id}/add-ons",
+    "function": "attach_booking_addons"
+  },
+  {
+    "method": "DELETE",
+    "path": "/bookings/{booking_id}/add-ons/{addon_index}",
+    "function": "remove_booking_addon"
+  },
+  {
+    "method": "POST",
+    "path": "/bookings/{booking_id}/approve",
+    "function": "approve_booking"
+  },
+  {
+    "method": "GET",
+    "path": "/bookings/{booking_id}/care",
+    "function": "get_booking_care"
+  },
+  {
+    "method": "PUT",
+    "path": "/bookings/{booking_id}/care",
+    "function": "set_booking_care"
+  },
+  {
+    "method": "POST",
+    "path": "/bookings/{booking_id}/care/{item_id}/complete",
+    "function": "complete_care_item"
+  },
+  {
+    "method": "POST",
+    "path": "/bookings/{booking_id}/care/{item_id}/reset",
+    "function": "reset_care_item"
+  },
+  {
+    "method": "POST",
+    "path": "/bookings/{booking_id}/care/{item_id}/skip",
+    "function": "skip_care_item"
+  },
+  {
+    "method": "POST",
+    "path": "/bookings/{booking_id}/check-in",
+    "function": "check_in"
+  },
+  {
+    "method": "POST",
+    "path": "/bookings/{booking_id}/check-out",
+    "function": "check_out"
+  },
+  {
+    "method": "POST",
+    "path": "/bookings/{booking_id}/check-out-group",
+    "function": "check_out_group"
+  },
+  {
+    "method": "GET",
+    "path": "/bookings/{booking_id}/checkout-group-preview",
+    "function": "checkout_group_preview"
+  },
+  {
+    "method": "POST",
+    "path": "/bookings/{booking_id}/checkout-partial",
+    "function": "checkout_partial"
+  },
+  {
+    "method": "GET",
+    "path": "/bookings/{booking_id}/discount-preview",
+    "function": "discount_preview"
+  },
+  {
+    "method": "GET",
+    "path": "/bookings/{booking_id}/early-checkout-quote",
+    "function": "early_checkout_quote"
+  },
+  {
+    "method": "POST",
+    "path": "/bookings/{booking_id}/financial-adjustment",
+    "function": "booking_financial_adjustment"
+  },
+  {
+    "method": "GET",
+    "path": "/bookings/{booking_id}/history",
+    "function": "booking_history"
+  },
+  {
+    "method": "GET",
+    "path": "/bookings/{booking_id}/invoice",
+    "function": "get_booking_invoice"
+  },
+  {
+    "method": "GET",
+    "path": "/bookings/{booking_id}/money-modifier-preview",
+    "function": "money_modifier_preview"
+  },
+  {
+    "method": "POST",
+    "path": "/bookings/{booking_id}/refund",
+    "function": "booking_refund"
+  },
+  {
+    "method": "POST",
+    "path": "/bookings/{booking_id}/reject",
+    "function": "reject_booking"
+  },
+  {
+    "method": "POST",
+    "path": "/bookings/{booking_id}/reopen-checkout",
+    "function": "reopen_booking_checkout"
+  },
+  {
+    "method": "POST",
+    "path": "/bookings/{booking_id}/report-card",
+    "function": "save_report_card"
+  },
+  {
+    "method": "GET",
+    "path": "/bookings/{booking_id}/report-card-email/preview",
+    "function": "preview_report_card_email"
+  },
+  {
+    "method": "PUT",
+    "path": "/bookings/{booking_id}/reschedule",
+    "function": "reschedule_booking"
+  },
+  {
+    "method": "POST",
+    "path": "/bookings/{booking_id}/reschedule-next-week",
+    "function": "reschedule_prepaid_session"
+  },
+  {
+    "method": "POST",
+    "path": "/bookings/{booking_id}/resend-report-card",
+    "function": "resend_report_card_email"
+  },
+  {
+    "method": "GET",
+    "path": "/bookings/{booking_id}/training-context",
+    "function": "get_training_context_for_booking"
+  },
+  {
+    "method": "POST",
+    "path": "/bookings/{booking_id}/training-session/draft",
+    "function": "start_training_session_draft_for_booking"
+  },
+  {
+    "method": "GET",
+    "path": "/branding",
+    "function": "fetch_branding"
+  },
+  {
+    "method": "GET",
+    "path": "/care/today",
+    "function": "care_board_today"
+  },
+  {
+    "method": "GET",
+    "path": "/claim/{token}",
+    "function": "verify_claim_token"
+  },
+  {
+    "method": "POST",
+    "path": "/claim/{token}",
+    "function": "consume_claim_token"
+  },
+  {
+    "method": "POST",
+    "path": "/claim/{token}/login",
+    "function": "claim_token_login"
+  },
+  {
+    "method": "GET",
+    "path": "/clients",
+    "function": "list_clients"
+  },
+  {
+    "method": "POST",
+    "path": "/clients",
+    "function": "create_client"
+  },
+  {
+    "method": "POST",
+    "path": "/clients/send-claim-emails/bulk",
+    "function": "send_claim_emails_bulk"
+  },
+  {
+    "method": "DELETE",
+    "path": "/clients/{client_id}",
+    "function": "delete_client"
+  },
+  {
+    "method": "GET",
+    "path": "/clients/{client_id}",
+    "function": "get_client"
+  },
+  {
+    "method": "PUT",
+    "path": "/clients/{client_id}",
+    "function": "update_client"
+  },
+  {
+    "method": "POST",
+    "path": "/clients/{client_id}/adjust-credits",
+    "function": "adjust_client_credits"
+  },
+  {
+    "method": "POST",
+    "path": "/clients/{client_id}/adjustment",
+    "function": "apply_tab_adjustment"
+  },
+  {
+    "method": "GET",
+    "path": "/clients/{client_id}/credit-adjustments",
+    "function": "list_credit_adjustments"
+  },
+  {
+    "method": "GET",
+    "path": "/clients/{client_id}/credit-lots",
+    "function": "list_client_lots"
+  },
+  {
+    "method": "GET",
+    "path": "/clients/{client_id}/credit-pack-prices",
+    "function": "client_credit_pack_prices"
+  },
+  {
+    "method": "POST",
+    "path": "/clients/{client_id}/credit-referral",
+    "function": "credit_referral"
+  },
+  {
+    "method": "GET",
+    "path": "/clients/{client_id}/files",
+    "function": "list_client_files"
+  },
+  {
+    "method": "POST",
+    "path": "/clients/{client_id}/files",
+    "function": "upload_client_file"
+  },
+  {
+    "method": "GET",
+    "path": "/clients/{client_id}/invoices",
+    "function": "list_client_invoices"
+  },
+  {
+    "method": "GET",
+    "path": "/clients/{client_id}/ledger",
+    "function": "get_client_ledger"
+  },
+  {
+    "method": "POST",
+    "path": "/clients/{client_id}/ledger/{ledger_id}/pos-tokens",
+    "function": "issue_pos_tokens_for_ledger_row"
+  },
+  {
+    "method": "GET",
+    "path": "/clients/{client_id}/open-invoices",
+    "function": "list_client_open_invoices"
+  },
+  {
+    "method": "POST",
+    "path": "/clients/{client_id}/payment",
+    "function": "apply_tab_payment"
+  },
+  {
+    "method": "POST",
+    "path": "/clients/{client_id}/portal-account",
+    "function": "create_portal_account"
+  },
+  {
+    "method": "GET",
+    "path": "/clients/{client_id}/price-overrides",
+    "function": "list_client_price_overrides"
+  },
+  {
+    "method": "POST",
+    "path": "/clients/{client_id}/price-overrides",
+    "function": "create_client_price_override"
+  },
+  {
+    "method": "POST",
+    "path": "/clients/{client_id}/price-overrides/bulk-apply",
+    "function": "bulk_apply_client_price_overrides"
+  },
+  {
+    "method": "GET",
+    "path": "/clients/{client_id}/receipts",
+    "function": "list_client_receipts"
+  },
+  {
+    "method": "POST",
+    "path": "/clients/{client_id}/sell-pack",
+    "function": "sell_credit_pack"
+  },
+  {
+    "method": "POST",
+    "path": "/clients/{client_id}/sell-packs",
+    "function": "sell_credit_packs_bulk"
+  },
+  {
+    "method": "POST",
+    "path": "/clients/{client_id}/sell-program",
+    "function": "sell_training_program"
+  },
+  {
+    "method": "POST",
+    "path": "/clients/{client_id}/send-claim-email",
+    "function": "send_claim_email"
+  },
+  {
+    "method": "POST",
+    "path": "/clients/{client_id}/send-statement",
+    "function": "send_client_statement"
+  },
+  {
+    "method": "GET",
+    "path": "/clients/{client_id}/service-prices",
+    "function": "client_service_prices"
+  },
+  {
+    "method": "POST",
+    "path": "/clients/{client_id}/status",
+    "function": "set_client_status"
+  },
+  {
+    "method": "GET",
+    "path": "/clients/{client_id}/trophies",
+    "function": "list_client_trophies"
+  },
+  {
+    "method": "POST",
+    "path": "/clients/{client_id}/trophies/{code}/award",
+    "function": "manual_award_client"
+  },
+  {
+    "method": "GET",
+    "path": "/clients/{client_id}/waiver",
+    "function": "client_waiver"
+  },
+  {
+    "method": "GET",
+    "path": "/commands",
+    "function": "list_commands"
+  },
+  {
+    "method": "POST",
+    "path": "/commands",
+    "function": "create_command"
+  },
+  {
+    "method": "DELETE",
+    "path": "/commands/{command_id}",
+    "function": "delete_command"
+  },
+  {
+    "method": "PUT",
+    "path": "/commands/{command_id}",
+    "function": "update_command"
+  },
+  {
+    "method": "GET",
+    "path": "/communications",
+    "function": "list_communications"
+  },
+  {
+    "method": "POST",
+    "path": "/communications",
+    "function": "create_communication"
+  },
+  {
+    "method": "DELETE",
+    "path": "/communications/{entry_id}",
+    "function": "delete_communication"
+  },
+  {
+    "method": "GET",
+    "path": "/communications/{entry_id}",
+    "function": "get_communication"
+  },
+  {
+    "method": "PUT",
+    "path": "/communications/{entry_id}",
+    "function": "update_communication"
+  },
+  {
+    "method": "POST",
+    "path": "/communications/{entry_id}/resolve",
+    "function": "resolve_followup"
+  },
+  {
+    "method": "PATCH",
+    "path": "/credit-lots/{lot_id}/recognition",
+    "function": "patch_lot_recognition"
+  },
+  {
+    "method": "GET",
+    "path": "/credit-packs",
+    "function": "list_credit_packs"
+  },
+  {
+    "method": "POST",
+    "path": "/credit-packs",
+    "function": "create_credit_pack"
+  },
+  {
+    "method": "POST",
+    "path": "/credit-packs/seed-standard",
+    "function": "seed_credit_packs"
+  },
+  {
+    "method": "DELETE",
+    "path": "/credit-packs/{pack_id}",
+    "function": "delete_credit_pack"
+  },
+  {
+    "method": "PUT",
+    "path": "/credit-packs/{pack_id}",
+    "function": "update_credit_pack"
+  },
+  {
+    "method": "POST",
+    "path": "/credit-packs/{pack_id}/duplicate",
+    "function": "duplicate_credit_pack"
+  },
+  {
+    "method": "GET",
+    "path": "/dashboard/stats",
+    "function": "dashboard_stats"
+  },
+  {
+    "method": "GET",
+    "path": "/dog-facts",
+    "function": "list_dog_facts"
+  },
+  {
+    "method": "POST",
+    "path": "/dog-facts",
+    "function": "create_dog_fact"
+  },
+  {
+    "method": "GET",
+    "path": "/dog-facts/today",
+    "function": "dog_fact_today"
+  },
+  {
+    "method": "DELETE",
+    "path": "/dog-facts/{fact_id}",
+    "function": "delete_dog_fact"
+  },
+  {
+    "method": "PATCH",
+    "path": "/dog-facts/{fact_id}",
+    "function": "update_dog_fact"
+  },
+  {
+    "method": "GET",
+    "path": "/dogs",
+    "function": "list_dogs"
+  },
+  {
+    "method": "POST",
+    "path": "/dogs",
+    "function": "create_dog"
+  },
+  {
+    "method": "GET",
+    "path": "/dogs/summary",
+    "function": "dogs_summary"
+  },
+  {
+    "method": "GET",
+    "path": "/dogs/tags/all",
+    "function": "all_dog_tags"
+  },
+  {
+    "method": "DELETE",
+    "path": "/dogs/{dog_id}",
+    "function": "delete_dog"
+  },
+  {
+    "method": "GET",
+    "path": "/dogs/{dog_id}",
+    "function": "get_dog"
+  },
+  {
+    "method": "PUT",
+    "path": "/dogs/{dog_id}",
+    "function": "update_dog"
+  },
+  {
+    "method": "GET",
+    "path": "/dogs/{dog_id}/behavior-trend",
+    "function": "dog_behavior_trend"
+  },
+  {
+    "method": "GET",
+    "path": "/dogs/{dog_id}/programs",
+    "function": "list_dog_enrollments"
+  },
+  {
+    "method": "POST",
+    "path": "/dogs/{dog_id}/programs",
+    "function": "retired_legacy_enrollment_route"
+  },
+  {
+    "method": "POST",
+    "path": "/dogs/{dog_id}/programs/custom",
+    "function": "create_custom_and_enroll"
+  },
+  {
+    "method": "PUT",
+    "path": "/dogs/{dog_id}/programs/{enrollment_id}",
+    "function": "update_enrollment"
+  },
+  {
+    "method": "PUT",
+    "path": "/dogs/{dog_id}/programs/{enrollment_id}/current-module",
+    "function": "set_enrollment_current_module"
+  },
+  {
+    "method": "PUT",
+    "path": "/dogs/{dog_id}/programs/{enrollment_id}/goals/{goal_id}",
+    "function": "update_goal"
+  },
+  {
+    "method": "GET",
+    "path": "/dogs/{dog_id}/programs/{enrollment_id}/session-log",
+    "function": "list_training_session_log"
+  },
+  {
+    "method": "GET",
+    "path": "/dogs/{dog_id}/programs/{enrollment_id}/training-context",
+    "function": "get_training_context_direct"
+  },
+  {
+    "method": "POST",
+    "path": "/dogs/{dog_id}/programs/{enrollment_id}/training-session/draft",
+    "function": "start_training_session_draft_direct"
+  },
+  {
+    "method": "GET",
+    "path": "/dogs/{dog_id}/safety-flag-suggestions",
+    "function": "safety_flag_suggestions"
+  },
+  {
+    "method": "PUT",
+    "path": "/dogs/{dog_id}/safety-flags",
+    "function": "set_dog_safety_flags"
+  },
+  {
+    "method": "GET",
+    "path": "/dogs/{dog_id}/school-enrollments",
+    "function": "list_dog_school_enrollments"
+  },
+  {
+    "method": "GET",
+    "path": "/dogs/{dog_id}/stats",
+    "function": "dog_stats"
+  },
+  {
+    "method": "PUT",
+    "path": "/dogs/{dog_id}/tags",
+    "function": "update_dog_tags"
+  },
+  {
+    "method": "GET",
+    "path": "/dogs/{dog_id}/timeline",
+    "function": "dog_timeline"
+  },
+  {
+    "method": "GET",
+    "path": "/dogs/{dog_id}/training",
+    "function": "get_dog_training"
+  },
+  {
+    "method": "POST",
+    "path": "/dogs/{dog_id}/training-logs",
+    "function": "add_training_log"
+  },
+  {
+    "method": "GET",
+    "path": "/dogs/{dog_id}/training-sessions",
+    "function": "list_training_sessions"
+  },
+  {
+    "method": "POST",
+    "path": "/dogs/{dog_id}/training-sessions",
+    "function": "log_training_session"
+  },
+  {
+    "method": "PUT",
+    "path": "/dogs/{dog_id}/training/{command_id}",
+    "function": "update_curriculum_entry"
+  },
+  {
+    "method": "GET",
+    "path": "/dogs/{dog_id}/trophies",
+    "function": "list_dog_trophies"
+  },
+  {
+    "method": "POST",
+    "path": "/dogs/{dog_id}/trophies/{code}/award",
+    "function": "manual_award_dog"
+  },
+  {
+    "method": "POST",
+    "path": "/dogs/{dog_id}/vaccine-cert",
+    "function": "admin_attach_vaccine_cert"
+  },
+  {
+    "method": "GET",
+    "path": "/email/unsubscribe",
+    "function": "marketing_email_unsubscribe"
+  },
+  {
+    "method": "POST",
+    "path": "/employee/bookings/{booking_id}/bathroom",
+    "function": "employee_bathroom_tick"
+  },
+  {
+    "method": "POST",
+    "path": "/employee/bookings/{booking_id}/log-feeding",
+    "function": "employee_log_feeding"
+  },
+  {
+    "method": "POST",
+    "path": "/employee/bookings/{booking_id}/log-medication",
+    "function": "employee_log_medication"
+  },
+  {
+    "method": "POST",
+    "path": "/employee/incidents",
+    "function": "employee_create_incident"
+  },
+  {
+    "method": "GET",
+    "path": "/employee/me",
+    "function": "employee_me"
+  },
+  {
+    "method": "GET",
+    "path": "/employee/my-shifts",
+    "function": "employee_my_shifts"
+  },
+  {
+    "method": "GET",
+    "path": "/employee/my-tasks",
+    "function": "employee_my_tasks"
+  },
+  {
+    "method": "GET",
+    "path": "/employee/pay-history",
+    "function": "employee_pay_history"
+  },
+  {
+    "method": "GET",
+    "path": "/employee/punch-corrections",
+    "function": "employee_list_punch_corrections"
+  },
+  {
+    "method": "POST",
+    "path": "/employee/punch-corrections",
+    "function": "employee_create_punch_correction"
+  },
+  {
+    "method": "POST",
+    "path": "/employee/punch-corrections/{cid}/decision",
+    "function": "employee_decide_punch_correction"
+  },
+  {
+    "method": "GET",
+    "path": "/employee/roster-today",
+    "function": "employee_roster_today"
+  },
+  {
+    "method": "GET",
+    "path": "/employee/time-off",
+    "function": "employee_list_time_off"
+  },
+  {
+    "method": "POST",
+    "path": "/employee/time-off",
+    "function": "employee_submit_time_off"
+  },
+  {
+    "method": "DELETE",
+    "path": "/employee/time-off/{rid}",
+    "function": "employee_cancel_time_off"
+  },
+  {
+    "method": "POST",
+    "path": "/employee/trivia/answer",
+    "function": "employee_trivia_answer"
+  },
+  {
+    "method": "GET",
+    "path": "/employee/trivia/quiz",
+    "function": "employee_trivia_quiz"
+  },
+  {
+    "method": "GET",
+    "path": "/events",
+    "function": "calendar_events"
+  },
+  {
+    "method": "GET",
+    "path": "/expenses",
+    "function": "list_expenses"
+  },
+  {
+    "method": "POST",
+    "path": "/expenses",
+    "function": "create_expense"
+  },
+  {
+    "method": "GET",
+    "path": "/expenses/categories",
+    "function": "expense_categories"
+  },
+  {
+    "method": "DELETE",
+    "path": "/expenses/{expense_id}",
+    "function": "delete_expense"
+  },
+  {
+    "method": "PUT",
+    "path": "/expenses/{expense_id}",
+    "function": "update_expense"
+  },
+  {
+    "method": "GET",
+    "path": "/export-index",
+    "function": "export_index"
+  },
+  {
+    "method": "GET",
+    "path": "/export/{entity}",
+    "function": "export_csv"
+  },
+  {
+    "method": "DELETE",
+    "path": "/files/{file_id}",
+    "function": "delete_file"
+  },
+  {
+    "method": "GET",
+    "path": "/files/{file_id}/download",
+    "function": "download_file"
+  },
+  {
+    "method": "GET",
+    "path": "/health",
+    "function": "health"
+  },
+  {
+    "method": "GET",
+    "path": "/homework",
+    "function": "list_homework"
+  },
+  {
+    "method": "POST",
+    "path": "/homework",
+    "function": "create_homework"
+  },
+  {
+    "method": "GET",
+    "path": "/homework-templates",
+    "function": "list_homework_templates"
+  },
+  {
+    "method": "POST",
+    "path": "/homework-templates",
+    "function": "create_homework_template"
+  },
+  {
+    "method": "POST",
+    "path": "/homework-templates/seed-standard",
+    "function": "seed_homework_templates"
+  },
+  {
+    "method": "DELETE",
+    "path": "/homework-templates/{template_id}",
+    "function": "delete_homework_template"
+  },
+  {
+    "method": "PUT",
+    "path": "/homework-templates/{template_id}",
+    "function": "update_homework_template"
+  },
+  {
+    "method": "POST",
+    "path": "/homework/daily-tracker",
+    "function": "create_daily_tracker"
+  },
+  {
+    "method": "POST",
+    "path": "/homework/from-template",
+    "function": "create_homework_from_template"
+  },
+  {
+    "method": "POST",
+    "path": "/homework/resource-upload",
+    "function": "upload_resource_file"
+  },
+  {
+    "method": "GET",
+    "path": "/homework/resource/{media_id}",
+    "function": "get_resource_file"
+  },
+  {
+    "method": "DELETE",
+    "path": "/homework/{homework_id}",
+    "function": "delete_homework"
+  },
+  {
+    "method": "GET",
+    "path": "/homework/{homework_id}",
+    "function": "get_homework_detail"
+  },
+  {
+    "method": "POST",
+    "path": "/homework/{homework_id}/catch-up",
+    "function": "homework_catch_up"
+  },
+  {
+    "method": "DELETE",
+    "path": "/homework/{homework_id}/certificate",
+    "function": "remove_certificate"
+  },
+  {
+    "method": "POST",
+    "path": "/homework/{homework_id}/certificate",
+    "function": "upload_certificate"
+  },
+  {
+    "method": "POST",
+    "path": "/homework/{homework_id}/complete",
+    "function": "complete_homework"
+  },
+  {
+    "method": "POST",
+    "path": "/homework/{homework_id}/day/{day_number}/answer/{question_id}",
+    "function": "answer_question"
+  },
+  {
+    "method": "POST",
+    "path": "/homework/{homework_id}/day/{day_number}/ask",
+    "function": "ask_question"
+  },
+  {
+    "method": "POST",
+    "path": "/homework/{homework_id}/day/{day_number}/resource",
+    "function": "add_day_resource"
+  },
+  {
+    "method": "DELETE",
+    "path": "/homework/{homework_id}/day/{day_number}/resource/{resource_id}",
+    "function": "remove_day_resource"
+  },
+  {
+    "method": "POST",
+    "path": "/homework/{homework_id}/day/{day_number}/rest",
+    "function": "mark_rest_day"
+  },
+  {
+    "method": "POST",
+    "path": "/homework/{homework_id}/day/{day_number}/review",
+    "function": "review_day"
+  },
+  {
+    "method": "POST",
+    "path": "/homework/{homework_id}/day/{day_number}/submit",
+    "function": "submit_day"
+  },
+  {
+    "method": "POST",
+    "path": "/homework/{homework_id}/day/{day_number}/toggle-step",
+    "function": "toggle_day_step"
+  },
+  {
+    "method": "POST",
+    "path": "/homework/{homework_id}/day/{day_number}/video",
+    "function": "upload_day_video"
+  },
+  {
+    "method": "GET",
+    "path": "/homework/{homework_id}/media/{media_id}",
+    "function": "get_day_media"
+  },
+  {
+    "method": "POST",
+    "path": "/homework/{homework_id}/practice-video",
+    "function": "upload_practice_video"
+  },
+  {
+    "method": "GET",
+    "path": "/homework/{homework_id}/report",
+    "function": "homework_report"
+  },
+  {
+    "method": "POST",
+    "path": "/homework/{homework_id}/resource",
+    "function": "add_plan_resource"
+  },
+  {
+    "method": "DELETE",
+    "path": "/homework/{homework_id}/resource/{resource_id}",
+    "function": "remove_plan_resource"
+  },
+  {
+    "method": "POST",
+    "path": "/homework/{homework_id}/section-log",
+    "function": "log_section"
+  },
+  {
+    "method": "DELETE",
+    "path": "/homework/{homework_id}/section-log/{log_id}",
+    "function": "delete_section_log"
+  },
+  {
+    "method": "POST",
+    "path": "/homework/{homework_id}/section-log/{log_id}/answer/{question_id}",
+    "function": "answer_section_question"
+  },
+  {
+    "method": "POST",
+    "path": "/homework/{homework_id}/section/{section_id}/ask",
+    "function": "ask_section_question"
+  },
+  {
+    "method": "POST",
+    "path": "/homework/{homework_id}/share-link",
+    "function": "homework_share_link"
+  },
+  {
+    "method": "GET",
+    "path": "/incidents",
+    "function": "list_incidents"
+  },
+  {
+    "method": "POST",
+    "path": "/incidents",
+    "function": "create_incident"
+  },
+  {
+    "method": "DELETE",
+    "path": "/incidents/{incident_id}",
+    "function": "delete_incident"
+  },
+  {
+    "method": "PUT",
+    "path": "/incidents/{incident_id}",
+    "function": "update_incident"
+  },
+  {
+    "method": "POST",
+    "path": "/incidents/{incident_id}/restore",
+    "function": "restore_incident"
+  },
+  {
+    "method": "GET",
+    "path": "/intake/submissions",
+    "function": "list_intake_submissions"
+  },
+  {
+    "method": "POST",
+    "path": "/intake/submissions",
+    "function": "create_intake_submission"
+  },
+  {
+    "method": "DELETE",
+    "path": "/intake/submissions/{submission_id}",
+    "function": "delete_intake_submission"
+  },
+  {
+    "method": "GET",
+    "path": "/intake/submissions/{submission_id}",
+    "function": "get_intake_submission"
+  },
+  {
+    "method": "PUT",
+    "path": "/intake/submissions/{submission_id}",
+    "function": "update_intake_submission"
+  },
+  {
+    "method": "GET",
+    "path": "/intake/templates",
+    "function": "list_intake_templates"
+  },
+  {
+    "method": "POST",
+    "path": "/intake/templates",
+    "function": "create_intake_template"
+  },
+  {
+    "method": "DELETE",
+    "path": "/intake/templates/{template_id}",
+    "function": "delete_intake_template"
+  },
+  {
+    "method": "GET",
+    "path": "/intake/templates/{template_id}",
+    "function": "get_intake_template"
+  },
+  {
+    "method": "PUT",
+    "path": "/intake/templates/{template_id}",
+    "function": "update_intake_template"
+  },
+  {
+    "method": "POST",
+    "path": "/intake/templates/{template_id}/duplicate",
+    "function": "duplicate_intake_template"
+  },
+  {
+    "method": "POST",
+    "path": "/intake/templates/{template_id}/toggle-active",
+    "function": "toggle_intake_template_active"
+  },
+  {
+    "method": "GET",
+    "path": "/invoices/{invoice_id}",
+    "function": "get_invoice"
+  },
+  {
+    "method": "POST",
+    "path": "/invoices/{invoice_id}/payments",
+    "function": "create_invoice_payment"
+  },
+  {
+    "method": "POST",
+    "path": "/invoices/{invoice_id}/pos-tokens",
+    "function": "issue_pos_tokens_for_invoice"
+  },
+  {
+    "method": "GET",
+    "path": "/kennel-board",
+    "function": "get_kennel_board"
+  },
+  {
+    "method": "GET",
+    "path": "/kennel-board/labels",
+    "function": "get_kennel_board_labels"
+  },
+  {
+    "method": "PUT",
+    "path": "/kennel-board/labels",
+    "function": "set_kennel_board_labels"
+  },
+  {
+    "method": "GET",
+    "path": "/me/messages",
+    "function": "my_messages"
+  },
+  {
+    "method": "POST",
+    "path": "/me/messages",
+    "function": "my_create_message"
+  },
+  {
+    "method": "GET",
+    "path": "/me/messages-unread-count",
+    "function": "my_unread_message_count"
+  },
+  {
+    "method": "GET",
+    "path": "/me/messages/{thread_id}",
+    "function": "my_message_thread"
+  },
+  {
+    "method": "POST",
+    "path": "/me/messages/{thread_id}/read",
+    "function": "my_mark_read"
+  },
+  {
+    "method": "POST",
+    "path": "/me/messages/{thread_id}/reply",
+    "function": "my_reply_message"
+  },
+  {
+    "method": "GET",
+    "path": "/me/permissions",
+    "function": "my_permissions"
+  },
+  {
+    "method": "GET",
+    "path": "/me/preferences",
+    "function": "get_my_prefs"
+  },
+  {
+    "method": "PUT",
+    "path": "/me/preferences",
+    "function": "set_my_prefs"
+  },
+  {
+    "method": "GET",
+    "path": "/me/training-tip/today",
+    "function": "my_training_tip_today"
+  },
+  {
+    "method": "POST",
+    "path": "/payments/{payment_id}/stripe-refund",
+    "function": "create_stripe_refund"
+  },
+  {
+    "method": "POST",
+    "path": "/payments/{payment_id}/void",
+    "function": "void_payment"
+  },
+  {
+    "method": "GET",
+    "path": "/photography/gallery",
+    "function": "list_photography_gallery"
+  },
+  {
+    "method": "POST",
+    "path": "/photography/gallery",
+    "function": "upload_photography_photo"
+  },
+  {
+    "method": "DELETE",
+    "path": "/photography/gallery/{photo_id}",
+    "function": "delete_photography_photo"
+  },
+  {
+    "method": "GET",
+    "path": "/photography/gallery/{photo_id}",
+    "function": "get_photography_photo"
+  },
+  {
+    "method": "PUT",
+    "path": "/photography/gallery/{photo_id}",
+    "function": "update_photography_photo"
+  },
+  {
+    "method": "POST",
+    "path": "/photography/gallery/{photo_id}/move",
+    "function": "move_photography_photo"
+  },
+  {
+    "method": "GET",
+    "path": "/portal/agreements",
+    "function": "portal_agreements"
+  },
+  {
+    "method": "POST",
+    "path": "/portal/agreements/{template_id}/sign",
+    "function": "portal_sign_agreement"
+  },
+  {
+    "method": "GET",
+    "path": "/portal/announcements",
+    "function": "list_portal_announcements"
+  },
+  {
+    "method": "POST",
+    "path": "/portal/announcements/{ann_id}/read",
+    "function": "mark_announcement_read"
+  },
+  {
+    "method": "POST",
+    "path": "/portal/bookings/{booking_id}/request-reschedule",
+    "function": "request_reschedule"
+  },
+  {
+    "method": "POST",
+    "path": "/portal/dogs",
+    "function": "portal_create_dog"
+  },
+  {
+    "method": "PUT",
+    "path": "/portal/dogs/{dog_id}",
+    "function": "portal_update_dog"
+  },
+  {
+    "method": "POST",
+    "path": "/portal/dogs/{dog_id}/vaccine-update",
+    "function": "portal_update_vaccine"
+  },
+  {
+    "method": "GET",
+    "path": "/portal/files",
+    "function": "list_my_files"
+  },
+  {
+    "method": "POST",
+    "path": "/portal/gallery/mark-seen",
+    "function": "portal_gallery_mark_seen"
+  },
+  {
+    "method": "POST",
+    "path": "/portal/help-requests",
+    "function": "portal_create_help_request"
+  },
+  {
+    "method": "GET",
+    "path": "/portal/homework-streak",
+    "function": "portal_homework_streak"
+  },
+  {
+    "method": "GET",
+    "path": "/portal/incentives",
+    "function": "portal_incentives"
+  },
+  {
+    "method": "GET",
+    "path": "/portal/intake/assigned",
+    "function": "portal_list_assigned_intake"
+  },
+  {
+    "method": "POST",
+    "path": "/portal/intake/submissions/{submission_id}/files/{field_id}",
+    "function": "portal_upload_intake_file"
+  },
+  {
+    "method": "POST",
+    "path": "/portal/intake/submissions/{submission_id}/submit",
+    "function": "portal_submit_intake"
+  },
+  {
+    "method": "GET",
+    "path": "/portal/invoices",
+    "function": "portal_invoices"
+  },
+  {
+    "method": "POST",
+    "path": "/portal/invoices/{invoice_id}/stripe-checkout-session",
+    "function": "create_stripe_checkout_session"
+  },
+  {
+    "method": "GET",
+    "path": "/portal/learn",
+    "function": "portal_learn"
+  },
+  {
+    "method": "PUT",
+    "path": "/portal/marketing-email-preference",
+    "function": "portal_marketing_email_preference"
+  },
+  {
+    "method": "GET",
+    "path": "/portal/me",
+    "function": "portal_me"
+  },
+  {
+    "method": "PUT",
+    "path": "/portal/me",
+    "function": "update_portal_me"
+  },
+  {
+    "method": "GET",
+    "path": "/portal/payment-plans",
+    "function": "portal_list_payment_plans"
+  },
+  {
+    "method": "POST",
+    "path": "/portal/payment-plans/{plan_id}/sign",
+    "function": "portal_sign_payment_plan"
+  },
+  {
+    "method": "GET",
+    "path": "/portal/progress",
+    "function": "portal_progress"
+  },
+  {
+    "method": "POST",
+    "path": "/portal/quote-request",
+    "function": "portal_quote_request"
+  },
+  {
+    "method": "GET",
+    "path": "/portal/reminder-settings",
+    "function": "get_reminder_settings"
+  },
+  {
+    "method": "PUT",
+    "path": "/portal/reminder-settings",
+    "function": "set_reminder_settings"
+  },
+  {
+    "method": "GET",
+    "path": "/portal/reschedule-requests",
+    "function": "list_my_reschedule_requests"
+  },
+  {
+    "method": "GET",
+    "path": "/portal/school",
+    "function": "portal_school_list"
+  },
+  {
+    "method": "GET",
+    "path": "/portal/school/{school_enrollment_id}",
+    "function": "portal_school_detail"
+  },
+  {
+    "method": "POST",
+    "path": "/portal/school/{school_enrollment_id}/advance",
+    "function": "portal_school_advance"
+  },
+  {
+    "method": "GET",
+    "path": "/portal/school/{school_enrollment_id}/checkpoint-history",
+    "function": "portal_school_checkpoint_history"
+  },
+  {
+    "method": "GET",
+    "path": "/portal/school/{school_enrollment_id}/home",
+    "function": "portal_school_home"
+  },
+  {
+    "method": "GET",
+    "path": "/portal/school/{school_enrollment_id}/lessons/{lesson_id}",
+    "function": "portal_school_lesson_detail"
+  },
+  {
+    "method": "POST",
+    "path": "/portal/school/{school_enrollment_id}/lessons/{lesson_id}/checkpoint",
+    "function": "portal_school_submit_checkpoint"
+  },
+  {
+    "method": "POST",
+    "path": "/portal/school/{school_enrollment_id}/lessons/{lesson_id}/complete-lesson",
+    "function": "portal_school_complete_lesson"
+  },
+  {
+    "method": "POST",
+    "path": "/portal/school/{school_enrollment_id}/lessons/{lesson_id}/start-practice",
+    "function": "portal_school_start_practice"
+  },
+  {
+    "method": "POST",
+    "path": "/portal/school/{school_enrollment_id}/lessons/{lesson_id}/steps/{step_key}/complete",
+    "function": "portal_school_complete_lesson_step"
+  },
+  {
+    "method": "GET",
+    "path": "/portal/school/{school_enrollment_id}/modules/{module_id}/quiz",
+    "function": "portal_school_module_quiz"
+  },
+  {
+    "method": "GET",
+    "path": "/portal/school/{school_enrollment_id}/modules/{module_id}/quiz/attempts",
+    "function": "portal_school_module_quiz_attempts"
+  },
+  {
+    "method": "POST",
+    "path": "/portal/school/{school_enrollment_id}/modules/{module_id}/quiz/submit",
+    "function": "portal_school_module_quiz_submit"
+  },
+  {
+    "method": "POST",
+    "path": "/portal/school/{school_enrollment_id}/remediation/start",
+    "function": "portal_school_start_remediation"
+  },
+  {
+    "method": "GET",
+    "path": "/portal/school/{school_enrollment_id}/support",
+    "function": "portal_school_support"
+  },
+  {
+    "method": "POST",
+    "path": "/portal/send-statement",
+    "function": "portal_send_statement"
+  },
+  {
+    "method": "GET",
+    "path": "/portal/session-recaps",
+    "function": "portal_session_recaps"
+  },
+  {
+    "method": "GET",
+    "path": "/portal/setup-status",
+    "function": "portal_setup_status"
+  },
+  {
+    "method": "GET",
+    "path": "/portal/shop-orders",
+    "function": "portal_shop_orders"
+  },
+  {
+    "method": "GET",
+    "path": "/portal/shop-orders/{order_id}",
+    "function": "portal_shop_order_status"
+  },
+  {
+    "method": "GET",
+    "path": "/portal/stripe-payment-attempts/{attempt_id}",
+    "function": "portal_stripe_attempt_status"
+  },
+  {
+    "method": "GET",
+    "path": "/portal/today-plan",
+    "function": "portal_today_plan"
+  },
+  {
+    "method": "GET",
+    "path": "/portal/trivia/daily",
+    "function": "portal_trivia_daily"
+  },
+  {
+    "method": "POST",
+    "path": "/portal/trivia/daily/answer",
+    "function": "portal_trivia_daily_answer"
+  },
+  {
+    "method": "GET",
+    "path": "/portal/trivia/leaderboard",
+    "function": "portal_trivia_leaderboard"
+  },
+  {
+    "method": "GET",
+    "path": "/portal/trivia/quiz",
+    "function": "portal_trivia_quiz"
+  },
+  {
+    "method": "POST",
+    "path": "/portal/trivia/quiz/answer",
+    "function": "portal_trivia_quiz_answer"
+  },
+  {
+    "method": "GET",
+    "path": "/portal/trivia/rewards-progress",
+    "function": "portal_trivia_rewards_progress"
+  },
+  {
+    "method": "GET",
+    "path": "/portal/trophies",
+    "function": "portal_trophies"
+  },
+  {
+    "method": "GET",
+    "path": "/pos/catalog",
+    "function": "get_register_catalog"
+  },
+  {
+    "method": "POST",
+    "path": "/pos/checkout",
+    "function": "create_pos_sale"
+  },
+  {
+    "method": "POST",
+    "path": "/pos/checkout/preview",
+    "function": "preview_pos_sale"
+  },
+  {
+    "method": "GET",
+    "path": "/pos/products",
+    "function": "list_pos_products"
+  },
+  {
+    "method": "POST",
+    "path": "/pos/products",
+    "function": "create_pos_product"
+  },
+  {
+    "method": "GET",
+    "path": "/pos/products/categories",
+    "function": "pos_product_categories"
+  },
+  {
+    "method": "DELETE",
+    "path": "/pos/products/{product_id}",
+    "function": "delete_pos_product"
+  },
+  {
+    "method": "PUT",
+    "path": "/pos/products/{product_id}",
+    "function": "update_pos_product"
+  },
+  {
+    "method": "POST",
+    "path": "/pos/products/{product_id}/adjust-stock",
+    "function": "adjust_pos_product_stock"
+  },
+  {
+    "method": "POST",
+    "path": "/pos/products/{product_id}/archive",
+    "function": "archive_pos_product"
+  },
+  {
+    "method": "POST",
+    "path": "/pos/products/{product_id}/duplicate",
+    "function": "duplicate_pos_product"
+  },
+  {
+    "method": "GET",
+    "path": "/pos/products/{product_id}/movements",
+    "function": "list_inventory_movements"
+  },
+  {
+    "method": "POST",
+    "path": "/pos/products/{product_id}/restore",
+    "function": "restore_pos_product"
+  },
+  {
+    "method": "GET",
+    "path": "/pos/receipt-payload",
+    "function": "get_pos_receipt_payload"
+  },
+  {
+    "method": "GET",
+    "path": "/pos/sales",
+    "function": "list_pos_sales"
+  },
+  {
+    "method": "POST",
+    "path": "/pos/sales",
+    "function": "create_pos_sale"
+  },
+  {
+    "method": "POST",
+    "path": "/pos/sales/preview",
+    "function": "preview_pos_sale"
+  },
+  {
+    "method": "GET",
+    "path": "/pos/sales/{sale_id}",
+    "function": "get_pos_sale"
+  },
+  {
+    "method": "POST",
+    "path": "/pos/sales/{sale_id}/pos-tokens",
+    "function": "issue_pos_tokens_for_sale"
+  },
+  {
+    "method": "POST",
+    "path": "/pos/sales/{sale_id}/void",
+    "function": "void_pos_sale"
+  },
+  {
+    "method": "POST",
+    "path": "/pos/verify-drawer-token",
+    "function": "verify_pos_drawer_token"
+  },
+  {
+    "method": "DELETE",
+    "path": "/price-overrides/{override_id}",
+    "function": "delete_price_override"
+  },
+  {
+    "method": "PUT",
+    "path": "/price-overrides/{override_id}",
+    "function": "update_price_override"
+  },
+  {
+    "method": "GET",
+    "path": "/pricing-tiers",
+    "function": "list_pricing_tiers"
+  },
+  {
+    "method": "POST",
+    "path": "/pricing-tiers",
+    "function": "create_pricing_tier"
+  },
+  {
+    "method": "GET",
+    "path": "/pricing-tiers/{tier_id}",
+    "function": "get_pricing_tier"
+  },
+  {
+    "method": "PUT",
+    "path": "/pricing-tiers/{tier_id}",
+    "function": "update_pricing_tier"
+  },
+  {
+    "method": "DELETE",
+    "path": "/pricing-tiers/{tier_id}/clients/{client_id}",
+    "function": "unassign_client_from_pricing_tier"
+  },
+  {
+    "method": "POST",
+    "path": "/pricing-tiers/{tier_id}/clients/{client_id}",
+    "function": "assign_client_to_pricing_tier"
+  },
+  {
+    "method": "POST",
+    "path": "/pricing-tiers/{tier_id}/prices",
+    "function": "set_pricing_tier_price"
+  },
+  {
+    "method": "DELETE",
+    "path": "/pricing-tiers/{tier_id}/prices/{price_id}",
+    "function": "remove_pricing_tier_price"
+  },
+  {
+    "method": "POST",
+    "path": "/pricing/quote",
+    "function": "pricing_quote"
+  },
+  {
+    "method": "GET",
+    "path": "/programs",
+    "function": "list_programs"
+  },
+  {
+    "method": "POST",
+    "path": "/programs",
+    "function": "create_program"
+  },
+  {
+    "method": "GET",
+    "path": "/programs/active-summary",
+    "function": "active_summary"
+  },
+  {
+    "method": "GET",
+    "path": "/programs/meta",
+    "function": "programs_meta"
+  },
+  {
+    "method": "GET",
+    "path": "/programs/pipeline",
+    "function": "programs_pipeline"
+  },
+  {
+    "method": "POST",
+    "path": "/programs/seed-standard",
+    "function": "seed_standard"
+  },
+  {
+    "method": "DELETE",
+    "path": "/programs/{program_id}",
+    "function": "delete_program"
+  },
+  {
+    "method": "GET",
+    "path": "/programs/{program_id}",
+    "function": "get_program"
+  },
+  {
+    "method": "PUT",
+    "path": "/programs/{program_id}",
+    "function": "update_program"
+  },
+  {
+    "method": "GET",
+    "path": "/programs/{program_id}/active-enrollments-count",
+    "function": "program_active_enrollments_count"
+  },
+  {
+    "method": "DELETE",
+    "path": "/programs/{program_id}/draft",
+    "function": "discard_program_draft"
+  },
+  {
+    "method": "POST",
+    "path": "/programs/{program_id}/duplicate",
+    "function": "duplicate_program"
+  },
+  {
+    "method": "POST",
+    "path": "/programs/{program_id}/publish",
+    "function": "publish_program"
+  },
+  {
+    "method": "GET",
+    "path": "/programs/{program_id}/publish-impact",
+    "function": "program_publish_impact"
+  },
+  {
+    "method": "GET",
+    "path": "/programs/{program_id}/validate",
+    "function": "validate_program"
+  },
+  {
+    "method": "POST",
+    "path": "/public/meet-greet-request",
+    "function": "request_meet_greet"
+  },
+  {
+    "method": "GET",
+    "path": "/public/meet-greet-slots",
+    "function": "public_meet_greet_slots"
+  },
+  {
+    "method": "GET",
+    "path": "/public/services",
+    "function": "public_list_services"
+  },
+  {
+    "method": "GET",
+    "path": "/public/shop/catalog",
+    "function": "get_public_shop_catalog"
+  },
+  {
+    "method": "GET",
+    "path": "/public/shop/item/{kind}/{item_id}",
+    "function": "get_public_shop_item_detail"
+  },
+  {
+    "method": "GET",
+    "path": "/public/shop/media/{media_id}",
+    "function": "get_public_shop_media"
+  },
+  {
+    "method": "GET",
+    "path": "/public/shop/taxonomy",
+    "function": "get_public_shop_taxonomy"
+  },
+  {
+    "method": "GET",
+    "path": "/receipts/{kind}/{ref_id}",
+    "function": "view_receipt"
+  },
+  {
+    "method": "POST",
+    "path": "/receipts/{kind}/{ref_id}/email",
+    "function": "email_receipt"
+  },
+  {
+    "method": "GET",
+    "path": "/recurring-templates",
+    "function": "list_recurring_templates"
+  },
+  {
+    "method": "POST",
+    "path": "/recurring-templates",
+    "function": "create_recurring_template"
+  },
+  {
+    "method": "DELETE",
+    "path": "/recurring-templates/{template_id}",
+    "function": "delete_recurring_template"
+  },
+  {
+    "method": "PUT",
+    "path": "/recurring-templates/{template_id}",
+    "function": "update_recurring_template"
+  },
+  {
+    "method": "POST",
+    "path": "/recurring-templates/{template_id}/extend",
+    "function": "extend_recurring_template"
+  },
+  {
+    "method": "GET",
+    "path": "/referrals/lookup/{code}",
+    "function": "lookup_referral_code"
+  },
+  {
+    "method": "GET",
+    "path": "/reports/pl",
+    "function": "pl_report_json"
+  },
+  {
+    "method": "POST",
+    "path": "/reports/pl/email-now",
+    "function": "pl_report_email_now"
+  },
+  {
+    "method": "GET",
+    "path": "/reports/pl/pdf",
+    "function": "pl_report_pdf"
+  },
+  {
+    "method": "GET",
+    "path": "/retail-sales",
+    "function": "list_retail_sales"
+  },
+  {
+    "method": "POST",
+    "path": "/retail-sales",
+    "function": "create_retail_sale"
+  },
+  {
+    "method": "GET",
+    "path": "/retail-sales/categories",
+    "function": "retail_sale_categories"
+  },
+  {
+    "method": "DELETE",
+    "path": "/retail-sales/{sale_id}",
+    "function": "delete_retail_sale"
+  },
+  {
+    "method": "PUT",
+    "path": "/retail-sales/{sale_id}",
+    "function": "update_retail_sale"
+  },
+  {
+    "method": "GET",
+    "path": "/review-requests",
+    "function": "list_review_requests"
+  },
+  {
+    "method": "POST",
+    "path": "/review-requests",
+    "function": "create_review_request"
+  },
+  {
+    "method": "DELETE",
+    "path": "/review-requests/{entry_id}",
+    "function": "delete_review_request"
+  },
+  {
+    "method": "GET",
+    "path": "/run-sheet",
+    "function": "run_sheet"
+  },
+  {
+    "method": "POST",
+    "path": "/school/enroll",
+    "function": "school_enroll"
+  },
+  {
+    "method": "DELETE",
+    "path": "/school/enrollments/{school_enrollment_id}",
+    "function": "delete_school_enrollment"
+  },
+  {
+    "method": "POST",
+    "path": "/school/enrollments/{school_enrollment_id}/access",
+    "function": "set_school_enrollment_access"
+  },
+  {
+    "method": "POST",
+    "path": "/school/enrollments/{school_enrollment_id}/withdraw",
+    "function": "withdraw_school_enrollment"
+  },
+  {
+    "method": "GET",
+    "path": "/search",
+    "function": "search"
+  },
+  {
+    "method": "GET",
+    "path": "/services",
+    "function": "list_services"
+  },
+  {
+    "method": "POST",
+    "path": "/services",
+    "function": "create_service"
+  },
+  {
+    "method": "GET",
+    "path": "/services/addons",
+    "function": "list_eligible_addons"
+  },
+  {
+    "method": "POST",
+    "path": "/services/seed-standard",
+    "function": "seed_services"
+  },
+  {
+    "method": "DELETE",
+    "path": "/services/{service_id}",
+    "function": "delete_service"
+  },
+  {
+    "method": "PUT",
+    "path": "/services/{service_id}",
+    "function": "update_service"
+  },
+  {
+    "method": "GET",
+    "path": "/settings",
+    "function": "fetch_settings"
+  },
+  {
+    "method": "PUT",
+    "path": "/settings",
+    "function": "save_settings"
+  },
+  {
+    "method": "GET",
+    "path": "/settings/public",
+    "function": "fetch_public_settings"
+  },
+  {
+    "method": "GET",
+    "path": "/settings/review-links",
+    "function": "get_review_links"
+  },
+  {
+    "method": "PUT",
+    "path": "/settings/review-links",
+    "function": "set_review_links"
+  },
+  {
+    "method": "GET",
+    "path": "/share/cert/{token}",
+    "function": "public_certificate_view"
+  },
+  {
+    "method": "GET",
+    "path": "/shop-manager/catalog-preview",
+    "function": "shop_manager_catalog_preview"
+  },
+  {
+    "method": "GET",
+    "path": "/shop-manager/catalog-preview-taxonomy",
+    "function": "shop_manager_catalog_preview_taxonomy"
+  },
+  {
+    "method": "GET",
+    "path": "/shop-manager/items",
+    "function": "shop_manager_list_items"
+  },
+  {
+    "method": "POST",
+    "path": "/shop-orders/{order_id}/stripe-refund",
+    "function": "create_shop_stripe_refund"
+  },
+  {
+    "method": "GET",
+    "path": "/shop/catalog",
+    "function": "get_shop_catalog"
+  },
+  {
+    "method": "GET",
+    "path": "/shop/catalog/taxonomy",
+    "function": "get_shop_catalog_taxonomy"
+  },
+  {
+    "method": "GET",
+    "path": "/shop/categories",
+    "function": "list_shop_categories"
+  },
+  {
+    "method": "POST",
+    "path": "/shop/categories",
+    "function": "create_shop_category"
+  },
+  {
+    "method": "POST",
+    "path": "/shop/categories/reorder",
+    "function": "reorder_shop_categories"
+  },
+  {
+    "method": "DELETE",
+    "path": "/shop/categories/{category_id}",
+    "function": "remove_shop_category"
+  },
+  {
+    "method": "PUT",
+    "path": "/shop/categories/{category_id}",
+    "function": "update_shop_category"
+  },
+  {
+    "method": "GET",
+    "path": "/shop/categories/{category_id}/impact",
+    "function": "shop_category_impact"
+  },
+  {
+    "method": "POST",
+    "path": "/shop/checkout",
+    "function": "create_shop_checkout"
+  },
+  {
+    "method": "POST",
+    "path": "/shop/free-course/claim",
+    "function": "claim_free_program"
+  },
+  {
+    "method": "GET",
+    "path": "/shop/item/{kind}/{item_id}",
+    "function": "get_shop_item_detail"
+  },
+  {
+    "method": "POST",
+    "path": "/shop/items/bulk-assign",
+    "function": "bulk_assign_shop_items"
+  },
+  {
+    "method": "POST",
+    "path": "/shop/media",
+    "function": "upload_shop_media"
+  },
+  {
+    "method": "DELETE",
+    "path": "/shop/media/{media_id}",
+    "function": "delete_shop_media"
+  },
+  {
+    "method": "GET",
+    "path": "/shop/media/{media_id}",
+    "function": "get_shop_media"
+  },
+  {
+    "method": "POST",
+    "path": "/shop/merch-click",
+    "function": "record_shop_merch_click"
+  },
+  {
+    "method": "POST",
+    "path": "/shop/subcategories",
+    "function": "create_shop_subcategory"
+  },
+  {
+    "method": "POST",
+    "path": "/shop/subcategories/reorder",
+    "function": "reorder_shop_subcategories"
+  },
+  {
+    "method": "DELETE",
+    "path": "/shop/subcategories/{subcategory_id}",
+    "function": "remove_shop_subcategory"
+  },
+  {
+    "method": "PUT",
+    "path": "/shop/subcategories/{subcategory_id}",
+    "function": "update_shop_subcategory"
+  },
+  {
+    "method": "GET",
+    "path": "/shop/uncategorized-items",
+    "function": "list_shop_uncategorized_items"
+  },
+  {
+    "method": "GET",
+    "path": "/staff/roles",
+    "function": "get_staff_roles_matrix"
+  },
+  {
+    "method": "PUT",
+    "path": "/staff/roles/{role}/permissions",
+    "function": "update_role_permissions"
+  },
+  {
+    "method": "PUT",
+    "path": "/staff/{user_id}/role",
+    "function": "set_staff_role"
+  },
+  {
+    "method": "POST",
+    "path": "/tasks/{tid}/claim",
+    "function": "claim_task"
+  },
+  {
+    "method": "POST",
+    "path": "/tasks/{tid}/complete",
+    "function": "complete_task"
+  },
+  {
+    "method": "POST",
+    "path": "/time-clock/clock-in",
+    "function": "time_clock_in"
+  },
+  {
+    "method": "POST",
+    "path": "/time-clock/clock-out",
+    "function": "time_clock_out"
+  },
+  {
+    "method": "GET",
+    "path": "/time-clock/current",
+    "function": "time_clock_current"
+  },
+  {
+    "method": "GET",
+    "path": "/time-clock/me",
+    "function": "time_clock_me"
+  },
+  {
+    "method": "GET",
+    "path": "/time-clock/me.csv",
+    "function": "time_clock_me_csv"
+  },
+  {
+    "method": "GET",
+    "path": "/training-session-drafts/{draft_id}",
+    "function": "get_training_session_draft"
+  },
+  {
+    "method": "PUT",
+    "path": "/training-session-drafts/{draft_id}",
+    "function": "update_training_session_draft"
+  },
+  {
+    "method": "POST",
+    "path": "/training-session-drafts/{draft_id}/complete",
+    "function": "complete_training_session"
+  },
+  {
+    "method": "POST",
+    "path": "/training-session-drafts/{draft_id}/reopen",
+    "function": "reopen_training_session"
+  },
+  {
+    "method": "GET",
+    "path": "/training-tips",
+    "function": "list_training_tips"
+  },
+  {
+    "method": "POST",
+    "path": "/training-tips",
+    "function": "create_training_tip"
+  },
+  {
+    "method": "POST",
+    "path": "/training-tips/import",
+    "function": "import_training_tips"
+  },
+  {
+    "method": "GET",
+    "path": "/training-tips/today",
+    "function": "training_tip_today"
+  },
+  {
+    "method": "DELETE",
+    "path": "/training-tips/{tip_id}",
+    "function": "delete_training_tip"
+  },
+  {
+    "method": "PATCH",
+    "path": "/training-tips/{tip_id}",
+    "function": "update_training_tip"
+  },
+  {
+    "method": "GET",
+    "path": "/training/meta",
+    "function": "training_meta"
+  },
+  {
+    "method": "GET",
+    "path": "/transactions",
+    "function": "list_transactions"
+  },
+  {
+    "method": "POST",
+    "path": "/transactions",
+    "function": "log_service"
+  },
+  {
+    "method": "GET",
+    "path": "/transactions/summary-range",
+    "function": "summary_range"
+  },
+  {
+    "method": "GET",
+    "path": "/transactions/weekly-summary",
+    "function": "weekly_summary"
+  },
+  {
+    "method": "DELETE",
+    "path": "/transactions/{transaction_id}",
+    "function": "delete_transaction"
+  },
+  {
+    "method": "PUT",
+    "path": "/transactions/{transaction_id}",
+    "function": "update_transaction"
+  },
+  {
+    "method": "GET",
+    "path": "/trophies/catalog",
+    "function": "list_trophy_catalog"
+  },
+  {
+    "method": "POST",
+    "path": "/trophies/catalog",
+    "function": "create_custom_trophy"
+  },
+  {
+    "method": "DELETE",
+    "path": "/trophies/catalog/{code}",
+    "function": "delete_trophy"
+  },
+  {
+    "method": "PUT",
+    "path": "/trophies/catalog/{code}",
+    "function": "update_trophy"
+  },
+  {
+    "method": "GET",
+    "path": "/trophies/leaderboard",
+    "function": "trophies_leaderboard"
+  },
+  {
+    "method": "GET",
+    "path": "/trophies/share-card/{awarded_id}.png",
+    "function": "trophy_share_card"
+  },
+  {
+    "method": "GET",
+    "path": "/vaccine-alerts",
+    "function": "vaccine_alerts"
+  },
+  {
+    "method": "POST",
+    "path": "/vaccine-alerts/{dog_id}/dismiss",
+    "function": "dismiss_alert"
+  },
+  {
+    "method": "GET",
+    "path": "/waitlist",
+    "function": "list_waitlist"
+  },
+  {
+    "method": "POST",
+    "path": "/waitlist",
+    "function": "add_to_waitlist"
+  },
+  {
+    "method": "DELETE",
+    "path": "/waitlist/{entry_id}",
+    "function": "delete_waitlist_entry"
+  },
+  {
+    "method": "GET",
+    "path": "/waitlist/{entry_id}",
+    "function": "get_waitlist_entry"
+  },
+  {
+    "method": "PUT",
+    "path": "/waitlist/{entry_id}",
+    "function": "update_waitlist_entry"
+  },
+  {
+    "method": "POST",
+    "path": "/waitlist/{entry_id}/convert-to-booking",
+    "function": "convert_waitlist_to_booking"
+  },
+  {
+    "method": "GET",
+    "path": "/waivers",
+    "function": "list_waivers"
+  },
+  {
+    "method": "GET",
+    "path": "/waivers/me",
+    "function": "my_waiver"
+  },
+  {
+    "method": "POST",
+    "path": "/waivers/sign",
+    "function": "sign_waiver"
+  },
+  {
+    "method": "POST",
+    "path": "/webhooks/stripe",
+    "function": "stripe_webhook"
+  }
+]

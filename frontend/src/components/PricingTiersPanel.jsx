@@ -151,15 +151,17 @@ function TierDetail({ tier, onBack, onRefresh }) {
   }, []);
 
   useEffect(() => {
-    if (clientQuery.trim().length < 2) { setClientResults([]); return; }
+    const needle = clientQuery.trim();
+    if (needle.length < 2) { setClientResults([]); return undefined; }
     let cancelled = false;
-    api.get("/clients").then(({ data }) => {
-      if (cancelled) return;
-      const q = clientQuery.toLowerCase();
-      setClientResults((data || []).filter((c) => c.name?.toLowerCase().includes(q)).slice(0, 8));
-    }).catch(() => {});
-    return () => { cancelled = true; };
+    const timer = setTimeout(() => {
+      api.get("/clients/options", { params: { q: needle, limit: 8 } }).then(({ data }) => {
+        if (!cancelled) setClientResults(data || []);
+      }).catch(() => { if (!cancelled) setClientResults([]); });
+    }, 200);
+    return () => { cancelled = true; clearTimeout(timer); };
   }, [clientQuery]);
+
 
   const toggleActive = async () => {
     try {

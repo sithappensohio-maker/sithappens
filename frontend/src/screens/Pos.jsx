@@ -349,14 +349,22 @@ export default function Pos({ onOpenShopManager } = {}) {
   }, [JSON.stringify(cartLines), JSON.stringify(discount), selectedClient?.id]);
 
   // ── Client panel ─────────────────────────────────────────────────────────
-  const [allClients, setAllClients] = useState([]);
-  useEffect(() => { api.get("/clients").then(({ data }) => setAllClients(data || [])).catch(() => {}); }, []);
   const [clientQuery, setClientQuery] = useState("");
-  const clientResults = useMemo(() => {
-    if (!clientQuery || clientQuery.length < 2) return [];
-    const q = clientQuery.toLowerCase();
-    return allClients.filter((c) => (c.name || "").toLowerCase().includes(q) || (c.email || "").toLowerCase().includes(q)).slice(0, 8);
-  }, [clientQuery, allClients]);
+  const [clientResults, setClientResults] = useState([]);
+  // Phase 6 — POS no longer downloads the full decorated client directory
+  // just to find one customer. Debounced server search returns at most eight
+  // matching rows and still includes the credit/account fields pricing needs.
+  useEffect(() => {
+    const needle = clientQuery.trim();
+    if (needle.length < 2) { setClientResults([]); return undefined; }
+    let cancelled = false;
+    const timer = setTimeout(() => {
+      api.get("/clients/options", { params: { q: needle, limit: 8 } })
+        .then(({ data }) => { if (!cancelled) setClientResults(data || []); })
+        .catch(() => { if (!cancelled) setClientResults([]); });
+    }, 200);
+    return () => { cancelled = true; clearTimeout(timer); };
+  }, [clientQuery]);
   // Sourced from the SAME roster Today's Visits reads (never a second,
   // independently-fetched definition of "this client's bookings today") —
   // this is also how ongoing boarding stays that began before today stay
@@ -601,7 +609,7 @@ export default function Pos({ onOpenShopManager } = {}) {
   const [orderActionBusyId, setOrderActionBusyId] = useState(null);
   const [onlineOrdersUnseenCount, setOnlineOrdersUnseenCount] = useState(0);
 
-  const refreshUnseenCount = useCallback(() => api.get("/admin/shop-orders/unseen-count")
+  const refreshUnseenCount = useCallback(() => api.get("/admin/shop-orders/unseen-count", { sharedCache: "refresh" })
     .then(({ data }) => setOnlineOrdersUnseenCount(data.unseen || 0)).catch(() => {}), []);
   useEffect(() => { refreshUnseenCount(); }, [refreshUnseenCount]);
 

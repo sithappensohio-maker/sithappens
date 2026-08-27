@@ -20,7 +20,7 @@ git log --oneline -5
 
 **No secrets, local data, or build artifacts are tracked**
 ```bash
-git ls-files | grep -iE '\.env$|\.env\.|\.sqlite|\.db$|mongodump|\.bson$|backup|\.zip$|node_modules|^frontend/build/'
+git ls-files | grep -iE '\.env$|\.env\.|\.sqlite|\.db$|mongodump|\.bson$|backup|\.zip$|node_modules|^frontend/dist/'
 ```
 This should print **nothing**. If it prints anything, stop — do not deploy
 until it's removed from tracking (`git rm --cached <path>` + add it to
@@ -167,19 +167,19 @@ separate effort from this release-readiness pass.
 **Frontend test suite**
 ```bash
 cd frontend
-CI=true npx craco test --watchAll=false
+yarn test:ci
 cd ..
 ```
 
 **Production frontend build**
 ```bash
 cd frontend
-CI=true npx craco build
+yarn build
 cd ..
 ```
 `CI=true` turns build warnings into hard failures — this is the same gate a
 real CI pipeline would apply. A clean run prints no warnings and ends with
-"The build folder is ready to be deployed."
+a successful Vite build in `frontend/dist/`.
 
 ## 2. Core workflow smoke test
 
@@ -238,7 +238,7 @@ unzip -l <archive-name>.zip | less
 - Confirm every file you expect is present (application code, this
   checklist, any new helper/test files from the release).
 - Confirm `.env`, `.env.local`, any `.db`/`.sqlite`/`.bson` file, any
-  `backup`/`dump` archive, `node_modules/`, `frontend/build/`, and `.git/`
+  `backup`/`dump` archive, `node_modules/`, `frontend/dist/`, and `.git/`
   are **absent**. `git archive` naturally excludes untracked and
   gitignored files, but verify the listing directly rather than trusting
   that — an archive is the thing that actually gets deployed.

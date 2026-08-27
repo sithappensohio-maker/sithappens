@@ -1899,7 +1899,7 @@ export function RegisterTab({ excludeTabs = [] } = {}) {
   const loadChoices = async () => {
     try {
       const [c, p] = await Promise.all([
-        api.get("/clients"),
+        api.get("/clients/options"),
         api.get("/credit-packs", { params: { include_inactive: false } }),
       ]);
       setClients((c.data || []).filter(x => !x.archived).sort((a,b)=>(a.name||"").localeCompare(b.name||"")));

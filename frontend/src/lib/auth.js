@@ -1,5 +1,5 @@
 import { createContext, useContext, useEffect, useState, useCallback } from "react";
-import { api, formatErr } from "./api";
+import { api, clearSharedApiCache, formatErr } from "./api";
 
 const AuthCtx = createContext(null);
 export const useAuth = () => useContext(AuthCtx);
@@ -25,6 +25,7 @@ export function AuthProvider({ children }) {
       setPermissions(permRes?.data?.permissions || null);
     } catch {
       localStorage.removeItem("sh_token");
+      clearSharedApiCache({ notify: false });
       setUser(false);
       setPermissions(null);
     }
@@ -51,6 +52,7 @@ export function AuthProvider({ children }) {
         return false;
       }
       localStorage.setItem("sh_token", data.token);
+      clearSharedApiCache({ notify: false });
       setMfaChallenge(null);
       setUser(data.user);
       // Sprint 110ex — also fetch permissions after login (separate endpoint
@@ -72,6 +74,7 @@ export function AuthProvider({ children }) {
     try {
       const { data } = await api.post("/auth/mfa/verify-login", { challenge_token: mfaChallenge, code });
       localStorage.setItem("sh_token", data.token);
+      clearSharedApiCache({ notify: false });
       setMfaChallenge(null);
       setUser(data.user);
       try {
@@ -94,6 +97,7 @@ export function AuthProvider({ children }) {
       if (referredByCode) payload.referred_by_code = referredByCode;
       const { data } = await api.post("/auth/register", payload);
       localStorage.setItem("sh_token", data.token);
+      clearSharedApiCache({ notify: false });
       setUser(data.user);
       return true;
     } catch (e) {
@@ -104,6 +108,7 @@ export function AuthProvider({ children }) {
 
   const logout = () => {
     localStorage.removeItem("sh_token");
+    clearSharedApiCache({ notify: false });
     setUser(false);
     setPermissions(null);
     setMfaChallenge(null);

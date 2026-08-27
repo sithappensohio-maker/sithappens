@@ -13,6 +13,52 @@ except Exception:  # pragma: no cover
         pass
 
 
+
+async def retain_template_if_referenced(*, db, template_id: str, now_iso) -> Optional[dict]:
+    """Archive a Practice recipe instead of deleting it when School still references it."""
+    if not await db.homework_templates.find_one({"id": template_id}, {"_id": 0, "id": 1}):
+        return None
+    refs = await db.programs.count_documents({"$or": [
+        {"welcome_homework_template_id": template_id},
+        {"modules.homework_template_id": template_id},
+        {"modules.goals.homework_template_ids": template_id},
+        {"modules.lessons.suggested_homework_template_ids": template_id},
+    ]})
+    frozen = await db.dog_programs.count_documents({"$or": [
+        {"program_snapshot.welcome_homework_template_id": template_id},
+        {"program_snapshot.modules.homework_template_id": template_id},
+        {"program_snapshot.modules.goals.homework_template_ids": template_id},
+        {"program_snapshot.modules.lessons.suggested_homework_template_ids": template_id},
+    ]})
+    if not (refs or frozen):
+        return None
+    await db.homework_templates.update_one({"id": template_id}, {"$set": {
+        "active": False,
+        "retained_for_course_refs": True,
+        "retained_for_course_refs_at": now_iso(),
+    }})
+    return {"ok": True, "archived": True, "retained_for_course_refs": True}
+
+
+async def release_school_homework_reference(*, db, homework: Optional[dict], homework_id: str) -> None:
+    """Release a School lesson's auto-Practice claim after explicit deletion."""
+    hw = homework or {}
+    if not hw.get("source_lesson_id"):
+        return
+    enr_id = hw.get("school_enrollment_record_id")
+    if not enr_id and hw.get("school_enrollment_id"):
+        se = await db.school_enrollments.find_one(
+            {"id": hw["school_enrollment_id"]}, {"_id": 0, "enrollment_id": 1})
+        enr_id = (se or {}).get("enrollment_id")
+    if enr_id:
+        await db.dog_programs.update_one({"id": enr_id}, {"$pull": {
+            "auto_homework_log": {
+                "trigger": f"school_lesson:{hw['source_lesson_id']}",
+                "homework_id": homework_id,
+            }
+        }})
+
+
 def _patch_deletes(*, db, g: dict) -> None:
     api, now_iso = g.get("api"), g.get("now_iso")
     if not api or not now_iso:
@@ -29,25 +75,10 @@ def _patch_deletes(*, db, g: dict) -> None:
             async def guarded_template_delete(template_id: str, _: dict, _original=original):
                 if not await db.homework_templates.find_one({"id": template_id}, {"_id": 0, "id": 1}):
                     return await _original(template_id, _)
-                refs = await db.programs.count_documents({"$or": [
-                    {"welcome_homework_template_id": template_id},
-                    {"modules.homework_template_id": template_id},
-                    {"modules.goals.homework_template_ids": template_id},
-                    {"modules.lessons.suggested_homework_template_ids": template_id},
-                ]})
-                frozen = await db.dog_programs.count_documents({"$or": [
-                    {"program_snapshot.welcome_homework_template_id": template_id},
-                    {"program_snapshot.modules.homework_template_id": template_id},
-                    {"program_snapshot.modules.goals.homework_template_ids": template_id},
-                    {"program_snapshot.modules.lessons.suggested_homework_template_ids": template_id},
-                ]})
-                if refs or frozen:
-                    await db.homework_templates.update_one({"id": template_id}, {"$set": {
-                        "active": False,
-                        "retained_for_course_refs": True,
-                        "retained_for_course_refs_at": now_iso(),
-                    }})
-                    return {"ok": True, "archived": True, "retained_for_course_refs": True}
+                retained = await retain_template_if_referenced(
+                    db=db, template_id=template_id, now_iso=now_iso)
+                if retained:
+                    return retained
                 return await _original(template_id, _)
             guarded_template_delete._school_integrity_wrapped = True
             dep.call = route.endpoint = guarded_template_delete
@@ -56,25 +87,14 @@ def _patch_deletes(*, db, g: dict) -> None:
             async def guarded_homework_delete(homework_id: str, _: dict, _original=original):
                 hw = await db.homework.find_one({"id": homework_id}, {"_id": 0})
                 result = await _original(homework_id, _)
-                if hw and hw.get("source_lesson_id"):
-                    enr_id = hw.get("school_enrollment_record_id")
-                    if not enr_id and hw.get("school_enrollment_id"):
-                        se = await db.school_enrollments.find_one(
-                            {"id": hw["school_enrollment_id"]}, {"_id": 0, "enrollment_id": 1})
-                        enr_id = (se or {}).get("enrollment_id")
-                    if enr_id:
-                        await db.dog_programs.update_one({"id": enr_id}, {"$pull": {
-                            "auto_homework_log": {
-                                "trigger": f"school_lesson:{hw['source_lesson_id']}",
-                                "homework_id": homework_id,
-                            }
-                        }})
+                await release_school_homework_reference(
+                    db=db, homework=hw, homework_id=homework_id)
                 return result
             guarded_homework_delete._school_integrity_wrapped = True
             dep.call = route.endpoint = guarded_homework_delete
 
 
-def install_school_practice_integrity(*, db, server_globals: dict) -> bool:
+def install_school_practice_integrity(*, db, server_globals: dict, patch_delete_routes: bool = True) -> bool:
     g = server_globals
     if g.get("_school_practice_integrity_installed"):
         return False
@@ -235,6 +255,7 @@ def install_school_practice_integrity(*, db, server_globals: dict) -> bool:
 
     g["_repair_school_practice_template_reference"] = repair_template
     g["_claim_school_lesson_homework"] = repaired_claim
-    _patch_deletes(db=db, g=g)
+    if patch_delete_routes:
+        _patch_deletes(db=db, g=g)
     g["_school_practice_integrity_installed"] = True
     return True

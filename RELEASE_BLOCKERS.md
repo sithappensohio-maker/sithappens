@@ -10,7 +10,7 @@ All conditions required before tagging a release candidate are met:
 | Release-critical backend suite (16 curated files) | **All 16 passed clean** |
 | No isolated failures in the 12 named critical areas (auth, permissions, booking, pricing, invoices, payments, register enforcement, Stripe/webhooks, Shop checkout, inventory, fulfillment, backups/restore) | **Verified clean across Clusters 1–6 above** |
 | Full frontend Jest suite | **72/72 passed, 6/6 suites** |
-| `CI=true npx craco build` | **Compiled successfully** (only a benign third-party source-map warning + expected bundle-size notice) |
+| `yarn build` | **Compiled successfully** (only a benign third-party source-map warning + expected bundle-size notice) |
 | Admin login (live) | **PASS** |
 | Client login (live) | **PASS** — including the forced temporary-password-change flow |
 | Check-in and checkout with disposable records (live) | **PASS** — real Front Desk UI, real booking, real checkout |

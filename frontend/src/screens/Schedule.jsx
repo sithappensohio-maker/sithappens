@@ -151,7 +151,7 @@ export default function Schedule() {
   };
   const loadClients = async () => {
     try {
-      const { data } = await api.get("/clients");
+      const { data } = await api.get("/clients/balances");
       const map = {};
       (data || []).forEach(c => {
         map[c.id] = {

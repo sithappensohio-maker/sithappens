@@ -43,6 +43,11 @@ const emptyDog = { name:"", breed:"", age_y:0, age_m:0, birthday:"", sex:"Male",
 export default function Clients({ focusId = null, focusMode = "scroll", onConsumed = () => {}, onJumpToDog = () => {}, openCreateOnMount = false, onCreateConsumed = () => {}, userId = null, hubTarget = null, can = () => false, onAddDog = () => {}, onBookForClient = () => {} }) {
   const confirm = useConfirm();
   const [clients, setClients] = useState([]);
+  const [clientSearch, setClientSearch] = useState("");
+  const [clientQuery, setClientQuery] = useState("");
+  const [clientPage, setClientPage] = useState(1);
+  const [clientMeta, setClientMeta] = useState({ total: 0, page: 1, pages: 1, page_size: 48 });
+  const [clientsLoading, setClientsLoading] = useState(true);
   const [open, setOpen] = useState(false);
   const [editing, setEditing] = useState(null);
   const [emailClient, setEmailClient] = useState(null);  // Sprint 110dh-2 — single-client email modal
@@ -70,38 +75,64 @@ export default function Clients({ focusId = null, focusMode = "scroll", onConsum
   const [awardPicker, setAwardPicker] = useState(null);  // client object
   const [plansByClient, setPlansByClient] = useState({});  // client_id -> plans[]
 
+  // Phase 6 — debounce server-side client directory search. The old Clients
+  // screen downloaded and decorated up to 1,000 families before rendering
+  // the first card; this workspace now asks for only the visible page.
+  useEffect(() => {
+    const timer = setTimeout(() => {
+      setClientQuery(clientSearch.trim());
+      setClientPage(1);
+    }, 250);
+    return () => clearTimeout(timer);
+  }, [clientSearch]);
+
   const loadTrophies = useCallback(async (clientList) => {
-    // Sprint 110ef — Single batch call to avoid the N-parallel 429 storm
-    // (see also Dogs.jsx + /admin/dog-trophies-summary).
     try {
-      const { data } = await api.get("/admin/client-trophies-summary");
+      const ids = clientList.map((c) => c.id).filter(Boolean);
+      if (!ids.length) { setTrophyMap({}); return; }
+      const { data } = await api.get("/admin/client-trophies-summary", { params: { client_ids: ids.join(",") } });
       const map = {};
       clientList.forEach(c => { map[c.id] = data?.[c.id] || []; });
       setTrophyMap(map);
     } catch (e) { console.warn("Clients trophy load failed:", e); }
   }, []);
 
+  // Credit-pack definitions are reference data; paging through the directory
+  // must not reload them on every page/search change.
+  useEffect(() => {
+    api.get("/credit-packs", { params: { register_only: true } })
+      .then(({ data }) => setPacks(data || []))
+      .catch(() => setPacks([]));
+  }, []);
+
   const load = useCallback(async () => {
-    const [c, p, pp] = await Promise.all([
-      api.get("/clients"),
-      api.get("/credit-packs", { params: { register_only: true } }).catch(()=>({data:[]})),
-      api.get("/admin/payment-plans").catch(()=>({data:[]})),
-    ]);
-    setClients(c.data);
-    setPacks(p.data || []);
-    // Sprint 110ef — Group all payment plans by client_id once so each
-    // AdminClientPaymentPlans card uses the bulk-loaded slice instead of
-    // firing its own /admin/payment-plans?client_id=… request (was causing
-    // browser-level `ERR_INSUFFICIENT_RESOURCES` with hundreds of clients).
-    const byClient = {};
-    (pp.data || []).forEach(plan => {
-      const cid = plan.client_id;
-      if (!cid) return;
-      (byClient[cid] = byClient[cid] || []).push(plan);
-    });
-    setPlansByClient(byClient);
-    loadTrophies(c.data);
-  }, [loadTrophies]);
+    setClientsLoading(true);
+    try {
+      const c = await api.get("/clients/page", { params: { q: clientQuery, page: clientPage, page_size: 48 } });
+      const rows = c.data?.items || [];
+      const ids = rows.map((client) => client.id).filter(Boolean);
+      const pp = ids.length
+        ? await api.get("/admin/payment-plans", { params: { client_ids: ids.join(",") } }).catch(()=>({data:[]}))
+        : { data: [] };
+      setClients(rows);
+      setClientMeta({
+        total: Number(c.data?.total) || 0,
+        page: Number(c.data?.page) || 1,
+        pages: Number(c.data?.pages) || 1,
+        page_size: Number(c.data?.page_size) || 48,
+      });
+      const byClient = {};
+      (pp.data || []).forEach(plan => {
+        const cid = plan.client_id;
+        if (!cid) return;
+        (byClient[cid] = byClient[cid] || []).push(plan);
+      });
+      setPlansByClient(byClient);
+      await loadTrophies(rows);
+    } finally {
+      setClientsLoading(false);
+    }
+  }, [clientQuery, clientPage, loadTrophies]);
   useEffect(() => { load(); }, [load]);
 
   const openNewClient = () => {
@@ -123,35 +154,115 @@ export default function Clients({ focusId = null, focusMode = "scroll", onConsum
   const [hubOpen, setHubOpen] = useState(null); // client object
   const [hubInitialTab, setHubInitialTab] = useState("overview");
   const [hubFocusId, setHubFocusId] = useState(null);
+  // Phase 2 routes keep the record id in the URL after it is opened. Track
+  // what this mounted screen already handled so data refreshes do not reopen
+  // the same hub/modal repeatedly just because the URL remains durable.
+  const handledHubRouteRef = useRef("");
+  const handledClientFocusRef = useRef("");
+  const routeOpenedHubRef = useRef(false);
+  const routeOpenedFocusHubRef = useRef(false);
+  const routeOpenedEditRef = useRef(false);
   const openHub = (c, initialTab = "overview", focusRecordId = null) => {
     setHubOpen(c); setHubInitialTab(initialTab); setHubFocusId(focusRecordId);
     addRecent(userId, { kind: "client", id: c.id, title: c.name, subtitle: c.email || c.phone || "" });
   };
 
-  // Search results for bookings/invoices route here with a richer target
-  // (kind + the owning client's id) so the Hub opens on the right tab.
+  const resolveClientForRoute = useCallback(async (clientId) => {
+    const visible = clients.find((c) => c.id === clientId);
+    if (visible) return visible;
+    try {
+      const [clientRes, dogRes] = await Promise.all([
+        api.get(`/clients/${clientId}`),
+        api.get("/dogs", { params: { owner_id: clientId, limit: 100 } }).catch(() => ({ data: [] })),
+      ]);
+      const row = clientRes.data;
+      if (!row?.id) return null;
+      return {
+        ...row,
+        dogs: (dogRes.data || []).map((dog) => ({ id: dog.id, name: dog.name, breed: dog.breed || "" })),
+      };
+    } catch { return null; }
+  }, [clients]);
+
+  // Search/deep-link targets may point to a family that is not on the current
+  // 48-row page. Resolve that one record directly instead of forcing the full
+  // directory back into memory merely to support durable Phase 2 URLs.
   useEffect(() => {
-    if (!hubTarget || clients.length === 0) return;
-    const c = clients.find(x => x.id === hubTarget.clientId);
-    const tabForKind = hubTarget.kind === "invoice" ? "money" : hubTarget.kind === "messages" ? "messages" : "bookings";
-    if (c) openHub(c, tabForKind, hubTarget.id);
-    onConsumed();
+    if (!hubTarget?.clientId) return undefined;
+    const routeKey = `${hubTarget.kind || ""}:${hubTarget.clientId || ""}:${hubTarget.id || ""}`;
+    if (handledHubRouteRef.current === routeKey) return undefined;
+    let cancelled = false;
+    (async () => {
+      const c = await resolveClientForRoute(hubTarget.clientId);
+      if (!c || cancelled) return;
+      const tabForKind = hubTarget.kind === "invoice" ? "money" : hubTarget.kind === "messages" ? "messages" : "bookings";
+      handledHubRouteRef.current = routeKey;
+      routeOpenedHubRef.current = true;
+      openHub(c, tabForKind, hubTarget.id);
+      onConsumed();
+    })();
+    return () => { cancelled = true; };
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [hubTarget, clients]);
 
   useEffect(() => {
-    if (!focusId || clients.length === 0) return;
-    // Sprint 110cm — Search result clicked → scroll-and-flash (don't auto-
-    // open the edit modal — disorienting). Explicit "Open profile" buttons
-    // from Pipeline/Dashboard pass mode="open" so they keep their old
-    // behavior of yanking the modal up.
-    if (focusMode === "open") {
-      const c = clients.find(x => x.id === focusId);
-      if (c) { openEditClient(c); onConsumed(); }
-    } else {
-      scrollToCardAndFlash(`client-card-${focusId}`).then(onConsumed);
-    }
+    if (!focusId) return undefined;
+    const routeKey = `${focusId}:${focusMode}`;
+    if (handledClientFocusRef.current === routeKey) return undefined;
+    let cancelled = false;
+    (async () => {
+      const c = await resolveClientForRoute(focusId);
+      if (!c || cancelled) return;
+      handledClientFocusRef.current = routeKey;
+      if (focusMode === "open") {
+        routeOpenedEditRef.current = true;
+        openEditClient(c);
+        onConsumed();
+        return;
+      }
+      if (clients.some(x => x.id === focusId)) {
+        scrollToCardAndFlash(`client-card-${focusId}`).then(onConsumed);
+      } else {
+        // A paginated directory cannot scroll to a card that is not mounted;
+        // opening the routed record is the least surprising equivalent.
+        routeOpenedFocusHubRef.current = true;
+        openHub(c);
+        onConsumed();
+      }
+    })();
+    return () => { cancelled = true; };
   }, [focusId, focusMode, clients, onConsumed, openEditClient]);
+
+
+  // Browser Back from a record URL to /admin/clients should also return the
+  // screen to list state. Only close UI that was opened by routing; manually
+  // opened client dialogs/hubs are left alone.
+  useEffect(() => {
+    if (!hubTarget) {
+      handledHubRouteRef.current = "";
+      if (routeOpenedHubRef.current) {
+        routeOpenedHubRef.current = false;
+        setHubOpen(null);
+        setHubFocusId(null);
+      }
+    }
+  }, [hubTarget]);
+
+  useEffect(() => {
+    if (!focusId) {
+      handledClientFocusRef.current = "";
+      if (routeOpenedEditRef.current) {
+        routeOpenedEditRef.current = false;
+        setOpen(false);
+        setEditing(null);
+      }
+      if (routeOpenedFocusHubRef.current) {
+        routeOpenedFocusHubRef.current = false;
+        setHubOpen(null);
+        setHubFocusId(null);
+      }
+    }
+  }, [focusId]);
 
   const submitClient = async () => {
     setErr("");
@@ -291,7 +402,7 @@ export default function Clients({ focusId = null, focusMode = "scroll", onConsum
   return (
     <div className="space-y-6 animate-slide-in" data-testid="clients-screen">
       <PageHero
-        eyebrow={{ icon: "fa-users", text: `${clients.length} families on file`, color: "text-shSecondary" }}
+        eyebrow={{ icon: "fa-users", text: `${clientMeta.total} families on file`, color: "text-shSecondary" }}
         title="Client Hub."
         highlight="Where humans live."
         subtitle="Profiles, dogs, credits, and waivers — all in one place."
@@ -304,8 +415,30 @@ export default function Clients({ focusId = null, focusMode = "scroll", onConsum
         testid="clients-hero"
       />
 
+      <div className="sh-card p-4 sm:p-5 flex flex-col sm:flex-row gap-3 sm:items-center sm:justify-between" data-testid="client-directory-controls">
+        <label className="relative block flex-1 max-w-2xl">
+          <i className="fas fa-search absolute left-3 top-1/2 -translate-y-1/2 text-shTextMuted" />
+          <input
+            value={clientSearch}
+            onChange={(e)=>setClientSearch(e.target.value)}
+            placeholder="Search clients by name, email, or phone…"
+            data-testid="client-directory-search"
+            className="w-full bg-bgHeader border border-shBorder rounded-lg pl-10 pr-10 py-3 text-[15px] text-shText placeholder:text-shTextMuted focus:outline-none focus:border-shSecondary"
+          />
+          {clientSearch && (
+            <button type="button" onClick={()=>setClientSearch("")} title="Clear search"
+                    className="absolute right-3 top-1/2 -translate-y-1/2 text-shTextMuted hover:text-shText">
+              <i className="fas fa-times" />
+            </button>
+          )}
+        </label>
+        <div className="text-[12px] font-black uppercase tracking-widest text-shTextMuted whitespace-nowrap">
+          {clientsLoading ? "Loading…" : clientQuery ? `${clientMeta.total} match${clientMeta.total === 1 ? "" : "es"}` : `Page ${clientMeta.page} of ${clientMeta.pages}`}
+        </div>
+      </div>
+
       <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4 sm:gap-6" data-testid="client-grid">
-        {clients.length === 0 && <div className="col-span-full text-center text-shTextMuted text-xs font-black uppercase py-16">No clients yet — add your first.</div>}
+        {!clientsLoading && clients.length === 0 && <div className="col-span-full text-center text-shTextMuted text-xs font-black uppercase py-16">{clientQuery ? "No clients match that search." : "No clients yet — add your first."}</div>}
         {clients.map(c => (
           <div key={c.id} className="sh-entity-card p-5 sm:p-6 group relative" data-testid={`client-card-${c.id}`}>
             <div className="absolute top-3 right-3 flex gap-1 opacity-100 md:opacity-0 md:group-hover:opacity-100 transition">
@@ -503,6 +636,24 @@ export default function Clients({ focusId = null, focusMode = "scroll", onConsum
           </div>
         ))}
       </div>
+
+      {clientMeta.pages > 1 && (
+        <div className="flex items-center justify-between gap-3 sh-card p-3" data-testid="client-pagination">
+          <button type="button" disabled={clientMeta.page <= 1 || clientsLoading}
+                  onClick={()=>setClientPage((p)=>Math.max(1, p - 1))}
+                  className="px-4 py-2 rounded-lg border border-shBorder text-[12px] font-black uppercase tracking-widest disabled:opacity-30 hover:border-shSecondary">
+            <i className="fas fa-chevron-left mr-2"/>Previous
+          </button>
+          <span className="text-[12px] font-black uppercase tracking-widest text-shTextMuted">
+            {clientMeta.total} families · {clientMeta.page} / {clientMeta.pages}
+          </span>
+          <button type="button" disabled={clientMeta.page >= clientMeta.pages || clientsLoading}
+                  onClick={()=>setClientPage((p)=>Math.min(clientMeta.pages, p + 1))}
+                  className="px-4 py-2 rounded-lg border border-shBorder text-[12px] font-black uppercase tracking-widest disabled:opacity-30 hover:border-shSecondary">
+            Next<i className="fas fa-chevron-right ml-2"/>
+          </button>
+        </div>
+      )}
 
       {awardPicker && (
         <ManualAwardPicker

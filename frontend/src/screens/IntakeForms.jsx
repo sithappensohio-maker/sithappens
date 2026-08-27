@@ -82,8 +82,8 @@ export default function IntakeForms() {
       const [t, s, c, d] = await Promise.all([
         api.get("/intake/templates"),
         api.get("/intake/submissions"),
-        api.get("/clients"),
-        api.get("/dogs"),
+        api.get("/clients/options"),
+        api.get("/dogs/options"),
       ]);
       setTemplates(t.data.templates || []);
       setSubmissions(s.data.submissions || []);

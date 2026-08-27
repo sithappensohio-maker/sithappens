@@ -66,8 +66,14 @@ from email_service import (
 import email_service
 import school_events
 import school_lesson_guide
-from school_curriculum_routes import register_curriculum_import
 from school_media_preflight import check_school_media_writable
+from school_practice_integrity import retain_template_if_referenced, release_school_homework_reference
+from domains.training import services as training_domain_services
+from domains.pricing import services as pricing_domain_services
+from domains.pos import services as pos_domain_services
+from domains.bookings import services as bookings_domain_services
+from domains.register import services as register_domain_services
+from domains.performance import services as performance_domain_services
 from school_events import EventType as SchoolEvent
 
 from trophy_service import (
@@ -236,7 +242,7 @@ async def health():
     process is up and Mongo is reachable."""
     try:
         await db.command("ping")
-        return {"status": "ok"}
+        return {"status": "ok", "git_sha": os.environ.get("APP_GIT_SHA", "unknown")}
     except Exception as e:
         raise HTTPException(status_code=503, detail=f"mongo unreachable: {e}")
 
@@ -3269,7 +3275,6 @@ async def _booking_days_count(target_date: str) -> int:
             count += 1
     return count
 
-@api.get("/bookings", response_model=List[BookingOut])
 async def list_bookings(
     user: dict = Depends(get_current_user),
     status_filter: Optional[str] = None,
@@ -3402,115 +3407,13 @@ async def _quote_base_service_price(
     legacy_boarding_minimum: int = 0,
     grooming_type: Optional[str] = None,
 ) -> Dict[str, Any]:
-    """Single backend source for base booking estimates.
-
-    Returns dollars + unit metadata. This is deliberately small and boring so
-    booking creation, checkout fallback, and reporting can agree instead of each
-    screen inventing its own boarding math.
-    """
-    q: Dict[str, Any]
-    if service_id:
-        q = {"id": service_id, "active": True}
-    else:
-        q = {"service_type": service_type, "is_default": True, "active": True}
-    svc = await db.services.find_one(q, {"_id": 0})
-    # Bug fix (found live during a boarding-pricing acceptance pass, 2026-07-31):
-    # when service_type=="grooming" and no exact service_id is given, both
-    # "Bath" and "Nail Trim" can independently carry is_default=True (they're
-    # defaults for their own grooming_type, not competitors), so the query
-    # above can match more than one row and silently return whichever Mongo
-    # happens to return first — historically always "Bath" regardless of
-    # what the client actually booked. Disambiguate using the same
-    # slug/name "nail" heuristic AdminBookingModal.jsx already uses when it
-    # reverse-maps an exact service back to a grooming_type (line ~634).
-    if service_type == "grooming" and not service_id and grooming_type:
-        candidates = await db.services.find(
-            {"service_type": "grooming", "active": True, "$or": [{"is_addon": {"$ne": True}}, {"is_addon": {"$exists": False}}]},
-            {"_id": 0},
-        ).to_list(50)
-        wants_nail = grooming_type == "nail_trim"
-        matches = [
-            c for c in candidates
-            if ("nail" in f"{c.get('slug','')} {c.get('name','')}".lower()) == wants_nail
-        ]
-        defaults = [c for c in matches if c.get("is_default")]
-        if len(defaults) == 1:
-            svc = defaults[0]
-        elif len(matches) == 1:
-            svc = matches[0]
-        # If still ambiguous (0 or 2+ matches), fall through to the existing
-        # svc/fallback logic below rather than guessing further.
-    if not svc and not service_id:
-        # Fallback: first active service of this type if no explicit default exists.
-        svc = await db.services.find_one(
-            {"service_type": service_type, "active": True},
-            {"_id": 0},
-            sort=[("is_default", -1), ("name", 1)],
-        )
-    if not svc:
-        return {
-            "service_id": service_id,
-            "service_name": None,
-            "unit_price": 0.0,
-            "units": 0,
-            "unit_label": "units",
-            "estimated_price": 0.0,
-        }
-    list_price = float(svc.get("base_price") or 0)
-    unit_price = list_price
-    pricing_meta = {
-        "effective_price": list_price,
-        "list_price": list_price,
-        "override_id": None,
-        "override_row": None,
-    }
-    if client_id:
-        try:
-            pricing_meta = await resolve_client_price(client_id, "service", svc.get("id") or "", list_price)
-            unit_price = float(pricing_meta.get("effective_price", list_price) or 0)
-        except Exception:
-            unit_price = list_price
-            pricing_meta = {
-                "effective_price": list_price,
-                "list_price": list_price,
-                "override_id": None,
-                "override_row": None,
-            }
-    preferred_rate_applied = bool(pricing_meta.get("override_id")) and abs(float(unit_price) - float(list_price)) > 0.005
-    # Sit Happens business rule: daycare/boarding sibling pricing is
-    # calculated as a discount off the SAME base unit price as the first dog.
-    # Older service rows may still have `additional_dog_rate` populated; do
-    # not stack that custom rate with the 50% multi-dog discount or daycare
-    # estimates become too low (ex: $30 + ($25 - 50%) = $42.50 instead of
-    # $30 + ($30 - 50%) = $45). For non-core services, preserve the legacy
-    # optional additional_dog_rate behavior.
-    if service_type in ("daycare", "boarding"):
-        additional_dog_unit_price = unit_price
-    else:
-        additional_dog_unit_price = float(svc.get("additional_dog_rate") if svc.get("additional_dog_rate") is not None else unit_price)
-    if service_type == "boarding":
-        units = _billable_boarding_units(
-            start_date, end_date, pickup_time, legacy_minimum=legacy_boarding_minimum,
-            cutoff_time=pickup_cutoff_time,
-        )
-        unit_label = "boarding days"
-    else:
-        units = 1 if service_type else 0
-        unit_label = "visits"
-    return {
-        "service_id": svc.get("id"),
-        "service_name": svc.get("name"),
-        "unit_price": round(unit_price, 2),
-        "list_unit_price": round(list_price, 2),
-        "preferred_rate_applied": preferred_rate_applied,
-        "price_override_id": pricing_meta.get("override_id"),
-        "price_source": "preferred_client_rate" if preferred_rate_applied else "catalog_rate",
-        "price_label": "Preferred client rate" if preferred_rate_applied else "Standard rate",
-        "additional_dog_unit_price": round(additional_dog_unit_price, 2),
-        "units": round(float(units), 2),
-        "unit_label": unit_label,
-        "estimated_price": round(unit_price * float(units), 2),
-    }
+    """Compatibility facade; canonical quote pricing lives in domains.pricing."""
+    return await pricing_domain_services.quote_base_service_price(
+        client_id=client_id, service_type=service_type, start_date=start_date,
+        end_date=end_date, pickup_time=pickup_time, pickup_cutoff_time=pickup_cutoff_time,
+        service_id=service_id, legacy_boarding_minimum=legacy_boarding_minimum,
+        grooming_type=grooming_type,
+    )
 
 
 class PricingQuoteIn(BaseModel):
@@ -3529,7 +3432,6 @@ class PricingQuoteIn(BaseModel):
     dog_count: int = 1
 
 
-@api.post("/pricing/quote")
 async def pricing_quote(body: PricingQuoteIn, user: dict = Depends(get_current_user)):
     """Backend source-of-truth quote for booking screens.
 
@@ -3801,14 +3703,15 @@ def _booking_start_local(body: BookingIn, settings: dict) -> datetime:
     except Exception:
         raise HTTPException(status_code=400, detail="Invalid booking date.")
 
-    hours_row = _service_hours_for_date(settings, body.service_type, target_date)
+    effective_service_type = training_domain_services.effective_booking_service_type(body)
+    hours_row = _service_hours_for_date(settings, effective_service_type, target_date)
     if hours_row.get("closed"):
-        raise HTTPException(status_code=400, detail=f"{body.service_type.title()} is closed on that day.")
+        raise HTTPException(status_code=400, detail=f"{effective_service_type.title()} is closed on that day.")
 
-    if body.service_type in TIME_SLOTTED_SERVICES:
+    if effective_service_type in TIME_SLOTTED_SERVICES:
         explicit = _parse_hhmm_strict(body.time, field_label="appointment time")
         if explicit is None:
-            raise HTTPException(status_code=400, detail=f"Please select a time for this {body.service_type} service.")
+            raise HTTPException(status_code=400, detail=f"Please select a time for this {effective_service_type} service.")
     else:
         explicit = _parse_hhmm_strict(body.dropoff_time, field_label="drop-off time")
 
@@ -3834,56 +3737,14 @@ def _booking_start_local(body: BookingIn, settings: dict) -> datetime:
         if explicit < open_time or explicit > close_time:
             raise HTTPException(
                 status_code=400,
-                detail=f"Selected time is outside {body.service_type} hours ({open_time.strftime('%-I:%M %p')}–{close_time.strftime('%-I:%M %p')}).",
+                detail=f"Selected time is outside {effective_service_type} hours ({open_time.strftime('%-I:%M %p')}–{close_time.strftime('%-I:%M %p')}).",
             )
     return local_dt
 
 
 async def _resolve_base_service_for_booking(body: BookingIn, user: dict) -> Optional[dict]:
-    """Resolve a valid active base service and prevent category-rule bypasses.
-
-    Clients must land on an exact catalog service. Legacy/category-only calls
-    are safely mapped only when there is one unambiguous active default/base
-    service. Admins may still create a broad historical/manual booking.
-    """
-    if body.service_id:
-        selected = await db.services.find_one({"id": body.service_id}, {"_id": 0})
-        if not selected or selected.get("active") is False:
-            raise HTTPException(status_code=400, detail="That service is no longer available.")
-        if selected.get("is_addon") is True:
-            raise HTTPException(status_code=400, detail="Add-ons must be attached to a base service booking.")
-        if selected.get("service_type") != body.service_type:
-            raise HTTPException(status_code=400, detail="Selected service does not match the booking category.")
-        return selected
-
-    candidates = await db.services.find(
-        {
-            "active": True,
-            "service_type": body.service_type,
-            "$or": [{"is_addon": {"$ne": True}}, {"is_addon": {"$exists": False}}],
-        },
-        {"_id": 0},
-    ).sort([("is_default", -1), ("name", 1)]).to_list(50)
-
-    # Admins retain a deliberate manual fallback for historical cleanup.
-    if user.get("role") == "admin":
-        if len(candidates) == 1:
-            body.service_id = candidates[0].get("id")
-            return candidates[0]
-        defaults = [svc for svc in candidates if svc.get("is_default")]
-        if len(defaults) == 1:
-            body.service_id = defaults[0].get("id")
-            return defaults[0]
-        return None
-
-    if not candidates:
-        raise HTTPException(status_code=400, detail=f"No active {body.service_type} service is available for online booking.")
-    defaults = [svc for svc in candidates if svc.get("is_default")]
-    selected = candidates[0] if len(candidates) == 1 else (defaults[0] if len(defaults) == 1 else None)
-    if selected is None:
-        raise HTTPException(status_code=400, detail="Please choose the exact service you want to book.")
-    body.service_id = selected.get("id")
-    return selected
+    """Compatibility facade; exact service selection lives in domains.bookings."""
+    return await bookings_domain_services.resolve_base_service_for_booking(body, user)
 
 
 
@@ -4156,8 +4017,7 @@ async def _crate_conflict(booking_id: str, date: str, end_date: Optional[str], c
     return None
 
 
-@api.post("/bookings", response_model=BookingOut)
-async def create_booking(body: BookingIn, user: dict = Depends(get_current_user)):
+async def _create_booking_impl(body: BookingIn, user: dict = Depends(get_current_user)):
     _require_booking_edit(user)
     dog = await db.dogs.find_one({"id": body.dog_id}, {"_id": 0})
     if not dog:
@@ -4634,6 +4494,10 @@ async def create_booking(body: BookingIn, user: dict = Depends(get_current_user)
         pass
     return doc
 
+async def create_booking(body: BookingIn, user: dict = Depends(get_current_user)):
+    """Bookings-domain facade for the proven booking transaction implementation."""
+    return await bookings_domain_services.create_booking(body, user)
+
 
 @api.get("/admin/vaccine-cert-uploads")
 async def admin_list_vaccine_uploads(include_reviewed: bool = False, _: dict = Depends(require_admin)):
@@ -4753,7 +4617,6 @@ async def _booking_days_count_filtered(target_date: str, service_type: str, *, e
     return count
 
 
-@api.post("/bookings/recurring")
 async def create_recurring(body: RecurringBookingIn, user: dict = Depends(get_current_user)):
     dog = await db.dogs.find_one({"id": body.dog_id}, {"_id": 0})
     if not dog:
@@ -4829,7 +4692,6 @@ async def create_recurring(body: RecurringBookingIn, user: dict = Depends(get_cu
 # half-committed booking. Per-booking admin emails are suppressed and one
 # summary "N dogs booked together" email goes out instead.
 # ─────────────────────────────────────────────────────────────────────────────
-@api.post("/bookings/group")
 async def create_booking_group(body: BookingGroupIn, user: dict = Depends(get_current_user)):
     _require_booking_edit(user)
     if not body.dogs:
@@ -5018,7 +4880,6 @@ async def create_booking_group(body: BookingGroupIn, user: dict = Depends(get_cu
     return {"group_id": group_id, "bookings": created}
 
 
-@api.get("/bookings/group/{group_id}")
 async def get_booking_group(group_id: str, user: dict = Depends(get_current_user)):
     """Return every booking row sharing this group_id. Clients only see their
     own group members (defence-in-depth — the bookings are already filtered
@@ -5033,7 +4894,6 @@ async def get_booking_group(group_id: str, user: dict = Depends(get_current_user
 
 
 
-@api.put("/bookings/{booking_id}/reschedule", response_model=BookingOut)
 async def reschedule_booking(booking_id: str, body: RescheduleIn, _: dict = Depends(require_admin)):
     booking = await db.bookings.find_one({"id": booking_id}, {"_id": 0})
     if not booking:
@@ -5249,7 +5109,6 @@ async def extend_recurring_template(
 
 
 
-@api.post("/bookings/{booking_id}/approve", response_model=BookingOut)
 async def approve_booking(booking_id: str, user: dict = Depends(require_admin)):
     # Action Required hardening — approving is a booking-management decision;
     # staff without booking_edit must not be able to do it by direct API call
@@ -5595,7 +5454,6 @@ async def _mutate_client_credits(
     return {"before": before, "after": after, "delta": applied, "lot_id": lot_id, "adjustment_id": adjustment_id}
 
 
-@api.post("/bookings/{booking_id}/reject", response_model=BookingOut)
 async def reject_booking(booking_id: str, user: dict = Depends(require_admin)):
     # Same matrix gate as approve_booking — declining is a booking decision.
     _require_booking_edit(user)
@@ -5615,7 +5473,6 @@ async def reject_booking(booking_id: str, user: dict = Depends(require_admin)):
         pass
     return booking
 
-@api.delete("/bookings/{booking_id}")
 async def cancel_booking(booking_id: str, forfeit: bool = False, user: dict = Depends(get_current_user)):
     # Serialize every cancellation with checkout/refund/adjustment activity.
     # Otherwise a cancellation and checkout could both pass their first read
@@ -5772,7 +5629,6 @@ async def _cancel_booking_impl(booking_id: str, forfeit: bool, user: dict):
         await db.bookings.update_one({"id": booking_id}, {"$set": update_payload})
     return {"ok": True, "forfeit": forfeit, "cancellation_fee": update_payload.get("cancellation_fee", 0)}
 
-@api.get("/bookings/availability")
 async def availability(date_str: str, dog_id: str, user: dict = Depends(get_current_user)):
     dog = await db.dogs.find_one({"id": dog_id}, {"_id": 0})
     if not dog:
@@ -5892,7 +5748,6 @@ async def _compute_meet_greet_slots(settings: dict, the_date: date) -> dict:
     return {"enabled": True, "closed": False, "slot_minutes": slot_minutes, "slots": candidates}
 
 
-@api.get("/bookings/time-slots")
 async def list_time_slots(
     date_str: str,
     service_type: Literal["training", "grooming", "photography"],
@@ -6019,7 +5874,6 @@ async def list_time_slots(
 # Catch-all booking-by-id MUST come AFTER any literal /bookings/<thing> routes
 # (availability, time-slots, conflicts) or it will shadow them. FastAPI
 # matches in order.
-@api.get("/bookings/conflicts")
 async def booking_conflicts(dog_id: str, date_str: str, _: dict = Depends(get_current_user)):
     """Return any pending/approved/completed bookings for this dog on the given date."""
     bookings = await db.bookings.find(
@@ -6036,7 +5890,6 @@ async def booking_conflicts(dog_id: str, date_str: str, _: dict = Depends(get_cu
     return {"conflicts": conflicts}
 
 
-@api.get("/bookings/summary")
 async def bookings_summary(
     user: dict = Depends(get_current_user),
     dog_id: Optional[str] = None,
@@ -6085,7 +5938,6 @@ async def bookings_summary(
     }
 
 
-@api.get("/bookings/{booking_id}", response_model=BookingOut)
 async def get_booking(booking_id: str, user: dict = Depends(get_current_user)):
     """Single-booking detail. Used by the admin Schedule's booking-detail
     modal so we can show notes / payment / homework history without paging
@@ -6726,7 +6578,6 @@ async def portal_update_dog(dog_id: str, body: PortalDogIn, user: dict = Depends
 
 
 
-@api.post("/bookings/{booking_id}/check-in", response_model=BookingOut)
 async def check_in(
     booking_id: str,
     body: Optional[CheckInIn] = None,
@@ -6808,7 +6659,6 @@ async def check_in(
     return result
 
 
-@api.post("/bookings/{booking_id}/add-ons", response_model=BookingOut)
 async def attach_booking_addons(
     booking_id: str,
     body: BookingAddonsIn,
@@ -6839,7 +6689,6 @@ async def attach_booking_addons(
     return booking
 
 
-@api.delete("/bookings/{booking_id}/add-ons/{addon_index}", response_model=BookingOut)
 async def remove_booking_addon(
     booking_id: str,
     addon_index: int,
@@ -7050,7 +6899,6 @@ async def _compute_multi_dog_discount(booking: dict, *, exclude_id: Optional[str
     }
 
 
-@api.get("/bookings/{booking_id}/discount-preview")
 async def discount_preview(booking_id: str, _: dict = Depends(require_employee_or_admin)):
     """Pre-checkout preview of the multi-dog discount that WILL apply at
     check-out time, given the current siblings already checked out today
@@ -7104,7 +6952,6 @@ async def discount_preview(booking_id: str, _: dict = Depends(require_employee_o
     }
 
 
-@api.get("/bookings/{booking_id}/early-checkout-quote")
 async def early_checkout_quote(booking_id: str, _: dict = Depends(require_employee_or_admin)):
     """Boarding early-checkout pricing: what the stay is worth through TODAY.
 
@@ -7181,7 +7028,6 @@ def _service_type_sales_taxable(service_type: Optional[str], tax_cfg: Dict[str, 
     return bool(((tax_cfg or {}).get("applies_to") or {}).get(svc))
 
 
-@api.get("/bookings/{booking_id}/money-modifier-preview")
 async def money_modifier_preview(
     booking_id: str,
     _: dict = Depends(require_employee_or_admin),
@@ -8929,7 +8775,6 @@ async def portal_send_statement(user: dict = Depends(get_current_user)):
     return await _send_account_statement(client_id)
 
 
-@api.post("/bookings/{booking_id}/checkout-partial", response_model=BookingOut)
 async def checkout_partial(
     booking_id: str,
     body: CheckoutIn,
@@ -9158,7 +9003,6 @@ async def _refresh_booking_price_for_current_override(booking: Dict[str, Any]) -
     return refreshed
 
 
-@api.get("/bookings/{booking_id}/checkout-group-preview")
 async def checkout_group_preview(
     booking_id: str,
     _: dict = Depends(require_employee_or_admin),
@@ -9215,7 +9059,6 @@ async def checkout_group_preview(
     }
 
 
-@api.post("/bookings/{booking_id}/check-out-group")
 async def check_out_group(
     booking_id: str,
     body: Optional[CheckoutIn] = None,
@@ -9498,8 +9341,7 @@ async def check_out_group(
         )
 
 
-@api.post("/bookings/{booking_id}/check-out", response_model=BookingOut)
-async def check_out(
+async def _check_out_endpoint_impl(
     booking_id: str,
     body: Optional[CheckoutIn] = None,
     user: dict = Depends(require_employee_or_admin),
@@ -9663,6 +9505,14 @@ async def check_out(
             }},
         )
 
+async def check_out(
+    booking_id: str,
+    body: Optional[CheckoutIn] = None,
+    user: dict = Depends(require_employee_or_admin),
+):
+    """Bookings-domain facade for the proven checkout transaction implementation."""
+    return await bookings_domain_services.check_out(booking_id, body, user)
+
 
 async def _check_out_locked(
     booking_id: str,
@@ -9681,6 +9531,8 @@ async def _check_out_locked(
     booking = await db.bookings.find_one({"id": booking_id}, {"_id": 0})
     if not booking:
         raise HTTPException(status_code=404, detail="Booking not found")
+    await training_domain_services.ensure_board_train_checkout_ready(
+        db=db, booking=booking, business_day=business_today().isoformat())
     # Client-specific pricing fix — see _refresh_booking_price_for_current_override's
     # docstring. Refreshes the in-memory booking so every downstream read of
     # estimated_price/unit_price/pricing_snapshot below already reflects the
@@ -10588,7 +10440,6 @@ async def _maybe_send_report_card_email(booking: dict) -> dict:
             "reason": "ok" if sent else update.get("report_card_email_error", "unknown")}
 
 
-@api.post("/bookings/{booking_id}/report-card", response_model=BookingOut)
 async def save_report_card(booking_id: str, body: ReportCardIn, user: dict = Depends(require_employee_or_admin)):
     booking = await db.bookings.find_one({"id": booking_id}, {"_id": 0})
     if not booking:
@@ -10613,7 +10464,6 @@ async def save_report_card(booking_id: str, body: ReportCardIn, user: dict = Dep
     return booking
 
 
-@api.get("/bookings/{booking_id}/report-card-email/preview")
 async def preview_report_card_email(booking_id: str, _: dict = Depends(require_admin)):
     """Sprint 110cq — Returns the rendered HTML body the report-card email
     would send for this booking, without actually sending it. Useful for
@@ -10637,7 +10487,6 @@ async def preview_report_card_email(booking_id: str, _: dict = Depends(require_a
     }
 
 
-@api.post("/bookings/{booking_id}/resend-report-card")
 async def resend_report_card_email(booking_id: str, _: dict = Depends(require_admin)):
     """Manual re-send of the Day-in-Pictures email. Clears the idempotency
     flags and triggers the email again — useful when the client says they
@@ -12285,7 +12134,6 @@ async def restore_incident(incident_id: str, _: dict = Depends(require_admin)):
 
 # -------- Financially locked booking corrections (Admin) --------
 
-@api.post("/bookings/{booking_id}/financial-adjustment", response_model=BookingOut)
 async def booking_financial_adjustment(
     booking_id: str, body: BookingFinancialAdjustmentIn, user: dict = Depends(require_admin_and_permission("delete_records")),
 ):
@@ -12378,7 +12226,6 @@ async def _booking_financial_adjustment_locked(
     return booking
 
 
-@api.post("/bookings/{booking_id}/refund", response_model=BookingOut)
 async def booking_refund(booking_id: str, body: BookingRefundIn, user: dict = Depends(require_admin_and_permission("delete_records"))):
     owner, keys, client_id, operation_id = await _acquire_booking_financial_correction_guard(booking_id)
     try:
@@ -12533,7 +12380,6 @@ async def _booking_refund_locked(booking_id: str, body: BookingRefundIn, user: d
         raise
 
 
-@api.post("/bookings/{booking_id}/reopen-checkout", response_model=BookingOut)
 async def reopen_booking_checkout(booking_id: str, body: BookingReopenCheckoutIn, user: dict = Depends(require_admin_and_permission("delete_records"))):
     owner, keys, client_id, operation_id = await _acquire_booking_financial_correction_guard(booking_id)
     try:
@@ -12622,7 +12468,6 @@ class BookingPatchIn(BaseModel):
     yard_group: Optional[str] = None
     training_group: Optional[str] = None
 
-@api.patch("/bookings/{booking_id}", response_model=BookingOut)
 async def patch_booking(booking_id: str, body: BookingPatchIn, _: dict = Depends(require_admin)):
     booking = await db.bookings.find_one({"id": booking_id}, {"_id": 0})
     if not booking:
@@ -12749,11 +12594,23 @@ async def search(q: str, user: dict = Depends(require_admin)):
         owner_ids = [d.get("owner_id") for d in matched_dogs if d.get("owner_id")]
         await _client_names_for(owner_ids)
         today = business_today().isoformat()
+        # Phase 6 — batch the upcoming-booking lookup. Global search used to
+        # execute one extra Mongo query per dog result (up to eight on every
+        # keystroke). One indexed query now serves the whole result set.
+        dog_ids = [d.get("id") for d in matched_dogs if d.get("id")]
+        upcoming_by_dog: Dict[str, Dict[str, Any]] = {}
+        if dog_ids:
+            upcoming_rows = await db.bookings.find(
+                {"dog_id": {"$in": dog_ids}, "date": {"$gte": today},
+                 "status": {"$in": ["approved", "pending"]}},
+                {"_id": 0, "dog_id": 1, "date": 1, "service_type": 1},
+            ).sort("date", 1).to_list(200)
+            for row in upcoming_rows:
+                did = row.get("dog_id")
+                if did and did not in upcoming_by_dog:
+                    upcoming_by_dog[did] = row
         for d in matched_dogs:
-            nb = await db.bookings.find_one(
-                {"dog_id": d["id"], "date": {"$gte": today}, "status": {"$in": ["approved", "pending"]}},
-                {"_id": 0, "date": 1, "service_type": 1}, sort=[("date", 1)],
-            )
+            nb = upcoming_by_dog.get(d.get("id"))
             upcoming = f"{nb['service_type'].title()} {nb['date']}" if nb else None
             out["dogs"].append({
                 "id": d["id"], "name": d["name"], "breed": d.get("breed"),
@@ -12856,35 +12713,19 @@ class HomeworkCompleteIn(BaseModel):
     photo: Optional[str] = ""
 
 @api.get("/homework")
-async def list_homework(user: dict = Depends(get_current_user), dog_id: Optional[str] = None):
-    q = {}
-    if user.get("role") != "admin":
-        q["client_id"] = user.get("client_id")
-    if dog_id:
-        q["dog_id"] = dog_id
-    items = await db.homework.find(q, {"_id": 0}).sort("created_at", -1).to_list(2000)
-    # Sprint 107 — enrich daily-tracker rows with streak/total_days so the
-    # admin Homework list can show a live progress bar without an extra fetch
-    # per row. Non-tracker homework is returned unchanged.
-    for it in items:
-        if it.get("daily_tracker"):
-            try:
-                prog = _compute_daily_progress(it)
-                it["total_days"] = len(prog)
-                it["streak"] = _streak_count(prog)
-                # UI Phase 3 — expose the same per-day status list the single-
-                # homework detail endpoint already returns to this same client
-                # (used by DailyCheckInCard/TodayPlanCard), so a Today card can
-                # show today's actionable status without a second round trip.
-                it["daily_progress"] = prog
-            except Exception:
-                pass
-    if user.get("role") != "admin":
-        # School-owned Practice lives inside the School experience now. Keep
-        # legacy/general one-off Practice in the old client list for backward
-        # compatibility, but never duplicate a School assignment in both UIs.
-        items = [_client_safe_homework(it) for it in items if not _is_school_homework(it)]
-    return items
+async def list_homework(
+    user: dict = Depends(get_current_user),
+    dog_id: Optional[str] = None,
+    status: Optional[str] = None,
+    active_first: bool = False,
+    limit: int = 2000,
+    offset: int = 0,
+):
+    """Legacy-compatible Practice list backed by the Phase 6 query service."""
+    return await performance_domain_services.list_homework(
+        user=user, dog_id=dog_id, status=status, active_first=active_first,
+        limit=limit, offset=offset,
+    )
 
 @api.post("/homework")
 async def create_homework(body: HomeworkIn, user: dict = Depends(require_admin)):
@@ -12923,6 +12764,7 @@ async def delete_homework(homework_id: str, _: dict = Depends(require_admin)):
     hw = await db.homework.find_one({"id": homework_id}, {"_id": 0})
     await db.homework.delete_one({"id": homework_id})
     await _release_manual_assignment_claim(hw)
+    await release_school_homework_reference(db=db, homework=hw, homework_id=homework_id)
     return {"ok": True}
 
 def homework_unreviewed_log_count(hw: dict) -> int:
@@ -13457,6 +13299,9 @@ async def delete_homework_template(template_id: str, _: dict = Depends(require_a
     tpl = await db.homework_templates.find_one({"id": template_id}, {"_id": 0})
     if not tpl:
         raise HTTPException(status_code=404, detail="Template not found")
+    retained = await retain_template_if_referenced(db=db, template_id=template_id, now_iso=now_iso)
+    if retained:
+        return retained
     # System-seeded templates are soft-deleted (so reseed restores them).
     if tpl.get("is_default"):
         await db.homework_templates.update_one({"id": template_id}, {"$set": {"active": False}})
@@ -24762,8 +24607,21 @@ async def _get_or_create_session_draft(enrollment: dict, booking_id: Optional[st
     start a brand new, second draft instead of showing the trainer the
     session that already happened. Reopening a completed session must go
     through the explicit, audited POST .../reopen endpoint instead."""
-    enrollment_id = enrollment["id"]
     occurrence_date = business_today().isoformat()
+    draft_request = await training_domain_services.prepare_session_draft_request(
+        db=db, enrollment=enrollment, booking_id=booking_id,
+        session_label=session_label, business_day=occurrence_date,
+    )
+    if draft_request.get("supplemental"):
+        return await training_domain_services.create_supplemental_draft(
+            db=db, enrollment=enrollment, booking_id=booking_id, actor=actor,
+            business_day=occurrence_date, school_lesson_id=draft_request["school_lesson_id"],
+            source_completed_draft_id=draft_request.get("source_completed_draft_id"),
+            now_iso=now_iso, gid=_gid, suggested_plan=_generate_suggested_plan,
+            duplicate_key_error=DuplicateKeyError,
+        )
+    session_label = draft_request.get("session_label", session_label)
+    enrollment_id = enrollment["id"]
     existing = await db.training_session_drafts.find_one(
         {"enrollment_id": enrollment_id, "occurrence_date": occurrence_date,
          "session_label": session_label, "status": {"$in": ["draft", "completing", "completed"]}},
@@ -24903,7 +24761,6 @@ async def _require_training_session_assignment(enrollment: dict, user: dict, *, 
     )
 
 
-@api.post("/bookings/{booking_id}/training-session/draft")
 async def start_training_session_draft_for_booking(
     booking_id: str, enrollment_id: Optional[str] = None, session_label: str = "",
     user: dict = Depends(require_admin_and_permission("manage_training_sessions")),
@@ -25084,6 +24941,8 @@ async def _required_checkpoint_blocks_advancement(enrollment: dict, action: str)
       reopen_previous_lesson, mark_for_assessment) are never blocked, so a
       blocked trainer can still record and save the whole lesson.
     """
+    if training_domain_services.trainer_controls_in_person_progression(enrollment, action):
+        return False
     if action not in _ADVANCEMENT_ACTIONS_PAST_LESSON:
         return False
     if enrollment.get("delivery_channel") not in ("in_person_school", "hybrid_school"):
@@ -25193,6 +25052,8 @@ async def _compute_completion_plan(enrollment: dict, draft: dict, draft_id: str,
     see complete_training_session for why recomputing on retry would be
     unsafe (it would re-read an enrollment that a partially-applied prior
     attempt may have already advanced, double-applying advancement)."""
+    training_domain_services.enforce_session_completion_record(
+        _current_lesson_assessment_gaps(enrollment, draft), draft, body)
     activities = list((draft.get("plan") or {}).get("activities") or [])
     actuals = draft.get("actuals") or {}
     modules_sorted = sorted(
@@ -25392,7 +25253,7 @@ async def _compute_completion_plan(enrollment: dict, draft: dict, draft_id: str,
         "session_label": draft.get("session_label"),
     }
     recap_ready = bool(body.send_recap and (draft.get("client_recap_note") or "").strip())
-    return {
+    plan = {
         "enrollment_id": enrollment["id"], "dog_id": enrollment["dog_id"],
         "set_doc": set_doc, "log_doc": log_doc, "homework_targets": homework_targets,
         "final_status": enrollment.get("status"), "final_module_id": enrollment.get("current_module_id"),
@@ -25400,6 +25261,7 @@ async def _compute_completion_plan(enrollment: dict, draft: dict, draft_id: str,
         "recap_ready": recap_ready,
         "completed_by": user.get("id"), "completed_by_name": user.get("name") or "",
     }
+    return training_domain_services.stamp_completion_plan(plan)
 
 
 class LostCompletionClaimError(RuntimeError):
@@ -25647,7 +25509,9 @@ async def _run_completion_worker(draft_id: str, plan: Dict[str, Any], claim_toke
     write below is itself scoped to this worker's own claim_token for the
     same reason — a lost-then-late failure can never clobber a new owner."""
     try:
-        return await _apply_completion_plan(draft_id, plan, claim_token)
+        result = await _apply_completion_plan(draft_id, plan, claim_token)
+        await training_domain_services.after_completion_worker(db=db, draft_id=draft_id, plan=plan)
+        return result
     except LostCompletionClaimError:
         raise
     except Exception:
@@ -26237,218 +26101,20 @@ def _light_recommended_focus(enrollment: dict) -> List[str]:
     return [a["name"] for a in plan[:2]]
 
 
-@api.get("/admin/training/today")
-async def admin_training_today(user: dict = Depends(require_admin_and_permission("manage_training_sessions"))):
-    """One row per today's training booking — appointment time, dog,
-    program, current module/lesson, recommended focus, homework completion,
-    media awaiting review, an unanswered client question if any, session
-    status (not_checked_in / plan_ready / in_progress / completed /
-    resolution_needed), the real trainer assignment, and the last trainer who
-    worked the dog for historical context. Batches
-    homework/media lookups across all of today's dogs in one query each —
-    no per-row fan-out.
+async def admin_training_today(user: dict):
+    """Compatibility callable; the HTTP route is owned by domains.training."""
+    from domains.training.today import build_training_today
+    return await build_training_today(
+        db=db, user=user, business_today=business_today,
+        staff_school_delivery_channels=STAFF_SCHOOL_DELIVERY_CHANNELS,
+        school_delivery_channels=SCHOOL_DELIVERY_CHANNELS,
+        check_enrollment_module_readiness=_check_enrollment_module_readiness,
+        enrollment_summary=_enrollment_summary, effective_lessons=_effective_lessons,
+        recommended_focus=_light_recommended_focus,
+        booking_training_assignment_for_day=_booking_training_assignment_for_day,
+    )
 
-    UI Phase 5 — dog_photo/client_name/reopen_count/draft_created_at/
-    needs_reassessment_count/homework_difficulty_flags are additive: each is
-    either already stored (dog photo, client name, draft reopen_count/
-    created_at, goal_progress.needs_reassessment) or computed from a cursor
-    this endpoint already iterates (the homework field_values loop below) —
-    no new queries beyond one batched client-name lookup, no new storage."""
-    today = business_today().isoformat()
-    bookings = await db.bookings.find(
-        {
-            "service_type": "training",
-            "status": {"$in": ["approved", "pending", "completed"]},
-            "$or": [
-                {"date": today},
-                {"date": {"$lte": today}, "end_date": {"$gte": today}},
-            ],
-        },
-        {"_id": 0},
-    ).sort("time", 1).to_list(500)
-    if not bookings:
-        return []
 
-    dog_ids = list({b["dog_id"] for b in bookings if b.get("dog_id")})
-    dogs_by_id = {d["id"]: d for d in await db.dogs.find({"id": {"$in": dog_ids}}, {"_id": 0, "id": 1, "name": 1, "photo": 1, "owner_id": 1}).to_list(500)}
-    owner_ids = list({d["owner_id"] for d in dogs_by_id.values() if d.get("owner_id")})
-    client_name_by_id = {c["id"]: c.get("name") for c in await db.clients.find({"id": {"$in": owner_ids}}, {"_id": 0, "id": 1, "name": 1}).to_list(500)}
-    # Online School hardening audit — this trainer dashboard resolves
-    # bookings' trainer-led progress; excluding online_school prevents a
-    # dog's simultaneous self-guided enrollment from falsely triggering
-    # this row's "multiple active enrollments" state.
-    active_enrs = await db.dog_programs.find(
-        {"dog_id": {"$in": dog_ids}, "status": "active", "delivery_channel": {"$in": list(STAFF_SCHOOL_DELIVERY_CHANNELS)}}, {"_id": 0}
-    ).to_list(500)
-    # Retired legacy rows are intentionally NOT current training. Keep a
-    # batched lookup only so Today's roster can tell Admin exactly why a dog
-    # is blocked instead of incorrectly saying "no active training program."
-    active_legacy_enrs = await db.dog_programs.find(
-        {"dog_id": {"$in": dog_ids}, "status": "active",
-         "delivery_channel": {"$nin": list(SCHOOL_DELIVERY_CHANNELS)}},
-        {"_id": 0, "id": 1, "dog_id": 1, "program_id": 1, "program_snapshot.name": 1},
-    ).to_list(500)
-    legacy_by_dog: Dict[str, List[dict]] = {}
-    for e in active_legacy_enrs:
-        legacy_by_dog.setdefault(e["dog_id"], []).append(e)
-    enrs_by_dog: Dict[str, List[dict]] = {}
-    for e in active_enrs:
-        enrs_by_dog.setdefault(e["dog_id"], []).append(e)
-    enr_ids = [e["id"] for e in active_enrs]
-
-    drafts_today = await db.training_session_drafts.find(
-        {"enrollment_id": {"$in": enr_ids}, "occurrence_date": today}, {"_id": 0},
-    ).to_list(500)
-    draft_by_enr: Dict[str, dict] = {d["enrollment_id"]: d for d in drafts_today}
-
-    # One batched homework query for every dog on today's roster, instead of
-    # a query per row.
-    homework_by_dog: Dict[str, List[dict]] = {}
-    async for hw in db.homework.find({"dog_id": {"$in": dog_ids}, "status": {"$ne": "completed"}}, {"_id": 0}):
-        homework_by_dog.setdefault(hw["dog_id"], []).append(hw)
-
-    # Last trainer to touch this enrollment is historical context only. Daily
-    # ownership now comes from the real date-scoped booking assignment below.
-    last_logs = await db.training_session_log.find(
-        {"enrollment_id": {"$in": enr_ids}}, {"_id": 0, "enrollment_id": 1, "by_user": 1, "at": 1},
-    ).sort("at", -1).to_list(1000)
-    last_trainer_by_enr: Dict[str, str] = {}
-    for log in last_logs:
-        last_trainer_by_enr.setdefault(log["enrollment_id"], log.get("by_user"))
-
-    # Real assignment identity: today's booking assignment wins, then the
-    # School/program-level assigned trainer is the fallback.  This replaces
-    # the old "last person who touched the dog" proxy.
-    daily_assignment_by_booking = {
-        b["id"]: _booking_training_assignment_for_day(b, today) for b in bookings
-    }
-    trainer_ids = {
-        a.get("assigned_trainer_id") for a in daily_assignment_by_booking.values() if a.get("assigned_trainer_id")
-    }
-    trainer_ids.update(e.get("assigned_trainer_id") for e in active_enrs if e.get("assigned_trainer_id"))
-    trainer_by_id = {}
-    if trainer_ids:
-        trainer_rows = await db.users.find(
-            {"id": {"$in": list(trainer_ids)}, "active": {"$ne": False}},
-            {"_id": 0, "id": 1, "name": 1, "display_name": 1, "email": 1},
-        ).to_list(500)
-        trainer_by_id = {u["id"]: (u.get("display_name") or u.get("name") or u.get("email") or "Trainer") for u in trainer_rows}
-
-    rows = []
-    for b in bookings:
-        dog = dogs_by_id.get(b.get("dog_id")) or {}
-        row = {
-            "booking_id": b["id"], "time": b.get("time") or "", "dog_id": b.get("dog_id"),
-            "dog_name": dog.get("name") or b.get("dog_name") or "",
-            "dog_photo": dog.get("photo") or "",
-            "client_name": client_name_by_id.get(dog.get("owner_id")) or "",
-            "checked_in": bool(b.get("checked_in_at")),
-            "assigned_trainer_id": (daily_assignment_by_booking.get(b["id"]) or {}).get("assigned_trainer_id"),
-            "assigned_trainer": trainer_by_id.get((daily_assignment_by_booking.get(b["id"]) or {}).get("assigned_trainer_id")),
-            "assignment_source": "daily" if (daily_assignment_by_booking.get(b["id"]) or {}).get("assigned_trainer_id") else "unassigned",
-            "residential_training": bool(b.get("end_date") and str(b.get("end_date"))[:10] > str(b.get("date") or "")[:10]),
-        }
-        enrs = enrs_by_dog.get(b.get("dog_id")) or []
-        if not enrs:
-            legacy_rows = legacy_by_dog.get(b.get("dog_id")) or []
-            if legacy_rows:
-                legacy = legacy_rows[0]
-                row.update({
-                    "session_status": "resolution_needed",
-                    "resolution_reason": "legacy_curriculum_requires_migration",
-                    "legacy_enrollment_id": legacy.get("id"),
-                    "legacy_program_id": legacy.get("program_id"),
-                    "legacy_program_name": (legacy.get("program_snapshot") or {}).get("name") or "Retired legacy training",
-                })
-            else:
-                row.update({"session_status": "resolution_needed", "resolution_reason": "no_active_enrollment"})
-            rows.append(row)
-            continue
-        if len(enrs) > 1:
-            row.update({"session_status": "resolution_needed", "resolution_reason": "multiple_active_enrollments"})
-            rows.append(row)
-            continue
-        enr = enrs[0]
-        readiness = _check_enrollment_module_readiness(enr)
-        if not readiness["ok"]:
-            row.update({"session_status": "resolution_needed", "resolution_reason": readiness["reason"]})
-            rows.append(row)
-            continue
-
-        summary = _enrollment_summary(enr)
-        cur_module = summary.get("current_module") or {}
-        cur_lesson = None
-        if enr.get("current_lesson_id"):
-            for l in _effective_lessons(cur_module):
-                if l.get("id") == enr["current_lesson_id"]:
-                    cur_lesson = l.get("name")
-                    break
-
-        draft = draft_by_enr.get(enr["id"])
-        if not b.get("checked_in_at") and not draft:
-            status = "not_checked_in"
-        elif draft and draft.get("status") == "completed":
-            status = "completed"
-        elif draft and any(v for v in (draft.get("actuals") or {}).values()):
-            status = "in_progress"
-        elif draft:
-            status = "plan_ready"
-        else:
-            status = "not_checked_in"
-
-        hw_rows = homework_by_dog.get(b.get("dog_id")) or []
-        hw_total_days = sum(int(h.get("total_days") or 0) for h in hw_rows if h.get("daily_tracker"))
-        hw_completed_days = sum(
-            sum(1 for l in (h.get("section_logs") or []) if l.get("submission_status") in ("submitted", "approved"))
-            for h in hw_rows if h.get("daily_tracker")
-        )
-        media_awaiting = 0
-        client_question = None
-        difficulty_flags = 0
-        for h in hw_rows:
-            for l in (h.get("section_logs") or []):
-                fv = l.get("field_values") or {}
-                if fv.get("__video_id") or fv.get("__photo"):
-                    media_awaiting += 1
-                # UI Phase 5 — same __difficulty/__could_not_complete keys
-                # GET /admin/homework/pending-reviews already surfaces per-day
-                # to the homework review queue; here just counted (not the
-                # per-day detail) for the trainer attention queue.
-                if fv.get("__difficulty") in ("hard", "very_hard") or fv.get("__could_not_complete"):
-                    difficulty_flags += 1
-                for q in (l.get("questions") or []):
-                    if not q.get("answer") and not client_question:
-                        client_question = q.get("text")
-
-        goal_progress = enr.get("goal_progress") or {}
-        needs_reassessment_count = sum(
-            1 for g in (cur_module.get("goals") or []) if (goal_progress.get(g.get("id")) or {}).get("needs_reassessment")
-        )
-
-        row.update({
-            "program_name": (enr.get("program_snapshot") or {}).get("name"),
-            "current_module_name": cur_module.get("name"),
-            "current_lesson_name": cur_lesson,
-            "recommended_focus": _light_recommended_focus(enr),
-            "homework_completion": {"days_completed": hw_completed_days, "total_days": hw_total_days} if hw_total_days else None,
-            "media_awaiting_review": media_awaiting,
-            "client_question": client_question,
-            "homework_difficulty_flags": difficulty_flags,
-            "needs_reassessment_count": needs_reassessment_count,
-            "session_status": status,
-            "resolution_reason": None,
-            "assigned_trainer_id": (daily_assignment_by_booking.get(b["id"]) or {}).get("assigned_trainer_id") or enr.get("assigned_trainer_id"),
-            "assigned_trainer": trainer_by_id.get((daily_assignment_by_booking.get(b["id"]) or {}).get("assigned_trainer_id") or enr.get("assigned_trainer_id")),
-            "assignment_source": "daily" if (daily_assignment_by_booking.get(b["id"]) or {}).get("assigned_trainer_id") else ("program" if enr.get("assigned_trainer_id") else "unassigned"),
-            "last_trainer": last_trainer_by_enr.get(enr["id"]) or b.get("checked_in_by_name"),
-            "viewer_is_admin": user.get("role") == "admin",
-            "enrollment_id": enr["id"],
-            "draft_id": (draft or {}).get("id"),
-            "reopen_count": (draft or {}).get("reopen_count") or 0,
-            "draft_created_at": (draft or {}).get("created_at"),
-        })
-        rows.append(row)
-    return rows
 
 
 class TrainingDayTrainerAssignmentIn(BaseModel):
@@ -26512,7 +26178,6 @@ async def assign_training_booking_trainer(
     }
 
 
-@api.get("/bookings/{booking_id}/training-context")
 async def get_training_context_for_booking(booking_id: str, _: dict = Depends(require_admin_and_permission("manage_training_sessions"))):
     """Return the active training-program context for the dog on this booking,
     so the check-in flow can decide whether to surface the Training Tracker."""
@@ -27412,12 +27077,25 @@ async def admin_pending_actions_count(user: dict = Depends(require_admin)):
     if not _user_can_see_any_pending_actions(user):
         return {"total": 0, "meet_and_greet_requests": 0, "booking_approvals": 0, "reschedule_requests": 0, "stripe_disputes": 0, "shop_refund_reconciliations": 0, "overdue_medications": 0}
     perms = _perms_for(user)
-    mg = await db.bookings.count_documents({"status": "pending", "is_meet_greet": True}) if perms.get("booking_edit") else 0
-    pending_bookings = await db.bookings.count_documents({"status": "pending", "is_meet_greet": {"$ne": True}}) if perms.get("booking_edit") else 0
-    resched = await db.reschedule_requests.count_documents({"status": "pending"}) if perms.get("booking_edit") else 0
-    disputes = await db.stripe_disputes.count_documents({"status": {"$in": list(STRIPE_DISPUTE_OPEN_STATUSES)}}) if perms.get("finance_reports") else 0
-    shop_recon = await db.shop_orders.count_documents({"refund_reconciliation_required": True}) if perms.get("finance_reports") else 0
-    overdue_meds = len(await _collect_overdue_medication_actions(limit=1000)) if perms.get("care_complete") else 0
+    # Phase 6 — these counters are independent. They previously ran one after
+    # another on every nav poll, so Action Required latency was the sum of six
+    # database/care queries. Run them concurrently while preserving the exact
+    # same permission gates and result semantics.
+    mg, pending_bookings, resched, disputes, shop_recon, overdue_rows = await asyncio.gather(
+        db.bookings.count_documents({"status": "pending", "is_meet_greet": True})
+            if perms.get("booking_edit") else asyncio.sleep(0, result=0),
+        db.bookings.count_documents({"status": "pending", "is_meet_greet": {"$ne": True}})
+            if perms.get("booking_edit") else asyncio.sleep(0, result=0),
+        db.reschedule_requests.count_documents({"status": "pending"})
+            if perms.get("booking_edit") else asyncio.sleep(0, result=0),
+        db.stripe_disputes.count_documents({"status": {"$in": list(STRIPE_DISPUTE_OPEN_STATUSES)}})
+            if perms.get("finance_reports") else asyncio.sleep(0, result=0),
+        db.shop_orders.count_documents({"refund_reconciliation_required": True})
+            if perms.get("finance_reports") else asyncio.sleep(0, result=0),
+        _collect_overdue_medication_actions(limit=1000)
+            if perms.get("care_complete") else asyncio.sleep(0, result=[]),
+    )
+    overdue_meds = len(overdue_rows)
     return {
         "total": mg + pending_bookings + resched + disputes + shop_recon + overdue_meds,
         "meet_and_greet_requests": mg, "booking_approvals": pending_bookings, "reschedule_requests": resched,
@@ -32648,9 +32326,16 @@ async def list_client_trophies(client_id: str, user: dict = Depends(get_current_
 
 # Sprint 110ef — Sibling batch endpoint to `/admin/dog-trophies-summary`.
 @api.get("/admin/client-trophies-summary")
-async def all_client_trophies_summary(_: dict = Depends(require_admin)):
+async def all_client_trophies_summary(
+    client_ids: Optional[str] = None, _: dict = Depends(require_admin),
+):
+    query: Dict[str, Any] = {"recipient_type": "client", "revoked": {"$ne": True}}
+    if client_ids:
+        ids = [value.strip() for value in client_ids.split(",") if value.strip()][:100]
+        if ids:
+            query["recipient_id"] = {"$in": ids}
     rows = await db.awarded_trophies.find(
-        {"recipient_type": "client", "revoked": {"$ne": True}},
+        query,
         {"_id": 0},
     ).sort("awarded_at", -1).to_list(10000)
     out: Dict[str, list] = {}
@@ -33600,6 +33285,9 @@ async def startup():
         (db.bookings, "dog_id", {}),
         (db.bookings, "client_id", {}),
         (db.bookings, "status", {}),
+        # Phase 6 global search: one batch lookup finds each matched dog's
+        # nearest upcoming booking by dog/date/status.
+        (db.bookings, [("dog_id", 1), ("date", 1), ("status", 1)], {"name": "bookings_dog_upcoming"}),
         (db.users, "client_id", {}),
         (db.clients, [("deleted_at", 1), ("name", 1)], {}),
         (db.dogs, "owner_id", {}),
@@ -33607,6 +33295,10 @@ async def startup():
         (db.homework, "dog_id", {}),
         (db.homework, "client_id", {}),
         (db.homework, [("status", 1), ("created_at", -1)], {}),
+        (db.homework, [("client_id", 1), ("status", 1), ("created_at", -1)], {"name": "homework_client_status_created"}),
+        (db.homework, [("dog_id", 1), ("status", 1), ("created_at", -1)], {"name": "homework_dog_status_created"}),
+        (db.waiver_signatures, [("client_id", 1), ("signed_at", -1)], {"name": "waiver_client_latest"}),
+        (db.intake_submissions, [("client_id", 1), ("status", 1)], {"name": "intake_client_status"}),
         (db.dog_programs, "dog_id", {}),
         (db.dog_programs, [("dog_id", 1), ("status", 1)], {}),
         (db.credit_lots, [("client_id", 1), ("purchased_at", -1)], {}),
@@ -33730,6 +33422,9 @@ async def startup():
         (db.shop_orders, "id", {"unique": True}),
         (db.shop_orders, "client_id", {}),
         (db.shop_orders, [("status", 1), ("fulfillment_status", 1)], {}),
+        (db.shop_orders, [("status", 1), ("admin_unseen", 1)], {"name": "shop_orders_unseen"}),
+        (db.client_message_threads, "unread_admin", {"name": "message_threads_unread_admin"}),
+        (db.client_message_threads, "status", {"name": "message_threads_status"}),
         (db.shop_checkout_claims, "idempotency_key", {"unique": True}),
         # Practice assignment idempotency — one active assignment of a given
         # template to a given dog. Brand-new collection, so this unique index
@@ -36292,15 +35987,8 @@ async def _active_register_closeout(date_value: str) -> Optional[Dict[str, Any]]
 
 
 async def _require_register_day_open(date_value: str) -> None:
-    closeout = await _active_register_closeout(date_value)
-    if closeout:
-        raise HTTPException(
-            status_code=409,
-            detail=(
-                f"The register for {date_value} is closed. Reopen the day with a reason "
-                "before recording another sale, payment, refund, expense, or till adjustment."
-            ),
-        )
+    """Compatibility facade; open-day enforcement lives in domains.register."""
+    await register_domain_services.require_register_day_open(date_value)
 
 
 def _closeout_rollover_cash(closeout: Optional[Dict[str, Any]]) -> Optional[float]:
@@ -36466,71 +36154,10 @@ async def _previous_closeout_rollover(date_value: str) -> Optional[Dict[str, Any
 
 
 def _effective_register_opening(
-    session: Optional[Dict[str, Any]],
-    previous_closeout: Optional[Dict[str, Any]],
+    current_closeout: Optional[Dict[str, Any]], previous_closeout: Optional[Dict[str, Any]],
 ) -> Dict[str, Any]:
-    """Resolve today's opening drawer without trusting stale browser state.
-
-    A saved session may differ from the previous closeout only when it carries
-    an explicit, auditable override reason. Legacy/stale rows that silently
-    replaced the rollover are recovered to the last confirmed count.
-    """
-    suggested = _closeout_rollover_cash(previous_closeout)
-    session_cash = None
-    if session and session.get("opening_cash") is not None:
-        try:
-            session_cash = round(float(session.get("opening_cash") or 0), 2)
-        except (TypeError, ValueError):
-            session_cash = None
-
-    override_reason = str((session or {}).get("opening_override_reason") or "").strip()
-    override_marked = bool((session or {}).get("opening_was_overridden"))
-    valid_override = override_marked and len(override_reason) >= 3
-
-    recovered = False
-    recorded_cash = session_cash
-    if suggested is not None:
-        if session_cash is None:
-            opening_cash = suggested
-            source = "previous_closeout"
-        elif abs(session_cash - suggested) <= 0.005:
-            opening_cash = session_cash
-            source = "drawer_session"
-        elif valid_override:
-            opening_cash = session_cash
-            source = "drawer_session_override"
-        else:
-            # Old UI/PWA state could write yesterday's opening amount into the
-            # next day without a reason. Never let that silently defeat the
-            # confirmed closeout rollover.
-            opening_cash = suggested
-            source = "previous_closeout_recovered"
-            recovered = True
-    elif session_cash is not None:
-        opening_cash = session_cash
-        source = "drawer_session"
-    else:
-        opening_cash = 0.0
-        source = "not_set"
-
-    effective_session = dict(session) if session else None
-    if effective_session is not None and recovered:
-        effective_session["recorded_opening_cash"] = recorded_cash
-        effective_session["opening_cash"] = opening_cash
-        effective_session["opening_recovered_from_rollover"] = True
-
-    return {
-        "opening_cash": round(float(opening_cash), 2),
-        "source": source,
-        "suggested_cash": suggested,
-        "suggested_from_date": (previous_closeout or {}).get("date"),
-        "suggested_from_closeout_id": (previous_closeout or {}).get("id"),
-        "valid_override": valid_override,
-        "override_reason": override_reason if valid_override else "",
-        "recovered": recovered,
-        "recorded_cash": recorded_cash,
-        "session": effective_session,
-    }
+    """Compatibility facade; register opening semantics live in domains.register."""
+    return register_domain_services.effective_register_opening(current_closeout, previous_closeout)
 
 
 class TillAdjustmentIn(BaseModel):
@@ -37101,7 +36728,6 @@ def _csv_response(rows: List[List[Any]], filename: str) -> Response:
 
 
 
-@api.get("/admin/register/range")
 async def admin_register_range(
     start_date: Optional[str] = None,
     end_date: Optional[str] = None,
@@ -37110,7 +36736,6 @@ async def admin_register_range(
     return await _register_range_summary(start_date, end_date)
 
 
-@api.get("/admin/register/closeouts")
 async def admin_register_closeouts(
     start_date: Optional[str] = None,
     end_date: Optional[str] = None,
@@ -37140,7 +36765,6 @@ def _activity_tender_details(a: Dict[str, Any], method_labels: Dict[str, str]) -
     )
 
 
-@api.get("/admin/register/export.csv")
 async def admin_register_export_csv(
     kind: Optional[str] = "activity",
     start_date: Optional[str] = None,
@@ -37218,7 +36842,6 @@ async def admin_register_export_csv(
     raise HTTPException(400, "kind must be activity, payment-methods, closeouts, expenses, till-adjustments, or tax-summary")
 
 
-@api.get("/admin/register/tax-packet.zip")
 async def admin_register_tax_packet_zip(
     start_date: Optional[str] = None,
     end_date: Optional[str] = None,
@@ -37304,12 +36927,10 @@ async def admin_register_tax_packet_zip(
     return Response(content=zbuf.getvalue(), media_type="application/zip", headers={"Content-Disposition": f'attachment; filename="sit-happens-tax-packet-{stamp}.zip"'})
 
 
-@api.get("/admin/register/day")
 async def admin_register_day(date: Optional[str] = None, _: dict = Depends(require_admin_and_permission("finance_reports"))):
     return await _register_day_summary(date)
 
 
-@api.post("/admin/register/open-drawer")
 async def admin_open_cash_drawer(body: CashDrawerOpenIn, user: dict = Depends(require_admin_and_permission("finance_reports"))):
     d = _validated_register_date(body.date)
     await _require_register_day_open(d)
@@ -37350,7 +36971,6 @@ async def admin_open_cash_drawer(body: CashDrawerOpenIn, user: dict = Depends(re
     return {"ok": True, "drawer_session": fresh, "register": await _register_day_summary(d)}
 
 
-@api.post("/admin/register/reopen-day")
 async def admin_reopen_register_day(body: ReopenRegisterDayIn, user: dict = Depends(require_admin_and_permission("finance_reports"))):
     d = _validated_register_date(body.date)
     reason = body.reason.strip()
@@ -37381,7 +37001,6 @@ async def admin_reopen_register_day(body: ReopenRegisterDayIn, user: dict = Depe
     return {"ok": True, "date": d, "register": await _register_day_summary(d)}
 
 
-@api.post("/admin/register/till-adjustment")
 async def admin_register_till_adjustment(body: TillAdjustmentIn, user: dict = Depends(require_admin_and_permission("finance_reports"))):
     """Record physical cash added to or removed from the till without
     classifying it as income or an expense. The required reason provides an
@@ -37411,7 +37030,6 @@ async def admin_register_till_adjustment(body: TillAdjustmentIn, user: dict = De
     return {"ok": True, "adjustment": doc, "register": await _register_day_summary(d)}
 
 
-@api.delete("/admin/register/till-adjustment/{adjustment_id}")
 async def delete_till_adjustment(adjustment_id: str, _: dict = Depends(require_admin_and_permission("delete_records"))):
     """Till adjustments (owner draws, change funds, corrections) had no way
     to remove a mistaken entry — unlike expenses and retail sales/refunds,
@@ -37447,7 +37065,6 @@ class RegisterCashPayoutIn(BaseModel):
     tax_deductible: Optional[bool] = True
 
 
-@api.post("/admin/register/refund")
 async def admin_register_refund(body: RegisterRefundIn, user: dict = Depends(require_admin_and_permission("delete_records"))):
     d = body.date or business_today().isoformat()
     await _require_register_day_open(d)
@@ -37476,7 +37093,6 @@ async def admin_register_refund(body: RegisterRefundIn, user: dict = Depends(req
     return {"ok": True, "refund": doc, "register": await _register_day_summary(d)}
 
 
-@api.post("/admin/register/cash-payout")
 async def admin_register_cash_payout(body: RegisterCashPayoutIn, user: dict = Depends(require_admin_and_permission("finance_reports"))):
     d = body.date or business_today().isoformat()
     await _require_register_day_open(d)
@@ -37572,7 +37188,6 @@ async def admin_end_of_day_closeout(body: EndOfDayCloseoutIn, user: dict = Depen
     return doc
 
 
-@api.get("/bookings/{booking_id}/history")
 async def booking_history(booking_id: str, _: dict = Depends(require_admin_and_permission("finance_reports"))):
     """Booking change history from audit log + payment ledger. No writes."""
     audits = await db.audit_log.find({"record_id": booking_id}, {"_id": 0}).sort("ts", -1).to_list(200)
@@ -37585,7 +37200,6 @@ async def booking_history(booking_id: str, _: dict = Depends(require_admin_and_p
 # No writes here — invoices/payments are only ever created by the checkout/
 # refund hooks above. These exist purely to surface what was recorded.
 
-@api.get("/bookings/{booking_id}/invoice")
 async def get_booking_invoice(booking_id: str, _: dict = Depends(require_admin_and_permission("finance_reports"))):
     """Resolves to the canonical invoice for this booking — since a group
     invoice's booking_ids array contains every dog in the group, this
@@ -39609,13 +39223,11 @@ async def list_stripe_online_payments(limit: int = 50, q: Optional[str] = None, 
     return {"payments": rows}
 
 
-@api.get("/admin/register/session")
 async def get_register_session(date: Optional[str] = None, _: dict = Depends(require_admin_and_permission("finance_reports"))):
     date_value = _validated_register_date(date, allow_future=False)
     return await _register_session_view(date_value)
 
 
-@api.get("/admin/register/status")
 async def get_register_status(user: dict = Depends(require_employee_or_admin)):
     """Operational register state — least privilege.
 
@@ -39694,7 +39306,6 @@ async def issue_test_receipt_print_token(body: Optional[Dict[str, Any]] = None, 
     return {"print_receipt_token": token}
 
 
-@api.get("/pos/receipt-payload")
 async def get_pos_receipt_payload(token: str):
     """Called by the local POS agent to fetch the canonical receipt content
     for a print action. The token itself is the credential — this is a
@@ -39854,7 +39465,6 @@ async def email_receipt(kind: RECEIPT_KIND, ref_id: str,
     return {"ok": True}
 
 
-@api.post("/pos/verify-drawer-token")
 async def verify_pos_drawer_token(body: Dict[str, Any]):
     """Called by the local POS agent before it kicks the physical drawer.
     Verifies + consumes a token issued for either an automatic post-cash-
@@ -41180,173 +40790,10 @@ async def _build_shop_catalog(client_id: Optional[str]) -> dict:
 
 
 async def _build_register_catalog(client_id: Optional[str]) -> dict:
-    """Front Desk / walk-up register catalog — the register-facing sibling
-    of _build_shop_catalog(). Same three canonical collections, same `kind`
-    discriminator, same resolve_client_price() so a grandfathered client is
-    charged identically whether staff ring them up at the register or they
-    self-checkout in the Shop — but gated on `show_at_register` instead of
-    `show_online`/`available_online`, since those are deliberately
-    independent visibility switches (Shop Manager ItemsTab shows both as
-    separate toggles). This does NOT create a second product system: it is
-    a second FILTER over the exact same pos_products/credit_packs/programs
-    documents, reusing the same Shop Organization category visibility and
-    the same pricing resolver as every other purchase surface.
-
-    A Shopify-linked product is excluded entirely (not just shown
-    read-only) — Shopify owns fulfillment for that listing, and a walk-up
-    register sale has no way to honor that, unlike the Shop's catalog
-    where it's a legitimate external-link tile."""
-    active_cats = {c["id"]: c for c in await db.shop_categories.find({"active": True}, {"_id": 0}).to_list(500)}
-    active_subs = {s["id"]: s for s in await db.shop_subcategories.find({"active": True}, {"_id": 0}).to_list(2000)}
-
-    def _shop_org_visible(cat_id, sub_id):
-        if not cat_id:
-            return True
-        if cat_id not in active_cats:
-            return False
-        if sub_id and sub_id not in active_subs:
-            return False
-        return True
-
-    def _shop_org_fields(cat_id, sub_id):
-        cat = active_cats.get(cat_id) if cat_id else None
-        sub = active_subs.get(sub_id) if sub_id else None
-        return {
-            "category_id": cat["id"] if cat else None,
-            "category_name": cat["name"] if cat else None,
-            "subcategory_id": sub["id"] if sub else None,
-            "subcategory_name": sub["name"] if sub else None,
-        }
-
-    items = []
-
-    products = await db.pos_products.find(
-        {"active": True, "archived": {"$ne": True}, "show_at_register": {"$ne": False}}, {"_id": 0},
-    ).sort([("category", 1), ("name", 1), ("id", 1)]).to_list(length=None)
-    for p in products:
-        if p.get("sales_destination") == "shopify_external":
-            continue
-        if not _shop_org_visible(p.get("category_id"), p.get("subcategory_id")):
-            continue
-        track = bool(p.get("track_inventory"))
-        stock = float(p.get("stock_on_hand") or 0)
-        list_price = round(float(p.get("price") or 0), 2)
-        pricing = await resolve_client_price(client_id, "pos_product", p["id"], list_price)
-        effective_price = round(float(pricing["effective_price"]), 2)
-        has_override = pricing["pricing_source"] != "standard"
-        items.append({
-            "kind": "product",
-            "id": p["id"],
-            "name": p.get("name"),
-            "description": p.get("description") or "",
-            "sku": p.get("sku") or "",
-            "category": p.get("category") or "",
-            "featured": bool(p.get("featured")),
-            "list_price": list_price,
-            "effective_price": effective_price,
-            "pricing_source": pricing["pricing_source"],
-            "price_override_id": pricing["override_id"],
-            "has_price_override": has_override,
-            "image_id": p.get("image_id"),
-            "track_inventory": track,
-            "in_stock": (not track) or (stock > 0.0005),
-            "stock_on_hand": round(stock, 2) if track else None,
-            "low_stock_threshold": p.get("low_stock_threshold") if track else None,
-            "taxable": bool(p.get("taxable", True)),
-            "tax_exempt_reason": p.get("tax_exempt_reason"),
-            **_shop_org_fields(p.get("category_id"), p.get("subcategory_id")),
-        })
-
-    packs = await db.credit_packs.find(
-        {"active": True, "show_at_register": {"$ne": False}}, {"_id": 0},
-    ).sort([("name", 1), ("id", 1)]).to_list(length=None)
-    for pk in packs:
-        if not _shop_org_visible(pk.get("category_id"), pk.get("subcategory_id")):
-            continue
-        qty = int(pk.get("qty") or 0)
-        list_price = round(float(pk.get("price") or 0), 2)
-        pricing = await resolve_client_price(client_id, "credit_pack", pk["id"], list_price)
-        effective_price = round(float(pricing["effective_price"]), 2)
-        has_override = bool(pricing["override_id"])
-        items.append({
-            "kind": "credit_pack",
-            "id": pk["id"],
-            "name": pk.get("name"),
-            "description": pk.get("description") or pk.get("online_description") or "",
-            "sku": "",
-            "category": "",
-            "service_type": pk.get("service_type"),
-            "qty": qty,
-            "featured": bool(pk.get("featured")),
-            "list_price": list_price,
-            "effective_price": effective_price,
-            "pricing_source": "client_override" if has_override else "standard",
-            "price_override_id": pricing["override_id"],
-            "has_price_override": has_override,
-            "value_each": round(effective_price / max(qty, 1), 2),
-            "image_id": pk.get("image_id"),
-            # Step 4C-1 — deterministically non-taxable (service), matching
-            # the pricing paths; a stray taxable=true on the doc is ignored.
-            "taxable": False,
-            "tax_exempt_reason": pk.get("tax_exempt_reason") or "Prepaid visit credits are a service, not a taxed retail good",
-            **_credit_pack_display_fields(pk, qty, effective_price),
-            **_shop_org_fields(pk.get("category_id"), pk.get("subcategory_id")),
-        })
-
-    programs = await db.programs.find(
-        {"active": True, "show_at_register": {"$ne": False}}, {"_id": 0},
-    ).sort([("name", 1), ("id", 1)]).to_list(length=None)
-    for prog in programs:
-        if not _shop_org_visible(prog.get("category_id"), prog.get("subcategory_id")):
-            continue
-        fmt = prog.get("format") or {}
-        # Programs have no grandfathered-pricing resolver today (matches
-        # sell-program's own behavior — see PosSaleLineIn/sell_training_program),
-        # so effective_price always equals list_price here; the field is
-        # still emitted so the Front Desk card can use one consistent
-        # "effective_price" read across all three kinds.
-        list_price = round(float(prog.get("price") or 0), 2)
-        items.append({
-            "kind": "training_program",
-            "id": prog["id"],
-            "name": prog.get("name"),
-            "description": prog.get("description") or prog.get("online_description") or "",
-            "sku": "",
-            "category": "",
-            "focus": prog.get("focus") or "",
-            "program_type": prog.get("type"),
-            "format_count": fmt.get("count"),
-            "format_unit": fmt.get("unit"),
-            "min_age_months": prog.get("min_age_months") or 0,
-            "featured": bool(prog.get("featured")),
-            "list_price": list_price,
-            "effective_price": list_price,
-            "pricing_source": "standard",
-            "price_override_id": None,
-            "has_price_override": False,
-            "image_id": prog.get("image_id"),
-            # Step 4C-1 — deterministically non-taxable (service).
-            "taxable": False,
-            "tax_exempt_reason": prog.get("tax_exempt_reason") or "Training is a service, not a taxed retail good",
-            # Phase 5 — client-facing so the Shop item detail page knows
-            # whether to show a dog selector / real ownership CTA states.
-            "purchase_fulfillment": prog.get("purchase_fulfillment") or "credits_only",
-            # Free Online School claim — COMPUTED from the stored program by
-            # the same helper the claim endpoint enforces, never a passthrough
-            # of the raw flag. A $0 program with no explicit opt-in resolves
-            # False here, so the Shop can never offer to claim one.
-            "free_claim_available": _free_claim_program_blockers(prog) is None,
-            "estimated_weeks": prog.get("estimated_weeks"),
-            "school_support": prog.get("school_support") or {},
-            "school_onboarding": prog.get("school_onboarding") or {},
-            "recommended_next_program_slugs": prog.get("recommended_next_program_slugs") or [],
-            **_shop_org_fields(prog.get("category_id"), prog.get("subcategory_id")),
-        })
-
-    return {"items": items}
+    """Compatibility facade; register catalog ownership is domains.pos."""
+    return await pos_domain_services.build_register_catalog(client_id)
 
 
-@api.get("/pos/catalog")
 async def get_register_catalog(client_id: Optional[str] = None, user: dict = Depends(require_employee_or_admin)):
     """Front Desk's real product/pack/program catalog — the register-visible
     counterpart to GET /shop/catalog. `client_id`, when given, resolves that
@@ -43437,7 +42884,6 @@ def _require_take_payments(user: dict):
         raise HTTPException(status_code=403, detail="You don't have permission to take payments.")
 
 
-@api.get("/pos/products")
 async def list_pos_products(
     include_inactive: bool = False,
     include_archived: bool = False,
@@ -43524,7 +42970,6 @@ def _resolve_pos_product_destination_fields(body: "PosProductIn") -> Dict[str, A
     }
 
 
-@api.post("/pos/products")
 async def create_pos_product(body: PosProductCreateIn, user: dict = Depends(require_admin_and_permission("pricing"))):
     await _validate_category_subcategory_pair(body.category_id, body.subcategory_id, expected_section="merch")
     destination_fields = _resolve_pos_product_destination_fields(body)
@@ -43563,7 +43008,6 @@ async def create_pos_product(body: PosProductCreateIn, user: dict = Depends(requ
     return doc
 
 
-@api.put("/pos/products/{product_id}")
 async def update_pos_product(product_id: str, body: PosProductIn, user: dict = Depends(require_admin_and_permission("pricing"))):
     """Edits product info only. stock_on_hand is deliberately never part of
     this patch — it can only change via a sale, a void, or the explicit
@@ -43602,7 +43046,6 @@ async def update_pos_product(product_id: str, body: PosProductIn, user: dict = D
     return {**existing, **patch}
 
 
-@api.post("/pos/products/{product_id}/duplicate")
 async def duplicate_pos_product(product_id: str, user: dict = Depends(require_admin_and_permission("pricing"))):
     """Copies a listing (name, category, pricing/Shopify-link fields, etc.)
     into a brand-new product row with its own id and zero history. Never
@@ -43666,7 +43109,6 @@ async def _pos_product_has_history(product_id: str) -> bool:
     return False
 
 
-@api.delete("/pos/products/{product_id}")
 async def delete_pos_product(product_id: str, user: dict = Depends(require_admin_and_permission("pricing"))):
     """Permanently deletes a product ONLY when it has never been referenced
     by any Shop order, POS sale, or inventory transaction (see
@@ -43691,7 +43133,6 @@ async def delete_pos_product(product_id: str, user: dict = Depends(require_admin
     return {"ok": True, "action": "deleted"}
 
 
-@api.post("/pos/products/{product_id}/archive")
 async def archive_pos_product(product_id: str, user: dict = Depends(require_admin_and_permission("pricing"))):
     """Retires a product that has history (or that an admin simply wants to
     stop selling) WITHOUT touching its historical references. Snapshots the
@@ -43720,7 +43161,6 @@ async def archive_pos_product(product_id: str, user: dict = Depends(require_admi
     return {**existing, **patch}
 
 
-@api.post("/pos/products/{product_id}/restore")
 async def restore_pos_product(product_id: str, user: dict = Depends(require_admin_and_permission("pricing"))):
     """Reverses archive_pos_product — restores the exact active/show_online
     state captured at archive time (never a blanket "turn everything back
@@ -43743,7 +43183,6 @@ async def restore_pos_product(product_id: str, user: dict = Depends(require_admi
     return {**existing, **patch}
 
 
-@api.get("/pos/products/categories")
 async def pos_product_categories(user: dict = Depends(require_employee_or_admin)):
     _require_take_payments(user)
     cats = await db.pos_products.distinct("category", {"active": True})
@@ -43811,7 +43250,6 @@ class InventoryAdjustIn(BaseModel):
         return v
 
 
-@api.post("/pos/products/{product_id}/adjust-stock")
 async def adjust_pos_product_stock(product_id: str, body: InventoryAdjustIn, user: dict = Depends(require_admin_and_permission("pricing"))):
     """Manual stock correction — receiving a shipment, damage, loss, an
     inventory-count correction, or an explicit refund-restock decision
@@ -43828,7 +43266,6 @@ async def adjust_pos_product_stock(product_id: str, body: InventoryAdjustIn, use
     return {"ok": True, **result}
 
 
-@api.get("/pos/products/{product_id}/movements")
 async def list_inventory_movements(product_id: str, limit: int = 100, user: dict = Depends(require_admin_and_permission("pricing"))):
     cursor = db.inventory_movements.find({"product_id": product_id}, {"_id": 0}).sort("created_at", -1)
     return await cursor.to_list(max(1, min(limit, 500)))
@@ -43906,290 +43343,16 @@ class PosSaleIn(PosSalePreviewIn):
     idempotency_key: str = Field(min_length=8, max_length=128)
 
 
-async def _price_pos_cart(lines: List[PosSaleLineIn], discount: Optional[PosSaleDiscountIn], *, can_price: bool, client_id: Optional[str] = None) -> tuple:
-    """Prices a WHOLE Front Desk cart — retail products, admin-only custom
-    lines, credit packs, and training programs — as ONE priced transaction.
-    Retail/credit-pack prices are ALWAYS resolved server-side from the live
-    catalog via resolve_client_price() (never trusted from the client);
-    training-program prices are list-price only (matches sell-program's own
-    behavior — no grandfathered-pricing resolver exists for programs
-    anywhere in the app); only a custom line's amount is caller-supplied,
-    and only staff holding the "pricing" permission may include one or
-    apply a discount.
-
-    Front Desk checkout integrity audit — this used to be retail/custom
-    only, with credit packs and training programs sold through entirely
-    separate sell-pack/sell-program calls. A mixed cart therefore produced
-    several unrelated "sales" instead of one coherent transaction. Pricing
-    every kind here, in one place, is what lets create_pos_sale commit the
-    whole cart as a single atomic, idempotent, one-receipt transaction.
-
-    Security checkpoint fix (kept from the retail-only version) — this used
-    to gate on `is_admin` (a blanket `role == "admin"` check), so any
-    restricted staff_role account (which still has `role: "admin"`) could
-    add custom-priced lines or discounts regardless of the "pricing"
-    permission the frontend already enforces. `can_price` is the caller's
-    actual `_perms_for(user).get("pricing")`. Raises HTTPException on any
-    invalid input; never partially prices.
-
-    Tax handling — each catalog item (pos_products/credit_packs/programs)
-    now carries its own `taxable`/`tax_exempt_reason` fields (see those
-    models) instead of tax being hardcoded by line `kind`. Tax is allocated
-    PER LINE, proportional to each taxable line's post-discount amount
-    (mirrors _price_shop_cart's existing per-line allocation), so every
-    line_item carries its own taxable/tax_rate_pct/allocated_tax/
-    tax_exempt_reason — never a single cart-wide lump.
-
-    Also enforces stock availability for track_inventory products, summed
-    across every line referencing the same product (so two cart lines for
-    the same item can't each individually pass a check that their combined
-    quantity would fail). This is a pre-commit convenience check shared by
-    preview and create — the actual sale commit still deducts atomically
-    (see _mutate_product_stock), so a race against another register can
-    never oversell even if this check briefly passed. Frontend stock
-    numbers are for display only; this is the real enforcement point.
-
-    Returns (priced_dict, catalog_caches) — catalog_caches is
-    {"products": {...}, "packs": {...}, "programs": {...}}, each mapping id
-    to the full catalog doc as read at pricing time, reused by the caller
-    so a sale commit never has to re-query anything it already fetched
-    here."""
-    line_items = []
-    product_cache: Dict[str, dict] = {}
-    pack_cache: Dict[str, dict] = {}
-    program_cache: Dict[str, dict] = {}
-    qty_by_product: Dict[str, float] = {}
-    has_entitlement_line = False
-
-    for line in lines:
-        if line.kind == "custom":
-            if not can_price:
-                raise HTTPException(status_code=403, detail="You don't have permission to add a custom item.")
-            if line.custom_amount is None or line.custom_amount <= 0:
-                raise HTTPException(status_code=400, detail="Custom items require a positive amount.")
-            if not (line.custom_reason or "").strip():
-                raise HTTPException(status_code=400, detail="Custom items require a reason.")
-            amount = round(float(line.custom_amount), 2)
-            # Step 4C-1 — custom lines carry a structured merchandise/service
-            # selection; services are never sales-taxable.
-            custom_is_service = line.custom_kind == "service"
-            line_items.append({
-                "kind": "custom", "product_id": None,
-                "custom_kind": line.custom_kind,
-                "description": (line.description or "Custom item").strip(),
-                "qty": 1, "unit_price": amount, "amount": amount,
-                "reason": line.custom_reason.strip(),
-                "taxable": not custom_is_service,
-                "tax_exempt_reason": "Service — not sales-taxable" if custom_is_service else None,
-            })
-        elif line.kind == "retail":
-            if not line.product_id:
-                raise HTTPException(status_code=400, detail="Retail line is missing a product.")
-            product = product_cache.get(line.product_id)
-            if product is None:
-                product = await db.pos_products.find_one({"id": line.product_id}, {"_id": 0})
-                if not product or not product.get("active", True):
-                    raise HTTPException(status_code=400, detail="One of the products in this cart is no longer available.")
-                product_cache[line.product_id] = product
-            qty = round(float(line.qty or 1), 3)
-            list_price = round(float(product["price"]), 2)
-            pricing = await resolve_client_price(client_id, "pos_product", product["id"], list_price)
-            unit_price = round(float(pricing["effective_price"]), 2)
-            has_override = pricing["pricing_source"] != "standard"
-            amount = round(qty * unit_price, 2)
-            taxable = bool(product.get("taxable", True))
-            line_items.append({
-                "kind": "retail", "product_id": product["id"],
-                "description": (line.description or product["name"]).strip(),
-                "qty": qty, "unit_price": unit_price, "amount": amount,
-                "list_price": list_price,
-                "has_price_override": has_override,
-                "price_override_id": pricing["override_id"],
-                "taxable": taxable, "tax_exempt_reason": None if taxable else product.get("tax_exempt_reason"),
-            })
-            qty_by_product[product["id"]] = qty_by_product.get(product["id"], 0) + qty
-        elif line.kind == "credit_pack":
-            has_entitlement_line = True
-            if not line.pack_id:
-                raise HTTPException(status_code=400, detail="Credit pack line is missing a pack.")
-            pack = pack_cache.get(line.pack_id)
-            if pack is None:
-                pack = await db.credit_packs.find_one({"id": line.pack_id}, {"_id": 0})
-                if not pack or not pack.get("active", True):
-                    raise HTTPException(status_code=400, detail="One of the credit packs in this cart is no longer available.")
-                pack_cache[line.pack_id] = pack
-            qty = int(line.qty or 1)  # whole packs purchased, not visit count
-            list_price = round(float(pack["price"]), 2)
-            pricing = await resolve_client_price(client_id, "credit_pack", pack["id"], list_price)
-            unit_price = round(float(pricing["effective_price"]), 2)
-            has_override = pricing["pricing_source"] != "standard"
-            amount = round(qty * unit_price, 2)
-            # Step 4C-1 — credit packs are prepaid SERVICE visits: never
-            # sales-taxable, deterministically (a stray taxable=true on the
-            # pack doc must not tax a service).
-            taxable = False
-            line_items.append({
-                "kind": "credit_pack", "pack_id": pack["id"],
-                "description": (line.description or pack["name"]).strip(),
-                "qty": qty, "unit_price": unit_price, "amount": amount,
-                "list_price": list_price,
-                "has_price_override": has_override,
-                "price_override_id": pricing["override_id"],
-                "taxable": taxable,
-                "tax_exempt_reason": None if taxable else (pack.get("tax_exempt_reason") or "Prepaid visit credits are a service, not a taxed retail good"),
-            })
-        elif line.kind == "training_program":
-            has_entitlement_line = True
-            if not line.program_id:
-                raise HTTPException(status_code=400, detail="Training program line is missing a program.")
-            program = program_cache.get(line.program_id)
-            if program is None:
-                program = await db.programs.find_one({"id": line.program_id}, {"_id": 0})
-                if not program or not program.get("active", True):
-                    raise HTTPException(status_code=400, detail="One of the training programs in this cart is no longer available.")
-                fmt = program.get("format") or {}
-                if int(fmt.get("count") or 0) <= 0:
-                    raise HTTPException(status_code=400, detail=f"{program.get('name', 'This program')} isn't set up for sale (format.count must be > 0).")
-                if program.get("purchase_fulfillment") == "online_school":
-                    # Phase 5 decision — the Front Desk register has no safe
-                    # way to select which of the client's dogs an Online
-                    # School enrollment is for (PosSaleLineIn carries no
-                    # dog_id, and Pos.jsx's program-line UI is client-scoped
-                    # only). Rather than guess a dog, this line kind is
-                    # blocked here until a register dog-selector exists;
-                    # staff can sell it through "Sell Program" (which
-                    # already supports dog_id) or the client Shop instead.
-                    raise HTTPException(
-                        status_code=400,
-                        detail=f"{program.get('name', 'This program')} is an Online School course and can't be sold at the register yet — use \"Sell Program\" on the client's profile or have the client buy it in their Shop.",
-                    )
-                program_cache[line.program_id] = program
-            qty = int(line.qty or 1)  # whole program enrollments purchased
-            list_price = round(float(program.get("price") or 0), 2)
-            # No grandfathered-pricing resolver exists for programs anywhere
-            # in the app (matches sell_training_program's own behavior) —
-            # effective_price always equals list_price.
-            unit_price = list_price
-            amount = round(qty * unit_price, 2)
-            # Step 4C-1 — training programs are services: never sales-taxable,
-            # deterministically.
-            taxable = False
-            line_items.append({
-                "kind": "training_program", "program_id": program["id"],
-                "description": (line.description or program["name"]).strip(),
-                "qty": qty, "unit_price": unit_price, "amount": amount,
-                "list_price": list_price,
-                "has_price_override": False,
-                "price_override_id": None,
-                "taxable": taxable,
-                "tax_exempt_reason": None if taxable else (program.get("tax_exempt_reason") or "Training is a service, not a taxed retail good"),
-            })
-        else:
-            raise HTTPException(status_code=400, detail=f"Unknown cart line kind: {line.kind}")
-
-    if has_entitlement_line and not client_id:
-        raise HTTPException(status_code=400, detail="Credit packs and training programs require a client — walk-in sales can't purchase them.")
-
-    for product_id, total_qty in qty_by_product.items():
-        product = product_cache[product_id]
-        if not product.get("track_inventory"):
-            continue
-        stock = float(product.get("stock_on_hand") or 0)
-        if total_qty > stock + 0.0005:
-            if stock <= 0.0005:
-                raise HTTPException(status_code=400, detail=f"{product['name']} is out of stock.")
-            raise HTTPException(status_code=400, detail=f"Only {stock:g} in stock for {product['name']}.")
-
-    subtotal = round(sum(li["amount"] for li in line_items), 2)
-
-    discount_amount = 0.0
-    discount_kind = None
-    discount_reason = None
-    if discount is not None:
-        if not can_price:
-            raise HTTPException(status_code=403, detail="You don't have permission to apply a discount.")
-        if discount.kind == "percent":
-            if discount.value > 100:
-                raise HTTPException(status_code=400, detail="A percentage discount cannot exceed 100%.")
-            discount_amount = round(subtotal * (discount.value / 100.0), 2)
-        else:
-            discount_amount = round(min(discount.value, subtotal), 2)
-        discount_kind = discount.kind
-        discount_reason = discount.reason.strip()
-
-    # Tax is allocated PER LINE (not as one cart-wide lump) — only lines
-    # whose catalog item is actually configured `taxable` contribute, and
-    # each gets its own discount-proportional share of the total tax so the
-    # receipt/invoice can show taxable status + rate + amount per line.
-    discount_ratio = (discount_amount / subtotal) if subtotal > 0 else 0.0
-    taxable_indices = [i for i, li in enumerate(line_items) if li["taxable"]]
-    taxable_subtotal = round(sum(line_items[i]["amount"] for i in taxable_indices), 2)
-    taxable_base = round(taxable_subtotal * (1 - discount_ratio), 2)
-    tax_amount = 0.0
-    tax_rate_pct = 0.0
-    try:
-        settings_tx = await get_settings()
-        tx_cfg = (settings_tx or {}).get("sales_tax") or {}
-        if tx_cfg.get("enabled") and float(tx_cfg.get("rate_pct") or 0) > 0 and taxable_base > 0:
-            applies = (tx_cfg.get("applies_to") or {})
-            if applies.get("retail", True):
-                tax_rate_pct = float(tx_cfg["rate_pct"])
-                tax_amount = round(taxable_base * (tax_rate_pct / 100.0), 2)
-    except Exception as exc:
-        logger.warning("POS cart tax calc failed: %s", exc)
-
-    allocated_so_far = 0.0
-    for pos, i in enumerate(taxable_indices):
-        li = line_items[i]
-        li["tax_rate_pct"] = tax_rate_pct
-        if tax_amount <= 0:
-            li["allocated_tax"] = 0.0
-            continue
-        if pos == len(taxable_indices) - 1:
-            li["allocated_tax"] = round(tax_amount - allocated_so_far, 2)
-        else:
-            line_share = round(tax_amount * (li["amount"] / taxable_subtotal), 2) if taxable_subtotal > 0 else 0.0
-            li["allocated_tax"] = line_share
-            allocated_so_far = round(allocated_so_far + line_share, 2)
-    for i, li in enumerate(line_items):
-        if i not in taxable_indices:
-            li["tax_rate_pct"] = 0.0
-            li["allocated_tax"] = 0.0
-
-    # Discount is a single cart-wide amount (fixed $ or %), but every line
-    # still needs its own post-discount "net_amount" — this is what each
-    # kind's own revenue-recognition row (retail_sales for retail/custom,
-    # one row per credit-pack/program lot) actually records, so a mixed
-    # cart's total revenue always adds up across every kind exactly once.
-    # Allocated proportionally by each line's pre-discount amount, with a
-    # running-remainder correction on the last line (same rounding-safe
-    # pattern as the tax allocation above).
-    discount_allocated_so_far = 0.0
-    for idx, li in enumerate(line_items):
-        if subtotal <= 0:
-            line_discount = 0.0
-        elif idx == len(line_items) - 1:
-            line_discount = round(discount_amount - discount_allocated_so_far, 2)
-        else:
-            line_discount = round(discount_amount * (li["amount"] / subtotal), 2)
-            discount_allocated_so_far = round(discount_allocated_so_far + line_discount, 2)
-        li["allocated_discount"] = line_discount
-        li["net_amount"] = round(li["amount"] - line_discount, 2)
-        li["line_total"] = round(li["net_amount"] + li["allocated_tax"], 2)
-
-    total = round((subtotal - discount_amount) + tax_amount, 2)
-
-    priced = {
-        "line_items": line_items, "subtotal": subtotal,
-        "discount_amount": discount_amount, "discount_kind": discount_kind, "discount_reason": discount_reason,
-        "tax_amount": tax_amount, "tax_rate_pct": tax_rate_pct, "total": total,
-    }
-    catalog_caches = {"products": product_cache, "packs": pack_cache, "programs": program_cache}
-    return priced, catalog_caches
+async def _price_pos_cart(
+    lines: List[PosSaleLineIn], discount: Optional[PosSaleDiscountIn], *,
+    can_price: bool, client_id: Optional[str] = None,
+) -> tuple:
+    """Compatibility facade; canonical POS cart pricing is domains.pos."""
+    return await pos_domain_services.price_pos_cart(
+        lines, discount, can_price=can_price, client_id=client_id
+    )
 
 
-@api.post("/pos/checkout/preview")
-@api.post("/pos/sales/preview")  # legacy alias — kept so no other caller breaks
 async def preview_pos_sale(body: PosSalePreviewIn, user: dict = Depends(require_employee_or_admin)):
     """Prices a cart without creating anything — pure read, safe to call on
     every cart edit for live cart totals. Covers every sellable kind
@@ -44199,9 +43362,7 @@ async def preview_pos_sale(body: PosSalePreviewIn, user: dict = Depends(require_
     return priced
 
 
-@api.post("/pos/checkout")
-@api.post("/pos/sales")  # legacy alias — kept so no other caller breaks
-async def create_pos_sale(body: PosSaleIn, user: dict = Depends(require_employee_or_admin)):
+async def _create_pos_sale_impl(body: PosSaleIn, user: dict = Depends(require_employee_or_admin)):
     """Completes ONE Front Desk checkout — retail products, custom lines,
     credit packs, AND training programs, in any combination — as a single
     financial transaction. Front Desk checkout integrity audit: this used
@@ -44514,8 +43675,11 @@ async def create_pos_sale(body: PosSaleIn, user: dict = Depends(require_employee
         "pos_open_drawer_token": pos_open_drawer_token,
     }
 
+async def create_pos_sale(body: PosSaleIn, user: dict = Depends(require_employee_or_admin)):
+    """POS-domain facade for the proven atomic/idempotent sale implementation."""
+    return await pos_domain_services.create_sale(body, user)
 
-@api.get("/pos/sales")
+
 async def list_pos_sales(
     date: Optional[str] = None, limit: int = 50,
     user: dict = Depends(require_employee_or_admin),
@@ -44527,7 +43691,6 @@ async def list_pos_sales(
     return await cursor.to_list(max(1, min(limit, 500)))
 
 
-@api.get("/pos/sales/{sale_id}")
 async def get_pos_sale(sale_id: str, user: dict = Depends(require_employee_or_admin)):
     _require_take_payments(user)
     sale = await db.pos_sales.find_one({"id": sale_id}, {"_id": 0})
@@ -44536,7 +43699,6 @@ async def get_pos_sale(sale_id: str, user: dict = Depends(require_employee_or_ad
     return sale
 
 
-@api.post("/pos/sales/{sale_id}/pos-tokens")
 async def issue_pos_tokens_for_sale(
     sale_id: str, body: Optional[Dict[str, Any]] = None,
     user: dict = Depends(require_employee_or_admin),
@@ -44598,7 +43760,6 @@ class PosSaleVoidIn(BaseModel):
     workstation_id: Optional[str] = Field(default=None, max_length=100)
 
 
-@api.post("/pos/sales/{sale_id}/void")
 async def void_pos_sale(sale_id: str, body: PosSaleVoidIn, user: dict = Depends(require_admin_and_permission("delete_records"))):
     """Reverses a completed Front Desk checkout — exactly once, and only
     while its business day is still open. Mirrors void_payment's exact
@@ -48913,29 +48074,8 @@ class PriceOverrideRevokeIn(BaseModel):
 
 
 def _override_is_active(row: dict, today: Optional[date] = None) -> bool:
-    """An override is active when it hasn't been explicitly revoked AND
-    starts_on is empty OR <= today AND expires_on is empty OR >= today.
-    `status`/`starts_on` are missing on every override created before those
-    fields existed — treated as "not revoked" / "no start restriction",
-    identical to their pre-existing (start-less, revoke-less) behavior."""
-    row = row or {}
-    if row.get("status") == "revoked":
-        return False
-    today = today or business_today()
-    starts = row.get("starts_on")
-    if starts:
-        try:
-            if date.fromisoformat(starts) > today:
-                return False
-        except Exception:
-            pass  # malformed date — assume no start restriction rather than silently dropping rate
-    exp = row.get("expires_on")
-    if not exp:
-        return True
-    try:
-        return date.fromisoformat(exp) >= today
-    except Exception:
-        return True  # malformed date — assume still active rather than silently dropping rate
+    """Compatibility facade for canonical pricing lifecycle rules."""
+    return pricing_domain_services.override_is_active(row, today)
 
 
 async def _count_active_overrides_for_target(target_kind: str, target_code: str) -> int:
@@ -48970,39 +48110,15 @@ def _override_status_label(row: dict) -> str:
 
 
 def _price_override_precedence_key(row: dict) -> tuple:
-    """Deterministic winner key for rows sharing one client/item key.
-
-    Revoked rows are filtered by the caller.  Explicit ``status=active`` rows
-    outrank legacy rows whose status field predates the lifecycle feature;
-    within the same lifecycle state, the newest edit/create wins.  The final
-    id tie-breaker makes the result stable even for old rows missing timestamps.
-    """
-    row = row or {}
-    return (
-        1 if row.get("status") == "active" else 0,
-        str(row.get("updated_at") or ""),
-        str(row.get("created_at") or ""),
-        str(row.get("id") or ""),
-    )
+    """Compatibility facade for canonical pricing precedence."""
+    return pricing_domain_services.price_override_precedence_key(row)
 
 
 def _pick_applicable_price_override(
-    rows: List[Dict[str, Any]],
-    today: Optional[date] = None,
+    rows: List[Dict[str, Any]], today: Optional[date] = None,
 ) -> Optional[Dict[str, Any]]:
-    """Pick the currently applicable override from retained price history.
-
-    ``price_overrides`` intentionally keeps revoked rows for audit/history.
-    MongoDB natural order is therefore not a lifecycle rule: an unrestricted
-    ``find_one`` can return an older revoked row before the newer active row and
-    incorrectly make the canonical resolver fall back to standard pricing.
-    Examine all rows for the exact key, keep only rows active *today*, and then
-    choose deterministically.
-    """
-    applicable = [row for row in (rows or []) if _override_is_active(row, today)]
-    if not applicable:
-        return None
-    return max(applicable, key=_price_override_precedence_key)
+    """Compatibility facade for canonical pricing-history selection."""
+    return pricing_domain_services.pick_applicable_price_override(rows, today)
 
 
 async def _apply_client_overrides(
@@ -49049,121 +48165,23 @@ async def _apply_client_overrides(
 
 
 async def resolve_client_price(
-    client_id: Optional[str],
-    target_kind: str,
-    target_code: str,
-    list_price: float,
+    client_id: Optional[str], target_kind: str, target_code: str, list_price: float,
 ) -> dict:
-    """Return `{effective_price, list_price, override_id, override_row,
-    pricing_source, tier_id, tier_name}` for the given client + catalog item.
-
-    Precedence (highest first), matching the "grandfathered pricing"
-    requirement exactly:
-      1. An active INDIVIDUAL client override for this exact item.
-      2. An active PRICING-TIER override for this exact item, if the client
-         is assigned to an active tier (see `clients.pricing_tier_id`) —
-         only consulted when no individual override applies.
-      3. The standard list price.
-
-    When no active override/tier price exists, effective == list. Used by
-    booking-create, credit-pack-sell, and Shop cart pricing so every one of
-    these paths shares the exact same source of truth — never a second,
-    competing pricing formula."""
-    out = {
-        "effective_price": float(list_price or 0),
-        "list_price": float(list_price or 0),
-        "override_id": None,
-        "override_row": None,
-        "pricing_source": "standard",
-        "tier_id": None,
-        "tier_name": None,
-    }
-    if not client_id or not target_code:
-        return out
-    # A key can legitimately have retained revoked history plus one newer
-    # active row. Never let MongoDB natural order decide which lifecycle row
-    # wins: inspect the exact-key history and choose the currently applicable
-    # row deterministically. This is the canonical path used by Quick Check-In,
-    # booking creation, checkout refresh, packs, and the client-price APIs.
-    override_rows = await db.price_overrides.find(
-        {"client_id": client_id, "target_kind": target_kind, "target_code": target_code},
-        {"_id": 0},
-    ).to_list(500)
-    row = _pick_applicable_price_override(override_rows)
-    if row:
-        out["effective_price"] = float(row.get("override_price") or 0)
-        out["override_id"] = row.get("id")
-        out["override_row"] = row
-        out["pricing_source"] = "client_override"
-        return out
-    # No individual override — fall through to the client's pricing tier, if any.
-    client = await db.clients.find_one({"id": client_id}, {"_id": 0, "pricing_tier_id": 1})
-    tier_id = (client or {}).get("pricing_tier_id")
-    if tier_id:
-        tier = await db.pricing_tiers.find_one({"id": tier_id, "active": True}, {"_id": 0, "name": 1})
-        if tier:
-            tier_row = await db.pricing_tier_prices.find_one(
-                {"tier_id": tier_id, "target_kind": target_kind, "target_code": target_code},
-                {"_id": 0},
-            )
-            if tier_row:
-                out["effective_price"] = float(tier_row.get("override_price") or 0)
-                out["pricing_source"] = "tier"
-                out["tier_id"] = tier_id
-                out["tier_name"] = tier.get("name")
-    return out
+    """Compatibility facade for the canonical Phase-5 pricing resolver."""
+    return await pricing_domain_services.resolve_client_price(
+        client_id, target_kind, target_code, list_price
+    )
 
 
 async def resolve_addon_snapshots(
-    client_id: Optional[str],
-    addon_service_ids: List[str],
-    base_service_type: str,
+    client_id: Optional[str], addon_service_ids: List[str], base_service_type: str,
 ) -> List[Dict[str, Any]]:
-    """Sprint 110an — turn a list of add-on `service_id`s into the snapshot
-    dicts we store on `booking.add_ons`. Validates each one:
-      • exists and is active,
-      • has `is_addon=True`,
-      • base_service_type is in its `addon_for` list.
-    Resolves the per-client legacy-pricing override per add-on so
-    grandfathered customers keep their locked rate. Raises 400 on any
-    invalid id so we never silently drop a paid add-on at booking time.
-    """
-    if not addon_service_ids:
-        return []
-    addons = await db.services.find(
-        {"id": {"$in": list(addon_service_ids)}, "active": True},
-        {"_id": 0},
-    ).to_list(100)
-    by_id = {a["id"]: a for a in addons}
-    snapshots: List[Dict[str, Any]] = []
-    for aid in addon_service_ids:
-        svc = by_id.get(aid)
-        if not svc:
-            raise HTTPException(status_code=400, detail=f"Unknown / inactive add-on `{aid}`")
-        if not svc.get("is_addon"):
-            raise HTTPException(status_code=400, detail=f"Service `{svc.get('name')}` is not flagged as an add-on")
-        eligible = svc.get("addon_for") or []
-        if eligible and base_service_type not in eligible:
-            raise HTTPException(
-                status_code=400,
-                detail=f"`{svc.get('name')}` isn't eligible as an add-on for {base_service_type} services",
-            )
-        list_price = float(svc.get("base_price") or 0)
-        pricing = await resolve_client_price(client_id, "service", aid, list_price)
-        snapshots.append({
-            "service_id": aid,
-            "name": svc.get("name") or "Add-on",
-            "icon": svc.get("icon") or "fa-plus",
-            "price": pricing["effective_price"],
-            "list_price": list_price,
-            "price_override_id": pricing["override_id"],
-            "qty": 1,
-            "added_at": now_iso(),
-        })
-    return snapshots
+    """Compatibility facade for canonical add-on pricing snapshots."""
+    return await pricing_domain_services.resolve_addon_snapshots(
+        client_id, addon_service_ids, base_service_type
+    )
 
 
-@api.get("/clients/{client_id}/price-overrides")
 async def list_client_price_overrides(client_id: str, _: dict = Depends(require_admin_and_permission("pricing")), include_expired: bool = False):
     client = await db.clients.find_one({"id": client_id}, {"_id": 0, "id": 1})
     if not client:
@@ -49202,7 +48220,6 @@ async def list_client_price_overrides(client_id: str, _: dict = Depends(require_
     return {"overrides": rows}
 
 
-@api.get("/clients/{client_id}/credit-pack-prices")
 async def client_credit_pack_prices(client_id: str, _: dict = Depends(require_admin_and_permission("sell_credits"))):
     """Effective credit-pack prices for ONE client, straight from
     resolve_client_price — the same resolver the sell endpoints charge with.
@@ -49273,7 +48290,6 @@ async def client_service_prices(client_id: str, _: dict = Depends(require_employ
     return {"prices": out}
 
 
-@api.post("/clients/{client_id}/price-overrides")
 async def create_client_price_override(client_id: str, body: PriceOverrideIn, user: dict = Depends(require_admin_and_permission("pricing"))):
     client = await db.clients.find_one({"id": client_id}, {"_id": 0, "id": 1, "name": 1})
     if not client:
@@ -49375,7 +48391,6 @@ class BulkPriceOverrideIn(BaseModel):
     note: Optional[str] = ""
 
 
-@api.post("/clients/{client_id}/price-overrides/bulk-apply")
 async def bulk_apply_client_price_overrides(client_id: str, body: BulkPriceOverrideIn, user: dict = Depends(require_admin_and_permission("pricing"))):
     """"Apply pricing set" — an admin convenience for setting several exact
     final prices for one client in one action. Deliberately reuses
@@ -49405,7 +48420,6 @@ async def bulk_apply_client_price_overrides(client_id: str, body: BulkPriceOverr
     return {"applied": len(applied), "overrides": applied, "errors": errors}
 
 
-@api.put("/price-overrides/{override_id}")
 async def update_price_override(override_id: str, body: PriceOverridePatch, _: dict = Depends(require_admin_and_permission("pricing"))):
     row = await db.price_overrides.find_one({"id": override_id}, {"_id": 0})
     if not row:
@@ -49439,7 +48453,6 @@ async def update_price_override(override_id: str, body: PriceOverridePatch, _: d
     return {**row, **patch}
 
 
-@api.delete("/price-overrides/{override_id}")
 async def delete_price_override(override_id: str, body: Optional[PriceOverrideRevokeIn] = None, user: dict = Depends(require_admin_and_permission("pricing"))):
     """"Return to standard price" — NEVER a hard delete. The override row
     (and its history) is preserved; only its status flips to revoked, so
@@ -49496,7 +48509,6 @@ async def _pricing_tier_target_name(target_kind: str, target_code: str) -> Optio
     return (t or {}).get("name")
 
 
-@api.get("/pricing-tiers")
 async def list_pricing_tiers(_: dict = Depends(require_admin_and_permission("pricing")), include_inactive: bool = True):
     q: Dict[str, Any] = {} if include_inactive else {"active": True}
     tiers = await db.pricing_tiers.find(q, {"_id": 0}).sort("name", 1).to_list(200)
@@ -49521,7 +48533,6 @@ async def list_pricing_tiers(_: dict = Depends(require_admin_and_permission("pri
     return {"tiers": tiers}
 
 
-@api.post("/pricing-tiers")
 async def create_pricing_tier(body: PricingTierIn, user: dict = Depends(require_admin_and_permission("pricing"))):
     doc = {
         "id": str(uuid.uuid4()),
@@ -49536,7 +48547,6 @@ async def create_pricing_tier(body: PricingTierIn, user: dict = Depends(require_
     return doc
 
 
-@api.get("/pricing-tiers/{tier_id}")
 async def get_pricing_tier(tier_id: str, _: dict = Depends(require_admin_and_permission("pricing"))):
     tier = await db.pricing_tiers.find_one({"id": tier_id}, {"_id": 0})
     if not tier:
@@ -49553,7 +48563,6 @@ async def get_pricing_tier(tier_id: str, _: dict = Depends(require_admin_and_per
     return tier
 
 
-@api.put("/pricing-tiers/{tier_id}")
 async def update_pricing_tier(tier_id: str, body: PricingTierPatch, user: dict = Depends(require_admin_and_permission("pricing"))):
     """Rename and/or activate/deactivate. Deactivating a tier stops it from
     applying to ANY client assigned to it (resolve_client_price checks
@@ -49572,7 +48581,6 @@ async def update_pricing_tier(tier_id: str, body: PricingTierPatch, user: dict =
     return {**tier, **patch}
 
 
-@api.post("/pricing-tiers/{tier_id}/clients/{client_id}")
 async def assign_client_to_pricing_tier(tier_id: str, client_id: str, user: dict = Depends(require_admin_and_permission("pricing"))):
     """Intentional, one-at-a-time assignment only — clients are never
     auto-enrolled into a tier. Overwrites any PREVIOUS tier assignment
@@ -49590,7 +48598,6 @@ async def assign_client_to_pricing_tier(tier_id: str, client_id: str, user: dict
     return {"ok": True, "client_id": client_id, "tier_id": tier_id, "previous_tier_id": previous_tier_id}
 
 
-@api.delete("/pricing-tiers/{tier_id}/clients/{client_id}")
 async def unassign_client_from_pricing_tier(tier_id: str, client_id: str, user: dict = Depends(require_admin_and_permission("pricing"))):
     """Only clears the assignment if the client is CURRENTLY on this exact
     tier — refuses to silently clear a different tier a stale UI might be
@@ -49604,7 +48611,6 @@ async def unassign_client_from_pricing_tier(tier_id: str, client_id: str, user: 
     return {"ok": True}
 
 
-@api.post("/pricing-tiers/{tier_id}/prices")
 async def set_pricing_tier_price(tier_id: str, body: PricingTierPriceIn, user: dict = Depends(require_admin_and_permission("pricing"))):
     tier = await db.pricing_tiers.find_one({"id": tier_id}, {"_id": 0, "id": 1})
     if not tier:
@@ -49641,7 +48647,6 @@ async def set_pricing_tier_price(tier_id: str, body: PricingTierPriceIn, user: d
     return doc
 
 
-@api.delete("/pricing-tiers/{tier_id}/prices/{price_id}")
 async def remove_pricing_tier_price(tier_id: str, price_id: str, user: dict = Depends(require_admin_and_permission("pricing"))):
     res = await db.pricing_tier_prices.delete_one({"id": price_id, "tier_id": tier_id})
     if res.deleted_count == 0:
@@ -50526,7 +49531,6 @@ async def sell_training_program(
         "schedule_warnings": schedule_warnings,
     }
 
-@api.post("/bookings/{booking_id}/reschedule-next-week")
 async def reschedule_prepaid_session(booking_id: str, _: dict = Depends(require_admin)):
     """Sprint 110ce — push a prepaid program session forward to the next
     available same-weekday slot, skipping business-closure dates AND any other
@@ -51376,7 +50380,6 @@ class MultiDateBookingIn(BaseModel):
     waitlist_on_capacity: bool = False
 
 
-@api.post("/bookings/multi-dates")
 async def create_multi_date_bookings(body: MultiDateBookingIn, user: dict = Depends(get_current_user)):
     """Creates one booking per date in `dates`. Returns
     {created: [...], skipped: [{date, reason}]} so the UI can show exactly
@@ -52101,6 +51104,7 @@ async def create_payment_plan(body: PaymentPlanCreate, current: dict = Depends(r
 async def list_payment_plans(
     status: Optional[str] = None,
     client_id: Optional[str] = None,
+    client_ids: Optional[str] = None,
     _: dict = Depends(require_admin_and_permission("finance_reports")),
 ):
     q: dict = {}
@@ -52108,6 +51112,10 @@ async def list_payment_plans(
         q["status"] = status
     if client_id:
         q["client_id"] = client_id
+    elif client_ids:
+        ids = [value.strip() for value in client_ids.split(",") if value.strip()][:100]
+        if ids:
+            q["client_id"] = {"$in": ids}
     rows = await db.payment_plans.find(q, {"_id": 0}).sort([("created_at", -1)]).to_list(5000)
     # Decorate each row with computed totals
     for p in rows:
@@ -53288,7 +52296,6 @@ async def _hydrate_booking_care(b: Dict[str, Any], today_iso_local: str) -> Dict
     return [_derive_care_item_status(it, b.get("date") or "", today_iso_local) for it in items]
 
 
-@api.get("/bookings/{booking_id}/care")
 async def get_booking_care(booking_id: str, _: dict = Depends(require_employee_or_admin)):
     b = await db.bookings.find_one({"id": booking_id}, {"_id": 0})
     if not b:
@@ -53310,7 +52317,6 @@ async def get_booking_care(booking_id: str, _: dict = Depends(require_employee_o
     }
 
 
-@api.put("/bookings/{booking_id}/care")
 async def set_booking_care(booking_id: str, body: CareScheduleIn, _: dict = Depends(require_admin)):
     b = await db.bookings.find_one({"id": booking_id}, {"_id": 0, "id": 1, "date": 1, "care_items": 1})
     if not b:
@@ -53336,7 +52342,6 @@ async def set_booking_care(booking_id: str, body: CareScheduleIn, _: dict = Depe
     }
 
 
-@api.post("/bookings/{booking_id}/care/{item_id}/complete")
 async def complete_care_item(booking_id: str, item_id: str, body: CareCompleteIn,
                               user: dict = Depends(require_employee_or_admin)):
     b = await db.bookings.find_one({"id": booking_id}, {"_id": 0})
@@ -53369,7 +52374,6 @@ async def complete_care_item(booking_id: str, item_id: str, body: CareCompleteIn
     return {"booking_id": booking_id, "items": [_derive_care_item_status(it, b.get("date") or "", today_local) for it in items]}
 
 
-@api.post("/bookings/{booking_id}/care/{item_id}/skip")
 async def skip_care_item(booking_id: str, item_id: str, body: CareSkipIn,
                           user: dict = Depends(require_employee_or_admin)):
     b = await db.bookings.find_one({"id": booking_id}, {"_id": 0})
@@ -53401,7 +52405,6 @@ async def skip_care_item(booking_id: str, item_id: str, body: CareSkipIn,
     return {"booking_id": booking_id, "items": [_derive_care_item_status(it, b.get("date") or "", today_local) for it in items]}
 
 
-@api.post("/bookings/{booking_id}/care/{item_id}/reset")
 async def reset_care_item(booking_id: str, item_id: str, _: dict = Depends(require_admin)):
     """Undo a completion or skip — admin-only safety valve."""
     b = await db.bookings.find_one({"id": booking_id}, {"_id": 0})
@@ -57235,33 +56238,34 @@ def _cors_origins() -> List[str]:
     return [public] if public else []
 
 
-# Online School full-suite registration — higher-level student workspace,
-# trainer ownership, plans, resources, notifications, interventions and analytics.
-# Registered only after every shared auth/permission helper above exists, so the
-# module can stay additive and cannot create a second auth/progression system.
-from school_suite import register_school_suite
-register_curriculum_import(
-    api=api, db=db,
-    manage_dep=require_admin_and_permission("manage_training_content"),
-    # Late-bound on purpose: the importer resolves the storage function when
-    # it actually stores something, rather than capturing it at registration.
-    # That keeps storage behaviour swappable — by a future backend, or by a
-    # test that needs the write to fail — without re-registering the route.
+# Phase 4 domain composition.  Training/School routes are registered through
+# explicit domain modules before the canonical API router is mounted.  The
+# production ASGI entrypoint no longer mutates route.endpoint/dependant.call
+# after import.
+from domains.bootstrap import register_domains
+register_domains(
+    app=app, api=api, db=db, server_globals=globals(),
+    get_current_user=get_current_user,
+    require_admin_and_permission=require_admin_and_permission,
+    perms_for=_perms_for, school_events=school_events,
+    # Keep importer media storage late-bound so tests/future storage backends
+    # can still replace the canonical writer without rebuilding routes.
     persist_school_media=lambda raw, media_id, filename: _persist_school_media_data_url(
         raw, media_id, filename),
-    program_model=ProgramIn, create_program=create_program,
-    update_program=update_program, now_iso=now_iso,
-    homework_template_model=HomeworkTemplateIn,
-    create_homework_template=create_homework_template,
-)
-
-register_school_suite(
-    api=api, db=db, get_current_user=get_current_user,
-    manage_school_dep=require_admin_and_permission("manage_school"),
-    perms_for=_perms_for, school_events=school_events,
-    persist_school_media=_persist_school_media_data_url, school_media_data_url=_school_media_data_url,
-    school_media_file_path=_school_media_file_path, require_school_access=_require_school_access,
+    school_media_data_url=_school_media_data_url,
+    school_media_file_path=_school_media_file_path,
+    require_school_access=_require_school_access,
     checkpoint_overall_scores=_resolved_checkpoint_overall_scores,
+    program_model=ProgramIn, create_program=create_program, update_program=update_program,
+    now_iso=now_iso, homework_template_model=HomeworkTemplateIn,
+    create_homework_template=create_homework_template,
+    business_today=business_today, gid=_gid,
+    staff_school_delivery_channels=STAFF_SCHOOL_DELIVERY_CHANNELS,
+    school_delivery_channels=SCHOOL_DELIVERY_CHANNELS,
+    check_enrollment_module_readiness=_check_enrollment_module_readiness,
+    enrollment_summary=_enrollment_summary, effective_lessons=_effective_lessons,
+    recommended_focus=_light_recommended_focus,
+    booking_training_assignment_for_day=_booking_training_assignment_for_day,
 )
 
 app.include_router(api)

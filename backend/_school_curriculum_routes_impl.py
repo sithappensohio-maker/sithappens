@@ -10,6 +10,7 @@ the SAME `create_program` / `update_program` the Studio uses, so an imported
 course is indistinguishable from a hand-built one.
 """
 import logging
+import inspect
 import os
 import posixpath
 import uuid
@@ -143,7 +144,8 @@ def _rebuild_key_map(program_src, saved_modules, previous):
 
 def register_curriculum_import(*, api, db, manage_dep, persist_school_media,
                                program_model, create_program, update_program, now_iso,
-                               homework_template_model=None, create_homework_template=None):
+                               homework_template_model=None, create_homework_template=None,
+                               preflight_hook=None, post_success_hook=None):
 
     async def _ingest(path: str, blob: bytes, mime: str, user: dict, cache: dict,
                       created: list) -> str:
@@ -237,6 +239,12 @@ def register_curriculum_import(*, api, db, manage_dep, persist_school_media,
         except pkg.ImportError_ as e:
             raise HTTPException(status_code=422, detail={
                 "error_code": "invalid_curriculum_package", "errors": e.errors})
+
+        if preflight_hook:
+            hook_result = preflight_hook(
+                manifest=manifest, files=files, plan=plan, body=body, user=user)
+            if inspect.isawaitable(hook_result):
+                await hook_result
 
         program_src = plan["program"]
         source_key = plan["source_key"]
@@ -472,6 +480,12 @@ def register_curriculum_import(*, api, db, manage_dep, persist_school_media,
         summary["practice_recipes"] = len(hw_map)
         summary["mode"] = body.mode
         summary["program_id"] = saved["id"]
+        if post_success_hook:
+            hook_result = post_success_hook(
+                manifest=manifest, files=files, plan=plan, body=body, user=user,
+                summary=summary, saved_program=saved)
+            if inspect.isawaitable(hook_result):
+                await hook_result
         return summary
 
     return import_curriculum_package

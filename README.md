@@ -71,7 +71,9 @@ After setup: `https://yourdomain.app` works from any device, anywhere.
 ```bash
 cd ~/sit-happens
 
-./update.sh        # Backup Mongo + .env, then pull, rebuild, and health-check
+./update.sh        # Backup, deploy exact origin/main SHA, verify, auto-rollback on failure
+./update.sh --status # Show recorded current/previous deployed SHAs
+./update.sh --rollback # Restore the previously successful SHA
 ./backup-now.sh    # Run a backup right now (local + Google Drive)
 ```
 
@@ -115,7 +117,7 @@ That's it. Same domain, same data, same everything.
 | `docs/operations/BAZZITE_SETUP.md` | Long-form setup walkthrough (Cloudflare Tunnel, LAN access, etc.) |
 | `docs/operations/TERMINAL_COMMANDS.md` | Every command you'll ever need, grouped by job |
 | `install.sh` | Interactive installer (Step 3 above) |
-| `update.sh` | One-command updater |
+| `update.sh` | Exact-SHA updater with deployment history and rollback |
 | `migrate-export.sh` / `migrate-import.sh` | Move to a new PC |
 | `backup-now.sh` | Manual backup |
 | `setup-auto-backup.sh` | Nightly Google Drive backup installer |

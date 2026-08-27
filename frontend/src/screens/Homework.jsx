@@ -24,12 +24,25 @@ export default function Homework() {
   const [form, setForm] = useState({ dog_id: "", title: "", instructions: "", video_url: "", due_date: "" });
   const [err, setErr] = useState("");
   const [filter, setFilter] = useState("all");
+  const [listLimit, setListLimit] = useState(250);
+  const [assignmentCounts, setAssignmentCounts] = useState({ all: 0, assigned: 0, completed: 0, active: 0 });
   const [expandedId, setExpandedId] = useState(null);
   const [deepLinkTarget, setDeepLinkTarget] = useState(null);
 
   const load = async () => {
-    const [h, d] = await Promise.all([api.get("/homework"), api.get("/dogs")]);
-    setList(h.data); setDogs(d.data);
+    const params = filter === "all"
+      ? { active_first: true, limit: listLimit }
+      : { status: filter, limit: listLimit };
+    const [h, d, hc] = await Promise.all([
+      api.get("/homework", { params }),
+      api.get("/dogs/options"),
+      api.get("/homework/counts").catch(() => ({ data: null })),
+    ]);
+    setList(h.data || []); setDogs(d.data || []);
+    if (hc.data) setAssignmentCounts({
+      all: Number(hc.data.all) || 0, assigned: Number(hc.data.assigned) || 0,
+      completed: Number(hc.data.completed) || 0, active: Number(hc.data.active) || 0,
+    });
     /* The header count must reflect ALL unreviewed practice, not only
        daily-tracker days awaiting approval. /admin/homework/pending-reviews
        is filtered to daily_tracker rows, so section-based practice — which
@@ -41,7 +54,7 @@ export default function Homework() {
       setAttentionCount(Number(r.data?.needs_attention) || 0);
     } catch { setPendingCount(0); setAttentionCount(0); }
   };
-  useEffect(() => { load(); }, []);
+  useEffect(() => { load(); }, [filter, listLimit]); // eslint-disable-line react-hooks/exhaustive-deps
   useEffect(() => {
     try {
       const raw = sessionStorage.getItem(SCHOOL_HQ_TARGET_KEY);
@@ -55,9 +68,17 @@ export default function Homework() {
     } catch { /* ignore malformed target */ }
   }, []);
   useEffect(() => {
-    if (!deepLinkTarget?.homework_id || !list.some((h) => h.id === deepLinkTarget.homework_id)) return;
-    setExpandedId(deepLinkTarget.homework_id);
-    const timer = setTimeout(() => document.querySelector(`[data-testid="hw-${deepLinkTarget.homework_id}"]`)?.scrollIntoView({ behavior: "smooth", block: "center" }), 50);
+    if (!deepLinkTarget?.homework_id) return undefined;
+    const id = deepLinkTarget.homework_id;
+    if (!list.some((h) => h.id === id)) {
+      let cancelled = false;
+      api.get(`/homework/${id}`).then(({ data }) => {
+        if (!cancelled && data?.id) setList((prev) => prev.some((h) => h.id === id) ? prev : [data, ...prev]);
+      }).catch(() => {});
+      return () => { cancelled = true; };
+    }
+    setExpandedId(id);
+    const timer = setTimeout(() => document.querySelector(`[data-testid="hw-${id}"]`)?.scrollIntoView({ behavior: "smooth", block: "center" }), 50);
     return () => clearTimeout(timer);
   }, [list, deepLinkTarget]);
 
@@ -155,8 +176,9 @@ export default function Homework() {
   const confirm = useConfirm();
   const remove = async (id) => { if (!(await confirm({ title: "Delete Practice?", body: "This will remove the assignment and all its session logs. This cannot be undone.", confirmText: "Delete", tone: "danger" }))) return; await api.delete(`/homework/${id}`); load(); };
 
-  const filtered = filter === "all" ? list : list.filter(h => h.status === filter);
-  const counts = { all: list.length, assigned: list.filter(h=>h.status==="assigned").length, completed: list.filter(h=>h.status==="completed").length };
+  const filtered = list;
+  const counts = assignmentCounts;
+  const currentTotal = Number(counts[filter] ?? counts.all) || 0;
 
   return (
     <div className="space-y-6 animate-slide-in" data-testid="homework-screen">
@@ -204,7 +226,7 @@ export default function Homework() {
 
       <div className="flex gap-2 flex-wrap">
         {["all","assigned","completed"].map(k => (
-          <button key={k} onClick={()=>setFilter(k)} data-testid={`hw-filter-${k}`}
+          <button key={k} onClick={()=>{ setFilter(k); setListLimit(250); }} data-testid={`hw-filter-${k}`}
                   className={`px-4 py-2 rounded text-[14px] font-black uppercase tracking-widest ${filter===k?"bg-shSecondary text-shText":"bg-[var(--sh-card-base)] text-shTextMuted border border-shBorder"}`}>
             {k} · {counts[k]}
           </button>
@@ -291,6 +313,17 @@ export default function Homework() {
           );
         })}
       </div>
+
+      {filtered.length < currentTotal && (
+        <div className="flex justify-center">
+          <button type="button" onClick={()=>setListLimit((n)=>Math.min(2000, n + 250))}
+                  disabled={listLimit >= 2000}
+                  data-testid="homework-load-older"
+                  className="px-5 py-2.5 rounded-lg border border-shBorder bg-[var(--sh-card-base)] text-[12px] font-black uppercase tracking-widest text-shTextMuted hover:text-shText hover:border-shSecondary disabled:opacity-40">
+            Load older Practice · {filtered.length} of {currentTotal}
+          </button>
+        </div>
+      )}
 
       {pickerOpen && (
         <TemplatePicker dogs={dogs} onClose={()=>setPickerOpen(false)} onAssigned={()=>load()} />

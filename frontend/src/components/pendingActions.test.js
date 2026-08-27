@@ -98,9 +98,9 @@ test("Bookings consumes the pending-action deep link exactly once and opens that
 // Navigation badges + Front Desk
 // ---------------------------------------------------------------------------
 
-test("nav badges for pending actions exist on Bookings and Dashboard, driven by the count API", () => {
+test("pending-action nav badges moved to the consolidated Today and Schedule destinations", () => {
   expect(appSrc).toMatch(/\/admin\/pending-actions\/count/);
-  expect(appSrc).toMatch(/n\.id === "bookings" \|\| n\.id === "dashboard"\) && pendingActions > 0/);
+  expect(appSrc).toMatch(/n\.id === "schedule" \|\| n\.id === "today"\) && pendingActions > 0/);
   expect(appSrc).toMatch(/sh:pending-actions-changed/);
   expect(appSrc).toMatch(/can\("booking_edit"\)/);
 });

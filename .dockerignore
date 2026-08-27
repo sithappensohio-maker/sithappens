@@ -8,7 +8,7 @@
 **/*.pyc
 **/.pytest_cache
 **/node_modules
-frontend/build
+frontend/dist
 .vscode
 .idea
 *.log

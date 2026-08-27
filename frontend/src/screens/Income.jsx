@@ -115,7 +115,7 @@ export default function Income({ openCreateExpenseOnMount = false, onCreateConsu
 
   // Clients list (loaded once) — used by the retail-sale modal to optionally tag a sale to a client
   useEffect(() => {
-    api.get("/clients").then(r => setClients(r.data || [])).catch(()=>{});
+    api.get("/clients/options").then(r => setClients(r.data || [])).catch(()=>{});
   }, []);
 
   // Sprint 110eg-3 — Surface the monthly P&L auto-email status near the

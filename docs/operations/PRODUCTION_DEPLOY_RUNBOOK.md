@@ -22,16 +22,16 @@ labeled PROD assume you are already connected over SSH and `cd`'d as shown.
 
 ## Facts this runbook relies on (confirmed by reading the repo just now)
 
-- Git remote: `https://github.com/sithappensohio-maker/sithappens.git`, branch `main` (matches the URL hardcoded in `update.sh`'s recovery instructions).
+- Production branch: `main` from Git remote `origin` by default (`DEPLOY_REMOTE` / `DEPLOY_BRANCH` can override the hardened updater explicitly).
 - Production repo path convention: `~/sit-happens` (used throughout `docs/operations/BAZZITE_SETUP.md`, `update.sh`, `install.sh`).
 - Containers (from `docker-compose.yml`): `sit-happens-mongo`, `sit-happens-backend`, `sit-happens-frontend`, `sit-happens-email-worker`. All `restart: unless-stopped`.
 - Mongo data lives in the **named Docker volume** `sit-happens_mongo_data` — never touched by a source-code `git pull` or `docker compose build`.
 - `.env`, `.env.*`, and `backups/` are all in `.gitignore` — a `git pull` cannot overwrite or delete them under normal operation (no merge conflicts are possible against untracked/ignored paths).
 - There is **no separate uploads/media directory** on disk to worry about: shop images (`shop_media` collection), vaccine docs, and dog photos are all stored as base64 inside MongoDB documents, not as files on a bind-mounted volume. The only bind mounts are `./backups` (mongo dump staging + backend JSON backups).
-- Health check: `GET /api/health` → `{"status":"ok"}`, and it actively pings Mongo (`backend/server.py`'s `/health` handler calls `db.command("ping")`), reachable at `http://localhost:8080/api/health` on the host (proxied by the frontend container's nginx). This is the ONE canonical "is the whole stack alive" check baked into `Dockerfile.backend`'s own `HEALTHCHECK` and used by both `install.sh` and `update.sh`.
+- Health check: `GET /api/health` → `{"status":"ok","git_sha":"<deployed SHA>"}`, and it actively pings Mongo (`backend/server.py`'s `/health` handler calls `db.command("ping")`), reachable at `http://localhost:8080/api/health` on the host (proxied by the frontend container's nginx). This is the ONE canonical "is the whole stack alive" check baked into `Dockerfile.backend`'s own `HEALTHCHECK` and used by both `install.sh` and `update.sh`.
 - SPA routing: `frontend/nginx.conf` already has `try_files $uri $uri/ /index.html;` as the catch-all — `/shop` and `/shop/item/product/<id>` should already 200 on a hard refresh by design. This runbook verifies that is actually true in production rather than assuming it.
 - Backup mechanism actually in the repo today is **`./backup-now.sh`**, not the older cron snippet in `docs/operations/BAZZITE_SETUP.md` §9 (that section is superseded — `backup-now.sh` + `setup-auto-backup.sh` are the current, more complete implementation: it mongodumps, stages `.env` + `docker-compose.yml` + an auto-written `RESTORE.md`, tars to `~/sit-happens-backups/sit-happens-backup-<timestamp>.tar.gz`, rotates to the newest 14, and best-effort uploads via `rclone` if configured).
-- `update.sh` already refuses to proceed without a fresh backup (`SKIP_PREUPDATE_BACKUP` gate calling `backup-now.sh`) — this runbook does the same steps explicitly and individually so each one can be verified, rather than relying on the bundled script.
+- `update.sh` refuses to proceed without a fresh backup (`SKIP_PREUPDATE_BACKUP` gate calling `backup-now.sh`), deploys the exact fetched SHA, records current/previous SHAs under the gitignored `.deploy-state/` directory, and automatically restores the previous SHA if startup/health/media verification fails. Use `./update.sh --status` and `./update.sh --rollback` for operator-visible provenance and recovery.
 - Production domain: repository evidence (`migrate-import.sh`'s post-migration message, `pos_agent/README.md`'s documented `SIT_HAPPENS_API_BASE`/CORS origin, and `docs/history/project-memory/PRD.md`'s `mail.sithappens.app` sender-domain notes) consistently point to **`https://sithappens.app`**. This is *derived*, not guessed — but confirm it's still your live domain before using it (Section 9.0 does that check).
 - `.env.example` is referenced by `docs/operations/BAZZITE_SETUP.md`/`install.sh` but is **not actually tracked in this repo**. `install.sh` already tolerates this (falls back to writing a default `.env` inline). Don't stop to look for a file that isn't there.
 - The public-shop settings toggle this release adds lives in the admin app at **Shop Manager → Shop Settings → Public Storefront** (checkboxes: "Enable Public Shop", "Allow Public Browsing"), backed by `PUT /api/settings` with `{"shop_page": {"public_shop_enabled": ..., "public_browsing_enabled": ...}}`. The UI path is what Section 10 uses; the API is shown only as the documented fallback per your instruction.
@@ -213,7 +213,7 @@ git push origin main
 ```bash
 COMMIT=$(git rev-parse --short HEAD)
 git archive --format=zip -o "sit-happens-release-checkpoint-${COMMIT}.zip" HEAD
-unzip -l "sit-happens-release-checkpoint-${COMMIT}.zip" | grep -iE '\.env|\.db$|\.sqlite$|\.bson$|backup|node_modules|frontend/build|\.git/'
+unzip -l "sit-happens-release-checkpoint-${COMMIT}.zip" | grep -iE '\.env|\.db$|\.sqlite$|\.bson$|backup|node_modules|frontend/dist|\.git/'
 ```
 - **Expect:** the `unzip -l` grep prints **nothing** — `git archive` only ever includes tracked files, so `.env`/backups/`node_modules`/`.git` cannot appear; this line is the direct verification rather than trusting that fact blindly.
 - **If it fails:** if anything matches, stop — something is tracked that shouldn't be (fix the `.gitignore`/untrack it, re-commit, regenerate the archive).

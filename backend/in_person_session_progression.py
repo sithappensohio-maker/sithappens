@@ -8,9 +8,9 @@ In-Person School is trainer-led: when an authorized trainer finishes the
 lesson and explicitly chooses ``advance_next``, the trainer's assessment is
 the progression decision.
 
-Install this after ``server`` has loaded. We replace only the checkpoint helper
-used by canonical session completion; no session, enrollment, or history model
-is duplicated.
+Phase 4 calls the same policy directly from the canonical checkpoint helper.
+The installer below remains for isolated compatibility tests only; production no
+longer replaces the checkpoint helper after ``server`` has loaded.
 """
 from __future__ import annotations
 

@@ -67,10 +67,13 @@ def test_duration_helpers_only_recognize_board_train():
     assert legacy_service_duration_days({"name": "Private Training 2 weeks"}) is None
 
 
-def test_runtime_hook_is_installed_on_canonical_resolver():
-    assert getattr(server, "_board_train_scheduling_installed", False) is True
-    assert getattr(server._resolve_base_service_for_booking, "_board_train_residential_wrapper", False) is True
-    assert getattr(server._booking_start_local, "_board_train_residential_wrapper", False) is True
+def test_residential_rules_are_directly_integrated_not_runtime_wrapped():
+    assert getattr(server, "_board_train_scheduling_installed", False) is False
+    assert getattr(server._resolve_base_service_for_booking, "_board_train_residential_wrapper", False) is False
+    assert getattr(server._booking_start_local, "_board_train_residential_wrapper", False) is False
+    source = (server.ROOT_DIR / "server.py").read_text(encoding="utf-8")
+    assert "training_domain_services.apply_booking_service_rules" in source
+    assert "training_domain_services.effective_booking_service_type" in source
 
 
 def test_one_two_three_week_packages_schedule_full_stay_and_charge_package_once():

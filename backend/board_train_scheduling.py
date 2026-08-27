@@ -6,11 +6,11 @@ resident at the facility for the entire linked program. Older booking code
 only gave date spans to ``service_type='boarding'``, which made a one-, two-,
 or three-week Board & Train appear as a one-day training appointment.
 
-This module installs one narrow runtime extension around the canonical exact
-service resolver. Every path that creates a booking already calls that resolver,
-so the span is derived server-side before conflict/closed-date checks, pricing,
-and persistence. A startup repair fixes only still-open historical rows made by
-the old bug; checked-out history is never rewritten.
+Phase 4 calls these scheduling rules directly from the Training domain before
+booking validation/persistence. ``install_board_train_scheduling`` remains only
+as a compatibility shim for focused legacy tests; production no longer wraps
+server helpers after import. A startup repair still fixes only open historical
+rows made by the old bug; checked-out history is never rewritten.
 """
 from __future__ import annotations
 

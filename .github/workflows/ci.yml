@@ -1,0 +1,117 @@
+name: Sit Happens CI
+
+permissions:
+  contents: read
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  frontend:
+    name: Frontend tests + Vite build
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: frontend
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-node@v6
+        with:
+          node-version: 20.19.0
+      - run: corepack enable
+      - run: yarn install --network-timeout 600000
+      - run: yarn test:ci
+      - run: yarn build
+
+  backend-architecture:
+    name: Backend compile + modernization guards
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-python@v7
+        with:
+          python-version: '3.11'
+          cache: pip
+          cache-dependency-path: backend/requirements-test.txt
+      - run: pip install -r backend/requirements-test.txt
+      - run: python -m compileall -q backend
+      - run: >-
+          python -m pytest -q
+          backend/test_modernization_phase4_architecture.py
+          backend/test_modernization_phase5_financial_domains.py
+          backend/test_modernization_phase6_performance.py
+          backend/test_modernization_phase7_infrastructure.py
+
+  release-critical:
+    name: Backend release-critical gate
+    runs-on: ubuntu-latest
+    services:
+      mongo:
+        image: mongo:7
+        ports:
+          - 27017:27017
+        options: >-
+          --health-cmd "mongosh --quiet --eval 'db.runCommand({ping:1}).ok'"
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 10
+    env:
+      MONGO_URL: mongodb://127.0.0.1:27017
+      DB_NAME: sit_happens_ci_release_critical
+      TEST_BACKEND_URL: http://127.0.0.1:8011
+      JWT_SECRET: ci-only-jwt-secret-not-used-in-production
+      ADMIN_EMAIL: admin@sithappens.com
+      ADMIN_PASSWORD: admin123
+      BACKUP_ROOT: ${{ github.workspace }}/backend/_test_release_critical_backups
+      SCHOOL_MEDIA_ROOT: ${{ github.workspace }}/backend/_ci_school_media
+      STRIPE_ONLINE_ENABLED: 'false'
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-python@v7
+        with:
+          python-version: '3.11'
+          cache: pip
+          cache-dependency-path: backend/requirements-test.txt
+      - run: pip install -r backend/requirements-test.txt
+      - name: Seed legacy CI admin before app startup
+        working-directory: backend
+        run: |
+          python - <<'PY'
+          import bcrypt, pymongo, uuid, os
+          db = pymongo.MongoClient(os.environ['MONGO_URL'])[os.environ['DB_NAME']]
+          db.users.delete_many({})
+          db.users.insert_one({
+              'id': str(uuid.uuid4()), 'email': 'admin@sithappens.com',
+              'password_hash': bcrypt.hashpw(b'admin123', bcrypt.gensalt()).decode(),
+              'name': 'CI Admin', 'role': 'admin', 'client_id': None,
+              'created_at': '2026-01-01T00:00:00+00:00', 'token_version': 0,
+              'must_change_password': False,
+          })
+          PY
+      - name: Start isolated backend
+        working-directory: backend
+        run: |
+          mkdir -p "$BACKUP_ROOT" "$SCHOOL_MEDIA_ROOT"
+          python -m uvicorn server:app --host 127.0.0.1 --port 8011 > /tmp/sit-happens-ci-backend.log 2>&1 &
+          echo $! > /tmp/sit-happens-ci-backend.pid
+          for i in $(seq 1 60); do
+            curl -fsS "$TEST_BACKEND_URL/api/health" && exit 0
+            sleep 2
+          done
+          cat /tmp/sit-happens-ci-backend.log
+          exit 1
+      - name: Ad hoc release-critical tests
+        working-directory: backend
+        run: python -m pytest -q test_pos_catalog.py test_pos_checkout_integrity.py test_front_desk_checkin.py test_shop_manager_polish.py
+      - name: Curated clean-database release gate
+        working-directory: backend
+        run: python tests/run_release_critical.py
+      - name: Backend logs on failure
+        if: failure()
+        run: cat /tmp/sit-happens-ci-backend.log || true

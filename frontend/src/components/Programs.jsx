@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState } from "react";
 import { api, formatErr } from "../lib/api";
 import { useConfirm } from "../lib/useConfirm";
+import { useProgramsData, useSharedData } from "../lib/sharedData";
 import { useAuth } from "../lib/auth";
 import CsvImportButton from "./CsvImportButton";
 import { parseProgramCsv, PROGRAM_CSV_SAMPLE } from "../lib/csvImport";
@@ -39,8 +40,8 @@ export function ProgramsPanel() {
   // checking the flag directly, with no separate owner special-case here,
   // already covers them.
   const canManage = permissions ? !!permissions.manage_training_content : true; // true while permissions are still loading, to avoid a flash of "forbidden"
-  const [programs, setPrograms] = useState([]);
-  const [meta, setMeta] = useState(null);
+  const { data: programs, refresh: refreshPrograms } = useProgramsData();
+  const { data: meta } = useSharedData("programs", { url: "/programs/meta", initialData: null });
   const [edit, setEdit] = useState(null);
   const [err, setErr] = useState("");
   const [importing, setImporting] = useState(false);
@@ -55,13 +56,6 @@ export function ProgramsPanel() {
     api.get("/homework-templates").then(({ data }) => setHwTemplates(data || [])).catch(() => setHwTemplates([]));
   }, []);
 
-  const load = async () => {
-    try {
-      const [p, m] = await Promise.all([api.get("/programs"), api.get("/programs/meta")]);
-      setPrograms(p.data); setMeta(m.data);
-    } catch (e) { setErr(e.response?.data?.detail || e.message); }
-  };
-  useEffect(() => { load(); }, []);
   // Shop Organization category/subcategory names, for the list rows only.
   const [shopCategories, setShopCategories] = useState([]);
   useEffect(() => {
@@ -105,7 +99,7 @@ export function ProgramsPanel() {
     setEdit({ ...full });
   };
   const closeEditor = () => setEdit(null);
-  const onStudioSaved = () => { setEdit(null); load(); };
+  const onStudioSaved = () => { setEdit(null); };
 
   // Program templates — download a program (WITH the Practice Coach recipes its
   // lessons link to) as one reusable .json blueprint, and upload one to seed a
@@ -130,7 +124,7 @@ export function ProgramsPanel() {
       setZipResult(summary);
       setAdoptPrompt(null);
       pendingZipRef.current = null;
-      await load();
+      refreshPrograms();
     } catch (e) {
       // `detail_object` is the unflattened body: the response interceptor
       // turns an object `detail` into a plain string for legacy renderers,
@@ -234,7 +228,7 @@ export function ProgramsPanel() {
 
   const remove = async (id) => {
     if (!(await confirm({ title: "Archive this program?", body: "Existing dogs already enrolled in this program will keep their progress. New enrollments will no longer be possible.", confirmText: "Archive", tone: "warning" }))) return;
-    try { await api.delete(`/programs/${id}`); load(); } catch (e) { setErr(e.response?.data?.detail); }
+    try { await api.delete(`/programs/${id}`); } catch (e) { setErr(e.response?.data?.detail); }
   };
 
   if (!meta) return <p className="text-gray-500 text-sm">Loading…</p>;

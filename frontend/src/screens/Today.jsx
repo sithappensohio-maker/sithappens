@@ -6,7 +6,7 @@ import ActionRow from "../components/admin/ActionRow";
 import ActionMenu from "../components/admin/ActionMenu";
 import { runTodayBrainCTA } from "../lib/todayBrain";
 import { useLiveRefresh } from "../lib/useLiveRefresh";
-import Dashboard from "./Dashboard";
+import TodayOperations from "../components/TodayOperations";
 import { visibleRecents } from "../lib/recentlyOpened";
 
 const RECENT_ICON = {
@@ -22,11 +22,11 @@ const RECENT_ICON = {
  *   - GET /admin/today-brain    -> the exact same prioritized feed Action
  *                                   Center already shows ("Do This Now")
  *   - GET /admin/register/day   -> register status + money received today
- *   - GET /admin/messages/unread-count -> unread badge, same as the sidebar
+ *   - unread message count         -> supplied by the shell's shared live-summary poll
  *
- * Dashboard and Action Center are NOT touched or replaced — both remain
- * fully reachable, and the existing Dashboard is embedded verbatim (not
- * reimplemented) under "More Dashboard Information" below.
+ * The legacy Dashboard is no longer mounted. Its unique daily operating
+ * actions are consolidated into TodayOperations below; duplicate summaries
+ * stay removed rather than being rendered twice.
  */
 
 const money = (n) => `$${Number(n || 0).toFixed(2)}`;
@@ -47,31 +47,27 @@ const SERVICE_LABEL = {
   grooming: "Grooming", photography: "Photography",
 };
 
-export default function Today({ onNavigate = () => {}, onJumpToDog = () => {}, onJumpToClient = () => {}, onOpenSearch = () => {}, can = () => false, actionGroups = [], newMenuBlocked = false, refreshSignal = 0, userId = null, onOpenRecent = () => {} }) {
+export default function Today({ onNavigate = () => {}, onJumpToDog = () => {}, onJumpToClient = () => {}, onOpenSearch = () => {}, can = () => false, actionGroups = [], newMenuBlocked = false, refreshSignal = 0, userId = null, onOpenRecent = () => {}, messagesUnread = 0 }) {
   const [recents, setRecents] = useState(() => visibleRecents(userId, can));
   useEffect(() => { setRecents(visibleRecents(userId, can)); }, [userId]); // eslint-disable-line react-hooks/exhaustive-deps
   const [stats, setStats] = useState(null);
   const [brain, setBrain] = useState(null);
   const [registerDay, setRegisterDay] = useState(null);
-  const [messagesUnread, setMessagesUnread] = useState(0);
   const [trainingToday, setTrainingToday] = useState([]);
   const [loading, setLoading] = useState(true);
-  const [moreOpen, setMoreOpen] = useState(false);
   const [brainBusy, setBrainBusy] = useState(false);
 
   const load = async () => {
     try {
-      const [s, tb, reg, mu, tr] = await Promise.all([
+      const [s, tb, reg, tr] = await Promise.all([
         api.get("/dashboard/stats"),
         api.get("/admin/today-brain").catch(() => ({ data: null })),
         can("finance_reports") ? api.get("/admin/register/day").catch(() => ({ data: null })) : Promise.resolve({ data: null }),
-        api.get("/admin/messages/unread-count").catch(() => ({ data: { unread: 0 } })),
         can("manage_training_sessions") ? api.get("/admin/training/today").catch(() => ({ data: [] })) : Promise.resolve({ data: [] }),
       ]);
       setStats(s.data);
       setBrain(tb.data);
       setRegisterDay(reg.data);
-      setMessagesUnread(mu.data?.unread || 0);
       setTrainingToday(tr.data || []);
     } finally {
       setLoading(false);
@@ -335,23 +331,15 @@ export default function Today({ onNavigate = () => {}, onJumpToDog = () => {}, o
         </div>
       )}
 
-      {/* 7. More Dashboard Information — collapsed by default, embeds the
-          EXISTING Dashboard screen wholesale (unchanged) so nothing is
-          removed, duplicated, or reimplemented. */}
-      <div className="rounded-2xl border border-shBorder overflow-hidden" data-testid="today-more-dashboard-wrap">
-        <button type="button" onClick={() => setMoreOpen((v) => !v)} data-testid="today-more-dashboard-toggle"
-                className="w-full flex items-center justify-between gap-3 px-4 py-3.5 bg-[var(--sh-card-base)] hover:bg-shSurfaceRaised/40 transition">
-          <span className="text-[14px] font-bold text-shText">
-            <i className="fas fa-chart-line text-shTextMuted mr-2"/>More Dashboard Information
-          </span>
-          <i className={`fas fa-chevron-down text-shTextMuted transition-transform ${moreOpen ? "rotate-180" : ""}`}/>
-        </button>
-        {moreOpen && (
-          <div className="p-4 sm:p-5 border-t border-shBorder" data-testid="today-more-dashboard-body">
-            <Dashboard onNavigate={onNavigate} onJumpToDog={onJumpToDog} onJumpToClient={onJumpToClient} can={can}/>
-          </div>
-        )}
-      </div>
+      {/* 7. Daily operations previously unique to the old Dashboard. The
+          duplicate Dashboard summaries are intentionally not reproduced. */}
+      <TodayOperations
+        stats={stats}
+        onReload={load}
+        onNavigate={onNavigate}
+        onJumpToDog={onJumpToDog}
+        can={can}
+      />
     </div>
   );
 }

@@ -1,9 +1,9 @@
 """Trainer Delivery hardening + Board & Train daily session orchestration.
 
-Installed from app_entry.py after server.py is fully imported. This keeps the
-canonical School enrollment/session/checkout code in server.py authoritative:
-we wrap existing helpers and enrich the existing Today route rather than
-creating a second progression or booking system.
+Phase 4 moved production wiring into ``domains.training.services`` and explicit
+Training-domain routes. The helper algorithms here remain reusable and the
+installer remains for focused compatibility tests, but ``app_entry.py`` no
+longer mutates server helpers or FastAPI route call targets after import.
 """
 from __future__ import annotations
 

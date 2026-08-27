@@ -85,22 +85,10 @@ async def _identity_snapshot(db, se: dict, dp: dict) -> dict:
     }
 
 
-def install_school_experience_feedback(*, server_module, db) -> None:
-    """Install the School experience-feedback API exactly once per worker."""
-    if getattr(server_module, "_school_experience_feedback_installed", False):
-        return
+def register_school_experience_feedback(*, api, db, get_current_user, manage_feedback_dep) -> None:
+    """Register School experience-feedback routes on the canonical API router."""
 
-    app = server_module.app
-    get_current_user = server_module.get_current_user
-
-    permission_factory = getattr(server_module, "require_admin_and_permission", None)
-    manage_feedback_dep = (
-        permission_factory("manage_training_content")
-        if callable(permission_factory)
-        else server_module.require_admin
-    )
-
-    @app.get("/api/portal/school/{sid}/experience-feedback")
+    @api.get("/portal/school/{sid}/experience-feedback")
     async def get_experience_feedback(sid: str, user: dict = Depends(get_current_user)):
         se, dp = await _client_context(db, sid, user)
         ident = await _identity_snapshot(db, se, dp)
@@ -124,7 +112,7 @@ def install_school_experience_feedback(*, server_module, db) -> None:
             },
         }
 
-    @app.put("/api/portal/school/{sid}/experience-feedback")
+    @api.put("/portal/school/{sid}/experience-feedback")
     async def save_experience_feedback(
         sid: str, body: SchoolExperienceFeedbackIn, user: dict = Depends(get_current_user)
     ):
@@ -183,7 +171,7 @@ def install_school_experience_feedback(*, server_module, db) -> None:
         })
         return {"feedback": row, "saved": True, "updated": revision > 1}
 
-    @app.get("/api/admin/school/experience-feedback")
+    @api.get("/admin/school/experience-feedback")
     async def admin_experience_feedback(
         program_id: Optional[str] = None,
         recommend: Optional[Literal["yes", "maybe", "no"]] = None,
@@ -220,4 +208,20 @@ def install_school_experience_feedback(*, server_module, db) -> None:
             "items": rows,
         }
 
+
+
+def install_school_experience_feedback(*, server_module, db) -> None:
+    """Legacy compatibility shim for older tests/extensions.
+
+    Production no longer calls this post-import installer; Phase 4 registers
+    the same routes explicitly through the School domain bootstrap.
+    """
+    if getattr(server_module, "_school_experience_feedback_installed", False):
+        return
+    register_school_experience_feedback(
+        api=server_module.api,
+        db=db,
+        get_current_user=server_module.get_current_user,
+        manage_feedback_dep=server_module.require_admin_and_permission("manage_training_content"),
+    )
     server_module._school_experience_feedback_installed = True

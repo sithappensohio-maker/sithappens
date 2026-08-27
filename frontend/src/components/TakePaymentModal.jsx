@@ -119,7 +119,7 @@ export default function TakePaymentModal({ onClose, onSuccess, presetClientId })
   ));
 
   useEffect(() => {
-    api.get("/clients").then((r) => {
+    api.get("/clients/options").then((r) => {
       const d = r.data;
       setClients(Array.isArray(d) ? d : (d.items || []));
     }).catch(() => setClients([]));

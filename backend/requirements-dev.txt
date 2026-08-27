@@ -1,0 +1,6 @@
+# Local developer tooling. Includes everything required by tests.
+-r requirements-test.txt
+black==26.3.1
+flake8==7.3.0
+isort==8.0.1
+mypy==2.0.0

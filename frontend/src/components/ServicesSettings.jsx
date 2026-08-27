@@ -1,5 +1,6 @@
-import { useEffect, useState } from "react";
+import { useState } from "react";
 import { api } from "../lib/api";
+import { useProgramsData, useServicesData } from "../lib/sharedData";
 import { useConfirm } from "../lib/useConfirm";
 import { ProgramsPanel } from "./Programs";
 import IconPicker from "./IconPicker";
@@ -33,18 +34,12 @@ const BASE_TYPES_FOR_ADDON = [
 
 export default function ServicesSettings() {
   const confirm = useConfirm();
-  const [services, setServices] = useState([]);
+  const { data: services } = useServicesData({ params: { include_inactive: true } });
   const [editing, setEditing] = useState(null);
   const [form, setForm] = useState(emptyService);
   const [err, setErr] = useState("");
   const [seeded, setSeeded] = useState(false);
   const [open, setOpen] = useState(false); // controls the New/Edit modal
-
-  const load = async () => {
-    const { data } = await api.get("/services", { params: { include_inactive: true } });
-    setServices(data);
-  };
-  useEffect(() => { load(); }, []);
 
   const openNew = () => { setEditing(null); setForm(emptyService); setErr(""); setOpen(true); };
   const openEdit = (s) => { setEditing(s); setForm({ ...emptyService, ...s }); setErr(""); setOpen(true); };
@@ -56,7 +51,6 @@ export default function ServicesSettings() {
       if (editing) await api.put(`/services/${editing.id}`, form);
       else await api.post("/services", form);
       closeModal();
-      load();
     } catch (e) {
       setErr(e.response?.data?.detail || "Save failed");
     }
@@ -65,13 +59,11 @@ export default function ServicesSettings() {
   const remove = async (s) => {
     if (!(await confirm({ title: `Remove "${s.name}"?`, body: "Default services are soft-deleted; re-seed from Settings to restore. Custom services are permanently removed.", confirmText: "Remove", tone: "danger" }))) return;
     await api.delete(`/services/${s.id}`);
-    load();
   };
 
   const seedAll = async () => {
     await api.post("/services/seed-standard");
     setSeeded(true);
-    load();
   };
 
   return (
@@ -344,13 +336,9 @@ export default function ServicesSettings() {
 // can wire any non-addon service to one. When the dog is booked under this
 // service, the system auto-enrolls them in the picked program.
 function BoardAndTrainPicker({ value, onChange }) {
-  const [programs, setPrograms] = useState(null);
-  useEffect(() => {
-    api.get("/programs").then(r => {
-      const items = Array.isArray(r.data) ? r.data : (r.data?.items || []);
-      setPrograms(items.filter(p => p.active !== false));
-    }).catch(() => setPrograms([]));
-  }, []);
+  const { data: programRows } = useProgramsData();
+  const items = Array.isArray(programRows) ? programRows : (programRows?.items || []);
+  const programs = items.filter(p => p.active !== false);
   return (
     <div className="md:col-span-2" data-testid="board-and-train-picker">
       <label className="text-[14px] font-black text-purple-400 uppercase tracking-widest">

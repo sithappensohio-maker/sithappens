@@ -985,18 +985,17 @@ function ClientPreviewTab() {
   const [previewClient, setPreviewClient] = useState(null);
 
   useEffect(() => {
-    if (clientQuery.trim().length < 2) { setClientResults([]); return; }
+    const needle = clientQuery.trim();
+    if (needle.length < 2) { setClientResults([]); return undefined; }
     let cancelled = false;
-    // GET /clients has no server-side search param — fetch the full list
-    // and filter client-side, matching PricingTiersPanel's identical
-    // working pattern for the same kind of client-picker search box.
-    api.get("/clients").then(({ data }) => {
-      if (cancelled) return;
-      const q = clientQuery.toLowerCase();
-      setClientResults((data || []).filter((c) => c.name?.toLowerCase().includes(q)).slice(0, 8));
-    }).catch(() => {});
-    return () => { cancelled = true; };
+    const timer = setTimeout(() => {
+      api.get("/clients/options", { params: { q: needle, limit: 8 } }).then(({ data }) => {
+        if (!cancelled) setClientResults(data || []);
+      }).catch(() => { if (!cancelled) setClientResults([]); });
+    }, 200);
+    return () => { cancelled = true; clearTimeout(timer); };
   }, [clientQuery]);
+
 
   return (
     <div className="space-y-4">

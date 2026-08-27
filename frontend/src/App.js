@@ -1,37 +1,30 @@
 import { Toaster, toast } from "sonner";
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useMemo, useState } from "react";
+import { Route, Routes, useLocation, useNavigate, useParams } from "react-router-dom";
 import { AuthProvider, useAuth } from "./lib/auth";
 import { ThemeProvider, useTheme } from "./lib/theme";
 import { addRecent } from "./lib/recentlyOpened";
 import Login from "./screens/Login";
 import Today from "./screens/Today";
-import Dashboard from "./screens/Dashboard";
 import ActionCenter from "./screens/ActionCenter";
-import Schedule from "./screens/Schedule";
+import ScheduleWorkspace from "./screens/ScheduleWorkspace";
+import TrainingWorkspace from "./screens/TrainingWorkspace";
 import Clients from "./screens/Clients";
 import Dogs from "./screens/Dogs";
-import Bookings from "./screens/Bookings";
 import Portal from "./screens/Portal";
 import EmployeePortal from "./screens/EmployeePortal";
 import Settings from "./screens/Settings";
 import Incidents from "./screens/Incidents";
 import RunSheet from "./screens/RunSheet";
-import Homework from "./screens/Homework";
-import SchoolHQ from "./screens/SchoolHQ";
-import Pipeline from "./screens/Pipeline";
 import Income from "./screens/Income";
-import Trophies from "./screens/Trophies";
-import Rewards from "./screens/Rewards";
 import DuplicateCheck from "./screens/DuplicateCheck";
 import Staff from "./screens/Staff";
 import Pos from "./screens/Pos";
 import CreditReconciliation from "./screens/CreditReconciliation";
 import ShopManager from "./screens/ShopManager";
-import RecurringTemplates from "./screens/RecurringTemplates";
 import Tutorials from "./screens/Tutorials";
 import IntakeForms from "./screens/IntakeForms";
 import CareBoard from "./screens/CareBoard";
-import Waitlist from "./screens/Waitlist";
 import KennelBoard from "./screens/KennelBoard";
 import AuditLog from "./screens/AuditLog";
 import BulkEmail from "./screens/BulkEmail";
@@ -52,16 +45,35 @@ import ImpersonationBanner from "./components/ImpersonationBanner";
 import TextSizePicker from "./components/TextSizePicker";
 import BrandFooter from "./components/BrandFooter";
 import ForcedPasswordChange from "./components/ForcedPasswordChange";
-import { api } from "./lib/api";
+import { useAdminNavCounts } from "./lib/sharedData";
+import { adminPathForTab, parseAdminLocation, SCHEDULE_TAB_BY_SECTION, TRAINING_TAB_BY_SECTION } from "./lib/adminRoutes";
 
 function AdminShell() {
   const { user, logout, can, isOwner } = useAuth();
   const { branding } = useTheme();
+  const location = useLocation();
+  const navigate = useNavigate();
   // Sprint 110di-17 — feature_visibility map. Default-true if missing so
   // first paint never hides anything.
   const fv = branding?.feature_visibility || {};
   const featureOn = (key) => fv[key] !== false;
-  const [tab, setTab] = useState("today");
+
+  // Modernization Phase 2 — the browser URL is now the authoritative admin
+  // navigation state. Existing screens still receive their legacy tab ids so
+  // this routing migration does not alter business behavior.
+  const routeInfo = useMemo(
+    () => parseAdminLocation(location.pathname, location.search),
+    [location.pathname, location.search],
+  );
+  const tab = routeInfo.tab;
+  const searchTarget = routeInfo.target;
+  const navigateAdmin = useCallback((destination, target = null, options = {}) => {
+    navigate(adminPathForTab(destination, target), { replace: !!options.replace });
+  }, [navigate]);
+  // Compatibility shim: old shell callbacks and `sh:nav` events can keep
+  // speaking in tab ids while React Router owns history/back/forward.
+  const setTab = useCallback((destination) => navigateAdmin(destination), [navigateAdmin]);
+  const clearSearchTarget = useCallback(() => {}, []);
   const [drawerOpen, setDrawerOpen] = useState(false);
   // Sprint 110di-41 — Desktop sidebar collapse to icons-only. Persisted in
   // localStorage so the operator's preference survives reloads.
@@ -77,93 +89,15 @@ function AdminShell() {
     });
   };
   const [searchOpen, setSearchOpen] = useState(false);
-  const [searchTarget, setSearchTarget] = useState(null);
-  // Stable identity (not a fresh `() => setSearchTarget(null)` every render) so
-  // Clients.jsx / Dogs.jsx can safely list this in a useEffect dependency array
-  // without that effect re-firing on every unrelated App re-render.
-  const clearSearchTarget = useCallback(() => setSearchTarget(null), []);
-  const [messagesUnread, setMessagesUnread] = useState(0);
-  const [shopOrdersUnseen, setShopOrdersUnseen] = useState(0);
-  const [schoolAttention, setSchoolAttention] = useState(0);
-  const [pendingActions, setPendingActions] = useState(0);
-
-  // Poll the admin messages-unread badge every 60s and on tab change so
-  // the sidebar dot stays roughly fresh without hammering the API.
-  useEffect(() => {
-    if (!can || !can("messages")) return;
-    let alive = true;
-    const tick = async () => {
-      try {
-        const { data } = await api.get("/admin/messages/unread-count");
-        if (alive) setMessagesUnread(data?.unread || 0);
-      } catch { /* ignore */ }
-    };
-    tick();
-    const h = setInterval(tick, 60000);
-    return () => { alive = false; clearInterval(h); };
-  }, [can, tab]);
-
-  // Same pattern for the new-Shop-order badge on Front Desk. Pos.jsx
-  // dispatches "sh:shop-orders-seen" right after it successfully marks
-  // displayed orders seen, so the sidebar badge drops immediately instead
-  // of waiting up to 60s for the next poll — mirrors the existing "sh:nav"
-  // cross-component event convention rather than prop-drilling into Pos.
-  useEffect(() => {
-    if (!can || !can("take_payments")) return;
-    let alive = true;
-    const tick = async () => {
-      try {
-        const { data } = await api.get("/admin/shop-orders/unseen-count");
-        if (alive) setShopOrdersUnseen(data?.unseen || 0);
-      } catch { /* ignore */ }
-    };
-    tick();
-    const h = setInterval(tick, 60000);
-    const onSeen = () => tick();
-    window.addEventListener("sh:shop-orders-seen", onSeen);
-    return () => { alive = false; clearInterval(h); window.removeEventListener("sh:shop-orders-seen", onSeen); };
-  }, [can, tab]);
-
-  // School HQ attention badge — unresolved School notifications needing a
-  // human. Same 60s poll + tab-change pattern as the messages badge; School HQ
-  // dispatches "sh:school-attention-changed" after a read/resolve so the badge
-  // drops immediately instead of waiting for the next poll.
-  useEffect(() => {
-    if (!can || !can("manage_school")) return;
-    let alive = true;
-    const tick = async () => {
-      try {
-        const { data } = await api.get("/admin/school/hq/attention-count");
-        if (alive) setSchoolAttention(data?.count || 0);
-      } catch { /* ignore */ }
-    };
-    tick();
-    const h = setInterval(tick, 60000);
-    const onChanged = () => tick();
-    window.addEventListener("sh:school-attention-changed", onChanged);
-    return () => { alive = false; clearInterval(h); window.removeEventListener("sh:school-attention-changed", onChanged); };
-  }, [can, tab]);
-
-  // Action Required badge — unresolved staff decisions (Meet & Greets,
-  // approval-required bookings, reschedule requests). Reflects the
-  // authoritative pending records, so reading notifications never clears it;
-  // Bookings/Dashboard dispatch "sh:pending-actions-changed" after an
-  // approve/decline so it drops immediately instead of waiting for the poll.
-  useEffect(() => {
-    if (!can || !can("booking_edit")) return;
-    let alive = true;
-    const tick = async () => {
-      try {
-        const { data } = await api.get("/admin/pending-actions/count");
-        if (alive) setPendingActions(data?.total || 0);
-      } catch { /* ignore */ }
-    };
-    tick();
-    const h = setInterval(tick, 60000);
-    const onChanged = () => tick();
-    window.addEventListener("sh:pending-actions-changed", onChanged);
-    return () => { alive = false; clearInterval(h); window.removeEventListener("sh:pending-actions-changed", onChanged); };
-  }, [can, tab]);
+  // Modernization Phase 3 — one shared owner for the shell badges. This
+  // replaces four independent polling effects (which also re-polled on every
+  // tab change) while preserving the same permissions, endpoints and events.
+  const { messagesUnread, shopOrdersUnseen, schoolAttention, pendingActions } = useAdminNavCounts({
+    messages: !!can?.("messages"),
+    shopOrders: !!can?.("take_payments"),
+    school: !!can?.("manage_school"),
+    pendingActions: !!can?.("booking_edit"),
+  });
 
   // Cmd/Ctrl+K to open global search
   useEffect(() => {
@@ -198,13 +132,13 @@ function AdminShell() {
     // record (or, for shop orders, the Front Desk order list) since none of
     // them have a standalone detail screen of their own — Client Hub (once
     // built) reads `searchTarget.kind` to focus the right tab.
-    if (item.kind === "dog") { setSearchTarget({ kind: "dog", id: item.id, mode: "scroll" }); setTab("dogs"); }
-    else if (item.kind === "client") { setSearchTarget({ kind: "client", id: item.id, mode: "scroll" }); setTab("clients"); }
-    else if (item.kind === "booking") { setSearchTarget({ kind: "booking", id: item.id, clientId: item.client_id, mode: "open" }); setTab("clients"); }
-    else if (item.kind === "invoice") { setSearchTarget({ kind: "invoice", id: item.id, clientId: item.client_id, mode: "open" }); setTab("clients"); }
-    else if (item.kind === "payment") { setSearchTarget({ kind: "client", id: item.client_id, mode: "scroll" }); setTab("clients"); }
-    else if (item.kind === "shop_order") { setSearchTarget({ kind: "shop_order", id: item.id, mode: "open" }); setTab("pos"); }
-    else if (item.kind === "prepaid_purchase") { setSearchTarget({ kind: "client", id: item.client_id, mode: "scroll" }); setTab("clients"); }
+    if (item.kind === "dog") navigateAdmin("dogs", { kind: "dog", id: item.id, mode: "scroll" });
+    else if (item.kind === "client") navigateAdmin("clients", { kind: "client", id: item.id, mode: "scroll" });
+    else if (item.kind === "booking") navigateAdmin("clients", { kind: "booking", id: item.id, clientId: item.client_id, mode: "open" });
+    else if (item.kind === "invoice") navigateAdmin("clients", { kind: "invoice", id: item.id, clientId: item.client_id, mode: "open" });
+    else if (item.kind === "payment") navigateAdmin("clients", { kind: "client", id: item.client_id, mode: "scroll" });
+    else if (item.kind === "shop_order") navigateAdmin("pos");
+    else if (item.kind === "prepaid_purchase") navigateAdmin("clients", { kind: "client", id: item.client_id, mode: "scroll" });
     // Section 2 — Recently Opened. Record every kind search can navigate to,
     // using the same title/subtitle already computed for the search row so
     // the recents list reads identically to how it appeared in search.
@@ -216,53 +150,40 @@ function AdminShell() {
   // global modal / navigation mechanisms as everywhere else; no new forms.
   const onSearchAction = (act, item) => {
     setSearchOpen(false);
-    if (act === "open_dog") { setSearchTarget({ kind: "dog", id: item.id, mode: "scroll" }); setTab("dogs"); addRecent(user?.id, { kind: "dog", id: item.id, title: item.title, subtitle: item.subtitle }); }
+    if (act === "open_dog") { navigateAdmin("dogs", { kind: "dog", id: item.id, mode: "scroll" }); addRecent(user?.id, { kind: "dog", id: item.id, title: item.title, subtitle: item.subtitle }); }
     else if (act === "open_client" || act === "open_client_of") {
       const id = act === "open_client_of" ? item.client_id : item.id;
-      setSearchTarget({ kind: "client", id, mode: "scroll" }); setTab("clients");
+      navigateAdmin("clients", { kind: "client", id, mode: "scroll" });
       addRecent(user?.id, { kind: "client", id, title: act === "open_client_of" ? item.subtitle : item.title, subtitle: "" });
     }
-    else if (act === "open_booking") { setSearchTarget({ kind: "booking", id: item.id, clientId: item.client_id, mode: "open" }); setTab("clients"); addRecent(user?.id, { kind: "booking", id: item.id, title: item.title, subtitle: item.subtitle, clientId: item.client_id }); }
-    else if (act === "open_invoice") { setSearchTarget({ kind: "invoice", id: item.id, clientId: item.client_id, mode: "open" }); setTab("clients"); addRecent(user?.id, { kind: "invoice", id: item.id, title: item.title, subtitle: item.subtitle, clientId: item.client_id }); }
-    else if (act === "open_shop_order") { setSearchTarget({ kind: "shop_order", id: item.id, mode: "open" }); setTab("pos"); addRecent(user?.id, { kind: "shop_order", id: item.id, title: item.title, subtitle: item.subtitle, clientId: item.client_id }); }
+    else if (act === "open_booking") { navigateAdmin("clients", { kind: "booking", id: item.id, clientId: item.client_id, mode: "open" }); addRecent(user?.id, { kind: "booking", id: item.id, title: item.title, subtitle: item.subtitle, clientId: item.client_id }); }
+    else if (act === "open_invoice") { navigateAdmin("clients", { kind: "invoice", id: item.id, clientId: item.client_id, mode: "open" }); addRecent(user?.id, { kind: "invoice", id: item.id, title: item.title, subtitle: item.subtitle, clientId: item.client_id }); }
+    else if (act === "open_shop_order") { navigateAdmin("pos"); addRecent(user?.id, { kind: "shop_order", id: item.id, title: item.title, subtitle: item.subtitle, clientId: item.client_id }); }
     else if (act === "book_dog") { setPendingBookingPreset({ clientId: item.client_id, dogId: item.id }); setGlobalModal("new_booking"); }
     else if (act === "take_payment") { setPendingPaymentPresetClientId(item.client_id); setGlobalModal("take_payment"); }
   };
 
   const navItems = NAV_ITEMS;
 
-  // Admin IA overhaul — Phase 2: sidebar reorganization. No new routes/ids
-  // are introduced; every one of the 30 existing navItems ids appears in
-  // EXACTLY one group below (verified 1:1 against the old Operations/
-  // Clients/Business/Team/System groups this replaces) — this only changes
-  // how the same flat `navItems` list is grouped/labeled in the sidebar.
-  //
-  // Two items from the user's requested group names have no real existing
-  // destination and were deliberately NOT invented as new nav entries
-  // (matches "do not add duplicate entries merely to match this wording"):
-  //   - Training "Progress" — no standalone screen exists; per-dog training
-  //     progress lives inside Dogs/Clients today, not a top-level nav item.
-  //   - Shop "Shop Products"/"Shop Orders", Money "Bills and Payments"/
-  //     "Register-related screens" — these live inside Front Desk (pos) and
-  //     Settings today, not as separate top-level screens. "Receipt
-  //     Settings" is a Settings category, not a nav item, for the same
-  //     reason.
-  // "Messages" appears in the user's spec under both Daily Work AND
-  // Communication — kept in Daily Work only (single instance, no duplicate
-  // sidebar entry) since it's a daily-relevant destination.
+  // Modernization Phase 1: sidebar destinations now represent real workspaces.
+  // Legacy tab ids stay registered and renderable for compatibility, but
+  // child destinations (Bookings/Waitlist/Recurring and School/Rewards/etc.)
+  // are hidden from the sidebar because their workspace tabs own discovery.
+  // Dashboard is also hidden as a standalone destination; Today is the owner
+  // landing workspace while Dashboard-only tools are migrated into it.
   const NAV_GROUPS = [
-    { label: "Daily Work", ids: ["today", "dashboard", "action_center", "pos", "schedule", "clients", "dogs", "messages"] },
+    { label: "Daily Work", ids: ["today", "dashboard", "action_center", "pos", "clients", "dogs", "messages"] },
+    { label: "Schedule", ids: ["schedule", "bookings", "waitlist", "recurring"] },
     { label: "Care", ids: ["runsheet", "care", "kennel", "incidents"] },
-    { label: "Bookings", ids: ["bookings", "waitlist", "recurring"] },
-    { label: "Training", ids: ["pipeline", "school_hq", "homework", "rewards_center", "trophies"] },
+    { label: "Training", ids: ["pipeline", "school_hq", "rewards_center", "trophies"] },
     { label: "Shop", ids: ["shop_manager"] },
     { label: "Money", ids: ["income", "credit_reconciliation"] },
     { label: "Communication", ids: ["announcements", "bulkemail", "intake"] },
     { label: "Administration", ids: ["staff", "duplicate_check", "audit", "settings", "tutorials"] },
   ];
-  // Daily Work expanded by default; every other group collapsed by default.
+  // The three core operating areas are open by default; secondary/admin groups stay collapsed.
   const DEFAULT_COLLAPSED_GROUPS = Object.fromEntries(
-    NAV_GROUPS.filter(g => g.label !== "Daily Work").map(g => [g.label, true])
+    NAV_GROUPS.filter(g => !["Daily Work", "Schedule", "Training"].includes(g.label)).map(g => [g.label, true])
   );
   const navById = Object.fromEntries(navItems.map(n => [n.id, n]));
   // Admin IA overhaul — permission-bug checkpoint: single source of truth for
@@ -274,9 +195,10 @@ function AdminShell() {
   // the same permission before checking.
   const navAllowed = (id) => navItemAllowed(navById[id === "register" ? "pos" : id], can, featureOn);
   const visibleGroups = NAV_GROUPS
-    .map(g => ({ ...g, items: g.ids.map(id => navById[id]).filter(n => n && navAllowed(n.id)) }))
+    .map(g => ({ ...g, items: g.ids.map(id => navById[id]).filter(n => n && n.sidebar !== false && navAllowed(n.id)) }))
     .filter(g => g.items.length > 0);
-  const currentNavLabel = navById[tab]?.label || tab;
+  const sidebarActiveId = workspaceRootForTab(tab);
+  const currentNavLabel = navById[sidebarActiveId]?.label || navById[tab]?.label || tab;
 
   // Phase 4 — global "+ New" action launcher. A pure launcher: every action
   // below opens the EXACT existing workflow used elsewhere (no duplicate
@@ -436,15 +358,29 @@ function AdminShell() {
   // permission is restored later it reappears on its own, and it's never
   // deleted from storage just for being temporarily hidden.
   const visibleFavorites = [...new Set(favorites)]
-    .filter(id => navById[id] && navAllowed(id))
+    .filter(id => navById[id] && navById[id].sidebar !== false && navAllowed(id))
     .map(id => navById[id]);
 
-  // If the currently-selected tab becomes unauthorized (e.g. a live
-  // permissions refresh downgrades this account, or `tab` somehow holds a
-  // stale/invalid id), send the user back to Today rather than leaving a
-  // restricted screen mounted or an empty panel on screen.
+  // Canonicalize legacy/invalid admin URLs and make /admin/today the owner
+  // landing route. `replace` keeps stale aliases out of browser Back history.
   useEffect(() => {
-    if (!navAllowed(tab)) setTab("today");
+    if (routeInfo.isAdminPath && routeInfo.needsCanonicalRedirect) {
+      navigate(routeInfo.canonicalPath, { replace: true });
+      return;
+    }
+    // Normal admin login begins at the historical root URL. Move that one
+    // landing case onto the durable Today URL, while preserving special
+    // authenticated public routes such as /shop.
+    if (!routeInfo.isAdminPath && location.pathname === "/") {
+      navigate("/admin/today", { replace: true });
+    }
+  }, [location.pathname, navigate, routeInfo.canonicalPath, routeInfo.isAdminPath, routeInfo.needsCanonicalRedirect]);
+
+  // If the current route becomes unauthorized (e.g. a live permissions
+  // refresh downgrades this account), replace it with Today rather than
+  // leaving a restricted screen mounted or making Back return to it.
+  useEffect(() => {
+    if (!navAllowed(tab)) navigateAdmin("today", null, { replace: true });
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [tab, can, featureOn]);
 
@@ -519,7 +455,7 @@ function AdminShell() {
             </p>
             <div className="space-y-0.5 mt-0.5">
               {visibleFavorites.map((n, idx) => {
-                const active = tab === n.id;
+                const active = sidebarActiveId === n.id;
                 return (
                   <div key={n.id} className="group relative flex items-center gap-0.5">
                     <button onClick={() => handleNav(n.id)} data-testid={`${prefix}pinned-${n.id}`}
@@ -539,7 +475,7 @@ function AdminShell() {
                         <span className="ml-2 inline-block bg-shAccent text-white text-[10px] font-bold px-1.5 py-0.5 rounded-full align-middle"
                               data-testid={`${prefix}pinned-pos-badge`}>{shopOrdersUnseen}</span>
                       )}
-                      {(n.id === "bookings" || n.id === "dashboard") && pendingActions > 0 && (
+                      {(n.id === "schedule" || n.id === "today") && pendingActions > 0 && (
                         <span className="ml-2 inline-block bg-shAccent text-white text-[10px] font-bold px-1.5 py-0.5 rounded-full align-middle"
                               data-testid={`${prefix}pinned-${n.id}-pending-badge`}>{pendingActions}</span>
                       )}
@@ -589,7 +525,7 @@ function AdminShell() {
               {(collapsed || !isCollapsed) && (
                 <div className="space-y-0.5 mt-0.5">
                   {g.items.map(n => {
-                    const active = tab === n.id;
+                    const active = sidebarActiveId === n.id;
                     const pinned = isPinned(n.id);
                     return (
                       <div key={n.id} className="group relative flex items-center gap-0.5">
@@ -611,11 +547,11 @@ function AdminShell() {
                             <span className={`${collapsed ? "absolute top-0 right-0 -mt-1 -mr-1" : "ml-2"} inline-block bg-shAccent text-white text-[10px] font-bold px-1.5 py-0.5 rounded-full align-middle`}
                                   data-testid={`${prefix}nav-pos-badge`}>{collapsed ? "•" : shopOrdersUnseen}</span>
                           )}
-                          {n.id === "school_hq" && schoolAttention > 0 && (
+                          {n.id === "pipeline" && schoolAttention > 0 && (
                             <span className={`${collapsed ? "absolute top-0 right-0 -mt-1 -mr-1" : "ml-2"} inline-block bg-shAccent text-white text-[10px] font-bold px-1.5 py-0.5 rounded-full align-middle`}
-                                  data-testid={`${prefix}nav-school_hq-badge`}>{collapsed ? "•" : schoolAttention}</span>
+                                  data-testid={`${prefix}nav-training-badge`}>{collapsed ? "•" : schoolAttention}</span>
                           )}
-                          {(n.id === "bookings" || n.id === "dashboard") && pendingActions > 0 && (
+                          {(n.id === "schedule" || n.id === "today") && pendingActions > 0 && (
                             <span className={`${collapsed ? "absolute top-0 right-0 -mt-1 -mr-1" : "ml-2"} inline-block bg-shAccent text-white text-[10px] font-bold px-1.5 py-0.5 rounded-full align-middle`}
                                   data-testid={`${prefix}nav-${n.id}-pending-badge`}>{collapsed ? "•" : pendingActions}</span>
                           )}
@@ -729,10 +665,10 @@ function AdminShell() {
           </div>
         </header>
         <div className="app-scroll-root flex-1 min-h-0 overflow-y-auto overscroll-contain p-4 md:p-7 relative" data-scroll-root>
-          {tab === "today" && navAllowed("today") && <Today
+          {["today", "dashboard"].includes(tab) && navAllowed("today") && <Today
             onNavigate={(t)=>setTab(t)}
-            onJumpToDog={(id)=>{ setSearchTarget({kind:"dog", id, mode:"open"}); setTab("dogs"); }}
-            onJumpToClient={(id)=>{ setSearchTarget({kind:"client", id, mode:"open"}); setTab("clients"); }}
+            onJumpToDog={(id)=>navigateAdmin("dogs", {kind:"dog", id, mode:"open"})}
+            onJumpToClient={(id)=>navigateAdmin("clients", {kind:"client", id, mode:"open"})}
             onOpenSearch={()=>setSearchOpen(true)}
             can={can}
             actionGroups={visibleActionGroups}
@@ -740,28 +676,23 @@ function AdminShell() {
             refreshSignal={todayRefreshSignal}
             userId={user?.id}
             onOpenRecent={navigateTo}
-          />}
-          {tab === "dashboard" && navAllowed("dashboard") && <Dashboard
-            onNavigate={(t)=>setTab(t)}
-            onJumpToDog={(id)=>{ setSearchTarget({kind:"dog", id, mode:"open"}); setTab("dogs"); }}
-            onJumpToClient={(id)=>{ setSearchTarget({kind:"client", id, mode:"open"}); setTab("clients"); }}
-            can={can}
+            messagesUnread={messagesUnread}
           />}
           {tab === "action_center" && navAllowed("action_center") && <ActionCenter
             onNavigate={(t)=>setTab(t)}
-            onJumpToDog={(id)=>{ setSearchTarget({kind:"dog", id, mode:"open"}); setTab("dogs"); }}
-            onJumpToClient={(id)=>{ setSearchTarget({kind:"client", id, mode:"open"}); setTab("clients"); }}
+            onJumpToDog={(id)=>navigateAdmin("dogs", {kind:"dog", id, mode:"open"})}
+            onJumpToClient={(id)=>navigateAdmin("clients", {kind:"client", id, mode:"open"})}
           />}
-          {tab === "schedule" && navAllowed("schedule") && <Schedule />}
+          {["schedule", "bookings", "waitlist", "recurring"].includes(tab) && navAllowed(tab) && (
+            <ScheduleWorkspace initialSection={tab} can={can} featureOn={featureOn}
+              onSectionChange={(section)=>navigateAdmin(SCHEDULE_TAB_BY_SECTION[section] || "schedule")} />
+          )}
           {tab === "runsheet" && navAllowed("runsheet") && <RunSheet />}
           {tab === "care" && navAllowed("care") && <CareBoard />}
           {tab === "kennel" && navAllowed("kennel") && <KennelBoard />}
-          {tab === "bookings" && navAllowed("bookings") && <Bookings />}
-          {tab === "waitlist" && navAllowed("waitlist") && <Waitlist />}
-          {tab === "recurring" && navAllowed("recurring") && <RecurringTemplates />}
           {tab === "clients" && navAllowed("clients") && <Clients focusId={searchTarget?.kind==="client"?searchTarget.id:null} focusMode={searchTarget?.mode || "scroll"}
             hubTarget={["booking","invoice","messages"].includes(searchTarget?.kind) ? searchTarget : null}
-            onConsumed={clearSearchTarget} onJumpToDog={(id)=>{ setSearchTarget({kind:"dog", id, mode:"open"}); setTab("dogs"); }}
+            onConsumed={clearSearchTarget} onJumpToDog={(id)=>navigateAdmin("dogs", {kind:"dog", id, mode:"open"})}
             onAddDog={()=>goCreate("dogs")}
             onBookForClient={(clientId)=>{ setPendingBookingPreset({ clientId, dogId: null }); setGlobalModal("new_booking"); }}
             openCreateOnMount={pendingCreateTab === "clients"} onCreateConsumed={()=>setPendingCreateTab(null)} userId={user?.id} can={can} />}
@@ -772,14 +703,18 @@ function AdminShell() {
             onOpenCareBoard={()=>setTab("care")}
             onOpenKennelBoard={()=>setTab("kennel")}
             onOpenFrontDesk={()=>setTab("pos")}
-            onMessageOwner={(dog)=>{ setSearchTarget({ kind: "messages", clientId: dog.owner_id, id: null }); setTab("clients"); }}
+            onMessageOwner={(dog)=>navigateAdmin("clients", { kind: "messages", clientId: dog.owner_id, id: null })}
           />}
           {tab === "duplicate_check" && navAllowed("duplicate_check") && <DuplicateCheck />}
-          {tab === "pipeline" && navAllowed("pipeline") && <Pipeline onJumpToDog={(id)=>{ setSearchTarget({kind:"dog", id, mode:"open"}); setTab("dogs"); }} />}
-          {tab === "school_hq" && navAllowed("school_hq") && <SchoolHQ />}
-          {tab === "homework" && navAllowed("homework") && <Homework />}
-          {tab === "rewards_center" && navAllowed("rewards_center") && <Rewards />}
-          {tab === "trophies" && navAllowed("trophies") && <Trophies />}
+          {["pipeline", "school_hq", "homework", "rewards_center", "trophies"].includes(tab) && navAllowed(tab) && (
+            <TrainingWorkspace
+              initialSection={tab}
+              can={can}
+              featureOn={featureOn}
+              onSectionChange={(section)=>navigateAdmin(TRAINING_TAB_BY_SECTION[section] || "pipeline")}
+              onJumpToDog={(id)=>navigateAdmin("dogs", {kind:"dog", id, mode:"open"})}
+            />
+          )}
           {/* The old standalone Register screen is gone — Front Desk now owns
               all of that functionality. Redirect any stale nav call
               (bookmarked sidebar state, old localStorage flag, etc.) that
@@ -797,7 +732,10 @@ function AdminShell() {
           {tab === "announcements" && navAllowed("announcements") && <Announcements openCreateOnMount={pendingCreateTab === "announcements"} onCreateConsumed={()=>setPendingCreateTab(null)} />}
           {tab === "bulkemail" && navAllowed("bulkemail") && <BulkEmail />}
           {tab === "audit" && navAllowed("audit") && <AuditLog />}
-          {tab === "settings" && navAllowed("settings") && <Settings />}
+          {tab === "settings" && navAllowed("settings") && <Settings
+            initialSection={searchTarget?.kind === "settings" ? searchTarget.section : "__overview__ops"}
+            onSectionChange={(section)=>navigateAdmin("settings", { kind: "settings", section })}
+          />}
           {tab === "tutorials" && navAllowed("tutorials") && <Tutorials role="admin" />}
         </div>
       </main>
@@ -866,25 +804,38 @@ export const navItemAllowed = (item, can, featureOn = () => true) => {
   return true;
 };
 
+export const WORKSPACE_ROOT_BY_TAB = {
+  dashboard: "today",
+  bookings: "schedule",
+  waitlist: "schedule",
+  recurring: "schedule",
+  school_hq: "pipeline",
+  homework: "pipeline",
+  rewards_center: "pipeline",
+  trophies: "pipeline",
+};
+
+export const workspaceRootForTab = (id) => WORKSPACE_ROOT_BY_TAB[id] || id;
+
 export const NAV_ITEMS = [
   { id: "today", label: "Today", icon: "fa-sun" },
-    { id: "dashboard", label: "Dashboard", icon: "fa-chart-line" },
+    { id: "dashboard", label: "Dashboard", icon: "fa-chart-line", sidebar: false },
     { id: "pos", label: "Front Desk", icon: "fa-cash-register", perm: "take_payments" },
     { id: "action_center", label: "Action Center", icon: "fa-list-check" },
     { id: "schedule", label: "Schedule", icon: "fa-calendar-alt" },
     { id: "runsheet", label: "Run Sheet", icon: "fa-clipboard-list" },
     { id: "care", label: "Care Board", icon: "fa-bowl-food", perm: "care_complete" },
     { id: "kennel", label: "Kennel Board", icon: "fa-paw", perm: "dogs_view" },
-    { id: "bookings", label: "Bookings", icon: "fa-calendar-check" },
-    { id: "waitlist", label: "Waitlist", icon: "fa-hourglass-half", perm: "booking_edit", feature: "waitlist" },
-    { id: "recurring", label: "Recurring", icon: "fa-rotate" },
+    { id: "bookings", label: "Bookings", icon: "fa-calendar-check", sidebar: false },
+    { id: "waitlist", label: "Waitlist", icon: "fa-hourglass-half", perm: "booking_edit", feature: "waitlist", sidebar: false },
+    { id: "recurring", label: "Recurring", icon: "fa-rotate", sidebar: false },
     { id: "clients", label: "Clients", icon: "fa-users", perm: "clients_view" },
     { id: "dogs", label: "Dogs", icon: "fa-paw", perm: "dogs_view" },
     { id: "duplicate_check", label: "Duplicate Check", icon: "fa-copy", perm: "settings" },
-    { id: "pipeline", label: "Pipeline", icon: "fa-line-chart" },
-    { id: "school_hq", label: "School HQ", icon: "fa-school", perm: "manage_school" },
-    { id: "rewards_center", label: "Rewards", icon: "fa-gift", feature: "rewards" },
-    { id: "trophies", label: "Trophies", icon: "fa-trophy", feature: "rewards" },
+    { id: "pipeline", label: "Training", icon: "fa-graduation-cap" },
+    { id: "school_hq", label: "School HQ", icon: "fa-school", perm: "manage_school", sidebar: false },
+    { id: "rewards_center", label: "Rewards", icon: "fa-gift", feature: "rewards", sidebar: false },
+    { id: "trophies", label: "Trophies", icon: "fa-trophy", feature: "rewards", sidebar: false },
     { id: "income", label: "Finance", icon: "fa-dollar-sign", perm: "finance_reports" },
     { id: "credit_reconciliation", label: "Credit Audit", icon: "fa-scale-balanced", perm: "finance_reports" },
     { id: "shop_manager", label: "Shop Manager", icon: "fa-bag-shopping", perm: "view_shop_categories" },
@@ -899,64 +850,45 @@ export const NAV_ITEMS = [
     { id: "tutorials", label: "How to Use", icon: "fa-circle-question" },
 ];
 
-export default function App() {
-  // Public claim/reset link — handled before auth so unauthenticated visitors can land here.
-  const claimMatch = typeof window !== "undefined" && window.location.pathname.match(/^\/claim\/([^/?#]+)/);
-  if (claimMatch) {
-    return (
-      <ErrorBoundary>
-        <Claim token={decodeURIComponent(claimMatch[1])} />
-      </ErrorBoundary>
-    );
-  }
-  // Sprint 110b — public shareable certificate page (no auth).
-  const shareMatch = typeof window !== "undefined" && window.location.pathname.match(/^\/share\/cert\/([^/?#]+)/);
-  if (shareMatch) {
-    return (
-      <ErrorBoundary>
-        <ShareCertificate token={decodeURIComponent(shareMatch[1])} />
-      </ErrorBoundary>
-    );
-  }
-  // Public no-account storefront — /shop and /shop/item/:kind/:id share the
-  // normal provider tree (AuthProvider/ThemeProvider/ConfirmProvider) since
-  // an authenticated visitor here renders the real Portal.jsx Shop, which
-  // depends on all three; ShopGate is the only difference from the default
-  // return below (it swaps Login for PublicShop when signed out).
-  const shopMatch = typeof window !== "undefined" && /^\/shop(\/.*)?$/.test(window.location.pathname);
-  if (shopMatch) {
-    return (
-      <ErrorBoundary>
-        <AuthProvider>
-          <ThemeProvider>
-            <ConfirmProvider>
-              <ImpersonationBanner />
-              <ShopGate />
-              <InstallPrompt />
-              <BrandFooter />
-              <Toaster theme="dark" position="top-right" richColors closeButton expand />
-            </ConfirmProvider>
-          </ThemeProvider>
-        </AuthProvider>
-      </ErrorBoundary>
-    );
-  }
+function ClaimRoute() {
+  const { token = "" } = useParams();
+  return <Claim token={token} />;
+}
 
+function CertificateShareRoute() {
+  const { token = "" } = useParams();
+  return <ShareCertificate token={token} />;
+}
+
+function AppProviders({ children }) {
   return (
     <ErrorBoundary>
       <AuthProvider>
         <ThemeProvider>
           <ConfirmProvider>
             <ImpersonationBanner />
-            <Gate />
+            {children}
             <InstallPrompt />
             <BrandFooter />
-            {/* Sprint 110ao — global toast layer for live-refresh new-arrival
-                pings (e.g. "🐶 New booking · Bella · daycare tomorrow"). */}
             <Toaster theme="dark" position="top-right" richColors closeButton expand />
           </ConfirmProvider>
         </ThemeProvider>
       </AuthProvider>
     </ErrorBoundary>
+  );
+}
+
+export default function App() {
+  // Phase 2 modernization: React Router now owns browser history. Public
+  // routes keep their existing behavior while all authenticated admin URLs
+  // are interpreted by AdminShell through the same router context.
+  return (
+    <Routes>
+      <Route path="/claim/:token" element={<ErrorBoundary><ClaimRoute /></ErrorBoundary>} />
+      <Route path="/share/cert/:token" element={<ErrorBoundary><CertificateShareRoute /></ErrorBoundary>} />
+      <Route path="/shop/*" element={<AppProviders><ShopGate /></AppProviders>} />
+      <Route path="/admin/*" element={<AppProviders><Gate /></AppProviders>} />
+      <Route path="*" element={<AppProviders><Gate /></AppProviders>} />
+    </Routes>
   );
 }

@@ -267,8 +267,8 @@ export default function AdminBookingModal({ defaultCheckIn = false, defaultDate 
     (async () => {
       try {
         const [cRes, dRes, sRes, svcRes, progRes] = await Promise.all([
-          api.get("/clients"),
-          api.get("/dogs"),
+          api.get("/clients/options"),
+          api.get("/dogs/options"),
           api.get("/settings"),
           api.get("/services"),
           // Program Studio carries the authoritative 1/2/3-week Board & Train
@@ -277,7 +277,9 @@ export default function AdminBookingModal({ defaultCheckIn = false, defaultDate 
           // of being treated as a one-hour appointment.
           api.get("/programs").catch(() => ({ data: [] })),
         ]);
-        // The list endpoints are capped; a preset/existing client or dog that
+        // Lightweight option endpoints avoid loading setup/waiver/history
+        // decoration into a booking modal. They remain capped, so a preset/existing
+        // client or dog that
         // falls outside the returned window must still resolve, otherwise the
         // controlled selects silently drift to the first option and the
         // booking lands on the WRONG client.

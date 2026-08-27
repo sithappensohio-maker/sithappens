@@ -9,6 +9,7 @@ from school_experience_feedback import SchoolExperienceFeedbackIn, _experience_e
 HERE = Path(__file__).resolve().parent
 SOURCE = (HERE / "school_experience_feedback.py").read_text(encoding="utf-8")
 ENTRY = (HERE / "app_entry.py").read_text(encoding="utf-8")
+DOMAIN = (HERE / "domains" / "school" / "routes.py").read_text(encoding="utf-8")
 
 
 def test_review_identity_is_client_dog_program_not_enrollment_attempt():
@@ -69,10 +70,11 @@ def test_client_identity_comes_from_authenticated_enrollment_not_request_body():
 
 
 def test_admin_feedback_endpoint_uses_training_content_permission_gate():
-    assert 'permission_factory("manage_training_content")' in SOURCE
-    assert '@app.get("/api/admin/school/experience-feedback")' in SOURCE
+    assert 'Depends(manage_feedback_dep)' in SOURCE
+    assert '@api.get("/admin/school/experience-feedback")' in SOURCE
+    assert 'manage_training_content_dep=require_admin_and_permission("manage_training_content")' in (HERE / "domains" / "bootstrap.py").read_text(encoding="utf-8")
 
 
-def test_production_entrypoint_installs_feedback_extension():
-    assert "from school_experience_feedback import install_school_experience_feedback" in ENTRY
-    assert "install_school_experience_feedback(server_module=server, db=server.db)" in ENTRY
+def test_production_entrypoint_does_not_post_import_install_feedback():
+    assert "install_school_experience_feedback" not in ENTRY
+    assert "register_school_experience_feedback" in DOMAIN

@@ -74,3 +74,6 @@ backend/_qa_*.log
 frontend/_qa_*.log
 frontend/package-lock.json
 backend/stripe_refund_reconciliation_*_dry_run.*
+
+# Local production deployment SHA history (written by update.sh)
+.deploy-state/

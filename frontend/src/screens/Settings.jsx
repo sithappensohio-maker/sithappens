@@ -45,10 +45,10 @@ const VAX_OPTIONS = [
   { key: "heartworm", label: "Heartworm" },
 ];
 
-export default function Settings() {
+export default function Settings({ initialSection = null, onSectionChange = () => {} }) {
   const { user } = useAuth();
   const [s, setS] = useState(null);
-  const [tab, setTab] = useState("__overview__ops");
+  const [tab, setTab] = useState(initialSection || "__overview__ops");
   const [saving, setSaving] = useState(false);
   const [msg, setMsg] = useState("");
 
@@ -352,11 +352,25 @@ export default function Settings() {
   const allSubs = CATEGORIES.flatMap(c => c.subsections.map(s => ({ ...s, _cat: c })));
   const findCategoryOf = (tabId) =>
     CATEGORIES.find(c => c.subsections.some(s => s.id === tabId))?.id || "ops";
+  const categoryForTab = (tabId) => tabId?.startsWith("__overview__")
+    ? (tabId.slice("__overview__".length) || "ops")
+    : findCategoryOf(tabId);
 
-  const [category, setCategory] = useState(() => findCategoryOf(tab));
+  const [category, setCategory] = useState(() => categoryForTab(tab));
   const [search, setSearch] = useState("");
   const [mobileNavOpen, setMobileNavOpen] = useState(false);
   const [showPlanned, setShowPlanned] = useState(false);
+
+  // Phase 2 routing: browser Back/Forward can change the active Settings
+  // subsection without remounting this large screen, so keep local panel
+  // state synchronized to the URL-derived section from App.
+  useEffect(() => {
+    if (!initialSection) return;
+    setTab(initialSection);
+    setCategory(categoryForTab(initialSection));
+    setMobileNavOpen(false);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [initialSection]);
 
   const openSub = (sub) => {
     if (sub.comingSoon) return;
@@ -369,6 +383,7 @@ export default function Settings() {
     const catId = findCategoryOf(sub.id);
     if (catId) setCategory(catId);
     setTab(sub.id);
+    onSectionChange(sub.id);
     setMobileNavOpen(false);
   };
 
@@ -381,6 +396,7 @@ export default function Settings() {
       if (cat) setCategory(cat);
       if (sub) {
         setTab(sub);
+        onSectionChange(sub);
         setMobileNavOpen(false);
       }
     };
@@ -391,7 +407,9 @@ export default function Settings() {
   const goCategoryOverview = (catId) => {
     setCategory(catId);
     // Reset tab to a sentinel value so the right column shows the overview.
-    setTab(`__overview__${catId}`);
+    const next = `__overview__${catId}`;
+    setTab(next);
+    onSectionChange(next);
     setMobileNavOpen(false);
   };
 

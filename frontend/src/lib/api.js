@@ -62,6 +62,7 @@ api.interceptors.response.use(
   (err) => {
     if (err?.response?.status === 401) {
       try { localStorage.removeItem("sh_token"); } catch (e) { /* ignore */ }
+      try { clearSharedApiCache({ notify: false }); } catch (e) { /* ignore */ }
       // Avoid the redirect storm if we're already on the auth screen — and
       // never force-navigate a visitor off /shop. A guest on the public
       // storefront has no token at all (a stray 401 there means some code
@@ -136,6 +137,214 @@ api.interceptors.response.use(
     return Promise.reject(err);
   }
 );
+
+
+// Modernization Phase 3 — shared response cache for the small set of
+// application-wide reference resources that used to be fetched independently
+// by dozens of mounted screens. This is deliberately NOT a blanket HTTP cache:
+// transactional/detail endpoints (ledger, bookings, dog timelines, etc.) keep
+// their old always-fetch behavior. Cache keys are token-scoped and include
+// query params, so two logins or two filtered variants can never share data.
+const SHARED_GET_POLICIES = [
+  { resource: "clients", ttl: 20000, paths: ["/clients"] },
+  { resource: "dogs", ttl: 20000, paths: ["/dogs"] },
+  { resource: "services", ttl: 60000, paths: ["/services"] },
+  { resource: "programs", ttl: 60000, paths: ["/programs", "/programs/meta"] },
+  { resource: "settings", ttl: 60000, paths: ["/settings", "/settings/public"] },
+  {
+    resource: "navCounts",
+    ttl: 15000,
+    paths: [
+      "/admin/live-summary",
+      // Keep the legacy counters cacheable for screens that still call one
+      // directly during the gradual Phase 6 migration.
+      "/admin/messages/unread-count",
+      "/admin/shop-orders/unseen-count",
+      "/admin/school/hq/attention-count",
+      "/admin/pending-actions/count",
+    ],
+  },
+];
+
+const _sharedResponseCache = new Map();
+const _sharedCacheListeners = new Set();
+let _sharedCacheVersion = 0;
+
+const _normalizedPath = (url = "") => {
+  try {
+    const raw = String(url || "");
+    const noQuery = raw.split("?")[0];
+    if (/^https?:\/\//i.test(noQuery)) return new URL(noQuery).pathname.replace(/^\/api(?=\/)/, "");
+    return noQuery.replace(/^\/api(?=\/)/, "");
+  } catch {
+    return String(url || "").split("?")[0];
+  }
+};
+
+const _stableValue = (value) => {
+  if (Array.isArray(value)) return value.map(_stableValue);
+  if (value && typeof value === "object") {
+    return Object.keys(value).sort().reduce((out, key) => {
+      const v = value[key];
+      if (v !== undefined) out[key] = _stableValue(v);
+      return out;
+    }, {});
+  }
+  return value;
+};
+
+const _sharedPolicyFor = (url) => {
+  const path = _normalizedPath(url);
+  return SHARED_GET_POLICIES.find((policy) => policy.paths.includes(path)) || null;
+};
+
+const _pruneSharedCache = (now = Date.now()) => {
+  for (const [key, entry] of _sharedResponseCache.entries()) {
+    if (!entry?.promise && entry?.expiresAt <= now) _sharedResponseCache.delete(key);
+  }
+  // Search/filter variants can create many legitimate keys. Keep the cache
+  // bounded anyway; oldest Map entries are least useful once this cap is hit.
+  while (_sharedResponseCache.size > 120) {
+    const oldest = _sharedResponseCache.keys().next().value;
+    if (oldest == null) break;
+    _sharedResponseCache.delete(oldest);
+  }
+};
+
+const _sharedKeyFor = (url, config = {}) => {
+  const token = localStorage.getItem("sh_token") || "";
+  const params = config?.params ? JSON.stringify(_stableValue(config.params)) : "";
+  return `${token}::${String(url || "")}::${params}`;
+};
+
+const _emitSharedCache = (event) => {
+  _sharedCacheVersion += 1;
+  _sharedCacheListeners.forEach((listener) => {
+    try { listener({ ...event, version: _sharedCacheVersion }); } catch { /* observer errors never break API calls */ }
+  });
+};
+
+export function subscribeSharedApiCache(listener) {
+  _sharedCacheListeners.add(listener);
+  return () => _sharedCacheListeners.delete(listener);
+}
+
+export function getSharedApiCacheVersion() {
+  return _sharedCacheVersion;
+}
+
+export function invalidateSharedApiData(resources) {
+  const wanted = new Set(Array.isArray(resources) ? resources : [resources]);
+  if (wanted.has("all")) SHARED_GET_POLICIES.forEach((p) => wanted.add(p.resource));
+  const removed = new Set();
+  for (const [key, entry] of _sharedResponseCache.entries()) {
+    if (wanted.has(entry.resource)) {
+      _sharedResponseCache.delete(key);
+      removed.add(entry.resource);
+    }
+  }
+  // Emit even if the cache is already empty. Hook consumers treat invalidation
+  // as the instruction to re-fetch; the mutation may have happened before the
+  // resource was cached in this tab.
+  if (wanted.size) _emitSharedCache({ type: "invalidate", resources: [...wanted], removed: [...removed] });
+}
+
+export function clearSharedApiCache({ notify = true } = {}) {
+  _sharedResponseCache.clear();
+  if (notify) _emitSharedCache({ type: "clear", resources: SHARED_GET_POLICIES.map((p) => p.resource) });
+}
+
+export function sharedApiCacheStats() {
+  const now = Date.now();
+  const byResource = {};
+  for (const entry of _sharedResponseCache.values()) {
+    const r = entry.resource || "unknown";
+    byResource[r] = (byResource[r] || 0) + (entry.response && entry.expiresAt > now ? 1 : 0);
+  }
+  return { entries: _sharedResponseCache.size, byResource, version: _sharedCacheVersion };
+}
+
+const _rawSharedGet = api.get.bind(api);
+api.get = (url, config = {}) => {
+  const policy = _sharedPolicyFor(url);
+  if (!policy || config?.sharedCache === false) {
+    if (!config?.sharedCache) return _rawSharedGet(url, config);
+    const clean = { ...config }; delete clean.sharedCache;
+    return _rawSharedGet(url, clean);
+  }
+
+  const forceRefresh = config?.sharedCache === "refresh";
+  const cleanConfig = { ...config };
+  delete cleanConfig.sharedCache;
+  const key = _sharedKeyFor(url, cleanConfig);
+  const now = Date.now();
+  _pruneSharedCache(now);
+  const existing = _sharedResponseCache.get(key);
+
+  if (!forceRefresh && existing?.response && existing.expiresAt > now) {
+    return Promise.resolve(existing.response);
+  }
+  if (!forceRefresh && existing?.promise) return existing.promise;
+
+  const promise = _rawSharedGet(url, cleanConfig)
+    .then((response) => {
+      _sharedResponseCache.set(key, {
+        resource: policy.resource,
+        response,
+        promise: null,
+        expiresAt: Date.now() + policy.ttl,
+      });
+      _emitSharedCache({ type: "set", resource: policy.resource, key });
+      return response;
+    })
+    .catch((err) => {
+      const current = _sharedResponseCache.get(key);
+      if (current?.promise === promise) _sharedResponseCache.delete(key);
+      throw err;
+    });
+
+  _sharedResponseCache.set(key, {
+    resource: policy.resource,
+    response: existing?.response || null,
+    expiresAt: existing?.expiresAt || 0,
+    promise,
+  });
+  return promise;
+};
+
+const _resourcesForMutation = (url) => {
+  const path = _normalizedPath(url);
+  const resources = new Set();
+  if (path === "/clients" || path.startsWith("/clients/") || path.startsWith("/pricing-tiers/") || path.startsWith("/admin/duplicates/clients")) resources.add("clients");
+  if (path.startsWith("/pos/")) resources.add("clients");
+  if (path === "/dogs" || path.startsWith("/dogs/") || path.startsWith("/portal/dogs") || path.startsWith("/admin/dogs/") || path.startsWith("/admin/duplicates/dogs")) resources.add("dogs");
+  if (path === "/services" || path.startsWith("/services/")) resources.add("services");
+  if (path === "/programs" || path.startsWith("/programs/")) resources.add("programs");
+  if (path === "/settings" || path.startsWith("/settings/")) resources.add("settings");
+  if (
+    path.startsWith("/admin/messages")
+    || path.startsWith("/admin/shop-orders")
+    || path.startsWith("/admin/school")
+    || path.startsWith("/admin/pending-actions")
+    || path.startsWith("/bookings")
+  ) resources.add("navCounts");
+  return [...resources];
+};
+
+// Make invalidation automatic for existing code. Old call sites can continue
+// using api.post/put/patch/delete; successful writes immediately evict the
+// relevant shared resources. Phase 3 hook consumers then re-fetch through the
+// subscription below, while legacy screens that already call their own load()
+// simply receive a fresh response instead of a stale cached one.
+for (const method of ["post", "put", "patch", "delete"]) {
+  const raw = api[method].bind(api);
+  api[method] = async (...args) => {
+    const response = await raw(...args);
+    const resources = _resourcesForMutation(args[0]);
+    if (resources.length) invalidateSharedApiData(resources);
+    return response;
+  };
+}
 
 export function formatErr(detail) {
   if (detail == null) return "Something went wrong.";

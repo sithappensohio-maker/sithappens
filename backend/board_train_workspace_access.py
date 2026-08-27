@@ -1,11 +1,10 @@
 """Keep Board & Train workspace content aligned with the School pointer.
 
 Trainer Delivery owns the two required AM/PM slots. After both are complete,
-staff still need to reopen the workspace. If the School pointer has not moved,
-we return the completed PM draft for review. If the School pointer moved to a
-new lesson after completion, we create one supplemental workspace for that
-current lesson instead of mutating historical AM/PM records or inventing a
-third required slot.
+staff still need to reopen the workspace. Phase 4 moved production orchestration
+into ``domains.training.services``; this module keeps the proven helper logic
+and legacy installer compatibility while production no longer monkey-patches
+``_get_or_create_session_draft`` after import.
 """
 from __future__ import annotations
 

@@ -1,0 +1,639 @@
+[
+  {
+    "domain": "bookings",
+    "method": "GET",
+    "path": "/bookings",
+    "function": "list_bookings",
+    "response_model": "List[BookingOut]"
+  },
+  {
+    "domain": "bookings",
+    "method": "POST",
+    "path": "/bookings",
+    "function": "create_booking",
+    "response_model": "BookingOut"
+  },
+  {
+    "domain": "bookings",
+    "method": "POST",
+    "path": "/bookings/recurring",
+    "function": "create_recurring",
+    "response_model": null
+  },
+  {
+    "domain": "bookings",
+    "method": "POST",
+    "path": "/bookings/group",
+    "function": "create_booking_group",
+    "response_model": null
+  },
+  {
+    "domain": "bookings",
+    "method": "GET",
+    "path": "/bookings/group/{group_id}",
+    "function": "get_booking_group",
+    "response_model": null
+  },
+  {
+    "domain": "bookings",
+    "method": "PUT",
+    "path": "/bookings/{booking_id}/reschedule",
+    "function": "reschedule_booking",
+    "response_model": "BookingOut"
+  },
+  {
+    "domain": "bookings",
+    "method": "POST",
+    "path": "/bookings/{booking_id}/approve",
+    "function": "approve_booking",
+    "response_model": "BookingOut"
+  },
+  {
+    "domain": "bookings",
+    "method": "POST",
+    "path": "/bookings/{booking_id}/reject",
+    "function": "reject_booking",
+    "response_model": "BookingOut"
+  },
+  {
+    "domain": "bookings",
+    "method": "DELETE",
+    "path": "/bookings/{booking_id}",
+    "function": "cancel_booking",
+    "response_model": null
+  },
+  {
+    "domain": "bookings",
+    "method": "GET",
+    "path": "/bookings/availability",
+    "function": "availability",
+    "response_model": null
+  },
+  {
+    "domain": "bookings",
+    "method": "GET",
+    "path": "/bookings/time-slots",
+    "function": "list_time_slots",
+    "response_model": null
+  },
+  {
+    "domain": "bookings",
+    "method": "GET",
+    "path": "/bookings/conflicts",
+    "function": "booking_conflicts",
+    "response_model": null
+  },
+  {
+    "domain": "bookings",
+    "method": "GET",
+    "path": "/bookings/summary",
+    "function": "bookings_summary",
+    "response_model": null
+  },
+  {
+    "domain": "bookings",
+    "method": "GET",
+    "path": "/bookings/{booking_id}",
+    "function": "get_booking",
+    "response_model": "BookingOut"
+  },
+  {
+    "domain": "bookings",
+    "method": "POST",
+    "path": "/bookings/{booking_id}/check-in",
+    "function": "check_in",
+    "response_model": "BookingOut"
+  },
+  {
+    "domain": "bookings",
+    "method": "POST",
+    "path": "/bookings/{booking_id}/add-ons",
+    "function": "attach_booking_addons",
+    "response_model": "BookingOut"
+  },
+  {
+    "domain": "bookings",
+    "method": "DELETE",
+    "path": "/bookings/{booking_id}/add-ons/{addon_index}",
+    "function": "remove_booking_addon",
+    "response_model": "BookingOut"
+  },
+  {
+    "domain": "bookings",
+    "method": "GET",
+    "path": "/bookings/{booking_id}/discount-preview",
+    "function": "discount_preview",
+    "response_model": null
+  },
+  {
+    "domain": "bookings",
+    "method": "GET",
+    "path": "/bookings/{booking_id}/early-checkout-quote",
+    "function": "early_checkout_quote",
+    "response_model": null
+  },
+  {
+    "domain": "bookings",
+    "method": "GET",
+    "path": "/bookings/{booking_id}/money-modifier-preview",
+    "function": "money_modifier_preview",
+    "response_model": null
+  },
+  {
+    "domain": "bookings",
+    "method": "POST",
+    "path": "/bookings/{booking_id}/checkout-partial",
+    "function": "checkout_partial",
+    "response_model": "BookingOut"
+  },
+  {
+    "domain": "bookings",
+    "method": "GET",
+    "path": "/bookings/{booking_id}/checkout-group-preview",
+    "function": "checkout_group_preview",
+    "response_model": null
+  },
+  {
+    "domain": "bookings",
+    "method": "POST",
+    "path": "/bookings/{booking_id}/check-out-group",
+    "function": "check_out_group",
+    "response_model": null
+  },
+  {
+    "domain": "bookings",
+    "method": "POST",
+    "path": "/bookings/{booking_id}/check-out",
+    "function": "check_out",
+    "response_model": "BookingOut"
+  },
+  {
+    "domain": "bookings",
+    "method": "POST",
+    "path": "/bookings/{booking_id}/report-card",
+    "function": "save_report_card",
+    "response_model": "BookingOut"
+  },
+  {
+    "domain": "bookings",
+    "method": "GET",
+    "path": "/bookings/{booking_id}/report-card-email/preview",
+    "function": "preview_report_card_email",
+    "response_model": null
+  },
+  {
+    "domain": "bookings",
+    "method": "POST",
+    "path": "/bookings/{booking_id}/resend-report-card",
+    "function": "resend_report_card_email",
+    "response_model": null
+  },
+  {
+    "domain": "bookings",
+    "method": "POST",
+    "path": "/bookings/{booking_id}/financial-adjustment",
+    "function": "booking_financial_adjustment",
+    "response_model": "BookingOut"
+  },
+  {
+    "domain": "bookings",
+    "method": "POST",
+    "path": "/bookings/{booking_id}/refund",
+    "function": "booking_refund",
+    "response_model": "BookingOut"
+  },
+  {
+    "domain": "bookings",
+    "method": "POST",
+    "path": "/bookings/{booking_id}/reopen-checkout",
+    "function": "reopen_booking_checkout",
+    "response_model": "BookingOut"
+  },
+  {
+    "domain": "bookings",
+    "method": "PATCH",
+    "path": "/bookings/{booking_id}",
+    "function": "patch_booking",
+    "response_model": "BookingOut"
+  },
+  {
+    "domain": "bookings",
+    "method": "POST",
+    "path": "/bookings/{booking_id}/training-session/draft",
+    "function": "start_training_session_draft_for_booking",
+    "response_model": null
+  },
+  {
+    "domain": "bookings",
+    "method": "GET",
+    "path": "/bookings/{booking_id}/training-context",
+    "function": "get_training_context_for_booking",
+    "response_model": null
+  },
+  {
+    "domain": "bookings",
+    "method": "GET",
+    "path": "/bookings/{booking_id}/history",
+    "function": "booking_history",
+    "response_model": null
+  },
+  {
+    "domain": "bookings",
+    "method": "GET",
+    "path": "/bookings/{booking_id}/invoice",
+    "function": "get_booking_invoice",
+    "response_model": null
+  },
+  {
+    "domain": "bookings",
+    "method": "POST",
+    "path": "/bookings/{booking_id}/reschedule-next-week",
+    "function": "reschedule_prepaid_session",
+    "response_model": null
+  },
+  {
+    "domain": "bookings",
+    "method": "POST",
+    "path": "/bookings/multi-dates",
+    "function": "create_multi_date_bookings",
+    "response_model": null
+  },
+  {
+    "domain": "bookings",
+    "method": "GET",
+    "path": "/bookings/{booking_id}/care",
+    "function": "get_booking_care",
+    "response_model": null
+  },
+  {
+    "domain": "bookings",
+    "method": "PUT",
+    "path": "/bookings/{booking_id}/care",
+    "function": "set_booking_care",
+    "response_model": null
+  },
+  {
+    "domain": "bookings",
+    "method": "POST",
+    "path": "/bookings/{booking_id}/care/{item_id}/complete",
+    "function": "complete_care_item",
+    "response_model": null
+  },
+  {
+    "domain": "bookings",
+    "method": "POST",
+    "path": "/bookings/{booking_id}/care/{item_id}/skip",
+    "function": "skip_care_item",
+    "response_model": null
+  },
+  {
+    "domain": "bookings",
+    "method": "POST",
+    "path": "/bookings/{booking_id}/care/{item_id}/reset",
+    "function": "reset_care_item",
+    "response_model": null
+  },
+  {
+    "domain": "pricing",
+    "method": "POST",
+    "path": "/pricing/quote",
+    "function": "pricing_quote",
+    "response_model": null
+  },
+  {
+    "domain": "pricing",
+    "method": "GET",
+    "path": "/clients/{client_id}/price-overrides",
+    "function": "list_client_price_overrides",
+    "response_model": null
+  },
+  {
+    "domain": "pricing",
+    "method": "GET",
+    "path": "/clients/{client_id}/credit-pack-prices",
+    "function": "client_credit_pack_prices",
+    "response_model": null
+  },
+  {
+    "domain": "pricing",
+    "method": "POST",
+    "path": "/clients/{client_id}/price-overrides",
+    "function": "create_client_price_override",
+    "response_model": null
+  },
+  {
+    "domain": "pricing",
+    "method": "POST",
+    "path": "/clients/{client_id}/price-overrides/bulk-apply",
+    "function": "bulk_apply_client_price_overrides",
+    "response_model": null
+  },
+  {
+    "domain": "pricing",
+    "method": "PUT",
+    "path": "/price-overrides/{override_id}",
+    "function": "update_price_override",
+    "response_model": null
+  },
+  {
+    "domain": "pricing",
+    "method": "DELETE",
+    "path": "/price-overrides/{override_id}",
+    "function": "delete_price_override",
+    "response_model": null
+  },
+  {
+    "domain": "pricing",
+    "method": "GET",
+    "path": "/pricing-tiers",
+    "function": "list_pricing_tiers",
+    "response_model": null
+  },
+  {
+    "domain": "pricing",
+    "method": "POST",
+    "path": "/pricing-tiers",
+    "function": "create_pricing_tier",
+    "response_model": null
+  },
+  {
+    "domain": "pricing",
+    "method": "GET",
+    "path": "/pricing-tiers/{tier_id}",
+    "function": "get_pricing_tier",
+    "response_model": null
+  },
+  {
+    "domain": "pricing",
+    "method": "PUT",
+    "path": "/pricing-tiers/{tier_id}",
+    "function": "update_pricing_tier",
+    "response_model": null
+  },
+  {
+    "domain": "pricing",
+    "method": "POST",
+    "path": "/pricing-tiers/{tier_id}/clients/{client_id}",
+    "function": "assign_client_to_pricing_tier",
+    "response_model": null
+  },
+  {
+    "domain": "pricing",
+    "method": "DELETE",
+    "path": "/pricing-tiers/{tier_id}/clients/{client_id}",
+    "function": "unassign_client_from_pricing_tier",
+    "response_model": null
+  },
+  {
+    "domain": "pricing",
+    "method": "POST",
+    "path": "/pricing-tiers/{tier_id}/prices",
+    "function": "set_pricing_tier_price",
+    "response_model": null
+  },
+  {
+    "domain": "pricing",
+    "method": "DELETE",
+    "path": "/pricing-tiers/{tier_id}/prices/{price_id}",
+    "function": "remove_pricing_tier_price",
+    "response_model": null
+  },
+  {
+    "domain": "pos",
+    "method": "GET",
+    "path": "/pos/receipt-payload",
+    "function": "get_pos_receipt_payload",
+    "response_model": null
+  },
+  {
+    "domain": "pos",
+    "method": "POST",
+    "path": "/pos/verify-drawer-token",
+    "function": "verify_pos_drawer_token",
+    "response_model": null
+  },
+  {
+    "domain": "pos",
+    "method": "GET",
+    "path": "/pos/catalog",
+    "function": "get_register_catalog",
+    "response_model": null
+  },
+  {
+    "domain": "pos",
+    "method": "GET",
+    "path": "/pos/products",
+    "function": "list_pos_products",
+    "response_model": null
+  },
+  {
+    "domain": "pos",
+    "method": "POST",
+    "path": "/pos/products",
+    "function": "create_pos_product",
+    "response_model": null
+  },
+  {
+    "domain": "pos",
+    "method": "PUT",
+    "path": "/pos/products/{product_id}",
+    "function": "update_pos_product",
+    "response_model": null
+  },
+  {
+    "domain": "pos",
+    "method": "POST",
+    "path": "/pos/products/{product_id}/duplicate",
+    "function": "duplicate_pos_product",
+    "response_model": null
+  },
+  {
+    "domain": "pos",
+    "method": "DELETE",
+    "path": "/pos/products/{product_id}",
+    "function": "delete_pos_product",
+    "response_model": null
+  },
+  {
+    "domain": "pos",
+    "method": "POST",
+    "path": "/pos/products/{product_id}/archive",
+    "function": "archive_pos_product",
+    "response_model": null
+  },
+  {
+    "domain": "pos",
+    "method": "POST",
+    "path": "/pos/products/{product_id}/restore",
+    "function": "restore_pos_product",
+    "response_model": null
+  },
+  {
+    "domain": "pos",
+    "method": "GET",
+    "path": "/pos/products/categories",
+    "function": "pos_product_categories",
+    "response_model": null
+  },
+  {
+    "domain": "pos",
+    "method": "POST",
+    "path": "/pos/products/{product_id}/adjust-stock",
+    "function": "adjust_pos_product_stock",
+    "response_model": null
+  },
+  {
+    "domain": "pos",
+    "method": "GET",
+    "path": "/pos/products/{product_id}/movements",
+    "function": "list_inventory_movements",
+    "response_model": null
+  },
+  {
+    "domain": "pos",
+    "method": "POST",
+    "path": "/pos/checkout/preview",
+    "function": "preview_pos_sale",
+    "response_model": null
+  },
+  {
+    "domain": "pos",
+    "method": "POST",
+    "path": "/pos/sales/preview",
+    "function": "preview_pos_sale",
+    "response_model": null
+  },
+  {
+    "domain": "pos",
+    "method": "POST",
+    "path": "/pos/checkout",
+    "function": "create_pos_sale",
+    "response_model": null
+  },
+  {
+    "domain": "pos",
+    "method": "POST",
+    "path": "/pos/sales",
+    "function": "create_pos_sale",
+    "response_model": null
+  },
+  {
+    "domain": "pos",
+    "method": "GET",
+    "path": "/pos/sales",
+    "function": "list_pos_sales",
+    "response_model": null
+  },
+  {
+    "domain": "pos",
+    "method": "GET",
+    "path": "/pos/sales/{sale_id}",
+    "function": "get_pos_sale",
+    "response_model": null
+  },
+  {
+    "domain": "pos",
+    "method": "POST",
+    "path": "/pos/sales/{sale_id}/pos-tokens",
+    "function": "issue_pos_tokens_for_sale",
+    "response_model": null
+  },
+  {
+    "domain": "pos",
+    "method": "POST",
+    "path": "/pos/sales/{sale_id}/void",
+    "function": "void_pos_sale",
+    "response_model": null
+  },
+  {
+    "domain": "register",
+    "method": "GET",
+    "path": "/admin/register/range",
+    "function": "admin_register_range",
+    "response_model": null
+  },
+  {
+    "domain": "register",
+    "method": "GET",
+    "path": "/admin/register/closeouts",
+    "function": "admin_register_closeouts",
+    "response_model": null
+  },
+  {
+    "domain": "register",
+    "method": "GET",
+    "path": "/admin/register/export.csv",
+    "function": "admin_register_export_csv",
+    "response_model": null
+  },
+  {
+    "domain": "register",
+    "method": "GET",
+    "path": "/admin/register/tax-packet.zip",
+    "function": "admin_register_tax_packet_zip",
+    "response_model": null
+  },
+  {
+    "domain": "register",
+    "method": "GET",
+    "path": "/admin/register/day",
+    "function": "admin_register_day",
+    "response_model": null
+  },
+  {
+    "domain": "register",
+    "method": "POST",
+    "path": "/admin/register/open-drawer",
+    "function": "admin_open_cash_drawer",
+    "response_model": null
+  },
+  {
+    "domain": "register",
+    "method": "POST",
+    "path": "/admin/register/reopen-day",
+    "function": "admin_reopen_register_day",
+    "response_model": null
+  },
+  {
+    "domain": "register",
+    "method": "POST",
+    "path": "/admin/register/till-adjustment",
+    "function": "admin_register_till_adjustment",
+    "response_model": null
+  },
+  {
+    "domain": "register",
+    "method": "DELETE",
+    "path": "/admin/register/till-adjustment/{adjustment_id}",
+    "function": "delete_till_adjustment",
+    "response_model": null
+  },
+  {
+    "domain": "register",
+    "method": "POST",
+    "path": "/admin/register/refund",
+    "function": "admin_register_refund",
+    "response_model": null
+  },
+  {
+    "domain": "register",
+    "method": "POST",
+    "path": "/admin/register/cash-payout",
+    "function": "admin_register_cash_payout",
+    "response_model": null
+  },
+  {
+    "domain": "register",
+    "method": "GET",
+    "path": "/admin/register/session",
+    "function": "get_register_session",
+    "response_model": null
+  },
+  {
+    "domain": "register",
+    "method": "GET",
+    "path": "/admin/register/status",
+    "function": "get_register_status",
+    "response_model": null
+  }
+]

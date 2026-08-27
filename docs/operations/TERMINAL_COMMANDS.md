@@ -9,7 +9,10 @@ Run them all from inside `~/sit-happens/` unless otherwise noted.
 
 | Goal | Command |
 |---|---|
-| Safely update (required backup first, then pull + rebuild) | `./update.sh` |
+| Safely update (backup → exact `origin/main` SHA → build → health verification) | `./update.sh` |
+| Show exact deployed/previous SHAs | `./update.sh --status` |
+| Roll back to the previously successful SHA | `./update.sh --rollback` |
+| Roll back to a specific known SHA | `./update.sh --rollback <SHA>` |
 | Run a manual backup right now | `./backup-now.sh` |
 | Start the app (if stopped) | `docker compose -p sit-happens up -d` |
 | Stop the app cleanly | `docker compose -p sit-happens down` |

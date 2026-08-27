@@ -108,6 +108,10 @@ const PROGRAM_TYPE_COLORS = {
 
 export default function Dogs({ focusId = null, focusMode = "scroll", onConsumed = () => {}, openCreateOnMount = false, onCreateConsumed = () => {}, userId = null,
   hubTarget = null, can = () => false, onBookForDog = () => {}, onLogIncident = () => {}, onOpenCareBoard = () => {}, onOpenKennelBoard = () => {}, onOpenFrontDesk = () => {}, onMessageOwner = () => {} }) {
+  // Phase 2 durable record URLs remain present after a dog is opened. This
+  // ref prevents normal list refreshes from reopening the same modal.
+  const handledDogFocusRef = useRef("");
+  const routeOpenedDogRef = useRef(false);
   const [dogs, setDogs] = useState([]);
   const [total, setTotal] = useState(0);          // matches for the CURRENT filter
   const [rosterTotal, setRosterTotal] = useState(0);  // whole roster, for the headline
@@ -150,7 +154,7 @@ export default function Dogs({ focusId = null, focusMode = "scroll", onConsumed 
     if (queryRef.current.trim()) params.search = queryRef.current.trim();
     const [d, c, p, s] = await Promise.all([
       api.get("/dogs", { params }),
-      api.get("/clients"),
+      api.get("/clients/options"),
       api.get("/programs/pipeline").catch(() => ({ data: [] })),
       api.get("/dogs/summary", { params: params.search ? { search: params.search } : {} })
         .catch(() => ({ data: null })),
@@ -258,13 +262,29 @@ export default function Dogs({ focusId = null, focusMode = "scroll", onConsumed 
   // mode="open" so they keep their direct-into-modal behavior.
   useEffect(() => {
     if (!focusId || dogs.length === 0) return;
+    const routeKey = `${focusId}:${focusMode}`;
+    if (handledDogFocusRef.current === routeKey) return;
     if (focusMode === "open") {
       const d = dogs.find(x => x.id === focusId);
-      if (d) { openEdit(d); onConsumed(); }
+      if (d) { handledDogFocusRef.current = routeKey; routeOpenedDogRef.current = true; openEdit(d); onConsumed(); }
     } else {
+      handledDogFocusRef.current = routeKey;
       scrollToCardAndFlash(`dog-card-${focusId}`).then(onConsumed);
     }
   }, [focusId, focusMode, dogs, onConsumed, openEdit]);
+
+  // Browser Back from /admin/dogs/:id to /admin/dogs closes only the dog
+  // modal that routing opened; a manually opened dog modal is not touched.
+  useEffect(() => {
+    if (!focusId) {
+      handledDogFocusRef.current = "";
+      if (routeOpenedDogRef.current) {
+        routeOpenedDogRef.current = false;
+        setOpen(false);
+        setEditing(null);
+      }
+    }
+  }, [focusId]);
 
   // Phase 4 — global "+ New" menu. `openNew` needs `clients` loaded first
   // (defaults owner_id to the first client), so this waits for that instead
