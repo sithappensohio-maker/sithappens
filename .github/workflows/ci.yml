@@ -26,7 +26,19 @@ jobs:
           node-version: 20.19.0
       - run: corepack enable
       - run: yarn install --network-timeout 600000
-      - run: yarn test:ci
+      - name: Run tests
+        run: |
+          set -o pipefail
+          yarn test:ci --json --outputFile=/tmp/jest-results.json 2>&1 | tee /tmp/jest-output.txt
+      - name: Upload frontend test diagnostics
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: frontend-test-diagnostics
+          path: |
+            /tmp/jest-results.json
+            /tmp/jest-output.txt
+          if-no-files-found: warn
       - run: yarn build
 
   backend-architecture:
@@ -108,7 +120,18 @@ jobs:
           exit 1
       - name: Ad hoc release-critical tests
         working-directory: backend
-        run: python -m pytest -q test_pos_catalog.py test_pos_checkout_integrity.py test_front_desk_checkin.py test_shop_manager_polish.py
+        run: |
+          set -o pipefail
+          python -m pytest -q test_pos_catalog.py test_pos_checkout_integrity.py test_front_desk_checkin.py test_shop_manager_polish.py --junitxml=/tmp/pytest-release-critical.xml 2>&1 | tee /tmp/pytest-release-critical.txt
+      - name: Upload backend test diagnostics
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: backend-test-diagnostics
+          path: |
+            /tmp/pytest-release-critical.xml
+            /tmp/pytest-release-critical.txt
+          if-no-files-found: warn
       - name: Curated clean-database release gate
         working-directory: backend
         run: python tests/run_release_critical.py
