@@ -1,0 +1,43 @@
+name: Validate modernization payload
+
+on:
+  push:
+    branches:
+      - modernization/phases-1-7-final
+    paths:
+      - '.modernization-patch/**'
+      - '.github/workflows/validate-modernization-payload.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  validate:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - name: Reassemble and validate staged payload
+        shell: bash
+        run: |
+          set -euo pipefail
+          cat \
+            .modernization-patch/xpart-01.txt \
+            .modernization-patch/xpart-02.txt \
+            .modernization-patch/xpart-03.txt \
+            .modernization-patch/xpart-04.txt \
+            .modernization-patch/xpart-05-06.txt \
+            .modernization-patch/xpart-07-08.txt \
+            .modernization-patch/xpart-09-10.txt \
+            .modernization-patch/xpart-11-12.txt \
+            .modernization-patch/xpart-13-14.txt \
+            > /tmp/modernization.b64
+          base64 --decode /tmp/modernization.b64 > /tmp/modernization.xz
+          xz --test /tmp/modernization.xz
+          xz --decompress --stdout /tmp/modernization.xz > /tmp/modernization.patch
+          echo "payload_bytes=$(wc -c < /tmp/modernization.patch)"
+          echo "diff_files=$(grep -c '^diff --git ' /tmp/modernization.patch || true)"
+          head -n 5 /tmp/modernization.patch
+          git apply --check /tmp/modernization.patch
