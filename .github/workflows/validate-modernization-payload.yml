@@ -1,4 +1,4 @@
-name: Validate modernization payload
+name: Promote verified modernization
 
 on:
   push:
@@ -10,16 +10,17 @@ on:
   workflow_dispatch:
 
 permissions:
-  contents: read
+  contents: write
 
 jobs:
-  validate:
+  promote:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
         with:
           fetch-depth: 0
-      - name: Reassemble and validate staged payload
+
+      - name: Reassemble and prove exact modernization patch
         shell: bash
         run: |
           set -euo pipefail
@@ -33,11 +34,48 @@ jobs:
             .modernization-patch/xpart-09-10.txt \
             .modernization-patch/xpart-11-12.txt \
             .modernization-patch/xpart-13-14.txt \
+            .modernization-patch/xpart-15-16.txt \
+            .modernization-patch/xpart-17-18.txt \
+            .modernization-patch/xpart-19-20.txt \
             > /tmp/modernization.b64
+
+          test "$(wc -c < /tmp/modernization.b64 | tr -d ' ')" = "155548"
           base64 --decode /tmp/modernization.b64 > /tmp/modernization.xz
           xz --test /tmp/modernization.xz
           xz --decompress --stdout /tmp/modernization.xz > /tmp/modernization.patch
-          echo "payload_bytes=$(wc -c < /tmp/modernization.patch)"
-          echo "diff_files=$(grep -c '^diff --git ' /tmp/modernization.patch || true)"
-          head -n 5 /tmp/modernization.patch
+
+          ACTUAL_SHA="$(sha256sum /tmp/modernization.patch | awk '{print $1}')"
+          test "$ACTUAL_SHA" = "41ee1fcb1f83cd98c8ec65844e268a4160418c26feaee1fc3c087b64896d3664"
+          test "$(grep -c '^diff --git ' /tmp/modernization.patch)" = "106"
+
+      - name: Apply only to the exact current main
+        shell: bash
+        run: |
+          set -euo pipefail
+          git fetch origin main
+          CURRENT_MAIN="$(git rev-parse origin/main)"
+          test "$CURRENT_MAIN" = "40976476c39d90b8791308fdc84bc9510017869a"
+          test "$(git rev-parse origin/main^{tree})" = "fed8363ec5c83e1701380026edf1d183fe04ab0a"
+
+          git checkout -B modernization-release origin/main
           git apply --check /tmp/modernization.patch
+          git apply /tmp/modernization.patch
+          git add -A
+
+          test "$(git diff --cached --name-only | wc -l | tr -d ' ')" = "106"
+          FINAL_TREE="$(git write-tree)"
+          echo "Final tree: $FINAL_TREE"
+          test "$FINAL_TREE" = "8ae6eefa57bf247356c06881cc2aa1f7d251356d"
+
+      - name: Commit and fast-forward main
+        shell: bash
+        run: |
+          set -euo pipefail
+          git config user.name "sithappensohio-maker"
+          git config user.email "sithappensohio@gmail.com"
+          git commit -m "refactor: complete phases 1-7 modernization"
+          NEW_SHA="$(git rev-parse HEAD)"
+          test "$(git rev-parse HEAD^)" = "40976476c39d90b8791308fdc84bc9510017869a"
+          test "$(git rev-parse HEAD^{tree})" = "8ae6eefa57bf247356c06881cc2aa1f7d251356d"
+          git push origin HEAD:main
+          echo "Promoted main to $NEW_SHA"
