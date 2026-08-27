@@ -24,21 +24,19 @@ jobs:
         run: |
           set -euo pipefail
           cat \
-            .modernization-patch/xpart-01.txt \
-            .modernization-patch/xpart-02.txt \
-            .modernization-patch/xpart-03.txt \
-            .modernization-patch/xpart-04.txt \
-            .modernization-patch/xpart-05-06.txt \
-            .modernization-patch/xpart-07-08.txt \
-            .modernization-patch/xpart-09-10.txt \
-            .modernization-patch/xpart-11-12.txt \
-            .modernization-patch/tail-13-14.txt \
-            .modernization-patch/tail-15-16.txt \
-            .modernization-patch/tail-17-18.txt \
-            .modernization-patch/payload-10.txt \
+            .modernization-patch/correct-01.txt \
+            .modernization-patch/payload-02.txt \
+            .modernization-patch/payload-03.txt \
+            .modernization-patch/payload-04.txt \
+            .modernization-patch/payload-05.txt \
+            .modernization-patch/payload-06.txt \
+            .modernization-patch/payload-07.txt \
+            .modernization-patch/payload-08.txt \
+            .modernization-patch/correct-09.txt \
+            .modernization-patch/correct-10.txt \
             > /tmp/modernization.b64
 
-          test "$(wc -c < /tmp/modernization.b64 | tr -d ' ')" = "155548"
+          test "$(wc -c < /tmp/modernization.b64 | tr -d ' ')" = "155872"
           base64 --decode /tmp/modernization.b64 > /tmp/modernization.xz
           xz --test /tmp/modernization.xz
           xz --decompress --stdout /tmp/modernization.xz > /tmp/modernization.patch
