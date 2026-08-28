@@ -14,37 +14,37 @@
 // not-needed card drops its hue entirely so muted = switched off.
 const METRIC_TONES = {
   cyan: {
-    card: "border-[#00a9e0]/55 bg-gradient-to-br from-[#00a9e0]/[0.15] via-black/20 to-black/25",
+    card: "border-[#00a9e0]/55 bg-gradient-to-br from-[#00a9e0]/[0.24] via-black/20 to-black/25",
     title: "text-[#4cc9f0]",
     chip: "border-[#00a9e0]/60 bg-[#00a9e0]/20",
   },
   teal: {
-    card: "border-[#2dd4bf]/50 bg-gradient-to-br from-[#2dd4bf]/[0.14] via-black/20 to-black/25",
+    card: "border-[#2dd4bf]/50 bg-gradient-to-br from-[#2dd4bf]/[0.22] via-black/20 to-black/25",
     title: "text-[#2dd4bf]",
     chip: "border-[#2dd4bf]/55 bg-[#2dd4bf]/15",
   },
   lime: {
-    card: "border-shPrimary/55 bg-gradient-to-br from-shPrimary/[0.15] via-black/20 to-black/25",
+    card: "border-shPrimary/55 bg-gradient-to-br from-shPrimary/[0.24] via-black/20 to-black/25",
     title: "text-[#a3e635]",
     chip: "border-shPrimary/60 bg-shPrimary/20",
   },
   orange: {
-    card: "border-shAccent/55 bg-gradient-to-br from-shAccent/[0.14] via-black/20 to-black/25",
+    card: "border-shAccent/55 bg-gradient-to-br from-shAccent/[0.22] via-black/20 to-black/25",
     title: "text-[#fb923c]",
     chip: "border-shAccent/55 bg-shAccent/15",
   },
   green: {
-    card: "border-[#4ade80]/50 bg-gradient-to-br from-[#4ade80]/[0.13] via-black/20 to-black/25",
+    card: "border-[#4ade80]/50 bg-gradient-to-br from-[#4ade80]/[0.20] via-black/20 to-black/25",
     title: "text-[#4ade80]",
     chip: "border-[#4ade80]/50 bg-[#4ade80]/15",
   },
   purple: {
-    card: "border-[#a78bfa]/55 bg-gradient-to-br from-[#a78bfa]/[0.15] via-black/20 to-black/25",
+    card: "border-[#a78bfa]/55 bg-gradient-to-br from-[#a78bfa]/[0.24] via-black/20 to-black/25",
     title: "text-[#a78bfa]",
     chip: "border-[#a78bfa]/55 bg-[#a78bfa]/15",
   },
   pink: {
-    card: "border-[#f472b6]/50 bg-gradient-to-br from-[#f472b6]/[0.14] via-black/20 to-black/25",
+    card: "border-[#f472b6]/50 bg-gradient-to-br from-[#f472b6]/[0.22] via-black/20 to-black/25",
     title: "text-[#f472b6]",
     chip: "border-[#f472b6]/50 bg-[#f472b6]/15",
   },

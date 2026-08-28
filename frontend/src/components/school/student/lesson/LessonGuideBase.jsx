@@ -345,16 +345,43 @@ export default function LessonGuide({
           const isCurrent = state === "current";
           const reason = locked ? lockReason(s, ctx) : "";
           const STEP_HUES = {
-            learn: "border-[#00a9e0]/45 bg-gradient-to-br from-[#00a9e0]/[0.12] to-black/25 hover:border-[#00a9e0]/70",
-            get_ready: "border-[#2dd4bf]/40 bg-gradient-to-br from-[#2dd4bf]/[0.11] to-black/25 hover:border-[#2dd4bf]/65",
-            train: "border-shPrimary/45 bg-gradient-to-br from-shPrimary/[0.12] to-black/25 hover:border-shPrimary/70",
-            watch_for: "border-[#a78bfa]/40 bg-gradient-to-br from-[#a78bfa]/[0.11] to-black/25 hover:border-[#a78bfa]/65",
-            know_got_it: "border-[#facc15]/40 bg-gradient-to-br from-[#facc15]/[0.10] to-black/25 hover:border-[#facc15]/60",
-            practice: "border-shAccent/45 bg-gradient-to-br from-shAccent/[0.11] to-black/25 hover:border-shAccent/70",
-            quick_check: "border-shSecondary/45 bg-gradient-to-br from-shSecondary/[0.12] to-black/25 hover:border-shSecondary/70",
-            next_step: "border-[#f472b6]/40 bg-gradient-to-br from-[#f472b6]/[0.11] to-black/25 hover:border-[#f472b6]/60",
+            learn: {
+              card: "border-[#00a9e0]/65 bg-gradient-to-br from-[#00a9e0]/[0.24] via-[#00a9e0]/[0.08] to-black/25 hover:border-[#00a9e0]",
+              title: "text-[#4cc9f0]", marker: "border-[#00a9e0]/70 bg-[#00a9e0]/25 text-[#4cc9f0]",
+            },
+            get_ready: {
+              card: "border-[#2dd4bf]/60 bg-gradient-to-br from-[#2dd4bf]/[0.22] via-[#2dd4bf]/[0.07] to-black/25 hover:border-[#2dd4bf]",
+              title: "text-[#2dd4bf]", marker: "border-[#2dd4bf]/65 bg-[#2dd4bf]/20 text-[#2dd4bf]",
+            },
+            train: {
+              card: "border-shPrimary/65 bg-gradient-to-br from-shPrimary/[0.24] via-shPrimary/[0.08] to-black/25 hover:border-shPrimary",
+              title: "text-[#a3e635]", marker: "border-shPrimary/70 bg-shPrimary/25 text-[#a3e635]",
+            },
+            watch_for: {
+              card: "border-[#a78bfa]/60 bg-gradient-to-br from-[#a78bfa]/[0.22] via-[#a78bfa]/[0.07] to-black/25 hover:border-[#a78bfa]",
+              title: "text-[#a78bfa]", marker: "border-[#a78bfa]/65 bg-[#a78bfa]/20 text-[#a78bfa]",
+            },
+            know_got_it: {
+              card: "border-[#facc15]/55 bg-gradient-to-br from-[#facc15]/[0.18] via-[#facc15]/[0.06] to-black/25 hover:border-[#facc15]",
+              title: "text-[#facc15]", marker: "border-[#facc15]/60 bg-[#facc15]/20 text-[#facc15]",
+            },
+            practice: {
+              card: "border-shAccent/60 bg-gradient-to-br from-shAccent/[0.20] via-shAccent/[0.07] to-black/25 hover:border-shAccent",
+              title: "text-[#fb923c]", marker: "border-shAccent/65 bg-shAccent/20 text-[#fb923c]",
+            },
+            quick_check: {
+              card: "border-shSecondary/60 bg-gradient-to-br from-shSecondary/[0.22] via-shSecondary/[0.08] to-black/25 hover:border-shSecondary",
+              title: "text-shSecondary", marker: "border-shSecondary/65 bg-shSecondary/20 text-shSecondary",
+            },
+            next_step: {
+              card: "border-[#f472b6]/55 bg-gradient-to-br from-[#f472b6]/[0.20] via-[#f472b6]/[0.07] to-black/25 hover:border-[#f472b6]",
+              title: "text-[#f472b6]", marker: "border-[#f472b6]/60 bg-[#f472b6]/20 text-[#f472b6]",
+            },
           };
-          const hue = STEP_HUES[s.key] || "border-shBorder/55 bg-[var(--sh-card-base)] hover:border-shSecondary/40";
+          const hue = STEP_HUES[s.key] || {
+            card: "border-shBorder/55 bg-[var(--sh-card-base)] hover:border-shSecondary/40",
+            title: "text-shText", marker: "border-shBorder text-shTextMuted",
+          };
 
           return (
             <li key={s.key} className="min-w-0">
@@ -370,10 +397,10 @@ export default function LessonGuide({
                 className={[
                   "w-full h-full text-left rounded-2xl border p-3.5 flex flex-col gap-2 min-h-[64px] transition",
                   "focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-shPrimary focus-visible:ring-inset",
-                  locked ? `opacity-60 saturate-[0.45] cursor-not-allowed ${hue}`
-                    : isCurrent || active ? "border-shAccent/70 bg-gradient-to-br from-shAccent/[0.14] to-black/25 shadow-[0_0_0_1px_var(--sh-accent)_inset,0_0_22px_rgba(242,101,34,0.3)]"
-                    : done ? "border-shPrimary/40 bg-shPrimary/[0.05] hover:bg-shPrimary/[0.08]"
-                    : hue,
+                  locked ? `opacity-60 saturate-[0.45] cursor-not-allowed ${hue.card}`
+                    : isCurrent || active ? "border-shAccent/80 bg-gradient-to-br from-shAccent/[0.26] via-shAccent/[0.10] to-black/25 shadow-[0_0_0_1px_var(--sh-accent)_inset,0_0_26px_rgba(242,101,34,0.4)]"
+                    : done ? "border-shPrimary/60 bg-gradient-to-br from-shPrimary/[0.20] via-shPrimary/[0.07] to-black/25 hover:border-shPrimary"
+                    : hue.card,
                 ].join(" ")}
               >
                 <span className="flex items-start gap-2.5 min-w-0">
@@ -381,10 +408,9 @@ export default function LessonGuide({
                   <span
                     className={[
                       "w-8 h-8 rounded-full grid place-items-center shrink-0 text-[12px] font-black border",
-                      done ? "border-shPrimary/60 bg-shPrimary/15 text-shPrimary"
-                        : isCurrent ? "border-shAccent bg-shAccent text-bgHeader"
-                        : locked ? "border-shBorder text-shTextMuted"
-                        : "border-shBorder text-shTextMuted",
+                      done ? "border-shPrimary bg-shPrimary text-bgHeader shadow-[0_0_12px_rgba(140,198,63,0.45)]"
+                        : isCurrent ? "border-shAccent bg-shAccent text-bgHeader shadow-[0_0_12px_rgba(242,101,34,0.5)]"
+                        : hue.marker,
                     ].join(" ")}
                     aria-hidden="true"
                   >
@@ -392,7 +418,7 @@ export default function LessonGuide({
                   </span>
                   <span className="min-w-0 flex-1">
                     <span className="block text-[11px] font-black uppercase tracking-[0.14em] text-shTextMuted">Step {s.n}</span>
-                    <span className={`block text-[18px] sm:text-[19px] font-black leading-snug ${isCurrent ? "text-shAccent" : done ? "text-shText" : "text-shText"}`}>
+                    <span className={`block text-[18px] sm:text-[19px] font-black leading-snug ${isCurrent ? "text-[#fb923c]" : done ? "text-[#a3e635]" : hue.title}`}>
                       {s.label}
                     </span>
                   </span>
@@ -406,16 +432,16 @@ export default function LessonGuide({
                 {/* State footer chip — the word is the state, never colour alone. */}
                 <span className="mt-auto pt-1.5">
                   {done && (
-                    <span className="inline-flex items-center gap-1.5 rounded-md border border-shPrimary/40 bg-shPrimary/10 px-2 py-1 text-[11px] font-black uppercase tracking-widest text-shPrimary"><i className="fas fa-check text-[9px]" aria-hidden="true"/>Complete</span>
+                    <span className="inline-flex items-center gap-1.5 rounded-md px-2 py-1 text-[11px] font-black uppercase tracking-widest bg-shPrimary text-bgHeader shadow-[0_0_10px_rgba(140,198,63,0.4)]"><i className="fas fa-check text-[9px]" aria-hidden="true"/>Complete</span>
                   )}
                   {isCurrent && (
-                    <span className="inline-flex items-center gap-1.5 rounded-md px-2 py-1 text-[11px] font-black uppercase tracking-widest bg-shAccent text-bgHeader"><i className="fas fa-circle-notch text-[9px]" aria-hidden="true"/>Current</span>
+                    <span className="inline-flex items-center gap-1.5 rounded-md px-2 py-1 text-[11px] font-black uppercase tracking-widest bg-shAccent text-bgHeader shadow-[0_0_10px_rgba(242,101,34,0.45)]"><i className="fas fa-circle-notch text-[9px]" aria-hidden="true"/>Current</span>
                   )}
                   {locked && (
                     <span className="inline-flex items-center gap-1.5 rounded-md border border-shBorder/60 bg-black/15 px-2 py-1 text-[11px] font-black uppercase tracking-widest text-shTextMuted"><i className="fas fa-lock text-[9px]" aria-hidden="true"/>Locked</span>
                   )}
                   {!done && !isCurrent && !locked && (
-                    <span className="inline-flex items-center gap-1.5 rounded-md border border-shSecondary/40 bg-shSecondary/10 px-2 py-1 text-[11px] font-black uppercase tracking-widest text-shSecondary">Available</span>
+                    <span className="inline-flex items-center gap-1.5 rounded-md px-2 py-1 text-[11px] font-black uppercase tracking-widest bg-shSecondary text-bgHeader">Available</span>
                   )}
                 </span>
               </button>
