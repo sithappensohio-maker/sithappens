@@ -124,6 +124,14 @@ export function PackEditor({ form, setForm, editing, originalImageId, emailTempl
                             onChange={(patch) => setForm({ ...form, ...patch })} />
       </div>
 
+      {/* Photo is channel-independent: the register grid and the client
+          Shop both render it, so it must never require Available Online. */}
+      <div className="mt-4 border-t border-shBorder pt-4">
+        <p className="text-[14px] font-black text-shTextMuted uppercase tracking-widest mb-1">Pack Photo (shown at the register and in the client Shop)</p>
+        <ShopImageUpload imageId={form.image_id} originalImageId={originalImageId}
+                         onChange={(id)=>setForm({...form, image_id: id})} />
+      </div>
+
       {/* Client Shop Phase 1 — additive online-visibility controls. */}
       <div className="mt-4 border-t border-shBorder pt-4">
         <p className="text-[13px] font-black text-shTextMuted uppercase tracking-widest mb-2">Client Shop</p>
@@ -140,11 +148,6 @@ export function PackEditor({ form, setForm, editing, originalImageId, emailTempl
               <input value={form.online_description || ""} onChange={(e)=>setForm({...form, online_description: e.target.value})}
                      data-testid="pack-online-description"
                      className="w-full mt-1 bg-[var(--sh-card-base)] border border-shBorder rounded p-2 text-shText text-sm" />
-            </div>
-            <div>
-              <label className="text-[14px] font-black text-shTextMuted uppercase tracking-widest mb-1 block">Pack Photo</label>
-              <ShopImageUpload imageId={form.image_id} originalImageId={originalImageId}
-                               onChange={(id)=>setForm({...form, image_id: id})} />
             </div>
           </div>
         )}

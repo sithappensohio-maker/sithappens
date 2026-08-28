@@ -14,6 +14,7 @@ import NeonEdge from "../components/premium/NeonEdge";
 import HuskyDogImage from "../components/brand/HuskyDogImage";
 import {
   inventoryStatus, itemWarnings, marginDisplay, filterItemsByView,
+  catalogProfitSummary,
   orderRef, orderComputedStatus, filterOrdersByView, searchOrders,
 } from "../lib/shopManagerPolish";
 
@@ -301,6 +302,25 @@ function ItemsTab({ onEditItem, onAddShopItem }) {
           or use the Categories &amp; Layout tab if you only need to organize categories.
         </div>
       ) : (
+      <>
+      {/* Catalog profitability rollup — display-only, from the rows shown
+          below. Honest numbers: items without a cost are excluded and
+          called out, never counted as zero-cost. */}
+      {(() => {
+        const ps = catalogProfitSummary(filtered);
+        if (ps.costedCount === 0 && ps.missingCostCount === 0) return null;
+        return (
+          <div className="flex flex-wrap items-center gap-x-5 gap-y-1 rounded-lg border border-shBorder bg-[var(--sh-card-base)] px-4 py-2.5" data-testid="sm-profit-summary">
+            <span className="text-[11px] text-shTextMuted uppercase tracking-widest font-black">Profitability</span>
+            <span className="text-sm text-shText">Stock at cost <span className="font-black">{ps.inventoryCost}</span></span>
+            <span className="text-sm text-shText">Retail value <span className="font-black">{ps.inventoryRetail}</span></span>
+            <span className="text-sm text-shText">Potential profit <span className="font-black text-shPrimary">{ps.potentialProfit}</span>{ps.marginPercent && <span className="text-shTextMuted"> ({ps.marginPercent} margin)</span>}</span>
+            {ps.missingCostCount > 0 && (
+              <span className="text-[12px] text-shOrange" data-testid="sm-profit-missing-cost">{ps.missingCostCount} product{ps.missingCostCount === 1 ? "" : "s"} missing cost — not counted</span>
+            )}
+          </div>
+        );
+      })()}
       <div className="overflow-x-auto">
         <table className="w-full text-sm">
           <thead>
@@ -409,6 +429,7 @@ function ItemsTab({ onEditItem, onAddShopItem }) {
           </tbody>
         </table>
       </div>
+      </>
       )}
 
       {stockModal && (() => {

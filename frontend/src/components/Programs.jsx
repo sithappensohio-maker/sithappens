@@ -513,12 +513,14 @@ export function ProgramEditor({ program, setProgram, meta, allPrograms = [], onS
                          data-testid="prog-online-description"
                          className="w-full bg-bgBase border border-bgHover rounded p-2 text-white text-sm"/>
                 </Field>
-                <Field label="Program Photo">
-                  <ShopImageUpload imageId={program.image_id} originalImageId={originalImageId}
-                                   onChange={(id)=>set({image_id: id})} />
-                </Field>
               </div>
             )}
+            {/* Photo is channel-independent: the register grid and the client
+                Shop both render it, so it must never require Available Online. */}
+            <Field label="Program Photo (shown at the register and in the client Shop)">
+              <ShopImageUpload imageId={program.image_id} originalImageId={originalImageId}
+                               onChange={(id)=>set({image_id: id})} />
+            </Field>
           </div>
 
           {/* Public no-account storefront — training programs always
