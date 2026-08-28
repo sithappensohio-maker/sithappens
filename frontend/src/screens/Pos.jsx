@@ -1412,7 +1412,7 @@ export default function Pos({ onOpenShopManager } = {}) {
                   <button key={`${item.kind}-${item.id}`} onClick={() => addItem(item)} disabled={outOfStock}
                           data-testid={`pos-product-${item.id}`}
                           className="bg-[var(--sh-card-base)] border border-shBorder hover:border-shPrimary/50 rounded-xl p-3 text-left disabled:opacity-40 disabled:hover:border-shBorder">
-                    <ItemThumbnail imageId={item.image_id} alt={item.name} variant="banner" size={64} className="mb-1.5" />
+                    <ItemThumbnail imageId={item.image_id} alt={item.name} variant="banner" size={80} fit="contain" className="mb-1.5" />
                     <p className="text-shText font-bold text-sm truncate">{item.name}</p>
                     {item.category_name && (
                       <p className="text-shTextMuted text-[10px] font-black uppercase tracking-widest truncate">{item.category_name}</p>
