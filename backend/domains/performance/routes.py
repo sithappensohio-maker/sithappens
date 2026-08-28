@@ -154,6 +154,41 @@ async def _decorate_client_page(*, db, items: list[dict], get_settings, business
     return items
 
 
+def _hoist_static_routes_above_dynamic_shadows(api) -> None:
+    """Starlette resolves routes in registration order, and this module
+    registers at domain-composition time — AFTER the legacy monolith's
+    routes — so the static picker paths registered above would otherwise be
+    captured forever by their earlier dynamic siblings and 404:
+    /clients/{client_id} swallowing /clients/page|options|balances,
+    /dogs/{dog_id} swallowing /dogs/options, and /homework/{homework_id}
+    swallowing /homework/counts.  Re-seat each static route directly ahead
+    of the first earlier-registered dynamic route that would match its
+    path.  This is pure registration-order arrangement at composition time;
+    no route's endpoint or dependant is ever touched (the Phase 4
+    contract), and with no conflicting dynamic route it is a no-op."""
+    def _dynamic_matches(dynamic_path: str, static_path: str) -> bool:
+        if "{" not in dynamic_path:
+            return False
+        pattern = "^" + re.sub(r"\{[^}]+\}", "[^/]+", dynamic_path) + "$"
+        return re.match(pattern, static_path) is not None
+
+    routes = api.routes
+    static_suffixes = (
+        "/clients/page", "/clients/options", "/clients/balances",
+        "/dogs/options", "/homework/counts",
+    )
+    for route in [r for r in routes if getattr(r, "path", "").endswith(static_suffixes)]:
+        methods = getattr(route, "methods", set()) or set()
+        for idx, earlier in enumerate(routes):
+            if earlier is route:
+                break
+            earlier_methods = getattr(earlier, "methods", set()) or set()
+            if (methods & earlier_methods) and _dynamic_matches(getattr(earlier, "path", ""), route.path):
+                routes.remove(route)
+                routes.insert(idx, route)
+                break
+
+
 def register_performance_routes(
     *, api, db, server_globals: dict, get_current_user, require_clients_view, perms_for,
     business_today,
@@ -278,3 +313,5 @@ def register_performance_routes(
             "pending_actions": pending_count,
             "generated_at": server_globals["now_iso"](),
         }
+
+    _hoist_static_routes_above_dynamic_shadows(api)
