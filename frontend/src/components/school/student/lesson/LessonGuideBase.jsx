@@ -331,7 +331,11 @@ export default function LessonGuide({
 
       {/* Step-card rail — one card per guided step, stacking on phones and
           fanning out into a grid on wider screens. Same rows, same states,
-          same locks; only the presentation changed. */}
+          same locks; only the presentation changed. Each step owns a hue so
+          the rail reads like a journey rather than a form — but color is
+          identity, never state: the current card burns orange with a glow,
+          and a locked card drops its hue entirely (muted = locked), with the
+          explicit word/icon still carrying the state. */}
       <ol className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-4 gap-2.5">
         {sections.map((s) => {
           const state = stepState(s, { ...ctx, currentKey: cur });
@@ -340,6 +344,17 @@ export default function LessonGuide({
           const done = state === "completed";
           const isCurrent = state === "current";
           const reason = locked ? lockReason(s, ctx) : "";
+          const STEP_HUES = {
+            learn: "border-[#00a9e0]/45 bg-gradient-to-br from-[#00a9e0]/[0.12] to-black/25 hover:border-[#00a9e0]/70",
+            get_ready: "border-[#2dd4bf]/40 bg-gradient-to-br from-[#2dd4bf]/[0.11] to-black/25 hover:border-[#2dd4bf]/65",
+            train: "border-shPrimary/45 bg-gradient-to-br from-shPrimary/[0.12] to-black/25 hover:border-shPrimary/70",
+            watch_for: "border-[#a78bfa]/40 bg-gradient-to-br from-[#a78bfa]/[0.11] to-black/25 hover:border-[#a78bfa]/65",
+            know_got_it: "border-[#facc15]/40 bg-gradient-to-br from-[#facc15]/[0.10] to-black/25 hover:border-[#facc15]/60",
+            practice: "border-shAccent/45 bg-gradient-to-br from-shAccent/[0.11] to-black/25 hover:border-shAccent/70",
+            quick_check: "border-shSecondary/45 bg-gradient-to-br from-shSecondary/[0.12] to-black/25 hover:border-shSecondary/70",
+            next_step: "border-[#f472b6]/40 bg-gradient-to-br from-[#f472b6]/[0.11] to-black/25 hover:border-[#f472b6]/60",
+          };
+          const hue = STEP_HUES[s.key] || "border-shBorder/55 bg-[var(--sh-card-base)] hover:border-shSecondary/40";
 
           return (
             <li key={s.key} className="min-w-0">
@@ -355,10 +370,10 @@ export default function LessonGuide({
                 className={[
                   "w-full h-full text-left rounded-2xl border p-3.5 flex flex-col gap-2 min-h-[64px] transition",
                   "focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-shPrimary focus-visible:ring-inset",
-                  locked ? "opacity-60 cursor-not-allowed border-shBorder/50 bg-black/10"
-                    : isCurrent || active ? "border-shAccent/60 bg-shAccent/[0.06] shadow-[0_0_0_1px_var(--sh-accent)_inset]"
-                    : done ? "border-shPrimary/35 bg-shPrimary/[0.04] hover:bg-shPrimary/[0.07]"
-                    : "border-shBorder/55 bg-[var(--sh-card-base)] hover:bg-white/[0.03] hover:border-shSecondary/40",
+                  locked ? `opacity-60 saturate-[0.45] cursor-not-allowed ${hue}`
+                    : isCurrent || active ? "border-shAccent/70 bg-gradient-to-br from-shAccent/[0.14] to-black/25 shadow-[0_0_0_1px_var(--sh-accent)_inset,0_0_22px_rgba(242,101,34,0.3)]"
+                    : done ? "border-shPrimary/40 bg-shPrimary/[0.05] hover:bg-shPrimary/[0.08]"
+                    : hue,
                 ].join(" ")}
               >
                 <span className="flex items-start gap-2.5 min-w-0">
@@ -431,7 +446,7 @@ export function PracticeUnlockedCard({ dogName, onStartPractice, busy, testid = 
         You&apos;ve finished the lesson instructions. Practice is where the training actually happens.
       </p>
       <button type="button" onClick={onStartPractice} disabled={busy} data-testid={`${testid}-cta`}
-              className="mt-4 w-full min-h-[56px] rounded-xl bg-shPrimary text-bgHeader text-[15px] font-black uppercase tracking-widest disabled:opacity-50 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-shPrimary focus-visible:ring-offset-2 focus-visible:ring-offset-bgBase">
+              className="mt-4 w-full min-h-[56px] rounded-xl bg-gradient-to-r from-shPrimary to-[#b7e35c] text-bgHeader text-[15px] font-black uppercase tracking-widest shadow-[0_0_24px_rgba(140,198,63,0.5)] hover:brightness-110 transition disabled:opacity-50 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-shPrimary focus-visible:ring-offset-2 focus-visible:ring-offset-bgBase">
         <i className="fas fa-paw mr-2" aria-hidden="true" />Start Practice
       </button>
     </section>
@@ -524,7 +539,7 @@ export function LessonSectionBody({
       {instructional && onComplete && !completed && (
         <button type="button" onClick={() => onComplete(section.key)} disabled={busy}
                 data-testid={`${testid}-continue-${section.key}`}
-                className="w-full min-h-[56px] rounded-xl bg-shPrimary text-bgHeader text-[15px] font-black uppercase tracking-widest disabled:opacity-50 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-shPrimary focus-visible:ring-offset-2 focus-visible:ring-offset-bgBase">
+                className="w-full min-h-[56px] rounded-xl bg-gradient-to-r from-shPrimary to-[#b7e35c] text-bgHeader text-[15px] font-black uppercase tracking-widest shadow-[0_0_24px_rgba(140,198,63,0.5)] hover:brightness-110 transition disabled:opacity-50 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-shPrimary focus-visible:ring-offset-2 focus-visible:ring-offset-bgBase">
           {busy ? "Saving…" : <>{continueLabel} <i className="fas fa-arrow-right ml-1.5 text-[12px]" aria-hidden="true" /></>}
         </button>
       )}

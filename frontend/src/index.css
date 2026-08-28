@@ -528,6 +528,18 @@ body.printing-pdf .print-card .bg-bgHeader { border: 1px solid #ddd !important; 
 }
 .sh-splatter-explosion > * { position: relative; z-index: 1; }
 
+/* School redesign — restrained paint splash for School hero bands: the
+   explosion peeks in from the right edge at low opacity so the band feels
+   alive without burying the identity/labels it sits behind. */
+.sh-school-splash { position: relative; isolation: isolate; }
+.sh-school-splash::before {
+  content: ""; position: absolute; pointer-events: none; z-index: 0;
+  top: -30%; right: -60px; width: 340px; height: 160%;
+  background: url("./assets/brand/splatter-explosion.png") center/contain no-repeat;
+  opacity: 0.16; mix-blend-mode: screen;
+}
+.sh-school-splash > * { position: relative; z-index: 1; }
+
 /* Diagonal brush stripe — for narrow banners (Income / Dashboard widgets). */
 .sh-splatter-brush {
   position: relative;

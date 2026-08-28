@@ -213,7 +213,7 @@ function SchoolOverviewHero({ data, snap, currentModule, currentLesson, currentD
   const lastSession = (data?.operations?.recent_sessions || [])[0];
   const activePractice = (data?.practice || []).filter(p => p.status !== "completed");
   return (
-    <section className="rounded-3xl border border-shBorder/70 bg-gradient-to-br from-shPrimary/[0.05] via-black/10 to-shSecondary/[0.04] p-4 sm:p-5" data-testid="school-overview-hero">
+    <section className="sh-school-splash overflow-hidden rounded-3xl border border-shPrimary/35 bg-gradient-to-br from-shPrimary/[0.10] via-black/10 to-shSecondary/[0.08] p-4 sm:p-5" data-testid="school-overview-hero">
       <div className="flex flex-col md:flex-row md:items-center gap-4">
         <ProgressRing pct={data?.progress?.course_pct || 0}/>
         <div className="min-w-0 flex-1">
@@ -228,7 +228,7 @@ function SchoolOverviewHero({ data, snap, currentModule, currentLesson, currentD
         </div>
         {staffLed && data?.enrollment?.status === "active" && (
           <button onClick={onOpenLesson} data-testid="school-overview-start-lesson"
-                  className="shrink-0 min-h-[50px] px-5 rounded-xl bg-shPrimary text-bgHeader text-[12px] font-black uppercase tracking-widest shadow-[0_12px_34px_-14px_rgba(140,198,63,0.8)] hover:brightness-110 transition">
+                  className="shrink-0 min-h-[50px] px-5 rounded-xl bg-gradient-to-r from-shPrimary to-[#b7e35c] text-bgHeader text-[12px] font-black uppercase tracking-widest shadow-[0_0_24px_rgba(140,198,63,0.5),0_12px_34px_-14px_rgba(140,198,63,0.8)] hover:brightness-110 transition">
             <i className="fas fa-play mr-1.5"/>Start Lesson
           </button>
         )}
@@ -241,7 +241,7 @@ function SchoolOverviewHero({ data, snap, currentModule, currentLesson, currentD
               const isCurrent = i === curIdx;
               const isDone = curIdx >= 0 && i < curIdx;
               return (
-                <div key={m.id} className={`shrink-0 min-w-[128px] rounded-xl border p-2.5 ${isCurrent ? "border-shPrimary/70 bg-shPrimary/[0.08] shadow-[0_0_0_1px_var(--sh-primary)_inset]" : isDone ? "border-shPrimary/30 bg-shPrimary/[0.03]" : "border-shBorder/55 bg-black/15"}`}>
+                <div key={m.id} className={`shrink-0 min-w-[128px] rounded-xl border p-2.5 ${isCurrent ? "border-shPrimary/70 bg-shPrimary/[0.10] shadow-[0_0_0_1px_var(--sh-primary)_inset,0_0_18px_rgba(140,198,63,0.35)]" : isDone ? "border-shPrimary/30 bg-shPrimary/[0.03]" : "border-shBorder/55 bg-black/15"}`}>
                   <p className="text-[9px] font-black uppercase tracking-widest text-shTextMuted">Module {i + 1}{isCurrent && <span className="ml-1.5 text-shPrimary">· Current</span>}</p>
                   <p className="text-[12px] font-black text-shText mt-0.5 leading-tight">{m.name}</p>
                   <p className="text-[10px] text-shTextMuted mt-1">

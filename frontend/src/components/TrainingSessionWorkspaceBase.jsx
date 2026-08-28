@@ -307,8 +307,9 @@ export default function TrainingSessionWorkspace({ bookingId, dogId, enrollmentI
   return (
     <div className="fixed inset-0 bg-black/80 z-50 flex items-center justify-center p-2 sm:p-4" data-testid="training-session-workspace">
       <div className="bg-[var(--sh-card-base)] border border-shBorder rounded-2xl w-full max-w-6xl max-h-[calc(var(--app-height)_-_1rem)] flex flex-col min-h-0 shadow-2xl">
-        {/* Header */}
-        <div className="px-4 sm:px-6 py-4 border-b border-shBorder shrink-0 space-y-3 bg-gradient-to-br from-shSecondary/[0.05] via-transparent to-transparent rounded-t-2xl">
+        {/* Header — brand-energy band: lime→blue wash + the designer paint
+            splash the Training hub hero already uses. */}
+        <div className="sh-school-splash overflow-hidden px-4 sm:px-6 py-4 border-b border-shPrimary/30 shrink-0 space-y-3 bg-gradient-to-r from-shPrimary/[0.16] via-shSecondary/[0.10] to-transparent rounded-t-2xl">
           <div className="flex items-start justify-between gap-2">
             <div className="min-w-0">
               <p className="text-[10px] font-black uppercase tracking-[0.18em] text-shPrimary"><i className="fas fa-clipboard-check mr-1.5"/>Skill Performance Log</p>
@@ -548,7 +549,7 @@ export default function TrainingSessionWorkspace({ bookingId, dogId, enrollmentI
                 <span className="block text-[9px] font-semibold normal-case tracking-normal opacity-75">Draft keeps autosaving</span>
               </button>
               <button onClick={() => setCompleting(true)} data-testid="workspace-complete-session"
-                      className="min-h-[46px] bg-shPrimary text-bgHeader px-5 py-2 rounded-xl font-black text-[13px] uppercase tracking-widest shadow-[0_10px_30px_-12px_rgba(140,198,63,0.7)] hover:brightness-110 transition">
+                      className="min-h-[46px] bg-gradient-to-r from-shPrimary to-[#b7e35c] text-bgHeader px-5 py-2 rounded-xl font-black text-[13px] uppercase tracking-widest shadow-[0_0_24px_rgba(140,198,63,0.5),0_10px_30px_-12px_rgba(140,198,63,0.8)] hover:brightness-110 transition">
                 <i className="fas fa-flag-checkered mr-1.5"/>Complete Session
               </button>
             </>
@@ -785,7 +786,7 @@ function RecordFields({ activity: a, actual, onChange }) {
           Capture what happened during today&apos;s session. Mark &ldquo;Not needed&rdquo; for anything that didn&apos;t apply to this lesson — leaving a card blank just means it wasn&apos;t entered, and a 0 is a real result.
         </p>
         <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-3 mt-2.5">
-          <MetricCard icon="fa-stopwatch" title="Duration" helper="How long the dog maintained or practiced the behavior."
+          <MetricCard icon="fa-stopwatch" title="Duration" tone="cyan" helper="How long the dog maintained or practiced the behavior."
                       notNeeded={!!notNeeded.duration} onNotNeededChange={setNotNeeded("duration", "duration_achieved")}
                       testid={`activity-${a.id}-metric-duration`}>
             {a.target_duration && <p className="text-[10.5px] text-shTextMuted mb-1.5"><span className="font-black uppercase tracking-widest text-[9.5px]">Target · </span>{a.target_duration}</p>}
@@ -807,7 +808,7 @@ function RecordFields({ activity: a, actual, onChange }) {
             {recordedValueBox("duration_achieved", "duration")}
           </MetricCard>
 
-          <MetricCard icon="fa-ruler" title="Distance" helper="How far the dog worked from the handler, target, or starting point."
+          <MetricCard icon="fa-ruler" title="Distance" tone="teal" helper="How far the dog worked from the handler, target, or starting point."
                       notNeeded={!!notNeeded.distance} onNotNeededChange={setNotNeeded("distance", "distance_achieved")}
                       testid={`activity-${a.id}-metric-distance`}>
             {a.target_distance && <p className="text-[10.5px] text-shTextMuted mb-1.5"><span className="font-black uppercase tracking-widest text-[9.5px]">Target · </span>{a.target_distance}</p>}
@@ -829,7 +830,7 @@ function RecordFields({ activity: a, actual, onChange }) {
             {recordedValueBox("distance_achieved", "distance")}
           </MetricCard>
 
-          <MetricCard icon="fa-rotate" title="Repetitions" helper="How many complete attempts were made."
+          <MetricCard icon="fa-rotate" title="Repetitions" tone="lime" helper="How many complete attempts were made."
                       notNeeded={!!notNeeded.repetitions} onNotNeededChange={setNotNeeded("repetitions", "repetitions_achieved")}
                       testid={`activity-${a.id}-metric-repetitions`}>
             <div className="flex gap-1.5 items-end">
@@ -855,7 +856,7 @@ function RecordFields({ activity: a, actual, onChange }) {
             {recordedValueBox("repetitions_achieved", "repetitions")}
           </MetricCard>
 
-          <MetricCard icon="fa-volume-high" title="Distraction" helper="What distractions were present and how difficult they were."
+          <MetricCard icon="fa-volume-high" title="Distraction" tone="orange" helper="What distractions were present and how difficult they were."
                       notNeeded={!!notNeeded.distraction} onNotNeededChange={setNotNeeded("distraction", "distraction_level")}
                       testid={`activity-${a.id}-metric-distraction`}>
             <label className={SMALL_LABEL_CLS}>Difficulty</label>
@@ -870,7 +871,7 @@ function RecordFields({ activity: a, actual, onChange }) {
             {recordedValueBox("distraction_level", "distraction")}
           </MetricCard>
 
-          <MetricCard icon="fa-tree" title="Environment" helper="Where the training took place."
+          <MetricCard icon="fa-tree" title="Environment" tone="green" helper="Where the training took place."
                       notNeeded={!!notNeeded.environment} onNotNeededChange={setNotNeeded("environment", "environment")}
                       testid={`activity-${a.id}-metric-environment`}>
             <SegmentedOptions options={ENVIRONMENT_CHOICES} value={details.environment?.choice || null}
@@ -885,7 +886,7 @@ function RecordFields({ activity: a, actual, onChange }) {
             {recordedValueBox("environment", "environment")}
           </MetricCard>
 
-          <MetricCard icon="fa-hand" title="Handler Help" helper="How much assistance or guidance the dog needed."
+          <MetricCard icon="fa-hand" title="Handler Help" tone="purple" helper="How much assistance or guidance the dog needed."
                       notNeeded={!!notNeeded.handler_help} onNotNeededChange={setNotNeeded("handler_help", "handler_assistance")}
                       testid={`activity-${a.id}-metric-handler`}>
             <label className={SMALL_LABEL_CLS}>Level</label>
@@ -919,7 +920,7 @@ function RecordFields({ activity: a, actual, onChange }) {
             {recordedValueBox("handler_assistance", "handler")}
           </MetricCard>
 
-          <MetricCard icon="fa-link" title="Leash" helper="How the leash was used and the dog's leash behavior."
+          <MetricCard icon="fa-link" title="Leash" tone="pink" helper="How the leash was used and the dog's leash behavior."
                       notNeeded={!!notNeeded.leash} onNotNeededChange={setNotNeeded("leash", "leash_off_leash")}
                       testid={`activity-${a.id}-metric-leash`}>
             <label className={SMALL_LABEL_CLS}>Leash use</label>
