@@ -68,6 +68,36 @@ export function marginDisplay(it) {
   };
 }
 
+// Catalog-wide profitability rollup for the Items tab — display-only and
+// honest: only internal physical products with a cost actually entered are
+// counted (a missing cost is never treated as zero — those items are
+// reported separately as uncounted), and stock-based totals only include
+// tracked items, clamping negative stock to zero. Archived items are the
+// caller's concern: pass the rows already being displayed.
+export function catalogProfitSummary(items) {
+  const internal = items.filter((it) => it.kind === "physical_product" && it.sales_destination !== "shopify_external" && !it.archived);
+  const costed = internal.filter((it) => it.cost != null);
+  const missingCost = internal.length - costed.length;
+  let inventoryCost = 0;
+  let inventoryRetail = 0;
+  for (const it of costed) {
+    if (!it.track_inventory) continue;
+    const qty = Math.max(Number(it.stock_on_hand ?? 0), 0);
+    inventoryCost += qty * Number(it.cost);
+    inventoryRetail += qty * Number(it.list_price || 0);
+  }
+  const potentialProfit = inventoryRetail - inventoryCost;
+  const marginPercent = inventoryRetail > 0 ? (potentialProfit / inventoryRetail) * 100 : null;
+  return {
+    costedCount: costed.length,
+    missingCostCount: missingCost,
+    inventoryCost: money(inventoryCost),
+    inventoryRetail: money(inventoryRetail),
+    potentialProfit: money(potentialProfit),
+    marginPercent: marginPercent != null ? `${marginPercent.toFixed(1)}%` : null,
+  };
+}
+
 // Items-tab view filters (All/Missing Details/Uncategorized/Low Stock/Out of
 // Stock/Hidden/Inactive/Archived). `items` is whatever the endpoint already
 // returned for the current view (Archived's own include_archived=true call

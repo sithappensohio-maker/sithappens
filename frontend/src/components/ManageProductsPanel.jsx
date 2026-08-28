@@ -99,6 +99,22 @@ export function ProductEditor({ form, setForm, editingId, originalImageId, savin
                  className="w-full bg-[var(--sh-card-base)] border border-shBorder rounded p-2 text-shText" />
         </div>
 
+        {/* Photo is channel-independent: the register grid and the client
+            Shop both render it, so it must never require Show Online. */}
+        <div className="col-span-2">
+          <label className="text-[11px] text-shTextMuted uppercase tracking-widest mb-1 block">Product Photo (shown at the register and in the client Shop)</label>
+          <ShopImageUpload imageId={form.image_id} originalImageId={originalImageId}
+                           onChange={(id) => setForm((f) => ({ ...f, image_id: id }))} />
+        </div>
+
+        {form.sales_destination === "internal" && form.cost !== "" && form.cost != null && form.price !== "" && Number(form.price) > 0 && (
+          <div className="col-span-2 rounded border border-shBorder bg-[var(--sh-card-base)] px-3 py-2 text-sm text-shText" data-testid="product-margin-preview">
+            <span className="text-[11px] text-shTextMuted uppercase tracking-widest mr-2">Profit per unit</span>
+            <span className="font-black">{money(Number(form.price) - Number(form.cost))}</span>
+            <span className="text-shTextMuted ml-2">({(((Number(form.price) - Number(form.cost)) / Number(form.price)) * 100).toFixed(1)}% margin)</span>
+          </div>
+        )}
+
         {form.sales_destination === "shopify_external" && (
           <>
             <div className="col-span-2">
@@ -190,11 +206,6 @@ export function ProductEditor({ form, setForm, editingId, originalImageId, savin
               <input type="number" value={form.online_sort_order}
                      onChange={(e) => setForm((f) => ({ ...f, online_sort_order: e.target.value }))}
                      className="w-full bg-[var(--sh-card-base)] border border-shBorder rounded p-2 text-shText" />
-            </div>
-            <div className="col-span-2">
-              <label className="text-[11px] text-shTextMuted uppercase tracking-widest mb-1 block">Product Photo</label>
-              <ShopImageUpload imageId={form.image_id} originalImageId={originalImageId}
-                               onChange={(id) => setForm((f) => ({ ...f, image_id: id }))} />
             </div>
           </div>
         )}

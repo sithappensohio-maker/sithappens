@@ -1,5 +1,6 @@
 import {
   inventoryStatus, itemWarnings, marginDisplay, filterItemsByView,
+  catalogProfitSummary,
   orderRef, orderComputedStatus, filterOrdersByView, searchOrders,
 } from "./shopManagerPolish";
 
@@ -69,6 +70,35 @@ test("marginDisplay computes gross margin dollars and percent from price - cost"
   const result = marginDisplay(trackedProduct({ list_price: 25, cost: 10 }));
   expect(result.cost).toBe("$10.00");
   expect(result.gm).toBe("$15.00 (60.0%)");
+});
+
+test("catalogProfitSummary rolls up stock value at cost/retail, excluding Shopify, archived, and cost-less items", () => {
+  const items = [
+    trackedProduct({ id: "a", stock_on_hand: 10, cost: 10, list_price: 25 }),   // 100 cost / 250 retail
+    trackedProduct({ id: "b", stock_on_hand: 4, cost: 5, list_price: 8 }),      // 20 cost / 32 retail
+    trackedProduct({ id: "no-cost", cost: null }),                              // uncounted, reported
+    trackedProduct({ id: "shopify", sales_destination: "shopify_external" }),   // never counted
+    trackedProduct({ id: "archived", archived: true }),                         // never counted
+    { kind: "credit_pack", id: "pack", cost: 1 },                               // never counted
+  ];
+  const ps = catalogProfitSummary(items);
+  expect(ps.costedCount).toBe(2);
+  expect(ps.missingCostCount).toBe(1);
+  expect(ps.inventoryCost).toBe("$120.00");
+  expect(ps.inventoryRetail).toBe("$282.00");
+  expect(ps.potentialProfit).toBe("$162.00");
+  expect(ps.marginPercent).toBe("57.4%");
+});
+
+test("catalogProfitSummary skips untracked stock and clamps negative stock to zero, never inventing value", () => {
+  const ps = catalogProfitSummary([
+    trackedProduct({ id: "untracked", track_inventory: false, cost: 10, list_price: 25 }), // costed but no stock math
+    trackedProduct({ id: "negative", stock_on_hand: -3, cost: 10, list_price: 25 }),
+  ]);
+  expect(ps.costedCount).toBe(2);
+  expect(ps.inventoryCost).toBe("$0.00");
+  expect(ps.inventoryRetail).toBe("$0.00");
+  expect(ps.marginPercent).toBeNull();
 });
 
 test("filterItemsByView Low Stock / Out of Stock only include active tracked products past/at threshold", () => {
