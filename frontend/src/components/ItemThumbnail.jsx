@@ -36,18 +36,23 @@ export function useShopMediaSrc(imageId, { public: isPublic = false } = {}) {
  * nothing shifts layout while the image is still loading or if it's
  * missing entirely.
  */
-export default function ItemThumbnail({ imageId, alt, size = 44, variant = "square", className = "", public: isPublic = false }) {
+export default function ItemThumbnail({ imageId, alt, size = 44, variant = "square", fit = "cover", className = "", public: isPublic = false }) {
   const src = useShopMediaSrc(imageId, { public: isPublic });
   const isBanner = variant === "banner";
   const boxStyle = isBanner
     ? { height: size, width: "100%" }
     : { width: size, height: size, minWidth: size, minHeight: size };
   const shapeClass = isBanner ? "w-full" : "shrink-0";
+  // fit="contain" letterboxes instead of cropping — for surfaces where the
+  // whole product image must stay readable (e.g. the register grid, where
+  // labels/banners carry the product's identity). The faint backdrop keeps
+  // the unused gutter looking intentional rather than broken.
+  const fitClass = fit === "contain" ? "object-contain bg-black/25" : "object-cover";
 
   if (src) {
     return (
       <img src={src} alt={alt || ""} style={boxStyle}
-           className={`${shapeClass} rounded-md border border-shBorder object-cover ${className}`} />
+           className={`${shapeClass} rounded-md border border-shBorder ${fitClass} ${className}`} />
     );
   }
   return (
