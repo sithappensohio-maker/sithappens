@@ -344,43 +344,21 @@ export default function LessonGuide({
           const done = state === "completed";
           const isCurrent = state === "current";
           const reason = locked ? lockReason(s, ctx) : "";
+          // Card surfaces come from the shared .sh-hue-card 3D system in
+          // index.css (glossy sheen, hue-lit radial, gradient edge, depth
+          // shadow); this map only picks each step's hue + text/marker tones.
           const STEP_HUES = {
-            learn: {
-              card: "border-[#00a9e0]/65 bg-gradient-to-br from-[#00a9e0]/[0.24] via-[#00a9e0]/[0.08] to-black/25 hover:border-[#00a9e0]",
-              title: "text-[#4cc9f0]", marker: "border-[#00a9e0]/70 bg-[#00a9e0]/25 text-[#4cc9f0]",
-            },
-            get_ready: {
-              card: "border-[#2dd4bf]/60 bg-gradient-to-br from-[#2dd4bf]/[0.22] via-[#2dd4bf]/[0.07] to-black/25 hover:border-[#2dd4bf]",
-              title: "text-[#2dd4bf]", marker: "border-[#2dd4bf]/65 bg-[#2dd4bf]/20 text-[#2dd4bf]",
-            },
-            train: {
-              card: "border-shPrimary/65 bg-gradient-to-br from-shPrimary/[0.24] via-shPrimary/[0.08] to-black/25 hover:border-shPrimary",
-              title: "text-[#a3e635]", marker: "border-shPrimary/70 bg-shPrimary/25 text-[#a3e635]",
-            },
-            watch_for: {
-              card: "border-[#a78bfa]/60 bg-gradient-to-br from-[#a78bfa]/[0.22] via-[#a78bfa]/[0.07] to-black/25 hover:border-[#a78bfa]",
-              title: "text-[#a78bfa]", marker: "border-[#a78bfa]/65 bg-[#a78bfa]/20 text-[#a78bfa]",
-            },
-            know_got_it: {
-              card: "border-[#facc15]/55 bg-gradient-to-br from-[#facc15]/[0.18] via-[#facc15]/[0.06] to-black/25 hover:border-[#facc15]",
-              title: "text-[#facc15]", marker: "border-[#facc15]/60 bg-[#facc15]/20 text-[#facc15]",
-            },
-            practice: {
-              card: "border-shAccent/60 bg-gradient-to-br from-shAccent/[0.20] via-shAccent/[0.07] to-black/25 hover:border-shAccent",
-              title: "text-[#fb923c]", marker: "border-shAccent/65 bg-shAccent/20 text-[#fb923c]",
-            },
-            quick_check: {
-              card: "border-shSecondary/60 bg-gradient-to-br from-shSecondary/[0.22] via-shSecondary/[0.08] to-black/25 hover:border-shSecondary",
-              title: "text-shSecondary", marker: "border-shSecondary/65 bg-shSecondary/20 text-shSecondary",
-            },
-            next_step: {
-              card: "border-[#f472b6]/55 bg-gradient-to-br from-[#f472b6]/[0.20] via-[#f472b6]/[0.07] to-black/25 hover:border-[#f472b6]",
-              title: "text-[#f472b6]", marker: "border-[#f472b6]/60 bg-[#f472b6]/20 text-[#f472b6]",
-            },
+            learn: { card: "sh-hue-card--cyan", title: "text-[#4cc9f0]", marker: "border-[#00a9e0]/70 bg-[#00a9e0]/25 text-[#4cc9f0]" },
+            get_ready: { card: "sh-hue-card--teal", title: "text-[#2dd4bf]", marker: "border-[#2dd4bf]/65 bg-[#2dd4bf]/20 text-[#2dd4bf]" },
+            train: { card: "sh-hue-card--lime", title: "text-[#a3e635]", marker: "border-shPrimary/70 bg-shPrimary/25 text-[#a3e635]" },
+            watch_for: { card: "sh-hue-card--purple", title: "text-[#a78bfa]", marker: "border-[#a78bfa]/65 bg-[#a78bfa]/20 text-[#a78bfa]" },
+            know_got_it: { card: "sh-hue-card--gold", title: "text-[#facc15]", marker: "border-[#facc15]/60 bg-[#facc15]/20 text-[#facc15]" },
+            practice: { card: "sh-hue-card--orange", title: "text-[#fb923c]", marker: "border-shAccent/65 bg-shAccent/20 text-[#fb923c]" },
+            quick_check: { card: "sh-hue-card--cyan", title: "text-shSecondary", marker: "border-shSecondary/65 bg-shSecondary/20 text-shSecondary" },
+            next_step: { card: "sh-hue-card--pink", title: "text-[#f472b6]", marker: "border-[#f472b6]/60 bg-[#f472b6]/20 text-[#f472b6]" },
           };
           const hue = STEP_HUES[s.key] || {
-            card: "border-shBorder/55 bg-[var(--sh-card-base)] hover:border-shSecondary/40",
-            title: "text-shText", marker: "border-shBorder text-shTextMuted",
+            card: "sh-hue-card--cyan", title: "text-shText", marker: "border-shBorder text-shTextMuted",
           };
 
           return (
@@ -395,11 +373,11 @@ export default function LessonGuide({
                 data-state={state}
                 data-active={active ? "true" : "false"}
                 className={[
-                  "w-full h-full text-left rounded-2xl border p-3.5 flex flex-col gap-2 min-h-[64px] transition",
+                  "sh-hue-card w-full h-full text-left rounded-2xl p-3.5 flex flex-col gap-2 min-h-[64px]",
                   "focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-shPrimary focus-visible:ring-inset",
-                  locked ? `opacity-60 saturate-[0.45] cursor-not-allowed ${hue.card}`
-                    : isCurrent || active ? "border-shAccent/80 bg-gradient-to-br from-shAccent/[0.26] via-shAccent/[0.10] to-black/25 shadow-[0_0_0_1px_var(--sh-accent)_inset,0_0_26px_rgba(242,101,34,0.4)]"
-                    : done ? "border-shPrimary/60 bg-gradient-to-br from-shPrimary/[0.20] via-shPrimary/[0.07] to-black/25 hover:border-shPrimary"
+                  locked ? `sh-hue-card--off opacity-70 cursor-not-allowed ${hue.card}`
+                    : isCurrent || active ? "sh-hue-card--current"
+                    : done ? "sh-hue-card--done"
                     : hue.card,
                 ].join(" ")}
               >

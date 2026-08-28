@@ -12,46 +12,21 @@
 // and trainers learn "distraction is the orange one" by sight. Color is
 // identity only — state still always carries an explicit word/control, and a
 // not-needed card drops its hue entirely so muted = switched off.
+// Card surfaces come from the shared .sh-hue-card 3D system in index.css
+// (glossy sheen, hue-lit radial wash, gradient edge, depth shadow); this map
+// only picks the hue variant + matching text/icon-chip tones.
 const METRIC_TONES = {
-  cyan: {
-    card: "border-[#00a9e0]/55 bg-gradient-to-br from-[#00a9e0]/[0.24] via-black/20 to-black/25",
-    title: "text-[#4cc9f0]",
-    chip: "border-[#00a9e0]/60 bg-[#00a9e0]/20",
-  },
-  teal: {
-    card: "border-[#2dd4bf]/50 bg-gradient-to-br from-[#2dd4bf]/[0.22] via-black/20 to-black/25",
-    title: "text-[#2dd4bf]",
-    chip: "border-[#2dd4bf]/55 bg-[#2dd4bf]/15",
-  },
-  lime: {
-    card: "border-shPrimary/55 bg-gradient-to-br from-shPrimary/[0.24] via-black/20 to-black/25",
-    title: "text-[#a3e635]",
-    chip: "border-shPrimary/60 bg-shPrimary/20",
-  },
-  orange: {
-    card: "border-shAccent/55 bg-gradient-to-br from-shAccent/[0.22] via-black/20 to-black/25",
-    title: "text-[#fb923c]",
-    chip: "border-shAccent/55 bg-shAccent/15",
-  },
-  green: {
-    card: "border-[#4ade80]/50 bg-gradient-to-br from-[#4ade80]/[0.20] via-black/20 to-black/25",
-    title: "text-[#4ade80]",
-    chip: "border-[#4ade80]/50 bg-[#4ade80]/15",
-  },
-  purple: {
-    card: "border-[#a78bfa]/55 bg-gradient-to-br from-[#a78bfa]/[0.24] via-black/20 to-black/25",
-    title: "text-[#a78bfa]",
-    chip: "border-[#a78bfa]/55 bg-[#a78bfa]/15",
-  },
-  pink: {
-    card: "border-[#f472b6]/50 bg-gradient-to-br from-[#f472b6]/[0.22] via-black/20 to-black/25",
-    title: "text-[#f472b6]",
-    chip: "border-[#f472b6]/50 bg-[#f472b6]/15",
-  },
+  cyan: { card: "sh-hue-card--cyan", title: "text-[#4cc9f0]", chip: "border-[#00a9e0]/60 bg-[#00a9e0]/20" },
+  teal: { card: "sh-hue-card--teal", title: "text-[#2dd4bf]", chip: "border-[#2dd4bf]/55 bg-[#2dd4bf]/15" },
+  lime: { card: "sh-hue-card--lime", title: "text-[#a3e635]", chip: "border-shPrimary/60 bg-shPrimary/20" },
+  orange: { card: "sh-hue-card--orange", title: "text-[#fb923c]", chip: "border-shAccent/55 bg-shAccent/15" },
+  green: { card: "sh-hue-card--green", title: "text-[#4ade80]", chip: "border-[#4ade80]/50 bg-[#4ade80]/15" },
+  purple: { card: "sh-hue-card--purple", title: "text-[#a78bfa]", chip: "border-[#a78bfa]/55 bg-[#a78bfa]/15" },
+  pink: { card: "sh-hue-card--pink", title: "text-[#f472b6]", chip: "border-[#f472b6]/50 bg-[#f472b6]/15" },
 };
 
 const NEUTRAL_TONE = {
-  card: "border-shBorder/60 bg-gradient-to-br from-shSecondary/[0.045] via-black/15 to-black/20",
+  card: "sh-hue-card--cyan",
   title: "text-shSecondary",
   chip: "border-shSecondary/30 bg-shSecondary/10",
 };
@@ -61,8 +36,8 @@ export default function MetricCard({
 }) {
   const t = (tone && METRIC_TONES[tone]) || NEUTRAL_TONE;
   return (
-    <section className={`rounded-2xl border p-3.5 sm:p-4 flex flex-col transition ${
-      notNeeded ? "border-shBorder/40 bg-black/10" : t.card
+    <section className={`sh-hue-card rounded-2xl p-3.5 sm:p-4 flex flex-col ${t.card} ${
+      notNeeded ? "sh-hue-card--off" : ""
     }`} data-testid={testid}>
       <p className={`text-[11px] font-black uppercase tracking-[0.14em] flex items-center gap-2 ${notNeeded ? "text-shTextMuted/60" : t.title}`}>
         {icon && <span className={`w-6 h-6 rounded-lg grid place-items-center border shrink-0 ${notNeeded ? "border-shBorder/40 bg-black/15" : t.chip}`}><i className={`fas ${icon} text-[10px]`}/></span>}
