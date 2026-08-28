@@ -13,7 +13,12 @@ import path from "path";
 
 const read = (...p) => fs.readFileSync(path.join(__dirname, ...p), "utf8");
 
-const workspaceSrc = read("TrainingSessionWorkspace.jsx");
+// The workspace is deliberately split: TrainingSessionWorkspace.jsx wraps the
+// optional manual In-Person progression control around the proven base
+// implementation in TrainingSessionWorkspaceBase.jsx. Every pinned behaviour
+// below must hold across the pair, so read them as one source.
+const workspaceSrc =
+  read("TrainingSessionWorkspace.jsx") + read("TrainingSessionWorkspaceBase.jsx");
 const historySrc = read("school", "student", "LessonHistoryScreen.jsx");
 const schoolAppSrc = read("..", "screens", "SchoolApp.jsx");
 const progressSrc = read("school", "student", "ProgressScreen.jsx");

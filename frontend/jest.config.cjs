@@ -10,6 +10,13 @@ module.exports = {
       ],
     }],
   },
+  // FullCalendar (imported by Schedule.jsx via App.js) pulls in preact's
+  // ESM-only dist build; let babel-jest transform those packages instead of
+  // the default "ignore all of node_modules" so any suite importing ../App
+  // can parse.
+  transformIgnorePatterns: [
+    "/node_modules/(?!(preact|@fullcalendar)([/\\\\]|$))",
+  ],
   moduleNameMapper: {
     "^@/(.*)$": "<rootDir>/src/$1",
     "\\.(css|less|scss|sass)$": "<rootDir>/src/test/styleMock.js",

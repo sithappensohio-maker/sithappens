@@ -243,8 +243,10 @@ test("an HEIC that the browser cannot decode is refused, not silently accepted",
 });
 
 test("HEIC is only restricted for inline lesson images, not for School Resources at large", () => {
-  // The resource pipeline's own allow-list is untouched.
+  // The resource pipeline's own allow-list is untouched. school_suite.py is
+  // now a compatibility re-export; the implementation (and this allow-list)
+  // lives in school_suite_base.py.
   const suite = fs.readFileSync(
-    path.join(__dirname, "..", "..", "..", "..", "..", "backend", "school_suite.py"), "utf8");
+    path.join(__dirname, "..", "..", "..", "..", "..", "backend", "school_suite_base.py"), "utf8");
   expect(suite).toMatch(/"image\/heic"/);
 });

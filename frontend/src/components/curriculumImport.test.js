@@ -91,9 +91,13 @@ test("a validation failure is not flattened into a generic error string", () => 
 });
 
 test("the catalogue refreshes after a successful import", () => {
+  // The shared-data modernization replaced the local load() with the
+  // useProgramsData() hook's refresh; a successful import still re-fetches
+  // the catalogue.
   const fn = src.slice(src.indexOf("const sendCurriculumZip"),
                        src.indexOf("const exportTemplate"));
-  expect(fn).toMatch(/await load\(\)/);
+  expect(fn).toMatch(/refreshPrograms\(\)/);
+  expect(src).toMatch(/const \{ data: programs, refresh: refreshPrograms \} = useProgramsData\(\)/);
 });
 
 test("a previous result never lingers over a new attempt", () => {

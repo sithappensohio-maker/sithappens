@@ -63,14 +63,25 @@ jobs:
           --health-retries 10
     env:
       MONGO_URL: mongodb://127.0.0.1:27017
-      DB_NAME: sit_happens_ci_release_critical
+      # Must contain "test" — release_critical_reset.py (correctly) refuses
+      # to drop/reseed any database whose name doesn't unmistakably mark it
+      # disposable, and the curated gate resets this DB before every file.
+      DB_NAME: sit_happens_test_ci_release_critical
       TEST_BACKEND_URL: http://127.0.0.1:8011
       JWT_SECRET: ci-only-jwt-secret-not-used-in-production
       ADMIN_EMAIL: admin@sithappens.com
       ADMIN_PASSWORD: admin123
       BACKUP_ROOT: ${{ github.workspace }}/backend/_test_release_critical_backups
       SCHOOL_MEDIA_ROOT: ${{ github.workspace }}/backend/_ci_school_media
-      STRIPE_ONLINE_ENABLED: 'false'
+      # tests/test_shop_checkout.py needs online payments ENABLED so the
+      # endpoint's own claim/order/reservation logic runs for real; the
+      # deliberately-invalid secret key makes the actual Stripe call fail
+      # safely (the suite asserts that 502 path — no real charge can exist).
+      STRIPE_ONLINE_ENABLED: 'true'
+      STRIPE_SECRET_KEY: sk_test_ci_only_invalid_key
+      # The same file signs its own webhook payloads with this secret and the
+      # server verifies them with the same value — a CI-only placeholder.
+      STRIPE_WEBHOOK_SECRET: whsec_ci_only_not_a_real_secret
     steps:
       - uses: actions/checkout@v7
       - uses: actions/setup-python@v7

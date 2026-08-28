@@ -21,6 +21,34 @@ from domains.performance import services as performance_services
 logger = logging.getLogger("sithappens")
 
 
+class _LiveDbProxy:
+    """Resolve the server module's CURRENT ``db`` global on every access.
+
+    ``register_domains`` runs once at import time, but the legacy release-
+    critical suite (see tests/test_shop_management.py::_call_server) drives
+    server.py's financial facades in-process by temporarily rebinding
+    ``server.db`` to a client created inside each test's own event loop.
+    Snapshotting the import-time handle into the extracted domains broke
+    that documented contract ("Event loop is closed" on every domain-backed
+    call), so the domains get this proxy instead: attribute/item access is
+    forwarded to whatever ``server.db`` is *right now*.  In production the
+    global never changes, making this byte-for-byte equivalent to the
+    direct handle.
+    """
+
+    def __init__(self, server_globals: dict):
+        self._server_globals = server_globals
+
+    def _current(self):
+        return self._server_globals["db"]
+
+    def __getattr__(self, name):
+        return getattr(self._current(), name)
+
+    def __getitem__(self, name):
+        return self._current()[name]
+
+
 def register_domains(
     *, app, api, db, server_globals: dict,
     get_current_user, require_admin_and_permission, perms_for,
@@ -34,6 +62,10 @@ def register_domains(
     recommended_focus, booking_training_assignment_for_day,
 ):
     """Register extracted domains and startup work once."""
+    # Every domain reads the database through the live proxy so that
+    # rebinding server.db (the legacy in-process test convention) reaches
+    # the domains too — see _LiveDbProxy's docstring.
+    db = _LiveDbProxy(server_globals)
     # Phase 5 financial kernel. The compatibility functions in server.py now
     # delegate to these services, so booking quotes, Quick Check-In, POS preview,
     # and POS checkout all share the same canonical pricing code.

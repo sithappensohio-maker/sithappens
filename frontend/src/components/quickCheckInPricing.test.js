@@ -158,8 +158,12 @@ test("the frontend chooses a service identity, never a dollar amount", () => {
 test("the price endpoint is the canonical resolver, not a second formula", () => {
   const backend = fs.readFileSync(
     path.join(__dirname, "..", "..", "..", "backend", "server.py"), "utf8");
+  // Phase 5 moved the price-overrides route decorator into the pricing
+  // domain, so the slice now ends at the next function definition instead of
+  // the old @api.post marker.
   const fn = backend.slice(backend.indexOf("async def client_service_prices"),
-                           backend.indexOf("@api.post(\"/clients/{client_id}/price-overrides\")"));
+                           backend.indexOf("async def create_client_price_override"));
+  expect(fn.length).toBeGreaterThan(0);
   expect(fn).toMatch(/await resolve_client_price\(/);
   expect(fn).not.toMatch(/override_price/);
 });

@@ -1,4 +1,4 @@
-import { defineConfig, loadEnv } from "vite";
+import { defineConfig, loadEnv, transformWithOxc } from "vite";
 import react from "@vitejs/plugin-react";
 import path from "node:path";
 import os from "node:os";
@@ -45,6 +45,28 @@ function healthPlugin(enabled) {
   };
 }
 
+// CRA-era sources keep JSX in .js files (App.js, index.js, lib/*.js). The
+// builtin oxc transform derives its parser language from the file extension
+// and (by default) excludes .js entirely, so those files die with
+// "Unexpected JSX expression" in both dev and build. This pre-plugin
+// transforms JSX away for src/**/*.js before the builtin ever parses them —
+// no renames, so the Jest source-scan tests keep reading the same paths.
+function jsxInJsPlugin() {
+  return {
+    name: "sit-happens-jsx-in-js",
+    enforce: "pre",
+    async transform(code, id) {
+      const file = id.split("?")[0].replace(/\\/g, "/");
+      if (!/\/src\/.+\.js$/.test(file)) return null;
+      const result = await transformWithOxc(code, id, {
+        lang: "jsx",
+        jsx: { runtime: "automatic" },
+      });
+      return { code: result.code, map: result.map ?? null };
+    },
+  };
+}
+
 export default defineConfig(({ mode }) => {
   const env = loadEnv(mode, here, "");
   const backendUrl = process.env.VITE_BACKEND_URL || env.VITE_BACKEND_URL || process.env.REACT_APP_BACKEND_URL || env.REACT_APP_BACKEND_URL || "";
@@ -53,7 +75,7 @@ export default defineConfig(({ mode }) => {
   const healthEnabled = process.env.ENABLE_HEALTH_CHECK || env.ENABLE_HEALTH_CHECK || "";
   const health = healthPlugin(healthEnabled.toLowerCase() === "true");
   return {
-    plugins: [react(), health].filter(Boolean),
+    plugins: [jsxInJsPlugin(), react(), health].filter(Boolean),
     resolve: { alias: { "@": path.resolve(here, "src") } },
     define: {
       "process.env.REACT_APP_BACKEND_URL": JSON.stringify(backendUrl),

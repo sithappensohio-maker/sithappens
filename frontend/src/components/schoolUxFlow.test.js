@@ -62,7 +62,9 @@ test("a successful Finish Practice replaces the form with the inline completion 
 });
 
 test("School-hosted completion auto-routes after a brief transition; generic homework gets one obvious CONTINUE", () => {
-  expect(practiceSrc).toMatch(/Updating your training plan/);
+  // Beginner-language pass reworded the transition copy; the auto-route
+  // still shows a School-hosted "what happens next" wait state.
+  expect(practiceSrc).toMatch(/School is checking what comes next/);
   expect(practiceSrc).toMatch(/setTimeout\(\(\) => onCompleted\(\), 1400\)/);
   expect(practiceSrc).toMatch(/data-testid="practice-complete-continue"/);
 });

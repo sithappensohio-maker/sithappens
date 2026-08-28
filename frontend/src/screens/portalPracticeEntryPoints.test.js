@@ -96,7 +96,8 @@ test("PracticePanel guards submit against double-tap and disables the button whi
 test("PracticeCompletionPanel's submit button is only disabled during 'saving', not 'error'", () => {
   const panelSrc = fs.readFileSync(path.join(__dirname, "..", "components", "training", "PracticeCompletionPanel.jsx"), "utf8");
   expect(panelSrc).toMatch(/disabled=\{saveState === "saving"\}/);
-  expect(panelSrc).toMatch(/saveState === "error" \? (?:"Retry"|<>Retry<\/>)/);
+  // The wrap-up handholding pass expanded the retry label to "Retry Saving".
+  expect(panelSrc).toMatch(/saveState === "error" \? (?:"Retry"|<>Retry(?: Saving)?<\/>)/);
 });
 
 // 10. Successful save updates the card state — PracticePanel calls the

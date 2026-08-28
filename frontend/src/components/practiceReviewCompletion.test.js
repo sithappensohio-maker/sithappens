@@ -147,7 +147,10 @@ test("a double-click cannot fire two completions", () => {
 test("completing refetches the list so the card moves out of ASSIGNED", () => {
   const fn = screenSrc.slice(screenSrc.indexOf("const completeAssignment"), screenSrc.indexOf("const openNew"));
   expect(fn).toMatch(/await load\(\)/);
-  // the filter counts are derived from the refreshed list, never held locally
-  expect(screenSrc).toMatch(/completed: list\.filter\(h=>h\.status==="completed"\)\.length/);
-  expect(screenSrc).toMatch(/assigned: list\.filter\(h=>h\.status==="assigned"\)\.length/);
+  // the filter counts are re-fetched with the list on every load — from the
+  // server's /homework/counts, so a capped list page can never undercount —
+  // never held in stale local state
+  expect(screenSrc).toMatch(/api\.get\("\/homework\/counts"\)/);
+  expect(screenSrc).toMatch(/completed: Number\(hc\.data\.completed\) \|\| 0/);
+  expect(screenSrc).toMatch(/assigned: Number\(hc\.data\.assigned\) \|\| 0/);
 });

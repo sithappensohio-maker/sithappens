@@ -71,7 +71,11 @@ test("non-daily practice uploads through the section practice-video route", () =
 
 test("the practice timer lives where the reps happen — guided screen and quick/legacy form, never only the after-guided completion form", () => {
   expect(practicePanelSrc).toMatch(/\{timerCard\}\s*<GuidedPracticeFlow/);
-  expect(practicePanelSrc).toMatch(/entryContext !== "guided_done" \|\| timerSec > 0\) && timerCard/);
+  // The wrap-up redesign renders the live timer in exactly two places — the
+  // guided screen and the quick/legacy form branch; after guided practice
+  // the elapsed time is reported as a tracked result chip instead.
+  expect((practicePanelSrc.match(/\{timerCard\}/g) || []).length).toBe(2);
+  expect(practicePanelSrc).toMatch(/if \(timerSec > 0\) items\.push\(\{ key: "guided-time"/);
 });
 
 test("section video control appears only when the recipe requests video", () => {

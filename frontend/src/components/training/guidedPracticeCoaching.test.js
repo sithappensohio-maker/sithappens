@@ -13,7 +13,10 @@ test("guided practice tells a beginner what to do, what counts, and when to rese
 
 test("guided practice coaches after each rep instead of only counting it", () => {
   expect(src).toMatch(/Do This Now/);
-  expect(src).toMatch(/Next Rep/);
+  // The repetition-handholding upgrade renamed the plain "Next Rep" button:
+  // acknowledging an outcome now tells the client to reset and start the
+  // numbered repetition (or take the scheduled break / see the round result).
+  expect(src).toMatch(/Reset & Start Rep \$\{nextRepNumber\}/);
   expect(src).toMatch(/ReactiveTip/);
 });
 
@@ -28,5 +31,7 @@ test("finished practice shows a real session recap before logging", () => {
   expect(src).toMatch(/Session Complete/);
   expect(src).toMatch(/clean reps/);
   expect(src).toMatch(/success/);
-  expect(src).toMatch(/Log This Practice/);
+  // The wrap-up handholding upgrade renamed the logging CTA: the recap now
+  // hands off to the review-and-save wrap-up rather than logging directly.
+  expect(src).toMatch(/Review & Save Today&apos;s Practice/);
 });

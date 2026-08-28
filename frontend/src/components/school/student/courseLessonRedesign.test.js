@@ -21,7 +21,10 @@ const navSrc = read("SchoolNav.jsx");
 const courseSrc = read("CourseRoadmap.jsx");
 const courseCardsSrc = read("course", "CourseCards.jsx");
 const lessonSrc = read("LessonScreen.jsx");
-const guideSrc = read("lesson", "LessonGuide.jsx");
+// The guide is split into the beginner-language wrapper (LessonGuide.jsx)
+// and the proven mapper/renderer (LessonGuideBase.jsx); the behaviours (and
+// forbidden content) pinned here must hold across the pair.
+const guideSrc = read("lesson", "LessonGuide.jsx") + read("lesson", "LessonGuideBase.jsx");
 const appSrc = read("..", "..", "..", "screens", "SchoolApp.jsx");
 
 // ---------------------------------------------------------------------------

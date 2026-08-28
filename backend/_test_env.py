@@ -90,4 +90,43 @@ os.environ["DB_NAME"] = TEST_DB_NAME
 # just claimed above.
 load_dotenv(Path(__file__).parent / ".env")
 
+def seed_admin_user(mongo_url: str, db_name: str) -> None:
+    """Seed the admin account into the just-dropped disposable database,
+    exactly the way CI's release-critical job seeds it before app startup.
+
+    _test_loop.py runs `server.startup()` against this database to create
+    the unique indexes the idempotency guards depend on. startup()'s
+    first-run security guard (Sprint 110di-46) refuses to CREATE a first
+    admin when ADMIN_PASSWORD is a default like "admin123" — which is
+    exactly what CI exports. CI resolves this for the uvicorn server by
+    inserting the admin row itself before startup; this helper is that same
+    seed for the ad hoc suite's disposable database, so the guard sees an
+    existing admin (not a first run) and the production refusal stays fully
+    intact and tested.
+    """
+    assert_safe_test_db_name(db_name)
+    import uuid
+
+    import bcrypt
+
+    admin_email = os.environ.get("ADMIN_EMAIL", "admin@sithappens.com").lower()
+    admin_pw = os.environ.get("ADMIN_PASSWORD") or "admin123"
+    client = pymongo.MongoClient(mongo_url)
+    try:
+        client[db_name].users.insert_one({
+            "id": str(uuid.uuid4()),
+            "email": admin_email,
+            "password_hash": bcrypt.hashpw(admin_pw.encode(), bcrypt.gensalt()).decode(),
+            "name": "Test Admin",
+            "role": "admin",
+            "client_id": None,
+            "created_at": "2026-01-01T00:00:00+00:00",
+            "token_version": 0,
+            "must_change_password": False,
+        })
+    finally:
+        client.close()
+
+
 reset_test_database(os.environ["MONGO_URL"], TEST_DB_NAME)
+seed_admin_user(os.environ["MONGO_URL"], TEST_DB_NAME)

@@ -142,7 +142,10 @@ test("DogTrainingTab offers ONE unified Assign Program action for every delivery
 });
 
 test("DogTrainingTab splits active enrollments by delivery_channel so trainer tools never render for a school row", () => {
-  expect(dogTrainingTabSrc).toMatch(/const active = activeAll\.filter\(e => e\.delivery_channel !== "online_school"\)/);
+  // In-person/hybrid School rows became deliberately staff-run (unified
+  // trainer progression); online_school rows still never get trainer tools.
+  expect(dogTrainingTabSrc).toMatch(/const STAFF_SCHOOL_CHANNELS = \["in_person_school", "hybrid_school"\]/);
+  expect(dogTrainingTabSrc).toMatch(/const active = activeAll\.filter\(e => STAFF_SCHOOL_CHANNELS\.includes\(e\.delivery_channel\)\)/);
   expect(dogTrainingTabSrc).toMatch(/const schoolActive = activeAll\.filter\(e => e\.delivery_channel === "online_school"\)/);
 });
 
@@ -162,8 +165,11 @@ test("delivery choices are restricted to what each program actually supports", (
   // self_guided course can never be assigned in person and a trainer_led
   // course can never be assigned online.
   expect(dogTrainingTabSrc).toMatch(/const modesFor = \(p\) =>/);
-  expect(dogTrainingTabSrc).toMatch(/if \(configured === "self_guided"\) return \[\{ key: "online"/);
-  expect(dogTrainingTabSrc).toMatch(/if \(configured === "both"\) return \[/);
+  // The School unification made every curriculum trainer-runnable in person;
+  // Online/Hybrid stay restricted to courses that support self-guided access,
+  // and a trainer_led course still can never be assigned online.
+  expect(dogTrainingTabSrc).toMatch(/if \(configured === "self_guided" \|\| configured === "both"\) return \[/);
+  expect(dogTrainingTabSrc).toMatch(/return \[\{ key: "in_person", label: "In Person"/);
   expect(dogTrainingTabSrc).toMatch(/modesFor\(selected\)\.map/);
 });
 

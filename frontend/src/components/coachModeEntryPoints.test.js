@@ -49,7 +49,9 @@ test("Coach Mode components render every piece of copy from practice_coach data,
   // literal placeholder copy standing in for it.
   expect(overviewSrc).toMatch(/pc\.goal/);
   expect(overviewSrc).toMatch(/pc\.success_today/);
-  expect(guidedSrc).toMatch(/practiceCoach\?\.guided_practice/);
+  // The per-rep coaching rewrite reads the same prop through a local alias.
+  expect(guidedSrc).toMatch(/const pc = practiceCoach \|\| \{\}/);
+  expect(guidedSrc).toMatch(/pc\.guided_practice/);
   expect(setupSrc).toMatch(/items\.map/);
   expect(troubleshootingSrc).toMatch(/items \|\| \[\]\)\.map/);
 });
@@ -96,13 +98,18 @@ test("section-log video is offered only when the recipe requests it; daily track
 
 test("difficulty, could-not-complete, and photo are now offered for BOTH daily-tracker and section-log homework", () => {
   expect(practicePanelSrc).toMatch(/allowDifficulty=\{true\}/);
-  expect(practicePanelSrc).toMatch(/allowCouldNotComplete=\{true\}/);
+  // Still offered for both homework kinds (the expression never branches on
+  // isDailyTracker); after a guided session whose completion status is
+  // already known, the dedicated stopped-early wrap-up replaces the checkbox.
+  expect(practicePanelSrc).toMatch(/allowCouldNotComplete=\{entryContext !== "guided_done" \|\| guidedStatus === null\}/);
   expect(practicePanelSrc).toMatch(/allowPhoto=\{true\}/);
 });
 
 test("PracticeCompletionPanel never renders a control whose capability flag is false", () => {
   expect(completionPanelSrc).toMatch(/\{allowDifficulty && \(/);
-  expect(completionPanelSrc).toMatch(/\{allowCouldNotComplete && \(/);
+  // The could-not-complete checkbox now sits behind the stopped-early
+  // branch, but it still only renders when its capability flag is true.
+  expect(completionPanelSrc).toMatch(/: allowCouldNotComplete && \(/);
   expect(completionPanelSrc).toMatch(/\{allowPhoto && \(/);
 });
 

@@ -21,7 +21,11 @@ import {
 
 const read = (...p) => fs.readFileSync(path.join(__dirname, ...p), "utf8");
 const code = (src) => src.replace(/\/\*[\s\S]*?\*\//g, "").replace(/^\s*\/\/.*$/gm, "");
-const guideSrc = read("lesson", "LessonGuide.jsx");
+// The guided-lesson implementation is deliberately split: LessonGuide.jsx is
+// the beginner-language delivery wrapper and LessonGuideBase.jsx keeps the
+// proven mapper/renderer (see LessonGuide.jsx's header). Every pinned
+// behaviour below must hold across the pair, so read them as one source.
+const guideSrc = read("lesson", "LessonGuide.jsx") + read("lesson", "LessonGuideBase.jsx");
 const lessonSrc = read("LessonScreen.jsx");
 const blocksSrc = read("LessonContentBlocks.jsx");
 
@@ -134,7 +138,9 @@ test("finishing a step posts to the canonical endpoint", () => {
 });
 
 test("a double-tap cannot record the same step twice", () => {
-  expect(lessonSrc).toMatch(/if \(stepBusy\) return;/);
+  // The guard now reports the ignored duplicate to its caller (the
+  // completion-response step advancement) instead of returning bare.
+  expect(lessonSrc).toMatch(/if \(stepBusy\) return \{ ok: false, ignored: true \};/);
   expect(lessonSrc).toMatch(/disabled=\{busy\}/);
 });
 

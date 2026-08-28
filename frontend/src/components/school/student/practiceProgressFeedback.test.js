@@ -156,10 +156,12 @@ test("the coach's grading and analytics are untouched by the redesign", () => {
 });
 
 test("the two outcome buttons are large, thumb-first and authored-label-first", () => {
-  expect(coachSrc).toMatch(/min-h-\[64px\]/);
-  // the recipe's own wording wins; the default matches the redesign's language
-  expect(coachSrc).toMatch(/gp\.success_button_label \|\| "CLEAN REP"/);
-  expect(coachSrc).toMatch(/gp\.miss_button_label \|\| "NEEDS RESET"/);
+  // The per-rep coaching upgrade grew the buttons again and rephrased the
+  // default labels in plain beginner language; the recipe's own wording
+  // still wins over both defaults.
+  expect(coachSrc).toMatch(/min-h-\[72px\]/);
+  expect(coachSrc).toMatch(/gp\.success_button_label \|\| "YES — THAT COUNTED"/);
+  expect(coachSrc).toMatch(/gp\.miss_button_label \|\| "NO — RESET THIS REP"/);
 });
 
 test("active practice never demands typing", () => {

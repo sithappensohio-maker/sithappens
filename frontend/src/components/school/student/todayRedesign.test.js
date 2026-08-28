@@ -108,7 +108,7 @@ test("Today is one command center followed by secondary support surfaces", () =>
 });
 
 test("the command center explains what to do now and keeps All Lessons secondary", () => {
-  expect(homeSrc).toMatch(/Today's Next Step/);
+  expect(homeSrc).toMatch(/Today(?:'|&apos;)s Next Step/);
   expect(homeSrc).toMatch(/What you do now/);
   expect(homeSrc).toMatch(/All lessons/);
   expect(homeSrc).toMatch(/School will tell you exactly what/);

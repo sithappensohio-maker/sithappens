@@ -99,10 +99,15 @@ test("Bookings consumes the pending-action deep link exactly once and opens that
 // ---------------------------------------------------------------------------
 
 test("pending-action nav badges moved to the consolidated Today and Schedule destinations", () => {
-  expect(appSrc).toMatch(/\/admin\/pending-actions\/count/);
+  // Phase 6 consolidated the nav counters behind useAdminNavCounts
+  // (lib/sharedData.js, one /admin/live-summary call); the badge, its
+  // permission gate, and the change-event refresh all still exist.
+  const sharedSrc = read("..", "lib", "sharedData.js");
+  expect(appSrc).toMatch(/useAdminNavCounts\(/);
   expect(appSrc).toMatch(/n\.id === "schedule" \|\| n\.id === "today"\) && pendingActions > 0/);
-  expect(appSrc).toMatch(/sh:pending-actions-changed/);
-  expect(appSrc).toMatch(/can\("booking_edit"\)/);
+  expect(appSrc).toMatch(/pendingActions: !!can\?\.\("booking_edit"\)/);
+  expect(sharedSrc).toMatch(/sh:pending-actions-changed/);
+  expect(sharedSrc).toMatch(/pendingActions: allowPending \? \(payload\.pending_actions\?\.total \|\| 0\) : 0/);
 });
 
 test("Front Desk reuses the same shared panel (no duplicated queue logic)", () => {
