@@ -40,6 +40,10 @@ import { useLiveRefresh } from "../lib/useLiveRefresh";
 import { useConfirm } from "../lib/useConfirm";
 import { classifyVisit, visitStatusLabel, visitCounts, filterVisits, sortVisits, isMissedCheckout } from "../lib/frontDeskVisits";
 import { creditPackStaffLine } from "../lib/shopPolish";
+import {
+  FrontDeskStatCard, FrontDeskQuickAction, FrontDeskToolButton, FrontDeskStatusChip,
+  FrontDeskDogAvatar, FrontDeskSectionHeader, CatalogCategoryTile,
+} from "../components/frontdesk/FrontDeskBits";
 
 // "card" here is a manually-recorded/offline card payment (external reader),
 // not a Stripe Terminal integration.
@@ -143,6 +147,16 @@ export default function Pos({ onOpenShopManager } = {}) {
   const VISITS_COLLAPSED_LIMIT = 5;
   const [checkInBusyId, setCheckInBusyId] = useState(null);
   const [quickCheckinOpen, setQuickCheckinOpen] = useState(false);
+  // Front Desk V2 — "Book a Service" quick action opens the SAME existing
+  // AdminBookingModal used everywhere else, just without the check-in preset.
+  const [bookServiceOpen, setBookServiceOpen] = useState(false);
+  // First-use staff guidance card — contextual help only, dismiss per visit.
+  const [guideDismissed, setGuideDismissed] = useState(false);
+  const visitsRef = useRef(null);
+  const jumpToVisits = (tab) => {
+    setVisitsTab(tab); setVisitsExpanded(false);
+    setTimeout(() => visitsRef.current?.scrollIntoView({ behavior: "smooth", block: "nearest" }), 60);
+  };
 
   const loadRoster = () => api.get("/employee/roster-today")
     .then(({ data }) => { const rows = data.roster || []; setRoster(rows); return rows; })
@@ -155,6 +169,12 @@ export default function Pos({ onOpenShopManager } = {}) {
   useLiveRefresh(loadRoster, { intervalMs: 45_000 });
 
   const rosterCounts = useMemo(() => visitCounts(roster), [roster]);
+  // Overdue pickups — dogs still on-site past their stay's scheduled end.
+  // Real roster data (isMissedCheckout), never a fabricated "pickups" metric.
+  const overduePickups = useMemo(
+    () => roster.filter((r) => classifyVisit(r) === "on_site" && isMissedCheckout(r)).length,
+    [roster],
+  );
   const visitsFiltered = useMemo(
     () => sortVisits(filterVisits(roster, visitsTab, visitsSearch), visitsTab),
     [roster, visitsTab, visitsSearch],
@@ -859,52 +879,68 @@ export default function Pos({ onOpenShopManager } = {}) {
         testid="pos-hero"
       />
 
+      {/* Today at a Glance — real roster/orders/register data only, each
+          card jumps to the section it summarizes. */}
+      <div className="grid grid-cols-2 md:grid-cols-3 xl:grid-cols-5 gap-2.5" data-testid="pos-glance-row">
+        <FrontDeskStatCard icon="fa-paw" tone="lime" value={rosterCounts.expected} label="Expected Visits"
+                           action="View list" onClick={() => jumpToVisits("expected")} testid="pos-glance-expected"/>
+        <FrontDeskStatCard icon="fa-house" tone="blue" value={rosterCounts.on_site} label="On-Site Dogs"
+                           action="View now" onClick={() => jumpToVisits("on_site")} testid="pos-glance-onsite"/>
+        <FrontDeskStatCard icon="fa-clock" tone="orange" value={overduePickups} label="Overdue Pickups"
+                           action="View list" onClick={() => jumpToVisits("on_site")} testid="pos-glance-pickups"/>
+        <FrontDeskStatCard icon="fa-bag-shopping" tone="purple" value={onlineOrdersUnseenCount} label="New Online Orders"
+                           action="View orders" onClick={() => toggleRegisterPanel("orders")} testid="pos-glance-orders"/>
+        <FrontDeskStatCard icon="fa-cash-register" tone={registerOpen ? "lime" : "orange"}
+                           value={registerOpen ? "OPEN" : "CLOSED"} label="Register" testid="pos-glance-register"/>
+      </div>
+
       {/* Step 3 — the register hub is THE status/expected-cash/closeout
           surface. Pos keeps only the tools row + printer chip here. */}
       <RegisterHub onStatusChange={setRegisterStatus} onOpenCloseout={openCloseoutWorkflow} />
 
-      {/* Hardware status + register tools header */}
-      <div className="sh-front-desk-statusbar">
-        <div className="sh-front-desk-statuses">
-          <span className={`sh-front-desk-status ${printerReady ? "sh-front-desk-status--good" : ""}`}>
-            Printer: {printerReady === null ? "Checking…" : printerReady ? "Ready" : "Unavailable"}
-          </span>
+      {/* Quick Actions — the daily moves as large obvious cards, with the
+          less-common register utilities in a compact secondary row. Same
+          permissions, same panel toggles, same testids as before. */}
+      <div data-testid="pos-quick-actions">
+        <FrontDeskSectionHeader icon="fa-bolt" tone="lime" title="Quick Actions"/>
+        <div className="grid grid-cols-1 sm:grid-cols-2 xl:grid-cols-4 gap-2.5">
+          {canBookingEdit && (
+            <FrontDeskQuickAction icon="fa-user-plus" tone="lime" title="Quick Check-In / Walk-In"
+                                  sub="Start a check-in for any dog" onClick={() => setQuickCheckinOpen(true)}
+                                  testid="pos-quick-checkin-button"/>
+          )}
+          {canBookingEdit && (
+            <FrontDeskQuickAction icon="fa-calendar-plus" tone="blue" title="Book a Service"
+                                  sub="Make a reservation" onClick={() => setBookServiceOpen(true)}
+                                  testid="pos-quick-book-service"/>
+          )}
+          <FrontDeskQuickAction icon="fa-bag-shopping" tone="purple" title="Online Orders"
+                                sub="Manage pickups & fulfillment" onClick={() => toggleRegisterPanel("orders")}
+                                active={onlineOrdersOpen} badge={onlineOrdersUnseenCount}
+                                testid="pos-online-orders-toggle"/>
+          {canDrawerAndRefunds && (
+            <FrontDeskQuickAction icon="fa-inbox" tone="orange" title="Open Cash Drawer"
+                                  sub={registerOpen ? "Drawer tools" : "Register not opened"}
+                                  onClick={() => toggleRegisterPanel("drawer")} active={drawerFormOpen}
+                                  testid="pos-open-drawer-toggle"/>
+          )}
         </div>
-        <div className="sh-front-desk-tools">
+        <div className="flex flex-wrap items-center gap-2 mt-2.5">
+          <FrontDeskToolButton icon="fa-receipt" label="Recent Sales" onClick={() => toggleRegisterPanel("recent")}
+                               active={recentOpen} testid="pos-recent-sales-toggle"/>
+          <FrontDeskToolButton icon="fa-sliders" label="Register Tools" onClick={() => toggleRegisterPanel("tools")}
+                               active={registerToolsOpen} testid="pos-register-tools-toggle"/>
           {canDrawerAndRefunds && (
-            <button onClick={() => toggleRegisterPanel("drawer")} data-testid="pos-open-drawer-toggle"
-                    className="sh-front-desk-tool">
-              <i className="fas fa-drawer-alt mr-1.5" />Open Drawer
-            </button>
+            <FrontDeskToolButton icon="fa-credit-card" label="Online Payments" onClick={() => toggleRegisterPanel("payments")}
+                                 active={onlinePaymentsOpen} testid="pos-online-payments-toggle"/>
           )}
-          <button onClick={() => toggleRegisterPanel("recent")} data-testid="pos-recent-sales-toggle"
-                  className="sh-front-desk-tool">
-            Recent Sales
-          </button>
           {canPricingActions && (
-            <button onClick={() => onOpenShopManager?.()} data-testid="pos-manage-products-toggle"
-                    className="sh-front-desk-tool">
-              Shop Manager
-            </button>
+            <FrontDeskToolButton icon="fa-store" label="Shop Manager" onClick={() => onOpenShopManager?.()}
+                                 testid="pos-manage-products-toggle"/>
           )}
-          <button onClick={() => toggleRegisterPanel("tools")} data-testid="pos-register-tools-toggle"
-                  className="sh-front-desk-tool">
-            Register Tools
-          </button>
-          {canDrawerAndRefunds && (
-            <button onClick={() => toggleRegisterPanel("payments")} data-testid="pos-online-payments-toggle"
-                    className="sh-front-desk-tool">
-              Online Payments
-            </button>
-          )}
-          <button onClick={() => toggleRegisterPanel("orders")} data-testid="pos-online-orders-toggle"
-                  className="sh-front-desk-tool">
-            Online Orders
-            {onlineOrdersUnseenCount > 0 && (
-              <span className="ml-2 inline-block bg-shAccent text-bgHeader text-[10px] font-black px-1.5 py-0.5 rounded-full align-middle"
-                    data-testid="pos-online-orders-unseen-badge">{onlineOrdersUnseenCount} NEW</span>
-            )}
-          </button>
+          <span className={`ml-auto inline-flex items-center gap-1.5 rounded-md border px-2 py-1 text-[10px] font-black uppercase tracking-widest ${printerReady ? "border-shPrimary/45 bg-shPrimary/10 text-shPrimary" : "border-shBorder/60 bg-black/15 text-shTextMuted"}`}>
+            <i className="fas fa-print text-[9px]"/>Printer: {printerReady === null ? "Checking…" : printerReady ? "Ready" : "Unavailable"}
+          </span>
         </div>
       </div>
 
@@ -1140,23 +1176,13 @@ export default function Pos({ onOpenShopManager } = {}) {
           second dashboard: three status tabs with counts, search, and just
           enough per-row detail to act (check in / check out) without
           leaving Front Desk. */}
-      <div className="sh-front-desk-panel p-4" data-testid="pos-todays-visits">
-        <div className="flex items-center justify-between flex-wrap gap-2 mb-3">
-          <p className="text-shText font-black uppercase tracking-widest text-sm">
-            <i className="fas fa-paw mr-2 text-shPrimary" />Today&apos;s Visits
-          </p>
-          <div className="flex items-center gap-2">
-            {canBookingEdit && (
-              <button onClick={() => setQuickCheckinOpen(true)} data-testid="pos-quick-checkin-button"
-                      className="bg-shPrimary text-bgHeader rounded px-3 py-2 text-[11px] font-black uppercase tracking-widest">
-                <i className="fas fa-bolt mr-1" />Quick Check-In / Walk-In
-              </button>
-            )}
-            <button onClick={loadRoster} className="text-[11px] uppercase tracking-widest font-black text-shTextMuted hover:text-shPrimary">
+      <div ref={visitsRef} className="sh-front-desk-panel p-4" data-testid="pos-todays-visits">
+        <FrontDeskSectionHeader icon="fa-paw" tone="lime" title="Today's Visits"
+          right={
+            <button onClick={loadRoster} className="min-h-[36px] px-2 text-[11px] uppercase tracking-widest font-black text-shTextMuted hover:text-shPrimary">
               <i className="fas fa-rotate-right mr-1" />Refresh
             </button>
-          </div>
-        </div>
+          }/>
 
         <div className="flex flex-wrap gap-2 mb-3">
           {[
@@ -1166,70 +1192,76 @@ export default function Pos({ onOpenShopManager } = {}) {
             ["all", `All (${roster.length})`],
           ].map(([k, label]) => (
             <button key={k} onClick={() => { setVisitsTab(k); setVisitsExpanded(false); }} data-testid={`pos-visits-tab-${k}`}
-                    className={`px-3 py-1.5 rounded text-[11px] font-black uppercase tracking-widest ${visitsTab === k ? "bg-shPrimary text-bgHeader" : "bg-[var(--sh-card-base)] border border-shBorder text-shTextMuted"}`}>
+                    className={`min-h-[36px] px-3 py-1.5 rounded-lg text-[11px] font-black uppercase tracking-widest transition ${visitsTab === k ? "bg-shPrimary text-bgHeader shadow-[0_0_14px_rgba(140,198,63,0.35)]" : "bg-[var(--sh-card-base)] border border-shBorder text-shTextMuted hover:border-shSecondary/45"}`}>
               {label}
             </button>
           ))}
         </div>
         <input value={visitsSearch} onChange={(e) => setVisitsSearch(e.target.value)} placeholder="Search by dog or client name"
                data-testid="pos-visits-search"
-               className="w-full bg-[var(--sh-card-base)] border border-shBorder rounded p-2 text-shText text-sm mb-3" />
+               className="w-full bg-black/20 border border-shBorder/60 rounded-xl px-3 py-2.5 text-shText text-sm mb-3 focus:outline-none focus:border-shSecondary/50" />
 
         {rosterLoading ? (
           <p className="text-shTextMuted text-sm py-4 text-center">Loading…</p>
         ) : visitsFiltered.length === 0 ? (
-          <p className="text-shTextMuted text-sm py-4 text-center">No visits match this filter.</p>
+          <div className="rounded-xl border border-dashed border-shBorder/60 py-6 text-center" data-testid="pos-visits-empty">
+            <p className="text-shTextMuted text-sm">No visits match this filter.</p>
+            {canBookingEdit && visitsTab === "expected" && !visitsSearch && (
+              <p className="text-[12px] text-shTextMuted mt-1">Walk-in arriving? Use <span className="text-shPrimary font-black">Quick Check-In / Walk-In</span> above.</p>
+            )}
+          </div>
         ) : (
           <div className="space-y-2">
             {visitsVisible.map((row) => {
               const bucket = classifyVisit(row);
               const label = visitStatusLabel(row);
               const missed = isMissedCheckout(row);
+              const arrivedAt = row.checked_in_at ? new Date(row.checked_in_at).toLocaleTimeString([], { hour: "numeric", minute: "2-digit" }) : "—";
+              const timeLabel = bucket === "expected" ? (row.dropoff_time || row.time || "—") : arrivedAt;
               return (
-                <div key={row.booking_id} className={`border rounded-lg p-3 ${missed ? "border-shAccent/50" : "border-shBorder"}`}
+                <div key={row.booking_id}
+                     className={`rounded-xl border p-2.5 sm:p-3 flex items-center gap-3 transition hover:bg-white/[0.03] ${
+                       missed ? "border-shAccent/60 bg-gradient-to-r from-shAccent/[0.12] to-black/15"
+                       : bucket === "on_site" ? "border-shSecondary/45 bg-gradient-to-r from-shSecondary/[0.10] to-black/15"
+                       : bucket === "checked_out" ? "border-shBorder/60 bg-black/10 opacity-80"
+                       : "border-shPrimary/40 bg-gradient-to-r from-shPrimary/[0.09] to-black/15"}`}
                      data-testid={`pos-visit-row-${row.booking_id}`}>
-                  <div className="flex items-center justify-between flex-wrap gap-2">
-                    <div className="min-w-0">
-                      <p className="text-shText font-bold text-sm">
-                        {row.dog_name} <span className="text-shTextMuted font-normal">· {row.client_name}</span>
-                      </p>
-                      <p className="text-shTextMuted text-[12px]">
-                        {row.service_type}
-                        {bucket === "expected" && (row.dropoff_time || row.time) && (
-                          <> · Drop-off {row.dropoff_time || row.time}{row.pickup_time ? ` · Pickup ${row.pickup_time}` : ""}</>
-                        )}
-                        {bucket === "on_site" && (
-                          <> · Arrived {row.checked_in_at ? new Date(row.checked_in_at).toLocaleTimeString([], { hour: "numeric", minute: "2-digit" }) : "—"}
-                            {row.pickup_time ? ` · Pickup ${row.pickup_time}` : ""}</>
-                        )}
-                        {bucket === "checked_out" && (
-                          <> · In {row.checked_in_at ? new Date(row.checked_in_at).toLocaleTimeString([], { hour: "numeric", minute: "2-digit" }) : "—"}
-                            {" "}· Out {row.checked_out_at ? new Date(row.checked_out_at).toLocaleTimeString([], { hour: "numeric", minute: "2-digit" }) : "—"}</>
-                        )}
-                        {(row.kennel || row.room || row.crate || row.yard_group || row.training_group) && (
-                          <> · {[row.kennel, row.room, row.crate, row.yard_group, row.training_group].filter(Boolean).join(" / ")}</>
-                        )}
-                      </p>
-                    </div>
-                    <div className="flex items-center gap-2 shrink-0">
-                      <span className={`text-[11px] font-black uppercase tracking-widest ${
-                        missed ? "text-shAccent" : bucket === "checked_out" ? "text-shTextMuted" : bucket === "on_site" ? "text-shPrimary" : "text-shSecondary"
-                      }`}>
-                        {label}
-                      </span>
-                      {bucket === "expected" && (
-                        <button onClick={() => doCheckIn(row)} disabled={checkInBusyId === row.booking_id} data-testid={`pos-visit-checkin-${row.booking_id}`}
-                                className="bg-shPrimary text-bgHeader rounded-lg px-4 py-2.5 text-[12px] font-black uppercase tracking-widest disabled:opacity-50">
-                          {checkInBusyId === row.booking_id ? "Checking In…" : "Check In"}
-                        </button>
+                  {/* Time block + colored state bar, like a run sheet. */}
+                  <span className={`self-stretch w-1 rounded-full shrink-0 ${missed ? "bg-shAccent" : bucket === "on_site" ? "bg-shSecondary" : bucket === "checked_out" ? "bg-shBorder" : "bg-shPrimary"}`} aria-hidden="true"/>
+                  <span className="w-[52px] shrink-0 text-center">
+                    <span className="block text-[13px] font-black text-shText leading-tight">{timeLabel}</span>
+                    <span className="block text-[8.5px] font-black uppercase tracking-widest text-shTextMuted mt-0.5">{bucket === "expected" ? "Drop-off" : bucket === "checked_out" ? "Arrived" : "Arrived"}</span>
+                  </span>
+                  <FrontDeskDogAvatar name={row.dog_name} bucket={bucket}/>
+                  <div className="min-w-0 flex-1">
+                    <p className="text-shText font-black text-[14px] leading-tight truncate">{row.dog_name}</p>
+                    <p className="text-shTextMuted text-[11.5px] truncate">
+                      {[row.breed, row.client_name].filter(Boolean).join(" · ")}
+                    </p>
+                    <p className="text-shTextMuted text-[11px] truncate">
+                      <span className="text-shSecondary font-bold capitalize">{String(row.service_type || "").replace(/_/g, " ")}</span>
+                      {bucket === "expected" && row.pickup_time && <> · Pickup {row.pickup_time}</>}
+                      {bucket === "on_site" && row.pickup_time && <> · Pickup {row.pickup_time}</>}
+                      {bucket === "checked_out" && row.checked_out_at && <> · Out {new Date(row.checked_out_at).toLocaleTimeString([], { hour: "numeric", minute: "2-digit" })}</>}
+                      {(row.kennel || row.room || row.crate || row.yard_group || row.training_group) && (
+                        <> · {[row.kennel, row.room, row.crate, row.yard_group, row.training_group].filter(Boolean).join(" / ")}</>
                       )}
-                      {bucket === "on_site" && (
-                        <button onClick={() => openCheckoutFor(row.booking_id)} disabled={checkoutLoadingId === row.booking_id} data-testid={`pos-visit-checkout-${row.booking_id}`}
-                                className="bg-[var(--sh-card-base)] border border-shPrimary text-shPrimary rounded-lg px-4 py-2.5 text-[12px] font-black uppercase tracking-widest disabled:opacity-50">
-                          {checkoutLoadingId === row.booking_id ? "Loading…" : "Check Out"}
-                        </button>
-                      )}
-                    </div>
+                    </p>
+                  </div>
+                  <div className="flex items-center gap-2 shrink-0">
+                    <FrontDeskStatusChip bucket={bucket} missed={missed} label={label}/>
+                    {bucket === "expected" && (
+                      <button onClick={() => doCheckIn(row)} disabled={checkInBusyId === row.booking_id} data-testid={`pos-visit-checkin-${row.booking_id}`}
+                              className="bg-shPrimary text-bgHeader rounded-lg px-4 py-2.5 min-h-[42px] text-[12px] font-black uppercase tracking-widest shadow-[0_8px_22px_-10px_rgba(140,198,63,0.8)] hover:brightness-110 transition disabled:opacity-50">
+                        {checkInBusyId === row.booking_id ? "Checking In…" : "Check In"}
+                      </button>
+                    )}
+                    {bucket === "on_site" && (
+                      <button onClick={() => openCheckoutFor(row.booking_id)} disabled={checkoutLoadingId === row.booking_id} data-testid={`pos-visit-checkout-${row.booking_id}`}
+                              className="bg-[var(--sh-card-base)] border border-shSecondary/60 text-shSecondary rounded-lg px-4 py-2.5 min-h-[42px] text-[12px] font-black uppercase tracking-widest hover:bg-shSecondary/10 transition disabled:opacity-50">
+                        {checkoutLoadingId === row.booking_id ? "Loading…" : "Check Out"}
+                      </button>
+                    )}
                   </div>
                 </div>
               );
@@ -1354,16 +1386,20 @@ export default function Pos({ onOpenShopManager } = {}) {
                    data-testid="pos-product-search"
                    className="w-full bg-[var(--sh-card-base)] border border-shBorder rounded p-2 text-shText mb-2" />
             {categoryPills.length > 0 && (
-              <div className="flex flex-wrap gap-2 mb-3" data-testid="pos-category-pills">
-                <button onClick={() => setActiveCategory("")} data-testid="pos-category-all"
-                        className={`px-3 py-1 rounded text-[11px] font-black uppercase tracking-widest ${!activeCategory ? "bg-shPrimary text-bgHeader" : "bg-[var(--sh-card-base)] text-shTextMuted"}`}>
-                  All ({products.length})
+              <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-4 gap-2 mb-3" data-testid="pos-category-pills">
+                <button onClick={() => setActiveCategory("")} data-testid="pos-category-all" aria-pressed={!activeCategory || undefined}
+                        className={`rounded-2xl border p-3 text-left min-h-[76px] flex flex-col justify-between transition focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-shPrimary ${!activeCategory ? "border-shPrimary/70 bg-shPrimary/[0.10] ring-2 ring-shPrimary ring-inset" : "border-shBorder/60 bg-black/15 hover:border-shSecondary/45"}`}>
+                  <i className="fas fa-border-all text-[16px] text-shText" aria-hidden="true"/>
+                  <span className="mt-1.5">
+                    <span className="block text-[12px] font-black uppercase tracking-[0.08em] text-shText leading-tight">All</span>
+                    <span className="block text-[10px] font-bold text-shTextMuted mt-0.5">{products.length} item{products.length === 1 ? "" : "s"}</span>
+                  </span>
                 </button>
-                {categoryPills.map((c) => (
-                  <button key={c.id} onClick={() => setActiveCategory(c.id)} data-testid={`pos-category-${c.id}`}
-                          className={`px-3 py-1 rounded text-[11px] font-black uppercase tracking-widest ${activeCategory === c.id ? "bg-shPrimary text-bgHeader" : "bg-[var(--sh-card-base)] text-shTextMuted"}`}>
-                    {c.label} ({c.count})
-                  </button>
+                {categoryPills.map((c, i) => (
+                  <CatalogCategoryTile key={c.id} label={c.label} count={c.count} index={i}
+                                       active={activeCategory === c.id}
+                                       onClick={() => setActiveCategory(activeCategory === c.id ? "" : c.id)}
+                                       testid={`pos-category-${c.id}`}/>
                 ))}
               </div>
             )}
@@ -1446,17 +1482,29 @@ export default function Pos({ onOpenShopManager } = {}) {
           </div>
         </div>
 
-        {/* Right: cart */}
+        {/* Right: cart — persistently visible on desktop while staff browse. */}
         <div className="lg:col-span-2">
-          <div className="sh-front-desk-cart p-4">
+          <div className="sh-front-desk-cart sh-hue-card sh-hue-card--lime p-4 lg:sticky lg:top-4 rounded-2xl">
             <div className="flex items-center justify-between mb-2">
-              <p className="text-shTextMuted text-[13px] uppercase tracking-widest font-black">Cart</p>
+              <p className="text-shText text-[14px] uppercase tracking-[0.12em] font-black"><i className="fas fa-cart-shopping mr-2 text-shPrimary"/>Your Cart
+                {cartLines.length > 0 && <span className="ml-2 text-[11px] text-shTextMuted normal-case tracking-normal font-bold">{cartLines.length} item{cartLines.length === 1 ? "" : "s"}</span>}
+              </p>
               {cartLines.length > 0 && (
                 <button onClick={resetCart} data-testid="pos-clear-cart"
                         className="text-shTextMuted hover:text-shDanger text-[11px] font-black uppercase tracking-widest">
                   Clear Cart
                 </button>
               )}
+            </div>
+            {/* Who this sale belongs to — mirrors the client panel state. */}
+            <div className={`rounded-xl border px-3 py-2 mb-3 flex items-center gap-2.5 ${selectedClient ? "border-shSecondary/45 bg-shSecondary/[0.07]" : "border-shBorder/60 bg-black/15"}`} data-testid="pos-cart-client">
+              <span className={`w-8 h-8 rounded-lg grid place-items-center border shrink-0 ${selectedClient ? "border-shSecondary/50 bg-shSecondary/15 text-shSecondary" : "border-shBorder/60 bg-black/20 text-shTextMuted"}`}>
+                <i className={`fas ${selectedClient ? "fa-user" : "fa-person-walking"} text-[13px]`}/>
+              </span>
+              <span className="min-w-0 flex-1">
+                <span className="block text-[13px] font-black text-shText truncate">{selectedClient ? selectedClient.name : "Walk-in sale"}</span>
+                <span className="block text-[10.5px] text-shTextMuted">{selectedClient ? "Client pricing applied" : "Select a client for packs, programs & client pricing"}</span>
+              </span>
             </div>
             <div className="space-y-2 max-h-80 overflow-y-auto">
               {cartLines.length === 0 && <p className="text-shTextMuted text-sm">Cart is empty.</p>}
@@ -1513,16 +1561,44 @@ export default function Pos({ onOpenShopManager } = {}) {
               <div className="flex justify-between text-shTextMuted"><span>Subtotal</span><span>{money(priced?.subtotal)}</span></div>
               {priced?.discount_amount > 0 && <div className="flex justify-between text-shTextMuted"><span>Discount</span><span>-{money(priced.discount_amount)}</span></div>}
               {priced?.tax_amount > 0 && <div className="flex justify-between text-shTextMuted"><span>Tax</span><span>{money(priced.tax_amount)}</span></div>}
-              <div className="flex justify-between text-shText font-black text-lg"><span>Total</span><span>{money(total)}</span></div>
+              <div className="flex justify-between items-baseline text-shText font-black"><span className="text-[15px]">Total</span><span className="text-[24px]">{money(total)}</span></div>
             </div>
 
             <button onClick={openTender} disabled={cartLines.length === 0 || !priced} data-testid="pos-checkout-button"
-                    className="sh-front-desk-checkout mt-4 w-full bg-shPrimary text-bgHeader font-black disabled:opacity-40">
-              Checkout
+                    className="sh-front-desk-checkout mt-4 w-full min-h-[54px] bg-gradient-to-r from-shPrimary to-[#b7e35c] text-bgHeader font-black uppercase tracking-widest text-[15px] rounded-xl shadow-[0_0_24px_rgba(140,198,63,0.45)] hover:brightness-110 transition disabled:opacity-40 disabled:shadow-none">
+              Checkout{cartLines.length > 0 && priced ? ` · ${money(total)}` : ""}
             </button>
           </div>
+
+          {/* Contextual first-use guidance — plain help, not a workflow engine. */}
+          {!guideDismissed && (
+            <div className="mt-3 rounded-2xl border border-shSecondary/40 bg-shSecondary/[0.06] p-3.5 flex items-start gap-3" data-testid="pos-staff-guide">
+              <span className="w-9 h-9 rounded-full grid place-items-center bg-shSecondary/15 border border-shSecondary/45 text-shSecondary shrink-0"><i className="fas fa-circle-question text-[14px]"/></span>
+              <div className="min-w-0 flex-1">
+                <p className="text-[12px] font-black uppercase tracking-[0.1em] text-shSecondary">What do I do next?</p>
+                <p className="text-[12px] text-shTextMuted mt-1 leading-relaxed">
+                  Check dogs in from <b className="text-shText">Today&apos;s Visits</b>, add anything they&apos;re buying from <b className="text-shText">Products &amp; Services</b>, then hit the green <b className="text-shText">Checkout</b>. The register must be open before taking cash.
+                </p>
+              </div>
+              <button onClick={() => setGuideDismissed(true)} aria-label="Dismiss guide" className="text-shTextMuted hover:text-shText px-1"><i className="fas fa-times"/></button>
+            </div>
+          )}
         </div>
       </div>
+
+      {/* Mobile sticky checkout bar — the cart lives at the bottom of the
+          single-column flow, so surface the total + the SAME openTender
+          action the cart button uses. Desktop keeps the persistent cart. */}
+      {cartLines.length > 0 && priced && (
+        <div className="lg:hidden fixed bottom-0 inset-x-0 z-40 px-3 pb-[max(0.6rem,env(safe-area-inset-bottom))]" data-testid="pos-mobile-checkout-bar">
+          <button onClick={openTender}
+                  className="w-full min-h-[54px] rounded-2xl bg-gradient-to-r from-shPrimary to-[#b7e35c] text-bgHeader font-black uppercase tracking-widest text-[14px] shadow-[0_-6px_30px_rgba(0,0,0,0.5),0_0_24px_rgba(140,198,63,0.5)] flex items-center justify-center gap-3">
+            <span>{cartLines.length} item{cartLines.length === 1 ? "" : "s"}</span>
+            <span aria-hidden="true">·</span>
+            <span>Checkout {money(total)}</span>
+          </button>
+        </div>
+      )}
 
       {checkoutBooking && (
         <CheckoutModal
@@ -1547,6 +1623,13 @@ export default function Pos({ onOpenShopManager } = {}) {
           defaultCheckIn={true}
           onClose={() => setQuickCheckinOpen(false)}
           onCreated={() => { setQuickCheckinOpen(false); loadRoster(); }}
+        />
+      )}
+      {bookServiceOpen && (
+        <AdminBookingModal
+          defaultCheckIn={false}
+          onClose={() => setBookServiceOpen(false)}
+          onCreated={() => { setBookServiceOpen(false); loadRoster(); }}
         />
       )}
       {showTakePayment && selectedClient && (
