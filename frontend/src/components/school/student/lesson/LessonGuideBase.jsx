@@ -329,7 +329,14 @@ export default function LessonGuide({
         </p>
       </div>
 
-      <ol className="rounded-2xl border border-shBorder/50 bg-[var(--sh-card-base)] overflow-hidden divide-y divide-shBorder/30">
+      {/* Step-card rail — one card per guided step, stacking on phones and
+          fanning out into a grid on wider screens. Same rows, same states,
+          same locks; only the presentation changed. Each step owns a hue so
+          the rail reads like a journey rather than a form — but color is
+          identity, never state: the current card burns orange with a glow,
+          and a locked card drops its hue entirely (muted = locked), with the
+          explicit word/icon still carrying the state. */}
+      <ol className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-4 gap-2.5">
         {sections.map((s) => {
           const state = stepState(s, { ...ctx, currentKey: cur });
           const active = activeKey === s.key;
@@ -337,9 +344,25 @@ export default function LessonGuide({
           const done = state === "completed";
           const isCurrent = state === "current";
           const reason = locked ? lockReason(s, ctx) : "";
+          // Card surfaces come from the shared .sh-hue-card 3D system in
+          // index.css (glossy sheen, hue-lit radial, gradient edge, depth
+          // shadow); this map only picks each step's hue + text/marker tones.
+          const STEP_HUES = {
+            learn: { card: "sh-hue-card--cyan", title: "text-[#4cc9f0]", marker: "border-[#00a9e0]/70 bg-[#00a9e0]/25 text-[#4cc9f0]" },
+            get_ready: { card: "sh-hue-card--teal", title: "text-[#2dd4bf]", marker: "border-[#2dd4bf]/65 bg-[#2dd4bf]/20 text-[#2dd4bf]" },
+            train: { card: "sh-hue-card--lime", title: "text-[#a3e635]", marker: "border-shPrimary/70 bg-shPrimary/25 text-[#a3e635]" },
+            watch_for: { card: "sh-hue-card--purple", title: "text-[#a78bfa]", marker: "border-[#a78bfa]/65 bg-[#a78bfa]/20 text-[#a78bfa]" },
+            know_got_it: { card: "sh-hue-card--gold", title: "text-[#facc15]", marker: "border-[#facc15]/60 bg-[#facc15]/20 text-[#facc15]" },
+            practice: { card: "sh-hue-card--orange", title: "text-[#fb923c]", marker: "border-shAccent/65 bg-shAccent/20 text-[#fb923c]" },
+            quick_check: { card: "sh-hue-card--cyan", title: "text-shSecondary", marker: "border-shSecondary/65 bg-shSecondary/20 text-shSecondary" },
+            next_step: { card: "sh-hue-card--pink", title: "text-[#f472b6]", marker: "border-[#f472b6]/60 bg-[#f472b6]/20 text-[#f472b6]" },
+          };
+          const hue = STEP_HUES[s.key] || {
+            card: "sh-hue-card--cyan", title: "text-shText", marker: "border-shBorder text-shTextMuted",
+          };
 
           return (
-            <li key={s.key}>
+            <li key={s.key} className="min-w-0">
               <button
                 type="button"
                 onClick={() => { if (!locked) onSelectSection?.(s.key); }}
@@ -350,48 +373,55 @@ export default function LessonGuide({
                 data-state={state}
                 data-active={active ? "true" : "false"}
                 className={[
-                  "w-full text-left px-4 py-4 flex items-start gap-3.5 min-h-[64px] transition",
+                  "sh-hue-card w-full h-full text-left rounded-2xl p-3.5 flex flex-col gap-2 min-h-[64px]",
                   "focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-shPrimary focus-visible:ring-inset",
-                  locked ? "opacity-60 cursor-not-allowed"
-                    : isCurrent || active ? "bg-shPrimary/[0.09] border-l-[3px] border-l-shPrimary"
-                    : "hover:bg-white/[0.03]",
+                  locked ? `sh-hue-card--off opacity-70 cursor-not-allowed ${hue.card}`
+                    : isCurrent || active ? "sh-hue-card--current"
+                    : done ? "sh-hue-card--done"
+                    : hue.card,
                 ].join(" ")}
               >
-                {/* Status marker — icon AND text, so state never rides on colour alone. */}
-                <span
-                  className={[
-                    "w-8 h-8 rounded-full grid place-items-center shrink-0 text-[12px] font-black border mt-0.5",
-                    done ? "border-shPrimary/60 bg-shPrimary/15 text-shPrimary"
-                      : isCurrent ? "border-shPrimary bg-shPrimary text-bgHeader"
-                      : locked ? "border-shBorder text-shTextMuted"
-                      : "border-shBorder text-shTextMuted",
-                  ].join(" ")}
-                  aria-hidden="true"
-                >
-                  {done ? <i className="fas fa-check" /> : locked ? <i className="fas fa-lock" /> : s.n}
-                </span>
-
-                <span className="min-w-0 flex-1">
-                  <span className="flex flex-wrap items-center gap-x-2 gap-y-1">
-                    <span className={`text-[18px] sm:text-[19px] font-black leading-snug ${isCurrent ? "text-shPrimary" : "text-shText"}`}>
+                <span className="flex items-start gap-2.5 min-w-0">
+                  {/* Status marker — icon AND text, so state never rides on colour alone. */}
+                  <span
+                    className={[
+                      "w-8 h-8 rounded-full grid place-items-center shrink-0 text-[12px] font-black border",
+                      done ? "border-shPrimary bg-shPrimary text-bgHeader shadow-[0_0_12px_rgba(140,198,63,0.45)]"
+                        : isCurrent ? "border-shAccent bg-shAccent text-bgHeader shadow-[0_0_12px_rgba(242,101,34,0.5)]"
+                        : hue.marker,
+                    ].join(" ")}
+                    aria-hidden="true"
+                  >
+                    {done ? <i className="fas fa-check" /> : locked ? <i className="fas fa-lock" /> : s.n}
+                  </span>
+                  <span className="min-w-0 flex-1">
+                    <span className="block text-[11px] font-black uppercase tracking-[0.14em] text-shTextMuted">Step {s.n}</span>
+                    <span className={`block text-[18px] sm:text-[19px] font-black leading-snug ${isCurrent ? "text-[#fb923c]" : done ? "text-[#a3e635]" : hue.title}`}>
                       {s.label}
                     </span>
-                    {done && (
-                      <span className="text-[11px] font-black uppercase tracking-widest text-shPrimary">Complete</span>
-                    )}
-                    {isCurrent && (
-                      <span className="text-[11px] font-black uppercase tracking-widest px-2 py-0.5 rounded-md bg-shPrimary text-bgHeader">Current</span>
-                    )}
-                    {locked && (
-                      <span className="text-[11px] font-black uppercase tracking-widest text-shTextMuted">Locked</span>
-                    )}
                   </span>
-                  <span className="block text-[15px] sm:text-[16px] text-shTextMuted mt-1 leading-relaxed">
-                    {locked ? reason : s.blurb}
-                  </span>
+                  {!locked && <i className="fas fa-chevron-right text-[11px] text-shTextMuted shrink-0 mt-2.5" aria-hidden="true" />}
                 </span>
 
-                {!locked && <i className="fas fa-chevron-right text-[11px] text-shTextMuted shrink-0 mt-2.5" aria-hidden="true" />}
+                <span className="block text-[15px] sm:text-[16px] text-shTextMuted leading-relaxed flex-1">
+                  {locked ? reason : s.blurb}
+                </span>
+
+                {/* State footer chip — the word is the state, never colour alone. */}
+                <span className="mt-auto pt-1.5">
+                  {done && (
+                    <span className="inline-flex items-center gap-1.5 rounded-md px-2 py-1 text-[11px] font-black uppercase tracking-widest bg-shPrimary text-bgHeader shadow-[0_0_10px_rgba(140,198,63,0.4)]"><i className="fas fa-check text-[9px]" aria-hidden="true"/>Complete</span>
+                  )}
+                  {isCurrent && (
+                    <span className="inline-flex items-center gap-1.5 rounded-md px-2 py-1 text-[11px] font-black uppercase tracking-widest bg-shAccent text-bgHeader shadow-[0_0_10px_rgba(242,101,34,0.45)]"><i className="fas fa-circle-notch text-[9px]" aria-hidden="true"/>Current</span>
+                  )}
+                  {locked && (
+                    <span className="inline-flex items-center gap-1.5 rounded-md border border-shBorder/60 bg-black/15 px-2 py-1 text-[11px] font-black uppercase tracking-widest text-shTextMuted"><i className="fas fa-lock text-[9px]" aria-hidden="true"/>Locked</span>
+                  )}
+                  {!done && !isCurrent && !locked && (
+                    <span className="inline-flex items-center gap-1.5 rounded-md px-2 py-1 text-[11px] font-black uppercase tracking-widest bg-shSecondary text-bgHeader">Available</span>
+                  )}
+                </span>
               </button>
             </li>
           );
@@ -420,7 +450,7 @@ export function PracticeUnlockedCard({ dogName, onStartPractice, busy, testid = 
         You&apos;ve finished the lesson instructions. Practice is where the training actually happens.
       </p>
       <button type="button" onClick={onStartPractice} disabled={busy} data-testid={`${testid}-cta`}
-              className="mt-4 w-full min-h-[56px] rounded-xl bg-shPrimary text-bgHeader text-[15px] font-black uppercase tracking-widest disabled:opacity-50 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-shPrimary focus-visible:ring-offset-2 focus-visible:ring-offset-bgBase">
+              className="mt-4 w-full min-h-[56px] rounded-xl bg-gradient-to-r from-shPrimary to-[#b7e35c] text-bgHeader text-[15px] font-black uppercase tracking-widest shadow-[0_0_24px_rgba(140,198,63,0.5)] hover:brightness-110 transition disabled:opacity-50 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-shPrimary focus-visible:ring-offset-2 focus-visible:ring-offset-bgBase">
         <i className="fas fa-paw mr-2" aria-hidden="true" />Start Practice
       </button>
     </section>
@@ -513,7 +543,7 @@ export function LessonSectionBody({
       {instructional && onComplete && !completed && (
         <button type="button" onClick={() => onComplete(section.key)} disabled={busy}
                 data-testid={`${testid}-continue-${section.key}`}
-                className="w-full min-h-[56px] rounded-xl bg-shPrimary text-bgHeader text-[15px] font-black uppercase tracking-widest disabled:opacity-50 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-shPrimary focus-visible:ring-offset-2 focus-visible:ring-offset-bgBase">
+                className="w-full min-h-[56px] rounded-xl bg-gradient-to-r from-shPrimary to-[#b7e35c] text-bgHeader text-[15px] font-black uppercase tracking-widest shadow-[0_0_24px_rgba(140,198,63,0.5)] hover:brightness-110 transition disabled:opacity-50 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-shPrimary focus-visible:ring-offset-2 focus-visible:ring-offset-bgBase">
           {busy ? "Saving…" : <>{continueLabel} <i className="fas fa-arrow-right ml-1.5 text-[12px]" aria-hidden="true" /></>}
         </button>
       )}

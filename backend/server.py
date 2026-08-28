@@ -24270,6 +24270,22 @@ class SessionActivityActualIn(BaseModel):
     mastery_decision: Optional[Literal["mastered", "not_yet"]] = None
     homework_eligible: bool = False
     needs_reassessment: bool = False
+    # Skill Performance Log redesign — explicit per-metric applicability.
+    # Keyed by metric id (duration/distance/repetitions/distraction/
+    # environment/handler_help/leash). True = the trainer deliberately
+    # marked "Not needed for this lesson", which is a distinct state from
+    # blank (nothing entered yet) and from a legitimate zero value. Absent
+    # entirely on legacy records — readers must treat missing as "no
+    # applicability decision recorded", never as not-needed.
+    metrics_not_needed: Optional[Dict[str, bool]] = None
+    # Structured companions to the legacy free-text metric fields, keyed
+    # the same way (duration {value, unit}, repetitions {attempts,
+    # successful}, handler_help {level, methods, other}, ...). The legacy
+    # string fields above remain the canonical DISPLAY values — the UI
+    # composes them from these details — so every existing recap/log/
+    # history reader keeps working unchanged and legacy drafts without
+    # details still render exactly as before.
+    metric_details: Optional[Dict[str, Dict[str, Any]]] = None
 
 
 class TrainingSessionDraftUpdateIn(BaseModel):

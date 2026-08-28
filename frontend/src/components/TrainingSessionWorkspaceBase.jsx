@@ -32,6 +32,9 @@ import EquipmentChips from "./training/EquipmentChips";
 import VideoDemoCard from "./training/VideoDemoCard";
 import ActivityCard from "./training/ActivityCard";
 import EmptyState from "./training/EmptyState";
+import SegmentedOptions from "./training/SegmentedOptions";
+import MetricCard from "./training/MetricCard";
+import VisibilityBadge from "./training/VisibilityBadge";
 
 const RESOLUTION_COPY = {
   no_active_enrollment: {
@@ -76,12 +79,12 @@ const RESOLUTION_COPY = {
 // existing drafts/logs keep rendering; "introduced" and "reliable" complete
 // the six-level scale on the same canonical field.
 const OUTCOME_OPTIONS = [
-  { key: "skipped", label: "Not Worked", color: "bg-gray-500/20 text-shTextMuted border-gray-500/30" },
-  { key: "introduced", label: "Introduced", color: "bg-gray-400/20 text-shText border-gray-400/40" },
-  { key: "needs_more_work", label: "Needs Work", color: "bg-shAccent/20 text-shAccent border-shAccent/40" },
-  { key: "improving", label: "Improving", color: "bg-shSecondary/20 text-shSecondary border-shSecondary/40" },
-  { key: "passed", label: "Good", color: "bg-shPrimary/20 text-shPrimary border-shPrimary/40" },
-  { key: "reliable", label: "Reliable", color: "bg-shPrimary/30 text-shPrimary border-shPrimary/60" },
+  { key: "skipped", label: "Not Worked", desc: "Did not attempt", color: "bg-gray-500/20 text-shTextMuted border-gray-500/30" },
+  { key: "introduced", label: "Introduced", desc: "New today", color: "bg-gray-400/20 text-shText border-gray-400/40" },
+  { key: "needs_more_work", label: "Needs Work", desc: "Struggled today", color: "bg-shAccent/20 text-shAccent border-shAccent/40" },
+  { key: "improving", label: "Improving", desc: "Better than last time", color: "bg-shSecondary/20 text-shSecondary border-shSecondary/40" },
+  { key: "passed", label: "Good", desc: "Solid performance", color: "bg-shPrimary/20 text-shPrimary border-shPrimary/40" },
+  { key: "reliable", label: "Reliable", desc: "Met expectations", color: "bg-shPrimary/30 text-shPrimary border-shPrimary/60" },
 ];
 
 const ADVANCEMENT_ACTIONS = [
@@ -218,11 +221,16 @@ export default function TrainingSessionWorkspace({ bookingId, dogId, enrollmentI
     setExpandedId(a.id);
   };
 
+  // `patch` may be a plain object or a function of the previous actual —
+  // the metric cards compose display values from prior state, so they must
+  // patch against the LATEST actual, not a render-scope snapshot (two
+  // quick edits inside one render frame would otherwise drop the first).
   const setActual = (activityId, patch) => {
-    updateDraft(d => ({
-      ...d,
-      actuals: { ...d.actuals, [activityId]: { ...(d.actuals[activityId] || {}), ...patch } },
-    }));
+    updateDraft(d => {
+      const prev = d.actuals[activityId] || {};
+      const resolved = typeof patch === "function" ? patch(prev) : patch;
+      return { ...d, actuals: { ...d.actuals, [activityId]: { ...prev, ...resolved } } };
+    });
   };
 
   if (loading) {
@@ -298,11 +306,18 @@ export default function TrainingSessionWorkspace({ bookingId, dogId, enrollmentI
 
   return (
     <div className="fixed inset-0 bg-black/80 z-50 flex items-center justify-center p-2 sm:p-4" data-testid="training-session-workspace">
-      <div className="bg-[var(--sh-card-base)] border border-shBorder rounded-2xl w-full max-w-4xl max-h-[calc(var(--app-height)_-_1rem)] flex flex-col min-h-0 shadow-2xl">
-        {/* Header */}
-        <div className="px-4 sm:px-6 py-4 border-b border-shBorder shrink-0 space-y-3">
+      <div className="bg-[var(--sh-card-base)] border border-shBorder rounded-2xl w-full max-w-6xl max-h-[calc(var(--app-height)_-_1rem)] flex flex-col min-h-0 shadow-2xl">
+        {/* Header — brand-energy band: lime→blue wash + the designer paint
+            splash the Training hub hero already uses. */}
+        <div className="sh-school-splash overflow-hidden px-4 sm:px-6 py-4 border-b border-shPrimary/30 shrink-0 space-y-3 bg-gradient-to-r from-shPrimary/[0.16] via-shSecondary/[0.10] to-transparent rounded-t-2xl">
           <div className="flex items-start justify-between gap-2">
-            <DogIdentityHeader dogName={dog?.name} dogPhoto={dog?.photo} breadcrumb={breadcrumbParts.join(" · ")} testid="workspace-dog-header"/>
+            <div className="min-w-0">
+              <p className="text-[10px] font-black uppercase tracking-[0.18em] text-shPrimary"><i className="fas fa-clipboard-check mr-1.5"/>Skill Performance Log</p>
+              <p className="text-[11.5px] text-shTextMuted mt-0.5">Record how the dog performed in this session.</p>
+              <div className="mt-2">
+                <DogIdentityHeader dogName={dog?.name} dogPhoto={dog?.photo} breadcrumb={breadcrumbParts.join(" · ")} testid="workspace-dog-header"/>
+              </div>
+            </div>
             <div className="flex items-center gap-2 shrink-0">
               {savingLabel && <p className="text-[11px] text-shTextMuted">{savingLabel}</p>}
               <button onClick={onClose} data-testid="workspace-close" className="text-shTextMuted hover:text-shText text-xl px-2"><i className="fas fa-times"/></button>
@@ -529,11 +544,12 @@ export default function TrainingSessionWorkspace({ bookingId, dogId, enrollmentI
           ) : (
             <>
               <button onClick={() => { onSaved?.(draft); onClose(); }} data-testid="workspace-done"
-                      className="bg-transparent border border-shBorder text-shTextMuted px-4 py-2 rounded font-black text-[13px] uppercase tracking-widest">
+                      className="min-h-[46px] bg-transparent border border-shSecondary/45 text-shSecondary px-4 py-2 rounded-xl font-black text-[13px] uppercase tracking-widest hover:bg-shSecondary/10 transition">
                 Save &amp; Close
+                <span className="block text-[9px] font-semibold normal-case tracking-normal opacity-75">Draft keeps autosaving</span>
               </button>
               <button onClick={() => setCompleting(true)} data-testid="workspace-complete-session"
-                      className="bg-shPrimary text-bgHeader px-4 py-2 rounded font-black text-[13px] uppercase tracking-widest shadow">
+                      className="min-h-[46px] bg-gradient-to-r from-shPrimary to-[#b7e35c] text-bgHeader px-5 py-2 rounded-xl font-black text-[13px] uppercase tracking-widest shadow-[0_0_24px_rgba(140,198,63,0.5),0_10px_30px_-12px_rgba(140,198,63,0.8)] hover:brightness-110 transition">
                 <i className="fas fa-flag-checkered mr-1.5"/>Complete Session
               </button>
             </>
@@ -626,70 +642,356 @@ function ActivityDetail({ activity: a, actual, onActualChange }) {
   );
 }
 
+/* ------------------------------------------------- Session performance --
+ * Skill Performance Log redesign. Seven metric cards replace the old
+ * free-text "Today's numbers" chips. Semantics, not just styling:
+ *   blank = not entered yet · 0 = a real zero · Not needed = deliberate N/A
+ * Structured inputs COMPOSE the legacy display string (duration_achieved,
+ * distance_achieved, …) so every recap/log/history reader is untouched;
+ * the structured values themselves persist in actual.metric_details and the
+ * applicability flags in actual.metrics_not_needed (both additive fields on
+ * SessionActivityActualIn). A legacy draft with only the free-text value
+ * still renders and stays editable through each card's Recorded value box.
+ */
+const DURATION_UNITS = ["minutes", "seconds"];
+const DISTANCE_UNITS = ["feet", "yards", "meters"];
+const DISTRACTION_LEVELS = ["None", "Low", "Moderate", "High", "Extreme"]
+  .map(v => ({ value: v, label: v }));
+const ENVIRONMENT_CHOICES = ["Training Room", "Play Area", "Lobby", "Outside", "Parking Lot", "Public", "Home", "Other"]
+  .map(v => ({ value: v, label: v }));
+const HANDLER_LEVELS = ["None", "Light", "Moderate", "Heavy", "Full"]
+  .map(v => ({ value: v, label: v }));
+const HANDLER_METHODS = ["Verbal Cue", "Hand Signal", "Lure / Food", "Body Positioning", "Leash Guidance", "Correction", "Other"];
+const LEASH_USES = ["Off Leash", "Loose", "Light Guidance", "Moderate Guidance", "Heavy Guidance", "Long Line"]
+  .map(v => ({ value: v, label: v }));
+
+// Compose the legacy free-text display value from a metric's structured
+// details — "" when nothing meaningful is entered (blank stays blank).
+function composeMetricValue(key, d = {}) {
+  const has = (v) => v !== undefined && v !== null && String(v).trim() !== "";
+  switch (key) {
+    case "duration":
+    case "distance":
+      return has(d.value) ? `${d.value} ${d.unit || (key === "duration" ? "minutes" : "feet")}` : "";
+    case "repetitions":
+      if (!has(d.attempts)) return has(d.successful) ? `${d.successful} successful` : "";
+      return has(d.successful) ? `${d.successful}/${d.attempts} successful` : `${d.attempts} attempts`;
+    case "distraction":
+      if (!d.difficulty) return has(d.note) ? String(d.note) : "";
+      return d.difficulty + (has(d.note) ? ` — ${d.note}` : "");
+    case "environment":
+      if (d.choice === "Other") return has(d.other) ? String(d.other) : "Other";
+      return d.choice || "";
+    case "handler_help": {
+      if (!d.level) return "";
+      const methods = (d.methods || []).filter(Boolean);
+      return d.level
+        + (methods.length ? ` · ${methods.join(", ")}` : "")
+        + (has(d.other) ? ` · ${d.other}` : "");
+    }
+    case "leash":
+      if (!d.use) return has(d.note) ? String(d.note) : "";
+      return d.use + (has(d.note) ? ` — ${d.note}` : "");
+    default:
+      return "";
+  }
+}
+
+const NUM_INPUT_CLS = "w-full min-h-[38px] bg-black/20 border border-shBorder/60 rounded-lg px-2.5 text-shText text-[14px] font-black focus:outline-none focus:border-shSecondary/50";
+const UNIT_SELECT_CLS = "min-h-[38px] bg-black/20 border border-shBorder/60 rounded-lg px-2 text-shTextMuted text-[12px] font-black focus:outline-none";
+const SMALL_LABEL_CLS = "block text-[10px] font-black uppercase tracking-[0.12em] text-shTextMuted mb-1";
+
 function RecordFields({ activity: a, actual, onChange }) {
-  const actualChips = [
-    { key: "duration_achieved", icon: "fa-stopwatch", label: "Duration", value: actual.duration_achieved, onChange: (v) => onChange({ duration_achieved: v }) },
-    { key: "distance_achieved", icon: "fa-ruler", label: "Distance", value: actual.distance_achieved, onChange: (v) => onChange({ distance_achieved: v }) },
-    { key: "repetitions_achieved", icon: "fa-rotate", label: "Reps", value: actual.repetitions_achieved, onChange: (v) => onChange({ repetitions_achieved: v }) },
-    { key: "distraction_level", icon: "fa-volume-high", label: "Distraction", value: actual.distraction_level, onChange: (v) => onChange({ distraction_level: v }) },
-    { key: "environment", icon: "fa-tree", label: "Environment", value: actual.environment, onChange: (v) => onChange({ environment: v }) },
-    { key: "handler_assistance", icon: "fa-hand", label: "Handler Help", value: actual.handler_assistance, onChange: (v) => onChange({ handler_assistance: v }) },
-    { key: "leash_off_leash", icon: "fa-link", label: "Leash", value: actual.leash_off_leash, onChange: (v) => onChange({ leash_off_leash: v }) },
-  ];
+  const details = actual.metric_details || {};
+  const notNeeded = actual.metrics_not_needed || {};
+
+  // Update one metric's structured details and recompose its legacy display
+  // value in the same patch so autosave writes both together. Functional
+  // patches: composition must read the LATEST actual, never this render's
+  // snapshot, or two quick edits in one frame would drop the first.
+  const patchMetric = (key, legacyField) => (detailPatch) => {
+    onChange(prev => {
+      const prevDetails = prev.metric_details || {};
+      const nextDetail = { ...(prevDetails[key] || {}), ...detailPatch };
+      return {
+        metric_details: { ...prevDetails, [key]: nextDetail },
+        [legacyField]: composeMetricValue(key, nextDetail),
+      };
+    });
+  };
+  const setNotNeeded = (key, legacyField) => (flag) => {
+    onChange(prev => ({
+      metrics_not_needed: { ...(prev.metrics_not_needed || {}), [key]: flag },
+      // Marking N/A clears the display value; unchecking recomposes it from
+      // whatever structured details were already entered.
+      [legacyField]: flag ? "" : composeMetricValue(key, (prev.metric_details || {})[key] || {}),
+    }));
+  };
+  // Direct free-text override — how legacy drafts (no structured details)
+  // stay fully editable, and how a trainer can always type an exact value.
+  const setLegacy = (legacyField) => (v) => onChange({ [legacyField]: v });
+
+  const reps = details.repetitions || {};
+  const attempts = Number(reps.attempts);
+  const successful = Number(reps.successful);
+  const successRate = Number.isFinite(attempts) && attempts > 0 && Number.isFinite(successful) && String(reps.successful ?? "").trim() !== ""
+    ? Math.max(0, Math.min(100, Math.round((successful / attempts) * 100)))
+    : null;
+
+  const recordedValueBox = (legacyField, testidKey) => (
+    <div className="mt-2.5">
+      <label className={SMALL_LABEL_CLS}>Recorded value <span className="normal-case tracking-normal font-semibold">(auto-filled — editable)</span></label>
+      <input value={actual[legacyField] || ""} onChange={(e) => setLegacy(legacyField)(e.target.value)}
+             data-testid={`activity-${a.id}-metric-${testidKey}-value`}
+             className="w-full min-h-[34px] bg-black/15 border border-shBorder/50 rounded-lg px-2.5 text-shText text-[12.5px] focus:outline-none focus:border-shSecondary/45"/>
+    </div>
+  );
+
+  const appendPrompt = (text) => {
+    onChange(prev => {
+      const cur = prev.client_observation || "";
+      return { client_observation: cur ? `${cur.replace(/\s+$/, "")}\n${text} ` : `${text} ` };
+    });
+  };
+
   return (
-    <div className="space-y-2 border-t border-shBorder pt-3">
+    <div className="space-y-4 border-t border-shBorder pt-3">
       {!a.manual_only && (
         <div>
           <label className="text-[11px] font-black uppercase tracking-widest text-shTextMuted">Skill level (0–5)</label>
-          <div className="mt-1">
+          <div className="mt-1.5">
             <SkillLevelIndicator score={actual.score ?? -1} onChange={(n) => onChange({ score: n })} testid={`activity-${a.id}-score-picker`}/>
           </div>
         </div>
       )}
       <div>
-        <label className="text-[11px] font-black uppercase tracking-widest text-shTextMuted">Outcome</label>
+        <label className="text-[11px] font-black uppercase tracking-widest text-shTextMuted">Session outcome</label>
         {/* 3-up on phones, 6-up on desktop — one tap per assessment, and
             every target stays at least 38px tall for gloved/outdoor use. */}
-        <div className="grid grid-cols-3 sm:grid-cols-6 gap-1 mt-1" data-testid={`activity-${a.id}-assessment`}>
+        <div className="grid grid-cols-3 sm:grid-cols-6 gap-1.5 mt-1.5" data-testid={`activity-${a.id}-assessment`}>
           {OUTCOME_OPTIONS.map(o => (
             <button key={o.key} onClick={() => onChange({ outcome: o.key })}
                     data-testid={`activity-${a.id}-assessment-${o.key}`}
-                    className={`min-h-[38px] px-1 rounded text-[10px] sm:text-[11px] font-black uppercase tracking-widest border leading-tight ${actual.outcome === o.key ? o.color : "border-shBorder text-shTextMuted"}`}>
+                    className={`min-h-[38px] px-1 py-1.5 rounded text-[10px] sm:text-[11px] font-black uppercase tracking-widest border leading-tight ${actual.outcome === o.key ? o.color : "border-shBorder text-shTextMuted hover:border-shSecondary/40"}`}>
               {o.label}
+              <span className="block text-[9px] font-semibold normal-case tracking-normal opacity-75 mt-0.5">{o.desc}</span>
             </button>
           ))}
         </div>
       </div>
+
       <div>
-        <label className="text-[11px] font-black uppercase tracking-widest text-shTextMuted">Today&apos;s numbers</label>
-        <div className="mt-1">
-          <MeasurementChips items={actualChips} testid={`activity-${a.id}-actuals`}/>
+        <p className="text-[11px] font-black uppercase tracking-[0.14em] text-shPrimary">Session performance details</p>
+        <p className="text-[11.5px] text-shTextMuted mt-0.5 leading-relaxed">
+          Capture what happened during today&apos;s session. Mark &ldquo;Not needed&rdquo; for anything that didn&apos;t apply to this lesson — leaving a card blank just means it wasn&apos;t entered, and a 0 is a real result.
+        </p>
+        <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-3 mt-2.5">
+          <MetricCard icon="fa-stopwatch" title="Duration" tone="cyan" helper="How long the dog maintained or practiced the behavior."
+                      notNeeded={!!notNeeded.duration} onNotNeededChange={setNotNeeded("duration", "duration_achieved")}
+                      testid={`activity-${a.id}-metric-duration`}>
+            {a.target_duration && <p className="text-[10.5px] text-shTextMuted mb-1.5"><span className="font-black uppercase tracking-widest text-[9.5px]">Target · </span>{a.target_duration}</p>}
+            <div className="flex gap-1.5">
+              <div className="flex-1 min-w-0">
+                <label className={SMALL_LABEL_CLS}>Actual</label>
+                <input type="number" min="0" step="any" value={details.duration?.value ?? ""}
+                       onChange={(e) => patchMetric("duration", "duration_achieved")({ value: e.target.value })}
+                       data-testid={`activity-${a.id}-metric-duration-input`} className={NUM_INPUT_CLS}/>
+              </div>
+              <div className="self-end">
+                <select value={details.duration?.unit || "minutes"}
+                        onChange={(e) => patchMetric("duration", "duration_achieved")({ unit: e.target.value })}
+                        className={UNIT_SELECT_CLS}>
+                  {DURATION_UNITS.map(u => <option key={u} value={u}>{u}</option>)}
+                </select>
+              </div>
+            </div>
+            {recordedValueBox("duration_achieved", "duration")}
+          </MetricCard>
+
+          <MetricCard icon="fa-ruler" title="Distance" tone="teal" helper="How far the dog worked from the handler, target, or starting point."
+                      notNeeded={!!notNeeded.distance} onNotNeededChange={setNotNeeded("distance", "distance_achieved")}
+                      testid={`activity-${a.id}-metric-distance`}>
+            {a.target_distance && <p className="text-[10.5px] text-shTextMuted mb-1.5"><span className="font-black uppercase tracking-widest text-[9.5px]">Target · </span>{a.target_distance}</p>}
+            <div className="flex gap-1.5">
+              <div className="flex-1 min-w-0">
+                <label className={SMALL_LABEL_CLS}>Actual</label>
+                <input type="number" min="0" step="any" value={details.distance?.value ?? ""}
+                       onChange={(e) => patchMetric("distance", "distance_achieved")({ value: e.target.value })}
+                       data-testid={`activity-${a.id}-metric-distance-input`} className={NUM_INPUT_CLS}/>
+              </div>
+              <div className="self-end">
+                <select value={details.distance?.unit || "feet"}
+                        onChange={(e) => patchMetric("distance", "distance_achieved")({ unit: e.target.value })}
+                        className={UNIT_SELECT_CLS}>
+                  {DISTANCE_UNITS.map(u => <option key={u} value={u}>{u}</option>)}
+                </select>
+              </div>
+            </div>
+            {recordedValueBox("distance_achieved", "distance")}
+          </MetricCard>
+
+          <MetricCard icon="fa-rotate" title="Repetitions" tone="lime" helper="How many complete attempts were made."
+                      notNeeded={!!notNeeded.repetitions} onNotNeededChange={setNotNeeded("repetitions", "repetitions_achieved")}
+                      testid={`activity-${a.id}-metric-repetitions`}>
+            <div className="flex gap-1.5 items-end">
+              <div className="flex-1 min-w-0">
+                <label className={SMALL_LABEL_CLS}>Attempts</label>
+                <input type="number" min="0" value={reps.attempts ?? ""}
+                       onChange={(e) => patchMetric("repetitions", "repetitions_achieved")({ attempts: e.target.value })}
+                       data-testid={`activity-${a.id}-metric-repetitions-attempts`} className={NUM_INPUT_CLS}/>
+              </div>
+              <div className="flex-1 min-w-0">
+                <label className={SMALL_LABEL_CLS}>Successful</label>
+                <input type="number" min="0" value={reps.successful ?? ""}
+                       onChange={(e) => patchMetric("repetitions", "repetitions_achieved")({ successful: e.target.value })}
+                       data-testid={`activity-${a.id}-metric-repetitions-successful`} className={NUM_INPUT_CLS}/>
+              </div>
+              {successRate != null && (
+                <div className="shrink-0 text-center px-1.5" data-testid={`activity-${a.id}-metric-repetitions-rate`}>
+                  <span className="block text-[16px] font-black text-shPrimary leading-none">{successRate}%</span>
+                  <span className="block text-[8.5px] font-black uppercase tracking-widest text-shTextMuted mt-1">Success</span>
+                </div>
+              )}
+            </div>
+            {recordedValueBox("repetitions_achieved", "repetitions")}
+          </MetricCard>
+
+          <MetricCard icon="fa-volume-high" title="Distraction" tone="orange" helper="What distractions were present and how difficult they were."
+                      notNeeded={!!notNeeded.distraction} onNotNeededChange={setNotNeeded("distraction", "distraction_level")}
+                      testid={`activity-${a.id}-metric-distraction`}>
+            <label className={SMALL_LABEL_CLS}>Difficulty</label>
+            <SegmentedOptions options={DISTRACTION_LEVELS} value={details.distraction?.difficulty || null}
+                              onChange={(v) => patchMetric("distraction", "distraction_level")({ difficulty: v })}
+                              columns="grid-cols-3" testid={`activity-${a.id}-metric-distraction-difficulty`}/>
+            <label className={`${SMALL_LABEL_CLS} mt-2`}>Details <span className="normal-case tracking-normal font-semibold">(optional)</span></label>
+            <input value={details.distraction?.note || ""} placeholder="e.g. Dog walking nearby"
+                   onChange={(e) => patchMetric("distraction", "distraction_level")({ note: e.target.value })}
+                   data-testid={`activity-${a.id}-metric-distraction-note`}
+                   className="w-full min-h-[34px] bg-black/20 border border-shBorder/60 rounded-lg px-2.5 text-shText text-[12.5px] focus:outline-none focus:border-shSecondary/50"/>
+            {recordedValueBox("distraction_level", "distraction")}
+          </MetricCard>
+
+          <MetricCard icon="fa-tree" title="Environment" tone="green" helper="Where the training took place."
+                      notNeeded={!!notNeeded.environment} onNotNeededChange={setNotNeeded("environment", "environment")}
+                      testid={`activity-${a.id}-metric-environment`}>
+            <SegmentedOptions options={ENVIRONMENT_CHOICES} value={details.environment?.choice || null}
+                              onChange={(v) => patchMetric("environment", "environment")({ choice: v })}
+                              columns="grid-cols-2 sm:grid-cols-3" testid={`activity-${a.id}-metric-environment-choice`}/>
+            {details.environment?.choice === "Other" && (
+              <input value={details.environment?.other || ""} placeholder="Describe the location"
+                     onChange={(e) => patchMetric("environment", "environment")({ other: e.target.value })}
+                     data-testid={`activity-${a.id}-metric-environment-other`}
+                     className="w-full mt-2 min-h-[34px] bg-black/20 border border-shBorder/60 rounded-lg px-2.5 text-shText text-[12.5px] focus:outline-none focus:border-shSecondary/50"/>
+            )}
+            {recordedValueBox("environment", "environment")}
+          </MetricCard>
+
+          <MetricCard icon="fa-hand" title="Handler Help" tone="purple" helper="How much assistance or guidance the dog needed."
+                      notNeeded={!!notNeeded.handler_help} onNotNeededChange={setNotNeeded("handler_help", "handler_assistance")}
+                      testid={`activity-${a.id}-metric-handler`}>
+            <label className={SMALL_LABEL_CLS}>Level</label>
+            <SegmentedOptions options={HANDLER_LEVELS} value={details.handler_help?.level || null}
+                              onChange={(v) => patchMetric("handler_help", "handler_assistance")({ level: v })}
+                              columns="grid-cols-3 sm:grid-cols-5" testid={`activity-${a.id}-metric-handler-level`}/>
+            <label className={`${SMALL_LABEL_CLS} mt-2`}>Methods used <span className="normal-case tracking-normal font-semibold">(check all that apply)</span></label>
+            <div className="grid grid-cols-2 gap-x-2 gap-y-1">
+              {HANDLER_METHODS.map(m => {
+                const selected = (details.handler_help?.methods || []).includes(m);
+                return (
+                  <label key={m} className="flex items-center gap-1.5 text-[11.5px] text-shText cursor-pointer min-h-[24px]">
+                    <input type="checkbox" checked={selected} className="w-3.5 h-3.5 accent-[var(--sh-secondary)]"
+                           onChange={() => {
+                             const cur = details.handler_help?.methods || [];
+                             patchMetric("handler_help", "handler_assistance")({
+                               methods: selected ? cur.filter(x => x !== m) : [...cur, m],
+                             });
+                           }}/>
+                    {m}
+                  </label>
+                );
+              })}
+            </div>
+            {(details.handler_help?.methods || []).includes("Other") && (
+              <input value={details.handler_help?.other || ""} placeholder="Other method (explain)"
+                     onChange={(e) => patchMetric("handler_help", "handler_assistance")({ other: e.target.value })}
+                     data-testid={`activity-${a.id}-metric-handler-other`}
+                     className="w-full mt-2 min-h-[34px] bg-black/20 border border-shBorder/60 rounded-lg px-2.5 text-shText text-[12.5px] focus:outline-none focus:border-shSecondary/50"/>
+            )}
+            {recordedValueBox("handler_assistance", "handler")}
+          </MetricCard>
+
+          <MetricCard icon="fa-link" title="Leash" tone="pink" helper="How the leash was used and the dog's leash behavior."
+                      notNeeded={!!notNeeded.leash} onNotNeededChange={setNotNeeded("leash", "leash_off_leash")}
+                      testid={`activity-${a.id}-metric-leash`}>
+            <label className={SMALL_LABEL_CLS}>Leash use</label>
+            <SegmentedOptions options={LEASH_USES} value={details.leash?.use || null}
+                              onChange={(v) => patchMetric("leash", "leash_off_leash")({ use: v })}
+                              columns="grid-cols-2 sm:grid-cols-3" testid={`activity-${a.id}-metric-leash-use`}/>
+            <label className={`${SMALL_LABEL_CLS} mt-2`}>Notes <span className="normal-case tracking-normal font-semibold">(optional)</span></label>
+            <input value={details.leash?.note || ""} placeholder="e.g. Loose most of the session"
+                   onChange={(e) => patchMetric("leash", "leash_off_leash")({ note: e.target.value })}
+                   data-testid={`activity-${a.id}-metric-leash-note`}
+                   className="w-full min-h-[34px] bg-black/20 border border-shBorder/60 rounded-lg px-2.5 text-shText text-[12.5px] focus:outline-none focus:border-shSecondary/50"/>
+            {recordedValueBox("leash_off_leash", "leash")}
+          </MetricCard>
         </div>
       </div>
+
       {/* Mastery is its OWN decision — a high score never grants it. Both
           buttons toggle off, so "no decision today" stays the default. */}
-      <div>
-        <label className="text-[11px] font-black uppercase tracking-widest text-shTextMuted">Mastery decision <span className="text-shTextMuted/70 normal-case font-bold">· optional, never automatic</span></label>
-        <div className="grid grid-cols-2 gap-1 mt-1" data-testid={`activity-${a.id}-mastery`}>
-          <button onClick={() => onChange({ mastery_decision: actual.mastery_decision === "mastered" ? null : "mastered" })}
-                  data-testid={`activity-${a.id}-mastery-mastered`}
-                  className={`min-h-[38px] rounded text-[11px] font-black uppercase tracking-widest border ${actual.mastery_decision === "mastered" ? "bg-shPrimary/25 text-shPrimary border-shPrimary/60" : "border-shBorder text-shTextMuted"}`}>
-            <i className="fas fa-award mr-1"/>Mark mastered
-          </button>
+      <div className="rounded-2xl border border-shBorder/60 bg-black/15 p-3.5">
+        <label className="text-[11px] font-black uppercase tracking-widest text-shTextMuted"><i className="fas fa-trophy mr-1.5 text-shPrimary"/>Mastery decision <span className="text-shTextMuted/70 normal-case font-bold">· optional, never automatic</span></label>
+        <p className="text-[11.5px] text-shTextMuted mt-1">Never automatic. Only mark mastered if the dog has met the lesson standard{a.pass_criteria ? ":" : "."}</p>
+        {a.pass_criteria && <p className="text-[12px] text-shText mt-1 rounded-lg border border-shPrimary/25 bg-shPrimary/[0.05] px-2.5 py-1.5" data-testid={`activity-${a.id}-mastery-standard`}>{a.pass_criteria}</p>}
+        <div className="grid grid-cols-2 gap-1.5 mt-2.5" data-testid={`activity-${a.id}-mastery`}>
           <button onClick={() => onChange({ mastery_decision: actual.mastery_decision === "not_yet" ? null : "not_yet" })}
                   data-testid={`activity-${a.id}-mastery-not-yet`}
-                  className={`min-h-[38px] rounded text-[11px] font-black uppercase tracking-widest border ${actual.mastery_decision === "not_yet" ? "bg-shAccent/25 text-shAccent border-shAccent/60" : "border-shBorder text-shTextMuted"}`}>
+                  className={`min-h-[44px] rounded-lg text-[11px] font-black uppercase tracking-widest border leading-tight ${actual.mastery_decision === "not_yet" ? "bg-shAccent/25 text-shAccent border-shAccent/60" : "border-shBorder text-shTextMuted hover:border-shAccent/40"}`}>
             Not yet
+            <span className="block text-[9px] font-semibold normal-case tracking-normal opacity-75 mt-0.5">Keep working on this skill</span>
+          </button>
+          <button onClick={() => onChange({ mastery_decision: actual.mastery_decision === "mastered" ? null : "mastered" })}
+                  data-testid={`activity-${a.id}-mastery-mastered`}
+                  className={`min-h-[44px] rounded-lg text-[11px] font-black uppercase tracking-widest border leading-tight ${actual.mastery_decision === "mastered" ? "bg-shPrimary/25 text-shPrimary border-shPrimary/60" : "border-shBorder text-shTextMuted hover:border-shPrimary/40"}`}>
+            <i className="fas fa-award mr-1"/>Mark mastered
+            <span className="block text-[9px] font-semibold normal-case tracking-normal opacity-75 mt-0.5">Dog has met the standard</span>
           </button>
         </div>
       </div>
-      <textarea value={actual.client_observation || ""} onChange={(e) => onChange({ client_observation: e.target.value })}
-                placeholder="Client-safe observation — the owner reads this in their recap"
-                data-testid={`activity-${a.id}-client-observation`}
-                rows={2} className="w-full bg-shPrimary/[0.05] border border-shPrimary/30 rounded p-2 text-shText text-[13px]"/>
-      <textarea value={actual.notes || ""} onChange={(e) => onChange({ notes: e.target.value })} placeholder="Private trainer note for this skill (staff only — never sent to the client)"
-                data-testid={`activity-${a.id}-private-note`}
-                rows={2} className="w-full bg-shAccent/[0.05] border border-shAccent/30 rounded p-2 text-shText text-[13px]"/>
+
+      <div className="grid grid-cols-1 lg:grid-cols-2 gap-3">
+        <div className="rounded-2xl border border-shPrimary/30 bg-shPrimary/[0.045] p-3.5">
+          <div className="flex flex-wrap items-center justify-between gap-2">
+            <label className="text-[11px] font-black uppercase tracking-widest text-shPrimary"><i className="fas fa-user mr-1.5"/>Client observation</label>
+            <VisibilityBadge/>
+          </div>
+          <p className="text-[11.5px] text-shTextMuted mt-1">What should the owner know about how their dog performed? They read this in their recap.</p>
+          <textarea value={actual.client_observation || ""} onChange={(e) => onChange({ client_observation: e.target.value })}
+                    placeholder="Client-safe observation — the owner reads this in their recap"
+                    data-testid={`activity-${a.id}-client-observation`}
+                    rows={3} className="w-full mt-2 bg-black/20 border border-shPrimary/30 rounded-lg p-2.5 text-shText text-[13px] focus:outline-none focus:border-shPrimary/50"/>
+          <div className="flex flex-wrap items-center gap-1.5 mt-1.5">
+            <span className="text-[10px] font-black uppercase tracking-widest text-shTextMuted">Consider including:</span>
+            {["What went well?", "What needs more work?", "What should the owner watch for?"].map(p => (
+              <button key={p} type="button" onClick={() => appendPrompt(p)}
+                      className="rounded-full border border-shSecondary/35 bg-shSecondary/[0.07] px-2.5 py-0.5 text-[10.5px] font-bold text-shSecondary hover:bg-shSecondary/15 transition">
+                {p}
+              </button>
+            ))}
+          </div>
+        </div>
+        <div className="rounded-2xl border border-shAccent/30 bg-shAccent/[0.045] p-3.5">
+          <div className="flex flex-wrap items-center justify-between gap-2">
+            <label className="text-[11px] font-black uppercase tracking-widest text-shAccent"><i className="fas fa-lock mr-1.5"/>Private trainer note</label>
+            <VisibilityBadge staffOnly/>
+          </div>
+          <p className="text-[11.5px] text-shTextMuted mt-1">Additional details, handling notes, or training-plan adjustments.</p>
+          <textarea value={actual.notes || ""} onChange={(e) => onChange({ notes: e.target.value })} placeholder="Private trainer note for this skill (staff only — never sent to the client)"
+                    data-testid={`activity-${a.id}-private-note`}
+                    rows={3} className="w-full mt-2 bg-black/20 border border-shAccent/30 rounded-lg p-2.5 text-shText text-[13px] focus:outline-none focus:border-shAccent/50"/>
+          <p className="text-[11px] font-bold text-shAccent mt-1.5">This note is never visible to the client.</p>
+        </div>
+      </div>
       <div className="flex flex-wrap gap-4">
         <label className="flex items-center gap-1.5 text-[12px] text-shText"><input type="checkbox" checked={!!actual.needs_reassessment} onChange={(e) => onChange({ needs_reassessment: e.target.checked })}/>Needs reassessment next visit</label>
       </div>
@@ -778,6 +1080,11 @@ function CompleteSessionModal({ lessonPractice, isAdmin = false, onCancel, onCom
                     <input type="checkbox" className="mt-0.5" checked={assignLessonPractice} onChange={(e) => setAssignLessonPractice(e.target.checked)}/>
                     <span><b>Send this lesson's Practice</b><br/><span className="text-[11px] text-shTextMuted">Default for normal in-person lessons. Turn it off only when the client should not practice this lesson yet.</span></span>
                   </label>
+                  {!assignLessonPractice && (
+                    <p className="mt-2 rounded-lg border border-shAccent/40 bg-shAccent/[0.07] px-2.5 py-1.5 text-[11px] font-black uppercase tracking-widest text-shAccent" data-testid="complete-session-practice-withheld">
+                      <i className="fas fa-hand mr-1.5"/>Practice withheld for this visit
+                    </p>
+                  )}
                 </>
               )
             ) : (

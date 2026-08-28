@@ -124,7 +124,7 @@ jobs:
           exit 1
       - name: Ad hoc release-critical tests
         working-directory: backend
-        run: python -m pytest -q test_pos_catalog.py test_pos_checkout_integrity.py test_front_desk_checkin.py test_shop_manager_polish.py
+        run: python -m pytest -q test_pos_catalog.py test_pos_checkout_integrity.py test_front_desk_checkin.py test_shop_manager_polish.py test_skill_performance_metrics.py
       - name: Curated clean-database release gate
         working-directory: backend
         run: |

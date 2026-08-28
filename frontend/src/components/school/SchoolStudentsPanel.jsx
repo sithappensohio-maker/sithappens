@@ -6,6 +6,8 @@ import { toast } from "sonner";
 import { openSchoolMedia } from "../../lib/schoolMedia";
 import HomeworkReportPanel from "../HomeworkReportPanel";
 import TrainingSessionWorkspace from "../TrainingSessionWorkspace";
+import VisibilityBadge from "../training/VisibilityBadge";
+import ProgressRing from "../training/ProgressRing";
 import { printSchoolCertificate, resolveSchoolCertificateTemplate } from "../../lib/schoolCertificate";
 
 const isoLocal = (v) => {
@@ -126,6 +128,9 @@ function StudentWorkspace({ studentId, trainers, onClose, onChanged, onReenrolle
       <div className="px-4 pt-3 flex gap-1 overflow-x-auto">{[["overview","Overview"],["plan","Training Plan"],["practice","Practice"],["requests","Trainer Requests"],["history","History"]].map(([k,l])=><button key={k} onClick={()=>setTab(k)} className={`shrink-0 px-3 py-2 rounded-lg text-xs font-black ${tab===k?"bg-shPrimary/15 text-shPrimary":"text-shTextMuted"}`}>{l}</button>)}</div>
       <div className="p-4 sm:p-6 space-y-5">
         {tab==="overview" && <>
+          <SchoolOverviewHero data={data} snap={snap} currentModule={currentModule} currentLesson={currentLesson}
+                              currentDelivery={currentDelivery}
+                              onOpenLesson={()=>setLessonWorkspace({dog_id:data.enrollment?.dog_id, enrollment_id:data.enrollment?.id})}/>
           <div className="grid grid-cols-2 sm:grid-cols-4 lg:grid-cols-8 gap-3"><Mini value={`${data.progress?.course_pct||0}%`} label="Course"/><Mini value={data.checkpoints?.length||0} label="Checkpoints"/><Mini value={data.practice?.filter(p=>p.status!=="completed").length||0} label="Active Practice"/><Mini value={data.operations?.session_count||0} label="Sessions"/><Mini value={data.operations?.training_credits??0} label="Training credits"/><Mini value={data.requests?.filter(r=>r.status==="open"||r.status==="submitted").length||0} label="Open requests"/><Mini value={data.support?.checkpoint_allowance==null?"∞":`${data.support?.checkpoint_used||0}/${data.support?.checkpoint_allowance}`} label="Reviews used"/><Mini value={data.support?.assist_allowance==null?"∞":`${data.support?.assist_used||0}/${data.support?.assist_allowance}`} label="Assists used"/></div>
           <section className="rounded-2xl border border-shBorder p-4"><h3 className="font-black text-shText">School ownership & access</h3><div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-3 mt-3"><Field label="Assigned trainer"><select value={settings.assigned_trainer_id||""} onChange={e=>setSettings(s=>({...s,assigned_trainer_id:e.target.value}))} className="input-school"><option value="">Sit Happens team</option>{trainers.map(t=><option key={t.id} value={t.id}>{t.name}</option>)}</select></Field><Field label="Access expires"><input type="datetime-local" value={settings.access_expires_at||""} onChange={e=>setSettings(s=>({...s,access_expires_at:e.target.value}))} className="input-school"/></Field><Field label="Pause until"><input type="datetime-local" value={settings.pause_until||""} onChange={e=>setSettings(s=>({...s,pause_until:e.target.value}))} className="input-school"/></Field><Field label="Checkpoint support included"><input type="number" min="0" value={settings.support_checkpoint_allowance??0} onChange={e=>setSettings(s=>({...s,support_checkpoint_allowance:e.target.value}))} className="input-school"/></Field><Field label="Trainer Assists included"><input type="number" min="0" value={settings.support_assist_allowance??0} onChange={e=>setSettings(s=>({...s,support_assist_allowance:e.target.value}))} className="input-school"/></Field><div className="lg:col-span-2 flex flex-wrap gap-2 items-end"><button type="button" onClick={()=>setAccessDays(30)} className="min-h-[36px] px-3 rounded-lg border border-shBorder text-[10px] font-black text-shTextMuted">Access +30 days</button><button type="button" onClick={()=>setAccessDays(90)} className="min-h-[36px] px-3 rounded-lg border border-shBorder text-[10px] font-black text-shTextMuted">Access +90 days</button><button type="button" onClick={()=>setPauseDays(7)} className="min-h-[36px] px-3 rounded-lg border border-shBorder text-[10px] font-black text-shTextMuted">Pause 7 days</button><button type="button" onClick={()=>setPauseDays(0)} className="min-h-[36px] px-3 rounded-lg border border-shBorder text-[10px] font-black text-shTextMuted">Unpause</button></div><div className="flex items-end"><button disabled={saving} onClick={saveSettings} className="w-full min-h-[42px] rounded-xl bg-shPrimary text-bgHeader font-black text-xs uppercase tracking-widest">Save student</button></div></div></section>
           {data.enrollment?.status==="completed" && certificateTemplate.enabled && <section className="rounded-2xl border border-shPrimary/30 bg-shPrimary/[0.04] p-4 flex flex-col sm:flex-row sm:items-center justify-between gap-3" data-testid="school-admin-course-certificate"><div><h3 className="font-black text-shText">Course completion certificate</h3><p className="text-[11px] text-shTextMuted mt-1">Print the same personalized certificate the client sees in School, including client name, dog name, completion date, trainer and certificate number.</p></div><button type="button" onClick={printCurrentCertificate} className="min-h-[42px] px-4 rounded-xl border border-shPrimary/40 text-shPrimary text-xs font-black uppercase tracking-widest shrink-0"><i className="fas fa-certificate mr-1"/>Print Certificate</button></section>}
@@ -148,9 +153,11 @@ function StudentWorkspace({ studentId, trainers, onClose, onChanged, onReenrolle
               : !currentLessonPracticeTemplateId ? <div className="rounded-xl border border-dashed border-shBorder p-4 mt-4 text-sm text-shTextMuted">No Practice recipe is configured on this lesson. Add one in Program Studio if the client should have homework for this step.</div>
               : !currentLessonPracticeTemplate ? <div className="rounded-xl border border-shAccent/30 bg-shAccent/[0.05] p-3 mt-4 text-xs text-shAccent">This lesson references a Practice recipe that no longer exists. Fix it in Program Studio.</div>
               : <div className="mt-4">
-                  <div className="rounded-xl border border-shSecondary/25 bg-shSecondary/[0.04] p-3">
-                    <p className="font-black text-sm text-shText">{currentLessonPracticeTemplate.name}</p>
-                    {currentLessonPracticeTemplate.description&&<p className="text-[11px] text-shTextMuted mt-1">{currentLessonPracticeTemplate.description}</p>}
+                  <div className="rounded-2xl border border-shSecondary/30 bg-gradient-to-br from-shSecondary/[0.06] via-black/10 to-black/15 p-4" data-testid="student-lesson-practice-recipe">
+                    <p className="text-[10px] font-black uppercase tracking-[0.14em] text-shSecondary"><i className="fas fa-clipboard-list mr-1.5"/>Lesson Practice Recipe</p>
+                    <p className="font-black text-[15px] text-shText mt-1">{currentLessonPracticeTemplate.name}</p>
+                    {currentLessonPracticeTemplate.description&&<p className="text-[12px] text-shTextMuted mt-1 leading-relaxed">{currentLessonPracticeTemplate.description}</p>}
+                    <p className="text-[10.5px] text-shTextMuted mt-2"><i className="fas fa-circle-info mr-1 text-shSecondary"/>The recipe is authoritative — the fields below only tailor this client&apos;s copy of it.</p>
                   </div>
                   <div className="grid sm:grid-cols-2 lg:grid-cols-3 gap-3 mt-3">
                     <Field label="Due date"><input type="date" className="input-school" value={practice.due_date} onChange={e=>setPractice(p=>({...p,due_date:e.target.value}))}/></Field>
@@ -158,12 +165,16 @@ function StudentWorkspace({ studentId, trainers, onClose, onChanged, onReenrolle
                     <Field label="Practice frequency"><input className="input-school" value={practice.practice_frequency} onChange={e=>setPractice(p=>({...p,practice_frequency:e.target.value}))} placeholder="e.g. 2 short sessions daily"/></Field>
                     <Field label="Repetition target"><input className="input-school" value={practice.repetition_target} onChange={e=>setPractice(p=>({...p,repetition_target:e.target.value}))} placeholder="e.g. 10 clean reps"/></Field>
                     <Field label="Environment"><input className="input-school" value={practice.environment} onChange={e=>setPractice(p=>({...p,environment:e.target.value}))} placeholder="Home, yard, store…"/></Field>
-                    <div className="sm:col-span-2 lg:col-span-3"><Field label="Trainer note"><textarea className="input-school min-h-[72px]" value={practice.trainer_personalized_note} onChange={e=>setPractice(p=>({...p,trainer_personalized_note:e.target.value}))} placeholder="Client-specific focus for this lesson…"/></Field></div>
+                    <div className="sm:col-span-2 lg:col-span-3">
+                      <div className="flex flex-wrap items-center justify-between gap-2 mb-1"><span className="text-[10px] uppercase tracking-widest font-black text-shTextMuted">Trainer note</span><VisibilityBadge/></div>
+                      <textarea className="input-school min-h-[72px]" value={practice.trainer_personalized_note} onChange={e=>setPractice(p=>({...p,trainer_personalized_note:e.target.value}))} placeholder="Client-specific focus for this lesson…"/>
+                    </div>
                     <div className="sm:col-span-2 lg:col-span-3 flex flex-wrap gap-4 items-center">
                       <label className="flex items-center gap-2 text-xs text-shText"><input type="checkbox" checked={practice.required} onChange={e=>setPractice(p=>({...p,required:e.target.checked}))}/> Required</label>
                       <label className="flex items-center gap-2 text-xs text-shText"><input type="checkbox" checked={practice.video_requested} onChange={e=>setPractice(p=>({...p,video_requested:e.target.checked}))}/> Request practice video</label>
-                      <button type="button" onClick={assignPractice} className="ml-auto min-h-[42px] px-4 rounded-xl bg-shPrimary text-bgHeader text-xs font-black uppercase tracking-widest">Assign Current Lesson Practice</button>
+                      <button type="button" onClick={assignPractice} className="ml-auto min-h-[46px] px-4 rounded-xl bg-shPrimary text-bgHeader text-xs font-black uppercase tracking-widest shadow-[0_10px_30px_-14px_rgba(140,198,63,0.8)] hover:brightness-110 transition"><i className="fas fa-paper-plane mr-1.5"/>Assign Current Lesson Practice</button>
                     </div>
+                    <p className="sm:col-span-2 lg:col-span-3 text-[10.5px] text-shTextMuted"><i className="fas fa-hand mr-1 text-shAccent"/>To deliberately withhold Practice for a visit, complete the trainer session without sending this lesson&apos;s Practice — nothing is ever sent automatically from this screen.</p>
                   </div>
                 </div>}
             </> : <>
@@ -190,6 +201,61 @@ function StudentWorkspace({ studentId, trainers, onClose, onChanged, onReenrolle
   </div><style>{`.input-school{width:100%;border:1px solid var(--sh-border);background:rgba(0,0,0,.18);border-radius:.75rem;padding:.6rem .75rem;color:var(--sh-text);font-size:.8rem}`}</style></div>;
 }
 function Mini({value,label}){return <div className="rounded-xl border border-shBorder bg-black/15 p-3"><p className="text-2xl font-black text-shText">{value}</p><p className="text-[9px] font-black uppercase tracking-widest text-shTextMuted">{label}</p></div>}
+
+/* School redesign — the trainer overview hero: real course progress as a
+ * ring, the exact current lesson, and the module roadmap. Every number here
+ * comes from data the workspace already loads; nothing is invented. */
+function SchoolOverviewHero({ data, snap, currentModule, currentLesson, currentDelivery, onOpenLesson }) {
+  const modules = [...(snap.modules || [])].sort((a, b) => (a.order || 0) - (b.order || 0));
+  const curIdx = modules.findIndex(m => m.id === data?.enrollment?.current_module_id);
+  const activeLessons = (m) => (m.lessons || []).filter(l => l.active !== false).length;
+  const staffLed = ["in_person", "hybrid"].includes(currentDelivery);
+  const lastSession = (data?.operations?.recent_sessions || [])[0];
+  const activePractice = (data?.practice || []).filter(p => p.status !== "completed");
+  return (
+    <section className="sh-school-splash overflow-hidden rounded-3xl border border-shPrimary/35 bg-gradient-to-br from-shPrimary/[0.10] via-black/10 to-shSecondary/[0.08] p-4 sm:p-5" data-testid="school-overview-hero">
+      <div className="flex flex-col md:flex-row md:items-center gap-4">
+        <ProgressRing pct={data?.progress?.course_pct || 0}/>
+        <div className="min-w-0 flex-1">
+          <p className="text-[10px] font-black uppercase tracking-[0.16em] text-shPrimary"><i className="fas fa-location-arrow mr-1.5"/>Current lesson</p>
+          <h3 className="text-[20px] sm:text-[24px] font-black text-shText mt-0.5 leading-tight text-balance">{currentLesson?.name || "No current lesson set"}</h3>
+          <p className="text-[12px] text-shTextMuted mt-1">{currentModule?.name || "—"}{snap.name ? ` · ${snap.name}` : ""}</p>
+          <div className="flex flex-wrap gap-x-4 gap-y-1 mt-2 text-[11px] text-shTextMuted">
+            {lastSession?.at && <span><i className="fas fa-calendar mr-1 text-shSecondary"/>Last session {new Date(lastSession.at).toLocaleDateString()}</span>}
+            <span><i className="fas fa-house-chimney-user mr-1 text-shSecondary"/>{activePractice.length} active Practice</span>
+            {(data?.requests || []).some(r => r.status === "submitted") && <span className="text-shAccent"><i className="fas fa-video mr-1"/>Video waiting for review</span>}
+          </div>
+        </div>
+        {staffLed && data?.enrollment?.status === "active" && (
+          <button onClick={onOpenLesson} data-testid="school-overview-start-lesson"
+                  className="shrink-0 min-h-[50px] px-5 rounded-xl bg-gradient-to-r from-shPrimary to-[#b7e35c] text-bgHeader text-[12px] font-black uppercase tracking-widest shadow-[0_0_24px_rgba(140,198,63,0.5),0_12px_34px_-14px_rgba(140,198,63,0.8)] hover:brightness-110 transition">
+            <i className="fas fa-play mr-1.5"/>Start Lesson
+          </button>
+        )}
+      </div>
+      {modules.length > 0 && (
+        <div className="mt-4 pt-4 border-t border-shBorder/40">
+          <p className="text-[10px] font-black uppercase tracking-[0.16em] text-shSecondary mb-2">Program roadmap</p>
+          <div className="flex gap-2 overflow-x-auto pb-1">
+            {modules.map((m, i) => {
+              const isCurrent = i === curIdx;
+              const isDone = curIdx >= 0 && i < curIdx;
+              return (
+                <div key={m.id} className={`shrink-0 min-w-[128px] rounded-xl border p-2.5 ${isCurrent ? "border-shPrimary/70 bg-shPrimary/[0.10] shadow-[0_0_0_1px_var(--sh-primary)_inset,0_0_18px_rgba(140,198,63,0.35)]" : isDone ? "border-shPrimary/30 bg-shPrimary/[0.03]" : "border-shBorder/55 bg-black/15"}`}>
+                  <p className="text-[9px] font-black uppercase tracking-widest text-shTextMuted">Module {i + 1}{isCurrent && <span className="ml-1.5 text-shPrimary">· Current</span>}</p>
+                  <p className="text-[12px] font-black text-shText mt-0.5 leading-tight">{m.name}</p>
+                  <p className="text-[10px] text-shTextMuted mt-1">
+                    {isDone ? <><i className="fas fa-check mr-1 text-shPrimary"/>Passed</> : <>{activeLessons(m)} lesson{activeLessons(m) === 1 ? "" : "s"}</>}
+                  </p>
+                </div>
+              );
+            })}
+          </div>
+        </div>
+      )}
+    </section>
+  );
+}
 function Field({label,children}){return <label className="block"><span className="block text-[10px] uppercase tracking-widest font-black text-shTextMuted mb-1">{label}</span>{children}</label>}
 function PlanBuilder({plan,setPlan,addTask,onSave,onCancel,lessons,editMode=false}){
   const removeTask=(i)=>setPlan(p=>({...p,tasks:p.tasks.filter((t,j)=>j!==i || t.completed_at)}));

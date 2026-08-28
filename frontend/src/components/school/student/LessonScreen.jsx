@@ -333,9 +333,12 @@ export default function LessonScreen({
           <p className="text-[9px] font-black uppercase tracking-[0.14em] text-shSecondary mb-2"><i className="fas fa-star mr-1.5" />Skills you&apos;re building</p>
           <div className="space-y-2">
             {data.skills.map((s) => (
-              <div key={s.id} className="rounded-xl border border-shBorder/45 bg-black/10 p-3">
-                <p className="text-[13px] font-black text-shText">{s.name}</p>
-                {s.client_facing_explanation && <p className="text-[12px] text-shTextMuted mt-1 leading-relaxed">{s.client_facing_explanation}</p>}
+              <div key={s.id} className="rounded-xl border border-shSecondary/40 bg-gradient-to-r from-shSecondary/[0.14] to-black/15 p-3 flex items-start gap-2.5">
+                <span className="w-7 h-7 rounded-lg grid place-items-center bg-shSecondary/20 border border-shSecondary/45 shrink-0"><i className="fas fa-bone text-shSecondary text-[11px]"/></span>
+                <span className="min-w-0">
+                  <p className="text-[13px] font-black text-shText">{s.name}</p>
+                  {s.client_facing_explanation && <p className="text-[12px] text-shTextMuted mt-1 leading-relaxed">{s.client_facing_explanation}</p>}
+                </span>
               </div>
             ))}
           </div>
@@ -407,8 +410,8 @@ export default function LessonScreen({
 
           {isCurrent && !requiresCp && !quizAvailable
             && ((hasPractice && practiceUnlocked && data.practiced) || (!hasPractice && learnDone)) && (
-            <PremiumButton variant="secondary" onClick={advance} disabled={busy} data-testid="lesson-advance"
-                           className="w-full justify-center min-h-[48px]">
+            <PremiumButton onClick={advance} disabled={busy} data-testid="lesson-advance"
+                           className="w-full justify-center min-h-[52px]">
               Continue to next lesson <i className="fas fa-arrow-right text-[10px]" />
             </PremiumButton>
           )}

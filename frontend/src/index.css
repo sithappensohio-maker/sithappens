@@ -528,6 +528,96 @@ body.printing-pdf .print-card .bg-bgHeader { border: 1px solid #ddd !important; 
 }
 .sh-splatter-explosion > * { position: relative; z-index: 1; }
 
+/* School redesign — 3D hue cards. One card system for the guided-lesson
+   step rail and the Skill Performance Log metric grid: a glossy top sheen,
+   a hue-lit radial wash (never a flat tint), a gradient edge that fades
+   down the card, real depth shadows, and a hover lift. Everything keys off
+   --hue-rgb / --hue-int so each variant is two custom properties, not a
+   copy of the whole treatment. */
+.sh-hue-card {
+  --hue-rgb: 0, 169, 224;
+  --hue-int: 0.30;
+  position: relative; isolation: isolate;
+  border: 1px solid transparent;
+  background:
+    linear-gradient(180deg, rgba(255,255,255,0.09), rgba(255,255,255,0.02) 24%, transparent 42%),
+    radial-gradient(130% 100% at 12% 0%, rgba(var(--hue-rgb), var(--hue-int)), transparent 58%),
+    linear-gradient(165deg, rgba(var(--hue-rgb), 0.13), rgba(3, 6, 26, 0.92));
+  box-shadow:
+    0 1px 0 rgba(255,255,255,0.09) inset,
+    0 -2px 0 rgba(0,0,0,0.35) inset,
+    0 16px 28px -16px rgba(0,0,0,0.85),
+    0 6px 0 -3px rgba(0,0,0,0.5);
+  transition: transform 0.18s ease, box-shadow 0.18s ease, filter 0.18s ease;
+}
+.sh-hue-card::before {
+  content: ""; position: absolute; inset: 0; border-radius: inherit;
+  padding: 1.5px; pointer-events: none; z-index: 0;
+  background: linear-gradient(180deg,
+              rgba(var(--hue-rgb), 0.9),
+              rgba(var(--hue-rgb), 0.22) 68%,
+              rgba(255,255,255,0.10));
+  -webkit-mask: linear-gradient(#000 0 0) content-box, linear-gradient(#000 0 0);
+  -webkit-mask-composite: xor; mask-composite: exclude;
+}
+.sh-hue-card > * { position: relative; z-index: 1; }
+button.sh-hue-card:not(:disabled):hover {
+  transform: translateY(-2px);
+  box-shadow:
+    0 1px 0 rgba(255,255,255,0.12) inset,
+    0 -2px 0 rgba(0,0,0,0.35) inset,
+    0 22px 36px -16px rgba(0,0,0,0.9),
+    0 8px 0 -3px rgba(0,0,0,0.55),
+    0 0 22px rgba(var(--hue-rgb), 0.30);
+}
+.sh-hue-card--cyan   { --hue-rgb: 0, 169, 224; }
+.sh-hue-card--teal   { --hue-rgb: 45, 212, 191; }
+.sh-hue-card--lime   { --hue-rgb: 140, 198, 63; }
+.sh-hue-card--orange { --hue-rgb: 242, 101, 34; }
+.sh-hue-card--green  { --hue-rgb: 74, 222, 128; }
+.sh-hue-card--purple { --hue-rgb: 167, 139, 250; }
+.sh-hue-card--pink   { --hue-rgb: 244, 114, 182; }
+.sh-hue-card--gold   { --hue-rgb: 250, 204, 21; }
+/* State boosts: the finished card glows lime, the current card burns
+   orange — both brighter than their resting hue. */
+.sh-hue-card--done {
+  --hue-rgb: 140, 198, 63; --hue-int: 0.42;
+  box-shadow:
+    0 1px 0 rgba(255,255,255,0.10) inset,
+    0 -2px 0 rgba(0,0,0,0.35) inset,
+    0 16px 28px -16px rgba(0,0,0,0.85),
+    0 6px 0 -3px rgba(0,0,0,0.5),
+    0 0 20px rgba(140,198,63,0.28);
+}
+.sh-hue-card--current {
+  --hue-rgb: 242, 101, 34; --hue-int: 0.46;
+  box-shadow:
+    0 1px 0 rgba(255,255,255,0.12) inset,
+    0 -2px 0 rgba(0,0,0,0.35) inset,
+    0 16px 28px -16px rgba(0,0,0,0.85),
+    0 6px 0 -3px rgba(0,0,0,0.5),
+    0 0 28px rgba(242,101,34,0.45);
+}
+/* Switched-off (locked step / not-needed metric): the hue survives only as
+   a dull whisper and the card sits flat — depth belongs to live cards. */
+.sh-hue-card--off {
+  filter: saturate(0.35) brightness(0.82);
+  box-shadow: 0 10px 18px -14px rgba(0,0,0,0.7);
+  transform: none;
+}
+
+/* School redesign — restrained paint splash for School hero bands: the
+   explosion peeks in from the right edge at low opacity so the band feels
+   alive without burying the identity/labels it sits behind. */
+.sh-school-splash { position: relative; isolation: isolate; }
+.sh-school-splash::before {
+  content: ""; position: absolute; pointer-events: none; z-index: 0;
+  top: -30%; right: -60px; width: 340px; height: 160%;
+  background: url("./assets/brand/splatter-explosion.png") center/contain no-repeat;
+  opacity: 0.16; mix-blend-mode: screen;
+}
+.sh-school-splash > * { position: relative; z-index: 1; }
+
 /* Diagonal brush stripe — for narrow banners (Income / Dashboard widgets). */
 .sh-splatter-brush {
   position: relative;
