@@ -71,6 +71,11 @@ jobs:
       JWT_SECRET: ci-only-jwt-secret-not-used-in-production
       ADMIN_EMAIL: admin@sithappens.com
       ADMIN_PASSWORD: admin123
+      # tests/test_shop_checkout.py's outbox group needs the admin alert
+      # recipient configured (queue_admin_new_shop_order skips the durable
+      # email_outbox row without it). ".invalid" TLD — never routable, and no
+      # email API key exists in CI, so nothing can actually send.
+      ADMIN_NOTIFICATION_EMAIL: ci-alerts@sithappens-ci.invalid
       BACKUP_ROOT: ${{ github.workspace }}/backend/_test_release_critical_backups
       SCHOOL_MEDIA_ROOT: ${{ github.workspace }}/backend/_ci_school_media
       # tests/test_shop_checkout.py needs online payments ENABLED so the
