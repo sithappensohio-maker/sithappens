@@ -2,6 +2,7 @@ import { useCallback, useEffect, useMemo, useState } from "react";
 import { api } from "../../../lib/api";
 import ScorePair from "./ScorePair";
 import AchievementCard from "../../training/AchievementCard";
+import ProgressRing from "../../training/ProgressRing";
 import { moduleQuizChip } from "../../../lib/onlineSchoolPolish";
 
 const QUIZ_TONE_CLS = {
@@ -130,9 +131,16 @@ export default function ProgressScreen({ enrollmentId, home, detail, onOpenHisto
         </button>
       )}
 
-      <section className="rounded-2xl border border-shPrimary/30 bg-shPrimary/[0.055] p-5 sm:p-6" data-testid="progress-course-completion">
-        <div className="flex items-end justify-between gap-3"><div><p className="text-[10px] font-black uppercase tracking-widest text-shPrimary">Course progress</p><p className="text-3xl font-black text-shText mt-1">{pct}%</p></div><p className="text-[12px] text-shTextMuted text-right">{home?.program?.name}<br/>{p.current_module_name || (home?.status === "completed" ? "Completed" : "")}</p></div>
-        <div className="h-2.5 rounded-full bg-black/25 overflow-hidden mt-4"><div className="h-full bg-shPrimary rounded-full" style={{ width: `${Math.max(0, Math.min(100, pct))}%` }} /></div>
+      <section className="rounded-3xl border border-shPrimary/30 bg-gradient-to-br from-shPrimary/[0.07] via-black/10 to-shSecondary/[0.04] p-5 sm:p-6" data-testid="progress-course-completion">
+        <div className="flex flex-col sm:flex-row sm:items-center gap-4">
+          <ProgressRing pct={pct} testid="progress-course-ring"/>
+          <div className="min-w-0 flex-1">
+            <p className="text-[10px] font-black uppercase tracking-widest text-shPrimary">Overall progress</p>
+            <p className="text-[18px] sm:text-[20px] font-black text-shText mt-0.5 leading-tight">{home?.program?.name}</p>
+            <p className="text-[12px] text-shTextMuted mt-0.5">{p.current_module_name || (home?.status === "completed" ? "Completed" : "")}</p>
+            <div className="h-2.5 rounded-full bg-black/25 overflow-hidden mt-3"><div className="h-full bg-shPrimary rounded-full transition-all" style={{ width: `${Math.max(0, Math.min(100, pct))}%` }} /></div>
+          </div>
+        </div>
         <div className="grid grid-cols-3 gap-2 mt-4"><Stat value={`${p.lessons_completed || 0}/${p.lessons_total || 0}`} label="Lessons" /><Stat value={`${p.modules_completed || 0}/${p.modules_total || 0}`} label="Modules" /><Stat value={p.checkpoints_passed || 0} label="Checkpoints passed" /></div>
       </section>
 

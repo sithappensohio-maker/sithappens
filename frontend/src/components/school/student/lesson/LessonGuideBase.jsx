@@ -329,7 +329,10 @@ export default function LessonGuide({
         </p>
       </div>
 
-      <ol className="rounded-2xl border border-shBorder/50 bg-[var(--sh-card-base)] overflow-hidden divide-y divide-shBorder/30">
+      {/* Step-card rail — one card per guided step, stacking on phones and
+          fanning out into a grid on wider screens. Same rows, same states,
+          same locks; only the presentation changed. */}
+      <ol className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-4 gap-2.5">
         {sections.map((s) => {
           const state = stepState(s, { ...ctx, currentKey: cur });
           const active = activeKey === s.key;
@@ -339,7 +342,7 @@ export default function LessonGuide({
           const reason = locked ? lockReason(s, ctx) : "";
 
           return (
-            <li key={s.key}>
+            <li key={s.key} className="min-w-0">
               <button
                 type="button"
                 onClick={() => { if (!locked) onSelectSection?.(s.key); }}
@@ -350,48 +353,56 @@ export default function LessonGuide({
                 data-state={state}
                 data-active={active ? "true" : "false"}
                 className={[
-                  "w-full text-left px-4 py-4 flex items-start gap-3.5 min-h-[64px] transition",
+                  "w-full h-full text-left rounded-2xl border p-3.5 flex flex-col gap-2 min-h-[64px] transition",
                   "focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-shPrimary focus-visible:ring-inset",
-                  locked ? "opacity-60 cursor-not-allowed"
-                    : isCurrent || active ? "bg-shPrimary/[0.09] border-l-[3px] border-l-shPrimary"
-                    : "hover:bg-white/[0.03]",
+                  locked ? "opacity-60 cursor-not-allowed border-shBorder/50 bg-black/10"
+                    : isCurrent || active ? "border-shAccent/60 bg-shAccent/[0.06] shadow-[0_0_0_1px_var(--sh-accent)_inset]"
+                    : done ? "border-shPrimary/35 bg-shPrimary/[0.04] hover:bg-shPrimary/[0.07]"
+                    : "border-shBorder/55 bg-[var(--sh-card-base)] hover:bg-white/[0.03] hover:border-shSecondary/40",
                 ].join(" ")}
               >
-                {/* Status marker — icon AND text, so state never rides on colour alone. */}
-                <span
-                  className={[
-                    "w-8 h-8 rounded-full grid place-items-center shrink-0 text-[12px] font-black border mt-0.5",
-                    done ? "border-shPrimary/60 bg-shPrimary/15 text-shPrimary"
-                      : isCurrent ? "border-shPrimary bg-shPrimary text-bgHeader"
-                      : locked ? "border-shBorder text-shTextMuted"
-                      : "border-shBorder text-shTextMuted",
-                  ].join(" ")}
-                  aria-hidden="true"
-                >
-                  {done ? <i className="fas fa-check" /> : locked ? <i className="fas fa-lock" /> : s.n}
-                </span>
-
-                <span className="min-w-0 flex-1">
-                  <span className="flex flex-wrap items-center gap-x-2 gap-y-1">
-                    <span className={`text-[18px] sm:text-[19px] font-black leading-snug ${isCurrent ? "text-shPrimary" : "text-shText"}`}>
+                <span className="flex items-start gap-2.5 min-w-0">
+                  {/* Status marker — icon AND text, so state never rides on colour alone. */}
+                  <span
+                    className={[
+                      "w-8 h-8 rounded-full grid place-items-center shrink-0 text-[12px] font-black border",
+                      done ? "border-shPrimary/60 bg-shPrimary/15 text-shPrimary"
+                        : isCurrent ? "border-shAccent bg-shAccent text-bgHeader"
+                        : locked ? "border-shBorder text-shTextMuted"
+                        : "border-shBorder text-shTextMuted",
+                    ].join(" ")}
+                    aria-hidden="true"
+                  >
+                    {done ? <i className="fas fa-check" /> : locked ? <i className="fas fa-lock" /> : s.n}
+                  </span>
+                  <span className="min-w-0 flex-1">
+                    <span className="block text-[11px] font-black uppercase tracking-[0.14em] text-shTextMuted">Step {s.n}</span>
+                    <span className={`block text-[18px] sm:text-[19px] font-black leading-snug ${isCurrent ? "text-shAccent" : done ? "text-shText" : "text-shText"}`}>
                       {s.label}
                     </span>
-                    {done && (
-                      <span className="text-[11px] font-black uppercase tracking-widest text-shPrimary">Complete</span>
-                    )}
-                    {isCurrent && (
-                      <span className="text-[11px] font-black uppercase tracking-widest px-2 py-0.5 rounded-md bg-shPrimary text-bgHeader">Current</span>
-                    )}
-                    {locked && (
-                      <span className="text-[11px] font-black uppercase tracking-widest text-shTextMuted">Locked</span>
-                    )}
                   </span>
-                  <span className="block text-[15px] sm:text-[16px] text-shTextMuted mt-1 leading-relaxed">
-                    {locked ? reason : s.blurb}
-                  </span>
+                  {!locked && <i className="fas fa-chevron-right text-[11px] text-shTextMuted shrink-0 mt-2.5" aria-hidden="true" />}
                 </span>
 
-                {!locked && <i className="fas fa-chevron-right text-[11px] text-shTextMuted shrink-0 mt-2.5" aria-hidden="true" />}
+                <span className="block text-[15px] sm:text-[16px] text-shTextMuted leading-relaxed flex-1">
+                  {locked ? reason : s.blurb}
+                </span>
+
+                {/* State footer chip — the word is the state, never colour alone. */}
+                <span className="mt-auto pt-1.5">
+                  {done && (
+                    <span className="inline-flex items-center gap-1.5 rounded-md border border-shPrimary/40 bg-shPrimary/10 px-2 py-1 text-[11px] font-black uppercase tracking-widest text-shPrimary"><i className="fas fa-check text-[9px]" aria-hidden="true"/>Complete</span>
+                  )}
+                  {isCurrent && (
+                    <span className="inline-flex items-center gap-1.5 rounded-md px-2 py-1 text-[11px] font-black uppercase tracking-widest bg-shAccent text-bgHeader"><i className="fas fa-circle-notch text-[9px]" aria-hidden="true"/>Current</span>
+                  )}
+                  {locked && (
+                    <span className="inline-flex items-center gap-1.5 rounded-md border border-shBorder/60 bg-black/15 px-2 py-1 text-[11px] font-black uppercase tracking-widest text-shTextMuted"><i className="fas fa-lock text-[9px]" aria-hidden="true"/>Locked</span>
+                  )}
+                  {!done && !isCurrent && !locked && (
+                    <span className="inline-flex items-center gap-1.5 rounded-md border border-shSecondary/40 bg-shSecondary/10 px-2 py-1 text-[11px] font-black uppercase tracking-widest text-shSecondary">Available</span>
+                  )}
+                </span>
               </button>
             </li>
           );
