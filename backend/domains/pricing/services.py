@@ -13,16 +13,18 @@ from fastapi import HTTPException
 _db = None
 _business_today_fn = None
 _billable_boarding_units_fn = None
+_boarding_pickup_day_units_fn = None
 _now_iso_fn = None
 _default_boarding_cutoff = None
 _UNSET = object()
 
 
-def configure(*, db, business_today, billable_boarding_units, now_iso, default_boarding_cutoff) -> None:
-    global _db, _business_today_fn, _billable_boarding_units_fn, _now_iso_fn, _default_boarding_cutoff
+def configure(*, db, business_today, billable_boarding_units, now_iso, default_boarding_cutoff, boarding_pickup_day_units=None) -> None:
+    global _db, _business_today_fn, _billable_boarding_units_fn, _boarding_pickup_day_units_fn, _now_iso_fn, _default_boarding_cutoff
     _db = db
     _business_today_fn = business_today
     _billable_boarding_units_fn = billable_boarding_units
+    _boarding_pickup_day_units_fn = boarding_pickup_day_units
     _now_iso_fn = now_iso
     _default_boarding_cutoff = default_boarding_cutoff
 
@@ -191,12 +193,20 @@ async def quote_base_service_price(
         additional_dog_unit_price = unit_price
     else:
         additional_dog_unit_price = float(svc.get("additional_dog_rate") if svc.get("additional_dog_rate") is not None else unit_price)
+    late_fee = {"applies": False, "amount": 0.0, "unit_price": 0.0, "service_id": None, "service_name": None}
     if service_type == "boarding":
+        # Industry-standard boarding: bill overnight nights at the boarding
+        # rate; the pickup day is free at/before the checkout time and bills
+        # one full DAYCARE day after it (never extra boarding units).
         units = _billable_boarding_units_fn(
             start_date, end_date, pickup_time, legacy_minimum=legacy_boarding_minimum,
             cutoff_time=pickup_cutoff_time,
         )
-        unit_label = "boarding days"
+        unit_label = "nights"
+        if units > 0:
+            late_fee = await late_pickup_daycare_fee(
+                client_id=client_id, pickup_time=pickup_time, cutoff_time=pickup_cutoff_time,
+            )
     else:
         units = 1 if service_type else 0
         unit_label = "visits"
@@ -212,7 +222,63 @@ async def quote_base_service_price(
         "additional_dog_unit_price": round(additional_dog_unit_price, 2),
         "units": round(float(units), 2),
         "unit_label": unit_label,
-        "estimated_price": round(unit_price * float(units), 2),
+        "late_pickup_daycare_fee": round(float(late_fee.get("amount") or 0), 2),
+        "late_pickup_daycare_applies": bool(late_fee.get("applies")),
+        "late_pickup_daycare_service_name": late_fee.get("service_name"),
+        "estimated_price": round(unit_price * float(units) + float(late_fee.get("amount") or 0), 2),
+    }
+
+
+async def late_pickup_daycare_fee(
+    *,
+    client_id: Optional[str],
+    pickup_time: Optional[str],
+    cutoff_time: Any = _UNSET,
+) -> Dict[str, Any]:
+    """One dog's late-pickup daycare fee at the FULL rate.
+
+    Boarding's pickup-day rule (industry-standard model): pickup at or before
+    the boarding checkout time is free; pickup after it bills one full daycare
+    day at the default daycare service price, honoring the client's
+    grandfathered rate. Callers apply the additional-dog 50% row factor
+    themselves, exactly like the boarding base. Returns amount 0.0 when the
+    pickup is on time, no pickup time is stored, no daycare service exists, or
+    the rule helper isn't wired (minimal test harnesses).
+    """
+    _configured()
+    if cutoff_time is _UNSET:
+        cutoff_time = _default_boarding_cutoff
+    out = {"applies": False, "amount": 0.0, "unit_price": 0.0, "service_id": None, "service_name": None}
+    if _boarding_pickup_day_units_fn is None:
+        return out
+    if float(_boarding_pickup_day_units_fn(pickup_time, cutoff_time) or 0) <= 0:
+        return out
+    svc = await _db.services.find_one(
+        {"service_type": "daycare", "is_default": True, "active": True}, {"_id": 0}
+    )
+    if not svc:
+        svc = await _db.services.find_one(
+            {"service_type": "daycare", "active": True, "$or": [{"is_addon": {"$ne": True}}, {"is_addon": {"$exists": False}}]},
+            {"_id": 0}, sort=[("is_default", -1), ("name", 1)],
+        )
+    if not svc:
+        return out
+    list_price = float(svc.get("base_price") or 0)
+    rate = list_price
+    if client_id:
+        try:
+            pricing = await resolve_client_price(client_id, "service", svc.get("id") or "", list_price)
+            rate = float(pricing.get("effective_price", list_price) or 0)
+        except Exception:
+            rate = list_price
+    if rate <= 0:
+        return out
+    return {
+        "applies": True,
+        "amount": round(rate, 2),
+        "unit_price": round(rate, 2),
+        "service_id": svc.get("id"),
+        "service_name": svc.get("name") or "Daycare",
     }
 
 

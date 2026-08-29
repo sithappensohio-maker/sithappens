@@ -82,6 +82,7 @@ def register_domains(
         db=db,
         business_today=business_today,
         billable_boarding_units=server_globals["_billable_boarding_units"],
+        boarding_pickup_day_units=server_globals["_boarding_pickup_day_units"],
         now_iso=now_iso,
         default_boarding_cutoff=server_globals["DEFAULT_BOARDING_FULL_DAY_PICKUP_CUTOFF"],
     )

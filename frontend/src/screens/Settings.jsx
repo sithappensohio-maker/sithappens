@@ -2457,7 +2457,7 @@ function RulesPanel({ s, save, saving }) {
       </Section>
 
       <Section title="Stay-duration pricing (auto-bill at check-out)"
-               subtitle="Daycare can price from elapsed hours. Boarding bills overnight nights plus pickup-day care using the cutoff time you choose below.">
+               subtitle="Daycare can price from elapsed hours. Boarding bills overnight nights; pickup after the checkout time below adds one full daycare day.">
         <label className="flex items-center gap-3 cursor-pointer mb-4">
           <input type="checkbox" checked={r.stay_pricing_enabled !== false}
                  onChange={(e)=>set("stay_pricing_enabled", e.target.checked)}
@@ -2476,7 +2476,7 @@ function RulesPanel({ s, save, saving }) {
                  value={r.daycare_half_day_max_hours ?? 5}
                  onChange={(v)=>set("daycare_half_day_max_hours", Math.max(0, parseFloat(v)||0))}
                  testId="stay-daycare-half-h" />
-          <Field label="Boarding full-day pickup starts at"
+          <Field label="Boarding checkout time (free pickup until)"
                  type="time"
                  value={r.boarding_full_day_pickup_cutoff || "17:00"}
                  onChange={(v)=>set("boarding_full_day_pickup_cutoff", v || "17:00")}
@@ -2484,7 +2484,7 @@ function RulesPanel({ s, save, saving }) {
         </div>
         <div className="mt-3 text-xs text-shTextMuted leading-relaxed">
           <div><span className="text-shPrimary font-black">Daycare:</span> total hours ≤ threshold → bill as half day, otherwise full day.</div>
-          <div><span className="text-shSecondary font-black">Boarding:</span> every overnight night is billed, then pickup before the selected cutoff adds a half day; pickup at or after the cutoff adds a full day. Additional dogs receive 50% off every night and the pickup day.</div>
+          <div><span className="text-shSecondary font-black">Boarding:</span> every overnight night is billed at the boarding rate. Pickup at or before the checkout time is free; pickup after it adds one full daycare day at your daycare rate. Additional dogs receive 50% off every night and the pickup-day charge.</div>
           <div className="text-shAccent mt-1"><i className="fas fa-info-circle mr-1" />The admin can still override the auto-price by typing a manual amount in the check-out modal.</div>
         </div>
       </Section>

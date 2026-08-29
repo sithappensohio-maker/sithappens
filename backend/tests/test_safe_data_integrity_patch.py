@@ -53,20 +53,23 @@ def test_backend_pricing_quote_three_night_boarding_with_pickup_day(admin_header
     }, timeout=15)
     r.raise_for_status()
     q = r.json()
-    assert q["billable_units"] == 3.5
-    assert q["unit_label"] == "boarding days"
-    assert q["pickup_day_units"] == 0.5
-    assert q["estimated_price"] == 175.0
+    # Industry-standard rule: nights only; a 4:30 PM pickup is at/before the
+    # 5 PM checkout time so the pickup day is free.
+    assert q["billable_units"] == 3
+    assert q["unit_label"] == "nights"
+    assert q["pickup_day_units"] == 0.0
+    assert q["late_pickup_daycare_fee"] == 0.0
+    assert q["estimated_price"] == 150.0
 
 
 
 def test_boarding_quote_two_dogs_late_pickup_and_addons(admin_headers):
-    """Friday→Sunday after 5 PM: 2 nights + 1 pickup day for both dogs.
+    """Friday→Sunday, pickup after 5 PM: 2 nights + 1 full DAYCARE day per dog.
 
-    First dog: 3 × $50 = $150
-    Second dog: 3 × $25 = $75
+    First dog: 2 × $50 + $40 daycare = $140
+    Second dog: 50% off → $70
     Bath + nails: $20 + $10 = $30
-    Total: $255
+    Total: $240
     """
     svcs = requests.get(f"{API}/services", headers=admin_headers, timeout=15).json()
     default = next((s for s in svcs if s.get("service_type") == "boarding" and s.get("is_default")), None)
@@ -75,6 +78,17 @@ def test_boarding_quote_two_dogs_late_pickup_and_addons(admin_headers):
     payload.update({"base_price": 50.0, "active": True, "is_default": True})
     rr = requests.put(f"{API}/services/{default['id']}", headers=admin_headers, json=payload, timeout=15)
     rr.raise_for_status()
+    # Pin the daycare rate the late-pickup fee bills at.
+    dc = next((s for s in svcs if s.get("service_type") == "daycare" and s.get("is_default")), None)
+    if dc:
+        dc_payload = {k: v for k, v in dc.items() if k not in ("id", "_id", "created_at")}
+        dc_payload.update({"base_price": 40.0, "active": True, "is_default": True})
+        requests.put(f"{API}/services/{dc['id']}", headers=admin_headers, json=dc_payload, timeout=15).raise_for_status()
+    else:
+        requests.post(f"{API}/services", headers=admin_headers, json={
+            "service_type": "daycare", "name": "Daycare", "base_price": 40.0,
+            "is_default": True, "active": True,
+        }, timeout=15).raise_for_status()
 
     created = []
     try:
@@ -102,14 +116,15 @@ def test_boarding_quote_two_dogs_late_pickup_and_addons(admin_headers):
         }, timeout=15)
         r.raise_for_status()
         q = r.json()
-        assert q["billable_units"] == 3
+        assert q["billable_units"] == 2
         assert q["pickup_day_units"] == 1
-        assert q["first_dog_base_price"] == 150.0
-        assert q["additional_dog_base_price"] == 150.0
-        assert q["multi_dog_discount_amount"] == 75.0
-        assert q["base_estimated_price"] == 225.0
+        assert q["late_pickup_daycare_fee"] == 40.0
+        assert q["first_dog_base_price"] == 140.0
+        assert q["additional_dog_base_price"] == 140.0
+        assert q["multi_dog_discount_amount"] == 70.0
+        assert q["base_estimated_price"] == 210.0
         assert q["add_on_total"] == 30.0
-        assert q["estimated_price"] == 255.0
+        assert q["estimated_price"] == 240.0
     finally:
         for svc in created:
             requests.delete(f"{API}/services/{svc['id']}", headers=admin_headers, timeout=15)

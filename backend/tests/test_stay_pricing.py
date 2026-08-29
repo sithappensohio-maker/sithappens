@@ -1,8 +1,9 @@
 """Stay pricing regression coverage.
 
-Boarding uses calendar nights plus pickup-day care: before the configured
-cutoff is a half day, and at/after the cutoff is a full day. Daycare continues
-to use elapsed-hour rules.
+Boarding (industry-standard model): calendar nights at the boarding rate.
+Pickup at or before the configured checkout time (boarding_full_day_pickup_cutoff)
+is free; pickup after it adds one full DAYCARE day at the daycare rate.
+Daycare continues to use elapsed-hour rules.
 Manual checkout overrides always win.
 """
 import os
@@ -146,7 +147,7 @@ def _get_booking(headers, bid):
 
 
 def test_boarding_two_nights_before_five(admin_headers):
-    """2 nights + half pickup day at 4 PM = 2.5 × $50 = $125."""
+    """2 nights, pickup 4 PM (before the 5 PM checkout) = free pickup day = $100."""
     _set_rules(admin_headers)
     _seed_default_service(admin_headers, "boarding", 50.0)
     client = _make_client(admin_headers)
@@ -157,11 +158,11 @@ def test_boarding_two_nights_before_five(admin_headers):
     )
     _checkout(admin_headers, bid)
     bk = _get_booking(admin_headers, bid)
-    assert bk.get("actual_price") == 125.0, f"got {bk.get('actual_price')}"
+    assert bk.get("actual_price") == 100.0, f"got {bk.get('actual_price')}"
 
 
-def test_boarding_two_nights_at_or_after_five(admin_headers):
-    """2 nights + full pickup day at 5 PM = 3 × $50 = $150."""
+def test_boarding_two_nights_at_exactly_five_is_free(admin_headers):
+    """Pickup AT the checkout time is on time — 2 nights = $100, no daycare day."""
     _set_rules(admin_headers)
     _seed_default_service(admin_headers, "boarding", 50.0)
     client = _make_client(admin_headers)
@@ -172,13 +173,28 @@ def test_boarding_two_nights_at_or_after_five(admin_headers):
     )
     _checkout(admin_headers, bid)
     bk = _get_booking(admin_headers, bid)
-    assert bk.get("actual_price") == 150.0, f"got {bk.get('actual_price')}"
+    assert bk.get("actual_price") == 100.0, f"got {bk.get('actual_price')}"
 
 
+def test_boarding_late_pickup_adds_full_daycare_day(admin_headers):
+    """Pickup after the checkout time bills one full DAYCARE day at the
+    daycare rate: 2 nights × $50 + $40 daycare = $140."""
+    _set_rules(admin_headers)
+    _seed_default_service(admin_headers, "boarding", 50.0)
+    _seed_default_service(admin_headers, "daycare", 40.0)
+    client = _make_client(admin_headers)
+    dog = _make_dog(admin_headers, client["id"])
+    bid = _make_booking_then_checkin(
+        admin_headers, client["id"], dog["id"], "boarding",
+        hours_ago=30, end_days=2, pickup_time="18:00",
+    )
+    _checkout(admin_headers, bid)
+    bk = _get_booking(admin_headers, bid)
+    assert bk.get("actual_price") == 140.0, f"got {bk.get('actual_price')}"
 
 
 def test_boarding_cutoff_can_be_changed(admin_headers):
-    """With a 6 PM cutoff, 5:30 PM is still a half pickup day."""
+    """With a 6 PM checkout time, a 5:30 PM pickup is on time — nights only."""
     _set_rules(admin_headers, boarding_full_day_pickup_cutoff="18:00")
     _seed_default_service(admin_headers, "boarding", 50.0)
     client = _make_client(admin_headers)
@@ -189,11 +205,12 @@ def test_boarding_cutoff_can_be_changed(admin_headers):
     )
     _checkout(admin_headers, bid)
     bk = _get_booking(admin_headers, bid)
-    assert bk.get("actual_price") == 125.0, f"got {bk.get('actual_price')}"
+    assert bk.get("actual_price") == 100.0, f"got {bk.get('actual_price')}"
     assert (bk.get("pricing_snapshot") or {}).get("pickup_cutoff_time") == "18:00"
 
 def test_boarding_pickup_rule_ignores_elapsed_hours(admin_headers):
-    """Scheduled 4 PM pickup remains half-day even if checkout is clicked later."""
+    """Scheduled 4 PM pickup stays free even if checkout is clicked later —
+    the stored reservation pickup time is the source of truth."""
     _set_rules(admin_headers)
     _seed_default_service(admin_headers, "boarding", 50.0)
     client = _make_client(admin_headers)
@@ -204,7 +221,7 @@ def test_boarding_pickup_rule_ignores_elapsed_hours(admin_headers):
     )
     _checkout(admin_headers, bid)
     bk = _get_booking(admin_headers, bid)
-    assert bk.get("actual_price") == 75.0, f"got {bk.get('actual_price')}"
+    assert bk.get("actual_price") == 50.0, f"got {bk.get('actual_price')}"
 
 
 def test_daycare_half_day(admin_headers):

@@ -649,6 +649,14 @@ export default function AdminBookingModal({ defaultCheckIn = false, defaultDate 
           .filter(l => l.dog_id === uniqueDogIds[0])
           .reduce((sum, l) => sum + Number(l.quote?.billable_units || 0), 0)
       : 0;
+    // Boarding pickup after the checkout time bills one full daycare day per
+    // dog — already inside each row's base_estimated_price; surfaced so the
+    // breakdown can say so instead of showing an inflated-looking base.
+    const latePickupFeePerDog = Number(quoteLines[0]?.quote?.late_pickup_daycare_fee || 0);
+    // Display units PER DOG (the summed billable_units across dogs read as
+    // nonsense, e.g. "4 boarding days" for a 2-dog 2-night stay).
+    const dogCount = Math.max(1, uniqueDogIds.length);
+    const displayUnits = coreMultiDogService && dogCount > 1 ? unitsForFirstDog : units;
     const creditUnitsRequired = pool
       ? (coreMultiDogService
           ? unitsForFirstDog * (1 + 0.5 * additionalDogCount)
@@ -667,6 +675,7 @@ export default function AdminBookingModal({ defaultCheckIn = false, defaultDate 
       additionalDogBase, additionalDogCount,
       multiDogDiscountAmount,
       multiDogDiscountLabel: mdCfg?.label || "Additional dog discount",
+      latePickupFeePerDog, dogCount, displayUnits,
     };
   }, [quoteLines, serviceType, selectedClient, multiDogDiscountSettings]);
 
@@ -1254,12 +1263,22 @@ export default function AdminBookingModal({ defaultCheckIn = false, defaultDate 
                   <div className="flex justify-between" data-testid="admin-booking-estimate-base">
                     <span className="text-shTextMuted">
                       Base price
-                      {quoteSummary.units > 0 && (
-                        <span className="text-shTextMuted ml-1">({pluralUnit(quoteSummary.units, quoteSummary.unitLabel)})</span>
+                      {quoteSummary.displayUnits > 0 && (
+                        <span className="text-shTextMuted ml-1">
+                          ({pluralUnit(quoteSummary.displayUnits, quoteSummary.unitLabel)}
+                          {quoteSummary.dogCount > 1 ? ` × ${quoteSummary.dogCount} dogs` : ""})
+                        </span>
                       )}
                     </span>
                     <span className="text-shText font-black">{fmtUSD(quoteSummary.baseTotal)}</span>
                   </div>
+
+                  {quoteSummary.latePickupFeePerDog > 0 && (
+                    <div className="text-[12px] text-shAccent" data-testid="admin-booking-estimate-late-pickup">
+                      <i className="fas fa-clock mr-1.5"/>
+                      Pickup after checkout time — adds a full daycare day ({fmtUSD(quoteSummary.latePickupFeePerDog)}/dog, included above).
+                    </div>
+                  )}
 
                   {quoteSummary.addonTotal > 0 && (
                     <div className="flex justify-between" data-testid="admin-booking-estimate-addons">

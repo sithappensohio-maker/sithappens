@@ -13,7 +13,9 @@ wizard Step 3, just above the Confirm button. STRICT GUARANTEES:
     daycare/boarding so legacy settings cannot underquote estimates.
   • Calculation per service type:
        daycare       → base_price × #dates × #dogs
-       boarding      → base_price × #nights × #dogs
+       boarding      → base_price × #nights × #dogs, plus one full daycare
+                       day per dog when pickup is after the boarding
+                       checkout time (industry-standard pickup-day rule)
        training      → base_price × #dogs (single session)
        grooming      → base_price × #dogs (single session)
        photography   → base_price × #dogs (single session)
@@ -186,29 +188,40 @@ export default function BookingPriceEstimate({
       units = isMultiDate ? Math.max(1, multiDates.length) : 1;
       unitLabel = units === 1 ? "day" : "days";
     } else if (serviceType === "boarding") {
-      // Boarding rule: calendar nights plus pickup-day care. Pickup before
-      // the admin-configured cutoff is a half day; pickup at/after it is a
-      // full day. This is intentionally clock-based, not hours-since-check-in.
+      // Boarding rule (industry-standard model): calendar nights at the
+      // boarding rate. Pickup at/before the admin-configured checkout time is
+      // free; pickup after it adds one full DAYCARE day (handled below as
+      // latePickupFee, never as extra boarding units). Clock-based, not
+      // hours-since-check-in.
       const nights = nightsBetween(date, endDate);
       if (nights < 1) {
         unitsValid = false;
-        units = nights;
-      } else {
-        const pickupMinutes = /^\d{2}:\d{2}/.test(pickupTime || "")
-          ? Number((pickupTime || "").slice(0, 2)) * 60 + Number((pickupTime || "").slice(3, 5))
-          : null;
-        const cutoffRaw = String(rules?.boarding_full_day_pickup_cutoff || "17:00");
-        const cutoffMinutes = /^\d{2}:\d{2}/.test(cutoffRaw)
-          ? Number(cutoffRaw.slice(0, 2)) * 60 + Number(cutoffRaw.slice(3, 5))
-          : 17 * 60;
-        const pickupUnits = pickupMinutes === null ? 0 : (pickupMinutes < cutoffMinutes ? 0.5 : 1);
-        units = nights + pickupUnits;
-        halfDay = pickupUnits === 0.5;
       }
-      unitLabel = "boarding days";
+      units = nights;
+      unitLabel = nights === 1 ? "night" : "nights";
     }
 
-    const basePrice = base * units;
+    // Late-pickup daycare fee mirror (server is authoritative; this covers
+    // the multi-dog/multi-date fallback paths that skip /pricing/quote).
+    let latePickupFeeUnit = 0;
+    if (serviceType === "boarding" && unitsValid) {
+      const pickupMinutes = /^\d{2}:\d{2}/.test(pickupTime || "")
+        ? Number((pickupTime || "").slice(0, 2)) * 60 + Number((pickupTime || "").slice(3, 5))
+        : null;
+      const cutoffRaw = String(rules?.boarding_full_day_pickup_cutoff || "17:00");
+      const cutoffMinutes = /^\d{2}:\d{2}/.test(cutoffRaw)
+        ? Number(cutoffRaw.slice(0, 2)) * 60 + Number(cutoffRaw.slice(3, 5))
+        : 17 * 60;
+      if (pickupMinutes !== null && pickupMinutes > cutoffMinutes) {
+        const daycareSvc = services.find(s => s.service_type === "daycare" && !s.is_addon && s.active !== false && s.is_default)
+          || services.find(s => s.service_type === "daycare" && !s.is_addon && s.active !== false);
+        latePickupFeeUnit = Number(daycareSvc?.base_price || 0);
+      }
+    }
+
+    // First-dog base: nights (or days/sessions) at the service rate, plus the
+    // late-pickup daycare fee for boarding pickups after the checkout time.
+    const basePrice = base * units + latePickupFeeUnit;
     // Sprint 110di-49 — Multi-dog discount applied UPFRONT (mirrors what
     // the checkout flow will charge, so the customer + admin both see the
     // accurate group total before they confirm). Per-service config wins;
@@ -224,7 +237,7 @@ export default function BookingPriceEstimate({
     // Compute the additional-dog price WITHOUT the discount first, then
     // subtract — that way the breakdown still shows the raw line and the
     // discount as its own savings line (matches the receipt convention).
-    const rawAdditionalDogPrice = additionalDogs * extraDogRate * units;
+    const rawAdditionalDogPrice = additionalDogs * (extraDogRate * units + latePickupFeeUnit);
     const mdDiscountAmount = applyMd
       ? (mdMode === "percent"
           ? rawAdditionalDogPrice * (mdValue / 100)
@@ -276,6 +289,7 @@ export default function BookingPriceEstimate({
         id: a.id, name: a.name, price: Number(a?.base_price || 0) * addonMultiplier,
       })),
       units, unitLabel, unitsValid, halfDay,
+      late_pickup_fee: latePickupFeeUnit,
       total,
       credits_available: creditsAvailable,
       credit_units_required: creditUnitsRequired,
@@ -321,6 +335,7 @@ export default function BookingPriceEstimate({
       unitLabel,
       unitsValid: serverQuote.service_type === "boarding" ? units >= 1 : true,
       halfDay: false,
+      late_pickup_fee: Number(serverQuote.late_pickup_daycare_fee || 0),
       total,
       service_name: serverQuote.service_name || legacyCalc.service_name,
       list_base: Number(serverQuote.list_unit_price || base),
@@ -419,16 +434,26 @@ export default function BookingPriceEstimate({
         <div className="flex justify-between" data-testid="booking-estimate-base">
           <span className="text-gray-400">
             Base price
-            {(calc.units > 1 || calc.halfDay) && (
+            {(calc.units > 1 || calc.halfDay || (calc.late_pickup_fee || 0) > 0) && (
               <span className="text-gray-500 ml-1">
                 ({calc.halfDay
                   ? `${calc.units.toFixed(1).replace(/\.0$/,'')} ${calc.unitLabel} (early pickup)`
-                  : `${calc.units} ${calc.unitLabel}`} × {fmtUSD(calc.base)})
+                  : `${calc.units} ${calc.unitLabel}`} × {fmtUSD(calc.base)}
+                {(calc.late_pickup_fee || 0) > 0 ? ` + ${fmtUSD(calc.late_pickup_fee)} late-pickup daycare` : ""})
               </span>
             )}
           </span>
           <span className="text-white font-black">{fmtUSD(calc.base_price)}</span>
         </div>
+
+        {/* Late-pickup daycare note — boarding pickup after the checkout time
+            bills one full daycare day per dog (already included in the base
+            and additional-dog amounts above). */}
+        {(calc.late_pickup_fee || 0) > 0 && (
+          <div className="text-[12px] text-shOrange" data-testid="booking-estimate-late-pickup-note">
+            <i className="fas fa-clock mr-1.5"/>Pickup after checkout time adds a full daycare day per dog.
+          </div>
+        )}
 
         {/* Additional dog charges — only when 2+ dogs selected */}
         {calc.additional_dogs > 0 && (
@@ -436,7 +461,7 @@ export default function BookingPriceEstimate({
             <span className="text-gray-400">
               Additional dog{calc.additional_dogs === 1 ? "" : "s"}
               <span className="text-gray-500 ml-1">
-                ({calc.additional_dogs} × {fmtUSD(calc.extraDogRate)}{calc.units > 1 ? ` × ${calc.units}` : ""})
+                ({calc.additional_dogs} × {fmtUSD(calc.extraDogRate)}{calc.units > 1 ? ` × ${calc.units}` : ""}{(calc.late_pickup_fee || 0) > 0 ? " + daycare day" : ""})
               </span>
             </span>
             <span className="text-white font-black">{fmtUSD(calc.additional_dog_price + (calc.md_discount_amount || 0))}</span>
