@@ -57,6 +57,15 @@ test("Dashboard is no longer a competing sidebar destination and legacy Dashboar
   expect(appSrc).toMatch(/const sidebarActiveId = workspaceRootForTab\(tab\)/);
 });
 
+test("Schedule calendar must size itself — percentage heights can't resolve inside the auto-height workspace", () => {
+  // Regression: after ScheduleWorkspace wrapped Schedule in auto-height divs,
+  // FullCalendar height="100%" resolved to 0px and the month grid vanished
+  // (header + weekday row rendered, no day cells).
+  const scheduleSrc = read("Schedule.jsx");
+  expect(scheduleSrc).toMatch(/height="auto"/);
+  expect(scheduleSrc).not.toMatch(/height=\{[^}]*"100%"/);
+});
+
 test("workspace tab clicks are wired back to the router instead of staying private local state", () => {
   expect(scheduleWorkspaceSrc).toMatch(/onSectionChange = \(\) => \{\}/);
   expect(scheduleWorkspaceSrc).toMatch(/onChange=\{\(next\) => \{ setSection\(next\); onSectionChange\(next\); \}\}/);

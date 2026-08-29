@@ -251,7 +251,7 @@ export default function Schedule() {
   };
 
   return (
-    <div className={`${mobile ? "flex flex-col gap-3" : "h-full flex flex-col gap-4"} animate-slide-in sh-schedule-workspace`} data-testid="schedule-calendar">
+    <div className={`flex flex-col ${mobile ? "gap-3" : "gap-4"} animate-slide-in sh-schedule-workspace`} data-testid="schedule-calendar">
       <PageHero
         eyebrow={{ icon: "fa-mouse-pointer", text: "Schedule · drag to reschedule", color: "text-shSecondary" }}
         title="The Calendar."
@@ -261,7 +261,10 @@ export default function Schedule() {
         compact={mobile}
         testid="schedule-hero"
       />
-      <div className={`bg-[var(--sh-card-base)] p-2 sm:p-4 rounded-xl border border-shBorder ${mobile ? "" : "flex-1 overflow-hidden"}`}
+      {/* The workspace wrapper is auto-height, so a height:100% chain can no
+          longer resolve here — the calendar sizes itself (height="auto") and
+          the page scrolls instead. */}
+      <div className="bg-[var(--sh-card-base)] p-2 sm:p-4 rounded-xl border border-shBorder"
            data-testid="schedule-grid-wrap">
         {/* Sprint 110di-45 — Mobile view toggle. Defaults to MONTH (grid with
             colored dots per booking, color-coded by service). User can flip to
@@ -281,13 +284,13 @@ export default function Schedule() {
             </button>
           </div>
         )}
-        <div className={mobile ? "" : "h-full"}>
-          <div className={mobile ? "" : "h-full"} style={mobile ? undefined : { height: "100%" }}>
+        <div>
+          <div>
             <FullCalendar
               ref={calRef}
               plugins={[dayGridPlugin, listPlugin, interactionPlugin]}
               initialView={mobile ? (mobileView === "list" ? "listMonth" : "dayGridMonth") : "dayGridMonth"}
-              height={mobile ? "auto" : "100%"}
+              height="auto"
               events={groupedEvents}
               editable={!mobile}
               eventStartEditable={!mobile}
