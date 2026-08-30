@@ -165,6 +165,9 @@ export function CheckoutModal({ booking, services, onClose, onRequestCancel }) {
   }, [clientBal, creditsToUseNow, hadCredit, defaultedFromBal, booking.actual_price]);
   const [payMethod, setPayMethod] = useState("cash");
   const [basePrice, setBasePrice] = useState("");
+  // Reason for a manual price change — stored on the booking's
+  // manual_price_override audit stamp (who/when/from/to/why).
+  const [priceReason, setPriceReason] = useState("");
   const [extraNights, setExtraNights] = useState(0);
   const [extraUseCredits, setExtraUseCredits] = useState(true);
   const [extraRate, setExtraRate] = useState("");
@@ -449,7 +452,10 @@ export function CheckoutModal({ booking, services, onClose, onRequestCancel }) {
 
       if (!useCredits) {
         body.payment_method = payMethod;
-        if (basePrice !== "") body.base_price = Number(basePrice);
+        if (basePrice !== "") {
+          body.base_price = Number(basePrice);
+          if (priceReason.trim()) body.base_price_reason = priceReason.trim();
+        }
         // Early boarding checkout: the backend prices from the booked-span
         // snapshot, so the actual-stay amount must travel as an explicit
         // base_price (manual override above still wins when typed).
@@ -849,6 +855,20 @@ export function CheckoutModal({ booking, services, onClose, onRequestCancel }) {
             <input type="number" step="0.01" value={basePrice} onChange={(e)=>setBasePrice(e.target.value)} data-testid="checkout-base-price"
                    placeholder={useCredits ? "$0.00" : (basePreview ? `$${basePreview.toFixed(2)}` : "$0.00")}
                    className="w-full mt-1 bg-bgPanel border border-bgHover rounded p-2 text-white text-sm" />
+            {/* Manual override in play — make it loud and ask why. The reason
+                lands in the booking's manual_price_override audit stamp. */}
+            {!useCredits && basePrice !== "" && basePreview > 0 && Number(basePrice) !== basePreview && (
+              <div className="mt-2 bg-shOrange/10 border border-shOrange/40 rounded p-2.5" data-testid="checkout-price-override-notice">
+                <p className="text-[12px] font-black uppercase tracking-widest text-shOrange">
+                  <i className="fas fa-pen mr-1.5"/>Manual price change: ${basePreview.toFixed(2)} → ${(Number(basePrice) || 0).toFixed(2)}
+                </p>
+                <input value={priceReason} onChange={(e)=>setPriceReason(e.target.value)}
+                       data-testid="checkout-price-override-reason"
+                       placeholder="Reason (e.g. loyalty discount, service issue) — saved to the audit trail"
+                       maxLength={300}
+                       className="w-full mt-2 bg-bgPanel border border-bgHover rounded p-2 text-white text-[13px]" />
+              </div>
+            )}
             {useCredits && (
               <p className="text-[13px] text-gray-500 mt-1.5 normal-case">
                 <i className="fas fa-circle-info text-shGreen mr-1"/>

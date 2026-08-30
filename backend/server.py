@@ -1112,6 +1112,9 @@ class CheckoutIn(BaseModel):
     # see the amount_paid-normalization guard below.
     payment_status: Optional[Literal["unpaid", "paid", "paid_partial"]] = None  # defaults inferred below
     base_price: Optional[float] = None  # override the auto-tally amount for the base service
+    # Short operator note for why the price was manually changed — stored on
+    # the booking's manual_price_override audit stamp alongside who/when.
+    base_price_reason: Optional[str] = Field(default=None, max_length=300)
     additional_cash_charge: float = Field(default=0, ge=0, le=100000)
     add_ons: List[CheckoutAddOn] = []
     # Sprint 110di-51 — Partial payment. When provided AND less than the
@@ -3095,14 +3098,16 @@ def _boarding_full_day_cutoff_from_rules(rules: Optional[dict]) -> str:
 def _boarding_pickup_day_units(
     pickup_time: Optional[str],
     cutoff_time: Optional[str] = DEFAULT_BOARDING_FULL_DAY_PICKUP_CUTOFF,
+    grace_minutes: int = 0,
 ) -> float:
-    """Number of DAYCARE days the pickup day bills (industry-standard rule).
+    """1.0 when the boarding pickup is late enough to bill, else 0.0.
 
-    The cutoff is the boarding checkout time. Pickup at or before it is free;
-    pickup after it means the dog spent the day in the daycare group, so the
-    pickup day bills as one full daycare day (see
-    _boarding_late_pickup_daycare_fee). Missing times keep legacy
-    overnight-only pricing rather than inventing a charge on old records.
+    The cutoff is the boarding checkout time. Pickup at or before it (plus the
+    admin-configured grace window) is free; pickup after it means the dog
+    spent the day in the daycare group, so the pickup day bills per the
+    configured charge mode (see _boarding_late_pickup_daycare_fee). Missing
+    times keep legacy overnight-only pricing rather than inventing a charge
+    on old records.
     """
     pickup_minutes = _clock_minutes(pickup_time)
     cutoff_minutes = _clock_minutes(cutoff_time)
@@ -3110,7 +3115,11 @@ def _boarding_pickup_day_units(
         cutoff_minutes = _clock_minutes(DEFAULT_BOARDING_FULL_DAY_PICKUP_CUTOFF) or (17 * 60)
     if pickup_minutes is None:
         return 0.0
-    return 0.0 if pickup_minutes <= cutoff_minutes else 1.0
+    try:
+        grace = max(0, int(grace_minutes or 0))
+    except Exception:
+        grace = 0
+    return 0.0 if pickup_minutes <= cutoff_minutes + grace else 1.0
 
 
 def _billable_boarding_units(
@@ -3156,100 +3165,16 @@ def _money_modifier_breakdown(
     settings: Dict[str, Any],
     checkout_ts: Optional[str] = None,
 ) -> Dict[str, Any]:
-    """Return one transparent seasonal/late-pickup pricing breakdown.
-
-    This helper is shared by checkout and the checkout preview endpoint so the
-    operator sees the same number the backend will save.
-    """
-    base = round(max(0.0, float(base_amount or 0)), 2)
-    amount = base
-    money = ((settings.get("day_to_day") or {}).get("money") or {})
-    seasonal = ((settings.get("day_to_day") or {}).get("seasonal") or {})
-    multiplier = 1.0
-    seasonal_label = None
-    bdate = booking.get("date") or ""
-    try:
-        for h in (seasonal.get("holiday_surcharges") or []):
-            if h.get("date") == bdate:
-                multiplier = float(h.get("multiplier", 1) or 1)
-                seasonal_label = h.get("label") or "Holiday surcharge"
-                break
-        else:
-            for row in (seasonal.get("peak_season_ranges") or []):
-                if (row.get("start") or "") <= bdate <= (row.get("end") or "9999"):
-                    multiplier = float(row.get("multiplier", 1) or 1)
-                    seasonal_label = row.get("label") or "Peak-season surcharge"
-                    break
-    except Exception:
-        multiplier = 1.0
-        seasonal_label = None
-    amount = round(amount * multiplier, 2)
-    seasonal_amount = round(amount - base, 2)
-
-    late_fee = 0.0
-    try:
-        ps = booking.get("pricing_snapshot") or {}
-        extra_group_dog = ps.get("group_dog_index") not in (None, 0) or bool(
-            (booking.get("multi_dog_discount") or {}).get("pre_applied")
-        )
-        per_15 = float(money.get("late_pickup_fee_per_15min", 0) or 0)
-        if per_15 > 0 and not extra_group_dog:
-            grace = int(money.get("late_pickup_grace_min", 10) or 0)
-            pickup_time = (booking.get("pickup_time") or "").strip()
-            pickup_date = booking.get("end_date") if booking.get("service_type") == "boarding" else booking.get("date")
-            if pickup_time and pickup_date:
-                declared = datetime.fromisoformat(f"{pickup_date}T{pickup_time}:00").replace(tzinfo=BUSINESS_TZ)
-                checkout_raw = checkout_ts or now_iso()
-                checked = datetime.fromisoformat(checkout_raw.replace("Z", "+00:00"))
-                if checked.tzinfo is None:
-                    checked = checked.replace(tzinfo=timezone.utc)
-                minutes_late = max(0.0, (checked.astimezone(BUSINESS_TZ) - declared).total_seconds() / 60.0 - grace)
-                if minutes_late > 0:
-                    blocks = int(minutes_late // 15) + (1 if minutes_late % 15 else 0)
-                    late_fee = round(blocks * per_15, 2)
-                    amount = round(amount + late_fee, 2)
-    except Exception:
-        late_fee = 0.0
-
-    before_rounding = amount
-    if money.get("round_to_dollar"):
-        amount = float(round(amount))
-    rounding_adjustment = round(amount - before_rounding, 2)
-    return {
-        "base_before": base,
-        "seasonal_multiplier": multiplier,
-        "seasonal_label": seasonal_label,
-        "seasonal_amount": seasonal_amount,
-        "late_pickup_fee": late_fee,
-        "round_to_dollar": bool(money.get("round_to_dollar")),
-        "rounding_adjustment": rounding_adjustment,
-        "total_after": round(amount, 2),
-        "modifier_total": round(amount - base, 2),
-    }
+    """Facade; canonical seasonal/late-pickup modifier math lives in domains.pricing."""
+    return pricing_domain_services.money_modifier_breakdown(booking, base_amount, settings, checkout_ts)
 
 
 def _credit_units_required(service_type: str, start: str, end: Optional[str], dog_count: int = 1, pickup_time: Optional[str] = None, pickup_cutoff_time: Optional[str] = DEFAULT_BOARDING_FULL_DAY_PICKUP_CUTOFF) -> float:
-    """Credit units are intentionally separate from dollars.
-
-    Sit Happens rule for daycare/boarding credits mirrors cash pricing:
-      • first dog = 1.0 credit per billable unit
-      • each additional dog = 0.5 credit per billable unit
-
-    Packs are still SOLD as whole credits, but balances may spend down in .5
-    increments for multi-dog households. Existing whole-number balances remain
-    valid because Mongo stores numeric fields without a migration.
-    """
-    dogs = max(1, int(dog_count or 1))
-    if service_type == "boarding":
-        units = _billable_boarding_units(start, end, pickup_time, legacy_minimum=1, cutoff_time=pickup_cutoff_time)
-        dog_weight = 1.0 + (0.5 * max(0, dogs - 1))
-        return round(float(units) * dog_weight, 2)
-    if service_type == "daycare":
-        dog_weight = 1.0 + (0.5 * max(0, dogs - 1))
-        return round(dog_weight, 2)
-    if service_type == "training":
-        return float(dogs)
-    return 0.0
+    """Facade; canonical credit-unit math lives in domains.pricing."""
+    return pricing_domain_services.credit_units_required(
+        service_type, start, end, dog_count=dog_count,
+        pickup_time=pickup_time, pickup_cutoff_time=pickup_cutoff_time,
+    )
 
 
 def _credit_unit_value_from_quote(quote: Dict[str, Any]) -> float:
@@ -3258,37 +3183,8 @@ def _credit_unit_value_from_quote(quote: Dict[str, Any]) -> float:
 
 
 def _service_base_credit_units_for_booking(booking: dict) -> float:
-    """Return service credit units using the same rule as cash pricing.
-
-    Boarding credits cover overnight nights only; the late-pickup daycare fee
-    is billed as cash, never credits. Recalculated from the stored dates so
-    legacy snapshots saved under the old pickup-day-care rule cannot
-    over-deduct credits.
-    """
-    if booking.get("service_type") == "boarding" and booking.get("end_date"):
-        ps = booking.get("pricing_snapshot") or {}
-        is_extra_group_dog = ps.get("group_dog_index") not in (None, 0) or bool((booking.get("multi_dog_discount") or {}).get("pre_applied"))
-        cutoff_time = ps.get("pickup_cutoff_time") or DEFAULT_BOARDING_FULL_DAY_PICKUP_CUTOFF
-        units = _billable_boarding_units(
-            booking.get("date"), booking.get("end_date"),
-            booking.get("pickup_time") or cutoff_time,
-            legacy_minimum=1,
-            cutoff_time=cutoff_time,
-        )
-        return round(units * (0.5 if is_extra_group_dog else 1.0), 2)
-    try:
-        snap = float(booking.get("credit_units_required") or 0)
-        if snap > 0:
-            return round(snap, 2)
-    except Exception:
-        pass
-    return _credit_units_required(
-        booking.get("service_type") or "daycare",
-        booking.get("date"),
-        booking.get("end_date"),
-        dog_count=1,
-        pickup_time=booking.get("pickup_time"),
-    )
+    """Facade; canonical per-booking credit-unit rule lives in domains.pricing."""
+    return pricing_domain_services.service_base_credit_units_for_booking(booking)
 
 async def _booking_days_count(target_date: str) -> int:
     bookings = await db.bookings.find(
@@ -3568,7 +3464,7 @@ async def pricing_quote(body: PricingQuoteIn, user: dict = Depends(get_current_u
         "end_date": body.end_date,
         "dropoff_time": body.dropoff_time,
         "pickup_time": effective_pickup_time,
-        "pickup_day_units": _boarding_pickup_day_units(effective_pickup_time, pickup_cutoff_time) if body.service_type == "boarding" else 0.0,
+        "pickup_day_units": (1.0 if quote.get("late_pickup_daycare_applies") else 0.0) if body.service_type == "boarding" else 0.0,
         "pickup_cutoff_time": pickup_cutoff_time if body.service_type == "boarding" else None,
         "late_pickup_daycare_fee": round(late_pickup_fee, 2),
         "late_pickup_daycare_applies": bool(quote.get("late_pickup_daycare_applies")),
@@ -4851,15 +4747,20 @@ async def create_booking_group(body: BookingGroupIn, user: dict = Depends(get_cu
             units = float(q.get("units") or 1)
             unit_price = float(q.get("unit_price") or 0)
             # estimated_price = nights × rate + any late-pickup daycare fee, so
-            # the 50% sibling row price discounts the fee too.
+            # the sibling row price discounts the fee too.
             full_base = round(float(q.get("estimated_price") or 0) or (unit_price * units), 2)
-            half_base = round(full_base * 0.5, 2)
+            # Configurable sibling discount (multi_dog_discount_core; default
+            # 50%). Credits keep the fixed 0.5-per-extra-dog rule regardless —
+            # credit weights and dollar discounts are deliberately separate.
+            group_md_cfg = _multi_dog_discount_config_for(await get_settings(), body.service_type)
+            per_dog_discount = round(_discount_amount_for_extra_dogs(full_base, group_md_cfg, 1), 2) if group_md_cfg else 0.0
+            extra_base = round(max(0.0, full_base - per_dog_discount), 2)
             for idx, bk in enumerate(created):
                 addon_total = 0.0
                 for ao in (bk.get("add_ons") or []):
                     addon_total += float(ao.get("price") or 0) * int(ao.get("qty") or 1)
                 is_extra = idx > 0
-                row_base = half_base if is_extra else full_base
+                row_base = extra_base if is_extra else full_base
                 row_credits = round(units * (0.5 if is_extra else 1.0), 2)
                 patch = {
                     "estimated_price": round(row_base + addon_total, 2),
@@ -4891,10 +4792,10 @@ async def create_booking_group(body: BookingGroupIn, user: dict = Depends(get_cu
                 if is_extra:
                     patch["multi_dog_discount"] = {
                         "pre_applied": True,
-                        "amount": round(full_base - half_base, 2),
-                        "mode": "percent",
-                        "value": 50.0,
-                        "label": "Additional dog discount",
+                        "amount": per_dog_discount,
+                        "mode": (group_md_cfg or {}).get("mode") or "percent",
+                        "value": float((group_md_cfg or {}).get("value") or 0),
+                        "label": (group_md_cfg or {}).get("label") or "Additional dog discount",
                         "service_type": body.service_type,
                         "based_on_price": full_base,
                         "applied_at": now_iso(),
@@ -5169,7 +5070,14 @@ async def approve_booking(booking_id: str, user: dict = Depends(require_admin)):
     try:
         client_doc = await db.clients.find_one({"id": booking["client_id"]}, {"_id": 0})
         if client_doc:
-            await notify_client_booking_approved(booking, client_doc)
+            policy_lines = None
+            if booking.get("service_type") in ("daycare", "boarding"):
+                try:
+                    policy = await pricing_domain_services.stay_policy_payload()
+                    policy_lines = (policy.get(booking["service_type"]) or {}).get("lines") or None
+                except Exception:
+                    policy_lines = None
+            await notify_client_booking_approved(booking, client_doc, policy_lines=policy_lines)
     except Exception:
         pass
     return booking
@@ -6795,71 +6703,12 @@ async def _maybe_send_low_credit_email(client_id: str, service_type: str, new_ba
 
 
 def _multi_dog_discount_config_for(settings: dict, service_type: str) -> Optional[Dict[str, Any]]:
-    """Return the active multi-dog discount config for a service type.
-
-    Sit Happens fixed business rule: daycare and boarding additional dogs are
-    always 50% off the same base service rate as the first dog. Older installs
-    may still have `additional_dog_rate` or old multi_dog_discount settings
-    such as flat $12.50 saved in Mongo. Those legacy settings must NOT affect
-    daycare/boarding quotes, estimates, or checkout math.
-
-    For non-core services, preserve the older configurable behavior.
-    """
-    service_type = service_type or "daycare"
-
-    if service_type in ("daycare", "boarding"):
-        return {
-            "enabled": True,
-            "mode": "percent",
-            "value": 50.0,
-            "label": "Additional dog discount",
-            "source": "fixed_daycare_boarding_rule",
-        }
-
-    # Other service types can still be enabled manually through settings, but
-    # they do not receive the Sit Happens default sibling discount.
-    per_service = settings.get("multi_dog_discount_by_service") or {}
-    cfg = per_service.get(service_type)
-    if cfg:
-        if not cfg.get("enabled"):
-            return None
-        return {
-            "enabled": True,
-            "mode": cfg.get("mode") or "percent",
-            "value": float(cfg.get("value") or 0),
-            "label": cfg.get("label") or "Additional dog discount",
-            "source": "settings",
-        }
-    # No per-service entry for this service type — fall back to the older,
-    # single flat config (multi_dog_discount_enabled/mode/value/label) so
-    # installs that never migrated to the granular per-service schema keep
-    # working for non-core services, exactly as documented above.
-    if not settings.get("multi_dog_discount_enabled"):
-        return None
-    legacy_value = float(settings.get("multi_dog_discount_value") or 0)
-    if legacy_value <= 0:
-        return None
-    return {
-        "enabled": True,
-        "mode": settings.get("multi_dog_discount_mode") or "percent",
-        "value": legacy_value,
-        "label": settings.get("multi_dog_discount_label") or "Additional dog discount",
-        "source": "settings_legacy",
-    }
+    """Facade; canonical multi-dog discount config lives in domains.pricing."""
+    return pricing_domain_services.multi_dog_discount_config_for(settings, service_type)
 
 def _discount_amount_for_extra_dogs(raw_additional_dog_base: float, cfg: Optional[Dict[str, Any]], additional_dogs: int = 1) -> float:
-    if not cfg or raw_additional_dog_base <= 0 or additional_dogs <= 0:
-        return 0.0
-    mode = (cfg.get("mode") or "percent").lower()
-    value = float(cfg.get("value") or 0)
-    if value <= 0:
-        return 0.0
-    if mode == "percent":
-        pct = max(0.0, min(100.0, value))
-        return round(raw_additional_dog_base * pct / 100.0, 2)
-    if mode == "flat":
-        return round(min(raw_additional_dog_base, value * max(1, additional_dogs)), 2)
-    return 0.0
+    """Facade; canonical discount math lives in domains.pricing."""
+    return pricing_domain_services.discount_amount_for_extra_dogs(raw_additional_dog_base, cfg, additional_dogs)
 
 
 def _booking_addon_total_from(booking: dict) -> float:
@@ -6870,6 +6719,11 @@ def _booking_addon_total_from(booking: dict) -> float:
         except Exception:
             continue
     return round(total, 2)
+
+
+def _group_row_price_factor(booking: dict) -> float:
+    """Facade; canonical group-row pricing factor lives in domains.pricing."""
+    return pricing_domain_services.group_row_price_factor(booking)
 
 
 async def _compute_multi_dog_discount(booking: dict, *, exclude_id: Optional[str] = None) -> Optional[Dict[str, Any]]:
@@ -6981,8 +6835,7 @@ async def discount_preview(booking_id: str, _: dict = Depends(require_employee_o
                 late_fee = await _boarding_late_pickup_daycare_fee(
                     booking.get("client_id"), pickup_clock, cutoff_time,
                 )
-                is_extra_group_dog = ps.get("group_dog_index") not in (None, 0) or bool((booking.get("multi_dog_discount") or {}).get("pre_applied"))
-                tentative_price = (unit * units + float(late_fee.get("amount") or 0)) * (0.5 if is_extra_group_dog else 1.0)
+                tentative_price = (unit * units + float(late_fee.get("amount") or 0)) * _group_row_price_factor(booking)
             else:
                 tentative_price = unit
     preview_booking = {**booking, "actual_price": round(tentative_price, 2)}
@@ -7036,8 +6889,7 @@ async def early_checkout_quote(booking_id: str, _: dict = Depends(require_employ
     units = float(quote.get("units") or 1)
     unit_price = float(quote.get("unit_price") or 0)
     late_fee_amount = float(quote.get("late_pickup_daycare_fee") or 0)
-    is_extra_group_dog = ps.get("group_dog_index") not in (None, 0) or bool((booking.get("multi_dog_discount") or {}).get("pre_applied"))
-    base_price = round((unit_price * units + late_fee_amount) * (0.5 if is_extra_group_dog else 1.0), 2)
+    base_price = round((unit_price * units + late_fee_amount) * _group_row_price_factor(booking), 2)
     return {
         "applicable": True,
         "actual_end_date": today,
@@ -7101,10 +6953,7 @@ async def money_modifier_preview(
             late_fee = await _boarding_late_pickup_daycare_fee(
                 booking.get("client_id"), booking.get("pickup_time") or cutoff_time, cutoff_time,
             )
-            extra_group_dog = ps.get("group_dog_index") not in (None, 0) or bool(
-                (booking.get("multi_dog_discount") or {}).get("pre_applied")
-            )
-            base_amount = round((unit_rate * units + float(late_fee.get("amount") or 0)) * (0.5 if extra_group_dog else 1.0), 2)
+            base_amount = round((unit_rate * units + float(late_fee.get("amount") or 0)) * _group_row_price_factor(booking), 2)
     if base_amount <= 0:
         base_preview = await discount_preview(booking_id, {})
         base_amount = float(base_preview.get("preview_base_price") or 0)
@@ -9617,6 +9466,19 @@ async def _check_out_locked(
     had_credit = bool(booking.get("credit_value")) and not booking.get("actual_price")
     use_credits = bool(body.use_credits)
 
+    # Manual price override audit stamp — who changed the price, from what,
+    # to what, and why. The override itself has always won (see below); this
+    # makes it visible in the booking record and the register activity trail.
+    if body.base_price is not None:
+        update["manual_price_override"] = {
+            "amount": round(float(body.base_price), 2),
+            "reason": (body.base_price_reason or "").strip(),
+            "by": user.get("id"),
+            "by_name": user.get("name") or user.get("email") or "",
+            "estimated_before": round(float(booking.get("estimated_price") or 0), 2),
+            "at": ts,
+        }
+
     # Resolve a sensible service value for income tracking. Admin's manual
     # base_price wins; otherwise fall back to the booking's default service price.
     # Sprint 110dk — auto-price daycare from actual check-in / check-out hours:
@@ -9780,11 +9642,7 @@ async def _check_out_locked(
                 late_fee = await _boarding_late_pickup_daycare_fee(
                     booking.get("client_id"), fee_pickup, fee_cutoff,
                 )
-                fee_row_factor = 0.5 if (
-                    ps_row.get("group_dog_index") not in (None, 0)
-                    or bool((booking.get("multi_dog_discount") or {}).get("pre_applied"))
-                ) else 1.0
-                late_fee_cash = round(float(late_fee.get("amount") or 0) * fee_row_factor, 2)
+                late_fee_cash = round(float(late_fee.get("amount") or 0) * _group_row_price_factor(booking), 2)
             if credit_shortfall <= 0.0001 and late_fee_cash <= 0.0001:
                 # Fully covered by credits. `actual_price` records the visit value,
                 # but `cash_revenue` stays $0 because payment_method=credits.
@@ -9874,9 +9732,7 @@ async def _check_out_locked(
                     late_fee = await _boarding_late_pickup_daycare_fee(
                         booking.get("client_id"), pickup_clock, cutoff_time,
                     )
-                    is_extra_group_dog = ps.get("group_dog_index") not in (None, 0) or bool((booking.get("multi_dog_discount") or {}).get("pre_applied"))
-                    row_factor = 0.5 if is_extra_group_dog else 1.0
-                    corrected_base = round((unit_rate * boarding_units + float(late_fee.get("amount") or 0)) * row_factor, 2)
+                    corrected_base = round((unit_rate * boarding_units + float(late_fee.get("amount") or 0)) * _group_row_price_factor(booking), 2)
                     if corrected_base > 0:
                         snap_base = corrected_base
                         update["boarding_pricing_correction"] = {
@@ -9984,10 +9840,7 @@ async def _check_out_locked(
                 late_fee = await _boarding_late_pickup_daycare_fee(
                     booking.get("client_id"), booking.get("pickup_time") or cutoff_time, cutoff_time,
                 )
-                is_extra_group_dog = ps.get("group_dog_index") not in (None, 0) or bool(
-                    (booking.get("multi_dog_discount") or {}).get("pre_applied")
-                )
-                modifier_base = round((unit_rate * units + float(late_fee.get("amount") or 0)) * (0.5 if is_extra_group_dog else 1.0), 2)
+                modifier_base = round((unit_rate * units + float(late_fee.get("amount") or 0)) * _group_row_price_factor(booking), 2)
         if modifier_base <= 0:
             modifier_base = float(update.get("actual_price") or 0)
         modifier_breakdown = _money_modifier_breakdown(booking, modifier_base, settings, ts)
@@ -11423,6 +11276,10 @@ class SettingsIn(BaseModel):
     multi_dog_discount_enabled: Optional[bool] = None
     multi_dog_discount_mode: Optional[Literal["percent", "flat"]] = None  # default "percent"
     multi_dog_discount_value: Optional[float] = None  # 10 = 10% or $10 depending on mode
+    # Configurable daycare/boarding sibling discount: {daycare|boarding:
+    # {enabled, mode, value, label}}. Defaults to 50% percent when unset;
+    # legacy by_service junk stays ignored for these two services.
+    multi_dog_discount_core: Optional[dict] = None
     multi_dog_discount_label: Optional[str] = None    # display label on the receipt
     # Sprint 110h — per-service-type discount config so daycare and boarding
     # can have totally different discount tiers (e.g. 15% off daycare, $20 off
@@ -11598,7 +11455,16 @@ async def fetch_public_settings():
         "multi_dog_discount_value":   float(s.get("multi_dog_discount_value") or 0),
         "multi_dog_discount_label":   s.get("multi_dog_discount_label") or "Multi-dog discount",
         "multi_dog_discount_by_service": s.get("multi_dog_discount_by_service") or {},
+        # Configurable daycare/boarding sibling discount (defaults to 50% off
+        # when unset). Estimators must read THIS for core services, never the
+        # legacy by_service values.
+        "multi_dog_discount_core": s.get("multi_dog_discount_core") or {},
     }
+
+async def stay_policies():
+    """Facade; the generated client-facing stay policy lives in domains.pricing."""
+    return await pricing_domain_services.stay_policy_payload()
+
 
 @api.put("/settings")
 async def save_settings(body: SettingsIn, _: dict = Depends(require_admin_and_permission("settings"))):
@@ -36532,6 +36398,21 @@ async def _register_day_summary(day: Optional[str] = None) -> Dict[str, Any]:
             "adjustment_type": kind, "direction": direction,
         })
 
+    # No-sale drawer opens (making change, etc.) — $0 events, but every
+    # physical drawer open shows in the day's audit trail with WHO opened it
+    # (PIN-verified employee) and why.
+    no_sale_rows = await db.register_no_sales.find({"date": d}, {"_id": 0}).sort("created_at", -1).to_list(10000)
+    for row in no_sale_rows:
+        activity.append({
+            "id": row.get("id"), "kind": "no_sale",
+            "label": "No sale · drawer opened",
+            "description": row.get("reason") or "No sale",
+            "client_name": row.get("employee_name") or "",
+            "amount": 0.0,
+            "payment_method": "cash drawer",
+            "created_at": row.get("created_at") or f"{d}T12:00:00",
+        })
+
     # Drawer session: use explicit opening cash when available; otherwise carry
     # forward the most recent closeout cash count as a helpful default.
     session = await db.cash_drawer_sessions.find_one({"date": d}, {"_id": 0})
@@ -37139,6 +37020,40 @@ async def delete_till_adjustment(adjustment_id: str, _: dict = Depends(require_a
     if res.deleted_count == 0:
         raise HTTPException(status_code=404, detail="Till adjustment not found")
     return {"ok": True, "register": await _register_day_summary(existing.get("date"))}
+
+
+# ── No-sale drawer opens (PIN-verified) ─────────────────────────────────────
+# Opening the physical drawer outside a sale (making change, swapping bills)
+# requires the acting employee's 4-digit register PIN. The PIN identifies the
+# HUMAN at a possibly-shared terminal; the event lands in the register
+# activity trail with their name. PINs are bcrypt-hashed on the user doc
+# (register_pin_hash) and must be unique across active staff.
+
+class RegisterPinIn(BaseModel):
+    pin: str = Field(min_length=4, max_length=4, pattern=r"^\d{4}$")
+    # Admins (settings permission) may set another staff member's PIN.
+    user_id: Optional[str] = None
+
+
+class RegisterNoSaleIn(BaseModel):
+    pin: str = Field(min_length=4, max_length=4, pattern=r"^\d{4}$")
+    reason: str = Field(min_length=3, max_length=200)
+    workstation_id: Optional[str] = None
+
+
+async def set_register_pin(body: RegisterPinIn, request: Request, user: dict = Depends(require_employee_or_admin)):
+    """Facade; canonical PIN management lives in domains.register."""
+    return await register_domain_services.set_register_pin(
+        pin=body.pin, target_user_id=body.user_id, actor=user, request=request,
+    )
+
+
+async def admin_register_no_sale(body: RegisterNoSaleIn, request: Request, user: dict = Depends(require_admin_and_permission("take_payments"))):
+    """Facade; canonical no-sale drawer-open logic lives in domains.register."""
+    return await register_domain_services.record_no_sale(
+        pin=body.pin, reason=body.reason, workstation_id=body.workstation_id,
+        actor=user, request=request,
+    )
 
 
 class RegisterRefundIn(BaseModel):

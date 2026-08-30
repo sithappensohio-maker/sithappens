@@ -4,6 +4,7 @@ import MultiDatePicker from "./MultiDatePicker";
 import { useEditLock } from "../lib/useLiveRefresh";
 import { todayISO } from "../lib/date";
 import BookingPriceEstimate from "./BookingPriceEstimate";
+import StayPolicyNote from "./StayPolicyNote";
 import PaymentOptionsCard from "./PaymentOptionsCard";
 import PremiumButton from "./premium/PremiumButton";
 import { accentRgb } from "./premium/tokens";
@@ -690,8 +691,13 @@ export default function PortalBookWizard({ dogs, seed, onClose, onBooked }) {
                              style={{colorScheme:"dark", background:"var(--sh-card-base)"}}
                              className="w-full mt-1 border border-shBorder rounded p-2 text-shText text-sm focus:outline-none focus:border-shSecondary/60"
                              data-testid="wiz-pickup-time" />
-                      <p className="text-[11px] text-gray-500 mt-1">Early pickup may cut the final day in half (admin's rule).</p>
                     </div>
+                  </div>
+                  {/* Policy block + live late-pickup warning, generated from the
+                      same settings the pricing engine charges with — the client
+                      sees any late-pickup cost BEFORE confirming. */}
+                  <div className="mt-2">
+                    <StayPolicyNote serviceType="boarding" pickupTime={pickupTime} testid="wiz-boarding-policy" />
                   </div>
                   </>
                 )}
@@ -702,6 +708,11 @@ export default function PortalBookWizard({ dogs, seed, onClose, onBooked }) {
                     <label className="text-[13px] uppercase tracking-widest text-gray-500 font-black">Date</label>
                     <input type="date" value={date} min={minDate} onChange={(e)=>setDate(e.target.value)} style={{colorScheme:"dark", background:"var(--sh-card-base)"}}
                            className="w-full mt-1 border border-shBorder rounded p-2 text-shText text-sm focus:outline-none focus:border-shSecondary/60" data-testid="wiz-date" />
+                    {serviceType === "daycare" && (
+                      <div className="mt-2">
+                        <StayPolicyNote serviceType="daycare" compact testid="wiz-daycare-policy" />
+                      </div>
+                    )}
                   </div>
                 )}
               </>

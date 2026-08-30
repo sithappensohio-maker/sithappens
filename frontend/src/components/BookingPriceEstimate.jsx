@@ -103,6 +103,7 @@ export default function BookingPriceEstimate({
           value: Number(settRes.data?.multi_dog_discount_value ?? 50),
           label: settRes.data?.multi_dog_discount_label || "Additional dog discount",
           by_service: settRes.data?.multi_dog_discount_by_service || {},
+          core: settRes.data?.multi_dog_discount_core || {},
         });
       })
       .catch(() => {
@@ -201,10 +202,14 @@ export default function BookingPriceEstimate({
       unitLabel = nights === 1 ? "night" : "nights";
     }
 
-    // Late-pickup daycare fee mirror (server is authoritative; this covers
-    // the multi-dog/multi-date fallback paths that skip /pricing/quote).
+    // Late-pickup fee mirror (server is authoritative; this covers the
+    // multi-dog/multi-date fallback paths that skip /pricing/quote). Charge
+    // mode, grace window, and flat fee come from booking_rules, same as the
+    // backend engine reads.
     let latePickupFeeUnit = 0;
-    if (serviceType === "boarding" && unitsValid) {
+    const lpMode = ["full_daycare_day", "half_daycare_day", "flat_fee", "none"].includes(rules?.boarding_late_pickup_mode)
+      ? rules.boarding_late_pickup_mode : "full_daycare_day";
+    if (serviceType === "boarding" && unitsValid && lpMode !== "none") {
       const pickupMinutes = /^\d{2}:\d{2}/.test(pickupTime || "")
         ? Number((pickupTime || "").slice(0, 2)) * 60 + Number((pickupTime || "").slice(3, 5))
         : null;
@@ -212,10 +217,16 @@ export default function BookingPriceEstimate({
       const cutoffMinutes = /^\d{2}:\d{2}/.test(cutoffRaw)
         ? Number(cutoffRaw.slice(0, 2)) * 60 + Number(cutoffRaw.slice(3, 5))
         : 17 * 60;
-      if (pickupMinutes !== null && pickupMinutes > cutoffMinutes) {
-        const daycareSvc = services.find(s => s.service_type === "daycare" && !s.is_addon && s.active !== false && s.is_default)
-          || services.find(s => s.service_type === "daycare" && !s.is_addon && s.active !== false);
-        latePickupFeeUnit = Number(daycareSvc?.base_price || 0);
+      const grace = Math.max(0, parseInt(rules?.boarding_late_pickup_grace_minutes, 10) || 0);
+      if (pickupMinutes !== null && pickupMinutes > cutoffMinutes + grace) {
+        if (lpMode === "flat_fee") {
+          latePickupFeeUnit = Math.max(0, Number(rules?.boarding_late_pickup_flat_fee || 0));
+        } else {
+          const daycareSvc = services.find(s => s.service_type === "daycare" && !s.is_addon && s.active !== false && s.is_default)
+            || services.find(s => s.service_type === "daycare" && !s.is_addon && s.active !== false);
+          const dayRate = Number(daycareSvc?.base_price || 0);
+          latePickupFeeUnit = lpMode === "half_daycare_day" ? dayRate * 0.5 : dayRate;
+        }
       }
     }
 
@@ -227,12 +238,18 @@ export default function BookingPriceEstimate({
     // accurate group total before they confirm). Per-service config wins;
     // otherwise the global value is used.
     const mdEligibleSvc = (serviceType === "daycare" || serviceType === "boarding");
-    // Sit Happens fixed rule. Ignore older saved discount settings for
-    // daycare/boarding, including flat $12.50 configs from the previous system.
-    const mdSvc = mdEligibleSvc ? { mode: "percent", value: 50, label: "Additional dog discount" } : ((mdDiscount?.by_service || {})[serviceType] || {});
-    const mdActiveForSvc = mdEligibleSvc ? true : (mdSvc.enabled !== undefined ? !!mdSvc.enabled : !!mdDiscount?.enabled);
-    const mdMode  = mdEligibleSvc ? "percent" : (mdSvc.mode || mdDiscount?.mode || "percent");
-    const mdValue = mdEligibleSvc ? 50 : Number(mdSvc.value ?? mdDiscount?.value ?? 0);
+    // Daycare/boarding read the configurable multi_dog_discount_core block
+    // (default 50% — the historical rule). Legacy by_service values stay
+    // ignored for these two services, including old flat $12.50 configs.
+    const mdCore = (mdDiscount?.core || {})[serviceType] || {};
+    const mdSvc = mdEligibleSvc
+      ? { mode: mdCore.mode === "flat" ? "flat" : "percent", value: Number(mdCore.value ?? 50), label: mdCore.label || "Additional dog discount" }
+      : ((mdDiscount?.by_service || {})[serviceType] || {});
+    const mdActiveForSvc = mdEligibleSvc
+      ? (mdDiscount?.enabled !== false && mdCore.enabled !== false)
+      : (mdSvc.enabled !== undefined ? !!mdSvc.enabled : !!mdDiscount?.enabled);
+    const mdMode  = mdSvc.mode || mdDiscount?.mode || "percent";
+    const mdValue = Number(mdSvc.value ?? mdDiscount?.value ?? 0);
     const applyMd = mdEligibleSvc && mdActiveForSvc && mdValue > 0 && additionalDogs > 0;
     // Compute the additional-dog price WITHOUT the discount first, then
     // subtract — that way the breakdown still shows the raw line and the

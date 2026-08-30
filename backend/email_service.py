@@ -9,6 +9,7 @@ import os
 import re
 import time
 from datetime import datetime, timedelta, timezone
+from typing import Optional
 from zoneinfo import ZoneInfo
 
 import qrcode
@@ -1985,8 +1986,14 @@ async def notify_client_pack_receipt(client: dict, lines: list, totals: dict, pa
     await _send(to_email, subject, body_html)
 
 
-async def notify_client_booking_approved(booking: dict, client: dict) -> None:
-    """Booking approved — let the client know."""
+async def notify_client_booking_approved(booking: dict, client: dict, policy_lines: Optional[list] = None) -> None:
+    """Booking approved — let the client know.
+
+    `policy_lines` (daycare/boarding): the stay policy generated from the live
+    pricing settings (see server._stay_policy_payload), so the confirmation
+    email restates exactly what checkout will charge — checkout time, late
+    pickup fee, half-day rule — with no hand-written copy to drift.
+    """
     to_email = client.get("email", "")
     if not to_email:
         return
@@ -2005,6 +2012,8 @@ async def notify_client_booking_approved(booking: dict, client: dict) -> None:
         rows.append(("Pickup", booking["pickup_time"]))
     if booking.get("kennel"):
         rows.append(("Kennel", booking["kennel"]))
+    for line in (policy_lines or []):
+        rows.append(("Policy", str(line)))
     await _dispatch(
         slug="client_booking_approved",
         to_email=to_email,

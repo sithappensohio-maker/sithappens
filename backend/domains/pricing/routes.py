@@ -9,6 +9,7 @@ from __future__ import annotations
 
 ROUTES = [
     ('POST', '/pricing/quote', 'pricing_quote', None),
+    ('GET', '/policies/stay', 'stay_policies', None),
     ('GET', '/clients/{client_id}/price-overrides', 'list_client_price_overrides', None),
     ('GET', '/clients/{client_id}/credit-pack-prices', 'client_credit_pack_prices', None),
     ('POST', '/clients/{client_id}/price-overrides', 'create_client_price_override', None),

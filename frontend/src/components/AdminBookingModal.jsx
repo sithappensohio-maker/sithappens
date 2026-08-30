@@ -72,12 +72,22 @@ const pluralUnit = (count, label) => {
 };
 
 const getMultiDogDiscountConfig = (settings, serviceType) => {
-  // Sit Happens fixed business rule: daycare and boarding additional dogs are
-  // always 50% off the same base service price as the first dog. Do not trust
-  // older saved settings like flat $12.50 or service.additional_dog_rate here;
-  // those were the source of weird daycare totals like $47.50.
+  // Daycare/boarding read the configurable multi_dog_discount_core block
+  // (default: 50% off — the historical fixed rule). Legacy by_service /
+  // additional_dog_rate values stay ignored for these two services; those
+  // were the source of weird daycare totals like $47.50.
   if (serviceType === "daycare" || serviceType === "boarding") {
-    return { mode: "percent", value: 50, label: "Additional dog discount", source: "fixed_daycare_boarding_rule" };
+    if (settings && settings.multi_dog_discount_enabled === false) return null;
+    const core = (settings?.multi_dog_discount_core || {})[serviceType] || {};
+    if (core.enabled === false) return null;
+    const value = Number(core.value ?? 50);
+    if (!(value > 0)) return null;
+    return {
+      mode: core.mode === "flat" ? "flat" : "percent",
+      value,
+      label: core.label || "Additional dog discount",
+      source: "settings_core",
+    };
   }
   if (!settings) return null;
   const per = settings.multi_dog_discount_by_service || {};
@@ -319,6 +329,7 @@ export default function AdminBookingModal({ defaultCheckIn = false, defaultDate 
           multi_dog_discount_value: Number(sRes.data?.multi_dog_discount_value ?? 50),
           multi_dog_discount_label: sRes.data?.multi_dog_discount_label || "Additional dog discount",
           multi_dog_discount_by_service: sRes.data?.multi_dog_discount_by_service || {},
+          multi_dog_discount_core: sRes.data?.multi_dog_discount_core || {},
         });
         if (!existing && !presetClientId && !presetDogId) {
           if (isQuickCheckin) {

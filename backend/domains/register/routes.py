@@ -17,6 +17,8 @@ ROUTES = [
     ('POST', '/admin/register/reopen-day', 'admin_reopen_register_day', None),
     ('POST', '/admin/register/till-adjustment', 'admin_register_till_adjustment', None),
     ('DELETE', '/admin/register/till-adjustment/{adjustment_id}', 'delete_till_adjustment', None),
+    ('POST', '/admin/register/no-sale', 'admin_register_no_sale', None),
+    ('POST', '/register/pin', 'set_register_pin', None),
     ('POST', '/admin/register/refund', 'admin_register_refund', None),
     ('POST', '/admin/register/cash-payout', 'admin_register_cash_payout', None),
     ('GET', '/admin/register/session', 'get_register_session', None),

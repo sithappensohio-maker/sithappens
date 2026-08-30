@@ -2,6 +2,7 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import { api } from "../lib/api";
 import { useAuth } from "../lib/auth";
 import { onRegisterChanged } from "../lib/registerBus";
+import { openDrawer as posOpenDrawer } from "../lib/posAgent";
 import { toast } from "sonner";
 
 // ── Step 3: Front Desk register hub ─────────────────────────────────────────
@@ -115,6 +116,13 @@ export default function RegisterHub({ onOpenCloseout, onStatusChange }) {
   const [openingReason, setOpeningReason] = useState("");
   const [openingNeedsReason, setOpeningNeedsReason] = useState(false);
   const [openBusy, setOpenBusy] = useState(false);
+  // No Sale — PIN-verified drawer open with no transaction (making change).
+  const [noSaleOpen, setNoSaleOpen] = useState(false);
+  const [noSalePin, setNoSalePin] = useState("");
+  const [noSaleReason, setNoSaleReason] = useState("Making change");
+  const [noSaleBusy, setNoSaleBusy] = useState(false);
+  const [pinSetupOpen, setPinSetupOpen] = useState(false);
+  const [newPin, setNewPin] = useState("");
   const statusChangeRef = useRef(onStatusChange);
   statusChangeRef.current = onStatusChange;
 
@@ -166,6 +174,39 @@ export default function RegisterHub({ onOpenCloseout, onStatusChange }) {
     setOpenBusy(false);
   };
 
+  const doNoSale = async () => {
+    if (!/^\d{4}$/.test(noSalePin)) { toast.error("Enter your 4-digit register PIN"); return; }
+    if (noSaleReason.trim().length < 3) { toast.error("Enter a short reason"); return; }
+    setNoSaleBusy(true);
+    try {
+      const { data } = await api.post("/admin/register/no-sale", {
+        pin: noSalePin, reason: noSaleReason.trim(),
+      });
+      if (data?.pos_open_drawer_token) {
+        const r = await posOpenDrawer(data.pos_open_drawer_token);
+        toast.success(r?.ok ? "Drawer opened" : "No-sale recorded (drawer hardware unavailable)");
+      } else {
+        toast.success("No-sale recorded");
+      }
+      setNoSaleOpen(false); setNoSalePin("");
+      refresh();
+    } catch (e) {
+      toast.error(e?.response?.data?.detail || "Could not open the drawer");
+    }
+    setNoSaleBusy(false);
+  };
+
+  const doSetPin = async () => {
+    if (!/^\d{4}$/.test(newPin)) { toast.error("PIN must be exactly 4 digits"); return; }
+    try {
+      await api.post("/register/pin", { pin: newPin });
+      toast.success("Register PIN saved");
+      setPinSetupOpen(false); setNewPin("");
+    } catch (e) {
+      toast.error(e?.response?.data?.detail || "Could not save the PIN");
+    }
+  };
+
   const view = buildRegisterView({ status, summary, canFinance });
   const tone = {
     open: "border-shPrimary/50",
@@ -197,6 +238,12 @@ export default function RegisterHub({ onOpenCloseout, onStatusChange }) {
           )}
         </div>
         <div className="flex items-center gap-3 flex-wrap">
+          {view.kind === "open" && (
+            <button onClick={() => { setNoSaleOpen((o) => !o); setPinSetupOpen(false); }} data-testid="register-hub-no-sale-btn"
+                    className="bg-[var(--sh-card-base)] border border-shBorder hover:border-shSecondary/60 text-shText rounded-xl px-4 py-3 font-black uppercase text-[12px] tracking-widest">
+              <i className="fas fa-inbox mr-1.5" />No Sale
+            </button>
+          )}
           {view.expectedCashText !== null && (
             <div className="text-right" data-testid="register-hub-expected">
               <p className="text-[10px] font-black uppercase tracking-widest text-shTextMuted">Expected cash</p>
@@ -220,6 +267,52 @@ export default function RegisterHub({ onOpenCloseout, onStatusChange }) {
           )}
         </div>
       </div>
+
+      {noSaleOpen && (
+        <div className="border border-shSecondary/40 rounded-xl p-3 space-y-2" data-testid="register-hub-no-sale-panel">
+          <p className="text-[12px] font-black uppercase tracking-widest text-shTextMuted">
+            <i className="fas fa-user-lock mr-1.5 text-shSecondary" />Open drawer without a sale — enter YOUR register PIN
+          </p>
+          <div className="flex items-center gap-2 flex-wrap">
+            <input type="password" inputMode="numeric" autoComplete="off" maxLength={4}
+                   value={noSalePin} onChange={(e) => setNoSalePin(e.target.value.replace(/\D/g, ""))}
+                   placeholder="••••" data-testid="register-hub-no-sale-pin"
+                   className="bg-[var(--sh-card-base)] border border-shBorder rounded p-2 text-shText w-24 text-center text-lg tracking-[0.4em]" />
+            <select value={noSaleReason} onChange={(e) => setNoSaleReason(e.target.value)}
+                    data-testid="register-hub-no-sale-reason"
+                    className="bg-[var(--sh-card-base)] border border-shBorder rounded p-2 text-shText text-sm">
+              <option>Making change</option>
+              <option>Swapping bills</option>
+              <option>Counting drawer</option>
+              <option>Other</option>
+            </select>
+            <button onClick={doNoSale} disabled={noSaleBusy} data-testid="register-hub-no-sale-submit"
+                    className="bg-shSecondary text-shText rounded px-4 py-2 font-black uppercase text-[12px] tracking-widest disabled:opacity-50">
+              {noSaleBusy ? "Opening…" : "Open Drawer"}
+            </button>
+            <button onClick={() => { setPinSetupOpen((o) => !o); }} data-testid="register-hub-pin-setup-toggle"
+                    className="text-shTextMuted hover:text-shText text-[11px] font-black uppercase tracking-widest">
+              Set my PIN
+            </button>
+          </div>
+          {pinSetupOpen && (
+            <div className="flex items-center gap-2 flex-wrap pt-1 border-t border-shBorder/50" data-testid="register-hub-pin-setup">
+              <span className="text-[12px] text-shTextMuted">New 4-digit PIN (identifies you on drawer opens):</span>
+              <input type="password" inputMode="numeric" autoComplete="off" maxLength={4}
+                     value={newPin} onChange={(e) => setNewPin(e.target.value.replace(/\D/g, ""))}
+                     placeholder="••••" data-testid="register-hub-pin-input"
+                     className="bg-[var(--sh-card-base)] border border-shBorder rounded p-2 text-shText w-24 text-center text-lg tracking-[0.4em]" />
+              <button onClick={doSetPin} data-testid="register-hub-pin-save"
+                      className="bg-shPrimary text-bgHeader rounded px-3 py-2 font-black uppercase text-[11px] tracking-widest">
+                Save PIN
+              </button>
+            </div>
+          )}
+          <p className="text-[11px] text-shTextMuted">
+            Every no-sale open is logged to the register activity trail with your name.
+          </p>
+        </div>
+      )}
 
       {view.showQuickOpen && (
         <div className="flex items-center gap-2 flex-wrap" data-testid="register-hub-quick-open">

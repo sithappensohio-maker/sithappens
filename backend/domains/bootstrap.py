@@ -77,12 +77,26 @@ def register_domains(
     register_services.configure(
         active_register_closeout=server_globals["_active_register_closeout"],
         closeout_rollover_cash=server_globals["_closeout_rollover_cash"],
+        db=db,
+        verify_password=server_globals["verify_password"],
+        hash_password=server_globals["hash_password"],
+        now_iso=now_iso,
+        business_today=business_today,
+        enforce_rate_limit=server_globals["_enforce_rate_limit"],
+        client_ip=server_globals["_client_ip"],
+        perms_for=server_globals["_perms_for"],
+        issue_pos_token=server_globals["_issue_pos_token"],
+        invalidate_auth_user_cache=server_globals["_invalidate_auth_user_cache"],
     )
     pricing_services.configure(
         db=db,
         business_today=business_today,
         billable_boarding_units=server_globals["_billable_boarding_units"],
         boarding_pickup_day_units=server_globals["_boarding_pickup_day_units"],
+        get_settings=server_globals["get_settings"],
+        clock_minutes=server_globals["_clock_minutes"],
+        boarding_cutoff_from_rules=server_globals["_boarding_full_day_cutoff_from_rules"],
+        business_tz=server_globals["BUSINESS_TZ"],
         now_iso=now_iso,
         default_boarding_cutoff=server_globals["DEFAULT_BOARDING_FULL_DAY_PICKUP_CUTOFF"],
     )

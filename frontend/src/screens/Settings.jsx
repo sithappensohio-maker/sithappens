@@ -2418,6 +2418,20 @@ function RulesPanel({ s, save, saving }) {
   const legacyLabel = s.multi_dog_discount_label || "Additional dog discount";
   const initialByService = {};
   for (const svc of SERVICES) {
+    // Daycare/boarding read the NEW multi_dog_discount_core block (what the
+    // pricing engine actually applies — legacy by_service values are ignored
+    // for these two services so stale junk can't underquote). Defaults match
+    // the historical fixed rule: enabled, 50% off.
+    if (svc.key === "daycare" || svc.key === "boarding") {
+      const core = (s.multi_dog_discount_core || {})[svc.key] || {};
+      initialByService[svc.key] = {
+        enabled: core.enabled !== false,
+        mode: core.mode === "flat" ? "flat" : "percent",
+        value: core.value ?? 50,
+        label: core.label || "Additional dog discount",
+      };
+      continue;
+    }
     const existing = (s.multi_dog_discount_by_service || {})[svc.key];
     initialByService[svc.key] = existing ? {
       enabled: !!existing.enabled,
@@ -2425,10 +2439,10 @@ function RulesPanel({ s, save, saving }) {
       value: existing.value ?? svc.defaultValue,
       label: existing.label || `${svc.label} multi-dog discount`,
     } : {
-      enabled: (svc.key === "daycare" || svc.key === "boarding") ? s.multi_dog_discount_enabled !== false : false,
+      enabled: false,
       mode: legacyMode,
-      value: (svc.key === "daycare" || svc.key === "boarding") ? legacyValue : svc.defaultValue,
-      label: (svc.key === "daycare" || svc.key === "boarding") ? legacyLabel : `${svc.label} multi-dog discount`,
+      value: svc.defaultValue,
+      label: `${svc.label} multi-dog discount`,
     };
   }
   const [mdEnabled, setMdEnabled] = useState(s.multi_dog_discount_enabled !== false);
@@ -2482,9 +2496,56 @@ function RulesPanel({ s, save, saving }) {
                  onChange={(v)=>set("boarding_full_day_pickup_cutoff", v || "17:00")}
                  testId="boarding-full-day-cutoff" />
         </div>
+        <div className="grid grid-cols-1 sm:grid-cols-3 gap-4 mt-4">
+          <div>
+            <label className="text-[11px] font-black text-shTextMuted uppercase tracking-widest block">Late pickup charges</label>
+            <select value={r.boarding_late_pickup_mode || "full_daycare_day"}
+                    onChange={(e)=>set("boarding_late_pickup_mode", e.target.value)}
+                    data-testid="boarding-late-pickup-mode"
+                    className="mt-1 w-full bg-[var(--sh-card-base)] border border-shBorder rounded p-2 text-shText text-sm">
+              <option value="full_daycare_day">Full daycare day (per dog)</option>
+              <option value="half_daycare_day">Half daycare day (per dog)</option>
+              <option value="flat_fee">Flat fee (per dog)</option>
+              <option value="none">No charge</option>
+            </select>
+          </div>
+          {(r.boarding_late_pickup_mode || "full_daycare_day") === "flat_fee" && (
+            <Field label="Flat late-pickup fee ($ per dog)"
+                   type="number"
+                   value={r.boarding_late_pickup_flat_fee ?? 25}
+                   onChange={(v)=>set("boarding_late_pickup_flat_fee", Math.max(0, parseFloat(v)||0))}
+                   testId="boarding-late-pickup-flat-fee" />
+          )}
+          <Field label="Grace period past checkout (minutes)"
+                 type="number"
+                 value={r.boarding_late_pickup_grace_minutes ?? 0}
+                 onChange={(v)=>set("boarding_late_pickup_grace_minutes", Math.max(0, parseInt(v)||0))}
+                 testId="boarding-late-pickup-grace" />
+        </div>
+        <div className="grid grid-cols-1 sm:grid-cols-2 gap-4 mt-4">
+          <div>
+            <label className="text-[11px] font-black text-shTextMuted uppercase tracking-widest block">Daycare policy note (shown to clients)</label>
+            <textarea value={r.daycare_policy_note || ""}
+                      onChange={(e)=>set("daycare_policy_note", e.target.value)}
+                      data-testid="daycare-policy-note"
+                      rows={2}
+                      placeholder="e.g. Drop-off 7–9 AM · pickup by 6 PM"
+                      className="mt-1 w-full bg-[var(--sh-card-base)] border border-shBorder rounded p-2 text-shText text-sm" />
+          </div>
+          <div>
+            <label className="text-[11px] font-black text-shTextMuted uppercase tracking-widest block">Boarding policy note (shown to clients)</label>
+            <textarea value={r.boarding_policy_note || ""}
+                      onChange={(e)=>set("boarding_policy_note", e.target.value)}
+                      data-testid="boarding-policy-note"
+                      rows={2}
+                      placeholder="e.g. Drop-off after 12 PM · bring your own food"
+                      className="mt-1 w-full bg-[var(--sh-card-base)] border border-shBorder rounded p-2 text-shText text-sm" />
+          </div>
+        </div>
         <div className="mt-3 text-xs text-shTextMuted leading-relaxed">
           <div><span className="text-shPrimary font-black">Daycare:</span> total hours ≤ threshold → bill as half day, otherwise full day.</div>
-          <div><span className="text-shSecondary font-black">Boarding:</span> every overnight night is billed at the boarding rate. Pickup at or before the checkout time is free; pickup after it adds one full daycare day at your daycare rate. Additional dogs receive 50% off every night and the pickup-day charge.</div>
+          <div><span className="text-shSecondary font-black">Boarding:</span> every overnight night is billed at the boarding rate. Pickup at or before the checkout time (plus any grace period) is free; pickup after it charges per the mode you pick above. Additional dogs get the multi-dog discount on every night and the pickup-day charge.</div>
+          <div className="mt-1"><i className="fas fa-bullhorn mr-1 text-shSecondary" />Everything here feeds the client-facing policy text automatically — what clients read always matches what checkout charges. The notes above are appended verbatim.</div>
           <div className="text-shAccent mt-1"><i className="fas fa-info-circle mr-1" />The admin can still override the auto-price by typing a manual amount in the check-out modal.</div>
         </div>
       </Section>
@@ -2546,6 +2607,9 @@ function RulesPanel({ s, save, saving }) {
         booking_rules: r,
         multi_dog_discount_enabled: mdEnabled,
         multi_dog_discount_by_service: byService,
+        // The pricing engine reads THIS block for daycare/boarding; by_service
+        // stays for the other services (and is ignored for these two).
+        multi_dog_discount_core: { daycare: byService.daycare, boarding: byService.boarding },
       })} saving={saving} />
     </div>
   );
