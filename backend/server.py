@@ -3159,6 +3159,27 @@ async def _boarding_late_pickup_daycare_fee(
     )
 
 
+async def _boarding_auto_base(booking: dict, settings: dict) -> float:
+    """This row's auto-computed boarding base: saved unit rate × nights, plus
+    the late-pickup daycare fee, times the group-row discount factor. Shared
+    by checkout repair, modifier previews, and the manual-override audit
+    stamp so they can never disagree. 0.0 for non-boarding/unusable rows."""
+    if booking.get("service_type") != "boarding" or not booking.get("end_date"):
+        return 0.0
+    ps = booking.get("pricing_snapshot") or {}
+    unit_rate = float(ps.get("unit_price") or booking.get("unit_price") or 0)
+    if unit_rate <= 0:
+        return 0.0
+    cutoff_time = ps.get("pickup_cutoff_time") or _boarding_full_day_cutoff_from_rules(settings.get("booking_rules") or {})
+    pickup_clock = booking.get("pickup_time") or cutoff_time
+    units = _billable_boarding_units(
+        booking.get("date"), booking.get("end_date"), pickup_clock,
+        legacy_minimum=1, cutoff_time=cutoff_time,
+    )
+    fee = await _boarding_late_pickup_daycare_fee(booking.get("client_id"), pickup_clock, cutoff_time)
+    return round((unit_rate * units + float(fee.get("amount") or 0)) * _group_row_price_factor(booking), 2)
+
+
 def _money_modifier_breakdown(
     booking: Dict[str, Any],
     base_amount: float,
@@ -6939,21 +6960,9 @@ async def money_modifier_preview(
         0.0,
         round(float(booking.get("estimated_price") or 0) - _booking_addon_total_from(booking), 2),
     )
-    if booking.get("service_type") == "boarding" and booking.get("end_date"):
-        ps = booking.get("pricing_snapshot") or {}
-        unit_rate = float(ps.get("unit_price") or booking.get("unit_price") or 0)
-        if unit_rate > 0:
-            cutoff_time = ps.get("pickup_cutoff_time") or _boarding_full_day_cutoff_from_rules(settings.get("booking_rules") or {})
-            units = _billable_boarding_units(
-                booking.get("date"), booking.get("end_date"),
-                booking.get("pickup_time") or cutoff_time,
-                legacy_minimum=1,
-                cutoff_time=cutoff_time,
-            )
-            late_fee = await _boarding_late_pickup_daycare_fee(
-                booking.get("client_id"), booking.get("pickup_time") or cutoff_time, cutoff_time,
-            )
-            base_amount = round((unit_rate * units + float(late_fee.get("amount") or 0)) * _group_row_price_factor(booking), 2)
+    boarding_auto = await _boarding_auto_base(booking, settings)
+    if boarding_auto > 0:
+        base_amount = boarding_auto
     if base_amount <= 0:
         base_preview = await discount_preview(booking_id, {})
         base_amount = float(base_preview.get("preview_base_price") or 0)
@@ -9475,7 +9484,10 @@ async def _check_out_locked(
             "reason": (body.base_price_reason or "").strip(),
             "by": user.get("id"),
             "by_name": user.get("name") or user.get("email") or "",
-            "estimated_before": round(float(booking.get("estimated_price") or 0), 2),
+            # The auto price the operator saw and overrode — not just the
+            # (possibly stale/absent) stored estimate.
+            "estimated_before": (await _boarding_auto_base(booking, settings))
+                or round(float(booking.get("estimated_price") or 0), 2),
             "at": ts,
         }
 
@@ -9714,35 +9726,16 @@ async def _check_out_locked(
 
             # Recompute the boarding base from the current rule so stale
             # snapshots (including ones saved under the old pickup-day-care
-            # rule) bill correctly: nights at the saved unit rate, plus a full
-            # daycare day only when pickup is after the checkout time. The
-            # saved unit rate keeps grandfathered pricing intact, and the 50%
-            # row price is preserved for additional dogs in a grouped booking.
-            if booking.get("service_type") == "boarding" and booking.get("end_date"):
-                ps = booking.get("pricing_snapshot") or {}
-                unit_rate = float(ps.get("unit_price") or booking.get("unit_price") or 0)
-                if unit_rate > 0:
-                    cutoff_time = ps.get("pickup_cutoff_time") or _boarding_full_day_cutoff_from_rules(settings.get("booking_rules") or {})
-                    pickup_clock = booking.get("pickup_time") or cutoff_time
-                    boarding_units = _billable_boarding_units(
-                        booking.get("date"), booking.get("end_date"), pickup_clock,
-                        legacy_minimum=1,
-                        cutoff_time=cutoff_time,
-                    )
-                    late_fee = await _boarding_late_pickup_daycare_fee(
-                        booking.get("client_id"), pickup_clock, cutoff_time,
-                    )
-                    corrected_base = round((unit_rate * boarding_units + float(late_fee.get("amount") or 0)) * _group_row_price_factor(booking), 2)
-                    if corrected_base > 0:
-                        snap_base = corrected_base
-                        update["boarding_pricing_correction"] = {
-                            "rule": "nights_plus_daycare_day_when_pickup_after_checkout_time",
-                            "billable_units": boarding_units,
-                            "late_pickup_daycare_fee": round(float(late_fee.get("amount") or 0), 2),
-                            "pickup_time": pickup_clock,
-                            "pickup_cutoff_time": cutoff_time,
-                            "applied_at": ts,
-                        }
+            # rule) bill correctly — see _boarding_auto_base (saved unit rate
+            # keeps grandfathered pricing; group rows keep their 50% price).
+            corrected_base = await _boarding_auto_base(booking, settings)
+            if corrected_base > 0:
+                snap_base = corrected_base
+                update["boarding_pricing_correction"] = {
+                    "rule": "nights_plus_daycare_day_when_pickup_after_checkout_time",
+                    "auto_base": corrected_base,
+                    "applied_at": ts,
+                }
 
             # Repair legacy daycare estimates the same way: the booking's
             # estimated_price is a full-day estimate taken at booking time
@@ -9826,21 +9819,9 @@ async def _check_out_locked(
                 0.0,
                 round(float(booking.get("estimated_price") or 0) - _booking_addon_total_from(booking), 2),
             )
-        if booking.get("service_type") == "boarding" and booking.get("end_date"):
-            ps = booking.get("pricing_snapshot") or {}
-            unit_rate = float(ps.get("unit_price") or booking.get("unit_price") or 0)
-            if unit_rate > 0:
-                cutoff_time = ps.get("pickup_cutoff_time") or _boarding_full_day_cutoff_from_rules(settings.get("booking_rules") or {})
-                units = _billable_boarding_units(
-                    booking.get("date"), booking.get("end_date"),
-                    booking.get("pickup_time") or cutoff_time,
-                    legacy_minimum=1,
-                    cutoff_time=cutoff_time,
-                )
-                late_fee = await _boarding_late_pickup_daycare_fee(
-                    booking.get("client_id"), booking.get("pickup_time") or cutoff_time, cutoff_time,
-                )
-                modifier_base = round((unit_rate * units + float(late_fee.get("amount") or 0)) * _group_row_price_factor(booking), 2)
+        boarding_auto = await _boarding_auto_base(booking, settings)
+        if boarding_auto > 0:
+            modifier_base = boarding_auto
         if modifier_base <= 0:
             modifier_base = float(update.get("actual_price") or 0)
         modifier_breakdown = _money_modifier_breakdown(booking, modifier_base, settings, ts)
@@ -17717,7 +17698,26 @@ async def _auto_complete_if_satisfied(enrollment: dict, *, sessions_logged: int 
         update["graduation_ready_at"] = now_iso()
     await db.dog_programs.update_one({"id": enrollment["id"]}, {"$set": update})
     enrollment.update(update)
+    if satisfied:  # False→True transition — tell the humans a decision awaits
+        asyncio.create_task(_announce_graduation_ready(dict(enrollment)))
     return enrollment
+
+
+async def _announce_graduation_ready(enrollment: dict) -> None:
+    """Best-effort 'ready to graduate' email to the owner + assigned trainer."""
+    try:
+        dog = await db.dogs.find_one({"id": enrollment.get("dog_id")}, {"_id": 0}) or {}
+        client = await db.clients.find_one({"id": dog.get("owner_id")}, {"_id": 0, "name": 1}) or {}
+        trainer = await db.users.find_one(
+            {"id": enrollment.get("assigned_trainer_id") or "__none__"}, {"_id": 0, "email": 1, "name": 1}
+        ) or {}
+        await email_service.notify_graduation_ready(
+            dog=dog, client=client, enrollment=enrollment,
+            mastered_pct=_enrollment_summary(enrollment).get("mastered_pct"),
+            trainer_email=trainer.get("email") or "", trainer_name=trainer.get("name") or "",
+        )
+    except Exception as exc:
+        logger.warning("Graduation-ready notification failed for enrollment=%s: %s", enrollment.get("id"), exc)
 
 
 def _suggest_target_date(started: str, fmt: dict) -> Optional[str]:
@@ -37161,6 +37161,13 @@ async def admin_end_of_day_closeout(body: EndOfDayCloseoutIn, user: dict = Depen
         raise HTTPException(status_code=400, detail="Confirmed rollover cash must exactly match the actual cash counted.")
     register_snapshot = await _register_day_summary(d)
     expected_cash = round(float((register_snapshot.get("totals") or {}).get("expected_cash") or 0), 2)
+    # Owner rule (2026-08-31): a drawer that doesn't balance never closes
+    # silently — an over/short needs a written explanation on the closeout.
+    if abs(counted - expected_cash) > 0.005 and len((body.notes or "").strip()) < 3:
+        raise HTTPException(
+            status_code=400,
+            detail=f"The drawer is {'over' if counted > expected_cash else 'short'} ${abs(counted - expected_cash):.2f} vs the expected ${expected_cash:.2f}. Add a closeout note explaining the difference before closing.",
+        )
     doc = {
         "id": str(uuid.uuid4()),
         "date": snapshot.get("date"),

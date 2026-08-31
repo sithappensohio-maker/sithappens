@@ -45,6 +45,26 @@ def register_training_routes(
     check_enrollment_module_readiness, enrollment_summary, effective_lessons,
     recommended_focus, booking_training_assignment_for_day,
 ):
+    @api.get("/training/legacy-enrollment-count")
+    async def training_legacy_enrollment_count(user: dict = Depends(get_current_user)):
+        """How many ACTIVE legacy (pre-School, read-only) enrollments exist.
+
+        The Training Hub pipeline intentionally shows only School-channel
+        enrollments; without this count an install whose data predates the
+        School migration sees "ACTIVE 0" with no explanation of where its
+        training records went.
+        """
+        _require_manual_progress_permission(user)
+        n = await db.dog_programs.count_documents({
+            "status": "active",
+            "$or": [
+                {"delivery_channel": {"$exists": False}},
+                {"delivery_channel": None},
+                {"delivery_channel": "trainer_led"},
+            ],
+        })
+        return {"active_legacy": n}
+
     @api.post("/training/enrollments/{enrollment_id}/reopen-program")
     async def reopen_training_program(
         enrollment_id: str, body: EnrollmentReopenIn, user: dict = Depends(manage_sessions_dep)

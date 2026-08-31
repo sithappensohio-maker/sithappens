@@ -492,6 +492,12 @@ export default function Pos({ onOpenShopManager } = {}) {
   const total = priced?.total ?? 0;
   const tenderedSoFar = tenders.reduce((s, t) => s + t.amount, 0);
   const remaining = Math.max(0, Math.round((total - tenderedSoFar) * 100) / 100);
+  // Change owed to the client: cash physically handed over beyond what was
+  // applied. Carried onto the sale-complete screen so the number the cashier
+  // needs most doesn't vanish the moment the tender is added.
+  const changeDue = Math.round(tenders.reduce(
+    (s, t) => s + (t.method === "cash" && t.tendered_amount ? Math.max(0, t.tendered_amount - t.amount) : 0), 0,
+  ) * 100) / 100;
 
   const openTender = () => {
     if (!priced || cartLines.length === 0) { toast.error("Add something to the cart first"); return; }
@@ -712,6 +718,12 @@ export default function Pos({ onOpenShopManager } = {}) {
           <i className="fas fa-circle-check text-shPrimary text-4xl mb-3" />
           <p className="text-shText text-xl font-black uppercase tracking-widest">Sale Complete</p>
           <p className="text-shTextMuted mt-1">Receipt #{s.receipt_number} · {money(s.total)}</p>
+          {changeDue > 0.005 && (
+            <div className="mt-3 bg-shPrimary/15 border border-shPrimary/50 rounded-xl py-3" data-testid="pos-complete-change-due">
+              <p className="text-shTextMuted text-[12px] uppercase tracking-widest font-black">Give Change</p>
+              <p className="text-shPrimary text-3xl font-black">{money(changeDue)}</p>
+            </div>
+          )}
         </div>
         <div className="bg-[var(--sh-card-base)] border border-shBorder rounded-2xl p-4 space-y-2">
           <div className="flex items-center justify-between">
@@ -798,13 +810,25 @@ export default function Pos({ onOpenShopManager } = {}) {
           <div className="bg-[var(--sh-card-base)] border border-shBorder rounded-2xl p-4 space-y-1">
             {tenders.map((t, i) => (
               <div key={i} className="flex items-center justify-between text-sm">
-                <span className="text-shTextMuted">{TENDER_LABELS[t.method]}{t.notes ? ` — ${t.notes}` : ""}</span>
+                <span className="text-shTextMuted">
+                  {TENDER_LABELS[t.method]}{t.notes ? ` — ${t.notes}` : ""}
+                  {t.method === "cash" && t.tendered_amount > t.amount && (
+                    <span className="text-shPrimary ml-1">(received {money(t.tendered_amount)})</span>
+                  )}
+                </span>
                 <div className="flex items-center gap-2">
                   <span className="text-shText font-bold">{money(t.amount)}</span>
                   <button onClick={() => removeTender(i)} className="text-shTextMuted hover:text-shDanger"><i className="fas fa-times" /></button>
                 </div>
               </div>
             ))}
+          </div>
+        )}
+
+        {remaining <= 0.005 && changeDue > 0.005 && (
+          <div className="bg-shPrimary/15 border border-shPrimary/50 rounded-2xl p-4 text-center" data-testid="pos-change-due">
+            <p className="text-shTextMuted text-[12px] uppercase tracking-widest font-black">Give Change</p>
+            <p className="text-shPrimary text-3xl font-black">{money(changeDue)}</p>
           </div>
         )}
 

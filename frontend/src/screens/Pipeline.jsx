@@ -120,6 +120,14 @@ export default function Pipeline({ onJumpToDog }) {
       .then(r => setTodayTip(r.data?.tip || null))
       .catch(() => setTodayTip(null));
   }, []);
+  // Legacy (pre-School, read-only) enrollments are hidden from this pipeline
+  // by design — say so instead of showing an unexplained "ACTIVE 0".
+  const [legacyCount, setLegacyCount] = useState(0);
+  useEffect(() => {
+    api.get("/training/legacy-enrollment-count")
+      .then(r => setLegacyCount(Number(r.data?.active_legacy || 0)))
+      .catch(() => setLegacyCount(0));
+  }, []);
 
   const stats = useMemo(() => {
     const s = { active: 0, on_hold: 0, completed: 0, overdue: 0 };
@@ -328,6 +336,14 @@ export default function Pipeline({ onJumpToDog }) {
         </button>
       </div>
 
+      {legacyCount > 0 && (
+        <div className="bg-shAccent/10 border border-shAccent/40 rounded-xl px-4 py-3 text-[13px] text-shTextMuted" data-testid="pipeline-legacy-hint">
+          <i className="fas fa-box-archive text-shAccent mr-2"/>
+          <span className="text-shText font-bold">{legacyCount} legacy training enrollment{legacyCount === 1 ? "" : "s"}</span> from
+          before the School system {legacyCount === 1 ? "is" : "are"} read-only and not shown here. Open the dog's profile → Training tab
+          to view one or migrate it into School so it can be managed from this pipeline.
+        </div>
+      )}
       <div className="bg-[var(--sh-card-base)] border border-shBorder rounded-xl overflow-hidden shadow-lg">
         {loading && <p className="p-8 text-center text-shTextMuted text-sm"><i className="fas fa-spinner fa-spin mr-2"/>Loading…</p>}
         {!loading && rows.length === 0 && (

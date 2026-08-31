@@ -190,7 +190,15 @@ export function CheckoutModal({ booking, services, onClose, onRequestCancel }) {
   const legacyCandidates = (services || []).filter(
     s => s.active && !s.is_addon && s.service_type !== booking.service_type
   );
-  const addOnCandidates = flaggedAddons.length > 0 ? flaggedAddons : legacyCandidates;
+  // Once the catalog uses the add-on flag AT ALL, the legacy "any other
+  // service" fallback is retired — it dumped every base service (Board &
+  // Train, duplicate daycare rows, …) into the picker for service types with
+  // no eligible flagged add-ons. Pure-legacy catalogs (zero flagged add-ons
+  // anywhere) keep the old behavior.
+  const catalogUsesAddonFlag = (services || []).some(s => s.active && s.is_addon);
+  const addOnCandidates = flaggedAddons.length > 0
+    ? flaggedAddons
+    : (catalogUsesAddonFlag ? [] : legacyCandidates);
   const [cart, setCart] = useState({});
 
   const [busy, setBusy] = useState(false);

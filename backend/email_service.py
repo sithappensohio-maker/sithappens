@@ -1071,6 +1071,31 @@ async def notify_admin_new_client(user: dict, client: dict) -> None:
     )
 
 
+async def notify_graduation_ready(*, dog: dict, client: dict, enrollment: dict, mastered_pct=None, trainer_email: str = "", trainer_name: str = "") -> None:
+    """A dog just satisfied its program's completion rule (owner rule
+    2026-08-31: nothing completes automatically — this email tells the owner
+    and the assigned trainer that an explicit graduation decision is waiting).
+    Sent to ADMIN_NOTIFICATION_EMAIL and, when set, the assigned trainer."""
+    program_name = ((enrollment or {}).get("program_snapshot") or {}).get("name") or "the program"
+    ctx = {
+        "client_name": (client or {}).get("name") or "—",
+        "dog_name": (dog or {}).get("name") or "—",
+        "program_name": program_name,
+        "mastered_pct": f"{mastered_pct:g}" if isinstance(mastered_pct, (int, float)) else "100",
+        "trainer_name": trainer_name or "—",
+    }
+    rows = [
+        ("Dog", ctx["dog_name"]),
+        ("Client", ctx["client_name"]),
+        ("Program", program_name),
+        ("Mastery", f"{ctx['mastered_pct']}%"),
+        ("Next step", "Graduate from the Training Pipeline (or session workspace) when YOU decide the dog is done"),
+    ]
+    recipients = [e for e in {ADMIN_NOTIFICATION_EMAIL, (trainer_email or "").strip()} if e]
+    for to_email in recipients:
+        await _dispatch(slug="admin_graduation_ready", to_email=to_email, ctx=ctx, rows=rows)
+
+
 async def notify_admin_vaccine_upload_pending(client: dict, dog: dict, vaccine: str, expires_on: str) -> None:
     """Client uploaded a vaccine certificate that needs admin review/approval."""
     if not ADMIN_NOTIFICATION_EMAIL:

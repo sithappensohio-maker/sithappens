@@ -2563,9 +2563,17 @@ export function RegisterTab({ excludeTabs = [] } = {}) {
             <RegisterFormInput label="Checks in drawer" type="number" step="0.01" value={closeout.check_total} onChange={v=>{setCloseout({...closeout, check_total:v});setCloseoutReview(false);}}/>
             <RegisterFormInput label="Closeout notes" value={closeout.notes} onChange={v=>{setCloseout({...closeout, notes:v});setCloseoutReview(false);}}/>
           </div>
-          {closeoutOverShort != null && <div className={`border rounded-lg p-3 ${Math.abs(closeoutOverShort) < 0.005 ? "bg-shPrimary/10 border-shPrimary/30" : "bg-shAccent/10 border-shAccent/40"}`}><p className="text-[10px] font-black uppercase tracking-widest text-shTextMuted">Live over / short</p><p className={`text-xl font-black ${Math.abs(closeoutOverShort) < 0.005 ? "text-shPrimary" : "text-shAccent"}`}>{closeoutOverShort >= 0 ? "+" : "-"}{money(Math.abs(closeoutOverShort))}</p></div>}
+          {closeoutOverShort != null && <div className={`border rounded-lg p-3 ${Math.abs(closeoutOverShort) < 0.005 ? "bg-shPrimary/10 border-shPrimary/30" : "bg-shAccent/10 border-shAccent/40"}`}><p className="text-[10px] font-black uppercase tracking-widest text-shTextMuted">Live over / short</p><p className={`text-xl font-black ${Math.abs(closeoutOverShort) < 0.005 ? "text-shPrimary" : "text-shAccent"}`}>{closeoutOverShort >= 0 ? "+" : "-"}{money(Math.abs(closeoutOverShort))}</p>
+            {Math.abs(closeoutOverShort) >= 0.005 && (closeout.notes || "").trim().length < 3 && (
+              <p className="text-[12px] text-shAccent font-bold mt-1" data-testid="closeout-note-required">
+                <i className="fas fa-pen mr-1"/>The drawer doesn't balance — a closeout note explaining the difference is required to close.
+              </p>
+            )}
+          </div>}
           {!closeoutReview ? (
-            <button onClick={reviewCloseout} disabled={closeout.cash_counted === ""} className="bg-shPrimary disabled:opacity-50 text-bgHeader px-4 py-2 rounded text-[12px] font-black uppercase tracking-widest"><i className="fas fa-magnifying-glass mr-1"/>Review closeout</button>
+            <button onClick={reviewCloseout}
+                    disabled={closeout.cash_counted === "" || (closeoutOverShort != null && Math.abs(closeoutOverShort) >= 0.005 && (closeout.notes || "").trim().length < 3)}
+                    className="bg-shPrimary disabled:opacity-50 text-bgHeader px-4 py-2 rounded text-[12px] font-black uppercase tracking-widest"><i className="fas fa-magnifying-glass mr-1"/>Review closeout</button>
           ) : (
             <div className="bg-[var(--sh-card-base)] border-2 border-shPrimary/50 rounded-xl p-4 space-y-3">
               <p className="text-shText font-black uppercase tracking-widest"><i className="fas fa-shield-check text-shPrimary mr-2"/>Final confirmation</p>

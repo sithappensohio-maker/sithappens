@@ -236,6 +236,18 @@ EMAIL_TEMPLATES = [
         "variables": ["client_name", "dog_name", "vaccine", "expires_on"],
     },
     {
+        "slug": "admin_graduation_ready",
+        "name": "Admin · Ready to Graduate",
+        "description": "Fires when a dog's training progress satisfies the program's completion rule. The dog STAYS enrolled — graduation is an explicit decision by the owner or assigned trainer.",
+        "category": "admin",
+        "audience": "admin",
+        "default_subject": "🎓 Ready to graduate · {{dog_name}} · {{program_name}}",
+        "default_title": "🎓 {{dog_name}} is ready to graduate",
+        "default_intro_html": "<strong>{{dog_name}}</strong> has met the completion rule for <strong>{{program_name}}</strong> ({{mastered_pct}}% mastered). The dog stays enrolled until you or the assigned trainer explicitly graduates the program from the Training Pipeline.",
+        "default_cta_text": "Open Training Pipeline",
+        "variables": ["client_name", "dog_name", "program_name", "mastered_pct", "trainer_name"],
+    },
+    {
         "slug": "admin_first_booking",
         "name": "Admin · First Booking",
         "description": "Fires the first time a brand-new client books.",
