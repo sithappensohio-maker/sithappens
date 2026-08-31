@@ -338,17 +338,19 @@ export function CheckoutModal({ booking, services, onClose, onRequestCancel }) {
   // checkout (group rows and credit deductions still price the booked span).
   const earlyStayActive = !!earlyQuote && !chargeFullStay && !isGroupCheckout;
 
-  let basePreview = 0;
-  if (basePrice !== "" && !useCredits) {
-    basePreview = Number(basePrice) || 0;
-  } else if (useCredits && hadCredit && creditAmt > 0) {
-    basePreview = creditAmt;
+  // The AUTO price — what the system would charge with no manual override.
+  // Kept separate from basePreview so the manual-override notice can compare
+  // the typed amount against it (folding the typed value into basePreview
+  // made that comparison always equal, hiding the notice).
+  let autoBasePreview = 0;
+  if (useCredits && hadCredit && creditAmt > 0) {
+    autoBasePreview = creditAmt;
   } else if (earlyStayActive && !useCredits) {
     // Early boarding checkout: charge the server-quoted ACTUAL stay
     // (nights through today + pickup-day rule at the current clock), not
     // the full booked span the snapshot/preview endpoints price. Cash path
     // only — credit deductions are computed server-side from the booked span.
-    basePreview = Number(earlyQuote.base_price || 0);
+    autoBasePreview = Number(earlyQuote.base_price || 0);
   } else {
     const defaultSvc = (services || []).find(s => s.is_default && s.service_type === booking.service_type && s.active);
     // Prefer the booking's saved estimate/snapshot. This keeps checkout aligned
@@ -356,12 +358,13 @@ export function CheckoutModal({ booking, services, onClose, onRequestCancel }) {
     const correctedBoardingPreview = booking.service_type === "boarding"
       ? Number(discountPreview?.preview_base_price || 0)
       : 0;
-    basePreview = correctedBoardingPreview > 0
+    autoBasePreview = correctedBoardingPreview > 0
       ? correctedBoardingPreview
       : (bookingBaseEstimate > 0
           ? bookingBaseEstimate
           : (defaultSvc ? Number(defaultSvc.base_price || 0) : Number(booking.actual_price || 0)));
   }
+  const basePreview = (basePrice !== "" && !useCredits) ? (Number(basePrice) || 0) : autoBasePreview;
   const isAdditionalDogRow = booking.pricing_snapshot?.group_dog_index > 0 || !!booking.multi_dog_discount?.pre_applied;
   const extraCreditUnitsPerNight = isGroupCheckout
     ? checkoutBookings.reduce((sum, row) => sum + ((row.pricing_snapshot?.group_dog_index > 0 || row.multi_dog_discount?.pre_applied) ? 0.5 : 1), 0)
@@ -857,10 +860,10 @@ export function CheckoutModal({ booking, services, onClose, onRequestCancel }) {
                    className="w-full mt-1 bg-bgPanel border border-bgHover rounded p-2 text-white text-sm" />
             {/* Manual override in play — make it loud and ask why. The reason
                 lands in the booking's manual_price_override audit stamp. */}
-            {!useCredits && basePrice !== "" && basePreview > 0 && Number(basePrice) !== basePreview && (
+            {!useCredits && basePrice !== "" && autoBasePreview > 0 && Number(basePrice) !== autoBasePreview && (
               <div className="mt-2 bg-shOrange/10 border border-shOrange/40 rounded p-2.5" data-testid="checkout-price-override-notice">
                 <p className="text-[12px] font-black uppercase tracking-widest text-shOrange">
-                  <i className="fas fa-pen mr-1.5"/>Manual price change: ${basePreview.toFixed(2)} → ${(Number(basePrice) || 0).toFixed(2)}
+                  <i className="fas fa-pen mr-1.5"/>Manual price change: ${autoBasePreview.toFixed(2)} → ${(Number(basePrice) || 0).toFixed(2)}
                 </p>
                 <input value={priceReason} onChange={(e)=>setPriceReason(e.target.value)}
                        data-testid="checkout-price-override-reason"
