@@ -9,7 +9,7 @@ import CheckpointReviewQueue from "../components/CheckpointReviewQueue";
 import CsvImportButton from "../components/CsvImportButton";
 import { parseTrainingTipsCsv, TRAINING_TIPS_CSV_SAMPLE } from "../lib/csvImport";
 import { toast } from "sonner";
-import { useConfirm } from "../lib/useConfirm";
+import { useConfirm, usePromptDialog } from "../lib/useConfirm";
 import TrainingDaySummary from "../components/training/TrainingDaySummary";
 import TrainingDogRow from "../components/training/TrainingDogRow";
 import TrainerAttentionQueue from "../components/training/TrainerAttentionQueue";
@@ -396,6 +396,14 @@ function Row({ row, expanded, onToggle, onJumpToDog, onOpenWorkspace, onSaved, i
               </span>
             )}
             {overdue && <span className="text-[13px] font-black uppercase tracking-widest px-2 py-0.5 rounded bg-red-500/20 text-red-300 border border-red-500/40"><i className="fas fa-triangle-exclamation mr-1"/>Overdue {Math.abs(row.days_to_target)}d</span>}
+            {row.status === "active" && row.graduation_ready && (
+              // Completion never happens automatically (owner rule) — this
+              // badge says the completion rule is satisfied and a human can
+              // graduate the dog whenever THEY decide it's done.
+              <span className="text-[13px] font-black uppercase tracking-widest px-2 py-0.5 rounded bg-shPrimary/20 text-shPrimary border border-shPrimary/40" data-testid={`pipeline-graduation-ready-${row.id}`}>
+                <i className="fas fa-graduation-cap mr-1"/>Ready to graduate
+              </span>
+            )}
           </div>
           <p className="text-[15px] text-shTextMuted mt-1 truncate">{row.program_snapshot?.name}</p>
           <div className="mt-1.5 flex items-center gap-3">
@@ -455,6 +463,7 @@ function Row({ row, expanded, onToggle, onJumpToDog, onOpenWorkspace, onSaved, i
 
 function ExpandedDetail({ row, onJumpToDog, onSaved, isAdmin }) {
   const confirm = useConfirm();
+  const promptDialog = usePromptDialog();
   const [notes, setNotes] = useState(row.trainer_notes || "");
   const [savedAt, setSavedAt] = useState(null);
   const [saving, setSaving] = useState(false);
@@ -503,6 +512,29 @@ function ExpandedDetail({ row, onJumpToDog, onSaved, isAdmin }) {
     }
   };
 
+  // Un-graduate — explicit and audited (POST .../reopen-program). Exists
+  // because graduation used to fire as a silent side effect of advancing
+  // past the final lesson, un-enrolling Board & Train dogs mid-stay.
+  const reopenProgram = async () => {
+    const reason = await promptDialog({
+      title: "Reopen this program?",
+      body: "The dog goes back to ACTIVE on its final lesson so training can continue until someone explicitly graduates it. A short reason is saved to the audit trail.",
+      placeholder: "e.g. completed by mistake — training not finished",
+      confirmText: "Reopen Program",
+      tone: "warning",
+      icon: "fa-rotate-left",
+    });
+    if (reason == null) return;
+    const clean = String(reason).trim();
+    if (clean.length < 3) return;
+    try {
+      await api.post(`/training/enrollments/${row.id}/reopen-program`, { reason: clean });
+      onSaved?.();
+    } catch (e) {
+      console.error("program reopen failed", e);
+    }
+  };
+
   const modules = row.program_snapshot?.modules || [];
   const progress = row.goal_progress || {};
 
@@ -522,6 +554,15 @@ function ExpandedDetail({ row, onJumpToDog, onSaved, isAdmin }) {
           <ReviewRequestButton clientId={row.client_id} dogId={row.dog_id}
                                clientName={row.client_name || ""} dogName={row.dog_name || ""}
                                source="graduation" />
+        )}
+        {isAdmin && row.status === "completed" && (
+          <button
+            onClick={reopenProgram}
+            data-testid={`pipeline-reopen-program-${row.id}`}
+            className="bg-shSecondary/15 hover:bg-shSecondary/30 text-shSecondary border border-shSecondary/40 rounded px-3 py-1.5 text-[12px] font-black uppercase tracking-widest"
+          >
+            <i className="fas fa-rotate-left mr-1.5"/>Reopen program
+          </button>
         )}
         {isAdmin && row.status === "active" && (
           <>

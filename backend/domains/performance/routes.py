@@ -248,9 +248,13 @@ def register_performance_routes(
 
     @api.get("/dogs/options")
     async def dog_options(_: dict = Depends(require_clients_view)):
+        # `vaccines` must ride along: AdminBookingModal's rabies banner reads
+        # selectedDog.vaccines.rabies from THIS list. The phase-6 slim
+        # projection dropped it, which made every dog render "Rabies: Missing"
+        # in the booking modal regardless of its real status.
         return await db.dogs.find(
             {"deleted_at": {"$exists": False}},
-            {"_id": 0, "id": 1, "name": 1, "breed": 1, "owner_id": 1},
+            {"_id": 0, "id": 1, "name": 1, "breed": 1, "owner_id": 1, "vaccines": 1},
         ).sort("name", 1).to_list(5000)
 
     @api.get("/homework/counts")

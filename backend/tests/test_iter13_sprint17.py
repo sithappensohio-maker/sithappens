@@ -89,13 +89,16 @@ def test_enroll_buddy_auto_completes(hdr):
             headers=hdr, json={"score": 5}, timeout=15)
         assert r2.status_code == 200, r2.text
 
-    # After the LAST goal is set to 5, status should be completed
+    # Owner rule 2026-08-30: satisfying the completion rule NEVER auto-
+    # completes the enrollment (it silently unenrolled Board & Train dogs
+    # mid-stay). It flags graduation READINESS; the status flip is an
+    # explicit human action (complete_program / Mark complete / Pipeline).
     listing = requests.get(f"{API}/dogs/{BUDDY_ID}/programs", headers=hdr, timeout=15).json()
     target = next((e for e in listing if e["id"] == enr_id), None)
     assert target is not None
-    assert target["status"] == "completed", f"Expected completed, got {target['status']} — full: {target}"
-    assert target.get("auto_completed") is True
-    assert target.get("completed_at")
+    assert target["status"] == "active", f"Expected still-active, got {target['status']} — full: {target}"
+    assert target.get("graduation_ready") is True
+    assert not target.get("completed_at")
 
     # Cleanup — delete this enrollment and restore active_program_id to None
     try:

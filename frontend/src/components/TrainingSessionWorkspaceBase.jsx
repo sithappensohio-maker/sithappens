@@ -89,7 +89,7 @@ const OUTCOME_OPTIONS = [
 
 const ADVANCEMENT_ACTIONS = [
   { key: "remain", label: "Needs more work — stay on this lesson", desc: "Record today's session and keep this exact lesson as the next training step." },
-  { key: "advance_next", label: "Ready — move to the next step", desc: "Finish this lesson and continue sequentially to the next lesson/module. The final lesson completes the program." },
+  { key: "advance_next", label: "Ready — move to the next step", desc: "Finish this lesson and continue sequentially to the next lesson/module. Advancing never graduates the program — that's a separate, explicit decision." },
   { key: "advance_lesson", label: "Admin override · next lesson", desc: "Manually move to the next lesson within this module." },
   { key: "advance_module", label: "Admin override · next module", desc: "Jump to the next module and its first lesson." },
   { key: "assign_review", label: "Assign review work", desc: "No forward progress — next session should review this material." },
@@ -560,13 +560,18 @@ export default function TrainingSessionWorkspace({ bookingId, dogId, enrollmentI
         <CompleteSessionModal
           lessonPractice={overview?.current_lesson_practice}
           isAdmin={isAdmin}
+          isFinalLesson={!!overview?.is_final_lesson}
           onCancel={() => setCompleting(false)}
           onComplete={async (body) => {
             try {
               const { data } = await api.post(`/training-session-drafts/${draft.id}/complete`, body);
               setCompletionResult(data);
               setCompleting(false);
-              toast.success("Session completed");
+              if (data?.session_log?.at_final_lesson) {
+                toast.success("Session completed — final lesson. The dog stays enrolled until someone graduates the program.");
+              } else {
+                toast.success("Session completed");
+              }
             } catch (e) {
               const detail = e?.response?.data?.detail;
               // The checkpoint gate is a curriculum rule, not a glitch — say
@@ -1000,7 +1005,7 @@ function RecordFields({ activity: a, actual, onChange }) {
 }
 
 /* ------------------------------------------------------------ Completion */
-function CompleteSessionModal({ lessonPractice, isAdmin = false, onCancel, onComplete }) {
+function CompleteSessionModal({ lessonPractice, isAdmin = false, isFinalLesson = false, onCancel, onComplete }) {
   const [action, setAction] = useState("remain");
   const [reason, setReason] = useState("");
   const canAssignLessonPractice = !!lessonPractice?.configured && lessonPractice?.available !== false;
@@ -1008,8 +1013,11 @@ function CompleteSessionModal({ lessonPractice, isAdmin = false, onCancel, onCom
   const [sendRecap, setSendRecap] = useState(true);
   const [submitting, setSubmitting] = useState(false);
   const needsReason = action === "skip_lesson";
-  const normalActions = ADVANCEMENT_ACTIONS.filter(o => ["remain", "advance_next"].includes(o.key));
-  const adminActions = ADVANCEMENT_ACTIONS.filter(o => !["remain", "advance_next"].includes(o.key));
+  // On the FINAL lesson, "advance next" has nowhere to go and graduation is
+  // its own explicit decision (owner rule) — so the choices become "stay on
+  // this lesson" or the clearly-labeled Graduate action.
+  const normalActions = ADVANCEMENT_ACTIONS.filter(o => (isFinalLesson ? ["remain"] : ["remain", "advance_next"]).includes(o.key));
+  const adminActions = ADVANCEMENT_ACTIONS.filter(o => !["remain", "advance_next"].includes(o.key) && !(isFinalLesson && o.key === "complete_program"));
 
   const submit = async () => {
     setSubmitting(true);
@@ -1043,6 +1051,15 @@ function CompleteSessionModal({ lessonPractice, isAdmin = false, onCancel, onCom
                 </button>
               ))}
             </div>
+            {isFinalLesson && (
+              <div className="mt-2 rounded-lg border border-shPrimary/45 bg-shPrimary/[0.06] p-3" data-testid="graduate-program-block">
+                <button onClick={() => setAction("complete_program")} data-testid="advancement-complete_program"
+                        className={`w-full text-left px-3 py-2 rounded border ${action === "complete_program" ? "bg-shPrimary/20 border-shPrimary text-shText" : "border-shPrimary/40 text-shTextMuted"}`}>
+                  <p className="text-[13px] font-black"><i className="fas fa-graduation-cap mr-1.5 text-shPrimary"/>Graduate — this dog has finished the program</p>
+                  <p className="text-[11px] opacity-80">This is the final lesson. The dog STAYS enrolled until you choose this — nothing completes automatically. Only the owner/manager or the assigned trainer can graduate.</p>
+                </button>
+              </div>
+            )}
             <p className="text-[11px] text-shTextMuted mt-2">Moving forward requires every required curriculum skill in this lesson to have today&apos;s outcome recorded, plus a skill level where applicable.</p>
           </div>
           {isAdmin && (

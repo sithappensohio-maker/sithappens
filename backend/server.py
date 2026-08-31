@@ -17696,40 +17696,27 @@ async def _check_completion_rule(enrollment: dict, *, sessions_logged: int = 0) 
 
 
 async def _auto_complete_if_satisfied(enrollment: dict, *, sessions_logged: int = 0) -> dict:
-    """If the enrollment's completion rule is satisfied AND it's still
-    active, mark it completed and clear `dogs.active_program_id` so a new
-    enrollment can take its place. Returns the (possibly mutated) enrollment."""
+    """Flag graduation READINESS — never complete anything automatically.
+
+    Owner rule (2026-08-30): a program ends only when the owner/manager or
+    the assigned trainer explicitly graduates the dog. This used to flip the
+    enrollment to status=completed the moment the completion_rule threshold
+    (e.g. 80% mastery) was crossed — which silently unenrolled a Board &
+    Train dog while the trainer was just rating steps. The rule evaluation
+    is kept as a `graduation_ready` badge so staff can SEE the dog is ready;
+    the status flip lives exclusively in the explicit complete_program /
+    Mark-complete actions (see require_program_graduation_authority).
+    Returns the (possibly annotated) enrollment."""
     if enrollment.get("status") != "active":
         return enrollment
     satisfied = await _check_completion_rule(enrollment, sessions_logged=sessions_logged)
-    if not satisfied:
+    if bool(enrollment.get("graduation_ready")) == bool(satisfied):
         return enrollment
-    update = {
-        "status": "completed",
-        "completed_at": now_iso(),
-        "auto_completed": True,
-    }
+    update = {"graduation_ready": bool(satisfied)}
+    if satisfied and not enrollment.get("graduation_ready_at"):
+        update["graduation_ready_at"] = now_iso()
     await db.dog_programs.update_one({"id": enrollment["id"]}, {"$set": update})
     enrollment.update(update)
-    # Clear the dog's pointer if it was pointing at this enrollment, then
-    # pick another active one if available.
-    dog = await db.dogs.find_one({"id": enrollment["dog_id"]}, {"_id": 0})
-    if dog and dog.get("active_program_id") == enrollment["id"]:
-        # Online School hardening audit — active_program_id is a run-sheet/
-        # front-desk display pointer that has always meant "this dog's
-        # TRAINER-LED program" (enroll_dog/sell_program are its only
-        # writers on first enrollment; school_enroll deliberately never
-        # touches it). Excluding online_school here preserves that
-        # invariant when reassigning the pointer after a trainer-led
-        # enrollment auto-completes — otherwise a dog with only an active
-        # online enrollment left could have it silently promoted to the
-        # dog's front-desk-visible "active program."
-        other = await db.dog_programs.find_one(
-            {"dog_id": enrollment["dog_id"], "status": "active", "id": {"$ne": enrollment["id"]},
-             "delivery_channel": {"$in": list(STAFF_SCHOOL_DELIVERY_CHANNELS)}},
-            {"_id": 0},
-        )
-        await db.dogs.update_one({"id": enrollment["dog_id"]}, {"$set": {"active_program_id": (other or {}).get("id")}})
     return enrollment
 
 
@@ -17857,7 +17844,12 @@ async def update_enrollment(dog_id: str, enrollment_id: str, body: EnrollmentUpd
     if body.status:
         update["status"] = body.status
         if body.status == "completed":
+            # Graduation is explicit and gated (owner rule 2026-08-30) — the
+            # owner/manager or this enrollment's assigned trainer only.
+            training_domain_services.require_program_graduation_authority(user, enrollment, _perms_for)
             update["completed_at"] = now_iso()
+            update["graduated_by"] = user.get("id")
+            update["graduated_by_name"] = user.get("name") or user.get("email") or ""
         if body.status == "on_hold":
             update["on_hold_at"] = now_iso()
         if body.status == "active":
@@ -18171,8 +18163,9 @@ async def _auto_assign_module_homework(enrollment: dict, just_mastered_goal_id: 
     # ITS homework_template_id.
     next_idx = parent_idx + 1
     if next_idx >= len(modules):
-        # Last module just got mastered — nothing more to assign here. Program
-        # completion will be handled by _auto_complete_if_satisfied.
+        # Last module just got mastered — nothing more to assign here.
+        # _auto_complete_if_satisfied flags graduation readiness; completion
+        # itself stays an explicit staff decision.
         return None
     next_module = modules[next_idx]
     template_id = next_module.get("homework_template_id")
@@ -24546,6 +24539,9 @@ async def _build_pre_session_overview(enrollment: dict, dog: dict) -> Dict[str, 
         "current_lesson_practice": current_lesson_practice,
         "current_week": summary.get("current_week"),
         "total_weeks": summary.get("total_weeks"),
+        # Pointer on the program's final lesson → completion modal swaps
+        # "advance next" for the explicit Graduate choice (owner rule 2026-08-30).
+        "is_final_lesson": training_domain_services.pointer_is_final_lesson(enrollment, _compute_next_school_position),
     }
 
 
@@ -25096,15 +25092,17 @@ async def _compute_completion_plan(enrollment: dict, draft: dict, draft_id: str,
 
     advance_record = None
     lesson_change = None
+    at_final_lesson = False
     action = body.advancement_action
     if action == "advance_next":
         if cur_module_id and cur_lesson_id:
             pos = _compute_next_school_position(enrollment, cur_module_id, cur_lesson_id)
             if pos["is_final"]:
-                lesson_change = {"action": "advance_next", "from_lesson_id": cur_lesson_id, "to_lesson_id": None, "reason": body.advancement_reason}
-                enrollment["current_lesson_id"] = None
-                enrollment["status"] = "completed"
-                enrollment["completed_at"] = now_iso()
+                # Owner rule 2026-08-30: the final lesson never auto-graduates
+                # (it used to silently complete the enrollment here, which
+                # unenrolled a Board & Train dog mid-stay). The dog stays on
+                # the final lesson; only explicit complete_program ends it.
+                at_final_lesson = True
             else:
                 next_module_id = pos["next_module_id"]
                 next_lesson_id = pos["next_lesson_id"]
@@ -25134,8 +25132,11 @@ async def _compute_completion_plan(enrollment: dict, draft: dict, draft_id: str,
             lesson_change = {"action": "reopen_previous_lesson", "from_lesson_id": cur_lesson_id, "to_lesson_id": target, "reason": body.advancement_reason}
             enrollment["current_lesson_id"] = target
     elif action == "complete_program":
+        training_domain_services.require_program_graduation_authority(user, enrollment, _perms_for)
         enrollment["status"] = "completed"
         enrollment["completed_at"] = now_iso()
+        enrollment["graduated_by"] = user.get("id")
+        enrollment["graduated_by_name"] = user.get("name") or user.get("email") or ""
     # "remain", "assign_review", "mark_for_assessment" — no pointer change
 
     set_doc: Dict[str, Any] = {
@@ -25144,8 +25145,8 @@ async def _compute_completion_plan(enrollment: dict, draft: dict, draft_id: str,
         "current_lesson_id": enrollment.get("current_lesson_id"),
     }
     if enrollment.get("status") == "completed":
+        set_doc.update({k: enrollment.get(k) for k in ("completed_at", "graduated_by", "graduated_by_name")})
         set_doc["status"] = "completed"
-        set_doc["completed_at"] = enrollment.get("completed_at")
 
     # ---- Client Practice — authored by the School lesson, not ad-hoc ----
     # The Online School and in-person trainer now use the SAME lesson recipe.
@@ -25206,6 +25207,8 @@ async def _compute_completion_plan(enrollment: dict, draft: dict, draft_id: str,
         "activities": activities,
         "advancement_action": action,
         "advancement_reason": body.advancement_reason,
+        # "advance_next" on the final lesson: dog stayed enrolled — UI says so.
+        "at_final_lesson": at_final_lesson,
         "lesson_change": lesson_change,
         "advanced_module": advance_record,
         "current_module_id_after": enrollment.get("current_module_id"),

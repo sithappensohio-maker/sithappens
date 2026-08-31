@@ -10,7 +10,7 @@ from typing import List
 from fastapi import Depends, HTTPException
 from pydantic import BaseModel, Field
 
-from .services import board_train_daily_status_payload
+from .services import board_train_daily_status_payload, require_program_graduation_authority
 from .today import build_training_today
 from trainer_delivery_enforcement import is_board_train_booking
 
@@ -19,6 +19,10 @@ class ManualInPersonProgressIn(BaseModel):
     target_lesson_id: str = Field(min_length=1, max_length=200)
     reason: str = Field(min_length=2, max_length=1000)
     mastered_lesson_ids: List[str] = Field(default_factory=list)
+
+
+class EnrollmentReopenIn(BaseModel):
+    reason: str = Field(min_length=3, max_length=300)
 
 
 def _ordered_lessons(enrollment: dict) -> list[dict]:
@@ -41,6 +45,70 @@ def register_training_routes(
     check_enrollment_module_readiness, enrollment_summary, effective_lessons,
     recommended_focus, booking_training_assignment_for_day,
 ):
+    @api.post("/training/enrollments/{enrollment_id}/reopen-program")
+    async def reopen_training_program(
+        enrollment_id: str, body: EnrollmentReopenIn, user: dict = Depends(manage_sessions_dep)
+    ):
+        """Un-graduate a completed enrollment — explicit and audited.
+
+        Exists because graduation used to happen as a silent side effect of
+        "advance_next" on the final lesson (fixed 2026-08-30), which
+        unenrolled dogs mid-Board&Train. Reopening restores status=active and
+        puts the pointer back on the final lesson of the current (or last)
+        module so the trainer can keep logging sessions until an explicit
+        graduation. Every reopen is appended to program_reopen_history —
+        who, when, why.
+        """
+        enrollment = await db.dog_programs.find_one({"id": enrollment_id}, {"_id": 0})
+        if not enrollment:
+            raise HTTPException(status_code=404, detail="Enrollment not found")
+        if enrollment.get("status") != "completed":
+            raise HTTPException(status_code=409, detail="Only a completed program can be reopened.")
+        require_program_graduation_authority(user, enrollment, perms_for)
+        modules_sorted = sorted(
+            (enrollment.get("program_snapshot", {}).get("modules") or []),
+            key=lambda m: (m.get("order", 0), m.get("name") or ""),
+        )
+        target_module = next(
+            (m for m in modules_sorted if m.get("id") == enrollment.get("current_module_id")),
+            modules_sorted[-1] if modules_sorted else None,
+        )
+        lessons = sorted(effective_lessons(target_module or {}), key=lambda l: l.get("order", 0))
+        restored_lesson_id = enrollment.get("current_lesson_id") or (lessons[-1].get("id") if lessons else None)
+        reopen_event = {
+            "id": gid(), "at": now_iso(),
+            "by": user.get("id"), "by_name": user.get("name") or user.get("email") or "",
+            "reason": body.reason.strip(),
+            "prior_completed_at": enrollment.get("completed_at"),
+        }
+        await db.dog_programs.update_one(
+            {"id": enrollment_id, "status": "completed"},
+            {"$set": {
+                "status": "active", "completed_at": None,
+                "current_module_id": (target_module or {}).get("id"),
+                "current_lesson_id": restored_lesson_id,
+            },
+             "$push": {"program_reopen_history": reopen_event}},
+        )
+        # Best-effort: an Online School companion row that completed alongside
+        # the enrollment reopens with it so School surfaces agree.
+        try:
+            await db.school_enrollments.update_one(
+                {"enrollment_id": enrollment_id, "status": "completed"},
+                {"$set": {"status": "active", "completed_at": None}},
+            )
+        except Exception:
+            pass
+        # Restore the run-sheet/front-desk "active program" pointer if the dog
+        # lost it when this enrollment was (wrongly) completed.
+        try:
+            dog = await db.dogs.find_one({"id": enrollment.get("dog_id")}, {"_id": 0, "active_program_id": 1})
+            if dog is not None and not dog.get("active_program_id"):
+                await db.dogs.update_one({"id": enrollment["dog_id"]}, {"$set": {"active_program_id": enrollment_id}})
+        except Exception:
+            pass
+        fresh = await db.dog_programs.find_one({"id": enrollment_id}, {"_id": 0})
+        return {"ok": True, "enrollment": fresh, "reopen_event": reopen_event}
     def _require_manual_progress_permission(user: dict) -> None:
         if user.get("role") == "admin":
             return

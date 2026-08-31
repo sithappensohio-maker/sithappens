@@ -36,6 +36,40 @@ def _text(value: Any) -> str:
     return str(value or "").strip()
 
 
+def require_program_graduation_authority(user: dict, enrollment: dict, perms_for: Callable[[dict], dict]) -> None:
+    """Graduation is an explicit human decision (owner rule, 2026-08-30).
+
+    Allowed: owner/managers (settings permission) and the enrollment's
+    assigned trainer. When no trainer is assigned to the enrollment, any
+    manage_training_sessions user may graduate — completion is still always
+    an explicit act, never a side effect of rating steps or advancing past
+    the final lesson.
+    """
+    perms = perms_for(user)
+    if perms.get("settings"):
+        return
+    assigned = (enrollment or {}).get("assigned_trainer_id")
+    if assigned:
+        if user.get("id") == assigned:
+            return
+        raise HTTPException(
+            status_code=403,
+            detail="Only the owner/manager or this dog's assigned trainer can graduate the program.",
+        )
+    if perms.get("manage_training_sessions"):
+        return
+    raise HTTPException(status_code=403, detail="Missing permission: manage_training_sessions")
+
+
+def pointer_is_final_lesson(enrollment: dict, compute_next_position: Callable[..., dict]) -> bool:
+    """True when the enrollment pointer sits on the program's final lesson."""
+    mid, lid = enrollment.get("current_module_id"), enrollment.get("current_lesson_id")
+    try:
+        return bool(mid and lid and compute_next_position(enrollment, mid, lid)["is_final"])
+    except Exception:
+        return False
+
+
 def trainer_controls_in_person_progression(enrollment: dict, action: str) -> bool:
     """Pure In-Person School uses the trainer's Ready decision, not checkpoints."""
     return (
