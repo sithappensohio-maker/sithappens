@@ -14,6 +14,7 @@ from domains.register import services as register_services
 from domains.school.routes import register_school_routes
 from domains.training.routes import register_training_routes
 from domains.training.services import repair_open_residential_spans
+from domains.operations.routes import register_operations_routes
 from domains.performance.routes import register_performance_routes
 from domains.performance.middleware import install_request_timing
 from domains.performance import services as performance_services
@@ -123,6 +124,12 @@ def register_domains(
     # route order within each domain.
     register_bookings_routes(api=api, server_globals=server_globals)
     register_pricing_routes(api=api, server_globals=server_globals)
+    register_operations_routes(
+        api=api, db=db,
+        require_admin=server_globals["require_admin"],
+        require_admin_and_permission=require_admin_and_permission,
+        now_iso=now_iso, business_today=business_today,
+    )
     register_register_routes(api=api, server_globals=server_globals)
     register_pos_routes(api=api, server_globals=server_globals)
     register_performance_routes(

@@ -116,6 +116,26 @@ export default function TodayOperations({ stats, onReload = () => {}, onNavigate
     }
   };
 
+  const approveAllVax = async () => {
+    const ok = await confirm({
+      title: `Approve all ${pendingVax.length} vaccine uploads?`,
+      body: "Every pending upload with a valid expiry date gets approved and applied to its dog — identical to pressing Approve on each row. Spot-check the certificate photos first; anything invalid is skipped and reported.",
+      confirmText: `Approve ${pendingVax.length}`,
+    });
+    if (!ok) return;
+    try {
+      const { data } = await api.post("/admin/vaccine-uploads/bulk-review", {
+        items: pendingVax.map((v) => ({ dog_id: v.dog_id, vaccine: v.vaccine })),
+      });
+      toast.success(`Approved ${data.approved_count} upload${data.approved_count === 1 ? "" : "s"}${data.skipped?.length ? ` · ${data.skipped.length} skipped` : ""}`);
+      const approvedKeys = new Set((data.approved || []).map((a) => `${a.dog_id}-${a.vaccine}`));
+      setPendingVax((prev) => prev.filter((v) => !approvedKeys.has(`${v.dog_id}-${v.vaccine}`)));
+      await Promise.resolve(onReload());
+    } catch (e) {
+      toast.error(formatErr(e.response?.data?.detail) || "Bulk approval failed");
+    }
+  };
+
   const rejectVax = async (v) => {
     const ok = await confirm({
       title: `Reject ${String(v.vaccine || "vaccine").toUpperCase()} cert?`,
@@ -216,7 +236,15 @@ export default function TodayOperations({ stats, onReload = () => {}, onNavigate
         <section className="grid grid-cols-1 xl:grid-cols-2 gap-4" data-testid="today-review-queues">
           {pendingVax.length > 0 && (
             <div className="rounded-2xl border border-shSecondary/30 bg-shSecondary/5 p-4 sm:p-5" data-testid="today-pending-vax-reviews">
-              <h2 className="text-[14px] font-black uppercase italic text-shText mb-3"><i className="fas fa-file-medical text-shSecondary mr-2"/>Vaccine Reviews · {pendingVax.length}</h2>
+              <div className="flex items-center justify-between gap-2 mb-3 flex-wrap">
+                <h2 className="text-[14px] font-black uppercase italic text-shText"><i className="fas fa-file-medical text-shSecondary mr-2"/>Vaccine Reviews · {pendingVax.length}</h2>
+                {pendingVax.length > 1 && (
+                  <button onClick={approveAllVax} data-testid="approve-all-vax"
+                          className="px-3 py-1.5 rounded-lg bg-shPrimary/15 border border-shPrimary/40 text-shPrimary text-[11px] font-black uppercase tracking-wider hover:bg-shPrimary/25">
+                    <i className="fas fa-check-double mr-1"/>Approve All
+                  </button>
+                )}
+              </div>
               <div className="space-y-2 max-h-[440px] overflow-y-auto pr-1">
                 {pendingVax.map((v) => (
                   <div key={`${v.dog_id}-${v.vaccine}`} className="rounded-xl border border-shBorder bg-[var(--sh-card-base)] p-3 flex items-center gap-3 flex-wrap">

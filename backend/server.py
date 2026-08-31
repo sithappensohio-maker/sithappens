@@ -4499,33 +4499,10 @@ async def admin_list_vaccine_uploads(include_reviewed: bool = False, _: dict = D
 
 @api.post("/admin/dogs/{dog_id}/vaccine-cert/{vaccine}/review")
 async def admin_review_vaccine_cert(dog_id: str, vaccine: str, user: dict = Depends(require_admin)):
-    """Mark a client-uploaded vaccine cert as reviewed/approved and apply the
-    pending expiry date to the dog so booking can unlock."""
-    if vaccine not in ("rabies", "bordetella", "dhpp"):
-        raise HTTPException(status_code=400, detail="Invalid vaccine type")
-    dog = await db.dogs.find_one({"id": dog_id}, {"_id": 0, "vaccine_certs": 1})
-    if not dog:
-        raise HTTPException(status_code=404, detail="Dog not found")
-    certs = dict(dog.get("vaccine_certs") or {})
-    if vaccine not in certs:
-        raise HTTPException(status_code=404, detail="No cert uploaded for this vaccine")
-    certs[vaccine] = dict(certs[vaccine])
-    approved_exp = certs[vaccine].get("pending_expires_on") or certs[vaccine].get("expires_on")
-    if not approved_exp:
-        raise HTTPException(status_code=400, detail="Uploaded cert is missing an expiry date")
-    try:
-        date.fromisoformat(str(approved_exp)[:10])
-    except Exception:
-        raise HTTPException(status_code=400, detail="Uploaded cert has an invalid expiry date")
-    certs[vaccine]["reviewed_at"] = now_iso()
-    certs[vaccine]["reviewed_by"] = user.get("name", "Admin")
-    certs[vaccine]["status"] = "approved"
-    certs[vaccine]["expires_on"] = str(approved_exp)[:10]
-    certs[vaccine].pop("pending_expires_on", None)
-    vaccines = dict((await db.dogs.find_one({"id": dog_id}, {"_id": 0, "vaccines": 1}) or {}).get("vaccines") or {})
-    vaccines[vaccine] = str(approved_exp)[:10]
-    await db.dogs.update_one({"id": dog_id}, {"$set": {"vaccine_certs": certs, "vaccines": vaccines}})
-    return {"ok": True, "dog_id": dog_id, "vaccine": vaccine, "expires_on": str(approved_exp)[:10]}
+    """Facade; the one canonical approval rule lives in domains.operations
+    (shared with POST /admin/vaccine-uploads/bulk-review)."""
+    from domains.operations.routes import approve_vaccine_cert
+    return await approve_vaccine_cert(db, dog_id, vaccine, user.get("name", "Admin"), now_iso)
 
 
 @api.delete("/admin/dogs/{dog_id}/vaccine-cert/{vaccine}")

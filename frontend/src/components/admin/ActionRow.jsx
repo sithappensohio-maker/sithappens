@@ -3,7 +3,14 @@
  * second copy. Renders one /admin/today-brain item: icon + priority label +
  * kind + title + subtitle + Open/Hide actions. No behavior change from the
  * original inline component.
+ *
+ * stuck_checkout rows additionally get a self-contained "Resolve…" action
+ * that opens the bulk StuckCheckoutsResolver — kept inside this component so
+ * both feeds (Today + Action Center) get it without parent wiring.
  */
+import { useState } from "react";
+import StuckCheckoutsResolver from "./StuckCheckoutsResolver";
+
 export const ACTION_PRIORITY_META = {
   urgent: { label: "Urgent", border: "border-red-500/40", bg: "bg-red-500/10", text: "text-red-300", icon: "fa-triangle-exclamation" },
   warn:   { label: "Needs Attention", border: "border-shAccent/40", bg: "bg-shAccent/10", text: "text-shAccent", icon: "fa-circle-exclamation" },
@@ -12,6 +19,7 @@ export const ACTION_PRIORITY_META = {
 
 export default function ActionRow({ item, onOpen, onDismiss, busy }) {
   const meta = ACTION_PRIORITY_META[item.priority] || ACTION_PRIORITY_META.info;
+  const [resolverOpen, setResolverOpen] = useState(false);
   return (
     <div className={`relative rounded-2xl border ${meta.border} ${meta.bg} p-4 shadow-lg`} data-testid={`action-center-row-${item.id}`}>
       {/* Stack vertically on narrow screens so the action buttons render in
@@ -29,12 +37,24 @@ export default function ActionRow({ item, onOpen, onDismiss, busy }) {
           </span>
         </button>
         <div className="flex items-center gap-2 shrink-0">
+          {item.kind === "stuck_checkout" && (
+            <button onClick={() => setResolverOpen(true)} data-testid="stuck-checkout-resolve-btn"
+                    className="bg-shPrimary/15 border border-shPrimary/30 text-shPrimary hover:bg-shPrimary/25 rounded-lg px-3 py-2 text-[11px] font-black uppercase tracking-widest transition">
+              <i className="fas fa-broom mr-1"/>Resolve…
+            </button>
+          )}
           <button onClick={onOpen} className="bg-shSecondary/15 border border-shSecondary/30 text-shSecondary hover:bg-shSecondary/25 rounded-lg px-3 py-2 text-[11px] font-black uppercase tracking-widest transition"><i className="fas fa-arrow-right mr-1"/>Open</button>
           {onDismiss && (
             <button onClick={onDismiss} disabled={busy} className="bg-[var(--sh-card-base)] border border-shBorder text-shTextMuted hover:text-red-300 hover:border-red-400/40 rounded-lg px-3 py-2 text-[11px] font-black uppercase tracking-widest transition disabled:opacity-50"><i className="fas fa-times mr-1"/>Hide</button>
           )}
         </div>
       </div>
+      {resolverOpen && (
+        <StuckCheckoutsResolver
+          onClose={() => setResolverOpen(false)}
+          onResolved={() => { try { window.location.reload(); } catch { /* feed refresh */ } }}
+        />
+      )}
     </div>
   );
 }
