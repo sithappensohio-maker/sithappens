@@ -15,6 +15,8 @@ import { computeLessonCompleteness, computeSkillCompleteness, resolveValidationT
          computeProgramReadiness, filterCurriculum, lessonNeighbours, firstIncomplete } from "../lib/programStudioPolish";
 import HomeworkTemplateEditor from "./HomeworkTemplateEditor";
 import HuskyDogImage from "./brand/HuskyDogImage";
+import ModuleIconTile from "./school/ModuleIconTile";
+import { MODULE_ICON_CHOICES, moduleIconFor } from "../lib/moduleIcons";
 import { resolveSchoolCertificateTemplate, schoolCertificateDefaults, schoolCertificateCourseName } from "../lib/schoolCertificate";
 
 /* ============================================================
@@ -1305,6 +1307,46 @@ function ModuleEditor({ module: m, updateModule, hwTemplates, reloadHwTemplates 
           </div>
           <p className="text-[10px] text-shTextMuted mt-3">Add and reorder lessons/skills from the course outline on the left.</p>
         </div>
+      </div>
+
+      <div className="rounded-2xl border border-shBorder/50 bg-black/10 p-4" data-testid="module-icon-control">
+        <div className="flex items-start gap-3 mb-3">
+          <ModuleIconTile module={m} size={40} />
+          <div className="min-w-0 flex-1">
+            <p className="text-[12px] font-black text-shText">Module icon</p>
+            <p className="text-[10px] text-shTextMuted">
+              {m.icon?.kind === "image" ? "Custom — your uploaded image."
+                : m.icon?.kind === "builtin" ? `Picked — "${MODULE_ICON_CHOICES.find(c => c.key === m.icon.builtin)?.label || m.icon.builtin}".`
+                : `Auto — derived from this module's content ("${MODULE_ICON_CHOICES.find(c => c.key === moduleIconFor(m).key)?.label || "Foundations"}").`}
+              {" "}Shown on the client's course trail and welcome index; changes reach enrolled students instantly.
+            </p>
+          </div>
+          {m.icon && (
+            <button type="button" onClick={() => updateModule(m._key, { icon: null })} data-testid="module-icon-reset"
+                    className="shrink-0 min-h-[36px] px-3 rounded-lg border border-shBorder text-[9px] font-black uppercase tracking-widest text-shTextMuted hover:text-shText transition">
+              Reset to Auto
+            </button>
+          )}
+        </div>
+        <div className="flex flex-wrap gap-1.5 mb-3">
+          {MODULE_ICON_CHOICES.map((c) => {
+            const active = m.icon?.kind === "builtin" && m.icon.builtin === c.key;
+            return (
+              <button key={c.key} type="button" title={c.label} data-testid={`module-icon-pick-${c.key}`}
+                      onClick={() => updateModule(m._key, { icon: active ? null : { kind: "builtin", builtin: c.key } })}
+                      className={`w-10 h-10 rounded-xl grid place-items-center border transition ${active ? "border-shPrimary bg-shPrimary/15 text-shPrimary" : "border-shBorder bg-black/20 text-shTextMuted hover:text-shText hover:border-shSecondary/40"}`}>
+                <i className={`fas ${c.fa} text-[14px]`} />
+              </button>
+            );
+          })}
+        </div>
+        <SField label="Or upload your own (PNG/JPG — square works best)">
+          <ShopImageUpload
+            imageId={m.icon?.kind === "image" ? m.icon.image_id : null}
+            originalImageId={m.icon?.kind === "image" ? m.icon.image_id : null}
+            onChange={(id) => updateModule(m._key, { icon: id ? { kind: "image", image_id: id } : null })}
+          />
+        </SField>
       </div>
 
       <div className="rounded-2xl border border-shBorder/50 bg-black/10 p-4">

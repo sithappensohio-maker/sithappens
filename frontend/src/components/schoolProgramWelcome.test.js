@@ -101,7 +101,9 @@ test("welcome content is gated exactly like the roadmap on revoked access, and o
     serverSrc.indexOf("def _school_current_action"),
   );
   expect(detailFn).toMatch(/welcome = None\s+if access_state != "revoked":/);
-  expect(detailFn).toMatch(/\{"_id": 0, "welcome_outcomes": 1\}/);
+  // The live read also carries module id/icon for the icon merge — still a
+  // narrow projection, never the whole program.
+  expect(detailFn).toMatch(/\{"_id": 0, "welcome_outcomes": 1, "modules\.id": 1, "modules\.icon": 1\}/);
   expect(detailFn).toMatch(/"welcome": welcome/);
 });
 

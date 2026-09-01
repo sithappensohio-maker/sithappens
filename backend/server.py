@@ -16363,6 +16363,19 @@ class ModuleQuizConfigIn(BaseModel):
     questions: List[ModuleQuizQuestionIn] = []
 
 
+class ModuleIconIn(BaseModel):
+    """Module icon for the client course trail / welcome index — pure
+    decoration, never progression data. "auto" (or an absent icon) lets the
+    client derive an icon from the module's content (lib/moduleIcons.js);
+    "builtin" pins one of that fixed set; "image" is the admin's own upload
+    through the same media pipeline as program photos. Read LIVE at course
+    render time (see portal_school_detail) so decorating a program after
+    import reaches already-enrolled students without a curriculum cascade."""
+    kind: Literal["auto", "builtin", "image"] = "auto"
+    builtin: Optional[str] = None
+    image_id: Optional[str] = None
+
+
 class ModuleIn(BaseModel):
     id: Optional[str] = None
     name: str = Field(min_length=1)
@@ -16379,6 +16392,8 @@ class ModuleIn(BaseModel):
     # Module Quiz — optional end-of-module knowledge gate. None/disabled on
     # every existing module = behavior byte-identical to today.
     module_quiz: Optional[ModuleQuizConfigIn] = None
+    # Module icon — client-facing decoration only (see ModuleIconIn).
+    icon: Optional[ModuleIconIn] = None
 
 
 class ProgramIn(BaseModel):
@@ -16621,6 +16636,9 @@ def _stamp_ids(modules: List[dict]) -> List[dict]:
             "lessons": lessons,
             "homework_template_id": m.get("homework_template_id"),
             "module_quiz": stamped_quiz,
+            # Module icon — decoration only (ModuleIconIn); carried verbatim
+            # so Studio saves and imports never silently drop it.
+            "icon": m.get("icon"),
         })
     return out
 
@@ -18711,6 +18729,7 @@ async def _school_roadmap(enrollment: dict, dog_id: str) -> dict:
                     "order": m.get("order", 0), "status": m_status,
                     "locked_reason": f"Complete {(prev_m or {}).get('name') or 'the previous module'} before continuing.",
                     "lessons": [],
+                    "icon": m.get("icon"),
                 })
                 continue
             # Open lesson access — the module ahead is browsable, not locked.
@@ -18761,6 +18780,7 @@ async def _school_roadmap(enrollment: dict, dog_id: str) -> dict:
             "id": m.get("id"), "name": m.get("name"), "description": m.get("description") or "",
             "order": m.get("order", 0), "status": m_status, "locked_reason": None,
             "lessons": lessons_out,
+            "icon": m.get("icon"),
         })
 
     current_lesson = next(
@@ -18941,6 +18961,8 @@ def _client_safe_school_roadmap(roadmap: dict) -> dict:
             # Module Quiz state is already client-safe (status/scores/counts
             # only — never questions, never correct answers).
             "quiz": m.get("quiz"),
+            # Decoration only (kind/builtin/image_id) — client-safe.
+            "icon": m.get("icon"),
         })
     current_lesson = roadmap.get("current_lesson")
     return {
@@ -20876,10 +20898,14 @@ def _school_welcome_payload(enrollment: dict, outcomes: List[str]) -> dict:
         minutes = sum(int(l.get("estimated_minutes") or 0) for l in lessons)
         quiz = m.get("module_quiz") or {}
         syllabus.append({
+            # Module id is already client-visible via the roadmap; it's what
+            # lets the detail endpoint overlay LIVE icons per module.
+            "id": m.get("id"),
             "name": m.get("name"), "description": m.get("description") or "",
             "lesson_count": len(entries), "total_minutes": minutes,
             "quiz_question_count": len(quiz.get("questions") or []) if quiz.get("enabled") else 0,
             "lessons": entries,
+            "icon": m.get("icon"),
         })
         total_lessons += len(entries)
         total_minutes += minutes
@@ -20923,13 +20949,26 @@ async def portal_school_detail(school_enrollment_id: str, user: dict = Depends(g
     welcome = None
     if access_state != "revoked":
         live_program = await db.programs.find_one(
-            {"id": enrollment.get("program_id")}, {"_id": 0, "welcome_outcomes": 1},
+            {"id": enrollment.get("program_id")},
+            {"_id": 0, "welcome_outcomes": 1, "modules.id": 1, "modules.icon": 1},
         ) or {}
         welcome = _school_welcome_payload(
             enrollment,
             live_program.get("welcome_outcomes")
             or (enrollment.get("program_snapshot") or {}).get("welcome_outcomes") or [],
         )
+        # Module icons are decoration, not curriculum — like welcome_outcomes
+        # they read LIVE (matched by the stable module id) so an admin
+        # decorating a program AFTER import reaches already-enrolled students
+        # instantly, with no snapshot cascade and no progression risk.
+        live_icons = {m.get("id"): m.get("icon") for m in (live_program.get("modules") or []) if m.get("icon")}
+        if live_icons:
+            for mo in (roadmap or {}).get("modules") or []:
+                if mo.get("id") in live_icons:
+                    mo["icon"] = live_icons[mo["id"]]
+            for entry in (welcome or {}).get("syllabus") or []:
+                if entry.get("id") in live_icons:
+                    entry["icon"] = live_icons[entry["id"]]
     return {
         "school_enrollment_id": se["id"], "status": status, "access_state": access_state,
         "delivery_mode": _school_delivery_mode(se, enrollment),

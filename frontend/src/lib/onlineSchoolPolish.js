@@ -23,6 +23,9 @@ export function buildSchoolRoadmap(roadmap) {
     lessons: m.lessons || [],
     lockedReason: m.locked_reason,
     quiz: m.quiz || null,
+    // Decoration only — the admin's icon choice/upload (or null → derived
+    // client-side by lib/moduleIcons).
+    icon: m.icon || null,
   }));
 }
 

@@ -1,6 +1,8 @@
 import { useState } from "react";
 import EmptyState from "../../training/EmptyState";
 import HuskyDogImage from "../../brand/HuskyDogImage";
+import ModuleIconTile from "../ModuleIconTile";
+import { moduleHue } from "../../../lib/moduleIcons";
 
 /* Program Welcome — the orientation page for a School program: what this
  * program covers, how School works, and a full read-only index of every
@@ -31,7 +33,8 @@ function IndexModule({ module: m, position, defaultOpen }) {
   return (
     <div className="border-t border-shBorder/50 first:border-t-0" data-testid={`welcome-index-module-${position}`}>
       <button type="button" onClick={() => setOpen(v => !v)} aria-expanded={open}
-              className="w-full text-left px-4 py-3 flex items-baseline gap-3 hover:bg-white/[0.02] transition">
+              className="w-full text-left px-4 py-3 flex items-center gap-3 hover:bg-white/[0.02] transition">
+        <ModuleIconTile module={m} hue={moduleHue(position)} size={38} />
         <span className="min-w-0 flex-1">
           <span className="block text-[13.5px] font-black text-shText leading-snug">{m.name}</span>
           {m.description && <span className="block text-[11.5px] text-shTextMuted mt-0.5 line-clamp-2">{m.description}</span>}
