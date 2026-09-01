@@ -9,11 +9,11 @@ export default function SetupChecklist({ items, tokens, testid }) {
         <div key={item.id} className="rounded-xl border border-shBorder/50 bg-black/12 p-3 min-h-[96px] flex flex-col justify-center items-center text-center gap-1.5"
              data-testid={testid ? `${testid}-item-${item.id}` : undefined}>
           <div className="relative w-9 h-9 rounded-xl bg-shSecondary/10 border border-shSecondary/25 grid place-items-center">
-            <i className={`fas ${iconKeyToFaClass(item.icon_key)} text-shSecondary text-[13px]`}/>
-            {item.required && <i className="fas fa-check-circle text-shPrimary text-[10px] absolute -top-1 -right-1"/>}
+            <i className={`fas ${iconKeyToFaClass(item.icon_key)} text-shSecondary text-[16px]`}/>
+            {item.required && <i className="fas fa-check-circle text-shPrimary text-[13px] absolute -top-1 -right-1"/>}
           </div>
-          <p className="text-[13px] sm:text-[14px] font-black text-shText leading-tight">{renderPracticeCoachText(item.title, tokens)}</p>
-          {item.description && <p className="text-[12.5px] text-shTextMuted leading-snug">{renderPracticeCoachText(item.description, tokens)}</p>}
+          <p className="text-[16px] sm:text-[17px] font-black text-shText leading-tight">{renderPracticeCoachText(item.title, tokens)}</p>
+          {item.description && <p className="text-[15px] text-shTextMuted leading-snug">{renderPracticeCoachText(item.description, tokens)}</p>}
         </div>
       ))}
     </div>

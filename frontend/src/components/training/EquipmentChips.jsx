@@ -7,8 +7,8 @@ export default function EquipmentChips({ equipment, testid }) {
   return (
     <div className="flex flex-wrap gap-2" data-testid={testid}>
       {items.map((item, i) => (
-        <span key={i} className="inline-flex items-center gap-2 bg-white/[0.025] border border-shBorder/55 rounded-xl px-3 py-2 text-[11px] sm:text-[12px] font-bold text-shText">
-          <i className="fas fa-bag-shopping text-shSecondary text-[10px]"/>{item}
+        <span key={i} className="inline-flex items-center gap-2 bg-white/[0.025] border border-shBorder/55 rounded-xl px-3 py-2 text-[14px] sm:text-[15px] font-bold text-shText">
+          <i className="fas fa-bag-shopping text-shSecondary text-[13px]"/>{item}
         </span>
       ))}
     </div>

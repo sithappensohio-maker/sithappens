@@ -19,7 +19,7 @@ import HuskyDogImage from "../../../brand/HuskyDogImage";
 export function Eyebrow({ children, tone = "cyan", className = "" }) {
   const cls = tone === "lime" ? "text-shPrimary" : tone === "orange" ? "text-shAccent" : "text-shSecondary";
   return (
-    <p className={`text-[9.5px] font-black uppercase tracking-[0.18em] ${cls} ${className}`}>{children}</p>
+    <p className={`text-[12px] font-black uppercase tracking-[0.18em] ${cls} ${className}`}>{children}</p>
   );
 }
 
@@ -37,23 +37,23 @@ export function ProgramHeroCard({ home, onViewCourse }) {
       <div className="flex items-stretch">
         <div className="min-w-0 flex-1 p-4 sm:p-5">
           <Eyebrow>Current program</Eyebrow>
-          <h2 className="text-[19px] sm:text-[22px] font-black text-shText leading-tight mt-1 text-balance">
+          <h2 className="text-[22px] sm:text-[25px] font-black text-shText leading-tight mt-1 text-balance">
             {home?.program?.name || "Your training program"}
           </h2>
           <div className="flex items-center gap-2 mt-1.5 flex-wrap">
-            <span className="text-[10px] font-black uppercase tracking-widest rounded-full border border-shSecondary/25 bg-shSecondary/10 text-shSecondary px-2 py-0.5">
+            <span className="text-[13px] font-black uppercase tracking-widest rounded-full border border-shSecondary/25 bg-shSecondary/10 text-shSecondary px-2 py-0.5">
               <i className={`fas ${deliveryIcon(home?.delivery_mode)} mr-1`} />{deliveryLabel(home?.delivery_mode)}
             </span>
-            {dog.name && <span className="text-[11.5px] text-shTextMuted truncate">{dog.name}</span>}
+            {dog.name && <span className="text-[14px] text-shTextMuted truncate">{dog.name}</span>}
           </div>
-          <p className="text-[13px] font-black text-shPrimary mt-3" data-testid="today-program-pct">{pct}% complete</p>
+          <p className="text-[16px] font-black text-shPrimary mt-3" data-testid="today-program-pct">{pct}% complete</p>
           <div className="h-2 rounded-full bg-black/40 overflow-hidden mt-1.5">
             <div className="h-full rounded-full bg-shPrimary transition-all" style={{ width: `${pct}%` }} />
           </div>
           {onViewCourse && (
             <button type="button" onClick={onViewCourse} data-testid="today-view-course"
-                    className="mt-2 -mb-1.5 min-h-[44px] inline-flex items-center text-[11.5px] font-black uppercase tracking-widest text-shSecondary hover:text-shText transition">
-              View full course <i className="fas fa-chevron-right text-[9px] ml-0.5" />
+                    className="mt-2 -mb-1.5 min-h-[44px] inline-flex items-center text-[14px] font-black uppercase tracking-widest text-shSecondary hover:text-shText transition">
+              View full course <i className="fas fa-chevron-right text-[11px] ml-0.5" />
             </button>
           )}
         </div>
@@ -84,17 +84,17 @@ export function CurrentLessonCard({ home, onPrimary }) {
   return (
     <section className="rounded-2xl border border-shSecondary/30 bg-shSecondary/[0.04] p-4 sm:p-5" data-testid="today-current-lesson">
       <Eyebrow>{noAction ? "Where you are" : "Current lesson"}</Eyebrow>
-      <h3 className="text-[18px] sm:text-[20px] font-black text-shText leading-tight mt-1 text-balance">
+      <h3 className="text-[21px] sm:text-[23px] font-black text-shText leading-tight mt-1 text-balance">
         {lesson?.name || action.label || "Your next step"}
       </h3>
-      <p className="text-[11.5px] text-shTextMuted mt-1">
+      <p className="text-[14px] text-shTextMuted mt-1">
         {[position, minutes ? `${minutes} min` : null].filter(Boolean).join(" · ") || home?.current_module?.name || ""}
       </p>
-      {action.sublabel && <p className="text-[13px] text-shText/90 mt-2 leading-relaxed">{action.sublabel}</p>}
+      {action.sublabel && <p className="text-[16px] text-shText/90 mt-2 leading-relaxed">{action.sublabel}</p>}
       {!noAction && (
         <button type="button" onClick={onPrimary} data-testid="today-primary-action"
-                className="mt-3.5 w-full min-h-[50px] rounded-xl bg-shPrimary text-[#071018] font-black text-[14px] tracking-wide inline-flex items-center justify-center gap-2 hover:brightness-110 transition shadow-[0_10px_30px_-12px_rgba(140,198,63,0.8)]">
-          {action.label || "Continue lesson"}<i className="fas fa-arrow-right text-[11px]" />
+                className="mt-3.5 w-full min-h-[50px] rounded-xl bg-shPrimary text-[#071018] font-black text-[17px] tracking-wide inline-flex items-center justify-center gap-2 hover:brightness-110 transition shadow-[0_10px_30px_-12px_rgba(140,198,63,0.8)]">
+          {action.label || "Continue lesson"}<i className="fas fa-arrow-right text-[14px]" />
         </button>
       )}
     </section>
@@ -113,8 +113,8 @@ export function PracticeCard({ practice, onOpen }) {
         <span className="w-11 h-11 rounded-full grid place-items-center mx-auto bg-shPrimary/10 border border-shPrimary/25">
           <i className="fas fa-check text-shPrimary" />
         </span>
-        <p className="text-[15px] font-black text-shText mt-2.5">All caught up</p>
-        <p className="text-[12.5px] text-shTextMuted mt-1">Great job staying consistent. Enjoy your day.</p>
+        <p className="text-[18px] font-black text-shText mt-2.5">All caught up</p>
+        <p className="text-[15px] text-shTextMuted mt-1">Great job staying consistent. Enjoy your day.</p>
       </section>
     );
   }
@@ -133,13 +133,13 @@ export function PracticeCard({ practice, onOpen }) {
       </span>
       <span className="min-w-0 flex-1">
         <Eyebrow tone={overdue ? "orange" : "cyan"}>{overdue ? "Overdue" : "Practice due"}</Eyebrow>
-        <span className="block text-[15px] font-black text-shText truncate mt-0.5">{next.title || "Practice"}</span>
-        <span className="block text-[11.5px] text-shTextMuted mt-0.5">
+        <span className="block text-[18px] font-black text-shText truncate mt-0.5">{next.title || "Practice"}</span>
+        <span className="block text-[14px] text-shTextMuted mt-0.5">
           {overdue ? "Was due " + next.due_date : dueToday ? "Due today to stay on track" : next.due_date ? `Due ${next.due_date}` : "Ready when you are"}
           {items.length > 1 ? ` · ${items.length} assigned` : ""}
         </span>
       </span>
-      <i className="fas fa-chevron-right text-[11px] text-shTextMuted shrink-0" />
+      <i className="fas fa-chevron-right text-[14px] text-shTextMuted shrink-0" />
     </button>
   );
 }
@@ -161,12 +161,12 @@ export function NextMilestoneCard({ home, onOpen }) {
       </span>
       <span className="min-w-0 flex-1">
         <Eyebrow tone="lime">Next milestone</Eyebrow>
-        <span className="block text-[15px] font-black text-shText truncate mt-0.5">{moduleName}</span>
-        <span className="block text-[11.5px] text-shTextMuted mt-0.5">
+        <span className="block text-[18px] font-black text-shText truncate mt-0.5">{moduleName}</span>
+        <span className="block text-[14px] text-shTextMuted mt-0.5">
           {remaining > 0 ? `${remaining} lesson${remaining === 1 ? "" : "s"} to go in this program` : "You've completed every lesson"}
         </span>
       </span>
-      <i className="fas fa-chevron-right text-[11px] text-shTextMuted shrink-0" />
+      <i className="fas fa-chevron-right text-[14px] text-shTextMuted shrink-0" />
     </button>
   );
 }
@@ -179,10 +179,10 @@ function StatTile({ icon, value, label, tone = "lime", testid }) {
     <div className="min-w-0 text-center" data-testid={testid}>
       <span className="w-9 h-9 rounded-full grid place-items-center mx-auto border"
             style={{ borderColor: `rgba(${rgb},0.35)`, background: `rgba(${rgb},0.10)`, color: `rgb(${rgb})` }}>
-        <i className={`fas ${icon} text-[12px]`} />
+        <i className={`fas ${icon} text-[15px]`} />
       </span>
-      <p className="text-[15px] font-black text-shText mt-1.5 leading-none">{value}</p>
-      <p className="text-[9.5px] uppercase tracking-widest text-shTextMuted mt-1 truncate">{label}</p>
+      <p className="text-[18px] font-black text-shText mt-1.5 leading-none">{value}</p>
+      <p className="text-[12px] uppercase tracking-widest text-shTextMuted mt-1 truncate">{label}</p>
     </div>
   );
 }
@@ -199,7 +199,7 @@ export function ProgressRow({ progress, trophyCount, onViewAll }) {
         <Eyebrow>Your progress</Eyebrow>
         {onViewAll && (
           <button type="button" onClick={onViewAll} data-testid="today-progress-view-all"
-                  className="-my-2 px-1 min-h-[44px] inline-flex items-center text-[10.5px] font-black uppercase tracking-widest text-shSecondary hover:text-shText transition">
+                  className="-my-2 px-1 min-h-[44px] inline-flex items-center text-[13px] font-black uppercase tracking-widest text-shSecondary hover:text-shText transition">
             View all
           </button>
         )}

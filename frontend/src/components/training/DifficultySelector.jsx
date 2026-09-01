@@ -18,7 +18,7 @@ export default function DifficultySelector({ value, onChange, testid }) {
                   className={`min-h-[72px] flex flex-col items-center justify-center gap-1.5 px-2 py-3 rounded-xl border transition ${index === CHOICES.length - 1 ? "col-span-2 sm:col-span-1" : ""}
                     ${selected ? "bg-shPrimary/12 border-shPrimary/55 text-shPrimary shadow-[0_0_22px_rgba(140,198,63,0.08)]" : "bg-black/10 border-shBorder/55 text-shTextMuted hover:border-shPrimary/35 hover:bg-white/[0.025]"}`}>
             <span className="text-[24px] leading-none" aria-hidden="true">{c.emoji}</span>
-            <span className="text-[10px] font-black uppercase tracking-[0.1em]">{c.label}</span>
+            <span className="text-[13px] font-black uppercase tracking-[0.1em]">{c.label}</span>
           </button>
         );
       })}

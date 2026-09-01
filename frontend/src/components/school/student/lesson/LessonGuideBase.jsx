@@ -260,9 +260,9 @@ export function CollapsibleNote({ icon, title, children, testid, tone = "muted" 
     <div className={`rounded-xl border overflow-hidden ${tone === "warn" ? "border-red-400/25 bg-red-500/[0.04]" : "border-shBorder/50 bg-black/10"}`} data-testid={testid}>
       <button type="button" onClick={() => setOpen(v => !v)} aria-expanded={open}
               className="w-full px-4 py-3.5 flex items-center gap-2.5 text-left min-h-[52px]">
-        <i className={`fas ${icon} ${accent} text-[13px]`} aria-hidden="true" />
-        <span className="flex-1 min-w-0 text-[16px] font-black text-shText">{title}</span>
-        <i className={`fas fa-chevron-${open ? "up" : "down"} text-[11px] text-shTextMuted`} aria-hidden="true" />
+        <i className={`fas ${icon} ${accent} text-[16px]`} aria-hidden="true" />
+        <span className="flex-1 min-w-0 text-[19px] font-black text-shText">{title}</span>
+        <i className={`fas fa-chevron-${open ? "up" : "down"} text-[14px] text-shTextMuted`} aria-hidden="true" />
       </button>
       {open && <div className="px-4 pb-4 -mt-1">{children}</div>}
     </div>
@@ -278,16 +278,16 @@ export function LessonHowItWorks({ hasPractice, testid = "lesson-how-it-works" }
     : ["Learn", "Quick Check", "Move On"];
   return (
     <section className="rounded-2xl border border-shSecondary/25 bg-shSecondary/[0.05] p-4 sm:p-5" data-testid={testid}>
-      <h2 className="text-[13px] font-black uppercase tracking-[0.16em] text-shSecondary">How this lesson works</h2>
-      <p className="mt-2 flex flex-wrap items-center gap-x-2 gap-y-1 text-[17px] sm:text-[18px] font-black text-shText">
+      <h2 className="text-[16px] font-black uppercase tracking-[0.16em] text-shSecondary">How this lesson works</h2>
+      <p className="mt-2 flex flex-wrap items-center gap-x-2 gap-y-1 text-[20px] sm:text-[21px] font-black text-shText">
         {chain.map((word, i) => (
           <span key={word} className="inline-flex items-center gap-2">
             {word}
-            {i < chain.length - 1 && <i className="fas fa-arrow-right text-[11px] text-shSecondary" aria-hidden="true" />}
+            {i < chain.length - 1 && <i className="fas fa-arrow-right text-[14px] text-shSecondary" aria-hidden="true" />}
           </span>
         ))}
       </p>
-      <p className="mt-2 text-[15px] sm:text-[16px] text-shTextMuted leading-relaxed">
+      <p className="mt-2 text-[18px] sm:text-[19px] text-shTextMuted leading-relaxed">
         Work through the sections in order. {hasPractice
           ? "Once you've finished the lesson material, Practice unlocks so you can work with your dog."
           : "Finish the lesson material, then complete the lesson to move on."}
@@ -323,8 +323,8 @@ export default function LessonGuide({
       {/* Lesson-level progress — real counts, never a percentage that a
           waiting-for-review or optional step would make untrue. */}
       <div className="flex items-baseline justify-between gap-3 px-0.5">
-        <h2 className="text-[13px] font-black uppercase tracking-[0.16em] text-shSecondary">Lesson progress</h2>
-        <p className="text-[15px] font-black text-shText" data-testid={`${testid}-progress`}>
+        <h2 className="text-[16px] font-black uppercase tracking-[0.16em] text-shSecondary">Lesson progress</h2>
+        <p className="text-[18px] font-black text-shText" data-testid={`${testid}-progress`}>
           {doneCount} of {instructional.length} step{instructional.length === 1 ? "" : "s"} complete
         </p>
       </div>
@@ -385,7 +385,7 @@ export default function LessonGuide({
                   {/* Status marker — icon AND text, so state never rides on colour alone. */}
                   <span
                     className={[
-                      "w-8 h-8 rounded-full grid place-items-center shrink-0 text-[12px] font-black border",
+                      "w-8 h-8 rounded-full grid place-items-center shrink-0 text-[15px] font-black border",
                       done ? "border-shPrimary bg-shPrimary text-bgHeader shadow-[0_0_12px_rgba(140,198,63,0.45)]"
                         : isCurrent ? "border-shAccent bg-shAccent text-bgHeader shadow-[0_0_12px_rgba(242,101,34,0.5)]"
                         : hue.marker,
@@ -395,31 +395,31 @@ export default function LessonGuide({
                     {done ? <i className="fas fa-check" /> : locked ? <i className="fas fa-lock" /> : s.n}
                   </span>
                   <span className="min-w-0 flex-1">
-                    <span className="block text-[11px] font-black uppercase tracking-[0.14em] text-shTextMuted">Step {s.n}</span>
-                    <span className={`block text-[18px] sm:text-[19px] font-black leading-snug ${isCurrent ? "text-[#fb923c]" : done ? "text-[#a3e635]" : hue.title}`}>
+                    <span className="block text-[14px] font-black uppercase tracking-[0.14em] text-shTextMuted">Step {s.n}</span>
+                    <span className={`block text-[21px] sm:text-[22px] font-black leading-snug ${isCurrent ? "text-[#fb923c]" : done ? "text-[#a3e635]" : hue.title}`}>
                       {s.label}
                     </span>
                   </span>
-                  {!locked && <i className="fas fa-chevron-right text-[11px] text-shTextMuted shrink-0 mt-2.5" aria-hidden="true" />}
+                  {!locked && <i className="fas fa-chevron-right text-[14px] text-shTextMuted shrink-0 mt-2.5" aria-hidden="true" />}
                 </span>
 
-                <span className="block text-[15px] sm:text-[16px] text-shTextMuted leading-relaxed flex-1">
+                <span className="block text-[18px] sm:text-[19px] text-shTextMuted leading-relaxed flex-1">
                   {locked ? reason : s.blurb}
                 </span>
 
                 {/* State footer chip — the word is the state, never colour alone. */}
                 <span className="mt-auto pt-1.5">
                   {done && (
-                    <span className="inline-flex items-center gap-1.5 rounded-md px-2 py-1 text-[11px] font-black uppercase tracking-widest bg-shPrimary text-bgHeader shadow-[0_0_10px_rgba(140,198,63,0.4)]"><i className="fas fa-check text-[9px]" aria-hidden="true"/>Complete</span>
+                    <span className="inline-flex items-center gap-1.5 rounded-md px-2 py-1 text-[14px] font-black uppercase tracking-widest bg-shPrimary text-bgHeader shadow-[0_0_10px_rgba(140,198,63,0.4)]"><i className="fas fa-check text-[11px]" aria-hidden="true"/>Complete</span>
                   )}
                   {isCurrent && (
-                    <span className="inline-flex items-center gap-1.5 rounded-md px-2 py-1 text-[11px] font-black uppercase tracking-widest bg-shAccent text-bgHeader shadow-[0_0_10px_rgba(242,101,34,0.45)]"><i className="fas fa-circle-notch text-[9px]" aria-hidden="true"/>Current</span>
+                    <span className="inline-flex items-center gap-1.5 rounded-md px-2 py-1 text-[14px] font-black uppercase tracking-widest bg-shAccent text-bgHeader shadow-[0_0_10px_rgba(242,101,34,0.45)]"><i className="fas fa-circle-notch text-[11px]" aria-hidden="true"/>Current</span>
                   )}
                   {locked && (
-                    <span className="inline-flex items-center gap-1.5 rounded-md border border-shBorder/60 bg-black/15 px-2 py-1 text-[11px] font-black uppercase tracking-widest text-shTextMuted"><i className="fas fa-lock text-[9px]" aria-hidden="true"/>Locked</span>
+                    <span className="inline-flex items-center gap-1.5 rounded-md border border-shBorder/60 bg-black/15 px-2 py-1 text-[14px] font-black uppercase tracking-widest text-shTextMuted"><i className="fas fa-lock text-[11px]" aria-hidden="true"/>Locked</span>
                   )}
                   {!done && !isCurrent && !locked && (
-                    <span className="inline-flex items-center gap-1.5 rounded-md px-2 py-1 text-[11px] font-black uppercase tracking-widest bg-shSecondary text-bgHeader">Available</span>
+                    <span className="inline-flex items-center gap-1.5 rounded-md px-2 py-1 text-[14px] font-black uppercase tracking-widest bg-shSecondary text-bgHeader">Available</span>
                   )}
                 </span>
               </button>
@@ -440,17 +440,17 @@ export default function LessonGuide({
 export function PracticeUnlockedCard({ dogName, onStartPractice, busy, testid = "lesson-practice-unlocked" }) {
   return (
     <section className="rounded-2xl border border-shPrimary/45 bg-shPrimary/[0.07] p-5 sm:p-6" data-testid={testid}>
-      <p className="text-[13px] font-black uppercase tracking-[0.16em] text-shPrimary">
+      <p className="text-[16px] font-black uppercase tracking-[0.16em] text-shPrimary">
         <i className="fas fa-lock-open mr-2" aria-hidden="true" />You&apos;re ready to practice
       </p>
       <h3 className="text-[22px] sm:text-[26px] font-black text-shText mt-1.5 leading-tight">
         Now it&apos;s time to work with {dogName || "your dog"}.
       </h3>
-      <p className="text-[16px] sm:text-[17px] text-shTextMuted mt-2 leading-relaxed">
+      <p className="text-[19px] sm:text-[20px] text-shTextMuted mt-2 leading-relaxed">
         You&apos;ve finished the lesson instructions. Practice is where the training actually happens.
       </p>
       <button type="button" onClick={onStartPractice} disabled={busy} data-testid={`${testid}-cta`}
-              className="mt-4 w-full min-h-[56px] rounded-xl bg-gradient-to-r from-shPrimary to-[#b7e35c] text-bgHeader text-[15px] font-black uppercase tracking-widest shadow-[0_0_24px_rgba(140,198,63,0.5)] hover:brightness-110 transition disabled:opacity-50 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-shPrimary focus-visible:ring-offset-2 focus-visible:ring-offset-bgBase">
+              className="mt-4 w-full min-h-[56px] rounded-xl bg-gradient-to-r from-shPrimary to-[#b7e35c] text-bgHeader text-[18px] font-black uppercase tracking-widest shadow-[0_0_24px_rgba(140,198,63,0.5)] hover:brightness-110 transition disabled:opacity-50 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-shPrimary focus-visible:ring-offset-2 focus-visible:ring-offset-bgBase">
         <i className="fas fa-paw mr-2" aria-hidden="true" />Start Practice
       </button>
     </section>
@@ -491,7 +491,7 @@ export function LessonSectionBody({
     <section className="space-y-3" data-testid={`${testid}-${section.key}`}>
       <div className="rounded-2xl border border-shBorder/50 bg-[var(--sh-card-base)] p-5 sm:p-6 space-y-4">
         <div>
-          <p className="text-[13px] font-black uppercase tracking-[0.16em] text-shSecondary">
+          <p className="text-[16px] font-black uppercase tracking-[0.16em] text-shSecondary">
             Step {section.n} of {all.length}
           </p>
           {/* The heading for what the client is reading right now. */}
@@ -506,17 +506,17 @@ export function LessonSectionBody({
           <ol className="space-y-3" data-testid={`${testid}-steps`}>
             {steps.map((step, i) => (
               <li key={i} className="flex items-start gap-3.5 rounded-xl border border-shBorder/40 bg-black/10 p-4">
-                <span className="w-8 h-8 rounded-full grid place-items-center shrink-0 border border-shSecondary/40 bg-shSecondary/10 text-shSecondary text-[13px] font-black">
+                <span className="w-8 h-8 rounded-full grid place-items-center shrink-0 border border-shSecondary/40 bg-shSecondary/10 text-shSecondary text-[16px] font-black">
                   {i + 1}
                 </span>
-                <span className="min-w-0 flex-1 text-[17px] sm:text-[18px] text-shText leading-[1.55]">{step}</span>
+                <span className="min-w-0 flex-1 text-[20px] sm:text-[21px] text-shText leading-[1.55]">{step}</span>
               </li>
             ))}
           </ol>
         )}
 
         {!blocks.length && !steps && section.body && (
-          <p className="text-[17px] sm:text-[18px] text-shText/90 whitespace-pre-wrap leading-[1.55]">{section.body}</p>
+          <p className="text-[20px] sm:text-[21px] text-shText/90 whitespace-pre-wrap leading-[1.55]">{section.body}</p>
         )}
       </div>
 
@@ -527,14 +527,14 @@ export function LessonSectionBody({
         <CollapsibleNote icon="fa-screwdriver-wrench" title="If it is not working" testid={`${testid}-troubleshooting`}>
           {asides.troubleshooting.length > 0
             ? <LessonContentBlocks blocks={asides.troubleshooting} enrollmentId={enrollmentId} hideTitles />
-            : <p className="text-[16px] text-shTextMuted whitespace-pre-wrap leading-relaxed">{legacyTrouble}</p>}
+            : <p className="text-[19px] text-shTextMuted whitespace-pre-wrap leading-relaxed">{legacyTrouble}</p>}
         </CollapsibleNote>
       )}
       {section.key === "train" && (asides.safety.length > 0 || legacySafety) && (
         <CollapsibleNote icon="fa-shield-halved" title="Safety &amp; welfare" tone="warn" testid={`${testid}-safety`}>
           {asides.safety.length > 0
             ? <LessonContentBlocks blocks={asides.safety} enrollmentId={enrollmentId} hideTitles />
-            : <p className="text-[16px] text-shTextMuted whitespace-pre-wrap leading-relaxed">{legacySafety}</p>}
+            : <p className="text-[19px] text-shTextMuted whitespace-pre-wrap leading-relaxed">{legacySafety}</p>}
         </CollapsibleNote>
       )}
 
@@ -543,12 +543,12 @@ export function LessonSectionBody({
       {instructional && onComplete && !completed && (
         <button type="button" onClick={() => onComplete(section.key)} disabled={busy}
                 data-testid={`${testid}-continue-${section.key}`}
-                className="w-full min-h-[56px] rounded-xl bg-gradient-to-r from-shPrimary to-[#b7e35c] text-bgHeader text-[15px] font-black uppercase tracking-widest shadow-[0_0_24px_rgba(140,198,63,0.5)] hover:brightness-110 transition disabled:opacity-50 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-shPrimary focus-visible:ring-offset-2 focus-visible:ring-offset-bgBase">
-          {busy ? "Saving…" : <>{continueLabel} <i className="fas fa-arrow-right ml-1.5 text-[12px]" aria-hidden="true" /></>}
+                className="w-full min-h-[56px] rounded-xl bg-gradient-to-r from-shPrimary to-[#b7e35c] text-bgHeader text-[18px] font-black uppercase tracking-widest shadow-[0_0_24px_rgba(140,198,63,0.5)] hover:brightness-110 transition disabled:opacity-50 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-shPrimary focus-visible:ring-offset-2 focus-visible:ring-offset-bgBase">
+          {busy ? "Saving…" : <>{continueLabel} <i className="fas fa-arrow-right ml-1.5 text-[15px]" aria-hidden="true" /></>}
         </button>
       )}
       {instructional && completed && (
-        <p className="text-[15px] font-black text-shPrimary text-center py-2" data-testid={`${testid}-done-${section.key}`}>
+        <p className="text-[18px] font-black text-shPrimary text-center py-2" data-testid={`${testid}-done-${section.key}`}>
           <i className="fas fa-circle-check mr-2" aria-hidden="true" />You&apos;ve completed this step
         </p>
       )}

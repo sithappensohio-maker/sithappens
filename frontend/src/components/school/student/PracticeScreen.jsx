@@ -38,7 +38,7 @@ export default function PracticeScreen({ home, loading, onOpenPractice, onPrimar
     <div className="space-y-5" data-testid="practice-screen">
       <header>
         <h1 className="text-shText font-black text-[22px] sm:text-[26px] leading-tight">Practice</h1>
-        <p className="text-[13px] text-shTextMuted mt-0.5 leading-relaxed">
+        <p className="text-[16px] text-shTextMuted mt-0.5 leading-relaxed">
           {b.overdue.length > 0
             ? `Start here — ${b.overdue.length} practice ${b.overdue.length === 1 ? "session is" : "sessions are"} past due.`
             : openCount > 0
@@ -51,8 +51,8 @@ export default function PracticeScreen({ home, loading, onOpenPractice, onPrimar
           too so the client never has to go back to Today to start. */}
       {practiceIsNext && action?.label && (
         <button type="button" onClick={onPrimaryAction} data-testid="practice-primary-action"
-                className="w-full min-h-[52px] rounded-xl bg-shPrimary text-[#071018] font-black text-[14px] inline-flex items-center justify-center gap-2 hover:brightness-110 transition shadow-[0_10px_30px_-12px_rgba(140,198,63,0.8)]">
-          {action.label}<i className="fas fa-arrow-right text-[11px]" />
+                className="w-full min-h-[52px] rounded-xl bg-shPrimary text-[#071018] font-black text-[17px] inline-flex items-center justify-center gap-2 hover:brightness-110 transition shadow-[0_10px_30px_-12px_rgba(140,198,63,0.8)]">
+          {action.label}<i className="fas fa-arrow-right text-[14px]" />
         </button>
       )}
 
@@ -67,7 +67,7 @@ export default function PracticeScreen({ home, loading, onOpenPractice, onPrimar
 
       {b.completed.length > 0 && (
         <section data-testid="practice-group-completed" className="space-y-2.5">
-          <p className="text-[9.5px] font-black uppercase tracking-[0.18em] text-shTextMuted">Recently completed</p>
+          <p className="text-[12px] font-black uppercase tracking-[0.18em] text-shTextMuted">Recently completed</p>
           {b.completed.map(hw => (
             <PracticeAssignmentCard key={hw.id} hw={hw} state="completed" />
           ))}

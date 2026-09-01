@@ -24,8 +24,8 @@ export default function SegmentedOptions({
                   className={`min-h-[40px] rounded-lg border px-2 py-1.5 text-left leading-tight transition disabled:opacity-40 ${
                     selected ? (TONES[tone] || TONES.secondary) : "border-shBorder/60 bg-black/15 text-shTextMuted hover:border-shSecondary/40"
                   }`}>
-            <span className="block text-[11px] font-black uppercase tracking-[0.08em]">{o.label}</span>
-            {o.sublabel && <span className="block text-[10px] font-semibold normal-case tracking-normal opacity-80 mt-0.5">{o.sublabel}</span>}
+            <span className="block text-[14px] font-black uppercase tracking-[0.08em]">{o.label}</span>
+            {o.sublabel && <span className="block text-[13px] font-semibold normal-case tracking-normal opacity-80 mt-0.5">{o.sublabel}</span>}
           </button>
         );
       })}

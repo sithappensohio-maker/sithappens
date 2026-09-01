@@ -15,8 +15,8 @@ export default function PracticeInstructionSteps({ steps, text, testid }) {
     <ol className="space-y-2.5" data-testid={testid}>
       {items.map((step, i) => (
         <li key={i} className="flex items-start gap-3 rounded-xl border border-shBorder/45 bg-black/10 p-3 sm:p-3.5">
-          <span className="shrink-0 w-8 h-8 rounded-xl bg-shPrimary/12 border border-shPrimary/35 text-shPrimary text-[12px] font-black grid place-items-center">{i + 1}</span>
-          <span className="text-[13px] sm:text-[14px] text-shText leading-relaxed pt-1">{step}</span>
+          <span className="shrink-0 w-8 h-8 rounded-xl bg-shPrimary/12 border border-shPrimary/35 text-shPrimary text-[15px] font-black grid place-items-center">{i + 1}</span>
+          <span className="text-[16px] sm:text-[17px] text-shText leading-relaxed pt-1">{step}</span>
         </li>
       ))}
     </ol>

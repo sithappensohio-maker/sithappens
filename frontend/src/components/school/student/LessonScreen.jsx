@@ -199,9 +199,9 @@ export default function LessonScreen({
     return (
       <div className="max-w-3xl mx-auto space-y-4" data-testid="lesson-onboarding-gate">
         <div className="rounded-2xl border border-shPrimary/30 bg-shPrimary/[0.06] p-4 sm:p-5">
-          <p className="text-[11px] font-black uppercase tracking-[0.18em] text-shPrimary">Start here before Lesson 1</p>
+          <p className="text-[14px] font-black uppercase tracking-[0.18em] text-shPrimary">Start here before Lesson 1</p>
           <h1 className="text-[24px] sm:text-[30px] font-black text-shText mt-1 leading-tight">One quick setup, then we start training.</h1>
-          <p className="text-[15px] sm:text-[16px] text-shTextMuted mt-2 leading-relaxed">
+          <p className="text-[18px] sm:text-[19px] text-shTextMuted mt-2 leading-relaxed">
             School needs a little information about {dogName || "your dog"} before the first training step. Fill this out once. When you save it, this lesson unlocks automatically.
           </p>
         </div>
@@ -261,9 +261,9 @@ export default function LessonScreen({
         </span>
         <div className="min-w-0 flex-1">
           <div className="flex items-center gap-2 min-w-0">
-            <p className="text-[10px] font-black uppercase tracking-[0.2em] text-shSecondary truncate">{data.module_name}</p>
-            {isCurrent && <span className="text-[9px] font-black uppercase tracking-widest px-2 py-0.5 rounded-md bg-shPrimary/10 border border-shPrimary/25 text-shPrimary shrink-0">Current</span>}
-            {completedReview && <span className="text-[9px] font-black uppercase tracking-widest px-2 py-0.5 rounded-md bg-shBorder/40 text-shTextMuted shrink-0"><i className="fas fa-check mr-1" />Completed</span>}
+            <p className="text-[13px] font-black uppercase tracking-[0.2em] text-shSecondary truncate">{data.module_name}</p>
+            {isCurrent && <span className="text-[11px] font-black uppercase tracking-widest px-2 py-0.5 rounded-md bg-shPrimary/10 border border-shPrimary/25 text-shPrimary shrink-0">Current</span>}
+            {completedReview && <span className="text-[11px] font-black uppercase tracking-widest px-2 py-0.5 rounded-md bg-shBorder/40 text-shTextMuted shrink-0"><i className="fas fa-check mr-1" />Completed</span>}
           </div>
           <h1 className="text-shText font-black text-[24px] sm:text-[32px] leading-[1.12] tracking-tight text-balance mt-1">
             {isFinal ? `${lesson.name} · Final Assessment` : lesson.name}
@@ -287,7 +287,7 @@ export default function LessonScreen({
       )}
 
       {completedReview && !cpResult && (
-        <p className="text-[12.5px] text-shTextMuted rounded-xl border border-shBorder bg-[var(--sh-card-base)] px-3.5 py-2.5" data-testid="lesson-review-note">
+        <p className="text-[15px] text-shTextMuted rounded-xl border border-shBorder bg-[var(--sh-card-base)] px-3.5 py-2.5" data-testid="lesson-review-note">
           <i className="fas fa-book-open mr-1.5 text-shSecondary" />You've completed this lesson — it stays open for review any time.
         </p>
       )}
@@ -317,7 +317,7 @@ export default function LessonScreen({
                                                nextLabel={nextSection?.label}
                                                isLastInstructional={isLastInstructional} />}
             {actionErr && (
-              <p className="rounded-xl border border-red-400/35 bg-red-500/[0.07] px-4 py-3 text-[14px] font-bold text-red-300"
+              <p className="rounded-xl border border-red-400/35 bg-red-500/[0.07] px-4 py-3 text-[17px] font-bold text-red-300"
                  data-testid="lesson-step-error">
                 <i className="fas fa-triangle-exclamation mr-2" aria-hidden="true" />{actionErr}
               </p>
@@ -330,14 +330,14 @@ export default function LessonScreen({
 
       {data.skills?.length > 0 && (
         <SectionCard accent="cyan" intensity="subtle">
-          <p className="text-[9px] font-black uppercase tracking-[0.14em] text-shSecondary mb-2"><i className="fas fa-star mr-1.5" />Skills you&apos;re building</p>
+          <p className="text-[11px] font-black uppercase tracking-[0.14em] text-shSecondary mb-2"><i className="fas fa-star mr-1.5" />Skills you&apos;re building</p>
           <div className="space-y-2">
             {data.skills.map((s) => (
               <div key={s.id} className="rounded-xl border border-shSecondary/40 bg-gradient-to-r from-shSecondary/[0.14] to-black/15 p-3 flex items-start gap-2.5">
-                <span className="w-7 h-7 rounded-lg grid place-items-center bg-shSecondary/20 border border-shSecondary/45 shrink-0"><i className="fas fa-bone text-shSecondary text-[11px]"/></span>
+                <span className="w-7 h-7 rounded-lg grid place-items-center bg-shSecondary/20 border border-shSecondary/45 shrink-0"><i className="fas fa-bone text-shSecondary text-[14px]"/></span>
                 <span className="min-w-0">
-                  <p className="text-[13px] font-black text-shText">{s.name}</p>
-                  {s.client_facing_explanation && <p className="text-[12px] text-shTextMuted mt-1 leading-relaxed">{s.client_facing_explanation}</p>}
+                  <p className="text-[16px] font-black text-shText">{s.name}</p>
+                  {s.client_facing_explanation && <p className="text-[15px] text-shTextMuted mt-1 leading-relaxed">{s.client_facing_explanation}</p>}
                 </span>
               </div>
             ))}
@@ -345,7 +345,7 @@ export default function LessonScreen({
         </SectionCard>
       )}
 
-      {actionErr && !hasGuide && <p className="text-shDanger text-[13px] font-bold" data-testid="lesson-action-error">{actionErr}</p>}
+      {actionErr && !hasGuide && <p className="text-shDanger text-[16px] font-bold" data-testid="lesson-action-error">{actionErr}</p>}
 
       <div ref={actionsRef} className="space-y-4" data-testid="lesson-actions">
       {setupRequired ? (
@@ -353,8 +353,8 @@ export default function LessonScreen({
           <div className="flex items-start gap-3">
             <span className="w-10 h-10 rounded-xl bg-shSecondary/10 border border-shSecondary/25 grid place-items-center shrink-0"><i className="fas fa-wrench text-shSecondary" /></span>
             <div>
-              <p className="text-[14px] font-black text-shText">Training setup needs attention</p>
-              <p className="text-[12.5px] text-shTextMuted mt-1">Your trainer needs to update this lesson before you can continue.</p>
+              <p className="text-[17px] font-black text-shText">Training setup needs attention</p>
+              <p className="text-[15px] text-shTextMuted mt-1">Your trainer needs to update this lesson before you can continue.</p>
             </div>
           </div>
         </SectionCard>
@@ -368,16 +368,16 @@ export default function LessonScreen({
           {hasPractice && !prescribedRemediation && !showUnlockMoment && (
             practiceUnlocked ? (
               <PremiumButton onClick={() => onStartPractice(lessonId)} disabled={busy} data-testid="lesson-start-practice"
-                             className="w-full justify-center min-h-[52px] text-[13px] sm:text-[14px]">
-                <i className="fas fa-paw text-[11px]" />{practiceButtonLabel(data.practiced)}
+                             className="w-full justify-center min-h-[52px] text-[16px] sm:text-[17px]">
+                <i className="fas fa-paw text-[14px]" />{practiceButtonLabel(data.practiced)}
               </PremiumButton>
             ) : (
               <div className="rounded-xl border border-shBorder bg-black/15 p-4 text-center"
                    data-testid="lesson-practice-locked">
-                <p className="text-[15px] font-black text-shTextMuted">
+                <p className="text-[18px] font-black text-shTextMuted">
                   <i className="fas fa-lock mr-2" aria-hidden="true" />Practice is locked
                 </p>
-                <p className="text-[15px] text-shTextMuted mt-1.5 leading-relaxed">
+                <p className="text-[18px] text-shTextMuted mt-1.5 leading-relaxed">
                   {data.practice_locked_reason || "Finish the lesson material to unlock Practice."}
                 </p>
               </div>
@@ -386,24 +386,24 @@ export default function LessonScreen({
 
           {!hasPractice && isCurrent && !learnDone && (!hasGuide || instructionalStepKeys.length === 0) && (
             <PremiumButton onClick={completeLesson} disabled={busy} data-testid="lesson-complete"
-                           className="w-full justify-center min-h-[52px] text-[13px] sm:text-[14px]">
-              <i className="fas fa-check text-[11px]" />Complete lesson
+                           className="w-full justify-center min-h-[52px] text-[16px] sm:text-[17px]">
+              <i className="fas fa-check text-[14px]" />Complete lesson
             </PremiumButton>
           )}
 
           {quizAvailable && (
             <SectionCard accent="lime" intensity="subtle" data-testid="lesson-module-quiz-cta">
               {checkpointPassedForQuiz && (
-                <p className="text-[12px] font-black text-shPrimary mb-1"><i className="fas fa-circle-check mr-1.5" />Trainer Checkpoint Passed</p>
+                <p className="text-[15px] font-black text-shPrimary mb-1"><i className="fas fa-circle-check mr-1.5" />Trainer Checkpoint Passed</p>
               )}
-              <p className="text-[14px] font-black text-shText">{quizMeta?.title || "Module Quiz"}</p>
-              <p className="text-[12px] text-shTextMuted mt-1">
+              <p className="text-[17px] font-black text-shText">{quizMeta?.title || "Module Quiz"}</p>
+              <p className="text-[15px] text-shTextMuted mt-1">
                 Before moving on, make sure the important pieces make sense.
                 {" "}{quizMeta?.question_count || 0} question{(quizMeta?.question_count || 0) === 1 ? "" : "s"} · Passing score {quizMeta?.passing_score || 80}%
               </p>
               <PremiumButton onClick={() => onTakeQuiz?.(quizMeta?.module_id)} disabled={busy} data-testid="lesson-take-module-quiz"
                              className="mt-3 w-full justify-center min-h-[50px]">
-                <i className="fas fa-list-check text-[11px]" />Take Module Quiz
+                <i className="fas fa-list-check text-[14px]" />Take Module Quiz
               </PremiumButton>
             </SectionCard>
           )}
@@ -412,14 +412,14 @@ export default function LessonScreen({
             && ((hasPractice && practiceUnlocked && data.practiced) || (!hasPractice && learnDone)) && (
             <PremiumButton onClick={advance} disabled={busy} data-testid="lesson-advance"
                            className="w-full justify-center min-h-[52px]">
-              Continue to next lesson <i className="fas fa-arrow-right text-[10px]" />
+              Continue to next lesson <i className="fas fa-arrow-right text-[13px]" />
             </PremiumButton>
           )}
 
           {isCurrent && requiresCp && hasPractice && !practiceUnlocked && !checkpointAlreadyInFlight && (
             <SectionCard accent="cyan" intensity="subtle" data-testid="lesson-checkpoint-locked-by-material">
-              <p className="text-[14px] font-black text-shText"><i className="fas fa-lock mr-2 text-shSecondary" />Checkpoint locked</p>
-              <p className="text-[12.5px] text-shTextMuted mt-1">Finish the lesson material and Practice before submitting your checkpoint.</p>
+              <p className="text-[17px] font-black text-shText"><i className="fas fa-lock mr-2 text-shSecondary" />Checkpoint locked</p>
+              <p className="text-[15px] text-shTextMuted mt-1">Finish the lesson material and Practice before submitting your checkpoint.</p>
             </SectionCard>
           )}
           {isCurrent && requiresCp && hasPractice && (practiceUnlocked || checkpointAlreadyInFlight) && (

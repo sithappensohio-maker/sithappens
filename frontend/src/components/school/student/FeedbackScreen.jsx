@@ -27,13 +27,13 @@ function CriterionGroup({ title, criteria = [], scores = {} }) {
   if (!criteria.length) return null;
   return (
     <div className="rounded-xl border border-shBorder bg-black/15 p-3">
-      <p className="text-[11px] font-black text-shText mb-2">{title}</p>
+      <p className="text-[14px] font-black text-shText mb-2">{title}</p>
       <div className="space-y-2">
         {criteria.map((c) => {
           const score = Number(scores?.[c.id] ?? 0);
           return (
             <div key={c.id}>
-              <div className="flex justify-between gap-2 text-[11px]"><span className="text-shTextMuted">{c.name}</span><span className="font-black text-shText">{score}/5</span></div>
+              <div className="flex justify-between gap-2 text-[14px]"><span className="text-shTextMuted">{c.name}</span><span className="font-black text-shText">{score}/5</span></div>
               <div className="h-1.5 rounded-full bg-shBorder/40 mt-1 overflow-hidden"><div className="h-full bg-shPrimary rounded-full" style={{ width: `${Math.max(0, Math.min(100, score * 20))}%` }} /></div>
             </div>
           );
@@ -54,11 +54,11 @@ function FeedbackEntry({ entry, onAsk }) {
     <article className="rounded-2xl border border-shBorder bg-[var(--sh-card-base)] p-4 sm:p-5" data-testid={`native-feedback-${entry.id}`}>
       <div className="flex flex-col sm:flex-row sm:items-start sm:justify-between gap-3">
         <div className="min-w-0">
-          <p className="text-[10px] font-black uppercase tracking-[0.18em] text-shTextMuted">Trainer review</p>
-          <h3 className="text-[17px] font-black text-shText mt-1">{entry.lesson_name || "Checkpoint"}</h3>
-          <p className="text-[11px] text-shTextMuted mt-1">{[entry.module_name, entry.trainer_name, fmt(entry.graded_at)].filter(Boolean).join(" · ")}</p>
+          <p className="text-[13px] font-black uppercase tracking-[0.18em] text-shTextMuted">Trainer review</p>
+          <h3 className="text-[20px] font-black text-shText mt-1">{entry.lesson_name || "Checkpoint"}</h3>
+          <p className="text-[14px] text-shTextMuted mt-1">{[entry.module_name, entry.trainer_name, fmt(entry.graded_at)].filter(Boolean).join(" · ")}</p>
         </div>
-        <span className={`text-[10px] font-black uppercase tracking-widest ${meta.cls}`}><i className={`fas ${meta.icon} mr-1.5`} />{meta.label}</span>
+        <span className={`text-[13px] font-black uppercase tracking-widest ${meta.cls}`}><i className={`fas ${meta.icon} mr-1.5`} />{meta.label}</span>
       </div>
 
       <div className="mt-4" data-testid={`feedback-scores-${entry.id}`} data-scored={(entry.handler_overall != null || entry.dog_overall != null) ? "true" : "false"}>
@@ -67,24 +67,24 @@ function FeedbackEntry({ entry, onAsk }) {
             in the record; the em dashes are explained rather than left to look
             like a bug. */}
         {entry.handler_overall == null && entry.dog_overall == null && (
-          <p className="text-[11.5px] text-shTextMuted mt-2.5 leading-snug" data-testid={`feedback-unscored-${entry.id}`}>
+          <p className="text-[14px] text-shTextMuted mt-2.5 leading-snug" data-testid={`feedback-unscored-${entry.id}`}>
             Scores weren&apos;t recorded for this one — your trainer&apos;s note is the record.
           </p>
         )}
       </div>
-      {entry.trainer_feedback && <p className="mt-4 text-[13px] text-gray-200 leading-relaxed border-l-2 border-shSecondary/35 pl-3 whitespace-pre-wrap">“{entry.trainer_feedback}”</p>}
-      {(entry.video_annotations || []).length > 0 && <div className="mt-4 rounded-xl border border-shSecondary/20 bg-shSecondary/[0.04] p-3"><p className="text-[10px] font-black uppercase tracking-widest text-shSecondary">Trainer video notes</p><div className="space-y-2 mt-2">{entry.video_annotations.map((a)=><p key={a.id} className="text-[12px] text-shText"><span className="font-black text-shSecondary mr-2">{Math.floor(Number(a.timestamp_seconds||0)/60)}:{String(Math.floor(Number(a.timestamp_seconds||0)%60)).padStart(2,'0')}</span>{a.note}</p>)}</div></div>}
+      {entry.trainer_feedback && <p className="mt-4 text-[16px] text-gray-200 leading-relaxed border-l-2 border-shSecondary/35 pl-3 whitespace-pre-wrap">“{entry.trainer_feedback}”</p>}
+      {(entry.video_annotations || []).length > 0 && <div className="mt-4 rounded-xl border border-shSecondary/20 bg-shSecondary/[0.04] p-3"><p className="text-[13px] font-black uppercase tracking-widest text-shSecondary">Trainer video notes</p><div className="space-y-2 mt-2">{entry.video_annotations.map((a)=><p key={a.id} className="text-[15px] text-shText"><span className="font-black text-shSecondary mr-2">{Math.floor(Number(a.timestamp_seconds||0)/60)}:{String(Math.floor(Number(a.timestamp_seconds||0)%60)).padStart(2,'0')}</span>{a.note}</p>)}</div></div>}
 
       {entry.outcome === "prescribe_practice" && (
-        <div className="mt-4 rounded-xl border border-shAccent/25 bg-shAccent/[0.05] p-3 text-[12px] text-shTextMuted">
-          <p className="font-black text-shAccent uppercase tracking-widest text-[10px]">Practice plan</p>
+        <div className="mt-4 rounded-xl border border-shAccent/25 bg-shAccent/[0.05] p-3 text-[15px] text-shTextMuted">
+          <p className="font-black text-shAccent uppercase tracking-widest text-[13px]">Practice plan</p>
           {p.practice_sessions_remaining != null && <p className="mt-1">{p.practice_sessions_remaining} practice session{p.practice_sessions_remaining === 1 ? "" : "s"} remaining.</p>}
           {p.notes && <p className="mt-1">{p.notes}</p>}
         </div>
       )}
       {entry.outcome === "trainer_assist_recommended" && (
-        <div className="mt-4 rounded-xl border border-purple-400/25 bg-purple-500/[0.05] p-3 text-[12px] text-shTextMuted">
-          <p className="font-black text-purple-300 uppercase tracking-widest text-[10px]">Trainer Assist · {(ta.status || "recommended").replace(/_/g, " ")}</p>
+        <div className="mt-4 rounded-xl border border-purple-400/25 bg-purple-500/[0.05] p-3 text-[15px] text-shTextMuted">
+          <p className="font-black text-purple-300 uppercase tracking-widest text-[13px]">Trainer Assist · {(ta.status || "recommended").replace(/_/g, " ")}</p>
           {ta.scheduled_date && <p className="mt-1">Scheduled: {[ta.scheduled_date, ta.scheduled_time].filter(Boolean).join(" · ")}</p>}
           {ta.client_summary && <p className="mt-1 text-shText">{ta.client_summary}</p>}
         </div>
@@ -93,8 +93,8 @@ function FeedbackEntry({ entry, onAsk }) {
       {/* Same text-link visual, but a real >=44px touch target (negative
           x-margin keeps the label aligned with the card edge). */}
       <div className="mt-2 flex flex-wrap gap-x-3">
-        {hasRubric && <button onClick={() => setOpen((v) => !v)} className="min-h-[44px] px-2 -mx-2 inline-flex items-center text-[11px] font-black uppercase tracking-widest text-shSecondary hover:text-shText">{open ? "Hide scoring details" : "View scoring details"} <i className={`fas fa-chevron-${open ? "up" : "down"} ml-1`} /></button>}
-        <button onClick={() => onAsk?.({ checkpoint: entry })} className="min-h-[44px] px-2 -mx-2 inline-flex items-center text-[11px] font-black uppercase tracking-widest text-shSecondary hover:text-shText"><i className="fas fa-comment-dots mr-1" />Ask about this review</button>
+        {hasRubric && <button onClick={() => setOpen((v) => !v)} className="min-h-[44px] px-2 -mx-2 inline-flex items-center text-[14px] font-black uppercase tracking-widest text-shSecondary hover:text-shText">{open ? "Hide scoring details" : "View scoring details"} <i className={`fas fa-chevron-${open ? "up" : "down"} ml-1`} /></button>}
+        <button onClick={() => onAsk?.({ checkpoint: entry })} className="min-h-[44px] px-2 -mx-2 inline-flex items-center text-[14px] font-black uppercase tracking-widest text-shSecondary hover:text-shText"><i className="fas fa-comment-dots mr-1" />Ask about this review</button>
       </div>
       {open && hasRubric && <div className="grid sm:grid-cols-2 gap-3 mt-4 pt-4 border-t border-shBorder"><CriterionGroup title="Handler Skills" criteria={rubric.handler_criteria} scores={entry.handler_scores} /><CriterionGroup title="Dog Performance" criteria={rubric.dog_criteria} scores={entry.dog_scores} /></div>}
     </article>
@@ -122,13 +122,13 @@ function ConversationCard({ thread, onRefresh }) {
   return (
     <div className="rounded-2xl border border-shBorder bg-black/15 p-4" data-testid={`school-thread-${thread.id}`}>
       <div className="flex items-start justify-between gap-2">
-        <div><p className="text-[13px] font-black text-shText">{thread.subject}</p><p className="text-[11px] text-shTextMuted mt-0.5">{[thread.school_module_name, thread.school_lesson_name].filter(Boolean).join(" · ") || "School"}</p></div>
-        {thread.unread_client && <span className="text-[9px] font-black uppercase tracking-widest bg-shAccent/15 text-shAccent px-2 py-1 rounded">New reply</span>}
+        <div><p className="text-[16px] font-black text-shText">{thread.subject}</p><p className="text-[14px] text-shTextMuted mt-0.5">{[thread.school_module_name, thread.school_lesson_name].filter(Boolean).join(" · ") || "School"}</p></div>
+        {thread.unread_client && <span className="text-[11px] font-black uppercase tracking-widest bg-shAccent/15 text-shAccent px-2 py-1 rounded">New reply</span>}
       </div>
       <div className="space-y-2 mt-3 max-h-64 overflow-y-auto">
-        {messages.map((m) => <div key={m.id} className={`rounded-xl p-2.5 text-[12px] ${m.sender_role === "client" ? "bg-shBorder/20" : "bg-shPrimary/[0.07] border border-shPrimary/15"}`}><p className="text-[10px] font-black uppercase tracking-widest text-shTextMuted">{m.sender_name}</p><p className="text-shText mt-1 whitespace-pre-wrap">{m.body}</p></div>)}
+        {messages.map((m) => <div key={m.id} className={`rounded-xl p-2.5 text-[15px] ${m.sender_role === "client" ? "bg-shBorder/20" : "bg-shPrimary/[0.07] border border-shPrimary/15"}`}><p className="text-[13px] font-black uppercase tracking-widest text-shTextMuted">{m.sender_name}</p><p className="text-shText mt-1 whitespace-pre-wrap">{m.body}</p></div>)}
       </div>
-      <div className="flex gap-2 mt-3"><input value={reply} onChange={(e) => setReply(e.target.value)} onKeyDown={(e) => e.key === "Enter" && send()} placeholder="Reply…" className="flex-1 min-w-0 rounded-xl border border-shBorder bg-black/20 px-3 py-2 text-[12px] text-shText" /><button onClick={send} disabled={busy || !reply.trim()} className="min-h-[40px] px-3 rounded-xl bg-shPrimary text-bgHeader text-[10px] font-black uppercase tracking-widest disabled:opacity-40">Send</button></div>
+      <div className="flex gap-2 mt-3"><input value={reply} onChange={(e) => setReply(e.target.value)} onKeyDown={(e) => e.key === "Enter" && send()} placeholder="Reply…" className="flex-1 min-w-0 rounded-xl border border-shBorder bg-black/20 px-3 py-2 text-[15px] text-shText" /><button onClick={send} disabled={busy || !reply.trim()} className="min-h-[40px] px-3 rounded-xl bg-shPrimary text-bgHeader text-[13px] font-black uppercase tracking-widest disabled:opacity-40">Send</button></div>
     </div>
   );
 }
@@ -157,7 +157,7 @@ export default function FeedbackScreen({ enrollmentId, onAsk, onChanged, onOpenH
   if (history === null || support === null) return <div className="space-y-3"><div className="h-24 rounded-2xl bg-shBorder/25 animate-pulse" /><div className="h-40 rounded-2xl bg-shBorder/20 animate-pulse" /></div>;
   return (
     <div className="max-w-3xl mx-auto space-y-5" data-testid="native-feedback-screen">
-      <header className="flex items-start justify-between gap-3 flex-wrap"><div><p className="text-[10px] font-black uppercase tracking-[0.22em] text-shAccent">Your trainer is part of the course</p><h1 className="text-2xl sm:text-3xl font-black text-shText mt-1">Trainer Feedback</h1><p className="text-[13px] text-shTextMuted mt-1">Checkpoint reviews, trainer guidance, and your School conversations in one place.</p></div><button onClick={() => onAsk?.({})} className="min-h-[42px] px-4 rounded-xl border border-shSecondary/35 text-shSecondary text-[11px] font-black uppercase tracking-widest"><i className="fas fa-comment-dots mr-1.5" />Ask Trainer</button></header>
+      <header className="flex items-start justify-between gap-3 flex-wrap"><div><p className="text-[13px] font-black uppercase tracking-[0.22em] text-shAccent">Your trainer is part of the course</p><h1 className="text-2xl sm:text-3xl font-black text-shText mt-1">Trainer Feedback</h1><p className="text-[16px] text-shTextMuted mt-1">Checkpoint reviews, trainer guidance, and your School conversations in one place.</p></div><button onClick={() => onAsk?.({})} className="min-h-[42px] px-4 rounded-xl border border-shSecondary/35 text-shSecondary text-[14px] font-black uppercase tracking-widest"><i className="fas fa-comment-dots mr-1.5" />Ask Trainer</button></header>
 
       {/* Lesson recaps — what a trainer wrote after an in-person or hybrid
           lesson. Most recent first; the full record stays one tap away. */}
@@ -165,20 +165,20 @@ export default function FeedbackScreen({ enrollmentId, onAsk, onChanged, onOpenH
         <section className="space-y-2.5" data-testid="feedback-lesson-recaps">
           <div className="flex items-end justify-between gap-3">
             <div>
-              <p className="text-[10px] font-black uppercase tracking-[0.2em] text-shPrimary">Lesson recaps</p>
-              <p className="text-[12px] text-shTextMuted mt-1">Your trainer&apos;s write-up after each session.</p>
+              <p className="text-[13px] font-black uppercase tracking-[0.2em] text-shPrimary">Lesson recaps</p>
+              <p className="text-[15px] text-shTextMuted mt-1">Your trainer&apos;s write-up after each session.</p>
             </div>
             {onOpenHistory && (
               <button type="button" onClick={onOpenHistory} data-testid="feedback-view-all-recaps"
-                      className="-my-2 px-1 min-h-[44px] inline-flex items-center text-[11px] font-black text-shSecondary shrink-0 underline underline-offset-2">View all</button>
+                      className="-my-2 px-1 min-h-[44px] inline-flex items-center text-[14px] font-black text-shSecondary shrink-0 underline underline-offset-2">View all</button>
             )}
           </div>
           {recaps.slice(0, 3).map((l) => (
             <article key={l.session_id} className="rounded-2xl border border-shBorder bg-[var(--sh-card-base)] p-4" data-testid={`feedback-recap-${l.session_id}`}>
-              <p className="text-[13.5px] font-black text-shText">{l.lesson_name || "Training session"}</p>
-              <p className="text-[11px] text-shTextMuted mt-0.5">{[l.module_name, l.trainer_name ? `with ${l.trainer_name}` : null, fmt(l.date)].filter(Boolean).join(" · ")}</p>
-              {l.trainer_feedback && <p className="mt-2.5 text-[13px] text-gray-200 leading-relaxed border-l-2 border-shPrimary/35 pl-3 whitespace-pre-wrap">{l.trainer_feedback}</p>}
-              {!l.trainer_feedback && l.what_went_well && <p className="mt-2.5 text-[13px] text-shTextMuted leading-relaxed"><span className="font-black text-shPrimary">What went well: </span>{l.what_went_well}</p>}
+              <p className="text-[16px] font-black text-shText">{l.lesson_name || "Training session"}</p>
+              <p className="text-[14px] text-shTextMuted mt-0.5">{[l.module_name, l.trainer_name ? `with ${l.trainer_name}` : null, fmt(l.date)].filter(Boolean).join(" · ")}</p>
+              {l.trainer_feedback && <p className="mt-2.5 text-[16px] text-gray-200 leading-relaxed border-l-2 border-shPrimary/35 pl-3 whitespace-pre-wrap">{l.trainer_feedback}</p>}
+              {!l.trainer_feedback && l.what_went_well && <p className="mt-2.5 text-[16px] text-shTextMuted leading-relaxed"><span className="font-black text-shPrimary">What went well: </span>{l.what_went_well}</p>}
             </article>
           ))}
         </section>
@@ -186,7 +186,7 @@ export default function FeedbackScreen({ enrollmentId, onAsk, onChanged, onOpenH
 
       {history.length > 0 && (
         <section className="space-y-3">
-          <p className="text-[10px] font-black uppercase tracking-[0.2em] text-shTextMuted">Checkpoint reviews · {history.length}</p>
+          <p className="text-[13px] font-black uppercase tracking-[0.2em] text-shTextMuted">Checkpoint reviews · {history.length}</p>
           {history.map((e) => <FeedbackEntry key={e.id} entry={e} onAsk={onAsk} />)}
         </section>
       )}
@@ -201,28 +201,28 @@ export default function FeedbackScreen({ enrollmentId, onAsk, onChanged, onOpenH
 
       {(support.practice_reviews || []).length > 0 && (
         <section className="space-y-2" data-testid="native-practice-reviews">
-          <div><p className="text-[10px] font-black uppercase tracking-[0.2em] text-shPrimary">Practice feedback</p><p className="text-[12px] text-shTextMuted mt-1">Coaching from your trainer on practice you logged — separate from formal checkpoint grades.</p></div>
+          <div><p className="text-[13px] font-black uppercase tracking-[0.2em] text-shPrimary">Practice feedback</p><p className="text-[15px] text-shTextMuted mt-1">Coaching from your trainer on practice you logged — separate from formal checkpoint grades.</p></div>
           {support.practice_reviews.map((r) => {
             const meta = PRACTICE_REVIEW_META[r.review_status] || PRACTICE_REVIEW_META.looks_good;
             return (
               <article key={r.id} className="rounded-2xl border border-shBorder bg-[var(--sh-card-base)] p-4" data-testid={`practice-review-${r.id}`}>
                 <div className="flex flex-col sm:flex-row sm:items-start sm:justify-between gap-2">
                   <div className="min-w-0">
-                    <p className="text-[13px] font-black text-shText">{r.practice_title || r.lesson_name || "Practice"}</p>
-                    <p className="text-[11px] text-shTextMuted mt-0.5">{[r.module_name, r.trainer_name, fmt(r.reviewed_at)].filter(Boolean).join(" · ")}</p>
+                    <p className="text-[16px] font-black text-shText">{r.practice_title || r.lesson_name || "Practice"}</p>
+                    <p className="text-[14px] text-shTextMuted mt-0.5">{[r.module_name, r.trainer_name, fmt(r.reviewed_at)].filter(Boolean).join(" · ")}</p>
                   </div>
-                  <span className={`text-[10px] font-black uppercase tracking-widest shrink-0 ${meta.cls}`}><i className={`fas ${meta.icon} mr-1.5`} />{meta.label}</span>
+                  <span className={`text-[13px] font-black uppercase tracking-widest shrink-0 ${meta.cls}`}><i className={`fas ${meta.icon} mr-1.5`} />{meta.label}</span>
                 </div>
-                {r.review_note && <p className="mt-3 text-[13px] text-gray-200 leading-relaxed border-l-2 border-shPrimary/35 pl-3 whitespace-pre-wrap">“{r.review_note}”</p>}
+                {r.review_note && <p className="mt-3 text-[16px] text-gray-200 leading-relaxed border-l-2 border-shPrimary/35 pl-3 whitespace-pre-wrap">“{r.review_note}”</p>}
               </article>
             );
           })}
         </section>
       )}
 
-      {(support.threads || []).length > 0 && <section className="space-y-3"><div><p className="text-[10px] font-black uppercase tracking-[0.2em] text-shSecondary">Trainer conversations</p><p className="text-[12px] text-shTextMuted mt-1">Questions asked through School stay attached to the training context.</p></div>{support.threads.map((t) => <ConversationCard key={t.id} thread={t} onRefresh={load} />)}</section>}
+      {(support.threads || []).length > 0 && <section className="space-y-3"><div><p className="text-[13px] font-black uppercase tracking-[0.2em] text-shSecondary">Trainer conversations</p><p className="text-[15px] text-shTextMuted mt-1">Questions asked through School stay attached to the training context.</p></div>{support.threads.map((t) => <ConversationCard key={t.id} thread={t} onRefresh={load} />)}</section>}
 
-      {(answeredPractice.length > 0 || pendingPractice.length > 0) && <section className="space-y-2"><p className="text-[10px] font-black uppercase tracking-[0.2em] text-shSecondary">Practice Coach questions</p>{[...pendingPractice, ...answeredPractice].map((q) => <div key={q.id} className="rounded-xl border border-shBorder bg-[var(--sh-card-base)] p-3"><p className="text-[11px] text-shTextMuted">{[q.module_name, q.lesson_name].filter(Boolean).join(" · ")}</p><p className="text-[13px] text-shText mt-1">You asked: “{q.text}”</p>{q.answer ? <p className="text-[13px] text-gray-200 mt-2 border-l-2 border-shSecondary/35 pl-3"><span className="font-black text-shSecondary">{q.answered_by || "Your trainer"}:</span> {q.answer}</p> : <p className="text-[11px] font-black uppercase tracking-widest text-shAccent mt-2">Waiting on a reply</p>}</div>)}</section>}
+      {(answeredPractice.length > 0 || pendingPractice.length > 0) && <section className="space-y-2"><p className="text-[13px] font-black uppercase tracking-[0.2em] text-shSecondary">Practice Coach questions</p>{[...pendingPractice, ...answeredPractice].map((q) => <div key={q.id} className="rounded-xl border border-shBorder bg-[var(--sh-card-base)] p-3"><p className="text-[14px] text-shTextMuted">{[q.module_name, q.lesson_name].filter(Boolean).join(" · ")}</p><p className="text-[16px] text-shText mt-1">You asked: “{q.text}”</p>{q.answer ? <p className="text-[16px] text-gray-200 mt-2 border-l-2 border-shSecondary/35 pl-3"><span className="font-black text-shSecondary">{q.answered_by || "Your trainer"}:</span> {q.answer}</p> : <p className="text-[14px] font-black uppercase tracking-widest text-shAccent mt-2">Waiting on a reply</p>}</div>)}</section>}
 
       <div className="pt-2 border-t border-shBorder/60" data-testid="school-experience-feedback-section">
         <SchoolExperienceFeedbackCard enrollmentId={enrollmentId} source="feedback_screen" />

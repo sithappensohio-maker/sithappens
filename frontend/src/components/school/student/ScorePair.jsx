@@ -17,13 +17,13 @@ function ScoreRow({ label, help, score }) {
   return (
     <div>
       <div className="flex items-baseline justify-between gap-2">
-        <p className="text-[13px] font-black text-shText">{label}</p>
-        <p className={`text-[15px] font-black ${tone.color}`}>{score == null ? "—" : `${Number(score).toFixed(1)}/5`}</p>
+        <p className="text-[16px] font-black text-shText">{label}</p>
+        <p className={`text-[18px] font-black ${tone.color}`}>{score == null ? "—" : `${Number(score).toFixed(1)}/5`}</p>
       </div>
       <div className="mt-1 h-1.5 rounded-full bg-shBorder/60 overflow-hidden">
         <div className="h-full rounded-full" style={{ width: `${pct}%`, background: `rgb(${tone.bar})` }} />
       </div>
-      {help && <p className="text-[11.5px] text-shTextMuted mt-1 leading-snug">{help}</p>}
+      {help && <p className="text-[14px] text-shTextMuted mt-1 leading-snug">{help}</p>}
     </div>
   );
 }

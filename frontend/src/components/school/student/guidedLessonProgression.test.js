@@ -257,13 +257,13 @@ test("instruction copy is comfortable to read", () => {
 test("a content heading is a heading, not tiny all-caps microcopy", () => {
   // "Before You Begin" is instructional structure; only true metadata such as
   // "STEP 2 OF 8" keeps the small uppercase treatment.
-  expect(blocksSrc).toMatch(/<h3 className=\{`text-\[18px\] sm:text-\[20px\] font-black/);
+  expect(blocksSrc).toMatch(/<h3 className=\{`text-\[21px\] sm:text-\[23px\] font-black/);
   expect(blocksSrc).not.toMatch(/\{b\.title\} && !hideTitles && <p className=\{`text-\[10px\]/);
 });
 
 test("tracker rows are titles with secondary descriptions", () => {
-  expect(guideSrc).toMatch(/text-\[18px\] sm:text-\[19px\] font-black/);
-  expect(guideSrc).toMatch(/text-\[15px\] sm:text-\[16px\] text-shTextMuted/);
+  expect(guideSrc).toMatch(/text-\[21px\] sm:text-\[22px\] font-black/);
+  expect(guideSrc).toMatch(/text-\[18px\] sm:text-\[19px\] text-shTextMuted/);
 });
 
 test("the primary continuation is impossible to miss", () => {

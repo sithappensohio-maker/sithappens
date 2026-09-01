@@ -89,18 +89,18 @@ export function CheckpointHero({ rubric, moduleName, dogName, tone = "cyan", eye
   return (
     <div className="flex items-start gap-3.5">
       <span className={`w-12 h-12 rounded-2xl grid place-items-center shrink-0 border ${ring}`}>
-        <i className={`fas ${icon} ${accent} text-[16px]`} />
+        <i className={`fas ${icon} ${accent} text-[19px]`} />
       </span>
       <div className="min-w-0 flex-1">
-        <p className={`text-[10px] font-black uppercase tracking-[0.16em] ${accent}`}>
+        <p className={`text-[13px] font-black uppercase tracking-[0.16em] ${accent}`}>
           {eyebrow || (isFinal ? "Final assessment" : "Checkpoint")}
           {moduleName ? <span className="text-shTextMuted"> · {moduleName}</span> : null}
         </p>
-        <h3 className="text-[19px] sm:text-[21px] font-black text-shText mt-1 leading-tight text-balance">
+        <h3 className="text-[22px] sm:text-[24px] font-black text-shText mt-1 leading-tight text-balance">
           {title || rubric?.title || "Trainer checkpoint"}
         </h3>
-        {blurb && <p className="text-[13px] text-shTextMuted mt-1.5 leading-relaxed">{blurb}</p>}
-        {dogName && !blurb && <p className="text-[13px] text-shTextMuted mt-1.5">You&apos;ve practised it — now let&apos;s see {dogName} do it.</p>}
+        {blurb && <p className="text-[16px] text-shTextMuted mt-1.5 leading-relaxed">{blurb}</p>}
+        {dogName && !blurb && <p className="text-[16px] text-shTextMuted mt-1.5">You&apos;ve practised it — now let&apos;s see {dogName} do it.</p>}
       </div>
     </div>
   );
@@ -114,11 +114,11 @@ export function ScoredCriteria({ rubric, testid = "checkpoint-criteria" }) {
   if (!h.length && !d.length) return null;
   const col = (label, help, items, tone) => items.length ? (
     <div className="min-w-0">
-      <p className={`text-[9.5px] font-black uppercase tracking-[0.16em] ${tone}`}>{label}</p>
-      <p className="text-[11px] text-shTextMuted mt-0.5 leading-snug">{help}</p>
+      <p className={`text-[12px] font-black uppercase tracking-[0.16em] ${tone}`}>{label}</p>
+      <p className="text-[14px] text-shTextMuted mt-0.5 leading-snug">{help}</p>
       <ul className="mt-2 space-y-1.5">
         {items.map((c) => (
-          <li key={c.id || c.name} className="flex items-start gap-2 text-[12.5px] text-shText leading-snug">
+          <li key={c.id || c.name} className="flex items-start gap-2 text-[15px] text-shText leading-snug">
             <i className="fas fa-circle text-[4px] mt-1.5 opacity-50 shrink-0" />
             <span className="min-w-0">{c.name}</span>
           </li>
@@ -128,7 +128,7 @@ export function ScoredCriteria({ rubric, testid = "checkpoint-criteria" }) {
   ) : null;
   return (
     <div className="rounded-xl border border-shBorder/50 bg-black/10 p-3.5" data-testid={testid}>
-      <p className="text-[9.5px] font-black uppercase tracking-[0.16em] text-shTextMuted mb-2.5">What your trainer scores</p>
+      <p className="text-[12px] font-black uppercase tracking-[0.16em] text-shTextMuted mb-2.5">What your trainer scores</p>
       <div className="grid sm:grid-cols-2 gap-4">
         {col("Handler Skills", "How you're performing the technique.", h, "text-shSecondary")}
         {col("Dog Performance", "How consistently your dog does it.", d, "text-shPrimary")}
@@ -142,10 +142,10 @@ export function SkillsCovered({ skills, testid = "checkpoint-skills" }) {
   if (!skills?.length) return null;
   return (
     <div className="rounded-xl border border-shBorder/50 bg-black/10 p-3.5" data-testid={testid}>
-      <p className="text-[9.5px] font-black uppercase tracking-[0.16em] text-shTextMuted mb-2">What you&apos;ll demonstrate</p>
+      <p className="text-[12px] font-black uppercase tracking-[0.16em] text-shTextMuted mb-2">What you&apos;ll demonstrate</p>
       <div className="flex flex-wrap gap-1.5">
         {skills.map((s) => (
-          <span key={s.id || s.name} className="text-[12px] font-black text-shText rounded-lg border border-shSecondary/25 bg-shSecondary/[0.06] px-2.5 py-1.5">
+          <span key={s.id || s.name} className="text-[15px] font-black text-shText rounded-lg border border-shSecondary/25 bg-shSecondary/[0.06] px-2.5 py-1.5">
             {s.name}
           </span>
         ))}
@@ -167,11 +167,11 @@ export function SubmissionRequirements({ rubric, testid = "checkpoint-requiremen
   if (!instructions && !requirements) return null;
   return (
     <div className="rounded-xl border border-shSecondary/25 bg-shSecondary/[0.05] p-3.5 space-y-2.5" data-testid={testid}>
-      <p className="text-[9.5px] font-black uppercase tracking-[0.16em] text-shSecondary">
+      <p className="text-[12px] font-black uppercase tracking-[0.16em] text-shSecondary">
         <i className="fas fa-circle-info mr-1.5" />What to show
       </p>
-      {instructions && <p className="text-[13px] text-shText/90 whitespace-pre-wrap leading-relaxed">{instructions}</p>}
-      {requirements && <p className="text-[13px] text-shText/90 whitespace-pre-wrap leading-relaxed">{requirements}</p>}
+      {instructions && <p className="text-[16px] text-shText/90 whitespace-pre-wrap leading-relaxed">{instructions}</p>}
+      {requirements && <p className="text-[16px] text-shText/90 whitespace-pre-wrap leading-relaxed">{requirements}</p>}
     </div>
   );
 }
@@ -181,11 +181,11 @@ export function SubmissionRequirements({ rubric, testid = "checkpoint-requiremen
 export function WhatHappensNext({ items, testid = "checkpoint-next" }) {
   return (
     <div className="rounded-xl border border-shBorder/50 bg-black/10 p-3.5" data-testid={testid}>
-      <p className="text-[9.5px] font-black uppercase tracking-[0.16em] text-shTextMuted mb-2">What happens next</p>
+      <p className="text-[12px] font-black uppercase tracking-[0.16em] text-shTextMuted mb-2">What happens next</p>
       <ol className="space-y-1.5">
         {items.map((t, i) => (
-          <li key={i} className="flex items-start gap-2.5 text-[12.5px] text-shTextMuted leading-snug">
-            <span className="w-5 h-5 rounded-full grid place-items-center shrink-0 border border-shBorder text-[9px] font-black text-shTextMuted">{i + 1}</span>
+          <li key={i} className="flex items-start gap-2.5 text-[15px] text-shTextMuted leading-snug">
+            <span className="w-5 h-5 rounded-full grid place-items-center shrink-0 border border-shBorder text-[11px] font-black text-shTextMuted">{i + 1}</span>
             <span className="min-w-0">{t}</span>
           </li>
         ))}
@@ -232,10 +232,10 @@ export function TrainerFeedback({ text, trainerName, tone = "lime", testid = "ch
   const accent = tone === "orange" ? "text-shAccent" : tone === "purple" ? "text-purple-300" : "text-shPrimary";
   return (
     <div className={`rounded-xl border ${border} bg-black/20 p-3.5`} data-testid={testid}>
-      <p className={`text-[9.5px] font-black uppercase tracking-[0.16em] ${accent} mb-1.5`}>
+      <p className={`text-[12px] font-black uppercase tracking-[0.16em] ${accent} mb-1.5`}>
         <i className="fas fa-comment-dots mr-1.5" />From {trainerName || "your trainer"}
       </p>
-      <p className="text-[13px] text-shText/90 leading-relaxed whitespace-pre-wrap">{body}</p>
+      <p className="text-[16px] text-shText/90 leading-relaxed whitespace-pre-wrap">{body}</p>
     </div>
   );
 }
@@ -251,13 +251,13 @@ export function RubricBreakdown({ rubric, handlerScores, dogScores, testid = "ch
   if (!h.length && !d.length) return null;
   const group = (label, items, tone) => items.length ? (
     <div className="min-w-0">
-      <p className={`text-[9.5px] font-black uppercase tracking-[0.16em] ${tone}`}>{label}</p>
+      <p className={`text-[12px] font-black uppercase tracking-[0.16em] ${tone}`}>{label}</p>
       <div className="mt-2 space-y-2">
         {items.map((r) => (
           <div key={r.name}>
             <div className="flex items-baseline justify-between gap-2">
-              <p className="text-[12.5px] text-shText min-w-0">{r.name}</p>
-              <p className="text-[12.5px] font-black text-shText shrink-0">{r.score}/5</p>
+              <p className="text-[15px] text-shText min-w-0">{r.name}</p>
+              <p className="text-[15px] font-black text-shText shrink-0">{r.score}/5</p>
             </div>
             <div className="mt-1 h-1 rounded-full bg-shBorder/60 overflow-hidden">
               <div className="h-full rounded-full bg-shPrimary" style={{ width: `${(Number(r.score) / 5) * 100}%` }} />
@@ -269,7 +269,7 @@ export function RubricBreakdown({ rubric, handlerScores, dogScores, testid = "ch
   ) : null;
   return (
     <div className="rounded-xl border border-shBorder/50 bg-black/10 p-3.5" data-testid={testid}>
-      <p className="text-[9.5px] font-black uppercase tracking-[0.16em] text-shTextMuted mb-2.5">Scored on</p>
+      <p className="text-[12px] font-black uppercase tracking-[0.16em] text-shTextMuted mb-2.5">Scored on</p>
       <div className="grid sm:grid-cols-2 gap-4">
         {group("Handler Skills", h, "text-shSecondary")}
         {group("Dog Performance", d, "text-shPrimary")}
@@ -287,7 +287,7 @@ export function CheckpointScores({ handler, dog, testid = "checkpoint-scores" })
     <div className="rounded-xl border border-shBorder/50 bg-black/10 p-3.5" data-testid={testid} data-scored={missing ? "false" : "true"}>
       <ScorePair handler={handler} dog={dog} />
       {missing && (
-        <p className="text-[11.5px] text-shTextMuted mt-2.5 leading-snug" data-testid={`${testid}-unavailable`}>
+        <p className="text-[14px] text-shTextMuted mt-2.5 leading-snug" data-testid={`${testid}-unavailable`}>
           Scores weren&apos;t recorded for this checkpoint. Your trainer&apos;s notes below are the record of how it went.
         </p>
       )}
@@ -340,7 +340,7 @@ export function CheckpointResultPanel({ entry, rubric, dogName, onContinue, cont
                        testid={`${testid}-breakdown`} />
       {onContinue && (
         <PremiumButton onClick={onContinue} data-testid={`${testid}-continue`} className="w-full justify-center min-h-[52px]">
-          {continueLabel || "Continue training"} <i className="fas fa-arrow-right text-[11px]" />
+          {continueLabel || "Continue training"} <i className="fas fa-arrow-right text-[14px]" />
         </PremiumButton>
       )}
     </NeonEdge>

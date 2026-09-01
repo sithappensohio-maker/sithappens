@@ -86,16 +86,16 @@ export function PracticeAssignmentCard({ hw, state = "open", onOpen, testid }) {
     <article data-testid={testid || `practice-card-${hw.id}`} data-state={state}
              className={`rounded-2xl border p-4 ${state === "overdue" ? "border-shAccent/35 bg-shAccent/[0.035]" : primary ? "border-shBorder/60 bg-[var(--sh-card-base)]" : "border-shBorder/45 bg-black/10"}`}>
       <div className="flex items-start gap-3">
-        <span className={`w-9 h-9 rounded-xl grid place-items-center shrink-0 border text-[12px] ${st.cls}`}>
+        <span className={`w-9 h-9 rounded-xl grid place-items-center shrink-0 border text-[15px] ${st.cls}`}>
           <i className={`fas ${st.icon}`} />
         </span>
         <div className="min-w-0 flex-1">
-          <p className={`text-[9.5px] font-black uppercase tracking-[0.16em] ${st.cls.split(" ")[0]}`}>{st.label}</p>
-          <h3 className="text-[14.5px] font-black text-shText leading-snug mt-0.5 text-balance">{m.title}</h3>
-          {m.focus && <p className="text-[12px] text-shTextMuted mt-1.5 leading-relaxed line-clamp-2">{m.focus}</p>}
+          <p className={`text-[12px] font-black uppercase tracking-[0.16em] ${st.cls.split(" ")[0]}`}>{st.label}</p>
+          <h3 className="text-[17px] font-black text-shText leading-snug mt-0.5 text-balance">{m.title}</h3>
+          {m.focus && <p className="text-[15px] text-shTextMuted mt-1.5 leading-relaxed line-clamp-2">{m.focus}</p>}
 
           {(m.timeLabel || m.dayLabel || m.dueLabel) && (
-            <p className="text-[11px] text-shTextMuted mt-2 flex flex-wrap items-center gap-x-2 gap-y-1">
+            <p className="text-[14px] text-shTextMuted mt-2 flex flex-wrap items-center gap-x-2 gap-y-1">
               {m.timeLabel && <span><i className="fas fa-stopwatch mr-1 opacity-70" />{m.timeLabel}</span>}
               {m.dayLabel && <span><i className="fas fa-calendar-days mr-1 opacity-70" />{m.dayLabel}</span>}
               {m.dueLabel && <span className={m.overdue ? "text-shAccent font-black" : ""}>{m.dueLabel}</span>}
@@ -105,7 +105,7 @@ export function PracticeAssignmentCard({ hw, state = "open", onOpen, testid }) {
           {/* Trainer context only when a trainer actually wrote something for
               this client — never a generic filler line. */}
           {m.trainerNote && (
-            <p className="mt-2.5 rounded-xl border border-shSecondary/25 bg-shSecondary/[0.05] px-3 py-2 text-[12px] text-shText leading-relaxed"
+            <p className="mt-2.5 rounded-xl border border-shSecondary/25 bg-shSecondary/[0.05] px-3 py-2 text-[15px] text-shText leading-relaxed"
                data-testid={testid ? `${testid}-trainer-note` : undefined}>
               <i className="fas fa-comment-dots text-shSecondary mr-1.5" />{m.trainerNote}
             </p>
@@ -115,10 +115,10 @@ export function PracticeAssignmentCard({ hw, state = "open", onOpen, testid }) {
 
       {state !== "completed" && onOpen && (
         <button type="button" onClick={() => onOpen(hw)} data-testid={testid ? `${testid}-start` : `practice-start-${hw.id}`}
-                className={`mt-3 w-full min-h-[48px] rounded-xl font-black text-[13.5px] inline-flex items-center justify-center gap-2 transition ${
+                className={`mt-3 w-full min-h-[48px] rounded-xl font-black text-[16px] inline-flex items-center justify-center gap-2 transition ${
                   primary ? "bg-shPrimary text-[#071018] hover:brightness-110"
                           : "border border-shBorder text-shText hover:bg-white/[0.03]"}`}>
-          <i className="fas fa-play text-[10px]" />Start practice
+          <i className="fas fa-play text-[13px]" />Start practice
         </button>
       )}
     </article>
@@ -131,7 +131,7 @@ export function PracticeGroup({ title, hint, items, state, onOpen, testid }) {
     <section data-testid={testid} className="space-y-2.5">
       <div>
         <Eyebrow>{title}</Eyebrow>
-        {hint && <p className="text-[12px] text-shTextMuted mt-0.5">{hint}</p>}
+        {hint && <p className="text-[15px] text-shTextMuted mt-0.5">{hint}</p>}
       </div>
       {items.map(hw => (
         <PracticeAssignmentCard key={hw.id} hw={hw} state={state} onOpen={onOpen} />

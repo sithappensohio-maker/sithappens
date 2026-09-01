@@ -32,7 +32,7 @@ export default function SchoolNav({ active, onNavigate }) {
               type="button"
               onClick={() => onNavigate(it.view)}
               aria-current={on ? "page" : undefined}
-              className={`flex items-center gap-3 px-3 py-2.5 rounded-lg text-[14px] font-semibold transition text-left ${on ? "bg-shPrimary/12 text-shText" : "text-shTextMuted hover:text-shText hover:bg-shBorder/30"}`}
+              className={`flex items-center gap-3 px-3 py-2.5 rounded-lg text-[17px] font-semibold transition text-left ${on ? "bg-shPrimary/12 text-shText" : "text-shTextMuted hover:text-shText hover:bg-shBorder/30"}`}
               style={on ? { borderLeft: "3px solid rgb(140,198,63)" } : { borderLeft: "3px solid transparent" }}
               data-testid={`school-nav-${it.view}`}
             >
@@ -61,8 +61,8 @@ export default function SchoolNav({ active, onNavigate }) {
               className={`flex-1 min-w-0 flex flex-col items-center justify-center gap-1 py-2.5 min-h-[56px] ${on ? "text-shPrimary" : "text-shTextMuted"}`}
               data-testid={`school-nav-m-${it.view}`}
             >
-              <i className={`fas ${it.icon} text-[16px]`} />
-              <span className="text-[10px] font-bold uppercase tracking-wide truncate max-w-full">{it.label}</span>
+              <i className={`fas ${it.icon} text-[19px]`} />
+              <span className="text-[13px] font-bold uppercase tracking-wide truncate max-w-full">{it.label}</span>
             </button>
           );
         })}

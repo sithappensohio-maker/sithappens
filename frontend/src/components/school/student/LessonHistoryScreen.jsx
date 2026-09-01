@@ -37,7 +37,7 @@ function ScorePips({ score }) {
       {[1, 2, 3, 4, 5].map((n) => (
         <i key={n} className={`fas fa-circle text-[6px] ${n <= score ? "text-shPrimary" : "text-shBorder"}`} />
       ))}
-      <span className="text-[11px] font-black text-shText ml-1">{score}/5</span>
+      <span className="text-[14px] font-black text-shText ml-1">{score}/5</span>
     </span>
   );
 }
@@ -64,8 +64,8 @@ export default function LessonHistoryScreen({ enrollmentId, dogName }) {
   }, [enrollmentId]);
   useEffect(() => { if (enrollmentId) load(); }, [enrollmentId, load]);
 
-  if (err) return <p className="text-shDanger text-[13px] font-bold p-4" data-testid="lesson-history-error">{err}</p>;
-  if (!data) return <p className="text-shTextMuted text-sm py-6 text-center"><i className="fas fa-spinner fa-spin mr-2" />Loading…</p>;
+  if (err) return <p className="text-shDanger text-[16px] font-bold p-4" data-testid="lesson-history-error">{err}</p>;
+  if (!data) return <p className="text-shTextMuted text-[17px] py-6 text-center"><i className="fas fa-spinner fa-spin mr-2" />Loading…</p>;
 
   const { progress = {}, lessons = [] } = data;
   // Match on the lesson the checkpoint was graded against — the same key the
@@ -77,16 +77,16 @@ export default function LessonHistoryScreen({ enrollmentId, dogName }) {
   return (
     <div className="space-y-4" data-testid="lesson-history-screen">
       <SectionCard accent="cyan" intensity="subtle">
-        <p className="text-[9px] font-black uppercase tracking-[0.14em] text-shSecondary">Training history</p>
-        <h2 className="text-[18px] font-black text-shText mt-1">{data.program_name || "School Program"}</h2>
-        <p className="text-[12px] text-shTextMuted mt-1">
+        <p className="text-[11px] font-black uppercase tracking-[0.14em] text-shSecondary">Training history</p>
+        <h2 className="text-[21px] font-black text-shText mt-1">{data.program_name || "School Program"}</h2>
+        <p className="text-[15px] text-shTextMuted mt-1">
           {dogName ? `${dogName} · ` : ""}{lessons.length} lesson{lessons.length === 1 ? "" : "s"} recorded
         </p>
         <div className="mt-3 flex items-center gap-3" data-testid="lesson-history-progress">
           <div className="flex-1 h-2 rounded-full bg-black/30 overflow-hidden">
             <div className="h-full bg-shPrimary rounded-full" style={{ width: `${progress.mastered_pct || 0}%` }} />
           </div>
-          <span className="text-[12px] font-black text-shText shrink-0">
+          <span className="text-[15px] font-black text-shText shrink-0">
             {progress.mastered_goals || 0}/{progress.total_goals || 0} skills mastered
           </span>
         </div>
@@ -102,8 +102,8 @@ export default function LessonHistoryScreen({ enrollmentId, dogName }) {
                     data-testid={`lesson-history-item-${l.session_id}`}>
             <div className="flex items-start justify-between gap-3 flex-wrap">
               <div className="min-w-0">
-                <p className="text-[15px] font-black text-shText">{l.lesson_name || "Training Session"}</p>
-                <p className="text-[11.5px] text-shTextMuted mt-0.5">
+                <p className="text-[18px] font-black text-shText">{l.lesson_name || "Training Session"}</p>
+                <p className="text-[14px] text-shTextMuted mt-0.5">
                   {l.module_name ? `${l.module_name} · ` : ""}
                   {l.date ? new Date(l.date).toLocaleDateString() : ""}
                   {l.trainer_name ? ` · with ${l.trainer_name}` : ""}
@@ -116,17 +116,17 @@ export default function LessonHistoryScreen({ enrollmentId, dogName }) {
                 {l.skills.map((s) => (
                   <div key={s.skill_id || s.name} className="rounded-xl border border-shBorder/50 bg-black/10 p-2.5">
                     <div className="flex items-center justify-between gap-2 flex-wrap">
-                      <p className="text-[13px] font-black text-shText">{s.name}</p>
+                      <p className="text-[16px] font-black text-shText">{s.name}</p>
                       <div className="flex items-center gap-2">
                         <ScorePips score={s.score} />
                         {s.assessment && (
-                          <span className={`text-[9px] font-black uppercase tracking-widest px-2 py-0.5 rounded-full border ${ASSESSMENT_TONES[s.assessment] || "text-shTextMuted border-shBorder"}`}>
+                          <span className={`text-[11px] font-black uppercase tracking-widest px-2 py-0.5 rounded-full border ${ASSESSMENT_TONES[s.assessment] || "text-shTextMuted border-shBorder"}`}>
                             {ASSESSMENT_LABELS[s.assessment] || s.assessment}
                           </span>
                         )}
                       </div>
                     </div>
-                    {s.observation && <p className="text-[12.5px] text-shTextMuted mt-1.5 leading-relaxed">{s.observation}</p>}
+                    {s.observation && <p className="text-[15px] text-shTextMuted mt-1.5 leading-relaxed">{s.observation}</p>}
                   </div>
                 ))}
               </div>
@@ -134,20 +134,20 @@ export default function LessonHistoryScreen({ enrollmentId, dogName }) {
 
             {l.what_went_well && (
               <div className="mt-3">
-                <p className="text-[9px] font-black uppercase tracking-[0.14em] text-shPrimary"><i className="fas fa-thumbs-up mr-1" />What went well</p>
-                <p className="text-[13px] text-shText mt-1 leading-relaxed">{l.what_went_well}</p>
+                <p className="text-[11px] font-black uppercase tracking-[0.14em] text-shPrimary"><i className="fas fa-thumbs-up mr-1" />What went well</p>
+                <p className="text-[16px] text-shText mt-1 leading-relaxed">{l.what_went_well}</p>
               </div>
             )}
             {l.needs_work && (
               <div className="mt-3">
-                <p className="text-[9px] font-black uppercase tracking-[0.14em] text-shAccent"><i className="fas fa-triangle-exclamation mr-1" />Needs work</p>
-                <p className="text-[13px] text-shText mt-1 leading-relaxed">{l.needs_work}</p>
+                <p className="text-[11px] font-black uppercase tracking-[0.14em] text-shAccent"><i className="fas fa-triangle-exclamation mr-1" />Needs work</p>
+                <p className="text-[16px] text-shText mt-1 leading-relaxed">{l.needs_work}</p>
               </div>
             )}
             {l.trainer_feedback && (
               <div className="mt-3 rounded-xl border border-shSecondary/25 bg-shSecondary/[0.05] p-3">
-                <p className="text-[9px] font-black uppercase tracking-[0.14em] text-shSecondary"><i className="fas fa-comment-dots mr-1" />From your trainer</p>
-                <p className="text-[13px] text-shText mt-1 leading-relaxed">{l.trainer_feedback}</p>
+                <p className="text-[11px] font-black uppercase tracking-[0.14em] text-shSecondary"><i className="fas fa-comment-dots mr-1" />From your trainer</p>
+                <p className="text-[16px] text-shText mt-1 leading-relaxed">{l.trainer_feedback}</p>
               </div>
             )}
             {/* Checkpoint result, read from the canonical checkpoint record. */}
@@ -156,7 +156,7 @@ export default function LessonHistoryScreen({ enrollmentId, dogName }) {
               if (!cp) return null;
               return (
                 <div className="mt-3 rounded-xl border border-shPrimary/30 bg-shPrimary/[0.05] p-3" data-testid={`lesson-history-checkpoint-${l.session_id}`}>
-                  <p className="text-[9px] font-black uppercase tracking-[0.14em] text-shPrimary">
+                  <p className="text-[11px] font-black uppercase tracking-[0.14em] text-shPrimary">
                     <i className="fas fa-clipboard-check mr-1" />Checkpoint
                     {cp.outcome ? ` · ${String(cp.outcome).replace(/_/g, " ")}` : ""}
                   </p>
@@ -167,17 +167,17 @@ export default function LessonHistoryScreen({ enrollmentId, dogName }) {
 
             {l.next_lesson_focus && (
               <div className="mt-3">
-                <p className="text-[9px] font-black uppercase tracking-[0.14em] text-shSecondary"><i className="fas fa-arrow-right mr-1" />Focus for next lesson</p>
-                <p className="text-[13px] text-shText mt-1 leading-relaxed">{l.next_lesson_focus}</p>
+                <p className="text-[11px] font-black uppercase tracking-[0.14em] text-shSecondary"><i className="fas fa-arrow-right mr-1" />Focus for next lesson</p>
+                <p className="text-[16px] text-shText mt-1 leading-relaxed">{l.next_lesson_focus}</p>
               </div>
             )}
 
             {l.practice_assigned?.length > 0 && (
               <div className="mt-3">
-                <p className="text-[9px] font-black uppercase tracking-[0.14em] text-shSecondary"><i className="fas fa-paw mr-1" />Practice before next lesson</p>
+                <p className="text-[11px] font-black uppercase tracking-[0.14em] text-shSecondary"><i className="fas fa-paw mr-1" />Practice before next lesson</p>
                 <ul className="mt-1 space-y-0.5">
                   {l.practice_assigned.map((t, i) => (
-                    <li key={i} className="text-[13px] text-shText"><i className="fas fa-circle text-[5px] mr-2 align-middle text-shSecondary" />{t}</li>
+                    <li key={i} className="text-[16px] text-shText"><i className="fas fa-circle text-[5px] mr-2 align-middle text-shSecondary" />{t}</li>
                   ))}
                 </ul>
               </div>

@@ -24,10 +24,10 @@ export default function EnrollmentSelector({ enrollments = [], selectedId, onSel
           <HuskyDogImage src={selected.dog_photo} name={selected.dog_name} className="w-full h-full object-cover" />
         </span>
         <span className="min-w-0 flex-1">
-          <span className="block text-shText text-[14px] font-bold truncate">{selected.dog_name}</span>
-          <span className="block text-[12px] text-shTextMuted truncate">{selected.program_name} · {deliveryLabel(selected.delivery_mode)}</span>
+          <span className="block text-shText text-[17px] font-bold truncate">{selected.dog_name}</span>
+          <span className="block text-[15px] text-shTextMuted truncate">{selected.program_name} · {deliveryLabel(selected.delivery_mode)}</span>
         </span>
-        <i className={`fas fa-chevron-${open ? "up" : "down"} text-shTextMuted text-xs`} />
+        <i className={`fas fa-chevron-${open ? "up" : "down"} text-shTextMuted text-[15px]`} />
       </button>
 
       {open && (
@@ -51,10 +51,10 @@ export default function EnrollmentSelector({ enrollments = [], selectedId, onSel
                       <HuskyDogImage src={e.dog_photo} name={e.dog_name} className="w-full h-full object-cover" />
                     </span>
                     <span className="min-w-0 flex-1">
-                      <span className="block text-shText text-[13px] font-bold truncate">{e.dog_name}</span>
-                      <span className="block text-[11px] text-shTextMuted truncate">{e.program_name} · {deliveryLabel(e.delivery_mode)}</span>
+                      <span className="block text-shText text-[16px] font-bold truncate">{e.dog_name}</span>
+                      <span className="block text-[14px] text-shTextMuted truncate">{e.program_name} · {deliveryLabel(e.delivery_mode)}</span>
                     </span>
-                    {active && <i className="fas fa-check text-shPrimary text-xs" />}
+                    {active && <i className="fas fa-check text-shPrimary text-[15px]" />}
                   </button>
                 </li>
               );

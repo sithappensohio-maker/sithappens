@@ -90,21 +90,21 @@ export default function SchoolExperienceFeedbackCard({ enrollmentId, source = "f
     <section className={`rounded-2xl border ${completionPrompt ? "border-shPrimary/35 bg-shPrimary/[0.045]" : "border-shSecondary/30 bg-shSecondary/[0.035]"} p-4 sm:p-5`} data-testid="school-experience-feedback">
       <div className="flex items-start justify-between gap-3 flex-wrap">
         <div className="min-w-0">
-          <p className={`text-[10px] font-black uppercase tracking-[0.22em] ${completionPrompt ? "text-shPrimary" : "text-shSecondary"}`}>
+          <p className={`text-[13px] font-black uppercase tracking-[0.22em] ${completionPrompt ? "text-shPrimary" : "text-shSecondary"}`}>
             {completionPrompt ? "You did it — one last thing" : "Your School experience"}
           </p>
           <h2 className="text-xl sm:text-2xl font-black text-shText mt-1">
             {completionPrompt ? "How was your experience with this course?" : "How’s Online School going?"}
           </h2>
-          <p className="text-[12.5px] text-shTextMuted mt-1 max-w-2xl">
+          <p className="text-[15px] text-shTextMuted mt-1 max-w-2xl">
             {saved
               ? "You can update this anytime. Your latest answers help us improve the course."
               : "Your feedback helps us make Sit Happens Online School clearer, easier, and more useful for the next dog-and-human team."}
           </p>
-          {course?.program_name && <p className="text-[11px] text-shTextMuted mt-1"><i className="fas fa-graduation-cap mr-1.5"/>{course.program_name}{course.dog_name ? ` · ${course.dog_name}` : ""}</p>}
+          {course?.program_name && <p className="text-[14px] text-shTextMuted mt-1"><i className="fas fa-graduation-cap mr-1.5"/>{course.program_name}{course.dog_name ? ` · ${course.dog_name}` : ""}</p>}
         </div>
         {completionPrompt && !expanded && (
-          <button type="button" onClick={() => setExpanded(true)} className="min-h-[44px] px-4 rounded-xl bg-shPrimary text-bgHeader text-[11px] font-black uppercase tracking-widest" data-testid="school-experience-open">
+          <button type="button" onClick={() => setExpanded(true)} className="min-h-[44px] px-4 rounded-xl bg-shPrimary text-bgHeader text-[14px] font-black uppercase tracking-widest" data-testid="school-experience-open">
             <i className="fas fa-star mr-1.5"/>{saved ? "Update review" : "Rate this course"}
           </button>
         )}
@@ -113,7 +113,7 @@ export default function SchoolExperienceFeedbackCard({ enrollmentId, source = "f
       {expanded && (
         <div className="mt-5 space-y-5" data-testid="school-experience-form">
           <div>
-            <p className="text-[11px] font-black text-shText">Overall experience</p>
+            <p className="text-[14px] font-black text-shText">Overall experience</p>
             <div className="flex gap-1 mt-2" role="radiogroup" aria-label="Overall experience">
               {[1,2,3,4,5].map((n) => (
                 <button key={n} type="button" onClick={() => setForm((f) => ({ ...f, overall_rating: n }))}
@@ -139,17 +139,17 @@ export default function SchoolExperienceFeedbackCard({ enrollmentId, source = "f
 
           <label className="flex items-start gap-3 rounded-xl border border-shBorder bg-black/10 p-3 cursor-pointer">
             <input type="checkbox" checked={form.testimonial_permission} onChange={(e) => setForm((f) => ({ ...f, testimonial_permission: e.target.checked }))} className="mt-1" data-testid="school-experience-testimonial"/>
-            <span className="text-[12px] text-shTextMuted"><strong className="text-shText">Sit Happens may use my comments as a testimonial.</strong><br/>Leave this unchecked if you want your comments used only as private School feedback.</span>
+            <span className="text-[15px] text-shTextMuted"><strong className="text-shText">Sit Happens may use my comments as a testimonial.</strong><br/>Leave this unchecked if you want your comments used only as private School feedback.</span>
           </label>
 
           <div className="flex items-center gap-3 flex-wrap">
             <button type="button" onClick={submit} disabled={!valid || busy || !loaded}
-                    className="min-h-[46px] px-5 rounded-xl bg-shPrimary text-bgHeader text-[11px] font-black uppercase tracking-widest disabled:opacity-40"
+                    className="min-h-[46px] px-5 rounded-xl bg-shPrimary text-bgHeader text-[14px] font-black uppercase tracking-widest disabled:opacity-40"
                     data-testid="school-experience-submit">
               <i className="fas fa-paper-plane mr-1.5"/>{busy ? "Saving…" : saved ? "Update feedback" : "Send feedback"}
             </button>
-            {saved && <span className="text-[11px] font-bold text-shPrimary"><i className="fas fa-circle-check mr-1"/>Feedback saved</span>}
-            {completionPrompt && <button type="button" onClick={() => setExpanded(false)} className="min-h-[44px] px-2 text-[11px] font-black uppercase tracking-widest text-shTextMuted">Close</button>}
+            {saved && <span className="text-[14px] font-bold text-shPrimary"><i className="fas fa-circle-check mr-1"/>Feedback saved</span>}
+            {completionPrompt && <button type="button" onClick={() => setExpanded(false)} className="min-h-[44px] px-2 text-[14px] font-black uppercase tracking-widest text-shTextMuted">Close</button>}
           </div>
         </div>
       )}
@@ -158,9 +158,9 @@ export default function SchoolExperienceFeedbackCard({ enrollmentId, source = "f
 }
 
 function ChoiceGroup({ title, options, value, onChange }) {
-  return <div><p className="text-[11px] font-black text-shText">{title}</p><div className="flex flex-wrap gap-2 mt-2">{options.map(([key,label]) => <button key={key} type="button" onClick={() => onChange(key)} aria-pressed={value === key} className={`min-h-[40px] px-3 rounded-xl border text-[11px] font-bold transition ${value === key ? "border-shPrimary/45 bg-shPrimary/10 text-shPrimary" : "border-shBorder bg-black/10 text-shTextMuted hover:text-shText"}`}>{label}</button>)}</div></div>;
+  return <div><p className="text-[14px] font-black text-shText">{title}</p><div className="flex flex-wrap gap-2 mt-2">{options.map(([key,label]) => <button key={key} type="button" onClick={() => onChange(key)} aria-pressed={value === key} className={`min-h-[40px] px-3 rounded-xl border text-[14px] font-bold transition ${value === key ? "border-shPrimary/45 bg-shPrimary/10 text-shPrimary" : "border-shBorder bg-black/10 text-shTextMuted hover:text-shText"}`}>{label}</button>)}</div></div>;
 }
 
 function TextArea({ label, value, onChange, placeholder }) {
-  return <label className="block"><span className="text-[11px] font-black text-shText">{label}</span><textarea value={value} onChange={(e) => onChange(e.target.value)} maxLength={5000} rows={4} placeholder={placeholder} className="mt-2 w-full rounded-xl border border-shBorder bg-black/15 p-3 text-[12px] text-shText placeholder:text-shTextMuted/60 resize-y"/></label>;
+  return <label className="block"><span className="text-[14px] font-black text-shText">{label}</span><textarea value={value} onChange={(e) => onChange(e.target.value)} maxLength={5000} rows={4} placeholder={placeholder} className="mt-2 w-full rounded-xl border border-shBorder bg-black/15 p-3 text-[15px] text-shText placeholder:text-shTextMuted/60 resize-y"/></label>;
 }

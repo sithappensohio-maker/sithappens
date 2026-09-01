@@ -34,9 +34,9 @@ function TrailNode({ position, status, hue }) {
       : { background: "var(--bg-base, #060c2e)", borderColor: `${hue.main}b0`, color: hue.main };
   return (
     <span aria-hidden="true"
-          className="sh-display absolute -left-9 top-4 w-[34px] h-[34px] -translate-x-1/2 ml-4 rounded-full grid place-items-center text-[12.5px] border-[2.5px] z-[2]"
+          className="sh-display absolute -left-9 top-4 w-[34px] h-[34px] -translate-x-1/2 ml-4 rounded-full grid place-items-center text-[15px] border-[2.5px] z-[2]"
           style={style}>
-      {isDone ? <i className="fas fa-check text-[12px]" /> : String(position).padStart(2, "0")}
+      {isDone ? <i className="fas fa-check text-[15px]" /> : String(position).padStart(2, "0")}
     </span>
   );
 }
@@ -49,7 +49,7 @@ function GraduationStop({ completed, dogName }) {
             style={{ borderColor: GOLD.main, color: completed ? "#3a2e00" : GOLD.main,
                      background: completed ? `linear-gradient(135deg, ${GOLD.grad[0]}, ${GOLD.grad[1]})` : "rgba(242,201,76,.08)",
                      boxShadow: "0 0 20px rgba(242,201,76,.3)" }}>
-        <i className="fas fa-graduation-cap text-[13px]" />
+        <i className="fas fa-graduation-cap text-[16px]" />
       </span>
       <div className={`rounded-2xl p-4 flex items-center gap-3 ${completed ? "" : "border border-dashed"}`}
            style={{ borderColor: "rgba(242,201,76,.5)",
@@ -58,13 +58,13 @@ function GraduationStop({ completed, dogName }) {
            data-testid="course-graduation-stop">
         <span className="w-11 h-11 rounded-xl grid place-items-center shrink-0 text-[#3a2e00] shadow-[inset_0_1px_0_rgba(255,255,255,.3)]"
               style={{ background: `linear-gradient(135deg, ${GOLD.grad[0]}, ${GOLD.grad[1]})` }}>
-          <i className="fas fa-trophy text-[16px]" />
+          <i className="fas fa-trophy text-[19px]" />
         </span>
         <span className="min-w-0">
-          <span className="block text-[14px] font-black" style={{ color: "#ffe9ad" }}>
+          <span className="block text-[17px] font-black" style={{ color: "#ffe9ad" }}>
             {completed ? "Graduated!" : "Graduation"}
           </span>
-          <span className="block text-[11px] text-shTextMuted mt-0.5 leading-relaxed" data-testid={completed ? "course-completed-banner" : undefined}>
+          <span className="block text-[14px] text-shTextMuted mt-0.5 leading-relaxed" data-testid={completed ? "course-completed-banner" : undefined}>
             {completed
               ? "Course complete — every lesson above stays open for review."
               : `Certificate, trainer sign-off, and what to train next${dogName ? ` with ${dogName}` : ""}.`}
@@ -130,11 +130,11 @@ export default function CourseRoadmap({ detail, progress, loading, onOpenLesson,
              data-testid="course-open-access-banner">
           <span className="w-9 h-9 rounded-xl grid place-items-center shrink-0 text-[#04101a] shadow-[0_8px_18px_-6px_rgba(0,169,224,.7)]"
                 style={{ background: "linear-gradient(135deg,#25b9ec,#00a9e0)" }}>
-            <i className="fas fa-lock-open text-[13px]" />
+            <i className="fas fa-lock-open text-[16px]" />
           </span>
           <span className="min-w-0">
-            <span className="block text-[12.5px] font-black text-shText">Open lesson access is on</span>
-            <span className="block text-[11px] text-shTextMuted mt-0.5 leading-relaxed">Every lesson is unlocked — take them in any order. Today still shows our recommended next step.</span>
+            <span className="block text-[15px] font-black text-shText">Open lesson access is on</span>
+            <span className="block text-[14px] text-shTextMuted mt-0.5 leading-relaxed">Every lesson is unlocked — take them in any order. Today still shows our recommended next step.</span>
           </span>
         </div>
       )}
@@ -161,7 +161,7 @@ export default function CourseRoadmap({ detail, progress, loading, onOpenLesson,
                   <span aria-hidden="true"
                         className="absolute -left-9 top-4 w-[34px] h-[34px] -translate-x-1/2 ml-4 rounded-full grid place-items-center z-[2] border-[2.5px] border-dashed border-shBorder text-shTextMuted"
                         style={{ background: "var(--bg-base, #060c2e)" }}>
-                    <i className="fas fa-lock text-[11px]" />
+                    <i className="fas fa-lock text-[14px]" />
                   </span>
                   <LockedModuleRun modules={item.modules} />
                 </div>
@@ -184,7 +184,7 @@ export default function CourseRoadmap({ detail, progress, loading, onOpenLesson,
                 {chip && (
                   /* The quiz milestone, stamped at the module's exit on the
                      spine — same server-derived chip vocabulary as before. */
-                  <span className={`absolute -left-9 -bottom-2.5 -translate-x-1/2 ml-4 z-[2] text-[8px] font-black uppercase tracking-[0.08em] rounded-md px-1.5 py-0.5 -rotate-3 shadow-lg ${QUIZ_CHIP_CLS[chip.tone] || QUIZ_CHIP_CLS.locked}`}
+                  <span className={`absolute -left-9 -bottom-2.5 -translate-x-1/2 ml-4 z-[2] text-[10px] font-black uppercase tracking-[0.08em] rounded-md px-1.5 py-0.5 -rotate-3 shadow-lg ${QUIZ_CHIP_CLS[chip.tone] || QUIZ_CHIP_CLS.locked}`}
                         style={chip.tone === "locked"
                           ? { background: "rgba(255,255,255,.08)", border: "1px solid rgba(96,128,196,.3)" }
                           : { background: `linear-gradient(135deg, ${GOLD.grad[0]}, ${GOLD.grad[1]})` }}

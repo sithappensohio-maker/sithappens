@@ -53,15 +53,15 @@ export function LessonHowItWorks({ hasPractice, testid = "lesson-how-it-works" }
   const chain = hasPractice ? ["Read", "Do", "Practice", "Next"] : ["Read", "Do", "Finish", "Next"];
   return (
     <section className="rounded-2xl border border-shSecondary/25 bg-shSecondary/[0.05] p-4 sm:p-5" data-testid={testid}>
-      <h2 className="text-[13px] font-black uppercase tracking-[0.16em] text-shSecondary">You do not have to figure this lesson out</h2>
-      <p className="mt-2 flex flex-wrap items-center gap-x-2 gap-y-1 text-[17px] sm:text-[18px] font-black text-shText">
+      <h2 className="text-[16px] font-black uppercase tracking-[0.16em] text-shSecondary">You do not have to figure this lesson out</h2>
+      <p className="mt-2 flex flex-wrap items-center gap-x-2 gap-y-1 text-[20px] sm:text-[21px] font-black text-shText">
         {chain.map((word, i) => (
           <span key={word} className="inline-flex items-center gap-2">
-            {word}{i < chain.length - 1 && <i className="fas fa-arrow-right text-[11px] text-shSecondary" aria-hidden="true" />}
+            {word}{i < chain.length - 1 && <i className="fas fa-arrow-right text-[14px] text-shSecondary" aria-hidden="true" />}
           </span>
         ))}
       </p>
-      <p className="mt-2 text-[15px] sm:text-[16px] text-shTextMuted leading-relaxed">
+      <p className="mt-2 text-[18px] sm:text-[19px] text-shTextMuted leading-relaxed">
         Open the current part, do exactly what it says, then use the big button at the bottom. School saves your place and chooses the next part for you. Finished parts stay available if you want to read them again.
       </p>
     </section>
@@ -71,13 +71,13 @@ export function LessonHowItWorks({ hasPractice, testid = "lesson-how-it-works" }
 export function PracticeUnlockedCard({ dogName, onStartPractice, busy, testid = "lesson-practice-unlocked" }) {
   return (
     <section className="rounded-2xl border border-shPrimary/45 bg-shPrimary/[0.07] p-5 sm:p-6" data-testid={testid}>
-      <p className="text-[13px] font-black uppercase tracking-[0.16em] text-shPrimary"><i className="fas fa-lock-open mr-2" aria-hidden="true" />You&apos;re ready to practice</p>
+      <p className="text-[16px] font-black uppercase tracking-[0.16em] text-shPrimary"><i className="fas fa-lock-open mr-2" aria-hidden="true" />You&apos;re ready to practice</p>
       <h3 className="text-[22px] sm:text-[26px] font-black text-shText mt-1.5 leading-tight">Now get {dogName || "your dog"} and do the exercise.</h3>
-      <p className="text-[16px] sm:text-[17px] text-shTextMuted mt-2 leading-relaxed">
+      <p className="text-[19px] sm:text-[20px] text-shTextMuted mt-2 leading-relaxed">
         Get the supplies from this lesson and tap Start Practice. Practice will tell you what to work on; you do not need to invent a training session or guess what comes next.
       </p>
       <button type="button" onClick={onStartPractice} disabled={busy} data-testid={`${testid}-cta`}
-              className="mt-4 w-full min-h-[56px] rounded-xl bg-shPrimary text-bgHeader text-[15px] font-black uppercase tracking-widest disabled:opacity-50 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-shPrimary focus-visible:ring-offset-2 focus-visible:ring-offset-bgBase">
+              className="mt-4 w-full min-h-[56px] rounded-xl bg-shPrimary text-bgHeader text-[18px] font-black uppercase tracking-widest disabled:opacity-50 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-shPrimary focus-visible:ring-offset-2 focus-visible:ring-offset-bgBase">
         <i className="fas fa-paw mr-2" aria-hidden="true" />Start Practice
       </button>
     </section>
@@ -127,33 +127,33 @@ function FreshLessonStart({ lesson, sections, hasPractice, onStart }) {
   return (
     <div className="fixed inset-0 z-[75] bg-black/85 backdrop-blur-sm p-3 sm:p-6 grid place-items-center" role="dialog" aria-modal="true" aria-labelledby="fresh-lesson-title" data-testid="fresh-lesson-start">
       <section className="w-full max-w-2xl max-h-[92vh] overflow-y-auto rounded-3xl border border-shPrimary/40 bg-[var(--sh-card-base)] shadow-2xl p-5 sm:p-8">
-        <p className="text-[10px] font-black uppercase tracking-[0.2em] text-shPrimary">New lesson · Start here</p>
+        <p className="text-[13px] font-black uppercase tracking-[0.2em] text-shPrimary">New lesson · Start here</p>
         <h1 id="fresh-lesson-title" className="text-[27px] sm:text-[36px] font-black text-shText mt-1 leading-tight text-balance">{lesson?.name || "Your next lesson"}</h1>
-        <p className="text-[15px] sm:text-[17px] text-shTextMuted mt-3 leading-relaxed">
+        <p className="text-[18px] sm:text-[20px] text-shTextMuted mt-3 leading-relaxed">
           You have not started this lesson yet. When you tap the button below, School will open Part 1 and guide you one part at a time.
         </p>
         <div className="grid gap-2 sm:grid-cols-3 mt-5">
           <div className="rounded-2xl border border-shBorder/55 bg-black/15 p-4">
-            <p className="text-[9px] font-black uppercase tracking-widest text-shSecondary">Lesson journey</p>
-            <p className="text-[18px] font-black text-shText mt-1">{sections.length} part{sections.length === 1 ? "" : "s"}</p>
-            <p className="text-[11.5px] text-shTextMuted mt-1">School opens them in the right order.</p>
+            <p className="text-[11px] font-black uppercase tracking-widest text-shSecondary">Lesson journey</p>
+            <p className="text-[21px] font-black text-shText mt-1">{sections.length} part{sections.length === 1 ? "" : "s"}</p>
+            <p className="text-[14px] text-shTextMuted mt-1">School opens them in the right order.</p>
           </div>
           <div className="rounded-2xl border border-shBorder/55 bg-black/15 p-4">
-            <p className="text-[9px] font-black uppercase tracking-widest text-shSecondary">Your job</p>
-            <p className="text-[18px] font-black text-shText mt-1">One thing at a time</p>
-            <p className="text-[11.5px] text-shTextMuted mt-1">Read it, do it, then use the big Next button.</p>
+            <p className="text-[11px] font-black uppercase tracking-widest text-shSecondary">Your job</p>
+            <p className="text-[21px] font-black text-shText mt-1">One thing at a time</p>
+            <p className="text-[14px] text-shTextMuted mt-1">Read it, do it, then use the big Next button.</p>
           </div>
           <div className="rounded-2xl border border-shBorder/55 bg-black/15 p-4">
-            <p className="text-[9px] font-black uppercase tracking-widest text-shSecondary">What happens later</p>
-            <p className="text-[18px] font-black text-shText mt-1">{hasPractice ? "Guided Practice" : "Finish & continue"}</p>
-            <p className="text-[11.5px] text-shTextMuted mt-1">{minutes ? `Plan on about ${minutes} minutes for the lesson.` : "School will tell you when you are finished."}</p>
+            <p className="text-[11px] font-black uppercase tracking-widest text-shSecondary">What happens later</p>
+            <p className="text-[21px] font-black text-shText mt-1">{hasPractice ? "Guided Practice" : "Finish & continue"}</p>
+            <p className="text-[14px] text-shTextMuted mt-1">{minutes ? `Plan on about ${minutes} minutes for the lesson.` : "School will tell you when you are finished."}</p>
           </div>
         </div>
         <button type="button" onClick={onStart} autoFocus data-testid="fresh-lesson-start-button"
-                className="mt-6 w-full min-h-[60px] rounded-xl bg-shPrimary text-bgHeader text-[15px] sm:text-[16px] font-black uppercase tracking-widest hover:brightness-110 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-shPrimary focus-visible:ring-offset-2 focus-visible:ring-offset-bgBase">
+                className="mt-6 w-full min-h-[60px] rounded-xl bg-shPrimary text-bgHeader text-[18px] sm:text-[19px] font-black uppercase tracking-widest hover:brightness-110 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-shPrimary focus-visible:ring-offset-2 focus-visible:ring-offset-bgBase">
           Start Lesson — Show Me Part 1 <i className="fas fa-arrow-right ml-1.5" aria-hidden="true" />
         </button>
-        <p className="text-[11.5px] text-shTextMuted text-center mt-2">Starting does not lock anything. You can leave and come back, and finished lessons stay available forever.</p>
+        <p className="text-[14px] text-shTextMuted text-center mt-2">Starting does not lock anything. You can leave and come back, and finished lessons stay available forever.</p>
       </section>
     </div>
   );
@@ -181,16 +181,16 @@ export function LessonSectionBody(props) {
     <div className="space-y-3" data-testid={`${testid}-guided-${section.key}`}>
       {coach && (
         <div className="rounded-xl border border-shPrimary/30 bg-shPrimary/[0.07] p-4" data-testid={`${testid}-coach-${section.key}`}>
-          <p className="text-[11px] font-black uppercase tracking-[0.16em] text-shPrimary">{coach.title}</p>
-          <p className="text-[16px] sm:text-[17px] text-shText mt-1.5 leading-relaxed">{coach.body}</p>
+          <p className="text-[14px] font-black uppercase tracking-[0.16em] text-shPrimary">{coach.title}</p>
+          <p className="text-[19px] sm:text-[20px] text-shText mt-1.5 leading-relaxed">{coach.body}</p>
         </div>
       )}
       <BaseLessonSectionBody {...props} sections={sections} onComplete={null} testid={testid} />
       {instructional && onComplete && !completed && (
         <button type="button" onClick={finishAndRevealNext} disabled={busy}
                 data-testid={`${testid}-continue-${section.key}`}
-                className="w-full min-h-[56px] rounded-xl bg-shPrimary text-bgHeader text-[15px] font-black uppercase tracking-widest disabled:opacity-50 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-shPrimary focus-visible:ring-offset-2 focus-visible:ring-offset-bgBase">
-          {busy ? "Saving…" : <>{coach?.button || "I'M DONE — NEXT"} <i className="fas fa-arrow-right ml-1.5 text-[12px]" aria-hidden="true" /></>}
+                className="w-full min-h-[56px] rounded-xl bg-shPrimary text-bgHeader text-[18px] font-black uppercase tracking-widest disabled:opacity-50 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-shPrimary focus-visible:ring-offset-2 focus-visible:ring-offset-bgBase">
+          {busy ? "Saving…" : <>{coach?.button || "I'M DONE — NEXT"} <i className="fas fa-arrow-right ml-1.5 text-[15px]" aria-hidden="true" /></>}
         </button>
       )}
     </div>
@@ -238,8 +238,8 @@ export default function LessonGuide(props) {
       {fresh && <FreshLessonStart lesson={props.lesson} sections={sections} hasPractice={props.hasPractice} onStart={begin} />}
       <style>{`[data-testid="${baseTestid}"] > div:first-child{display:none!important;}`}</style>
       <div className="flex items-center justify-between gap-3 rounded-xl border border-shSecondary/25 bg-shSecondary/[0.045] px-3.5 py-2.5" data-testid="lesson-journey-position">
-        <span className="text-[10px] font-black uppercase tracking-[0.16em] text-shSecondary">Lesson journey</span>
-        <span className="text-[14px] sm:text-[15px] font-black text-shText">Part {partIndex + 1} of {sections.length}</span>
+        <span className="text-[13px] font-black uppercase tracking-[0.16em] text-shSecondary">Lesson journey</span>
+        <span className="text-[17px] sm:text-[18px] font-black text-shText">Part {partIndex + 1} of {sections.length}</span>
       </div>
       <BaseLessonGuide {...props} sections={sections} onSelectSection={selectAndReveal} />
     </>

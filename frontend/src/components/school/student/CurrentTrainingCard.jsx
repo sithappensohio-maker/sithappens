@@ -25,15 +25,15 @@ export default function CurrentTrainingCard({ home, onPrimary }) {
       style={{ borderColor: `rgba(${rgb},0.35)`, background: `linear-gradient(160deg, rgba(${rgb},0.10), var(--sh-card-base) 60%)` }}
       data-testid="current-training-card"
     >
-      <p className="text-[11px] font-black uppercase tracking-[0.28em]" style={{ color: `rgb(${rgb})` }}>
+      <p className="text-[14px] font-black uppercase tracking-[0.28em]" style={{ color: `rgb(${rgb})` }}>
         <i className={`fas ${meta.icon} mr-1.5`} />
         {caughtUp ? "You're caught up" : `${dog}'s training for today`}
       </p>
 
       {home?.program?.name && (
         <div className="flex flex-wrap items-center gap-2 mt-2">
-          <p className="text-[12px] text-shTextMuted uppercase tracking-widest font-bold truncate">{home.program.name}</p>
-          <span className="text-[9px] font-black uppercase tracking-widest rounded-full border border-shSecondary/25 bg-shSecondary/10 text-shSecondary px-2 py-1" data-testid="school-delivery-mode">
+          <p className="text-[15px] text-shTextMuted uppercase tracking-widest font-bold truncate">{home.program.name}</p>
+          <span className="text-[11px] font-black uppercase tracking-widest rounded-full border border-shSecondary/25 bg-shSecondary/10 text-shSecondary px-2 py-1" data-testid="school-delivery-mode">
             <i className={`fas ${deliveryIcon(home.delivery_mode)} mr-1`} />{deliveryLabel(home.delivery_mode)}
           </span>
         </div>
@@ -41,27 +41,27 @@ export default function CurrentTrainingCard({ home, onPrimary }) {
       <h2 className="text-shText font-black text-[20px] sm:text-[24px] leading-tight mt-1 text-balance">
         {lesson?.name || action.label || "Your training"}
       </h2>
-      {moduleName && <p className="text-[12.5px] text-shTextMuted mt-1">{moduleName}</p>}
+      {moduleName && <p className="text-[15px] text-shTextMuted mt-1">{moduleName}</p>}
 
       {action.sublabel && action.sublabel !== lesson?.name && (
-        <p className="text-[14px] text-shTextMuted mt-3 leading-relaxed">{action.sublabel}</p>
+        <p className="text-[17px] text-shTextMuted mt-3 leading-relaxed">{action.sublabel}</p>
       )}
 
       {(equipment.length > 0 || minutes) && (
         <div className="flex flex-wrap items-center gap-2 mt-4">
           {minutes && (
-            <span className="text-[12px] font-bold text-shTextMuted bg-[var(--sh-card-base)] border border-shBorder rounded-full px-3 py-1">
+            <span className="text-[15px] font-bold text-shTextMuted bg-[var(--sh-card-base)] border border-shBorder rounded-full px-3 py-1">
               <i className="fas fa-clock mr-1.5" />{minutes} min
             </span>
           )}
           {equipment.map((e) => (
-            <span key={e} className="text-[12px] font-bold text-shTextMuted bg-[var(--sh-card-base)] border border-shBorder rounded-full px-3 py-1">{e}</span>
+            <span key={e} className="text-[15px] font-bold text-shTextMuted bg-[var(--sh-card-base)] border border-shBorder rounded-full px-3 py-1">{e}</span>
           ))}
         </div>
       )}
 
       {noPrimaryAction ? (
-        <p className="mt-5 text-[13px] font-bold text-shTextMuted" data-testid="current-training-no-cta">
+        <p className="mt-5 text-[16px] font-bold text-shTextMuted" data-testid="current-training-no-cta">
           {action.type === "awaiting_review" ? "Your trainer has the checkpoint now — nothing else is required from you yet."
             : action.type === "setup_required" ? "Your trainer needs to update this lesson before you can continue."
             : action.type === "course_paused" ? "Training is paused for now. Your completed work and feedback remain saved."
@@ -71,7 +71,7 @@ export default function CurrentTrainingCard({ home, onPrimary }) {
         <button
           type="button"
           onClick={onPrimary}
-          className="mt-5 w-full sm:w-auto inline-flex items-center justify-center gap-2 text-[14px] font-black uppercase tracking-widest px-6 py-3.5 rounded-xl transition active:scale-[0.99]"
+          className="mt-5 w-full sm:w-auto inline-flex items-center justify-center gap-2 text-[17px] font-black uppercase tracking-widest px-6 py-3.5 rounded-xl transition active:scale-[0.99]"
           style={{ background: `rgb(${rgb})`, color: "#0b0f14" }}
           data-testid="current-training-cta"
         >

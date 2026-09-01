@@ -1,24 +1,27 @@
 /* Practice Coach readability floor.
  * The School/Practice experience is intentionally designed for true beginners.
  * Tiny metadata-sized text makes the coaching harder to follow, especially on
- * phones, so anything rendered inside the Practice Coach below 13–14px gets a
- * scoped minimum without changing the rest of the app or icon sizing. */
+ * phones, so anything rendered inside the Practice Coach below 14–15px gets a
+ * scoped minimum without changing the rest of the app or icon sizing.
+ * The floors track the school-wide type scale-up (~1.3x): the Practice Coach
+ * files themselves were rescaled, so these mostly catch shared components
+ * rendered inside the panel that still carry tiny sizes. */
 [data-testid="practice-panel"] :not(i).text-\[8px\],
 [data-testid="practice-panel"] :not(i).text-\[9px\],
 [data-testid="practice-panel"] :not(i).text-\[10px\] {
-  font-size: 12.5px !important;
+  font-size: 13px !important;
   line-height: 1.35 !important;
 }
 
 [data-testid="practice-panel"] :not(i).text-\[11px\],
 [data-testid="practice-panel"] :not(i).text-\[11\.5px\] {
-  font-size: 13.5px !important;
+  font-size: 14px !important;
   line-height: 1.45 !important;
 }
 
 [data-testid="practice-panel"] :not(i).text-\[12px\],
 [data-testid="practice-panel"] :not(i).text-\[12\.5px\] {
-  font-size: 14px !important;
+  font-size: 15px !important;
   line-height: 1.5 !important;
 }
 

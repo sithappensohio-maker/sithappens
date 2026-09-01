@@ -54,22 +54,22 @@ export default function MeasurementChips({ items, testid }) {
              className={`bg-black/15 border border-shBorder/55 rounded-xl px-3 py-2.5 min-w-0 ${it.onChange ? "sm:min-w-[220px] sm:flex-1" : "sm:min-w-[110px]"}`}
              data-testid={testid ? `${testid}-${it.key}` : undefined}>
           {(isPlan || isResult) && (
-            <p className={`text-[12px] font-black uppercase tracking-[0.1em] mb-1 ${isPlan ? "text-shSecondary" : "text-shPrimary"}`}>
+            <p className={`text-[15px] font-black uppercase tracking-[0.1em] mb-1 ${isPlan ? "text-shSecondary" : "text-shPrimary"}`}>
               {isPlan ? "Today's Plan" : "Today's Result"}
             </p>
           )}
-          <p className="text-[12px] sm:text-[13px] font-black uppercase tracking-[0.1em] text-shTextMuted flex items-center gap-1.5">
+          <p className="text-[15px] sm:text-[16px] font-black uppercase tracking-[0.1em] text-shTextMuted flex items-center gap-1.5">
             {it.icon && <i className={`fas ${it.icon} text-shSecondary`}/>}<span>{clientMeasurementLabel(it)}</span>
           </p>
           {it.onChange ? (
             <>
               <input value={it.value || ""} onChange={(e) => it.onChange(e.target.value)}
                      placeholder={it.placeholder || "Enter what happened"} data-testid={testid ? `${testid}-${it.key}-input` : undefined}
-                     className="w-full bg-transparent text-shText text-[17px] font-black border-0 p-0 mt-1 focus:outline-none min-h-[28px]"/>
-              <p className="text-[13px] text-shTextMuted mt-1.5 leading-relaxed">{editableHelp(it)}</p>
+                     className="w-full bg-transparent text-shText text-[20px] font-black border-0 p-0 mt-1 focus:outline-none min-h-[28px]"/>
+              <p className="text-[16px] text-shTextMuted mt-1.5 leading-relaxed">{editableHelp(it)}</p>
             </>
           ) : (
-            <p className="text-shText text-[16px] font-black truncate mt-1">{it.value}</p>
+            <p className="text-shText text-[19px] font-black truncate mt-1">{it.value}</p>
           )}
         </div>
       ))}

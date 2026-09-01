@@ -23,7 +23,7 @@ function InlineImage({ src, alt, caption, testid }) {
       <img src={src} alt={alt || ""} loading="lazy"
            className="w-full max-w-full h-auto max-h-[60vh] sm:max-h-[520px] object-contain rounded-xl border border-shBorder/50 bg-black/25" />
       {caption && (
-        <figcaption className="mt-2 text-[15px] sm:text-[16px] text-shTextMuted leading-[1.5]">
+        <figcaption className="mt-2 text-[18px] sm:text-[19px] text-shTextMuted leading-[1.5]">
           {caption}
         </figcaption>
       )}
@@ -33,7 +33,7 @@ function InlineImage({ src, alt, caption, testid }) {
 
 function SplitLines({ body }) {
   const lines = String(body || "").split(/\r?\n/).map((x) => x.trim()).filter(Boolean);
-  return <ol className="space-y-3">{lines.map((x, i) => <li key={i} className="flex gap-3 text-[17px] sm:text-[18px] text-shText"><span className="w-7 h-7 rounded-full bg-shSecondary/10 border border-shSecondary/25 text-shSecondary text-[12px] font-black grid place-items-center shrink-0">{i + 1}</span><p className="leading-[1.55] pt-0.5">{x}</p></li>)}</ol>;
+  return <ol className="space-y-3">{lines.map((x, i) => <li key={i} className="flex gap-3 text-[20px] sm:text-[21px] text-shText"><span className="w-7 h-7 rounded-full bg-shSecondary/10 border border-shSecondary/25 text-shSecondary text-[15px] font-black grid place-items-center shrink-0">{i + 1}</span><p className="leading-[1.55] pt-0.5">{x}</p></li>)}</ol>;
 }
 
 /* A prep checklist the client uses one-handed while a dog waits, so the tap
@@ -53,7 +53,7 @@ function ChecklistBlock({ block }) {
                    className="flex items-start gap-3.5 py-2.5 cursor-pointer group">
               <input id={id} type="checkbox"
                      className="mt-0.5 w-6 h-6 shrink-0 rounded-md border-2 border-shSecondary/50 bg-black/25 accent-shPrimary cursor-pointer focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-shPrimary focus-visible:ring-offset-2 focus-visible:ring-offset-bgBase" />
-              <span className="min-w-0 flex-1 text-[17px] sm:text-[18px] text-shText leading-[1.5] group-hover:text-white">{x}</span>
+              <span className="min-w-0 flex-1 text-[20px] sm:text-[21px] text-shText leading-[1.5] group-hover:text-white">{x}</span>
             </label>
           </li>
         );
@@ -73,13 +73,13 @@ function TimerBlock({ block }) {
     const id = setTimeout(() => setLeft((v) => Math.max(0, v - 1)), 1000);
     return () => clearTimeout(id);
   }, [running, left]);
-  return <div className="flex flex-wrap items-center gap-3"><div className="text-3xl font-black text-shText tabular-nums">{mins}:{secs}</div><button onClick={() => setRunning((v) => !v)} className="min-h-[42px] px-4 rounded-xl bg-shSecondary text-[#031018] text-[11px] font-black uppercase tracking-widest">{running ? "Pause" : "Start"}</button><button onClick={() => { setRunning(false); setLeft(total); }} className="min-h-[42px] px-3 rounded-xl border border-shBorder text-[11px] font-black text-shTextMuted">Reset</button></div>;
+  return <div className="flex flex-wrap items-center gap-3"><div className="text-3xl font-black text-shText tabular-nums">{mins}:{secs}</div><button onClick={() => setRunning((v) => !v)} className="min-h-[42px] px-4 rounded-xl bg-shSecondary text-[#031018] text-[14px] font-black uppercase tracking-widest">{running ? "Pause" : "Start"}</button><button onClick={() => { setRunning(false); setLeft(total); }} className="min-h-[42px] px-3 rounded-xl border border-shBorder text-[14px] font-black text-shTextMuted">Reset</button></div>;
 }
 
 function RepBlock({ block }) {
   const target = Number(block.config?.target || 5);
   const [count, setCount] = useState(0);
-  return <div className="flex items-center gap-4"><button onClick={() => setCount((c) => Math.min(target, c + 1))} className="w-14 h-14 rounded-2xl bg-shPrimary text-[#071018] text-xl font-black">+1</button><div><p className="text-2xl font-black text-shText">{count} / {target}</p><p className="text-[11px] text-shTextMuted">repetitions</p></div><button onClick={() => setCount(0)} className="text-[11px] font-black text-shTextMuted uppercase tracking-widest">Reset</button></div>;
+  return <div className="flex items-center gap-4"><button onClick={() => setCount((c) => Math.min(target, c + 1))} className="w-14 h-14 rounded-2xl bg-shPrimary text-[#071018] text-xl font-black">+1</button><div><p className="text-2xl font-black text-shText">{count} / {target}</p><p className="text-[14px] text-shTextMuted">repetitions</p></div><button onClick={() => setCount(0)} className="text-[14px] font-black text-shTextMuted uppercase tracking-widest">Reset</button></div>;
 }
 
 
@@ -94,7 +94,7 @@ function LinkedResourceMedia({ resource, type, title, alt, caption, testid }) {
     }).catch(() => setSrc(""));
     return () => { live = false; cleanup(); };
   }, [resource?.media_id, resource?.url]);
-  if (!src) return <div className="rounded-xl border border-dashed border-shBorder p-3 text-[11px] text-shTextMuted"><i className="fas fa-spinner fa-spin mr-2"/>Loading School media…</div>;
+  if (!src) return <div className="rounded-xl border border-dashed border-shBorder p-3 text-[14px] text-shTextMuted"><i className="fas fa-spinner fa-spin mr-2"/>Loading School media…</div>;
   if (type === "video") return <div className="aspect-video rounded-xl overflow-hidden bg-black"><video src={src} controls playsInline preload="metadata" className="w-full h-full object-contain" /></div>;
   if (type === "image") return <InlineImage src={src} alt={alt} caption={caption} testid={testid} />;
   return null;
@@ -120,7 +120,7 @@ function QuizBlock({ block }) {
 
   return (
     <div className="space-y-3">
-      {block.body && <p className="text-[14px] sm:text-[15px] font-black text-shText leading-snug">{block.body}</p>}
+      {block.body && <p className="text-[17px] sm:text-[18px] font-black text-shText leading-snug">{block.body}</p>}
       {options.length ? (
         <div className="grid gap-2.5">
           {options.map((o) => {
@@ -131,12 +131,12 @@ function QuizBlock({ block }) {
               <button key={o} type="button" data-testid={`quick-check-option-${block.id}-${options.indexOf(o)}`}
                       data-selected={on ? "true" : "false"} data-correct={right ? "true" : undefined}
                       onClick={() => setAnswer(o)}
-                      className={`w-full text-left rounded-xl border p-3.5 flex items-start gap-3 text-[13.5px] min-h-[56px] transition ${
+                      className={`w-full text-left rounded-xl border p-3.5 flex items-start gap-3 text-[16px] min-h-[56px] transition ${
                         right ? "border-shPrimary/55 bg-shPrimary/[0.09]"
                         : wrong ? "border-shAccent/45 bg-shAccent/[0.06]"
                         : on ? "border-shSecondary/50 bg-shSecondary/[0.07]"
                         : "border-shBorder bg-black/10 hover:border-shSecondary/35"}`}>
-                <span className={`w-6 h-6 rounded-full grid place-items-center shrink-0 border text-[10px] mt-0.5 ${
+                <span className={`w-6 h-6 rounded-full grid place-items-center shrink-0 border text-[13px] mt-0.5 ${
                   right ? "border-shPrimary bg-shPrimary text-[#071018]"
                   : wrong ? "border-shAccent bg-shAccent text-[#071018]"
                   : on ? "border-shSecondary bg-shSecondary text-[#031018]"
@@ -151,10 +151,10 @@ function QuizBlock({ block }) {
       ) : (
         <>
           <textarea value={answer} onChange={(e) => { setAnswer(e.target.value); setReflected(false); }} rows={3}
-                    className="w-full rounded-xl border border-shBorder bg-black/15 p-3 text-shText text-[13.5px]" placeholder="Your answer" />
+                    className="w-full rounded-xl border border-shBorder bg-black/15 p-3 text-shText text-[16px]" placeholder="Your answer" />
           {answer && !reflected && (
             <button type="button" onClick={() => setReflected(true)} data-testid={`quick-check-submit-${block.id}`}
-                    className="min-h-[44px] px-4 rounded-xl border border-shSecondary/35 text-shSecondary text-[11px] font-black uppercase tracking-widest">
+                    className="min-h-[44px] px-4 rounded-xl border border-shSecondary/35 text-shSecondary text-[14px] font-black uppercase tracking-widest">
               Check answer
             </button>
           )}
@@ -164,17 +164,17 @@ function QuizBlock({ block }) {
       {checked && (
         <div className={`rounded-xl border p-3.5 ${isCorrect === true ? "border-shPrimary/30 bg-shPrimary/[0.045]" : isCorrect === false ? "border-shAccent/30 bg-shAccent/[0.04]" : "border-shBorder bg-black/10"}`}
              data-testid={`quick-check-feedback-${block.id}`}>
-          <p className={`text-[13px] font-black ${isCorrect === true ? "text-shPrimary" : isCorrect === false ? "text-shAccent" : "text-shText"}`}>
+          <p className={`text-[16px] font-black ${isCorrect === true ? "text-shPrimary" : isCorrect === false ? "text-shAccent" : "text-shText"}`}>
             {isCorrect === true ? "That’s it." : isCorrect === false ? "Not quite — here’s why." : "Response recorded for your own reflection."}
           </p>
           {isCorrect === false && correct && (
-            <p className="text-[12.5px] text-shText mt-1.5"><i className="fas fa-circle-check text-shPrimary mr-1.5" />{correct}</p>
+            <p className="text-[15px] text-shText mt-1.5"><i className="fas fa-circle-check text-shPrimary mr-1.5" />{correct}</p>
           )}
-          {block.config?.explanation && <p className="text-[12.5px] text-shTextMuted mt-2 leading-relaxed">{block.config.explanation}</p>}
-          <p className="text-[10px] text-shTextMuted mt-2.5">Knowledge checks reinforce the lesson; they do not unlock or block course progression.</p>
+          {block.config?.explanation && <p className="text-[15px] text-shTextMuted mt-2 leading-relaxed">{block.config.explanation}</p>}
+          <p className="text-[13px] text-shTextMuted mt-2.5">Knowledge checks reinforce the lesson; they do not unlock or block course progression.</p>
           {isCorrect === false && (
             <button type="button" onClick={() => setAnswer("")} data-testid={`quick-check-retry-${block.id}`}
-                    className="mt-2.5 text-[11px] font-black text-shSecondary underline underline-offset-2">Try again</button>
+                    className="mt-2.5 text-[14px] font-black text-shSecondary underline underline-offset-2">Try again</button>
           )}
         </div>
       )}
@@ -204,19 +204,19 @@ export default function LessonContentBlocks({ blocks = [], enrollmentId, preview
   return <div className="space-y-4" data-testid="lesson-content-blocks">{active.map((b, i) => {
     const tone = b.type === "warning" ? "border-red-400/30 bg-red-500/[0.055]" : b.type === "trainer_tip" ? "border-shPrimary/30 bg-shPrimary/[0.055]" : "border-shBorder bg-[var(--sh-card-base)]";
     return <section key={b.id || i} className={`rounded-2xl border p-4 sm:p-5 ${tone}`} data-testid={`lesson-content-block-${b.type}`}>
-      {b.title && !hideTitles && <h3 className={`text-[18px] sm:text-[20px] font-black leading-snug mb-2.5 ${b.type === "warning" ? "text-red-300" : b.type === "trainer_tip" ? "text-shPrimary" : "text-shText"}`}>{b.title}</h3>}
+      {b.title && !hideTitles && <h3 className={`text-[21px] sm:text-[23px] font-black leading-snug mb-2.5 ${b.type === "warning" ? "text-red-300" : b.type === "trainer_tip" ? "text-shPrimary" : "text-shText"}`}>{b.title}</h3>}
       {b.type === "video" && b.url && <div className="aspect-video rounded-xl overflow-hidden bg-black"><video src={b.url} controls playsInline preload="metadata" className="w-full h-full object-contain" /></div>}
       {b.type === "image" && b.url && <InlineImage src={b.url} alt={b.config?.alt} caption={b.config?.caption} testid={`lesson-image-${b.id || i}`} />}
       {b.resource_id && resourceById[b.resource_id] && ["video","image"].includes(b.type) && <LinkedResourceMedia resource={resourceById[b.resource_id]} type={b.type} title={b.title} alt={b.config?.alt} caption={b.config?.caption} testid={`lesson-image-${b.id || i}`} />}
-      {b.resource_id && resourceById[b.resource_id] && b.type === "download" && <button type="button" onClick={() => openResource(resourceById[b.resource_id])} className="w-full text-left rounded-xl border border-shSecondary/20 bg-shSecondary/[0.035] p-3"><i className="fas fa-download text-shSecondary mr-2"/><span className="text-[13px] font-black text-shText">{resourceById[b.resource_id].title}</span><span className="block text-[11px] text-shTextMuted mt-1">Open School resource</span></button>}
-      {previewMode && b.resource_id && !resourceById[b.resource_id] && ["video","image","download"].includes(b.type) && <div className="rounded-xl border border-dashed border-shSecondary/25 bg-shSecondary/[0.025] p-3"><i className={`fas ${b.type === "video" ? "fa-video" : b.type === "image" ? "fa-image" : "fa-download"} text-shSecondary mr-2`}/><span className="text-[13px] font-black text-shText">{b.title || "Linked School resource"}</span><span className="block text-[11px] text-shTextMuted mt-1">The selected resource will appear here for enrolled students.</span></div>}
+      {b.resource_id && resourceById[b.resource_id] && b.type === "download" && <button type="button" onClick={() => openResource(resourceById[b.resource_id])} className="w-full text-left rounded-xl border border-shSecondary/20 bg-shSecondary/[0.035] p-3"><i className="fas fa-download text-shSecondary mr-2"/><span className="text-[16px] font-black text-shText">{resourceById[b.resource_id].title}</span><span className="block text-[14px] text-shTextMuted mt-1">Open School resource</span></button>}
+      {previewMode && b.resource_id && !resourceById[b.resource_id] && ["video","image","download"].includes(b.type) && <div className="rounded-xl border border-dashed border-shSecondary/25 bg-shSecondary/[0.025] p-3"><i className={`fas ${b.type === "video" ? "fa-video" : b.type === "image" ? "fa-image" : "fa-download"} text-shSecondary mr-2`}/><span className="text-[16px] font-black text-shText">{b.title || "Linked School resource"}</span><span className="block text-[14px] text-shTextMuted mt-1">The selected resource will appear here for enrolled students.</span></div>}
       {b.type === "steps" && <SplitLines body={(b.items || []).length ? b.items.join("\n") : b.body} />}
       {b.type === "checklist" && <ChecklistBlock block={b} />}
       {b.type === "quiz" && <QuizBlock block={b} />}
       {b.type === "timer" && <TimerBlock block={b} />}
       {b.type === "rep_counter" && <RepBlock block={b} />}
-      {b.type === "download" && !b.resource_id && <a href={b.url || "#"} target="_blank" rel="noreferrer" className="inline-flex min-h-[42px] items-center px-4 rounded-xl border border-shSecondary/35 text-shSecondary text-[11px] font-black uppercase tracking-widest"><i className="fas fa-download mr-2"/>Open resource</a>}
-      {["text","trainer_tip","warning","practice","checkpoint"].includes(b.type) && b.body && <p className="text-[17px] sm:text-[18px] text-shText leading-[1.55] whitespace-pre-line">{b.body}</p>}
+      {b.type === "download" && !b.resource_id && <a href={b.url || "#"} target="_blank" rel="noreferrer" className="inline-flex min-h-[42px] items-center px-4 rounded-xl border border-shSecondary/35 text-shSecondary text-[14px] font-black uppercase tracking-widest"><i className="fas fa-download mr-2"/>Open resource</a>}
+      {["text","trainer_tip","warning","practice","checkpoint"].includes(b.type) && b.body && <p className="text-[20px] sm:text-[21px] text-shText leading-[1.55] whitespace-pre-line">{b.body}</p>}
     </section>;
   })}</div>;
 }

@@ -9,8 +9,8 @@ export default function TrainerFeedbackNotice({ text, tone = "primary", label = 
   return (
     <div className={`relative overflow-hidden border rounded-2xl p-4 ${toneCls}`} data-testid={testid}>
       <div className="absolute -right-8 -top-8 w-24 h-24 rounded-full bg-current opacity-[0.04] blur-2xl"/>
-      <p className="relative text-[10px] font-black uppercase tracking-[0.14em]"><i className="fas fa-comment-dots mr-1.5"/>{label}</p>
-      <p className="relative text-[14px] text-shText mt-2 leading-relaxed">“{text}”</p>
+      <p className="relative text-[13px] font-black uppercase tracking-[0.14em]"><i className="fas fa-comment-dots mr-1.5"/>{label}</p>
+      <p className="relative text-[17px] text-shText mt-2 leading-relaxed">“{text}”</p>
     </div>
   );
 }

@@ -49,11 +49,11 @@ export function CurrentActionGuide({ home }) {
   const title = home?.current_lesson?.name || action.label || "Your next step";
   return (
     <section className="rounded-2xl border border-shPrimary/30 bg-shPrimary/[0.06] p-4 sm:p-5" data-testid="school-current-action-guide">
-      <p className="text-[10px] font-black uppercase tracking-[0.18em] text-shPrimary">{noAction ? "Where you are" : "Do this now"}</p>
-      <h2 className="text-[18px] sm:text-[20px] font-black text-shText mt-1 leading-tight text-balance">{title}</h2>
-      <p className="text-[14px] sm:text-[15px] text-shText mt-2 leading-relaxed">{actionCoachCopy(action, home?.dog?.name)}</p>
+      <p className="text-[13px] font-black uppercase tracking-[0.18em] text-shPrimary">{noAction ? "Where you are" : "Do this now"}</p>
+      <h2 className="text-[21px] sm:text-[23px] font-black text-shText mt-1 leading-tight text-balance">{title}</h2>
+      <p className="text-[17px] sm:text-[18px] text-shText mt-2 leading-relaxed">{actionCoachCopy(action, home?.dog?.name)}</p>
       {!noAction && (
-        <p className="text-[11.5px] text-shTextMuted mt-2.5">Use the big action directly below. Finish this one thing; School will choose the next step for you.</p>
+        <p className="text-[14px] text-shTextMuted mt-2.5">Use the big action directly below. Finish this one thing; School will choose the next step for you.</p>
       )}
     </section>
   );
@@ -69,7 +69,7 @@ export default function SchoolOrientation({ dogName }) {
   return (
     <>
       <button type="button" onClick={() => setOpen(true)} data-testid="school-how-it-works"
-              className="min-h-[44px] px-3 rounded-xl border border-shSecondary/30 text-shSecondary text-[10.5px] sm:text-[11px] font-black uppercase tracking-widest hover:text-shText hover:border-shSecondary/50">
+              className="min-h-[44px] px-3 rounded-xl border border-shSecondary/30 text-shSecondary text-[13px] sm:text-[14px] font-black uppercase tracking-widest hover:text-shText hover:border-shSecondary/50">
         <i className="fas fa-circle-question mr-1.5" />How School works
       </button>
 
@@ -77,11 +77,11 @@ export default function SchoolOrientation({ dogName }) {
         <div className="fixed inset-0 z-[80] bg-black/75 backdrop-blur-sm p-3 sm:p-6 grid place-items-center"
              role="dialog" aria-modal="true" aria-labelledby="school-orientation-title" data-testid="school-orientation">
           <div className="w-full max-w-2xl max-h-[92vh] overflow-y-auto rounded-3xl border border-shSecondary/35 bg-[var(--sh-card-base)] shadow-2xl p-5 sm:p-7">
-            <p className="text-[10px] font-black uppercase tracking-[0.22em] text-shPrimary">Before you start</p>
+            <p className="text-[13px] font-black uppercase tracking-[0.22em] text-shPrimary">Before you start</p>
             <h2 id="school-orientation-title" className="text-[25px] sm:text-[32px] font-black text-shText mt-1 leading-tight text-balance">
               You do not need to know how to use School. We will guide you.
             </h2>
-            <p className="text-[15px] sm:text-[16px] text-shTextMuted mt-2 leading-relaxed">
+            <p className="text-[18px] sm:text-[19px] text-shTextMuted mt-2 leading-relaxed">
               {dogName ? `School tells you what to do with ${dogName}, one step at a time.` : "School tells you what to do with your dog, one step at a time."} You should never have to guess which lesson to open or what comes next.
             </p>
 
@@ -101,13 +101,13 @@ export default function SchoolOrientation({ dogName }) {
             </div>
 
             <div className="mt-5 rounded-2xl border border-shPrimary/25 bg-shPrimary/[0.06] p-4">
-              <p className="text-[14px] sm:text-[15px] text-shText leading-relaxed">
+              <p className="text-[17px] sm:text-[18px] text-shText leading-relaxed">
                 <strong>If you get lost:</strong> go back to <strong>Today</strong>. School will pick up from the correct place and tell you what to do next.
               </p>
             </div>
 
             <button type="button" onClick={close} data-testid="school-orientation-start" autoFocus
-                    className="mt-5 w-full min-h-[56px] rounded-xl bg-shPrimary text-bgHeader text-[14px] sm:text-[15px] font-black uppercase tracking-widest hover:brightness-110 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-shPrimary focus-visible:ring-offset-2 focus-visible:ring-offset-bgBase">
+                    className="mt-5 w-full min-h-[56px] rounded-xl bg-shPrimary text-bgHeader text-[17px] sm:text-[18px] font-black uppercase tracking-widest hover:brightness-110 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-shPrimary focus-visible:ring-offset-2 focus-visible:ring-offset-bgBase">
               Show me what to do <i className="fas fa-arrow-right ml-1.5" />
             </button>
           </div>
@@ -121,11 +121,11 @@ function OrientationStep({ n, icon, title, children }) {
   return (
     <div className="rounded-2xl border border-shBorder/55 bg-black/10 p-4">
       <div className="flex items-center gap-2.5">
-        <span className="w-9 h-9 rounded-full grid place-items-center shrink-0 border border-shSecondary/35 bg-shSecondary/10 text-shSecondary text-[12px] font-black">{n}</span>
-        <i className={`fas ${icon} text-shPrimary text-[13px]`} aria-hidden="true" />
-        <h3 className="text-[16px] font-black text-shText leading-tight">{title}</h3>
+        <span className="w-9 h-9 rounded-full grid place-items-center shrink-0 border border-shSecondary/35 bg-shSecondary/10 text-shSecondary text-[15px] font-black">{n}</span>
+        <i className={`fas ${icon} text-shPrimary text-[16px]`} aria-hidden="true" />
+        <h3 className="text-[19px] font-black text-shText leading-tight">{title}</h3>
       </div>
-      <p className="text-[14px] text-shTextMuted mt-2 leading-relaxed">{children}</p>
+      <p className="text-[17px] text-shTextMuted mt-2 leading-relaxed">{children}</p>
     </div>
   );
 }

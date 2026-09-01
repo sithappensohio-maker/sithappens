@@ -16,23 +16,23 @@ export default function LatestFeedbackCard({ feedback, onView }) {
   return (
     <section className="rounded-2xl border border-shSecondary/30 bg-[var(--sh-card-base)] p-4 sm:p-5" data-testid="latest-feedback-card">
       <div className="flex items-center justify-between gap-2 mb-3">
-        <p className="text-[11px] font-black uppercase tracking-[0.28em] text-shSecondary">
+        <p className="text-[14px] font-black uppercase tracking-[0.28em] text-shSecondary">
           <i className="fas fa-comment-dots mr-1.5" />Latest trainer feedback
         </p>
-        {when && <span className="text-[11px] uppercase tracking-widest text-shTextMuted">{when}</span>}
+        {when && <span className="text-[14px] uppercase tracking-widest text-shTextMuted">{when}</span>}
       </div>
 
-      <p className="text-shText text-[14px] font-bold">
+      <p className="text-shText text-[17px] font-bold">
         {trainer} reviewed {feedback.lesson_name ? `“${feedback.lesson_name}”` : "your checkpoint"}
       </p>
-      {OUTCOME && <p className={`text-[12px] font-black uppercase tracking-widest mt-0.5 ${OUTCOME.cls}`}>{OUTCOME.label}</p>}
+      {OUTCOME && <p className={`text-[15px] font-black uppercase tracking-widest mt-0.5 ${OUTCOME.cls}`}>{OUTCOME.label}</p>}
 
       <div className="mt-3">
         <ScorePair handler={feedback.handler_overall} dog={feedback.dog_overall} compact />
       </div>
 
       {feedback.trainer_feedback && (
-        <p className="mt-3 text-[13px] text-gray-200 italic whitespace-pre-wrap leading-relaxed border-l-2 border-shSecondary/40 pl-3">
+        <p className="mt-3 text-[16px] text-gray-200 italic whitespace-pre-wrap leading-relaxed border-l-2 border-shSecondary/40 pl-3">
           “{feedback.trainer_feedback}”
         </p>
       )}
@@ -40,7 +40,7 @@ export default function LatestFeedbackCard({ feedback, onView }) {
       <button
         type="button"
         onClick={onView}
-        className="mt-4 text-[12px] font-black uppercase tracking-widest text-shSecondary hover:text-shText transition"
+        className="mt-4 text-[15px] font-black uppercase tracking-widest text-shSecondary hover:text-shText transition"
         data-testid="latest-feedback-view"
       >
         View full feedback <i className="fas fa-arrow-right ml-1" />

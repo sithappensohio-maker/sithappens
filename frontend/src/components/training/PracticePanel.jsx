@@ -321,10 +321,10 @@ export default function PracticePanel({ homework, dogPhoto, onClose, onChanged, 
   const timerCard = (
     <SectionCard accent="cyan" intensity="subtle">
       <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3">
-        <div><p className="text-[9px] font-black uppercase tracking-[0.14em] text-shTextMuted"><i className="fas fa-stopwatch mr-1.5 text-shSecondary"/>Practice Timer <span className="normal-case tracking-normal font-semibold">(optional)</span></p><span className="block text-[30px] font-black text-white tabular-nums mt-1" data-testid="practice-timer-display">{String(Math.floor(timerSec / 60)).padStart(2, "0")}:{String(timerSec % 60).padStart(2, "0")}</span></div>
+        <div><p className="text-[11px] font-black uppercase tracking-[0.14em] text-shTextMuted"><i className="fas fa-stopwatch mr-1.5 text-shSecondary"/>Practice Timer <span className="normal-case tracking-normal font-semibold">(optional)</span></p><span className="block text-[30px] font-black text-white tabular-nums mt-1" data-testid="practice-timer-display">{String(Math.floor(timerSec / 60)).padStart(2, "0")}:{String(timerSec % 60).padStart(2, "0")}</span></div>
         <div className="grid grid-cols-2 gap-2 sm:flex">
-          <button type="button" onClick={() => setTimerRunning(r => !r)} data-testid="practice-timer-toggle" className="min-h-[44px] bg-shSecondary/12 text-shSecondary border border-shSecondary/35 px-4 py-2 rounded-xl text-[11px] font-black">{timerRunning ? "Pause" : "Start"}</button>
-          <button type="button" onClick={() => { setTimerSec(0); setTimerRunning(false); }} data-testid="practice-timer-reset" className="min-h-[44px] border border-shBorder/55 bg-black/10 text-shTextMuted px-4 py-2 rounded-xl text-[11px] font-black">Reset</button>
+          <button type="button" onClick={() => setTimerRunning(r => !r)} data-testid="practice-timer-toggle" className="min-h-[44px] bg-shSecondary/12 text-shSecondary border border-shSecondary/35 px-4 py-2 rounded-xl text-[14px] font-black">{timerRunning ? "Pause" : "Start"}</button>
+          <button type="button" onClick={() => { setTimerSec(0); setTimerRunning(false); }} data-testid="practice-timer-reset" className="min-h-[44px] border border-shBorder/55 bg-black/10 text-shTextMuted px-4 py-2 rounded-xl text-[14px] font-black">Reset</button>
         </div>
       </div>
     </SectionCard>
@@ -338,8 +338,8 @@ export default function PracticePanel({ homework, dogPhoto, onClose, onChanged, 
           <div className="flex items-center gap-3 min-w-0">
             <div className="w-11 h-11 sm:w-12 sm:h-12 rounded-xl overflow-hidden border border-shPrimary/30 bg-black/35 shrink-0"><HuskyDogImage src={dogPhoto} name={homework.dog_name} alt={homework.dog_name} className="w-full h-full object-cover object-top"/></div>
             <div className="min-w-0">
-              <div className="flex items-center gap-2"><p className="text-[9px] font-black uppercase tracking-[0.16em] text-shPrimary">Practice Coach</p><span className="w-1 h-1 rounded-full bg-shBorder"/><p className="text-[9px] font-black uppercase tracking-[0.12em] text-shSecondary truncate">{homework.dog_name}</p></div>
-              <h3 className="text-[16px] sm:text-[18px] font-black text-shText truncate mt-0.5">{homework.title}</h3>
+              <div className="flex items-center gap-2"><p className="text-[11px] font-black uppercase tracking-[0.16em] text-shPrimary">Practice Coach</p><span className="w-1 h-1 rounded-full bg-shBorder"/><p className="text-[11px] font-black uppercase tracking-[0.12em] text-shSecondary truncate">{homework.dog_name}</p></div>
+              <h3 className="text-[19px] sm:text-[21px] font-black text-shText truncate mt-0.5">{homework.title}</h3>
             </div>
           </div>
           <button onClick={onClose} data-testid="practice-panel-close" className="w-10 h-10 rounded-xl border border-shBorder/55 bg-black/15 text-shTextMuted hover:text-shText hover:bg-white/[0.03] grid place-items-center shrink-0"><i className="fas fa-times"/></button>
@@ -351,7 +351,7 @@ export default function PracticePanel({ homework, dogPhoto, onClose, onChanged, 
               <span className="w-16 h-16 rounded-2xl bg-shPrimary/15 border border-shPrimary/40 grid place-items-center"><i className="fas fa-check text-shPrimary text-2xl" /></span>
               <div>
                 <p className="text-[20px] font-black text-shText uppercase tracking-tight">✓ Practice Saved</p>
-                <p className="text-[13px] text-shTextMuted mt-1" data-testid="practice-complete-subtitle">
+                <p className="text-[16px] text-shTextMuted mt-1" data-testid="practice-complete-subtitle">
                   {onCompleted ? "School is checking what comes next…" : "Nice work — it's saved to your training history."}
                 </p>
               </div>
@@ -360,12 +360,12 @@ export default function PracticePanel({ homework, dogPhoto, onClose, onChanged, 
               ) : (
                 <div className="w-full max-w-sm space-y-2">
                   <button type="button" onClick={onClose} data-testid="practice-complete-continue"
-                          className="w-full min-h-[50px] bg-shPrimary text-bgHeader rounded-xl font-black text-[13px] uppercase tracking-widest shadow-lg hover:bg-shPrimary/90 transition">
+                          className="w-full min-h-[50px] bg-shPrimary text-bgHeader rounded-xl font-black text-[16px] uppercase tracking-widest shadow-lg hover:bg-shPrimary/90 transition">
                     Continue Training <i className="fas fa-arrow-right ml-1.5" />
                   </button>
                   {!isDailyTracker && (
                     <button type="button" onClick={markAssignmentComplete} disabled={markingComplete} data-testid="practice-mark-assignment-complete"
-                            className="w-full min-h-[44px] text-[11px] font-black uppercase tracking-widest text-shTextMuted hover:text-shPrimary disabled:opacity-50">
+                            className="w-full min-h-[44px] text-[14px] font-black uppercase tracking-widest text-shTextMuted hover:text-shPrimary disabled:opacity-50">
                       {markingComplete ? "Marking complete…" : "This assignment is fully done — mark it complete"}
                     </button>
                   )}
@@ -376,8 +376,8 @@ export default function PracticePanel({ homework, dogPhoto, onClose, onChanged, 
             <EmptyState icon="fa-clipboard-check" message="This assignment doesn't have any sessions to log yet." testid="practice-no-section"/>
           ) : readOnly ? (
             <div className="space-y-3">
-              <p className="text-[11px] font-black uppercase tracking-widest text-shTextMuted">{model.status === "completed" ? "Completed" : "Submitted — waiting for your trainer"}</p>
-              {reviewDay?.log?.note && <p className="text-[13px] text-shText italic">&ldquo;{reviewDay.log.note}&rdquo;</p>}
+              <p className="text-[14px] font-black uppercase tracking-widest text-shTextMuted">{model.status === "completed" ? "Completed" : "Submitted — waiting for your trainer"}</p>
+              {reviewDay?.log?.note && <p className="text-[16px] text-shText italic">&ldquo;{reviewDay.log.note}&rdquo;</p>}
               {reviewDay?.log?.review_note && <TrainerFeedbackNotice text={reviewDay.log.review_note} testid="practice-review-note"/>}
               {(reviewDay?.questions || []).filter(q => q.answer).map(q => (
                 <TrainerFeedbackNotice key={q.id} label="Reply to your question" text={q.answer} testid={`practice-answer-${q.id}`}/>
@@ -415,55 +415,55 @@ export default function PracticePanel({ homework, dogPhoto, onClose, onChanged, 
                       <i className={`fas ${guidedStoppedEarly ? "fa-pause" : "fa-check"}`}/>
                     </span>
                     <div className="min-w-0">
-                      <p className={`text-[9px] font-black uppercase tracking-[0.14em] ${guidedStoppedEarly ? "text-shAccent" : "text-shPrimary"}`}>{guidedStoppedEarly ? "Practice Ended Early" : "Guided Practice Complete"}</p>
-                      <p className="text-[17px] sm:text-[19px] font-black text-shText mt-1 leading-tight">
+                      <p className={`text-[11px] font-black uppercase tracking-[0.14em] ${guidedStoppedEarly ? "text-shAccent" : "text-shPrimary"}`}>{guidedStoppedEarly ? "Practice Ended Early" : "Guided Practice Complete"}</p>
+                      <p className="text-[20px] sm:text-[22px] font-black text-shText mt-1 leading-tight">
                         {guidedStoppedEarly ? "Save what actually happened — do not redo it just to finish the plan." : "The training is finished. Compare the plan with what actually happened."}
                       </p>
                     </div>
                   </div>
                   {targetChips.length > 0 && (
                     <div className="mt-4">
-                      <p className="text-[9px] font-black uppercase tracking-[0.16em] text-shSecondary mb-2">Today&apos;s Plan</p>
+                      <p className="text-[11px] font-black uppercase tracking-[0.16em] text-shSecondary mb-2">Today&apos;s Plan</p>
                       <MeasurementChips items={targetChips} testid="practice-plan"/>
                     </div>
                   )}
                   {resultChips.length > 0 && (
                     <div className="mt-4">
-                      <p className="text-[9px] font-black uppercase tracking-[0.16em] text-shPrimary mb-2">Today&apos;s Results</p>
+                      <p className="text-[11px] font-black uppercase tracking-[0.16em] text-shPrimary mb-2">Today&apos;s Results</p>
                       <MeasurementChips items={resultChips} testid="practice-results"/>
                     </div>
                   )}
                 </SectionCard>
               ) : (
                 <>
-                  <div className="flex flex-wrap items-center gap-2 text-[12px] text-shTextMuted font-bold">
+                  <div className="flex flex-wrap items-center gap-2 text-[15px] text-shTextMuted font-bold">
                     {estimatedMinutes ? <span><i className="fas fa-clock mr-1"/>{estimatedMinutes} min</span> : null}
                   </div>
 
                   {entryContext === "quick" && practiceCoach?.goal && (
                     <SectionCard accent="lime" intensity="subtle">
-                      <p className="text-[9px] font-black uppercase tracking-[0.15em] text-shPrimary mb-1.5">Quick Practice Goal</p>
-                      <p className="text-[15px] text-shText font-black leading-snug">{renderPracticeCoachText(practiceCoach.goal, tokens)}</p>
-                      {(practiceCoach.steps || []).length > 0 && <p className="text-[11px] text-shTextMuted mt-2 leading-relaxed">{practiceCoach.steps.map(s => renderPracticeCoachText(s.title, tokens)).join(" · ")}</p>}
+                      <p className="text-[11px] font-black uppercase tracking-[0.15em] text-shPrimary mb-1.5">Quick Practice Goal</p>
+                      <p className="text-[18px] text-shText font-black leading-snug">{renderPracticeCoachText(practiceCoach.goal, tokens)}</p>
+                      {(practiceCoach.steps || []).length > 0 && <p className="text-[14px] text-shTextMuted mt-2 leading-relaxed">{practiceCoach.steps.map(s => renderPracticeCoachText(s.title, tokens)).join(" · ")}</p>}
                     </SectionCard>
                   )}
 
                   <VideoDemoCard videoUrl={homework.video_url} testid="practice-video"/>
-                  {section.day_focus && <p className="text-[14px] text-shText font-bold">{section.day_focus}</p>}
+                  {section.day_focus && <p className="text-[17px] text-shText font-bold">{section.day_focus}</p>}
                   <PracticeInstructionSteps text={section.instructions} testid="practice-steps"/>
                   <EquipmentChips equipment={(section.equipment || []).join(", ")} testid="practice-equipment"/>
                   {targetChips.length > 0 && <MeasurementChips items={targetChips} testid="practice-targets"/>}
 
                   {homework.trainer_personalized_note && (
                     <ExpandableSection title="Trainer's Note" icon="fa-user-tie" tone="secondary" testid="practice-trainer-note">
-                      <p className="text-[13px] text-shText">{homework.trainer_personalized_note}</p>
+                      <p className="text-[16px] text-shText">{homework.trainer_personalized_note}</p>
                     </ExpandableSection>
                   )}
                   {(section.resources || []).length > 0 && (
                     <ExpandableSection title="Resources" icon="fa-paperclip" testid="practice-resources">
                       <ul className="space-y-1">
                         {section.resources.map(r => (
-                          <li key={r.id}><a href={r.url || "#"} target="_blank" rel="noopener noreferrer" className="text-[13px] text-shSecondary hover:underline"><i className="fas fa-file mr-1.5"/>{r.name}</a></li>
+                          <li key={r.id}><a href={r.url || "#"} target="_blank" rel="noopener noreferrer" className="text-[16px] text-shSecondary hover:underline"><i className="fas fa-file mr-1.5"/>{r.name}</a></li>
                         ))}
                       </ul>
                     </ExpandableSection>
@@ -505,7 +505,7 @@ export default function PracticePanel({ homework, dogPhoto, onClose, onChanged, 
         {(readOnly || !section) && (
           <div className="px-4 sm:px-5 py-3 border-t border-shBorder flex justify-end shrink-0">
             <button onClick={onClose} data-testid="practice-panel-done"
-                    className="bg-shPrimary text-bgHeader px-4 py-2 rounded font-black text-[13px] uppercase tracking-widest shadow">Close</button>
+                    className="bg-shPrimary text-bgHeader px-4 py-2 rounded font-black text-[16px] uppercase tracking-widest shadow">Close</button>
           </div>
         )}
       </div>
