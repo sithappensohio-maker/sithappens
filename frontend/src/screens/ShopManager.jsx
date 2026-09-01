@@ -1248,7 +1248,10 @@ function OnlineOrdersTab() {
  * ShopImageUpload for the banner/section cover images, same delete-old-
  * image-after-save sequencing as every other editor in this file.
  * ========================================================================== */
-const SHOP_SETTINGS_SECTION_KEYS = ["merch", "prepaid_visits", "training"];
+// online_school included — the client shop always supported a configured
+// cover image/label for it (sectionMetaFor), but this editor predated the
+// section, leaving no admin surface to upload one.
+const SHOP_SETTINGS_SECTION_KEYS = ["merch", "prepaid_visits", "training", "online_school"];
 
 function ShopSettingsTab() {
   const [loading, setLoading] = useState(true);

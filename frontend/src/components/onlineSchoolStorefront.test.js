@@ -102,6 +102,11 @@ test("admin can feature only permission-granted quotes, and the button says wher
   expect(adminFeedbackSrc).toMatch(/appears on the public Online School page/);
 });
 
+test("Shop Manager's section editor includes online_school, so its cover image/label are actually settable", () => {
+  const shopManagerSrc = read("..", "screens", "ShopManager.jsx");
+  expect(shopManagerSrc).toMatch(/SHOP_SETTINGS_SECTION_KEYS = \["merch", "prepaid_visits", "training", "online_school"\]/);
+});
+
 // ---------------------------------------------------------------------------
 // 4. Backend contract
 // ---------------------------------------------------------------------------
