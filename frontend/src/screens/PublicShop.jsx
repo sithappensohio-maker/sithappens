@@ -5,6 +5,7 @@ import GuestAuthModal from "../components/GuestAuthModal";
 import PublicBrandShell from "../components/PublicBrandShell";
 import { EmptyState, PremiumButton, SectionCard } from "../components/premium";
 import { isFreeClaimable } from "../lib/freeCourseClaim";
+import { dogsTrainedLabel, ratingSummary } from "../lib/schoolStorefront";
 import { readGuestCart, writeGuestCart, stashPendingShopRedirect } from "../lib/shopGuestCart";
 
 function initialPublicShopTab() {
@@ -32,6 +33,17 @@ export default function PublicShop() {
   const [authOpen, setAuthOpen] = useState(false);
   const [shopTab, setShopTab] = useState(initialPublicShopTab);
   const [freeCourse, setFreeCourse] = useState(null);
+  // Online School storefront aggregates — real numbers only. Chips render
+  // solely when the data clears its honesty threshold (lib/schoolStorefront),
+  // so a fresh install shows the plain value-prop pills, never a fake stat.
+  const [schoolStats, setSchoolStats] = useState(null);
+  useEffect(() => {
+    let cancelled = false;
+    api.get("/public/school/storefront")
+      .then(({ data }) => { if (!cancelled) setSchoolStats(data?.stats || null); })
+      .catch(() => { if (!cancelled) setSchoolStats(null); });
+    return () => { cancelled = true; };
+  }, []);
   // null = still checking; true/false once /settings/public resolves.
   // Read directly rather than waiting on PortalShop's own fetch so a
   // disabled shop shows a clean "closed" state instead of a raw 404 error
@@ -156,9 +168,28 @@ export default function PublicShop() {
               Real Sit Happens training in a guided online format — clear lessons, hands-on practice, progress tracking, and trainer-built programs you can work through at home.
             </p>
             <div className="flex flex-wrap gap-2 mt-4 text-[10px] sm:text-[11px] font-black uppercase tracking-widest">
-              <span className="px-2.5 py-1.5 rounded-full border border-shSecondary/30 bg-shSecondary/10 text-shSecondary"><i className="fas fa-circle-play mr-1.5"/>Self-paced</span>
-              <span className="px-2.5 py-1.5 rounded-full border border-shPrimary/30 bg-shPrimary/10 text-shPrimary"><i className="fas fa-list-check mr-1.5"/>Guided practice</span>
-              <span className="px-2.5 py-1.5 rounded-full border border-shBorder bg-black/15 text-shTextMuted"><i className="fas fa-chart-line mr-1.5"/>Track progress</span>
+              {(() => {
+                // Real trust numbers replace the generic pills once they
+                // exist; until then the value-prop pills carry the hero.
+                const dogs = dogsTrainedLabel(schoolStats?.dogs_trained);
+                const rating = ratingSummary(schoolStats);
+                if (!dogs && !rating) {
+                  return (
+                    <>
+                      <span className="px-2.5 py-1.5 rounded-full border border-shSecondary/30 bg-shSecondary/10 text-shSecondary"><i className="fas fa-circle-play mr-1.5"/>Self-paced</span>
+                      <span className="px-2.5 py-1.5 rounded-full border border-shPrimary/30 bg-shPrimary/10 text-shPrimary"><i className="fas fa-list-check mr-1.5"/>Guided practice</span>
+                      <span className="px-2.5 py-1.5 rounded-full border border-shBorder bg-black/15 text-shTextMuted"><i className="fas fa-chart-line mr-1.5"/>Track progress</span>
+                    </>
+                  );
+                }
+                return (
+                  <>
+                    {dogs && <span className="px-2.5 py-1.5 rounded-full border border-shPrimary/30 bg-shPrimary/10 text-shPrimary" data-testid="public-school-stat-dogs"><i className="fas fa-paw mr-1.5"/>{dogs} dogs trained</span>}
+                    {rating && <span className="px-2.5 py-1.5 rounded-full border border-shPrimary/30 bg-shPrimary/10 text-shPrimary" data-testid="public-school-stat-rating"><i className="fas fa-star mr-1.5"/>{rating.average} from {rating.count} reviews</span>}
+                    <span className="px-2.5 py-1.5 rounded-full border border-shSecondary/30 bg-shSecondary/10 text-shSecondary"><i className="fas fa-user-check mr-1.5"/>Real trainer feedback</span>
+                  </>
+                );
+              })()}
             </div>
           </div>
           <div className="flex flex-col sm:flex-row lg:flex-col gap-2 min-w-[220px]">

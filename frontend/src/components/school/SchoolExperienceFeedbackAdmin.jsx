@@ -77,7 +77,7 @@ export default function SchoolExperienceFeedbackAdmin() {
         <EmptyState icon="fa-star" accent="cyan" title="No client feedback yet" description="Submitted School experience reviews will appear here." />
       ) : (
         <div className="space-y-3" data-testid="school-client-feedback-list">
-          {items.map((r) => <ReviewCard key={r.id} review={r}/>) }
+          {items.map((r) => <ReviewCard key={r.id} review={r} onChanged={load}/>) }
         </div>
       )}
     </div>
@@ -88,7 +88,25 @@ function Stat({ icon, value, label, detail }) {
   return <div className="rounded-2xl border border-shBorder bg-[var(--sh-card-base)] p-4"><i className={`fas ${icon} text-shSecondary text-sm`}/><p className="text-2xl font-black text-shText mt-2">{value}</p><p className="text-[9px] font-black uppercase tracking-widest text-shTextMuted mt-1">{label}</p>{detail&&<p className="text-[10px] text-shTextMuted mt-1">{detail}</p>}</div>;
 }
 
-function ReviewCard({ review: r }) {
+function ReviewCard({ review: r, onChanged }) {
+  const [busy, setBusy] = useState(false);
+  const [err, setErr] = useState("");
+  // Storefront featuring — the explicit admin act that publishes a
+  // permission-granted quote on the public Online School page. The server
+  // refuses featuring without testimonial_permission, and the public
+  // endpoint re-checks BOTH flags on every read, so a client revoking
+  // permission unpublishes instantly even while this stays toggled on.
+  const toggleFeature = async () => {
+    setBusy(true); setErr("");
+    try {
+      await api.put(`/admin/school/experience-feedback/${encodeURIComponent(r.id)}/feature`, { featured: !r.storefront_featured });
+      onChanged?.();
+    } catch (e) {
+      setErr(typeof e?.response?.data?.detail === "string" ? e.response.data.detail : "Couldn't update this testimonial.");
+    } finally {
+      setBusy(false);
+    }
+  };
   return (
     <article className="rounded-2xl border border-shBorder bg-[var(--sh-card-base)] p-4 sm:p-5" data-testid={`school-client-feedback-${r.id}`}>
       <div className="flex flex-col lg:flex-row lg:items-start lg:justify-between gap-3">
@@ -97,6 +115,7 @@ function ReviewCard({ review: r }) {
             <p className="text-[15px] font-black text-shText">{r.client_name || "Client"}</p>
             {r.dog_name && <span className="text-[10px] font-black uppercase tracking-widest text-shPrimary">· {r.dog_name}</span>}
             {r.testimonial_permission && <span className="rounded-full border border-shPrimary/30 bg-shPrimary/10 px-2 py-1 text-[9px] font-black uppercase tracking-widest text-shPrimary"><i className="fas fa-quote-left mr-1"/>Testimonial OK</span>}
+            {r.storefront_featured && <span className="rounded-full border border-shSecondary/35 bg-shSecondary/10 px-2 py-1 text-[9px] font-black uppercase tracking-widest text-shSecondary" data-testid={`school-client-feedback-featured-${r.id}`}><i className="fas fa-store mr-1"/>On storefront</span>}
           </div>
           <p className="text-[11px] text-shTextMuted mt-1">{[r.program_name, fmt(r.updated_at)].filter(Boolean).join(" · ")}</p>
         </div>
@@ -113,9 +132,20 @@ function ReviewCard({ review: r }) {
       </div>
 
       {(r.liked_most || r.improve) && <div className="grid md:grid-cols-2 gap-3 mt-4">
-        {r.liked_most && <QuoteBlock title="What they like most" text={r.liked_most}/>} 
-        {r.improve && <QuoteBlock title="What could be better" text={r.improve}/>} 
+        {r.liked_most && <QuoteBlock title="What they like most" text={r.liked_most}/>}
+        {r.improve && <QuoteBlock title="What could be better" text={r.improve}/>}
       </div>}
+      {r.testimonial_permission && r.liked_most && (
+        <div className="mt-3 flex flex-wrap items-center gap-2">
+          <button type="button" onClick={toggleFeature} disabled={busy} data-testid={`school-client-feedback-feature-${r.id}`}
+                  className={`min-h-[40px] px-4 rounded-xl text-[10.5px] font-black uppercase tracking-widest border transition ${r.storefront_featured ? "border-shSecondary/45 bg-shSecondary/10 text-shSecondary" : "border-shBorder text-shTextMuted hover:text-shText hover:border-shSecondary/40"} ${busy ? "opacity-60 cursor-wait" : ""}`}>
+            <i className={`fas ${r.storefront_featured ? "fa-store-slash" : "fa-store"} mr-1.5`}/>
+            {r.storefront_featured ? "Remove from storefront" : "Feature on storefront"}
+          </button>
+          <span className="text-[10.5px] text-shTextMuted">The "what they like most" quote appears on the public Online School page.</span>
+          {err && <span className="text-[10.5px] text-shAccent">{err}</span>}
+        </div>
+      )}
       {Number(r.revision || 1) > 1 && <p className="text-[10px] text-shTextMuted mt-3"><i className="fas fa-clock-rotate-left mr-1"/>Client has updated this review {r.revision - 1} time{r.revision - 1 === 1 ? "" : "s"}; the current answer is shown here.</p>}
     </article>
   );

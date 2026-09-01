@@ -150,6 +150,10 @@ class SchoolStudentPatch(BaseModel):
     pause_until: Optional[str] = None
     support_checkpoint_allowance: Optional[int] = Field(default=None, ge=0, le=100)
     support_assist_allowance: Optional[int] = Field(default=None, ge=0, le=100)
+    # Open lesson access — staff-granted "take lessons in any order" for this
+    # one enrollment. See server._school_open_lesson_access for exactly what
+    # it relaxes (roadmap lock statuses only; progression stays sequential).
+    open_lesson_access: Optional[bool] = None
 
 
 class SchoolNoteIn(BaseModel):
@@ -462,6 +466,7 @@ def register_school_suite(*, api, db, get_current_user, manage_school_dep, perms
                                   or "online"),
                 "trainer": trainer, "last_activity_at": latest_events.get(se.get("id")), "attention_count": attn.get(se.get("id"), 0), **pos,
                 "access_expires_at": dp.get("school_access_expires_at"), "pause_until": dp.get("school_pause_until"),
+                "open_lesson_access": bool((dp.get("open_lesson_access") or {}).get("enabled")),
             }
             if needle and needle not in " ".join(str(x or "").lower() for x in [client.get("name"), client.get("email"), dog.get("name"), row.get("program_name")]):
                 continue
@@ -603,6 +608,15 @@ def register_school_suite(*, api, db, get_current_user, manage_school_dep, perms
         if "pause_until" in body.model_fields_set: changes["school_pause_until"] = body.pause_until
         if "support_checkpoint_allowance" in body.model_fields_set: changes["support_checkpoint_allowance"] = body.support_checkpoint_allowance
         if "support_assist_allowance" in body.model_fields_set: changes["support_assist_allowance"] = body.support_assist_allowance
+        if "open_lesson_access" in body.model_fields_set and body.open_lesson_access is not None \
+                and body.open_lesson_access != bool((dp.get("open_lesson_access") or {}).get("enabled")):
+            # Written as a small audit record, not a bare bool, so "who opened
+            # every lesson for this client and when" is always answerable.
+            changes["open_lesson_access"] = {
+                "enabled": bool(body.open_lesson_access),
+                "updated_at": _now(), "updated_by": user.get("id"),
+                "updated_by_name": user.get("name"),
+            }
         changes.update({"school_updated_at": _now(), "school_updated_by": user.get("id")})
         mirror = {k: v for k, v in changes.items() if k in {"assigned_trainer_id", "support_checkpoint_allowance", "support_assist_allowance"}}
         await db.dog_programs.update_one({"id": dp["id"]}, {"$set": changes})

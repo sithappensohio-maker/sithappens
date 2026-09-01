@@ -19,6 +19,10 @@ describe("studentSchool routes", () => {
     expect(parseSchoolPath("/school/course/abc-123/lesson/les-9")).toEqual({ view: "lesson", enrollmentId: "abc-123", lessonId: "les-9" });
   });
 
+  test("parses the program welcome route under its course", () => {
+    expect(parseSchoolPath("/school/course/abc-123/welcome")).toEqual({ view: "welcome", enrollmentId: "abc-123", lessonId: null });
+  });
+
   test("parses simple views and falls back to today on junk", () => {
     expect(parseSchoolPath("/school/today").view).toBe("today");
     expect(parseSchoolPath("/school/practice").view).toBe("practice");
@@ -35,6 +39,7 @@ describe("studentSchool routes", () => {
       [["today"], "/school", "today"],
       [["course", "e1"], "/school/course/e1", "course"],
       [["lesson", "e1", "l2"], "/school/course/e1/lesson/l2", "lesson"],
+      [["welcome", "e1"], "/school/course/e1/welcome", "welcome"],
       [["practice"], "/school/practice", "practice"],
       [["progress"], "/school/progress", "progress"],
       [["feedback"], "/school/feedback", "feedback"],

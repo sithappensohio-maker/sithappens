@@ -16464,6 +16464,23 @@ class ProgramIn(BaseModel):
     # requirement (see claim_free_program). Defaults False so every existing
     # program keeps its exact current behaviour with no migration.
     free_enrollment_enabled: bool = False
+    # Program Welcome page — client-facing "what you'll learn" bullets shown on
+    # the School welcome/index screen. Deliberately read LIVE at welcome render
+    # time (never from the frozen enrollment snapshot) so improving this
+    # orientation copy reaches existing students without a curriculum cascade.
+    welcome_outcomes: List[str] = []
+    # Online School storefront — the problem-first "Helps with" list on the
+    # public/client course card ("pulling, nipping, door chaos"). Marketing
+    # copy only; never read by progression or the welcome page.
+    helps_with: List[str] = []
+
+    @field_validator("welcome_outcomes", "helps_with")
+    @classmethod
+    def _clean_bullet_lines(cls, v: List[str]) -> List[str]:
+        # The Studio editors store one bullet per textarea line, so blank lines
+        # arrive mid-edit as empty strings — drop them at the boundary rather
+        # than persisting padding into every program document.
+        return [s.strip()[:300] for s in (v or []) if s and s.strip()][:12]
 
 
 # Optional skill-measurement fields carried on a goal/skill — see GoalIn's
@@ -18625,6 +18642,17 @@ async def _active_refresher_entitlement(enrollment: dict) -> Optional[str]:
     return prescription.get("refresher_lesson_id")
 
 
+def _school_open_lesson_access(enrollment: dict) -> bool:
+    """Open lesson access — an explicit per-enrollment staff grant (see the
+    admin student PATCH in school_suite_base) that lets a chosen client take
+    lessons in ANY order. It relaxes exactly one thing: the roadmap's locked
+    statuses. The pointer, Today's current_action, /advance gates, module
+    quizzes, and checkpoints all keep their normal sequential behavior — a
+    completed enrollment doesn't need this (completion already opens every
+    lesson for review)."""
+    return bool(((enrollment or {}).get("open_lesson_access") or {}).get("enabled"))
+
+
 async def _school_roadmap(enrollment: dict, dog_id: str) -> dict:
     """Server-internal (not client-safe) computation — the single source
     powering the roadmap response, the single-lesson lock check, and the
@@ -18636,7 +18664,13 @@ async def _school_roadmap(enrollment: dict, dog_id: str) -> dict:
     can see what's coming, per spec: 'explain WHY it is locked, not merely
     display a padlock') but are reduced to a minimal placeholder — no
     instructional content leaves the server for a lesson the student hasn't
-    reached yet."""
+    reached yet.
+
+    Open lesson access (_school_open_lesson_access) relaxes ONLY the lock
+    statuses here: would-be-locked modules come back "upcoming" WITH their
+    full lessons, and would-be-locked lessons come back "available" — which
+    automatically opens every per-lesson route that consults this roadmap
+    (_accessible_school_lesson, start-practice). Nothing else changes."""
     modules = sorted(
         (enrollment.get("program_snapshot") or {}).get("modules") or [],
         key=lambda m: (m.get("order", 0), m.get("name") or ""),
@@ -18658,6 +18692,7 @@ async def _school_roadmap(enrollment: dict, dog_id: str) -> dict:
     # as locked. A graduated course is fully completed and stays reviewable:
     # every module/lesson reads "completed", nothing is current or locked.
     is_completed_enrollment = _canonical_school_status(enrollment) == "completed"
+    open_access = _school_open_lesson_access(enrollment) and not is_completed_enrollment
 
     modules_out = []
     for m_idx, m in enumerate(modules):
@@ -18669,17 +18704,26 @@ async def _school_roadmap(enrollment: dict, dog_id: str) -> dict:
             m_status = "locked"
 
         if m_status == "locked":
-            prev_m = modules[m_idx - 1] if m_idx > 0 else None
-            modules_out.append({
-                "id": m.get("id"), "name": m.get("name"), "description": m.get("description") or "",
-                "order": m.get("order", 0), "status": m_status,
-                "locked_reason": f"Complete {(prev_m or {}).get('name') or 'the previous module'} before continuing.",
-                "lessons": [],
-            })
-            continue
+            if not open_access:
+                prev_m = modules[m_idx - 1] if m_idx > 0 else None
+                modules_out.append({
+                    "id": m.get("id"), "name": m.get("name"), "description": m.get("description") or "",
+                    "order": m.get("order", 0), "status": m_status,
+                    "locked_reason": f"Complete {(prev_m or {}).get('name') or 'the previous module'} before continuing.",
+                    "lessons": [],
+                })
+                continue
+            # Open lesson access — the module ahead is browsable, not locked.
+            m_status = "upcoming"
 
         lessons = _effective_lesson_list(m)
-        cur_lesson_idx = next((i for i, l in enumerate(lessons) if l.get("id") == cur_lesson_id), 0) if m_status == "current" else len(lessons)
+        # An "upcoming" (open-access) module's sentinel is -1, NOT
+        # len(lessons): the non-current default of len(lessons) marks every
+        # lesson completed (correct for completed modules only), while -1
+        # routes them all through the locked branch below where open access
+        # flips them to "available".
+        cur_lesson_idx = (next((i for i, l in enumerate(lessons) if l.get("id") == cur_lesson_id), 0) if m_status == "current"
+                          else -1 if m_status == "upcoming" else len(lessons))
         lessons_out = []
         for l_idx, l in enumerate(lessons):
             if m_status == "completed" or l_idx < cur_lesson_idx:
@@ -18688,6 +18732,17 @@ async def _school_roadmap(enrollment: dict, dog_id: str) -> dict:
                 l_status = "locked"
             else:
                 l_status = "in_progress" if practiced else "available"
+
+            if l_status == "locked" and open_access:
+                # Full lesson, any order — same shape as any unlocked lesson,
+                # so every consumer (client-safe reducer, lesson detail,
+                # start-practice) treats it identically.
+                lessons_out.append({
+                    **l, "status": "available", "locked_reason": None,
+                    "is_current": False,
+                    "learn_completed": l.get("id") in learn_completed_ids,
+                })
+                continue
 
             if l_status == "locked":
                 prev_l = lessons[l_idx - 1] if l_idx > 0 else None
@@ -20801,6 +20856,43 @@ async def _school_completion_summary(se: dict, enrollment: dict) -> Optional[dic
     }
 
 
+def _school_welcome_payload(enrollment: dict, outcomes: List[str]) -> dict:
+    """Client-safe Program Welcome content — orientation, never progression.
+
+    The index comes from the enrollment's OWN frozen program_snapshot (the
+    curriculum this student is actually on) in the exact _effective_lesson_list
+    ordering the roadmap uses, reduced to names, minutes, and quiz question
+    counts. Deliberately NO lesson ids, no instructional content, and no lock
+    state: this is a read-only table of contents, and every lock/progression
+    decision stays the roadmap's job. Listing locked-module lesson NAMES here
+    is an intentional relaxation of the roadmap's locked-module redaction —
+    the welcome page's whole purpose is showing the full journey up front."""
+    snap = enrollment.get("program_snapshot") or {}
+    modules = sorted(snap.get("modules") or [], key=lambda m: (m.get("order", 0), m.get("name") or ""))
+    syllabus, total_lessons, total_minutes = [], 0, 0
+    for m in modules:
+        lessons = _effective_lesson_list(m)
+        entries = [{"name": l.get("name"), "estimated_minutes": l.get("estimated_minutes")} for l in lessons]
+        minutes = sum(int(l.get("estimated_minutes") or 0) for l in lessons)
+        quiz = m.get("module_quiz") or {}
+        syllabus.append({
+            "name": m.get("name"), "description": m.get("description") or "",
+            "lesson_count": len(entries), "total_minutes": minutes,
+            "quiz_question_count": len(quiz.get("questions") or []) if quiz.get("enabled") else 0,
+            "lessons": entries,
+        })
+        total_lessons += len(entries)
+        total_minutes += minutes
+    return {
+        "description": snap.get("description") or "",
+        "focus": snap.get("focus") or "",
+        "estimated_weeks": snap.get("estimated_weeks"),
+        "outcomes": [o for o in (outcomes or []) if isinstance(o, str) and o.strip()],
+        "syllabus": syllabus,
+        "totals": {"modules": len(syllabus), "lessons": total_lessons, "minutes": total_minutes},
+    }
+
+
 @api.get("/portal/school/{school_enrollment_id}")
 async def portal_school_detail(school_enrollment_id: str, user: dict = Depends(get_current_user)):
     se, enrollment = await _school_enrollment_for_client(school_enrollment_id, user)
@@ -20823,6 +20915,21 @@ async def portal_school_detail(school_enrollment_id: str, user: dict = Depends(g
     # accessible) and Principle 2 (training history is historical data).
     roadmap = None if access_state == "revoked" else _client_safe_school_roadmap(await _school_roadmap(enrollment, se["dog_id"]))
     completion_summary = await _school_completion_summary(se, enrollment)
+    # Program Welcome — same revoked-access rule as the roadmap: lifecycle
+    # state stays visible, curriculum content (the index IS curriculum
+    # names) does not. Outcomes read from the LIVE program (see
+    # ProgramIn.welcome_outcomes) with the snapshot as a fallback for a
+    # since-deleted program.
+    welcome = None
+    if access_state != "revoked":
+        live_program = await db.programs.find_one(
+            {"id": enrollment.get("program_id")}, {"_id": 0, "welcome_outcomes": 1},
+        ) or {}
+        welcome = _school_welcome_payload(
+            enrollment,
+            live_program.get("welcome_outcomes")
+            or (enrollment.get("program_snapshot") or {}).get("welcome_outcomes") or [],
+        )
     return {
         "school_enrollment_id": se["id"], "status": status, "access_state": access_state,
         "delivery_mode": _school_delivery_mode(se, enrollment),
@@ -20833,6 +20940,11 @@ async def portal_school_detail(school_enrollment_id: str, user: dict = Depends(g
         "course_pct": _school_course_progress(enrollment, status)["course_pct"],
         "roadmap": roadmap,
         "completion_summary": completion_summary,
+        "welcome": welcome,
+        # Open lesson access — presentation flag only (the roadmap above has
+        # already applied it); lets the course screen say WHY nothing is
+        # locked instead of silently looking different.
+        "open_lesson_access": _school_open_lesson_access(enrollment),
     }
 
 
@@ -40780,6 +40892,15 @@ async def _build_shop_catalog(client_id: Optional[str]) -> dict:
             "school_support": prog.get("school_support") or {},
             "school_onboarding": prog.get("school_onboarding") or {},
             "recommended_next_program_slugs": prog.get("recommended_next_program_slugs") or [],
+            # Online School storefront — card content. Bullet lists are admin-
+            # authored marketing copy (ProgramIn.helps_with/welcome_outcomes);
+            # counts are derived here so the storefront never needs the
+            # curriculum itself (module/lesson NAMES stay non-public until
+            # enrollment's welcome page).
+            "helps_with": prog.get("helps_with") or [],
+            "welcome_outcomes": prog.get("welcome_outcomes") or [],
+            "module_count": len(prog.get("modules") or []),
+            "lesson_count": sum(len(_effective_lessons(m)) for m in (prog.get("modules") or [])),
             **_shop_org_fields(prog.get("category_id"), prog.get("subcategory_id")),
         })
 
@@ -40971,7 +41092,22 @@ _PUBLIC_FIELDS_PRODUCT = {"sales_destination", "shopify_product_url"}
 # describe QUANTITY, not price (same precedent as raw `qty` below, already
 # unconditionally public) — safe to show even when pricing is hidden.
 _PUBLIC_FIELDS_PACK = {"service_type", "qty", "display_quantity", "display_unit", "display_dog_count", "credits_per_display_unit"}
-_PUBLIC_FIELDS_PROGRAM = {"focus", "program_type", "format_count", "format_unit", "min_age_months", "estimated_weeks", "school_support", "school_onboarding"}
+_PUBLIC_FIELDS_PROGRAM = {
+    "focus", "program_type", "format_count", "format_unit", "min_age_months",
+    "estimated_weeks", "school_support", "school_onboarding",
+    # Online School storefront card content — admin-authored marketing bullets
+    # and derived counts (never curriculum names/ids; see the catalog builder).
+    "helps_with", "welcome_outcomes", "module_count", "lesson_count",
+    # These two were always intended to be public — the guest storefront's
+    # Online School tab filters on purchase_fulfillment and its free-course
+    # discovery reads free_claim_available, but neither survived the public
+    # allowlist, so the PUBLIC Online School tab was permanently empty (and
+    # Start Free Course could never deep-link) no matter how programs were
+    # flagged. Both are computed/config discriminators, not sensitive data,
+    # and free_claim_available is already recomputed by _public_purchase_state
+    # from the same rule the claim endpoint enforces.
+    "purchase_fulfillment", "free_claim_available",
+}
 
 _PUBLIC_SECTION_FLAG_FOR_SECTION = {"merch": "show_public_merch", "prepaid_visits": "show_public_prepaid", "training": "show_public_training"}
 _PUBLIC_SECTION_FOR_KIND = {"product": "merch", "credit_pack": "prepaid_visits", "training_program": "training"}

@@ -7,6 +7,7 @@ import SchoolNav from "../components/school/student/SchoolNav";
 import EnrollmentSelector from "../components/school/student/EnrollmentSelector";
 import StudentHome from "../components/school/student/StudentHome";
 import CourseRoadmap from "../components/school/student/CourseRoadmap";
+import ProgramWelcome from "../components/school/student/ProgramWelcome";
 import LessonScreen from "../components/school/student/LessonScreen";
 import TodayScreen from "../components/school/student/TodayScreen";
 import PracticePanel from "../components/training/PracticePanel";
@@ -20,7 +21,7 @@ import StudentWorkspaceExtras from "../components/school/student/StudentWorkspac
 import SchoolNotificationBell from "../components/school/student/SchoolNotificationBell";
 import ResourcesScreen from "../components/school/student/ResourcesScreen";
 import SearchScreen from "../components/school/student/SearchScreen";
-import { parseSchoolPath, schoolPathFor, SELECTED_ENROLLMENT_KEY } from "../lib/studentSchool";
+import { parseSchoolPath, schoolPathFor, welcomeSeen, markWelcomeSeen, SELECTED_ENROLLMENT_KEY } from "../lib/studentSchool";
 
 function AccessEndedState({ onHome, onExit }) {
   return (
@@ -92,6 +93,19 @@ export default function SchoolApp({ path, clientName, onNavigate, onExit }) {
   useEffect(() => { setHomeLoading(true); setHome(null); setDetail(null); loadHome(); loadDetail(); }, [loadHome, loadDetail]);
   useLiveRefresh(loadHome, { intervalMs: 45000 });
 
+  // Program Welcome — a client who hasn't completed a single lesson lands on
+  // the welcome/index page the FIRST time they open My Course on this device.
+  // The seen-flag is written before navigating so this can never loop, and the
+  // page stays reachable forever via the course hero's "About this program".
+  useEffect(() => {
+    if (parsed.view !== "course" || !selectedId || !detail || !home) return;
+    if (detail.access_state === "revoked" || detail.status === "completed") return;
+    if ((home.progress?.lessons_completed ?? 0) !== 0) return;
+    if (welcomeSeen(selectedId)) return;
+    markWelcomeSeen(selectedId);
+    onNavigate(schoolPathFor("welcome", selectedId));
+  }, [parsed.view, selectedId, detail, home, onNavigate]);
+
   const refreshAll = useCallback(() => { loadHome(); loadDetail(); }, [loadHome, loadDetail]);
 
   const go = useCallback((view, lessonId) => {
@@ -100,7 +114,7 @@ export default function SchoolApp({ path, clientName, onNavigate, onExit }) {
 
   const selectEnrollment = useCallback((id) => {
     setSelectedId(id);
-    if (parsed.view === "course" || parsed.view === "lesson") onNavigate(schoolPathFor("course", id));
+    if (parsed.view === "course" || parsed.view === "lesson" || parsed.view === "welcome") onNavigate(schoolPathFor("course", id));
     else onNavigate(schoolPathFor(parsed.view === "lesson" ? "course" : parsed.view, id));
   }, [onNavigate, parsed.view]);
 
@@ -276,7 +290,14 @@ export default function SchoolApp({ path, clientName, onNavigate, onExit }) {
       screen = (
         <CourseRoadmap detail={detail} progress={home?.progress} loading={!detail}
                        onOpenLesson={(lid) => go("lesson", lid)}
+                       onAbout={() => go("welcome")}
                        onResume={() => home?.current_action ? runAction(home.current_action) : go("today")} />
+      );
+    } else if (parsed.view === "welcome") {
+      screen = (
+        <ProgramWelcome detail={detail} progress={home?.progress}
+                        onStart={() => home?.current_action ? runAction(home.current_action) : go("course")}
+                        onViewCourse={() => go("course")} />
       );
     } else if (parsed.view === "lesson" && parsed.lessonId) {
       screen = (
@@ -353,7 +374,7 @@ export default function SchoolApp({ path, clientName, onNavigate, onExit }) {
           <div className="mb-4 max-w-sm"><EnrollmentSelector enrollments={list} selectedId={selectedId} onSelect={selectEnrollment} /></div>
         )}
         <div className="flex gap-6 items-start">
-          <SchoolNav active={parsed.view === "lesson" ? "course" : parsed.view} onNavigate={goView} />
+          <SchoolNav active={parsed.view === "lesson" || parsed.view === "welcome" ? "course" : parsed.view} onNavigate={goView} />
           <div className="min-w-0 flex-1">{screen}</div>
         </div>
       </div>

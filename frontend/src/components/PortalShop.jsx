@@ -10,6 +10,7 @@ import { isFreeClaimable } from "../lib/freeCourseClaim";
 import { SELECTED_ENROLLMENT_KEY } from "../lib/studentSchool";
 import ShopItemDetail from "./ShopItemDetail";
 import HuskyDogImage from "./brand/HuskyDogImage";
+import OnlineSchoolStorefront from "./OnlineSchoolStorefront";
 import {
   itemsForTab, subcategoryOptionsForTab, nextFiltersForTab,
   sortShopItems, singularUnit, stockCeiling, isInternalPhysical, orderStatusLabel,
@@ -838,6 +839,11 @@ export default function PortalShop({
   };
 
   const searching = search.trim().length > 0;
+  // Online School tab — a rich storefront landing (hero, how-it-works,
+  // course cards, testimonials, FAQ) replaces the generic category/grid
+  // browsing for this one tab. A live search still wins: typing drops the
+  // visitor into the normal flat results grid exactly like every other tab.
+  const onlineSchoolLanding = tab === "online_school" && !searching;
   // Search always shows a flat grid immediately — even from an index screen
   // with no category selected — rather than staying on category/section
   // cards while results exist underneath them unseen.
@@ -1243,7 +1249,19 @@ export default function PortalShop({
       {loading && <p className="text-gray-500 text-sm text-center py-6">Loading the shop…</p>}
       {!loading && err && <p className="text-red-400 text-sm text-center py-6">{err}</p>}
 
-      {!loading && !err && showIndexScreen && (
+      {!loading && !err && onlineSchoolLanding && (
+        <OnlineSchoolStorefront
+          items={sortShopItems(itemsForTab(browsableItems, "online_school"))}
+          mode={mode}
+          onOpenDetail={openDetail}
+          /* The guest page already opens with PublicShop's own Online School
+             marketing hero directly above these tabs — rendering a second
+             full hero here would stack two of them. */
+          showHero={mode !== "guest"}
+        />
+      )}
+
+      {!loading && !err && !onlineSchoolLanding && showIndexScreen && (
         tab === "all" && shopPage.landing_mode === "featured_items" ? (
           // Featured Items landing mode — flat grid of catalog items flagged
           // featured, reusing the exact same item.featured field sortShopItems
@@ -1284,7 +1302,7 @@ export default function PortalShop({
         )
       )}
 
-      {!loading && !err && !showIndexScreen && (
+      {!loading && !err && !onlineSchoolLanding && !showIndexScreen && (
         <>
           {showGridHeader && (
             <CategoryGridHeader

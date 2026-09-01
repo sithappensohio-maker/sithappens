@@ -38,6 +38,14 @@ class SchoolExperienceFeedbackIn(BaseModel):
     source: Literal["feedback_screen", "course_completion"] = "feedback_screen"
 
 
+class TestimonialFeatureIn(BaseModel):
+    featured: bool
+
+
+def _first_name(full_name: Optional[str]) -> str:
+    return (_clean(full_name).split() or ["A Sit Happens client"])[0]
+
+
 def _feedback_id(client_id: str, dog_id: str, program_id: str) -> str:
     return f"school-experience:{client_id}:{dog_id}:{program_id}"
 
@@ -206,6 +214,87 @@ def register_school_experience_feedback(*, api, db, get_current_user, manage_fee
                 "testimonial_permissions": testimonials,
             },
             "items": rows,
+        }
+
+    @api.put("/admin/school/experience-feedback/{feedback_id}/feature")
+    async def feature_testimonial(
+        feedback_id: str, body: TestimonialFeatureIn, user: dict = Depends(manage_feedback_dep),
+    ):
+        """Online School storefront — hand-pick which permission-granted
+        reviews appear publicly. Featuring is an explicit admin act; nothing
+        publishes automatically, and only rows whose client ticked the
+        testimonial-permission box can be featured at all."""
+        row = await db.school_experience_feedback.find_one({"_id": feedback_id}, {"_id": 0})
+        if not row:
+            raise HTTPException(status_code=404, detail="Feedback not found")
+        if body.featured and not row.get("testimonial_permission"):
+            raise HTTPException(status_code=422, detail="This client has not given testimonial permission.")
+        await db.school_experience_feedback.update_one(
+            {"_id": feedback_id},
+            {"$set": {
+                "storefront_featured": bool(body.featured),
+                "storefront_featured_at": _now() if body.featured else None,
+                "storefront_featured_by": user.get("id") if body.featured else None,
+            }},
+        )
+        return {"ok": True, "featured": bool(body.featured)}
+
+    @api.get("/public/school/storefront")
+    async def public_school_storefront():
+        """Online School storefront aggregates — no auth, because the same
+        payload feeds the guest storefront and the client Shop. Everything is
+        either an aggregate (counts, average stars) or content an admin
+        explicitly featured AND the client explicitly permitted; a client
+        re-saving their review without the permission box unpublishes the
+        quote immediately because BOTH flags are required here, whether or
+        not the featured flag was ever cleared. Only first name + dog +
+        program are exposed — never emails, ids, or free-text 'improve'
+        feedback."""
+        dogs_trained = len(await db.school_enrollments.distinct("dog_id"))
+
+        rating_rows = await db.school_experience_feedback.find(
+            {}, {"_id": 0, "overall_rating": 1, "program_id": 1},
+        ).to_list(10000)
+        rated = [r for r in rating_rows if r.get("overall_rating")]
+        rating_count = len(rated)
+        average_rating = round(sum(r["overall_rating"] for r in rated) / rating_count, 1) if rating_count else None
+        program_ratings: dict = {}
+        for r in rated:
+            pid = r.get("program_id")
+            if not pid:
+                continue
+            slot = program_ratings.setdefault(pid, {"count": 0, "total": 0})
+            slot["count"] += 1
+            slot["total"] += r["overall_rating"]
+        program_ratings = {
+            pid: {"count": s["count"], "average": round(s["total"] / s["count"], 1)}
+            for pid, s in program_ratings.items()
+        }
+
+        featured = await db.school_experience_feedback.find(
+            {"testimonial_permission": True, "storefront_featured": True},
+            {"_id": 0, "id": 1, "liked_most": 1, "client_name": 1, "dog_name": 1,
+             "program_name": 1, "overall_rating": 1, "storefront_featured_at": 1},
+        ).sort("storefront_featured_at", DESCENDING).to_list(12)
+        testimonials = [
+            {
+                "id": row.get("id"),
+                "quote": _clean(row.get("liked_most")),
+                "client_first_name": _first_name(row.get("client_name")),
+                "dog_name": row.get("dog_name") or "",
+                "program_name": row.get("program_name") or "",
+                "rating": row.get("overall_rating"),
+            }
+            for row in featured if _clean(row.get("liked_most"))
+        ]
+        return {
+            "stats": {
+                "dogs_trained": dogs_trained,
+                "average_rating": average_rating,
+                "rating_count": rating_count,
+            },
+            "program_ratings": program_ratings,
+            "testimonials": testimonials,
         }
 
 

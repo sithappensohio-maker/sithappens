@@ -37,7 +37,7 @@ function moduleState(m) {
  * client on the 120-lesson Service Dog program that their course was 5
  * lessons long. The roadmap-derived count survives only as a fallback for a
  * caller that has no progress payload yet. */
-export function CourseHero({ detail, roadmap, progress, onResume }) {
+export function CourseHero({ detail, roadmap, progress, onResume, onAbout }) {
   const pct = Math.max(0, Math.min(100, Math.round(progress?.course_pct ?? detail?.course_pct ?? 0)));
   const visibleLessons = roadmap?.modules?.flatMap(m => m.lessons || []) || [];
   const lessonsDone = Number(progress?.lessons_completed ?? visibleLessons.filter(l => l.status === "completed").length);
@@ -55,7 +55,15 @@ export function CourseHero({ detail, roadmap, progress, onResume }) {
     <section className="relative overflow-hidden rounded-2xl border border-shBorder/60 bg-[var(--sh-card-base)]" data-testid="course-hero">
       <div className="flex items-stretch">
         <div className="min-w-0 flex-1 p-4 sm:p-5">
-          <Eyebrow>{detail?.dog_name ? `${detail.dog_name} · your course` : "Your course"}</Eyebrow>
+          <div className="flex flex-wrap items-center justify-between gap-2">
+            <Eyebrow>{detail?.dog_name ? `${detail.dog_name} · your course` : "Your course"}</Eyebrow>
+            {onAbout && (
+              <button type="button" onClick={onAbout} data-testid="course-about-program"
+                      className="min-h-[40px] px-2 text-[10.5px] font-black uppercase tracking-widest text-shSecondary hover:text-shText">
+                About this program <i className="fas fa-circle-info ml-1 text-[9px]" />
+              </button>
+            )}
+          </div>
           <h1 className="text-[20px] sm:text-[24px] font-black text-shText leading-tight mt-1 text-balance">
             {detail?.program_name || "Your program"}
           </h1>

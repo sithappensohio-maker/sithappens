@@ -70,6 +70,7 @@ export function parseSchoolPath(pathname) {
   if (!seg) return { view: SCHOOL_DEFAULT_VIEW, enrollmentId: null, lessonId: null };
   if (seg === "course") {
     if (m[3] === "lesson" && m[4]) return { view: "lesson", enrollmentId: m[2] || null, lessonId: m[4] };
+    if (m[3] === "welcome") return { view: "welcome", enrollmentId: m[2] || null, lessonId: null };
     return { view: "course", enrollmentId: m[2] || null, lessonId: null };
   }
   // "home" is a legacy alias — normalise it so the app only ever renders,
@@ -82,8 +83,21 @@ export function parseSchoolPath(pathname) {
 export function schoolPathFor(view, enrollmentId, lessonId) {
   if (view === "home" || view === SCHOOL_DEFAULT_VIEW) return "/school";
   if (view === "lesson" && enrollmentId && lessonId) return `/school/course/${enrollmentId}/lesson/${lessonId}`;
+  if (view === "welcome" && enrollmentId) return `/school/course/${enrollmentId}/welcome`;
   if (view === "course" && enrollmentId) return `/school/course/${enrollmentId}`;
   return `/school/${view}`;
+}
+
+/* Program Welcome — first-visit flag, per enrollment. localStorage (not the
+ * session-scoped convention) so the welcome page auto-opens once per device,
+ * not once per tab; when storage is unavailable we report "seen" so a broken
+ * store can never trap the client in a welcome-redirect loop. */
+const welcomeSeenKey = (enrollmentId) => `sh_school_welcome_seen:${enrollmentId}`;
+export function welcomeSeen(enrollmentId) {
+  try { return !!localStorage.getItem(welcomeSeenKey(enrollmentId)); } catch { return true; }
+}
+export function markWelcomeSeen(enrollmentId) {
+  try { localStorage.setItem(welcomeSeenKey(enrollmentId), "1"); } catch { /* ignore */ }
 }
 
 /* sessionStorage key for the selected enrollment (per the app's session-scoped

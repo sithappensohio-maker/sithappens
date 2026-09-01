@@ -744,6 +744,24 @@ function SetupTab({ program, set, meta, allPrograms, hwTemplates, emailTemplates
                   <SField label="Trainer Assists included"><input type="number" min="0" value={program.school_support?.trainer_assists_included ?? ""} onChange={(e) => set({ school_support: { ...(program.school_support || {}), trainer_assists_included: e.target.value === "" ? null : parseInt(e.target.value) } })} className={inputCls}/></SField>
                 </div>
                 <SField label="Target trainer response time (hours — informational)"><input type="number" min="1" max="168" value={program.school_support?.response_target_hours ?? ""} onChange={(e) => set({ school_support: { ...(program.school_support || {}), response_target_hours: e.target.value === "" ? null : parseInt(e.target.value) } })} className={`${inputCls} max-w-[180px]`}/></SField>
+                {/* Program Welcome page — one outcome per line; blank lines are
+                    dropped server-side (ProgramIn.welcome_outcomes) and edits
+                    reach existing students immediately (read live, not from
+                    the enrollment snapshot). */}
+                <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
+                  <SField label="What you'll learn (welcome page + storefront — one point per line, up to 12)">
+                    <textarea value={(program.welcome_outcomes || []).join("\n")}
+                              onChange={(e) => set({ welcome_outcomes: e.target.value.split("\n") })}
+                              rows={4} data-testid="prog-welcome-outcomes" className={inputCls}
+                              placeholder={"Reliable name response around distractions\nLoose-leash walking foundations\nCalm greetings at the door"}/>
+                  </SField>
+                  <SField label="Helps with (storefront card — one problem per line)">
+                    <textarea value={(program.helps_with || []).join("\n")}
+                              onChange={(e) => set({ helps_with: e.target.value.split("\n") })}
+                              rows={4} data-testid="prog-helps-with" className={inputCls}
+                              placeholder={"Leash pulling\nJumping on guests\nIgnoring you outside"}/>
+                  </SField>
+                </div>
                 <div className="rounded-xl border border-shBorder/50 bg-black/10 p-3">
                   <p className="text-[11px] font-black text-shText mb-2">Enrollment onboarding</p>
                   <div className="grid sm:grid-cols-3 gap-2">

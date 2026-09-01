@@ -19,7 +19,7 @@ const QUIZ_CHIP_CLS = {
  * progression decision — this screen only presents them. Lesson clicks
  * navigate through the caller exactly as before.
  */
-export default function CourseRoadmap({ detail, progress, loading, onOpenLesson, onResume }) {
+export default function CourseRoadmap({ detail, progress, loading, onOpenLesson, onResume, onAbout }) {
   if (loading && !detail) {
     return (
       <div className="space-y-3" data-testid="course-roadmap-loading">
@@ -43,11 +43,19 @@ export default function CourseRoadmap({ detail, progress, loading, onOpenLesson,
 
   return (
     <div className="space-y-4" data-testid="course-roadmap">
-      <CourseHero detail={detail} roadmap={roadmap} progress={progress} onResume={isCompleted ? null : onOpenLesson} />
+      <CourseHero detail={detail} roadmap={roadmap} progress={progress} onResume={isCompleted ? null : onOpenLesson} onAbout={onAbout} />
 
       {isCompleted && (
         <p className="text-[13px] font-black text-shPrimary" data-testid="course-completed-banner">
           <i className="fas fa-graduation-cap mr-1.5" />Course complete — every lesson below stays open for review.
+        </p>
+      )}
+
+      {/* Open lesson access — say WHY nothing is locked (the roadmap data
+          already reflects it; this is presentation only). */}
+      {!isCompleted && detail.open_lesson_access && (
+        <p className="text-[13px] font-black text-shSecondary" data-testid="course-open-access-banner">
+          <i className="fas fa-lock-open mr-1.5" />Open lesson access — every lesson is unlocked for you. Take them in any order; Today still shows our recommended next step.
         </p>
       )}
 
