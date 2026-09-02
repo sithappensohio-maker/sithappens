@@ -15103,7 +15103,11 @@ async def dog_timeline(dog_id: str, limit: int = 80, user: dict = Depends(get_cu
 
     # ── Photo gallery additions (we don't store per-photo timestamps in the
     # array, so we surface a single rolled-up event if the dog has photos)
-    photo_count = len(dog.get("photos") or [])
+    # `photo` is the primary avatar (the one prompted at signup); `photos` is
+    # the optional gallery. Count both — a dog with only a profile photo
+    # used to show no photos on its timeline.
+    _gallery = [p for p in (dog.get("photos") or []) if p]
+    photo_count = len(_gallery) + (1 if dog.get("photo") and dog.get("photo") not in _gallery else 0)
     if photo_count:
         events.append({
             "id": f"photos-{dog_id}",
@@ -32908,6 +32912,12 @@ async def portal_incentives(user: dict = Depends(get_current_user)):
             "description": t.get("description"),
             "tier": t.get("tier"),
             "icon": t.get("icon"),
+            # Uploaded artwork + its fit/focal point so the Portal ladder can
+            # render TrophyBadge instead of the icon glyph.
+            "custom_image": t.get("custom_image") or "",
+            "image_fit": t.get("image_fit") or "circle",
+            "image_offset_x": t.get("image_offset_x", 50),
+            "image_offset_y": t.get("image_offset_y", 50),
             "kind": kind,
             "threshold": thresh,
             "current": int(cur),
@@ -39765,6 +39775,75 @@ async def issue_test_receipt_print_token(body: Optional[Dict[str, Any]] = None, 
     return {"print_receipt_token": token}
 
 
+RECEIPT_LOGO_MAX_DOTS = int(os.environ.get("RECEIPT_LOGO_MAX_DOTS", "384"))   # fits 58mm and 80mm heads
+RECEIPT_LOGO_MAX_HEIGHT = int(os.environ.get("RECEIPT_LOGO_MAX_HEIGHT", "200"))
+_LOGO_RASTER_CACHE: Dict[str, Dict[str, Any]] = {}
+
+
+def _rasterize_logo_for_thermal(data_url: str, *, max_dots: int = RECEIPT_LOGO_MAX_DOTS,
+                                max_height: int = RECEIPT_LOGO_MAX_HEIGHT) -> Optional[Dict[str, Any]]:
+    """Turn an uploaded logo (data URL) into ESC/POS `GS v 0` raster rows:
+    1 bit per dot, MSB first, rows padded to whole bytes. The POS agent is
+    stdlib-only, so the server does the imaging (Pillow is already a
+    backend dependency for trophy share cards)."""
+    try:
+        from PIL import Image
+        import base64 as _b64
+        import io as _io
+        raw = data_url.split(",", 1)[1] if data_url.startswith("data:") else data_url
+        im = Image.open(_io.BytesIO(_b64.b64decode(raw)))
+        # Flatten transparency onto white, then greyscale.
+        if im.mode in ("RGBA", "LA", "P"):
+            im = im.convert("RGBA")
+            bg = Image.new("RGBA", im.size, (255, 255, 255, 255))
+            bg.paste(im, mask=im.split()[-1])
+            im = bg
+        im = im.convert("L")
+        w, h = im.size
+        if w <= 0 or h <= 0:
+            return None
+        scale = min(1.0, max_dots / float(w), max_height / float(h))
+        if scale < 1.0:
+            im = im.resize((max(1, int(w * scale)), max(1, int(h * scale))))
+        w, h = im.size
+        bw = im.point(lambda px: 0 if px < 128 else 255, "1")
+        row_bytes = (w + 7) // 8
+        out = bytearray()
+        px = bw.load()
+        for y in range(h):
+            for bx in range(row_bytes):
+                byte = 0
+                for bit in range(8):
+                    x = bx * 8 + bit
+                    if x < w and px[x, y] == 0:   # black dot → 1
+                        byte |= 0x80 >> bit
+                out.append(byte)
+        return {"width_dots": w, "height": h, "row_bytes": row_bytes, "data_b64": _b64.b64encode(bytes(out)).decode()}
+    except Exception as exc:
+        logger.warning("receipt logo rasterize failed: %s", exc)
+        return None
+
+
+async def _attach_receipt_logo_raster(payload: dict) -> dict:
+    """Adds `business_logo_raster` for the thermal agent when a logo is set.
+    Best-effort: a missing/broken image just prints no logo."""
+    media_id = payload.get("business_logo_image_id")
+    if not media_id:
+        return payload
+    try:
+        cached = _LOGO_RASTER_CACHE.get(media_id)
+        if cached is None:
+            m = await db.shop_media.find_one({"id": media_id}, {"_id": 0, "data": 1})
+            raster = _rasterize_logo_for_thermal(m["data"]) if m and m.get("data") else None
+            cached = raster or {}
+            _LOGO_RASTER_CACHE[media_id] = cached
+        if cached:
+            payload["business_logo_raster"] = cached
+    except Exception as exc:
+        logger.warning("receipt logo attach failed: %s", exc)
+    return payload
+
+
 async def get_pos_receipt_payload(token: str):
     """Called by the local POS agent to fetch the canonical receipt content
     for a print action. The token itself is the credential — this is a
@@ -39772,18 +39851,18 @@ async def get_pos_receipt_payload(token: str):
     browser session. Single-use: a second call with the same token fails."""
     claims = await _verify_and_consume_pos_token(token, expected_action=("print_receipt", "print_test_receipt"))
     if claims.get("action") == "print_test_receipt":
-        return await _build_test_receipt_payload()
+        return await _attach_receipt_logo_raster(await _build_test_receipt_payload())
     pos_sale_id = claims.get("pos_sale_id")
     if pos_sale_id:
-        return await _build_pos_sale_receipt_payload(pos_sale_id)
+        return await _attach_receipt_logo_raster(await _build_pos_sale_receipt_payload(pos_sale_id))
     ledger_id = claims.get("ledger_id")
     if ledger_id:
-        return await _build_tab_payment_receipt_payload(ledger_id)
+        return await _attach_receipt_logo_raster(await _build_tab_payment_receipt_payload(ledger_id))
     invoice_id = claims.get("invoice_id")
     if not invoice_id:
         raise HTTPException(status_code=400, detail="Token has no associated invoice, POS sale, or ledger row")
     payload = await _build_receipt_payload(invoice_id, payment_ids=claims.get("payment_ids") or None)
-    return payload
+    return await _attach_receipt_logo_raster(payload)
 
 
 @api.get("/admin/receipts/preview")

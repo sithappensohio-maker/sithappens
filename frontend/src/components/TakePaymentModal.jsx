@@ -21,6 +21,7 @@ import { toast } from "sonner";
 import { api } from "../lib/api";
 import { emitRegisterChanged } from "../lib/registerBus";
 import { printReceipt as posPrintReceipt, openDrawer as posOpenDrawer } from "../lib/posAgent";
+import ReceiptLogo from "./ReceiptLogo";
 
 export default function TakePaymentModal({ onClose, onSuccess, presetClientId }) {
   const [clients, setClients] = useState([]);
@@ -298,6 +299,7 @@ export default function TakePaymentModal({ onClose, onSuccess, presetClientId })
               {receiptViewOpen.test_receipt && (
                 <div className="bg-amber-200 text-amber-900 text-center font-black text-[10px] uppercase tracking-widest py-1 mb-2 rounded">{receiptViewOpen.test_label}</div>
               )}
+              <ReceiptLogo imageId={receiptViewOpen.business_logo_image_id} />
               <p className="font-black text-base">{receiptViewOpen.business_name}</p>
               <p className="text-gray-500 mt-1">Receipt #{receiptViewOpen.receipt_number}</p>
               {receiptViewOpen.client_name && <p className="text-gray-500">Client: {receiptViewOpen.client_name}</p>}

@@ -13,6 +13,7 @@ import NeonEdge from "./premium/NeonEdge";
 import PremiumButton from "./premium/PremiumButton";
 import { accentRgb } from "./premium/tokens";
 import { CLIENT_LABELS } from "../lib/clientLabels";
+import ReceiptLogo, { fetchReceiptLogoDataUrl } from "./ReceiptLogo";
 
 const money = (n) => `$${Number(n || 0).toFixed(2)}`;
 
@@ -125,6 +126,7 @@ export default function PortalInvoices() {
       toast.error(e?.response?.data?.detail || "Could not load the receipt");
       return;
     }
+    const logoSrc = await fetchReceiptLogoDataUrl(payload.business_logo_image_id);
     const w = window.open("", "_blank", "width=380,height=600");
     if (!w) { toast.error("Please allow pop-ups to print your receipt"); return; }
     const lines = (payload.line_items || []).map((li) =>
@@ -134,6 +136,7 @@ export default function PortalInvoices() {
       <style>body{font-family:ui-monospace,monospace;font-size:13px;padding:16px;color:#000;background:#fff;} .b{font-weight:900;} .hr{border-top:1px solid #999;margin:8px 0;}</style>
       </head><body>
       ${payload.test_receipt ? `<div style="background:#fde68a;text-align:center;font-weight:900;padding:4px;margin-bottom:8px;">${payload.test_label || ""}</div>` : ""}
+      ${logoSrc ? `<img src="${logoSrc}" alt="" style="display:block;max-height:56px;margin:0 auto 6px auto;" />` : ""}
       <p class="b">${payload.business_name || ""}</p>
       <p>Receipt #${payload.receipt_number || ""}</p>
       ${payload.client_name ? `<p>Client: ${payload.client_name}</p>` : ""}
@@ -233,6 +236,7 @@ export default function PortalInvoices() {
             {receiptViewOpen.test_receipt && (
               <div className="bg-amber-200 text-amber-900 text-center font-black text-[10px] uppercase tracking-widest py-1 mb-2 rounded">{receiptViewOpen.test_label}</div>
             )}
+            <ReceiptLogo imageId={receiptViewOpen.business_logo_image_id} />
             <p className="font-black text-base">{receiptViewOpen.business_name}</p>
             <p className="text-gray-500 mt-1">Receipt #{receiptViewOpen.receipt_number}</p>
             {receiptViewOpen.client_name && <p className="text-gray-500">Client: {receiptViewOpen.client_name}</p>}

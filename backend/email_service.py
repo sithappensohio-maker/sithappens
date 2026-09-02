@@ -2442,6 +2442,15 @@ async def send_meet_greet_request_received(
     )
 
 
+def _dog_hero_photo(dog: dict) -> str:
+    """The picture to feature for a dog: first gallery photo, else the
+    profile photo (`photo`) — the one every UI surface uses and the one most
+    dogs actually have. The birthday card used to read only the gallery."""
+    photos = dog.get("photos") or []
+    first = photos[0] if photos and isinstance(photos[0], str) else ""
+    return first or (dog.get("photo") if isinstance(dog.get("photo"), str) else "") or ""
+
+
 async def notify_client_dog_birthday(client: dict, dog: dict, *, delivery_key: str | None = None, delivery_meta: dict | None = None) -> bool:
     """Wish the owner a happy birthday for their dog. Uses the dog's first
     photo (if any) as a hero image. No discount code — just a card."""
@@ -2451,12 +2460,12 @@ async def notify_client_dog_birthday(client: dict, dog: dict, *, delivery_key: s
     dog_name = (dog.get("name") or "your pup").strip()
     breed = (dog.get("breed") or "").strip()
     first_name = (client.get("name") or "there").split(" ")[0]
-    photos = dog.get("photos") or []
+    hero = _dog_hero_photo(dog)
     hero_html = ""
-    if photos and isinstance(photos[0], str) and photos[0]:
+    if hero:
         hero_html = (
             f'<div style="margin:-28px -32px 20px -32px;background:#0f172a;">'
-            f'<img src="{photos[0]}" alt="{dog_name}" '
+            f'<img src="{hero}" alt="{dog_name}" '
             f'style="display:block;width:100%;max-height:300px;object-fit:cover;" />'
             f"</div>"
         )

@@ -2,6 +2,7 @@ import { useEffect, useState } from "react";
 import { api, formatErr } from "../lib/api";
 import { printReceipt } from "../lib/posAgent";
 import ShopImageUpload from "./ShopImageUpload";
+import ReceiptLogo from "./ReceiptLogo";
 
 // Basic receipt customization (Phase 2, reduced scope). Presentation only —
 // every amount on every receipt still comes from the existing authoritative
@@ -20,21 +21,6 @@ function Toggle({ label, help, checked, onChange, testid }) {
       </span>
     </label>
   );
-}
-
-function ReceiptLogo({ imageId, thermal }) {
-  const [src, setSrc] = useState(null);
-  useEffect(() => {
-    if (!imageId) { setSrc(null); return; }
-    let cancelled = false;
-    api.get(`/shop/media/${imageId}`).then(({ data }) => { if (!cancelled) setSrc(data.data); }).catch(() => {});
-    return () => { cancelled = true; };
-  }, [imageId]);
-  if (!src) return null;
-  // Thermal printers can't reproduce color/greyscale gradients cleanly —
-  // render the preview in monochrome so what's previewed matches what a
-  // thermal printer can actually produce.
-  return <img src={src} alt="" className="mx-auto mb-1.5" style={{ maxHeight: thermal ? 40 : 56, filter: thermal ? "grayscale(1) contrast(1.3)" : undefined }} />;
 }
 
 function ReceiptPreviewCard({ payload, thermal }) {

@@ -80,6 +80,27 @@ def _center(text, width=RECEIPT_WIDTH):
     return (" " * pad) + text + "\n"
 
 
+def _logo_raster_bytes(payload: dict) -> bytes:
+    """ESC/POS raster (GS v 0) for the business logo, when the server sent
+    one. The SERVER rasterises the uploaded logo into 1-bit rows
+    (`business_logo_raster` = {row_bytes, height, data_b64}) so this agent
+    stays stdlib-only — no Pillow on the POS box. Any malformed payload
+    simply prints no logo; it never breaks the receipt."""
+    raster = payload.get("business_logo_raster") or {}
+    try:
+        import base64
+        row_bytes = int(raster.get("row_bytes") or 0)
+        height = int(raster.get("height") or 0)
+        data = base64.b64decode(raster.get("data_b64") or "")
+        if row_bytes <= 0 or height <= 0 or len(data) != row_bytes * height or row_bytes > 255 * 256:
+            return b""
+    except Exception:
+        return b""
+    x_l, x_h = row_bytes & 0xFF, (row_bytes >> 8) & 0xFF
+    y_l, y_h = height & 0xFF, (height >> 8) & 0xFF
+    return ALIGN_CENTER + GS + b"v0" + bytes([0, x_l, x_h, y_l, y_h]) + data + b"\n"
+
+
 def _receipt_header_footer(payload: dict):
     """Shared header (test banner, business identity, date/receipt#,
     client/dog/staff) and footer (thank-you + cut) — identical across all
@@ -98,6 +119,9 @@ def _receipt_header_footer(payload: dict):
         out.append(("-" * RECEIPT_WIDTH + "\n").encode())
         out.append(b"\n")
     out.append(ALIGN_CENTER)
+    logo = _logo_raster_bytes(payload)
+    if logo:
+        out.append(logo)
     out.append(BOLD_ON + _center(payload.get("business_name") or "Sit Happens").encode() + BOLD_OFF)
     if payload.get("business_address"):
         out.append(_center(payload["business_address"]).encode())

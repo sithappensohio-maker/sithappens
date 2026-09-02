@@ -158,3 +158,19 @@ def test_tab_payment_and_pos_sale_receipts_also_use_configured_branding_and_foot
     text = _decode(pos_agent.format_receipt(pos_sale_payload))
     assert "Sit Happens Dog Training" in text
     assert "Thank you for choosing Sit Happens!" in text
+
+
+def test_logo_raster_is_printed_before_the_business_name_when_provided():
+    """The server rasterises the uploaded receipt logo (business_logo_raster);
+    the agent must emit it as an ESC/POS GS v 0 block ahead of the name and
+    stay silent (no logo, no crash) when the raster is absent or malformed."""
+    import base64
+    rows = bytes([0xFF, 0x00] * 4)  # 2 bytes/row × 4 rows
+    payload = dict(BASE_PAYLOAD, business_logo_raster={"row_bytes": 2, "height": 4, "data_b64": base64.b64encode(rows).decode()})
+    raw = pos_agent.format_receipt(payload)
+    marker = b"\x1dv0" + bytes([0, 2, 0, 4, 0]) + rows
+    assert marker in raw
+    assert raw.index(marker) < raw.index(b"Sit Happens Dog Training")
+    assert b"\x1dv0" not in pos_agent.format_receipt(BASE_PAYLOAD)
+    bad = dict(BASE_PAYLOAD, business_logo_raster={"row_bytes": 2, "height": 4, "data_b64": base64.b64encode(b"\xff").decode()})
+    assert b"\x1dv0" not in pos_agent.format_receipt(bad)

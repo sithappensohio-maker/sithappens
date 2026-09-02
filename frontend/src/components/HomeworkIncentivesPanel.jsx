@@ -9,6 +9,7 @@
  */
 import { useEffect, useState } from "react";
 import { api } from "../lib/api";
+import TrophyBadge from "./TrophyBadge";
 
 const TIER_RING = {
   bronze:   "ring-[#cd7f32] bg-[#3a2412]/40",
@@ -150,7 +151,9 @@ export default function HomeworkIncentivesPanel() {
               <div key={t.code}
                    data-testid={`incentives-trophy-${t.code}`}
                    className={`flex items-center gap-2 px-3 py-2 rounded-lg ring-2 ${TIER_RING[t.tier] || TIER_RING.bronze}`}>
-                <i className={`fas ${t.icon || "fa-trophy"} text-lg ${TIER_TEXT[t.tier] || ""}`}/>
+                {t.custom_image
+                  ? <TrophyBadge definition={t} size="sm" data-testid={`incentives-art-${t.code}`}/>
+                  : <i className={`fas ${t.icon || "fa-trophy"} text-lg ${TIER_TEXT[t.tier] || ""}`}/>}
                 <div>
                   <p className={`text-[13px] font-black leading-tight ${TIER_TEXT[t.tier] || "text-shText"}`}>{t.name}</p>
                   <p className="text-[10px] text-shTextMuted uppercase tracking-widest">{t.tier}</p>
@@ -171,7 +174,9 @@ export default function HomeworkIncentivesPanel() {
                    className="bg-[var(--sh-card-base)] rounded-lg p-3 border border-shBorder">
                 <div className="flex items-center justify-between mb-1.5">
                   <div className="flex items-center gap-2 min-w-0">
-                    <i className={`fas ${t.icon || "fa-medal"} ${TIER_TEXT[t.tier] || "text-shTextMuted"}`}/>
+                    {t.custom_image
+                      ? <span className="shrink-0 scale-[0.7] origin-left -my-2"><TrophyBadge definition={t} size="sm" locked data-testid={`incentives-art-${t.code}`}/></span>
+                      : <i className={`fas ${t.icon || "fa-medal"} ${TIER_TEXT[t.tier] || "text-shTextMuted"}`}/>}
                     <p className={`text-[13px] font-black truncate ${TIER_TEXT[t.tier] || "text-shText"}`}>{t.name}</p>
                   </div>
                   <p className="text-[12px] font-black text-shTextMuted shrink-0 ml-2">

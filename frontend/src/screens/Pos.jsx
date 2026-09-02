@@ -44,6 +44,7 @@ import {
   FrontDeskStatCard, FrontDeskQuickAction, FrontDeskToolButton, FrontDeskStatusChip,
   FrontDeskDogAvatar, FrontDeskSectionHeader, CatalogCategoryTile,
 } from "../components/frontdesk/FrontDeskBits";
+import ReceiptLogo from "../components/ReceiptLogo";
 
 // "card" here is a manually-recorded/offline card payment (external reader),
 // not a Stripe Terminal integration.
@@ -767,6 +768,7 @@ export default function Pos({ onOpenShopManager } = {}) {
               {receiptViewOpen.test_receipt && (
                 <div className="bg-amber-200 text-amber-900 text-center font-black text-[10px] uppercase tracking-widest py-1 mb-2 rounded">{receiptViewOpen.test_label}</div>
               )}
+              <ReceiptLogo imageId={receiptViewOpen.business_logo_image_id} />
               <p className="font-black text-base">{receiptViewOpen.business_name}</p>
               <p className="text-gray-500 mt-1">Receipt #{receiptViewOpen.receipt_number}</p>
               {receiptViewOpen.client_name && <p className="text-gray-500">Client: {receiptViewOpen.client_name}</p>}

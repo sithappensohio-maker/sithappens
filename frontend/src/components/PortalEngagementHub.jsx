@@ -4,6 +4,7 @@ import NeonIconStage from "./premium/NeonIconStage";
 import MiniActionCard from "./premium/MiniActionCard";
 import EmptyState from "./premium/EmptyState";
 import { accentRgb, HOVER_BORDER_CLASS } from "./premium/tokens";
+import TrophyBadge from "./TrophyBadge";
 
 /* Existing "tone" names (green/blue/orange/purple/gray) predate the
  * premium accent system's names (lime/cyan/orange/purple/neutral) — this
@@ -306,6 +307,9 @@ export function buildPortalActivity({ bookings = [], dogs = null, homework = [],
   [...(trophies.client_trophies || []), ...(trophies.dog_trophies || [])].forEach((t) => {
     items.push({
       id: `trophy-${t.id}`, kind: "rewards", icon: t.trophy_icon || "fa-trophy", tone: "orange",
+      // Full award row so the row can draw the admin-uploaded artwork
+      // (TrophyBadge) instead of the icon glyph — same fix as AchievementCard.
+      trophy: t,
       title: `${t.recipient_name || "You"} earned “${t.trophy_name || "a new trophy"}”`,
       text: t.trophy_description || "Achievement unlocked",
       ts: t.awarded_at,
@@ -481,7 +485,9 @@ export default function PortalEngagementHub({
               return (
                 <button key={item.id} type="button" onClick={() => runPriorityAction(item.kind, actions)}
                         className="w-full text-left py-3 first:pt-0 last:pb-0 flex items-start gap-3 group transition duration-200 hover:-translate-y-0.5">
-                  <span className={`w-9 h-9 rounded-full bg-[var(--sh-card-base)] border ${itemTone.border} ${itemTone.text} grid place-items-center shrink-0 mt-0.5`}><i className={`fas ${item.icon}`}/></span>
+                  {item.trophy && (item.trophy.trophy_custom_image || item.trophy.custom_image)
+                    ? <span className="shrink-0 scale-75 origin-top-left -mr-3" data-testid={`activity-trophy-art-${item.trophy.id}`}><TrophyBadge trophy={item.trophy} size="sm"/></span>
+                    : <span className={`w-9 h-9 rounded-full bg-[var(--sh-card-base)] border ${itemTone.border} ${itemTone.text} grid place-items-center shrink-0 mt-0.5`}><i className={`fas ${item.icon}`}/></span>}
                   <span className="min-w-0 flex-1">
                     <span className="block text-[14px] text-shText font-semibold leading-snug group-hover:text-shPrimary transition">{item.title}</span>
                     <span className="block text-[12px] text-shTextMuted mt-0.5 truncate">{item.text}</span>

@@ -4,6 +4,7 @@ import { api } from "../lib/api";
 import { emitRegisterChanged } from "../lib/registerBus";
 import { useEditLock } from "../lib/useLiveRefresh";
 import { printReceipt as posPrintReceipt, openDrawer as posOpenDrawer } from "../lib/posAgent";
+import ReceiptLogo from "./ReceiptLogo";
 
 /**
  * Shared check-out modal — used by the admin Dashboard AND the Employee
@@ -611,6 +612,7 @@ export function CheckoutModal({ booking, services, onClose, onRequestCancel }) {
               {receiptViewOpen.test_receipt && (
                 <div className="bg-amber-200 text-amber-900 text-center font-black text-[10px] uppercase tracking-widest py-1 mb-2 rounded">{receiptViewOpen.test_label}</div>
               )}
+              <ReceiptLogo imageId={receiptViewOpen.business_logo_image_id} />
               <p className="font-black text-base">{receiptViewOpen.business_name}</p>
               <p className="text-gray-500 mt-1">Receipt #{receiptViewOpen.receipt_number}</p>
               {receiptViewOpen.client_name && <p className="text-gray-500">Client: {receiptViewOpen.client_name}</p>}
