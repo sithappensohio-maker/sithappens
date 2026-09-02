@@ -131,19 +131,99 @@ async def _eligible_trophies(db, *, category: str, kind: str) -> List[Dict[str, 
     ).sort("threshold", 1).to_list(50)
 
 
-async def _count_dog_goals_at_5(db, dog_id: str) -> int:
-    enrollments = await db.dog_programs.find(
-        {"dog_id": dog_id}, {"_id": 0, "goal_progress": 1}
-    ).to_list(200)
-    n = 0
-    for e in enrollments:
-        for _gid, gp in (e.get("goal_progress") or {}).items():
-            try:
-                if int(gp.get("score") or 0) >= 5:
-                    n += 1
-            except Exception:
-                continue
-    return n
+# The app's mastery rule: a trainer-scored goal is "mastered" at 4 (see the
+# goal endpoint's `if body.score >= 4: status = "mastered"`, the legacy→School
+# migration stamping score 4, and manual-progress mastery). The skill trophies
+# used to demand 5, so dogs the app itself called "mastered" scored 0.
+MASTERY_SCORE = 4
+
+
+def goal_is_mastered(gp: Optional[dict]) -> bool:
+    if not isinstance(gp, dict):
+        return False
+    if str(gp.get("status") or "") == "mastered":
+        return True
+    try:
+        return int(gp.get("score") or 0) >= MASTERY_SCORE
+    except Exception:
+        return False
+
+
+def ordered_snapshot_lessons(snapshot: Optional[dict]) -> List[Dict[str, Any]]:
+    """Flatten a program snapshot's ACTIVE lessons in curriculum order —
+    the same (module.order, name) / (lesson.order, name) rule the roadmap
+    and course-progress helpers use, so "lessons passed" agrees everywhere."""
+    rows: List[Dict[str, Any]] = []
+    modules = sorted((snapshot or {}).get("modules") or [], key=lambda m: (m.get("order", 0), m.get("name") or ""))
+    for module in modules:
+        lessons = sorted([l for l in (module.get("lessons") or []) if l.get("active", True)],
+                         key=lambda l: (l.get("order", 0), l.get("name") or ""))
+        for lesson in lessons:
+            rows.append({"module": module, "lesson": lesson})
+    return rows
+
+
+def online_skills_demonstrated(enrollment: dict) -> set:
+    """Online School's legitimate skill signal.
+
+    Self-guided checkpoint grading deliberately never writes trainer
+    goal_progress scores, so online students could never earn the skill
+    trophies. A lesson the student has advanced PAST (the pointer only moves
+    forward, and a checkpoint lesson can't be passed without the trainer's
+    advance) is a demonstrated lesson; its `skill_ids` are the skills the
+    student showed. A completed enrollment demonstrates every lesson."""
+    if str(enrollment.get("delivery_channel") or "") != "online_school":
+        return set()
+    rows = ordered_snapshot_lessons(enrollment.get("program_snapshot") or {})
+    if not rows:
+        return set()
+    if enrollment.get("status") == "completed":
+        passed = rows
+    else:
+        cur_module = enrollment.get("current_module_id")
+        cur_lesson = enrollment.get("current_lesson_id")
+        idx = next((i for i, r in enumerate(rows) if r["lesson"].get("id") == cur_lesson), None)
+        if idx is None:
+            # Pointer cleared inside a module (module done) or unknown: count
+            # every lesson of modules BEFORE the current one, plus the current
+            # module when its pointer is cleared.
+            mod_ids = []
+            for r in rows:
+                mid = r["module"].get("id")
+                if mid not in mod_ids:
+                    mod_ids.append(mid)
+            cur_idx = mod_ids.index(cur_module) if cur_module in mod_ids else 0
+            done_mods = set(mod_ids[:cur_idx]) | ({cur_module} if cur_lesson is None and cur_module in mod_ids else set())
+            passed = [r for r in rows if r["module"].get("id") in done_mods]
+        else:
+            passed = rows[:idx]
+    skills = set()
+    for r in passed:
+        for sid in (r["lesson"].get("skill_ids") or []):
+            if sid:
+                skills.add(sid)
+    return skills
+
+
+async def _count_dog_skills_mastered(db, dog_id: str) -> int:
+    """Distinct skills this dog has mastered across every enrollment:
+    trainer-scored goals at the app's mastery threshold (in-person/hybrid,
+    legacy) plus Online School lessons demonstrated (see above)."""
+    skills: set = set()
+    async for e in db.dog_programs.find(
+        {"dog_id": dog_id},
+        {"_id": 0, "goal_progress": 1, "delivery_channel": 1, "status": 1,
+         "current_module_id": 1, "current_lesson_id": 1, "program_snapshot": 1},
+    ):
+        for gid, gp in (e.get("goal_progress") or {}).items():
+            if gid and goal_is_mastered(gp):
+                skills.add(gid)
+        skills |= online_skills_demonstrated(e)
+    return len(skills)
+
+
+# Backwards-compatible name (older call sites / tests).
+_count_dog_goals_at_5 = _count_dog_skills_mastered
 
 
 async def _count_dog_programs_completed(db, dog_id: str) -> int:
@@ -160,13 +240,14 @@ async def _count_dog_checkpoints_passed(db, dog_id: str) -> int:
 async def check_dog_trophies(db, dog_id: str) -> List[Dict[str, Any]]:
     """Re-evaluate auto-trophies for a single dog and award newly-met ones."""
     awarded: List[Dict[str, Any]] = []
-    # 1) goal_score_5_count
-    goal5 = await _count_dog_goals_at_5(db, dog_id)
+    # 1) goal_score_5_count — the trigger_kind key is historical; it now means
+    #    "skills mastered" at the app's real threshold, incl. Online School.
+    goal5 = await _count_dog_skills_mastered(db, dog_id)
     for t in await _eligible_trophies(db, category="dog", kind="goal_score_5_count"):
         if goal5 >= int(t.get("threshold") or 0):
             row = await award_trophy(
                 db, recipient_type="dog", recipient_id=dog_id, trophy_code=t["code"],
-                meta={"goal_score_5_count_at_award": goal5},
+                meta={"skills_mastered_at_award": goal5, "goal_score_5_count_at_award": goal5},
             )
             if row:
                 awarded.append(row)
@@ -400,10 +481,55 @@ async def recheck_all_client_trophies(db) -> Dict[str, Any]:
     return summary
 
 
+async def recheck_all_dog_trophies(db) -> Dict[str, Any]:
+    """Dog-side twin of recheck_all_client_trophies: graduations that never
+    re-evaluated (Pipeline/DogTrainingTab), the mastery-threshold fix and the
+    new Online School skill signal all need a sweep to hand out what was
+    already earned."""
+    summary: Dict[str, Any] = {"dogs_checked": 0, "awarded": 0, "by_code": {}}
+    async for d in db.dogs.find({}, {"_id": 0, "id": 1}):
+        did = d.get("id")
+        if not did:
+            continue
+        summary["dogs_checked"] += 1
+        try:
+            rows = await check_dog_trophies(db, did)
+        except Exception as exc:
+            logger.warning("trophy recheck failed for dog %s: %s", did, exc)
+            continue
+        for r in rows:
+            summary["awarded"] += 1
+            code = r.get("trophy_code") or "?"
+            summary["by_code"][code] = summary["by_code"].get(code, 0) + 1
+    if summary["awarded"]:
+        logger.info("Dog trophy recheck awarded %d trophies across %d dogs: %s",
+                    summary["awarded"], summary["dogs_checked"], summary["by_code"])
+    return summary
+
+
+async def recheck_all_trophies(db) -> Dict[str, Any]:
+    """Clients AND dogs, one summary (what the scheduler + Re-check button run)."""
+    clients = await recheck_all_client_trophies(db)
+    dogs = await recheck_all_dog_trophies(db)
+    by_code = dict(clients.get("by_code") or {})
+    for k, v in (dogs.get("by_code") or {}).items():
+        by_code[k] = by_code.get(k, 0) + v
+    return {
+        "clients_checked": clients.get("clients_checked", 0),
+        "dogs_checked": dogs.get("dogs_checked", 0),
+        "awarded": int(clients.get("awarded", 0)) + int(dogs.get("awarded", 0)),
+        "by_code": by_code,
+    }
+
+
 # Homework-era catalog copy → School Practice copy. Only rows whose text is
 # STILL the original seed text are rewritten, so anything the admin renamed
 # or re-described in Settings → Trophies is left exactly as they wrote it.
 SCHOOL_COPY_MIGRATION: Dict[str, Dict[str, tuple]] = {
+    "dog_quick_learner": {
+        "description": ("First training goal mastered with a perfect 5 rating.",
+                        "First training skill mastered."),
+    },
     "client_streak_spark": {
         "description": ('Three days in a row of homework — the streak is alive!',
                  'Three days of Practice in a row — the streak is alive!'),

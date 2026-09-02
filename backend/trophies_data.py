@@ -15,7 +15,10 @@ TIER_COLORS = {
 #   auto = evaluator runs after the relevant write hook fires
 #   manual = admin-only, only awarded via the manual award endpoint
 # trigger_kind (for auto):
-#   goal_score_5_count    -> threshold = N goals at score 5 in any program
+#   goal_score_5_count    -> (historical key) threshold = N distinct skills mastered: trainer-scored
+#                            goals at the app's mastery threshold (4) + Online School lessons passed
+#   first_checkpoint_passed -> threshold = N trainer-graded checkpoints with outcome "advance"
+#   (old goal_score_5_count note) -> threshold = N goals at score 5 in any program
 #   program_completed     -> threshold = N programs completed
 #   homework_streak_days  -> threshold = N consecutive days with >=1 real client-logged
 #                            Practice session (School section-log / daily submit) or completion
@@ -27,7 +30,7 @@ SEED_TROPHIES = [
     {
         "code": "dog_quick_learner",
         "name": "Quick Learner",
-        "description": "First training goal mastered with a perfect 5 rating.",
+        "description": "First training skill mastered.",
         "category": "dog",
         "tier": "bronze",
         "icon": "fa-bolt",
@@ -60,6 +63,19 @@ SEED_TROPHIES = [
         "trigger_type": "auto",
         "trigger_kind": "goal_score_5_count",
         "threshold": 10,
+        "active": True,
+        "is_default": True,
+    },
+    {
+        "code": "dog_checkpoint_cleared",
+        "name": "Checkpoint Cleared",
+        "description": "Passed a trainer-graded checkpoint. The work is showing!",
+        "category": "dog",
+        "tier": "bronze",
+        "icon": "fa-flag-checkered",
+        "trigger_type": "auto",
+        "trigger_kind": "first_checkpoint_passed",
+        "threshold": 1,
         "active": True,
         "is_default": True,
     },

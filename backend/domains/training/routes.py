@@ -13,6 +13,7 @@ from pydantic import BaseModel, Field
 from .services import board_train_daily_status_payload, require_program_graduation_authority
 from .today import build_training_today
 from trainer_delivery_enforcement import is_board_train_booking
+from trophy_service import check_dog_trophies
 
 
 class ManualInPersonProgressIn(BaseModel):
@@ -256,6 +257,12 @@ def register_training_routes(
         )
         if not result.modified_count:
             raise HTTPException(status_code=409, detail="The dog's current lesson changed while you were moving it. Refresh and try again.")
+        # 🏆 Manual mastery is a real skill signal — re-evaluate the dog's
+        # trophies now instead of waiting for the daily sweep.
+        try:
+            await check_dog_trophies(db, enrollment.get("dog_id"))
+        except Exception:
+            pass
         return {
             "ok": True, "enrollment_id": enrollment_id,
             "current_module_id": target["module"].get("id"), "current_module_name": target["module"].get("name") or "Module",

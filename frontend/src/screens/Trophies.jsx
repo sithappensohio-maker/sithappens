@@ -8,7 +8,8 @@ import PageHero from "../components/PageHero";
 const TIER_OPTIONS = ["bronze", "silver", "gold", "platinum"];
 const TRIGGER_KIND_OPTIONS = [
   { value: "", label: "— manual only —" },
-  { value: "goal_score_5_count", label: "Dog: Training goals scored 5" },
+  { value: "goal_score_5_count", label: "Dog: Training skills mastered (trainer-scored or School lessons passed)" },
+  { value: "first_checkpoint_passed", label: "Dog: Trainer-graded checkpoints passed" },
   { value: "program_completed", label: "Dog: Programs completed" },
   { value: "homework_streak_days", label: "Client: School Practice streak (days practiced in a row)" },
   { value: "homework_completed", label: "Client: School Practice assignments completed" },
@@ -89,7 +90,7 @@ export default function Trophies() {
       {recheck.result && (
         <div className="rounded-xl border border-shBorder bg-[var(--sh-card-base)] p-3 text-[13px] text-shTextMuted" data-testid="recheck-awards-result">
           <i className="fas fa-check-circle text-emerald-400 mr-2"/>
-          Checked {recheck.result.clients_checked} clients · {recheck.result.awarded} new award{recheck.result.awarded === 1 ? "" : "s"}
+          Checked {recheck.result.clients_checked} clients and {recheck.result.dogs_checked ?? 0} dogs · {recheck.result.awarded} new award{recheck.result.awarded === 1 ? "" : "s"}
           {recheck.result.awarded > 0 && ` (${Object.entries(recheck.result.by_code || {}).map(([c, n]) => `${c} ×${n}`).join(", ")})`}
         </div>
       )}

@@ -82,6 +82,7 @@ from trophy_service import (
     check_dog_trophies,
     check_client_trophies,
     recheck_all_client_trophies,
+    recheck_all_trophies,
     migrate_trophy_copy_for_school,
     practice_log_counts_as_session as _shared_practice_log_counts_as_session,
     render_share_card_png,
@@ -18007,6 +18008,14 @@ async def update_enrollment(dog_id: str, enrollment_id: str, body: EnrollmentUpd
     if update:
         await db.dog_programs.update_one({"id": enrollment_id}, {"$set": update})
         enrollment.update(update)
+        if update.get("status") == "completed":
+            # 🏆 Graduation is the "Sit Happens Graduate" trigger. This path
+            # (Pipeline / DogTrainingTab) never re-evaluated, so the award
+            # only ever fired from the School final-lesson flow.
+            try:
+                await check_dog_trophies(db, dog_id)
+            except Exception as exc:
+                logger.warning("Trophy check after graduation failed: %s", exc)
     return _enrollment_summary(enrollment)
 
 
@@ -32600,11 +32609,12 @@ async def _recheck_client_trophies_after_practice(hw: dict, user: dict) -> None:
 
 @api.post("/admin/trophies/recheck")
 async def admin_recheck_trophies(_: dict = Depends(require_admin)):
-    """Re-run every client auto-award evaluator now (visits, practice streaks,
-    practice completions, referrals). Idempotent; returns what was awarded.
+    """Re-run every client AND dog auto-award evaluator now (visits, practice
+    streaks, practice completions, referrals; skills mastered, graduations,
+    checkpoints). Idempotent; returns what was awarded.
     Use after fixing an evaluator or editing thresholds so earned-but-never-
     fired awards land immediately instead of waiting for the next checkout."""
-    summary = await recheck_all_client_trophies(db)
+    summary = await recheck_all_trophies(db)
     await db.system_runs.update_one(
         {"_id": "trophy_recheck"},
         {"$set": {"date": business_today().isoformat(), "ran_at": now_iso(), "awarded": summary["awarded"]}},
@@ -32623,7 +32633,7 @@ async def _maybe_recheck_trophies_today():
         marker = await db.system_runs.find_one({"_id": "trophy_recheck"})
         if marker and marker.get("date") == today:
             return
-        summary = await recheck_all_client_trophies(db)
+        summary = await recheck_all_trophies(db)
         await db.system_runs.update_one(
             {"_id": "trophy_recheck"},
             {"$set": {"date": today, "ran_at": now_iso(), "awarded": summary["awarded"]}},
