@@ -3873,15 +3873,39 @@ async def _acquire_capacity_locks(keys: List[str], *, owner: Optional[str] = Non
     })
 
 
-async def _active_capacity_bookings(service_type: str, *, exclude_booking_id: Optional[str] = None) -> List[dict]:
+def _overlapping_stay_query(start_date: str, end_date: Optional[str] = None) -> Dict[str, Any]:
+    """Bookings whose presence dates overlap [start_date, end_date] (inclusive,
+    same semantics as _dates_in_range): starts on/before the window end and
+    either ends on/after the window start or is a single-day row inside it."""
+    end = end_date or start_date
+    return {
+        "date": {"$lte": end},
+        "$or": [
+            {"end_date": {"$gte": start_date}},
+            {"end_date": {"$in": [None, ""]}, "date": {"$gte": start_date}},
+            {"end_date": {"$exists": False}, "date": {"$gte": start_date}},
+        ],
+    }
+
+
+async def _active_capacity_bookings(service_type: str, *, exclude_booking_id: Optional[str] = None,
+                                    start_date: Optional[str] = None, end_date: Optional[str] = None) -> List[dict]:
+    """Bookings still occupying capacity for a service — not checked out —
+    optionally limited to those overlapping a stay window. Filtered and
+    streamed by Mongo: the old version pulled EVERY historical pending/
+    approved/completed row for the service into a to_list(10000) and let
+    the ceiling silently under-count capacity once the business had that
+    many rows on file."""
     q: Dict[str, Any] = {
         "service_type": service_type,
         "status": {"$in": ["pending", "approved", "completed"]},
+        "$and": [{"$or": [{"checked_out_at": {"$in": [None, ""]}}, {"checked_out_at": {"$exists": False}}]}],
     }
+    if start_date:
+        q["$and"].append(_overlapping_stay_query(start_date, end_date))
     if exclude_booking_id:
         q["id"] = {"$ne": exclude_booking_id}
-    rows = await db.bookings.find(q, {"_id": 0}).to_list(10000)
-    return [b for b in rows if not b.get("checked_out_at")]
+    return [b async for b in db.bookings.find(q, {"_id": 0})]
 
 
 async def _assert_capacity_available(
@@ -3910,7 +3934,9 @@ async def _assert_capacity_available(
         if kennel:
             max_per = int((((settings.get("day_to_day") or {}).get("guardrails") or {}).get("max_dogs_per_kennel", 1)) or 1)
             max_per = max(1, max_per)
-            existing = await _active_capacity_bookings("boarding", exclude_booking_id=exclude_booking_id)
+            existing = await _active_capacity_bookings(
+                "boarding", exclude_booking_id=exclude_booking_id, start_date=body.date, end_date=body.end_date,
+            )
             for stay_day in _presence_dates(body.date, body.end_date):
                 used = sum(
                     1 for b in existing
@@ -4610,17 +4636,24 @@ async def admin_reject_vaccine_cert(dog_id: str, vaccine: str, _: dict = Depends
 
 
 async def _booking_days_count_filtered(target_date: str, service_type: str, *, exclude_booking_id: Optional[str] = None) -> int:
-    query: Dict[str, Any] = {"status": {"$in": ["approved", "pending", "completed"]}, "service_type": service_type}
+    """Dogs occupying `service_type` capacity on `target_date`. The query is
+    date-bounded (rows overlapping the day) and streamed — the old version
+    scanned EVERY historical row through a to_list(10000) ceiling, so once
+    the business had 10k bookings on file the capacity gate silently stopped
+    seeing some of today's dogs."""
+    query: Dict[str, Any] = {
+        "status": {"$in": ["approved", "pending", "completed"]},
+        "service_type": service_type,
+        **_overlapping_stay_query(target_date, target_date),
+    }
     if exclude_booking_id:
         query["id"] = {"$ne": exclude_booking_id}
-    bookings = await db.bookings.find(query, {"_id": 0}).to_list(10000)
     count = 0
-    for b in bookings:
+    async for b in db.bookings.find(query, {"_id": 0, "date": 1, "end_date": 1, "checked_out_at": 1}):
         # Once a booking is checked out, its slot frees up for the day.
         if b.get("checked_out_at"):
             continue
-        days = _dates_in_range(b["date"], b.get("end_date"))
-        if target_date in days:
+        if target_date in _dates_in_range(b["date"], b.get("end_date")):
             count += 1
     return count
 
@@ -10525,6 +10558,17 @@ async def resend_report_card_email(booking_id: str, _: dict = Depends(require_ad
     }
 
 # -------- Vaccine Alerts --------
+async def _active_vaccine_dismissals(now_dt: Optional[datetime] = None) -> Dict[str, str]:
+    """{dog_id: until} for dismissals still in force — filtered in Mongo so the
+    map is complete no matter how many expired dismissals accumulate."""
+    now_iso_ = (now_dt or datetime.now(timezone.utc)).isoformat()
+    out: Dict[str, str] = {}
+    async for d in db.vaccine_dismissals.find({"until": {"$gt": now_iso_}}, {"_id": 0, "dog_id": 1, "until": 1}):
+        if d.get("dog_id"):
+            out[d["dog_id"]] = d.get("until")
+    return out
+
+
 @api.get("/vaccine-alerts")
 async def vaccine_alerts(_: dict = Depends(require_admin)):
     settings = await get_settings()
@@ -10533,18 +10577,16 @@ async def vaccine_alerts(_: dict = Depends(require_admin)):
     today = business_today().isoformat()
     in_warn = (business_today() + timedelta(days=warn_days)).isoformat()
     now_dt = datetime.now(timezone.utc)
-    dismissals = await db.vaccine_dismissals.find({}, {"_id": 0}).to_list(2000)
-    dismiss_map = {}
-    for d in dismissals:
-        try:
-            until = datetime.fromisoformat(d["until"])
-        except Exception:
-            continue
-        if until > now_dt:
-            dismiss_map[d["dog_id"]] = d["until"]
+    dismiss_map = await _active_vaccine_dismissals(now_dt)
 
-    dogs = await db.dogs.find({}, {"_id": 0}).to_list(2000)
-    clients = {c["id"]: c["name"] for c in await db.clients.find({}, {"_id": 0}).to_list(2000)}
+    # Every dog (streamed, no ceiling — dog 2001 with an expired rabies cert
+    # used to be invisible), and only the owners those dogs actually have.
+    dogs = [d async for d in db.dogs.find({}, {"_id": 0, "photo": 0, "photos": 0, "training_logs": 0})]
+    owner_ids = list({d.get("owner_id") for d in dogs if d.get("owner_id")})
+    clients = {}
+    if owner_ids:
+        async for c in db.clients.find({"id": {"$in": owner_ids}}, {"_id": 0, "id": 1, "name": 1}):
+            clients[c["id"]] = c.get("name")
     alerts = []
     for d in dogs:
         if d["id"] in dismiss_map:
@@ -26930,6 +26972,16 @@ async def admin_run_daily_jobs(_: dict = Depends(require_admin)):
 
 PENDING_ACTION_TYPES = ("meet_and_greet_request", "booking_approval", "reschedule_request", "stripe_dispute", "shop_refund_reconciliation", "overdue_medication")
 
+# item `type` → key on /admin/pending-actions/count
+_PENDING_ACTION_COUNT_KEYS = {
+    "meet_and_greet_request": "meet_and_greet_requests",
+    "booking_approval": "booking_approvals",
+    "reschedule_request": "reschedule_requests",
+    "stripe_dispute": "stripe_disputes",
+    "shop_refund_reconciliation": "shop_refund_reconciliations",
+    "overdue_medication": "overdue_medications",
+}
+
 _PENDING_ACTION_TYPE_LABELS = {
     "meet_and_greet_request": "Meet & Greet Request",
     "booking_approval": "Booking Needs Approval",
@@ -27282,10 +27334,16 @@ async def _collect_pending_actions(user: dict, *, type_filter: Optional[str] = N
     # appointment date and bury old requests".
     items.sort(key=lambda it: (it["urgency_rank"], it.get("created_at") or ""))
 
-    counts: Dict[str, int] = {t: 0 for t in PENDING_ACTION_TYPES}
-    for it in items:
-        counts[it["type"]] = counts.get(it["type"], 0) + 1
-    counts["total"] = len(items)
+    # Counts come from the SAME indexed collection counts the nav badge uses
+    # (/admin/pending-actions/count), not from the capped per-category lists
+    # above — the two used to disagree once any category outgrew its list cap.
+    # `listed` says how many rows this response actually carries.
+    true_counts = await admin_pending_actions_count(user)
+    counts: Dict[str, int] = {}
+    for t in PENDING_ACTION_TYPES:
+        counts[t] = int(true_counts.get(_PENDING_ACTION_COUNT_KEYS[t], 0) or 0)
+    counts["total"] = counts[type_filter] if type_filter in counts else int(true_counts.get("total", 0) or 0)
+    counts["listed"] = len(items)
 
     # Truncation must never make a whole CATEGORY disappear. Ranking alone is
     # not enough: a busy day can put 160+ same-rank bookings and medications
@@ -27383,20 +27441,12 @@ async def dashboard_stats(_: dict = Depends(require_admin)):
     # feeding/medications/training_skills for the care-icon badges, but the
     # photo arrays + raw training_logs are the bandwidth hogs.
     dog_proj = {"_id": 0, "photo": 0, "photos": 0, "training_logs": 0}
-    dogs = await db.dogs.find({}, dog_proj).to_list(2000)
+    dogs = [d async for d in db.dogs.find({}, dog_proj)]   # no ceiling — see /vaccine-alerts
     # Build the same "active dismissal" map used by /vaccine-alerts so the
     # Health Flags tile + the alert list stay in lock-step. (Bug fix: previously
     # the tile counter didn't decrease when alerts were hidden/cleared.)
     now_dt = datetime.now(timezone.utc)
-    dismissals = await db.vaccine_dismissals.find({}, {"_id": 0}).to_list(2000)
-    dismissed_dog_ids = set()
-    for d in dismissals:
-        try:
-            until = datetime.fromisoformat(d["until"])
-        except Exception:
-            continue
-        if until > now_dt:
-            dismissed_dog_ids.add(d["dog_id"])
+    dismissed_dog_ids = set((await _active_vaccine_dismissals(now_dt)).keys())
     health_flags = 0
     for d in dogs:
         if d["id"] in dismissed_dog_ids:
@@ -27416,13 +27466,13 @@ async def dashboard_stats(_: dict = Depends(require_admin)):
     business_todayt = business_today()
     win_start = (business_todayt - timedelta(days=60)).isoformat()  # boarding stays might span back
     win_end = (business_todayt + timedelta(days=1)).isoformat()
-    today_bookings = await db.bookings.find(
+    today_bookings = [b async for b in db.bookings.find(
         {
             "status": {"$in": ["approved", "pending", "completed"]},
             "date": {"$gte": win_start, "$lte": win_end},
         },
         {"_id": 0},
-    ).to_list(2000)
+    )]
     # Build dog map for enrichment
     dog_map = {d["id"]: d for d in dogs}
     # Pre-fetch only the clients we actually need (instead of all clients) so
@@ -54903,7 +54953,8 @@ async def _bulk_email_resolve_recipients(filters: List[str]) -> List[Dict[str, A
     base_q: Dict[str, Any] = {"email": {"$nin": [None, ""]}, "marketing_email_opt_out": {"$ne": True}}
     if "active" in filt:
         base_q["status"] = {"$ne": "inactive"}
-    clients = await db.clients.find(base_q, {"_id": 0}).to_list(10000)
+    # Streamed — client 10,001 used to silently never receive a campaign.
+    clients = [c async for c in db.clients.find(base_q, {"_id": 0})]
 
     # Pull all dogs once (indexed by owner_id) for missing_vaccine + dog_names.
     dogs_by_owner: Dict[str, List[Dict[str, Any]]] = {}
@@ -56285,48 +56336,60 @@ def _dupe_public_dog(d: Dict[str, Any], clients_by_id: Dict[str, Dict[str, Any]]
     }
 
 
+async def _count_by_field(coll, field: str, match: Optional[Dict[str, Any]] = None) -> Dict[str, int]:
+    """{field value: row count} computed by Mongo over the whole collection."""
+    pipeline = [{"$match": match or {}}, {"$group": {"_id": f"${field}", "n": {"$sum": 1}}}]
+    out: Dict[str, int] = {}
+    async for row in coll.aggregate(pipeline):
+        key = row.get("_id")
+        if key:
+            out[str(key)] = int(row.get("n") or 0)
+    return out
+
+
+async def _booking_ownership_counts(today_s: str):
+    """Per-client and per-dog booking totals + future (pending/approved on or
+    after today) across hot AND archived bookings, aggregated in Mongo."""
+    pipeline_for = (lambda key: [
+        {"$match": {key: {"$nin": [None, ""]}}},
+        {"$group": {
+            "_id": f"${key}",
+            "n": {"$sum": 1},
+            "future": {"$sum": {"$cond": [{"$and": [{"$gte": ["$date", today_s]}, {"$in": ["$status", ["pending", "approved"]]}]}, 1, 0]}},
+        }},
+    ])
+    totals = {"client_id": ({}, {}), "dog_id": ({}, {})}
+    for key in ("client_id", "dog_id"):
+        all_counts, future_counts = totals[key]
+        for coll in (db.bookings, db.bookings_archive):
+            try:
+                async for row in coll.aggregate(pipeline_for(key)):
+                    k = str(row.get("_id"))
+                    all_counts[k] = all_counts.get(k, 0) + int(row.get("n") or 0)
+                    future_counts[k] = future_counts.get(k, 0) + int(row.get("future") or 0)
+            except Exception:
+                continue
+    return totals["client_id"][0], totals["client_id"][1], totals["dog_id"][0], totals["dog_id"][1]
+
+
 async def _duplicate_finder_report(include_archived: bool = False) -> Dict[str, Any]:
     client_q = {} if include_archived else {"deleted": {"$ne": True}, "archived": {"$ne": True}}
     dog_q = {} if include_archived else {"deleted": {"$ne": True}, "archived": {"$ne": True}}
-    clients = await db.clients.find(client_q, {"_id": 0}).to_list(5000)
-    dogs = await db.dogs.find(dog_q, {"_id": 0}).to_list(5000)
+    # People are streamed (no ceiling — a duplicate pair straddling row 5000
+    # was never found); every "how many X does this record own" number the
+    # operator uses to pick the survivor is a Mongo $group over the whole
+    # collection(s), never a slice.
+    clients = [c async for c in db.clients.find(client_q, {"_id": 0})]
+    dogs = [d async for d in db.dogs.find(dog_q, {"_id": 0})]
     clients_by_id = {c.get("id"): c for c in clients if c.get("id")}
     dogs_by_owner: Dict[str, List[Dict[str, Any]]] = {}
     for d in dogs:
         dogs_by_owner.setdefault(d.get("owner_id") or "", []).append(d)
 
-    booking_projection = {"_id": 0, "id": 1, "client_id": 1, "dog_id": 1, "date": 1, "status": 1}
-    active_bookings = await db.bookings.find({}, booking_projection).to_list(20000)
-    archived_bookings = await db.bookings_archive.find({}, booking_projection).to_list(20000)
-    all_bookings = active_bookings + archived_bookings
     today_s = business_today().isoformat()
-    bookings_by_client: Dict[str, int] = {}
-    future_by_client: Dict[str, int] = {}
-    bookings_by_dog: Dict[str, int] = {}
-    future_by_dog: Dict[str, int] = {}
-    for b in all_bookings:
-        cid, did = b.get("client_id") or "", b.get("dog_id") or ""
-        if cid:
-            bookings_by_client[cid] = bookings_by_client.get(cid, 0) + 1
-        if did:
-            bookings_by_dog[did] = bookings_by_dog.get(did, 0) + 1
-        if (b.get("date") or "") >= today_s and (b.get("status") in ("pending", "approved")):
-            if cid:
-                future_by_client[cid] = future_by_client.get(cid, 0) + 1
-            if did:
-                future_by_dog[did] = future_by_dog.get(did, 0) + 1
-
-    users_by_client: Dict[str, int] = {}
-    for u in await db.users.find({"client_id": {"$exists": True}}, {"_id": 0, "client_id": 1}).to_list(10000):
-        cid = u.get("client_id") or ""
-        if cid:
-            users_by_client[cid] = users_by_client.get(cid, 0) + 1
-
-    ledger_by_client: Dict[str, int] = {}
-    for row in await db.payment_ledger.find({}, {"_id": 0, "client_id": 1}).to_list(30000):
-        cid = row.get("client_id") or ""
-        if cid:
-            ledger_by_client[cid] = ledger_by_client.get(cid, 0) + 1
+    bookings_by_client, future_by_client, bookings_by_dog, future_by_dog = await _booking_ownership_counts(today_s)
+    users_by_client = await _count_by_field(db.users, "client_id", {"client_id": {"$exists": True, "$nin": [None, ""]}})
+    ledger_by_client = await _count_by_field(db.payment_ledger, "client_id", {"client_id": {"$nin": [None, ""]}})
 
     client_candidates: List[Dict[str, Any]] = []
     seen_sets = set()
