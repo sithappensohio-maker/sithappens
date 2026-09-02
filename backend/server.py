@@ -87,6 +87,7 @@ from trophy_service import (
     render_share_card_png,
 )
 import scheduler as job_scheduler
+from trophy_service import dog_visit_filter
 from trophies_data import TIER_COLORS
 
 # -------- Config --------
@@ -4900,7 +4901,8 @@ async def get_booking_group(group_id: str, user: dict = Depends(get_current_user
     q: Dict = {"group_id": group_id}
     if user.get("role") == "client":
         q["client_id"] = user.get("client_id")
-    items = await db.bookings.find(q, {"_id": 0}).sort("created_at", 1).to_list(50)
+    # A historical group's members may already be archived — read both.
+    items = await _booking_rows_anywhere(q, {"_id": 0}, limit=500, sort_field="created_at")
     if not items:
         raise HTTPException(status_code=404, detail="Group not found")
     return {"group_id": group_id, "bookings": items, "count": len(items)}
@@ -5965,13 +5967,14 @@ async def get_booking(booking_id: str, user: dict = Depends(get_current_user)):
     """Single-booking detail. Used by the admin Schedule's booking-detail
     modal so we can show notes / payment / homework history without paging
     through the full /bookings list."""
-    b = await db.bookings.find_one({"id": booking_id}, {"_id": 0})
+    b, _coll, archived = await _load_booking_for_financial_correction(booking_id)
     if not b:
         raise HTTPException(status_code=404, detail="Booking not found")
     # Admins + employees can fetch any booking; clients only their own.
     if user.get("role") == "client" and b.get("client_id") != user.get("client_id"):
         raise HTTPException(status_code=403, detail="Not your booking")
     b["financial_locked"] = _booking_is_financially_locked(b)
+    b["archived"] = bool(archived)
     return b
 
 
@@ -5997,18 +6000,11 @@ async def portal_me(user: dict = Depends(get_current_user)):
         await _ensure_client_referral_code(cid)
         client = await db.clients.find_one({"id": cid}, PORTAL_CLIENT_PROJECTION) or client
 
-    # Visit counts per dog (status=completed counts as a real visit).
+    # Visit counts per dog — lifetime, so they must include bookings the
+    # archive job moved out of `bookings`, and they use the same "a visit
+    # happened" rule as the trophy engine (checked out, or legacy completed).
     dog_ids = [d["id"] async for d in db.dogs.find({"owner_id": cid}, {"_id": 0, "id": 1})]
-    visit_counts: Dict[str, int] = {}
-    if dog_ids:
-        pipeline = [
-            {"$match": {"dog_id": {"$in": dog_ids}, "status": "completed"}},
-            {"$group": {"_id": "$dog_id", "count": {"$sum": 1}}},
-        ]
-        async for row in db.bookings.aggregate(pipeline):
-            visit_counts[row["_id"]] = int(row.get("count") or 0)
-        for d in dog_ids:
-            visit_counts.setdefault(d, 0)
+    visit_counts = await _dog_visit_counts(dog_ids)
 
     return {
         "client": client,
@@ -7990,7 +7986,10 @@ async def _build_receipt_payload(invoice_id: str, payment_ids: Optional[List[str
     # historical one predating a given field) simply omits that extra.
     bookings = []
     if invoice.get("booking_ids"):
-        bookings = await db.bookings.find({"id": {"$in": invoice["booking_ids"]}}, {"_id": 0}).to_list(50)
+        # Old invoices reference bookings the archive job has since moved —
+        # a reprinted/re-emailed receipt must keep its service dates + staff.
+        _ids = list(invoice["booking_ids"])
+        bookings = await _booking_rows_anywhere({"id": {"$in": _ids}}, {"_id": 0}, limit=max(50, len(_ids)))
     service_dates = [
         {"date": b.get("date"), "end_date": b.get("end_date"), "dog_name": b.get("dog_name")}
         for b in bookings if b.get("date")
@@ -12637,7 +12636,9 @@ async def search(q: str, user: dict = Depends(require_admin)):
     booking_or = [{"dog_name": rx}, {"client_name": rx}]
     if len(q) >= 3:
         booking_or.append({"id": ref_rx})
-    matched_bookings = await db.bookings.find({"$or": booking_or}, {"_id": 0}).sort("date", -1).limit(8).to_list(8)
+    # Both collections: a booking reference pasted from an old receipt or
+    # email must still resolve after the row was archived.
+    matched_bookings = await _booking_rows_anywhere({"$or": booking_or}, {"_id": 0}, limit=8, sort_field="date", sort_desc=True)
     for b in matched_bookings:
         out["bookings"].append({
             "id": b["id"], "dog_id": b.get("dog_id"), "dog_name": b.get("dog_name"),
@@ -28175,14 +28176,51 @@ async def admin_today_brain_restore(body: TodayBrainDismissIn, _: dict = Depends
 
 
 # -------- Calendar Events --------
+async def _dog_visit_counts(dog_ids: List[str]) -> Dict[str, int]:
+    """Lifetime visits per dog across hot + archived bookings."""
+    counts: Dict[str, int] = {d: 0 for d in dog_ids}
+    if not dog_ids:
+        return counts
+    pipeline = [{"$match": dog_visit_filter(dog_ids)}, {"$group": {"_id": "$dog_id", "count": {"$sum": 1}}}]
+    for coll in (db.bookings, db.bookings_archive):
+        try:
+            async for row in coll.aggregate(pipeline):
+                counts[row["_id"]] = counts.get(row["_id"], 0) + int(row.get("count") or 0)
+        except Exception:
+            continue
+    return counts
+
+
+CALENDAR_DEFAULT_PAST_DAYS = 120
+CALENDAR_DEFAULT_FUTURE_DAYS = 400
+
+
 @api.get("/events")
-async def calendar_events(_: dict = Depends(require_admin)):
+async def calendar_events(_: dict = Depends(require_admin), start: Optional[str] = None, end: Optional[str] = None):
+    """Calendar events for a date window. The Schedule screen passes the
+    visible range (FullCalendar datesSet); without one, a default window is
+    used. Reads hot AND archived bookings, so paging back past the 90-day
+    archive cutoff still shows completed history (they used to vanish)."""
     # Sprint 110at — keep completed bookings on the calendar (they used to
     # disappear the moment the dog was checked out). They render with a
     # muted gray tone so the active queue (pending/approved) still pops.
-    bookings = await db.bookings.find(
-        {"status": {"$in": ["approved", "pending", "completed"]}}, {"_id": 0}
-    ).to_list(2000)
+    today = business_today()
+    win_start = (start or (today - timedelta(days=CALENDAR_DEFAULT_PAST_DAYS)).isoformat())[:10]
+    win_end = (end or (today + timedelta(days=CALENDAR_DEFAULT_FUTURE_DAYS)).isoformat())[:10]
+    bookings = await _booking_rows_anywhere(
+        {
+            "status": {"$in": ["approved", "pending", "completed"]},
+            # A stay overlaps the window if it starts before the window ends
+            # and (its end, or its start for single-day rows) is on/after
+            # the window start.
+            "date": {"$lte": win_end},
+            "$or": [{"end_date": {"$gte": win_start}}, {"end_date": {"$in": [None, ""]}, "date": {"$gte": win_start}},
+                    {"end_date": {"$exists": False}, "date": {"$gte": win_start}}],
+        },
+        {"_id": 0},
+        limit=20000,
+        sort_field="date",
+    )
     events = []
     for b in bookings:
         end = b.get("end_date") or b["date"]
@@ -34200,7 +34238,9 @@ async def log_service(body: LogServiceIn, user: dict = Depends(require_admin_and
 
 @api.put("/transactions/{transaction_id}")
 async def update_transaction(transaction_id: str, body: TransactionUpdateIn, _: dict = Depends(require_admin_and_permission("finance_reports"))):
-    booking = await db.bookings.find_one({"id": transaction_id}, {"_id": 0})
+    # The ledger list reads hot + archived rows; an edit must land on the
+    # same record the reports read instead of 404ing after archival.
+    booking, _tx_coll, _tx_archived = await _load_booking_for_financial_correction(transaction_id)
     if not booking:
         raise HTTPException(status_code=404, detail="Transaction not found")
     update = {k: v for k, v in body.model_dump().items() if v is not None}
@@ -34239,13 +34279,13 @@ async def update_transaction(transaction_id: str, body: TransactionUpdateIn, _: 
     if float(update.get("cash_revenue") or 0) > 0 or float(booking.get("cash_revenue") or 0) > 0:
         money_day = _business_date_from_timestamp((update.get("paid_at") or booking.get("paid_at")))
         await _require_register_day_open(money_day)
-    await db.bookings.update_one({"id": transaction_id}, {"$set": update})
+    await _tx_coll.update_one({"id": transaction_id}, {"$set": update})
     return {**booking, **update}
 
 
 @api.delete("/transactions/{transaction_id}")
 async def delete_transaction(transaction_id: str, _: dict = Depends(require_admin_and_permission("delete_records"))):
-    booking = await db.bookings.find_one({"id": transaction_id}, {"_id": 0})
+    booking, _tx_coll, _tx_archived = await _load_booking_for_financial_correction(transaction_id)
     if not booking:
         raise HTTPException(status_code=404, detail="Transaction not found")
     if _booking_is_financially_locked(booking):
@@ -34258,9 +34298,9 @@ async def delete_transaction(transaction_id: str, _: dict = Depends(require_admi
     # If it was created via log_service (no real check-in flow), hard-delete.
     # Otherwise, just strip the income fields and leave the booking intact.
     if booking.get("service_id") and not booking.get("checked_in_at"):
-        await db.bookings.delete_one({"id": transaction_id})
+        await _tx_coll.delete_one({"id": transaction_id})
     else:
-        await db.bookings.update_one(
+        await _tx_coll.update_one(
             {"id": transaction_id},
             {"$unset": {"service_id": "", "service_name": "", "actual_price": "", "payment_status": "", "payment_method": "", "paid_at": "", "amount_paid": "", "balance_due": "", "cash_revenue": ""}},
         )
@@ -54750,9 +54790,21 @@ async def _bulk_email_resolve_recipients(filters: List[str]) -> List[Dict[str, A
     needs_booking_filter = bool(filt & {"daycare", "boarding", "training", "upcoming_bookings"})
     bookings_by_client: Dict[str, List[Dict[str, Any]]] = {}
     if needs_booking_filter:
-        async for b in db.bookings.find({"status": {"$nin": ["cancelled", "rejected"]}},
-                                        {"_id": 0, "client_id": 1, "service_type": 1, "date": 1, "end_date": 1, "status": 1}):
+        _bk_q = {"status": {"$nin": ["cancelled", "rejected"]}}
+        _bk_proj = {"_id": 0, "client_id": 1, "service_type": 1, "date": 1, "end_date": 1, "status": 1}
+        async for b in db.bookings.find(_bk_q, _bk_proj):
             bookings_by_client.setdefault(b.get("client_id") or "", []).append(b)
+        # "Has ever boarded / done daycare / trained" is a LIFETIME question;
+        # completed bookings older than 90 days live in the archive, and a
+        # loyal client whose last stay was a season ago was silently dropped
+        # from the audience. `upcoming_bookings` is future-only, so archived
+        # rows never satisfy it — harmless to include.
+        if filt & {"daycare", "boarding", "training"}:
+            try:
+                async for b in db.bookings_archive.find(_bk_q, _bk_proj):
+                    bookings_by_client.setdefault(b.get("client_id") or "", []).append(b)
+            except Exception as exc:
+                logger.warning("bulk email: archive scan failed (audience may be short): %s", exc)
 
     not_switched_set: set = set()
     if "not_switched" in filt:

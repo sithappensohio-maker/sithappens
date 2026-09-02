@@ -294,6 +294,20 @@ def _visit_filter(client_id: str) -> Dict[str, Any]:
     }
 
 
+def dog_visit_filter(dog_ids) -> Dict[str, Any]:
+    """Same visit definition as `_visit_filter`, scoped to one or more dogs.
+    Used by the Portal's per-dog visit badges so they agree with the trophy
+    engine (and count archived bookings) instead of a bare status=completed."""
+    ids = list(dog_ids) if not isinstance(dog_ids, str) else [dog_ids]
+    return {
+        "dog_id": {"$in": ids},
+        "$or": [
+            {"checked_out_at": {"$nin": [None, ""]}},
+            {"status": {"$in": ["completed", "checked_out"]}},
+        ],
+    }
+
+
 async def _client_visit_count(db, client_id: str) -> int:
     """Total visits across ALL of the client's dogs.
 

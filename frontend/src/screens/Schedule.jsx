@@ -143,8 +143,24 @@ export default function Schedule() {
     return () => mq.removeEventListener("change", handler);
   }, []);
 
-  const load = async () => {
-    try { const { data } = await api.get("/events"); setEvents(data); } catch (e) { console.warn("events load failed", e); }
+  // The calendar asks for the VISIBLE window (FullCalendar datesSet) and the
+  // backend reads hot + archived bookings for it, so paging back past the
+  // 90-day archive cutoff still shows completed history. The last window is
+  // kept so refreshes after edits re-fetch the same range.
+  const rangeRef = useRef(null);
+  const load = async (range) => {
+    if (range && range.start) rangeRef.current = range;
+    const r = rangeRef.current;
+    const params = r ? { start: r.start, end: r.end } : {};
+    try { const { data } = await api.get("/events", { params }); setEvents(data); } catch (e) { console.warn("events load failed", e); }
+  };
+  const onDatesSet = (info) => {
+    const start = (info.startStr || "").slice(0, 10);
+    const end = (info.endStr || "").slice(0, 10);
+    if (!start || !end) return;
+    const prev = rangeRef.current;
+    if (prev && prev.start === start && prev.end === end) return;
+    load({ start, end });
   };
   const loadDogs = async () => {
     try { const { data } = await api.get("/dogs"); setDogs(data); } catch (e) { console.warn("dogs load failed", e); }
@@ -288,6 +304,7 @@ export default function Schedule() {
           <div>
             <FullCalendar
               ref={calRef}
+              datesSet={onDatesSet}
               plugins={[dayGridPlugin, listPlugin, interactionPlugin]}
               initialView={mobile ? (mobileView === "list" ? "listMonth" : "dayGridMonth") : "dayGridMonth"}
               height="auto"

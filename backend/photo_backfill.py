@@ -140,32 +140,36 @@ async def _backfill_dogs(db) -> None:
 async def _backfill_bookings(db) -> None:
     """Compress report_card.photos arrays on bookings."""
     _state["current_stage"] = "bookings"
-    cursor = db.bookings.find({"report_card.photos": {"$exists": True, "$ne": []}}, projection=None)
-    async for bk in cursor:
-        _state["scanned"] += 1
-        rc = bk.get("report_card") or {}
-        photos = rc.get("photos") or []
-        if not photos:
-            continue
-        new_photos: List[str] = []
-        changed = False
-        for p in photos:
-            if not p:
+    # Completed bookings older than 90 days live in `bookings_archive` — that
+    # is exactly where the oldest, largest uncompressed report-card photos
+    # are, so the sweep must cover both collections.
+    for coll in (db.bookings, db.bookings_archive):
+        cursor = coll.find({"report_card.photos": {"$exists": True, "$ne": []}}, projection=None)
+        async for bk in cursor:
+            _state["scanned"] += 1
+            rc = bk.get("report_card") or {}
+            photos = rc.get("photos") or []
+            if not photos:
                 continue
-            before = len(p)
-            new = _compress_data_url(p)
-            if new:
-                _state["bytes_before"] += before
-                _state["bytes_after"] += len(new)
-                _state["compressed"] += 1
-                new_photos.append(new)
-                changed = True
-            else:
-                _state["skipped"] += 1
-                new_photos.append(p)
-        if changed:
-            await db.bookings.update_one({"id": bk["id"]}, {"$set": {"report_card.photos": new_photos}})
-        await asyncio.sleep(0)
+            new_photos: List[str] = []
+            changed = False
+            for p in photos:
+                if not p:
+                    continue
+                before = len(p)
+                new = _compress_data_url(p)
+                if new:
+                    _state["bytes_before"] += before
+                    _state["bytes_after"] += len(new)
+                    _state["compressed"] += 1
+                    new_photos.append(new)
+                    changed = True
+                else:
+                    _state["skipped"] += 1
+                    new_photos.append(p)
+            if changed:
+                await coll.update_one({"id": bk["id"]}, {"$set": {"report_card.photos": new_photos}})
+            await asyncio.sleep(0)
 
 
 async def _backfill_incidents(db) -> None:
