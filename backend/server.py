@@ -81,6 +81,9 @@ from trophy_service import (
     award_trophy,
     check_dog_trophies,
     check_client_trophies,
+    recheck_all_client_trophies,
+    migrate_trophy_copy_for_school,
+    practice_log_counts_as_session as _shared_practice_log_counts_as_session,
     render_share_card_png,
 )
 from trophies_data import TIER_COLORS
@@ -13808,6 +13811,11 @@ async def log_section(homework_id: str, body: SectionLogIn, user: dict = Depends
     # Online School spine — record the practice as a School event (routine
     # completion → activity feed; could-not-complete → attention alert).
     await _emit_school_practice_log_event(hw, entry, body, user)
+    # 🏆 Practice-streak awards count DAYS PRACTICED, and in School a lesson's
+    # multi-day Practice logs one session per day on a single homework row
+    # (it never flips to `completed` day by day). Re-evaluate here, not only
+    # on assignment completion, or a 7-day streak could never fire.
+    await _recheck_client_trophies_after_practice(hw, user)
     if user.get("role") != "admin":
         hw = _client_safe_homework(hw)
     return hw
@@ -14299,6 +14307,9 @@ async def submit_day(
             logger.warning("Daily tracker submit notify failed: %s", exc)
     # Online School spine — same practice-event emission as the section-log path.
     await _emit_school_practice_log_event(hw, new_log, body, user)
+    # 🏆 A submitted daily-tracker day is a real Practice session (same rule
+    # as the section-log path) — count it toward practice-streak awards now.
+    await _recheck_client_trophies_after_practice(hw, user)
 
     # Return the refreshed homework with progress.
     return await get_homework_detail(homework_id, user)
@@ -18570,22 +18581,12 @@ def _practice_lock_reason(lesson: dict, missing: list) -> str:
 def _practice_log_counts_as_session(hw: Optional[dict], log: Optional[dict]) -> bool:
     """One definition of a REAL Practice session, reused by every School gate.
 
-    Question placeholders, half-filled daily drafts, rest days and skipped
-    days are bookkeeping — not training. Section-based Practice keeps its
-    legacy append-only shape (an ordinary log has no submission_status), while
-    daily trackers count only an explicit submitted/approved day. Keeping this
-    predicate shared matters: the first-practice gate, checkpoint remediation
-    counts and graduation totals must never disagree about whether training
-    actually happened.
+    The predicate itself lives in trophy_service.practice_log_counts_as_session
+    so the practice-streak awards judge "did training happen today?" with the
+    exact same rule as the first-practice gate, checkpoint remediation counts
+    and graduation totals. Keep this a thin alias — never fork the rule here.
     """
-    if not isinstance(log, dict):
-        return False
-    if log.get("is_rest_day") or log.get("is_skipped"):
-        return False
-    status = log.get("submission_status")
-    if (hw or {}).get("daily_tracker"):
-        return status in ("submitted", "approved")
-    return status not in ("draft", "in_progress", "rest", "skipped")
+    return _shared_practice_log_counts_as_session(hw, log)
 
 
 def _lesson_is_practiced(hw: Optional[dict]) -> bool:
@@ -27207,6 +27208,8 @@ async def dashboard_stats(_: dict = Depends(require_admin)):
         logger.warning("daily_jobs trigger failed (non-fatal): %s", e)
     # Same lazy-daily pattern for cold-storage archival of old bookings.
     asyncio.create_task(_maybe_archive_today())
+    # ...and for the client auto-award sweep (visit tiers, practice streaks).
+    asyncio.create_task(_maybe_recheck_trophies_today())
     settings = await get_settings()
     required = settings.get("required_vaccines", ["rabies"])
     warn_days = int(settings.get("vaccine_warning_days", 30))
@@ -32390,6 +32393,53 @@ async def list_dog_trophies(dog_id: str, user: dict = Depends(get_current_user))
     return _serialize_awarded(rows)
 
 
+async def _recheck_client_trophies_after_practice(hw: dict, user: dict) -> None:
+    """Best-effort client trophy re-evaluation after a Practice session log.
+    Admin/trainer logs are bookkeeping, not the client's practice, so they
+    never trigger it (and practice_days ignores them anyway)."""
+    if user.get("role") == "admin" or not hw.get("client_id"):
+        return
+    try:
+        await check_client_trophies(db, hw["client_id"])
+    except Exception as exc:
+        logger.warning("Client trophy check after practice log failed: %s", exc)
+
+
+@api.post("/admin/trophies/recheck")
+async def admin_recheck_trophies(_: dict = Depends(require_admin)):
+    """Re-run every client auto-award evaluator now (visits, practice streaks,
+    practice completions, referrals). Idempotent; returns what was awarded.
+    Use after fixing an evaluator or editing thresholds so earned-but-never-
+    fired awards land immediately instead of waiting for the next checkout."""
+    summary = await recheck_all_client_trophies(db)
+    await db.system_runs.update_one(
+        {"_id": "trophy_recheck"},
+        {"$set": {"date": business_today().isoformat(), "ran_at": now_iso(), "awarded": summary["awarded"]}},
+        upsert=True,
+    )
+    return summary
+
+
+async def _maybe_recheck_trophies_today():
+    """Lazy once-per-business-day sweep (same pattern as _maybe_archive_today):
+    catches awards whose inputs changed outside a hook — e.g. visit tiers
+    after the archive job moved bookings, or a client who crossed a threshold
+    before an evaluator fix shipped."""
+    try:
+        today = business_today().isoformat()
+        marker = await db.system_runs.find_one({"_id": "trophy_recheck"})
+        if marker and marker.get("date") == today:
+            return
+        summary = await recheck_all_client_trophies(db)
+        await db.system_runs.update_one(
+            {"_id": "trophy_recheck"},
+            {"$set": {"date": today, "ran_at": now_iso(), "awarded": summary["awarded"]}},
+            upsert=True,
+        )
+    except Exception as e:
+        logger.warning("trophy recheck failed (non-fatal): %s", e)
+
+
 # Sprint 110ef — Batch endpoint to avoid the 429 storm caused by N parallel
 # `GET /dogs/{id}/trophies` calls when the Dogs admin page loads (one per
 # dog). Returns a `{dog_id: [trophies]}` map in a single round trip.
@@ -33640,6 +33690,7 @@ async def startup():
     # Seed trophies catalog (idempotent)
     try:
         await seed_trophies_if_empty(db)
+        await migrate_trophy_copy_for_school(db)
     except Exception as exc:
         logger.warning("Trophy seeding failed: %s", exc)
     # Sprint 110av — start the auto-backup loop. Loop honors the

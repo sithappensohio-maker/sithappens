@@ -17,9 +17,10 @@ TIER_COLORS = {
 # trigger_kind (for auto):
 #   goal_score_5_count    -> threshold = N goals at score 5 in any program
 #   program_completed     -> threshold = N programs completed
-#   homework_streak_days  -> threshold = N consecutive days with >=1 homework completed
-#   homework_completed    -> threshold = N total homework completed by this client
-#   visit_count           -> threshold = N total checkouts across all dogs of this client
+#   homework_streak_days  -> threshold = N consecutive days with >=1 real client-logged
+#                            Practice session (School section-log / daily submit) or completion
+#   homework_completed    -> threshold = N Practice assignments (School + legacy homework) completed
+#   visit_count           -> threshold = N completed visits across all dogs (live + archived bookings)
 #   successful_referrals  -> threshold = N referrals collection rows where this client is referrer
 SEED_TROPHIES = [
     # --- DOG TROPHIES ---
@@ -104,7 +105,7 @@ SEED_TROPHIES = [
     {
         "code": "client_streak_spark",
         "name": "Streak Sparked",
-        "description": "Three days in a row of homework — the streak is alive!",
+        "description": "Three days of Practice in a row — the streak is alive!",
         "category": "client",
         "tier": "bronze",
         "icon": "fa-fire",
@@ -116,8 +117,8 @@ SEED_TROPHIES = [
     },
     {
         "code": "client_homework_hero",
-        "name": "Homework Hero",
-        "description": "Completed homework seven days in a row.",
+        "name": "Practice Hero",
+        "description": "Practiced with your dog seven days in a row.",
         "category": "client",
         "tier": "bronze",
         "icon": "fa-fire",
@@ -130,7 +131,7 @@ SEED_TROPHIES = [
     {
         "code": "client_streak_two_weeks",
         "name": "Two-Week Champ",
-        "description": "14 days in a row — habit forming.",
+        "description": "14 days of Practice in a row — habit forming.",
         "category": "client",
         "tier": "silver",
         "icon": "fa-fire-flame-curved",
@@ -143,7 +144,7 @@ SEED_TROPHIES = [
     {
         "code": "client_streak_month",
         "name": "Month-Long Master",
-        "description": "30 days in a row. That's discipline.",
+        "description": "30 days of Practice in a row. That's discipline.",
         "category": "client",
         "tier": "gold",
         "icon": "fa-fire-flame-curved",
@@ -156,7 +157,7 @@ SEED_TROPHIES = [
     {
         "code": "client_streak_iron",
         "name": "Iron Streak",
-        "description": "60 days in a row. Pup parent of the year energy.",
+        "description": "60 days of Practice in a row. Pup parent of the year energy.",
         "category": "client",
         "tier": "platinum",
         "icon": "fa-shield",
@@ -169,7 +170,7 @@ SEED_TROPHIES = [
     {
         "code": "client_streak_centurion",
         "name": "Centurion",
-        "description": "100-day streak. Officially unstoppable.",
+        "description": "100-day Practice streak. Officially unstoppable.",
         "category": "client",
         "tier": "diamond",
         "icon": "fa-crown",
@@ -183,7 +184,7 @@ SEED_TROPHIES = [
     {
         "code": "client_first_plan",
         "name": "First Plan Down",
-        "description": "Your first complete training plan. Many more to come!",
+        "description": "Your first School Practice assignment completed. Many more to come!",
         "category": "client",
         "tier": "bronze",
         "icon": "fa-graduation-cap",
@@ -196,7 +197,7 @@ SEED_TROPHIES = [
     {
         "code": "client_five_plans",
         "name": "Five Down",
-        "description": "5 training plans finished — you and your pup are dialed in.",
+        "description": "5 Practice assignments finished — you and your pup are dialed in.",
         "category": "client",
         "tier": "bronze",
         "icon": "fa-book-open",
@@ -209,7 +210,7 @@ SEED_TROPHIES = [
     {
         "code": "client_dedicated",
         "name": "Dedicated Owner",
-        "description": "Logged 25 completed homework assignments.",
+        "description": "25 School Practice assignments completed.",
         "category": "client",
         "tier": "silver",
         "icon": "fa-book-open",
@@ -222,7 +223,7 @@ SEED_TROPHIES = [
     {
         "code": "client_coach_of_year",
         "name": "Coach of the Year",
-        "description": "An incredible 100 completed homework assignments!",
+        "description": "An incredible 100 School Practice assignments completed!",
         "category": "client",
         "tier": "gold",
         "icon": "fa-whistle",  # falls back to chalkboard-teacher if not present

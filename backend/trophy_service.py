@@ -193,24 +193,79 @@ async def check_dog_trophies(db, dog_id: str) -> List[Dict[str, Any]]:
     return awarded
 
 
+def practice_log_counts_as_session(hw: Optional[dict], log: Optional[dict]) -> bool:
+    """One definition of a REAL Practice session, reused by every School gate
+    AND by the trophy engine.
+
+    Question placeholders, half-filled daily drafts, rest days and skipped
+    days are bookkeeping — not training. Section-based Practice keeps its
+    legacy append-only shape (an ordinary log has no submission_status), while
+    daily trackers count only an explicit submitted/approved day. Keeping this
+    predicate shared matters: the first-practice gate, checkpoint remediation
+    counts, graduation totals and practice-streak awards must never disagree
+    about whether training actually happened.
+    """
+    if not isinstance(log, dict):
+        return False
+    if log.get("is_rest_day") or log.get("is_skipped"):
+        return False
+    status = log.get("submission_status")
+    if (hw or {}).get("daily_tracker"):
+        return status in ("submitted", "approved")
+    return status not in ("draft", "in_progress", "rest", "skipped")
+
+
 async def _count_homework_completed(db, client_id: str) -> int:
+    """Practice assignments this client has finished. School Practice lives in
+    the same `homework` collection as legacy assignments (each lesson's
+    Practice is a homework row owned by the enrollment), so one count covers
+    both eras."""
     return await db.homework.count_documents({"client_id": client_id, "status": "completed"})
+
+
+def _log_day(log: Dict[str, Any]) -> Optional[date]:
+    raw = str(log.get("date") or "")[:10]
+    try:
+        return date.fromisoformat(raw)
+    except Exception:
+        pass
+    try:
+        return datetime.fromisoformat(str(log.get("logged_at") or "")).date()
+    except Exception:
+        return None
+
+
+async def practice_days(db, client_id: str) -> set:
+    """Every calendar day this client trained: a day with at least one real,
+    client-logged Practice session on ANY assignment (School lessons log a
+    session per day on ONE homework row — a multi-day Practice never flips to
+    `completed` day by day), plus the day any assignment was completed."""
+    docs = await db.homework.find(
+        {"client_id": client_id},
+        {"_id": 0, "status": 1, "completed_at": 1, "daily_tracker": 1, "section_logs": 1},
+    ).to_list(5000)
+    days = set()
+    for hw in docs:
+        for log in (hw.get("section_logs") or []):
+            if not practice_log_counts_as_session(hw, log):
+                continue
+            if str(log.get("logged_by_role") or "client") == "admin":
+                continue  # trainer bookkeeping is not the client's practice
+            d = _log_day(log)
+            if d:
+                days.add(d)
+        if hw.get("status") == "completed":
+            try:
+                days.add(datetime.fromisoformat(hw.get("completed_at") or "").date())
+            except Exception:
+                pass
+    return days
 
 
 async def _homework_streak_days(db, client_id: str) -> int:
     """Longest current streak of consecutive days ending today (or yesterday)
-    where the client completed at least one homework assignment."""
-    docs = await db.homework.find(
-        {"client_id": client_id, "status": "completed"},
-        {"_id": 0, "completed_at": 1},
-    ).to_list(2000)
-    days = set()
-    for d in docs:
-        ts = d.get("completed_at") or ""
-        try:
-            days.add(datetime.fromisoformat(ts).date())
-        except Exception:
-            continue
+    on which the client practiced — see `practice_days`."""
+    days = await practice_days(db, client_id)
     if not days:
         return 0
     today = date.today()
@@ -225,11 +280,34 @@ async def _homework_streak_days(db, client_id: str) -> int:
     return streak
 
 
-async def _client_visit_count(db, client_id: str) -> int:
-    return await db.bookings.count_documents({
+def _visit_filter(client_id: str) -> Dict[str, Any]:
+    """A visit is any booking for this client that actually happened: it was
+    checked out (current flow), or it carries a terminal completed status from
+    the pre-checkout era (`completed` / legacy `checked_out` rows that never
+    got a `checked_out_at` stamp). Cancelled / rejected never count."""
+    return {
         "client_id": client_id,
-        "checked_out_at": {"$ne": None, "$exists": True},
-    })
+        "$or": [
+            {"checked_out_at": {"$nin": [None, ""]}},
+            {"status": {"$in": ["completed", "checked_out"]}},
+        ],
+    }
+
+
+async def _client_visit_count(db, client_id: str) -> int:
+    """Total visits across ALL of the client's dogs.
+
+    Completed bookings older than ~90 days are moved out of `bookings` into
+    `bookings_archive` by the cold-storage job, so counting the live
+    collection alone silently capped every client at roughly one quarter of
+    visits and the 50 / 100 visit awards could never fire. Count both."""
+    filt = _visit_filter(client_id)
+    live = await db.bookings.count_documents(filt)
+    try:
+        archived = await db.bookings_archive.count_documents(filt)
+    except Exception:
+        archived = 0
+    return int(live or 0) + int(archived or 0)
 
 
 async def _client_successful_referrals(db, client_id: str) -> int:
@@ -280,6 +358,97 @@ async def check_client_trophies(db, client_id: str) -> List[Dict[str, Any]]:
             if row:
                 awarded.append(row)
     return awarded
+
+
+async def recheck_all_client_trophies(db) -> Dict[str, Any]:
+    """Re-run the client auto-award evaluators for every client. Idempotent
+    (award_trophy skips anything already held), so it is safe to run after
+    an evaluator fix or a catalog change to hand out awards that were earned
+    but never fired — e.g. visit tiers that the archive job hid."""
+    summary: Dict[str, Any] = {"clients_checked": 0, "awarded": 0, "by_code": {}}
+    async for c in db.clients.find({}, {"_id": 0, "id": 1}):
+        cid = c.get("id")
+        if not cid:
+            continue
+        summary["clients_checked"] += 1
+        try:
+            rows = await check_client_trophies(db, cid)
+        except Exception as exc:  # one bad client must not stop the sweep
+            logger.warning("trophy recheck failed for client %s: %s", cid, exc)
+            continue
+        for r in rows:
+            summary["awarded"] += 1
+            code = r.get("trophy_code") or "?"
+            summary["by_code"][code] = summary["by_code"].get(code, 0) + 1
+    if summary["awarded"]:
+        logger.info("Trophy recheck awarded %d trophies across %d clients: %s",
+                    summary["awarded"], summary["clients_checked"], summary["by_code"])
+    return summary
+
+
+# Homework-era catalog copy → School Practice copy. Only rows whose text is
+# STILL the original seed text are rewritten, so anything the admin renamed
+# or re-described in Settings → Trophies is left exactly as they wrote it.
+SCHOOL_COPY_MIGRATION: Dict[str, Dict[str, tuple]] = {
+    "client_streak_spark": {
+        "description": ('Three days in a row of homework — the streak is alive!',
+                 'Three days of Practice in a row — the streak is alive!'),
+    },
+    "client_homework_hero": {
+        "name": ('Homework Hero',
+                 'Practice Hero'),
+        "description": ('Completed homework seven days in a row.',
+                 'Practiced with your dog seven days in a row.'),
+    },
+    "client_streak_two_weeks": {
+        "description": ('14 days in a row — habit forming.',
+                 '14 days of Practice in a row — habit forming.'),
+    },
+    "client_streak_month": {
+        "description": ("30 days in a row. That's discipline.",
+                 "30 days of Practice in a row. That's discipline."),
+    },
+    "client_streak_iron": {
+        "description": ('60 days in a row. Pup parent of the year energy.',
+                 '60 days of Practice in a row. Pup parent of the year energy.'),
+    },
+    "client_streak_centurion": {
+        "description": ('100-day streak. Officially unstoppable.',
+                 '100-day Practice streak. Officially unstoppable.'),
+    },
+    "client_first_plan": {
+        "description": ('Your first complete training plan. Many more to come!',
+                 'Your first School Practice assignment completed. Many more to come!'),
+    },
+    "client_five_plans": {
+        "description": ('5 training plans finished — you and your pup are dialed in.',
+                 '5 Practice assignments finished — you and your pup are dialed in.'),
+    },
+    "client_dedicated": {
+        "description": ('Logged 25 completed homework assignments.',
+                 '25 School Practice assignments completed.'),
+    },
+    "client_coach_of_year": {
+        "description": ('An incredible 100 completed homework assignments!',
+                 'An incredible 100 School Practice assignments completed!'),
+    },
+}
+
+
+async def migrate_trophy_copy_for_school(db) -> int:
+    """Rewrite untouched homework-era names/descriptions in School terms on
+    both the catalog and the awarded snapshots. Returns catalog rows changed."""
+    changed = 0
+    for code, fields in SCHOOL_COPY_MIGRATION.items():
+        for field, (old, new) in fields.items():
+            res = await db.trophies.update_many({"code": code, field: old}, {"$set": {field: new}})
+            changed += int(res.modified_count or 0)
+            await db.awarded_trophies.update_many(
+                {"trophy_code": code, f"trophy_{field}": old}, {"$set": {f"trophy_{field}": new}},
+            )
+    if changed:
+        logger.info("Migrated %d trophy catalog rows to School Practice copy", changed)
+    return changed
 
 
 # ─────────────────────── share card PNG ────────────────────────

@@ -148,8 +148,7 @@ export default function PortalProgress({ homework = [] }) {
           <p className="text-[11px] font-black uppercase tracking-widest text-shTextMuted mb-2">Achievements</p>
           <div className="space-y-2" data-testid="progress-achievements">
             {dogTrophies.map(t => (
-              <AchievementCard key={t.id} icon={t.trophy_icon} name={t.trophy_name} date={t.awarded_at}
-                                description={t.trophy_description} testid={`progress-achievement-${t.id}`}/>
+              <AchievementCard key={t.id} trophy={t} testid={`progress-achievement-${t.id}`}/>
             ))}
           </div>
         </div>

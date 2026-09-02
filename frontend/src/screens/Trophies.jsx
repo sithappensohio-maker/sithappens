@@ -10,9 +10,9 @@ const TRIGGER_KIND_OPTIONS = [
   { value: "", label: "— manual only —" },
   { value: "goal_score_5_count", label: "Dog: Training goals scored 5" },
   { value: "program_completed", label: "Dog: Programs completed" },
-  { value: "homework_streak_days", label: "Client: Practice streak (days)" },
-  { value: "homework_completed", label: "Client: Homework total completed" },
-  { value: "visit_count", label: "Client: Total visits (checkouts)" },
+  { value: "homework_streak_days", label: "Client: School Practice streak (days practiced in a row)" },
+  { value: "homework_completed", label: "Client: School Practice assignments completed" },
+  { value: "visit_count", label: "Client: Total visits (all dogs, incl. archived bookings)" },
   { value: "successful_referrals", label: "Client: Successful referrals" },
 ];
 
@@ -22,6 +22,7 @@ export default function Trophies() {
   const [editing, setEditing] = useState(null);
   const [creating, setCreating] = useState(false);
   const [err, setErr] = useState("");
+  const [recheck, setRecheck] = useState({ busy: false, result: null });
 
   const load = async () => {
     try {
@@ -33,6 +34,20 @@ export default function Trophies() {
 
   const dogTrophies = trophies.filter(t => t.category === "dog");
   const clientTrophies = trophies.filter(t => t.category === "client");
+
+  // Re-run every client auto-award evaluator now (visits, Practice streaks,
+  // Practice completions, referrals). Idempotent — only hands out awards that
+  // were earned but never fired, e.g. after an evaluator fix or a threshold edit.
+  const recheckAwards = async () => {
+    setRecheck({ busy: true, result: null });
+    try {
+      const { data } = await api.post("/admin/trophies/recheck");
+      setRecheck({ busy: false, result: data });
+    } catch (e) {
+      setRecheck({ busy: false, result: null });
+      setErr(formatErr(e.response?.data?.detail) || "Re-check failed");
+    }
+  };
 
   const removeTrophy = async (t) => {
     const ok = await confirm({
@@ -56,14 +71,28 @@ export default function Trophies() {
         highlight="Earn it. Show it."
         subtitle="15 trophies seeded by default — add custom ones for your business below."
         right={(
-          <button onClick={()=>setCreating(true)} data-testid="add-trophy-button"
-                  className="bg-shAccent text-shText px-5 py-2.5 rounded-lg text-[13px] font-black uppercase tracking-widest shadow-lg hover:bg-shAccent/90 transition">
-            <i className="fas fa-plus mr-2"/>New Trophy
-          </button>
+          <div className="flex flex-wrap items-center gap-2">
+            <button onClick={recheckAwards} disabled={recheck.busy} data-testid="recheck-awards-button"
+                    title="Re-run every client auto-award now (visits, Practice streaks, Practice completions, referrals)"
+                    className="border border-shBorder text-shText px-4 py-2.5 rounded-lg text-[13px] font-black uppercase tracking-widest hover:border-shAccent/60 transition disabled:opacity-50">
+              <i className={`fas ${recheck.busy ? "fa-spinner fa-spin" : "fa-rotate"} mr-2`}/>Re-check awards
+            </button>
+            <button onClick={()=>setCreating(true)} data-testid="add-trophy-button"
+                    className="bg-shAccent text-shText px-5 py-2.5 rounded-lg text-[13px] font-black uppercase tracking-widest shadow-lg hover:bg-shAccent/90 transition">
+              <i className="fas fa-plus mr-2"/>New Trophy
+            </button>
+          </div>
         )}
         testid="trophies-hero"
       />
       {err && <div className="bg-red-500/10 text-red-400 rounded p-3 text-sm">{err}</div>}
+      {recheck.result && (
+        <div className="rounded-xl border border-shBorder bg-[var(--sh-card-base)] p-3 text-[13px] text-shTextMuted" data-testid="recheck-awards-result">
+          <i className="fas fa-check-circle text-emerald-400 mr-2"/>
+          Checked {recheck.result.clients_checked} clients · {recheck.result.awarded} new award{recheck.result.awarded === 1 ? "" : "s"}
+          {recheck.result.awarded > 0 && ` (${Object.entries(recheck.result.by_code || {}).map(([c, n]) => `${c} ×${n}`).join(", ")})`}
+        </div>
+      )}
 
       <TrophySection title="Client Trophies" trophies={clientTrophies} onEdit={setEditing} onDelete={removeTrophy}/>
       <TrophySection title="Dog Trophies" trophies={dogTrophies} onEdit={setEditing} onDelete={removeTrophy}/>

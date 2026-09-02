@@ -352,8 +352,7 @@ export default function OnlineSchoolDashboard({ clientFirstName, onClose, onCont
           ) : (
             <div className="grid sm:grid-cols-2 gap-3">
               {dogTrophies.map(t => (
-                <AchievementCard key={t.id} icon={t.trophy_icon} name={t.trophy_name} date={t.awarded_at}
-                                 description={t.trophy_description} testid={`school-achievement-${t.id}`}/>
+                <AchievementCard key={t.id} trophy={t} testid={`school-achievement-${t.id}`}/>
               ))}
             </div>
           )}

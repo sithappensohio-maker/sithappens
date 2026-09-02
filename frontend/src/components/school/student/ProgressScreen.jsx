@@ -80,12 +80,15 @@ export default function ProgressScreen({ enrollmentId, home, detail, onOpenHisto
   const [record, setRecord] = useState(null);
   const load = useCallback(async () => {
     const [h, t, r] = await Promise.all([api.get(`/portal/school/${enrollmentId}/checkpoint-history`), api.get("/portal/trophies"), api.get(`/portal/school/${enrollmentId}/record`)]);
-    setHistory(h.data || []); setTrophies(t.data?.dog_trophies || []); setRecord(r.data || { programs: [], checkpoints: [] });
+    setHistory(h.data || []); setTrophies([...(t.data?.dog_trophies || []), ...(t.data?.client_trophies || [])]); setRecord(r.data || { programs: [], checkpoints: [] });
   }, [enrollmentId]);
   useEffect(() => { if (!enrollmentId) return; setHistory(null); setTrophies(null); setRecord(null); load().catch(() => { setHistory([]); setTrophies([]); setRecord({ programs: [], checkpoints: [] }); }); }, [load, enrollmentId]);
 
   const p = home?.progress || {};
-  const dogTrophies = useMemo(() => (trophies || []).filter((t) => !home?.dog?.id || t.recipient_id === home.dog.id || t.dog_id === home.dog.id), [trophies, home?.dog?.id]);
+  /* School Achievements = this dog's trophies PLUS the owner's client
+     trophies (Practice streaks, Practice completions, visit tiers) — those
+     are earned through School work, so they belong on the School record. */
+  const dogTrophies = useMemo(() => (trophies || []).filter((t) => t.recipient_type === "client" || !home?.dog?.id || t.recipient_id === home.dog.id || t.dog_id === home.dog.id), [trophies, home?.dog?.id]);
   /* Every graded checkpoint is part of the record, including legacy rows
      whose overall scores resolve to null — dropping those told a client with
      a real passed checkpoint that they had none. `scored` stays separate
@@ -185,7 +188,7 @@ export default function ProgressScreen({ enrollmentId, home, detail, onOpenHisto
         )}
       </section>
 
-      <section className="space-y-3" data-testid="progress-achievements"><p className="text-[13px] font-black uppercase tracking-[0.2em] text-shAccent">Achievements</p>{dogTrophies.length ? <div className="grid sm:grid-cols-2 gap-3">{dogTrophies.map((t) => <AchievementCard key={t.id} icon={t.trophy_icon} name={t.trophy_name} date={t.awarded_at} description={t.trophy_description} testid={`progress-achievement-${t.id}`} />)}</div> : <div className="rounded-2xl border border-shBorder bg-[var(--sh-card-base)] p-4 text-[15px] text-shTextMuted">Achievements will appear here as {home?.dog?.name || "your dog"} reaches milestones.</div>}</section>
+      <section className="space-y-3" data-testid="progress-achievements"><p className="text-[13px] font-black uppercase tracking-[0.2em] text-shAccent">Achievements</p>{dogTrophies.length ? <div className="grid sm:grid-cols-2 gap-3">{dogTrophies.map((t) => <AchievementCard key={t.id} trophy={t} testid={`progress-achievement-${t.id}`} />)}</div> : <div className="rounded-2xl border border-shBorder bg-[var(--sh-card-base)] p-4 text-[15px] text-shTextMuted">Achievements will appear here as {home?.dog?.name || "your dog"} reaches milestones.</div>}</section>
 
       <section className="space-y-3" data-testid="dog-training-record">
         <div><p className="text-[13px] font-black uppercase tracking-[0.2em] text-shSecondary">Permanent training record</p><p className="text-[15px] text-shTextMuted mt-1">Every in-person, online, and hybrid School program and trainer-scored checkpoint stays attached to {home?.dog?.name || "your dog"}.</p></div>

@@ -40,7 +40,8 @@ test("Student Home uses the backend lesson equipment field", () => {
 
 test("native Progress consumes the real portal trophies response shape", () => {
   expect(progress).toMatch(/t\.data\?\.dog_trophies \|\| \[\]/);
-  expect(progress).toMatch(/t\.trophy_description/);
+  // Awards pass the full row so the card can show the admin-uploaded artwork.
+  expect(progress).toMatch(/<AchievementCard key=\{t\.id\} trophy=\{t\}/);
   expect(progress).toMatch(/p\.course_pct/);
   expect(progress).toMatch(/Skill mastery/);
 });
