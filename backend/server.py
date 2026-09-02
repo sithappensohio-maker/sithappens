@@ -5996,7 +5996,12 @@ async def credit_referral(client_id: str, body: dict, user: dict = Depends(requi
 
     # Manual referral credits are still allowed, but they now use the same
     # non-cash rewards ledger as auto-referrals so credit history and tax reports
-    # stay clean. If the referral was already paid, return the existing row.
+    # stay clean. If the referral was already paid, return the existing row —
+    # for EVERY bonus size. The bonus>1 branch used to skip this check and
+    # inserted a fresh `referrals` row (and paid again) on every call.
+    already = await db.referrals.find_one({"referred_id": referred}, {"_id": 0})
+    if already:
+        return already
     if bonus != 1:
         reward = await _grant_client_reward_credit(
             client,
@@ -30353,14 +30358,25 @@ async def _build_referral_rows(limit: int = 200) -> Tuple[List[dict], List[dict]
     paid referral record yet. This keeps older signups visible without needing a
     destructive migration.
     """
+    # `paid_rows` is a DISPLAY list (newest first, capped). The exclusion set
+    # below must never be derived from it: once more than `limit` referrals had
+    # ever been paid, the oldest paid ones fell out of the slice and resurfaced
+    # here as "pending"/"ready" — inviting a second credit for the same referral.
+    # `distinct` is evaluated in Mongo over the whole collection, so the set is
+    # complete no matter how large the history grows.
     paid_rows = await db.referrals.find({}, {"_id": 0}).sort("created_at", -1).to_list(limit)
-    paid_by_referred = {r.get("referred_id") for r in paid_rows if r.get("referred_id")}
-    referred_clients = await db.clients.find(
-        {"referred_by_code": {"$exists": True, "$ne": ""}, "$or": [{"deleted": {"$ne": True}}, {"deleted": {"$exists": False}}]},
-        {"_id": 0, "id": 1, "name": 1, "email": 1, "referred_by_code": 1, "created_at": 1}
-    ).to_list(5000)
+    paid_by_referred = {rid for rid in await db.referrals.distinct("referred_id") if rid}
+    referred_clients = [
+        c async for c in db.clients.find(
+            {"referred_by_code": {"$exists": True, "$ne": ""}, "$or": [{"deleted": {"$ne": True}}, {"deleted": {"$exists": False}}]},
+            {"_id": 0, "id": 1, "name": 1, "email": 1, "referred_by_code": 1, "created_at": 1},
+        )
+    ]
     codes = sorted({(c.get("referred_by_code") or "").upper().strip() for c in referred_clients if c.get("referred_by_code")})
-    referrers = await db.clients.find({"referral_code": {"$in": codes}}, {"_id": 0, "id": 1, "name": 1, "email": 1, "referral_code": 1}).to_list(5000) if codes else []
+    referrers = (
+        await db.clients.find({"referral_code": {"$in": codes}}, {"_id": 0, "id": 1, "name": 1, "email": 1, "referral_code": 1}).to_list(len(codes) + 10)
+        if codes else []
+    )
     by_code = {(r.get("referral_code") or "").upper(): r for r in referrers}
     pending = []
     invalid_code_count = 0
@@ -33402,6 +33418,10 @@ async def startup():
     await db.bookings_archive.create_index([("date", 1), ("status", 1)])
     await db.bookings_archive.create_index("dog_id")
     await db.bookings_archive.create_index("client_id")
+    # Referral idempotency guards look up by referred_id; the Rewards Center
+    # exclusion set is distinct("referred_id"); trophies count by referrer_id.
+    await db.referrals.create_index("referred_id")
+    await db.referrals.create_index("referrer_id")
     # Performance indexes — hot query paths used by Dashboard, Schedule,
     # Bookings, Pipeline, Income. All safe to create; existing data uses
     # them on next query. Each wrapped individually so one failure (e.g.
