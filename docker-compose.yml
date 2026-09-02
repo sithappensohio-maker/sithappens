@@ -79,8 +79,10 @@ services:
 
   email-worker:
     # Reuses the backend image/build — only the command differs. Runs ONLY
-    # the durable email_outbox processor (backend/email_worker.py), never
-    # maybe_run_daily/birthdays/vaccines/homework/trainer-digest/P&L jobs.
+    # the durable email_outbox processor (backend/email_worker.py). The daily
+    # jobs (birthdays/vaccines/homework/trainer-digest/P&L), booking archive,
+    # trophy re-check, recurring auto-extend and nightly backup run inside the
+    # backend via backend/scheduler.py (Mongo-leased, one worker at a time).
     # Exactly ONE instance — do not scale this service.
     build:
       context: .

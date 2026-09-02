@@ -11,7 +11,7 @@ import PageHero from "../components/PageHero";
  * extends start the day AFTER the previously booked window.
  */
 const WD = ["Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun"];
-const emptyForm = { dog_id: "", service_type: "daycare", service_id: "", time: "", dropoff_time: "", weekdays: [0, 2, 4], notes: "", default_horizon_weeks: 12, active: true, label: "", start_date: "" };
+const emptyForm = { dog_id: "", service_type: "daycare", service_id: "", time: "", dropoff_time: "", weekdays: [0, 2, 4], notes: "", default_horizon_weeks: 12, active: true, label: "", start_date: "", auto_extend: true };
 
 export default function RecurringTemplates() {
   const confirm = useConfirm();
@@ -50,6 +50,7 @@ export default function RecurringTemplates() {
       time: r.time || "", dropoff_time: r.dropoff_time || "", weekdays: r.weekdays || [],
       notes: r.notes || "", default_horizon_weeks: r.default_horizon_weeks || 12,
       active: r.active !== false, label: r.label || "", start_date: r.start_date || "",
+      auto_extend: r.auto_extend !== false,
     });
     setErr(""); setOpen(true);
   };
@@ -122,7 +123,7 @@ export default function RecurringTemplates() {
         <div className="bg-[var(--sh-card-base)] border border-shBorder rounded-xl p-12 text-center" data-testid="recurring-empty">
           <i className="fas fa-calendar-week text-gray-600 text-4xl mb-3"/>
           <p className="text-shText font-black text-[16px] uppercase tracking-widest">No saved schedules yet</p>
-          <p className="text-[15px] text-shTextMuted normal-case mt-2 max-w-md mx-auto">Set up a template once for your M/W/F regulars, then extend the next 12 weeks of bookings with a single click.</p>
+          <p className="text-[15px] text-shTextMuted normal-case mt-2 max-w-md mx-auto">Set up a template once for your M/W/F regulars, then extend the next 12 weeks of bookings with a single click — after that the scheduler keeps it booked ahead automatically.</p>
         </div>
       ) : (
         <div className="space-y-2">
@@ -146,6 +147,15 @@ export default function RecurringTemplates() {
                   <span>Booked through <span className="text-shText">{r.last_booked_through}</span></span>
                 ) : (
                   <span className="text-gray-600">Never extended</span>
+                )}
+                {r.last_booked_through && r.auto_extend !== false && r.active && (
+                  <span className="block text-[12px] text-shSecondary mt-0.5" data-testid={`auto-extend-badge-${r.id}`}
+                        title={r.last_auto_extended_at ? `Last auto-extended ${r.last_auto_extended_at.slice(0, 10)}` : "The scheduler extends this schedule automatically ~2 weeks before the booked window ends"}>
+                    <i className="fas fa-rotate mr-1"/>Auto-extends
+                  </span>
+                )}
+                {r.last_booked_through && r.auto_extend === false && (
+                  <span className="block text-[12px] text-gray-500 mt-0.5">Manual extend only</span>
                 )}
               </div>
               <div className="col-span-12 md:col-span-2 flex md:justify-end gap-2">
@@ -231,6 +241,14 @@ export default function RecurringTemplates() {
                 <input type="number" min="1" max="52" value={form.default_horizon_weeks}
                        onChange={(e)=>setForm({...form, default_horizon_weeks: parseInt(e.target.value) || 12})}
                        className="w-full mt-1 bg-[var(--sh-card-base)] border border-shBorder rounded p-2 text-shText text-sm" />
+              </div>
+              <div>
+                <label className="flex items-center gap-2 cursor-pointer" data-testid="template-auto-extend">
+                  <input type="checkbox" checked={form.auto_extend !== false}
+                         onChange={(e)=>setForm({...form, auto_extend: e.target.checked})} />
+                  <span className="text-[14px] font-black text-shTextMuted uppercase tracking-widest">Auto-extend</span>
+                </label>
+                <p className="text-[13px] text-shTextMuted normal-case mt-1">After the first Extend, the scheduler keeps this schedule booked ahead by the horizon above, starting about two weeks before the booked window runs out. Turn off to extend by hand only.</p>
               </div>
               <div>
                 <label className="text-[14px] font-black text-shTextMuted uppercase tracking-widest">Notes (optional)</label>

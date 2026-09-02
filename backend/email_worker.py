@@ -1,10 +1,10 @@
 """Dedicated email-outbox worker.
 
 Runs as its OWN single-instance process, separate from the FastAPI backend
-(`uvicorn server:app --workers 2`) and separate from `daily_jobs.automation_loop`
-(dead code, never started) / `maybe_run_daily` (birthdays, vaccines, homework
-reminders, trainer digests, P&L jobs — triggered lazily from server.py's
-/dashboard/stats handler). This process calls ONLY `process_email_outbox()`.
+(`uvicorn server:app --workers 2`). The jobs that QUEUE mail — `maybe_run_daily`
+(birthdays, vaccines, homework reminders, trainer digests, P&L) and the other
+automated sweeps — run inside the backend via `scheduler.py` (a Mongo-leased
+tick loop, one worker at a time). This process calls ONLY `process_email_outbox()`.
 """
 import asyncio
 import logging

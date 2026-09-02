@@ -86,6 +86,7 @@ from trophy_service import (
     practice_log_counts_as_session as _shared_practice_log_counts_as_session,
     render_share_card_png,
 )
+import scheduler as job_scheduler
 from trophies_data import TIER_COLORS
 
 # -------- Config --------
@@ -2164,7 +2165,7 @@ async def _archive_old_bookings_once() -> dict:
 
 @api.post("/admin/bookings/archive-now")
 async def archive_now(_: dict = Depends(require_admin)):
-    """Manual trigger. Background scheduler also runs this nightly."""
+    """Manual trigger. scheduler.py also runs this on every tick (idempotent, once per business day)."""
     return await _archive_old_bookings_once()
 
 # Once-per-UTC-day guard so we don't re-archive on every dashboard load.
@@ -2184,6 +2185,76 @@ async def _maybe_archive_today():
             logger.info("Archived %d old bookings (cutoff %s)", result["moved"], result["cutoff_date"])
     except Exception as e:
         logger.warning("auto-archive failed (non-fatal): %s", e)
+
+async def _run_once_per_business_day(marker_id: str, fn) -> Dict[str, Any]:
+    """Run `fn()` at most once per business day, recorded on a `system_runs`
+    marker (`_id` = marker_id). The slot is reserved BEFORE the run so two
+    callers can't overlap; a failure clears the slot so the next tick retries."""
+    today = business_today().isoformat()
+    marker = await db.system_runs.find_one({"_id": marker_id})
+    if marker and marker.get("date") == today:
+        return {"skipped": "done_today", "ran_at": marker.get("ran_at")}
+    await db.system_runs.update_one(
+        {"_id": marker_id}, {"$set": {"date": today, "started_at": now_iso()}}, upsert=True,
+    )
+    try:
+        result = await fn()
+    except Exception as exc:
+        await db.system_runs.update_one({"_id": marker_id}, {"$set": {"date": None, "error": str(exc)[:500]}})
+        raise
+    await db.system_runs.update_one(
+        {"_id": marker_id}, {"$set": {"ran_at": now_iso(), "result": job_scheduler.jsonable(result)}, "$unset": {"error": ""}},
+    )
+    return result
+
+
+# ── Recurring schedules: keep them booked ahead automatically ──────────────
+# `POST /recurring-templates/{id}/extend` was the ONLY thing that created the
+# next weeks of a client's M/W/F schedule, and it was a manual button. If
+# nobody clicked, recurring clients silently stopped having bookings. The
+# scheduler now extends any active, auto_extend template whose booked-through
+# date is within RECURRING_AUTO_EXTEND_LEAD_DAYS, by its default horizon.
+# A template that has NEVER been extended is left alone: the first manual
+# Extend is the operator's opt-in (it may still be a draft).
+RECURRING_AUTO_EXTEND_LEAD_DAYS = int(os.environ.get("RECURRING_AUTO_EXTEND_LEAD_DAYS", "14"))
+_SCHEDULER_USER: Dict[str, Any] = {"id": "system:scheduler", "role": "admin", "name": "Scheduler", "email": ""}
+
+
+async def _auto_extend_recurring_templates_once() -> Dict[str, Any]:
+    today = business_today()
+    edge = (today + timedelta(days=RECURRING_AUTO_EXTEND_LEAD_DAYS)).isoformat()
+    summary: Dict[str, Any] = {"checked": 0, "extended": 0, "created": 0, "skipped_slots": 0, "errors": []}
+    q = {
+        "active": {"$ne": False},
+        "auto_extend": {"$ne": False},
+        "last_booked_through": {"$type": "string", "$lte": edge},
+    }
+    async for t in db.recurring_templates.find(q, {"_id": 0}):
+        summary["checked"] += 1
+        try:
+            res = await extend_recurring_template(t["id"], ExtendTemplateIn(weeks=None), _SCHEDULER_USER)
+            summary["extended"] += 1
+            summary["created"] += int(res.get("created") or 0)
+            summary["skipped_slots"] += len(res.get("skipped") or [])
+            await db.recurring_templates.update_one(
+                {"id": t["id"]},
+                {"$set": {"last_auto_extended_at": now_iso(),
+                          "last_auto_extend_result": {"window": res.get("window"), "created": res.get("created"),
+                                                      "skipped": len(res.get("skipped") or [])}}},
+            )
+        except HTTPException as exc:
+            summary["errors"].append({"template_id": t["id"], "label": t.get("label"), "error": str(exc.detail)[:300]})
+        except Exception as exc:  # one broken template must not stop the sweep
+            logger.warning("auto-extend failed for template %s: %s", t.get("id"), exc)
+            summary["errors"].append({"template_id": t["id"], "label": t.get("label"), "error": str(exc)[:300]})
+    if summary["extended"]:
+        logger.info("recurring auto-extend: %s", summary)
+    return summary
+
+
+async def _maybe_auto_extend_recurring_today() -> Dict[str, Any]:
+    return await _run_once_per_business_day("recurring_auto_extend", _auto_extend_recurring_templates_once)
+
 
 @api.get("/admin/bookings/archive")
 async def list_archived(skip: int = 0, limit: int = 100, _: dict = Depends(require_admin)):
@@ -4866,6 +4937,9 @@ class RecurringTemplateIn(BaseModel):
     # through at least once, after which it advances normally.
     start_date: Optional[str] = ""
     active: bool = True
+    # Scheduler keeps the schedule booked ahead once it has been extended at
+    # least once (the first manual Extend is the opt-in). Off = manual only.
+    auto_extend: bool = True
 
 
 class ExtendTemplateIn(BaseModel):
@@ -27215,6 +27289,7 @@ async def dashboard_stats(_: dict = Depends(require_admin)):
     asyncio.create_task(_maybe_archive_today())
     # ...and for the client auto-award sweep (visit tiers, practice streaks).
     asyncio.create_task(_maybe_recheck_trophies_today())
+    asyncio.create_task(_maybe_auto_extend_recurring_today())
     settings = await get_settings()
     required = settings.get("required_vaccines", ["rabies"])
     warn_days = int(settings.get("vaccine_warning_days", 30))
@@ -28963,33 +29038,67 @@ def _seconds_until_next_run(hour: int, minute: int) -> float:
     return max(60.0, (target - now).total_seconds())
 
 
-_auto_backup_task: Optional[asyncio.Task] = None
+async def _maybe_auto_backup_tick() -> Dict[str, Any]:
+    """Scheduler job replacing the old per-worker `_auto_backup_loop` (which
+    every uvicorn worker started, so scheduled backups fired twice). Runs the
+    scheduled backup once per business day at/after the configured HH:MM;
+    `_run_auto_backup_once` keeps its own lease + same-day guard, and a failed
+    attempt is retried no more than hourly."""
+    cfg = await _get_auto_backup_config()
+    if not cfg.get("enabled"):
+        return {"skipped": "disabled"}
+    now = now_local()
+    hour, minute = int(cfg.get("hour") or 3), int(cfg.get("minute") or 0)
+    if (now.hour, now.minute) < (hour, minute):
+        return {"skipped": "before_window", "at": f"{hour:02d}:{minute:02d}"}
+    today = business_today().isoformat()
+    marker = await db.system_runs.find_one({"_id": "auto_backup_tick"}) or {}
+    if marker.get("date") == today and marker.get("ok"):
+        return {"skipped": "done_today", "path": marker.get("path")}
+    last_attempt = marker.get("attempted_at") or ""
+    if marker.get("date") == today and last_attempt and last_attempt > (datetime.now(timezone.utc) - timedelta(hours=1)).isoformat():
+        return {"skipped": "retry_later", "error": marker.get("error")}
+    result = await _run_auto_backup_once(trigger="scheduled")
+    ok = bool(result.get("ok")) or (result.get("status") == "skipped" and bool(result.get("path")))
+    await db.system_runs.update_one(
+        {"_id": "auto_backup_tick"},
+        {"$set": {"date": today, "attempted_at": now_iso(), "ok": ok, "status": result.get("status"),
+                  "path": result.get("path"), "error": result.get("error")}},
+        upsert=True,
+    )
+    return {"ok": ok, "status": result.get("status"), "path": result.get("path"), "error": result.get("error")}
 
 
-async def _auto_backup_loop():
-    """Background loop — sleeps until next scheduled run, then fires."""
-    while True:
-        try:
-            cfg = await _get_auto_backup_config()
-            if not cfg.get("enabled"):
-                # Re-check every 5 minutes so toggling it on takes effect quickly
-                await asyncio.sleep(300)
-                continue
-            wait = _seconds_until_next_run(
-                int(cfg.get("hour") or 3),
-                int(cfg.get("minute") or 0),
-            )
-            logger.info("auto-backup: next run in %.0fs", wait)
-            await asyncio.sleep(wait)
-            # Re-check config — operator may have disabled it while we slept
-            cfg = await _get_auto_backup_config()
-            if cfg.get("enabled"):
-                await _run_auto_backup_once(trigger="scheduled")
-        except asyncio.CancelledError:
-            raise
-        except Exception as e:
-            logger.warning("auto-backup loop error: %s", e)
-            await asyncio.sleep(60)
+_scheduler_task: Optional[asyncio.Task] = None
+SCHEDULER_MARKER_IDS = ["daily", "archive_bookings", "trophy_recheck", "recurring_auto_extend", "auto_backup_tick"]
+
+
+def _scheduler_jobs() -> List[job_scheduler.Job]:
+    """Every automated job, in run order. Each is idempotent on its own."""
+    from daily_jobs import maybe_run_daily
+
+    return [
+        ("daily_jobs", lambda: maybe_run_daily(db)),
+        ("archive_bookings", _maybe_archive_today),
+        ("trophy_recheck", _maybe_recheck_trophies_today),
+        ("recurring_auto_extend", _maybe_auto_extend_recurring_today),
+        ("auto_backup", _maybe_auto_backup_tick),
+    ]
+
+
+@api.get("/admin/scheduler/status")
+async def admin_scheduler_status(_: dict = Depends(require_admin)):
+    st = await job_scheduler.status(db, SCHEDULER_MARKER_IDS)
+    st["enabled"] = os.environ.get("SCHEDULER_ENABLED", "1") == "1"
+    st["running_in_this_worker"] = bool(_scheduler_task and not _scheduler_task.done())
+    st["jobs"] = [n for n, _ in _scheduler_jobs()]
+    return st
+
+
+@api.post("/admin/scheduler/run-now")
+async def admin_scheduler_run_now(user: dict = Depends(require_admin)):
+    """Run one scheduler tick immediately (same idempotent jobs the loop runs)."""
+    return await job_scheduler.run_jobs_once(db, _scheduler_jobs(), holder=f"manual:{user.get('id', 'admin')}")
 
 
 class AutoBackupConfigIn(BaseModel):
@@ -33713,12 +33822,12 @@ async def startup():
         await migrate_trophy_copy_for_school(db)
     except Exception as exc:
         logger.warning("Trophy seeding failed: %s", exc)
-    # Sprint 110av — start the auto-backup loop. Loop honors the
-    # `enabled` flag on every iteration so disabling the feature simply
-    # makes it a no-op (it doesn't get cancelled).
-    global _auto_backup_task
-    if _auto_backup_task is None or _auto_backup_task.done():
-        _auto_backup_task = asyncio.create_task(_auto_backup_loop())
+    # Start the leased job scheduler (daily jobs, archive, trophy re-check,
+    # recurring auto-extend, nightly backup). Every worker runs the loop; the
+    # Mongo lease makes exactly one of them do the work.
+    global _scheduler_task
+    if os.environ.get("SCHEDULER_ENABLED", "1") == "1" and (_scheduler_task is None or _scheduler_task.done()):
+        _scheduler_task = asyncio.create_task(job_scheduler.run_forever(db, _scheduler_jobs()))
     # Sprint 110ax — seed the dog-facts library on first boot
     try:
         await _seed_dog_facts_if_empty()
@@ -33797,11 +33906,11 @@ async def _migrate_shop_manager_fields_if_needed() -> None:
 
 @app.on_event("shutdown")
 async def shutdown():
-    global _auto_backup_task
-    if _auto_backup_task and not _auto_backup_task.done():
-        _auto_backup_task.cancel()
+    global _scheduler_task
+    if _scheduler_task and not _scheduler_task.done():
+        _scheduler_task.cancel()
         try:
-            await _auto_backup_task
+            await _scheduler_task
         except (asyncio.CancelledError, Exception):
             pass
     # Give in-flight best-effort background writes (audit-log rows spawned

@@ -25,6 +25,9 @@ from other work.
 import os
 from pathlib import Path
 
+# The in-process scheduler must never run against a test database.
+os.environ.setdefault("SCHEDULER_ENABLED", "0")
+
 from dotenv import load_dotenv
 import pymongo
 

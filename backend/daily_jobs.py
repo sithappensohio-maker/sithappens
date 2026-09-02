@@ -1,18 +1,20 @@
-"""Daily background tasks for Sit Happens.
+"""Daily automation jobs.
 
-The server starts a lightweight in-process automation loop at startup. It
-runs the daily job gate and drains a durable email outbox, so warnings do not
-depend on an admin opening the dashboard and temporary send failures retry.
-The `system_runs` collection tracks the last run-date for each daily batch.
+These run from `scheduler.py` — an in-process tick loop (one worker holds a
+Mongo lease) that calls `maybe_run_daily` every minute; the first tick at or
+after `DAILY_JOBS_MIN_HOUR` local time runs the day's jobs. `GET
+/dashboard/stats` still calls it as a belt-and-braces fallback. Day-gated
+jobs (Monday / Sunday digests, monthly P&L, birthdays) carry catch-up
+windows, so a day the process was down is late, not lost.
 
 Each job is fully idempotent on its own (de-duped by `notification_log`
-entries) — the system_runs gate is just a perf shortcut to avoid re-iterating
-all dogs on every dashboard hit.
+keys), so running them twice is always safe.
 """
 from __future__ import annotations
 
 import asyncio
 import logging
+import os
 from datetime import date, datetime, timedelta, timezone
 from typing import Any, Dict
 from zoneinfo import ZoneInfo
@@ -25,6 +27,11 @@ logger = logging.getLogger(__name__)
 # so daily emails / birthday job / archive cutover all happen relative to the
 # operator's wall clock, not UTC.
 BUSINESS_TZ = ZoneInfo("America/New_York")
+# Jobs run on the first scheduler tick at/after this local hour (emails
+# should not go out at midnight just because the day rolled over).
+DAILY_JOBS_MIN_HOUR = int(os.environ.get("DAILY_JOBS_MIN_HOUR", "7"))
+# How many days back a missed birthday is still greeted.
+BIRTHDAY_CATCHUP_DAYS = int(os.environ.get("BIRTHDAY_CATCHUP_DAYS", "3"))
 
 
 def _today_local() -> date:
@@ -68,7 +75,11 @@ async def run_birthday_job(db) -> dict:
     if not (settings.get("birthday_email") or {"enabled": True}).get("enabled", True):
         return {"sent": 0, "skipped": 0, "disabled": True}
     today = datetime.now(BUSINESS_TZ).date()
-    mm_dd = today.strftime("%m-%d")
+    # Catch-up window: a birthday whose day the jobs did not run on (process
+    # down, deploy) is still greeted within BIRTHDAY_CATCHUP_DAYS, keyed by the
+    # birthday date itself so it is sent exactly once.
+    targets = {(today - timedelta(days=i)).strftime("%m-%d"): today - timedelta(days=i)
+               for i in range(BIRTHDAY_CATCHUP_DAYS)}
     sent = 0
     skipped = 0
     async for dog in db.dogs.find({}, {"_id": 0}):
@@ -76,9 +87,10 @@ async def run_birthday_job(db) -> dict:
         if len(bd) < 10:
             continue
         # birthday stored as YYYY-MM-DD
-        if bd[5:10] != mm_dd:
+        bday = targets.get(bd[5:10])
+        if bday is None:
             continue
-        key = f"birthday:{dog.get('id')}:{today.isoformat()}"
+        key = f"birthday:{dog.get('id')}:{bday.isoformat()}"
         if await _already_notified(db, key):
             skipped += 1
             continue
@@ -197,14 +209,15 @@ async def run_pl_monthly_job(db) -> Dict[str, Any]:
 
 
 
-async def run_homework_weekly_digest_job(db) -> dict:
+async def run_homework_weekly_digest_job(db, as_of: date | None = None) -> dict:
     """Sunday-night digest: for every client with at least one active daily-tracker
     homework, send a recap of streaks, photos, and your review notes.
 
     De-duped per (client, week_start_iso) so it can't double-send if the dashboard
-    is hit twice on a Sunday.
+    is hit twice on a Sunday. `as_of` lets the scheduler run a MISSED Sunday's
+    digest on the following Mon/Tue for the week that actually ended.
     """
-    today = datetime.now(BUSINESS_TZ).date()
+    today = as_of or datetime.now(BUSINESS_TZ).date()
     # week_start = the Monday on or before today (always returns a Mon→Sun window)
     monday = today - timedelta(days=today.weekday())
     sunday = monday + timedelta(days=6)
@@ -497,7 +510,10 @@ async def run_trainer_monday_digest_job(db) -> dict:
     today = datetime.now(BUSINESS_TZ).date()
     week_start = today.isoformat()
     week_end = (today + timedelta(days=6)).isoformat()
-    key = f"trainer_monday_digest:{week_start}"
+    # Keyed by this ISO week's Monday (== today on a Monday) so a catch-up run
+    # on Tue/Wed sends once for the week, never twice.
+    iso_monday = today - timedelta(days=today.weekday())
+    key = f"trainer_monday_digest:{iso_monday.isoformat()}"
     if await _already_notified(db, key):
         return {"skipped_already_sent": True, "key": key}
 
@@ -612,9 +628,37 @@ async def run_trainer_monday_digest_job(db) -> dict:
         return {"sent": 0, "reason": str(exc)[:200], "week_start": week_start}
 
 
-async def maybe_run_daily(db) -> dict | None:
-    """Run every daily job at most once per business-local day. Returns a
-    summary on the first call of the day, or None when already processed."""
+def daily_plan(today: date) -> Dict[str, Any]:
+    """Which day-gated jobs are due on `today` (pure, unit-testable).
+
+    Catch-up windows exist because the old dashboard-driven trigger skipped
+    these outright when nobody opened Admin on the exact day. Every job below
+    de-dupes on its own key, so a wider window never double-sends.
+      - trainer Monday digest: Mon, or Tue/Wed if Monday's never went out
+      - homework weekly digest: Sunday, or Mon/Tue for the week just ended
+      - monthly P&L: the 1st, or any day through the 7th until sent
+    """
+    wd = today.weekday()
+    if wd == 6:
+        hw_as_of: date | None = today
+    elif wd in (0, 1):
+        hw_as_of = today - timedelta(days=wd + 1)  # the Sunday that just passed
+    else:
+        hw_as_of = None
+    return {
+        "trainer_monday_digest": wd <= 2,
+        "hw_weekly_digest_as_of": hw_as_of,
+        "pl_monthly": today.day <= 7,
+    }
+
+
+async def maybe_run_daily(db, *, min_hour: int | None = None) -> dict | None:
+    """Run every daily job at most once per business-local day, on the first
+    call at/after `min_hour` local. Returns a summary on the run, or None when
+    already processed (or too early)."""
+    min_hour = DAILY_JOBS_MIN_HOUR if min_hour is None else min_hour
+    if datetime.now(BUSINESS_TZ).hour < min_hour:
+        return None
     today = _today_iso()
     existing = await db.system_runs.find_one({"id": "daily"}, {"_id": 0})
     if existing and existing.get("last_run") == today:
@@ -631,14 +675,12 @@ async def maybe_run_daily(db) -> dict | None:
         results["vaccine_expiry"] = await run_vaccine_expiry_job(db)
         results["hw_reminder"] = await run_homework_practice_reminder_job(db)
         results["hw_step_rollup"] = await run_homework_step_rollup_job(db)
-        # Monday-only: trainer's weekly digest (weekday() returns 0 for Monday).
-        if datetime.now(BUSINESS_TZ).date().weekday() == 0:
+        plan = daily_plan(_today_local())
+        if plan["trainer_monday_digest"]:
             results["trainer_monday_digest"] = await run_trainer_monday_digest_job(db)
-        # Sunday-only: homework weekly digest (weekday() returns 6 for Sunday).
-        if datetime.now(BUSINESS_TZ).date().weekday() == 6:
-            results["hw_weekly_digest"] = await run_homework_weekly_digest_job(db)
-        # Monthly P&L only fires on the 1st of the month
-        if _today_local().day == 1:
+        if plan["hw_weekly_digest_as_of"] is not None:
+            results["hw_weekly_digest"] = await run_homework_weekly_digest_job(db, as_of=plan["hw_weekly_digest_as_of"])
+        if plan["pl_monthly"]:
             results["pl_monthly"] = await run_pl_monthly_job(db)
         # Sprint 110o — auto-backup removed (was unreliable in unprivileged
         # Docker containers; admin uses manual backup + host-side rclone timer).
