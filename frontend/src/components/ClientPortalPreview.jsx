@@ -121,7 +121,8 @@ export default function ClientPortalPreview({ clientId, onClose }) {
                   <div className="space-y-2" data-testid="preview-training">
                     {data.dogs.map(d => (data.enrollments_by_dog[d.id] || []).map(e => (
                       <div key={e.id} className="bg-[var(--sh-card-base)] border border-shBorder rounded p-3 flex items-center gap-3">
-                        <ProgressRing percent={e.mastered_pct || 0} size={48} stroke={5} color="#00a9e0" label={`${e.mastered_goals||0}/${e.total_goals||0}`} />
+                        <ProgressRing percent={(e.progress_pct ?? e.mastered_pct) || 0} size={48} stroke={5} color="#00a9e0"
+                                      label={e.progress_kind === "lessons" ? `${e.lessons_completed||0}/${e.lessons_total||0}` : `${e.mastered_goals||0}/${e.total_goals||0}`} />
                         <div className="min-w-0 flex-1">
                           <p className="text-[15px] font-black uppercase text-shText truncate">{d.name} · {e.program_snapshot?.name || "Program"}</p>
                           <p className="text-[13px] text-shTextMuted font-black uppercase tracking-widest">Started {e.started_at} · {e.status}</p>

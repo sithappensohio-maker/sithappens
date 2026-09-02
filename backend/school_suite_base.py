@@ -227,7 +227,7 @@ class ResourceIn(BaseModel):
     active: bool = True
 
 
-def register_school_suite(*, api, db, get_current_user, manage_school_dep, perms_for, school_events, persist_school_media=None, school_media_data_url=None, school_media_file_path=None, require_school_access=None, checkpoint_overall_scores=None):
+def register_school_suite(*, api, db, get_current_user, manage_school_dep, perms_for, school_events, persist_school_media=None, school_media_data_url=None, school_media_file_path=None, require_school_access=None, checkpoint_overall_scores=None, course_progress=None):
     def _with_overall_scores(rows: List[dict]) -> List[dict]:
         """Shape the canonical Handler/Dog overall scores onto checkpoint
         history rows. New grades carry them persisted on the submission;
@@ -1093,6 +1093,18 @@ def register_school_suite(*, api, db, get_current_user, manage_school_dep, perms
         progress = dp.get("goal_progress") or {}
         total_goals = len(goal_names)
         mastered = sum(1 for gid in goal_names if (progress.get(gid) or {}).get("status") == "mastered")
+        mastered_pct = round(mastered * 100 / total_goals) if total_goals else 0
+        # Online School never writes trainer goal scores, so the student used
+        # to see a 0% "skills mastered" bar forever. Carry course progress
+        # (lessons completed / total, the number the roadmap shows) and one
+        # honest progress_pct per channel.
+        course = None
+        if course_progress is not None:
+            try:
+                course = course_progress(dp) or None
+            except Exception:
+                course = None
+        online = (dp.get("delivery_channel") == "online_school")
         return {
             "school_enrollment_id": se.get("id"),
             "enrollment_id": dp["id"],
@@ -1101,7 +1113,12 @@ def register_school_suite(*, api, db, get_current_user, manage_school_dep, perms
             "status": dp.get("status"),
             "progress": {
                 "mastered_goals": mastered, "total_goals": total_goals,
-                "mastered_pct": round(mastered * 100 / total_goals) if total_goals else 0,
+                "mastered_pct": mastered_pct,
+                "course_pct": (course or {}).get("course_pct"),
+                "lessons_completed": (course or {}).get("lessons_completed"),
+                "lessons_total": (course or {}).get("lessons_total"),
+                "progress_pct": int((course or {}).get("course_pct")) if (online and course) else mastered_pct,
+                "progress_kind": "lessons" if online else "skills",
             },
             "lessons": lessons_out,
         }

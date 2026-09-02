@@ -1631,7 +1631,7 @@ async def notify_client_homework_reminder(client: dict, plans: list, *, delivery
         f"""
         <div style='border:1px solid #e2e8f0;border-radius:10px;padding:14px;margin:10px 0;background:#fff;'>
           <p style='margin:0 0 4px 0;color:#64748b;font-size:12px;font-weight:900;text-transform:uppercase;letter-spacing:.08em;'>
-            {p.get('dog_name','')} · Day {p.get('day_number',0)} of {p.get('total_days',0)}
+            {p.get('dog_name','')} · {("Session " + str(p.get('day_number', 0))) if not p.get('total_days') else ("Day " + str(p.get('day_number', 0)) + " of " + str(p.get('total_days', 0)))}
           </p>
           <h3 style='margin:0 0 6px 0;color:{BRAND_DARK};font-size:17px;font-weight:900;'>{p.get('hw_title','')}</h3>
           <p style='margin:0;color:#0f172a;font-size:14px;'>Today's focus: <strong>{p.get('today_focus','')}</strong></p>
@@ -1679,7 +1679,8 @@ async def notify_client_weekly_homework_digest(client: dict, items: list, week_s
     rows = []
     for it in items:
         streak_chip = f"<span style='display:inline-block;background:{BRAND_GREEN}15;color:{BRAND_GREEN};font-weight:900;font-size:12px;letter-spacing:.08em;text-transform:uppercase;padding:2px 8px;border-radius:4px;'>🔥 {it['streak']}-day streak</span>" if it.get("streak", 0) > 0 else ""
-        progress = f"{it.get('approved_total', 0)} of {it.get('total_days', 0)} approved"
+        progress = (f"{it.get('approved_total', 0)} session{'s' if it.get('approved_total', 0) != 1 else ''} logged"
+                    if not it.get("total_days") else f"{it.get('approved_total', 0)} of {it.get('total_days', 0)} approved")
         this_week = f"{it.get('approved_this_week', 0)} this week"
         notes_html = ""
         for n in (it.get("notes") or [])[:3]:

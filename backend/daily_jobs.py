@@ -20,6 +20,7 @@ from typing import Any, Dict
 from zoneinfo import ZoneInfo
 
 import email_service
+import trophy_service
 
 logger = logging.getLogger(__name__)
 
@@ -44,6 +45,67 @@ VACCINE_FIELDS = (("rabies", "Rabies"), ("bordetella", "Bordetella"), ("dhpp", "
 
 def _today_iso() -> str:
     return _today_local().isoformat()
+
+
+# ── School Practice rows ──────────────────────────────────────────────────
+# School Practice lives in `homework` too (one row per lesson, owned by the
+# enrollment), but it is section-based, NOT a daily tracker: the client logs
+# a session per day into section_logs and the row only completes at the end.
+# Every job here used to filter on `daily_tracker: True`, which excluded
+# School students from reminders, digests and the trainer's Monday leaders
+# entirely. These helpers give the jobs a School-aware view of a row.
+SCHOOL_PRACTICE_MATCH: Dict[str, Any] = {
+    "$or": [
+        {"school_enrollment_id": {"$nin": [None, ""]}},
+        {"school_enrollment_record_id": {"$nin": [None, ""]}},
+    ],
+}
+PRACTICE_ROW_MATCH: Dict[str, Any] = {"$or": [{"daily_tracker": True}, SCHOOL_PRACTICE_MATCH]}
+
+
+def _is_school_row(hw: dict) -> bool:
+    return bool(hw.get("school_enrollment_id") or hw.get("school_enrollment_record_id")) and not hw.get("daily_tracker")
+
+
+def _school_session_logs(hw: dict) -> list:
+    """Real, client-logged Practice sessions on a School row."""
+    return [
+        lo for lo in (hw.get("section_logs") or [])
+        if trophy_service.practice_log_counts_as_session(hw, lo)
+        and str(lo.get("logged_by_role") or "client") != "admin"
+    ]
+
+
+def _log_day(lo: dict) -> str:
+    return str(lo.get("date") or "")[:10] or str(lo.get("logged_at") or "")[:10]
+
+
+def _school_session_days(hw: dict) -> set:
+    return {_log_day(lo) for lo in _school_session_logs(hw) if _log_day(lo)}
+
+
+def _streak_ending(days: set, anchor: date) -> int:
+    """Consecutive practice days ending on `anchor` (or the day before it)."""
+    if not days:
+        return 0
+    cur = anchor if anchor.isoformat() in days else anchor - timedelta(days=1)
+    n = 0
+    while cur.isoformat() in days:
+        n += 1
+        cur -= timedelta(days=1)
+    return n
+
+
+def _school_log_needs_review(lo: dict) -> bool:
+    """Mirror of server._practice_pending_log_match for one log."""
+    if lo.get("review_status") or str(lo.get("logged_by_role") or "client") == "admin" or lo.get("is_rest_day"):
+        return False
+    if lo.get("submission_status") in ("approved", "needs_redo", "rest"):
+        return False
+    fv = lo.get("field_values") or {}
+    if fv.get("__video_id") or fv.get("__could_not_complete") or fv.get("__difficulty") in ("hard", "very_hard"):
+        return True
+    return any(not (q.get("answer") or "") for q in (lo.get("questions") or []))
 
 
 async def _already_notified(db, key: str) -> bool:
@@ -231,10 +293,12 @@ async def run_homework_weekly_digest_job(db, as_of: date | None = None) -> dict:
     by_client: Dict[str, list] = {}
     async for hw in db.homework.find(
         {
-            "daily_tracker": True,
-            "$or": [
-                {"status": {"$ne": "completed"}},
-                {"completed_at": {"$gte": fortnight_ago}},
+            "$and": [
+                PRACTICE_ROW_MATCH,
+                {"$or": [
+                    {"status": {"$ne": "completed"}},
+                    {"completed_at": {"$gte": fortnight_ago}},
+                ]},
             ],
         },
         {"_id": 0},
@@ -259,6 +323,23 @@ async def run_homework_weekly_digest_job(db, as_of: date | None = None) -> dict:
 
         items = []
         for hw in hws:
+            if _is_school_row(hw):
+                s_logs = _school_session_logs(hw)
+                week_logs = [lo for lo in s_logs if week_start <= _log_day(lo) <= week_end]
+                items.append({
+                    "hw_title": hw.get("title", ""),
+                    "dog_name": hw.get("dog_name", ""),
+                    "total_days": 0,
+                    "approved_total": len(s_logs),
+                    "approved_this_week": len(week_logs),
+                    "streak": _streak_ending(_school_session_days(hw), min(today, sunday)),
+                    "photos": [(lo.get("field_values") or {}).get("__photo") for lo in week_logs if (lo.get("field_values") or {}).get("__photo")],
+                    "notes": [{"day": 0, "focus": "Practice session", "note": lo["review_note"]} for lo in week_logs if lo.get("review_note")],
+                    "next_focus": "" if hw.get("status") == "completed" else "Keep logging Practice sessions — your trainer advances you when it sticks.",
+                    "school": True,
+                    "_activity_this_week": len(week_logs) + (1 if week_start <= str(hw.get("completed_at") or "")[:10] <= week_end else 0),
+                })
+                continue
             sections = sorted(
                 [s for s in (hw.get("template_snapshot") or {}).get("sections", []) if s.get("day_number")],
                 key=lambda s: int(s.get("day_number") or 0),
@@ -374,13 +455,27 @@ async def run_homework_practice_reminder_job(db) -> dict:
         key = f"hw_reminder:{client['id']}:{today_iso}"
         if await _already_notified(db, key):
             continue
-        # Find their active daily-trackers with a day that needs the client's action
-        hws = await db.homework.find(
-            {"client_id": client["id"], "daily_tracker": True, "status": {"$ne": "completed"}},
+        # Their open daily-trackers AND open School Practice rows.
+        hws = [hw async for hw in db.homework.find(
+            {"client_id": client["id"], "status": {"$ne": "completed"}, **PRACTICE_ROW_MATCH},
             {"_id": 0},
-        ).to_list(50)
+        )]
         plans = []
         for hw in hws:
+            if _is_school_row(hw):
+                # School Practice: nudge unless a session was already logged today.
+                days = _school_session_days(hw)
+                if today_iso in days:
+                    continue
+                plans.append({
+                    "hw_title": hw.get("title", ""),
+                    "dog_name": hw.get("dog_name", ""),
+                    "today_focus": "Log today's Practice session",
+                    "day_number": len(days) + 1,
+                    "total_days": 0,
+                    "school": True,
+                })
+                continue
             sections = sorted(
                 [s for s in (hw.get("template_snapshot") or {}).get("sections", []) if s.get("day_number")],
                 key=lambda s: int(s.get("day_number") or 0),
@@ -526,8 +621,44 @@ async def run_trainer_monday_digest_job(db) -> dict:
     week_bookings = 0
     week_revenue_forecast = 0.0
 
-    # ── Walk all daily-tracker homework
-    async for hw in db.homework.find({"daily_tracker": True}, {"_id": 0}):
+    # ── Walk all daily-tracker homework AND School Practice rows
+    async for hw in db.homework.find(PRACTICE_ROW_MATCH, {"_id": 0}):
+        if _is_school_row(hw):
+            days = _school_session_days(hw)
+            streak = _streak_ending(days, today)
+            if streak >= 3 and hw.get("status") != "completed":
+                streak_leaders.append({"dog": hw.get("dog_name", ""), "client": hw.get("client_name", ""), "title": hw.get("title", ""), "streak": streak})
+            best_run = 0
+            run_n = 0
+            prev = None
+            for dstr in sorted(days):
+                try:
+                    dd = date.fromisoformat(dstr)
+                except Exception:
+                    continue
+                run_n = run_n + 1 if prev and (dd - prev).days == 1 else 1
+                best_run = max(best_run, run_n)
+                prev = dd
+            idle_two = not any((today - timedelta(days=i)).isoformat() in days for i in range(2))
+            if best_run >= 3 and idle_two and hw.get("status") != "completed" and streak == 0:
+                lost_streak.append({"dog": hw.get("dog_name", ""), "client": hw.get("client_name", ""), "title": hw.get("title", ""), "streak_was": best_run})
+            for lo in hw.get("section_logs") or []:
+                if _school_log_needs_review(lo):
+                    pending_reviews.append({
+                        "dog": hw.get("dog_name", ""), "client": hw.get("client_name", ""), "title": hw.get("title", ""),
+                        "day": 0, "submitted_at": lo.get("logged_at"),
+                    })
+                for q in (lo.get("questions") or []):
+                    if not q.get("answer"):
+                        unanswered_qs.append({
+                            "dog": hw.get("dog_name", ""), "client": hw.get("client_name", ""),
+                            "day": 0, "text": q.get("text", ""), "asked_at": q.get("asked_at"),
+                        })
+            if hw.get("status") == "completed" and not hw.get("certificate"):
+                ca = hw.get("completed_at") or ""
+                if ca and ca[:10] >= (today - timedelta(days=7)).isoformat():
+                    just_completed.append({"dog": hw.get("dog_name", ""), "client": hw.get("client_name", ""), "title": hw.get("title", ""), "completed_at": ca[:10], "homework_id": hw["id"]})
+            continue
         sections = sorted(
             [s for s in (hw.get("template_snapshot") or {}).get("sections", []) if s.get("day_number")],
             key=lambda s: int(s.get("day_number") or 0),

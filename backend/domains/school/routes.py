@@ -52,9 +52,14 @@ def register_school_routes(
         create_homework_template=create_homework_template,
     )
 
+    _course_progress_fn = (
+        server_globals.get("_school_course_progress") if hasattr(server_globals, "get")
+        else getattr(server_globals, "_school_course_progress", None)
+    )
     register_school_suite(
         api=api,
         db=db,
+        course_progress=(lambda dp: _course_progress_fn(dp, dp.get("status") or "active")) if _course_progress_fn else None,
         get_current_user=get_current_user,
         manage_school_dep=manage_school_dep,
         perms_for=perms_for,

@@ -44,6 +44,26 @@ const friendlyDate = (value) => {
 };
 
 
+/* A REAL Practice session on a homework row — the same rule the backend's
+ * practice_log_counts_as_session applies (rest/skipped days and drafts are
+ * bookkeeping, not training). School Practice logs one of these per day on a
+ * single row that only completes at the end, so per-session activity is the
+ * only honest signal for School students. */
+export function isPracticeSessionLog(homework, log) {
+  if (!log || log.is_rest_day || log.is_skipped) return false;
+  const status = log.submission_status;
+  if (homework?.daily_tracker) return status === "submitted" || status === "approved";
+  return !["draft", "in_progress", "rest", "skipped"].includes(status);
+}
+
+export function practiceSessionLogs(homework) {
+  return (homework?.section_logs || []).filter((log) => isPracticeSessionLog(homework, log));
+}
+
+export function practicedOn(homework, day) {
+  return practiceSessionLogs(homework).some((log) => String(log.date || log.logged_at || "").slice(0, 10) === day);
+}
+
 export function isActiveOnPremisesBooking(booking, today = isoDay()) {
   if (!booking?.checked_in_at || booking?.checked_out_at) return false;
 
@@ -176,8 +196,11 @@ export function buildPortalPriority({
     }
   }
 
+  // A plan the client already practiced today is not their next step —
+  // pinning it anyway crowded out report cards and bookings for School
+  // students who practice daily on one long-running row.
   const activeHomework = showHomework
-    ? homework.filter((h) => h.status !== "completed")
+    ? homework.filter((h) => h.status !== "completed" && !practicedOn(h, today))
       .sort((a, b) => String(a.due_date || "9999-12-31").localeCompare(String(b.due_date || "9999-12-31")))[0]
     : null;
   if (activeHomework) {
@@ -264,6 +287,14 @@ export function buildPortalActivity({ bookings = [], dogs = null, homework = [],
   });
 
   homework.forEach((h) => {
+    practiceSessionLogs(h).forEach((log) => {
+      items.push({
+        id: `practice-${h.id}-${log.id || log.date}`, kind: "homework", icon: "fa-dumbbell", tone: "purple",
+        title: `${h.dog_name || "Your dog"} practiced ${h.title || "training"}`,
+        text: log.note ? String(log.note).slice(0, 80) : "Practice session logged",
+        ts: log.logged_at || (log.date ? `${log.date}T12:00:00` : h.created_at),
+      });
+    });
     items.push({
       id: `homework-${h.id}`, kind: "homework", icon: h.status === "completed" ? "fa-circle-check" : "fa-graduation-cap", tone: h.status === "completed" ? "green" : "purple",
       title: h.status === "completed" ? `${h.dog_name || "Your dog"} completed ${h.title || "homework"}` : `${h.title || "Training homework"} was assigned to ${h.dog_name || "your dog"}`,

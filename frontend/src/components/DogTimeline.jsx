@@ -7,6 +7,7 @@ const KIND_META = {
   homework_assigned:  { color: "bg-shAccent/15 text-shAccent",icon: "fa-clipboard-list",  label: "Practice assigned" },
   homework_completed: { color: "bg-shPrimary/15 text-shPrimary",  icon: "fa-flag-checkered",  label: "Practice done" },
   day_approved:       { color: "bg-shPrimary/15 text-shPrimary",  icon: "fa-circle-check",    label: "Day approved" },
+  practice_session:   { color: "bg-purple-500/15 text-purple-300", icon: "fa-dumbbell",      label: "Practiced" },
   photos_added:       { color: "bg-purple-500/15 text-purple-300", icon: "fa-camera",     label: "Photos" },
   incident:           { color: "bg-red-500/15 text-red-300",  icon: "fa-triangle-exclamation", label: "Incident" },
 };

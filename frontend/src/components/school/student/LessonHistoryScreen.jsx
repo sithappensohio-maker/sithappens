@@ -84,10 +84,12 @@ export default function LessonHistoryScreen({ enrollmentId, dogName }) {
         </p>
         <div className="mt-3 flex items-center gap-3" data-testid="lesson-history-progress">
           <div className="flex-1 h-2 rounded-full bg-black/30 overflow-hidden">
-            <div className="h-full bg-shPrimary rounded-full" style={{ width: `${progress.mastered_pct || 0}%` }} />
+            <div className="h-full bg-shPrimary rounded-full" style={{ width: `${(progress.progress_pct ?? progress.mastered_pct) || 0}%` }} />
           </div>
           <span className="text-[15px] font-black text-shText shrink-0">
-            {progress.mastered_goals || 0}/{progress.total_goals || 0} skills mastered
+            {progress.progress_kind === "lessons"
+              ? `${progress.lessons_completed || 0}/${progress.lessons_total || 0} lessons completed`
+              : `${progress.mastered_goals || 0}/${progress.total_goals || 0} skills mastered`}
           </span>
         </div>
       </SectionCard>

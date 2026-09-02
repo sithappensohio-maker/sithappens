@@ -274,7 +274,7 @@ export default function DogTrainingTab({ dogId, dogName, dogAgeMonths = 0 }) {
                 <div className="flex items-center justify-between">
                   <div>
                     <p className="text-sm font-black text-shText">{h.program_snapshot.name}</p>
-                    <p className="text-[15px] text-shTextMuted">{h.status.toUpperCase()} · {h.mastered_goals}/{h.total_goals} mastered ({h.mastered_pct}%)</p>
+                    <p className="text-[15px] text-shTextMuted">{h.status.toUpperCase()} · {h.progress_kind === "lessons" ? `${h.lessons_completed ?? 0}/${h.lessons_total ?? 0} lessons` : `${h.mastered_goals}/${h.total_goals} mastered`} ({h.progress_pct ?? h.mastered_pct}%)</p>
                   </div>
                   <span className="text-[10px] font-black uppercase tracking-widest text-shTextMuted">School history</span>
                 </div>
@@ -406,7 +406,13 @@ function SchoolEnrollmentAdminCard({ enrollment: e, dogName, schoolEnrollmentId,
   const [cpHistory, setCpHistory] = useState(null);
   const accessRevoked = (e.access_state || "active") === "revoked";
   const provenance = e.enrollment_source === "purchase" ? "Purchased" : "Manually enrolled";
-  const pct = Math.max(0, Math.min(100, Number(e.mastered_pct || 0)));
+  // Online School never writes trainer goal scores, so mastered_pct is 0%
+  // for every online student; the backend's progress_pct is the honest
+  // number per channel (lessons completed online, skills mastered in person).
+  const pct = Math.max(0, Math.min(100, Number((e.progress_pct ?? e.mastered_pct) || 0)));
+  const progressLabel = e.progress_kind === "lessons"
+    ? `${e.lessons_completed ?? 0}/${e.lessons_total ?? 0} lessons completed`
+    : `${e.mastered_goals}/${e.total_goals} skills mastered`;
 
   const loadHistory = async () => {
     if (cpHistory !== null) { setHistoryOpen(o => !o); return; }
@@ -445,7 +451,7 @@ function SchoolEnrollmentAdminCard({ enrollment: e, dogName, schoolEnrollmentId,
 
             <div className="mt-3">
               <div className="flex items-center justify-between text-[10px] text-shTextMuted mb-1.5">
-                <span>{e.mastered_goals}/{e.total_goals} skills mastered</span><span className="font-black text-shPrimary">{pct}%</span>
+                <span data-testid={`school-enrollment-progress-${e.id}`}>{progressLabel}</span><span className="font-black text-shPrimary">{pct}%</span>
               </div>
               <div className="h-1.5 rounded-full bg-white/[0.06] overflow-hidden"><div className="h-full rounded-full bg-gradient-to-r from-shSecondary to-shPrimary" style={{ width: `${pct}%` }}/></div>
             </div>

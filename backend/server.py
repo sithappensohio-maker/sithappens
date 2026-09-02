@@ -88,7 +88,7 @@ from trophy_service import (
     render_share_card_png,
 )
 import scheduler as job_scheduler
-from trophy_service import dog_visit_filter
+from trophy_service import dog_visit_filter, practice_days
 from trophies_data import TIER_COLORS
 
 # -------- Config --------
@@ -15067,6 +15067,26 @@ async def dog_timeline(dog_id: str, limit: int = 80, user: dict = Depends(get_cu
                 "homework_id": hw["id"],
                 "has_cert": bool(hw.get("certificate")),
             })
+        # School Practice — one event per REAL client-logged session (the
+        # same rule the streak trophies use). Without this a School dog's
+        # timeline showed the assignment and nothing until graduation.
+        if _is_school_homework(hw) and not hw.get("daily_tracker"):
+            for log in hw.get("section_logs") or []:
+                if not _practice_log_counts_as_session(hw, log):
+                    continue
+                if str(log.get("logged_by_role") or "client") == "admin":
+                    continue
+                fv = log.get("field_values") or {}
+                events.append({
+                    "id": f"practice-{hw['id']}-{log.get('id')}",
+                    "ts": log.get("logged_at") or (f"{log.get('date')}T12:00:00" if log.get("date") else hw.get("created_at")),
+                    "kind": "practice_session",
+                    "title": f"Practice session — {hw.get('title', '')}",
+                    "homework_id": hw["id"],
+                    "mood": fv.get("__mood"),
+                    "difficulty": fv.get("__difficulty"),
+                    "could_not_complete": bool(fv.get("__could_not_complete")),
+                })
         # Daily-tracker individual approved days
         if hw.get("daily_tracker"):
             for log in hw.get("section_logs") or []:
@@ -17776,8 +17796,27 @@ def _enrollment_summary(enrollment: dict) -> dict:
     readiness = _school_curriculum_readiness(enrollment.get("program_snapshot") or {})
     channel = enrollment.get("delivery_channel")
     is_school = channel in SCHOOL_DELIVERY_CHANNELS
+    # Online School never writes trainer goal scores, so mastered_pct reads
+    # 0% for every online student no matter how far along they are. Carry
+    # curriculum (course) progress for School rows and expose ONE honest
+    # `progress_pct` per channel — lessons completed for online_school,
+    # trainer-scored skill mastery for in-person/hybrid — so admin cards and
+    # the Portal preview stop showing 0% for online students.
+    course = None
+    if is_school:
+        try:
+            course = _school_course_progress(enrollment, enrollment.get("status") or "active")
+        except Exception:
+            course = None
+    online = channel == "online_school"
+    progress_pct = int(course["course_pct"]) if (online and course) else pct
     return {**enrollment, "total_goals": total, "mastered_goals": mastered,
             "in_progress_goals": in_progress, "mastered_pct": pct,
+            "course_pct": (course or {}).get("course_pct"),
+            "lessons_completed": (course or {}).get("lessons_completed"),
+            "lessons_total": (course or {}).get("lessons_total"),
+            "progress_pct": progress_pct,
+            "progress_kind": "lessons" if online else "skills",
             "total_weeks": total_weeks, "current_week": current_week,
             "current_module": current_module,
             "curriculum_system": "school" if is_school else "legacy",
@@ -32330,16 +32369,15 @@ async def admin_client_portal_snapshot(client_id: str, _: dict = Depends(require
     dogs = await db.dogs.find({"owner_id": client_id}, {"_id": 0}).to_list(200)
     bookings = await _booking_rows_anywhere({"client_id": client_id}, {"_id": 0}, limit=500, sort_field="date", sort_desc=True)
 
-    # Active enrollments per dog (mirrors what PortalTrainingCard fetches)
+    # Active enrollments per dog. This used to read `db.program_enrollments`,
+    # a collection nothing writes to — the section was empty for every
+    # client. Real enrollments live in dog_programs; _enrollment_summary adds
+    # the progress numbers the preview renders (progress_pct per channel).
     enrollments_by_dog: Dict[str, list] = {}
     if dogs:
         dog_ids = [d["id"] for d in dogs]
-        enrolls = await db.program_enrollments.find(
-            {"dog_id": {"$in": dog_ids}, "status": "active"},
-            {"_id": 0},
-        ).to_list(200)
-        for e in enrolls:
-            enrollments_by_dog.setdefault(e["dog_id"], []).append(e)
+        async for e in db.dog_programs.find({"dog_id": {"$in": dog_ids}, "status": "active"}, {"_id": 0}):
+            enrollments_by_dog.setdefault(e["dog_id"], []).append(_enrollment_summary(e))
 
     # Homework assigned to this client
     homework = await db.homework.find(
@@ -51308,25 +51346,21 @@ async def update_email_settings(body: EmailSettingsUpdate, _: dict = Depends(req
 
 @api.get("/portal/homework-streak")
 async def portal_homework_streak(current: dict = Depends(get_current_user)):
-    """Current + longest consecutive-day homework completion streak for the
-    logged-in client. Drives the 🔥 streak tile on the portal home."""
+    """Current + longest consecutive-day PRACTICE streak for the logged-in
+    client. Drives the 🔥 streak tile on the portal home.
+
+    A day counts when the client logged a real Practice session (School
+    section-log / daily submit) or completed an assignment — the same rule
+    the streak trophies use (trophy_service.practice_days). Counting only
+    completed assignments made the tile vanish for School students, who
+    practice daily on ONE multi-day Practice row that never flips to
+    completed day by day."""
     client_id = current.get("client_id")
     if not client_id:
         raise HTTPException(status_code=400, detail="No client linked to this account")
 
-    docs = await db.homework.find(
-        {"client_id": client_id, "status": "completed"},
-        {"_id": 0, "completed_at": 1},
-    ).to_list(5000)
-
     from datetime import date as _date, timedelta as _td  # local import to avoid name clashes
-    days = set()
-    for d in docs:
-        ts = d.get("completed_at") or ""
-        try:
-            days.add(datetime.fromisoformat(ts).date())
-        except Exception:
-            continue
+    days = await practice_days(db, client_id)
 
     today = _date.today()
     # Current streak: count back from today (or yesterday if no completion today)
