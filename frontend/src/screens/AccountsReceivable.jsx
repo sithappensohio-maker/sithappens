@@ -116,6 +116,11 @@ export default function AccountsReceivableTab() {
           <div>
             <p className="sh-eyebrow text-shSecondary"><i className="fas fa-users mr-1.5"/>Accounts with balance</p>
             <p className="text-[13px] text-shTextMuted mt-1">{data.count} client{data.count === 1 ? "" : "s"} need money attention.</p>
+            {data.list_truncated && (
+              <p className="text-[12px] text-amber-300/90 mt-1" data-testid="ar-list-truncated">
+                Showing the {data.clients.length} largest balances. The totals above cover all {data.count}.
+              </p>
+            )}
           </div>
           <PremiumButton onClick={load} data-testid="ar-refresh" variant="ghost" className="!px-3 !py-2 !min-h-[38px] !text-[12px]">
             <i className="fas fa-rotate-right"/>Refresh

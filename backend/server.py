@@ -8556,30 +8556,60 @@ async def apply_tab_adjustment(
     return {"ok": True, "balance": new_balance, "row": row}
 
 
+AR_LIST_MAX = 2000
+
+
+async def _account_balance_totals() -> Dict[str, Any]:
+    """Receivable / credit-on-file / count over ALL clients, summed in Mongo.
+    `$convert` tolerates legacy string balances the same way the old Python
+    `float(x or 0)` did."""
+    pipeline = [
+        {"$match": {"account_balance": {"$ne": 0, "$exists": True}}},
+        {"$addFields": {"_bal": {"$convert": {"input": "$account_balance", "to": "double", "onError": 0, "onNull": 0}}}},
+        {"$group": {
+            "_id": None,
+            "receivable": {"$sum": {"$cond": [{"$gt": ["$_bal", 0]}, "$_bal", 0]}},
+            "credit": {"$sum": {"$cond": [{"$lt": ["$_bal", 0]}, {"$multiply": ["$_bal", -1]}, 0]}},
+            "receivable_count": {"$sum": {"$cond": [{"$gt": ["$_bal", 0]}, 1, 0]}},
+            "count": {"$sum": 1},
+        }},
+    ]
+    rows = await db.clients.aggregate(pipeline).to_list(1)
+    row = rows[0] if rows else {}
+    return {
+        "receivable": round(float(row.get("receivable") or 0), 2),
+        "credit": round(float(row.get("credit") or 0), 2),
+        "receivable_count": int(row.get("receivable_count") or 0),
+        "count": int(row.get("count") or 0),
+    }
+
+
 @api.get("/admin/accounts-receivable")
 async def get_accounts_receivable(_: dict = Depends(require_admin_and_permission("finance_reports"))):
-    """Return every client with a non-zero account_balance, plus the totals.
-    POSITIVE balance = receivable (client owes us). NEGATIVE = pre-paid credit."""
-    clients = await db.clients.find(
-        {"account_balance": {"$ne": 0, "$exists": True}},
-        {"_id": 0, "id": 1, "name": 1, "email": 1, "phone": 1, "account_balance": 1},
-    ).to_list(5000)
-    # Sort: largest owed first, then largest credit
-    clients.sort(key=lambda c: -float(c.get("account_balance") or 0))
-    total_receivable = sum(
-        float(c.get("account_balance") or 0) for c in clients
-        if (c.get("account_balance") or 0) > 0
-    )
-    total_credit = sum(
-        -float(c.get("account_balance") or 0) for c in clients
-        if (c.get("account_balance") or 0) < 0
-    )
+    """Return clients with a non-zero account_balance, plus the totals.
+    POSITIVE balance = receivable (client owes us). NEGATIVE = pre-paid credit.
+
+    The totals are computed by Mongo over EVERY matching client — they used
+    to be summed from a to_list(5000) slice, which silently understated AR
+    once the client base outgrew the cap. The row list stays bounded for
+    display (largest owed first) and says so via `list_truncated`."""
+    totals = await _account_balance_totals()
+    # Sorted in Mongo on the numeric value (legacy string balances would
+    # otherwise sort ahead of every number), largest owed first.
+    clients = await db.clients.aggregate([
+        {"$match": {"account_balance": {"$ne": 0, "$exists": True}}},
+        {"$addFields": {"_bal": {"$convert": {"input": "$account_balance", "to": "double", "onError": 0, "onNull": 0}}}},
+        {"$sort": {"_bal": -1, "name": 1}},
+        {"$limit": AR_LIST_MAX},
+        {"$project": {"_id": 0, "id": 1, "name": 1, "email": 1, "phone": 1, "account_balance": "$_bal"}},
+    ]).to_list(AR_LIST_MAX)
     return {
         "clients": clients,
-        "count": len(clients),
-        "total_receivable": round(total_receivable, 2),
-        "total_credit_on_file": round(total_credit, 2),
-        "net": round(total_receivable - total_credit, 2),
+        "count": totals["count"],
+        "list_truncated": totals["count"] > len(clients),
+        "total_receivable": totals["receivable"],
+        "total_credit_on_file": totals["credit"],
+        "net": round(totals["receivable"] - totals["credit"], 2),
     }
 
 
@@ -34760,12 +34790,14 @@ async def weekly_summary(_: dict = Depends(require_admin_and_permission("finance
     #   - training_program_sale → "Training Programs"
     #   - payment_plan_installment → "Payment Plans"   (Sprint 110do)
     #   - everything else (treats, toys, items) → "Retail"
-    retail_rows_all = await db.retail_sales.find(
+    # Streamed with no result ceiling (the old to_list(2000) silently dropped
+    # a busy week's later rows from every retail figure below).
+    retail_rows_all = [x async for x in db.retail_sales.find(
         {"date": {"$gte": monday_iso, "$lte": sunday_iso}},
         # RH1 — tax_amount is required: business revenue EXCLUDES collected
         # sales tax, so the projection must carry the tax decomposition.
         {"_id": 0, "amount": 1, "source_kind": 1, "tax_amount": 1},
-    ).to_list(2000)
+    )]
     # Step 4B-4 — magnitude of this week's refund/void/reversal rows (any
     # negative retail row, matching the register's bucketing rule) so the
     # response can expose an honest gross/refunds/net trio.
@@ -34840,14 +34872,11 @@ async def weekly_summary(_: dict = Depends(require_admin_and_permission("finance
     # bookings instead of silently hiding in AR. We surface AR as its OWN
     # number on the response (so the frontend can show "incl. AR" sub-label)
     # AND add it to the headline `unpaid_total`.
-    ar_clients = await db.clients.find(
-        {"account_balance": {"$gt": 0, "$exists": True}},
-        {"_id": 0, "account_balance": 1, "id": 1},
-    ).to_list(5000)
-    ar_outstanding_total = round(
-        sum(float(c.get("account_balance") or 0) for c in ar_clients), 2,
-    )
-    ar_outstanding_count = len(ar_clients)
+    # Summed in Mongo over every client (no result ceiling) — see
+    # _account_balance_totals; the old to_list(5000) slice understated AR.
+    _ar = await _account_balance_totals()
+    ar_outstanding_total = _ar["receivable"]
+    ar_outstanding_count = _ar["receivable_count"]
     unpaid_total += ar_outstanding_total
 
     return {
@@ -34942,17 +34971,23 @@ async def summary_range(
         paid_total += amt
         by_day[ev["date"]] = round(by_day.get(ev["date"], 0) + amt, 2)
     # Expenses in the same window so the UI can show NET (income - expenses)
-    exp_rows = await db.expenses.find(
-        {"date": {"$gte": start_date, "$lte": end_date}},
-        {"_id": 0},
-    ).to_list(5000)
-    expenses_total = round(sum(float(e.get("amount") or 0) for e in exp_rows), 2)
+    # One streamed pass with no result ceiling: a year-long range on a busy
+    # shop used to drop every expense past row 5000 from the P&L.
+    expenses_total = 0.0
+    expense_count = 0
     by_category: Dict[str, Dict] = {}
-    for e in exp_rows:
+    async for e in db.expenses.find(
+        {"date": {"$gte": start_date, "$lte": end_date}},
+        {"_id": 0, "amount": 1, "category": 1},
+    ):
+        amt = float(e.get("amount") or 0)
+        expenses_total += amt
+        expense_count += 1
         cat = (e.get("category") or "Uncategorized").strip() or "Uncategorized"
         b = by_category.setdefault(cat, {"name": cat, "count": 0, "total": 0.0})
         b["count"] += 1
-        b["total"] = round(b["total"] + float(e.get("amount") or 0), 2)
+        b["total"] = round(b["total"] + amt, 2)
+    expenses_total = round(expenses_total, 2)
 
     # Retail sales in the same window — folded into completed_total + by_day
     # so NET maths include external-POS retail revenue too.
@@ -34960,39 +34995,47 @@ async def summary_range(
     # "training_program_sale") into their OWN bucket. They're a service, not
     # retail merchandise, so the Income screen shows them as "Training Revenue"
     # on a separate stat tile and they don't pollute the Retail total.
-    retail_rows_all = await db.retail_sales.find(
-        {"date": {"$gte": start_date, "$lte": end_date}},
-        {"_id": 0},
-    ).to_list(5000)
     # Step 4B-5 — same canonical taxonomy as weekly_summary (this range view
     # used to fold even credit packs and account payments into "retail").
     # Classification only: the categories partition the rows, so
     # other_revenue_total — and with it completed/net/profit — is unchanged.
-    range_cat_rows: Dict[str, List[Dict[str, Any]]] = {}
-    for r in retail_rows_all:
-        range_cat_rows.setdefault(_finance_income_category(r), []).append(r)
+    # One streamed pass with NO result ceiling (the old to_list(5000) dropped
+    # a long range's later rows from revenue, tax and by_day alike). The
+    # accounting policy stays in the canonical per-row helpers — it is not
+    # re-implemented as a Mongo aggregation, so no Finance surface can drift.
+    range_cat_totals: Dict[str, float] = {}
+    range_cat_counts: Dict[str, int] = {}
+    other_revenue_total = 0.0
+    range_sales_tax_collected = 0.0
+    async for r in db.retail_sales.find(
+        {"date": {"$gte": start_date, "$lte": end_date}},
+        {"_id": 0},
+    ):
+        cat = _finance_income_category(r)
+        rev = _business_revenue_net_of_sales_tax(r)
+        range_cat_totals[cat] = range_cat_totals.get(cat, 0.0) + rev
+        range_cat_counts[cat] = range_cat_counts.get(cat, 0) + 1
+        other_revenue_total += rev
+        range_sales_tax_collected += _sales_tax_collected_on_row(r)
+        d = r.get("date")
+        if d:
+            by_day[d] = round(by_day.get(d, 0) + rev, 2)
 
     def _range_cat_total(key: str) -> float:
         # RH1 — canonical business revenue (collected sales tax excluded).
-        return round(sum(_business_revenue_net_of_sales_tax(r) for r in range_cat_rows.get(key, [])), 2)
+        return round(range_cat_totals.get(key, 0.0), 2)
 
-    retail_rows = range_cat_rows.get("retail", [])
+    retail_count = range_cat_counts.get("retail", 0)
     retail_total = _range_cat_total("retail")
-    training_rows = range_cat_rows.get("training_programs", [])
+    training_revenue_count = range_cat_counts.get("training_programs", 0)
     training_revenue_total = _range_cat_total("training_programs")
     credit_pack_sales_total = _range_cat_total("credit_packs")
     payment_plans_total = _range_cat_total("payment_plans")
     account_payments_total = _range_cat_total("account_payments")
     refunds_reversals_signed = _range_cat_total("refunds_reversals")
     # RH1 — business revenue for the whole window, sales tax excluded.
-    other_revenue_total = round(
-        sum(_business_revenue_net_of_sales_tax(r) for r in retail_rows_all), 2)
-    range_sales_tax_collected = round(
-        sum(_sales_tax_collected_on_row(r) for r in retail_rows_all), 2)
-    for r in retail_rows_all:
-        d = r.get("date")
-        if d:
-            by_day[d] = round(by_day.get(d, 0) + _business_revenue_net_of_sales_tax(r), 2)
+    other_revenue_total = round(other_revenue_total, 2)
+    range_sales_tax_collected = round(range_sales_tax_collected, 2)
 
     # Labor cost in the same window — uses the payroll tax estimator so the
     # Income page shows TRUE cost (gross + employer burden), not just gross wages.
@@ -35046,9 +35089,9 @@ async def summary_range(
         "completed_total": round(completed_total + other_revenue_total, 2),
         "service_total": round(completed_total, 2),
         "retail_total": retail_total,
-        "retail_count": len(retail_rows),
+        "retail_count": retail_count,
         "training_revenue_total": training_revenue_total,
-        "training_revenue_count": len(training_rows),
+        "training_revenue_count": training_revenue_count,
         # Step 4B-5 — weekly/range taxonomy parity (these used to be folded
         # into retail_total here).
         "credit_pack_sales_total": credit_pack_sales_total,
@@ -35067,7 +35110,7 @@ async def summary_range(
         "net_total": round(completed_total + other_revenue_total - expenses_total - labor_total, 2),
         "net_before_labor": round(completed_total + other_revenue_total - expenses_total, 2),
         "expenses_by_category": sorted(by_category.values(), key=lambda x: -x["total"]),
-        "expense_count": len(exp_rows),
+        "expense_count": expense_count,
         "by_day": [{"date": d, "total": v} for d, v in sorted(by_day.items())],
     }
 
