@@ -13,6 +13,7 @@
 import { accentRgb } from "../../../premium/tokens";
 import { deliveryIcon, deliveryLabel } from "../../../../lib/studentSchool";
 import HuskyDogImage from "../../../brand/HuskyDogImage";
+import { isRequiredPracticeSatisfied, practiceLoggedLabel, practiceTitle } from "../../../../lib/practiceState";
 
 /* Small caps section label — the electric-blue eyebrow used throughout the
    reference design. */
@@ -92,7 +93,7 @@ export function CurrentLessonCard({ home, onPrimary }) {
       </p>
       {action.sublabel && <p className="text-[16px] text-shText/90 mt-2 leading-relaxed">{action.sublabel}</p>}
       {!noAction && (
-        <button type="button" onClick={onPrimary} data-testid="today-primary-action"
+        <button type="button" onClick={onPrimary} data-testid="today-primary-action" data-school-primary="true"
                 className="mt-3.5 w-full min-h-[50px] rounded-xl bg-shPrimary text-[#071018] font-black text-[17px] tracking-wide inline-flex items-center justify-center gap-2 hover:brightness-110 transition shadow-[0_10px_30px_-12px_rgba(140,198,63,0.8)]">
           {action.label || "Continue lesson"}<i className="fas fa-arrow-right text-[14px]" />
         </button>
@@ -107,18 +108,41 @@ export function CurrentLessonCard({ home, onPrimary }) {
  *  assignment's own due_date — orange and direct, never alarmist. */
 export function PracticeCard({ practice, onOpen }) {
   const items = (practice || []).filter(p => p && p.status !== "completed");
-  if (items.length === 0) {
+  // The server says which row is the current lesson's required practice and
+  // whether it is already satisfied (required_practice_satisfied); this card
+  // only phrases it. Unfinished trainer-prescribed or remediation work is
+  // never "satisfied" and still shows as due.
+  const open = items.filter(p => !isRequiredPracticeSatisfied(p));
+  const logged = items.filter(isRequiredPracticeSatisfied);
+  if (open.length === 0) {
+    const done = logged[0] || null;
+    const label = done ? practiceLoggedLabel(done) : null;
     return (
-      <section className="rounded-2xl border border-shBorder/50 bg-[var(--sh-card-base)] p-5 text-center" data-testid="today-practice-none">
+      <section className="rounded-2xl border border-shBorder/50 bg-[var(--sh-card-base)] p-5 text-center" data-testid="today-practice-none" data-practice-logged={done ? "true" : "false"}>
         <span className="w-11 h-11 rounded-full grid place-items-center mx-auto bg-shPrimary/10 border border-shPrimary/25">
           <i className="fas fa-check text-shPrimary" />
         </span>
-        <p className="text-[18px] font-black text-shText mt-2.5">All caught up</p>
-        <p className="text-[15px] text-shTextMuted mt-1">Great job staying consistent. Enjoy your day.</p>
+        {done ? (
+          <>
+            <p className="text-[18px] font-black text-shText mt-2.5" data-testid="today-practice-satisfied">{label.title}</p>
+            <p className="text-[15px] text-shTextMuted mt-1">{label.detail}</p>
+            {onOpen && (
+              <button type="button" onClick={() => onOpen(done)} data-testid="today-practice-again"
+                      className="mt-3 min-h-[40px] px-3 text-[13px] font-black uppercase tracking-widest text-shSecondary hover:text-shText">
+                <i className="fas fa-rotate mr-1.5" />Practice again
+              </button>
+            )}
+          </>
+        ) : (
+          <>
+            <p className="text-[18px] font-black text-shText mt-2.5">All caught up</p>
+            <p className="text-[15px] text-shTextMuted mt-1">Great job staying consistent. Enjoy your day.</p>
+          </>
+        )}
       </section>
     );
   }
-  const next = items[0];
+  const next = open[0];
   const today = new Date(); today.setHours(0, 0, 0, 0);
   const due = next.due_date ? new Date(`${next.due_date}T00:00:00`) : null;
   const overdue = due && due < today;
@@ -133,7 +157,7 @@ export function PracticeCard({ practice, onOpen }) {
       </span>
       <span className="min-w-0 flex-1">
         <Eyebrow tone={overdue ? "orange" : "cyan"}>{overdue ? "Overdue" : "Practice due"}</Eyebrow>
-        <span className="block text-[18px] font-black text-shText truncate mt-0.5">{next.title || "Practice"}</span>
+        <span className="block text-[18px] font-black text-shText truncate mt-0.5">{practiceTitle(next)}</span>
         <span className="block text-[14px] text-shTextMuted mt-0.5">
           {overdue ? "Was due " + next.due_date : dueToday ? "Due today to stay on track" : next.due_date ? `Due ${next.due_date}` : "Ready when you are"}
           {items.length > 1 ? ` · ${items.length} assigned` : ""}

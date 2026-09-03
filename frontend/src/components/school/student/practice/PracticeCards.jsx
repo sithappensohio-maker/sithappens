@@ -12,6 +12,7 @@
 import { Eyebrow } from "../today/TodayCards";
 import { todayISO } from "../../../../lib/date";
 import { renderPracticeCoachText } from "../../../../lib/practiceCoachPolish";
+import { isRequiredPracticeSatisfied, practiceLoggedLabel, practiceTitle } from "../../../../lib/practiceState";
 
 /* Attention states. Overdue is orange, and orange is used ONLY here — the
    brief is explicit that it must stay an attention colour rather than becoming
@@ -22,16 +23,20 @@ const STATE = {
   recommended: { label: "Recommended next", cls: "text-shPrimary border-shPrimary/40 bg-shPrimary/10", icon: "fa-star" },
   open: { label: "Assigned", cls: "text-shTextMuted border-shBorder bg-black/20", icon: "fa-paw" },
   completed: { label: "Completed", cls: "text-shPrimary border-shPrimary/35 bg-shPrimary/[0.07]", icon: "fa-circle-check" },
+  // The current lesson's required practice, already logged (server-decided).
+  done: { label: "Logged", cls: "text-shPrimary border-shPrimary/35 bg-shPrimary/[0.07]", icon: "fa-circle-check" },
 };
 
 /** Sort assignments into the four groups the brief asks for, in priority
  *  order. `recommendedId` is the assignment the SERVER already named as the
  *  next best action — this never picks a favourite of its own. */
 export function practiceBuckets(list, { recommendedId, today = todayISO() } = {}) {
-  const overdue = [], due = [], recommended = [], upcoming = [], completed = [];
+  const overdue = [], due = [], recommended = [], upcoming = [], completed = [], done = [];
   for (const hw of list || []) {
     if (!hw) continue;
     if (hw.status === "completed") { completed.push(hw); continue; }
+    // Satisfied required practice is done for today — never overdue/due/next.
+    if (isRequiredPracticeSatisfied(hw)) { done.push(hw); continue; }
     const d = hw.due_date || "";
     if (d && d < today) { overdue.push(hw); continue; }
     if (d && d === today) { due.push(hw); continue; }
@@ -44,6 +49,7 @@ export function practiceBuckets(list, { recommendedId, today = todayISO() } = {}
     due: due.sort(byDue),
     recommended,
     upcoming: upcoming.sort(byDue),
+    done,
     completed: completed.slice(0, 5),
   };
 }
@@ -63,7 +69,7 @@ export function practiceCardModel(hw, { today = todayISO() } = {}) {
   const overdue = !!(hw?.due_date && hw.due_date < today && hw.status !== "completed");
   const days = Number(hw?.total_days) || 0;
   return {
-    title: renderPracticeCoachText(hw?.title || "Practice", tokens),
+    title: renderPracticeCoachText(practiceTitle(hw), tokens),
     // The skill this practice belongs to, as the trainer named it.
     focus: renderPracticeCoachText((pc?.goal || hw?.template_snapshot?.description || hw?.instructions || "").trim(), tokens),
     // Approximate time: one round times the number of rounds when the recipe
@@ -74,6 +80,7 @@ export function practiceCardModel(hw, { today = todayISO() } = {}) {
     overdue,
     dueLabel: hw?.due_date ? (overdue ? `Was due ${hw.due_date}` : `Due ${hw.due_date}`) : null,
     required: hw?.required !== false,
+    logged: isRequiredPracticeSatisfied(hw) ? practiceLoggedLabel(hw) : null,
   };
 }
 
@@ -94,7 +101,11 @@ export function PracticeAssignmentCard({ hw, state = "open", onOpen, testid }) {
           <h3 className="text-[17px] font-black text-shText leading-snug mt-0.5 text-balance">{m.title}</h3>
           {m.focus && <p className="text-[15px] text-shTextMuted mt-1.5 leading-relaxed line-clamp-2">{m.focus}</p>}
 
-          {(m.timeLabel || m.dayLabel || m.dueLabel) && (
+          {state === "done" && m.logged ? (
+            <p className="text-[14px] text-shPrimary mt-2" data-testid={testid ? `${testid}-logged` : `practice-card-${hw.id}-logged`}>
+              <i className="fas fa-circle-check mr-1" />{m.logged.title} · {m.logged.detail}
+            </p>
+          ) : (m.timeLabel || m.dayLabel || m.dueLabel) && (
             <p className="text-[14px] text-shTextMuted mt-2 flex flex-wrap items-center gap-x-2 gap-y-1">
               {m.timeLabel && <span><i className="fas fa-stopwatch mr-1 opacity-70" />{m.timeLabel}</span>}
               {m.dayLabel && <span><i className="fas fa-calendar-days mr-1 opacity-70" />{m.dayLabel}</span>}
@@ -118,7 +129,7 @@ export function PracticeAssignmentCard({ hw, state = "open", onOpen, testid }) {
                 className={`mt-3 w-full min-h-[48px] rounded-xl font-black text-[16px] inline-flex items-center justify-center gap-2 transition ${
                   primary ? "bg-shPrimary text-[#071018] hover:brightness-110"
                           : "border border-shBorder text-shText hover:bg-white/[0.03]"}`}>
-          <i className="fas fa-play text-[13px]" />Start practice
+          <i className={`fas ${state === "done" ? "fa-rotate" : "fa-play"} text-[13px]`} />{state === "done" ? "Practice again" : "Start practice"}
         </button>
       )}
     </article>

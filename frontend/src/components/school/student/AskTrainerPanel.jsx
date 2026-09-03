@@ -1,7 +1,9 @@
 import { useEffect, useState } from "react";
 import { api } from "../../../lib/api";
+import { useImmersiveWorkflow } from "../../../lib/immersiveWorkflow";
 
 export default function AskTrainerPanel({ open, context, onClose, onSent }) {
+  useImmersiveWorkflow(!!open);
   const [text, setText] = useState("");
   const [busy, setBusy] = useState(false);
   const [sent, setSent] = useState(false);

@@ -49,6 +49,7 @@ export default function SchoolNav({ active, onNavigate }) {
         style={{ paddingBottom: "env(safe-area-inset-bottom)" }}
         aria-label="School sections"
         data-testid="school-nav-mobile"
+        data-bottom-dock=""
       >
         {NAV_ITEMS.map((it) => {
           const on = active === it.view;

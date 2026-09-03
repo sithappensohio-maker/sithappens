@@ -70,7 +70,9 @@ test("non-daily practice uploads through the section practice-video route", () =
 });
 
 test("the practice timer lives where the reps happen — guided screen and quick/legacy form, never only the after-guided completion form", () => {
-  expect(practicePanelSrc).toMatch(/\{timerCard\}\s*<GuidedPracticeFlow/);
+  // The mobile UX fix put the cue + scoring buttons FIRST on the guided
+  // screen; the optional timer follows the rep loop instead of preceding it.
+  expect(practicePanelSrc).toMatch(/<GuidedPracticeFlow[\s\S]*?\/>\s*\{timerCard\}/);
   // The wrap-up redesign renders the live timer in exactly two places — the
   // guided screen and the quick/legacy form branch; after guided practice
   // the elapsed time is reported as a tracked result chip instead.

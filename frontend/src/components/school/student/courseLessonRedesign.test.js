@@ -170,10 +170,17 @@ test("folding never drops or reorders a module", () => {
 // Lesson — mapping, not duplicating
 // ---------------------------------------------------------------------------
 
-test("the guided sequence is the eight steps from the brief, in order", () => {
+test("the guided sequence is the five numbered parts, then Practice and Next", () => {
+  // 2026-09-03 mobile UX fix (approved, option B): the lesson's optional
+  // knowledge check is NOT a server-owned step, so it is no longer a numbered
+  // part of the journey — it rides inside the last instructional part as
+  // reinforcement. The base mapper (LessonGuideBase) still knows quick_check;
+  // the client-facing sequence does not present it as "Part 7 of 8".
   expect(GUIDE_SECTIONS.map(s => s.key)).toEqual([
-    "learn", "get_ready", "train", "watch_for", "know_got_it", "practice", "quick_check", "next_step",
+    "learn", "get_ready", "train", "watch_for", "know_got_it", "practice", "next_step",
   ]);
+  expect(GUIDE_SECTIONS.filter(s => s.kind === "instructional").map(s => s.n)).toEqual([1, 2, 3, 4, 5]);
+  expect(GUIDE_SECTIONS.find(s => s.key === "practice").n).toBeNull();
 });
 
 test("each step maps to an authored field rather than new curriculum data", () => {
@@ -183,7 +190,7 @@ test("each step maps to an authored field rather than new curriculum data", () =
     common_mistakes: "Watch out.", success_criteria: "5 in a row.",
   };
   const keys = buildGuide(lesson, { hasPractice: true, hasQuiz: true }).map(s => s.key);
-  expect(keys).toEqual(["learn", "get_ready", "train", "watch_for", "know_got_it", "practice", "quick_check", "next_step"]);
+  expect(keys).toEqual(["learn", "get_ready", "train", "watch_for", "know_got_it", "practice", "next_step"]);
 });
 
 test("Learn merges the overview and why-it-matters the trainer already wrote", () => {
@@ -199,10 +206,12 @@ test("sections with no authored content are omitted, never shown empty", () => {
   expect(sparse.find(s => s.key === "train")).toBeUndefined();
 });
 
-test("Practice and Quick Check appear only when they genuinely exist", () => {
+test("Practice appears only when it genuinely exists; the module quiz is never a numbered part", () => {
   expect(buildGuide({ client_overview: "x" }, { hasPractice: false, hasQuiz: false }).map(s => s.key)).not.toContain("practice");
   expect(buildGuide({ client_overview: "x" }, { hasPractice: true, hasQuiz: false }).map(s => s.key)).toContain("practice");
-  expect(buildGuide({ client_overview: "x" }, { hasPractice: false, hasQuiz: true }).map(s => s.key)).toContain("quick_check");
+  // The Module Quiz is a real server-owned step; the journey strip names it in
+  // its "Then:" chain (LessonScreen thenChain), not as a part of the lesson.
+  expect(buildGuide({ client_overview: "x" }, { hasPractice: false, hasQuiz: true }).map(s => s.key)).not.toContain("quick_check");
 });
 
 test("authored step lists become numbered steps; prose stays prose", () => {

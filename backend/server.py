@@ -21386,6 +21386,42 @@ def _school_lesson_counts(enrollment: dict) -> dict:
     return {"lessons_completed": completed, "lessons_total": total}
 
 
+async def _client_practice_summary(hw: dict, enrollment: dict, *, current_hw_id: Optional[str],
+                                   current_lesson_practiced: bool, practice_required_now: bool) -> dict:
+    """Read-only, ADDITIVE summary of one School practice row for the client
+    Today view-model (portal_school_home.active_practice).
+
+    Every number comes from the same canonical predicate the School gates use
+    (_practice_log_counts_as_session, via _count_practice_sessions_since), so
+    the browser never has to infer "was this practised?" from raw section_logs.
+    Nothing here changes what counts as practice, the current action,
+    advancement, homework status or remediation.
+
+    ``required_practice_satisfied`` is true ONLY for the row the roadmap itself
+    judged (the current lesson's own Practice), only once the roadmap says that
+    lesson is practised, and never while School still asks for practice on it
+    (current action practice / remediation). Trainer-prescribed general rows,
+    remediation recipes and prior-lesson rows therefore never read as
+    satisfied — they keep their own honest session counts.
+    """
+    lesson_id = hw.get("source_lesson_id") if _is_school_homework(hw) else None
+    lesson = _find_lesson_in_snapshot(enrollment, lesson_id) if lesson_id else None
+    sessions = await _count_practice_sessions_since(hw.get("id"), None)
+    stamps = [
+        lg.get("logged_at") for lg in (hw.get("section_logs") or [])
+        if lg.get("logged_at") and _practice_log_counts_as_session(hw, lg)
+    ]
+    is_current = bool(current_hw_id and hw.get("id") == current_hw_id)
+    return {
+        "school_lesson_id": lesson_id,
+        "school_lesson_name": (lesson or {}).get("name") if lesson else None,
+        "is_current_lesson_practice": is_current,
+        "sessions_logged": int(sessions),
+        "last_session_at": max(stamps) if stamps else None,
+        "required_practice_satisfied": bool(is_current and current_lesson_practiced and not practice_required_now),
+    }
+
+
 @api.get("/portal/school/{school_enrollment_id}/home")
 async def portal_school_home(school_enrollment_id: str, user: dict = Depends(get_current_user)):
     """Bounded Student Home view-model — one call that answers 'what is my dog
@@ -21510,6 +21546,15 @@ async def portal_school_home(school_enrollment_id: str, user: dict = Depends(get
         {"_id": 0},
     ).sort("created_at", -1).to_list(100)
     active_practice = []
+    # The row the roadmap judged for "practised" — the current lesson's own
+    # Practice — resolved the same way _school_roadmap resolves it, so Today
+    # can label that one row authoritatively (see _client_practice_summary).
+    _cur_practice_lesson_id = (roadmap or {}).get("current_lesson_id")
+    _current_practice_hw = (
+        await _lesson_practice_homework(se["dog_id"], _cur_practice_lesson_id, enrollment.get("id"))
+        if _cur_practice_lesson_id else None
+    )
+    _practice_required_now = (action or {}).get("type") in ("practice", "remediation")
     for hw in active_practice_rows:
         gate = await _school_practice_gate_state(hw)
         # The current lesson's Practice may be pre-provisioned for reliability,
@@ -21518,7 +21563,14 @@ async def portal_school_home(school_enrollment_id: str, user: dict = Depends(get
         # remains visible exactly as before.
         if gate.get("applies") and not gate.get("unlocked"):
             continue
-        active_practice.append(_client_safe_homework(hw))
+        safe_hw = _client_safe_homework(hw)
+        safe_hw.update(await _client_practice_summary(
+            hw, enrollment,
+            current_hw_id=(_current_practice_hw or {}).get("id"),
+            current_lesson_practiced=bool((roadmap or {}).get("current_lesson_practiced")),
+            practice_required_now=_practice_required_now,
+        ))
+        active_practice.append(safe_hw)
 
     progress = {
         # course_pct is the ONLY number presented as Course Progress —

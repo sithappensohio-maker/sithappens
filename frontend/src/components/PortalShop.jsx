@@ -509,7 +509,7 @@ function CheckoutTray({ cartCount, subtotal, onViewCart, onCheckout, busy, justA
       {/* Desktop — floats above content, left-inset to clear the persistent
           client sidebar (w-52 = 13rem) so it never overlaps nav chrome and
           stays aligned with the actual shop content column. */}
-      <div className="hidden md:flex fixed bottom-6 z-40 justify-center pointer-events-none" style={{ left: "13rem", right: 0 }}>
+      <div className="hidden md:flex fixed bottom-6 z-40 justify-center pointer-events-none" style={{ left: "13rem", right: 0 }} data-bottom-dock="">
         <div
           data-testid="shop-checkout-tray"
           className="pointer-events-auto flex items-center gap-4 pl-5 pr-3 py-3 rounded-2xl border border-shPrimary/40 w-full max-w-xl mx-6 transition-shadow duration-300"
@@ -531,7 +531,7 @@ function CheckoutTray({ cartCount, subtotal, onViewCart, onCheckout, busy, justA
 
       {/* Mobile — fixed bottom bar, offset above the bottom nav (measured,
           not guessed) and respecting the phone's safe-area inset. */}
-      <div className="md:hidden fixed inset-x-0 z-40" style={{ bottom: mobileNavH }} data-testid="shop-checkout-tray-mobile">
+      <div className="md:hidden fixed inset-x-0 z-40" style={{ bottom: mobileNavH }} data-testid="shop-checkout-tray-mobile" data-bottom-dock="">
         <div
           className="flex items-center gap-3 px-4 pt-3 border-t border-shPrimary/40 transition-shadow duration-300"
           style={{ background: "var(--sh-card-base)", paddingBottom: "max(0.75rem, env(safe-area-inset-bottom))", boxShadow: glow }}

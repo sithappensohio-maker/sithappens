@@ -69,12 +69,17 @@ test("once the material is done the current step becomes Practice", () => {
   expect(currentStepKey(s, { completed: all, practiceUnlocked: true })).toBe("practice");
 });
 
-test("a practised lesson moves the client on to Quick Check", () => {
+test("a practised lesson has no further numbered part — what comes next is School's server action", () => {
+  // Option B (2026-09-03): the lesson's knowledge check is reinforcement, not
+  // a gated step, so it never becomes "current". After Practice the only
+  // remaining signpost is Next Step; Today/the actions area carry the real
+  // server-owned next action (advance, module quiz, trainer check).
   const s = sections();
   const all = instructionalKeys(s);
+  expect(s.map(x => x.key)).not.toContain("quick_check");
   expect(currentStepKey(s, {
     completed: all, practiceUnlocked: true, practiced: true, quickCheckUnlocked: true,
-  })).toBe("quick_check");
+  })).toBe("next_step");
 });
 
 // ---------------------------------------------------------------------------
@@ -97,11 +102,20 @@ test("Practice is locked until every instructional step is finished", () => {
     .not.toBe("locked");
 });
 
-test("Quick Check is locked until the lesson has been practised", () => {
-  const s = sections();
-  const quick = s.find(x => x.key === "quick_check");
-  expect(stepState(quick, { quickCheckUnlocked: false })).toBe("locked");
-  expect(stepState(quick, { quickCheckUnlocked: true })).not.toBe("locked");
+test("the lesson's knowledge check rides inside the last part as reinforcement", () => {
+  const lesson = { content_blocks: [
+    { id: "intro", type: "text", title: "Why this matters", body: "Intro", order: 1 },
+    { id: "steps", type: "steps", title: "Steps", items: ["One"], order: 2 },
+    { id: "success", type: "text", title: "Success criteria", body: "Success", order: 3 },
+    { id: "quiz", type: "quiz", title: "Quick check", body: "Q?", items: ["A", "B"], config: { correct_answer: "A" }, order: 4 },
+  ] };
+  const s = buildGuide(lesson, { hasPractice: true, hasQuiz: false });
+  expect(s.map(x => x.key)).toEqual(["learn", "train", "know_got_it", "practice", "next_step"]);
+  const last = s.find(x => x.key === "know_got_it");
+  expect(last.blocks.map(b => b.id)).toEqual(["success", "quiz"]);
+  expect(last.blocks[1].reinforcement).toBe(true);
+  // ...and it never gates anything: the part count is unchanged by it.
+  expect(instructionalKeys(s)).toEqual(["learn", "train", "know_got_it"]);
 });
 
 test("Next Step will not imply the lesson is finished while work remains", () => {
@@ -116,7 +130,7 @@ test("a locked step always says what would unlock it", () => {
   expect(lockReason(s.find(x => x.key === "practice"), {})).toMatch(/lesson material/i);
   expect(lockReason(s.find(x => x.key === "practice"),
     { practiceLockedReason: "Finish Learn to unlock Practice." })).toBe("Finish Learn to unlock Practice.");
-  expect(lockReason(s.find(x => x.key === "quick_check"), {})).toMatch(/practice/i);
+  expect(lockReason(s.find(x => x.key === "next_step"), {})).toMatch(/earlier steps/i);
 });
 
 // ---------------------------------------------------------------------------
@@ -178,9 +192,12 @@ test("the guided threshold is shared with the server", () => {
   expect(lessonSrc).toMatch(/>= GUIDE_MIN_CONTENT_STEPS/);
 });
 
-test("a first-time client is told how the lesson works", () => {
-  expect(guideSrc).toMatch(/How this lesson works/i);
-  expect(lessonSrc).toMatch(/<LessonHowItWorks/);
+test("a first-time client is told how the lesson works — once, in the New-lesson dialog", () => {
+  // One explanation, not three: the Read → Do → Practice → Next chain lives in
+  // the Start-lesson dialog; the lesson body opens on the current part.
+  expect(guideSrc).toMatch(/fresh-lesson-journey/);
+  expect(guideSrc).toMatch(/journeyWords\(hasPractice\)/);
+  expect(lessonSrc).not.toMatch(/<LessonHowItWorks/);
 });
 
 test("lesson progress is stated in real counts, never a misleading percentage", () => {
@@ -245,7 +262,7 @@ test("the current step title reads as the heading for what is being read", () =>
 
 test("step metadata stays metadata-sized", () => {
   expect(guideSrc).toMatch(/text-\[13px\] font-black uppercase tracking-\[0\.16em\]/);
-  expect(guideSrc).toMatch(/Step \{section\.n\} of \{all\.length\}/);
+  expect(guideSrc).toMatch(/Part \{section\.n\} of \{all\.length\}/);
 });
 
 test("instruction copy is comfortable to read", () => {

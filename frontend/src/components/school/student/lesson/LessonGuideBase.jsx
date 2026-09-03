@@ -392,10 +392,10 @@ export default function LessonGuide({
                     ].join(" ")}
                     aria-hidden="true"
                   >
-                    {done ? <i className="fas fa-check" /> : locked ? <i className="fas fa-lock" /> : s.n}
+                    {done ? <i className="fas fa-check" /> : locked ? <i className="fas fa-lock" /> : (s.n ?? <i className={`fas ${s.icon || "fa-arrow-right"}`} />)}
                   </span>
                   <span className="min-w-0 flex-1">
-                    <span className="block text-[14px] font-black uppercase tracking-[0.14em] text-shTextMuted">Step {s.n}</span>
+                    <span className="block text-[14px] font-black uppercase tracking-[0.14em] text-shTextMuted">{s.n ? `Part ${s.n}` : "After the parts"}</span>
                     <span className={`block text-[21px] sm:text-[22px] font-black leading-snug ${isCurrent ? "text-[#fb923c]" : done ? "text-[#a3e635]" : hue.title}`}>
                       {s.label}
                     </span>
@@ -470,6 +470,7 @@ export function PracticeUnlockedCard({ dogName, onStartPractice, busy, testid = 
 export function LessonSectionBody({
   lesson, sectionKey, sections, enrollmentId, onComplete, completed = false,
   busy = false, nextLabel, isLastInstructional = false, testid = "lesson-section",
+  onQuizAnswered,
 }) {
   const all = sections || buildGuide(lesson, { hasPractice: true, hasQuiz: true });
   const section = all.find(s => s.key === sectionKey);
@@ -492,7 +493,7 @@ export function LessonSectionBody({
       <div className="rounded-2xl border border-shBorder/50 bg-[var(--sh-card-base)] p-5 sm:p-6 space-y-4">
         <div>
           <p className="text-[16px] font-black uppercase tracking-[0.16em] text-shSecondary">
-            Step {section.n} of {all.length}
+            Part {section.n} of {all.length}
           </p>
           {/* The heading for what the client is reading right now. */}
           <h2 className="text-[26px] sm:text-[30px] font-black text-shText mt-1 leading-tight text-balance">
@@ -500,7 +501,7 @@ export function LessonSectionBody({
           </h2>
         </div>
 
-        {blocks.length > 0 && <LessonContentBlocks blocks={blocks} enrollmentId={enrollmentId} />}
+        {blocks.length > 0 && <LessonContentBlocks blocks={blocks} enrollmentId={enrollmentId} onQuizAnswered={onQuizAnswered} />}
 
         {!blocks.length && steps && (
           <ol className="space-y-3" data-testid={`${testid}-steps`}>

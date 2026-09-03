@@ -1,10 +1,26 @@
-import { useState } from "react";
+import { useEffect, useRef, useState } from "react";
+import { focusDialogTitle } from "../../../lib/schoolViewport";
+import { useImmersiveWorkflow } from "../../../lib/immersiveWorkflow";
+
+/* "How School works" — the four-step GPS explanation of the client journey.
+ *
+ * ONE first-time orientation: the Program Welcome page (ProgramWelcome.jsx)
+ * shows these same four steps the first time a client has a Today plan, and
+ * then hands them straight to their current action. This overlay never opens
+ * on its own any more; it is the on-demand version behind the "How School
+ * works" button, for anyone who wants the reminder later. */
 
 const ORIENTATION_KEY = "sh_school_orientation_v3";
 
-function alreadySeen() {
-  try { return window.localStorage.getItem(ORIENTATION_KEY) === "1"; }
-  catch { return false; }
+export const ORIENTATION_STEPS = [
+  { n: "1", icon: "fa-arrow-pointer", title: "Use the big next button", body: "Open Today. The large green action is the one thing you should do now." },
+  { n: "2", icon: "fa-list-ol", title: "Do one step at a time", body: "Read the current step, actually do what it says, then tap the button at the bottom. Your place is saved." },
+  { n: "3", icon: "fa-paw", title: "Practice when School tells you", body: "When it is time to train with your dog, Practice will open and tell you what to work on. You do not need to invent a session." },
+  { n: "4", icon: "fa-book-open", title: "Go back whenever you want", body: "Completed lessons stay in your Course library. Review them or practice again without erasing the completion you already earned." },
+];
+
+function markSeen() {
+  try { window.localStorage.setItem(ORIENTATION_KEY, "1"); } catch { /* storage can be disabled */ }
 }
 
 export function actionCoachCopy(action, dogName) {
@@ -19,7 +35,7 @@ export function actionCoachCopy(action, dogName) {
     case "remediation":
       return `Do the extra practice your trainer prescribed for ${dog}. This is the next job; you do not need to restart the course.`;
     case "submit_checkpoint":
-      return "Follow the Quick Check directions exactly as shown. Submit what the app asks for, then you are done until the result comes back.";
+      return "Follow the trainer check directions exactly as shown. Film the short clip the app asks for and send it, then you are done until the result comes back.";
     case "module_quiz":
       return "Answer the short review before moving on. It checks that the important pieces make sense; it is not a trick test.";
     case "advance":
@@ -39,7 +55,28 @@ export function actionCoachCopy(action, dogName) {
     case "access_expired":
       return "There is no training action to complete right now. Contact Sit Happens if you believe this course should still be available.";
     default:
-      return "Follow the next action School gives you. When you finish it, School will tell you exactly what to do next.";
+      return "Use the big button below. School will take you to the correct next step and tell you what to do when you get there.";
+  }
+}
+
+/* One short, plain sentence for the line directly above Today's button. The
+   server's sublabel wins when it says something; these are the fallbacks. */
+export function doThisNowCopy(action, dogName, lessonName) {
+  const dog = dogName || "your dog";
+  const sub = String(action?.sublabel || "").trim();
+  if (sub && sub !== String(lessonName || "").trim()) return sub;
+  switch (action?.type) {
+    case "start": return "Start your first lesson.";
+    case "lesson": return "Read this lesson one part at a time.";
+    case "practice": return `Get ${dog} and do today's practice.`;
+    case "remediation": return `Do the extra practice your trainer set for ${dog}.`;
+    case "submit_checkpoint": return "Film a short clip so your trainer can check it.";
+    case "module_quiz": return "Answer a few quick questions before moving on.";
+    case "advance": return "You finished this lesson. Continue to the next one.";
+    case "awaiting_review": return "Your trainer is reviewing your work.";
+    case "course_complete": return "You finished the course.";
+    case "onboarding": return "Answer a few setup questions first.";
+    default: return sub;
   }
 }
 
@@ -59,17 +96,40 @@ export function CurrentActionGuide({ home }) {
   );
 }
 
+export function OrientationSteps({ dogName, inPerson = false, testid }) {
+  const steps = ORIENTATION_STEPS.map((s) => (
+    inPerson && s.n === "3"
+      ? { ...s, title: "Train with your trainer", body: "Your trainer advances your lessons during your in-person sessions and keeps your plan on track." }
+      : s.n === "3" && dogName ? { ...s, body: s.body.replace("your dog", dogName) } : s
+  ));
+  return (
+    <div className="grid gap-3 sm:grid-cols-2" data-testid={testid}>
+      {steps.map((s) => (
+        <div key={s.n} className="rounded-2xl border border-shBorder/55 bg-black/10 p-4">
+          <div className="flex items-center gap-2.5">
+            <span className="w-9 h-9 rounded-full grid place-items-center shrink-0 border border-shSecondary/35 bg-shSecondary/10 text-shSecondary text-[15px] font-black">{s.n}</span>
+            <i className={`fas ${s.icon} text-shPrimary text-[16px]`} aria-hidden="true" />
+            <h3 className="text-[19px] font-black text-shText leading-tight">{s.title}</h3>
+          </div>
+          <p className="text-[17px] text-shTextMuted mt-2 leading-relaxed">{s.body}</p>
+        </div>
+      ))}
+    </div>
+  );
+}
+
 export default function SchoolOrientation({ dogName }) {
-  const [open, setOpen] = useState(() => !alreadySeen());
-  const close = () => {
-    try { window.localStorage.setItem(ORIENTATION_KEY, "1"); } catch { /* storage can be disabled */ }
-    setOpen(false);
-  };
+  // On demand only. The first-time orientation is the Program Welcome page.
+  const [open, setOpen] = useState(false);
+  const titleRef = useRef(null);
+  useImmersiveWorkflow(open);
+  useEffect(() => { if (open) focusDialogTitle(titleRef.current); }, [open]);
+  const close = () => { markSeen(); setOpen(false); };
 
   return (
     <>
       <button type="button" onClick={() => setOpen(true)} data-testid="school-how-it-works"
-              className="min-h-[44px] px-3 rounded-xl border border-shSecondary/30 text-shSecondary text-[13px] sm:text-[14px] font-black uppercase tracking-widest hover:text-shText hover:border-shSecondary/50">
+              className="min-h-[40px] px-2 rounded-lg text-shSecondary text-[13px] font-black uppercase tracking-widest hover:text-shText focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-shPrimary">
         <i className="fas fa-circle-question mr-1.5" />How School works
       </button>
 
@@ -77,28 +137,15 @@ export default function SchoolOrientation({ dogName }) {
         <div className="fixed inset-0 z-[80] bg-black/75 backdrop-blur-sm p-3 sm:p-6 grid place-items-center"
              role="dialog" aria-modal="true" aria-labelledby="school-orientation-title" data-testid="school-orientation">
           <div className="w-full max-w-2xl max-h-[92vh] overflow-y-auto rounded-3xl border border-shSecondary/35 bg-[var(--sh-card-base)] shadow-2xl p-5 sm:p-7">
-            <p className="text-[13px] font-black uppercase tracking-[0.22em] text-shPrimary">Before you start</p>
-            <h2 id="school-orientation-title" className="text-[25px] sm:text-[32px] font-black text-shText mt-1 leading-tight text-balance">
+            <p className="text-[13px] font-black uppercase tracking-[0.22em] text-shPrimary">How School works</p>
+            <h2 id="school-orientation-title" ref={titleRef} tabIndex={-1} className="text-[25px] sm:text-[32px] font-black text-shText mt-1 leading-tight text-balance focus:outline-none">
               You do not need to know how to use School. We will guide you.
             </h2>
             <p className="text-[18px] sm:text-[19px] text-shTextMuted mt-2 leading-relaxed">
               {dogName ? `School tells you what to do with ${dogName}, one step at a time.` : "School tells you what to do with your dog, one step at a time."} You should never have to guess which lesson to open or what comes next.
             </p>
 
-            <div className="grid gap-3 sm:grid-cols-2 mt-5">
-              <OrientationStep n="1" icon="fa-arrow-pointer" title="Use the big next button">
-                Open <strong>Today</strong>. The large green action is the one thing you should do now.
-              </OrientationStep>
-              <OrientationStep n="2" icon="fa-list-ol" title="Do one step at a time">
-                Read the current step, actually do what it says, then tap the button at the bottom. Your place is saved.
-              </OrientationStep>
-              <OrientationStep n="3" icon="fa-paw" title="Practice when School tells you">
-                When it is time to train with your dog, Practice will open and tell you what to work on. You do not need to invent a session.
-              </OrientationStep>
-              <OrientationStep n="4" icon="fa-book-open" title="Go back whenever you want">
-                Completed lessons stay in your Course library. Review them or practice again without erasing the completion you already earned.
-              </OrientationStep>
-            </div>
+            <div className="mt-5"><OrientationSteps dogName={dogName} /></div>
 
             <div className="mt-5 rounded-2xl border border-shPrimary/25 bg-shPrimary/[0.06] p-4">
               <p className="text-[17px] sm:text-[18px] text-shText leading-relaxed">
@@ -106,26 +153,13 @@ export default function SchoolOrientation({ dogName }) {
               </p>
             </div>
 
-            <button type="button" onClick={close} data-testid="school-orientation-start" autoFocus
+            <button type="button" onClick={close} data-testid="school-orientation-start"
                     className="mt-5 w-full min-h-[56px] rounded-xl bg-shPrimary text-bgHeader text-[17px] sm:text-[18px] font-black uppercase tracking-widest hover:brightness-110 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-shPrimary focus-visible:ring-offset-2 focus-visible:ring-offset-bgBase">
-              Show me what to do <i className="fas fa-arrow-right ml-1.5" />
+              Got it <i className="fas fa-arrow-right ml-1.5" />
             </button>
           </div>
         </div>
       )}
     </>
-  );
-}
-
-function OrientationStep({ n, icon, title, children }) {
-  return (
-    <div className="rounded-2xl border border-shBorder/55 bg-black/10 p-4">
-      <div className="flex items-center gap-2.5">
-        <span className="w-9 h-9 rounded-full grid place-items-center shrink-0 border border-shSecondary/35 bg-shSecondary/10 text-shSecondary text-[15px] font-black">{n}</span>
-        <i className={`fas ${icon} text-shPrimary text-[16px]`} aria-hidden="true" />
-        <h3 className="text-[19px] font-black text-shText leading-tight">{title}</h3>
-      </div>
-      <p className="text-[17px] text-shTextMuted mt-2 leading-relaxed">{children}</p>
-    </div>
   );
 }

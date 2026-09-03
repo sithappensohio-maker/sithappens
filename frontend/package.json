@@ -12,8 +12,8 @@
     "html2pdf.js": "^0.14.0",
     "react": "^19.0.0",
     "react-dom": "^19.0.0",
-    "sonner": "^2.0.3",
-    "react-router-dom": "^6.30.1"
+    "react-router-dom": "^6.30.1",
+    "sonner": "^2.0.3"
   },
   "scripts": {
     "start": "vite --host 0.0.0.0",
@@ -21,19 +21,22 @@
     "build": "vite build",
     "preview": "vite preview --host 0.0.0.0",
     "test": "jest",
-    "test:ci": "jest --runInBand"
+    "test:ci": "jest --runInBand",
+    "e2e": "playwright test",
+    "e2e:headed": "playwright test --headed"
   },
   "devDependencies": {
-    "autoprefixer": "^10.4.20",
-    "postcss": "^8.4.49",
-    "tailwindcss": "^3.4.17",
     "@babel/core": "^7.29.0",
     "@babel/preset-env": "^7.29.0",
     "@babel/preset-react": "^7.29.0",
+    "@playwright/test": "1.58.2",
     "@vitejs/plugin-react": "6.1.0",
+    "autoprefixer": "^10.4.20",
     "babel-jest": "^30.4.1",
     "jest": "30.4.2",
     "jest-environment-jsdom": "30.4.1",
+    "postcss": "^8.4.49",
+    "tailwindcss": "^3.4.17",
     "vite": "8.2.2"
   },
   "packageManager": "yarn@1.22.22+sha512.a6b2f7906b721bba3d67d4aff083df04dad64c399707841b7acf00f6b133b7ac24255f2652fa22ae3534329dc6180534e98d17432037ff6fd140556e2bb3137e",

@@ -1,5 +1,8 @@
 // Client Practice Coach overview. All behavior/data remains driven by the
 // authored practice_coach object; only presentation changed.
+//
+// Guided Practice is THE action for a beginner. "Quick Practice" (logging a
+// session that already happened) is secondary and worded as what it is.
 import { useState } from "react";
 import SetupChecklist from "./SetupChecklist";
 import GoodRepNotThisCards from "./GoodRepNotThisCards";
@@ -22,7 +25,7 @@ function StepRow({ step, index, tokens, testid }) {
           <p className="text-[18px] sm:text-[19px] font-black text-shText leading-tight">{renderPracticeCoachText(step.title, tokens)}</p>
           <p className="text-[17px] text-shTextMuted leading-relaxed mt-1">{renderPracticeCoachText(step.instruction, tokens)}</p>
         </span>
-        {hasDetail && <i className={`fas fa-chevron-${open ? "up" : "down"} text-shTextMuted text-[13px] mt-2 shrink-0`}/>} 
+        {hasDetail && <i className={`fas fa-chevron-${open ? "up" : "down"} text-shTextMuted text-[13px] mt-2 shrink-0`}/>}
       </button>
       {open && hasDetail && (
         <div className="px-3.5 pb-3.5 sm:px-4 sm:pb-4">
@@ -34,39 +37,50 @@ function StepRow({ step, index, tokens, testid }) {
 }
 
 export default function CoachPracticeOverview({
-  practiceCoach, tokens, dogPhoto, onStartGuided, onQuickPractice, onOpenTroubleshooting, testid,
+  practiceCoach, tokens, dogPhoto, onStartGuided, onQuickPractice, onOpenTroubleshooting, testid, schoolFlow = false, lessonName = null,
 }) {
   const pc = practiceCoach || {};
   const dogName = tokens?.dog_name || "Your dog";
   return (
     <div className="space-y-4 sm:space-y-5" data-testid={testid}>
-      <section className="relative overflow-hidden rounded-3xl border border-shSecondary/30 bg-gradient-to-br from-shSecondary/[0.085] via-black/20 to-black/35 min-h-[250px] sm:min-h-[280px]">
+      <section className="relative overflow-hidden rounded-3xl border border-shSecondary/30 bg-gradient-to-br from-shSecondary/[0.085] via-black/20 to-black/35">
         <div className="absolute -right-12 -top-12 w-56 h-56 rounded-full bg-shSecondary/10 blur-3xl pointer-events-none"/>
-        <div className="grid sm:grid-cols-[1.25fr_0.75fr] min-h-[250px] sm:min-h-[280px]">
-          <div className="relative z-10 p-5 sm:p-6 flex flex-col justify-center order-2 sm:order-1">
-            <div className="flex items-center gap-2 text-shSecondary text-[15px] font-black uppercase tracking-[0.11em] mb-3" data-testid={testid ? `${testid}-time` : undefined}>
+        <div className="grid sm:grid-cols-[1.25fr_0.75fr]">
+          <div className="relative z-10 p-4 sm:p-6 flex flex-col justify-center order-1">
+            {lessonName && (
+              <p className="text-[13px] font-black uppercase tracking-[0.14em] text-shTextMuted mb-2" data-testid={testid ? `${testid}-lesson` : undefined}>
+                <i className="fas fa-book-open mr-1.5 text-shSecondary"/>Practice for: <span className="text-shText">{lessonName}</span>
+              </p>
+            )}
+            <div className="flex items-center gap-2 text-shSecondary text-[15px] font-black uppercase tracking-[0.11em] mb-2" data-testid={testid ? `${testid}-time` : undefined}>
               <i className="fas fa-clock"/>{practiceTimeLabel(pc.schedule) || "Today's practice"}
             </div>
-            <p className="text-[15px] sm:text-[16px] font-black uppercase tracking-[0.1em] text-shPrimary mb-1.5"><i className="fas fa-bullseye mr-1.5"/>Today&apos;s Goal</p>
+            <p className="text-[15px] sm:text-[16px] font-black uppercase tracking-[0.1em] text-shPrimary mb-1"><i className="fas fa-bullseye mr-1.5"/>Today&apos;s Goal</p>
             <h3 className="text-[22px] sm:text-[28px] font-black text-white leading-tight max-w-xl">{renderPracticeCoachText(pc.goal, tokens)}</h3>
             {pc.success_today && (
-              <p className="text-[17px] sm:text-[18px] text-shTextMuted mt-3 leading-relaxed"><span className="font-black text-shText">Success today: </span>{renderPracticeCoachText(pc.success_today, tokens)}</p>
+              <p className="text-[16px] sm:text-[18px] text-shTextMuted mt-2 leading-relaxed"><span className="font-black text-shText">Success today: </span>{renderPracticeCoachText(pc.success_today, tokens)}</p>
             )}
             {pc.encouragement && <p className="text-[16px] sm:text-[17px] text-shTextMuted mt-2 italic">{renderPracticeCoachText(pc.encouragement, tokens)}</p>}
-            <div className="flex flex-col sm:flex-row gap-2.5 mt-5">
+            {onStartGuided && (
+              <p className="text-[15px] sm:text-[16px] text-shText mt-3 leading-snug">
+                Get {dogName} and your treats. Guided Practice tells you what to do for every rep and keeps score for you.
+              </p>
+            )}
+            <div className="flex flex-col gap-2 mt-4">
               {onStartGuided && (
-                <PremiumButton onClick={onStartGuided} data-testid={testid ? `${testid}-start-guided` : undefined} className="justify-center min-h-[48px] sm:min-w-[220px]">
+                <PremiumButton onClick={onStartGuided} data-testid={testid ? `${testid}-start-guided` : undefined} data-school-primary="true" className="justify-center min-h-[54px] sm:min-w-[220px]">
                   <i className="fas fa-play text-[13px]"/>Start Guided Practice
                 </PremiumButton>
               )}
               {onQuickPractice && (
-                <PremiumButton variant="secondary" onClick={onQuickPractice} data-testid={testid ? `${testid}-quick-practice` : undefined} className="justify-center min-h-[48px]">
-                  <i className="fas fa-bolt text-[13px]"/>Quick Practice
-                </PremiumButton>
+                <button type="button" onClick={onQuickPractice} data-testid={testid ? `${testid}-quick-practice` : undefined}
+                        className="min-h-[44px] px-2 text-[14px] font-black uppercase tracking-widest text-shSecondary hover:text-shText text-center focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-shPrimary rounded-lg">
+                  <i className="fas fa-pen-to-square mr-1.5"/>{schoolFlow ? "I already practiced — log what we did" : "Quick Practice — just log a session"}
+                </button>
               )}
             </div>
           </div>
-          <div className="relative h-[170px] sm:h-auto order-1 sm:order-2 overflow-hidden border-b sm:border-b-0 sm:border-l border-shSecondary/20">
+          <div className="relative h-[120px] sm:h-auto order-2 overflow-hidden border-t sm:border-t-0 sm:border-l border-shSecondary/20">
             <div className="absolute inset-0 bg-gradient-to-t sm:bg-gradient-to-l from-[var(--sh-card-base)] via-transparent to-transparent z-10 pointer-events-none"/>
             <HuskyDogImage src={dogPhoto} name={dogName} alt={dogName} className="absolute inset-0 w-full h-full object-cover object-top"/>
             <div className="absolute left-4 bottom-4 z-20 px-3 py-1.5 rounded-lg bg-black/60 backdrop-blur border border-white/10 text-white text-[16px] font-black">{dogName}</div>

@@ -25,6 +25,10 @@ export default function PracticeCompletionPanel({
   errorMessage,
   onSubmit,
   submitLabel = "Save Today's Practice",
+  submitDisabled = false,
+  submitHint,
+  noteRequired = false,
+  noteTitle,
   testid,
 }) {
   return (
@@ -78,8 +82,10 @@ export default function PracticeCompletionPanel({
       )}
 
       <SectionCard accent="cyan" intensity="subtle">
-        <label className="text-[15px] font-black uppercase tracking-[0.11em] text-shTextMuted">Anything your trainer should know? <span className="normal-case tracking-normal font-semibold">(optional)</span></label>
-        <p className="text-[16px] text-shTextMuted mt-1">Use this for a win, something that was difficult, or anything unusual that happened.</p>
+        <label className={`text-[15px] font-black uppercase tracking-[0.11em] ${noteRequired ? "text-shSecondary" : "text-shTextMuted"}`}>
+          {noteTitle || "Anything your trainer should know?"} <span className="normal-case tracking-normal font-semibold">{noteRequired ? "(a sentence or two)" : "(optional)"}</span>
+        </label>
+        <p className="text-[16px] text-shTextMuted mt-1">{noteRequired ? "What you worked on, roughly how many tries, and how your dog did." : "Use this for a win, something that was difficult, or anything unusual that happened."}</p>
         <textarea value={note || ""} onChange={(e) => onNoteChange(e.target.value)} rows={3}
                   placeholder="Example: The first few repetitions were hard, but it got easier after we moved to a quieter room." data-testid={testid ? `${testid}-note` : undefined}
                   className="w-full mt-2 bg-black/20 border border-shBorder/55 rounded-xl p-3 text-shText text-[18px] sm:text-[19px] min-h-[88px] focus:outline-none focus:border-shSecondary/45 resize-y"/>
@@ -139,12 +145,12 @@ export default function PracticeCompletionPanel({
 
       <div className="sticky bottom-0 -mx-1 pt-3 pb-[max(0.25rem,env(safe-area-inset-bottom))] bg-gradient-to-t from-[var(--sh-card-base)] via-[var(--sh-card-base)]/95 to-transparent">
         <div className="rounded-2xl border border-shPrimary/25 bg-[var(--sh-card-base)]/95 backdrop-blur px-3 py-3 sm:px-4">
-          <p className="text-[16px] text-shTextMuted text-center sm:text-right mb-2">
-            When everything above looks right, save this session. School will keep your history and then show you what comes next.
+          <p className="text-[16px] text-shTextMuted text-center sm:text-right mb-2" data-testid={testid ? `${testid}-submit-hint` : undefined}>
+            {submitHint || "When everything above looks right, save this session. School will keep your history and then show you what comes next."}
           </p>
           <div className="flex flex-col-reverse sm:flex-row sm:items-center sm:justify-end gap-2.5">
             {saveState === "saved" && <span className="text-[14px] font-black uppercase tracking-[0.12em] text-shPrimary text-center sm:text-left"><i className="fas fa-check mr-1.5"/>Saved</span>}
-            <PremiumButton onClick={onSubmit} disabled={saveState === "saving"} data-testid={testid ? `${testid}-submit` : undefined} className="w-full sm:w-auto justify-center min-h-[54px] sm:min-w-[280px]">
+            <PremiumButton onClick={onSubmit} disabled={saveState === "saving" || submitDisabled} data-testid={testid ? `${testid}-submit` : undefined} className="w-full sm:w-auto justify-center min-h-[54px] sm:min-w-[280px]">
               {saveState === "saving" ? <><i className="fas fa-spinner fa-spin"/>Saving Today&apos;s Practice…</> : saveState === "error" ? <>Retry Saving</> : <><i className="fas fa-check text-[13px]"/>{submitLabel}</>}
             </PremiumButton>
           </div>

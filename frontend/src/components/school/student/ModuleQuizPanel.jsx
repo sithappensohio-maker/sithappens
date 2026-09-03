@@ -5,6 +5,7 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { api, formatErr } from "../../../lib/api";
 import PremiumButton from "../../premium/PremiumButton";
+import { useImmersiveWorkflow } from "../../../lib/immersiveWorkflow";
 
 const newIdempotencyKey = () =>
   (window.crypto?.randomUUID ? window.crypto.randomUUID() : `qk-${Date.now()}-${Math.random().toString(36).slice(2)}`);
@@ -33,6 +34,7 @@ function ResultQuestion({ r, onReviewLesson }) {
 }
 
 export default function ModuleQuizPanel({ enrollmentId, moduleId, checkpointPassed = false, onClose, onAdvanced, onReviewLesson }) {
+  useImmersiveWorkflow(true);
   const [quiz, setQuiz] = useState(null);      // GET payload
   const [loadErr, setLoadErr] = useState("");
   const [stage, setStage] = useState("intro"); // intro | taking | result

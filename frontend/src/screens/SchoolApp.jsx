@@ -1,6 +1,7 @@
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useLayoutEffect, useState } from "react";
 import { api } from "../lib/api";
 import { useLiveRefresh } from "../lib/useLiveRefresh";
+import { resetSchoolScroll, revealInSchool } from "../lib/schoolViewport";
 import PremiumButton from "../components/premium/PremiumButton";
 import EmptyState from "../components/premium/EmptyState";
 import SchoolNav from "../components/school/student/SchoolNav";
@@ -47,6 +48,7 @@ export default function SchoolApp({ path, clientName, onNavigate, onExit }) {
   const [list, setList] = useState(null);
   const [selectedId, setSelectedId] = useState(null);
   const [home, setHome] = useState(null);
+  const [homeError, setHomeError] = useState(null);
   const [homeLoading, setHomeLoading] = useState(true);
   const [detail, setDetail] = useState(null);
   const [practice, setPractice] = useState(null);
@@ -80,10 +82,18 @@ export default function SchoolApp({ path, clientName, onNavigate, onExit }) {
 
   const loadHome = useCallback(async () => {
     if (!selectedId) return;
-    try { const { data } = await api.get(`/portal/school/${selectedId}/home`); setHome(data); }
-    catch { setHome(null); }
+    try { const { data } = await api.get(`/portal/school/${selectedId}/home`); setHome(data); setHomeError(null); }
+    catch (e) {
+      setHome(null);
+      const d = e?.response?.data?.detail;
+      setHomeError(typeof d === "string" ? d : (d?.message || "unavailable"));
+    }
     finally { setHomeLoading(false); }
   }, [selectedId]);
+  // The Today view-model answers 409 until a required one-time setup is
+  // saved. That is not an outage: Today shows "Step 0" with the form.
+  const homeBlockedByOnboarding = !home && typeof homeError === "string"
+    && homeError.toLowerCase().includes("online school setup");
   const loadDetail = useCallback(async () => {
     if (!selectedId) return;
     try { const { data } = await api.get(`/portal/school/${selectedId}`); setDetail(data); }
@@ -94,12 +104,15 @@ export default function SchoolApp({ path, clientName, onNavigate, onExit }) {
   useLiveRefresh(loadHome, { intervalMs: 45000 });
 
   // Program Welcome — a client who hasn't completed a single lesson lands on
-  // the welcome/index page the FIRST time they open My Course on this device.
-  // The seen-flag is written before navigating so this can never loop, and the
-  // page stays reachable forever via the course hero's "About this program".
+  // it the FIRST time School has a Today plan for them on this device. It is
+  // THE one first-time orientation (Today or My Course; never while the
+  // one-time setup is still gating, because the plan does not exist yet).
+  // The seen-flag is written before navigating so this can never loop, and
+  // the page stays reachable forever via the course hero's "About this program".
   useEffect(() => {
-    if (parsed.view !== "course" || !selectedId || !detail || !home) return;
+    if ((parsed.view !== "course" && parsed.view !== "today") || !selectedId || !detail || !home) return;
     if (detail.access_state === "revoked" || detail.status === "completed") return;
+    if (home.current_action?.type === "onboarding") return;
     if ((home.progress?.lessons_completed ?? 0) !== 0) return;
     if (welcomeSeen(selectedId)) return;
     markWelcomeSeen(selectedId);
@@ -108,9 +121,21 @@ export default function SchoolApp({ path, clientName, onNavigate, onExit }) {
 
   const refreshAll = useCallback(() => { loadHome(); loadDetail(); }, [loadHome, loadDetail]);
 
+  // A screen change gets a fresh viewport (lib/schoolViewport). go() resets
+  // before navigating so a same-view hop (Practice opened from Today, closed
+  // back to Today) still lands at the top; the layout effect covers every
+  // other route change (deep links, back/forward, notifications).
   const go = useCallback((view, lessonId) => {
+    resetSchoolScroll();
     onNavigate(schoolPathFor(view, selectedId, lessonId));
   }, [onNavigate, selectedId]);
+  useLayoutEffect(() => {
+    resetSchoolScroll();
+    // Once more after the new screen has painted: the browser may nudge the
+    // container while the old screen's nodes unmount and the new ones settle.
+    const t = setTimeout(() => resetSchoolScroll(), 0);
+    return () => clearTimeout(t);
+  }, [parsed.view, parsed.lessonId, selectedId]);
 
   const selectEnrollment = useCallback((id) => {
     setSelectedId(id);
@@ -120,16 +145,16 @@ export default function SchoolApp({ path, clientName, onNavigate, onExit }) {
 
   const selectedEntry = Array.isArray(list) ? list.find((e) => e.school_enrollment_id === selectedId) : null;
 
-  const openHomework = useCallback(async (homeworkId) => {
+  const openHomework = useCallback(async (homeworkId, lessonId = null) => {
     const { data: hw } = await api.get(`/homework/${homeworkId}`);
-    setPractice({ homework: hw });
+    setPractice({ homework: hw, lessonId });
   }, []);
 
   const openPractice = useCallback(async (lessonId) => {
     setPracticeDone(false);
     try {
       const { data } = await api.post(`/portal/school/${selectedId}/lessons/${lessonId}/start-practice`);
-      await openHomework(data.homework_id);
+      await openHomework(data.homework_id, lessonId);
       refreshAll();
     } catch (e) {
       const msg = e.response?.data?.detail || "Couldn't start practice — try again.";
@@ -182,15 +207,30 @@ export default function SchoolApp({ path, clientName, onNavigate, onExit }) {
     go("today");
   }, [selectedId, loadDetail, openPractice, openPrescribedPractice, go]);
 
-  const revealOnboarding = useCallback((attempts = 16) => {
-    if (typeof document === "undefined") return;
-    const target = document.querySelector('[data-testid="school-onboarding"]');
-    if (target) {
-      target.scrollIntoView({ behavior: "smooth", block: "start" });
-      return;
-    }
-    if (attempts > 0 && typeof setTimeout === "function") setTimeout(() => revealOnboarding(attempts - 1), 80);
+  const revealOnboarding = useCallback(() => {
+    revealInSchool('[data-testid="school-onboarding"]', { align: "start", ifNeeded: true });
   }, []);
+
+  // Practice Coach launched from School names the lesson it belongs to: the
+  // lesson School opened it for, else the lesson the backend stamped on the
+  // homework row ("school_lesson:<id>" trigger).
+  const schoolLessonFor = useCallback((hw, lessonId = null) => {
+    if (!hw) return null;
+    const m = /^school_lesson:(.+)$/.exec(String(hw.trigger || ""));
+    const lid = lessonId || hw.school_lesson_id || (m ? m[1] : null);
+    // Rows opened from a Today practice card carry no lesson id, but School
+    // stamps "Online School · <lesson name>" as the assigner.
+    const byName = /^Online School\s*[·\-–]\s*(.+)$/.exec(String(hw.assigned_by || ""));
+    const wantedName = byName ? byName[1].trim() : null;
+    for (const mod of detail?.roadmap?.modules || []) {
+      const l = (mod.lessons || []).find((x) => (lid && x.id === lid) || (!lid && wantedName && x.name === wantedName));
+      if (l) return { id: l.id, name: l.name, moduleName: mod.name };
+    }
+    if (lid && home?.current_lesson?.id === lid) return { id: lid, name: home.current_lesson.name, moduleName: home?.current_module?.name };
+    if (!lid && wantedName && home?.current_lesson?.name === wantedName) return { id: home.current_lesson.id, name: wantedName, moduleName: home?.current_module?.name };
+    if (!lid && !wantedName) return null;
+    return { id: lid, name: wantedName, moduleName: null };
+  }, [detail, home]);
 
   const runAction = useCallback(async (action) => {
     const t = action?.type;
@@ -296,6 +336,7 @@ export default function SchoolApp({ path, clientName, onNavigate, onExit }) {
     } else if (parsed.view === "welcome") {
       screen = (
         <ProgramWelcome detail={detail} progress={home?.progress}
+                        actionLabel={home?.current_action?.type && home.current_action.type !== "onboarding" ? home.current_action.label : null}
                         onStart={() => home?.current_action ? runAction(home.current_action) : go("course")}
                         onViewCourse={() => go("course")} />
       );
@@ -322,6 +363,7 @@ export default function SchoolApp({ path, clientName, onNavigate, onExit }) {
         <div className="space-y-4">
           <StudentHome
             home={home} loading={homeLoading} clientName={clientName}
+            blockedByOnboarding={homeBlockedByOnboarding}
             onPrimaryAction={() => runAction(home?.current_action)}
             onAsk={() => openAsk()}
             onViewFeedback={() => goView("feedback")}
@@ -390,6 +432,7 @@ export default function SchoolApp({ path, clientName, onNavigate, onExit }) {
 
       {practice && (
         <PracticePanel homework={practice.homework} dogPhoto={selectedEntry?.dog_photo}
+                       schoolLesson={schoolLessonFor(practice.homework, practice.lessonId)}
                        onClose={closePractice} onChanged={refreshAll} onPracticeLogged={practiceLogged}
                        onCompleted={practiceCompleted} />
       )}

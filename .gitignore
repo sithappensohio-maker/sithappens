@@ -77,3 +77,8 @@ backend/stripe_refund_reconciliation_*_dry_run.*
 
 # Local production deployment SHA history (written by update.sh)
 .deploy-state/
+
+# Playwright (client School mobile suite) — generated output and the disposable seed manifest
+frontend/e2e/results/
+frontend/e2e/report/
+frontend/e2e/.seed.json

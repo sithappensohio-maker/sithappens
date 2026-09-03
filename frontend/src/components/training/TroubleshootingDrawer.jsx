@@ -2,10 +2,12 @@
 // as a mobile bottom sheet and a centered panel on larger screens.
 import { useState } from "react";
 import PremiumButton from "../premium/PremiumButton";
+import { useImmersiveWorkflow } from "../../lib/immersiveWorkflow";
 import { renderPracticeCoachText } from "../../lib/practiceCoachPolish";
 
 export default function TroubleshootingDrawer({ items, tokens, onAskTrainer, open, onClose, testid }) {
   const [openId, setOpenId] = useState(null);
+  useImmersiveWorkflow(!!open);
   if (!open) return null;
   return (
     <div className="fixed inset-0 bg-black/85 backdrop-blur-sm z-[60] flex items-end sm:items-center justify-center sm:p-4"

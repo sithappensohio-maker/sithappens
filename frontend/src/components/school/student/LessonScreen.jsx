@@ -9,11 +9,12 @@ import HuskyDogImage from "../../brand/HuskyDogImage";
 import CheckpointPanel from "./CheckpointPanel";
 import { SchoolOnboarding } from "./StudentWorkspaceExtras";
 import LessonGuide, {
-  LessonSectionBody, buildGuide, LessonHowItWorks, PracticeUnlockedCard,
-  currentStepKey, instructionalKeys, stepState, GUIDE_MIN_CONTENT_STEPS,
+  LessonSectionBody, buildGuide, PracticeUnlockedCard,
+  currentStepKey, instructionalKeys, instructionalParts, stepState, GUIDE_MIN_CONTENT_STEPS,
 } from "./lesson/LessonGuide";
 import { CheckpointResultPanel } from "./checkpoint/CheckpointCards";
 import { practiceButtonLabel } from "../../../lib/onlineSchoolPolish";
+import { revealInSchool } from "../../../lib/schoolViewport";
 
 /* Native School Lesson screen (Phase 2B). Presents existing lesson content via
  * the shared LessonDetailPanel and drives the Phase-2A Learn boundary:
@@ -33,7 +34,6 @@ export default function LessonScreen({
   const [actionErr, setActionErr] = useState("");
   const [guideKey, setGuideKey] = useState(null);
   const [onboardingGate, setOnboardingGate] = useState(undefined);
-  const actionsRef = useRef(null);
 
   const loadSeq = useRef(0);
   const load = useCallback(async () => {
@@ -93,6 +93,23 @@ export default function LessonScreen({
     detailRef.current = detail;
     load();
   }, [detail, load]);
+
+  // A lesson opens on its CURRENT actionable content — once per lesson, after
+  // the payload is in, and only if that content is not already on screen
+  // (lib/schoolViewport). Later moves are owned by the step reveals.
+  const loadRevealRef = useRef(null);
+  useEffect(() => {
+    if (!data || onboardingGate === undefined || err) return;
+    if (loadRevealRef.current === lessonId) return;
+    loadRevealRef.current = lessonId;
+    revealInSchool(() => {
+      if (typeof document === "undefined") return null;
+      return document.querySelector('[data-testid^="lesson-section-guided-"]')
+        || document.querySelector('[data-testid="lesson-practice-unlocked"]')
+        || document.querySelector('[data-testid="school-checkpoint-submit-form"]')
+        || document.querySelector('[data-testid="lesson-actions"]');
+    }, { align: "start", ifNeeded: true });
+  }, [data, onboardingGate, err, lessonId]);
 
   const roadmap = detail?.roadmap;
   const requiresCp = !!(data?.is_current && roadmap?.requires_checkpoint);
@@ -252,6 +269,22 @@ export default function LessonScreen({
   const checkpointPassedForQuiz = requiresCp && roadmap?.checkpoint_status?.outcome === "advance";
   const checkpointAlreadyInFlight = requiresCp && roadmap?.checkpoint_status
     && roadmap.checkpoint_status.status !== "not_submitted";
+  // What the journey strip says comes after the numbered parts. Every entry is
+  // a real, server-owned step; the wording is presentation only.
+  const thenChain = [];
+  if (hasPractice) thenChain.push("Practice");
+  if (requiresCp) thenChain.push("Trainer check");
+  thenChain.push(quizAvailable ? "Module quiz" : "Next lesson");
+  const remainingParts = instructionalParts(guideSections)
+    .filter((s) => !stepsCompleted.includes(s.key)).map((s) => s.label);
+  const checkpointAhead = "After practice, we'll guide you through your trainer check.";
+  // The checkpoint rubric/form appears only when the checkpoint is genuinely
+  // the customer's next action (practised, or already submitted/graded).
+  const showCheckpointPanel = isCurrent && requiresCp && hasPractice && (!!data.practiced || checkpointAlreadyInFlight);
+  const showCheckpointAhead = isCurrent && requiresCp && hasPractice && practiceUnlocked && !data.practiced && !checkpointAlreadyInFlight;
+  const practiceButtonEarly = hasPractice && !prescribedRemediation && !showUnlockMoment && practiceUnlocked && !data.practiced;
+  const practiceAgainLate = hasPractice && !prescribedRemediation && !showUnlockMoment && practiceUnlocked && !!data.practiced;
+  const practiceLocked = hasPractice && !prescribedRemediation && !showUnlockMoment && !practiceUnlocked;
 
   return (
     <div className="max-w-3xl mx-auto space-y-4" data-testid="lesson-screen">
@@ -294,7 +327,6 @@ export default function LessonScreen({
 
       {hasGuide ? (
           <div className="space-y-4" data-testid="lesson-guided">
-            {!completedReview && <LessonHowItWorks hasPractice={hasPractice} />}
             <LessonGuide lesson={lesson} hasPractice={hasPractice} hasQuiz={quizAvailable}
                          sections={guideSections} activeKey={openKey}
                          completed={stepsCompleted}
@@ -302,10 +334,12 @@ export default function LessonScreen({
                          practiceLockedReason={data.practice_locked_reason}
                          quickCheckUnlocked={quickCheckUnlocked}
                          practiced={!!data.practiced}
+                         thenChain={thenChain}
                          onSelectSection={(k) => {
+                           // Selecting only changes which part is shown; the
+                           // guide owns the single reveal for the tap.
                            if (k === "next_step" || k === "practice" || k === "quick_check") {
                              setGuideKey(null);
-                             actionsRef.current?.scrollIntoView({ behavior: "smooth", block: "center" });
                              return;
                            }
                            setGuideKey(k === openKey ? null : k);
@@ -328,26 +362,11 @@ export default function LessonScreen({
         ? <LessonContentBlocks blocks={lesson.content_blocks} enrollmentId={enrollmentId} />
         : <LessonDetailPanel lesson={lesson} testid="lesson-detail" />}
 
-      {data.skills?.length > 0 && (
-        <SectionCard accent="cyan" intensity="subtle">
-          <p className="text-[11px] font-black uppercase tracking-[0.14em] text-shSecondary mb-2"><i className="fas fa-star mr-1.5" />Skills you&apos;re building</p>
-          <div className="space-y-2">
-            {data.skills.map((s) => (
-              <div key={s.id} className="rounded-xl border border-shSecondary/40 bg-gradient-to-r from-shSecondary/[0.14] to-black/15 p-3 flex items-start gap-2.5">
-                <span className="w-7 h-7 rounded-lg grid place-items-center bg-shSecondary/20 border border-shSecondary/45 shrink-0"><i className="fas fa-bone text-shSecondary text-[14px]"/></span>
-                <span className="min-w-0">
-                  <p className="text-[16px] font-black text-shText">{s.name}</p>
-                  {s.client_facing_explanation && <p className="text-[15px] text-shTextMuted mt-1 leading-relaxed">{s.client_facing_explanation}</p>}
-                </span>
-              </div>
-            ))}
-          </div>
-        </SectionCard>
-      )}
-
       {actionErr && !hasGuide && <p className="text-shDanger text-[16px] font-bold" data-testid="lesson-action-error">{actionErr}</p>}
 
-      <div ref={actionsRef} className="space-y-4" data-testid="lesson-actions">
+      {/* The actions area: the ONE next thing first, secondary things after.
+          `data-school-primary` marks the button a reveal keeps on screen. */}
+      <div className="space-y-4" data-testid="lesson-actions">
       {setupRequired ? (
         <SectionCard accent="cyan" intensity="subtle" data-testid="lesson-setup-required">
           <div className="flex items-start gap-3">
@@ -362,30 +381,19 @@ export default function LessonScreen({
         <>
           {showUnlockMoment && !prescribedRemediation && (
             <PracticeUnlockedCard dogName={dogName} busy={busy}
+                                  afterNote={requiresCp ? checkpointAhead : null}
                                   onStartPractice={() => onStartPractice(lessonId)} />
           )}
 
-          {hasPractice && !prescribedRemediation && !showUnlockMoment && (
-            practiceUnlocked ? (
-              <PremiumButton onClick={() => onStartPractice(lessonId)} disabled={busy} data-testid="lesson-start-practice"
-                             className="w-full justify-center min-h-[52px] text-[16px] sm:text-[17px]">
-                <i className="fas fa-paw text-[14px]" />{practiceButtonLabel(data.practiced)}
-              </PremiumButton>
-            ) : (
-              <div className="rounded-xl border border-shBorder bg-black/15 p-4 text-center"
-                   data-testid="lesson-practice-locked">
-                <p className="text-[18px] font-black text-shTextMuted">
-                  <i className="fas fa-lock mr-2" aria-hidden="true" />Practice is locked
-                </p>
-                <p className="text-[18px] text-shTextMuted mt-1.5 leading-relaxed">
-                  {data.practice_locked_reason || "Finish the lesson material to unlock Practice."}
-                </p>
-              </div>
-            )
+          {practiceButtonEarly && (
+            <PremiumButton onClick={() => onStartPractice(lessonId)} disabled={busy} data-testid="lesson-start-practice" data-school-primary="true"
+                           className="w-full justify-center min-h-[52px] text-[16px] sm:text-[17px]">
+              <i className="fas fa-paw text-[14px]" />{practiceButtonLabel(false)}
+            </PremiumButton>
           )}
 
           {!hasPractice && isCurrent && !learnDone && (!hasGuide || instructionalStepKeys.length === 0) && (
-            <PremiumButton onClick={completeLesson} disabled={busy} data-testid="lesson-complete"
+            <PremiumButton onClick={completeLesson} disabled={busy} data-testid="lesson-complete" data-school-primary="true"
                            className="w-full justify-center min-h-[52px] text-[16px] sm:text-[17px]">
               <i className="fas fa-check text-[14px]" />Complete lesson
             </PremiumButton>
@@ -401,7 +409,7 @@ export default function LessonScreen({
                 Before moving on, make sure the important pieces make sense.
                 {" "}{quizMeta?.question_count || 0} question{(quizMeta?.question_count || 0) === 1 ? "" : "s"} · Passing score {quizMeta?.passing_score || 80}%
               </p>
-              <PremiumButton onClick={() => onTakeQuiz?.(quizMeta?.module_id)} disabled={busy} data-testid="lesson-take-module-quiz"
+              <PremiumButton onClick={() => onTakeQuiz?.(quizMeta?.module_id)} disabled={busy} data-testid="lesson-take-module-quiz" data-school-primary="true"
                              className="mt-3 w-full justify-center min-h-[50px]">
                 <i className="fas fa-list-check text-[14px]" />Take Module Quiz
               </PremiumButton>
@@ -410,19 +418,19 @@ export default function LessonScreen({
 
           {isCurrent && !requiresCp && !quizAvailable
             && ((hasPractice && practiceUnlocked && data.practiced) || (!hasPractice && learnDone)) && (
-            <PremiumButton onClick={advance} disabled={busy} data-testid="lesson-advance"
+            <PremiumButton onClick={advance} disabled={busy} data-testid="lesson-advance" data-school-primary="true"
                            className="w-full justify-center min-h-[52px]">
               Continue to next lesson <i className="fas fa-arrow-right text-[13px]" />
             </PremiumButton>
           )}
 
-          {isCurrent && requiresCp && hasPractice && !practiceUnlocked && !checkpointAlreadyInFlight && (
-            <SectionCard accent="cyan" intensity="subtle" data-testid="lesson-checkpoint-locked-by-material">
-              <p className="text-[17px] font-black text-shText"><i className="fas fa-lock mr-2 text-shSecondary" />Checkpoint locked</p>
-              <p className="text-[15px] text-shTextMuted mt-1">Finish the lesson material and Practice before submitting your checkpoint.</p>
-            </SectionCard>
+          {showCheckpointAhead && !showUnlockMoment && (
+            <p className="text-[16px] text-shTextMuted rounded-xl border border-shSecondary/25 bg-shSecondary/[0.04] px-3.5 py-2.5"
+               data-testid="lesson-checkpoint-ahead">
+              <i className="fas fa-clipboard-check mr-1.5 text-shSecondary" aria-hidden="true" />{checkpointAhead}
+            </p>
           )}
-          {isCurrent && requiresCp && hasPractice && (practiceUnlocked || checkpointAlreadyInFlight) && (
+          {showCheckpointPanel && (
             <CheckpointPanel
               lessonId={lessonId}
               deliveryMode={deliveryMode}
@@ -440,9 +448,63 @@ export default function LessonScreen({
               onContinue={advance}
             />
           )}
+
+          {practiceAgainLate && (
+            <PremiumButton variant="secondary" onClick={() => onStartPractice(lessonId)} disabled={busy} data-testid="lesson-start-practice"
+                           className="w-full justify-center min-h-[52px] text-[16px] sm:text-[17px]">
+              <i className="fas fa-paw text-[14px]" />{practiceButtonLabel(true)}
+            </PremiumButton>
+          )}
+
+          {practiceLocked && (
+            <div className="rounded-xl border border-shBorder bg-black/15 p-4" data-testid="lesson-practice-locked">
+              <p className="text-[18px] font-black text-shTextMuted">
+                <i className="fas fa-lock mr-2" aria-hidden="true" />Practice is locked
+              </p>
+              {remainingParts.length > 0 ? (
+                <>
+                  <p className="text-[16px] text-shTextMuted mt-1.5">Finish these parts first:</p>
+                  <ul className="mt-1 space-y-1" data-testid="lesson-practice-locked-parts">
+                    {remainingParts.map((label) => (
+                      <li key={label} className="flex items-start gap-2 text-[17px] text-shText">
+                        <i className="fas fa-circle text-[6px] mt-2.5 text-shSecondary" aria-hidden="true" />{label}
+                      </li>
+                    ))}
+                  </ul>
+                </>
+              ) : (
+                <p className="text-[17px] text-shTextMuted mt-1.5 leading-relaxed">
+                  {data.practice_locked_reason || "Finish the lesson material to unlock Practice."}
+                </p>
+              )}
+            </div>
+          )}
+
+          {isCurrent && requiresCp && hasPractice && !practiceUnlocked && !checkpointAlreadyInFlight && (
+            <p className="text-[15px] text-shTextMuted px-1" data-testid="lesson-checkpoint-locked-by-material">
+              <i className="fas fa-clipboard-check mr-1.5 text-shSecondary" aria-hidden="true" />This lesson ends with a short trainer check, after the parts and practice.
+            </p>
+          )}
         </>
       )}
       </div>
+
+      {data.skills?.length > 0 && (
+        <SectionCard accent="cyan" intensity="subtle">
+          <p className="text-[11px] font-black uppercase tracking-[0.14em] text-shSecondary mb-2"><i className="fas fa-star mr-1.5" />Skills you&apos;re building</p>
+          <div className="space-y-2">
+            {data.skills.map((s) => (
+              <div key={s.id} className="rounded-xl border border-shSecondary/40 bg-gradient-to-r from-shSecondary/[0.14] to-black/15 p-3 flex items-start gap-2.5">
+                <span className="w-7 h-7 rounded-lg grid place-items-center bg-shSecondary/20 border border-shSecondary/45 shrink-0"><i className="fas fa-bone text-shSecondary text-[14px]"/></span>
+                <span className="min-w-0">
+                  <p className="text-[16px] font-black text-shText">{s.name}</p>
+                  {s.client_facing_explanation && <p className="text-[15px] text-shTextMuted mt-1 leading-relaxed">{s.client_facing_explanation}</p>}
+                </span>
+              </div>
+            ))}
+          </div>
+        </SectionCard>
+      )}
     </div>
   );
 }

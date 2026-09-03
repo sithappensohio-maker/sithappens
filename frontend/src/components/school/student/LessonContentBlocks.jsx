@@ -108,7 +108,7 @@ function LinkedResourceMedia({ resource, type, title, alt, caption, testid }) {
  * asks for wherever existing behaviour permits it. No scoring rule is invented
  * here: this remains reinforcement and never unlocks or blocks anything.
  */
-function QuizBlock({ block }) {
+function QuizBlock({ block, onAnswered }) {
   const [answer, setAnswer] = useState("");
   const options = block.items || [];
   const correct = block.config?.correct_answer || null;
@@ -130,7 +130,7 @@ function QuizBlock({ block }) {
             return (
               <button key={o} type="button" data-testid={`quick-check-option-${block.id}-${options.indexOf(o)}`}
                       data-selected={on ? "true" : "false"} data-correct={right ? "true" : undefined}
-                      onClick={() => setAnswer(o)}
+                      onClick={() => { setAnswer(o); onAnswered?.(); }}
                       className={`w-full text-left rounded-xl border p-3.5 flex items-start gap-3 text-[16px] min-h-[56px] transition ${
                         right ? "border-shPrimary/55 bg-shPrimary/[0.09]"
                         : wrong ? "border-shAccent/45 bg-shAccent/[0.06]"
@@ -153,7 +153,7 @@ function QuizBlock({ block }) {
           <textarea value={answer} onChange={(e) => { setAnswer(e.target.value); setReflected(false); }} rows={3}
                     className="w-full rounded-xl border border-shBorder bg-black/15 p-3 text-shText text-[16px]" placeholder="Your answer" />
           {answer && !reflected && (
-            <button type="button" onClick={() => setReflected(true)} data-testid={`quick-check-submit-${block.id}`}
+            <button type="button" onClick={() => { setReflected(true); onAnswered?.(); }} data-testid={`quick-check-submit-${block.id}`}
                     className="min-h-[44px] px-4 rounded-xl border border-shSecondary/35 text-shSecondary text-[14px] font-black uppercase tracking-widest">
               Check answer
             </button>
@@ -182,7 +182,7 @@ function QuizBlock({ block }) {
   );
 }
 
-export default function LessonContentBlocks({ blocks = [], enrollmentId, previewMode = false, hideTitles = false }) {
+export default function LessonContentBlocks({ blocks = [], enrollmentId, previewMode = false, hideTitles = false, onQuizAnswered }) {
   const [resources, setResources] = useState([]);
   const active = [...blocks].filter((b) => b?.active !== false).sort((a, b) => (a.order || 0) - (b.order || 0));
   const resourceIds = useMemo(() => active.map((b) => b.resource_id).filter(Boolean), [active]);
@@ -212,7 +212,7 @@ export default function LessonContentBlocks({ blocks = [], enrollmentId, preview
       {previewMode && b.resource_id && !resourceById[b.resource_id] && ["video","image","download"].includes(b.type) && <div className="rounded-xl border border-dashed border-shSecondary/25 bg-shSecondary/[0.025] p-3"><i className={`fas ${b.type === "video" ? "fa-video" : b.type === "image" ? "fa-image" : "fa-download"} text-shSecondary mr-2`}/><span className="text-[16px] font-black text-shText">{b.title || "Linked School resource"}</span><span className="block text-[14px] text-shTextMuted mt-1">The selected resource will appear here for enrolled students.</span></div>}
       {b.type === "steps" && <SplitLines body={(b.items || []).length ? b.items.join("\n") : b.body} />}
       {b.type === "checklist" && <ChecklistBlock block={b} />}
-      {b.type === "quiz" && <QuizBlock block={b} />}
+      {b.type === "quiz" && <QuizBlock block={b} onAnswered={onQuizAnswered} />}
       {b.type === "timer" && <TimerBlock block={b} />}
       {b.type === "rep_counter" && <RepBlock block={b} />}
       {b.type === "download" && !b.resource_id && <a href={b.url || "#"} target="_blank" rel="noreferrer" className="inline-flex min-h-[42px] items-center px-4 rounded-xl border border-shSecondary/35 text-shSecondary text-[14px] font-black uppercase tracking-widest"><i className="fas fa-download mr-2"/>Open resource</a>}

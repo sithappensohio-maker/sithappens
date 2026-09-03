@@ -40,6 +40,7 @@ export default function ClientMobileNav({
       <nav
         className="md:hidden fixed bottom-0 inset-x-0 z-30 bg-bgHeader border-t border-shBorder pb-safe flex items-stretch shadow-sh"
         data-testid="client-mobile-nav"
+        data-bottom-dock=""
       >
         <NavButton icon="fa-house" label="Home" onClick={onHome} testid="mobile-nav-home" />
         <NavButton icon="fa-calendar-plus" label="Book" onClick={onBook} testid="mobile-nav-book" />

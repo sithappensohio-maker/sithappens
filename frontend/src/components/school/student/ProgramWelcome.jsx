@@ -3,10 +3,13 @@ import EmptyState from "../../training/EmptyState";
 import HuskyDogImage from "../../brand/HuskyDogImage";
 import ModuleIconTile from "../ModuleIconTile";
 import { moduleHue } from "../../../lib/moduleIcons";
+import { OrientationSteps } from "./SchoolOrientation";
 
-/* Program Welcome — the orientation page for a School program: what this
- * program covers, how School works, and a full read-only index of every
- * module and lesson from day one.
+/* Program Welcome — THE one first-time orientation for a School program:
+ * what this program covers, how School works (the same four steps the
+ * on-demand "How School works" overlay uses), and a full read-only index of
+ * every module and lesson from day one. Its one button hands the client
+ * straight to their current Today action.
  *
  * Content comes from detail.welcome (see _school_welcome_payload): the index
  * is the enrollment's own frozen snapshot reduced to names/minutes/quiz
@@ -64,7 +67,7 @@ function IndexModule({ module: m, position, defaultOpen }) {
   );
 }
 
-export default function ProgramWelcome({ detail, progress, onStart, onViewCourse }) {
+export default function ProgramWelcome({ detail, progress, onStart, onViewCourse, actionLabel = null }) {
   if (!detail) {
     return (
       <div className="space-y-3" data-testid="program-welcome-loading">
@@ -86,6 +89,9 @@ export default function ProgramWelcome({ detail, progress, onStart, onViewCourse
   const completed = detail.status === "completed";
   const started = (progress?.lessons_completed ?? 0) > 0 || completed;
   const inPerson = detail.delivery_mode === "in_person";
+  // The button says what School will actually do next (the server's current
+  // action label) — "Start Lesson 1" only when that really is the next step.
+  const startLabel = completed ? "Review your course" : (actionLabel || (started ? "Continue training" : "Start Lesson 1"));
 
   const chips = [
     detail.dog_name || null,
@@ -99,14 +105,21 @@ export default function ProgramWelcome({ detail, progress, onStart, onViewCourse
       {/* ------------------------------------------------------------- Hero */}
       <section className="relative overflow-hidden rounded-3xl border border-shPrimary/40 bg-gradient-to-br from-shPrimary/[0.11] via-black/18 to-shSecondary/[0.055]">
         <div className="flex items-stretch">
-          <div className="min-w-0 flex-1 p-5 sm:p-7">
+          <div className="min-w-0 flex-1 p-4 sm:p-7">
             <p className="text-[13px] font-black uppercase tracking-[0.2em] text-shPrimary"><i className="fas fa-paw mr-1.5" />Welcome to your program</p>
             <h1 className="text-[25px] sm:text-[32px] font-black text-shText leading-tight mt-2 text-balance" data-testid="welcome-program-name">
               {detail.program_name || "Your program"}
             </h1>
-            {w.focus && <p className="text-[16px] sm:text-[17px] text-shTextMuted mt-2 leading-relaxed">{w.focus}</p>}
+            <p className="text-[17px] sm:text-[18px] text-shText mt-2 leading-snug" data-testid="welcome-promise">
+              School tells you what to do with {dogName}, one step at a time. The big green button is always the next thing to do.
+            </p>
+            <button type="button" onClick={completed ? onViewCourse : onStart} data-testid="welcome-start" data-school-primary="true"
+                    className="mt-3.5 w-full sm:w-auto sm:px-8 min-h-[54px] rounded-xl bg-shPrimary text-[#071018] font-black text-[17px] uppercase tracking-widest inline-flex items-center justify-center gap-2 hover:brightness-110 transition shadow-[0_12px_34px_-12px_rgba(140,198,63,0.8)]">
+              {startLabel}<i className="fas fa-arrow-right text-[14px]" />
+            </button>
+            {w.focus && <p className="text-[16px] sm:text-[17px] text-shTextMuted mt-3 leading-relaxed">{w.focus}</p>}
             {chips.length > 0 && (
-              <div className="flex flex-wrap gap-1.5 mt-3.5">
+              <div className="flex flex-wrap gap-1.5 mt-3">
                 {chips.map((c, i) => (
                   <span key={c} className={`text-[13px] font-black uppercase tracking-widest px-2.5 py-1.5 rounded-full border ${i === 0 && detail.dog_name ? "text-shPrimary border-shPrimary/40 bg-shPrimary/10" : "text-shTextMuted border-shBorder bg-black/20"}`}>
                     {c}
@@ -114,13 +127,9 @@ export default function ProgramWelcome({ detail, progress, onStart, onViewCourse
                 ))}
               </div>
             )}
-            <button type="button" onClick={completed ? onViewCourse : onStart} data-testid="welcome-start"
-                    className="mt-5 w-full sm:w-auto sm:px-8 min-h-[54px] rounded-xl bg-shPrimary text-[#071018] font-black text-[17px] uppercase tracking-widest inline-flex items-center justify-center gap-2 hover:brightness-110 transition shadow-[0_12px_34px_-12px_rgba(140,198,63,0.8)]">
-              {completed ? "Review your course" : started ? "Continue training" : "Start Lesson 1"}<i className="fas fa-arrow-right text-[14px]" />
-            </button>
             {!completed && (
               <button type="button" onClick={onViewCourse} data-testid="welcome-skip-to-course"
-                      className="mt-2 w-full sm:w-auto sm:px-6 sm:ml-2 min-h-[44px] rounded-xl border border-shBorder bg-black/15 text-shTextMuted font-black text-[14px] uppercase tracking-widest inline-flex items-center justify-center gap-2 hover:border-shPrimary/40 hover:text-shText transition">
+                      className="mt-1 w-full sm:w-auto sm:ml-2 min-h-[44px] px-2 text-shTextMuted font-black text-[13px] uppercase tracking-widest inline-flex items-center justify-center gap-2 hover:text-shText transition">
                 Skip to all lessons
               </button>
             )}
@@ -130,6 +139,20 @@ export default function ProgramWelcome({ detail, progress, onStart, onViewCourse
             <div className="absolute inset-0 bg-gradient-to-r from-[var(--sh-card-base)] via-transparent to-transparent" />
           </div>
         </div>
+      </section>
+
+      {/* ------------------------------------------------------ How it works */}
+      <section className="rounded-2xl border border-shBorder/60 bg-[var(--sh-card-base)] p-4 sm:p-5" data-testid="welcome-how-it-works">
+        <p className="text-[13px] font-black uppercase tracking-[0.18em] text-shSecondary">How School works</p>
+        <div className="mt-3">
+          <OrientationSteps dogName={detail.dog_name} inPerson={inPerson} testid="welcome-orientation-steps" />
+        </div>
+        <p className="text-[15px] text-shTextMuted mt-3 leading-relaxed">
+          {inPerson
+            ? "Train with your trainer: your trainer advances your lessons during your in-person sessions and keeps your plan on track."
+            : "Your trainer checks in: send videos, ask questions, and pass each module's check before the next one unlocks."}
+          {" "}If you ever get lost, go back to <strong className="text-shText">Today</strong>.
+        </p>
       </section>
 
       {/* -------------------------------------------------- What's covered */}
@@ -151,28 +174,6 @@ export default function ProgramWelcome({ detail, progress, onStart, onViewCourse
           )}
         </section>
       )}
-
-      {/* ------------------------------------------------------ How it works */}
-      <section className="rounded-2xl border border-shBorder/60 bg-[var(--sh-card-base)] p-4 sm:p-5" data-testid="welcome-how-it-works">
-        <p className="text-[13px] font-black uppercase tracking-[0.18em] text-shSecondary">How it works</p>
-        <div className="mt-3 space-y-3">
-          {[
-            { t: "Watch the lesson", s: "Short videos and exact steps — most lessons take under 15 minutes." },
-            { t: `Practice with ${dogName}`, s: "Each lesson gives you a practice plan. Log your practice so your trainer can see how it's going." },
-            inPerson
-              ? { t: "Train with your trainer", s: "Your trainer advances your lessons during your in-person sessions and keeps your plan on track." }
-              : { t: "Your trainer checks in", s: "Send videos, ask questions, and pass each module's check before the next one unlocks." },
-          ].map((step, i) => (
-            <div key={step.t} className="flex items-start gap-3">
-              <span className="w-6 h-6 rounded-full grid place-items-center shrink-0 border border-shSecondary/45 bg-shSecondary/10 text-shSecondary text-[14px] font-black">{i + 1}</span>
-              <div className="min-w-0">
-                <p className="text-[16px] font-black text-shText leading-snug">{step.t}</p>
-                <p className="text-[15px] text-shTextMuted leading-relaxed mt-0.5">{step.s}</p>
-              </div>
-            </div>
-          ))}
-        </div>
-      </section>
 
       {/* ---------------------------------------------------- Program index */}
       <section className="rounded-2xl border border-shBorder/60 bg-[var(--sh-card-base)] overflow-hidden" data-testid="welcome-index">

@@ -14,6 +14,7 @@ import { useState } from "react";
 import NeonEdge from "../../premium/NeonEdge";
 import PremiumButton from "../../premium/PremiumButton";
 import PracticeMediaUploader from "../../training/PracticeMediaUploader";
+import { useImmersiveWorkflow } from "../../../lib/immersiveWorkflow";
 import {
   checkpointState, CheckpointHero, ScoredCriteria, SkillsCovered, SubmissionRequirements,
   WhatHappensNext, PassCelebration, TrainerFeedback, RubricBreakdown, CheckpointScores, nextStepAfter,
@@ -251,6 +252,8 @@ export default function CheckpointPanel({
 }
 
 function CheckpointSubmitForm({ rubric, skills, moduleName, dogName, onSubmit, busy, resubmit }) {
+  // Filming and sending the trainer check is an immersive workflow.
+  useImmersiveWorkflow(true);
   const [videoFile, setVideoFile] = useState(null);
   const [videoDataUrl, setVideoDataUrl] = useState("");
   const [videoErr, setVideoErr] = useState("");

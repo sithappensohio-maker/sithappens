@@ -43,7 +43,9 @@ export default function PracticeScreen({ home, loading, onOpenPractice, onPrimar
             ? `Start here — ${b.overdue.length} practice ${b.overdue.length === 1 ? "session is" : "sessions are"} past due.`
             : openCount > 0
               ? `Short reps between lessons are what make it stick${dogName ? ` for ${dogName}` : ""}.`
-              : "Nothing outstanding right now — your next lesson will assign more when it's time."}
+              : b.done.length > 0
+                ? "Today's practice is logged. Practice again any time if you want more reps."
+                : "Nothing outstanding right now — your next lesson will assign more when it's time."}
         </p>
       </header>
 
@@ -65,6 +67,11 @@ export default function PracticeScreen({ home, loading, onOpenPractice, onPrimar
       <PracticeGroup testid="practice-group-upcoming" title="Also assigned" state="open" items={b.upcoming}
                      onOpen={onOpenPractice} />
 
+      {/* Secondary to everything unfinished above: the required practice School
+          already counted for today (server-decided), open for more reps. */}
+      <PracticeGroup testid="practice-group-done" title="Done for today" state="done" items={b.done}
+                     hint="Logged. Practice again any time if you want more reps." onOpen={onOpenPractice} />
+
       {b.completed.length > 0 && (
         <section data-testid="practice-group-completed" className="space-y-2.5">
           <p className="text-[12px] font-black uppercase tracking-[0.18em] text-shTextMuted">Recently completed</p>
@@ -74,7 +81,7 @@ export default function PracticeScreen({ home, loading, onOpenPractice, onPrimar
         </section>
       )}
 
-      {all.length === 0 && !practiceIsNext && (
+      {all.length === 0 && !practiceIsNext && b.done.length === 0 && (
         <EmptyState icon="fa-paw" accent="lime" title="No practice assigned yet"
                     message="Your trainer assigns practice as you move through the course."
                     testid="practice-empty" />

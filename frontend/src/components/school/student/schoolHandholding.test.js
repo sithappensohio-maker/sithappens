@@ -76,9 +76,13 @@ test("a fresh lesson has an unmistakable Start Lesson moment", () => {
 });
 
 test("lesson progress uses the same part count the client can actually see", () => {
+  // "Part 3 of 5" counts numbered instructional parts only; the full map of
+  // parts is collapsed behind "Show all parts" so seven completed/locked cards
+  // never compete with the one current action.
   expect(guideSrc).toMatch(/Lesson journey/);
-  expect(guideSrc).toMatch(/Part \{partIndex \+ 1\} of \{sections\.length\}/);
-  expect(guideSrc).toMatch(/> div:first-child\{display:none!important/);
+  expect(guideSrc).toMatch(/Part \$\{pos\.index \|\| 1\} of \$\{pos\.total\}/);
+  expect(guideSrc).toMatch(/Show all parts/);
+  expect(guideSrc).toMatch(/lesson-journey-then/);
 });
 
 test("Today explains the current server action instead of expecting the client to interpret it", () => {

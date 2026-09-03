@@ -104,12 +104,55 @@ function RepetitionPrimer({ repsPerRound, roundIndex, roundsPerDay, testid }) {
   );
 }
 
-function LiveRecipeGuide({ practiceCoach, tokens }) {
+/* The live cue — what to do for THIS rep. Sits directly above the scoring
+   buttons so a beginner holding a dog sees the instruction and the two
+   buttons together, without scrolling. */
+function CueCard({ practiceCoach, tokens, testid }) {
   const pc = practiceCoach || {};
   const gp = pc.guided_practice || {};
   const steps = (pc.steps || []).filter((s) => s && (s.title || s.instruction));
   return (
+      <section className="rounded-2xl border border-shBorder/60 bg-black/15 p-3.5 sm:p-5 max-[359px]:p-3" data-testid={testid}>
+        <p className="text-[11px] font-black uppercase tracking-[0.16em] text-shPrimary"><i className="fas fa-list-check mr-1.5" />Do This Rep</p>
+        {gp.cue_prompt && <p className="text-[20px] sm:text-[24px] font-black text-white mt-1 sm:mt-1.5 leading-snug">{renderPracticeCoachText(gp.cue_prompt, tokens)}</p>}
+        {gp.ready_instruction && <p className="text-[15px] sm:text-[16px] text-shTextMuted mt-1.5 sm:mt-2 leading-relaxed">{renderPracticeCoachText(gp.ready_instruction, tokens)}</p>}
+        {steps.length > 0 && (
+          /* The recipe steps were on the overview the customer just read; here
+             they open on request so the cue and the buttons stay together. */
+          <details className="mt-2.5 sm:mt-3">
+            <summary className="cursor-pointer min-h-[36px] flex items-center text-[14px] font-black text-shSecondary list-none">
+              <i className="fas fa-chevron-right mr-2 text-[11px]" aria-hidden="true" />The steps ({steps.length})
+            </summary>
+            <ol className="mt-2 space-y-2">
+              {steps.slice(0, 6).map((step, i) => (
+                <li key={step.id || i} className="flex gap-3 items-start">
+                  <span className="w-6 h-6 rounded-lg bg-shSecondary/10 border border-shSecondary/25 text-shSecondary text-[13px] font-black grid place-items-center shrink-0">{i + 1}</span>
+                  <div className="min-w-0">
+                    {step.title && <p className="text-[15px] font-black text-shText leading-snug">{renderPracticeCoachText(step.title, tokens)}</p>}
+                    {step.instruction && <p className="text-[14px] sm:text-[15px] text-shTextMuted mt-0.5 leading-relaxed">{renderPracticeCoachText(step.instruction, tokens)}</p>}
+                  </div>
+                </li>
+              ))}
+            </ol>
+          </details>
+        )}
+      </section>
+  );
+}
+
+/* Goal + what counts / what to reset — reference material for the rep loop.
+   Rendered UNDER the scoring buttons so it is there to read, not in the way. */
+function LiveRecipeGuide({ practiceCoach, tokens }) {
+  const pc = practiceCoach || {};
+  const gp = pc.guided_practice || {};
+  return (
     <div className="space-y-3">
+      <div className="grid gap-3 sm:grid-cols-2">
+        <TextSequence title="What Counts" items={pc.good_rep?.sequence} explanation={pc.good_rep?.explanation}
+                      fallback={pc.success_today} tokens={tokens} tone="good" />
+        <TextSequence title="Reset This Rep" items={pc.not_this?.sequence} explanation={pc.not_this?.explanation}
+                      fallback={gp.miss_message} tokens={tokens} tone="reset" />
+      </div>
       {(pc.goal || pc.success_today) && (
         <section className="rounded-2xl border border-shSecondary/25 bg-shSecondary/[0.045] p-4 sm:p-5">
           <p className="text-[11px] font-black uppercase tracking-[0.16em] text-shSecondary"><i className="fas fa-bullseye mr-1.5" />Today&apos;s Goal</p>
@@ -117,32 +160,6 @@ function LiveRecipeGuide({ practiceCoach, tokens }) {
           {pc.success_today && <p className="text-[15px] sm:text-[16px] text-shTextMuted mt-2 leading-relaxed"><span className="font-black text-shText">Success today: </span>{renderPracticeCoachText(pc.success_today, tokens)}</p>}
         </section>
       )}
-
-      <section className="rounded-2xl border border-shBorder/60 bg-black/15 p-4 sm:p-5">
-        <p className="text-[11px] font-black uppercase tracking-[0.16em] text-shPrimary"><i className="fas fa-list-check mr-1.5" />Do This Rep</p>
-        {gp.cue_prompt && <p className="text-[21px] sm:text-[24px] font-black text-white mt-1.5 leading-snug">{renderPracticeCoachText(gp.cue_prompt, tokens)}</p>}
-        {gp.ready_instruction && <p className="text-[15px] sm:text-[16px] text-shTextMuted mt-2 leading-relaxed">{renderPracticeCoachText(gp.ready_instruction, tokens)}</p>}
-        {steps.length > 0 && (
-          <ol className="mt-4 space-y-2">
-            {steps.slice(0, 6).map((step, i) => (
-              <li key={step.id || i} className="flex gap-3 items-start">
-                <span className="w-6 h-6 rounded-lg bg-shSecondary/10 border border-shSecondary/25 text-shSecondary text-[13px] font-black grid place-items-center shrink-0">{i + 1}</span>
-                <div className="min-w-0">
-                  {step.title && <p className="text-[15px] font-black text-shText leading-snug">{renderPracticeCoachText(step.title, tokens)}</p>}
-                  {step.instruction && <p className="text-[14px] sm:text-[15px] text-shTextMuted mt-0.5 leading-relaxed">{renderPracticeCoachText(step.instruction, tokens)}</p>}
-                </div>
-              </li>
-            ))}
-          </ol>
-        )}
-      </section>
-
-      <div className="grid gap-3 sm:grid-cols-2">
-        <TextSequence title="What Counts" items={pc.good_rep?.sequence} explanation={pc.good_rep?.explanation}
-                      fallback={pc.success_today} tokens={tokens} tone="good" />
-        <TextSequence title="Reset This Rep" items={pc.not_this?.sequence} explanation={pc.not_this?.explanation}
-                      fallback={gp.miss_message} tokens={tokens} tone="reset" />
-      </div>
     </div>
   );
 }
@@ -173,38 +190,35 @@ export default function GuidedPracticeFlow({ practiceCoach, tokens, onOpenTroubl
 
   return (
     <div className="space-y-4 sm:space-y-5" data-testid={testid}>
-      <div className="rounded-2xl border border-shSecondary/25 bg-gradient-to-br from-shSecondary/[0.07] via-black/15 to-black/25 p-4 sm:p-5">
-        <div className="flex items-center justify-between gap-4">
-          <div>
-            <p className="text-[11px] font-black uppercase tracking-[0.16em] text-shSecondary">Guided Practice</p>
-            <p className="text-[18px] sm:text-[20px] font-black text-shText mt-1" data-testid={testid ? `${testid}-round` : undefined}>Round {state.roundIndex + 1} of {state.roundsPerDay}</p>
+      {/* Compact on phones: the counters are one row so the cue and the two
+          scoring buttons fit under them on a 320×568 screen. */}
+      <div className="rounded-2xl border border-shSecondary/25 bg-gradient-to-br from-shSecondary/[0.07] via-black/15 to-black/25 p-3 sm:p-5">
+        <div className="flex items-center justify-between gap-3">
+          <div className="min-w-0">
+            <p className="text-[11px] font-black uppercase tracking-[0.16em] text-shSecondary max-[359px]:hidden">Guided Practice</p>
+            <p className="text-[16px] sm:text-[20px] font-black text-shText mt-0.5 sm:mt-1" data-testid={testid ? `${testid}-round` : undefined}>Round {state.roundIndex + 1} of {state.roundsPerDay}</p>
           </div>
-          <div className="text-right">
-            <p className="text-[11px] font-black uppercase tracking-[0.14em] text-shTextMuted">Current repetition</p>
-            <p className="text-[17px] font-black text-shText mt-1" data-testid={testid ? `${testid}-rep` : undefined}>{Math.min(state.repIndex + 1, state.repsPerRound)} / {state.repsPerRound}</p>
+          <div className="text-right shrink-0">
+            <p className="text-[11px] font-black uppercase tracking-[0.14em] text-shTextMuted">Rep</p>
+            <p className="text-[16px] sm:text-[17px] font-black text-shText mt-0.5 sm:mt-1" data-testid={testid ? `${testid}-rep` : undefined}>{Math.min(state.repIndex + 1, state.repsPerRound)} / {state.repsPerRound}</p>
           </div>
         </div>
-        <div className="h-2 rounded-full bg-white/[0.055] overflow-hidden mt-4"><div className="h-full rounded-full bg-gradient-to-r from-shSecondary to-shPrimary transition-all" style={{ width: `${roundPct}%` }}/></div>
-        <p className="text-[13px] text-shTextMuted mt-2 flex flex-wrap items-center gap-x-2.5 gap-y-1" data-testid={testid ? `${testid}-session-progress` : undefined}>
+        <div className="h-1.5 sm:h-2 rounded-full bg-white/[0.055] overflow-hidden mt-2.5 sm:mt-4"><div className="h-full rounded-full bg-gradient-to-r from-shSecondary to-shPrimary transition-all" style={{ width: `${roundPct}%` }}/></div>
+        <p className="text-[13px] text-shTextMuted mt-2 hidden sm:flex flex-wrap items-center gap-x-2.5 gap-y-1" data-testid={testid ? `${testid}-session-progress` : undefined}>
           <span className="font-black text-shTextMuted">{session.done} of {session.total} complete tries today</span>
           {schedule.minutes_per_round ? <span>· about {schedule.minutes_per_round} min a round</span> : null}
           {schedule.target_response_seconds ? <span>· give {schedule.target_response_seconds}s to respond each try</span> : null}
         </p>
       </div>
 
-      {state.phase === "active" && (
-        <RepetitionPrimer repsPerRound={state.repsPerRound} roundIndex={state.roundIndex} roundsPerDay={state.roundsPerDay}
-                          testid={testid ? `${testid}-repetition-primer` : undefined} />
-      )}
-
       {state.phase === "active" && !state.lastOutcome && (
         <>
-          <LiveRecipeGuide practiceCoach={practiceCoach} tokens={tokens} />
-          <section className="rounded-3xl border border-shPrimary/30 bg-gradient-to-br from-shPrimary/[0.07] via-black/15 to-black/30 p-5 sm:p-6 shadow-[0_18px_55px_-38px_rgba(140,198,63,0.8)]">
+          <CueCard practiceCoach={practiceCoach} tokens={tokens} testid={testid ? `${testid}-cue` : undefined} />
+          <section className="rounded-3xl border border-shPrimary/30 bg-gradient-to-br from-shPrimary/[0.07] via-black/15 to-black/30 p-3.5 sm:p-6 shadow-[0_18px_55px_-38px_rgba(140,198,63,0.8)]" data-testid={testid ? `${testid}-score` : undefined}>
             <div className="flex items-center justify-between gap-3">
               <div>
                 <p className="text-[11px] font-black uppercase tracking-[0.16em] text-shPrimary">Repetition {state.repIndex + 1} of {state.repsPerRound}</p>
-                <p className="text-[18px] sm:text-[20px] font-black text-shText mt-1">
+                <p className="text-[16px] sm:text-[20px] font-black text-shText mt-0.5 sm:mt-1 leading-snug max-[359px]:hidden">
                   {state.repIndex === 0
                     ? "Do the full sequence once, then score what happened."
                     : "Start over at Step 1 and do the same training sequence again."}
@@ -222,19 +236,31 @@ export default function GuidedPracticeFlow({ practiceCoach, tokens, onOpenTroubl
                 </span>
               ) : null}
             </div>
-            <div className="grid gap-3 sm:grid-cols-2 mt-5">
+            <div className="grid grid-cols-2 gap-2.5 sm:gap-3 mt-3.5 sm:mt-5 max-[359px]:mt-2.5">
               <button type="button" onClick={() => record("success")} data-testid={testid ? `${testid}-success` : undefined}
-                      className="min-h-[72px] rounded-2xl bg-shPrimary/14 text-shPrimary border border-shPrimary/55 px-4 py-3 font-black text-[16px] sm:text-[17px] uppercase tracking-[0.08em] hover:bg-shPrimary/20 active:scale-[0.98] transition">
-                <i className="fas fa-check mr-2"/>{gp.success_button_label || "YES — THAT COUNTED"}
-                <span className="block mt-1 text-[13px] normal-case tracking-normal font-semibold text-shTextMuted">Count this complete try</span>
+                      className="min-h-[64px] sm:min-h-[72px] rounded-2xl bg-shPrimary/14 text-shPrimary border border-shPrimary/55 px-2.5 sm:px-4 py-3 font-black text-[15px] sm:text-[17px] uppercase tracking-[0.06em] sm:tracking-[0.08em] hover:bg-shPrimary/20 active:scale-[0.98] transition">
+                <i className="fas fa-check mr-1.5 sm:mr-2"/>{gp.success_button_label || "YES — THAT COUNTED"}
+                <span className="hidden sm:block mt-1 text-[13px] normal-case tracking-normal font-semibold text-shTextMuted">Count this complete try</span>
               </button>
               <button type="button" onClick={() => record("miss")} data-testid={testid ? `${testid}-miss` : undefined}
-                      className="min-h-[72px] rounded-2xl bg-shDanger/[0.07] text-shDanger border border-shDanger/45 px-4 py-3 font-black text-[16px] sm:text-[17px] uppercase tracking-[0.08em] hover:bg-shDanger/10 active:scale-[0.98] transition">
-                <i className="fas fa-rotate-left mr-2"/>{gp.miss_button_label || "NO — RESET THIS REP"}
-                <span className="block mt-1 text-[13px] normal-case tracking-normal font-semibold text-shTextMuted">Record it, then reset before trying again</span>
+                      className="min-h-[64px] sm:min-h-[72px] rounded-2xl bg-shDanger/[0.07] text-shDanger border border-shDanger/45 px-2.5 sm:px-4 py-3 font-black text-[15px] sm:text-[17px] uppercase tracking-[0.06em] sm:tracking-[0.08em] hover:bg-shDanger/10 active:scale-[0.98] transition">
+                <i className="fas fa-rotate-left mr-1.5 sm:mr-2"/>{gp.miss_button_label || "NO — RESET THIS REP"}
+                <span className="hidden sm:block mt-1 text-[13px] normal-case tracking-normal font-semibold text-shTextMuted">Record it, then reset before trying again</span>
               </button>
             </div>
           </section>
+          <LiveRecipeGuide practiceCoach={practiceCoach} tokens={tokens} />
+          {/* The explainer is reference material, not the first thing a
+              person holding a dog needs; it opens on request. */}
+          <details className="rounded-2xl border border-shBorder/50 bg-black/10 px-4 py-2" data-testid={testid ? `${testid}-primer-details` : undefined}>
+            <summary className="cursor-pointer min-h-[44px] flex items-center text-[16px] font-black text-shText list-none">
+              <i className="fas fa-repeat mr-2 text-shSecondary" aria-hidden="true" />How this round works
+            </summary>
+            <div className="pb-2">
+              <RepetitionPrimer repsPerRound={state.repsPerRound} roundIndex={state.roundIndex} roundsPerDay={state.roundsPerDay}
+                                testid={testid ? `${testid}-repetition-primer` : undefined} />
+            </div>
+          </details>
         </>
       )}
 

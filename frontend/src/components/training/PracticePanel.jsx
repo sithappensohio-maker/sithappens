@@ -12,6 +12,7 @@ import { toast } from "sonner";
 import { todayISO } from "../../lib/date";
 import { assignmentCardModel } from "../../lib/clientPracticePolish";
 import { hasCoachMode, quickPracticeAllowed, renderPracticeCoachText } from "../../lib/practiceCoachPolish";
+import { useImmersiveWorkflow } from "../../lib/immersiveWorkflow";
 import VideoDemoCard from "./VideoDemoCard";
 import PracticeInstructionSteps from "./PracticeInstructionSteps";
 import EquipmentChips from "./EquipmentChips";
@@ -121,8 +122,24 @@ function guidedResultItems(metrics, timerSec) {
   return items;
 }
 
-export default function PracticePanel({ homework, dogPhoto, onClose, onChanged, onPracticeLogged, onCompleted }) {
+// Minimum a "log what we did" (Quick Practice) session must say before it
+// counts. A bare tap must never register as the practice School requires.
+export const QUICK_LOG_MIN_NOTE = 12;
+export function quickLogIsMeaningful({ difficulty, note, values }) {
+  const noteOk = String(note || "").trim().length >= QUICK_LOG_MIN_NOTE;
+  const fieldOk = Object.values(values || {}).some((v) => v !== "" && v !== undefined && v !== null && v !== false);
+  return !!difficulty && (noteOk || fieldOk);
+}
+const QUICK_LOG_HINT = "Tell us what you practiced (a sentence is fine, or fill in the results) and how it felt before saving.";
+
+export default function PracticePanel({ homework, dogPhoto, onClose, onChanged, onPracticeLogged, onCompleted, schoolLesson = null }) {
   const model = assignmentCardModel(homework);
+  // Launched from School (a lesson's practice) vs. ordinary homework. School
+  // shows the lesson name and requires a meaningful "log what we did" entry.
+  const schoolFlow = !!onCompleted || !!schoolLesson?.name;
+  const bodyRef = useRef(null);
+  // Practice Coach is an immersive workflow: passive overlays stay out of the way.
+  useImmersiveWorkflow(true);
   const isDailyTracker = !!homework.daily_tracker;
   const readOnly = model.status === "completed" || model.status === "waiting_review";
   const activeDay = model.actionableDay;
@@ -196,9 +213,21 @@ export default function PracticePanel({ homework, dogPhoto, onClose, onChanged, 
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [viewMode]);
 
+  // Each Coach screen (overview → guided → wrap-up) starts at its top: the
+  // cue and the scoring buttons on entering guided, the results on wrap-up.
+  useEffect(() => {
+    if (bodyRef.current) bodyRef.current.scrollTop = 0;
+  }, [viewMode]);
+
+  const quickLogValid = quickLogIsMeaningful({ difficulty, note, values });
+
   const submit = async () => {
     if (saveState === "saving" || saveState === "saved") return;
     if (submittingRef.current) return;
+    if (entryContext === "quick" && schoolFlow && !quickLogValid) {
+      setSaveState("error"); setErrorMessage(QUICK_LOG_HINT);
+      return;
+    }
     submittingRef.current = true;
     setSaveState("saving"); setErrorMessage("");
     try {
@@ -338,14 +367,15 @@ export default function PracticePanel({ homework, dogPhoto, onClose, onChanged, 
           <div className="flex items-center gap-3 min-w-0">
             <div className="w-11 h-11 sm:w-12 sm:h-12 rounded-xl overflow-hidden border border-shPrimary/30 bg-black/35 shrink-0"><HuskyDogImage src={dogPhoto} name={homework.dog_name} alt={homework.dog_name} className="w-full h-full object-cover object-top"/></div>
             <div className="min-w-0">
-              <div className="flex items-center gap-2"><p className="text-[11px] font-black uppercase tracking-[0.16em] text-shPrimary">Practice Coach</p><span className="w-1 h-1 rounded-full bg-shBorder"/><p className="text-[11px] font-black uppercase tracking-[0.12em] text-shSecondary truncate">{homework.dog_name}</p></div>
-              <h3 className="text-[19px] sm:text-[21px] font-black text-shText truncate mt-0.5">{homework.title}</h3>
+              <div className="flex items-center gap-2"><p className="text-[11px] font-black uppercase tracking-[0.16em] text-shPrimary">Practice Coach</p><span className="w-1 h-1 rounded-full bg-shBorder"/><p className="text-[11px] font-black uppercase tracking-[0.12em] text-shSecondary truncate">{schoolLesson?.name ? "School" : homework.dog_name}</p></div>
+              <h3 className="text-[19px] sm:text-[21px] font-black text-shText truncate mt-0.5" data-testid="practice-panel-title">{schoolLesson?.name || homework.title}</h3>
+              {schoolLesson?.name && <p className="text-[13px] text-shTextMuted truncate" data-testid="practice-panel-subtitle">{homework.dog_name}{schoolLesson.moduleName ? ` · ${schoolLesson.moduleName}` : ""}</p>}
             </div>
           </div>
-          <button onClick={onClose} data-testid="practice-panel-close" className="w-10 h-10 rounded-xl border border-shBorder/55 bg-black/15 text-shTextMuted hover:text-shText hover:bg-white/[0.03] grid place-items-center shrink-0"><i className="fas fa-times"/></button>
+          <button onClick={onClose} data-testid="practice-panel-close" aria-label="Close practice" className="w-10 h-10 rounded-xl border border-shBorder/55 bg-black/15 text-shTextMuted hover:text-shText hover:bg-white/[0.03] grid place-items-center shrink-0"><i className="fas fa-times"/></button>
         </div>
 
-        <div className="relative overflow-y-auto flex-1 min-h-0 px-3 sm:px-5 lg:px-6 py-4 sm:py-5 space-y-4 sm:space-y-5 pb-[max(1rem,env(safe-area-inset-bottom))]">
+        <div ref={bodyRef} className="relative overflow-y-auto flex-1 min-h-0 px-3 sm:px-5 lg:px-6 py-4 sm:py-5 space-y-4 sm:space-y-5 pb-[max(1rem,env(safe-area-inset-bottom))]" data-testid="practice-panel-body">
           {viewMode === "complete" ? (
             <div className="flex flex-col items-center justify-center text-center py-10 sm:py-14 space-y-4" data-testid="practice-complete-state">
               <span className="w-16 h-16 rounded-2xl bg-shPrimary/15 border border-shPrimary/40 grid place-items-center"><i className="fas fa-check text-shPrimary text-2xl" /></span>
@@ -393,18 +423,19 @@ export default function PracticePanel({ homework, dogPhoto, onClose, onChanged, 
                 onStartGuided={startGuided}
                 onQuickPractice={quickPracticeAllowed(practiceCoach) ? startQuickPractice : undefined}
                 onOpenTroubleshooting={() => setTroubleshootingOpen(true)}
+                schoolFlow={schoolFlow} lessonName={schoolLesson?.name || null}
                 testid="coach-overview"
               />
             </>
           ) : coachEnabled && viewMode === "guided" ? (
             <>
-              {timerCard}
               <GuidedPracticeFlow
                 practiceCoach={practiceCoach} tokens={tokens}
                 onOpenTroubleshooting={() => setTroubleshootingOpen(true)}
                 onFinish={finishGuided}
                 testid="coach-guided"
               />
+              {timerCard}
             </>
           ) : (
             <>
@@ -440,6 +471,13 @@ export default function PracticePanel({ homework, dogPhoto, onClose, onChanged, 
                     {estimatedMinutes ? <span><i className="fas fa-clock mr-1"/>{estimatedMinutes} min</span> : null}
                   </div>
 
+                  {entryContext === "quick" && schoolFlow && (
+                    <SectionCard accent="cyan" intensity="subtle" data-testid="practice-quick-log-intro">
+                      <p className="text-[11px] font-black uppercase tracking-[0.15em] text-shSecondary mb-1.5">Log what you already did</p>
+                      <p className="text-[18px] text-shText font-black leading-snug">Tell us what you practiced with {homework.dog_name || "your dog"} and how it felt.</p>
+                      <p className="text-[15px] text-shTextMuted mt-1.5 leading-relaxed">School counts this as today&apos;s practice, so it needs a little real information: how it felt, plus a sentence about what you did or the results below.</p>
+                    </SectionCard>
+                  )}
                   {entryContext === "quick" && practiceCoach?.goal && (
                     <SectionCard accent="lime" intensity="subtle">
                       <p className="text-[11px] font-black uppercase tracking-[0.15em] text-shPrimary mb-1.5">Quick Practice Goal</p>
@@ -473,6 +511,10 @@ export default function PracticePanel({ homework, dogPhoto, onClose, onChanged, 
               )}
 
               <PracticeCompletionPanel
+                noteRequired={entryContext === "quick" && schoolFlow}
+                noteTitle={entryContext === "quick" && schoolFlow ? "What did you practice?" : undefined}
+                submitDisabled={entryContext === "quick" && schoolFlow && !quickLogValid}
+                submitHint={entryContext === "quick" && schoolFlow && !quickLogValid ? QUICK_LOG_HINT : undefined}
                 allowDifficulty={true}
                 allowCouldNotComplete={entryContext !== "guided_done" || guidedStatus === null}
                 stoppedEarly={guidedStoppedEarly}
