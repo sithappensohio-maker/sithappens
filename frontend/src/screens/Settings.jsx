@@ -16,12 +16,14 @@ import PricingTiersPanel from "../components/PricingTiersPanel";
 import ReceiptSettingsPanel from "../components/ReceiptSettingsPanel";
 import DayToDayControls from "../components/DayToDayControls";
 import DataExportPanel from "../components/DataExportPanel";
+import PublicWebsitePanel from "../components/PublicWebsitePanel";
 
 // Section 6 — Common Settings shortcuts. Each entry just points at an
 // existing subsection id (or, for Shop Categories, the external
 // Shop Manager tab) — no new settings panels are created here.
 const COMMON_SETTINGS_SHORTCUTS = [
   { key: "hours", label: "Business Hours", icon: "fa-clock", id: "hours" },
+  { key: "public_site", label: "Public Website", icon: "fa-globe", id: "public_site" },
   { key: "services", label: "Services & Prices", icon: "fa-dollar-sign", id: "services" },
   { key: "credit_packs", label: "Prepaid Packs", icon: "fa-coins", id: "credit_packs" },
   { key: "shop_categories", label: "Shop Manager", icon: "fa-bag-shopping", externalTab: "shop_manager" },
@@ -241,6 +243,9 @@ export default function Settings({ initialSection = null, onSectionChange = () =
         { id: "portal_links", label: "Portal Links", icon: "fa-link",
           desc: "Outbound links shown to clients in the portal (Instagram, Google Reviews, etc).",
           badges: ["Optional", "Client-facing"] },
+        { id: "public_site", label: "Public Website", icon: "fa-globe",
+          desc: "What logged-out visitors see at sithappens.app: contact details, address, service area, homepage headline, gallery and social links. Prices and hours come from their own settings.",
+          badges: ["Live", "Client-facing"] },
         { id: "photography_gallery", label: "Photography Page", icon: "fa-camera-retro",
           desc: "Featured photo gallery and headline shown on the full-screen client Photography page. Packages reuse the Services & Programs catalog.",
           badges: ["Live", "Client-facing"] },
@@ -596,6 +601,7 @@ export default function Settings({ initialSection = null, onSectionChange = () =
               {tab === "services" && <ServicesSettings />}
               {tab === "credit_packs" && <CreditPacksSettings />}
               {tab === "photography_gallery" && <AdminPhotographyPanel s={s} save={save} saving={saving} />}
+              {tab === "public_site" && <PublicWebsitePanel />}
               {tab === "commands" && <CommandsPanel />}
               {tab === "backup" && <BackupPanel />}
               {tab === "data_export" && <DataExportPanel />}

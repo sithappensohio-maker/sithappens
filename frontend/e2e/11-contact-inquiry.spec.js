@@ -12,8 +12,9 @@ const env = Object.fromEntries(
 
 test("contact questionnaire: landing page → Inquiries → contacted", async ({ page, request }) => {
   await page.goto("/");
-  await expect(page.getByTestId("landing-inquiry-card")).toBeVisible();
-  await page.getByTestId("landing-hero-inquiry-cta").click();
+  // A guest at / now gets the public website; the questionnaire is one of its doors.
+  await expect(page.getByTestId("public-home")).toBeVisible();
+  await page.getByTestId("site-how-inquiry").click();
   await expect(page.getByTestId("contact-inquiry-modal")).toBeVisible();
   await H.snap(page, "27-inquiry-01-form");
   await page.getByTestId("ci-name").fill("Probe Person");

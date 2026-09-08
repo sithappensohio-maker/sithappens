@@ -94,7 +94,7 @@ const HOW = [
   { n: 3, title: "Book in seconds", body: "Pick a service and a date. We confirm and you're set." },
 ];
 
-export default function Login() {
+export default function Login({ focus = false }) {
   const { login, verifyMfa, cancelMfa, mfaChallenge, register, error, setError } = useAuth();
   const [mode, setMode] = useState("login");
   const [email, setEmail] = useState("");
@@ -140,6 +140,122 @@ export default function Login() {
   };
 
   const activeServiceCount = services.length;
+
+  const authCard = (
+    <div id="landing-auth" className="mt-8 max-w-md scroll-mt-24" data-testid="landing-auth-card">
+      <p className="text-[11px] font-black uppercase tracking-[0.3em] text-gray-500 mb-3">
+        Already a client, or ready to sign up now?
+      </p>
+      <div className="relative bg-bgPanel border border-bgHover rounded-2xl p-6 sm:p-7 shadow-2xl sh-public-auth-card">
+        <div className="flex gap-2 mb-5 bg-bgBase rounded-lg p-1">
+          <button onClick={() => setMode("login")} data-testid="tab-login"
+                  className={`flex-1 py-2 rounded text-[13px] font-black uppercase tracking-widest transition ${mode==="login"?"bg-shBlue text-white":"text-gray-400 hover:text-gray-200"}`}>
+            Sign In
+          </button>
+          <button onClick={() => setMode("register")} data-testid="tab-register"
+                  className={`flex-1 py-2 rounded text-[13px] font-black uppercase tracking-widest transition ${mode==="register"?"bg-shGreen text-bgHeader":"text-gray-400 hover:text-gray-200"}`}>
+            Register
+          </button>
+        </div>
+
+        <form onSubmit={onSubmit} className="space-y-3.5">
+          {mfaChallenge ? (
+            <>
+              <div>
+                <label className="text-[12px] font-black text-gray-500 uppercase tracking-widest">Authenticator code</label>
+                <input value={mfaCode} onChange={(e)=>setMfaCode(e.target.value)} required autoFocus inputMode="numeric" autoComplete="one-time-code"
+                       placeholder="6-digit code or recovery code" data-testid="login-mfa-input"
+                       className="w-full mt-1 bg-bgBase border border-bgHover rounded p-2.5 text-white text-sm focus:border-shBlue outline-none"/>
+                <button type="button" onClick={()=>{ cancelMfa(); setMfaCode(""); }} className="mt-2 text-[11px] uppercase tracking-widest font-black text-gray-500 hover:text-white">Back to password</button>
+              </div>
+            </>
+          ) : <>
+          {mode === "register" && (
+            <>
+              <div>
+                <label className="text-[12px] font-black text-gray-500 uppercase tracking-widest">Full Name</label>
+                <input value={name} onChange={(e)=>setName(e.target.value)} required data-testid="register-name-input"
+                       className="w-full mt-1 bg-bgBase border border-bgHover rounded p-2.5 text-white text-sm focus:border-shGreen outline-none"/>
+              </div>
+              <div>
+                <label className="text-[12px] font-black text-gray-500 uppercase tracking-widest">Referral Code <span className="text-gray-600 normal-case font-normal">(optional)</span></label>
+                <input value={refCode} onChange={(e)=>setRefCode(e.target.value.toUpperCase())} maxLength={12} data-testid="register-refcode-input"
+                       placeholder="e.g. 7KTUMQ"
+                       className="w-full mt-1 bg-bgBase border border-bgHover rounded p-2.5 text-white text-sm font-mono uppercase focus:border-shGreen outline-none"/>
+                {refCode && <p className="text-[12px] text-shGreen mt-1 uppercase tracking-widest">Your friend gets a free daycare day once you finish your first appointment!</p>}
+              </div>
+            </>
+          )}
+          <div>
+            <label className="text-[12px] font-black text-gray-500 uppercase tracking-widest">Email</label>
+            <input type="email" value={email} onChange={(e)=>setEmail(e.target.value)} required data-testid="login-email-input"
+                   className="w-full mt-1 bg-bgBase border border-bgHover rounded p-2.5 text-white text-sm focus:border-shBlue outline-none"/>
+          </div>
+          <div>
+            <label className="text-[12px] font-black text-gray-500 uppercase tracking-widest">Password</label>
+            <input type="password" value={password} onChange={(e)=>setPassword(e.target.value)} required
+                   minLength={mode === "register" ? 8 : undefined} autoComplete={mode === "register" ? "new-password" : "current-password"}
+                   data-testid="login-password-input"
+                   className="w-full mt-1 bg-bgBase border border-bgHover rounded p-2.5 text-white text-sm focus:border-shBlue outline-none"/>
+            {mode === "register" && <p className="mt-1 text-[11px] text-gray-500">Use at least 8 characters.</p>}
+            {mode === "login" && (
+              <button type="button" onClick={()=>setForgotOpen(true)} data-testid="forgot-password-link"
+                      className="mt-2 text-[12px] font-black uppercase tracking-widest text-shGreen hover:text-shGreen/80 transition">
+                Forgot password?
+              </button>
+            )}
+          </div>
+          </>}
+          {error && <div data-testid="login-error" className="text-[13px] text-red-400 bg-red-500/10 rounded p-2.5 uppercase font-black">{error}</div>}
+          <button type="submit" disabled={loading} data-testid="login-submit-button"
+                  className={`w-full py-3 rounded font-black text-[14px] uppercase tracking-widest shadow-lg disabled:opacity-50 transition ${mode==="register" ? "bg-shGreen text-bgHeader hover:bg-shGreen/90" : "bg-shBlue text-white hover:bg-shBlue/90"}`}>
+            {loading?"Please wait...":(mfaChallenge ? "Verify & Sign In" : (mode==="login"?"Sign In":"Create Account"))}
+          </button>
+        </form>
+
+        <p className="mt-5 text-center text-[12px] text-gray-500 uppercase tracking-widest">
+          {mode==="login" ? "New here? Tap Register above." : "Already a client? Tap Sign In above."}
+        </p>
+      </div>
+    </div>
+  );
+
+  // Focused sign-in (the /login route): the public website owns the marketing
+  // now, so this screen is just the door — brand, the auth card, a way back.
+  if (focus) {
+    return (
+      <div className="min-h-screen w-full bg-bgBase text-white sh-public-landing" data-testid="login-screen" data-focus="true">
+        <header className="sticky top-0 z-30 backdrop-blur bg-bgBase/80 border-b border-bgHover/60 sh-public-landing__header">
+          <div className="max-w-6xl mx-auto px-4 sm:px-6 py-3 flex items-center justify-between gap-3">
+            <a href="/" className="flex items-center gap-3 min-w-0" data-testid="login-back-home">
+              <img src="/logo.png" alt="Sit Happens" className="h-12 sm:h-14 shrink-0 drop-shadow-[0_0_18px_rgba(140,198,63,0.35)]"/>
+              <span className="min-w-0">
+                <span className="sh-public-wordmark sh-public-wordmark--header block">Sit Happens</span>
+                <span className="block text-[10px] font-bold tracking-[0.08em] text-shTextMuted truncate mt-0.5">Dog Training · Online School · Daycare · Boarding · Photography</span>
+              </span>
+            </a>
+            <a href="/" className="shrink-0 text-[12px] font-black uppercase tracking-widest text-gray-400 hover:text-white whitespace-nowrap" data-testid="login-back-site">
+              <i className="fas fa-arrow-left mr-1.5"/>Back<span className="hidden sm:inline"> to the website</span>
+            </a>
+          </div>
+        </header>
+        <div className="relative max-w-4xl mx-auto px-4 sm:px-6 py-10 sm:py-16 sh-splatter">
+          <div className="max-w-md mx-auto">
+            <p className="text-[11px] sm:text-[12px] font-black uppercase tracking-[0.35em] text-shGreen mb-3"><i className="fas fa-paw mr-2"/>Client portal</p>
+            <h1 className="sh-display text-4xl sm:text-5xl text-white leading-[0.95] mb-6">Welcome back.</h1>
+            {authCard}
+            <div className="mt-6 flex flex-wrap gap-x-5 gap-y-2 text-[12px] uppercase tracking-widest font-black text-gray-500">
+              <button type="button" onClick={() => setMeetGreetOpen(true)} className="hover:text-white" data-testid="login-meet-greet">New here? Request a Meet &amp; Greet</button>
+              <button type="button" onClick={openOnlineSchool} className="hover:text-white" data-testid="login-online-school">Explore Online School</button>
+            </div>
+          </div>
+        </div>
+        <ForgotPasswordModal open={forgotOpen} onClose={()=>setForgotOpen(false)} initialEmail={email}/>
+        <RequestMeetGreetModal open={meetGreetOpen} onClose={()=>setMeetGreetOpen(false)}/>
+        <ContactInquiryModal open={inquiryOpen} onClose={()=>setInquiryOpen(false)}/>
+      </div>
+    );
+  }
 
   return (
     <div className="min-h-screen w-full bg-bgBase text-white sh-public-landing" data-testid="login-screen">
@@ -269,82 +385,7 @@ export default function Login() {
             </div>
 
             {/* Sign in / register — secondary to the service-path choices above. */}
-            <div id="landing-auth" className="mt-8 max-w-md scroll-mt-24" data-testid="landing-auth-card">
-              <p className="text-[11px] font-black uppercase tracking-[0.3em] text-gray-500 mb-3">
-                Already a client, or ready to sign up now?
-              </p>
-              <div className="relative bg-bgPanel border border-bgHover rounded-2xl p-6 sm:p-7 shadow-2xl sh-public-auth-card">
-                <div className="flex gap-2 mb-5 bg-bgBase rounded-lg p-1">
-                  <button onClick={() => setMode("login")} data-testid="tab-login"
-                          className={`flex-1 py-2 rounded text-[13px] font-black uppercase tracking-widest transition ${mode==="login"?"bg-shBlue text-white":"text-gray-400 hover:text-gray-200"}`}>
-                    Sign In
-                  </button>
-                  <button onClick={() => setMode("register")} data-testid="tab-register"
-                          className={`flex-1 py-2 rounded text-[13px] font-black uppercase tracking-widest transition ${mode==="register"?"bg-shGreen text-bgHeader":"text-gray-400 hover:text-gray-200"}`}>
-                    Register
-                  </button>
-                </div>
-
-                <form onSubmit={onSubmit} className="space-y-3.5">
-                  {mfaChallenge ? (
-                    <>
-                      <div>
-                        <label className="text-[12px] font-black text-gray-500 uppercase tracking-widest">Authenticator code</label>
-                        <input value={mfaCode} onChange={(e)=>setMfaCode(e.target.value)} required autoFocus inputMode="numeric" autoComplete="one-time-code"
-                               placeholder="6-digit code or recovery code" data-testid="login-mfa-input"
-                               className="w-full mt-1 bg-bgBase border border-bgHover rounded p-2.5 text-white text-sm focus:border-shBlue outline-none"/>
-                        <button type="button" onClick={()=>{ cancelMfa(); setMfaCode(""); }} className="mt-2 text-[11px] uppercase tracking-widest font-black text-gray-500 hover:text-white">Back to password</button>
-                      </div>
-                    </>
-                  ) : <>
-                  {mode === "register" && (
-                    <>
-                      <div>
-                        <label className="text-[12px] font-black text-gray-500 uppercase tracking-widest">Full Name</label>
-                        <input value={name} onChange={(e)=>setName(e.target.value)} required data-testid="register-name-input"
-                               className="w-full mt-1 bg-bgBase border border-bgHover rounded p-2.5 text-white text-sm focus:border-shGreen outline-none"/>
-                      </div>
-                      <div>
-                        <label className="text-[12px] font-black text-gray-500 uppercase tracking-widest">Referral Code <span className="text-gray-600 normal-case font-normal">(optional)</span></label>
-                        <input value={refCode} onChange={(e)=>setRefCode(e.target.value.toUpperCase())} maxLength={12} data-testid="register-refcode-input"
-                               placeholder="e.g. 7KTUMQ"
-                               className="w-full mt-1 bg-bgBase border border-bgHover rounded p-2.5 text-white text-sm font-mono uppercase focus:border-shGreen outline-none"/>
-                        {refCode && <p className="text-[12px] text-shGreen mt-1 uppercase tracking-widest">Your friend gets a free daycare day once you finish your first appointment!</p>}
-                      </div>
-                    </>
-                  )}
-                  <div>
-                    <label className="text-[12px] font-black text-gray-500 uppercase tracking-widest">Email</label>
-                    <input type="email" value={email} onChange={(e)=>setEmail(e.target.value)} required data-testid="login-email-input"
-                           className="w-full mt-1 bg-bgBase border border-bgHover rounded p-2.5 text-white text-sm focus:border-shBlue outline-none"/>
-                  </div>
-                  <div>
-                    <label className="text-[12px] font-black text-gray-500 uppercase tracking-widest">Password</label>
-                    <input type="password" value={password} onChange={(e)=>setPassword(e.target.value)} required
-                           minLength={mode === "register" ? 8 : undefined} autoComplete={mode === "register" ? "new-password" : "current-password"}
-                           data-testid="login-password-input"
-                           className="w-full mt-1 bg-bgBase border border-bgHover rounded p-2.5 text-white text-sm focus:border-shBlue outline-none"/>
-                    {mode === "register" && <p className="mt-1 text-[11px] text-gray-500">Use at least 8 characters.</p>}
-                    {mode === "login" && (
-                      <button type="button" onClick={()=>setForgotOpen(true)} data-testid="forgot-password-link"
-                              className="mt-2 text-[12px] font-black uppercase tracking-widest text-shGreen hover:text-shGreen/80 transition">
-                        Forgot password?
-                      </button>
-                    )}
-                  </div>
-                  </>}
-                  {error && <div data-testid="login-error" className="text-[13px] text-red-400 bg-red-500/10 rounded p-2.5 uppercase font-black">{error}</div>}
-                  <button type="submit" disabled={loading} data-testid="login-submit-button"
-                          className={`w-full py-3 rounded font-black text-[14px] uppercase tracking-widest shadow-lg disabled:opacity-50 transition ${mode==="register" ? "bg-shGreen text-bgHeader hover:bg-shGreen/90" : "bg-shBlue text-white hover:bg-shBlue/90"}`}>
-                    {loading?"Please wait...":(mfaChallenge ? "Verify & Sign In" : (mode==="login"?"Sign In":"Create Account"))}
-                  </button>
-                </form>
-
-                <p className="mt-5 text-center text-[12px] text-gray-500 uppercase tracking-widest">
-                  {mode==="login" ? "New here? Tap Register above." : "Already a client? Tap Sign In above."}
-                </p>
-              </div>
-            </div>
+            {authCard}
           </div>
         </div>
       </section>

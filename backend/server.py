@@ -3132,6 +3132,103 @@ async def update_inquiry(inquiry_id: str, body: InquiryPatchIn, user: dict = Dep
     return row
 
 
+# -------- Public website (logged-out sithappens.app) --------
+# The app doubles as the public website. These two endpoints are the only
+# data the public pages need that the existing public endpoints don't already
+# serve (/public/services, /public/school/storefront, /public/shop/*,
+# /settings/public, /branding). Nothing here duplicates a record: business
+# info lives in settings, programs in `programs`.
+
+def _public_site_info(s: dict) -> dict:
+    site = {**(_default_settings().get("public_site") or {}), **(s.get("public_site") or {})}
+    # Legacy flat keys (already used on receipts) win when set.
+    if s.get("business_name"):
+        site["business_name"] = s["business_name"]
+    for key in ("phone", "email"):
+        if s.get(key):
+            site[key] = s[key]
+    if not site.get("map_url"):
+        import urllib.parse
+        q = ", ".join(x for x in (site.get("address_line"), f"{site.get('city', '')}, {site.get('state', '')} {site.get('zip', '')}".strip(", ")) if x)
+        site["map_url"] = "https://www.google.com/maps/search/?api=1&query=" + urllib.parse.quote(q) if q else ""
+    return site
+
+
+@api.get("/public/site")
+async def public_site():
+    """Everything the logged-out website needs about the business: contact
+    details, hours, service area, the photography headline, whether the Meet &
+    Greet door is open, and the generated stay policy. Read-only, no auth."""
+    s = await get_settings()
+    try:
+        stay = await stay_policies()
+    except Exception as e:  # never let a pricing hiccup blank the homepage
+        logger.warning("public_site: stay policy unavailable: %s", e)
+        stay = None
+    return {
+        "site": _public_site_info(s),
+        "business_hours": s.get("business_hours") or {},
+        "photography_page": s.get("photography_page") or {"headline": "Capture the moments worth keeping."},
+        "meet_greet_enabled": bool((s.get("meet_greet") or {}).get("enabled", True)),
+        "feature_visibility": {**_default_feature_visibility(), **(s.get("feature_visibility") or {})},
+        "service_descriptions": s.get("service_descriptions") or {},
+        "stay": stay,
+    }
+
+
+_PUBLIC_PROGRAM_TYPE_LABELS = {
+    "private_lessons": "Private lessons",
+    "group_class": "Group classes",
+    "day_train": "Day training",
+    "board_train": "Board & Train",
+    "service_dog": "Service dog training",
+}
+_PUBLIC_PROGRAM_TYPE_ORDER = {k: i for i, k in enumerate(_PUBLIC_PROGRAM_TYPE_LABELS)}
+
+
+@api.get("/public/training-programs")
+async def public_training_programs():
+    """In-person training programs for the public Training page — the same
+    `programs` rows admins manage and trainers enroll dogs into. Online School
+    programs are served by /public/school/storefront and are excluded here.
+    A program stays off the website when it is inactive, dog-specific, or
+    marked not publicly visible; its price shows only when show_public_price
+    allows and a real price is set."""
+    rows = await db.programs.find(
+        {
+            "active": True,
+            "$or": [{"owner_dog_id": None}, {"owner_dog_id": {"$exists": False}}],
+            "publicly_visible": {"$ne": False},
+            "type": {"$nin": ["self_guided", "online"]},
+            "delivery_mode": {"$nin": ["self_guided", "online"]},
+        },
+        {"_id": 0, "id": 1, "slug": 1, "name": 1, "type": 1, "description": 1, "focus": 1, "format": 1,
+         "min_age_months": 1, "prereq_slugs": 1, "price": 1, "show_public_price": 1, "available_online": 1,
+         "featured": 1, "image_id": 1, "online_description": 1},
+    ).to_list(500)
+    name_by_slug = {r.get("slug"): r.get("name") for r in rows if r.get("slug")}
+    out = []
+    for p in rows:
+        price = p.get("price")
+        show_price = p.get("show_public_price", True) is not False and isinstance(price, (int, float)) and price > 0
+        out.append({
+            "id": p.get("id"), "slug": p.get("slug"), "name": p.get("name"),
+            "type": p.get("type") or "private_lessons",
+            "type_label": _PUBLIC_PROGRAM_TYPE_LABELS.get(p.get("type"), "Training"),
+            "description": p.get("description") or "", "focus": p.get("focus") or "",
+            "online_description": p.get("online_description") or "",
+            "format": p.get("format") or None,
+            "min_age_months": p.get("min_age_months"),
+            "prerequisites": [name_by_slug.get(sl, sl) for sl in (p.get("prereq_slugs") or [])],
+            "price": float(price) if show_price else None,
+            "available_online": bool(p.get("available_online")),
+            "featured": bool(p.get("featured")),
+            "image_url": f"/api/public/shop/media/{p['image_id']}" if p.get("image_id") else None,
+        })
+    out.sort(key=lambda r: (_PUBLIC_PROGRAM_TYPE_ORDER.get(r["type"], 99), r["name"] or ""))
+    return {"programs": out, "type_labels": _PUBLIC_PROGRAM_TYPE_LABELS}
+
+
 # -------- Dogs --------
 async def _resolve_client_scope(user: dict) -> Optional[str]:
     """Return client_id if user is a client (to filter), None if admin (no filter)."""
@@ -10921,6 +11018,26 @@ def _default_settings() -> dict:
             "photography_portfolio_url": "",
         },
         # Photography full-page headline (client Photography destination).
+        # Public website (logged-out sithappens.app). Seeded from the live
+        # sithappensohiodogtraining.com so the app can replace it without a
+        # content gap; every field is overridable in Settings.
+        "public_site": {
+            "business_name": "Sit Happens Dog Training",
+            "tagline": "Dog Training · Daycare & Boarding · Warren, Ohio",
+            "phone": "(330) 978-5575",
+            "email": "sithappensohio@gmail.com",
+            "address_line": "137 North St NW",
+            "city": "Warren",
+            "state": "OH",
+            "zip": "44483",
+            "service_area": "Warren, Ohio and the surrounding Mahoning Valley",
+            "hero_headline": "Dog training for real-life chaos in Warren, Ohio.",
+            "hero_subheadline": "We help dogs (and their humans) build better habits, stronger connections, and calmer days. From leash pulling to puppy chaos, we've got you covered.",
+            "gallery_url": "https://sithappensdogtraining.mypixieset.com/",
+            "facebook_url": "",
+            "instagram_url": "",
+            "map_url": "",
+        },
         "photography_page": {
             "headline": "Capture the moments worth keeping.",
         },
@@ -11573,6 +11690,7 @@ class SettingsIn(BaseModel):
     service_descriptions: Optional[dict] = None
     client_portal_links: Optional[dict] = None
     photography_page: Optional[dict] = None
+    public_site: Optional[dict] = None  # logged-out website facts — see /public/site
     shop_page: Optional[dict] = None
     closed_dates: Optional[List[str]] = None  # ISO dates the business is closed (holidays, vacations)
     day_to_day: Optional[dict] = None  # Sprint 110dm — free-form day-to-day operator controls

@@ -1,6 +1,6 @@
 import { Toaster, toast } from "sonner";
 import { useCallback, useEffect, useMemo, useState } from "react";
-import { Route, Routes, useLocation, useNavigate, useParams } from "react-router-dom";
+import { Navigate, Route, Routes, useLocation, useNavigate, useParams } from "react-router-dom";
 import { AuthProvider, useAuth } from "./lib/auth";
 import { ThemeProvider, useTheme } from "./lib/theme";
 import { addRecent } from "./lib/recentlyOpened";
@@ -34,6 +34,10 @@ import Announcements from "./screens/Announcements";
 import Claim from "./screens/Claim";
 import ShareCertificate from "./screens/ShareCertificate";
 import PublicShop from "./screens/PublicShop";
+import PublicHome from "./public/PublicHome";
+import PublicTraining from "./public/PublicTraining";
+import { PublicAbout, PublicPhotography, PublicContact } from "./public/PublicPages";
+import { rootDestination } from "./public/publicSite";
 import GlobalSearch from "./components/GlobalSearch";
 import AdminBookingModal from "./components/AdminBookingModal";
 import TakePaymentModal from "./components/TakePaymentModal";
@@ -784,6 +788,35 @@ function Gate() {
 // gets the real client Shop (via Portal.jsx's widened shopOpen match),
 // an admin/employee gets their normal shell, exactly as if they had
 // navigated here from inside the app.
+// The app is also the public website. `/` is the one URL whose meaning
+// depends on who is asking: a guest gets the public homepage, a signed-in
+// client/staff/admin gets exactly what Gate() always gave them. Links that
+// only the sign-in screen can honour (a referral code, the old #landing-auth
+// anchor) are sent to /login with their query intact — see rootDestination.
+function RootGate() {
+  const { user } = useAuth();
+  const { search, hash } = useLocation();
+  const dest = rootDestination({ user, search, hash });
+  if (dest === "loading") {
+    return <div className="h-screen w-screen flex items-center justify-center text-shTextMuted text-sm font-bold uppercase tracking-widest" style={{ background: "var(--sh-card-base)" }}>Loading…</div>;
+  }
+  if (dest === "login") return <Navigate to={`/login${search || ""}`} replace />;
+  if (dest === "public") return <PublicHome />;
+  return <Gate />;
+}
+
+// /login — the focused sign-in / register screen. A signed-in visitor has no
+// business here and is sent to their app; a guest gets the existing Login
+// screen (same auth hooks, MFA, forgot-password, referral handling).
+function LoginRoute() {
+  const { user } = useAuth();
+  if (user === null) {
+    return <div className="h-screen w-screen flex items-center justify-center text-shTextMuted text-sm font-bold uppercase tracking-widest" style={{ background: "var(--sh-card-base)" }}>Loading…</div>;
+  }
+  if (user) return <Navigate to="/" replace />;
+  return <Login focus />;
+}
+
 function ShopGate() {
   const { user } = useAuth();
   if (user === null) {
@@ -889,6 +922,12 @@ export default function App() {
     <Routes>
       <Route path="/claim/:token" element={<ErrorBoundary><ClaimRoute /></ErrorBoundary>} />
       <Route path="/share/cert/:token" element={<ErrorBoundary><CertificateShareRoute /></ErrorBoundary>} />
+      <Route path="/" element={<AppProviders><RootGate /></AppProviders>} />
+      <Route path="/login" element={<AppProviders><LoginRoute /></AppProviders>} />
+      <Route path="/training" element={<AppProviders><PublicTraining /></AppProviders>} />
+      <Route path="/about" element={<AppProviders><PublicAbout /></AppProviders>} />
+      <Route path="/photography" element={<AppProviders><PublicPhotography /></AppProviders>} />
+      <Route path="/contact" element={<AppProviders><PublicContact /></AppProviders>} />
       <Route path="/shop/*" element={<AppProviders><ShopGate /></AppProviders>} />
       <Route path="/admin/*" element={<AppProviders><Gate /></AppProviders>} />
       <Route path="*" element={<AppProviders><Gate /></AppProviders>} />
