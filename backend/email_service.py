@@ -2442,6 +2442,94 @@ async def send_meet_greet_request_received(
     )
 
 
+async def notify_admin_contact_inquiry(inquiry: dict, labels: dict) -> bool:
+    """Someone filled in the public "Tell us about your dog" questionnaire —
+    the operator must know now. Same durability contract as the Meet & Greet
+    alert: outbox retry on failure, notification_log stamp on success. The
+    `inquiries` row exists independently, so a lost email is never a lost lead."""
+    if not ADMIN_NOTIFICATION_EMAIL:
+        logger.warning("ADMIN_NOTIFICATION_EMAIL not set — skipping contact inquiry admin email")
+        return False
+    L = labels or {}
+    def lab(group, key):
+        return (L.get(group) or {}).get(key, key) if key else "—"
+    name = inquiry.get("name") or "—"
+    dog = inquiry.get("dog_name") or "—"
+    email = inquiry.get("email") or ""
+    phone = inquiry.get("phone") or ""
+    interests = ", ".join(lab("interests", i) for i in (inquiry.get("interests") or [])) or "—"
+    concerns = ", ".join(lab("concerns", c) for c in (inquiry.get("concerns") or [])) or "—"
+    rows = [
+        ("Name", name),
+        ("Reach them by", lab("preferred_contact", inquiry.get("preferred_contact"))),
+        ("Phone", phone or "—"),
+        ("Email", email or "—"),
+        ("Dog", f"{dog} · {inquiry.get('breed') or '—'} · {inquiry.get('dog_age') or '—'}"),
+        ("Looking for", interests),
+        ("Goals / concerns", concerns),
+        ("Message", inquiry.get("message") or "—"),
+    ]
+    optional = [
+        ("Sex", {"male": "Male", "female": "Female"}.get(inquiry.get("dog_sex"), "")),
+        ("Spayed / neutered", lab("yes_no_unsure", inquiry.get("fixed")) if inquiry.get("fixed") else ""),
+        ("Vaccines current", lab("yes_no_unsure", inquiry.get("vaccines_current")) if inquiry.get("vaccines_current") else ""),
+        ("Previous training", inquiry.get("previous_training") or ""),
+        ("Household", inquiry.get("household") or ""),
+        ("Zip", inquiry.get("zip") or ""),
+        ("Wants to start", lab("start_timing", inquiry.get("start_timing")) if inquiry.get("start_timing") else ""),
+        ("Heard about us", inquiry.get("heard_from") or ""),
+    ]
+    rows += [(k, v) for k, v in optional if v]
+    rows.append(("Received", inquiry.get("created_at") or _utc_now_iso()))
+    links = []
+    if email:
+        links.append(f'<a href="mailto:{email}" style="color:#00a9e0;font-weight:700">Reply by email</a>')
+    if phone:
+        tel = "".join(ch for ch in phone if ch.isdigit() or ch == "+")
+        links.append(f'<a href="tel:{tel}" style="color:#00a9e0;font-weight:700">Call {phone}</a>')
+        links.append(f'<a href="sms:{tel}" style="color:#00a9e0;font-weight:700">Text {phone}</a>')
+    body_html = ('<p style="margin:16px 0 0;font-size:14px">' + " &nbsp;·&nbsp; ".join(links) + "</p>") if links else ""
+    key = f"admin_contact_inquiry:{inquiry.get('id')}"
+    cta_url = f"{APP_PUBLIC_URL}/" if APP_PUBLIC_URL else None
+    return await _dispatch(
+        slug="admin_contact_inquiry",
+        to_email=ADMIN_NOTIFICATION_EMAIL,
+        ctx={"client_name": name, "dog_name": dog, "interests": interests, "concerns": concerns},
+        rows=rows,
+        body_html=body_html,
+        cta_url=cta_url,
+        show_install=False,
+        fallback_subject=f"New inquiry — {dog} / {name}",
+        fallback_title="📬 New inquiry from the website",
+        fallback_intro=f"{name} told us about {dog} and is looking for: {interests}. It's waiting for you under Inquiries.",
+        fallback_cta_text="Open Inquiries",
+        outbox_key=key,
+        on_success={"type": "notification_log", "key": key,
+                    "meta": {"kind": "admin_contact_inquiry", "inquiry_id": inquiry.get("id")}},
+        queue_on_failure=True,
+    )
+
+
+async def send_contact_inquiry_received(to_email: str, client_name: str, dog_name: str) -> None:
+    """Short acknowledgement to the person who filled in the questionnaire.
+    No portal link — they are not a client yet; the operator replies personally."""
+    first = (client_name or "there").split(" ")[0]
+    rows = [("Dog", dog_name)] if dog_name else []
+    await _dispatch(
+        slug="contact_inquiry_received",
+        to_email=to_email,
+        ctx={"first_name": first, "client_name": client_name or "", "dog_name": dog_name or ""},
+        rows=rows,
+        show_install=False,
+        fallback_subject=f"Got it — we'll be in touch about {dog_name}" if dog_name else "Got it — we'll be in touch",
+        fallback_title="🐾 Got it!",
+        fallback_intro=(
+            f"Hi {first}, thanks for telling us about {dog_name or 'your dog'}. "
+            "We read every one of these ourselves and will reach out within one business day."
+        ),
+    )
+
+
 def _dog_hero_photo(dog: dict) -> str:
     """The picture to feature for a dog: first gallery photo, else the
     profile photo (`photo`) — the one every UI surface uses and the one most

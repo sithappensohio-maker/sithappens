@@ -489,6 +489,30 @@ EMAIL_TEMPLATES = [
         "default_intro_html": "",
         "variables": ["first_name", "brand_name"],
     },
+    {
+        "slug": "contact_inquiry_received",
+        "name": "Inquiry Received (acknowledgement)",
+        "description": "Sent to someone right after they submit the public 'Tell us about your dog' questionnaire.",
+        "category": "client",
+        "audience": "client",
+        "default_subject": "Got it — we'll be in touch about {{dog_name}}",
+        "default_title": "🐾 Got it!",
+        "default_intro_html": "Hi {{first_name}}, thanks for telling us about <strong>{{dog_name}}</strong>. We read every one of these ourselves and will reach out within one business day.",
+        "default_cta_text": "",
+        "variables": ["first_name", "client_name", "dog_name"],
+    },
+    {
+        "slug": "admin_contact_inquiry",
+        "name": "New Website Inquiry (admin)",
+        "description": "Sent to the operator the moment the public questionnaire is submitted.",
+        "category": "admin",
+        "audience": "admin",
+        "default_subject": "New inquiry — {{dog_name}} / {{client_name}}",
+        "default_title": "📬 New inquiry from the website",
+        "default_intro_html": "<strong>{{client_name}}</strong> told us about <strong>{{dog_name}}</strong> and is looking for: {{interests}}. It's waiting for you under Inquiries.",
+        "default_cta_text": "Open Inquiries",
+        "variables": ["client_name", "dog_name", "interests", "concerns"],
+    },
 ]
 
 

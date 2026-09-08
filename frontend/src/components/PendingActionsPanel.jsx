@@ -42,6 +42,7 @@ const TYPE_ICON = {
   stripe_dispute: "fa-credit-card",
   shop_refund_reconciliation: "fa-rotate-left",
   overdue_medication: "fa-pills",
+  contact_inquiry: "fa-inbox",
 };
 
 const REVIEW_LABEL = {
@@ -51,6 +52,7 @@ const REVIEW_LABEL = {
   stripe_dispute: "Review Dispute",
   shop_refund_reconciliation: "Review Refund",
   overdue_medication: "Open Care Board",
+  contact_inquiry: "Review Inquiry",
 };
 
 function fmtDateTime(dateStr, timeStr) {
@@ -93,7 +95,11 @@ export function PendingActionCard({ action, onOpen, testid }) {
             {action.client_name || "Client"}{action.dog_name ? <span className="text-shTextMuted font-bold"> / {action.dog_name}</span> : null}
             <span className="text-shTextMuted font-bold"> · {action.service_name}</span>
           </p>
-          {action.type === "overdue_medication" ? (
+          {action.type === "contact_inquiry" ? (
+            <p className="text-[12px] text-shTextMuted mt-1 break-words">
+              Received {fmtReceived(action.created_at)} · <span className="font-bold">{action.waiting_label}</span>
+            </p>
+          ) : action.type === "overdue_medication" ? (
             <>
               <p className="text-[12px] text-red-300 mt-1 break-words">
                 Due <span className="font-black">{dateRange}</span>

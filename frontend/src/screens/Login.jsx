@@ -3,6 +3,7 @@ import { useAuth } from "../lib/auth";
 import { api } from "../lib/api";
 import ForgotPasswordModal from "../components/ForgotPasswordModal";
 import RequestMeetGreetModal from "../components/RequestMeetGreetModal";
+import ContactInquiryModal from "../components/ContactInquiryModal";
 
 /**
  * Sprint 110t — Landing + Auth combined screen.
@@ -106,6 +107,7 @@ export default function Login() {
   const [services, setServices] = useState([]);
   const [browseOpen, setBrowseOpen] = useState(false);
   const [meetGreetOpen, setMeetGreetOpen] = useState(false);
+  const [inquiryOpen, setInquiryOpen] = useState(false);
 
   useEffect(() => {
     try {
@@ -240,6 +242,24 @@ export default function Login() {
                   <i className="fas fa-laptop-file"/>Explore Online School
                 </button>
               </div>
+            </div>
+
+            {/* Third door: people who don't yet know which service fits. The
+                questionnaire lands in Inquiries + Action Required and emails the owner. */}
+            <div className="mt-4 bg-bgPanel border border-bgHover rounded-2xl p-5 sm:p-6 flex flex-col sm:flex-row sm:items-center gap-4" data-testid="landing-inquiry-card">
+              <div className="flex-1 min-w-0">
+                <p className="text-[11px] sm:text-[12px] font-black uppercase tracking-[0.3em] text-shGreen mb-1">
+                  <i className="fas fa-dog mr-2"/>Not sure what you need?
+                </p>
+                <p className="text-[14px] text-gray-300 leading-relaxed">
+                  Tell us about your dog — what's going well, what's hard — and we'll come back with a plan. Two minutes, no account.
+                </p>
+              </div>
+              <button onClick={() => setInquiryOpen(true)}
+                      data-testid="landing-hero-inquiry-cta"
+                      className="w-full sm:w-auto shrink-0 justify-center bg-shGreen text-bgHeader px-6 py-3.5 rounded-full font-black text-[14px] uppercase tracking-widest shadow-lg hover:bg-shGreen/90 transition inline-flex items-center gap-2">
+                <i className="fas fa-pen-to-square"/>Tell us about your dog
+              </button>
             </div>
 
             <div className="flex flex-wrap items-center gap-x-5 gap-y-2 mt-6 text-[12px] uppercase tracking-widest font-black text-gray-500">
@@ -446,6 +466,7 @@ export default function Login() {
 
       <ForgotPasswordModal open={forgotOpen} onClose={()=>setForgotOpen(false)} initialEmail={email}/>
       <RequestMeetGreetModal open={meetGreetOpen} onClose={()=>setMeetGreetOpen(false)}/>
+      <ContactInquiryModal open={inquiryOpen} onClose={()=>setInquiryOpen(false)}/>
 
       {/* ===== Browse-all-services modal ===== */}
       {browseOpen && (

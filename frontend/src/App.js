@@ -10,6 +10,7 @@ import ActionCenter from "./screens/ActionCenter";
 import ScheduleWorkspace from "./screens/ScheduleWorkspace";
 import TrainingWorkspace from "./screens/TrainingWorkspace";
 import Clients from "./screens/Clients";
+import Inquiries from "./screens/Inquiries";
 import Dogs from "./screens/Dogs";
 import Portal from "./screens/Portal";
 import EmployeePortal from "./screens/EmployeePortal";
@@ -172,7 +173,7 @@ function AdminShell() {
   // Dashboard is also hidden as a standalone destination; Today is the owner
   // landing workspace while Dashboard-only tools are migrated into it.
   const NAV_GROUPS = [
-    { label: "Daily Work", ids: ["today", "dashboard", "action_center", "pos", "clients", "dogs", "messages"] },
+    { label: "Daily Work", ids: ["today", "dashboard", "action_center", "pos", "clients", "inquiries", "dogs", "messages"] },
     { label: "Schedule", ids: ["schedule", "bookings", "waitlist", "recurring"] },
     { label: "Care", ids: ["runsheet", "care", "kennel", "incidents"] },
     { label: "Training", ids: ["pipeline", "school_hq", "rewards_center", "trophies"] },
@@ -696,6 +697,7 @@ function AdminShell() {
             onAddDog={()=>goCreate("dogs")}
             onBookForClient={(clientId)=>{ setPendingBookingPreset({ clientId, dogId: null }); setGlobalModal("new_booking"); }}
             openCreateOnMount={pendingCreateTab === "clients"} onCreateConsumed={()=>setPendingCreateTab(null)} userId={user?.id} can={can} />}
+          {tab === "inquiries" && navAllowed("inquiries") && <Inquiries can={can} onOpenClient={(id)=>navigateAdmin("clients", {kind:"client", id, mode:"open"})} />}
           {tab === "dogs" && navAllowed("dogs") && <Dogs focusId={searchTarget?.kind==="dog"?searchTarget.id:null} focusMode={searchTarget?.mode || "scroll"} onConsumed={clearSearchTarget} openCreateOnMount={pendingCreateTab === "dogs"} onCreateConsumed={()=>setPendingCreateTab(null)} userId={user?.id}
             can={can}
             onBookForDog={(dogId, ownerId)=>{ setPendingBookingPreset({ clientId: ownerId || null, dogId }); setGlobalModal("new_booking"); }}
@@ -830,6 +832,7 @@ export const NAV_ITEMS = [
     { id: "waitlist", label: "Waitlist", icon: "fa-hourglass-half", perm: "booking_edit", feature: "waitlist", sidebar: false },
     { id: "recurring", label: "Recurring", icon: "fa-rotate", sidebar: false },
     { id: "clients", label: "Clients", icon: "fa-users", perm: "clients_view" },
+    { id: "inquiries", label: "Inquiries", icon: "fa-inbox", perm: "clients_edit" },
     { id: "dogs", label: "Dogs", icon: "fa-paw", perm: "dogs_view" },
     { id: "duplicate_check", label: "Duplicate Check", icon: "fa-copy", perm: "settings" },
     { id: "pipeline", label: "Training", icon: "fa-graduation-cap" },

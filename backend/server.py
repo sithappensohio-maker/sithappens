@@ -62,6 +62,8 @@ from email_service import (
     notify_client_quote_received,
     send_account_claim,
     send_meet_greet_request_received,
+    notify_admin_contact_inquiry,
+    send_contact_inquiry_received,
 )
 import email_service
 import school_events
@@ -2921,6 +2923,213 @@ async def request_meet_greet(body: MeetGreetRequestIn, request: Request):
         logger.error("meet_greet_request: admin alert email dispatch crashed for booking %s: %s", mg_booking["id"], e)
 
     return {"ok": True}
+
+
+# -------- Contact inquiry (public "Tell us about your dog" questionnaire) --------
+# The landing page's second door: someone who doesn't yet know whether they
+# want daycare, boarding, training or Online School. Saved as an `inquiries`
+# row (the authoritative record, surfaced in Action Required), merged into a
+# `prospect` client like a Meet & Greet request, and the operator is emailed
+# through the durable outbox path. Vocabulary is server-owned so the email,
+# the admin list and the public form can never disagree.
+INQUIRY_INTERESTS = {
+    "daycare": "Daycare",
+    "boarding": "Boarding",
+    "in_person_training": "In-person training",
+    "online_school": "Online School",
+    "grooming": "Grooming",
+    "not_sure": "Not sure — help me choose",
+}
+INQUIRY_CONCERNS = {
+    "puppy_basics": "Puppy basics",
+    "leash_pulling": "Pulling on leash",
+    "jumping": "Jumping",
+    "barking": "Barking",
+    "recall": "Not coming when called",
+    "house_training": "House training",
+    "separation_anxiety": "Separation anxiety",
+    "reactivity": "Reactive to dogs or people",
+    "bite_history": "Has growled, snapped, or bitten",
+    "other": "Other",
+}
+INQUIRY_PREFERRED_CONTACT = {"call": "Call", "text": "Text", "email": "Email"}
+INQUIRY_START_TIMING = {"asap": "As soon as possible", "next_month": "In the next month", "exploring": "Just exploring"}
+INQUIRY_YES_NO_UNSURE = {"yes": "Yes", "no": "No", "not_sure": "Not sure"}
+INQUIRY_STATUSES = ("new", "contacted", "closed")
+
+
+class ContactInquiryIn(BaseModel):
+    # Required — who, which dog, what for
+    name: str = Field(min_length=1, max_length=120)
+    email: EmailStr
+    phone: str = Field(min_length=1, max_length=40)
+    preferred_contact: Literal["call", "text", "email"]
+    dog_name: str = Field(min_length=1, max_length=80)
+    breed: str = Field(min_length=1, max_length=120)
+    dog_age: str = Field(min_length=1, max_length=40)
+    interests: List[Literal["daycare", "boarding", "in_person_training", "online_school", "grooming", "not_sure"]] = Field(min_length=1)
+    concerns: List[Literal["puppy_basics", "leash_pulling", "jumping", "barking", "recall", "house_training",
+                           "separation_anxiety", "reactivity", "bite_history", "other"]] = Field(min_length=1)
+    message: str = Field(min_length=1, max_length=4000)
+    # Optional
+    dog_sex: Literal["male", "female", ""] = ""
+    fixed: Literal["yes", "no", "not_sure", ""] = ""
+    vaccines_current: Literal["yes", "no", "not_sure", ""] = ""
+    previous_training: str = Field(default="", max_length=1000)
+    household: str = Field(default="", max_length=1000)
+    zip: str = Field(default="", max_length=20)
+    start_timing: Literal["asap", "next_month", "exploring", ""] = ""
+    heard_from: str = Field(default="", max_length=200)
+    # Honeypot — hidden on the real form; bots fill it in. Never stored.
+    website: str = Field(default="", max_length=500)
+
+
+class InquiryPatchIn(BaseModel):
+    status: Optional[Literal["new", "contacted", "closed"]] = None
+    admin_notes: Optional[str] = Field(default=None, max_length=4000)
+
+
+def _inquiry_labels() -> dict:
+    return {
+        "interests": INQUIRY_INTERESTS, "concerns": INQUIRY_CONCERNS,
+        "preferred_contact": INQUIRY_PREFERRED_CONTACT, "start_timing": INQUIRY_START_TIMING,
+        "yes_no_unsure": INQUIRY_YES_NO_UNSURE, "statuses": list(INQUIRY_STATUSES),
+    }
+
+
+def _inquiry_summary_lines(inq: dict) -> List[str]:
+    """Plain-language rows shared by the operator email and the prospect note."""
+    interests = ", ".join(INQUIRY_INTERESTS.get(i, i) for i in (inq.get("interests") or [])) or "—"
+    concerns = ", ".join(INQUIRY_CONCERNS.get(c, c) for c in (inq.get("concerns") or [])) or "—"
+    return [f"Interested in: {interests}.", f"Goals / concerns: {concerns}."]
+
+
+@api.get("/public/contact-inquiry-options")
+async def public_contact_inquiry_options():
+    """The questionnaire's choices, so the public form renders the same words
+    the operator will read in the email and the admin list."""
+    return _inquiry_labels()
+
+
+@api.post("/public/contact-inquiry")
+async def submit_contact_inquiry(body: ContactInquiryIn, request: Request):
+    """Public — no account required. Saves the questionnaire, creates or
+    merges a `prospect` client, emails the operator (durable outbox) and sends
+    the submitter a short acknowledgement. The submitter's request never fails
+    because an email did. Rate-limited like every other unauthenticated write."""
+    email = body.email.lower()
+    ip = _client_ip(request)
+    await _enforce_rate_limit(request, "contact_inquiry_ip", ip, limit=10, window_seconds=3600)
+    await _enforce_rate_limit(request, "contact_inquiry_email_ip", f"{ip}|{email}", limit=5, window_seconds=3600)
+
+    if (body.website or "").strip():
+        # A bot filled the hidden field. Say "ok" so it learns nothing; keep nothing.
+        logger.info("contact_inquiry: honeypot tripped from %s — dropped", ip)
+        return {"ok": True}
+
+    name = body.name.strip()
+    dog_name = body.dog_name.strip()
+    inquiry_id = str(uuid.uuid4())
+    received = now_iso()
+    inquiry = {
+        "id": inquiry_id,
+        "created_at": received,
+        "status": "new",
+        "name": name,
+        "email": email,
+        "phone": body.phone.strip(),
+        "preferred_contact": body.preferred_contact,
+        "dog_name": dog_name,
+        "breed": body.breed.strip(),
+        "dog_age": body.dog_age.strip(),
+        "interests": list(dict.fromkeys(body.interests)),
+        "concerns": list(dict.fromkeys(body.concerns)),
+        "message": body.message.strip(),
+        "dog_sex": body.dog_sex,
+        "fixed": body.fixed,
+        "vaccines_current": body.vaccines_current,
+        "previous_training": body.previous_training.strip(),
+        "household": body.household.strip(),
+        "zip": body.zip.strip(),
+        "start_timing": body.start_timing,
+        "heard_from": body.heard_from.strip(),
+        "admin_notes": "",
+        "source_ip": ip,
+    }
+
+    # Prospect record — same auto-merge rule as /auth/register and the Meet &
+    # Greet form: reuse a client with this email rather than creating a twin.
+    note = " ".join([f"Contact inquiry ({received}).", f"Dog: {dog_name}.", *_inquiry_summary_lines(inquiry)])
+    existing_client = await db.clients.find_one(
+        {"email": {"$regex": f"^{re.escape(email)}$", "$options": "i"}}, {"_id": 0},
+    )
+    if existing_client:
+        client_id = existing_client["id"]
+        prior_notes = (existing_client.get("evaluation_notes") or "").strip()
+        update_fields = {"evaluation_notes": f"{prior_notes}\n{note}".strip() if prior_notes else note}
+        if inquiry["phone"] and not existing_client.get("phone"):
+            update_fields["phone"] = inquiry["phone"]
+        await db.clients.update_one({"id": client_id}, {"$set": update_fields})
+        client_doc = {**existing_client, **update_fields}
+        merged = True
+    else:
+        client_id = str(uuid.uuid4())
+        client_doc = {
+            "id": client_id, "name": name, "address": "", "phone": inquiry["phone"], "email": email,
+            "emerg": "", "credits": 0, "waiver": False, "referred_by_code": None,
+            "client_status": "prospect", "evaluation_notes": note, "created_at": received,
+        }
+        await db.clients.insert_one(dict(client_doc))
+        merged = False
+    inquiry["client_id"] = client_id
+    inquiry["client_merged"] = merged
+    await db.inquiries.insert_one(dict(inquiry))
+
+    # Operator alert — durable (outbox retry, notification_log stamp); the
+    # `inquiries` row is the authoritative record and is already in Action Required.
+    try:
+        sent_now = await notify_admin_contact_inquiry(inquiry, _inquiry_labels())
+        if not sent_now:
+            logger.warning("contact_inquiry: admin alert for %s not sent immediately (queued/skipped — %s)",
+                           inquiry_id, email_service.last_send_error)
+    except Exception as e:
+        logger.error("contact_inquiry: admin alert dispatch crashed for %s: %s", inquiry_id, e)
+    try:
+        await send_contact_inquiry_received(to_email=email, client_name=name, dog_name=dog_name)
+    except Exception as e:
+        logger.warning("contact_inquiry: acknowledgement email failed for %s: %s", email, e)
+
+    return {"ok": True, "id": inquiry_id}
+
+
+@api.get("/inquiries")
+async def list_inquiries(status: Optional[str] = None, _: dict = Depends(require_admin_and_permission("clients_edit"))):
+    q: Dict[str, Any] = {}
+    if status and status != "all":
+        if status not in INQUIRY_STATUSES:
+            raise HTTPException(status_code=400, detail="Unknown status.")
+        q["status"] = status
+    rows = await db.inquiries.find(q, {"_id": 0, "source_ip": 0}).sort("created_at", -1).to_list(2000)
+    counts = {s: await db.inquiries.count_documents({"status": s}) for s in INQUIRY_STATUSES}
+    return {"items": rows, "counts": counts, "labels": _inquiry_labels()}
+
+
+@api.patch("/inquiries/{inquiry_id}")
+async def update_inquiry(inquiry_id: str, body: InquiryPatchIn, user: dict = Depends(require_admin_and_permission("clients_edit"))):
+    row = await db.inquiries.find_one({"id": inquiry_id}, {"_id": 0})
+    if not row:
+        raise HTTPException(status_code=404, detail="Inquiry not found.")
+    update: Dict[str, Any] = {"updated_at": now_iso(), "updated_by": user.get("name") or user.get("email") or ""}
+    if body.status is not None:
+        update["status"] = body.status
+        if body.status == "contacted" and not row.get("contacted_at"):
+            update["contacted_at"] = update["updated_at"]
+    if body.admin_notes is not None:
+        update["admin_notes"] = body.admin_notes.strip()
+    await db.inquiries.update_one({"id": inquiry_id}, {"$set": update})
+    row.update(update)
+    row.pop("source_ip", None)
+    return row
 
 
 # -------- Dogs --------
@@ -27022,7 +27231,7 @@ async def admin_run_daily_jobs(_: dict = Depends(require_admin)):
 # Saturday slot only became noticeable when Saturday arrived. The requested
 # date now drives URGENCY only, never visibility.
 
-PENDING_ACTION_TYPES = ("meet_and_greet_request", "booking_approval", "reschedule_request", "stripe_dispute", "shop_refund_reconciliation", "overdue_medication")
+PENDING_ACTION_TYPES = ("meet_and_greet_request", "booking_approval", "reschedule_request", "stripe_dispute", "shop_refund_reconciliation", "overdue_medication", "contact_inquiry")
 
 # item `type` → key on /admin/pending-actions/count
 _PENDING_ACTION_COUNT_KEYS = {
@@ -27032,6 +27241,7 @@ _PENDING_ACTION_COUNT_KEYS = {
     "stripe_dispute": "stripe_disputes",
     "shop_refund_reconciliation": "shop_refund_reconciliations",
     "overdue_medication": "overdue_medications",
+    "contact_inquiry": "contact_inquiries",
 }
 
 _PENDING_ACTION_TYPE_LABELS = {
@@ -27041,6 +27251,7 @@ _PENDING_ACTION_TYPE_LABELS = {
     "stripe_dispute": "Stripe Dispute / Chargeback",
     "shop_refund_reconciliation": "Shop Refund Needs Review",
     "overdue_medication": "Overdue Medication",
+    "contact_inquiry": "New Inquiry",
 }
 
 
@@ -27283,6 +27494,34 @@ async def _collect_pending_actions(user: dict, *, type_filter: Optional[str] = N
     perms = _perms_for(user)
     items: List[dict] = []
 
+    if perms.get("clients_edit"):
+        # Contact questionnaire submissions nobody has replied to yet. Urgency
+        # is by age alone — there is no requested date to escalate on.
+        inq_rows = await db.inquiries.find(
+            {"status": "new"},
+            {"_id": 0, "id": 1, "client_id": 1, "name": 1, "dog_name": 1, "interests": 1,
+             "message": 1, "created_at": 1, "preferred_contact": 1},
+        ).sort("created_at", 1).to_list(200)
+        for q in inq_rows:
+            urgency = _pending_action_urgency(q.get("created_at"), None, None)
+            service = ", ".join(INQUIRY_INTERESTS.get(i, i) for i in (q.get("interests") or [])) or "Inquiry"
+            items.append({
+                "id": f"contact_inquiry:{q['id']}",
+                "type": "contact_inquiry",
+                "type_label": _PENDING_ACTION_TYPE_LABELS["contact_inquiry"],
+                "priority": "action_required",
+                "status": "pending",
+                "created_at": q.get("created_at"),
+                "client_id": q.get("client_id"), "client_name": q.get("name"),
+                "dog_id": None, "dog_name": q.get("dog_name"),
+                "service_name": service,
+                "requested_start": None, "requested_date": None, "requested_end_date": None, "requested_time": None,
+                "notes": (q.get("message") or "")[:300],
+                "deep_link": {"screen": "inquiries", "inquiry_id": q["id"]},
+                "required_permission": "clients_edit",
+                **urgency,
+            })
+
     if perms.get("booking_edit"):
         rows = await db.bookings.find(
             {"status": "pending"},
@@ -27414,7 +27653,7 @@ async def _collect_pending_actions(user: dict, *, type_filter: Optional[str] = N
 
 def _user_can_see_any_pending_actions(user: dict) -> bool:
     perms = _perms_for(user)
-    return bool(perms.get("booking_edit") or perms.get("finance_reports") or perms.get("care_complete"))
+    return bool(perms.get("booking_edit") or perms.get("finance_reports") or perms.get("care_complete") or perms.get("clients_edit"))
 
 
 @api.get("/admin/pending-actions")
@@ -27440,13 +27679,13 @@ async def admin_pending_actions_count(user: dict = Depends(require_admin)):
     rather than 403 so nav badges can poll safely for every staff role; the
     detailed list endpoint stays permission-enforced."""
     if not _user_can_see_any_pending_actions(user):
-        return {"total": 0, "meet_and_greet_requests": 0, "booking_approvals": 0, "reschedule_requests": 0, "stripe_disputes": 0, "shop_refund_reconciliations": 0, "overdue_medications": 0}
+        return {"total": 0, "meet_and_greet_requests": 0, "booking_approvals": 0, "reschedule_requests": 0, "stripe_disputes": 0, "shop_refund_reconciliations": 0, "overdue_medications": 0, "contact_inquiries": 0}
     perms = _perms_for(user)
     # Phase 6 — these counters are independent. They previously ran one after
     # another on every nav poll, so Action Required latency was the sum of six
     # database/care queries. Run them concurrently while preserving the exact
     # same permission gates and result semantics.
-    mg, pending_bookings, resched, disputes, shop_recon, overdue_rows = await asyncio.gather(
+    mg, pending_bookings, resched, disputes, shop_recon, overdue_rows, inquiries = await asyncio.gather(
         db.bookings.count_documents({"status": "pending", "is_meet_greet": True})
             if perms.get("booking_edit") else asyncio.sleep(0, result=0),
         db.bookings.count_documents({"status": "pending", "is_meet_greet": {"$ne": True}})
@@ -27459,12 +27698,15 @@ async def admin_pending_actions_count(user: dict = Depends(require_admin)):
             if perms.get("finance_reports") else asyncio.sleep(0, result=0),
         _collect_overdue_medication_actions(limit=1000)
             if perms.get("care_complete") else asyncio.sleep(0, result=[]),
+        db.inquiries.count_documents({"status": "new"})
+            if perms.get("clients_edit") else asyncio.sleep(0, result=0),
     )
     overdue_meds = len(overdue_rows)
     return {
-        "total": mg + pending_bookings + resched + disputes + shop_recon + overdue_meds,
+        "total": mg + pending_bookings + resched + disputes + shop_recon + overdue_meds + inquiries,
         "meet_and_greet_requests": mg, "booking_approvals": pending_bookings, "reschedule_requests": resched,
         "stripe_disputes": disputes, "shop_refund_reconciliations": shop_recon, "overdue_medications": overdue_meds,
+        "contact_inquiries": inquiries,
     }
 
 
