@@ -46,6 +46,7 @@ export default function ClientHub({
   const [lots, setLots] = useState(null);
   const [receipts, setReceipts] = useState(null);
   const [trophies, setTrophies] = useState(null);
+  const [visits, setVisits] = useState(null); // lifetime visits + award tier, from the award engine's own count
 
   useEffect(() => {
     if ((tab === "bookings" || tab === "overview") && bookings === null) {
@@ -61,6 +62,9 @@ export default function ClientHub({
     }
     if (tab === "documents" && receipts === null) {
       api.get(`/clients/${client.id}/receipts`).then(({ data }) => setReceipts(data || [])).catch(() => setReceipts([]));
+    }
+    if (tab === "overview" && visits === null) {
+      api.get(`/clients/${client.id}/visits`).then(({ data }) => setVisits(data || false)).catch(() => setVisits(false));
     }
     if (tab === "history" && trophies === null) {
       api.get(`/clients/${client.id}/trophies`).then(({ data }) => setTrophies(data || [])).catch(() => setTrophies([]));
@@ -120,6 +124,8 @@ export default function ClientHub({
                 <button onClick={() => setTab("messages")} data-testid="hub-action-message" className="min-h-[44px] px-3 py-2 rounded bg-bgBase border border-bgHover text-gray-200 text-[12px] font-black uppercase tracking-widest">Send Message</button>
                 <button onClick={onEditClient} data-testid="hub-action-edit" className="min-h-[44px] px-3 py-2 rounded bg-bgBase border border-bgHover text-gray-200 text-[12px] font-black uppercase tracking-widest">Edit Client</button>
               </div>
+
+              <VisitsCard visits={visits} />
 
               <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
                 <div className="bg-bgBase/40 border border-bgHover rounded-lg p-3">
@@ -295,6 +301,58 @@ export default function ClientHub({
           )}
         </div>
       </div>
+    </div>
+  );
+}
+
+/* Lifetime visits, counted exactly the way the visit awards are (checked-out
+ * or completed bookings, live + archived, every dog). Shows the tier the
+ * client holds and how far the next one is, so "why doesn't she have
+ * Regular yet?" answers itself. */
+function fmtVisitDate(iso) {
+  if (!iso) return "";
+  try { return new Date(`${String(iso).slice(0, 10)}T12:00:00`).toLocaleDateString(undefined, { month: "short", day: "numeric", year: "numeric" }); } catch { return iso; }
+}
+
+export function VisitsCard({ visits }) {
+  if (visits === null) return <div className="bg-bgBase/40 border border-bgHover rounded-lg p-3 text-[12px] text-gray-500" data-testid="hub-visits-loading">Counting visits…</div>;
+  if (!visits) return null;
+  const next = visits.next;
+  const held = visits.held;
+  const pct = next ? Math.min(100, Math.round((visits.visits / next.threshold) * 100)) : 100;
+  return (
+    <div className="bg-bgBase/40 border border-bgHover rounded-lg p-3 sm:p-4" data-testid="hub-visits">
+      <div className="flex flex-wrap items-end justify-between gap-3">
+        <div>
+          <p className="text-[11px] uppercase font-black text-gray-500 tracking-widest">Visits</p>
+          <p className="text-3xl font-black text-white leading-none mt-1" data-testid="hub-visits-count">{visits.visits}</p>
+          {visits.last_visit && <p className="text-[12px] text-gray-500 mt-1" data-testid="hub-visits-last">Last visit {fmtVisitDate(visits.last_visit)}</p>}
+        </div>
+        <div className="text-right min-w-0">
+          {held ? (
+            <p className="text-[12px] font-black uppercase tracking-widest text-shGreen" data-testid="hub-visits-held"><i className="fas fa-trophy mr-1.5" />{held.name}</p>
+          ) : (
+            <p className="text-[12px] font-black uppercase tracking-widest text-gray-500" data-testid="hub-visits-held">No visit award yet</p>
+          )}
+          {next
+            ? <p className="text-[12px] text-gray-300 mt-0.5" data-testid="hub-visits-next">{next.remaining} more to <span className="font-black text-white">{next.name}</span> ({next.threshold})</p>
+            : held && <p className="text-[12px] text-gray-400 mt-0.5" data-testid="hub-visits-next">Top tier reached</p>}
+        </div>
+      </div>
+      {next && (
+        <div className="h-1.5 rounded-full bg-white/[0.06] overflow-hidden mt-3" aria-hidden="true">
+          <div className="h-full rounded-full bg-gradient-to-r from-shBlue to-shGreen" style={{ width: `${pct}%` }} />
+        </div>
+      )}
+      {(visits.per_dog || []).length > 1 && (
+        <div className="flex flex-wrap gap-1.5 mt-3" data-testid="hub-visits-dogs">
+          {visits.per_dog.map((d) => (
+            <span key={d.dog_id} className="px-2 py-1 rounded-full bg-bgPanel border border-bgHover text-[11px] font-black uppercase tracking-wide text-gray-300">
+              <i className="fas fa-paw text-shGreen mr-1" />{d.dog_name} · {d.visits}
+            </span>
+          ))}
+        </div>
+      )}
     </div>
   );
 }

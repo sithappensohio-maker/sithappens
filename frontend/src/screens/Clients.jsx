@@ -72,6 +72,7 @@ export default function Clients({ focusId = null, focusMode = "scroll", onConsum
   const [receipt, setReceipt] = useState(null); // populated after a sale to show the printable receipt
   const [previewId, setPreviewId] = useState(null); // client id whose portal we're previewing
   const [trophyMap, setTrophyMap] = useState({});  // client_id -> awarded[]
+  const [visitMap, setVisitMap] = useState({});    // client_id -> {visits, held, next} (award engine's own count)
   const [awardPicker, setAwardPicker] = useState(null);  // client object
   const [plansByClient, setPlansByClient] = useState({});  // client_id -> plans[]
 
@@ -85,6 +86,15 @@ export default function Clients({ focusId = null, focusMode = "scroll", onConsum
     }, 250);
     return () => clearTimeout(timer);
   }, [clientSearch]);
+
+  const loadVisits = useCallback(async (clientList) => {
+    try {
+      const ids = clientList.map((c) => c.id).filter(Boolean);
+      if (!ids.length) { setVisitMap({}); return; }
+      const { data } = await api.get("/admin/client-visit-counts", { params: { client_ids: ids.join(",") } });
+      setVisitMap(data || {});
+    } catch (e) { console.warn("Clients visit count load failed:", e); }
+  }, []);
 
   const loadTrophies = useCallback(async (clientList) => {
     try {
@@ -129,10 +139,11 @@ export default function Clients({ focusId = null, focusMode = "scroll", onConsum
       });
       setPlansByClient(byClient);
       await loadTrophies(rows);
+      loadVisits(rows);
     } finally {
       setClientsLoading(false);
     }
-  }, [clientQuery, clientPage, loadTrophies]);
+  }, [clientQuery, clientPage, loadTrophies, loadVisits]);
   useEffect(() => { load(); }, [load]);
 
   const openNewClient = () => {
@@ -529,7 +540,19 @@ export default function Clients({ focusId = null, focusMode = "scroll", onConsum
                 </ul>
               )}
             </div>
-            <div className="mt-4 grid grid-cols-2 sm:grid-cols-4 gap-2 border-t border-shBorder pt-3">
+            <div className="mt-4 flex flex-wrap gap-x-4 gap-y-3 border-t border-shBorder pt-3">
+              <div>
+                <p className="text-[13px] uppercase font-black text-shTextMuted tracking-widest">Visits</p>
+                <p className="text-xl font-black text-white" data-testid={`visit-count-${c.id}`}>{visitMap[c.id] ? visitMap[c.id].visits : "—"}</p>
+                {visitMap[c.id] && (
+                  <p className="text-[10px] font-black uppercase tracking-wide text-shTextMuted whitespace-nowrap" data-testid={`visit-tier-${c.id}`}
+                     title={visitMap[c.id].next ? `${visitMap[c.id].next.remaining} more to ${visitMap[c.id].next.name}` : "Top visit award"}>
+                    {visitMap[c.id].held
+                      ? <><i className="fas fa-trophy text-shPrimary mr-1"/>{visitMap[c.id].held.name}</>
+                      : visitMap[c.id].next ? `${visitMap[c.id].next.remaining} to ${visitMap[c.id].next.name}` : ""}
+                  </p>
+                )}
+              </div>
               <div>
                 <p className="text-[13px] uppercase font-black text-shTextMuted tracking-widest">Daycare</p>
                 <p className="text-xl font-black text-shPrimary" data-testid={`daycare-credits-${c.id}`}>{fmtCredits(c.credits || 0)}</p>
@@ -558,7 +581,7 @@ export default function Clients({ focusId = null, focusMode = "scroll", onConsum
                   </p>
                 </div>
               ) : null}
-              <div className="text-right">
+              <div className="text-right ml-auto">
                 <p className="text-[13px] uppercase font-black text-shTextMuted tracking-widest">Portal</p>
                 <p className="text-[14px] text-shSecondary font-black">{c.portal_email ? "Active" : "Not set"}</p>
                 {c.portal_email && (

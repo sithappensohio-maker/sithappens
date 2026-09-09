@@ -90,7 +90,7 @@ from trophy_service import (
     render_share_card_png,
 )
 import scheduler as job_scheduler
-from trophy_service import dog_visit_filter, practice_days
+from trophy_service import dog_visit_filter, practice_days, _client_visit_count, _visit_filter, _eligible_trophies
 from trophies_data import TIER_COLORS
 
 # -------- Config --------
@@ -33180,6 +33180,87 @@ async def list_client_trophies(client_id: str, user: dict = Depends(get_current_
         {"_id": 0},
     ).sort("awarded_at", -1).to_list(200)
     return _serialize_awarded(rows)
+
+
+@api.get("/clients/{client_id}/visits")
+async def client_visits_summary(client_id: str, user: dict = Depends(get_current_user)):
+    """Lifetime visits for a client, the way the award engine counts them
+    (checked-out or completed bookings, live + archived, across all their
+    dogs), with the visit-award tier they hold and the next one. One source
+    for the Client hub's visit count so it can never disagree with the
+    trophy that gets awarded."""
+    if user.get("role") != "admin" and user.get("client_id") != client_id:
+        raise HTTPException(status_code=403, detail="Not allowed")
+    total = await _client_visit_count(db, client_id)
+    dogs = await db.dogs.find({"owner_id": client_id, "deleted_at": {"$exists": False}}, {"_id": 0, "id": 1, "name": 1}).to_list(100)
+    per_dog_counts = await _dog_visit_counts([d["id"] for d in dogs])
+    per_dog = sorted(
+        [{"dog_id": d["id"], "dog_name": d.get("name") or "Dog", "visits": int(per_dog_counts.get(d["id"], 0))} for d in dogs],
+        key=lambda r: (-r["visits"], r["dog_name"]),
+    )
+    # Most recent visit: newest check-out (or completed booking date) in either collection.
+    filt = _visit_filter(client_id)
+    last_visit = None
+    for coll in (db.bookings, db.bookings_archive):
+        try:
+            row = await coll.find(filt, {"_id": 0, "checked_out_at": 1, "date": 1, "end_date": 1}).sort("date", -1).limit(1).to_list(1)
+        except Exception:
+            row = []
+        if row:
+            stamp = row[0].get("end_date") or row[0].get("date") or (row[0].get("checked_out_at") or "")[:10]
+            if stamp and (last_visit is None or stamp > last_visit):
+                last_visit = stamp
+    tiers = await _eligible_trophies(db, category="client", kind="visit_count")
+    held = None
+    nxt = None
+    for t in tiers:  # sorted by threshold ascending
+        th = int(t.get("threshold") or 0)
+        entry = {"code": t.get("code"), "name": t.get("name"), "threshold": th, "icon": t.get("icon"), "tier": t.get("tier")}
+        if total >= th:
+            held = entry
+        elif nxt is None:
+            nxt = {**entry, "remaining": th - total}
+    return {"client_id": client_id, "visits": int(total), "per_dog": per_dog, "last_visit": last_visit, "held": held, "next": nxt,
+            "tiers": [{"code": t.get("code"), "name": t.get("name"), "threshold": int(t.get("threshold") or 0)} for t in tiers]}
+
+
+@api.get("/admin/client-visit-counts")
+async def client_visit_counts(client_ids: Optional[str] = None, _: dict = Depends(require_admin)):
+    """Lifetime visits for a page of clients in ONE round trip (the Clients
+    directory renders 48 cards; one call per card would 429). Same visit rule
+    as the award engine, live + archived bookings, grouped server-side with no
+    result ceiling — a client with 400 visits reads 400. Returns
+    {client_id: {visits, held, next}} for every requested id (zeros included)."""
+    ids = [v.strip() for v in (client_ids or "").split(",") if v.strip()][:500]
+    if not ids:
+        return {}
+    counts: Dict[str, int] = {cid: 0 for cid in ids}
+    match = {"client_id": {"$in": ids}, "$or": [
+        {"checked_out_at": {"$nin": [None, ""]}},
+        {"status": {"$in": ["completed", "checked_out"]}},
+    ]}
+    pipeline = [{"$match": match}, {"$group": {"_id": "$client_id", "n": {"$sum": 1}}}]
+    for coll in (db.bookings, db.bookings_archive):
+        try:
+            async for row in coll.aggregate(pipeline):
+                counts[row["_id"]] = counts.get(row["_id"], 0) + int(row.get("n") or 0)
+        except Exception as exc:
+            logger.warning("client visit counts: %s unavailable: %s", getattr(coll, "name", "?"), exc)
+    tiers = await _eligible_trophies(db, category="client", kind="visit_count")
+    out: Dict[str, Any] = {}
+    for cid in ids:
+        total = int(counts.get(cid, 0))
+        held = None
+        nxt = None
+        for t in tiers:
+            th = int(t.get("threshold") or 0)
+            entry = {"code": t.get("code"), "name": t.get("name"), "threshold": th}
+            if total >= th:
+                held = entry
+            elif nxt is None:
+                nxt = {**entry, "remaining": th - total}
+        out[cid] = {"visits": total, "held": held, "next": nxt}
+    return out
 
 
 # Sprint 110ef — Sibling batch endpoint to `/admin/dog-trophies-summary`.
