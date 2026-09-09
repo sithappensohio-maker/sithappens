@@ -40,6 +40,10 @@ PASSWORD = "Password123!"
 # referenced until the process exits — a collected generator runs its cleanup.
 _KEEP_ALIVE = []
 
+# A self-contained demonstration image so the seeded lessons exercise the
+# media-first display rule without any uploaded file.
+DEMO_IMAGE_URI = 'data:image/svg+xml;utf8,%3Csvg%20xmlns%3D%22http%3A//www.w3.org/2000/svg%22%20width%3D%22640%22%20height%3D%22360%22%3E%3Crect%20width%3D%22640%22%20height%3D%22360%22%20fill%3D%22%230c143e%22/%3E%3Ccircle%20cx%3D%22320%22%20cy%3D%22150%22%20r%3D%2270%22%20fill%3D%22%238cc63f%22/%3E%3Ctext%20x%3D%22320%22%20y%3D%22290%22%20font-family%3D%22Arial%22%20font-size%3D%2240%22%20font-weight%3D%22900%22%20fill%3D%22%23ffffff%22%20text-anchor%3D%22middle%22%3EDEMO%3A%20lure%20at%20nose%20height%3C/text%3E%3C/svg%3E'
+
 
 def _text(id_, title, body, order):
     return {"id": id_, "type": "text", "title": title, "body": body, "order": order, "active": True}
@@ -67,6 +71,10 @@ def blocks_for(prefix, skill, cue):
             "Do ten repetitions, then stop and give your dog a short break. That is one round.",
             "Do three rounds today with at least a minute of rest between them.",
         ], "order": 4, "active": True},
+        # Authored AFTER the steps on purpose: the client view floats demo media
+        # to the top of its part, so this must render above the step list.
+        {"id": f"{prefix}-demo", "type": "image", "title": "What it looks like", "url": DEMO_IMAGE_URI,
+         "config": {"caption": "Treat at the nose, hand still, eyes on you."}, "order": 4, "active": True},
         {"id": f"{prefix}-tip", "type": "trainer_tip", "title": "Trainer tip",
          "body": "Feed the treat at your dog's nose, not up at your face. We want your dog to learn that looking at you pays, not that jumping toward your hand pays.", "order": 5, "active": True},
         {"id": f"{prefix}-warn", "type": "warning", "title": "Safety and welfare",

@@ -22,7 +22,16 @@ test.describe("reload and return", () => {
     await page.reload();
     await expect(page.getByTestId("lesson-journey-part")).toHaveText(/Part 3 of 5/);
     await H.expectInUsable(page, page.getByTestId("lesson-section-coach-train"), "Part 3 coaching card after reload");
+    // Demo media first: the image block was authored after the steps, but the
+    // Train part shows it before the step list (and keeps every other block).
+    const trainBlocks = page.getByTestId("lesson-section-guided-train").getByTestId("lesson-content-blocks").locator("> section");
+    await expect(trainBlocks.first()).toHaveAttribute("data-testid", "lesson-content-block-image");
+    await expect(trainBlocks.first().locator("img")).toBeVisible();
+    await expect(trainBlocks.first()).toContainText("Treat at the nose");
+    await expect(trainBlocks.filter({ hasText: "Step-by-step lesson" })).toHaveCount(1);
     await H.snap(page, "07-reload-part3");
+    await trainBlocks.first().locator("img").scrollIntoViewIfNeeded();
+    await H.snap(page, "07b-demo-image-first");
 
     // Leave via the tab bar, come back through Today's button.
     await page.getByTestId("school-nav-m-today").click();

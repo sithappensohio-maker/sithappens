@@ -182,9 +182,31 @@ function QuizBlock({ block, onAnswered }) {
   );
 }
 
+/* Is this block a demonstration picture or clip (an uploaded image/video, or a
+ * linked School media resource of that type)? */
+export function isDemoMediaBlock(b) {
+  if (!b || b.active === false) return false;
+  if (b.type !== "image" && b.type !== "video") return false;
+  return !!(b.url || b.resource_id);
+}
+
+/* The order a student sees a part's blocks in.
+ *
+ * Demonstration images and videos come FIRST — in dog training the picture of
+ * the hand position or the clip of the rep is the fastest way to understand
+ * the exercise, and on a phone it used to sit below the whole step list.
+ * This is a display rule only: nothing is dropped, the curriculum's stored
+ * order is untouched, and within each group (media, then everything else)
+ * the authored order is preserved. Admin preview uses the same rule so what
+ * the trainer sees is what the client sees. */
+export function orderBlocksForStudent(blocks = []) {
+  const active = [...blocks].filter((b) => b?.active !== false).sort((a, b) => (a.order || 0) - (b.order || 0));
+  return [...active.filter(isDemoMediaBlock), ...active.filter((b) => !isDemoMediaBlock(b))];
+}
+
 export default function LessonContentBlocks({ blocks = [], enrollmentId, previewMode = false, hideTitles = false, onQuizAnswered }) {
   const [resources, setResources] = useState([]);
-  const active = [...blocks].filter((b) => b?.active !== false).sort((a, b) => (a.order || 0) - (b.order || 0));
+  const active = useMemo(() => orderBlocksForStudent(blocks), [blocks]);
   const resourceIds = useMemo(() => active.map((b) => b.resource_id).filter(Boolean), [active]);
   const resourceKey = resourceIds.join("|");
   useEffect(() => {
