@@ -432,7 +432,7 @@ export default function SchoolApp({ path, clientName, onNavigate, onExit }) {
 
       {practice && (
         <PracticePanel homework={practice.homework} dogPhoto={selectedEntry?.dog_photo}
-                       schoolLesson={schoolLessonFor(practice.homework, practice.lessonId)}
+                       schoolLesson={schoolLessonFor(practice.homework, practice.lessonId)} enrollmentId={selectedId}
                        onClose={closePractice} onChanged={refreshAll} onPracticeLogged={practiceLogged}
                        onCompleted={practiceCompleted} />
       )}

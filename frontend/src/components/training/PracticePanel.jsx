@@ -27,6 +27,7 @@ import TroubleshootingDrawer from "./TroubleshootingDrawer";
 import CoachEndQuestions from "./CoachEndQuestions";
 import DifficultyFeedbackNotice from "./DifficultyFeedbackNotice";
 import HuskyDogImage from "../brand/HuskyDogImage";
+import { useLessonDemoBlocks } from "./LessonDemoMedia";
 import SectionCard from "../premium/SectionCard";
 
 const FIELD_ICON = { reps: "fa-rotate", sets: "fa-layer-group", duration_sec: "fa-stopwatch", duration_min: "fa-stopwatch",
@@ -132,7 +133,7 @@ export function quickLogIsMeaningful({ difficulty, note, values }) {
 }
 const QUICK_LOG_HINT = "Tell us what you practiced (a sentence is fine, or fill in the results) and how it felt before saving.";
 
-export default function PracticePanel({ homework, dogPhoto, onClose, onChanged, onPracticeLogged, onCompleted, schoolLesson = null }) {
+export default function PracticePanel({ homework, dogPhoto, onClose, onChanged, onPracticeLogged, onCompleted, schoolLesson = null, enrollmentId = null }) {
   const model = assignmentCardModel(homework);
   // Launched from School (a lesson's practice) vs. ordinary homework. School
   // shows the lesson name and requires a meaningful "log what we did" entry.
@@ -148,6 +149,8 @@ export default function PracticePanel({ homework, dogPhoto, onClose, onChanged, 
 
   const coachEnabled = hasCoachMode(homework);
   const practiceCoach = homework.template_snapshot?.practice_coach || null;
+  // The lesson's own demonstration images/videos follow the client into practice.
+  const demoBlocks = useLessonDemoBlocks(enrollmentId, schoolLesson?.id || null);
   const tokens = { dog_name: homework.dog_name, client_first_name: (homework.client_name || "").split(" ")[0] || "" };
 
   // "overview" -> "guided" -> "form" (Coach Mode's end-of-practice form),
@@ -424,6 +427,7 @@ export default function PracticePanel({ homework, dogPhoto, onClose, onChanged, 
                 onQuickPractice={quickPracticeAllowed(practiceCoach) ? startQuickPractice : undefined}
                 onOpenTroubleshooting={() => setTroubleshootingOpen(true)}
                 schoolFlow={schoolFlow} lessonName={schoolLesson?.name || null}
+                demoBlocks={demoBlocks} enrollmentId={enrollmentId}
                 testid="coach-overview"
               />
             </>
@@ -431,6 +435,7 @@ export default function PracticePanel({ homework, dogPhoto, onClose, onChanged, 
             <>
               <GuidedPracticeFlow
                 practiceCoach={practiceCoach} tokens={tokens}
+                demoBlocks={demoBlocks} enrollmentId={enrollmentId}
                 onOpenTroubleshooting={() => setTroubleshootingOpen(true)}
                 onFinish={finishGuided}
                 testid="coach-guided"

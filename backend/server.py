@@ -13341,6 +13341,10 @@ class PracticeCoachStepIn(BaseModel):
     title: str = ""
     instruction: str = ""
     media_url: Optional[str] = None
+    # An uploaded demo picture (homework_media id, via /homework/resource-upload);
+    # served to the client by GET /homework/resource/{id} once a homework they
+    # own references it. `media_url` stays for external links.
+    media_id: Optional[str] = None
 
 
 class PracticeCoachExampleIn(BaseModel):
@@ -13350,6 +13354,7 @@ class PracticeCoachExampleIn(BaseModel):
     sequence: List[str] = []
     explanation: Optional[str] = ""
     media_url: Optional[str] = None
+    media_id: Optional[str] = None
 
 
 class PracticeCoachTroubleshootingItemIn(BaseModel):
@@ -13493,8 +13498,8 @@ def _validate_practice_coach(pc: Optional[dict]) -> Dict[str, List[str]]:
         warnings.append("No stop rule — clients won't get explicit permission to stop.")
     if not pc.get("difficulty_feedback"):
         warnings.append("No difficulty feedback — clients won't get a response after rating their session.")
-    steps_have_media = any(isinstance(s, dict) and s.get("media_url") for s in steps)
-    good_rep_media = (pc.get("good_rep") or {}).get("media_url")
+    steps_have_media = any(isinstance(s, dict) and (s.get("media_url") or s.get("media_id")) for s in steps)
+    good_rep_media = (pc.get("good_rep") or {}).get("media_url") or (pc.get("good_rep") or {}).get("media_id")
     if not steps_have_media and not good_rep_media:
         warnings.append("No demo media — optional, but a photo or video helps clients see the exercise.")
     return {"errors": errors, "warnings": warnings}
@@ -15273,6 +15278,10 @@ async def get_resource_file(media_id: str, user: dict = Depends(get_current_user
                 "$or": [
                     {"resources.media_id": media_id},
                     {"template_snapshot.sections.resources.media_id": media_id},
+                    # Practice-recipe demo media (step pictures, Good Rep / Not This)
+                    {"template_snapshot.practice_coach.steps.media_id": media_id},
+                    {"template_snapshot.practice_coach.good_rep.media_id": media_id},
+                    {"template_snapshot.practice_coach.not_this.media_id": media_id},
                 ],
             },
             {"_id": 0, "id": 1},

@@ -6,14 +6,17 @@
 import { useState } from "react";
 import SetupChecklist from "./SetupChecklist";
 import GoodRepNotThisCards from "./GoodRepNotThisCards";
+import LessonDemoMedia from "./LessonDemoMedia";
 import HuskyDogImage from "../brand/HuskyDogImage";
 import PremiumButton from "../premium/PremiumButton";
 import SectionCard from "../premium/SectionCard";
 import { renderPracticeCoachText, practiceTimeLabel } from "../../lib/practiceCoachPolish";
+import { hasRecipeMedia, useRecipeMediaSrc } from "../../lib/recipeMedia";
 
 function StepRow({ step, index, tokens, testid }) {
   const [open, setOpen] = useState(false);
-  const hasDetail = !!step.media_url;
+  const hasDetail = hasRecipeMedia(step);
+  const mediaSrc = useRecipeMediaSrc(step);
   return (
     <div className="rounded-2xl border border-shBorder/50 bg-black/12 overflow-hidden" data-testid={testid}>
       <button type="button" onClick={() => hasDetail && setOpen(o => !o)}
@@ -29,7 +32,7 @@ function StepRow({ step, index, tokens, testid }) {
       </button>
       {open && hasDetail && (
         <div className="px-3.5 pb-3.5 sm:px-4 sm:pb-4">
-          <img src={step.media_url} alt="" className="w-full rounded-xl border border-shBorder/50"/>
+          {mediaSrc && <img src={mediaSrc} alt="" className="w-full rounded-xl border border-shBorder/50" data-testid={testid ? `${testid}-media` : undefined}/>}
         </div>
       )}
     </div>
@@ -38,6 +41,7 @@ function StepRow({ step, index, tokens, testid }) {
 
 export default function CoachPracticeOverview({
   practiceCoach, tokens, dogPhoto, onStartGuided, onQuickPractice, onOpenTroubleshooting, testid, schoolFlow = false, lessonName = null,
+  demoBlocks = [], enrollmentId = null,
 }) {
   const pc = practiceCoach || {};
   const dogName = tokens?.dog_name || "Your dog";
@@ -87,6 +91,8 @@ export default function CoachPracticeOverview({
           </div>
         </div>
       </section>
+
+      <LessonDemoMedia blocks={demoBlocks} enrollmentId={enrollmentId} variant="full" testid={testid ? `${testid}-demo` : undefined} />
 
       {(pc.setup_items || []).length > 0 && (
         <SectionCard accent="cyan" intensity="subtle">

@@ -80,7 +80,7 @@ export function practiceTimeLabel(schedule) {
 export function practiceCoachReadiness(pc) {
   if (!pc) return [];
   const steps = pc.steps || [];
-  const hasMedia = steps.some(s => s && s.media_url) || !!(pc.good_rep && pc.good_rep.media_url);
+  const hasMedia = steps.some(s => s && (s.media_url || s.media_id)) || !!(pc.good_rep && (pc.good_rep.media_url || pc.good_rep.media_id));
   const diffFeedback = pc.difficulty_feedback || {};
   return [
     { key: "goal", label: "Goal present", met: !!String(pc.goal || "").trim() },

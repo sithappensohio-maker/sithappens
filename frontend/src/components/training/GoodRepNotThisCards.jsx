@@ -1,7 +1,9 @@
 // Practice Coach visual examples. All authored content/semantics unchanged.
 import { renderPracticeCoachText } from "../../lib/practiceCoachPolish";
+import { useRecipeMediaSrc } from "../../lib/recipeMedia";
 
 function ExampleCard({ title, icon, tone, example, tokens, testid }) {
+  const mediaSrc = useRecipeMediaSrc(example);
   if (!example || !(example.sequence || []).length) return null;
   const good = tone === "good";
   return (
@@ -10,7 +12,7 @@ function ExampleCard({ title, icon, tone, example, tokens, testid }) {
         <span className={`w-9 h-9 rounded-xl border grid place-items-center ${good ? "bg-shPrimary/10 border-shPrimary/25 text-shPrimary" : "bg-shAccent/10 border-shAccent/25 text-shAccent"}`}><i className={`fas ${icon} text-[15px]`}/></span>
         <p className={`text-[16px] font-black uppercase tracking-[0.1em] ${good ? "text-shPrimary" : "text-shAccent"}`}>{title}</p>
       </div>
-      {example.media_url && <img src={example.media_url} alt="" className="w-full rounded-xl border border-shBorder/50 mb-3"/>}
+      {mediaSrc && <img src={mediaSrc} alt="" className="w-full rounded-xl border border-shBorder/50 mb-3" data-testid={testid ? `${testid}-media` : undefined}/>}
       <div className="flex flex-wrap items-center gap-1.5 text-shText text-[16px] sm:text-[17px] font-bold">
         {example.sequence.map((step, i) => (
           <span key={i} className="flex items-center gap-1.5 max-w-full">

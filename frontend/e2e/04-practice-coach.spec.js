@@ -39,6 +39,11 @@ test.describe("Practice Coach", () => {
     const guided = page.getByTestId("coach-overview-start-guided");
     await expectInPanel(page, guided, "Start Guided Practice");
     await expect(page.getByTestId("coach-overview-quick-practice")).toContainText(/already practiced/i);
+    // The lesson's own demo picture follows the client into the Coach, automatically.
+    const demo = page.getByTestId("coach-overview-demo");
+    await expect(demo).toContainText(/What it looks like/);
+    await expect(demo.locator("img")).toBeVisible();
+    await expect(demo).toContainText(/Treat at the nose/);
     await H.snap(page, "11-coach-overview");
     await guided.click();
 
@@ -47,6 +52,13 @@ test.describe("Practice Coach", () => {
     await expectInPanel(page, page.getByTestId("coach-guided-cue"), "cue card");
     await expectInPanel(page, page.getByTestId("coach-guided-success"), "LOOKED button");
     await expectInPanel(page, page.getByTestId("coach-guided-miss"), "DIDN'T button");
+    // On the rep screen the demo is one tap away, right under the buttons.
+    const repDemo = page.getByTestId("coach-guided-demo");
+    await expect(repDemo).toBeVisible();
+    await expect(repDemo.locator("img").first()).toBeVisible();
+    await page.getByTestId("coach-guided-demo-toggle").click();
+    await expect(page.getByTestId("coach-guided-demo-open").locator("img")).toBeVisible();
+    await page.getByTestId("coach-guided-demo-toggle").click();
     await H.snap(page, "12-coach-first-rep");
 
     for (let i = 0; i < 10; i += 1) {

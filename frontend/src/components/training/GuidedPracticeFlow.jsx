@@ -1,4 +1,5 @@
 // Guided Practice local UI state. Reducer/network boundaries are unchanged;
+import LessonDemoMedia from "./LessonDemoMedia";
 // this component turns the authored Practice Recipe into live, beginner-safe
 // coaching while the client is actually working with the dog.
 import { useReducer } from "react";
@@ -164,7 +165,7 @@ function LiveRecipeGuide({ practiceCoach, tokens }) {
   );
 }
 
-export default function GuidedPracticeFlow({ practiceCoach, tokens, onOpenTroubleshooting, onFinish, testid }) {
+export default function GuidedPracticeFlow({ practiceCoach, tokens, onOpenTroubleshooting, onFinish, testid, demoBlocks = [], enrollmentId = null }) {
   const pc = practiceCoach || {};
   const gp = pc.guided_practice || {};
   const [state, dispatch] = useReducer(
@@ -249,6 +250,9 @@ export default function GuidedPracticeFlow({ practiceCoach, tokens, onOpenTroubl
               </button>
             </div>
           </section>
+          {/* The lesson's own demo picture/clip, one tap away, below the
+              buttons so the cue and the scoring stay on the first screen. */}
+          <LessonDemoMedia blocks={demoBlocks} enrollmentId={enrollmentId} variant="compact" testid={testid ? `${testid}-demo` : undefined} />
           <LiveRecipeGuide practiceCoach={practiceCoach} tokens={tokens} />
           {/* The explainer is reference material, not the first thing a
               person holding a dog needs; it opens on request. */}

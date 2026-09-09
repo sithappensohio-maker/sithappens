@@ -14,6 +14,8 @@ import { useEffect, useMemo, useState } from "react";
 import { api, formatErr } from "../lib/api";
 import { toast } from "sonner";
 import { practiceCoachReadiness, PRACTICE_COACH_ICON_KEYS, iconKeyToFaClass } from "../lib/practiceCoachPolish";
+import { compressImage } from "../lib/imageCompress";
+import { useRecipeMediaSrc } from "../lib/recipeMedia";
 import CoachPracticeOverview from "./training/CoachPracticeOverview";
 import GuidedPracticeFlow from "./training/GuidedPracticeFlow";
 import PracticeCompletionPanel from "./training/PracticeCompletionPanel";
@@ -73,6 +75,57 @@ function StringListEditor({ items, onChange, placeholder, testid }) {
               className="min-h-[40px] px-3 rounded-lg border border-dashed border-shPrimary/30 bg-shPrimary/[0.035] text-[11px] font-black text-shPrimary">
         <i className="fas fa-plus mr-1"/>{placeholder || "Add"}
       </button>
+    </div>
+  );
+}
+
+/* Demo picture for a recipe step or a Good Rep / Not This example. Upload a
+ * photo (stored like every other homework resource) or paste a link; the
+ * client Coach resolves either. One slot, one picture. */
+function RecipeImageSlot({ value, onChange, testid }) {
+  const [busy, setBusy] = useState(false);
+  const [link, setLink] = useState("");
+  const src = useRecipeMediaSrc(value);
+  const inputId = `${testid || "recipe-image"}-file`;
+  const upload = async (file) => {
+    if (!file) return;
+    setBusy(true);
+    try {
+      const data = await compressImage(file);
+      if (/^data:image\/hei[cf]/i.test(String(data || ""))) { toast.error("HEIC images don't display in most browsers. Save it as JPEG or PNG first."); setBusy(false); return; }
+      const { data: up } = await api.post("/homework/resource-upload", { data, filename: file.name });
+      onChange({ media_id: up.media_id, media_url: null });
+    } catch (e) {
+      toast.error(formatErr(e.response?.data?.detail) || "Upload failed");
+    }
+    setBusy(false);
+  };
+  return (
+    <div className="mt-1.5 rounded-lg border border-shBorder/60 bg-black/15 p-2" data-testid={testid}>
+      {src ? (
+        <div className="flex items-start gap-3">
+          <img src={src} alt="" className="w-24 h-16 object-cover rounded-md border border-shBorder/50 shrink-0" data-testid={testid ? `${testid}-preview` : undefined}/>
+          <div className="flex-1 min-w-0">
+            <p className="text-[11px] font-black uppercase tracking-widest text-shSecondary"><i className="fas fa-camera mr-1.5"/>Demo picture</p>
+            <p className="text-[12px] text-shTextMuted truncate">{value?.media_url ? value.media_url : "Uploaded photo"}</p>
+            <button type="button" onClick={() => onChange({ media_id: null, media_url: null })} data-testid={testid ? `${testid}-remove` : undefined}
+                    className="mt-1 text-[11px] font-black uppercase tracking-widest text-red-300 hover:text-red-200">Remove</button>
+          </div>
+        </div>
+      ) : (
+        <div className="flex flex-wrap items-center gap-2">
+          <input id={inputId} type="file" accept="image/jpeg,image/png,image/webp" className="hidden" data-testid={testid ? `${testid}-file` : undefined}
+                 onChange={(e) => { upload(e.target.files?.[0]); e.target.value = ""; }}/>
+          <label htmlFor={inputId} className={`cursor-pointer inline-flex items-center gap-1.5 px-2.5 py-1.5 rounded border border-shSecondary/40 text-shSecondary text-[11px] font-black uppercase tracking-widest hover:border-shSecondary ${busy ? "opacity-50 pointer-events-none" : ""}`}>
+            <i className="fas fa-camera"/>{busy ? "Uploading…" : "Add demo picture"}
+          </label>
+          <span className="text-[11px] text-shTextMuted">or</span>
+          <input value={link} onChange={(e) => setLink(e.target.value)} placeholder="Paste an image link" data-testid={testid ? `${testid}-link` : undefined}
+                 className="flex-1 min-w-[160px] bg-[var(--sh-card-base)] border border-shBorder rounded px-2 py-1.5 text-[12px] text-shText"/>
+          <button type="button" disabled={!link.trim()} onClick={() => { onChange({ media_url: link.trim(), media_id: null }); setLink(""); }} data-testid={testid ? `${testid}-use-link` : undefined}
+                  className="px-2.5 py-1.5 rounded bg-shSecondary/15 text-shSecondary text-[11px] font-black uppercase tracking-widest disabled:opacity-40">Use link</button>
+        </div>
+      )}
     </div>
   );
 }
@@ -284,11 +337,12 @@ export default function HomeworkTemplateEditor({ templateId, onClose, onSaved })
                     <p className="text-[11px] font-black uppercase tracking-widest text-shTextMuted mb-1.5">Guided steps</p>
                     <ListEditor items={pc.steps} onChange={(v) => updatePc({ steps: v })} testid="tpl-steps"
                                 addLabel="Add step"
-                                newItem={() => ({ id: genId("step"), title: "", instruction: "", media_url: null })}
-                                renderItem={(it, update) => (
+                                newItem={() => ({ id: genId("step"), title: "", instruction: "", media_url: null, media_id: null })}
+                                renderItem={(it, update, i) => (
                                   <>
                                     <input value={it.title} onChange={(e) => update({ title: e.target.value })} placeholder="Step title" className={inputCls}/>
                                     <textarea value={it.instruction} onChange={(e) => update({ instruction: e.target.value })} rows={2} placeholder="Instruction" className={inputCls}/>
+                                    <RecipeImageSlot value={it} onChange={(patch) => update(patch)} testid={`tpl-step-${i}-image`}/>
                                   </>
                                 )}/>
                   </div>
@@ -300,6 +354,7 @@ export default function HomeworkTemplateEditor({ templateId, onClose, onSaved })
                         <div key={key}>
                           <p className="text-[11px] font-black uppercase tracking-widest text-shTextMuted mb-1.5">{label}</p>
                           <StringListEditor items={ex.sequence} onChange={(v) => updatePc({ [key]: { ...ex, sequence: v } })} placeholder="Add sequence step" testid={`tpl-${key}-sequence`}/>
+                          <RecipeImageSlot value={ex} onChange={(patch) => updatePc({ [key]: { ...ex, ...patch } })} testid={`tpl-${key}-image`}/>
                           <textarea value={ex.explanation || ""} onChange={(e) => updatePc({ [key]: { ...ex, explanation: e.target.value } })} rows={2} placeholder="Explanation" className={`${inputCls} mt-1.5`}/>
                         </div>
                       );
