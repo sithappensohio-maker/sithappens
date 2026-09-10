@@ -20,6 +20,7 @@ import SchoolApp from "./SchoolApp";
 import OnlineSchoolHeroCard from "../components/school/OnlineSchoolHeroCard";
 import MultiDateCalendar from "../components/MultiDateCalendar";
 import PortalHomeActionCard from "../components/PortalHomeActionCard";
+import PortalEventCard from "../components/PortalEventCard";
 import PremiumButton from "../components/premium/PremiumButton";
 import ClientSidebar from "../components/ClientSidebar";
 import ClientMobileNav from "../components/ClientMobileNav";
@@ -1310,6 +1311,9 @@ export default function Portal() {
             />
           )}
         </div>
+
+        {/* Next public event (only while one is published) */}
+        <PortalEventCard />
 
         {/* Persistent waiver-signature confirmation — replaces the old
             silent modal close (Focused Client Usability phase). Only ever

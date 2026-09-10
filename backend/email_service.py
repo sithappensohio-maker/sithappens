@@ -2510,6 +2510,68 @@ async def notify_admin_contact_inquiry(inquiry: dict, labels: dict) -> bool:
     )
 
 
+def _event_when(event: dict) -> tuple:
+    """('Saturday, October 24, 2026', '2:00 PM – 5:00 PM') in the business timezone."""
+    try:
+        tz = ZoneInfo("America/New_York")
+        start = datetime.fromisoformat(str(event.get("start_at")).replace("Z", "+00:00")).astimezone(tz)
+        day = start.strftime("%A, %B %d, %Y").replace(" 0", " ")
+        fmt = lambda d: d.strftime("%I:%M %p").lstrip("0")
+        end_raw = event.get("end_at")
+        if end_raw:
+            end = datetime.fromisoformat(str(end_raw).replace("Z", "+00:00")).astimezone(tz)
+            return day, f"{fmt(start)} – {fmt(end)}"
+        return day, fmt(start)
+    except Exception:
+        return str(event.get("start_at") or ""), ""
+
+
+async def send_event_registration_confirmed(to_email: str, event: dict, registration: dict) -> bool:
+    """Short 'you're registered' note for a public event preregistration.
+    No portal link and no ticket — the confirmation number is all the door
+    needs. Returns whether an email actually went out (False when email is
+    not configured), so the page can say so honestly."""
+    first = (registration.get("primary_contact") or "there").split(" ")[0]
+    day, when = _event_when(event)
+    dogs = registration.get("dogs") or []
+    adults, children = int(registration.get("adults") or 0), int(registration.get("children") or 0)
+    rows = [
+        ("Confirmation #", registration.get("confirmation_number") or ""),
+        ("Event", event.get("name") or ""),
+        ("When", f"{day} · {when}".strip(" ·")),
+        ("Where", " ".join(x for x in (event.get("location_name"), event.get("location_address")) if x)),
+        ("People", f"{adults} adult{'s' if adults != 1 else ''}, {children} child{'ren' if children != 1 else ''}"),
+    ]
+    if dogs:
+        rows.append(("Dogs", ", ".join(d.get("name", "") for d in dogs)))
+    entries = [d for d in dogs if d.get("costume_entered")]
+    if entries:
+        rows.append(("Costume contest", "; ".join(
+            f"{d.get('name', '')} — Contestant #{int(d['contestant_number']):03d}" if d.get("contestant_number") else d.get("name", "")
+            for d in entries)))
+    else:
+        rows.append(("Costume contest", "Not entered (you can still enter at the door)"))
+    return await _dispatch(
+        slug="event_registration_confirmed",
+        to_email=to_email,
+        ctx={"first_name": first, "client_name": registration.get("primary_contact") or "", "event_name": event.get("name") or "",
+             "event_day": day, "event_time": when, "confirmation_number": registration.get("confirmation_number") or ""},
+        rows=rows,
+        cta_url=f"{APP_PUBLIC_URL}/events/{event.get('slug')}" if APP_PUBLIC_URL and event.get("slug") else None,
+        show_install=False,
+        fallback_subject=f"You're registered — {event.get('name') or 'Sit Happens event'}",
+        fallback_title="🎃 You're registered!",
+        fallback_intro=(
+            f"Hi {first}, you're on the list for {event.get('name') or 'our event'} on {day}, {when}. "
+            "No ticket needed — just give your name or confirmation number at the check-in table. "
+            "Dogs must stay leashed (no retractable leashes)."
+        ),
+        fallback_cta_text="Event details",
+        outbox_key=f"event_registration_confirmed:{registration.get('id')}",
+        queue_on_failure=True,
+    )
+
+
 async def send_contact_inquiry_received(to_email: str, client_name: str, dog_name: str) -> None:
     """Short acknowledgement to the person who filled in the questionnaire.
     No portal link — they are not a client yet; the operator replies personally."""

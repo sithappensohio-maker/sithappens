@@ -45,6 +45,8 @@ const PERM_LABELS = {
   manage_engagement_content: "Engagement content",
   manage_shop_media: "Shop media",
   sell_credits: "Sell prepaid visits",
+  manage_events: "Run public events (check-in, walk-ins, exports)",
+  edit_events: "Create and edit public events",
 };
 
 export default function RolesPanel() {

@@ -11,6 +11,7 @@ import ScheduleWorkspace from "./screens/ScheduleWorkspace";
 import TrainingWorkspace from "./screens/TrainingWorkspace";
 import Clients from "./screens/Clients";
 import Inquiries from "./screens/Inquiries";
+import Events from "./screens/Events";
 import Dogs from "./screens/Dogs";
 import Portal from "./screens/Portal";
 import EmployeePortal from "./screens/EmployeePortal";
@@ -37,6 +38,8 @@ import PublicShop from "./screens/PublicShop";
 import PublicHome from "./public/PublicHome";
 import PublicTraining from "./public/PublicTraining";
 import { PublicAbout, PublicPhotography, PublicContact } from "./public/PublicPages";
+import PublicEvent from "./public/PublicEvent";
+import PublicEvents from "./public/PublicEventBits";
 import { rootDestination } from "./public/publicSite";
 import GlobalSearch from "./components/GlobalSearch";
 import AdminBookingModal from "./components/AdminBookingModal";
@@ -178,7 +181,7 @@ function AdminShell() {
   // landing workspace while Dashboard-only tools are migrated into it.
   const NAV_GROUPS = [
     { label: "Daily Work", ids: ["today", "dashboard", "action_center", "pos", "clients", "inquiries", "dogs", "messages"] },
-    { label: "Schedule", ids: ["schedule", "bookings", "waitlist", "recurring"] },
+    { label: "Schedule", ids: ["schedule", "bookings", "waitlist", "recurring", "events"] },
     { label: "Care", ids: ["runsheet", "care", "kennel", "incidents"] },
     { label: "Training", ids: ["pipeline", "school_hq", "rewards_center", "trophies"] },
     { label: "Shop", ids: ["shop_manager"] },
@@ -702,6 +705,7 @@ function AdminShell() {
             onBookForClient={(clientId)=>{ setPendingBookingPreset({ clientId, dogId: null }); setGlobalModal("new_booking"); }}
             openCreateOnMount={pendingCreateTab === "clients"} onCreateConsumed={()=>setPendingCreateTab(null)} userId={user?.id} can={can} />}
           {tab === "inquiries" && navAllowed("inquiries") && <Inquiries can={can} onOpenClient={(id)=>navigateAdmin("clients", {kind:"client", id, mode:"open"})} />}
+          {tab === "events" && navAllowed("events") && <Events can={can} />}
           {tab === "dogs" && navAllowed("dogs") && <Dogs focusId={searchTarget?.kind==="dog"?searchTarget.id:null} focusMode={searchTarget?.mode || "scroll"} onConsumed={clearSearchTarget} openCreateOnMount={pendingCreateTab === "dogs"} onCreateConsumed={()=>setPendingCreateTab(null)} userId={user?.id}
             can={can}
             onBookForDog={(dogId, ownerId)=>{ setPendingBookingPreset({ clientId: ownerId || null, dogId }); setGlobalModal("new_booking"); }}
@@ -864,6 +868,7 @@ export const NAV_ITEMS = [
     { id: "bookings", label: "Bookings", icon: "fa-calendar-check", sidebar: false },
     { id: "waitlist", label: "Waitlist", icon: "fa-hourglass-half", perm: "booking_edit", feature: "waitlist", sidebar: false },
     { id: "recurring", label: "Recurring", icon: "fa-rotate", sidebar: false },
+    { id: "events", label: "Events", icon: "fa-calendar-day", perm: "manage_events" },
     { id: "clients", label: "Clients", icon: "fa-users", perm: "clients_view" },
     { id: "inquiries", label: "Inquiries", icon: "fa-inbox", perm: "clients_edit" },
     { id: "dogs", label: "Dogs", icon: "fa-paw", perm: "dogs_view" },
@@ -928,6 +933,8 @@ export default function App() {
       <Route path="/about" element={<AppProviders><PublicAbout /></AppProviders>} />
       <Route path="/photography" element={<AppProviders><PublicPhotography /></AppProviders>} />
       <Route path="/contact" element={<AppProviders><PublicContact /></AppProviders>} />
+      <Route path="/events" element={<AppProviders><PublicEvents /></AppProviders>} />
+      <Route path="/events/:slug" element={<AppProviders><PublicEvent /></AppProviders>} />
       <Route path="/shop/*" element={<AppProviders><ShopGate /></AppProviders>} />
       <Route path="/admin/*" element={<AppProviders><Gate /></AppProviders>} />
       <Route path="*" element={<AppProviders><Gate /></AppProviders>} />

@@ -1792,6 +1792,8 @@ const PERM_META = [
   { key: "manage_engagement_content", label: "Manage Engagement Content", desc: "Trivia, dog facts, photography gallery, and trophy catalog administration." },
   { key: "manage_shop_media",       label: "Manage Shop Media",       desc: "Upload and delete Shop product/credit-pack/program images." },
   { key: "sell_credits",            label: "Sell Prepaid Visits",     desc: "Sell credit packs and training programs to a client — narrower than Finance/Reports, so front-desk staff can sell without seeing P&L." },
+  { key: "manage_events",           label: "Run Public Events",       desc: "The Events dashboard: see who preregistered, check people in on event day, add walk-ins, view costume contestants and export CSVs." },
+  { key: "edit_events",             label: "Edit Public Events",      desc: "Create new events and change an event's name, dates, description, rules, costume contest and whether it is published." },
 ];
 
 // Dependencies: granting the dependent permission auto-suggests enabling the base.

@@ -502,6 +502,18 @@ EMAIL_TEMPLATES = [
         "variables": ["first_name", "client_name", "dog_name"],
     },
     {
+        "slug": "event_registration_confirmed",
+        "name": "Event Registration Confirmed",
+        "description": "Sent to someone right after they preregister for a public event (e.g. Trunk or Treat). No ticket — the confirmation number is all the door needs.",
+        "category": "client",
+        "audience": "client",
+        "default_subject": "You're registered — {{event_name}}",
+        "default_title": "🎃 You're registered!",
+        "default_intro_html": "Hi {{first_name}}, you're on the list for <strong>{{event_name}}</strong> on {{event_day}}, {{event_time}}. No ticket needed — just give your name or confirmation number <strong>{{confirmation_number}}</strong> at the check-in table. Dogs must stay leashed (no retractable leashes).",
+        "default_cta_text": "Event details",
+        "variables": ["first_name", "client_name", "event_name", "event_day", "event_time", "confirmation_number"],
+    },
+    {
         "slug": "admin_contact_inquiry",
         "name": "New Website Inquiry (admin)",
         "description": "Sent to the operator the moment the public questionnaire is submitted.",

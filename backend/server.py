@@ -66,6 +66,7 @@ from email_service import (
     send_contact_inquiry_received,
 )
 import email_service
+import events_domain
 import school_events
 import school_lesson_guide
 from school_media_preflight import check_school_media_writable
@@ -34511,6 +34512,12 @@ async def startup():
         await _seed_dog_facts_if_empty()
     except Exception as exc:
         logger.warning("Dog facts seeding failed: %s", exc)
+    # Public events — indexes + the first event (idempotent by slug).
+    try:
+        await events_domain.ensure_events_indexes(db)
+        await events_domain.seed_default_events(db)
+    except Exception as exc:
+        logger.warning("Events setup failed: %s", exc)
     # Sprint 110di-20 — load role permission overrides at boot.
     try:
         await _load_role_overrides_from_settings()
@@ -54624,6 +54631,14 @@ PERMISSION_KEYS = (
     # only (see front_desk override below); _empty_perms() defaults every
     # other role False.
     "sell_credits",
+    # Public event preregistration (Trunk or Treat etc.) — the admin Events
+    # dashboard, event-day check-in, walk-ins, costume contestants and CSV
+    # exports. Every hands-on staff role has it by default (they run the
+    # door); read_only does not.
+    "manage_events",
+    # Creating/editing/deleting events themselves (name, dates, rules,
+    # publish) is owner/manager only, like the other content-shaping keys.
+    "edit_events",
 )
 
 
@@ -54680,6 +54695,7 @@ ROLE_PERMISSIONS: Dict[str, Dict[str, bool]] = {
         "manage_training_sessions": True,
         # School HQ is the trainer's daily operations hub — on by default.
         "manage_school": True,
+        "manage_events": True,
     },
     "daycare_staff": {
         **_empty_perms(),
@@ -54689,6 +54705,7 @@ ROLE_PERMISSIONS: Dict[str, Dict[str, bool]] = {
         "booking_edit": True,
         "messages": True,
         "take_payments": True,
+        "manage_events": True,
     },
     "boarding_staff": {
         **_empty_perms(),
@@ -54698,6 +54715,7 @@ ROLE_PERMISSIONS: Dict[str, Dict[str, bool]] = {
         "booking_edit": True,
         "messages": True,
         "take_payments": True,
+        "manage_events": True,
     },
     "front_desk": {
         **_empty_perms(),
@@ -54707,6 +54725,7 @@ ROLE_PERMISSIONS: Dict[str, Dict[str, bool]] = {
         "messages": True,
         "take_payments": True,
         "sell_credits": True,
+        "manage_events": True,
     },
     "read_only": {
         **_empty_perms(),
@@ -57409,6 +57428,14 @@ register_domains(
     enrollment_summary=_enrollment_summary, effective_lessons=_effective_lessons,
     recommended_focus=_light_recommended_focus,
     booking_training_assignment_for_day=_booking_training_assignment_for_day,
+)
+
+# Public event preregistration (events_domain.py) — public page + register,
+# client prefill, and the permission-gated admin dashboard/check-in/exports.
+events_domain.register_events_routes(
+    api=api, db=db, get_current_user=get_current_user,
+    require_admin_and_permission=require_admin_and_permission,
+    enforce_rate_limit=_enforce_rate_limit, client_ip=_client_ip, logger=logger,
 )
 
 app.include_router(api)

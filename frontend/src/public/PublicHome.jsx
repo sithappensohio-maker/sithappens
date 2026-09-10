@@ -4,6 +4,7 @@ import { api } from "../lib/api";
 import { useAuth } from "../lib/auth";
 import PublicSiteShell from "./PublicSiteShell";
 import { Eyebrow, Title, Section, Cta, usePublicDoors, ContactStrip, ProgramCard, FreeCourseCard, FinalCta } from "./PublicBits";
+import { UpcomingEventBanner } from "./PublicEventBits";
 import { usePublicSite, bookingHref, hoursRows, money, ONLINE_SCHOOL_HREF } from "./publicSite";
 import { PROBLEMS, PROMISE, PILLARS, HOW_TO_BOOK, FALLBACK_PROGRAMS, CATEGORY_META } from "./publicContent";
 
@@ -120,6 +121,9 @@ export default function PublicHome() {
           {rows[0] && <span><i className="fas fa-clock text-shGreen mr-1.5" />{rows[0].days} {rows[0].hours}</span>}
         </div>
       </div>
+
+      {/* ===== Next event (only while one is published) ===== */}
+      <UpcomingEventBanner />
 
       {/* ===== What we do ===== */}
       <Section tone="panel" testid="site-services">

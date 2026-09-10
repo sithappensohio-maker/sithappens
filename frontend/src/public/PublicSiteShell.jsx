@@ -2,6 +2,7 @@ import { useEffect, useState } from "react";
 import { Link, useLocation } from "react-router-dom";
 import { useAuth } from "../lib/auth";
 import { PUBLIC_NAV, usePublicSite, hoursRows } from "./publicSite";
+import { usePublicEvents, eventsNavItem } from "./publicEvents";
 
 /**
  * The public website's frame: brand header with the site's navigation, a
@@ -18,6 +19,10 @@ function isActive(item, pathname) {
 export default function PublicSiteShell({ children, testid = "public-site" }) {
   const { user } = useAuth();
   const { site, data } = usePublicSite();
+  const events = usePublicEvents();
+  // "Events" appears only while something is on the calendar.
+  const eventsItem = eventsNavItem(events);
+  const navItems = eventsItem ? [...PUBLIC_NAV, eventsItem] : PUBLIC_NAV;
   const { pathname } = useLocation();
   const [open, setOpen] = useState(false);
   useEffect(() => { setOpen(false); }, [pathname]);
@@ -61,7 +66,7 @@ export default function PublicSiteShell({ children, testid = "public-site" }) {
             </span>
           </Link>
           <nav className="sh-site-nav" aria-label="Site">
-            {PUBLIC_NAV.map((item) => navLink(item))}
+            {navItems.map((item) => navLink(item))}
           </nav>
           <div className="sh-site-header__actions">
             {tel && <a href={`tel:${tel}`} className="sh-site-phone" data-testid="site-header-phone"><i className="fas fa-phone" /><span>{phone}</span></a>}
@@ -76,7 +81,7 @@ export default function PublicSiteShell({ children, testid = "public-site" }) {
         </div>
         {open && (
           <div className="sh-site-drawer" data-testid="site-drawer">
-            {PUBLIC_NAV.map((item) => navLink(item, "sh-site-drawer__link"))}
+            {navItems.map((item) => navLink(item, "sh-site-drawer__link"))}
             <Link to={accountHref} className="sh-site-drawer__link is-account" data-testid="site-drawer-account">
               <i className={`fas ${signedIn ? "fa-house" : "fa-user"} mr-2`} />{accountLabel}
             </Link>
@@ -114,7 +119,7 @@ export default function PublicSiteShell({ children, testid = "public-site" }) {
           <div>
             <p className="sh-site-footer__title">Explore</p>
             <div className="flex flex-col gap-1.5">
-              {PUBLIC_NAV.filter((i) => i.key !== "home").map((item) => (
+              {navItems.filter((i) => i.key !== "home").map((item) => (
                 item.to.startsWith("/shop") || item.to.includes("#")
                   ? <a key={item.key} href={item.to} className="sh-site-footer__link">{item.label}</a>
                   : <Link key={item.key} to={item.to} className="sh-site-footer__link">{item.label}</Link>
