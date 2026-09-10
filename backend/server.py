@@ -36053,8 +36053,8 @@ def _employee_doc_to_out(u: dict) -> dict:
         "address_city": u.get("address_city", ""),
         "address_state": u.get("address_state", ""),
         "address_zip": u.get("address_zip", ""),
-        "role": "employee",
-        "staff_role": u.get("staff_role") or "read_only",
+        "role": u.get("role") or "employee",
+        "staff_role": u.get("staff_role") or ("owner" if u.get("role") == "admin" else "read_only"),
         "created_at": u.get("created_at"),
         "last_login_at": u.get("last_login_at"),
         "must_change_password": bool(u.get("must_change_password", False)),
@@ -36065,7 +36065,7 @@ async def _get_owner_user_ids() -> set:
     """Return the set of user ids flagged as owner (single-owner enforced, but
     returned as a set for clean exclusion logic). Empty set when no owner."""
     rows = await db.users.find(
-        {"role": "employee", "is_owner": True}, {"_id": 0, "id": 1}
+        {"role": {"$in": ["employee", "admin"]}, "is_owner": True}, {"_id": 0, "id": 1}
     ).to_list(10)
     return {r["id"] for r in rows}
 
@@ -36076,7 +36076,7 @@ async def _enforce_single_owner(new_owner_id: Optional[str]) -> None:
     if not new_owner_id:
         return
     await db.users.update_many(
-        {"role": "employee", "is_owner": True, "id": {"$ne": new_owner_id}},
+        {"role": {"$in": ["employee", "admin"]}, "is_owner": True, "id": {"$ne": new_owner_id}},
         {"$set": {"is_owner": False}},
     )
 
@@ -36084,7 +36084,7 @@ async def _enforce_single_owner(new_owner_id: Optional[str]) -> None:
 @api.get("/admin/employees")
 async def list_employees(_: dict = Depends(require_admin_and_permission("payroll"))):
     rows = await db.users.find(
-        {"role": "employee"}, {"_id": 0, "password_hash": 0}
+        {"role": {"$in": ["employee", "admin"]}}, {"_id": 0, "password_hash": 0}
     ).sort("name", 1).to_list(500)
     return [_employee_doc_to_out(u) for u in rows]
 
@@ -36124,7 +36124,7 @@ async def create_employee(body: EmployeeCreateIn, _: dict = Depends(require_admi
 
 @api.put("/admin/employees/{user_id}", response_model=EmployeeOut)
 async def update_employee(user_id: str, body: EmployeeIn, _: dict = Depends(require_admin_and_permission("payroll"))):
-    u = await db.users.find_one({"id": user_id, "role": "employee"}, {"_id": 0})
+    u = await db.users.find_one({"id": user_id, "role": {"$in": ["employee", "admin"]}}, {"_id": 0})
     if not u:
         raise HTTPException(status_code=404, detail="Employee not found")
     update = {
@@ -36142,6 +36142,13 @@ async def update_employee(user_id: str, body: EmployeeIn, _: dict = Depends(requ
         "address_state": body.address_state or "",
         "address_zip": body.address_zip or "",
     }
+    if u.get("role") == "admin":
+        # The admin login keeps its identity and stays active no matter what
+        # the form sent; only pay, owner and tax details apply.
+        update.pop("email", None)
+        update.pop("active", None)
+        if body.name:
+            update["name"] = body.name
     await db.users.update_one({"id": user_id}, {"$set": update})
     if update["is_owner"]:
         await _enforce_single_owner(user_id)
@@ -36180,9 +36187,10 @@ async def deactivate_employee(user_id: str, _: dict = Depends(require_admin_and_
 # ── Owner (sole-prop / self-pay) ──
 @api.get("/admin/owner")
 async def get_owner(_: dict = Depends(require_admin_and_permission("payroll"))):
-    """Returns the single employee flagged as owner, or null."""
+    """Returns the single user flagged as owner (an employee record or the
+    admin login itself), or null."""
     row = await db.users.find_one(
-        {"role": "employee", "is_owner": True},
+        {"role": {"$in": ["employee", "admin"]}, "is_owner": True},
         {"_id": 0, "password_hash": 0},
     )
     return {"owner": _employee_doc_to_out(row) if row else None}
@@ -36192,7 +36200,7 @@ async def get_owner(_: dict = Depends(require_admin_and_permission("payroll"))):
 async def owner_draw_summary(_: dict = Depends(require_admin_and_permission("finance_reports"))):
     """Today / MTD / YTD draw for the owner: hours × hourly_rate."""
     row = await db.users.find_one(
-        {"role": "employee", "is_owner": True},
+        {"role": {"$in": ["employee", "admin"]}, "is_owner": True},
         {"_id": 0, "id": 1, "name": 1, "display_name": 1, "hourly_rate": 1},
     )
     if not row:
@@ -36455,7 +36463,7 @@ async def _staff_readiness_summary(day: Optional[str] = None) -> Dict[str, Any]:
     is_today = d == business_today().isoformat()
 
     employees = await db.users.find(
-        {"role": "employee", "active": True},
+        {"$or": [{"role": "employee", "active": True}, {"role": "admin", "is_owner": True}]},
         {"_id": 0, "id": 1, "name": 1, "display_name": 1, "email": 1, "hourly_rate": 1, "staff_role": 1, "is_owner": 1},
     ).sort("name", 1).to_list(500)
     employee_map = {e["id"]: e for e in employees}
@@ -36631,7 +36639,7 @@ async def admin_staff_readiness(date: Optional[str] = None, _: dict = Depends(re
 @api.get("/admin/staff/pay-snapshot")
 async def staff_pay_snapshot(_: dict = Depends(require_admin_and_permission("finance_reports"))):
     employees = await db.users.find(
-        {"role": "employee", "active": True},
+        {"$or": [{"role": "employee", "active": True}, {"role": "admin", "is_owner": True}]},
         {"_id": 0, "id": 1, "name": 1, "display_name": 1, "email": 1, "hourly_rate": 1, "is_owner": 1},
     ).to_list(500)
     if not employees:

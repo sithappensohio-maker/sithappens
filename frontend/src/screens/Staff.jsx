@@ -169,6 +169,7 @@ export default function Staff() {
                 <p className="text-base font-black text-shText">
                   {e.name}
                   {e.is_owner && <span className="ml-2 text-[11px] font-black uppercase tracking-widest bg-shSecondary/20 text-shSecondary px-2 py-0.5 rounded" data-testid={`staff-owner-${e.id}`}><i className="fas fa-crown mr-1"/>Owner</span>}
+                  {e.role === "admin" && <span className="ml-2 text-[11px] font-black uppercase tracking-widest bg-shPrimary/15 text-shPrimary px-2 py-0.5 rounded" data-testid={`staff-admin-${e.id}`} title="This is an admin login. Set an hourly rate and tick Owner to track its hours as owner's draw."><i className="fas fa-shield-halved mr-1"/>Admin login</span>}
                   {!e.active && <span className="ml-2 text-[11px] font-black uppercase tracking-widest bg-red-500/15 text-red-300 px-2 py-0.5 rounded">Inactive</span>}
                   {snap?.live && <span className="ml-2 text-[11px] font-black uppercase tracking-widest bg-shPrimary/20 text-shPrimary px-2 py-0.5 rounded animate-pulse" data-testid={`staff-live-${e.id}`}><i className="fas fa-bolt mr-1"/>On the clock</span>}
                 </p>
@@ -194,9 +195,9 @@ export default function Staff() {
               <div className="flex gap-2 flex-wrap">
                 <button onClick={()=>setModal({ mode: "edit", emp: e })} data-testid={`staff-edit-${e.id}`}
                         className="text-[13px] font-black uppercase text-shSecondary hover:underline">Edit</button>
-                <button onClick={()=>setModal({ mode: "reset-pw", emp: e })} data-testid={`staff-reset-${e.id}`}
-                        className="text-[13px] font-black uppercase text-shAccent hover:underline">Reset PW</button>
-                {e.active && <button onClick={()=>deactivate(e)} data-testid={`staff-deactivate-${e.id}`}
+                {e.role !== "admin" && <button onClick={()=>setModal({ mode: "reset-pw", emp: e })} data-testid={`staff-reset-${e.id}`}
+                        className="text-[13px] font-black uppercase text-shAccent hover:underline">Reset PW</button>}
+                {e.role !== "admin" && e.active && <button onClick={()=>deactivate(e)} data-testid={`staff-deactivate-${e.id}`}
                                     className="text-[13px] font-black uppercase text-red-400 hover:underline">Deactivate</button>}
               </div>
             </div>
@@ -537,11 +538,13 @@ function EmployeeFormModal({ mode, emp, onClose, onSaved }) {
         {mode !== "reset-pw" && (
           <>
             <Field label="Name *" value={form.name} onChange={v=>setForm({...form, name: v})} testid="emp-name"/>
-            <Field label="Email *" type="email" value={form.email} onChange={v=>setForm({...form, email: v})} testid="emp-email"/>
+            {emp?.role === "admin"
+              ? <p className="text-[12px] text-shTextMuted" data-testid="emp-admin-note"><i className="fas fa-shield-halved mr-1 text-shPrimary"/>Admin login · {emp.email}. Email and access are managed from your own account; set the rate and Owner flag here.</p>
+              : <Field label="Email *" type="email" value={form.email} onChange={v=>setForm({...form, email: v})} testid="emp-email"/>}
             <Field label="Display name (shown on run sheet)" value={form.display_name} onChange={v=>setForm({...form, display_name: v})} testid="emp-display"/>
             <Field label="Phone" value={form.phone} onChange={v=>setForm({...form, phone: v})} testid="emp-phone"/>
             <Field label="Hourly rate ($)" type="number" value={form.hourly_rate} onChange={v=>setForm({...form, hourly_rate: Number(v)||0})} testid="emp-rate"/>
-            {mode === "edit" && (
+            {mode === "edit" && emp?.role !== "admin" && (
               <label className="flex items-center gap-2 text-[14px] font-black uppercase tracking-widest text-shTextMuted">
                 <input type="checkbox" checked={form.active} onChange={(e)=>setForm({...form, active: e.target.checked})} className="w-4 h-4 accent-shPrimary" data-testid="emp-active"/>
                 Active (can log in)
