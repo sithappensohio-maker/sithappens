@@ -484,3 +484,30 @@ def test_banner_background_image_upload_serve_replace_and_remove():
     finally:
         run(server.db.event_media.delete_many({"event_id": ev["id"]}))
         run(server.db.events.update_one({"id": ev["id"]}, {"$set": {"banner_image_id": None}}))
+
+
+def test_flyer_picture_uses_the_same_upload_and_shows_on_the_event_page():
+    import base64 as _b64
+    ev = _event()
+    owner = _staff()
+    png = _b64.b64encode(b"\x89PNG\r\n\x1a\n" + b"\x00" * 32).decode()
+    body = {"data": f"data:image/png;base64,{png}", "filename": "flyer.png"}
+    try:
+        assert run(_http.get(f"/api/public/events/{SLUG}")).json()["event"]["flyer_image_version"] is None
+        assert run(_http.get(f"/api/public/events/{SLUG}/images/flyer")).status_code == 404
+        assert run(_http.get(f"/api/public/events/{SLUG}/images/poster")).status_code == 404, "only known kinds"
+        r = run(_http.post(f"/api/admin/events/{ev['id']}/images/flyer", json=body, headers=_auth(owner)))
+        assert r.status_code == 200, r.text
+        v = r.json()["event"]["flyer_image_version"]
+        assert v and r.json()["event"]["banner_image_version"] is None, "the flyer never touches the banner slot"
+        pub = run(_http.get(f"/api/public/events/{SLUG}")).json()["event"]
+        assert pub["flyer_image_version"] == v
+        img = run(_http.get(f"/api/public/events/{SLUG}/images/flyer", params={"v": v}))
+        assert img.status_code == 200 and img.headers["content-type"] == "image/png"
+        assert run(_http.post(f"/api/admin/events/{ev['id']}/images/poster", json=body, headers=_auth(owner))).status_code == 404
+        d = run(_http.delete(f"/api/admin/events/{ev['id']}/images/flyer", headers=_auth(owner)))
+        assert d.status_code == 200 and d.json()["event"]["flyer_image_version"] is None
+        assert run(server.db.event_media.count_documents({"event_id": ev["id"], "kind": "flyer"})) == 0
+    finally:
+        run(server.db.event_media.delete_many({"event_id": ev["id"]}))
+        run(server.db.events.update_one({"id": ev["id"]}, {"$set": {"flyer_image_id": None, "banner_image_id": None}}))

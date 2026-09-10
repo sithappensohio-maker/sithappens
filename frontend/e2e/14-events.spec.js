@@ -401,8 +401,12 @@ test.describe("public event preregistration", () => {
     const png = Buffer.from("iVBORw0KGgoAAAANSUhEUgAAAAIAAAACCAIAAAD91JpzAAAAFklEQVR4nGP4z8DwHwyBBAOEAWMAAKeXCf3l5yW0AAAAAElFTkSuQmCC", "base64");
     await page.getByTestId("event-editor-banner-file").setInputFiles({ name: "pumpkins.png", mimeType: "image/png", buffer: png });
     await expect(page.getByTestId("event-editor-banner-preview")).toBeVisible({ timeout: 15_000 });
+    // the flyer goes up the same way and lands on the event page
+    await page.getByTestId("event-editor-flyer-file").setInputFiles({ name: "flyer.png", mimeType: "image/png", buffer: png });
+    await expect(page.getByTestId("event-editor-flyer-preview")).toBeVisible({ timeout: 15_000 });
     await H.snap(page, "55-editor-banner-picture");
-    await page.getByTestId("event-editor-close").click();
+    await page.keyboard.press("Escape"); // toasts can sit over the X on a phone
+    await expect(page.getByTestId("event-editor")).toHaveCount(0);
 
     const guest = await page.context().browser().newContext({ viewport: page.viewportSize() });
     const gp = await guest.newPage();
@@ -411,21 +415,27 @@ test.describe("public event preregistration", () => {
     const banner = gp.getByTestId("site-event-banner");
     await expect(banner).toHaveAttribute("data-has-image", "1");
     const bgImage = await gp.getByTestId("site-event-banner-image").evaluate((el) => getComputedStyle(el).backgroundImage);
-    expect(bgImage).toMatch(/\/api\/public\/events\/trunk-or-treat-2026\/banner\?v=/);
-    const img = await request.get(`${H.API}/public/events/${SLUG}/banner`);
+    expect(bgImage).toMatch(/\/api\/public\/events\/trunk-or-treat-2026\/images\/banner\?v=/);
+    const img = await request.get(`${H.API}/public/events/${SLUG}/images/banner`);
     expect(img.status()).toBe(200);
     expect(img.headers()["content-type"]).toBe("image/png");
     // words and button are untouched
     await expect(gp.getByTestId("site-event-banner-name")).toContainText(/trunk or treat/i);
     await expect(gp.getByTestId("site-event-banner-cta")).toHaveAttribute("href", `/events/${SLUG}`);
     await H.snap(gp, "56-home-banner-with-picture");
+    await gp.goto(`/events/${SLUG}`);
+    await expect(gp.getByTestId("event-flyer-image")).toHaveAttribute("src", new RegExp(`/api/public/events/${SLUG}/images/flyer\\?v=`));
     await guest.close();
 
     await page.getByTestId("event-edit").click();
     await page.getByTestId("event-editor-banner-remove").click();
     await expect(page.getByTestId("event-editor-banner-empty")).toBeVisible({ timeout: 15_000 });
-    await page.getByTestId("event-editor-close").click();
-    expect((await request.get(`${H.API}/public/events/${SLUG}/banner`)).status()).toBe(404);
+    await page.getByTestId("event-editor-flyer-remove").click();
+    await expect(page.getByTestId("event-editor-flyer-empty")).toBeVisible({ timeout: 15_000 });
+    await page.keyboard.press("Escape"); // toasts can sit over the X on a phone
+    await expect(page.getByTestId("event-editor")).toHaveCount(0);
+    expect((await request.get(`${H.API}/public/events/${SLUG}/images/banner`)).status()).toBe(404);
+    expect((await request.get(`${H.API}/public/events/${SLUG}/images/flyer`)).status()).toBe(404);
     expect(errors.filter((e) => !e.includes("404")), errors.join(" | ")).toEqual([]);
   });
 

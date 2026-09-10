@@ -5,7 +5,7 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import { api, formatErr } from "../lib/api";
 import { toast } from "sonner";
-import { bannerImageUrl } from "../public/publicEvents";
+import { eventImageUrl } from "../public/publicEvents";
 
 export const ICON_PRESETS = [
   ["fa-car-side", "Trunk / car"], ["fa-hat-wizard", "Costume"], ["fa-camera-retro", "Photo booth"], ["fa-bone", "Treat / trick"],
@@ -103,17 +103,17 @@ function readAsDataUrl(file) {
   });
 }
 
-/** Banner background picture: uploaded straight away (it needs a saved event),
- *  shown as a preview, removable. The words and the button on the banner are
- *  the app's own and never change with the picture. */
-function BannerImageField({ event, onChanged }) {
+/** An uploadable event picture (`banner` behind the homepage banner, `flyer`
+ *  on the event page): uploaded straight away (it needs a saved event), shown
+ *  as a preview, replaceable, removable. */
+function EventImageField({ kind, event, onChanged, emptyText, help, previewClass = "h-28 sm:h-36" }) {
   const [busy, setBusy] = useState(false);
   const [err, setErr] = useState("");
   const inputRef = useRef(null);
   if (!event) {
-    return <p className="text-[13px] text-shTextMuted" data-testid="event-editor-banner-later">Create the event first, then you can add a background picture for the homepage banner here.</p>;
+    return <p className="text-[13px] text-shTextMuted" data-testid={`event-editor-${kind}-later`}>Create the event first, then you can upload this picture here.</p>;
   }
-  const url = bannerImageUrl(event);
+  const url = eventImageUrl(event, kind);
   const pick = async (e) => {
     const file = e.target.files?.[0];
     e.target.value = "";
@@ -124,35 +124,35 @@ function BannerImageField({ event, onChanged }) {
     setBusy(true);
     try {
       const data = await readAsDataUrl(file);
-      const r = await api.post(`/admin/events/${event.id}/banner-image`, { data, filename: file.name });
-      toast.success("Banner picture saved");
+      const r = await api.post(`/admin/events/${event.id}/images/${kind}`, { data, filename: file.name });
+      toast.success("Picture saved");
       onChanged(r.data);
     } catch (ex) { setErr(formatErr(ex.response?.data?.detail) || ex.message || "Couldn't upload the picture."); }
     setBusy(false);
   };
   const remove = async () => {
     setBusy(true);
-    try { const r = await api.delete(`/admin/events/${event.id}/banner-image`); toast.success("Banner picture removed"); onChanged(r.data); }
+    try { const r = await api.delete(`/admin/events/${event.id}/images/${kind}`); toast.success("Picture removed"); onChanged(r.data); }
     catch (ex) { setErr(formatErr(ex.response?.data?.detail) || "Couldn't remove the picture."); }
     setBusy(false);
   };
   return (
-    <div className="space-y-2" data-testid="event-editor-banner">
+    <div className="space-y-2" data-testid={`event-editor-${kind}`}>
       <div className="rounded-xl border border-bgHover overflow-hidden bg-bgBase">
         {url
-          ? <div className="h-28 sm:h-36 bg-cover bg-center" style={{ backgroundImage: `url("${url}")` }} data-testid="event-editor-banner-preview" />
-          : <div className="h-20 grid place-items-center text-[13px] text-shTextMuted" data-testid="event-editor-banner-empty">No picture yet. The banner uses the brand colours.</div>}
+          ? <div className={`${previewClass} bg-contain bg-center bg-no-repeat`} style={{ backgroundImage: `url("${url}")` }} data-testid={`event-editor-${kind}-preview`} />
+          : <div className="h-20 grid place-items-center text-[13px] text-shTextMuted px-3 text-center" data-testid={`event-editor-${kind}-empty`}>{emptyText}</div>}
       </div>
       <div className="flex flex-wrap gap-2">
-        <input ref={inputRef} type="file" accept="image/jpeg,image/png,image/webp" onChange={pick} className="hidden" data-testid="event-editor-banner-file" />
-        <button type="button" onClick={() => inputRef.current?.click()} disabled={busy} data-testid="event-editor-banner-upload"
+        <input ref={inputRef} type="file" accept="image/jpeg,image/png,image/webp" onChange={pick} className="hidden" data-testid={`event-editor-${kind}-file`} />
+        <button type="button" onClick={() => inputRef.current?.click()} disabled={busy} data-testid={`event-editor-${kind}-upload`}
                 className="min-h-[44px] px-4 rounded-xl bg-shSurfaceRaised text-shText font-black text-[12px] uppercase tracking-widest border border-bgHover disabled:opacity-50">
           <i className="fas fa-image mr-1.5" />{busy ? "Uploading…" : url ? "Replace picture" : "Upload picture"}
         </button>
-        {url && <button type="button" onClick={remove} disabled={busy} data-testid="event-editor-banner-remove" className="min-h-[44px] px-4 rounded-xl bg-red-500/10 text-red-300 font-black text-[12px] uppercase tracking-widest border border-red-500/30 disabled:opacity-50">Remove</button>}
+        {url && <button type="button" onClick={remove} disabled={busy} data-testid={`event-editor-${kind}-remove`} className="min-h-[44px] px-4 rounded-xl bg-red-500/10 text-red-300 font-black text-[12px] uppercase tracking-widest border border-red-500/30 disabled:opacity-50">Remove</button>}
       </div>
-      <p className="text-[12px] text-shTextMuted">JPEG, PNG or WEBP up to 5 MB. Wide pictures work best (about 3:1). A dark wash goes over it so the words stay readable.</p>
-      {err && <p className="text-[13px] text-red-300 font-black" data-testid="event-editor-banner-error">{err}</p>}
+      <p className="text-[12px] text-shTextMuted">{help}</p>
+      {err && <p className="text-[13px] text-red-300 font-black" data-testid={`event-editor-${kind}-error`}>{err}</p>}
     </div>
   );
 }
@@ -223,9 +223,22 @@ export default function EventEditor({ event, onClose, onSaved, onDeleted, onChan
             {slugChanged && <p className="text-[12px] text-shOrange font-black mt-1" data-testid="event-editor-slug-warning"><i className="fas fa-triangle-exclamation mr-1" />Changing this breaks any QR code or link already shared.</p>}
           </Field>
           <Field label="Description"><textarea rows={3} value={f.description} onChange={(e) => set("description")(e.target.value)} className={inputCls} data-testid="event-editor-description" /></Field>
-          <Field label="Flyer image link" hint="(optional, shows in place of the logo card)"><input value={f.hero_image_url} onChange={(e) => set("hero_image_url")(e.target.value)} className={inputCls} data-testid="event-editor-hero" placeholder="https://…" /></Field>
+          <Field label="Flyer" hint="(optional; shows on the event page in place of the logo card)">
+            <div className="mt-1">
+              <EventImageField kind="flyer" event={event} onChanged={onChanged} previewClass="h-40 sm:h-56"
+                               emptyText="No flyer yet. The event page shows the logo card." help="JPEG, PNG or WEBP up to 5 MB. Portrait or square flyers look best." />
+              <details className="mt-2">
+                <summary className="text-[12px] font-black uppercase tracking-widest text-shTextMuted cursor-pointer">Or paste a picture link</summary>
+                <input value={f.hero_image_url} onChange={(e) => set("hero_image_url")(e.target.value)} className={inputCls} data-testid="event-editor-hero" placeholder="https://…" />
+                <p className="text-[12px] text-shTextMuted mt-1">Used only when no flyer is uploaded.</p>
+              </details>
+            </div>
+          </Field>
           <Field label="Homepage banner background" hint="(optional picture behind the banner; text and button stay the same)">
-            <div className="mt-1"><BannerImageField event={event} onChanged={onChanged} /></div>
+            <div className="mt-1">
+              <EventImageField kind="banner" event={event} onChanged={onChanged}
+                               emptyText="No picture yet. The banner uses the brand colours." help="JPEG, PNG or WEBP up to 5 MB. Wide pictures work best (about 3:1). A dark wash goes over it so the words stay readable." />
+            </div>
           </Field>
         </div>
 

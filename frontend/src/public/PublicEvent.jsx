@@ -5,7 +5,7 @@ import { useAuth } from "../lib/auth";
 import PublicSiteShell from "./PublicSiteShell";
 import { Eyebrow, Title, Cta, ContactStrip } from "./PublicBits";
 import { usePublicSite } from "./publicSite";
-import { fmtEventWhen } from "./publicEvents";
+import { fmtEventWhen, flyerImageUrl } from "./publicEvents";
 
 /**
  * /events/<slug> — a public event page with free preregistration.
@@ -218,8 +218,8 @@ export default function PublicEvent() {
               )}
             </div>
             <div className="sh-site-card overflow-hidden p-0" data-testid="event-flyer" style={{ "--card-accent": "#f26522" }}>
-              {ev.hero_image_url
-                ? <img src={ev.hero_image_url} alt={`${ev.name} flyer`} className="w-full h-auto object-cover" />
+              {(flyerImageUrl(ev) || ev.hero_image_url)
+                ? <img src={flyerImageUrl(ev) || ev.hero_image_url} alt={`${ev.name} flyer`} className="w-full h-auto object-cover" data-testid="event-flyer-image" />
                 : (
                   <div className="aspect-[4/5] sm:aspect-[4/3] lg:aspect-[4/5] flex flex-col items-center justify-center text-center p-6 bg-gradient-to-br from-shOrange/25 via-bgPanel to-shGreen/15">
                     <img src="/logo.png" alt="" className="w-40 sm:w-48 drop-shadow-[0_12px_30px_rgba(0,0,0,0.6)]" />

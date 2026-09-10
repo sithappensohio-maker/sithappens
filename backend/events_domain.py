@@ -132,6 +132,10 @@ def _pad_contestant(n: Optional[int]) -> str:
 
 BANNER_ALLOWED_MIME = ("image/jpeg", "image/png", "image/webp")
 MAX_BANNER_BYTES = 5 * 1024 * 1024
+# Uploadable pictures on an event: the homepage banner background and the
+# flyer shown on the event page. Each is stored in `event_media` and
+# referenced from the event as `<kind>_image_id`.
+IMAGE_KINDS = ("banner", "flyer")
 
 
 def _public_event(ev: dict) -> dict:
@@ -140,8 +144,13 @@ def _public_event(ev: dict) -> dict:
     # `<api>/public/events/<slug>/banner?v=<version>` from this (no file
     # extension on purpose — production nginx serves image-looking paths
     # statically). The version changes with every upload so caches refresh.
-    out["banner_image_version"] = (ev.get("banner_image_id") or "")[:8] or None
+    for kind in IMAGE_KINDS:
+        out[f"{kind}_image_version"] = _image_version(ev, kind)
     return out
+
+
+def _image_version(ev: dict, kind: str) -> Optional[str]:
+    return (ev.get(f"{kind}_image_id") or "")[:8] or None
 
 
 class BannerImageIn(BaseModel):
@@ -490,20 +499,32 @@ def register_events_routes(*, api, db, get_current_user, require_admin_and_permi
             out.append(item)
         return {"events": out}
 
-    @api.get("/public/events/{slug}/banner")
-    async def public_event_banner(slug: str):
-        """The uploaded banner background as a real image response (public,
-        cacheable; the `?v=` the page appends busts caches on re-upload)."""
+    async def _public_image(slug: str, kind: str) -> Response:
+        """An uploaded event picture as a real image response (public,
+        cacheable; the `?v=` the page appends busts caches on re-upload).
+        No file extension on these paths: production nginx serves
+        image-looking paths statically before the API proxy sees them."""
+        if kind not in IMAGE_KINDS:
+            raise HTTPException(status_code=404, detail="No such image")
         ev = await _event_by_slug(slug, published_only=True)
-        mid = ev.get("banner_image_id")
+        mid = ev.get(f"{kind}_image_id")
         m = await db.event_media.find_one({"id": mid, "event_id": ev["id"]}, {"_id": 0, "mime": 1, "b64": 1}) if mid else None
         if not m:
-            raise HTTPException(status_code=404, detail="No banner image")
+            raise HTTPException(status_code=404, detail=f"No {kind} image")
         try:
             data = base64.b64decode(m["b64"])
         except Exception:
-            raise HTTPException(status_code=404, detail="No banner image")
+            raise HTTPException(status_code=404, detail=f"No {kind} image")
         return Response(content=data, media_type=m["mime"], headers={"Cache-Control": "public, max-age=3600"})
+
+    @api.get("/public/events/{slug}/images/{kind}")
+    async def public_event_image(slug: str, kind: str):
+        return await _public_image(slug, kind)
+
+    @api.get("/public/events/{slug}/banner")
+    async def public_event_banner(slug: str):
+        """Older alias of /images/banner."""
+        return await _public_image(slug, "banner")
 
     @api.get("/public/events/{slug}")
     async def public_event(slug: str):
@@ -660,7 +681,7 @@ def register_events_routes(*, api, db, get_current_user, require_admin_and_permi
         ev = await _event_by_id(event_id)
         regs = await db.event_registrations.count_documents({"event_id": event_id})
         return {"event": {**ev, "registration_closed": _registration_closed(ev), "registration_count": regs,
-                          "banner_image_version": (ev.get("banner_image_id") or "")[:8] or None},
+                          **{f"{k}_image_version": _image_version(ev, k) for k in IMAGE_KINDS}},
                 "summary": await _summary(db, event_id)}
 
     @api.post("/admin/events")
@@ -808,11 +829,12 @@ def register_events_routes(*, api, db, get_current_user, require_admin_and_permi
         await db.event_registrations.insert_one(dict(reg))
         return {"registration": _row(reg), "summary": await _summary(db, event_id)}
 
-    @api.post("/admin/events/{event_id}/banner-image")
-    async def admin_upload_banner_image(event_id: str, body: BannerImageIn, user: dict = Depends(edit)):
-        """Background picture for the homepage banner (text and button stay
-        the app's). JPEG/PNG/WEBP, 5 MB ceiling measured from the real base64
-        length. Replaces any previous picture."""
+    async def _store_image(event_id: str, kind: str, body: "BannerImageIn", user: dict) -> dict:
+        """Save an uploaded picture (JPEG/PNG/WEBP, 5 MB ceiling measured from
+        the real base64 length) and point the event at it, dropping the
+        previous one."""
+        if kind not in IMAGE_KINDS:
+            raise HTTPException(status_code=404, detail="No such image")
         ev = await _event_by_id(event_id)
         raw = body.data
         if not raw.startswith("data:"):
@@ -828,22 +850,42 @@ def register_events_routes(*, api, db, get_current_user, require_admin_and_permi
         if approx > MAX_BANNER_BYTES:
             raise HTTPException(status_code=400, detail=f"That picture is {approx // (1024 * 1024)} MB. Max is 5 MB.")
         media_id = str(uuid.uuid4())
-        await db.event_media.insert_one({"id": media_id, "event_id": event_id, "kind": "banner", "mime": mime, "b64": b64,
-                                         "filename": _clean(body.filename, 140) or "banner", "size_bytes": approx,
+        await db.event_media.insert_one({"id": media_id, "event_id": event_id, "kind": kind, "mime": mime, "b64": b64,
+                                         "filename": _clean(body.filename, 140) or kind, "size_bytes": approx,
                                          "uploaded_at": _now_iso(), "uploaded_by": user.get("id")})
-        old = ev.get("banner_image_id")
-        await db.events.update_one({"id": event_id}, {"$set": {"banner_image_id": media_id, "updated_at": _now_iso()}})
+        old = ev.get(f"{kind}_image_id")
+        await db.events.update_one({"id": event_id}, {"$set": {f"{kind}_image_id": media_id, "updated_at": _now_iso()}})
         if old:
             await db.event_media.delete_one({"id": old})
         return await _event_admin_view(event_id)
 
+    async def _remove_image(event_id: str, kind: str) -> dict:
+        if kind not in IMAGE_KINDS:
+            raise HTTPException(status_code=404, detail="No such image")
+        ev = await _event_by_id(event_id)
+        if ev.get(f"{kind}_image_id"):
+            await db.event_media.delete_one({"id": ev[f"{kind}_image_id"]})
+            await db.events.update_one({"id": event_id}, {"$set": {f"{kind}_image_id": None, "updated_at": _now_iso()}})
+        return await _event_admin_view(event_id)
+
+    @api.post("/admin/events/{event_id}/images/{kind}")
+    async def admin_upload_event_image(event_id: str, kind: str, body: BannerImageIn, user: dict = Depends(edit)):
+        """`banner` = the picture behind the homepage banner (words and button
+        stay the app's); `flyer` = the picture on the event page."""
+        return await _store_image(event_id, kind, body, user)
+
+    @api.delete("/admin/events/{event_id}/images/{kind}")
+    async def admin_delete_event_image(event_id: str, kind: str, user: dict = Depends(edit)):
+        return await _remove_image(event_id, kind)
+
+    @api.post("/admin/events/{event_id}/banner-image")
+    async def admin_upload_banner_image(event_id: str, body: BannerImageIn, user: dict = Depends(edit)):
+        """Older alias of /images/banner."""
+        return await _store_image(event_id, "banner", body, user)
+
     @api.delete("/admin/events/{event_id}/banner-image")
     async def admin_delete_banner_image(event_id: str, user: dict = Depends(edit)):
-        ev = await _event_by_id(event_id)
-        if ev.get("banner_image_id"):
-            await db.event_media.delete_one({"id": ev["banner_image_id"]})
-            await db.events.update_one({"id": event_id}, {"$set": {"banner_image_id": None, "updated_at": _now_iso()}})
-        return await _event_admin_view(event_id)
+        return await _remove_image(event_id, "banner")
 
     @api.get("/admin/events/{event_id}/qr")
     async def admin_event_qr(event_id: str, request: Request, origin: str = Query(default=""),

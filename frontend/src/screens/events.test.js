@@ -12,7 +12,7 @@ import { fmtEventWhen, eventsNavItem, eventHref } from "../public/publicEvents";
 import { adminPathForTab, parseAdminLocation } from "../lib/adminRoutes";
 import { isoToLocalInput, localInputToIso, slugify, formFromEvent, payloadFromForm } from "../components/EventEditor";
 import { upcomingEvents, isEventDay } from "../components/TodayEventsCard";
-import { bannerImageUrl } from "../public/publicEvents";
+import { bannerImageUrl, flyerImageUrl } from "../public/publicEvents";
 
 const read = (...p) => fs.readFileSync(path.join(__dirname, ...p), "utf8");
 const app = read("..", "App.js");
@@ -209,7 +209,9 @@ describe("admin Today shows upcoming events", () => {
 
 describe("banner background picture", () => {
   test("the banner points at the public image route (no file extension) only when a picture exists", () => {
-    expect(bannerImageUrl({ slug: "trunk-or-treat-2026", banner_image_version: "ab12cd34" })).toMatch(/\/api\/public\/events\/trunk-or-treat-2026\/banner\?v=ab12cd34$/);
+    expect(bannerImageUrl({ slug: "trunk-or-treat-2026", banner_image_version: "ab12cd34" })).toMatch(/\/api\/public\/events\/trunk-or-treat-2026\/images\/banner\?v=ab12cd34$/);
+    expect(flyerImageUrl({ slug: "trunk-or-treat-2026", flyer_image_version: "ff00ff00" })).toMatch(/\/images\/flyer\?v=ff00ff00$/);
+    expect(flyerImageUrl({ slug: "x", banner_image_version: "ab12cd34" })).toBeNull();
     expect(bannerImageUrl({ slug: "x", banner_image_version: null })).toBeNull();
     const bits = read("..", "public", "PublicEventBits.jsx");
     expect(bits).toMatch(/data-testid="site-event-banner-image"/);
@@ -217,10 +219,14 @@ describe("banner background picture", () => {
   });
   test("the editor uploads/removes through the admin routes and refreshes without closing", () => {
     const editor = read("..", "components", "EventEditor.jsx");
-    expect(editor).toMatch(/api\.post\(`\/admin\/events\/\$\{event\.id\}\/banner-image`, \{ data, filename: file\.name \}\)/);
-    expect(editor).toMatch(/api\.delete\(`\/admin\/events\/\$\{event\.id\}\/banner-image`\)/);
+    expect(editor).toMatch(/api\.post\(`\/admin\/events\/\$\{event\.id\}\/images\/\$\{kind\}`, \{ data, filename: file\.name \}\)/);
+    expect(editor).toMatch(/api\.delete\(`\/admin\/events\/\$\{event\.id\}\/images\/\$\{kind\}`\)/);
     expect(editor).toMatch(/accept="image\/jpeg,image\/png,image\/webp"/);
-    expect(editor).toContain('data-testid="event-editor-banner-later"');
+    // both pictures use the one upload field
+    expect(editor).toMatch(/<EventImageField kind="flyer"/);
+    expect(editor).toMatch(/<EventImageField kind="banner"/);
+    // the event page prefers the uploaded flyer, then a pasted link, then the logo card
+    expect(publicEvent).toMatch(/\(flyerImageUrl\(ev\) \|\| ev\.hero_image_url\)/);
     expect(events).toMatch(/onChanged=\{\(data\) => \{/);
   });
 });

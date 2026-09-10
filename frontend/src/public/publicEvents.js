@@ -52,7 +52,10 @@ export function fmtEventShort(ev) {
 /** Where an uploaded banner background lives, or null when there is none.
  *  No file extension on the path: production nginx serves image-looking
  *  paths statically before the API proxy sees them. */
-export function bannerImageUrl(ev) {
-  if (!ev?.banner_image_version) return null;
-  return `${API_BASE}/public/events/${ev.slug}/banner?v=${ev.banner_image_version}`;
+export function eventImageUrl(ev, kind) {
+  const v = ev?.[`${kind}_image_version`];
+  if (!v) return null;
+  return `${API_BASE}/public/events/${ev.slug}/images/${kind}?v=${v}`;
 }
+export const bannerImageUrl = (ev) => eventImageUrl(ev, "banner");
+export const flyerImageUrl = (ev) => eventImageUrl(ev, "flyer");
