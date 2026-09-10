@@ -63,7 +63,11 @@ test.describe("public event preregistration", () => {
     await expect(page.getByTestId("site-event-banner-name")).toContainText(/trunk or treat/i);
     await expect(page.getByTestId("site-event-banner-when")).toContainText(/October 24, 2026/);
     await expect(page.getByTestId("site-event-banner-cta")).toHaveAttribute("href", `/events/${SLUG}`);
-    await banner.scrollIntoViewIfNeeded();
+    // a strip at the very top: under the header, above the hero, on the first screen
+    const bannerBox = await banner.boundingBox();
+    const heroBox = await page.getByTestId("site-hero").boundingBox();
+    expect(bannerBox.y).toBeLessThan(140);
+    expect(bannerBox.y + bannerBox.height).toBeLessThanOrEqual(heroBox.y + 1);
     await H.snap(page, "39-home-event-banner");
     await page.getByTestId("site-menu-toggle").click();
     const navEvents = page.getByTestId("site-drawer").getByTestId("site-nav-events");
@@ -208,8 +212,17 @@ test.describe("public event preregistration", () => {
     expect(reg.registration.confirmation_number).toMatch(/^SH-TOT-/);
 
     await adminInBrowser(page, request);
-    await page.goto("/admin/events");
+    // Today shows the event with its preregistration count and opens the dashboard
+    await page.goto("/admin/today");
+    const todayCard = page.getByTestId("today-events");
+    await expect(todayCard).toBeVisible({ timeout: 20_000 });
+    await expect(page.getByTestId(`today-event-${SLUG}`)).toContainText(/trunk or treat/i);
+    await expect(page.getByTestId(`today-event-${SLUG}-households`)).toContainText(/\d+ household/);
+    await todayCard.scrollIntoViewIfNeeded();
+    await H.snap(page, "43b-admin-today-events");
+    await page.getByTestId("today-open-events").click();
     await expect(page.getByTestId("events-screen")).toBeVisible({ timeout: 20_000 });
+    await expect(page).toHaveURL(/\/admin\/events$/);
     await expect(page.getByTestId("event-name")).toContainText(/trunk or treat/i);
     await expect(page.getByTestId("event-public-link")).toContainText(`/events/${SLUG}`);
     for (const k of ["households", "adults", "children", "people", "dogs", "costume_entries", "checked_in", "walk_ins"]) {
@@ -351,7 +364,7 @@ test.describe("public event preregistration", () => {
     await H.snap(gp, "53-second-event-public");
     // and it is in the nav (two events → the index) and the homepage banner counts it
     await gp.goto("/");
-    await expect(gp.getByTestId("site-event-banner")).toContainText(/2 coming up/);
+    await expect(gp.getByTestId("site-event-banner-all")).toContainText(/2/);
     await gp.getByTestId("site-menu-toggle").click();
     await expect(gp.getByTestId("site-drawer").getByTestId("site-nav-events")).toHaveAttribute("href", "/events");
     await gp.goto("/events");

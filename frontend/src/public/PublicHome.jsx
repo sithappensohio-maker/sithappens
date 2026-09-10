@@ -71,6 +71,9 @@ export default function PublicHome() {
 
   return (
     <PublicSiteShell testid="public-home">
+      {/* ===== Next event — a strip at the very top, only while one is published ===== */}
+      <UpcomingEventBanner />
+
       {/* ===== Hero ===== */}
       <section className="relative overflow-hidden" data-testid="site-hero">
         <div className="absolute inset-0 pointer-events-none opacity-40"
@@ -121,9 +124,6 @@ export default function PublicHome() {
           {rows[0] && <span><i className="fas fa-clock text-shGreen mr-1.5" />{rows[0].days} {rows[0].hours}</span>}
         </div>
       </div>
-
-      {/* ===== Next event (only while one is published) ===== */}
-      <UpcomingEventBanner />
 
       {/* ===== What we do ===== */}
       <Section tone="panel" testid="site-services">

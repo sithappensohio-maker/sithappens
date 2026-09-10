@@ -8,6 +8,7 @@ import { runTodayBrainCTA } from "../lib/todayBrain";
 import { useLiveRefresh } from "../lib/useLiveRefresh";
 import TodayOperations from "../components/TodayOperations";
 import { visibleRecents } from "../lib/recentlyOpened";
+import TodayEventsCard from "../components/TodayEventsCard";
 
 const RECENT_ICON = {
   client: "fa-user", dog: "fa-paw", booking: "fa-calendar-check",
@@ -210,6 +211,9 @@ export default function Today({ onNavigate = () => {}, onJumpToDog = () => {}, o
                          testid="today-stat-register" onClick={() => onNavigate("pos")}/>
         )}
       </div>
+
+      {/* 2b. Upcoming public events (only while something is on the calendar) */}
+      <TodayEventsCard can={can} onNavigate={onNavigate} refreshSignal={refreshSignal} />
 
       {/* 3. Do This Now */}
       <div className="rounded-2xl border border-shBorder bg-[var(--sh-card-base)] p-4 sm:p-5" data-testid="today-do-this-now">

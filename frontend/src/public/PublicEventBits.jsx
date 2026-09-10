@@ -6,23 +6,33 @@ import PublicSiteShell from "./PublicSiteShell";
 import { Eyebrow, Title, Cta } from "./PublicBits";
 import { usePublicEvents, eventHref, fmtEventWhen, fmtEventShort } from "./publicEvents";
 
-/** Homepage banner for the next upcoming event. Renders nothing when there is none. */
+/** Homepage banner for the next upcoming event: a loud, full-width band at
+ *  the very top of the page, under the site header and above the hero, so it
+ *  is the first thing anyone sees. Renders nothing when nothing is coming up. */
 export function UpcomingEventBanner() {
   const events = usePublicEvents();
   const ev = events && events[0];
   if (!ev) return null;
   const when = fmtEventWhen(ev);
   return (
-    <div className="max-w-6xl mx-auto px-4 sm:px-6 mt-4 mb-2" data-testid="site-event-banner">
-      <div className="sh-site-band flex flex-col lg:flex-row lg:items-center gap-4" style={{ borderColor: "rgba(242,101,34,.45)" }}>
+    <div className="relative overflow-hidden" data-testid="site-event-banner"
+         style={{ background: "linear-gradient(100deg, rgba(242,101,34,.55) 0%, rgba(242,101,34,.22) 38%, rgba(140,198,63,.22) 70%, rgba(0,169,224,.28) 100%)", borderBottom: "2px solid rgba(242,101,34,.7)", boxShadow: "inset 0 -30px 60px -40px #000" }}>
+      <div className="absolute inset-0 pointer-events-none opacity-60" style={{ background: "radial-gradient(circle at 8% 20%, rgba(242,101,34,.9) 0%, transparent 32%), radial-gradient(circle at 92% 70%, rgba(140,198,63,.7) 0%, transparent 30%)" }} />
+      <div className="relative max-w-6xl mx-auto px-4 sm:px-6 py-5 sm:py-7 flex flex-col lg:flex-row lg:items-center gap-4 lg:gap-8 sh-splatter">
         <div className="min-w-0 flex-1">
-          <p className="text-[11px] font-black uppercase tracking-[0.3em] text-shOrange"><i className="fas fa-calendar-day mr-1.5" />{ev.admission === "free" ? "Free community event" : "Upcoming event"}{events.length > 1 ? ` · ${events.length} coming up` : ""}</p>
-          <p className="sh-display text-2xl sm:text-3xl text-white leading-none mt-1.5" style={{ textWrap: "balance" }} data-testid="site-event-banner-name">{ev.name_line_1 || ev.name}{ev.name_line_2 ? <span className="text-shGreen"> {ev.name_line_2}</span> : null}</p>
-          <p className="text-[14px] text-gray-200 mt-2 font-bold" data-testid="site-event-banner-when">{when.day} · {when.time}{ev.location_name ? ` · ${ev.location_name}` : ""}</p>
+          <p className="text-[12px] sm:text-[13px] font-black uppercase tracking-[0.3em] text-white" data-testid="site-event-banner-when">
+            <span className="inline-block px-2 py-0.5 rounded-md bg-shOrange text-bgHeader mr-2 align-middle"><i className="fas fa-calendar-day mr-1.5" />{ev.admission === "free" ? "Free event" : "Event"}</span>
+            <span className="align-middle">{when.day} · {when.time}</span>
+          </p>
+          <p className="sh-display text-[30px] sm:text-[40px] lg:text-[48px] text-white leading-[0.95] mt-2" style={{ textWrap: "balance" }} data-testid="site-event-banner-name">
+            {ev.name_line_1 || ev.name}{ev.name_line_2 ? <><br className="hidden sm:block" /><span className="text-shGreen"> {ev.name_line_2}</span></> : null}
+          </p>
+          {ev.location_name && <p className="text-[14px] sm:text-[15px] text-gray-200 font-bold mt-2"><i className="fas fa-location-dot text-shOrange mr-1.5" />{ev.location_name}{ev.walk_ins_allowed !== false ? " · Walk-ins welcome" : ""}{ev.admission === "free" ? " · Free admission" : ""}</p>}
         </div>
-        <div className="flex flex-col sm:flex-row gap-2 shrink-0">
-          <Cta color="green" to={eventHref(ev)} icon="fa-paw" testid="site-event-banner-cta">{ev.registration_closed ? "Event details" : "Preregister free"}</Cta>
-          {events.length > 1 && <Cta color="ghost" to="/events" icon="fa-calendar-days" testid="site-event-banner-all">All events</Cta>}
+        <div className="flex flex-col items-start lg:items-end gap-2 shrink-0">
+          <Cta color="green" to={eventHref(ev)} icon="fa-paw" testid="site-event-banner-cta" className="min-h-[60px] text-[16px] px-8 sh-event-cta-pulse">{ev.registration_closed ? "Event details" : "Preregister free"}</Cta>
+          <span className="text-[11px] font-black uppercase tracking-widest text-gray-300">{ev.registration_closed ? "Preregistration has closed" : "Takes two minutes · No account needed"}</span>
+          {events.length > 1 && <Link to="/events" className="text-[11px] font-black uppercase tracking-widest text-white underline underline-offset-4" data-testid="site-event-banner-all">All events ({events.length})</Link>}
         </div>
       </div>
     </div>

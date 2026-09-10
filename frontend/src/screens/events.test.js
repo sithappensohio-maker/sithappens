@@ -11,6 +11,7 @@ import { padContestant, SUMMARY_CARDS } from "./Events";
 import { fmtEventWhen, eventsNavItem, eventHref } from "../public/publicEvents";
 import { adminPathForTab, parseAdminLocation } from "../lib/adminRoutes";
 import { isoToLocalInput, localInputToIso, slugify, formFromEvent, payloadFromForm } from "../components/EventEditor";
+import { upcomingEvents, isEventDay } from "../components/TodayEventsCard";
 
 const read = (...p) => fs.readFileSync(path.join(__dirname, ...p), "utf8");
 const app = read("..", "App.js");
@@ -97,9 +98,9 @@ describe("how people reach an event", () => {
     expect(shell.match(/navItems\./g).length).toBe(3); // header, drawer, footer
     expect(shell).not.toMatch(/\{PUBLIC_NAV\.map/);
   });
-  test("the homepage banner sits under the hero and the portal card under the quick actions", () => {
+  test("the homepage banner is the first thing on the page (above the hero) and the portal card sits under the quick actions", () => {
     expect(home).toMatch(/<UpcomingEventBanner \/>/);
-    expect(home.indexOf("<UpcomingEventBanner />")).toBeLessThan(home.indexOf('testid="site-services"'));
+    expect(home.indexOf("<UpcomingEventBanner />")).toBeLessThan(home.indexOf('data-testid="site-hero"'));
     expect(portal).toMatch(/<PortalEventCard \/>/);
     expect(portal.indexOf("<PortalEventCard />")).toBeGreaterThan(portal.indexOf('data-testid="portal-top-quick-actions"'));
     expect(app).toMatch(/<Route path="\/events" element=\{<AppProviders><PublicEvents \/><\/AppProviders>\} \/>/);
@@ -178,5 +179,29 @@ describe("event page load states", () => {
     expect(publicEvent).toMatch(/data-testid="event-load-failed"/);
     expect(publicEvent).toMatch(/testid="event-retry"/);
     expect(publicEvent.indexOf("ev === null && loadFailed")).toBeLessThan(publicEvent.indexOf('data-testid="event-not-found"'));
+  });
+});
+
+describe("admin Today shows upcoming events", () => {
+  test("the card is wired under the snapshot, gated on manage_events, and opens the Events tab", () => {
+    const today = read("Today.jsx");
+    expect(today).toMatch(/<TodayEventsCard can=\{can\} onNavigate=\{onNavigate\} refreshSignal=\{refreshSignal\} \/>/);
+    expect(today.indexOf("<TodayEventsCard")).toBeGreaterThan(today.indexOf('data-testid="today-snapshot"'));
+    expect(today.indexOf("<TodayEventsCard")).toBeLessThan(today.indexOf('data-testid="today-do-this-now"'));
+    const card = read("..", "components", "TodayEventsCard.jsx");
+    expect(card).toMatch(/const allowed = can\("manage_events"\);/);
+    expect(card).toMatch(/onNavigate\("events"\)/);
+    expect(card).toMatch(/api\.get\("\/admin\/events"\)/);
+  });
+  test("only events that haven't ended are listed, soonest first; event day is recognised", () => {
+    const now = new Date("2026-10-24T15:00:00-04:00");
+    const list = [
+      { slug: "later", start_at: "2027-04-10T13:00:00-04:00", end_at: "2027-04-10T15:00:00-04:00" },
+      { slug: "past", start_at: "2026-09-01T13:00:00-04:00", end_at: "2026-09-01T15:00:00-04:00" },
+      { slug: "tot", start_at: "2026-10-24T14:00:00-04:00", end_at: "2026-10-24T17:00:00-04:00" },
+    ];
+    expect(upcomingEvents(list, now.getTime()).map((e) => e.slug)).toEqual(["tot", "later"]);
+    expect(isEventDay(list[2], now)).toBe(true);
+    expect(isEventDay(list[0], now)).toBe(false);
   });
 });

@@ -2693,3 +2693,9 @@ html, body, #root {
 .sh-site-footer__bar { border-top:1px solid var(--sh-border); }
 .sh-site-footer__bar { max-width:100%; padding:14px 16px; display:flex; flex-direction:column; gap:6px; align-items:center; justify-content:space-between; font-size:11px; font-weight:900; letter-spacing:.14em; text-transform:uppercase; color:#64748b; }
 @media (min-width:640px) { .sh-site-footer__bar { flex-direction:row; padding-left:calc((100% - var(--site-max)) / 2 + 16px); padding-right:calc((100% - var(--site-max)) / 2 + 16px); } }
+
+/* Public event banner — the preregister button breathes so it reads as the
+   thing to tap; still when the visitor prefers reduced motion. */
+@keyframes sh-event-cta-pulse { 0%, 100% { box-shadow: 0 0 0 0 rgba(140,198,63,.55), 0 18px 40px -18px rgba(140,198,63,.8); } 50% { box-shadow: 0 0 0 12px rgba(140,198,63,0), 0 18px 40px -18px rgba(140,198,63,.8); } }
+.sh-event-cta-pulse { animation: sh-event-cta-pulse 2.2s ease-out infinite; }
+@media (prefers-reduced-motion: reduce) { .sh-event-cta-pulse { animation: none; } }
