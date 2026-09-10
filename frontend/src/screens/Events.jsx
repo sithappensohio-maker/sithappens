@@ -13,6 +13,10 @@ const VIEWS = [
   ["costume", "Costume contest", "fa-hat-wizard"],
 ];
 const STATUS_FILTERS = [["registered", "Registered"], ["all", "All"], ["cancelled", "Cancelled"]];
+/** Registration list columns, in the order the owner asked for. */
+export const TABLE_COLUMNS = ["Confirmation #", "Primary contact", "Email", "Phone", "Adults", "Children", "Dogs", "Costume", "Source", "Status", "Check-in", "Registered"];
+const LAYOUT_KEY = "sh_events_attendee_layout";
+function readLayout() { try { return localStorage.getItem(LAYOUT_KEY) === "table" ? "table" : "list"; } catch { return "list"; } }
 
 export function padContestant(n) { return n ? `#${String(n).padStart(3, "0")}` : ""; }
 export function fmtWhen(iso) {
@@ -141,6 +145,45 @@ function AttendeeRow({ reg, onCheckIn, onUndo, onOpen, busy }) {
             </button>
           )}
         </div>
+      </div>
+    </div>
+  );
+}
+
+/** The registration list as a plain table: every column at a glance, one
+ *  row per household, tap a row for the details. Scrolls sideways on a phone. */
+function RegistrationTable({ regs, onOpen, onCheckIn, onUndo, busy }) {
+  return (
+    <div className="bg-bgPanel border border-bgHover rounded-2xl overflow-hidden">
+      <div className="overflow-x-auto">
+        <table className="w-full text-[13px] min-w-[1080px]" data-testid="event-attendees-table">
+          <thead className="text-[10px] uppercase tracking-widest text-shTextMuted">
+            <tr className="border-b border-bgHover">{TABLE_COLUMNS.map((h) => <th key={h} className="text-left px-3 py-2 font-black whitespace-nowrap">{h}</th>)}<th className="px-3 py-2" /></tr>
+          </thead>
+          <tbody>
+            {regs.map((r) => (
+              <tr key={r.id} className={`border-b border-bgHover/60 ${r.status === "cancelled" ? "opacity-60" : ""} ${r.checked_in ? "bg-shGreen/5" : ""}`} data-testid={`event-table-row-${r.id}`}>
+                <td className="px-3 py-2 font-mono font-black text-shBlue whitespace-nowrap"><button type="button" onClick={() => onOpen(r)} className="underline underline-offset-2">{r.confirmation_number}</button></td>
+                <td className="px-3 py-2 font-black text-white whitespace-nowrap">{r.primary_contact}</td>
+                <td className="px-3 py-2 text-shText">{r.email}</td>
+                <td className="px-3 py-2 text-shText whitespace-nowrap">{r.phone}</td>
+                <td className="px-3 py-2 text-shText tabular-nums">{r.adults}</td>
+                <td className="px-3 py-2 text-shText tabular-nums">{r.children}</td>
+                <td className="px-3 py-2 text-shText">{r.dog_count}{r.dog_names ? <span className="text-shTextMuted"> · {r.dog_names}</span> : null}</td>
+                <td className="px-3 py-2 whitespace-nowrap">{r.costume_contest ? <Pill tone="orange">{r.dogs.filter((d) => d.contestant_number).map((d) => padContestant(d.contestant_number)).join(" ") || "Yes"}</Pill> : <span className="text-shTextMuted">No</span>}</td>
+                <td className="px-3 py-2 whitespace-nowrap">{r.source === "walk_in" ? <Pill tone="blue">Walk-in</Pill> : <span className="text-shTextMuted">Online</span>}</td>
+                <td className="px-3 py-2 whitespace-nowrap">{r.status === "cancelled" ? <Pill tone="red">Cancelled</Pill> : <span className="text-shText">Registered</span>}</td>
+                <td className="px-3 py-2 whitespace-nowrap">{r.checked_in ? <Pill tone="green"><i className="fas fa-check" />{fmtTime(r.checked_in_at)}</Pill> : <span className="text-shTextMuted">—</span>}</td>
+                <td className="px-3 py-2 text-shTextMuted whitespace-nowrap">{fmtWhen(r.created_at)}</td>
+                <td className="px-3 py-2 whitespace-nowrap text-right">
+                  {r.status === "registered" && (r.checked_in
+                    ? <button type="button" onClick={() => onUndo(r)} disabled={busy === r.id} className="min-h-[36px] px-2.5 rounded-lg bg-shSurfaceRaised text-shText font-black text-[11px] uppercase tracking-widest border border-bgHover">Undo</button>
+                    : <button type="button" onClick={() => onCheckIn(r)} disabled={busy === r.id} className="min-h-[36px] px-2.5 rounded-lg bg-shGreen text-bgHeader font-black text-[11px] uppercase tracking-widest">Check in</button>)}
+                </td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
       </div>
     </div>
   );
@@ -298,6 +341,8 @@ export default function Events({ can }) {
   const [view, setView] = useState("attendees");
   const [q, setQ] = useState("");
   const [statusFilter, setStatusFilter] = useState("registered");
+  const [layout, setLayoutState] = useState(readLayout);
+  const setLayout = (v) => { setLayoutState(v); try { localStorage.setItem(LAYOUT_KEY, v); } catch { /* ignore */ } };
   const [regs, setRegs] = useState([]);
   const [contestants, setContestants] = useState([]);
   const [loading, setLoading] = useState(false);
@@ -479,11 +524,19 @@ export default function Events({ can }) {
                           className={`min-h-[36px] px-3 rounded-lg text-[11px] font-black uppercase tracking-widest ${statusFilter === k ? "bg-shSurfaceRaised text-shText ring-1 ring-bgHover" : "text-shTextMuted"}`}>{label}</button>
                 ))}
                 <span className="ml-auto text-[12px] text-shTextMuted" data-testid="event-attendee-count">{loading ? "Searching…" : `${regs.length} shown`}</span>
+                <div className="flex rounded-lg overflow-hidden border border-bgHover" role="group" aria-label="Layout">
+                  {[["list", "fa-list", "List"], ["table", "fa-table", "Table"]].map(([k, icon, label]) => (
+                    <button key={k} type="button" onClick={() => setLayout(k)} aria-pressed={layout === k} title={label} data-testid={`event-layout-${k}`}
+                            className={`min-h-[36px] px-3 text-[11px] font-black uppercase tracking-widest ${layout === k ? "bg-shSurfaceRaised text-shText" : "text-shTextMuted"}`}><i className={`fas ${icon} mr-1`} />{label}</button>
+                  ))}
+                </div>
               </div>
               {!loading && regs.length === 0 && <p className="text-shTextMuted text-[14px] py-6 text-center" data-testid="event-attendees-empty">{q ? "No one matches. Try a phone number or the confirmation number, or add them as a walk-in." : "No registrations yet."}</p>}
-              <div className="space-y-2">
-                {regs.map((r) => <AttendeeRow key={r.id} reg={r} busy={busy} onCheckIn={checkIn} onUndo={undo} onOpen={setOpen} />)}
-              </div>
+              {layout === "table" && regs.length > 0
+                ? <RegistrationTable regs={regs} busy={busy} onCheckIn={checkIn} onUndo={undo} onOpen={setOpen} />
+                : <div className="space-y-2">
+                    {regs.map((r) => <AttendeeRow key={r.id} reg={r} busy={busy} onCheckIn={checkIn} onUndo={undo} onOpen={setOpen} />)}
+                  </div>}
             </div>
           )}
 

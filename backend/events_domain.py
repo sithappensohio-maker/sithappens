@@ -87,6 +87,7 @@ TRUNK_OR_TREAT_2026 = {
     "published": True,
     "walk_ins_allowed": True,
     "confirmation_prefix": "SH-TOT",
+    "notify_on_registration": True,
     "features": {"costume_contest": True, "walk_ins": True},
     "highlights": [
         {"icon": "fa-car-side", "color": "#f26522", "title": "Doggy Trunk or Treat", "body": "Decorated trunks, dog treats at every stop."},
@@ -287,6 +288,7 @@ class EventIn(BaseModel):
     published: bool = False
     walk_ins_allowed: bool = True
     confirmation_prefix: str = Field(default="SH-EV", max_length=12)
+    notify_on_registration: bool = True  # email the operator on every online preregistration
     costume_contest: bool = True
     highlights: List[EventHighlightIn] = Field(default_factory=list, max_length=12)
     rules: List[str] = Field(default_factory=list, max_length=12)
@@ -322,6 +324,7 @@ def _event_doc_from_in(body: EventIn) -> dict:
         "published": bool(body.published),
         "walk_ins_allowed": bool(body.walk_ins_allowed),
         "confirmation_prefix": prefix,
+        "notify_on_registration": bool(body.notify_on_registration),
         "features": {"costume_contest": bool(body.costume_contest), "walk_ins": bool(body.walk_ins_allowed)},
         "highlights": [{"icon": _clean(h.icon, 40) or "fa-paw", "color": _clean(h.color, 20) or "#8cc63f",
                         "title": _clean(h.title, 80), "body": _clean(h.body, 200)} for h in body.highlights if _clean(h.title, 80)],
@@ -642,6 +645,14 @@ def register_events_routes(*, api, db, get_current_user, require_admin_and_permi
             email_sent = await email_service.send_event_registration_confirmed(to_email=email, event=ev, registration=reg)
         except Exception as exc:  # the registration stands whether or not the email goes out
             logger.warning("events: confirmation email failed for %s: %s", reg["confirmation_number"], exc)
+        # Operator alert (durable: outbox retry). Off per event if the owner
+        # prefers. Duplicates never reach here, so one household = one email.
+        if ev.get("notify_on_registration", True):
+            try:
+                total = await db.event_registrations.count_documents({"event_id": ev["id"], "status": "registered"})
+                await email_service.notify_admin_event_registration(ev, reg, total)
+            except Exception as exc:
+                logger.warning("events: operator alert failed for %s: %s", reg["confirmation_number"], exc)
         return {"ok": True, "registration": _receipt(reg, email_sent=bool(email_sent))}
 
     @api.get("/portal/events/prefill")

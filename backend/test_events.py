@@ -59,8 +59,8 @@ def _module_setup_and_cleanup():
     run(server.db.users.delete_many({"email": {"$regex": f"^{TAG.lower()}"}}))
     run(server.db.clients.delete_many({"email": {"$regex": f"^{TAG.lower()}"}}))
     run(server.db.dogs.delete_many({"name": {"$regex": f"^{TAG}"}}))
-    run(server.db.email_outbox.delete_many({"key": {"$regex": "^event_registration_confirmed:"}}))
-    run(server.db.notification_log.delete_many({"key": {"$regex": "^event_registration_confirmed:"}}))
+    run(server.db.email_outbox.delete_many({"key": {"$regex": "^(event_registration_confirmed|admin_event_registration):"}}))
+    run(server.db.notification_log.delete_many({"key": {"$regex": "^(event_registration_confirmed|admin_event_registration):"}}))
 
 
 def _clear_rate_limits():
@@ -511,3 +511,30 @@ def test_flyer_picture_uses_the_same_upload_and_shows_on_the_event_page():
     finally:
         run(server.db.event_media.delete_many({"event_id": ev["id"]}))
         run(server.db.events.update_one({"id": ev["id"]}, {"$set": {"flyer_image_id": None, "banner_image_id": None}}))
+
+
+def test_operator_is_told_about_each_new_online_registration_and_can_switch_it_off():
+    ev = _event()
+    email = _email()
+    key_rx = {"key": {"$regex": "^admin_event_registration:"}}
+    before = run(server.db.email_outbox.count_documents(key_rx))
+    reg = _register(email).json()["registration"]
+    # queued durably for the operator (email is not configured in tests → outbox)
+    q = run(server.db.email_outbox.find_one({"key": f"admin_event_registration:{reg['id']}"}))
+    assert q is not None
+    assert run(server.db.email_outbox.count_documents(key_rx)) == before + 1
+    # the same household again is a duplicate → no second alert
+    _register(email)
+    assert run(server.db.email_outbox.count_documents(key_rx)) == before + 1
+    # walk-ins added by staff do not alert
+    admin = _staff()
+    run(_http.post(f"/api/admin/events/{ev['id']}/walk-in", json={"primary_contact": "Door", "phone": "330-555-0003", "adults": 1}, headers=_auth(admin)))
+    assert run(server.db.email_outbox.count_documents(key_rx)) == before + 1
+    # the owner can switch alerts off per event
+    run(server.db.events.update_one({"id": ev["id"]}, {"$set": {"notify_on_registration": False}}))
+    try:
+        _register(_email())
+        assert run(server.db.email_outbox.count_documents(key_rx)) == before + 1
+    finally:
+        run(server.db.events.update_one({"id": ev["id"]}, {"$set": {"notify_on_registration": True}}))
+    assert "notify_on_registration" in events_domain.EventIn.model_fields

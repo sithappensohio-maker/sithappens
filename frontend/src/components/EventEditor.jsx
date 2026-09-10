@@ -45,7 +45,7 @@ export function formFromEvent(ev) {
       name: "", slug: "", slugTouched: false, name_line_1: "", name_line_2: "", description: "",
       start_at: "", end_at: "", location_name: "Sit Happens Dog Training", location_address: "", admission: "free", capacity: "",
       registration_open: true, registration_closes_at: "", published: false, walk_ins_allowed: true,
-      confirmation_prefix: "SH-EV", costume_contest: true,
+      confirmation_prefix: "SH-EV", costume_contest: true, notify_on_registration: true,
       highlights: [], rules: ["Leashed dogs only.", "No retractable leashes.", "Owners are responsible for their dogs at all times."],
       rules_acknowledgment: DEFAULT_RULES_ACK, hero_image_url: "",
     };
@@ -57,6 +57,7 @@ export function formFromEvent(ev) {
     capacity: ev.capacity ? String(ev.capacity) : "", registration_open: ev.registration_open !== false,
     registration_closes_at: isoToLocalInput(ev.registration_closes_at), published: !!ev.published,
     walk_ins_allowed: ev.walk_ins_allowed !== false, confirmation_prefix: ev.confirmation_prefix || "SH-EV",
+    notify_on_registration: ev.notify_on_registration !== false,
     costume_contest: (ev.features || {}).costume_contest !== false,
     highlights: (ev.highlights || []).map((h) => ({ icon: h.icon || "fa-paw", color: h.color || "#8cc63f", title: h.title || "", body: h.body || "" })),
     rules: [...(ev.rules || [])], rules_acknowledgment: ev.rules_acknowledgment || DEFAULT_RULES_ACK, hero_image_url: ev.hero_image_url || "",
@@ -73,6 +74,7 @@ export function payloadFromForm(f) {
     registration_open: !!f.registration_open, registration_closes_at: localInputToIso(f.registration_closes_at),
     published: !!f.published, walk_ins_allowed: !!f.walk_ins_allowed,
     confirmation_prefix: f.confirmation_prefix.trim().toUpperCase(), costume_contest: !!f.costume_contest,
+    notify_on_registration: !!f.notify_on_registration,
     highlights: f.highlights.filter((h) => h.title.trim()).map((h) => ({ ...h, title: h.title.trim(), body: h.body.trim() })),
     rules: f.rules.map((r) => r.trim()).filter(Boolean),
     rules_acknowledgment: f.rules_acknowledgment.trim(), hero_image_url: f.hero_image_url.trim(),
@@ -263,6 +265,7 @@ export default function EventEditor({ event, onClose, onSaved, onDeleted, onChan
             <Toggle label="Preregistration open" hint="Off = the page shows details only." value={f.registration_open} onChange={set("registration_open")} testid="event-editor-open" />
             <Toggle label="Walk-ins welcome" hint="Staff can add people at the door." value={f.walk_ins_allowed} onChange={set("walk_ins_allowed")} testid="event-editor-walkins" />
             <Toggle label="Dog costume contest" hint="Adds the costume questions and contestant numbers." value={f.costume_contest} onChange={set("costume_contest")} testid="event-editor-costume" />
+            <Toggle label="Email me each preregistration" hint="One email per household, to the business notification address. Walk-ins never send one." value={f.notify_on_registration} onChange={set("notify_on_registration")} testid="event-editor-notify" />
             <Field label="Preregistration closes" hint="(optional)"><input type="datetime-local" value={f.registration_closes_at} onChange={(e) => set("registration_closes_at")(e.target.value)} className={inputCls} data-testid="event-editor-closes" /></Field>
             <Field label="Confirmation prefix" hint="(e.g. SH-TOT → SH-TOT-0001)"><input value={f.confirmation_prefix} onChange={(e) => set("confirmation_prefix")(e.target.value.toUpperCase())} className={`${inputCls} font-mono uppercase`} data-testid="event-editor-prefix" maxLength={12} /></Field>
           </div>

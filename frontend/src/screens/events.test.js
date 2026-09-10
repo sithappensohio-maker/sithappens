@@ -7,7 +7,7 @@
 // screens keep the door-day essentials.
 import fs from "fs";
 import path from "path";
-import { padContestant, SUMMARY_CARDS } from "./Events";
+import { padContestant, SUMMARY_CARDS, TABLE_COLUMNS } from "./Events";
 import { fmtEventWhen, eventsNavItem, eventHref } from "../public/publicEvents";
 import { adminPathForTab, parseAdminLocation } from "../lib/adminRoutes";
 import { isoToLocalInput, localInputToIso, slugify, formFromEvent, payloadFromForm } from "../components/EventEditor";
@@ -228,5 +228,20 @@ describe("banner background picture", () => {
     // the event page prefers the uploaded flyer, then a pasted link, then the logo card
     expect(publicEvent).toMatch(/\(flyerImageUrl\(ev\) \|\| ev\.hero_image_url\)/);
     expect(events).toMatch(/onChanged=\{\(data\) => \{/);
+  });
+});
+
+describe("registration list and operator alerts", () => {
+  test("the attendee table has every column the owner asked for and is reachable from a List / Table switch", () => {
+    expect(TABLE_COLUMNS).toEqual(["Confirmation #", "Primary contact", "Email", "Phone", "Adults", "Children", "Dogs", "Costume", "Source", "Status", "Check-in", "Registered"]);
+    expect(events).toMatch(/data-testid=\{`event-layout-\$\{k\}`\}/);
+    expect(events).toMatch(/data-testid="event-attendees-table"/);
+    expect(events).toMatch(/localStorage\.setItem\(LAYOUT_KEY, v\)/);
+  });
+  test("each event carries an 'email me each preregistration' switch, on by default", () => {
+    const editor = read("..", "components", "EventEditor.jsx");
+    expect(editor).toMatch(/testid="event-editor-notify"/);
+    expect(editor).toMatch(/notify_on_registration: true,/);
+    expect(editor).toMatch(/notify_on_registration: !!f\.notify_on_registration,/);
   });
 });

@@ -252,6 +252,20 @@ test.describe("public event preregistration", () => {
     await noOverflow(page);
     await H.snap(page, "45-admin-events-search");
 
+    // the plain registration table: every column, sideways scroll on a phone, no page overflow
+    await page.getByTestId("event-layout-table").click();
+    const table = page.getByTestId("event-attendees-table");
+    await expect(table).toBeVisible();
+    await expect(table.getByTestId(`event-table-row-${reg.registration.id}`)).toContainText(reg.registration.confirmation_number);
+    await expect(table.getByTestId(`event-table-row-${reg.registration.id}`)).toContainText("Rex");
+    for (const h of ["Confirmation #", "Primary contact", "Email", "Phone", "Adults", "Children", "Dogs", "Costume", "Source", "Status", "Check-in", "Registered"]) {
+      await expect(table.locator("thead")).toContainText(h);
+    }
+    await noOverflow(page);
+    await H.snap(page, "45b-admin-events-table");
+    await page.getByTestId("event-layout-list").click();
+    await expect(row).toBeVisible();
+
     // check in → pill + count; undo → back
     const btn = page.getByTestId(`event-checkin-${reg.registration.id}`);
     await H.expectNotCovered(page, btn, "check in button");
@@ -335,6 +349,7 @@ test.describe("public event preregistration", () => {
     await page.getByTestId("event-editor-prefix").fill("SH-SF");
     await page.getByTestId("event-editor-costume").uncheck();
     await page.getByTestId("event-editor-published").check();
+    await expect(page.getByTestId("event-editor-notify")).toBeChecked(); // alerts on by default
     await page.getByTestId("event-editor-add-highlight").click();
     await page.getByTestId("event-editor-highlight-title-0").fill("Agility try-it");
     await page.getByTestId("event-editor-highlight-body-0").fill("Low jumps and a tunnel.");

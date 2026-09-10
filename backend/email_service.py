@@ -2510,6 +2510,72 @@ async def notify_admin_contact_inquiry(inquiry: dict, labels: dict) -> bool:
     )
 
 
+async def notify_admin_event_registration(event: dict, registration: dict, total_registered: int) -> bool:
+    """Someone preregistered for a public event — tell the operator, same
+    durability contract as the inquiry alert (outbox retry, notification_log
+    stamp). The registration row is the record; a lost email is never a lost
+    registration."""
+    if not ADMIN_NOTIFICATION_EMAIL:
+        logger.warning("ADMIN_NOTIFICATION_EMAIL not set — skipping event registration admin email")
+        return False
+    name = registration.get("primary_contact") or "—"
+    email = registration.get("email") or ""
+    phone = registration.get("phone") or ""
+    adults, children = int(registration.get("adults") or 0), int(registration.get("children") or 0)
+    dogs = registration.get("dogs") or []
+    entries = [d for d in dogs if d.get("costume_entered")]
+    day, when = _event_when(event)
+    heard = {"client": "Sit Happens client", "facebook": "Facebook", "instagram": "Instagram", "local_business": "Local business",
+             "friend": "Friend / family", "flyer": "Flyer / QR code", "other": "Other"}.get(registration.get("heard_from") or "", "")
+    if registration.get("heard_from_other"):
+        heard = f"{heard}: {registration['heard_from_other']}"
+    rows = [
+        ("Event", f"{event.get('name') or ''} · {day}"),
+        ("Confirmation #", registration.get("confirmation_number") or ""),
+        ("Name", name),
+        ("Phone", phone or "—"),
+        ("Email", email or "—"),
+        ("People", f"{adults} adult{'s' if adults != 1 else ''}, {children} child{'ren' if children != 1 else ''}"),
+        ("Dogs", ", ".join(d.get("name", "") for d in dogs) or "none"),
+        ("Costume contest", "; ".join(
+            f"{d.get('name', '')}" + (f" ({d.get('costume_theme')})" if d.get("costume_theme") else "")
+            + (f" — #{int(d['contestant_number']):03d}" if d.get("contestant_number") else "") for d in entries) or "not entered"),
+        ("Heard about it", heard or "—"),
+        ("Marketing consent", "yes" if registration.get("marketing_consent") else "no"),
+        ("Registered so far", str(total_registered)),
+        ("Received", registration.get("created_at") or _utc_now_iso()),
+    ]
+    links = []
+    if email:
+        links.append(f'<a href="mailto:{email}" style="color:#00a9e0;font-weight:700">Reply by email</a>')
+    if phone:
+        tel = "".join(ch for ch in phone if ch.isdigit() or ch == "+")
+        links.append(f'<a href="tel:{tel}" style="color:#00a9e0;font-weight:700">Call {phone}</a>')
+    body_html = ('<p style="margin:16px 0 0;font-size:14px">' + " &nbsp;·&nbsp; ".join(links) + "</p>") if links else ""
+    key = f"admin_event_registration:{registration.get('id')}"
+    cta_url = f"{APP_PUBLIC_URL}/admin/events" if APP_PUBLIC_URL else None
+    return await _dispatch(
+        slug="admin_event_registration",
+        to_email=ADMIN_NOTIFICATION_EMAIL,
+        ctx={"client_name": name, "event_name": event.get("name") or "", "confirmation_number": registration.get("confirmation_number") or "",
+             "people": str(adults + children), "dogs": str(len(dogs)), "total_registered": str(total_registered)},
+        rows=rows,
+        body_html=body_html,
+        cta_url=cta_url,
+        show_install=False,
+        fallback_subject=f"New preregistration — {name} · {event.get('name') or 'event'} ({total_registered} so far)",
+        fallback_title="🎃 New event preregistration",
+        fallback_intro=(f"{name} just preregistered for {event.get('name') or 'the event'}: {adults + children} people, "
+                        f"{len(dogs)} dog{'s' if len(dogs) != 1 else ''}. That makes {total_registered} household"
+                        f"{'s' if total_registered != 1 else ''} so far. The full list is under Events."),
+        fallback_cta_text="Open Events",
+        outbox_key=key,
+        on_success={"type": "notification_log", "key": key,
+                    "meta": {"kind": "admin_event_registration", "registration_id": registration.get("id"), "event_id": event.get("id")}},
+        queue_on_failure=True,
+    )
+
+
 def _event_when(event: dict) -> tuple:
     """('Saturday, October 24, 2026', '2:00 PM – 5:00 PM') in the business timezone."""
     try:

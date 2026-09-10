@@ -514,6 +514,18 @@ EMAIL_TEMPLATES = [
         "variables": ["first_name", "client_name", "event_name", "event_day", "event_time", "confirmation_number"],
     },
     {
+        "slug": "admin_event_registration",
+        "name": "New Event Preregistration (admin)",
+        "description": "Sent to the operator each time someone preregisters for a public event online (walk-ins added by staff do not send one).",
+        "category": "admin",
+        "audience": "admin",
+        "default_subject": "New preregistration — {{client_name}} · {{event_name}} ({{total_registered}} so far)",
+        "default_title": "🎃 New event preregistration",
+        "default_intro_html": "<strong>{{client_name}}</strong> just preregistered for <strong>{{event_name}}</strong>: {{people}} people, {{dogs}} dogs. That makes {{total_registered}} households so far. The full list is under Events.",
+        "default_cta_text": "Open Events",
+        "variables": ["client_name", "event_name", "confirmation_number", "people", "dogs", "total_registered"],
+    },
+    {
         "slug": "admin_contact_inquiry",
         "name": "New Website Inquiry (admin)",
         "description": "Sent to the operator the moment the public questionnaire is submitted.",
