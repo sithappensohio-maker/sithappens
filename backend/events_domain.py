@@ -773,13 +773,18 @@ def register_events_routes(*, api, db, get_current_user, require_admin_and_permi
         await db.event_registrations.insert_one(dict(reg))
         return {"registration": _row(reg), "summary": await _summary(db, event_id)}
 
-    @api.get("/admin/events/{event_id}/qr.png")
+    @api.get("/admin/events/{event_id}/qr")
     async def admin_event_qr(event_id: str, request: Request, origin: str = Query(default=""),
                              size: int = Query(default=10, ge=4, le=40), user: dict = Depends(manage)):
         """The flyer QR code: encodes the event's permanent public address.
         Prefers APP_PUBLIC_URL; a browser may pass its own origin when that is
         not configured (local/dev). `size` is the module size in pixels, so
-        size=30 is print-ready."""
+        size=30 is print-ready.
+
+        The path deliberately has no `.png` suffix: production nginx answers
+        image-looking paths from the static folder before the API proxy sees
+        them, so `/qr.png` was a 404 that never reached the backend. The
+        PNG name for the download comes from Content-Disposition instead."""
         ev = await _event_by_id(event_id)
         base = (os.environ.get("APP_PUBLIC_URL") or "").rstrip("/")
         if not base:

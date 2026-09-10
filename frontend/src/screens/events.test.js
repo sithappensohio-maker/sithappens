@@ -163,7 +163,9 @@ describe("event editor — every event is editable and reusable", () => {
 
 describe("flyer QR code", () => {
   test("the dashboard shows the code for the event's public address and offers a print-size download", () => {
-    expect(events).toMatch(/api\.get\(`\/admin\/events\/\$\{event\.id\}\/qr\.png`, \{ params: \{ origin, size: 6 \}, responseType: "blob" \}\)/);
+    expect(events).toMatch(/api\.get\(`\/admin\/events\/\$\{event\.id\}\/qr`, \{ params: \{ origin, size: 6 \}, responseType: "blob" \}\)/);
+    // never an image-looking API path: production nginx would serve it statically (404)
+    expect(events).not.toMatch(/\/qr\.png`/);
     expect(events).toMatch(/params: \{ origin, size: 30 \}/);
     expect(events).toMatch(/a\.download = `\$\{event\.slug\}-qr\.png`/);
     expect(events).toMatch(/<div className="mt-3"><EventQr event=\{event\} \/><\/div>/);

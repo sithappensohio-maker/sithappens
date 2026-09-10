@@ -41,7 +41,8 @@ export const SUMMARY_CARDS = [
 
 /** The flyer QR code for an event: shown small, downloadable print-size.
  *  Fetched through the API client (it needs the staff token), so it is an
- *  object URL rather than a plain <img src>. */
+ *  object URL rather than a plain <img src>. The API path has no .png suffix
+ *  on purpose — production nginx serves image-looking paths statically. */
 function EventQr({ event }) {
   const [src, setSrc] = useState(null);
   const [busy, setBusy] = useState(false);
@@ -49,7 +50,7 @@ function EventQr({ event }) {
   useEffect(() => {
     let alive = true; let url = null;
     setSrc(null);
-    api.get(`/admin/events/${event.id}/qr.png`, { params: { origin, size: 6 }, responseType: "blob" })
+    api.get(`/admin/events/${event.id}/qr`, { params: { origin, size: 6 }, responseType: "blob" })
       .then((r) => { if (!alive) return; url = URL.createObjectURL(r.data); setSrc(url); })
       .catch(() => { if (alive) setSrc(""); });
     return () => { alive = false; if (url) URL.revokeObjectURL(url); };
@@ -57,7 +58,7 @@ function EventQr({ event }) {
   const download = async () => {
     setBusy(true);
     try {
-      const r = await api.get(`/admin/events/${event.id}/qr.png`, { params: { origin, size: 30 }, responseType: "blob" });
+      const r = await api.get(`/admin/events/${event.id}/qr`, { params: { origin, size: 30 }, responseType: "blob" });
       const href = URL.createObjectURL(r.data);
       const a = document.createElement("a");
       a.href = href; a.download = `${event.slug}-qr.png`; document.body.appendChild(a); a.click(); a.remove(); URL.revokeObjectURL(href);

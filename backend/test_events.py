@@ -426,19 +426,19 @@ def test_owner_creates_edits_and_deletes_an_event_front_desk_cannot():
 def test_qr_code_encodes_the_public_event_address():
     ev = _event()
     admin = _staff()
-    r = run(_http.get(f"/api/admin/events/{ev['id']}/qr.png", params={"origin": "https://sithappens.app", "size": 6}, headers=_auth(admin)))
+    r = run(_http.get(f"/api/admin/events/{ev['id']}/qr", params={"origin": "https://sithappens.app", "size": 6}, headers=_auth(admin)))
     assert r.status_code == 200, r.text
     assert r.headers["content-type"] == "image/png"
     assert r.content[:8] == b"\x89PNG\r\n\x1a\n"
     assert r.headers["x-event-url"] == f"https://sithappens.app/events/{SLUG}"
     assert f'{SLUG}-qr.png' in r.headers["content-disposition"]
     # a bigger module size makes a bigger picture
-    big = run(_http.get(f"/api/admin/events/{ev['id']}/qr.png", params={"origin": "https://sithappens.app", "size": 12}, headers=_auth(admin)))
+    big = run(_http.get(f"/api/admin/events/{ev['id']}/qr", params={"origin": "https://sithappens.app", "size": 12}, headers=_auth(admin)))
     assert len(big.content) > len(r.content)
     # a junk origin is ignored, never encoded
-    junk = run(_http.get(f"/api/admin/events/{ev['id']}/qr.png", params={"origin": "javascript:alert(1)"}, headers=_auth(admin)))
+    junk = run(_http.get(f"/api/admin/events/{ev['id']}/qr", params={"origin": "javascript:alert(1)"}, headers=_auth(admin)))
     assert junk.status_code == 200 and "javascript" not in junk.headers["x-event-url"]
     # gated like the rest of the dashboard
-    assert run(_http.get(f"/api/admin/events/{ev['id']}/qr.png")).status_code == 401
+    assert run(_http.get(f"/api/admin/events/{ev['id']}/qr")).status_code == 401
     ro = _staff(role="employee", staff_role="read_only")
-    assert run(_http.get(f"/api/admin/events/{ev['id']}/qr.png", headers=_auth(ro))).status_code == 403
+    assert run(_http.get(f"/api/admin/events/{ev['id']}/qr", headers=_auth(ro))).status_code == 403
