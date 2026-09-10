@@ -2576,6 +2576,39 @@ async def notify_admin_event_registration(event: dict, registration: dict, total
     )
 
 
+async def send_event_photos_ready(to_email: str, event: dict, order: dict, link: str, message: str = "") -> bool:
+    """The customer's event photos are edited and ready: one email with the
+    download link (and a line about any framed print). Durable via the
+    outbox like the other event emails."""
+    first = (order.get("primary_contact") or "there").split(" ")[0]
+    pkg = order.get("package") or {}
+    rows = [("Order #", order.get("order_number") or ""), ("Package", f"{order.get('package_name') or ''}" + (f" × {order.get('qty')}" if int(order.get("qty") or 1) > 1 else ""))]
+    if order.get("dogs"):
+        rows.append(("Dogs", ", ".join(order["dogs"])))
+    if pkg.get("print"):
+        rows.append(("Framed print", f"{pkg['print']} — we'll let you know when it's ready to pick up"))
+    if message:
+        rows.append(("A note from us", message))
+    return await _dispatch(
+        slug="event_photos_ready",
+        to_email=to_email,
+        ctx={"first_name": first, "client_name": order.get("primary_contact") or "", "event_name": event.get("name") or "",
+             "order_number": order.get("order_number") or "", "package_name": order.get("package_name") or ""},
+        rows=rows,
+        cta_url=link,
+        show_install=False,
+        fallback_subject=f"Your {event.get('photos_title') or 'event'} photos are ready",
+        fallback_title="📸 Your photos are ready!",
+        fallback_intro=(f"Hi {first}, your edited photos from {event.get('name') or 'our event'} are ready. "
+                        "Tap the button to download them — and thank you for coming."),
+        fallback_cta_text="Download your photos",
+        outbox_key=f"event_photos_ready:{order.get('id')}",
+        on_success={"type": "notification_log", "key": f"event_photos_ready:{order.get('id')}",
+                    "meta": {"kind": "event_photos_ready", "order_id": order.get("id"), "event_id": event.get("id")}},
+        queue_on_failure=True,
+    )
+
+
 def _event_when(event: dict) -> tuple:
     """('Saturday, October 24, 2026', '2:00 PM – 5:00 PM') in the business timezone."""
     try:

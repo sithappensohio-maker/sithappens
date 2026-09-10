@@ -7,10 +7,12 @@ import { api, formatErr } from "../lib/api";
 import { toast } from "sonner";
 import PageHero from "../components/PageHero";
 import EventEditor from "../components/EventEditor";
+import EventPhotosPanel from "../components/EventPhotosPanel";
 
 const VIEWS = [
   ["attendees", "Attendees", "fa-list-check"],
   ["costume", "Costume contest", "fa-hat-wizard"],
+  ["photos", "Photos", "fa-camera-retro"],
 ];
 const STATUS_FILTERS = [["registered", "Registered"], ["all", "All"], ["cancelled", "Cancelled"]];
 /** Registration list columns, in the order the owner asked for. */
@@ -501,7 +503,7 @@ export default function Events({ can }) {
 
           {/* View switch */}
           <div className="flex gap-2" data-testid="event-views">
-            {VIEWS.map(([k, label, icon]) => (
+            {VIEWS.filter(([k]) => k !== "photos" || event.photos_enabled !== false).map(([k, label, icon]) => (
               <button key={k} type="button" onClick={() => setView(k)} aria-pressed={view === k} data-testid={`event-view-${k}`}
                       className={`min-h-[44px] px-3 sm:px-4 rounded-xl text-[12px] font-black uppercase tracking-widest ${view === k ? "bg-shPrimary text-bgHeader" : "bg-shSurfaceRaised text-shTextMuted"}`}>
                 <i className={`fas ${icon} mr-1.5`} />{label}{k === "costume" && contestants.length ? <span className="ml-1.5 opacity-80">{contestants.length}</span> : null}
@@ -539,6 +541,8 @@ export default function Events({ can }) {
                   </div>}
             </div>
           )}
+
+          {view === "photos" && event.photos_enabled !== false && <EventPhotosPanel event={event} can={can} />}
 
           {view === "costume" && (
             <div className="bg-bgPanel border border-bgHover rounded-2xl overflow-hidden" data-testid="event-costume">

@@ -514,6 +514,18 @@ EMAIL_TEMPLATES = [
         "variables": ["first_name", "client_name", "event_name", "event_day", "event_time", "confirmation_number"],
     },
     {
+        "slug": "event_photos_ready",
+        "name": "Event Photos Ready",
+        "description": "Sent to a customer when their edited event photos are ready, with the download link.",
+        "category": "client",
+        "audience": "client",
+        "default_subject": "Your event photos are ready",
+        "default_title": "📸 Your photos are ready!",
+        "default_intro_html": "Hi {{first_name}}, your edited photos from <strong>{{event_name}}</strong> are ready. Tap the button to download them — and thank you for coming.",
+        "default_cta_text": "Download your photos",
+        "variables": ["first_name", "client_name", "event_name", "order_number", "package_name"],
+    },
+    {
         "slug": "admin_event_registration",
         "name": "New Event Preregistration (admin)",
         "description": "Sent to the operator each time someone preregisters for a public event online (walk-ins added by staff do not send one).",

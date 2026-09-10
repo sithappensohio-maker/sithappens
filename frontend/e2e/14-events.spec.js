@@ -304,6 +304,40 @@ test.describe("public event preregistration", () => {
     await page.getByTestId("event-search").fill(`Walk In ${tag}`);
     await expect(page.locator('[data-testid^="event-reg-"][data-checked-in="1"]')).toHaveCount(1);
 
+    // photo booth: an order for the registered household, paid by card through the register, then sent
+    await page.getByTestId("event-view-photos").click();
+    await expect(page.getByTestId("event-photos")).toBeVisible();
+    await page.getByTestId("photo-order-add").click();
+    await expect(page.getByTestId("photo-order-new")).toBeVisible();
+    await page.getByTestId("photo-order-search").fill(reg.registration.confirmation_number);
+    await page.getByTestId(`photo-order-match-${reg.registration.id}`).click();
+    await expect(page.getByTestId("photo-order-linked")).toBeVisible();
+    await expect(page.getByTestId("photo-order-dogs")).toHaveValue("Rex");
+    await page.getByTestId("photo-order-shot").fill("IMG_0099");
+    await page.getByTestId("photo-order-package-digital-3").click();
+    await expect(page.getByTestId("photo-order-total")).toHaveText("$30.00");
+    await H.snap(page, "57-photo-order-new");
+    await page.getByTestId("photo-order-create").click();
+    await expect(page.getByTestId("photo-order-pay")).toBeVisible();
+    await expect(page.getByTestId("photo-order-pay-total")).toContainText(/\$/);
+    await page.getByTestId("photo-order-method-card").click();
+    await H.snap(page, "58-photo-order-pay");
+    await page.getByTestId("photo-order-pay-submit").click();
+    await expect(page.getByTestId("photo-order-pay")).toHaveCount(0, { timeout: 15_000 });
+    const paidRow = page.locator('[data-testid^="photo-order-"][data-status="paid"]').first();
+    await expect(paidRow).toBeVisible();
+    await expect(paidRow).toContainText(/receipt/i);
+    await expect(paidRow).toContainText(/\$3\d\.\d\d/); // $30 + any tax
+    await expect(page.getByTestId("photo-stat-revenue-value")).not.toHaveText("$0.00"); // both phone projects sell into one event
+    const orderId = (await paidRow.getAttribute("data-testid")).replace("photo-order-", "");
+    await page.getByTestId(`photo-order-send-${orderId}`).click();
+    await page.getByTestId("photo-order-link").fill("https://drive.example/trunk-or-treat/abc");
+    await page.getByTestId("photo-order-send-submit").click();
+    await expect(page.getByTestId(`photo-order-status-${orderId}`)).toHaveText(/sent/i, { timeout: 15_000 });
+    await noOverflow(page);
+    await H.snap(page, "59-photo-orders");
+    await page.getByTestId("event-view-costume").click();
+
     // costume roster: unique three-digit numbers, both dogs present
     await page.getByTestId("event-view-costume").click();
     await expect(page.getByTestId("event-costume-table")).toBeVisible();

@@ -56,6 +56,9 @@ def _module_setup_and_cleanup():
         run(server.db.event_registrations.delete_many({"event_id": ev["id"]}))
         run(server.db.event_counters.delete_many({"_id": {"$regex": f"^{ev['id']}:"}}))
         run(server.db.events.update_one({"id": ev["id"]}, {"$set": {"registration_open": True, "published": True, "capacity": None}}))
+    run(server.db.event_photo_orders.delete_many({"event_id": ev["id"]}) if ev else None)
+    run(server.db.pos_products.delete_many({"event_photo_package.event_id": ev["id"]}) if ev else None)
+    run(server.db.cash_drawer_sessions.delete_many({"opened_by": TAG}))
     run(server.db.users.delete_many({"email": {"$regex": f"^{TAG.lower()}"}}))
     run(server.db.clients.delete_many({"email": {"$regex": f"^{TAG.lower()}"}}))
     run(server.db.dogs.delete_many({"name": {"$regex": f"^{TAG}"}}))
@@ -538,3 +541,101 @@ def test_operator_is_told_about_each_new_online_registration_and_can_switch_it_o
     finally:
         run(server.db.events.update_one({"id": ev["id"]}, {"$set": {"notify_on_registration": True}}))
     assert "notify_on_registration" in events_domain.EventIn.model_fields
+
+
+def test_photo_booth_orders_ring_through_the_register_and_are_fulfilled_after():
+    from unittest.mock import patch
+    ev = _event()
+    assert ev.get("photos_enabled") and len(ev.get("photo_packages") or []) == 7, "the flyer's price list is seeded"
+    owner = _staff()
+    front = _staff(role="employee", staff_role="front_desk")
+    ro = _staff(role="employee", staff_role="read_only")
+    # a registered household with a costume dog
+    reg = _register(_email(), primary_contact="Photo Family", phone="330-555-4242").json()["registration"]
+    body = {"registration_id": reg["id"], "primary_contact": "Photo Family", "email": reg["email"], "phone": "330-555-4242",
+            "dogs": ["Waffles", "Pickles"], "contestant_numbers": [d["contestant_number"] for d in reg["dogs"] if d["contestant_number"]],
+            "shot_ref": "IMG_0412-0418", "package_key": "bundle-3-5x7", "qty": 1, "notes": "family in the shot"}
+    assert run(_http.post(f"/api/admin/events/{ev['id']}/photo-orders", json=body, headers=_auth(ro))).status_code == 403
+    r = run(_http.post(f"/api/admin/events/{ev['id']}/photo-orders", json=body, headers=_auth(front)))
+    assert r.status_code == 200, r.text
+    o = r.json()["order"]
+    assert o["order_number"].startswith("SH-TOT-P") and o["status"] == "ordered" and o["list_total"] == 45.0
+    assert o["confirmation_number"] == reg["confirmation_number"] and o["print"] == "5×7" and o["digitals"] == 3
+    assert o["print_status"] == "pending"
+    # the package now sells through a hidden register product
+    fresh = _event()
+    pkg = next(pk for pk in fresh["photo_packages"] if pk["key"] == "bundle-3-5x7")
+    prod = run(server.db.pos_products.find_one({"id": pkg["product_id"]}, {"_id": 0}))
+    assert prod and prod["price"] == 45.0 and prod["taxable"] is True and prod["show_at_register"] is False and prod["category"] == "Event photos"
+    assert run(_http.post(f"/api/admin/events/{ev['id']}/photo-orders", json={**body, "package_key": "nope"}, headers=_auth(owner))).status_code == 422
+    # priced by the register's own cart pricing
+    pv = run(_http.post(f"/api/admin/events/{ev['id']}/photo-orders/{o['id']}/preview", headers=_auth(front)))
+    assert pv.status_code == 200, pv.text
+    assert pv.json()["subtotal"] == 45.0 and pv.json()["total"] >= 45.0
+    total = pv.json()["total"]
+    # send before paying is refused; deleting an unpaid order is fine (but we keep this one)
+    assert run(_http.post(f"/api/admin/events/{ev['id']}/photo-orders/{o['id']}/send", json={"delivery_link": "https://x.example/a"}, headers=_auth(front))).status_code == 409
+    # pay cash through the real register (drawer open for today, POS tokens stubbed like the register tests)
+    today = server.business_today().isoformat()
+    run(server.db.cash_drawer_sessions.insert_one({"date": today, "opened_by": TAG, "opening_cash": 100.0, "opened_at": server.now_iso()}))
+    async def _noop(*a, **k):
+        return None
+    with patch.object(server, "_issue_pos_token", new=_noop):
+        pay = run(_http.post(f"/api/admin/events/{ev['id']}/photo-orders/{o['id']}/checkout", headers=_auth(front),
+                             json={"tenders": [{"method": "cash", "amount": total, "tendered_amount": total + 5}], "idempotency_key": "photo-test-0001"}))
+    assert pay.status_code == 200, pay.text
+    paid = pay.json()["order"]
+    assert paid["status"] == "paid" and paid["total"] == total and paid["receipt_number"] and paid["pos_sale_id"]
+    sale = run(server.db.pos_sales.find_one({"id": paid["pos_sale_id"]}, {"_id": 0}))
+    assert sale and sale["total"] == total and sale["line_items"][0]["product_id"] == pkg["product_id"]
+    assert sale["tenders"][0]["method"] == "cash"
+    # paying again is a no-op, deleting a paid order is refused
+    with patch.object(server, "_issue_pos_token", new=_noop):
+        again = run(_http.post(f"/api/admin/events/{ev['id']}/photo-orders/{o['id']}/checkout", headers=_auth(front),
+                               json={"tenders": [{"method": "card", "amount": total}], "idempotency_key": "photo-test-0002"}))
+    assert again.status_code == 200 and again.json()["order"]["pos_sale_id"] == paid["pos_sale_id"]
+    assert run(server.db.pos_sales.count_documents({"line_items.product_id": pkg["product_id"]})) == 1
+    assert run(_http.delete(f"/api/admin/events/{ev['id']}/photo-orders/{o['id']}", headers=_auth(owner))).status_code == 409
+    # fulfilment: ready → send with a link → sent, customer email queued
+    rd = run(_http.patch(f"/api/admin/events/{ev['id']}/photo-orders/{o['id']}", json={"status": "ready", "print_status": "ready"}, headers=_auth(front)))
+    assert rd.status_code == 200 and rd.json()["order"]["status"] == "ready" and rd.json()["order"]["print_status"] == "ready"
+    assert run(_http.post(f"/api/admin/events/{ev['id']}/photo-orders/{o['id']}/send", json={"delivery_link": "ftp://nope"}, headers=_auth(front))).status_code == 422
+    snd = run(_http.post(f"/api/admin/events/{ev['id']}/photo-orders/{o['id']}/send", json={"delivery_link": "https://drive.example/abc", "message": "Enjoy!"}, headers=_auth(front)))
+    assert snd.status_code == 200, snd.text
+    assert snd.json()["order"]["status"] == "sent" and snd.json()["order"]["delivery_link"] == "https://drive.example/abc"
+    assert run(server.db.email_outbox.find_one({"key": f"event_photos_ready:{o['id']}"})) is not None
+    # summary, search, csv
+    sm = run(_http.get(f"/api/admin/events/{ev['id']}/photo-orders/summary", headers=_auth(front))).json()
+    assert sm["orders"] >= 1 and sm["revenue"] >= total and sm["sent"] >= 1
+    found = run(_http.get(f"/api/admin/events/{ev['id']}/photo-orders", params={"q": "IMG_0412"}, headers=_auth(front))).json()["orders"]
+    assert [x["id"] for x in found] == [o["id"]]
+    csvr = run(_http.get(f"/api/admin/events/{ev['id']}/photo-orders.csv", headers=_auth(owner)))
+    assert csvr.status_code == 200 and "Order #,Name,Email" in csvr.text and "IMG_0412-0418" in csvr.text
+    assert run(_http.get(f"/api/admin/events/{ev['id']}/photo-orders", headers=_auth(ro))).status_code == 403
+    # an unpaid walk-up order can be deleted
+    w = run(_http.post(f"/api/admin/events/{ev['id']}/photo-orders", json={"primary_contact": "Walk Up", "email": _email(), "package_key": "digital-1"}, headers=_auth(front))).json()["order"]
+    assert run(_http.delete(f"/api/admin/events/{ev['id']}/photo-orders/{w['id']}", headers=_auth(front))).status_code == 200
+
+
+def test_photo_packages_are_editable_and_keep_their_register_product():
+    ev = _event()
+    owner = _staff()
+    cur = run(_http.get(f"/api/admin/events/{ev['id']}", headers=_auth(owner))).json()["event"]
+    pkgs = [dict(pk) for pk in cur["photo_packages"]]
+    pkgs[0]["price"] = 18.0
+    pkgs.append({"name": "Family Session", "price": 75, "digitals": 10, "print": ""})
+    body = {k: cur.get(k) for k in ("name", "slug", "name_line_1", "name_line_2", "description", "start_at", "end_at", "location_name", "location_address",
+                                     "admission", "capacity", "registration_open", "registration_closes_at", "published", "walk_ins_allowed",
+                                     "confirmation_prefix", "highlights", "rules", "rules_acknowledgment", "hero_image_url", "notify_on_registration")}
+    body.update({"costume_contest": True, "photos_enabled": True, "photos_title": "Halloween Pet Photos", "photo_packages": pkgs})
+    r = run(_http.put(f"/api/admin/events/{ev['id']}", json=body, headers=_auth(owner)))
+    assert r.status_code == 200, r.text
+    out = r.json()["event"]["photo_packages"]
+    assert out[0]["price"] == 18.0 and out[0].get("product_id") == pkgs[0].get("product_id")
+    assert out[-1]["key"] == "family-session" and out[-1]["digitals"] == 10
+    # duplicate keys are refused
+    bad = {**body, "photo_packages": pkgs + [{"key": pkgs[0]["key"], "name": "dup", "price": 1}]}
+    assert run(_http.put(f"/api/admin/events/{ev['id']}", json=bad, headers=_auth(owner))).status_code == 422
+    # restore
+    body["photo_packages"] = cur["photo_packages"]
+    run(_http.put(f"/api/admin/events/{ev['id']}", json=body, headers=_auth(owner)))

@@ -57436,6 +57436,10 @@ events_domain.register_events_routes(
     api=api, db=db, get_current_user=get_current_user,
     require_admin_and_permission=require_admin_and_permission,
     enforce_rate_limit=_enforce_rate_limit, client_ip=_client_ip, logger=logger,
+    # Photo-booth sales ride the real register: same atomic sale, tenders,
+    # receipts, drawer, tax and P&L as a Front Desk checkout.
+    create_pos_sale=_create_pos_sale_impl, price_pos_cart=_price_pos_cart, require_take_payments=_require_take_payments,
+    pos_sale_model=PosSaleIn, pos_line_model=PosSaleLineIn, pos_tender_model=PosSaleTenderIn,
 )
 
 app.include_router(api)

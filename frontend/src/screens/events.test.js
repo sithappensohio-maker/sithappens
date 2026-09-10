@@ -13,6 +13,7 @@ import { adminPathForTab, parseAdminLocation } from "../lib/adminRoutes";
 import { isoToLocalInput, localInputToIso, slugify, formFromEvent, payloadFromForm } from "../components/EventEditor";
 import { upcomingEvents, isEventDay } from "../components/TodayEventsCard";
 import { bannerImageUrl, flyerImageUrl } from "../public/publicEvents";
+import { packageLabel, TENDER_METHODS, STATUS_META } from "../components/EventPhotosPanel";
 
 const read = (...p) => fs.readFileSync(path.join(__dirname, ...p), "utf8");
 const app = read("..", "App.js");
@@ -243,5 +244,30 @@ describe("registration list and operator alerts", () => {
     expect(editor).toMatch(/testid="event-editor-notify"/);
     expect(editor).toMatch(/notify_on_registration: true,/);
     expect(editor).toMatch(/notify_on_registration: !!f\.notify_on_registration,/);
+  });
+});
+
+describe("photo booth", () => {
+  test("the Photos tab exists, is hidden when photos are off, and rings sales through the register endpoints", () => {
+    expect(events).toMatch(/\["photos", "Photos", "fa-camera-retro"\]/);
+    expect(events).toMatch(/k !== "photos" \|\| event\.photos_enabled !== false/);
+    expect(events).toMatch(/<EventPhotosPanel event=\{event\} can=\{can\} \/>/);
+    const panel = read("..", "components", "EventPhotosPanel.jsx");
+    expect(panel).toMatch(/api\.post\(`\/admin\/events\/\$\{event\.id\}\/photo-orders\/\$\{order\.id\}\/checkout`/);
+    expect(panel).toMatch(/api\.post\(`\/admin\/events\/\$\{event\.id\}\/photo-orders\/\$\{order\.id\}\/preview`\)/);
+    expect(panel).toMatch(/api\.post\(`\/admin\/events\/\$\{event\.id\}\/photo-orders\/\$\{order\.id\}\/send`/);
+    expect(panel).toMatch(/const canPay = !!can\?\.\("take_payments"\);/);
+    expect(TENDER_METHODS.map(([k]) => k)).toEqual(["cash", "card", "check", "venmo", "paypal", "other"]);
+    expect(Object.keys(STATUS_META)).toEqual(["ordered", "paid", "ready", "sent"]);
+  });
+  test("package labels read the way the flyer does", () => {
+    expect(packageLabel({ name: "3 Edited Digitals", digitals: 3, print: "" })).toBe("3 digitals");
+    expect(packageLabel({ name: "x", digitals: 5, print: "8×10" })).toBe("5 digitals + 8×10 framed print");
+    expect(packageLabel({ name: "5×7 Framed Print", digitals: 0, print: "5×7" })).toBe("5×7 framed print");
+  });
+  test("the editor carries the photo booth settings and package list", () => {
+    const editor = read("..", "components", "EventEditor.jsx");
+    for (const t of ["event-editor-photos-enabled", "event-editor-photos-title", "event-editor-add-package"]) expect(editor).toContain(`testid="${t}"`);
+    expect(editor).toMatch(/photo_packages: \(f\.photo_packages \|\| \[\]\)\.filter/);
   });
 });

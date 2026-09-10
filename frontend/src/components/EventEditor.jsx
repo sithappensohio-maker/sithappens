@@ -46,6 +46,7 @@ export function formFromEvent(ev) {
       start_at: "", end_at: "", location_name: "Sit Happens Dog Training", location_address: "", admission: "free", capacity: "",
       registration_open: true, registration_closes_at: "", published: false, walk_ins_allowed: true,
       confirmation_prefix: "SH-EV", costume_contest: true, notify_on_registration: true,
+      photos_enabled: true, photos_title: "", photo_packages: [],
       highlights: [], rules: ["Leashed dogs only.", "No retractable leashes.", "Owners are responsible for their dogs at all times."],
       rules_acknowledgment: DEFAULT_RULES_ACK, hero_image_url: "",
     };
@@ -58,6 +59,8 @@ export function formFromEvent(ev) {
     registration_closes_at: isoToLocalInput(ev.registration_closes_at), published: !!ev.published,
     walk_ins_allowed: ev.walk_ins_allowed !== false, confirmation_prefix: ev.confirmation_prefix || "SH-EV",
     notify_on_registration: ev.notify_on_registration !== false,
+    photos_enabled: ev.photos_enabled !== false, photos_title: ev.photos_title || "",
+    photo_packages: (ev.photo_packages || []).map((pk) => ({ key: pk.key || "", name: pk.name || "", price: String(pk.price ?? ""), digitals: String(pk.digitals ?? 0), print: pk.print || "", popular: !!pk.popular, product_id: pk.product_id || null })),
     costume_contest: (ev.features || {}).costume_contest !== false,
     highlights: (ev.highlights || []).map((h) => ({ icon: h.icon || "fa-paw", color: h.color || "#8cc63f", title: h.title || "", body: h.body || "" })),
     rules: [...(ev.rules || [])], rules_acknowledgment: ev.rules_acknowledgment || DEFAULT_RULES_ACK, hero_image_url: ev.hero_image_url || "",
@@ -75,6 +78,8 @@ export function payloadFromForm(f) {
     published: !!f.published, walk_ins_allowed: !!f.walk_ins_allowed,
     confirmation_prefix: f.confirmation_prefix.trim().toUpperCase(), costume_contest: !!f.costume_contest,
     notify_on_registration: !!f.notify_on_registration,
+    photos_enabled: !!f.photos_enabled, photos_title: (f.photos_title || "").trim(),
+    photo_packages: (f.photo_packages || []).filter((pk) => pk.name.trim()).map((pk) => ({ key: pk.key || null, name: pk.name.trim(), price: Number(pk.price) || 0, digitals: Number(pk.digitals) || 0, print: (pk.print || "").trim(), popular: !!pk.popular })),
     highlights: f.highlights.filter((h) => h.title.trim()).map((h) => ({ ...h, title: h.title.trim(), body: h.body.trim() })),
     rules: f.rules.map((r) => r.trim()).filter(Boolean),
     rules_acknowledgment: f.rules_acknowledgment.trim(), hero_image_url: f.hero_image_url.trim(),
@@ -299,6 +304,31 @@ export default function EventEditor({ event, onClose, onSaved, onDeleted, onChan
               </div>
             </div>
           ))}
+        </div>
+
+        {/* Photo booth */}
+        <div className="space-y-2" data-testid="event-editor-photos">
+          <div className="flex items-center justify-between gap-2">
+            <p className="text-[13px] font-black uppercase italic tracking-tight text-white">Photo booth <span className="text-shTextMuted font-normal normal-case not-italic">(packages rung up at the event)</span></p>
+            <button type="button" onClick={() => setF((p) => ({ ...p, photo_packages: [...p.photo_packages, { key: "", name: "", price: "", digitals: "0", print: "", popular: false, product_id: null }] }))} data-testid="event-editor-add-package"
+                    className="min-h-[40px] px-3 rounded-lg bg-shSurfaceRaised text-shText font-black text-[11px] uppercase tracking-widest"><i className="fas fa-plus mr-1" />Add</button>
+          </div>
+          <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+            <Toggle label="Photos at this event" hint="Shows the Photos tab on the dashboard." value={f.photos_enabled} onChange={set("photos_enabled")} testid="event-editor-photos-enabled" />
+            <Field label="Photos title" hint="(on receipts and emails)"><input value={f.photos_title} onChange={(e) => set("photos_title")(e.target.value)} className={inputCls} data-testid="event-editor-photos-title" placeholder="Halloween Pet Photos" /></Field>
+          </div>
+          {f.photo_packages.length === 0 && <p className="text-[13px] text-shTextMuted">No packages yet. Add one per thing you sell, e.g. 3 Edited Digitals $30.</p>}
+          {f.photo_packages.map((pk, i) => (
+            <div key={i} className="bg-bgBase border border-bgHover rounded-xl p-3 grid grid-cols-2 sm:grid-cols-[1fr_90px_80px_90px_auto_auto] gap-2 items-end" data-testid={`event-editor-package-${i}`}>
+              <div className="col-span-2 sm:col-span-1"><p className={labelCls}>Name</p><input value={pk.name} onChange={(e) => setF((p) => ({ ...p, photo_packages: p.photo_packages.map((x, j) => (j === i ? { ...x, name: e.target.value } : x)) }))} className={inputCls} data-testid={`event-editor-package-name-${i}`} placeholder="3 Edited Digitals" /></div>
+              <div><p className={labelCls}>Price</p><input type="number" min="0" step="0.01" inputMode="decimal" value={pk.price} onChange={(e) => setF((p) => ({ ...p, photo_packages: p.photo_packages.map((x, j) => (j === i ? { ...x, price: e.target.value } : x)) }))} className={inputCls} data-testid={`event-editor-package-price-${i}`} /></div>
+              <div><p className={labelCls}>Digitals</p><input type="number" min="0" inputMode="numeric" value={pk.digitals} onChange={(e) => setF((p) => ({ ...p, photo_packages: p.photo_packages.map((x, j) => (j === i ? { ...x, digitals: e.target.value } : x)) }))} className={inputCls} data-testid={`event-editor-package-digitals-${i}`} /></div>
+              <div><p className={labelCls}>Print</p><input value={pk.print} onChange={(e) => setF((p) => ({ ...p, photo_packages: p.photo_packages.map((x, j) => (j === i ? { ...x, print: e.target.value } : x)) }))} className={inputCls} data-testid={`event-editor-package-print-${i}`} placeholder="5×7" /></div>
+              <label className="flex items-center gap-2 min-h-[44px] text-[12px] text-shText"><input type="checkbox" checked={!!pk.popular} onChange={(e) => setF((p) => ({ ...p, photo_packages: p.photo_packages.map((x, j) => (j === i ? { ...x, popular: e.target.checked } : x)) }))} className="w-5 h-5 accent-shOrange" />Popular</label>
+              <button type="button" aria-label="Remove" onClick={() => setF((p) => ({ ...p, photo_packages: p.photo_packages.filter((_, j) => j !== i) }))} className="min-w-[44px] min-h-[44px] text-shTextMuted hover:text-red-300"><i className="fas fa-trash" /></button>
+            </div>
+          ))}
+          <p className="text-[12px] text-shTextMuted">Each package sells through a hidden register product, so photo sales land in the drawer, sales tax and the P&L like any merchandise.</p>
         </div>
 
         {/* Rules */}
