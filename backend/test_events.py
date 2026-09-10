@@ -442,3 +442,45 @@ def test_qr_code_encodes_the_public_event_address():
     assert run(_http.get(f"/api/admin/events/{ev['id']}/qr")).status_code == 401
     ro = _staff(role="employee", staff_role="read_only")
     assert run(_http.get(f"/api/admin/events/{ev['id']}/qr", headers=_auth(ro))).status_code == 403
+
+
+def test_banner_background_image_upload_serve_replace_and_remove():
+    import base64 as _b64
+    ev = _event()
+    owner = _staff()
+    front = _staff(role="employee", staff_role="front_desk")
+    png = _b64.b64encode(b"\x89PNG\r\n\x1a\n" + b"\x00" * 64).decode()
+    body = {"data": f"data:image/png;base64,{png}", "filename": "pumpkins.png"}
+    try:
+        # no picture yet: the public page says so and the image route is a 404
+        assert run(_http.get(f"/api/public/events/{SLUG}")).json()["event"]["banner_image_version"] is None
+        assert run(_http.get(f"/api/public/events/{SLUG}/banner")).status_code == 404
+        # only event editors may upload
+        assert run(_http.post(f"/api/admin/events/{ev['id']}/banner-image", json=body, headers=_auth(front))).status_code == 403
+        r = run(_http.post(f"/api/admin/events/{ev['id']}/banner-image", json=body, headers=_auth(owner)))
+        assert r.status_code == 200, r.text
+        v1 = r.json()["event"]["banner_image_version"]
+        assert v1 and len(v1) == 8
+        # served publicly as a real image, cacheable
+        img = run(_http.get(f"/api/public/events/{SLUG}/banner", params={"v": v1}))
+        assert img.status_code == 200 and img.headers["content-type"] == "image/png"
+        assert img.content[:8] == b"\x89PNG\r\n\x1a\n" and "max-age" in img.headers["cache-control"]
+        assert run(_http.get(f"/api/public/events/{SLUG}")).json()["event"]["banner_image_version"] == v1
+        # validation
+        assert run(_http.post(f"/api/admin/events/{ev['id']}/banner-image", json={"data": "data:application/pdf;base64,QUJD"}, headers=_auth(owner))).status_code == 400
+        assert run(_http.post(f"/api/admin/events/{ev['id']}/banner-image", json={"data": "not-a-data-url"}, headers=_auth(owner))).status_code == 400
+        big = "data:image/jpeg;base64," + ("A" * (7 * 1024 * 1024))
+        assert run(_http.post(f"/api/admin/events/{ev['id']}/banner-image", json={"data": big}, headers=_auth(owner))).status_code == 400
+        # replacing drops the old picture
+        r2 = run(_http.post(f"/api/admin/events/{ev['id']}/banner-image", json=body, headers=_auth(owner)))
+        v2 = r2.json()["event"]["banner_image_version"]
+        assert v2 != v1 and run(server.db.event_media.count_documents({"event_id": ev["id"]})) == 1
+        # removing
+        assert run(_http.delete(f"/api/admin/events/{ev['id']}/banner-image", headers=_auth(front))).status_code == 403
+        d = run(_http.delete(f"/api/admin/events/{ev['id']}/banner-image", headers=_auth(owner)))
+        assert d.status_code == 200 and d.json()["event"]["banner_image_version"] is None
+        assert run(_http.get(f"/api/public/events/{SLUG}/banner")).status_code == 404
+        assert run(server.db.event_media.count_documents({"event_id": ev["id"]})) == 0
+    finally:
+        run(server.db.event_media.delete_many({"event_id": ev["id"]}))
+        run(server.db.events.update_one({"id": ev["id"]}, {"$set": {"banner_image_id": None}}))

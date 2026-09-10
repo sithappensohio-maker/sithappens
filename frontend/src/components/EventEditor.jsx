@@ -2,9 +2,10 @@
    the dates, the link name, the rules people must accept, the costume contest
    switch and whether it is published. Reused for every event after Trunk or
    Treat. Owner/manager only (edit_events). */
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { api, formatErr } from "../lib/api";
 import { toast } from "sonner";
+import { bannerImageUrl } from "../public/publicEvents";
 
 export const ICON_PRESETS = [
   ["fa-car-side", "Trunk / car"], ["fa-hat-wizard", "Costume"], ["fa-camera-retro", "Photo booth"], ["fa-bone", "Treat / trick"],
@@ -93,7 +94,70 @@ const Toggle = ({ label, hint, value, onChange, testid }) => (
   </label>
 );
 
-export default function EventEditor({ event, onClose, onSaved, onDeleted }) {
+function readAsDataUrl(file) {
+  return new Promise((resolve, reject) => {
+    const r = new FileReader();
+    r.onload = () => resolve(String(r.result));
+    r.onerror = () => reject(new Error("Couldn't read that file."));
+    r.readAsDataURL(file);
+  });
+}
+
+/** Banner background picture: uploaded straight away (it needs a saved event),
+ *  shown as a preview, removable. The words and the button on the banner are
+ *  the app's own and never change with the picture. */
+function BannerImageField({ event, onChanged }) {
+  const [busy, setBusy] = useState(false);
+  const [err, setErr] = useState("");
+  const inputRef = useRef(null);
+  if (!event) {
+    return <p className="text-[13px] text-shTextMuted" data-testid="event-editor-banner-later">Create the event first, then you can add a background picture for the homepage banner here.</p>;
+  }
+  const url = bannerImageUrl(event);
+  const pick = async (e) => {
+    const file = e.target.files?.[0];
+    e.target.value = "";
+    if (!file) return;
+    setErr("");
+    if (!/^image\/(jpeg|png|webp)$/.test(file.type)) { setErr("Use a JPEG, PNG or WEBP picture."); return; }
+    if (file.size > 5 * 1024 * 1024) { setErr("That picture is over 5 MB. Please shrink it first."); return; }
+    setBusy(true);
+    try {
+      const data = await readAsDataUrl(file);
+      const r = await api.post(`/admin/events/${event.id}/banner-image`, { data, filename: file.name });
+      toast.success("Banner picture saved");
+      onChanged(r.data);
+    } catch (ex) { setErr(formatErr(ex.response?.data?.detail) || ex.message || "Couldn't upload the picture."); }
+    setBusy(false);
+  };
+  const remove = async () => {
+    setBusy(true);
+    try { const r = await api.delete(`/admin/events/${event.id}/banner-image`); toast.success("Banner picture removed"); onChanged(r.data); }
+    catch (ex) { setErr(formatErr(ex.response?.data?.detail) || "Couldn't remove the picture."); }
+    setBusy(false);
+  };
+  return (
+    <div className="space-y-2" data-testid="event-editor-banner">
+      <div className="rounded-xl border border-bgHover overflow-hidden bg-bgBase">
+        {url
+          ? <div className="h-28 sm:h-36 bg-cover bg-center" style={{ backgroundImage: `url("${url}")` }} data-testid="event-editor-banner-preview" />
+          : <div className="h-20 grid place-items-center text-[13px] text-shTextMuted" data-testid="event-editor-banner-empty">No picture yet. The banner uses the brand colours.</div>}
+      </div>
+      <div className="flex flex-wrap gap-2">
+        <input ref={inputRef} type="file" accept="image/jpeg,image/png,image/webp" onChange={pick} className="hidden" data-testid="event-editor-banner-file" />
+        <button type="button" onClick={() => inputRef.current?.click()} disabled={busy} data-testid="event-editor-banner-upload"
+                className="min-h-[44px] px-4 rounded-xl bg-shSurfaceRaised text-shText font-black text-[12px] uppercase tracking-widest border border-bgHover disabled:opacity-50">
+          <i className="fas fa-image mr-1.5" />{busy ? "Uploading…" : url ? "Replace picture" : "Upload picture"}
+        </button>
+        {url && <button type="button" onClick={remove} disabled={busy} data-testid="event-editor-banner-remove" className="min-h-[44px] px-4 rounded-xl bg-red-500/10 text-red-300 font-black text-[12px] uppercase tracking-widest border border-red-500/30 disabled:opacity-50">Remove</button>}
+      </div>
+      <p className="text-[12px] text-shTextMuted">JPEG, PNG or WEBP up to 5 MB. Wide pictures work best (about 3:1). A dark wash goes over it so the words stay readable.</p>
+      {err && <p className="text-[13px] text-red-300 font-black" data-testid="event-editor-banner-error">{err}</p>}
+    </div>
+  );
+}
+
+export default function EventEditor({ event, onClose, onSaved, onDeleted, onChanged = () => {} }) {
   const [f, setF] = useState(() => formFromEvent(event));
   const [busy, setBusy] = useState(false);
   const [err, setErr] = useState("");
@@ -160,6 +224,9 @@ export default function EventEditor({ event, onClose, onSaved, onDeleted }) {
           </Field>
           <Field label="Description"><textarea rows={3} value={f.description} onChange={(e) => set("description")(e.target.value)} className={inputCls} data-testid="event-editor-description" /></Field>
           <Field label="Flyer image link" hint="(optional, shows in place of the logo card)"><input value={f.hero_image_url} onChange={(e) => set("hero_image_url")(e.target.value)} className={inputCls} data-testid="event-editor-hero" placeholder="https://…" /></Field>
+          <Field label="Homepage banner background" hint="(optional picture behind the banner; text and button stay the same)">
+            <div className="mt-1"><BannerImageField event={event} onChanged={onChanged} /></div>
+          </Field>
         </div>
 
         {/* When / where */}

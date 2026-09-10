@@ -390,6 +390,45 @@ test.describe("public event preregistration", () => {
     expect(errors.filter((e) => !e.includes("404")), errors.join(" | ")).toEqual([]);
   });
 
+  test("owner uploads a banner background picture; the homepage banner uses it; remove puts the colours back", async ({ page, request }) => {
+    const errors = watchErrors(page);
+    await adminInBrowser(page, request);
+    await page.goto("/admin/events");
+    await expect(page.getByTestId("events-screen")).toBeVisible({ timeout: 20_000 });
+    await page.getByTestId("event-edit").click();
+    await expect(page.getByTestId("event-editor-banner")).toBeVisible();
+    // a real (tiny) PNG, built here so the test owns it
+    const png = Buffer.from("iVBORw0KGgoAAAANSUhEUgAAAAIAAAACCAIAAAD91JpzAAAAFklEQVR4nGP4z8DwHwyBBAOEAWMAAKeXCf3l5yW0AAAAAElFTkSuQmCC", "base64");
+    await page.getByTestId("event-editor-banner-file").setInputFiles({ name: "pumpkins.png", mimeType: "image/png", buffer: png });
+    await expect(page.getByTestId("event-editor-banner-preview")).toBeVisible({ timeout: 15_000 });
+    await H.snap(page, "55-editor-banner-picture");
+    await page.getByTestId("event-editor-close").click();
+
+    const guest = await page.context().browser().newContext({ viewport: page.viewportSize() });
+    const gp = await guest.newPage();
+    await gp.addInitScript(() => { try { localStorage.setItem("sh_install_dismissed_at", String(Date.now())); } catch {} });
+    await gp.goto("/");
+    const banner = gp.getByTestId("site-event-banner");
+    await expect(banner).toHaveAttribute("data-has-image", "1");
+    const bgImage = await gp.getByTestId("site-event-banner-image").evaluate((el) => getComputedStyle(el).backgroundImage);
+    expect(bgImage).toMatch(/\/api\/public\/events\/trunk-or-treat-2026\/banner\?v=/);
+    const img = await request.get(`${H.API}/public/events/${SLUG}/banner`);
+    expect(img.status()).toBe(200);
+    expect(img.headers()["content-type"]).toBe("image/png");
+    // words and button are untouched
+    await expect(gp.getByTestId("site-event-banner-name")).toContainText(/trunk or treat/i);
+    await expect(gp.getByTestId("site-event-banner-cta")).toHaveAttribute("href", `/events/${SLUG}`);
+    await H.snap(gp, "56-home-banner-with-picture");
+    await guest.close();
+
+    await page.getByTestId("event-edit").click();
+    await page.getByTestId("event-editor-banner-remove").click();
+    await expect(page.getByTestId("event-editor-banner-empty")).toBeVisible({ timeout: 15_000 });
+    await page.getByTestId("event-editor-close").click();
+    expect((await request.get(`${H.API}/public/events/${SLUG}/banner`)).status()).toBe(404);
+    expect(errors.filter((e) => !e.includes("404")), errors.join(" | ")).toEqual([]);
+  });
+
   test("desktop 1440×900: public page and admin dashboard", async ({ page, request }) => {
     test.skip(test.info().project.name !== "phone-390", "one desktop pass is enough");
     await page.setViewportSize({ width: 1440, height: 900 });

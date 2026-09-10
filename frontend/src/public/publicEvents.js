@@ -2,7 +2,7 @@
 // banner, the /events index and the client portal card, so every surface
 // shows and hides the same events as they are published and closed.
 import { useEffect, useState } from "react";
-import { api } from "../lib/api";
+import { api, API_BASE } from "../lib/api";
 
 let _eventsPromise = null;
 export function loadPublicEvents() {
@@ -47,4 +47,12 @@ export function fmtEventShort(ev) {
   const s = new Date(ev.start_at); const e = ev.end_at ? new Date(ev.end_at) : null;
   const t = (d) => d.toLocaleTimeString(undefined, { hour: "numeric", minute: "2-digit" });
   return `${s.toLocaleDateString(undefined, { weekday: "short", month: "short", day: "numeric", year: "numeric" })} · ${t(s)}${e ? ` – ${t(e)}` : ""}`;
+}
+
+/** Where an uploaded banner background lives, or null when there is none.
+ *  No file extension on the path: production nginx serves image-looking
+ *  paths statically before the API proxy sees them. */
+export function bannerImageUrl(ev) {
+  if (!ev?.banner_image_version) return null;
+  return `${API_BASE}/public/events/${ev.slug}/banner?v=${ev.banner_image_version}`;
 }

@@ -519,6 +519,11 @@ export default function Events({ can }) {
       {open && <RegistrationDetail reg={open} busy={busy} onClose={() => setOpen(null)} onCheckIn={checkIn} onUndo={undo} onCancel={cancel} onReinstate={reinstate} />}
       {editor && (
         <EventEditor event={editor === "new" ? null : editor} onClose={() => setEditor(null)}
+          onChanged={(data) => {
+            // a banner picture was uploaded or removed: refresh without closing
+            setEvents((evs) => (evs || []).map((e) => (e.id === data.event.id ? { ...e, ...data.event } : e)));
+            setEditor((cur) => (cur && cur !== "new" && cur.id === data.event.id ? { ...cur, ...data.event } : cur));
+          }}
           onSaved={(data) => {
             setEditor(null);
             setEvents((evs) => {

@@ -12,6 +12,7 @@ import { fmtEventWhen, eventsNavItem, eventHref } from "../public/publicEvents";
 import { adminPathForTab, parseAdminLocation } from "../lib/adminRoutes";
 import { isoToLocalInput, localInputToIso, slugify, formFromEvent, payloadFromForm } from "../components/EventEditor";
 import { upcomingEvents, isEventDay } from "../components/TodayEventsCard";
+import { bannerImageUrl } from "../public/publicEvents";
 
 const read = (...p) => fs.readFileSync(path.join(__dirname, ...p), "utf8");
 const app = read("..", "App.js");
@@ -203,5 +204,23 @@ describe("admin Today shows upcoming events", () => {
     expect(upcomingEvents(list, now.getTime()).map((e) => e.slug)).toEqual(["tot", "later"]);
     expect(isEventDay(list[2], now)).toBe(true);
     expect(isEventDay(list[0], now)).toBe(false);
+  });
+});
+
+describe("banner background picture", () => {
+  test("the banner points at the public image route (no file extension) only when a picture exists", () => {
+    expect(bannerImageUrl({ slug: "trunk-or-treat-2026", banner_image_version: "ab12cd34" })).toMatch(/\/api\/public\/events\/trunk-or-treat-2026\/banner\?v=ab12cd34$/);
+    expect(bannerImageUrl({ slug: "x", banner_image_version: null })).toBeNull();
+    const bits = read("..", "public", "PublicEventBits.jsx");
+    expect(bits).toMatch(/data-testid="site-event-banner-image"/);
+    expect(bits).toMatch(/rgba\(3,7,30,\.82\)/); // the dark wash that keeps the words readable
+  });
+  test("the editor uploads/removes through the admin routes and refreshes without closing", () => {
+    const editor = read("..", "components", "EventEditor.jsx");
+    expect(editor).toMatch(/api\.post\(`\/admin\/events\/\$\{event\.id\}\/banner-image`, \{ data, filename: file\.name \}\)/);
+    expect(editor).toMatch(/api\.delete\(`\/admin\/events\/\$\{event\.id\}\/banner-image`\)/);
+    expect(editor).toMatch(/accept="image\/jpeg,image\/png,image\/webp"/);
+    expect(editor).toContain('data-testid="event-editor-banner-later"');
+    expect(events).toMatch(/onChanged=\{\(data\) => \{/);
   });
 });
