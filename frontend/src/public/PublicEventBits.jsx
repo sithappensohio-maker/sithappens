@@ -22,12 +22,12 @@ export function UpcomingEventBanner() {
         <>
           {/* the uploaded picture, then a dark wash so the words and button stay readable on any photo */}
           <div className="absolute inset-0 bg-cover bg-center" style={{ backgroundImage: `url("${bg}")` }} data-testid="site-event-banner-image" />
-          <div className="absolute inset-0 pointer-events-none" style={{ background: "linear-gradient(90deg, rgba(3,7,30,.82) 0%, rgba(3,7,30,.62) 55%, rgba(3,7,30,.45) 100%)" }} />
+          <div className="absolute inset-0 pointer-events-none" style={{ background: "linear-gradient(90deg, rgba(3,7,30,.62) 0%, rgba(3,7,30,.38) 45%, rgba(3,7,30,.18) 100%)" }} />
         </>
       ) : (
         <div className="absolute inset-0 pointer-events-none opacity-60" style={{ background: "radial-gradient(circle at 8% 20%, rgba(242,101,34,.9) 0%, transparent 32%), radial-gradient(circle at 92% 70%, rgba(140,198,63,.7) 0%, transparent 30%)" }} />
       )}
-      <div className={`relative max-w-6xl mx-auto px-4 sm:px-6 py-5 sm:py-7 flex flex-col lg:flex-row lg:items-center gap-4 lg:gap-8 ${bg ? "" : "sh-splatter"}`}>
+      <div className={`relative max-w-6xl mx-auto px-4 sm:px-6 py-5 sm:py-7 ${bg ? "lg:py-12" : ""} flex flex-col lg:flex-row lg:items-center gap-4 lg:gap-8 ${bg ? "sh-event-banner--photo" : "sh-splatter"}`}>
         <div className="min-w-0 flex-1">
           <p className="text-[12px] sm:text-[13px] font-black uppercase tracking-[0.3em] text-white" data-testid="site-event-banner-when">
             <span className="inline-block px-2 py-0.5 rounded-md bg-shOrange text-bgHeader mr-2 align-middle"><i className="fas fa-calendar-day mr-1.5" />{ev.admission === "free" ? "Free event" : "Event"}</span>

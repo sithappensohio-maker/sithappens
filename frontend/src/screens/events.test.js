@@ -213,7 +213,7 @@ describe("banner background picture", () => {
     expect(bannerImageUrl({ slug: "x", banner_image_version: null })).toBeNull();
     const bits = read("..", "public", "PublicEventBits.jsx");
     expect(bits).toMatch(/data-testid="site-event-banner-image"/);
-    expect(bits).toMatch(/rgba\(3,7,30,\.82\)/); // the dark wash that keeps the words readable
+    expect(bits).toMatch(/rgba\(3,7,30,\.62\)/); // the dark wash that keeps the words readable
   });
   test("the editor uploads/removes through the admin routes and refreshes without closing", () => {
     const editor = read("..", "components", "EventEditor.jsx");

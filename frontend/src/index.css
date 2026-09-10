@@ -2699,3 +2699,6 @@ html, body, #root {
 @keyframes sh-event-cta-pulse { 0%, 100% { box-shadow: 0 0 0 0 rgba(140,198,63,.55), 0 18px 40px -18px rgba(140,198,63,.8); } 50% { box-shadow: 0 0 0 12px rgba(140,198,63,0), 0 18px 40px -18px rgba(140,198,63,.8); } }
 .sh-event-cta-pulse { animation: sh-event-cta-pulse 2.2s ease-out infinite; }
 @media (prefers-reduced-motion: reduce) { .sh-event-cta-pulse { animation: none; } }
+/* With an uploaded picture behind it, the banner's words get a shadow so they
+   read over bright artwork, and the band grows so more of the picture shows. */
+.sh-event-banner--photo p, .sh-event-banner--photo span { text-shadow: 0 2px 4px rgba(0,0,0,.85), 0 0 18px rgba(0,0,0,.6); }
