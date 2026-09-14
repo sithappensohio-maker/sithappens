@@ -100,7 +100,7 @@ function AdminShell() {
   // Modernization Phase 3 — one shared owner for the shell badges. This
   // replaces four independent polling effects (which also re-polled on every
   // tab change) while preserving the same permissions, endpoints and events.
-  const { messagesUnread, shopOrdersUnseen, schoolAttention, pendingActions } = useAdminNavCounts({
+  const { messagesUnread, shopOrdersUnseen, schoolAttention, pendingActions, scheduleActions } = useAdminNavCounts({
     messages: !!can?.("messages"),
     shopOrders: !!can?.("take_payments"),
     school: !!can?.("manage_school"),
@@ -483,9 +483,13 @@ function AdminShell() {
                         <span className="ml-2 inline-block bg-shAccent text-white text-[10px] font-bold px-1.5 py-0.5 rounded-full align-middle"
                               data-testid={`${prefix}pinned-pos-badge`}>{shopOrdersUnseen}</span>
                       )}
-                      {(n.id === "schedule" || n.id === "today") && pendingActions > 0 && (
+                      {n.id === "today" && pendingActions > 0 && (
                         <span className="ml-2 inline-block bg-shAccent text-white text-[10px] font-bold px-1.5 py-0.5 rounded-full align-middle"
-                              data-testid={`${prefix}pinned-${n.id}-pending-badge`}>{pendingActions}</span>
+                              data-testid={`${prefix}pinned-today-pending-badge`}>{pendingActions}</span>
+                      )}
+                      {n.id === "schedule" && scheduleActions > 0 && (
+                        <span className="ml-2 inline-block bg-shAccent text-white text-[10px] font-bold px-1.5 py-0.5 rounded-full align-middle"
+                              data-testid={`${prefix}pinned-schedule-pending-badge`}>{scheduleActions}</span>
                       )}
                     </button>
                     <div className="shrink-0 flex items-center">
@@ -559,9 +563,13 @@ function AdminShell() {
                             <span className={`${collapsed ? "absolute top-0 right-0 -mt-1 -mr-1" : "ml-2"} inline-block bg-shAccent text-white text-[10px] font-bold px-1.5 py-0.5 rounded-full align-middle`}
                                   data-testid={`${prefix}nav-training-badge`}>{collapsed ? "•" : schoolAttention}</span>
                           )}
-                          {(n.id === "schedule" || n.id === "today") && pendingActions > 0 && (
+                          {n.id === "today" && pendingActions > 0 && (
                             <span className={`${collapsed ? "absolute top-0 right-0 -mt-1 -mr-1" : "ml-2"} inline-block bg-shAccent text-white text-[10px] font-bold px-1.5 py-0.5 rounded-full align-middle`}
-                                  data-testid={`${prefix}nav-${n.id}-pending-badge`}>{collapsed ? "•" : pendingActions}</span>
+                                  data-testid={`${prefix}nav-today-pending-badge`}>{collapsed ? "•" : pendingActions}</span>
+                          )}
+                          {n.id === "schedule" && scheduleActions > 0 && (
+                            <span className={`${collapsed ? "absolute top-0 right-0 -mt-1 -mr-1" : "ml-2"} inline-block bg-shAccent text-white text-[10px] font-bold px-1.5 py-0.5 rounded-full align-middle`}
+                                  data-testid={`${prefix}nav-schedule-pending-badge`}>{collapsed ? "•" : scheduleActions}</span>
                           )}
                         </button>
                         {!collapsed && (

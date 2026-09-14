@@ -303,7 +303,7 @@ def register_performance_routes(
             return await server_globals["admin_school_hq_attention_count"](user)
 
         async def pending():
-            if not (perms.get("booking_edit") or perms.get("finance_reports") or perms.get("care_complete")):
+            if not (perms.get("booking_edit") or perms.get("finance_reports") or perms.get("care_complete") or perms.get("clients_edit")):
                 return {"total": 0}
             return await server_globals["admin_pending_actions_count"](user)
 

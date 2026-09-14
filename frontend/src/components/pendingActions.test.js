@@ -104,10 +104,32 @@ test("pending-action nav badges moved to the consolidated Today and Schedule des
   // permission gate, and the change-event refresh all still exist.
   const sharedSrc = read("..", "lib", "sharedData.js");
   expect(appSrc).toMatch(/useAdminNavCounts\(/);
-  expect(appSrc).toMatch(/n\.id === "schedule" \|\| n\.id === "today"\) && pendingActions > 0/);
+  expect(appSrc).toMatch(/n\.id === "today" && pendingActions > 0/);
+  // Schedule only badges what its Bookings tab can show (approvals, Meet &
+  // Greets, reschedules) — never inquiries/disputes/meds it cannot render.
+  expect(appSrc).toMatch(/n\.id === "schedule" && scheduleActions > 0/);
+  expect(appSrc).not.toMatch(/n\.id === "schedule" \|\| n\.id === "today"/);
   expect(appSrc).toMatch(/pendingActions: !!can\?\.\("booking_edit"\)/);
   expect(sharedSrc).toMatch(/sh:pending-actions-changed/);
   expect(sharedSrc).toMatch(/pendingActions: allowPending \? \(payload\.pending_actions\?\.total \|\| 0\) : 0/);
+  expect(sharedSrc).toMatch(/scheduleActions: allowPending \? scheduleActionCount\(payload\.pending_actions\) : 0/);
+});
+
+test("scheduleActionCount sums only the scheduling categories", async () => {
+  const { scheduleActionCount } = await import("../lib/sharedData");
+  expect(scheduleActionCount({ total: 5, meet_and_greet_requests: 1, booking_approvals: 2, reschedule_requests: 0, contact_inquiries: 1, overdue_medications: 1 })).toBe(3);
+  expect(scheduleActionCount({ total: 1, meet_and_greet_requests: 0, booking_approvals: 0, reschedule_requests: 0, contact_inquiries: 1 })).toBe(0);
+  // Older backend without the breakdown: fall back to the total rather than hiding the badge.
+  expect(scheduleActionCount({ total: 2 })).toBe(2);
+  expect(scheduleActionCount(null)).toBe(0);
+});
+
+test("a new website inquiry also reaches Today's Do This Now / Action Center feed", () => {
+  const serverSrc = read("..", "..", "..", "backend", "server.py");
+  expect(serverSrc).toMatch(/"kind": "contact_inquiry",\s*"priority": "warn"/);
+  expect(serverSrc).toMatch(/"cta": \{"type": "open_screen", "screen": "inquiries"\}/);
+  // Dismissal signature carries the count so a second inquiry re-surfaces it.
+  expect(serverSrc).toMatch(/if kind in \("booking_pending", "contact_inquiry",/);
 });
 
 test("Front Desk reuses the same shared panel (no duplicated queue logic)", () => {

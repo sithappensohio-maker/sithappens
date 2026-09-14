@@ -28291,6 +28291,30 @@ async def admin_today_brain(_: dict = Depends(require_admin)):
     except Exception as e:
         logger.warning("today-brain pending-bookings failed: %s", e)
 
+    # 5a. New website inquiries nobody has replied to (warn). The Action
+    # Required queue (Front Desk) already lists each one; this feed only
+    # carried pending BOOKINGS, so an inquiry lit the Today badge while
+    # "Do This Now" and the Action Center stayed empty.
+    try:
+        inq_rows = await db.inquiries.find(
+            {"status": "new"}, {"_id": 0, "name": 1, "dog_name": 1},
+        ).sort("created_at", 1).to_list(200)
+        if inq_rows:
+            n = len(inq_rows)
+            who = [f"{q.get('name') or 'Someone'} / {q.get('dog_name') or 'their dog'}" for q in inq_rows[:3]]
+            items.append({
+                "id": f"contact-inquiries:{n}",
+                "kind": "contact_inquiry",
+                "priority": "warn",
+                "title": f"{n} new website inquir{'ies' if n != 1 else 'y'} waiting for a reply",
+                "subtitle": ", ".join(who) + (f" · +{n - len(who)} more" if n > len(who) else "") + " · Tap to open Inquiries",
+                "ts": now_dt.isoformat(),
+                "cta": {"type": "open_screen", "screen": "inquiries"},
+                "icon": "fa-inbox",
+            })
+    except Exception as e:
+        logger.warning("today-brain website inquiries failed: %s", e)
+
     # 5b. Open client help requests / feedback (warn)
     try:
         new_help = await db.help_requests.count_documents({"status": "new"})
@@ -28622,7 +28646,7 @@ def _today_brain_signature(item: dict) -> str:
         # ("Name · 2 daycare · 0 training · 1 boarding left").
         nums = "|".join([t for t in title.replace("·", " ").split() if t.isdigit()])
         return f"low:{nums or title}"
-    if kind in ("booking_pending", "hw_review", "hw_question", "vaccine_upload_review", "help_request", "quote_request", "reward_referral", "reward_trivia", "unpaid_balance", "stuck_checkout", "missing_report_card"):
+    if kind in ("booking_pending", "contact_inquiry", "hw_review", "hw_question", "vaccine_upload_review", "help_request", "quote_request", "reward_referral", "reward_trivia", "unpaid_balance", "stuck_checkout", "missing_report_card"):
         # Title/subtitle carries the count → encode it as the signature.
         nums = "|".join([t for t in (title + " " + subtitle).split() if t.isdigit()])
         return f"{kind}:{nums or title}"

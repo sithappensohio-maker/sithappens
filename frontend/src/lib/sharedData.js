@@ -111,7 +111,19 @@ const EMPTY_COUNTS = {
   shopOrdersUnseen: 0,
   schoolAttention: 0,
   pendingActions: 0,
+  scheduleActions: 0,
 };
+
+// The Schedule badge only counts items the Schedule workspace can actually
+// show (its Bookings tab lists approvals, Meet & Greets and reschedules).
+// Inquiries, disputes, refunds and overdue meds live elsewhere, so counting
+// them there sent the operator to a calendar with nothing on it.
+const SCHEDULE_ACTION_KEYS = ["meet_and_greet_requests", "booking_approvals", "reschedule_requests"];
+export function scheduleActionCount(pending) {
+  if (!pending || typeof pending !== "object") return 0;
+  if (SCHEDULE_ACTION_KEYS.every((k) => pending[k] === undefined)) return Number(pending.total) || 0;
+  return SCHEDULE_ACTION_KEYS.reduce((sum, k) => sum + (Number(pending[k]) || 0), 0);
+}
 
 // The shell previously owned four separate polling effects, each duplicated
 // the same lifecycle/error/event logic and re-ran whenever the active tab
@@ -146,6 +158,7 @@ export function useAdminNavCounts(access = {}) {
         shopOrdersUnseen: allowShopOrders ? (payload.shop_orders?.unseen || 0) : 0,
         schoolAttention: allowSchool ? (payload.school?.count || 0) : 0,
         pendingActions: allowPending ? (payload.pending_actions?.total || 0) : 0,
+        scheduleActions: allowPending ? scheduleActionCount(payload.pending_actions) : 0,
       };
       if (mountedRef.current) setCounts(next);
       return next;

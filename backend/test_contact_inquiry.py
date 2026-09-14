@@ -153,3 +153,32 @@ def test_public_options_match_the_server_vocabulary():
     assert set(opts["interests"]) == set(server.INQUIRY_INTERESTS)
     assert set(opts["concerns"]) == set(server.INQUIRY_CONCERNS)
     assert opts["statuses"] == ["new", "contacted", "closed"]
+
+
+def test_new_inquiry_reaches_todays_do_this_now_feed_and_leaves_when_contacted():
+    """The Today badge counts Action Required, but "Do This Now" and the
+    Action Center read /admin/today-brain — which only knew about pending
+    bookings. A new inquiry must surface there too, routed to Inquiries, and
+    drop out once it is marked contacted."""
+    email = _email()
+    inquiry_id = _submit(email, dog_name="Cujo").json()["id"]
+    admin = _admin_user()
+
+    brain = run(server.admin_today_brain(_=admin))
+    hits = [it for it in brain["items"] if it["kind"] == "contact_inquiry"]
+    assert hits, "new inquiry missing from today-brain"
+    it = hits[0]
+    assert it["priority"] == "warn"
+    assert it["cta"] == {"type": "open_screen", "screen": "inquiries"}
+    assert "inquir" in it["title"] and "waiting for a reply" in it["title"]
+    assert f"{TAG} Owner / Cujo" in it["subtitle"] or "more" in it["subtitle"]
+    # The dismissal signature encodes the count so a later inquiry re-surfaces it.
+    n = run(server.db.inquiries.count_documents({"status": "new"}))
+    assert it["signature"] == f"contact_inquiry:{n}"
+
+    # Front Desk / Today / Schedule share one poll; a clients_edit-only role
+    # must still get the inquiry counted in it.
+    run(server.update_inquiry(inquiry_id, server.InquiryPatchIn(status="contacted"), admin))
+    brain = run(server.admin_today_brain(_=admin))
+    remaining = run(server.db.inquiries.count_documents({"status": "new"}))
+    assert bool([x for x in brain["items"] if x["kind"] == "contact_inquiry"]) == (remaining > 0)
