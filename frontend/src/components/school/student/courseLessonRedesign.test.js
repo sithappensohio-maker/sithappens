@@ -103,7 +103,9 @@ test("a metric is shown only when its denominator is real", () => {
 
 test("Continue targets the canonical current lesson", () => {
   expect(courseCardsSrc).toMatch(/const current = roadmap\?\.current_lesson/);
-  expect(courseCardsSrc).toMatch(/onClick=\{\(\) => onResume\(current\.id\)\}/);
+  // Stage 9 — the single Continue lives on the CURRENT card, still bound to the roadmap's current lesson
+  expect(courseCardsSrc).toMatch(/onClick: \(\) => onResume\(current\.id\)/);
+  expect(courseCardsSrc).toMatch(/data-testid="course-current"/);
 });
 
 test("module state words are friendly and cover every server status", () => {

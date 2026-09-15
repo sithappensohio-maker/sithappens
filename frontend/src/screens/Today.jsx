@@ -264,7 +264,7 @@ export default function Today({ onNavigate = () => {}, onJumpToDog = () => {}, o
           ) : (
             <div className="space-y-2">
               {trainingToday.map((r) => (
-                <button key={r.booking_id} onClick={() => onNavigate("pipeline")}
+                <button key={r.booking_id} onClick={() => onNavigate("pipeline", { focus: `session:${r.booking_id}` })}
                         className="w-full text-left rounded-xl border border-shBorder bg-black/10 px-3 py-2.5 hover:border-shPrimary/35 transition"
                         data-testid={`today-training-plan-${r.booking_id}`}>
                   <div className="flex flex-wrap items-center gap-x-2 gap-y-1">

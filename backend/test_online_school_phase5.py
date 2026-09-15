@@ -17,6 +17,7 @@ from unittest.mock import patch
 import httpx
 
 import _test_env  # noqa: F401 — must run before `import server`, see its docstring
+import pytest
 import server
 from _test_loop import run
 
@@ -220,36 +221,30 @@ def test_sell_program_does_not_collide_with_existing_online_school_enrollment():
             online_raw = run(server.db.dog_programs.find_one({"id": online_enrollment_id}))
             assert online_raw["delivery_channel"] == "online_school"
 
-            sale_result = run(server.sell_training_program(
-                c["id"], server.SellProgramIn(program_id=prog["id"], dog_id=dog["id"], payment_method="cash"), admin,
-            ))
-            assert sale_result["enrollment"] is not None
-            new_enrollment_id = sale_result["enrollment"]["id"]
+            # Release closure — ONE active School enrollment per dog+program (rule B5), so the
+            # sale can never manufacture a second progress ledger. It no longer charges and
+            # shrugs either: it refuses up front and names the enrollment that already exists.
+            lots_before = run(server.db.credit_lots.count_documents({"client_id": c["id"], "program_id": prog["id"]}))
+            with pytest.raises(server.HTTPException) as exc:
+                run(server.sell_training_program(
+                    c["id"], server.SellProgramIn(program_id=prog["id"], dog_id=dog["id"], payment_method="cash"), admin,
+                ))
+            assert exc.value.status_code == 409
+            assert exc.value.detail["code"] == "dog_already_enrolled"
+            assert exc.value.detail["enrollment_id"] == online_enrollment_id
+            assert run(server.db.credit_lots.count_documents({"client_id": c["id"], "program_id": prog["id"]})) == lots_before
 
-            # Must be a brand new row, not the online-school one.
-            assert new_enrollment_id != online_enrollment_id
-            new_raw = run(server.db.dog_programs.find_one({"id": new_enrollment_id}))
-            assert "delivery_channel" not in new_raw  # trainer-led rows never set this key
-
-            # Both stay active and distinct.
-            active_rows = run(server.db.dog_programs.find(
-                {"dog_id": dog["id"], "program_id": prog["id"], "status": "active"}, {"_id": 0},
-            ).to_list(10))
-            assert len(active_rows) == 2
-            ids = {r["id"] for r in active_rows}
-            assert ids == {online_enrollment_id, new_enrollment_id}
-
-            # Selling again (now two active rows exist: one online, one
-            # trainer-led) must still match onto the trainer-led one, not
-            # error and not create a third row.
+            # An operator who really is selling another block says so; still one enrollment.
             sale_result_2 = run(server.sell_training_program(
-                c["id"], server.SellProgramIn(program_id=prog["id"], dog_id=dog["id"], payment_method="cash"), admin,
+                c["id"], server.SellProgramIn(program_id=prog["id"], dog_id=dog["id"], payment_method="cash",
+                                              allow_additional_sessions=True), admin,
             ))
-            assert sale_result_2["enrollment"]["id"] == new_enrollment_id
+            assert sale_result_2["enrollment"]["id"] == online_enrollment_id
+            assert sale_result_2["already_enrolled"]["sold_additional_sessions"] is True
             active_rows_2 = run(server.db.dog_programs.find(
                 {"dog_id": dog["id"], "program_id": prog["id"], "status": "active"}, {"_id": 0},
             ).to_list(10))
-            assert len(active_rows_2) == 2
+            assert [r["id"] for r in active_rows_2] == [online_enrollment_id]
         finally:
             _cleanup_dog_programs_and_lots(dog["id"], c["id"])
 
@@ -272,16 +267,22 @@ def test_sell_program_with_purchase_fulfillment_online_school_grants_real_enroll
             se = run(server.db.school_enrollments.find_one({"enrollment_id": enr_id}, {"_id": 0}))
             assert se is not None and se["status"] == "active"
 
-            # Retry (e.g. staff double-clicks) must converge onto the same
-            # enrollment, not error and not create a duplicate.
-            result_2 = run(server.sell_training_program(
-                c["id"], server.SellProgramIn(program_id=prog["id"], dog_id=dog["id"], payment_method="cash"), admin,
-            ))
-            assert result_2["enrollment"]["id"] == enr_id
+            # Release closure — a retry (staff double-click) used to converge onto the same
+            # enrollment while quietly writing a SECOND credit lot and income row. It is now
+            # refused before any of that, naming the enrollment the client already paid for.
+            lots_before = run(server.db.credit_lots.count_documents({"client_id": c["id"], "program_id": prog["id"]}))
+            income_before = run(server.db.retail_sales.count_documents({"client_id": c["id"], "source_kind": "training_program_sale"}))
+            with pytest.raises(server.HTTPException) as exc:
+                run(server.sell_training_program(
+                    c["id"], server.SellProgramIn(program_id=prog["id"], dog_id=dog["id"], payment_method="cash"), admin,
+                ))
+            assert exc.value.status_code == 409 and exc.value.detail["enrollment_id"] == enr_id
+            assert run(server.db.credit_lots.count_documents({"client_id": c["id"], "program_id": prog["id"]})) == lots_before
+            assert run(server.db.retail_sales.count_documents({"client_id": c["id"], "source_kind": "training_program_sale"})) == income_before
             active_rows = run(server.db.dog_programs.find(
                 {"dog_id": dog["id"], "program_id": prog["id"], "status": "active"}, {"_id": 0},
             ).to_list(10))
-            assert len(active_rows) == 1
+            assert len(active_rows) == 1 and active_rows[0]["id"] == enr_id
         finally:
             _cleanup_dog_programs_and_lots(dog["id"], c["id"])
 

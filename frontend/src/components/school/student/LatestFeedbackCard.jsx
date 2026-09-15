@@ -43,7 +43,7 @@ export default function LatestFeedbackCard({ feedback, onView }) {
         className="mt-4 text-[15px] font-black uppercase tracking-widest text-shSecondary hover:text-shText transition"
         data-testid="latest-feedback-view"
       >
-        View full feedback <i className="fas fa-arrow-right ml-1" />
+        Open Coach <i className="fas fa-arrow-right ml-1" />
       </button>
     </section>
   );

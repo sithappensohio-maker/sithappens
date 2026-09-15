@@ -1269,7 +1269,12 @@ function SellProgramModal({ client, onClose, onSold }) {
   const effectivePrice = overridePrice !== "" ? Number(overridePrice) : listPrice;
   const perEach = qty > 0 ? (effectivePrice / qty) : 0;
 
-  const sell = async () => {
+  // Release closure — the server refuses a sale for a dog that is already enrolled and
+  // says so with a structured 409. We show that plainly and let the operator confirm an
+  // extra block of sessions; nothing is charged until they do.
+  const [alreadyEnrolled, setAlreadyEnrolled] = useState(null);
+
+  const sell = async (allowAdditional = false) => {
     if (!programId) { setError("Pick a program"); return; }
     setBusy(true); setError("");
     try {
@@ -1286,16 +1291,23 @@ function SellProgramModal({ client, onClose, onSold }) {
         if (scheduleStart) body.schedule_start_date = scheduleStart;
         if (overrideClosures) body.schedule_override_closures = true;
       }
+      if (allowAdditional) body.allow_additional_sessions = true;
       const r = await api.post(`/clients/${client.id}/sell-program`, body);
+      setAlreadyEnrolled(null);
       const sb = r.data.scheduled_bookings || [];
       const warns = r.data.schedule_warnings || [];
       const parts = [`Sold ${r.data.lot.pack_name} · +${qty} ${unit}`];
       if (sb.length) parts.push(`${sb.length} weekly session${sb.length === 1 ? "" : "s"} booked`);
       if (warns.length) parts.push(`(${warns.length} closure${warns.length === 1 ? "" : "s"} skipped)`);
       toast.success(parts.join(" · "));
+      // The sale can succeed while the dog still is not set up to train. Never let that
+      // land as a bare "Sold" — say what did not happen, so nobody assumes training started.
+      if (r.data.enrollment_warning) toast.warning(r.data.enrollment_warning, { duration: 10_000 });
       onSold?.(r.data);
     } catch (e) {
-      setError(e.response?.data?.detail || "Could not complete sale");
+      const d = e.response?.data?.detail_object || e.response?.data?.detail;
+      if (d && typeof d === "object" && d.code === "dog_already_enrolled") { setAlreadyEnrolled(d); setError(""); }
+      else setError(e.response?.data?.detail || "Could not complete sale");
     } finally { setBusy(false); }
   };
 
@@ -1557,15 +1569,32 @@ function SellProgramModal({ client, onClose, onSold }) {
           </p>
         )}
 
+        {alreadyEnrolled && (
+          <div className="rounded-xl border border-shAccent/50 bg-shAccent/10 p-3 space-y-2" data-testid="sell-program-already-enrolled">
+            <p className="text-[12px] font-black uppercase tracking-widest text-shAccent">
+              <i className="fas fa-circle-info mr-1.5"/>Already enrolled · nothing charged
+            </p>
+            <p className="text-[14px] text-shText leading-snug">{alreadyEnrolled.msg}</p>
+          </div>
+        )}
+
         <div className="flex gap-2 pt-2">
           <button onClick={onClose} className="flex-1 text-shTextMuted py-3 text-[14px] font-black uppercase tracking-widest">
             Cancel
           </button>
-          <button onClick={sell} disabled={busy || !programId}
-                  data-testid="sell-program-confirm"
-                  className="flex-1 bg-purple-500 text-shText py-3 rounded font-black text-[14px] uppercase tracking-widest disabled:opacity-50">
-            {busy ? <><i className="fas fa-circle-notch fa-spin mr-1"/>Selling…</> : <><i className="fas fa-check mr-1"/>Confirm sale</>}
-          </button>
+          {alreadyEnrolled ? (
+            <button onClick={() => sell(true)} disabled={busy}
+                    data-testid="sell-program-confirm-additional"
+                    className="flex-1 bg-shAccent text-[#071018] py-3 rounded font-black text-[14px] uppercase tracking-widest disabled:opacity-50">
+              {busy ? <><i className="fas fa-circle-notch fa-spin mr-1"/>Selling…</> : <><i className="fas fa-plus mr-1"/>Sell {qty} more anyway</>}
+            </button>
+          ) : (
+            <button onClick={() => sell(false)} disabled={busy || !programId}
+                    data-testid="sell-program-confirm"
+                    className="flex-1 bg-purple-500 text-shText py-3 rounded font-black text-[14px] uppercase tracking-widest disabled:opacity-50">
+              {busy ? <><i className="fas fa-circle-notch fa-spin mr-1"/>Selling…</> : <><i className="fas fa-check mr-1"/>Confirm sale</>}
+            </button>
+          )}
         </div>
       </div>
     </Modal>

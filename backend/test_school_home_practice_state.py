@@ -34,6 +34,8 @@ from test_online_school_phase4 import (  # noqa: E402
 NEW_FIELDS = {
     "school_lesson_id", "school_lesson_name", "is_current_lesson_practice",
     "sessions_logged", "last_session_at", "required_practice_satisfied",
+    # Stage 4 (clarity pass) — plain presentation flags, still read-only.
+    "assigned_by_trainer", "is_optional", "session_linked",
 }
 ALLOWED = set(server._CLIENT_SAFE_HOMEWORK_FIELDS) | {"template_snapshot", "section_logs", "daily_progress"} | NEW_FIELDS
 

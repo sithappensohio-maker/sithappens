@@ -19,6 +19,7 @@ const read = (...p) => fs.readFileSync(path.join(__dirname, ...p), "utf8");
 // below must hold across the pair, so read them as one source.
 const workspaceSrc =
   read("TrainingSessionWorkspace.jsx") + read("TrainingSessionWorkspaceBase.jsx");
+const briefingSrc = read("training", "TrainerBriefing.jsx");
 const historySrc = read("school", "student", "LessonHistoryScreen.jsx");
 const schoolAppSrc = read("..", "screens", "SchoolApp.jsx");
 const progressSrc = read("school", "student", "ProgressScreen.jsx");
@@ -66,6 +67,7 @@ test("per-skill client observation and private trainer note are two distinct fie
 });
 
 test("the two session-level notes are labelled unmistakably", () => {
+  expect(workspaceSrc).toMatch(/Staff only — clients will not see this/);
   expect(workspaceSrc).toMatch(/Private trainer note · never shown to the client/);
   expect(workspaceSrc).toMatch(/Client recap note · the owner reads this/);
 });
@@ -75,7 +77,9 @@ test("the three structured summary fields exist and are autosaved", () => {
     expect(workspaceSrc).toMatch(new RegExp(`updateDraft\\(\\{ ${f}: e\\.target\\.value \\}\\)`));
     expect(workspaceSrc).toMatch(new RegExp(`${f}: d\\.${f},`)); // included in the PUT
   }
-  expect(workspaceSrc).toMatch(/data-testid="workspace-lesson-summary"/);
+  // Stage 7 — the three fields live in Wrap Up (client handoff + next focus).
+  expect(workspaceSrc).toMatch(/data-testid="wrap-client-handoff"/);
+  expect(workspaceSrc).toMatch(/data-testid="wrap-next-focus"/);
 });
 
 // ---------------------------------------------------------------------------
@@ -90,11 +94,14 @@ test("the checkpoint gate 409 is surfaced as an explanation, not a generic toast
 });
 
 test("the previous-session handoff shows real context, not just the last note", () => {
-  expect(workspaceSrc).toMatch(/data-testid="workspace-last-lesson-handoff"/);
-  expect(workspaceSrc).toMatch(/overview\.last_session\.strongest_skills/);
-  expect(workspaceSrc).toMatch(/overview\.last_session\.needs_work_skills/);
-  expect(workspaceSrc).toMatch(/overview\.last_session\.practice_assigned/);
-  expect(workspaceSrc).toMatch(/overview\.last_session\.next_lesson_focus/);
+  // Stage 6/7 — the handoff is the BEFORE briefing's "Last time" block, fed
+  // by overview.briefing.last_session from the same bootstrap payload.
+  expect(workspaceSrc).toMatch(/<TrainerBriefing embedded briefing=\{briefing\}/);
+  expect(briefingSrc).toMatch(/testid="briefing-last"/);
+  expect(briefingSrc).toMatch(/last\.skills\.map/);
+  expect(briefingSrc).toMatch(/last\.what_went_well/);
+  expect(briefingSrc).toMatch(/last\.needs_work/);
+  expect(briefingSrc).toMatch(/last\.next_lesson_focus/);
 });
 
 // ---------------------------------------------------------------------------

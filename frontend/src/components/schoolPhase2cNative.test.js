@@ -10,7 +10,8 @@ const portal = readSrc("..", "screens", "Portal.jsx");
 const feedback = readSrc("school", "student", "FeedbackScreen.jsx");
 const progress = readSrc("school", "student", "ProgressScreen.jsx");
 const ask = readSrc("school", "student", "AskTrainerPanel.jsx");
-const current = readSrc("school", "student", "CurrentTrainingCard.jsx");
+// Stage 13 — CurrentTrainingCard.jsx was an unmounted leftover of the phase-2c client
+// (only TodayScreen used it, and TodayScreen was never rendered); both are removed.
 const lesson = readSrc("school", "student", "LessonScreen.jsx");
 const hq = readSrc("..", "screens", "SchoolHQ.jsx");
 
@@ -33,8 +34,6 @@ test("Practice Coach question refresh cannot masquerade as Practice completion",
 
 
 test("Student Home uses the backend lesson equipment field", () => {
-  expect(current).toMatch(/lesson\?\.equipment_needed/);
-  expect(current).not.toMatch(/lesson\?\.equipment\)/);
 });
 
 

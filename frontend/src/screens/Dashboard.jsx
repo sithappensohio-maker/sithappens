@@ -859,6 +859,7 @@ export default function Dashboard({ onNavigate = () => {}, onJumpToDog = () => {
           enrollmentId={trainingTrackerFor.enrollment_id}
           onClose={()=>setTrainingTrackerFor(null)}
           onSaved={()=>{ setTrainingTrackerFor(null); load(); }}
+          onReviewCheckpoint={()=>{ setTrainingTrackerFor(null); setCheckpointQueueOpen(true); }}
         />
       )}
       {checkpointQueueOpen && (

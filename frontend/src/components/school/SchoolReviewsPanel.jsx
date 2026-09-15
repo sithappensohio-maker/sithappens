@@ -5,6 +5,8 @@
 //   Checkpoints = formal graded assessments (opens the existing
 //               CheckpointReviewQueue — the single grading implementation)
 import { useCallback, useEffect, useRef, useState } from "react";
+import { practiceReviewHandoff } from "../../lib/handoff";
+import HandoffPanel from "../HandoffPanel";
 import { api, formatErr } from "../../lib/api";
 import { loadSchoolMediaUrl } from "../../lib/schoolMedia";
 import EmptyState from "../premium/EmptyState";
@@ -87,6 +89,9 @@ function PracticeDetail({ row, onBack, onReviewed }) {
   const [feedback, setFeedback] = useState(row.review_note || "");
   const [busy, setBusy] = useState(false);
   const [err, setErr] = useState("");
+  // Stage 10 — the review lands on a handoff (what the client now sees) instead
+  // of the row silently leaving the list.
+  const [result, setResult] = useState(null);
   const m = row.metrics || {};
   const reviewed = REVIEW_STATUS_META[row.review_status];
 
@@ -94,7 +99,8 @@ function PracticeDetail({ row, onBack, onReviewed }) {
     setBusy(true); setErr("");
     try {
       await api.post(`/admin/school/practice-reviews/${row.homework_id}/${row.log_id}`, { status, note: feedback });
-      onReviewed?.();
+      setResult(practiceReviewHandoff(status, { dogName: row.dog_name, clientName: row.client_name }));
+      onReviewed?.({ stay: true });
     } catch (e) {
       setErr(formatErr(e.response?.data?.detail) || "Couldn't save this review.");
     } finally { setBusy(false); }
@@ -154,7 +160,9 @@ function PracticeDetail({ row, onBack, onReviewed }) {
 
       {err && <p className="text-red-400 text-[13px] uppercase font-black" data-testid="practice-review-error">{err}</p>}
 
-      {reviewed ? (
+      {result ? (
+        <HandoffPanel handoff={result} testid="practice-review-handoff" onAction={onBack} />
+      ) : reviewed ? (
         <div className={`rounded-xl border p-3 ${reviewed.cls}`} data-testid="practice-review-already">
           <p className="text-[11px] font-black uppercase tracking-widest">Reviewed · {reviewed.label}{row.reviewed_by ? ` · ${row.reviewed_by}` : ""}</p>
           {row.review_note && <p className="text-[12px] mt-1 whitespace-pre-wrap">{row.review_note}</p>}
@@ -252,8 +260,8 @@ export default function SchoolReviewsPanel({ summary, initialReviewType = null, 
   const practiceCount = summary?.practice_reviews_pending ?? (pending || []).length;
   const checkpointCount = summary?.checkpoints_pending ?? (checkpoints || []).length;
 
-  const reviewedNow = async () => {
-    setActive(null);
+  const reviewedNow = async (opts) => {
+    if (!opts?.stay) setActive(null);
     await loadPractice();
     if (recent !== null) await loadRecent();
     onChanged?.();

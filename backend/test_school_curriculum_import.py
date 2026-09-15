@@ -1290,23 +1290,34 @@ def test_after_adoption_re_import_matches_by_key_and_is_idempotent():
         {"name": {"$regex": f"^{TAG} Recipe"}})) == 3, "recipes were duplicated"
 
 
-def test_an_active_course_owning_the_pathway_is_never_offered():
-    # Adopting a live course would rewrite something clients are working
-    # through. The import stays refused instead.
-    _archived_legacy_course(active=True)
+def test_an_active_course_owning_the_pathway_is_offered_with_the_consequences_said_out_loud():
+    """Superseded: this used to be a flat 422. Adopting a LIVE course rewrites something
+    clients are working through, so the import now stops and ASKS, naming the course and
+    saying it is active — nothing is written until the owner confirms that exact course."""
+    legacy = _archived_legacy_course(active=True)
     admin = _admin()
     man, media = _full_course()
     r = _post(admin, _zip(man, media))
-    assert r.status_code == 422, f"{r.status_code}: {r.text[:300]}"
-    assert "adoption" not in r.text.lower()
+    assert r.status_code == 409, f"{r.status_code}: {r.text[:300]}"
+    detail = r.json()["detail"]
+    assert detail["error_code"] == "archived_course_adoption_required"
+    assert detail["program_id"] == legacy["id"] and detail["existing_active"] is True
+    # and nothing was written while the question is open
+    assert run(server.db.programs.count_documents({"slug": FREE_SLUG})) == 1
 
 
-def test_a_course_already_claimed_by_another_package_is_not_offered():
-    _archived_legacy_course(import_source_key="some-other-package")
+def test_a_course_already_claimed_by_another_package_says_so_and_waits():
+    """Superseded: also a confirmation now, and the answer says the claim changed hands
+    (source_key_changed) so the owner can see they are pointing a different ZIP at it."""
+    legacy = _archived_legacy_course(import_source_key="some-other-package")
     admin = _admin()
     man, media = _full_course()
     r = _post(admin, _zip(man, media))
-    assert r.status_code == 422, f"{r.status_code}: {r.text[:300]}"
+    assert r.status_code == 409, f"{r.status_code}: {r.text[:300]}"
+    detail = r.json()["detail"]
+    assert detail["error_code"] == "archived_course_adoption_required"
+    assert detail["program_id"] == legacy["id"] and detail["source_key_changed"] is True
+    assert run(server.db.programs.count_documents({"slug": FREE_SLUG})) == 1
 
 
 def test_an_ambiguous_pathway_owner_is_not_offered():
@@ -1320,16 +1331,22 @@ def test_an_ambiguous_pathway_owner_is_not_offered():
     assert r.status_code == 422, f"{r.status_code}: {r.text[:300]}"
 
 
-def test_a_stale_adoption_answer_is_refused():
+def test_an_adoption_answer_still_targets_exactly_one_course():
+    """Superseded: a course becoming active between question and answer is no longer a
+    reason to refuse (an active course can be adopted, with the warning above). What still
+    matters is that the answer adopts THAT course and never quietly creates a second one."""
     legacy = _archived_legacy_course()
     admin = _admin()
     man, media = _full_course()
-    # Someone reactivates the course between the question and the answer.
     run(server.db.programs.update_one({"id": legacy["id"]}, {"$set": {"active": True}}))
     r = _post(admin, _zip(man, media), adopt=legacy["id"])
-    assert r.status_code == 409
-    assert r.json()["detail"]["error_code"] == "adoption_no_longer_available"
+    assert r.status_code == 200, f"{r.status_code}: {r.text[:300]}"
+    assert r.json()["program_id"] == legacy["id"]
     assert run(server.db.programs.count_documents({"slug": FREE_SLUG})) == 1
+    # answering with a course that does NOT own the pathway is still refused outright
+    other = _archived_legacy_course(name="Some Other Course", slug="some-other-course")
+    r2 = _post(admin, _zip(man, media), adopt=other["id"])
+    assert r2.status_code in (409, 422), f"{r2.status_code}: {r2.text[:300]}"
 
 
 def test_adopting_a_program_the_import_never_offered_is_refused():

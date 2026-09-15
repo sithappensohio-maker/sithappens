@@ -28,7 +28,9 @@ import uuid
 import httpx
 
 import _test_env  # noqa: F401 — must run before `import server`, see its docstring
+import pytest
 import server
+from test_training_session_workspace import _author_lessons  # noqa: E402
 from _test_loop import run
 
 TAG = "TEST_CURRICULUM_PHASE1"
@@ -99,6 +101,8 @@ def _make_legacy_program_in(name):
 def _program(program_in):
     admin = _admin_user()
     prog = run(server.create_program(program_in, admin))
+    if "Legacy" not in prog["name"]:  # the legacy-shape test below inspects the lesson-less program itself
+        prog = _author_lessons(prog, admin)  # Stage 13 fixture repair — School assigns lesson-by-lesson curricula only
     try:
         yield prog, admin
     finally:
@@ -123,19 +127,32 @@ def test_legacy_program_with_no_lessons_field_stores_empty_lessons_list_and_keep
 
 
 def test_legacy_program_still_enrolls_and_scores_exactly_as_before():
+    """Superseded (Stage 13): a modules/goals-only program can no longer be assigned OR
+    worked. School refuses the assignment with a plain 422, and a row that predates School
+    is read-only history — listed and labelled, never opened as a workable session."""
     with _program(_make_legacy_program_in(f"{TAG} Legacy Enroll")) as (prog, admin):
         with _client_and_dog() as (c, dog):
-            enr = run(server.enroll_dog(dog["id"], server.EnrollIn(program_id=prog["id"]), admin))
+            with pytest.raises(server.HTTPException) as refused:
+                run(server.enroll_dog(dog["id"], server.EnrollIn(program_id=prog["id"]), admin))
+            assert refused.value.status_code == 422
+            enr = {"id": str(uuid.uuid4()), "dog_id": dog["id"], "program_id": prog["id"], "status": "active",
+                   "program_snapshot": {"name": prog["name"], "type": prog["type"], "format": prog.get("format"), "modules": prog["modules"],
+                                        "completion_rule": server._default_completion_rule()},
+                   "goal_progress": server._empty_progress(prog["modules"]), "current_module_id": prog["modules"][0]["id"],
+                   "started_at": server.business_today().isoformat(), "created_at": server.now_iso(), "sessions_count": 0}
+            run(server.db.dog_programs.insert_one(dict(enr)))
             try:
-                ctx = run(server.get_training_context_direct(dog["id"], enr["id"], admin))
-                assert ctx["has_program"] is True
-                assert len(ctx["goals"]) == 2
-                sit_id = ctx["goals"][0]["id"]
-                updated = run(server.update_goal(dog["id"], enr["id"], sit_id, server.GoalUpdate(score=5), admin))
-                assert updated  # no exception — same code path as pre-Phase-1
+                # the row stays readable, is labelled legacy/read-only, and keeps its goals
                 listing = run(server.list_dog_enrollments(dog["id"], admin))
                 e = next(x for x in listing if x["id"] == enr["id"])
-                assert e["goal_progress"][sit_id]["status"] == "mastered"
+                assert e["curriculum_system"] == "legacy" and e["legacy_read_only"] is True
+                sit_id = next(iter(e["goal_progress"]))
+                assert e["program_snapshot"]["modules"][0]["goals"][0]["id"] == sit_id
+                # but it can no longer be WORKED: the trainer context refuses it with a plain
+                # 409 telling staff to migrate it, instead of opening a session on dead curriculum
+                with pytest.raises(server.HTTPException) as blocked:
+                    run(server.get_training_context_direct(dog["id"], enr["id"], admin))
+                assert blocked.value.status_code == 409 and "migrated" in str(blocked.value.detail)
             finally:
                 run(server.db.dog_programs.delete_one({"id": enr["id"]}))
 
@@ -185,6 +202,7 @@ def test_creating_a_program_with_a_lesson_stamps_ids_and_drops_bogus_skill_refs(
     body = _program_with_lesson_in(f"{TAG} With Lesson")
     admin = _admin_user()
     prog = run(server.create_program(body, admin))
+    prog = _author_lessons(prog, admin)  # Stage 13 fixture repair — School assigns lesson-by-lesson curricula only
     try:
         module = prog["modules"][0]
         sit_id = next(g["id"] for g in module["goals"] if g["name"] == "Sit")
@@ -227,6 +245,7 @@ def test_duplicate_program_remaps_lesson_skill_ids_to_new_goal_ids_and_never_sha
     # working lesson->skill link to duplicate.
     admin = _admin_user()
     prog = run(server.create_program(body, admin))
+    prog = _author_lessons(prog, admin)  # Stage 13 fixture repair — School assigns lesson-by-lesson curricula only
     sit_id = next(g["id"] for g in prog["modules"][0]["goals"] if g["name"] == "Sit")
     fixed = server.ProgramIn(
         name=prog["name"], type="private_lessons", format=prog["format"], price=50,
@@ -291,6 +310,7 @@ def test_trainer_can_reach_training_context_and_run_a_session_front_desk_cannot(
 
                 goal_id = r_ctx_trainer.json()["goals"][0]["id"]
 
+                run(server.db.dog_programs.update_one({"id": enr["id"]}, {"$set": {"assigned_trainer_id": trainer_uid}}))  # Stage 13: trainers work assigned dogs
                 r_draft_fd = client.post(f"/api/dogs/{dog['id']}/programs/{enr['id']}/training-session/draft", headers=fd_h)
                 assert r_draft_fd.status_code == 403, r_draft_fd.text
 
@@ -302,13 +322,15 @@ def test_trainer_can_reach_training_context_and_run_a_session_front_desk_cannot(
 
                 r_update_fd = client.put(
                     f"/api/training-session-drafts/{draft_id}", headers=fd_h,
-                    json={"actuals": {activity_id: {"score": 3}}},
+                    json={"actuals": {activity_id: {"score": 3, "outcome": "improving", "mastery_decision": "not_yet"}},
+                          "what_went_well": "Went well.", "needs_work": "Needs work.", "next_lesson_focus": "Next focus.", "client_recap_note": "Recap."},  # Stage 13 fixture repair
                 )
                 assert r_update_fd.status_code == 403, r_update_fd.text
 
                 r_update_trainer = client.put(
                     f"/api/training-session-drafts/{draft_id}", headers=trainer_h,
-                    json={"actuals": {activity_id: {"score": 3}}},
+                    json={"actuals": {activity_id: {"score": 3, "outcome": "improving", "mastery_decision": "not_yet"}},
+                          "what_went_well": "Went well.", "needs_work": "Needs work.", "next_lesson_focus": "Next focus.", "client_recap_note": "Recap."},  # Stage 13 fixture repair
                 )
                 assert r_update_trainer.status_code == 200, r_update_trainer.text
 

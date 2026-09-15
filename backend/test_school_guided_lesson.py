@@ -354,7 +354,7 @@ def test_the_client_and_server_agree_on_when_the_sequence_is_shown():
     import pathlib, re
     assert guide.GUIDE_MIN_CONTENT_STEPS == 1
     js = (pathlib.Path(__file__).resolve().parents[1] / "frontend" / "src" /
-          "components" / "school" / "student" / "lesson" / "LessonGuide.jsx")
+          "components" / "school" / "student" / "lesson" / "LessonGuideBase.jsx")  # the constant moved into the shared base in Stage 9
     m = re.search(r"GUIDE_MIN_CONTENT_STEPS = (\d+)", js.read_text(encoding="utf-8"))
     assert m and int(m.group(1)) == guide.GUIDE_MIN_CONTENT_STEPS, (
         "client and server disagree on when the guided sequence is shown")

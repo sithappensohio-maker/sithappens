@@ -87,7 +87,9 @@ export function adminPathForTab(tab, target = null) {
       rewards_center: "rewards",
       trophies: "trophies",
     }[rawTab];
-    return slug ? `/admin/training/${slug}` : "/admin/training";
+    // Stage 11.5 — Today deep-links into ONE queue item: ?focus=session:<booking_id>
+    const focus = rawTab === "pipeline" && target?.focus ? `?focus=${enc(String(target.focus))}` : "";
+    return slug ? `/admin/training/${slug}` : `/admin/training${focus}`;
   }
 
   if (canonical === "clients" && target) {

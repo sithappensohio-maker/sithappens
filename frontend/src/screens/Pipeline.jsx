@@ -10,12 +10,11 @@ import CsvImportButton from "../components/CsvImportButton";
 import { parseTrainingTipsCsv, TRAINING_TIPS_CSV_SAMPLE } from "../lib/csvImport";
 import { toast } from "sonner";
 import { useConfirm, usePromptDialog } from "../lib/useConfirm";
-import TrainingDaySummary from "../components/training/TrainingDaySummary";
-import TrainingDogRow from "../components/training/TrainingDogRow";
-import TrainerAttentionQueue from "../components/training/TrainerAttentionQueue";
-import SessionStatusFilter from "../components/training/SessionStatusFilter";
-import EmptyState from "../components/training/EmptyState";
-import { computeDaySummary, buildAttentionQueue, filterTrainingRows } from "../lib/trainerDashboardPolish";
+import TrainerDayQueue from "../components/training/TrainerDayQueue";
+import { hubPresentation } from "../lib/trainerDay";
+import SchoolReviewsPanel from "../components/school/SchoolReviewsPanel";
+import DailyReviewQueue from "../components/DailyReviewQueue";
+import TrainerAssistQueue from "../components/TrainerAssistQueue";
 
 const STATUS_META = {
   active: { label: "Active", color: "#8cc63f", icon: "fa-play" },
@@ -41,7 +40,22 @@ const GOAL_STATUS_META = {
     Sprint 110cc — click a row to expand and edit trainer notes + per-goal
     progress inline; no need to jump to the dog page first. */
 export default function Pipeline({ onJumpToDog }) {
-  const { user } = useAuth();
+  const { user, can } = useAuth();
+  // Stage 12 — ONE hub, composed by capability: whoever may assign training staff
+  // runs the operation (Everyone, Needs assignment, trainer chips, the full program
+  // pipeline); everyone else is a trainer and gets My Training Day. Review tools and
+  // the tips import keep their own permission keys.
+  const canAssignStaff = can("assign_training_staff");
+  const operations = canAssignStaff;
+  const canManageSchool = can("manage_school");
+  const canManageContent = can("manage_training_content");
+  const hub = hubPresentation({ canAssign: operations });
+  const [needsAssignmentOnly, setNeedsAssignmentOnly] = useState(false);
+  // Stage 11.5 — Today → Training carries ?focus=<queue item key>; once the day
+  // loads that card scrolls into view and is highlighted. Nothing else changes.
+  const [focusKey] = useState(() => {
+    try { return new URLSearchParams(window.location.search).get("focus") || null; } catch { return null; }
+  });
   const [rows, setRows] = useState([]);
   const [filterStatus, setFilterStatus] = useState("active");
   const [filterType, setFilterType] = useState("");
@@ -54,9 +68,6 @@ export default function Pipeline({ onJumpToDog }) {
   const [todayTip, setTodayTip] = useState(null);
   // Training-school expansion (Phase 7, redesigned UI Phase 5) — "Today's
   // Training Dogs" — the Trainer Daily Dashboard.
-  const [todayRows, setTodayRows] = useState([]);
-  const [todayLoading, setTodayLoading] = useState(true);
-  const [todayFilter, setTodayFilter] = useState("all");
   const [trainers, setTrainers] = useState([]);
   // Gap-closing pass — workspaceFor now covers BOTH entry points, the
   // booking-based "Open Plan" button ({ bookingId }) and the per-row
@@ -67,37 +78,84 @@ export default function Pipeline({ onJumpToDog }) {
   const [workspaceFor, setWorkspaceFor] = useState(null);
   // Online School Phase 2 — Trainer Checkpoints & Grading entry point,
   // living next to Today's Training Dogs (the trainer daily-ops surface).
-  const [pendingCheckpointCount, setPendingCheckpointCount] = useState(0);
-  const [checkpointQueueOpen, setCheckpointQueueOpen] = useState(false);
+  // Stage 11 — Trainer Daily Queue. ONE aggregate request (GET /admin/training/day)
+  // replaces the separate today-roster + checkpoint-count loads; every review
+  // tool opened from a card deep-links to that exact item, and every close
+  // reloads the queue from canonical state (no stale cards).
+  const [day, setDay] = useState(null);
+  const [dayLoading, setDayLoading] = useState(true);
+  const [mineOnly, setMineOnly] = useState(false);
+  const [checkpointFor, setCheckpointFor] = useState(null);   // { open: true, submissionId? }
+  const [practiceFor, setPracticeFor] = useState(null);       // { section_log_id }
+  const [dailyFor, setDailyFor] = useState(null);             // { homework_id, day_number }
+  const [assistFor, setAssistFor] = useState(null);           // { submissionId? }
 
-  const loadToday = async () => {
-    setTodayLoading(true);
+  const loadDay = async () => {
     try {
-      const { data } = await api.get("/admin/training/today");
-      setTodayRows(data);
-    } catch { setTodayRows([]); }
-    setTodayLoading(false);
-  };
-  const loadPendingCheckpoints = async () => {
-    try {
-      const { data } = await api.get("/admin/school/checkpoints/pending");
-      setPendingCheckpointCount((data || []).length);
-    } catch { setPendingCheckpointCount(0); }
+      const { data } = await api.get("/admin/training/day");
+      setDay(data);
+    } catch { setDay({ items: [], counts: {}, omitted: ["unavailable"] }); }
+    setDayLoading(false);
   };
   useEffect(() => {
-    loadToday(); loadPendingCheckpoints();
+    loadDay();
     api.get("/admin/school/trainers").then(r => setTrainers((r.data || []).filter(t => t.can_run_training_sessions !== false))).catch(() => setTrainers([]));
   }, []);
   useEffect(() => {
-    if (user?.role && user.role !== "admin") setTodayFilter("my_dogs");
-  }, [user?.role]);
-  useLiveRefresh(loadToday, { intervalMs: 30_000 });
+    // A trainer-tier account (staff_role set) starts on "My work"; the owner sees everyone.
+    if (user?.staff_role) setMineOnly(true);
+  }, [user?.staff_role]);
+  useLiveRefresh(loadDay, { intervalMs: 30_000 });
+  const focusDone = useRef(false);
+  useEffect(() => {
+    if (!focusKey || dayLoading || !day || focusDone.current) return;
+    const hit = (day.items || []).find((it) => it.key === focusKey);
+    if (!hit) { focusDone.current = true; return; }          // not on today's queue (nothing to scroll to)
+    if (mineOnly && hit.mine === false) { setMineOnly(false); return; }
+    const sel = `[data-testid="day-item-${window.CSS?.escape ? CSS.escape(focusKey) : focusKey}"]`;
+    // Blocks above the queue (tip of the day, pipeline stats) finish loading after the
+    // first paint and shift the page, so settle for a moment: re-centre the card only
+    // while it is out of view, then stop for good — the 30 s live refresh never re-scrolls.
+    // Align the card's TOP just under the shell's sticky header (owner shell or Staff
+    // Portal) — a queue card can be taller than a 320px phone, so centring it would
+    // leave its top off-screen.
+    // Stacked sticky bars (Staff Portal header + tab strip) chain from the top edge.
+    const stickyBottom = () => {
+      const rects = Array.from(document.querySelectorAll("header, nav, [class*='sticky']"))
+        .filter((e) => ["sticky", "fixed"].includes(getComputedStyle(e).position))
+        .map((e) => e.getBoundingClientRect()).sort((a, b) => a.top - b.top);
+      let bottom = 0;
+      for (const r of rects) if (r.top <= bottom + 1 && r.bottom > bottom) bottom = r.bottom;
+      return bottom;
+    };
+    const inView = (el) => { const b = el.getBoundingClientRect(); const top = stickyBottom(); return b.top >= top - 1 && b.top < top + window.innerHeight * 0.4; };
+    const tick = () => {
+      const el = document.querySelector(sel);
+      if (!el || !el.scrollIntoView || inView(el)) return;
+      el.style.scrollMarginTop = `${stickyBottom() + 8}px`;
+      el.scrollIntoView({ block: "start" });
+    };
+    // Late blocks (banners, tip of the day, stats) keep shifting the page for a few
+    // seconds: follow layout changes until the trainer touches the page or 8 s pass.
+    const timers = [80, 600, 1500, 3000].map((ms) => setTimeout(tick, ms));
+    const ro = typeof ResizeObserver !== "undefined" ? new ResizeObserver(() => tick()) : null;
+    const root = document.querySelector("[data-scroll-root]");
+    if (ro) { ro.observe(document.body); if (root) Array.from(root.children).forEach((c) => ro.observe(c)); }
+    const stop = () => { focusDone.current = true; ro?.disconnect(); };
+    const done = setTimeout(stop, 8000);
+    const userEvents = ["pointerdown", "wheel", "touchstart", "keydown"];
+    userEvents.forEach((ev) => window.addEventListener(ev, stop, { passive: true, once: true }));
+    return () => { timers.forEach(clearTimeout); clearTimeout(done); ro?.disconnect(); userEvents.forEach((ev) => window.removeEventListener(ev, stop)); };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [focusKey, dayLoading, day, mineOnly]);
 
   const load = async () => {
     setLoading(true);
     const params = {};
     if (filterStatus) params.status = filterStatus;
     if (filterType) params.type = filterType;
+    // a trainer's roster is only the programs assigned to them (server-side, by id)
+    if (!operations && user?.id) params.trainer = user.id;
     if (search) params.search = search;
     if (trainerFilter) params.trainer = trainerFilter;
     if (filterStalled) params.stalled_days = 7;
@@ -108,7 +166,14 @@ export default function Pipeline({ onJumpToDog }) {
     setLoading(false);
   };
   useEffect(() => { load(); /* eslint-disable-line react-hooks/exhaustive-deps */ }, [filterStatus, filterType, filterStalled, trainerFilter]);
+  // Stage 13 request audit — the debounce is for TYPING. Without this guard it also fired
+  // on mount, fetching the whole program list an extra time every time the hub opened.
+  // Keyed on the search TEXT (not a mounted flag) so React's double-invoked mount effects
+  // in development cannot slip an extra fetch through either.
+  const lastSearch = useRef(search);
   useEffect(() => {
+    if (lastSearch.current === search) return;
+    lastSearch.current = search;
     const t = setTimeout(load, 250);
     return () => clearTimeout(t);
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -138,82 +203,110 @@ export default function Pipeline({ onJumpToDog }) {
     return s;
   }, [rows]);
 
-  // Training UI Phase 5 — Trainer Daily Dashboard derived state. All three
-  // are pure reductions over todayRows (lib/trainerDashboardPolish.js) —
-  // no additional fetch per summary/queue/filter.
-  const todaySummary = useMemo(() => computeDaySummary(todayRows), [todayRows]);
-  const attentionItems = useMemo(() => buildAttentionQueue(todayRows), [todayRows]);
-  const filteredTodayRows = useMemo(
-    () => filterTrainingRows(todayRows, todayFilter, user || null),
-    [todayRows, todayFilter, user],
-  );
-
-  const assignTrainer = async (r, trainerId) => {
+  const assignTrainer = async (item, trainerId) => {
+    const bookingId = item?.action?.target?.booking_id;
+    if (!bookingId) return;
     try {
-      await api.patch(`/admin/training/today/${r.booking_id}/trainer`, { assigned_trainer_id: trainerId });
+      await api.patch(`/admin/training/today/${bookingId}/trainer`, { assigned_trainer_id: trainerId });
       toast.success(trainerId ? "Trainer assigned" : "Trainer assignment cleared");
-      await loadToday();
+      await loadDay();
     } catch (e) {
       toast.error(e?.response?.data?.detail || "Could not assign trainer");
     }
   };
+  const assignedTrainerFor = (item) => item?.assigned_trainer_id || "";
 
-  const runPrimaryAction = async (action, r) => {
-    if (action.kind === "migrate_legacy") {
-      if (onJumpToDog) onJumpToDog(r.dog_id);
-      else toast.info("Open this dog's Training tab and choose Move into School.");
-      return;
+  // Every queue action carries its own target (booking / enrollment / submission /
+  // homework log) — the trainer never re-selects what the app already knows.
+  const runDayAction = async (action, item) => {
+    const t = action?.target || {};
+    switch (action?.kind) {
+      case "start_session":
+      case "resume_session":
+      case "resolve_session":
+      case "view_session":
+        // Stage 11.5 — an unfinished draft from an earlier day resumes THAT draft
+        // (dog + enrollment + draft_id), never today's booking bootstrap.
+        if (t.draft_id && t.dog_id && t.enrollment_id) setWorkspaceFor({ dogId: t.dog_id, enrollmentId: t.enrollment_id, draftId: t.draft_id });
+        else if (t.booking_id) setWorkspaceFor({ bookingId: t.booking_id });
+        else if (t.dog_id && t.enrollment_id) setWorkspaceFor({ dogId: t.dog_id, enrollmentId: t.enrollment_id });
+        return;
+      case "review_checkpoint":
+        setCheckpointFor({ open: true, submissionId: t.submission_id || null });
+        return;
+      case "review_practice":
+        setPracticeFor({ section_log_id: t.section_log_id, homework_id: t.homework_id });
+        return;
+      case "review_daily":
+        setDailyFor({ homework_id: t.homework_id, day_number: t.day_number });
+        return;
+      case "open_trainer_assist":
+        setAssistFor({ submissionId: t.submission_id || null });
+        return;
+      case "check_in":
+        try {
+          await api.post(`/bookings/${t.booking_id}/check-in`);
+          await loadDay();
+        } catch (e) {
+          toast.error(e?.response?.data?.detail || "Check-in failed — open the full check-in flow to resolve.");
+        }
+        return;
+      case "open_dog":
+        if (onJumpToDog && t.dog_id) onJumpToDog(t.dog_id);
+        else toast.info("Open this dog from the Dogs screen.");
+        return;
+      default:
+        toast.info("Nothing to open for this item.");
     }
-    if (action.kind === "assign_trainer") {
-      toast.info(user?.role === "admin" ? "Choose the trainer from this dog's Assigned Trainer menu." : "An Admin needs to assign this dog before training starts.");
-      return;
-    }
-    if (action.kind === "check_in") {
-      try {
-        await api.post(`/bookings/${r.booking_id}/check-in`);
-        loadToday();
-      } catch (e) {
-        toast.error(e?.response?.data?.detail || "Check-in failed — open the full check-in flow to resolve.");
-      }
-      return;
-    }
-    // "open_workspace" (Open Plan / Continue Session / Resume Draft / View
-    // Completed Session / Resolve) — every one of these opens the same
-    // TrainingSessionWorkspace, which already renders the correct state
-    // (resolution screen, in-progress plan, or completed recap) on its own.
-    setWorkspaceFor({ bookingId: r.booking_id });
-  };
-
-  const runAttentionAction = (item) => {
-    if (item.actionKind === "migrate_legacy") {
-      if (onJumpToDog) onJumpToDog(item.dogId);
-      return;
-    }
-    if (item.actionKind === "review_homework") {
-      if (onJumpToDog) onJumpToDog(item.dogId);
-      return;
-    }
-    setWorkspaceFor({ bookingId: item.bookingId });
   };
 
   return (
     <>
-    <div className="p-8 max-w-7xl mx-auto space-y-6" data-testid="pipeline-screen">
+    <div className="p-4 sm:p-8 max-w-7xl mx-auto space-y-6" data-testid="pipeline-screen">
       <PageHero
-        eyebrow={{ icon: "fa-graduation-cap", text: "Training Hub", color: "text-shPrimary" }}
-        title="Training Hub."
-        highlight="Every dog. One view."
-        subtitle="Assign today's trainer, follow the dog's exact current lesson, record the result, and keep every program moving in order."
-        right={(
-          <div className="flex gap-2 flex-wrap">
+        eyebrow={{ icon: "fa-graduation-cap", text: hub.eyebrow, color: "text-shPrimary" }}
+        title={hub.title}
+        highlight={hub.highlight}
+        subtitle={hub.subtitle}
+        right={operations ? (
+          <div className="flex gap-2 flex-wrap" data-testid="hub-stats-operations">
             <Stat label="Active" value={stats.active} color="#8cc63f" />
             <Stat label="On Hold" value={stats.on_hold} color="#f59e0b" />
             <Stat label="Completed" value={stats.completed} color="#00a9e0" />
             {stats.overdue > 0 && <Stat label="Overdue" value={stats.overdue} color="#ef4444" />}
+            {(day?.counts?.needs_assignment || 0) > 0 && <Stat label="Needs a trainer" value={day.counts.needs_assignment} color="#f59e0b" />}
+          </div>
+        ) : (
+          <div className="flex gap-2 flex-wrap" data-testid="hub-stats-trainer">
+            <Stat label="Needs you" value={dayLoading ? "…" : (day?.items || []).filter((it) => it.mine !== false && !["upcoming", "done"].includes(it.section)).length} color="#8cc63f" />
+            <Stat label="Today" value={dayLoading ? "…" : (day?.counts?.today || 0)} color="#00a9e0" />
+            <Stat label="Done" value={dayLoading ? "…" : (day?.counts?.done || 0)} color="#8cc63f" />
           </div>
         )}
         testid="pipeline-hero"
       />
+
+      {/* Stage 11 — Trainer Daily Queue: the one place to run the training day.
+          Needs attention → Today's training → Continue → Upcoming → Done, each
+          item from the canonical record it points at (GET /admin/training/day). */}
+      <div className="space-y-3" data-testid="today-training-dogs">
+        <TrainerDayQueue
+          day={day} loading={dayLoading} focusKey={focusKey} heading={hub.heading}
+          mineOnly={mineOnly} onToggleMine={operations ? setMineOnly : undefined}
+          needsAssignmentOnly={needsAssignmentOnly} onToggleNeedsAssignment={operations ? setNeedsAssignmentOnly : undefined}
+          onAction={runDayAction} canOpenDog={!!onJumpToDog}
+          trainers={trainers} canAssignTrainer={canAssignStaff} onAssignTrainer={assignTrainer}
+          assignedTrainerFor={assignedTrainerFor}
+        />
+        {canManageSchool && (
+          <div className="flex justify-end">
+            <button onClick={() => setCheckpointFor({ open: true, submissionId: null })} data-testid="open-checkpoint-queue-pipeline"
+                    className="text-[11px] font-black uppercase tracking-widest text-shTextMuted hover:text-shText border border-shBorder rounded px-2.5 py-1">
+              <i className="fas fa-video mr-1"/>Open checkpoint queue
+            </button>
+          </div>
+        )}
+      </div>
 
       {/* Sprint 110di-72 — Training Tip of the Day */}
       {todayTip && (
@@ -229,7 +322,7 @@ export default function Pipeline({ onJumpToDog }) {
                 <p className="text-shTextMuted text-[11px] mt-1">— {todayTip.source}</p>
               )}
             </div>
-            <CsvImportButton
+            {canManageContent && <CsvImportButton
               label="Import Tips CSV"
               parse={parseTrainingTipsCsv}
               sampleText={TRAINING_TIPS_CSV_SAMPLE}
@@ -247,65 +340,15 @@ export default function Pipeline({ onJumpToDog }) {
                   toast.error(e?.response?.data?.detail || "Tips import failed");
                 }
               }}
-            />
+            />}
           </div>
         </div>
       )}
 
-      {/* Training-school expansion (Phase 7, redesigned UI Phase 5) —
-          Trainer Daily Dashboard. Reuses the existing bookings/check-in
-          records and the Phase 3/4 session-draft machinery — never a
-          second appointment calendar, never a second progress store. */}
-      {(todayLoading || todayRows.length > 0) && (
-        <div className="space-y-3" data-testid="today-training-dogs">
-          <div className="flex items-center justify-between flex-wrap gap-2">
-            <p className="text-[13px] font-black uppercase tracking-widest text-shText"><i className="fas fa-paw mr-1.5 text-shPrimary"/>Today&rsquo;s Training Dogs</p>
-            <div className="flex items-center gap-2">
-              {pendingCheckpointCount > 0 && (
-                <button onClick={() => setCheckpointQueueOpen(true)} data-testid="open-checkpoint-queue-pipeline"
-                        className="text-[11px] font-black uppercase tracking-widest text-shAccent hover:text-shText border border-shAccent/40 hover:border-shAccent rounded px-2.5 py-1">
-                  <i className="fas fa-video mr-1"/>Checkpoints · {pendingCheckpointCount}
-                </button>
-              )}
-              {!todayLoading && <span className="text-[12px] text-shTextMuted font-black uppercase tracking-widest">{todayRows.length}</span>}
-            </div>
-          </div>
-
-          {todayLoading && <p className="p-6 text-center text-shTextMuted text-sm"><i className="fas fa-spinner fa-spin mr-2"/>Loading…</p>}
-
-          {!todayLoading && (
-            <>
-              <TrainingDaySummary summary={todaySummary} testid="today-summary"/>
-
-              {attentionItems.length > 0 && (
-                <div className="bg-[var(--sh-card-base)] border border-shBorder rounded-xl overflow-hidden shadow-lg p-3">
-                  <p className="text-[11px] font-black uppercase tracking-widest text-shTextMuted mb-2"><i className="fas fa-bell mr-1.5 text-shAccent"/>Needs Attention</p>
-                  <TrainerAttentionQueue items={attentionItems} onAction={runAttentionAction} testid="attention-queue"/>
-                </div>
-              )}
-
-              <SessionStatusFilter value={todayFilter} onChange={setTodayFilter} testid="today-filter"/>
-
-              {todayRows.length === 0 && (
-                <EmptyState icon="fa-calendar-day" message="No training appointments today." testid="today-empty-none"/>
-              )}
-              {todayRows.length > 0 && filteredTodayRows.length === 0 && (
-                <EmptyState icon="fa-filter" message="No dogs match this filter." testid="today-empty-filtered"/>
-              )}
-              {filteredTodayRows.length > 0 && (
-                <div className="space-y-2">
-                  {filteredTodayRows.map(r => (
-                    <TrainingDogRow key={r.booking_id} row={r} onPrimaryAction={runPrimaryAction}
-                                    trainers={trainers} canAssignTrainer={user?.role === "admin"} onAssignTrainer={assignTrainer}
-                                    testid={`today-training-row-${r.booking_id}`}/>
-                  ))}
-                </div>
-              )}
-            </>
-          )}
-        </div>
-      )}
-
+      {/* Stage 12 — the operational program pipeline is the owner's; a trainer gets a quiet
+          "My students" roster (the SAME rows, filtered server-side to their assignments). */}
+      {operations ? (
+        <div data-testid="pipeline-programs">
       <div className="flex flex-wrap gap-2 mb-5 items-center" data-testid="pipeline-filters">
         <input value={search} onChange={(e)=>setSearch(e.target.value)} placeholder="Search dog, client, program…"
                data-testid="pipeline-search"
@@ -339,7 +382,7 @@ export default function Pipeline({ onJumpToDog }) {
       {legacyCount > 0 && (
         <div className="bg-shAccent/10 border border-shAccent/40 rounded-xl px-4 py-3 text-[13px] text-shTextMuted" data-testid="pipeline-legacy-hint">
           <i className="fas fa-box-archive text-shAccent mr-2"/>
-          <span className="text-shText font-bold">{legacyCount} legacy training enrollment{legacyCount === 1 ? "" : "s"}</span> from
+          <span className="text-shText font-bold">{legacyCount} legacy training program record{legacyCount === 1 ? "" : "s"}</span> from
           before the School system {legacyCount === 1 ? "is" : "are"} read-only and not shown here. Open the dog's profile → Training tab
           to view one or migrate it into School so it can be managed from this pipeline.
         </div>
@@ -347,7 +390,7 @@ export default function Pipeline({ onJumpToDog }) {
       <div className="bg-[var(--sh-card-base)] border border-shBorder rounded-xl overflow-hidden shadow-lg">
         {loading && <p className="p-8 text-center text-shTextMuted text-sm"><i className="fas fa-spinner fa-spin mr-2"/>Loading…</p>}
         {!loading && rows.length === 0 && (
-          <p className="p-12 text-center text-shTextMuted text-sm">No enrollments match these filters.</p>
+          <p className="p-12 text-center text-shTextMuted text-sm">No programs match these filters.</p>
         )}
         {!loading && rows.length > 0 && (
           <div className="divide-y divide-shBorder">
@@ -366,6 +409,33 @@ export default function Pipeline({ onJumpToDog }) {
           </div>
         )}
       </div>
+        </div>
+      ) : (
+        <details className="rounded-xl border border-shBorder bg-[var(--sh-card-base)]" data-testid="my-students">
+          <summary className="cursor-pointer list-none px-4 py-3 flex items-center justify-between gap-2 min-h-[48px]">
+            <span className="text-[13px] font-black uppercase tracking-widest text-shText"><i className="fas fa-users mr-1.5 text-shSecondary" aria-hidden="true" />My students · {rows.length}</span>
+            <span className="text-[12px] text-shTextMuted">Dogs whose program is assigned to you</span>
+          </summary>
+          {loading && <p className="p-6 text-center text-shTextMuted text-sm"><i className="fas fa-spinner fa-spin mr-2"/>Loading…</p>}
+          {!loading && rows.length === 0 && <p className="px-4 pb-4 text-shTextMuted text-sm" data-testid="my-students-empty">No programs are assigned to you yet.</p>}
+          {!loading && rows.length > 0 && (
+            <div className="divide-y divide-shBorder border-t border-shBorder">
+            {rows.map(r => (
+              <Row
+                key={r.id}
+                row={r}
+                expanded={expandedId === r.id}
+                onToggle={() => setExpandedId(expandedId === r.id ? null : r.id)}
+                onJumpToDog={onJumpToDog}
+                onOpenWorkspace={() => setWorkspaceFor({ dogId: r.dog_id, enrollmentId: r.id })}
+                onSaved={load}
+                isAdmin={user?.role === "admin"}
+              />
+            ))}
+            </div>
+          )}
+        </details>
+      )}
     </div>
 
     {workspaceFor && (
@@ -373,12 +443,35 @@ export default function Pipeline({ onJumpToDog }) {
         bookingId={workspaceFor.bookingId}
         dogId={workspaceFor.dogId}
         enrollmentId={workspaceFor.enrollmentId}
+        resumeDraftId={workspaceFor.draftId}
         onClose={() => setWorkspaceFor(null)}
-        onSaved={() => { setWorkspaceFor(null); loadToday(); load(); }}
+        onSaved={() => { setWorkspaceFor(null); loadDay(); load(); }}
+        onReviewCheckpoint={() => { setWorkspaceFor(null); setCheckpointFor({ open: true, submissionId: null }); }}
       />
     )}
-    {checkpointQueueOpen && (
-      <CheckpointReviewQueue onClose={() => setCheckpointQueueOpen(false)} onGraded={loadPendingCheckpoints}/>
+    {checkpointFor?.open && (
+      <CheckpointReviewQueue initialSubmissionId={checkpointFor.submissionId || null}
+                             onClose={() => { setCheckpointFor(null); loadDay(); }} onGraded={loadDay}/>
+    )}
+    {practiceFor && (
+      <div className="fixed inset-0 z-50 bg-black/80 flex items-start sm:items-center justify-center p-0 sm:p-4" role="dialog" aria-modal="true" aria-labelledby="practice-review-modal-title" data-testid="practice-review-modal">
+        <div className="w-full max-w-3xl max-h-[100dvh] sm:max-h-[92vh] overflow-y-auto bg-[var(--sh-card-base)] sm:rounded-2xl border border-shBorder p-4 sm:p-6">
+          <div className="flex items-center justify-between gap-3 mb-3">
+            <h2 id="practice-review-modal-title" className="text-[13px] font-black uppercase tracking-widest text-shText"><i className="fas fa-clipboard-check mr-1.5 text-shSecondary" aria-hidden="true"/>Practice review</h2>
+            <button type="button" onClick={() => { setPracticeFor(null); loadDay(); }} data-testid="practice-review-modal-close"
+                    className="min-h-[40px] min-w-[40px] rounded-lg border border-shBorder text-shTextMuted hover:text-shText" aria-label="Close">✕</button>
+          </div>
+          <SchoolReviewsPanel initialTarget={{ section_log_id: practiceFor.section_log_id }}
+                              onOpenCheckpoint={(id) => { setPracticeFor(null); setCheckpointFor({ open: true, submissionId: id || null }); }}
+                              onChanged={loadDay}/>
+        </div>
+      </div>
+    )}
+    {dailyFor && (
+      <DailyReviewQueue initialItem={dailyFor} onClose={() => { setDailyFor(null); loadDay(); }} onReviewed={loadDay}/>
+    )}
+    {assistFor && (
+      <TrainerAssistQueue initialSubmissionId={assistFor.submissionId || null} onClose={() => { setAssistFor(null); loadDay(); }} onChanged={loadDay}/>
     )}
     </>
   );
@@ -515,7 +608,7 @@ function ExpandedDetail({ row, onJumpToDog, onSaved, isAdmin }) {
   const setStatus = async (newStatus) => {
     const ok = await confirm({
       title: `Change training status to ${newStatus}?`,
-      body: "This changes the enrollment status immediately.",
+      body: "This changes the program status immediately.",
       confirmText: "Change Status",
       tone: "warning",
     });
@@ -633,7 +726,7 @@ function ExpandedDetail({ row, onJumpToDog, onSaved, isAdmin }) {
       {modules.length > 0 ? (
         <div data-testid={`pipeline-goals-${row.id}`}>
           <p className="text-[11px] font-black uppercase tracking-[0.3em] text-shPrimary mb-2">
-            <i className="fas fa-list-check mr-1.5"/>Goals · {isAdmin ? "Admin corrections" : "Curriculum progress"}
+            <i className="fas fa-list-check mr-1.5"/>Goals · {isAdmin ? "Admin corrections" : "Lesson progress"}
           </p>
           <p className="text-[12px] text-shTextMuted italic mb-2">
             {isAdmin

@@ -13,6 +13,7 @@ import httpx
 
 import _test_env  # noqa: F401 — must run before `import server`
 import server
+from test_training_session_workspace import _author_lessons  # noqa: E402
 from _test_loop import run
 
 TAG = "TEST_UI4_SAFE"
@@ -73,6 +74,7 @@ def _client_dog_program():
         ])],
     )
     prog = run(server.create_program(body, admin))
+    prog = _author_lessons(prog, admin)  # Stage 13 fixture repair — School assigns lesson-by-lesson curricula only
     sit_id = prog["modules"][0]["goals"][0]["id"]
     lesson_id = prog["modules"][0]["lessons"][0]["id"]
     run(server.db.programs.update_one(
@@ -149,17 +151,23 @@ def test_legacy_program_without_explicit_lessons_still_renders_in_portal_learn()
     )
     prog = run(server.create_program(body, admin))
     assert prog["modules"][0].get("lessons") in (None, [])  # confirms this really is the legacy shape
-    enr = run(server.enroll_dog(did, server.EnrollIn(program_id=prog["id"]), admin))
+    # Stage 13 — the legacy shape can no longer be ASSIGNED (School refuses it), but rows
+    # created before School exist as read-only history: establish one directly, the way
+    # those rows actually look, and prove the portal still renders it.
+    enr = {"id": str(uuid.uuid4()), "dog_id": did, "program_id": prog["id"], "status": "active",
+           "program_snapshot": {"name": prog["name"], "type": prog["type"], "format": prog.get("format"), "modules": prog["modules"],
+                                "completion_rule": server._default_completion_rule()},
+           "goal_progress": server._empty_progress(prog["modules"]), "current_module_id": prog["modules"][0]["id"],
+           "started_at": server.business_today().isoformat(), "created_at": server.now_iso(), "sessions_count": 0}
+    run(server.db.dog_programs.insert_one(dict(enr)))
     try:
         token = server.create_access_token(user_id, c["email"], "client", 0)
         h = {"Authorization": f"Bearer {token}"}
         r = client.get("/api/portal/learn", headers=h)
         assert r.status_code == 200, r.text
-        entry = next(x for x in r.json() if x["dog_id"] == did)
-        assert len(entry["modules"]) == 1
-        lessons = entry["modules"][0]["lessons"]
-        assert len(lessons) == 1
-        assert lessons[0]["name"] == "Lesson 1"  # the synthesized default lesson
+        # superseded: a retired legacy row is read-only history for staff (migrate it into School);
+        # the client portal lists School courses only and never synthesizes a lesson any more
+        assert not [x for x in r.json() if x["dog_id"] == did]
     finally:
         run(server.db.dog_programs.delete_one({"id": enr["id"]}))
         run(server.db.programs.delete_one({"id": prog["id"]}))
@@ -193,6 +201,7 @@ def test_portal_learn_reports_locked_counts_without_naming_locked_content():
         ],
     )
     prog = run(server.create_program(body, admin))
+    prog = _author_lessons(prog, admin)  # Stage 13 fixture repair — School assigns lesson-by-lesson curricula only
     enr = run(server.enroll_dog(did, server.EnrollIn(program_id=prog["id"]), admin))
     try:
         token = server.create_access_token(user_id, c["email"], "client", 0)
@@ -265,6 +274,7 @@ def _client_dog_multi_module_program(n_modules=3):
         format={"count": n_modules, "unit": "sessions"}, price=50, modules=modules,
     )
     prog = run(server.create_program(body, admin))
+    prog = _author_lessons(prog, admin)  # Stage 13 fixture repair — School assigns lesson-by-lesson curricula only
     enr = run(server.enroll_dog(did, server.EnrollIn(program_id=prog["id"]), admin))
     try:
         yield c, dog, prog, enr, admin, user_id
@@ -292,8 +302,11 @@ def _run_session(dog_id, enr_id, admin, advancement_action):
     ), admin))
     started = run(server.start_training_session_draft_for_booking(booking["id"], enr_id, f"sess-{uuid.uuid4().hex[:8]}", admin))
     draft_id = started["draft"]["id"]
+    # Stage 13 fixture repair — completion requires the trainer record on every required skill
+    required = [a for a in started["draft"]["plan"]["activities"] if a.get("required_curriculum")]
     run(server.update_training_session_draft(draft_id, server.TrainingSessionDraftUpdateIn(
-        client_recap_note="Good session.",
+        client_recap_note="Good session.", what_went_well="Went well.", needs_work="Needs work.", next_lesson_focus="Next focus.",
+        actuals={a["id"]: server.SessionActivityActualIn(score=3, outcome="improving", mastery_decision="not_yet") for a in required},
     ), admin))
     run(server.complete_training_session(draft_id, server.SessionCompletionIn(advancement_action=advancement_action), admin))
     return f"sesslog-{draft_id}"
@@ -393,10 +406,12 @@ def test_multi_program_history_resolves_each_session_from_its_own_program_snapsh
         name=f"{TAG} ProgA {uuid.uuid4().hex[:6]}", type="private_lessons", format={"count": 1, "unit": "sessions"}, price=50,
         modules=[server.ModuleIn(name="Alpha Module", order=0, goals=[server.GoalIn(name="AlphaSkill")])],
     ), admin))
+    prog_a = _author_lessons(prog_a, admin)  # Stage 13 fixture repair
     prog_b = run(server.create_program(server.ProgramIn(
         name=f"{TAG} ProgB {uuid.uuid4().hex[:6]}", type="private_lessons", format={"count": 1, "unit": "sessions"}, price=50,
         modules=[server.ModuleIn(name="Beta Module", order=0, goals=[server.GoalIn(name="BetaSkill")])],
     ), admin))
+    prog_b = _author_lessons(prog_b, admin)  # Stage 13 fixture repair
     enr_a = run(server.enroll_dog(did, server.EnrollIn(program_id=prog_a["id"]), admin))
     log_a_id = _run_session(did, enr_a["id"], admin, "remain")
     run(server.db.dog_programs.update_one({"id": enr_a["id"]}, {"$set": {"status": "completed"}}))
@@ -436,9 +451,9 @@ def test_portal_session_recaps_never_includes_internal_session_note():
         activities = started["draft"]["plan"]["activities"]
         sit_activity = next(a for a in activities if a.get("skill_id") == sit_id)
         run(server.update_training_session_draft(draft_id, server.TrainingSessionDraftUpdateIn(
-            actuals={sit_activity["id"]: server.SessionActivityActualIn(score=5)},
+            actuals={sit_activity["id"]: server.SessionActivityActualIn(score=5, outcome="passed", mastery_decision="not_yet")},
             session_note="INTERNAL-STAFF-ONLY-NOTE-XYZ",
-            client_recap_note="Great session today!",
+            client_recap_note="Great session today!", what_went_well="Went well.", needs_work="Needs work.", next_lesson_focus="Next focus.",  # Stage 13 fixture repair
         ), admin))
         run(server.complete_training_session(draft_id, server.SessionCompletionIn(advancement_action="remain"), admin))
 

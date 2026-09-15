@@ -1,4 +1,52 @@
-import { parseSchoolPath, schoolPathFor } from "./studentSchool";
+import { parseSchoolPath, schoolPathFor, trainingMode, trainingModeKey, deliveryLabel, TRAINING_MODES } from "./studentSchool";
+
+/* Training Experience Clarity Pass — Stage 1. One client-facing explanation
+   per delivery mode, derived from the server's existing field in every
+   spelling it is emitted in. */
+describe("trainingMode", () => {
+  test("maps every backend spelling onto the three client modes", () => {
+    for (const m of ["in_person", "trainer_led", "in_person_school"]) expect(trainingModeKey(m)).toBe("trainer_led");
+    for (const m of ["hybrid", "hybrid_school", "both"]) expect(trainingModeKey(m)).toBe("hybrid");
+    for (const m of ["online", "self_guided", "online_school"]) expect(trainingModeKey(m)).toBe("online");
+  });
+
+  test("legacy or missing modes read as trainer-led, never as an online course", () => {
+    expect(trainingModeKey(undefined)).toBe("trainer_led");
+    expect(trainingModeKey(null)).toBe("trainer_led");
+    expect(trainingModeKey("")).toBe("trainer_led");
+    expect(trainingModeKey("legacy_whatever")).toBe("trainer_led");
+  });
+
+  test("each mode carries the agreed title, short label and one-sentence explanation", () => {
+    expect(trainingMode("in_person").title).toBe("Trainer-Led Program");
+    expect(trainingMode("hybrid").title).toBe("Hybrid Program");
+    expect(trainingMode("online").title).toBe("Online Program");
+    expect(trainingMode("in_person").body).toMatch(/Your trainer guides you through the lessons/);
+    expect(trainingMode("hybrid").body).toMatch(/in-person sessions/);
+    expect(trainingMode("online").body).toMatch(/at your own pace/);
+    for (const tm of Object.values(TRAINING_MODES)) {
+      expect(tm.body.split(/[.!?]\s/).length).toBeLessThanOrEqual(2);
+      // Internal vocabulary never leaks into the client sentence.
+      expect(tm.body).not.toMatch(/enrollment|homework|curriculum|module state|self.guided/i);
+    }
+  });
+
+  test("every screen that renders <TrainingModeNote imports it (a missing import only fails at runtime)", () => {
+    const fs = require("fs"); const path = require("path");
+    const root = path.join(__dirname, "..");
+    const walk = (d) => fs.readdirSync(d, { withFileTypes: true }).flatMap((e) => e.isDirectory() ? walk(path.join(d, e.name)) : [path.join(d, e.name)]);
+    const users = walk(root).filter((f) => f.endsWith(".jsx") && !f.endsWith("TrainingModeNote.jsx") && fs.readFileSync(f, "utf8").includes("<TrainingModeNote"));
+    expect(users.length).toBeGreaterThanOrEqual(3);
+    for (const f of users) expect(fs.readFileSync(f, "utf8")).toMatch(/import TrainingModeNote from "[./]+TrainingModeNote"/);
+  });
+
+  test("the chip label is the short mode name (no more 'In Person' vs 'Trainer-Led' split)", () => {
+    expect(deliveryLabel("in_person")).toBe("Trainer-Led");
+    expect(deliveryLabel("trainer_led")).toBe("Trainer-Led");
+    expect(deliveryLabel("hybrid")).toBe("Hybrid");
+    expect(deliveryLabel("online")).toBe("Online");
+  });
+});
 
 /* Updated by the client redesign (phase 2). The default view was renamed
    "home" -> "today": the client had two landing pages rendering the same

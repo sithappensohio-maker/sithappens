@@ -336,7 +336,7 @@ export default function LessonGuide(props) {
           <span className="text-[13px] font-black uppercase tracking-[0.16em] text-shSecondary">Lesson journey</span>
           <span className="text-[17px] sm:text-[18px] font-black text-shText" data-testid="lesson-journey-part">{positionLabel}</span>
         </div>
-        <div className="flex items-center justify-between gap-3 mt-1">
+        <div className="sh-lesson-then-row flex items-center justify-between gap-3 mt-1">
           <p className="text-[15px] text-shTextMuted min-w-0" data-testid="lesson-journey-then">
             {reviewing
               ? `Reviewing Part ${viewing}. Your current part is ${pos.index}.`

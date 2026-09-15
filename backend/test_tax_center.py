@@ -168,11 +168,22 @@ def test_control_scenario_full_stack():
     assert len(sales_entries) >= 2                      # prev (actionable) + open month
     assert "grand_total" not in json.dumps(tc)
 
-    # 2 — next action = earliest dated actionable = the sales filing (23rd)
+    # 2 — next action = the EARLIEST-dated actionable obligation. Which one that is
+    # depends on today's calendar date (a federal quarter due on the 15th outranks a
+    # sales filing due on the 23rd of the same month), so assert the rule itself
+    # against the payload rather than naming the one that only wins in August.
     prev_key = f"sales_tax:{prev.isoformat()[:7]}"
     assert tc["next_action"]["none"] is False
-    assert tc["next_action"]["key"] == prev_key
-    assert tc["next_action"]["status"] == "FILING_REQUIRED"
+    dated = [e for e in tc["obligations"]
+             if e["actionable"] and e.get("due_date")
+             and e["status"] in ("OVERDUE", "PAYMENT_NEEDED", "FILING_REQUIRED")]
+    assert dated, "the control scenario must leave at least one dated obligation"
+    earliest = sorted(dated, key=lambda e: (e["due_date"], e["priority"], e["jurisdiction"]))[0]
+    assert tc["next_action"]["key"] == earliest["key"]
+    assert tc["next_action"]["due_date"] == earliest["due_date"]
+    assert tc["next_action"]["status"] == earliest["status"]
+    # and the unresolved sales filing is definitely one of the actionable obligations
+    assert prev_key in {e["key"] for e in dated}
 
     # 3 — federal equals the federal endpoint exactly
     fe = _entry(tc, "federal")

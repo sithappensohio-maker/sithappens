@@ -301,9 +301,11 @@ def test_portal_school_list_includes_completed_enrollment():
 def test_final_advance_completes_dog_program_without_disturbing_trainer_led_active_lookup():
     with _school_program(n_modules=1, n_lessons_per_module=1) as (prog, admin), _client_and_dog() as (client_doc, dog):
         se, enr = _enroll(prog, dog, admin)
-        # A second, unrelated trainer-led enrollment for the SAME dog —
-        # proves the online completion never displaces or masquerades as it.
-        led_enr = run(server.enroll_dog(dog["id"], server.EnrollIn(program_id=prog["id"]), admin))
+        # A second, unrelated trainer-led enrollment for the SAME dog (Stage 13: on a second
+        # program — one active enrollment per dog+program) — proves the online completion
+        # never displaces or masquerades as it.
+        _led_ctx = _school_program(n_modules=1, n_lessons_per_module=1); led_prog, _ = _led_ctx.__enter__()  # kept alive until the test ends
+        led_enr = run(server.enroll_dog(dog["id"], server.EnrollIn(program_id=led_prog["id"]), admin))
         try:
             client_user = _client_user(client_doc["id"])
             sub_id, hid, did, lesson_id, _hw = _submit_checkpoint_for_current_lesson(se, enr, client_user)
@@ -322,7 +324,8 @@ def test_final_advance_completes_dog_program_without_disturbing_trainer_led_acti
             assert trainer_led_active["id"] == led_enr["id"]
         finally:
             _cleanup_school(se["id"], enr["id"])
-            run(server.db.dog_programs.delete_one({"id": led_enr["id"]}))
+            if led_enr:
+                run(server.db.dog_programs.delete_one({"id": led_enr["id"]}))
 
 
 # ---------------------------------------------------------------------------
@@ -453,7 +456,9 @@ def test_practice_sessions_logged_is_enrollment_scoped_not_dog_lesson_scoped():
     dog_id+lesson_id homework lookup."""
     with _school_program(n_modules=1, n_lessons_per_module=1) as (prog, admin), _client_and_dog() as (client_doc, dog):
         se, enr = _enroll(prog, dog, admin)
-        led_enr = run(server.enroll_dog(dog["id"], server.EnrollIn(program_id=prog["id"]), admin))
+        # Stage 13 — a second enrollment of the SAME program is refused (one active per dog+program);
+        # the ambiguity this test guards is the dog_id+lesson_id homework row below, which still exists.
+        led_enr = None
         led_hw = None
         try:
             client_user = _client_user(client_doc["id"])
@@ -483,7 +488,8 @@ def test_practice_sessions_logged_is_enrollment_scoped_not_dog_lesson_scoped():
             assert detail["completion_summary"]["practice_sessions_logged"] == 1
         finally:
             _cleanup_school(se["id"], enr["id"])
-            run(server.db.dog_programs.delete_one({"id": led_enr["id"]}))
+            if led_enr:
+                run(server.db.dog_programs.delete_one({"id": led_enr["id"]}))
             if led_hw:
                 run(server.db.homework.delete_one({"id": led_hw["id"]}))
 

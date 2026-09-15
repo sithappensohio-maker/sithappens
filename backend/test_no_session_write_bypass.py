@@ -32,6 +32,7 @@ import httpx
 
 import _test_env  # noqa: F401 — must run before `import server`, see its docstring
 import server
+from test_training_session_workspace import _author_lessons  # noqa: E402
 from _test_loop import run
 
 TAG = "TEST_NO_SESSION_BYPASS"
@@ -96,6 +97,7 @@ def _program():
         modules=[server.ModuleIn(name="Week 1", order=0, goals=[server.GoalIn(name="Sit"), server.GoalIn(name="Down")])],
     )
     prog = run(server.create_program(body, admin))
+    prog = _author_lessons(prog, admin)  # Stage 13 fixture repair — School assigns lesson-by-lesson curricula only
     try:
         yield prog, admin
     finally:
@@ -220,6 +222,7 @@ def _two_module_program():
         ],
     )
     prog = run(server.create_program(body, admin))
+    prog = _author_lessons(prog, admin)  # Stage 13 fixture repair — School assigns lesson-by-lesson curricula only
     try:
         yield prog, admin
     finally:
@@ -238,8 +241,8 @@ def test_completion_pipeline_is_the_only_path_that_writes_advancement_and_log_to
                 activities = started["draft"]["plan"]["activities"]
                 sit_activity = next(a for a in activities if a.get("skill_id") == sit_id)
                 run(server.update_training_session_draft(
-                    draft_id, server.TrainingSessionDraftUpdateIn(
-                        actuals={sit_activity["id"]: server.SessionActivityActualIn(score=5)},
+                    draft_id, server.TrainingSessionDraftUpdateIn(what_went_well="Went well.", needs_work="Needs work.", next_lesson_focus="Next focus.", client_recap_note="Recap for the client.",
+                        actuals={sit_activity["id"]: server.SessionActivityActualIn(score=5, outcome="passed", mastery_decision="not_yet")},
                     ), admin,
                 ))
                 result = run(server.complete_training_session(

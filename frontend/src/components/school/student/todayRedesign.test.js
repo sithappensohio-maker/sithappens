@@ -20,7 +20,9 @@ test("Today turns the server-derived current_action into the one main CTA", () =
   expect(homeSrc).toMatch(/actionCoachCopy\(action, home\?\.dog\?\.name\)/);
   expect(homeSrc).toMatch(/data-testid="today-command-center"/);
   expect(homeSrc).toMatch(/data-testid="today-primary-action"/);
-  expect(homeSrc).toMatch(/\{action\.label \|\| "Continue Training"\}/);
+  // Stage 2: the journey's NOW cta names the button ("Start Practice",
+  // "Continue to next lesson"); current_action's label stays the fallback.
+  expect(homeSrc).toMatch(/\{primaryCta\?\.label \|\| action\.label \|\| "Continue Training"\}/);
 });
 
 test("states with no legitimate client action do not render the primary button", () => {
@@ -118,7 +120,7 @@ test("a completed course replaces the daily action rather than stacking on it", 
   expect(homeSrc).toMatch(/const completed = home\.status === "completed"/);
   expect(homeSrc).toMatch(/\{completed \? \(/);
   expect(homeSrc).toMatch(/<CourseCompletionCard/);
-  expect(homeSrc).toMatch(/\{!completed && <PracticeCard/);
+  expect(homeSrc).toMatch(/\{!completed && !practiceCoveredByJourney\(home\) && !practiceCoveredByRecap\(home\) && <PracticeCard/);
 });
 
 test("navigation callbacks are wired from SchoolApp", () => {

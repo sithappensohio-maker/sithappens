@@ -1,4 +1,6 @@
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
+import { practiceReviewHandoff, HANDOFF_LABELS } from "../lib/handoff";
+import HandoffPanel from "./HandoffPanel";
 import { api } from "../lib/api";
 
 /**
@@ -6,12 +8,13 @@ import { api } from "../lib/api";
  * Lists every daily-tracker day that's awaiting approval and lets the admin
  * approve or send back with a note.
  */
-export default function DailyReviewQueue({ onClose, onReviewed }) {
+export default function DailyReviewQueue({ onClose, onReviewed, initialItem = null }) {
   const [items, setItems] = useState([]);
   const [loading, setLoading] = useState(true);
   const [active, setActive] = useState(null); // {homework_id, day_number}
   const [activeDetail, setActiveDetail] = useState(null);
   const [reviewNote, setReviewNote] = useState("");
+  const [result, setResult] = useState(null); // Stage 10 — post-review handoff
   const [busy, setBusy] = useState(false);
   const [err, setErr] = useState("");
 
@@ -23,6 +26,14 @@ export default function DailyReviewQueue({ onClose, onReviewed }) {
     } finally { setLoading(false); }
   };
   useEffect(() => { load(); }, []);
+
+  const initialHandled = useRef(false);
+  useEffect(() => {
+    // Stage 11 — the daily queue deep-links to one day's submission.
+    if (initialHandled.current || !initialItem || !items.length) return;
+    const hit = items.find((it) => it.homework_id === initialItem.homework_id && Number(it.day_number) === Number(initialItem.day_number));
+    if (hit) { initialHandled.current = true; open(hit); }
+  }, [items, initialItem]); // eslint-disable-line react-hooks/exhaustive-deps
 
   const open = async (it) => {
     setActive(it);
@@ -39,7 +50,7 @@ export default function DailyReviewQueue({ onClose, onReviewed }) {
     setBusy(true); setErr("");
     try {
       await api.post(`/homework/${active.homework_id}/day/${active.day_number}/review`, { action, note: reviewNote });
-      setActive(null); setActiveDetail(null);
+      setResult(practiceReviewHandoff(action === "approve" ? "approved" : "needs_redo", { dogName: active.dog_name, clientName: active.client_name, backLabel: HANDOFF_LABELS.back_to_queue }));
       await load();
       onReviewed?.();
     } catch (e) { setErr(e.response?.data?.detail || "Failed to save"); }
@@ -102,7 +113,7 @@ export default function DailyReviewQueue({ onClose, onReviewed }) {
           </div>
         ) : (
           <div className="p-5 space-y-4" data-testid="review-detail-pane">
-            <button onClick={() => { setActive(null); setActiveDetail(null); }} className="text-[14px] text-shTextMuted hover:text-shSecondary font-black uppercase tracking-widest" data-testid="review-back">
+            <button onClick={() => { setActive(null); setActiveDetail(null); setResult(null); }} className="text-[14px] text-shTextMuted hover:text-shSecondary font-black uppercase tracking-widest" data-testid="review-back">
               <i className="fas fa-chevron-left mr-1" />Back to queue
             </button>
 
@@ -239,7 +250,10 @@ export default function DailyReviewQueue({ onClose, onReviewed }) {
                                  questions={dayObj?.questions || []}
                                  onAnswered={async () => { const { data } = await api.get(`/homework/${active.homework_id}`); setActiveDetail(data); }} />
 
-            {/* Review action */}
+            {/* Review action — after the POST it becomes the handoff (what the client now sees) */}
+            {result ? (
+              <HandoffPanel handoff={result} testid="daily-review-handoff" onAction={() => { setActive(null); setActiveDetail(null); setResult(null); }} />
+            ) : (
             <div className="bg-[var(--sh-card-base)] border border-shBorder rounded-xl p-4 space-y-3">
               <p className="text-[13px] font-black uppercase tracking-widest text-shSecondary">
                 <i className="fas fa-comment mr-1" />Your note (optional — emailed to client)
@@ -259,6 +273,7 @@ export default function DailyReviewQueue({ onClose, onReviewed }) {
                 </button>
               </div>
             </div>
+            )}
           </div>
         )}
       </div>

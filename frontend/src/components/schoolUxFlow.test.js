@@ -61,11 +61,13 @@ test("a successful Finish Practice replaces the form with the inline completion 
   expect(practiceSrc).not.toMatch(/toast\.success\("Practice logged"\)/);
 });
 
-test("School-hosted completion auto-routes after a brief transition; generic homework gets one obvious CONTINUE", () => {
-  // Beginner-language pass reworded the transition copy; the auto-route
-  // still shows a School-hosted "what happens next" wait state.
-  expect(practiceSrc).toMatch(/School is checking what comes next/);
-  expect(practiceSrc).toMatch(/setTimeout\(\(\) => onCompleted\(\), 1400\)/);
+test("School-hosted completion ends on a real handoff (Practice complete + Next) and routes on CONTINUE; generic homework keeps its CONTINUE", () => {
+  // Stage 4 (clarity pass): no auto-route timer — the Coach asks School what
+  // comes next, shows it, and the client taps Continue.
+  expect(practiceSrc).toMatch(/Checking what comes next…/);
+  expect(practiceSrc).not.toMatch(/setTimeout\(\(\) => onCompleted\(\), 1400\)/);
+  expect(practiceSrc).toMatch(/Promise\.resolve\(onCompleted\(homework\.id\)\)/);
+  expect(practiceSrc).toMatch(/next: "practice-complete-next"/); // Stage 10: the shared HandoffPanel carries the Stage 4 testids
   expect(practiceSrc).toMatch(/data-testid="practice-complete-continue"/);
 });
 
@@ -90,7 +92,9 @@ test("one completion action: mark-complete no longer sits beside Finish Practice
 test("SchoolApp routes post-completion from the refreshed backend current_action ladder", () => {
   expect(schoolAppSrc).toMatch(/const practiceCompleted = useCallback/);
   expect(schoolAppSrc).toMatch(/api\.get\(`\/portal\/school\/\$\{selectedId\}\/home`\)/);
-  expect(schoolAppSrc).toMatch(/freshHome\?\.current_action/);
+  // Stage 4: the fresh view-model feeds the handoff; routing runs on Continue.
+  expect(schoolAppSrc).toMatch(/return practiceCompletionHandoff\(freshHome \|\| home, hwId\);/);
+  expect(schoolAppSrc).toMatch(/const continueAfterPractice = useCallback\(\(handoff\) => \{/);
   expect(schoolAppSrc).toMatch(/onCompleted=\{practiceCompleted\}/);
   // Every branch keys off act.type — no "next lesson = current + 1" math.
   expect(schoolAppSrc).not.toMatch(/lesson_index\s*\+\s*1|currentLessonIdx\s*\+\s*1/);

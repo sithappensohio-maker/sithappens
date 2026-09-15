@@ -27,8 +27,9 @@ test("free-course hero CTA discovers the real claimable program instead of hardc
   expect(publicShopSrc).not.toMatch(/program_id\s*:\s*["'][^"']+["']/);
 });
 
-test("desktop client navigation exposes Online School as a primary destination", () => {
-  const school = sidebarSrc.indexOf('label="Online School"');
+test("desktop client navigation exposes School as a primary destination (one name, matching the mobile bar and in-app header)", () => {
+  const school = sidebarSrc.indexOf('label="School"');
+  expect(sidebarSrc).not.toContain('label="Online School"');
   const shop = sidebarSrc.indexOf('label="Shop"');
   expect(school).toBeGreaterThan(-1);
   expect(shop).toBeGreaterThan(-1);

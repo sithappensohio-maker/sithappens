@@ -269,7 +269,7 @@ def test_reached_school_material_does_not_expose_locked_future_lesson_resources(
     to curriculum the student has actually reached. Program/global resources
     are handled separately and remain intentionally available.
     """
-    from school_suite import _reached_school_material
+    from school_suite_base import _reached_school_material  # moved with the School suite split
 
     enrollment = {
         "status": "active",

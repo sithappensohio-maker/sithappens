@@ -3,6 +3,8 @@
 // ReviewVideo pattern (fetching from the existing homework media
 // endpoint) — same visual language, same conventions.
 import { useEffect, useRef, useState } from "react";
+import { checkpointGradeHandoff, makeHandoff, HANDOFF_LABELS } from "../lib/handoff";
+import HandoffPanel from "./HandoffPanel";
 import { api } from "../lib/api";
 import { loadSchoolMediaUrl } from "../lib/schoolMedia";
 import NeonEdge from "./premium/NeonEdge";
@@ -59,11 +61,14 @@ export default function CheckpointReviewQueue({ onClose, onGraded, initialSubmis
     if (target) { open(target); initialHandled.current = true; }
   }, [items, initialSubmissionId]);
 
-  const back = () => { setActive(null); setErr(""); };
+  const [result, setResult] = useState(null); // Stage 10 — post-grade handoff from the grade RESPONSE
+  const back = () => { setActive(null); setErr(""); setResult(null); };
 
   // Grading requires a deliberate 1-5 score on EVERY criterion — the action
   // buttons stay disabled (with a visible message) until then.
-  const allScored = !!active
+  // No score is ever assumed: every criterion needs a deliberate 1-5, and a row
+  // whose rubric could not be established (context_problem) is never gradable here.
+  const allScored = !!active && !active.context_problem
     && (active.rubric_snapshot?.handler_criteria || []).every(c => Number.isFinite(handlerScores[c.id]))
     && (active.rubric_snapshot?.dog_criteria || []).every(c => Number.isFinite(dogScores[c.id]));
 
@@ -80,8 +85,8 @@ export default function CheckpointReviewQueue({ onClose, onGraded, initialSubmis
           min_practice_sessions_required: minSessions ? parseInt(minSessions, 10) : undefined,
         };
       }
-      await api.post(`/admin/school/checkpoints/${active.id}/grade`, body);
-      setActive(null);
+      const { data } = await api.post(`/admin/school/checkpoints/${active.id}/grade`, body);
+      setResult(checkpointGradeHandoff(data?.checkpoint || { outcome }, { dogName: active.dog_name, lessonName: active.lesson_name, enrollment: data?.enrollment || null }));
       await load();
       onGraded?.();
     } catch (e) {
@@ -105,7 +110,7 @@ export default function CheckpointReviewQueue({ onClose, onGraded, initialSubmis
     setBusy(true); setErr("");
     try {
       await api.post(`/admin/school/checkpoints/${active.id}/clear-trainer-assist-hold`);
-      setActive(null);
+      setResult(makeHandoff({ state: "complete", title: "Hold cleared", summary: `${active.dog_name || "The dog"} can submit the ${active.lesson_name || "checkpoint"} checkpoint again.`, next: { label: "What the client receives", description: "Their Today asks them to resubmit the checkpoint." }, action: { label: HANDOFF_LABELS.back_to_queue, run: "back" } }));
       await load();
       onGraded?.();
     } catch (e) {
@@ -170,7 +175,8 @@ export default function CheckpointReviewQueue({ onClose, onGraded, initialSubmis
               <i className="fas fa-chevron-left mr-1"/>Back to queue
             </button>
 
-            <NeonEdge accentRgb="242,101,34" intensity="subtle" className="p-4 sm:p-5">
+            {result && <HandoffPanel handoff={result} testid="checkpoint-review-handoff" onAction={back} />}
+            {!result && <NeonEdge accentRgb="242,101,34" intensity="subtle" className="p-4 sm:p-5">
               <div className="flex items-center gap-3.5">
                 <div className="w-14 h-14 rounded-2xl overflow-hidden border border-shAccent/25 shrink-0"><HuskyDogImage src={active.dog_photo} name={active.dog_name} alt={active.dog_name} className="w-full h-full object-cover object-top"/></div>
                 <div className="min-w-0">
@@ -180,7 +186,8 @@ export default function CheckpointReviewQueue({ onClose, onGraded, initialSubmis
                 </div>
               </div>
               {active.client_note && <div className="bg-black/25 rounded-xl p-3 mt-3 border border-shAccent/15"><p className="text-[10px] font-black uppercase tracking-[0.14em] text-shAccent/80 mb-1">Client note</p><p className="text-gray-200 text-[13px] italic whitespace-pre-wrap">“{active.client_note}”</p></div>}
-            </NeonEdge>
+            </NeonEdge>}
+            {!result && (<>
 
             {active.homework_id && active.video_media_id && (
               <div className="space-y-3">
@@ -278,7 +285,12 @@ export default function CheckpointReviewQueue({ onClose, onGraded, initialSubmis
                     </div>
                   ) : (
                     <>
-                      {!allScored && (
+                      {active.context_problem && (
+                        <p className="text-[12px] font-bold text-red-300 rounded-xl border border-red-400/30 bg-red-500/[0.06] px-3 py-2" data-testid="checkpoint-review-context-problem">
+                          <i className="fas fa-triangle-exclamation mr-1.5"/>{active.context_problem}
+                        </p>
+                      )}
+                      {!allScored && !active.context_problem && (
                         <p className="text-[12px] font-bold text-shAccent pt-3 border-t border-shBorder/50" data-testid="checkpoint-review-incomplete-scores">
                           <i className="fas fa-circle-info mr-1.5"/>Score every Handler and Dog criterion (1-5) before choosing an outcome — no score is ever assumed.
                         </p>
@@ -302,6 +314,7 @@ export default function CheckpointReviewQueue({ onClose, onGraded, initialSubmis
                 </div>
               </>
             )}
+            </>)}
           </div>
         )}
       </div>

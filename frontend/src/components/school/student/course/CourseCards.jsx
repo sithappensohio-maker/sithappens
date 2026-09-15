@@ -12,6 +12,7 @@
  */
 import { useState } from "react";
 import { Eyebrow } from "../today/TodayCards";
+import TrainingModeNote from "../TrainingModeNote";
 import HuskyDogImage from "../../../brand/HuskyDogImage";
 import ModuleIconTile from "../../ModuleIconTile";
 import { moduleHue } from "../../../../lib/moduleIcons";
@@ -50,7 +51,7 @@ function moduleMinutes(m) {
  * client on the 120-lesson Service Dog program that their course was 5
  * lessons long. The roadmap-derived count survives only as a fallback for a
  * caller that has no progress payload yet. */
-export function CourseHero({ detail, roadmap, progress, onResume, onAbout, trophyCount = null }) {
+export function CourseHero({ detail, roadmap, progress, onAbout, trophyCount = null }) {
   const pct = Math.max(0, Math.min(100, Math.round(progress?.course_pct ?? detail?.course_pct ?? 0)));
   const visibleLessons = roadmap?.modules?.flatMap(m => m.lessons || []) || [];
   const lessonsDone = Number(progress?.lessons_completed ?? visibleLessons.filter(l => l.status === "completed").length);
@@ -62,7 +63,6 @@ export function CourseHero({ detail, roadmap, progress, onResume, onAbout, troph
   const modulesDone = Number(progress?.modules_completed ?? 0);
   const modulesTotal = Number(progress?.modules_total ?? roadmap?.modules?.length ?? 0);
   const completed = detail?.status === "completed";
-  const current = roadmap?.current_lesson;
   /* The dog-photo ring: green = finished share of the course, a blue sliver
      = the one lesson in flight. Both are drawn FROM the same server numbers
      shown in the tiles — never a second computation of progress. */
@@ -109,6 +109,9 @@ export function CourseHero({ detail, roadmap, progress, onResume, onAbout, troph
                   style={{ background: "linear-gradient(135deg,#a5dc55,#8cc63f)" }} data-testid="course-pct">{pct}%</span>
           </div>
         </div>
+        {/* Full width under the title/ring row so the sentence never wraps
+            into a 4-word column beside the dog photo on a phone. */}
+        <TrainingModeNote mode={detail?.delivery_mode} testid="course-training-mode" className="mt-3" />
 
         {/* One segment per lesson (green done, blue in flight) — falls back to
             the continuous bar for very long programs where 120 slivers would
@@ -131,42 +134,78 @@ export function CourseHero({ detail, roadmap, progress, onResume, onAbout, troph
         )}
 
         <div className="grid grid-cols-3 gap-2 mt-3">
-          <div className="rounded-xl border border-shPrimary/25 bg-shPrimary/[0.05] px-3 py-2 flex items-center gap-2.5 min-w-0">
-            <span className="w-7 h-7 rounded-lg grid place-items-center shrink-0 bg-shPrimary/15 border border-shPrimary/40 text-shPrimary"><i className="fas fa-bone text-[14px]" /></span>
+          <div className="sh-course-stat rounded-xl border border-shPrimary/25 bg-shPrimary/[0.05] px-3 py-2 flex items-center gap-2.5 min-w-0">
+            <span className="sh-course-stat-icon w-7 h-7 rounded-lg grid place-items-center shrink-0 bg-shPrimary/15 border border-shPrimary/40 text-shPrimary" aria-hidden="true"><i className="fas fa-bone text-[14px]" /></span>
             <span className="min-w-0">
-              <span className="block text-[17px] font-black text-shText leading-none tabular-nums" data-testid="course-lessons">
+              <span className="sh-course-stat-num block text-[17px] font-black text-shText leading-none tabular-nums whitespace-nowrap" data-testid="course-lessons">
                 {lessonsDone}<span className="text-shTextMuted"> / {lessonsTotal}</span>
               </span>
-              <span className="block text-[11px] font-black uppercase tracking-[0.12em] text-shTextMuted mt-1">Lessons</span>
+              <span className="sh-course-stat-label block text-[11px] font-black uppercase tracking-[0.12em] text-shTextMuted mt-1">Lessons</span>
             </span>
           </div>
           {modulesTotal > 0 && (
-            <div className="rounded-xl border border-shSecondary/25 bg-shSecondary/[0.05] px-3 py-2 flex items-center gap-2.5 min-w-0">
-              <span className="w-7 h-7 rounded-lg grid place-items-center shrink-0 bg-shSecondary/15 border border-shSecondary/40 text-shSecondary"><i className="fas fa-paw text-[14px]" /></span>
+            <div className="sh-course-stat rounded-xl border border-shSecondary/25 bg-shSecondary/[0.05] px-3 py-2 flex items-center gap-2.5 min-w-0">
+              <span className="sh-course-stat-icon w-7 h-7 rounded-lg grid place-items-center shrink-0 bg-shSecondary/15 border border-shSecondary/40 text-shSecondary" aria-hidden="true"><i className="fas fa-paw text-[14px]" /></span>
               <span className="min-w-0">
-                <span className="block text-[17px] font-black text-shText leading-none tabular-nums" data-testid="course-modules">
+                <span className="sh-course-stat-num block text-[17px] font-black text-shText leading-none tabular-nums whitespace-nowrap" data-testid="course-modules">
                   {modulesDone}<span className="text-shTextMuted"> / {modulesTotal}</span>
                 </span>
-                <span className="block text-[11px] font-black uppercase tracking-[0.12em] text-shTextMuted mt-1">Modules</span>
+                <span className="sh-course-stat-label block text-[11px] font-black uppercase tracking-[0.12em] text-shTextMuted mt-1">Modules</span>
               </span>
             </div>
           )}
           {trophyCount != null && (
-            <div className="rounded-xl border border-shAccent/25 bg-shAccent/[0.05] px-3 py-2 flex items-center gap-2.5 min-w-0" data-testid="course-trophies">
-              <span className="w-7 h-7 rounded-lg grid place-items-center shrink-0 bg-shAccent/15 border border-shAccent/40 text-shAccent"><i className="fas fa-trophy text-[14px]" /></span>
+            <div className="sh-course-stat rounded-xl border border-shAccent/25 bg-shAccent/[0.05] px-3 py-2 flex items-center gap-2.5 min-w-0" data-testid="course-trophies">
+              <span className="sh-course-stat-icon w-7 h-7 rounded-lg grid place-items-center shrink-0 bg-shAccent/15 border border-shAccent/40 text-shAccent" aria-hidden="true"><i className="fas fa-trophy text-[14px]" /></span>
               <span className="min-w-0">
-                <span className="block text-[17px] font-black text-shText leading-none tabular-nums">{trophyCount}</span>
-                <span className="block text-[11px] font-black uppercase tracking-[0.12em] text-shTextMuted mt-1">Trophies</span>
+                <span className="sh-course-stat-num block text-[17px] font-black text-shText leading-none tabular-nums whitespace-nowrap">{trophyCount}</span>
+                <span className="sh-course-stat-label block text-[11px] font-black uppercase tracking-[0.12em] text-shTextMuted mt-1">Trophies</span>
               </span>
             </div>
           )}
         </div>
 
-        {!completed && current && onResume && (
-          <button type="button" onClick={() => onResume(current.id)} data-testid="course-continue"
+      </div>
+    </section>
+  );
+}
+
+/* ------------------------------------------------------- Current lesson */
+
+/** The dominant card: what the client is learning NOW and the one action
+ *  that fits their delivery mode. Online/hybrid continue in the app; a
+ *  trainer-led client is told plainly that the trainer moves them forward,
+ *  with Practice offered when it exists. `journey` comes from
+ *  lib/courseJourney (server roadmap + current_action, nothing decided here). */
+export function CurrentLessonCard({ journey, roadmap, onResume, onOpenLesson, onOpenPractice }) {
+  const cur = journey?.current;
+  if (!cur) return null;
+  const current = roadmap?.current_lesson;
+  const act = cur.action || { kind: "none" };
+  const cta = act.kind === "practice" && cur.practice && onOpenPractice
+    ? { label: act.label, onClick: () => onOpenPractice(cur.practice.id), icon: "fa-bullseye", testid: "course-current-practice" }
+    : act.kind === "practice" && onResume
+      ? { label: act.label, onClick: () => onResume(current?.id), icon: "fa-bullseye", testid: "course-current-practice" }
+    : act.kind === "lesson" && journey.program.mode === "in_person" && onOpenLesson
+      ? { label: act.label, onClick: () => onOpenLesson(current?.id), icon: "fa-book-open", testid: "course-current-review" }
+    : act.kind === "lesson" && onResume
+      ? { label: act.label, onClick: () => onResume(current.id), icon: "fa-play", testid: "course-continue" }
+      : null;
+  return (
+    <section data-testid="course-current" data-mode={journey.program.mode || ""} data-checkpoint={cur.isCheckpoint ? "1" : undefined}
+             className="rounded-3xl border border-transparent overflow-hidden"
+             style={{ background: "linear-gradient(var(--sh-card-base), var(--sh-card-base)) padding-box, linear-gradient(120deg, rgba(0,169,224,.85), rgba(96,128,196,.25) 55%, rgba(140,198,63,.6)) border-box", boxShadow: "0 16px 44px -20px rgba(0,169,224,.55)" }}>
+      <div className="p-5 sm:p-6" style={{ background: "radial-gradient(120% 120% at 0% 0%, rgba(0,169,224,.16), transparent 55%)" }}>
+        <p className="text-[12px] font-black uppercase tracking-[0.18em] text-shSecondary"><i className="fas fa-play mr-1.5 text-[11px]" aria-hidden="true" />{cur.isCheckpoint ? "Current · checkpoint lesson" : "Current"}</p>
+        <h2 className="sh-display text-[26px] sm:text-[30px] text-shText leading-[1.05] mt-1 text-balance" data-testid="course-current-title">{cur.name}</h2>
+        <p className="text-[14px] text-shTextMuted mt-1" data-testid="course-current-position">{[cur.position, cur.moduleName].filter(Boolean).join(" · ")}{cur.minutes ? ` · ${cur.minutes} min` : ""}</p>
+        {cur.summary && <p className="text-[16px] text-shText mt-3 leading-relaxed" data-testid="course-current-summary">{cur.summary}</p>}
+        {act.modeLine && <p className="text-[15px] text-shTextMuted mt-2 leading-relaxed" data-testid="course-current-mode">{act.modeLine}</p>}
+        {cta && (
+          <button type="button" onClick={cta.onClick} data-testid={cta.testid}
                   className="mt-4 w-full sm:w-auto sm:px-6 min-h-[50px] rounded-xl text-[#071018] font-black text-[16px] uppercase tracking-widest inline-flex items-center justify-center gap-2 hover:brightness-110 transition shadow-[0_14px_30px_-10px_rgba(140,198,63,0.75)]"
                   style={{ background: "linear-gradient(135deg,#9ad14e,#8cc63f)" }}>
-            <i className="fas fa-play text-[13px]" />Continue lesson<i className="fas fa-arrow-right text-[14px]" />
+            <i className={`fas ${cta.icon} text-[13px]`} aria-hidden="true" />{cta.label}<i className="fas fa-arrow-right text-[14px]" aria-hidden="true" />
           </button>
         )}
       </div>
@@ -174,9 +213,33 @@ export function CourseHero({ detail, roadmap, progress, onResume, onAbout, troph
   );
 }
 
+const NEXT_ICON = { lesson: "fa-arrow-right", checkpoint: "fa-flag-checkered", quiz: "fa-list-check", module: "fa-book", graduation: "fa-graduation-cap" };
+
+/** What comes after the current lesson and, when it is not open yet, the
+ *  plain reason — from the server's current_action, never a gate name. */
+export function ComingNextCard({ next }) {
+  if (!next) return null;
+  return (
+    <section data-testid="course-next" data-kind={next.kind}
+             className="rounded-2xl border border-shBorder/60 bg-black/15 px-4 py-3.5 flex items-start gap-3">
+      <span className="w-10 h-10 rounded-xl grid place-items-center shrink-0 border border-shBorder bg-white/[0.04] text-shTextMuted" aria-hidden="true">
+        <i className={`fas ${NEXT_ICON[next.kind] || "fa-arrow-right"} text-[15px]`} />
+      </span>
+      <span className="min-w-0">
+        <span className="block text-[11px] font-black uppercase tracking-[0.16em] text-shTextMuted">Coming next</span>
+        <span className="block text-[17px] font-black text-shText leading-snug mt-0.5" data-testid="course-next-title">{next.kind === "checkpoint" && !/^checkpoint$/i.test(String(next.title || "").trim()) ? `Checkpoint — ${next.title}` : next.title}</span>
+        {next.reason && <span className="block text-[14px] text-shTextMuted mt-0.5" data-testid="course-next-reason"><i className="fas fa-lock mr-1.5 text-[11px]" aria-hidden="true" />{next.reason}</span>}
+      </span>
+    </section>
+  );
+}
+
 /* ----------------------------------------------------------------- Lesson */
 
 function lessonState(lesson, currentLessonId) {
+  // Stage 9 — rows decorated by lib/courseJourney carry `state`/`stateLabel`;
+  // the roadmap-only fallback keeps the same words.
+  if (lesson.state === "next") return { label: "Coming next", cls: "text-shText border-shBorder bg-white/[0.04]", icon: "fa-arrow-right" };
   if (lesson.id === currentLessonId) return { label: "Current lesson", cls: "text-shSecondary border-shSecondary/45 bg-shSecondary/10", icon: "fa-circle-play" };
   if (lesson.status === "completed") return { label: "Completed", cls: "text-shPrimary border-shPrimary/40 bg-shPrimary/10", icon: "fa-circle-check" };
   if (lesson.status === "locked") return { label: "Locked", cls: "text-shTextMuted border-shBorder bg-black/20", icon: "fa-lock" };
@@ -195,8 +258,8 @@ function LessonBadge({ lesson, currentLessonId, index }) {
   }
   if (lesson.status === "completed") {
     return (
-      <span className="w-[34px] h-[34px] rounded-xl grid place-items-center shrink-0 border-[1.5px] border-shPrimary/55 bg-shPrimary/15 text-shPrimary">
-        <i className="fas fa-check text-[15px]" />
+      <span className="w-[28px] h-[28px] rounded-lg grid place-items-center shrink-0 border border-shPrimary/45 bg-shPrimary/10 text-shPrimary" aria-hidden="true">
+        <i className="fas fa-check text-[13px]" />
       </span>
     );
   }
@@ -218,26 +281,31 @@ function LessonRow({ lesson, currentLessonId, onOpen, index }) {
   const st = lessonState(lesson, currentLessonId);
   const locked = lesson.status === "locked";
   const isCurrent = lesson.id === currentLessonId;
+  const done = lesson.status === "completed";
   const minutes = lesson.estimated_minutes;
+  // A locked row explains itself: the journey's plain reason for the very
+  // next step, else the roadmap's own locked_reason. Never a bare padlock.
+  const reason = locked ? (lesson.reason || lesson.locked_reason || null) : null;
   return (
     <button type="button" disabled={locked} onClick={() => !locked && onOpen?.(lesson.id)}
-            data-testid={`course-lesson-${lesson.id}`} data-state={locked ? "locked" : isCurrent ? "current" : lesson.status || "available"}
-            className={`w-full text-left flex items-center gap-3 px-3 py-2.5 rounded-xl transition ${locked ? "opacity-70 cursor-default" : "hover:bg-white/[0.03]"}`}>
+            data-testid={`course-lesson-${lesson.id}`} data-state={locked ? "locked" : isCurrent ? "current" : lesson.state === "next" ? "next" : lesson.status || "available"}
+            aria-label={`${lesson.name} — ${st.label}${reason ? `. ${reason}` : ""}`}
+            className={`w-full text-left flex items-center gap-3 px-3 rounded-xl transition ${done ? "py-1.5 opacity-80" : "py-2.5"} ${locked ? "opacity-70 cursor-default" : "hover:bg-white/[0.03]"}`}>
       <LessonBadge lesson={lesson} currentLessonId={currentLessonId} index={index} />
       <span className="min-w-0 flex-1">
-        <span className={`block text-[16px] font-black leading-snug line-clamp-2 ${isCurrent ? "text-[#e4f6ff]" : "text-shText"}`}>{lesson.name}</span>
-        <span className={`block text-[12px] font-black uppercase tracking-[0.09em] mt-0.5 ${isCurrent ? "text-shSecondary" : lesson.status === "completed" ? "text-shPrimary" : "text-shTextMuted"}`}>
+        <span className={`block leading-snug line-clamp-2 ${done ? "text-[15px] font-bold text-shTextMuted" : "text-[16px] font-black"} ${isCurrent ? "text-[#e4f6ff]" : done ? "" : "text-shText"}`}>{lesson.name}</span>
+        <span className={`block text-[12px] font-black uppercase tracking-[0.09em] mt-0.5 ${isCurrent ? "text-shSecondary" : done ? "text-shPrimary" : "text-shTextMuted"}`}>
           {st.label}
-          {locked && lesson.locked_reason ? <span className="normal-case font-bold tracking-normal"> — {lesson.locked_reason}</span> : ""}
+          {reason ? <span className="normal-case font-bold tracking-normal"> — {reason}</span> : ""}
         </span>
       </span>
       {minutes ? (
-        <span className={`text-[13px] font-black rounded-full px-2.5 py-1 tabular-nums whitespace-nowrap shrink-0 ${isCurrent ? "text-[#04101a]" : "text-shTextMuted border border-shBorder bg-white/[0.04]"}`}
+        <span className={`sh-lesson-minutes text-[13px] font-black rounded-full px-2.5 py-1 tabular-nums whitespace-nowrap shrink-0 ${isCurrent ? "text-[#04101a]" : "text-shTextMuted border border-shBorder bg-white/[0.04]"}`}
               style={isCurrent ? { background: "linear-gradient(135deg,#25b9ec,#00a9e0)" } : undefined}>
           {minutes} min
         </span>
       ) : null}
-      {!locked && <i className="fas fa-chevron-right text-[13px] text-shTextMuted shrink-0" />}
+      {!locked && !done && <i className="fas fa-chevron-right text-[13px] text-shTextMuted shrink-0" aria-hidden="true" />}
     </button>
   );
 }
@@ -258,7 +326,7 @@ export function ModuleCard({ module: m, currentLessonId, onOpenLesson, defaultOp
   const hue = moduleHue(position);
   const minutes = moduleMinutes(m);
   const meta = [
-    lessons.length > 0 ? `${done} / ${lessons.length} lessons` : null,
+    m.meta || (lessons.length > 0 ? `${done} of ${lessons.length} lesson${lessons.length === 1 ? "" : "s"} complete` : null),
     minutes,
   ].filter(Boolean).join(" · ");
 

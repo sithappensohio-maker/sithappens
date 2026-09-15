@@ -2168,6 +2168,11 @@ html, body, #root {
   .sh-entity-card:hover { transform:none; }
   .sh-entity-card__body { padding:15px; }
   .app-scroll-root { padding:14px !important; }
+  /* The School shell already gives its content a 14px gutter (px-3.5), so the
+     phone-wide scroll-root padding above would double it to 28px per side and
+     leave a 320px phone only ~257px for the journey rail. Keep the safe-area
+     bottom padding; drop the duplicated horizontal one. */
+  .app-scroll-root.sh-school-scroll { padding-left:0 !important; padding-right:0 !important; }
 }
 
 @media (max-width: 359px) {
@@ -2243,6 +2248,46 @@ html, body, #root {
   scroll-snap-type: x proximity;
 }
 .sh-admin-tabs__track::-webkit-scrollbar { display:none; }
+/* Client School bottom tabs: five words must fit a 320px phone. Below 360px
+   the label drops to 11px with no letter-spacing (about 52px for "PRACTICE"
+   inside a 64px tab) so nothing clips; the icon and 56px target are unchanged. */
+/* Course hero stat tiles (Lessons / Modules / Trophies): three across on a
+   phone leaves ~94px per tile at 390 and ~77px at 320. The icon square is
+   decoration, so it yields first; the count and the word always stay. */
+@media (max-width: 479px) {
+  .sh-course-stat { padding-left: 8px; padding-right: 8px; gap: 0; }
+  .sh-course-stat-icon { display: none; }
+  .sh-course-stat-label { font-size: 10px; letter-spacing: 0.04em; }
+}
+@media (max-width: 359px) {
+  .sh-school-tab-label { font-size: 11px; letter-spacing: 0; }
+  /* Today rail on a 320×568 phone: the primary action must still land above
+     the tab bar on entry. LAST keeps its title and eyebrow; its summary line
+     and timestamp (and the greeting's explainer line) yield on this width. */
+  .sh-today-greeting { font-size: 18px; }
+  .sh-today-sub { display: none; }
+  .sh-journey-last-detail { display: none; }
+  .sh-journey-step-body.pb-4 { padding-bottom: 2px; }
+  .sh-command-body { padding: 10px 12px 12px; }
+  .sh-journey-rail { margin-top: 8px; }
+  .sh-journey-context { margin-top: 0; }
+  .sh-journey-now-title { font-size: 22px; }
+  .sh-journey-do-now { font-size: 16px; margin-top: 4px; }
+  .sh-today-primary { margin-top: 8px; }
+  .sh-journey-context-program { display: none; }
+  .sh-orient-label { display: none; }
+  .sh-orient-icon { margin-right: 0; font-size: 18px; }
+  /* Lesson journey card: "Then: Practice → Next lesson" gets the full width,
+     the Show-all-parts toggle drops under it instead of squeezing it. */
+  .sh-lesson-then-row { flex-wrap: wrap; row-gap: 0; }
+  .sh-lesson-then-row > button { margin-left: auto; }
+  /* Course lesson rows: at 320px the minutes pill left ~44px for the lesson
+     name; the CURRENT card already states the minutes, so the row drops it. */
+  .sh-lesson-minutes { display: none; }
+}
+/* Coach filter strip: swipes sideways on phones without a visible bar. */
+.sh-coach-filters { scrollbar-width: none; }
+.sh-coach-filters::-webkit-scrollbar { display:none; }
 .sh-admin-tabs__item {
   position: relative;
   display: inline-flex;

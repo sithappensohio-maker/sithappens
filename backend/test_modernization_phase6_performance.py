@@ -70,7 +70,7 @@ def test_global_search_batches_upcoming_dog_bookings_and_pending_counts_parallel
     assert '"dog_id": {"$in": dog_ids}' in server
     assert "upcoming_by_dog" in server
     assert "Phase 6 — batch the upcoming-booking lookup" in server
-    assert "mg, pending_bookings, resched, disputes, shop_recon, overdue_rows = await asyncio.gather(" in server
+    assert "mg, pending_bookings, resched, disputes, shop_recon, overdue_rows, inquiries = await asyncio.gather(" in server
 
 
 def test_frontend_uses_lightweight_client_resources_instead_of_rich_full_list():

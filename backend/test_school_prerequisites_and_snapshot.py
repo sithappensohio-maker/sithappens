@@ -30,7 +30,9 @@ def _program_body(name, slug, **kw):
         available_online=True,
         delivery_mode="self_guided",
         purchase_fulfillment="online_school",
-        modules=[server.ModuleIn(name="Module 1", goals=[server.GoalIn(name="Skill")])],
+        # Stage 13 fixture repair — School assigns lesson-by-lesson curricula only
+        modules=[server.ModuleIn(name="Module 1", goals=[server.GoalIn(name="Skill")],
+                                 lessons=[server.LessonIn(name="Lesson 1", order=0, skill_ids=[])])],
     )
     base.update(kw)
     return server.ProgramIn(**base)

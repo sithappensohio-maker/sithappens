@@ -111,28 +111,21 @@ export default function TrainingSessionWorkspace(props) {
 
   return (
     <>
-      <TrainingSessionWorkspaceBase {...props} />
-
-      {!!options?.future_lessons?.length && !open && (
-        <button
-          type="button"
-          onClick={openControl}
-          data-testid="in-person-manual-progress-open"
-          className="fixed z-[70] left-4 bottom-4 sm:left-6 sm:bottom-6 rounded-xl border border-shSecondary/60 bg-[var(--sh-card-base)] px-4 py-3 text-left shadow-2xl hover:border-shSecondary transition"
-        >
-          <span className="block text-[10px] font-black uppercase tracking-[0.14em] text-shSecondary">In-Person Trainer Control</span>
-          <span className="block text-[13px] font-black text-shText mt-0.5"><i className="fas fa-forward-step mr-1.5"/>Move Dog Ahead</span>
-        </button>
-      )}
+      {/* Stage 7 — the manual Trainer-Led progression control is no longer a
+          floating button over the workspace (it covered Save & Close on
+          phones). It is an exceptional action, so it now lives inside Wrap Up
+          under "Advanced progression actions" and opens the same modal. */}
+      <TrainingSessionWorkspaceBase {...props}
+        manualProgress={options?.future_lessons?.length ? { open: openControl, currentLessonName: options.current_lesson_name } : null} />
 
       {open && (
         <div className="fixed inset-0 z-[80] bg-black/80 flex items-center justify-center p-3 sm:p-5" data-testid="in-person-manual-progress-modal">
           <div className="w-full max-w-2xl max-h-[90vh] overflow-y-auto rounded-2xl border border-shSecondary/45 bg-[var(--sh-card-base)] shadow-2xl">
             <div className="p-4 sm:p-5 border-b border-shBorder">
-              <p className="text-[11px] font-black uppercase tracking-[0.14em] text-shSecondary">Trainer-controlled In-Person progression</p>
+              <p className="text-[11px] font-black uppercase tracking-[0.14em] text-shSecondary">Trainer-Led progression</p>
               <h3 className="text-xl font-black text-shText mt-1">Move this dog to a later lesson</h3>
               <p className="text-[13px] text-shTextMuted mt-2 leading-relaxed">
-                Use this when the dog has mastered material earlier than expected. This changes only the In-Person School position. Online and Hybrid School remain gated. If a session is already open, that session stays attached to the lesson it started on; the new position is used the next time training is opened.
+                Use this when the dog has mastered material earlier than expected. This changes only the Trainer-Led School position. Online and Hybrid programs stay gated by their own lessons. If a session is already open, that session stays attached to the lesson it started on; the new position is used the next time training is opened.
               </p>
             </div>
 

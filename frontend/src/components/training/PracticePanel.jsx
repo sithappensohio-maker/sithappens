@@ -7,6 +7,7 @@
 //
 // Coach Mode is a delivery layer over the same Practice data/logging model.
 import { useEffect, useRef, useState } from "react";
+import HandoffPanel from "../HandoffPanel";
 import { api, formatErr } from "../../lib/api";
 import { toast } from "sonner";
 import { todayISO } from "../../lib/date";
@@ -133,7 +134,7 @@ export function quickLogIsMeaningful({ difficulty, note, values }) {
 }
 const QUICK_LOG_HINT = "Tell us what you practiced (a sentence is fine, or fill in the results) and how it felt before saving.";
 
-export default function PracticePanel({ homework, dogPhoto, onClose, onChanged, onPracticeLogged, onCompleted, schoolLesson = null, enrollmentId = null }) {
+export default function PracticePanel({ homework, dogPhoto, onClose, onChanged, onPracticeLogged, onCompleted, onContinue = null, schoolLesson = null, enrollmentId = null }) {
   const model = assignmentCardModel(homework);
   // Launched from School (a lesson's practice) vs. ordinary homework. School
   // shows the lesson name and requires a meaningful "log what we did" entry.
@@ -176,6 +177,9 @@ export default function PracticePanel({ homework, dogPhoto, onClose, onChanged, 
   const [errorMessage, setErrorMessage] = useState("");
   const [timerSec, setTimerSec] = useState(0);
   const [timerRunning, setTimerRunning] = useState(false);
+  // Stage 4 — completion handoff: null = asking School what comes next,
+  // false = no School flow (generic homework), object = what to show.
+  const [handoff, setHandoff] = useState(null);
 
   useEffect(() => {
     if (!timerRunning) return;
@@ -211,8 +215,11 @@ export default function PracticePanel({ homework, dogPhoto, onClose, onChanged, 
 
   useEffect(() => {
     if (viewMode !== "complete" || !onCompleted) return undefined;
-    const t = setTimeout(() => onCompleted(), 1400);
-    return () => clearTimeout(t);
+    let live = true;
+    Promise.resolve(onCompleted(homework.id))
+      .then((h) => { if (live) setHandoff(h || false); })
+      .catch(() => { if (live) setHandoff(false); });
+    return () => { live = false; };
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [viewMode]);
 
@@ -380,17 +387,33 @@ export default function PracticePanel({ homework, dogPhoto, onClose, onChanged, 
 
         <div ref={bodyRef} className="relative overflow-y-auto flex-1 min-h-0 px-3 sm:px-5 lg:px-6 py-4 sm:py-5 space-y-4 sm:space-y-5 pb-[max(1rem,env(safe-area-inset-bottom))]" data-testid="practice-panel-body">
           {viewMode === "complete" ? (
-            <div className="flex flex-col items-center justify-center text-center py-10 sm:py-14 space-y-4" data-testid="practice-complete-state">
-              <span className="w-16 h-16 rounded-2xl bg-shPrimary/15 border border-shPrimary/40 grid place-items-center"><i className="fas fa-check text-shPrimary text-2xl" /></span>
-              <div>
-                <p className="text-[20px] font-black text-shText uppercase tracking-tight">✓ Practice Saved</p>
-                <p className="text-[16px] text-shTextMuted mt-1" data-testid="practice-complete-subtitle">
-                  {onCompleted ? "School is checking what comes next…" : "Nice work — it's saved to your training history."}
-                </p>
-              </div>
-              {onCompleted ? (
-                <i className="fas fa-spinner fa-spin text-shSecondary" aria-hidden="true" />
+            <div className="flex flex-col items-center justify-center text-center py-6 sm:py-10 space-y-4" data-testid="practice-complete-state">
+              {/* Stage 10 — School-hosted completion is the shared handoff
+                  (RESULT · NEXT · one real action). The Stage 4 testids stay:
+                  a handoff with no primary action puts its calm way out on
+                  `practice-complete-continue`, so "continue" always exists. */}
+              {onCompleted && handoff ? (
+                <div className="w-full max-w-md text-left">
+                  <HandoffPanel handoff={handoff} testid="practice-complete"
+                                ids={{ title: "practice-complete-title", summary: "practice-complete-subtitle", next: "practice-complete-next",
+                                       action: "practice-complete-continue", secondary: handoff.action ? "practice-complete-secondary" : "practice-complete-continue" }}
+                                onAction={() => (onContinue ? onContinue(handoff) : onClose())}
+                                onSecondary={(sec) => (onContinue ? onContinue({ ...handoff, cta: sec ? { label: sec.label, kind: sec.kind } : handoff.cta }) : onClose())} />
+                </div>
+              ) : onCompleted && handoff === null ? (
+                <div>
+                  <span className="w-16 h-16 mx-auto rounded-2xl bg-shPrimary/15 border border-shPrimary/40 grid place-items-center"><i className="fas fa-check text-shPrimary text-2xl" /></span>
+                  <p className="text-[20px] font-black text-shText uppercase tracking-tight mt-3" data-testid="practice-complete-title">Practice saved</p>
+                  <p className="text-[16px] text-shTextMuted mt-1" data-testid="practice-complete-subtitle">Checking what comes next…</p>
+                  <i className="fas fa-spinner fa-spin text-shSecondary mt-3" aria-hidden="true" />
+                </div>
               ) : (
+                <>
+                <span className="w-16 h-16 rounded-2xl bg-shPrimary/15 border border-shPrimary/40 grid place-items-center"><i className="fas fa-check text-shPrimary text-2xl" /></span>
+                <div>
+                  <p className="text-[20px] font-black text-shText uppercase tracking-tight" data-testid="practice-complete-title">Practice saved</p>
+                  <p className="text-[16px] text-shTextMuted mt-1" data-testid="practice-complete-subtitle">Nice work — it's saved to your training history.</p>
+                </div>
                 <div className="w-full max-w-sm space-y-2">
                   <button type="button" onClick={onClose} data-testid="practice-complete-continue"
                           className="w-full min-h-[50px] bg-shPrimary text-bgHeader rounded-xl font-black text-[16px] uppercase tracking-widest shadow-lg hover:bg-shPrimary/90 transition">
@@ -403,6 +426,7 @@ export default function PracticePanel({ homework, dogPhoto, onClose, onChanged, 
                     </button>
                   )}
                 </div>
+                </>
               )}
             </div>
           ) : !section ? (

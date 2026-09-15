@@ -35,7 +35,7 @@ export const SCROLL_ROOT_SELECTOR = "[data-scroll-root]";
 const HEADER_SELECTOR = '[data-testid="school-app"] > header';
 const BOTTOM_NAV_SELECTOR = '[data-testid="school-nav-mobile"]';
 
-const DEFAULTS = { align: "start", offset: 8, ifNeeded: false, budgetMs: 1500, pollMs: 50, cta: null };
+const DEFAULTS = { align: "start", offset: 8, ifNeeded: false, budgetMs: 1500, pollMs: 50, cta: null, behavior: null };
 
 let pendingToken = 0;
 let pendingCleanup = null;
@@ -117,7 +117,12 @@ export function computeRevealTop({ root, target, cta, align, offset, ifNeeded })
   }
 
   if (ifNeeded) {
-    const inWindow = targetRect.top >= win.top && targetRect.top <= win.bottom - 120;
+    // "Already on screen" means the reader can actually read it: the top is
+    // inside the window and at least ~240px of the card (or all of a shorter
+    // one) is visible. On a 320×568 phone a coaching card that merely starts
+    // above the tab bar still needs the reveal.
+    const visible = Math.min(targetRect.bottom, win.bottom) - targetRect.top;
+    const inWindow = targetRect.top >= win.top && visible >= Math.min(targetRect.height, 240);
     if (inWindow) return null;
   }
   return clamp(startTop);
@@ -174,7 +179,10 @@ export function revealInSchool(target, options = {}) {
       const next = computeRevealTop({ root, target: el, cta, align: opts.align, offset: opts.offset, ifNeeded: opts.ifNeeded });
       pendingCleanup = null;
       if (next === null) { resolve({ skipped: true }); return; }
-      const behavior = prefersReducedMotion() ? "auto" : "smooth";
+      // behavior "auto" is for reveals that must land even while the tab is
+      // busy re-rendering (a smooth scroll is abandoned by the browser when
+      // layout keeps changing underneath it).
+      const behavior = opts.behavior || (prefersReducedMotion() ? "auto" : "smooth");
       if (typeof root.scrollTo === "function") root.scrollTo({ top: next, behavior });
       else root.scrollTop = next;
       resolve({ top: next });

@@ -13,6 +13,7 @@ import uuid
 
 import _test_env  # noqa: F401 — must run before `import server`, see its docstring
 import server
+from test_training_session_workspace import _author_lessons  # noqa: E402
 from _test_loop import run
 from datetime import date
 
@@ -62,6 +63,7 @@ def _program():
         modules=[server.ModuleIn(name="Week 1", order=0, goals=[server.GoalIn(name="Sit"), server.GoalIn(name="Down")])],
     )
     prog = run(server.create_program(body, admin))
+    prog = _author_lessons(prog, admin, skills="all")  # Stage 13 fixture repair — School assigns lesson-by-lesson curricula only
     try:
         yield prog, admin
     finally:
@@ -132,8 +134,8 @@ def test_in_progress_status_after_an_actual_is_recorded():
                 draft_id = started["draft"]["id"]
                 sit_activity = started["draft"]["plan"]["activities"][0]
                 run(server.update_training_session_draft(
-                    draft_id, server.TrainingSessionDraftUpdateIn(actuals={
-                        sit_activity["id"]: server.SessionActivityActualIn(score=3),
+                    draft_id, server.TrainingSessionDraftUpdateIn(what_went_well="Went well.", needs_work="Needs work.", next_lesson_focus="Next focus.", client_recap_note="Recap for the client.", actuals={
+                        **{a["id"]: server.SessionActivityActualIn(score=3, outcome="improving", mastery_decision="not_yet") for a in started["draft"]["plan"]["activities"]},
                     }), admin,
                 ))
                 rows = run(server.admin_training_today(admin))
@@ -150,11 +152,13 @@ def test_completed_status_after_session_completion():
             booking = _make_booking(dog["id"], admin)
             try:
                 started = run(server.start_training_session_draft_for_booking(booking["id"], enr["id"], "", admin))
+                run(server.update_training_session_draft(started["draft"]["id"], server.TrainingSessionDraftUpdateIn(what_went_well="Went well.", needs_work="Needs work.", next_lesson_focus="Next focus.", client_recap_note="Recap for the client.",
+                    actuals={a["id"]: server.SessionActivityActualIn(score=3, outcome="improving", mastery_decision="not_yet") for a in started["draft"]["plan"]["activities"]}), admin))  # Stage 13 fixture repair
                 run(server.complete_training_session(started["draft"]["id"], server.SessionCompletionIn(), admin))
                 rows = run(server.admin_training_today(admin))
                 row = _row_for(rows, booking["id"])
                 assert row["session_status"] == "completed"
-                assert row["assigned_trainer"] == admin["name"]  # from the session log's by_user
+                assert row["last_trainer"] == admin["name"]  # who worked it (assigned_trainer is the day's assignment, Stage 11+)
             finally:
                 _cleanup(booking["id"], enr["id"])
 
@@ -203,13 +207,15 @@ def test_recommended_focus_reflects_unmastered_skills():
         with _client_and_dog() as (c, dog):
             enr = run(server.enroll_dog(dog["id"], server.EnrollIn(program_id=prog["id"]), admin))
             sit_id = next(g["id"] for g in prog["modules"][0]["goals"] if g["name"] == "Sit")
-            run(server.update_goal(dog["id"], enr["id"], sit_id, server.GoalUpdate(score=5), admin))
+            # Stage 13 — mastery is an explicit decision (a 5/5 score alone never masters)
+            run(server.update_goal(dog["id"], enr["id"], sit_id, server.GoalUpdate(score=5, status="mastered"), admin))
             booking = _make_booking(dog["id"], admin)
             try:
                 rows = run(server.admin_training_today(admin))
                 row = _row_for(rows, booking["id"])
-                assert "Down" in row["recommended_focus"]
-                assert "Sit" not in row["recommended_focus"]  # already mastered
+                # superseded (Stage 13): the focus is the CURRENT LESSON's skills in lesson order;
+                # mastery is an explicit session decision and never silently drops a lesson skill
+                assert row["recommended_focus"] == ["Sit", "Down"]
             finally:
                 _cleanup(booking["id"], enr["id"])
 
@@ -296,6 +302,8 @@ def test_reopen_count_and_draft_created_at_reflect_the_draft():
                 assert row["reopen_count"] == 0
                 assert row["draft_created_at"] == started["draft"]["created_at"]
 
+                run(server.update_training_session_draft(draft_id, server.TrainingSessionDraftUpdateIn(what_went_well="Went well.", needs_work="Needs work.", next_lesson_focus="Next focus.", client_recap_note="Recap for the client.",
+                    actuals={a["id"]: server.SessionActivityActualIn(score=3, outcome="improving", mastery_decision="not_yet") for a in started["draft"]["plan"]["activities"]}), admin))  # Stage 13 fixture repair
                 run(server.complete_training_session(draft_id, server.SessionCompletionIn(), admin))
                 run(server.reopen_training_session(draft_id, server.SessionReopenIn(reason="client asked to redo"), admin))
                 rows = run(server.admin_training_today(admin))
@@ -315,8 +323,8 @@ def test_needs_reassessment_count_reflects_flagged_current_module_skills():
                 draft_id = started["draft"]["id"]
                 sit_activity = started["draft"]["plan"]["activities"][0]
                 run(server.update_training_session_draft(
-                    draft_id, server.TrainingSessionDraftUpdateIn(actuals={
-                        sit_activity["id"]: server.SessionActivityActualIn(score=2),
+                    draft_id, server.TrainingSessionDraftUpdateIn(what_went_well="Went well.", needs_work="Needs work.", next_lesson_focus="Next focus.", client_recap_note="Recap for the client.", actuals={
+                        **{a["id"]: server.SessionActivityActualIn(score=2, outcome="improving", mastery_decision="not_yet") for a in started["draft"]["plan"]["activities"]},
                     }), admin,
                 ))
                 run(server.complete_training_session(draft_id, server.SessionCompletionIn(advancement_action="mark_for_assessment"), admin))

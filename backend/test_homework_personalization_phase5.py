@@ -20,6 +20,7 @@ import uuid
 
 import _test_env  # noqa: F401 — must run before `import server`, see its docstring
 import server
+from test_training_session_workspace import _author_lessons  # noqa: E402
 from _test_loop import run
 from datetime import date, timedelta
 
@@ -62,6 +63,7 @@ def _program_with_template(admin, template_id):
         )],
     )
     prog = run(server.create_program(body, admin))
+    prog = _author_lessons(prog, admin)  # Stage 13 fixture repair — School assigns lesson-by-lesson curricula only
     sit_id = next(g["id"] for g in prog["modules"][0]["goals"] if g["name"] == "Sit")
     fixed = server.ProgramIn(
         name=prog["name"], type="private_lessons", format=prog["format"], price=50,
@@ -116,9 +118,9 @@ def _run_session_with_homework(prog, admin, dog, enr=None, notes="Practice daily
         draft_id,
         server.TrainingSessionDraftUpdateIn(
             actuals={
-                sit_activity["id"]: server.SessionActivityActualIn(score=3, outcome="improving", notes="Private trainer observation"),
+                sit_activity["id"]: server.SessionActivityActualIn(score=3, outcome="improving", notes="Private trainer observation", mastery_decision="not_yet"),
             },
-            practice_note=notes,
+            practice_note=notes, what_went_well="Went well.", needs_work="Needs work.", next_lesson_focus="Next focus.", client_recap_note="Recap for the client.",  # Stage 13 fixture repair
         ),
         admin,
     ))

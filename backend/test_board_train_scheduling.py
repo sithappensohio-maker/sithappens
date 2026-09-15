@@ -71,8 +71,12 @@ def test_residential_rules_are_directly_integrated_not_runtime_wrapped():
     assert getattr(server, "_board_train_scheduling_installed", False) is False
     assert getattr(server._resolve_base_service_for_booking, "_board_train_residential_wrapper", False) is False
     assert getattr(server._booking_start_local, "_board_train_residential_wrapper", False) is False
+    # Stage 13 — the rule is unchanged (integrated, never monkey-patched at runtime). The
+    # booking-side call moved into the domain wiring, so assert the wiring holds the REAL
+    # domain function object rather than grepping server.py for a call that moved.
+    from domains.bookings import services as bookings_domain_services
+    assert bookings_domain_services._apply_booking_service_rules_fn is server.training_domain_services.apply_booking_service_rules
     source = (server.ROOT_DIR / "server.py").read_text(encoding="utf-8")
-    assert "training_domain_services.apply_booking_service_rules" in source
     assert "training_domain_services.effective_booking_service_type" in source
 
 

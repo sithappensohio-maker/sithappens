@@ -44,7 +44,7 @@ test("the modal posts the whole questionnaire to the public endpoint and carries
 });
 
 test("the vocabulary in the modal's fallback matches the server's", () => {
-  const py = fs.readFileSync(path.join(__dirname, "..", "..", "..", "backend", "server.py"), "utf8").replace(/\r\n/g, "\n");
+  const py = fs.readFileSync(path.join(__dirname, "..", "..", "..", "backend", "domains", "public_site", "routes.py"), "utf8").replace(/\r\n/g, "\n");
   const keys = (src, name) => {
     const start = src.indexOf(`${name} = {`);
     expect(start).toBeGreaterThan(-1);

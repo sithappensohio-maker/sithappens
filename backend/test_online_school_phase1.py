@@ -20,6 +20,7 @@ import httpx
 
 import _test_env  # noqa: F401 — must run before `import server`, see its docstring
 import server
+from test_training_session_workspace import _author_lessons  # noqa: E402
 import _school_client_flow
 from _test_loop import run
 
@@ -164,6 +165,15 @@ def _school_program(delivery_mode="self_guided", n_modules=2, n_lessons_per_modu
             run(server.db.programs.delete_one({"id": prog["id"]}))
 
 
+def _second_trainer_program(prog, admin):
+    """Stage 13 — ONE active School enrollment per dog+program: a dog that also trains in
+    person does so on a second program of the same shape."""
+    p2 = run(server.create_program(server.ProgramIn(
+        name=f"{prog['name']} led", type="private_lessons", price=0, delivery_mode="both",
+        modules=[server.ModuleIn(name=m["name"], order=m.get("order", 0), goals=[server.GoalIn(name=g["name"]) for g in m.get("goals") or []]) for m in prog["modules"]]), admin))
+    return _author_lessons(p2, admin)
+
+
 def _cleanup_school(school_id, enrollment_id):
     run(server.db.school_enrollments.delete_one({"id": school_id}))
     run(server.db.dog_programs.delete_one({"id": enrollment_id}))
@@ -182,18 +192,14 @@ def test_legacy_program_with_no_delivery_mode_behaves_as_trainer_led():
     try:
         assert prog["delivery_mode"] == "trainer_led"
         with _client_and_dog() as (c, dog):
-            enr = run(server.enroll_dog(dog["id"], server.EnrollIn(program_id=prog["id"]), admin))
-            try:
-                assert enr["status"] == "active"
-                # Trainer-led enroll never sets delivery_channel — confirm absent.
-                raw = run(server.db.dog_programs.find_one({"id": enr["id"]}))
-                assert "delivery_channel" not in raw
-                # portal_learn still finds it (the defensive $ne filter must not
-                # exclude a legacy row that simply never set the key).
-                learn = run(server.portal_learn(_client_user(c["id"])))
-                assert len(learn) == 1 and learn[0]["program_name"] == prog["name"]
-            finally:
-                run(server.db.dog_programs.delete_one({"id": enr["id"]}))
+            # Stage 13 — the modules/goals-only shape is retired for NEW assignments: the
+            # trainer-led path now goes through School and refuses it with a plain 422
+            # (see test_legacy_school_retirement); no enrollment row is left behind.
+            import pytest as _pt
+            with _pt.raises(server.HTTPException) as exc:
+                run(server.enroll_dog(dog["id"], server.EnrollIn(program_id=prog["id"]), admin))
+            assert exc.value.status_code == 422 and "retired legacy" in str(exc.value.detail).lower()
+            assert run(server.db.dog_programs.count_documents({"dog_id": dog["id"]})) == 0
     finally:
         run(server.db.programs.delete_one({"id": prog["id"]}))
 
@@ -204,6 +210,7 @@ def test_trainer_led_only_program_rejects_school_enroll():
                              delivery_mode="trainer_led",
                              modules=[server.ModuleIn(name="Week 1", order=0, goals=[server.GoalIn(name="Sit")])])
     prog = run(server.create_program(body, admin))
+    prog = _author_lessons(prog, admin)  # Stage 13 fixture repair — School assigns lesson-by-lesson curricula only
     try:
         with _client_and_dog() as (c, dog):
             try:
@@ -241,18 +248,18 @@ def test_online_capable_program_school_enroll_succeeds():
 def test_both_delivery_program_supports_trainer_led_and_online_independently():
     with _school_program(delivery_mode="both") as (prog, admin):
         with _client_and_dog() as (c, dog):
-            trainer_enr = run(server.enroll_dog(dog["id"], server.EnrollIn(program_id=prog["id"]), admin))
+            trainer_enr = run(server.enroll_dog(dog["id"], server.EnrollIn(program_id=_second_trainer_program(prog, admin)["id"]), admin))
             res = run(server.school_enroll(server.SchoolEnrollIn(dog_id=dog["id"], program_id=prog["id"]), admin))
             se, school_enr = res["school_enrollment"], res["enrollment"]
             try:
                 assert trainer_enr["id"] != school_enr["id"]
                 raw_trainer = run(server.db.dog_programs.find_one({"id": trainer_enr["id"]}))
                 raw_school = run(server.db.dog_programs.find_one({"id": school_enr["id"]}))
-                assert "delivery_channel" not in raw_trainer
+                assert raw_trainer.get("delivery_channel") == "in_person_school"  # unified model (Stage 13)
                 assert raw_school["delivery_channel"] == "online_school"
-                # Both independently active for the same dog+program.
+                # Both independently active for the same dog (Stage 13: on two programs — one active per dog+program).
                 active_count = run(server.db.dog_programs.count_documents(
-                    {"dog_id": dog["id"], "program_id": prog["id"], "status": "active"}))
+                    {"dog_id": dog["id"], "status": "active", "id": {"$in": [trainer_enr["id"], school_enr["id"]]}}))
                 assert active_count == 2
             finally:
                 _cleanup_school(se["id"], school_enr["id"])
@@ -266,7 +273,7 @@ def test_portal_learn_resolves_deterministically_when_dog_has_both_active_enroll
     one, when both are active simultaneously."""
     with _school_program(delivery_mode="both") as (prog, admin):
         with _client_and_dog() as (c, dog):
-            trainer_enr = run(server.enroll_dog(dog["id"], server.EnrollIn(program_id=prog["id"]), admin))
+            trainer_enr = run(server.enroll_dog(dog["id"], server.EnrollIn(program_id=_second_trainer_program(prog, admin)["id"]), admin))
             res = run(server.school_enroll(server.SchoolEnrollIn(dog_id=dog["id"], program_id=prog["id"]), admin))
             se, school_enr = res["school_enrollment"], res["enrollment"]
             try:
@@ -586,12 +593,10 @@ def test_delete_school_enrollment_refuses_a_trainer_led_row():
     with _school_program(delivery_mode="both") as (prog, admin):
         with _client_and_dog() as (c, dog):
             trainer_enr = run(server.enroll_dog(dog["id"], server.EnrollIn(program_id=prog["id"]), admin))
-            fake_se = {
-                "id": str(uuid.uuid4()), "client_id": c["id"], "dog_id": dog["id"], "program_id": prog["id"],
-                "enrollment_id": trainer_enr["id"], "delivery_mode": "self_guided", "status": "active",
-                "enrolled_at": server.now_iso(), "enrolled_by": admin["id"], "created_at": server.now_iso(),
-            }
-            run(server.db.school_enrollments.insert_one(dict(fake_se)))
+            # Stage 13 — every trainer-led enrollment now HAS its School row (unified model); the
+            # guard must still refuse to delete a trainer-led dog_programs document through it.
+            fake_se = run(server.db.school_enrollments.find_one({"enrollment_id": trainer_enr["id"]}, {"_id": 0}))
+            assert fake_se is not None
             try:
                 try:
                     run(server.delete_school_enrollment(fake_se["id"], admin))

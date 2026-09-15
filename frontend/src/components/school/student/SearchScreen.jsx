@@ -29,7 +29,7 @@ export default function SearchScreen({ enrollmentId, onOpenLesson, onFeedback })
   const groups = [
     { key: "lessons", title: "Lessons", icon: "fa-book-open", rows: data?.lessons || [], click: (r) => onOpenLesson?.(r.lesson_id) },
     { key: "resources", title: "Resources", icon: "fa-folder-open", rows: data?.resources || [], click: openResource },
-    { key: "feedback", title: "Trainer Feedback", icon: "fa-comment-dots", rows: data?.feedback || [], click: () => onFeedback?.() },
+    { key: "feedback", title: "Coach", icon: "fa-comments", rows: data?.feedback || [], click: () => onFeedback?.() },
   ];
 
   return <div className="max-w-3xl mx-auto space-y-5" data-testid="school-search-screen">

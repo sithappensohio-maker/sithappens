@@ -682,7 +682,7 @@ function AdminShell() {
         </header>
         <div className="app-scroll-root flex-1 min-h-0 overflow-y-auto overscroll-contain p-4 md:p-7 relative" data-scroll-root>
           {["today", "dashboard"].includes(tab) && navAllowed("today") && <Today
-            onNavigate={(t)=>setTab(t)}
+            onNavigate={(t, target)=> (target ? navigateAdmin(t, target) : setTab(t))}
             onJumpToDog={(id)=>navigateAdmin("dogs", {kind:"dog", id, mode:"open"})}
             onJumpToClient={(id)=>navigateAdmin("clients", {kind:"client", id, mode:"open"})}
             onOpenSearch={()=>setSearchOpen(true)}

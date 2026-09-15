@@ -236,54 +236,60 @@ def test_install_preserves_existing_today_dependency_graph():
 
 
 import pytest
+from _test_loop import run  # noqa: E402
 
 
-@pytest.mark.asyncio
-async def test_installed_completion_wrapper_blocks_bad_remain_and_marks_good_log():
-    import trainer_delivery_enforcement as mod
-    from fastapi import HTTPException
+# Stage 13 — this venv (and CI's requirements-test) has no pytest-asyncio; run the body on the shared test loop
+def test_installed_completion_wrapper_blocks_bad_remain_and_marks_good_log():
+    async def _t():
+        import trainer_delivery_enforcement as mod
+        from fastapi import HTTPException
 
-    server, calls = _fake_server_for_install()
-    mod.install_trainer_delivery_enforcement(server_module=server, db=_NoopDB())
+        server, calls = _fake_server_for_install()
+        mod.install_trainer_delivery_enforcement(server_module=server, db=_NoopDB())
 
-    bad = _complete_required_draft()
-    bad["actuals"]["skill-1"].pop("mastery_decision")
-    with pytest.raises(HTTPException) as exc:
-        await server._compute_completion_plan(
+        bad = _complete_required_draft()
+        bad["actuals"]["skill-1"].pop("mastery_decision")
+        with pytest.raises(HTTPException) as exc:
+            await server._compute_completion_plan(
+                {},
+                bad,
+                "draft-bad",
+                _body(),
+                {"id": "trainer"},
+            )
+        assert exc.value.status_code == 409
+        assert "Confirm Mastered or Not Yet" in exc.value.detail["msg"]
+        assert calls == []
+
+        good = await server._compute_completion_plan(
             {},
-            bad,
-            "draft-bad",
+            _complete_required_draft(),
+            "draft-good",
             _body(),
             {"id": "trainer"},
         )
-    assert exc.value.status_code == 409
-    assert "Confirm Mastered or Not Yet" in exc.value.detail["msg"]
-    assert calls == []
-
-    good = await server._compute_completion_plan(
-        {},
-        _complete_required_draft(),
-        "draft-good",
-        _body(),
-        {"id": "trainer"},
-    )
-    assert calls == [("draft-good", "remain")]
-    assert good["trainer_delivery_rule_version"] == 1
-    assert good["log_doc"]["completion_requirements_verified"] is True
+        assert calls == [("draft-good", "remain")]
+        assert good["trainer_delivery_rule_version"] == 1
+        assert good["log_doc"]["completion_requirements_verified"] is True
+    run(_t())
 
 
-@pytest.mark.asyncio
-async def test_board_train_overdue_uses_business_day_not_host_utc_date():
-    import trainer_delivery_enforcement as mod
+# Stage 13 — this venv (and CI's requirements-test) has no pytest-asyncio; run the body on the shared test loop
+def test_board_train_overdue_uses_business_day_not_host_utc_date():
+    async def _t():
+        import trainer_delivery_enforcement as mod
 
-    readiness = await mod.board_train_readiness(
-        _NoopDB(),
-        {"id": "b1", "date": "2026-08-25", "end_date": "2026-08-27"},
-        through="2026-08-26",
-        business_day="2026-08-26",
-    )
-    assert [x["date"] for x in readiness["incomplete_days"]] == [
-        "2026-08-25",
-        "2026-08-26",
-    ]
-    assert [x["date"] for x in readiness["overdue_days"]] == ["2026-08-25"]
+        readiness = await mod.board_train_readiness(
+            _NoopDB(),
+            {"id": "b1", "date": "2026-08-25", "end_date": "2026-08-27"},
+            through="2026-08-26",
+            business_day="2026-08-26",
+        )
+        assert [x["date"] for x in readiness["incomplete_days"]] == [
+            "2026-08-25",
+            "2026-08-26",
+        ]
+        assert [x["date"] for x in readiness["overdue_days"]] == ["2026-08-25"]
+    run(_t())
+

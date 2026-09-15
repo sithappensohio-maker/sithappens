@@ -27,6 +27,7 @@ import { useConfirm } from "../lib/useConfirm";
 // genuinely see different tabs when their staff_role grants different keys.
 import Clients from "./Clients";
 import Incidents from "./Incidents";
+import Pipeline from "./Pipeline";
 
 function fmtTime(iso) {
   if (!iso) return "—";
@@ -60,7 +61,9 @@ function getGeo() {
 
 export default function EmployeePortal() {
   const { user, logout, can } = useAuth();
-  const [tab, setTab] = useState("clock");
+  // Stage 11.5 — /admin/training (the Today/Training deep link) opens the Staff
+  // Portal straight on the Training tab; every other path lands on Clock.
+  const [tab, setTab] = useState(() => (typeof window !== "undefined" && /^\/admin\/training/.test(window.location.pathname)) ? "training" : "clock");
   const [incidentOpen, setIncidentOpen] = useState(false);
 
   // Permission-matrix fix — additional tabs, gated per-employee by their
@@ -70,6 +73,10 @@ export default function EmployeePortal() {
   // their own clock/timecard/schedule/time-off regardless of staff_role.
   const canClients = can("clients_view");
   const canIncidents = can("incidents");
+  // Stage 11.5 — a Trainer employee gets the SAME Training Hub / Trainer Daily
+  // Queue the owner uses, gated by the training-sessions permission from the
+  // staff-role matrix — never by admin role. Front Desk does not hold that key.
+  const canTraining = can("manage_training_sessions");
 
   // Same render-level guard AdminShell uses: if a live permissions refresh
   // (polled every 60s in lib/auth.js) downgrades this account while it's
@@ -78,7 +85,8 @@ export default function EmployeePortal() {
   useEffect(() => {
     if (tab === "clients" && !canClients) setTab("clock");
     if (tab === "incidents" && !canIncidents) setTab("clock");
-  }, [tab, canClients, canIncidents]);
+    if (tab === "training" && !canTraining) setTab("clock");
+  }, [tab, canClients, canIncidents, canTraining]);
 
   return (
     <div className="min-h-screen bg-bgBase flex flex-col pb-safe sh-employee-portal" data-scroll-root data-testid="employee-portal">
@@ -104,6 +112,7 @@ export default function EmployeePortal() {
           onChange={setTab}
           items={[
             { key: "clock", label: "Clock", icon: "fa-clock", testid: "emp-tab-clock" },
+            ...(canTraining ? [{ key: "training", label: "Training", icon: "fa-graduation-cap", testid: "emp-tab-training", accent: "lime" }] : []),
             { key: "roster", label: "Roster", icon: "fa-paw", testid: "emp-tab-roster", accent: "cyan" },
             ...(canClients ? [{ key: "clients", label: "Clients", icon: "fa-users", testid: "emp-tab-clients", accent: "cyan" }] : []),
             ...(canIncidents ? [{ key: "incidents", label: "Incidents", icon: "fa-triangle-exclamation", testid: "emp-tab-incidents", accent: "orange" }] : []),
@@ -117,8 +126,9 @@ export default function EmployeePortal() {
         />
       </div>
 
-      <main className={`flex-1 p-3 sm:p-5 pb-28 sm:pb-8 w-full mx-auto ${(tab === "clients" || tab === "incidents") ? "max-w-6xl" : "max-w-3xl"}`}>
+      <main className={`flex-1 ${tab === "training" ? "p-0 sm:p-0" : "p-3 sm:p-5"} pb-28 sm:pb-8 w-full mx-auto ${(tab === "clients" || tab === "incidents" || tab === "training") ? "max-w-6xl" : "max-w-3xl"}`}>
         {tab === "clock" && <ClockTab />}
+        {tab === "training" && canTraining && <div data-testid="emp-training"><Pipeline /></div>}
         {tab === "roster" && <RosterTab />}
         {tab === "clients" && canClients && <Clients />}
         {tab === "incidents" && canIncidents && <Incidents />}

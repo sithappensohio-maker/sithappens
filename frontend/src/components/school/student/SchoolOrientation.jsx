@@ -128,9 +128,9 @@ export default function SchoolOrientation({ dogName }) {
 
   return (
     <>
-      <button type="button" onClick={() => setOpen(true)} data-testid="school-how-it-works"
-              className="min-h-[40px] px-2 rounded-lg text-shSecondary text-[13px] font-black uppercase tracking-widest hover:text-shText focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-shPrimary">
-        <i className="fas fa-circle-question mr-1.5" />How School works
+      <button type="button" onClick={() => setOpen(true)} data-testid="school-how-it-works" aria-label="How School works" title="How School works"
+              className="min-h-[40px] min-w-[40px] px-2 rounded-lg text-shSecondary text-[13px] font-black uppercase tracking-widest hover:text-shText focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-shPrimary">
+        <i className="fas fa-circle-question mr-1.5 sh-orient-icon" aria-hidden="true" /><span className="sh-orient-label">How School works</span>
       </button>
 
       {open && (

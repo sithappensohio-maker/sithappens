@@ -34,6 +34,8 @@ test.describe("practice state after logging", () => {
     const submit = page.getByTestId("practice-completion-submit");
     await submit.scrollIntoViewIfNeeded();
     await submit.click();
+    await expect(page.getByTestId("practice-complete-state")).toBeVisible();
+    await page.getByTestId("practice-complete-continue").click();
     await expect(page).toHaveURL(/\/school$/, { timeout: 15_000 });
 
     // After: the stale instruction is gone for the lesson's row; the general
@@ -65,11 +67,16 @@ test.describe("practice state after logging", () => {
     await expect(done).toContainText(/Done for today/);
     await expect(done).toContainText(/Practice logged today/);
     await expect(done.getByRole("button", { name: /practice again/i })).toBeVisible();
-    await expect(page.getByTestId(`practice-card-${client.general_practice_id}`)).toBeVisible();
-    await expect(page.getByTestId(`practice-card-${client.general_practice_id}`)).toHaveAttribute("data-state", /open|due|overdue|recommended/);
+    // Stage 4: the one unfinished row (the trainer's general Practice) is
+    // today's featured item — rich card + one Start button — not a list row.
+    const today = page.getByTestId("practice-today");
+    await expect(today).toBeVisible();
+    await expect(today).toHaveAttribute("data-practice-id", client.general_practice_id);
+    await expect(today).toHaveAttribute("data-practice-kind", "start");
+    await expect(today).toContainText(/Loose-Leash Bonus/);
     // Done sits below the unfinished work.
     const doneBox = await done.boundingBox();
-    const openBox = await page.getByTestId(`practice-card-${client.general_practice_id}`).boundingBox();
+    const openBox = await today.boundingBox();
     expect(doneBox.y).toBeGreaterThan(openBox.y);
     await H.snap(page, "21-practice-tab-done-for-today");
   });

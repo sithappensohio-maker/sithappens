@@ -26,7 +26,7 @@ export default function TrainerCard({ trainer, onAsk, onViewFeedback, hasUnanswe
 
       {unreadReplies > 0 ? (
         <button type="button" onClick={onViewFeedback} className="mt-3 text-left text-[15px] font-black text-shPrimary" data-testid="trainer-new-reply">
-          <i className="fas fa-reply mr-1" />New trainer {unreadReplies === 1 ? "reply" : "replies"} — view feedback
+          <i className="fas fa-reply mr-1" />New trainer {unreadReplies === 1 ? "reply" : "replies"} — open Coach
         </button>
       ) : hasUnansweredQuestion ? (
         <p className="mt-3 text-[15px] font-bold text-shAccent">

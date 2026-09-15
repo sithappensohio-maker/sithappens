@@ -6,7 +6,7 @@
 // /portal/school (course %, Week/Module X of Y, current lesson, practiced
 // state); nothing is computed by guessing indices in the frontend.
 import HuskyDogImage from "../brand/HuskyDogImage";
-import { deliveryIcon, deliveryLabel } from "../../lib/studentSchool";
+import { deliveryIcon, deliveryLabel, trainingMode } from "../../lib/studentSchool";
 
 function ctaFor(entry) {
   if (!entry) return { label: "View Course", icon: "fa-arrow-right" };
@@ -74,6 +74,10 @@ export default function OnlineSchoolHeroCard({ entries = [], onOpen, testid = "o
               </p>
             </div>
           </div>
+          <p className="text-[12px] text-shTextMuted mt-3 leading-relaxed" data-testid={`${testid}-mode-note`}
+             data-training-mode={trainingMode(e.delivery_mode).key}>
+            <span className="font-black text-shText">{trainingMode(e.delivery_mode).title}.</span> {trainingMode(e.delivery_mode).body}
+          </p>
           {entries.length > 1 && (
             <p className="text-[11px] text-shTextMuted mt-3" data-testid={`${testid}-more-courses`}>
               <i className="fas fa-layer-group mr-1.5 text-shSecondary" />

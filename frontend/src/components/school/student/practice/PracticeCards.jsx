@@ -21,7 +21,7 @@ const STATE = {
   overdue: { label: "Overdue", cls: "text-shAccent border-shAccent/45 bg-shAccent/10", icon: "fa-triangle-exclamation" },
   due: { label: "Due today", cls: "text-shSecondary border-shSecondary/45 bg-shSecondary/10", icon: "fa-clock" },
   recommended: { label: "Recommended next", cls: "text-shPrimary border-shPrimary/40 bg-shPrimary/10", icon: "fa-star" },
-  open: { label: "Assigned", cls: "text-shTextMuted border-shBorder bg-black/20", icon: "fa-paw" },
+  open: { label: "To do", cls: "text-shTextMuted border-shBorder bg-black/20", icon: "fa-paw" },
   completed: { label: "Completed", cls: "text-shPrimary border-shPrimary/35 bg-shPrimary/[0.07]", icon: "fa-circle-check" },
   // The current lesson's required practice, already logged (server-decided).
   done: { label: "Logged", cls: "text-shPrimary border-shPrimary/35 bg-shPrimary/[0.07]", icon: "fa-circle-check" },

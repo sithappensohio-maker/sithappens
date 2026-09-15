@@ -42,6 +42,7 @@ const PERM_LABELS = {
   manage_staff_scheduling: "Staff scheduling",
   manage_training_content: "Training content",
   manage_training_sessions: "Training sessions",
+  assign_training_staff: "Assign training staff (who owns which dog's training)",
   manage_engagement_content: "Engagement content",
   manage_shop_media: "Shop media",
   sell_credits: "Sell prepaid visits",

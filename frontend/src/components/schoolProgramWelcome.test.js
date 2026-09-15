@@ -41,10 +41,13 @@ test("the index is read-only orientation: no lesson-open navigation, and the who
   expect(welcomeSrc).toMatch(/including parts that unlock later/);
 });
 
-test("how-it-works adapts step 3 for in-person delivery instead of promising module unlocks", () => {
+test("how-it-works adapts step 3 for in-person delivery and explains the program's training mode in the shared words", () => {
   expect(welcomeSrc).toMatch(/delivery_mode === "in_person"/);
-  expect(welcomeSrc).toMatch(/Train with your trainer/);
-  expect(welcomeSrc).toMatch(/Your trainer checks in/);
+  // Stage 1 clarity pass: the mode explanation is the ONE shared sentence
+  // (TrainingModeNote), not a Welcome-only paraphrase.
+  expect(welcomeSrc).toMatch(/<TrainingModeNote mode=\{detail\.delivery_mode\} testid="welcome-training-mode"/);
+  expect(welcomeSrc).not.toMatch(/Train with your trainer:/);
+  expect(welcomeSrc).not.toMatch(/curriculum is being prepared/);
 });
 
 // ---------------------------------------------------------------------------

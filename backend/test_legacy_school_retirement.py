@@ -116,7 +116,9 @@ def test_active_legacy_is_not_resolved_as_current_trainer_work():
     p = _legacy_program()
     legacy = _insert_legacy(dog, p)
     resolved = run(server._resolve_active_enrollment_for_dog(dog["id"]))
-    assert resolved == {"ok": False, "reason": "no_active_enrollment"}
+    # superseded: an active legacy row is NAMED as needing migration (never resolved as work, never silently "nothing")
+    assert resolved["ok"] is False and resolved["reason"] == "legacy_curriculum_requires_migration"
+    assert resolved.get("enrollment_id") == legacy["id"]
     summary = server._enrollment_summary(legacy)
     assert summary["curriculum_system"] == "legacy"
     assert summary["legacy_read_only"] is True

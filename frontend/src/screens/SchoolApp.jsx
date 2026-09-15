@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useLayoutEffect, useState } from "react";
+import { useCallback, useEffect, useLayoutEffect, useRef, useState } from "react";
 import { api } from "../lib/api";
 import { useLiveRefresh } from "../lib/useLiveRefresh";
 import { resetSchoolScroll, revealInSchool } from "../lib/schoolViewport";
@@ -10,7 +10,6 @@ import StudentHome from "../components/school/student/StudentHome";
 import CourseRoadmap from "../components/school/student/CourseRoadmap";
 import ProgramWelcome from "../components/school/student/ProgramWelcome";
 import LessonScreen from "../components/school/student/LessonScreen";
-import TodayScreen from "../components/school/student/TodayScreen";
 import PracticePanel from "../components/training/PracticePanel";
 import ModuleQuizPanel from "../components/school/student/ModuleQuizPanel";
 import FeedbackScreen from "../components/school/student/FeedbackScreen";
@@ -23,6 +22,8 @@ import SchoolNotificationBell from "../components/school/student/SchoolNotificat
 import ResourcesScreen from "../components/school/student/ResourcesScreen";
 import SearchScreen from "../components/school/student/SearchScreen";
 import { parseSchoolPath, schoolPathFor, welcomeSeen, markWelcomeSeen, SELECTED_ENROLLMENT_KEY } from "../lib/studentSchool";
+import { practiceCompletionHandoff, lessonIdForPractice } from "../lib/practiceState";
+import { makeHandoff, lessonCompleteHandoff, quizHandoff, HANDOFF_LABELS } from "../lib/handoff";
 
 function AccessEndedState({ onHome, onExit }) {
   return (
@@ -55,6 +56,18 @@ export default function SchoolApp({ path, clientName, onNavigate, onExit }) {
   const [practiceDone, setPracticeDone] = useState(false);
   const [askContext, setAskContext] = useState(null);
   const [quizFor, setQuizFor] = useState(null);
+  // Stage 4 — completed Practice for the SELECTED enrollment, loaded on
+  // demand in small pages (never the whole ledger). Reset on every switch.
+  const [practiceHistory, setPracticeHistory] = useState(null);
+  // Set when the client returns to Today from a saved Practice: keep the next
+  // action on screen even on a short phone (the LAST step sits above NOW).
+  // Runs from an effect AFTER the route-change scroll reset, which would
+  // otherwise cancel the reveal.
+  const [revealNowAfterPractice, setRevealNowAfterPractice] = useState(false);
+  // Stage 10 — the one post-action handoff Today shows ("what just happened /
+  // what happens next"). Never persisted; scoped to the enrollment it came
+  // from; cleared the moment the client acts or leaves Today.
+  const [handoff, setHandoff] = useState(null);
 
   const loadList = useCallback(async () => {
     try { const { data } = await api.get("/portal/school"); setList(data || []); }
@@ -100,7 +113,15 @@ export default function SchoolApp({ path, clientName, onNavigate, onExit }) {
     catch { setDetail(null); }
   }, [selectedId]);
 
-  useEffect(() => { setHomeLoading(true); setHome(null); setDetail(null); loadHome(); loadDetail(); }, [loadHome, loadDetail]);
+  useEffect(() => { setHomeLoading(true); setHome(null); setDetail(null); setPracticeHistory(null); loadHome(); loadDetail(); }, [loadHome, loadDetail]);
+  const loadPracticeHistory = useCallback(async () => {
+    if (!selectedId) return;
+    const offset = practiceHistory?.items?.length || 0;
+    try {
+      const { data } = await api.get(`/portal/school/${selectedId}/practice-history`, { params: { limit: 5, offset } });
+      setPracticeHistory((prev) => ({ items: [...(prev?.items || []), ...(data.items || [])], total: data.total ?? 0 }));
+    } catch { setPracticeHistory((prev) => prev || { items: [], total: 0 }); }
+  }, [selectedId, practiceHistory]);
   useLiveRefresh(loadHome, { intervalMs: 45000 });
 
   // Program Welcome — a client who hasn't completed a single lesson lands on
@@ -127,6 +148,7 @@ export default function SchoolApp({ path, clientName, onNavigate, onExit }) {
   // other route change (deep links, back/forward, notifications).
   const go = useCallback((view, lessonId) => {
     resetSchoolScroll();
+    if (view !== "today" && view !== "home") setHandoff(null);
     onNavigate(schoolPathFor(view, selectedId, lessonId));
   }, [onNavigate, selectedId]);
   useLayoutEffect(() => {
@@ -145,10 +167,12 @@ export default function SchoolApp({ path, clientName, onNavigate, onExit }) {
 
   const selectedEntry = Array.isArray(list) ? list.find((e) => e.school_enrollment_id === selectedId) : null;
 
+  // One opener for every path (Today rail, recap, Practice page, deep links):
+  // the lesson context comes from the row itself when the caller has none.
   const openHomework = useCallback(async (homeworkId, lessonId = null) => {
     const { data: hw } = await api.get(`/homework/${homeworkId}`);
-    setPractice({ homework: hw, lessonId });
-  }, []);
+    setPractice({ homework: hw, lessonId: lessonIdForPractice(home, homeworkId, lessonId) });
+  }, [home]);
 
   const openPractice = useCallback(async (lessonId) => {
     setPracticeDone(false);
@@ -185,15 +209,31 @@ export default function SchoolApp({ path, clientName, onNavigate, onExit }) {
     refreshAll();
   }, [refreshAll]);
 
-  const practiceCompleted = useCallback(async () => {
-    setPractice(null);
-    let act = null;
+  // Stage 4 — a saved Practice session ends on a real handoff, not a tick:
+  // the Coach asks for the FRESH view-model (this reload is the same one
+  // Today uses), shows "Practice complete / Next …", and only routes when
+  // the client taps Continue (continueAfterPractice, the routing below).
+  const practiceCompleted = useCallback(async (hwId) => {
+    let freshHome = null;
     try {
-      const { data: freshHome } = await api.get(`/portal/school/${selectedId}/home`);
+      const res = await api.get(`/portal/school/${selectedId}/home`);
+      freshHome = res.data;
       setHome(freshHome);
       loadDetail();
-      act = freshHome?.current_action || null;
     } catch { /* fall through to Today */ }
+    return practiceCompletionHandoff(freshHome || home, hwId);
+  }, [selectedId, loadDetail, home]);
+
+  const continueAfterPractice = useCallback((handoff) => {
+    setPractice(null);
+    const act = home?.current_action || null;
+    const kind = handoff?.cta?.kind;
+    if (kind === "progress") { go("progress"); return; }
+    // Back on Today, keep the next action on screen even on a short phone —
+    // the LAST step sits above NOW, so a 320×568 viewport otherwise lands
+    // with the button just below the fold.
+    const showNow = () => setRevealNowAfterPractice(true);
+    if (kind === "today" || !act) { go("today"); showNow(); return; }
     const t = act?.type;
     const lessonId = act?.target?.lesson_id;
     if (t === "practice" && lessonId) { openPractice(lessonId); return; }
@@ -204,8 +244,11 @@ export default function SchoolApp({ path, clientName, onNavigate, onExit }) {
       if (moduleId) { setQuizFor({ moduleId, checkpointPassed: false }); return; }
     }
     if (t === "course_complete") { go("progress"); return; }
+    if (t === "advance") { runActionRef.current?.(act); return; }
     go("today");
-  }, [selectedId, loadDetail, openPractice, openPrescribedPractice, go]);
+    showNow();
+  }, [home, openPractice, openPrescribedPractice, go]);
+  const runActionRef = useRef(null);
 
   const revealOnboarding = useCallback(() => {
     revealInSchool('[data-testid="school-onboarding"]', { align: "start", ifNeeded: true });
@@ -232,6 +275,37 @@ export default function SchoolApp({ path, clientName, onNavigate, onExit }) {
     return { id: lid, name: wantedName, moduleName: null };
   }, [detail, home]);
 
+  // Stage 10 — after the pointer moves (self-advance from Today or the lesson
+  // screen), land on Today with RESULT + NEXT read from the FRESH home of THIS
+  // enrollment. The previous lesson name is what just finished.
+  const landLessonComplete = useCallback(async (previousLessonName) => {
+    const enrollmentId = selectedId;
+    let fresh = null;
+    try {
+      const res = await api.get(`/portal/school/${enrollmentId}/home`);
+      fresh = res.data;
+      setHome(fresh);
+      loadDetail();
+    } catch { /* Today reloads on its own */ }
+    go("today");
+    setHandoff({ enrollmentId, ...lessonCompleteHandoff({ lessonName: previousLessonName, home: fresh || home, scope: { enrollmentId } }) });
+    setRevealNowAfterPractice(false);
+  }, [selectedId, loadDetail, go, home]);
+
+  const landQuiz = useCallback(async (result) => {
+    const enrollmentId = selectedId;
+    let fresh = null;
+    try {
+      const res = await api.get(`/portal/school/${enrollmentId}/home`);
+      fresh = res.data;
+      setHome(fresh);
+      loadDetail();
+    } catch { /* Today reloads on its own */ }
+    if (result?.course_completed) { go("progress"); return; }
+    go("today");
+    setHandoff({ enrollmentId, ...quizHandoff(result, fresh || home, { enrollmentId }) });
+  }, [selectedId, loadDetail, go, home]);
+
   const runAction = useCallback(async (action) => {
     const t = action?.type;
     const lessonId = action?.target?.lesson_id || home?.current_lesson?.id;
@@ -247,8 +321,19 @@ export default function SchoolApp({ path, clientName, onNavigate, onExit }) {
       }
     }
     if (t === "advance") {
-      try { await api.post(`/portal/school/${selectedId}/advance`); } catch { /* backend gate holds */ }
-      refreshAll(); go("today"); return;
+      const previousLessonName = home?.current_lesson?.name || null;
+      try {
+        await api.post(`/portal/school/${selectedId}/advance`);
+      } catch (e) {
+        // The backend gate held. Say so — a silent bounce to Today looked like nothing happened.
+        const d = e?.response?.data?.detail;
+        const message = typeof d === "string" ? d : (d && typeof d === "object" && d.message) || "School didn't accept that yet. Today shows what is still needed first.";
+        refreshAll(); go("today");
+        setHandoff({ enrollmentId: selectedId, ...makeHandoff({ state: "error", title: "Couldn't move on yet", summary: message, next: null, action: null, secondary: { label: HANDOFF_LABELS.back_to_today, run: "today" } }) });
+        return;
+      }
+      await landLessonComplete(previousLessonName);
+      return;
     }
     if (t === "course_complete") { go("progress"); return; }
     if (t === "start") { go("course"); return; }
@@ -262,6 +347,18 @@ export default function SchoolApp({ path, clientName, onNavigate, onExit }) {
     if (t === "course_paused") { go("home"); return; }
     go("today");
   }, [home, detail, go, openPractice, openPrescribedPractice, selectedId, refreshAll, revealOnboarding]);
+
+  runActionRef.current = runAction;
+
+  useEffect(() => {
+    if (!revealNowAfterPractice || parsed.view !== "today") return;
+    setRevealNowAfterPractice(false);
+    // One-shot, deliberately without a cleanup: the fresh home view-model
+    // lands within milliseconds and must not cancel the reveal. The delay
+    // clears the route-change scroll reset (a setTimeout(0) in the layout
+    // effect above), which would otherwise cancel it.
+    setTimeout(() => revealInSchool('[data-testid="today-journey-now"]', { align: "action", cta: '[data-testid="today-primary-action"]', ifNeeded: true, behavior: "auto" }), 80);
+  }, [revealNowAfterPractice, parsed.view]);
 
   const goView = useCallback((view) => {
     setPracticeDone(false);
@@ -328,8 +425,9 @@ export default function SchoolApp({ path, clientName, onNavigate, onExit }) {
       screen = <AccessEndedState onHome={() => go("home")} onExit={onExit} />;
     } else if (parsed.view === "course") {
       screen = (
-        <CourseRoadmap detail={detail} progress={home?.progress} loading={!detail}
+        <CourseRoadmap detail={detail} progress={home?.progress} home={home} loading={!detail}
                        onOpenLesson={(lid) => go("lesson", lid)}
+                       onOpenPractice={(hwId) => openHomework(hwId)}
                        onAbout={() => go("welcome")}
                        onResume={() => home?.current_action ? runAction(home.current_action) : go("today")} />
       );
@@ -348,9 +446,10 @@ export default function SchoolApp({ path, clientName, onNavigate, onExit }) {
           deliveryMode={selectedEntry?.delivery_mode}
           onStartPractice={openPractice}
           onStartPrescribedPractice={openPrescribedPractice}
-          onAdvanced={() => { refreshAll(); go("today"); }}
+          onAdvanced={(_res, previousLessonName) => landLessonComplete(previousLessonName)}
           onStateChanged={(opts) => { refreshAll(); if (opts?.openLessonId) go("lesson", opts.openLessonId); }}
           onBackToCourse={() => go("course")}
+          onBackToToday={() => go("today")}
           onAskTrainer={(ctx) => openAsk(ctx)}
           onTakeQuiz={(mid) => setQuizFor({
             moduleId: mid || detail?.roadmap?.module_quiz?.module_id,
@@ -370,6 +469,14 @@ export default function SchoolApp({ path, clientName, onNavigate, onExit }) {
             onViewProgress={() => goView("progress")}
             onViewCourse={() => goView("course")}
             onOpenPractice={(hw) => openHomework(hw?.id || hw)}
+            handoff={handoff && handoff.enrollmentId === selectedId ? handoff : null}
+            onHandoffAction={(a) => {
+              setHandoff(null);
+              if (a?.run === "action") runAction(home?.current_action);
+              else if (a?.run === "progress") goView("progress");
+              else if (a?.run === "course") goView("course");
+              else go("today");
+            }}
           />
           <StudentWorkspaceExtras enrollmentId={selectedId} home={home} mode="home" onChanged={refreshAll}
                                   onOpenLesson={(lid) => go("lesson", lid)} onOpenHomework={openHomework} />
@@ -379,11 +486,16 @@ export default function SchoolApp({ path, clientName, onNavigate, onExit }) {
       screen = (
         <PracticeScreen home={home} loading={homeLoading}
                         onOpenPractice={(hw) => openHomework(hw?.id || hw)}
-                        onPrimaryAction={() => runAction(home?.current_action)} />
+                        onPrimaryAction={() => runAction(home?.current_action)}
+                        onOpenLesson={(lid) => go("lesson", lid)}
+                        onGoCourse={() => goView("course")}
+                        history={practiceHistory} onLoadHistory={loadPracticeHistory} />
       );
     } else if (parsed.view === "feedback") {
-      screen = <FeedbackScreen enrollmentId={selectedId} onAsk={openAsk} onChanged={refreshAll}
-                               onOpenHistory={() => go("lesson_history")} />;
+      screen = <FeedbackScreen enrollmentId={selectedId} home={home} onAsk={openAsk} onChanged={refreshAll}
+                               onOpenHistory={() => go("lesson_history")}
+                               onOpenPractice={(hw) => openHomework(hw?.id || hw)}
+                               onPrimaryAction={() => runAction(home?.current_action)} />;
     } else if (parsed.view === "progress") {
       screen = <ProgressScreen enrollmentId={selectedId} home={home} detail={detail} onOpenHistory={() => go("lesson_history")}
                                onPrimaryAction={() => runAction(home?.current_action)} />;
@@ -404,6 +516,14 @@ export default function SchoolApp({ path, clientName, onNavigate, onExit }) {
             onViewProgress={() => goView("progress")}
             onViewCourse={() => goView("course")}
             onOpenPractice={(hw) => openHomework(hw?.id || hw)}
+            handoff={handoff && handoff.enrollmentId === selectedId ? handoff : null}
+            onHandoffAction={(a) => {
+              setHandoff(null);
+              if (a?.run === "action") runAction(home?.current_action);
+              else if (a?.run === "progress") goView("progress");
+              else if (a?.run === "course") goView("course");
+              else go("today");
+            }}
           />
           <StudentWorkspaceExtras enrollmentId={selectedId} home={home} mode="home" onChanged={refreshAll}
                                   onOpenLesson={(lid) => go("lesson", lid)} onOpenHomework={openHomework} />
@@ -411,7 +531,7 @@ export default function SchoolApp({ path, clientName, onNavigate, onExit }) {
       );
     }
     body = (
-      <div className="max-w-5xl mx-auto w-full px-3 sm:px-6 py-4 sm:py-6 pb-24 md:pb-6">
+      <div className="max-w-5xl mx-auto w-full px-3.5 sm:px-6 py-4 sm:py-6 pb-24 md:pb-6">
         {list.length > 1 && (
           <div className="mb-4 max-w-sm"><EnrollmentSelector enrollments={list} selectedId={selectedId} onSelect={selectEnrollment} /></div>
         )}
@@ -426,7 +546,7 @@ export default function SchoolApp({ path, clientName, onNavigate, onExit }) {
   return (
     <div className="app-shell h-full min-h-0 flex flex-col" style={{ background: "var(--sh-card-base)" }} data-testid="school-app">
       {header}
-      <div className="app-scroll-root flex-1 min-h-0 overflow-y-auto overscroll-contain" data-scroll-root>
+      <div className="app-scroll-root sh-school-scroll flex-1 min-h-0 overflow-y-auto overscroll-contain" data-scroll-root>
         {body}
       </div>
 
@@ -434,7 +554,7 @@ export default function SchoolApp({ path, clientName, onNavigate, onExit }) {
         <PracticePanel homework={practice.homework} dogPhoto={selectedEntry?.dog_photo}
                        schoolLesson={schoolLessonFor(practice.homework, practice.lessonId)} enrollmentId={selectedId}
                        onClose={closePractice} onChanged={refreshAll} onPracticeLogged={practiceLogged}
-                       onCompleted={practiceCompleted} />
+                       onCompleted={practiceCompleted} onContinue={continueAfterPractice} />
       )}
 
       {quizFor && (
@@ -443,7 +563,7 @@ export default function SchoolApp({ path, clientName, onNavigate, onExit }) {
           moduleId={quizFor.moduleId}
           checkpointPassed={quizFor.checkpointPassed}
           onClose={() => { setQuizFor(null); refreshAll(); }}
-          onAdvanced={() => { setQuizFor(null); refreshAll(); go("today"); }}
+          onAdvanced={(result) => { setQuizFor(null); landQuiz(result); }}
           onReviewLesson={(lid) => { setQuizFor(null); go("lesson", lid); }}
         />
       )}

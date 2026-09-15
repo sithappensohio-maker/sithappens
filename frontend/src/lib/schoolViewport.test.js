@@ -48,6 +48,17 @@ test("ifNeeded skips the scroll when the target already sits in the usable windo
   expect(computeRevealTop({ root, target: el(900, 300), align: "start", offset: 8, ifNeeded: true })).not.toBeNull();
 });
 
+test("ifNeeded still reveals a card that only just starts above the tab bar on a 320×568 phone", () => {
+  // usable window 75..504: a 252px coaching card whose top is at 344 shows
+  // only 160px — the reader cannot read it, so the reveal must run.
+  const root = makeRoot({ clientHeight: 429 });
+  expect(computeRevealTop({ root, target: el(344, 252), align: "start", offset: 8, ifNeeded: true })).toBe(344 - 75 - 8);
+  // a short card that is entirely visible is left alone
+  expect(computeRevealTop({ root, target: el(344, 120), align: "start", offset: 8, ifNeeded: true })).toBeNull();
+  // and a tall card with ≥240px readable is left alone too (the 390×844 case)
+  expect(computeRevealTop({ root: makeRoot(), target: el(330, 252), align: "start", offset: 8, ifNeeded: true })).toBeNull();
+});
+
 test("action alignment prefers the card's top when the whole card fits", () => {
   const root = makeRoot({ scrollTop: 500 });
   const card = el(1500, 400);

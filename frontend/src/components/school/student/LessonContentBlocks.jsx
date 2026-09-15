@@ -40,9 +40,24 @@ function SplitLines({ body }) {
    target is a real one and the text is readable at arm's length. Ticking a
    box is a personal aid — it deliberately does NOT report progress anywhere,
    because the lesson model does not define these as completion criteria. */
-function ChecklistBlock({ block }) {
+function ChecklistBlock({ block, readOnly = false }) {
   const items = block?.items || [];
   const base = block?.id || "checklist";
+  if (readOnly) {
+    // Reference rendering (trainer teaching guide): the same items, no
+    // controls. The client's boxes are a personal aid that records nothing,
+    // so a staff reader gets the list without a box that looks like it does.
+    return (
+      <ul className="space-y-1" data-testid="lesson-content-block-checklist-readonly">
+        {items.map((x, i) => (
+          <li key={`ro-${base}-${i}`} className="flex items-start gap-3.5 py-2">
+            <span className="mt-1 w-5 h-5 shrink-0 rounded-md border-2 border-shSecondary/35 bg-black/15" aria-hidden="true" />
+            <span className="min-w-0 flex-1 text-[17px] text-shText leading-[1.5]">{x}</span>
+          </li>
+        ))}
+      </ul>
+    );
+  }
   return (
     <ul className="space-y-1">
       {items.map((x, i) => {
@@ -204,7 +219,7 @@ export function orderBlocksForStudent(blocks = []) {
   return [...active.filter(isDemoMediaBlock), ...active.filter((b) => !isDemoMediaBlock(b))];
 }
 
-export default function LessonContentBlocks({ blocks = [], enrollmentId, previewMode = false, hideTitles = false, onQuizAnswered }) {
+export default function LessonContentBlocks({ blocks = [], enrollmentId, previewMode = false, hideTitles = false, onQuizAnswered, readOnly = false }) {
   const [resources, setResources] = useState([]);
   const active = useMemo(() => orderBlocksForStudent(blocks), [blocks]);
   const resourceIds = useMemo(() => active.map((b) => b.resource_id).filter(Boolean), [active]);
@@ -233,7 +248,7 @@ export default function LessonContentBlocks({ blocks = [], enrollmentId, preview
       {b.resource_id && resourceById[b.resource_id] && b.type === "download" && <button type="button" onClick={() => openResource(resourceById[b.resource_id])} className="w-full text-left rounded-xl border border-shSecondary/20 bg-shSecondary/[0.035] p-3"><i className="fas fa-download text-shSecondary mr-2"/><span className="text-[16px] font-black text-shText">{resourceById[b.resource_id].title}</span><span className="block text-[14px] text-shTextMuted mt-1">Open School resource</span></button>}
       {previewMode && b.resource_id && !resourceById[b.resource_id] && ["video","image","download"].includes(b.type) && <div className="rounded-xl border border-dashed border-shSecondary/25 bg-shSecondary/[0.025] p-3"><i className={`fas ${b.type === "video" ? "fa-video" : b.type === "image" ? "fa-image" : "fa-download"} text-shSecondary mr-2`}/><span className="text-[16px] font-black text-shText">{b.title || "Linked School resource"}</span><span className="block text-[14px] text-shTextMuted mt-1">The selected resource will appear here for enrolled students.</span></div>}
       {b.type === "steps" && <SplitLines body={(b.items || []).length ? b.items.join("\n") : b.body} />}
-      {b.type === "checklist" && <ChecklistBlock block={b} />}
+      {b.type === "checklist" && <ChecklistBlock block={b} readOnly={readOnly} />}
       {b.type === "quiz" && <QuizBlock block={b} onAnswered={onQuizAnswered} />}
       {b.type === "timer" && <TimerBlock block={b} />}
       {b.type === "rep_counter" && <RepBlock block={b} />}

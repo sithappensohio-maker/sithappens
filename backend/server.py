@@ -2139,7 +2139,6 @@ async def delete_file(file_id: str, _: dict = Depends(require_admin)):
     return {"ok": True}
 
 
-
 # -------- Bookings cold-storage archive (Sprint 88) --------
 # Completed / cancelled / rejected bookings older than ARCHIVE_AFTER_DAYS get
 # moved out of the hot `bookings` collection into `bookings_archive`. Keeps
@@ -2350,7 +2349,6 @@ async def _first_booking_created_for_clients(client_ids: List[str]) -> Dict[str,
         if cid and ca and (cid not in out or ca < out[cid]):
             out[cid] = ca
     return out
-
 
 
 @api.post("/clients/send-claim-emails/bulk")
@@ -2924,310 +2922,6 @@ async def request_meet_greet(body: MeetGreetRequestIn, request: Request):
         logger.error("meet_greet_request: admin alert email dispatch crashed for booking %s: %s", mg_booking["id"], e)
 
     return {"ok": True}
-
-
-# -------- Contact inquiry (public "Tell us about your dog" questionnaire) --------
-# The landing page's second door: someone who doesn't yet know whether they
-# want daycare, boarding, training or Online School. Saved as an `inquiries`
-# row (the authoritative record, surfaced in Action Required), merged into a
-# `prospect` client like a Meet & Greet request, and the operator is emailed
-# through the durable outbox path. Vocabulary is server-owned so the email,
-# the admin list and the public form can never disagree.
-INQUIRY_INTERESTS = {
-    "daycare": "Daycare",
-    "boarding": "Boarding",
-    "in_person_training": "In-person training",
-    "online_school": "Online School",
-    "grooming": "Grooming",
-    "not_sure": "Not sure — help me choose",
-}
-INQUIRY_CONCERNS = {
-    "puppy_basics": "Puppy basics",
-    "leash_pulling": "Pulling on leash",
-    "jumping": "Jumping",
-    "barking": "Barking",
-    "recall": "Not coming when called",
-    "house_training": "House training",
-    "separation_anxiety": "Separation anxiety",
-    "reactivity": "Reactive to dogs or people",
-    "bite_history": "Has growled, snapped, or bitten",
-    "other": "Other",
-}
-INQUIRY_PREFERRED_CONTACT = {"call": "Call", "text": "Text", "email": "Email"}
-INQUIRY_START_TIMING = {"asap": "As soon as possible", "next_month": "In the next month", "exploring": "Just exploring"}
-INQUIRY_YES_NO_UNSURE = {"yes": "Yes", "no": "No", "not_sure": "Not sure"}
-INQUIRY_STATUSES = ("new", "contacted", "closed")
-
-
-class ContactInquiryIn(BaseModel):
-    # Required — who, which dog, what for
-    name: str = Field(min_length=1, max_length=120)
-    email: EmailStr
-    phone: str = Field(min_length=1, max_length=40)
-    preferred_contact: Literal["call", "text", "email"]
-    dog_name: str = Field(min_length=1, max_length=80)
-    breed: str = Field(min_length=1, max_length=120)
-    dog_age: str = Field(min_length=1, max_length=40)
-    interests: List[Literal["daycare", "boarding", "in_person_training", "online_school", "grooming", "not_sure"]] = Field(min_length=1)
-    concerns: List[Literal["puppy_basics", "leash_pulling", "jumping", "barking", "recall", "house_training",
-                           "separation_anxiety", "reactivity", "bite_history", "other"]] = Field(min_length=1)
-    message: str = Field(min_length=1, max_length=4000)
-    # Optional
-    dog_sex: Literal["male", "female", ""] = ""
-    fixed: Literal["yes", "no", "not_sure", ""] = ""
-    vaccines_current: Literal["yes", "no", "not_sure", ""] = ""
-    previous_training: str = Field(default="", max_length=1000)
-    household: str = Field(default="", max_length=1000)
-    zip: str = Field(default="", max_length=20)
-    start_timing: Literal["asap", "next_month", "exploring", ""] = ""
-    heard_from: str = Field(default="", max_length=200)
-    # Honeypot — hidden on the real form; bots fill it in. Never stored.
-    website: str = Field(default="", max_length=500)
-
-
-class InquiryPatchIn(BaseModel):
-    status: Optional[Literal["new", "contacted", "closed"]] = None
-    admin_notes: Optional[str] = Field(default=None, max_length=4000)
-
-
-def _inquiry_labels() -> dict:
-    return {
-        "interests": INQUIRY_INTERESTS, "concerns": INQUIRY_CONCERNS,
-        "preferred_contact": INQUIRY_PREFERRED_CONTACT, "start_timing": INQUIRY_START_TIMING,
-        "yes_no_unsure": INQUIRY_YES_NO_UNSURE, "statuses": list(INQUIRY_STATUSES),
-    }
-
-
-def _inquiry_summary_lines(inq: dict) -> List[str]:
-    """Plain-language rows shared by the operator email and the prospect note."""
-    interests = ", ".join(INQUIRY_INTERESTS.get(i, i) for i in (inq.get("interests") or [])) or "—"
-    concerns = ", ".join(INQUIRY_CONCERNS.get(c, c) for c in (inq.get("concerns") or [])) or "—"
-    return [f"Interested in: {interests}.", f"Goals / concerns: {concerns}."]
-
-
-@api.get("/public/contact-inquiry-options")
-async def public_contact_inquiry_options():
-    """The questionnaire's choices, so the public form renders the same words
-    the operator will read in the email and the admin list."""
-    return _inquiry_labels()
-
-
-@api.post("/public/contact-inquiry")
-async def submit_contact_inquiry(body: ContactInquiryIn, request: Request):
-    """Public — no account required. Saves the questionnaire, creates or
-    merges a `prospect` client, emails the operator (durable outbox) and sends
-    the submitter a short acknowledgement. The submitter's request never fails
-    because an email did. Rate-limited like every other unauthenticated write."""
-    email = body.email.lower()
-    ip = _client_ip(request)
-    await _enforce_rate_limit(request, "contact_inquiry_ip", ip, limit=10, window_seconds=3600)
-    await _enforce_rate_limit(request, "contact_inquiry_email_ip", f"{ip}|{email}", limit=5, window_seconds=3600)
-
-    if (body.website or "").strip():
-        # A bot filled the hidden field. Say "ok" so it learns nothing; keep nothing.
-        logger.info("contact_inquiry: honeypot tripped from %s — dropped", ip)
-        return {"ok": True}
-
-    name = body.name.strip()
-    dog_name = body.dog_name.strip()
-    inquiry_id = str(uuid.uuid4())
-    received = now_iso()
-    inquiry = {
-        "id": inquiry_id,
-        "created_at": received,
-        "status": "new",
-        "name": name,
-        "email": email,
-        "phone": body.phone.strip(),
-        "preferred_contact": body.preferred_contact,
-        "dog_name": dog_name,
-        "breed": body.breed.strip(),
-        "dog_age": body.dog_age.strip(),
-        "interests": list(dict.fromkeys(body.interests)),
-        "concerns": list(dict.fromkeys(body.concerns)),
-        "message": body.message.strip(),
-        "dog_sex": body.dog_sex,
-        "fixed": body.fixed,
-        "vaccines_current": body.vaccines_current,
-        "previous_training": body.previous_training.strip(),
-        "household": body.household.strip(),
-        "zip": body.zip.strip(),
-        "start_timing": body.start_timing,
-        "heard_from": body.heard_from.strip(),
-        "admin_notes": "",
-        "source_ip": ip,
-    }
-
-    # Prospect record — same auto-merge rule as /auth/register and the Meet &
-    # Greet form: reuse a client with this email rather than creating a twin.
-    note = " ".join([f"Contact inquiry ({received}).", f"Dog: {dog_name}.", *_inquiry_summary_lines(inquiry)])
-    existing_client = await db.clients.find_one(
-        {"email": {"$regex": f"^{re.escape(email)}$", "$options": "i"}}, {"_id": 0},
-    )
-    if existing_client:
-        client_id = existing_client["id"]
-        prior_notes = (existing_client.get("evaluation_notes") or "").strip()
-        update_fields = {"evaluation_notes": f"{prior_notes}\n{note}".strip() if prior_notes else note}
-        if inquiry["phone"] and not existing_client.get("phone"):
-            update_fields["phone"] = inquiry["phone"]
-        await db.clients.update_one({"id": client_id}, {"$set": update_fields})
-        client_doc = {**existing_client, **update_fields}
-        merged = True
-    else:
-        client_id = str(uuid.uuid4())
-        client_doc = {
-            "id": client_id, "name": name, "address": "", "phone": inquiry["phone"], "email": email,
-            "emerg": "", "credits": 0, "waiver": False, "referred_by_code": None,
-            "client_status": "prospect", "evaluation_notes": note, "created_at": received,
-        }
-        await db.clients.insert_one(dict(client_doc))
-        merged = False
-    inquiry["client_id"] = client_id
-    inquiry["client_merged"] = merged
-    await db.inquiries.insert_one(dict(inquiry))
-
-    # Operator alert — durable (outbox retry, notification_log stamp); the
-    # `inquiries` row is the authoritative record and is already in Action Required.
-    try:
-        sent_now = await notify_admin_contact_inquiry(inquiry, _inquiry_labels())
-        if not sent_now:
-            logger.warning("contact_inquiry: admin alert for %s not sent immediately (queued/skipped — %s)",
-                           inquiry_id, email_service.last_send_error)
-    except Exception as e:
-        logger.error("contact_inquiry: admin alert dispatch crashed for %s: %s", inquiry_id, e)
-    try:
-        await send_contact_inquiry_received(to_email=email, client_name=name, dog_name=dog_name)
-    except Exception as e:
-        logger.warning("contact_inquiry: acknowledgement email failed for %s: %s", email, e)
-
-    return {"ok": True, "id": inquiry_id}
-
-
-@api.get("/inquiries")
-async def list_inquiries(status: Optional[str] = None, _: dict = Depends(require_admin_and_permission("clients_edit"))):
-    q: Dict[str, Any] = {}
-    if status and status != "all":
-        if status not in INQUIRY_STATUSES:
-            raise HTTPException(status_code=400, detail="Unknown status.")
-        q["status"] = status
-    rows = await db.inquiries.find(q, {"_id": 0, "source_ip": 0}).sort("created_at", -1).to_list(2000)
-    counts = {s: await db.inquiries.count_documents({"status": s}) for s in INQUIRY_STATUSES}
-    return {"items": rows, "counts": counts, "labels": _inquiry_labels()}
-
-
-@api.patch("/inquiries/{inquiry_id}")
-async def update_inquiry(inquiry_id: str, body: InquiryPatchIn, user: dict = Depends(require_admin_and_permission("clients_edit"))):
-    row = await db.inquiries.find_one({"id": inquiry_id}, {"_id": 0})
-    if not row:
-        raise HTTPException(status_code=404, detail="Inquiry not found.")
-    update: Dict[str, Any] = {"updated_at": now_iso(), "updated_by": user.get("name") or user.get("email") or ""}
-    if body.status is not None:
-        update["status"] = body.status
-        if body.status == "contacted" and not row.get("contacted_at"):
-            update["contacted_at"] = update["updated_at"]
-    if body.admin_notes is not None:
-        update["admin_notes"] = body.admin_notes.strip()
-    await db.inquiries.update_one({"id": inquiry_id}, {"$set": update})
-    row.update(update)
-    row.pop("source_ip", None)
-    return row
-
-
-# -------- Public website (logged-out sithappens.app) --------
-# The app doubles as the public website. These two endpoints are the only
-# data the public pages need that the existing public endpoints don't already
-# serve (/public/services, /public/school/storefront, /public/shop/*,
-# /settings/public, /branding). Nothing here duplicates a record: business
-# info lives in settings, programs in `programs`.
-
-def _public_site_info(s: dict) -> dict:
-    site = {**(_default_settings().get("public_site") or {}), **(s.get("public_site") or {})}
-    # Legacy flat keys (already used on receipts) win when set.
-    if s.get("business_name"):
-        site["business_name"] = s["business_name"]
-    for key in ("phone", "email"):
-        if s.get(key):
-            site[key] = s[key]
-    if not site.get("map_url"):
-        import urllib.parse
-        q = ", ".join(x for x in (site.get("address_line"), f"{site.get('city', '')}, {site.get('state', '')} {site.get('zip', '')}".strip(", ")) if x)
-        site["map_url"] = "https://www.google.com/maps/search/?api=1&query=" + urllib.parse.quote(q) if q else ""
-    return site
-
-
-@api.get("/public/site")
-async def public_site():
-    """Everything the logged-out website needs about the business: contact
-    details, hours, service area, the photography headline, whether the Meet &
-    Greet door is open, and the generated stay policy. Read-only, no auth."""
-    s = await get_settings()
-    try:
-        stay = await stay_policies()
-    except Exception as e:  # never let a pricing hiccup blank the homepage
-        logger.warning("public_site: stay policy unavailable: %s", e)
-        stay = None
-    return {
-        "site": _public_site_info(s),
-        "business_hours": s.get("business_hours") or {},
-        "photography_page": s.get("photography_page") or {"headline": "Capture the moments worth keeping."},
-        "meet_greet_enabled": bool((s.get("meet_greet") or {}).get("enabled", True)),
-        "feature_visibility": {**_default_feature_visibility(), **(s.get("feature_visibility") or {})},
-        "service_descriptions": s.get("service_descriptions") or {},
-        "stay": stay,
-    }
-
-
-_PUBLIC_PROGRAM_TYPE_LABELS = {
-    "private_lessons": "Private lessons",
-    "group_class": "Group classes",
-    "day_train": "Day training",
-    "board_train": "Board & Train",
-    "service_dog": "Service dog training",
-}
-_PUBLIC_PROGRAM_TYPE_ORDER = {k: i for i, k in enumerate(_PUBLIC_PROGRAM_TYPE_LABELS)}
-
-
-@api.get("/public/training-programs")
-async def public_training_programs():
-    """In-person training programs for the public Training page — the same
-    `programs` rows admins manage and trainers enroll dogs into. Online School
-    programs are served by /public/school/storefront and are excluded here.
-    A program stays off the website when it is inactive, dog-specific, or
-    marked not publicly visible; its price shows only when show_public_price
-    allows and a real price is set."""
-    rows = await db.programs.find(
-        {
-            "active": True,
-            "$or": [{"owner_dog_id": None}, {"owner_dog_id": {"$exists": False}}],
-            "publicly_visible": {"$ne": False},
-            "type": {"$nin": ["self_guided", "online"]},
-            "delivery_mode": {"$nin": ["self_guided", "online"]},
-        },
-        {"_id": 0, "id": 1, "slug": 1, "name": 1, "type": 1, "description": 1, "focus": 1, "format": 1,
-         "min_age_months": 1, "prereq_slugs": 1, "price": 1, "show_public_price": 1, "available_online": 1,
-         "featured": 1, "image_id": 1, "online_description": 1},
-    ).to_list(500)
-    name_by_slug = {r.get("slug"): r.get("name") for r in rows if r.get("slug")}
-    out = []
-    for p in rows:
-        price = p.get("price")
-        show_price = p.get("show_public_price", True) is not False and isinstance(price, (int, float)) and price > 0
-        out.append({
-            "id": p.get("id"), "slug": p.get("slug"), "name": p.get("name"),
-            "type": p.get("type") or "private_lessons",
-            "type_label": _PUBLIC_PROGRAM_TYPE_LABELS.get(p.get("type"), "Training"),
-            "description": p.get("description") or "", "focus": p.get("focus") or "",
-            "online_description": p.get("online_description") or "",
-            "format": p.get("format") or None,
-            "min_age_months": p.get("min_age_months"),
-            "prerequisites": [name_by_slug.get(sl, sl) for sl in (p.get("prereq_slugs") or [])],
-            "price": float(price) if show_price else None,
-            "available_online": bool(p.get("available_online")),
-            "featured": bool(p.get("featured")),
-            "image_url": f"/api/public/shop/media/{p['image_id']}" if p.get("image_id") else None,
-        })
-    out.sort(key=lambda r: (_PUBLIC_PROGRAM_TYPE_ORDER.get(r["type"], 99), r["name"] or ""))
-    return {"programs": out, "type_labels": _PUBLIC_PROGRAM_TYPE_LABELS}
 
 
 # -------- Dogs --------
@@ -4085,7 +3779,6 @@ async def _resolve_base_service_for_booking(body: BookingIn, user: dict) -> Opti
     return await bookings_domain_services.resolve_base_service_for_booking(body, user)
 
 
-
 CAPACITY_LOCK_TTL_SECONDS = 180
 
 
@@ -4296,7 +3989,6 @@ async def _assert_capacity_available(
     if same_service_overlaps >= slot_capacity:
         label = (selected_service or {}).get("name") or body.service_type.title()
         raise _capacity_error(settings, body, f"{label} is full at {body.time}.", resource="class_or_slot", target_date=body.date)
-
 
 
 async def _update_booking_with_capacity(booking: dict, update: Dict[str, Any]) -> dict:
@@ -4940,8 +4632,6 @@ async def admin_reject_vaccine_cert(dog_id: str, vaccine: str, _: dict = Depends
     return {"ok": True, "dog_id": dog_id, "vaccine": vaccine, "rejected": True}
 
 
-
-
 async def _booking_days_count_filtered(target_date: str, service_type: str, *, exclude_booking_id: Optional[str] = None) -> int:
     """Dogs occupying `service_type` capacity on `target_date`. The query is
     date-bounded (rows overlapping the day) and streamed — the old version
@@ -5249,14 +4939,12 @@ async def get_booking_group(group_id: str, user: dict = Depends(get_current_user
     return {"group_id": group_id, "bookings": items, "count": len(items)}
 
 
-
 async def reschedule_booking(booking_id: str, body: RescheduleIn, _: dict = Depends(require_admin)):
     booking = await db.bookings.find_one({"id": booking_id}, {"_id": 0})
     if not booking:
         raise HTTPException(status_code=404, detail="Booking not found")
     update = {"date": body.date, "end_date": body.end_date}
     return await _update_booking_with_capacity(booking, update)
-
 
 
 # ────────────────────── Recurring Schedule Templates ──────────────────────
@@ -5462,10 +5150,6 @@ async def extend_recurring_template(
         "created": len(result.get("created", [])),
         "skipped": result.get("skipped", []),
     }
-
-
-
-
 
 
 async def approve_booking(booking_id: str, user: dict = Depends(require_admin)):
@@ -6319,7 +6003,6 @@ async def get_booking(booking_id: str, user: dict = Depends(get_current_user)):
     return b
 
 
-
 # Every client-facing endpoint that returns a client document must project
 # through this — never a raw db.clients.find_one({"_id": 0}) result. Keeps
 # internal Stripe/AR bookkeeping fields (and anything else added here later)
@@ -6733,7 +6416,6 @@ async def admin_attach_vaccine_cert(dog_id: str, body: VaccineUpdateIn, user: di
     return {"ok": True, "dog_id": dog_id, "vaccine": body.vaccine, "expires_on": body.expires_on}
 
 
-
 # -------- Portal self-service: profile + dogs --------
 class PortalProfileIn(BaseModel):
     name: str = Field(min_length=1)
@@ -6897,7 +6579,6 @@ async def admin_update_help_request(req_id: str, body: HelpRequestStatusIn, _: d
     return doc
 
 
-
 @api.post("/portal/dogs", response_model=DogOut)
 async def portal_create_dog(body: PortalDogIn, user: dict = Depends(get_current_user)):
     cid = await _require_client_with_record(user)
@@ -6940,7 +6621,6 @@ async def portal_update_dog(dog_id: str, body: PortalDogIn, user: dict = Depends
     await db.dogs.update_one({"id": dog_id}, {"$set": update})
     existing.update(update)
     return existing
-
 
 
 async def check_in(
@@ -9216,8 +8896,6 @@ async def _rollback_checkout_finances(
         await db.payment_ledger.delete_many({"operation_id": operation_id})
     except Exception as exc:
         logger.critical("checkout rollback could not remove ledger rows for %s: %s", operation_id, exc)
-
-
 
 
 async def _active_household_checkout_rows(anchor: Dict[str, Any]) -> List[Dict[str, Any]]:
@@ -11964,7 +11642,6 @@ def _validate_banner_cta_url(url: str) -> None:
     raise HTTPException(status_code=422, detail="Banner link must be an internal path (starting with /) or an https:// URL.")
 
 
-
 # -------- Sprint 110di-4 — "What to Expect on Your First Visit" content --------
 def _portal_first_visit_default() -> Dict[str, Any]:
     """Default copy for the portal `First Visit` card. Stored in settings under
@@ -14504,7 +14181,6 @@ def _normalize_resources(items: list) -> list:
     return out
 
 
-
 def _compute_daily_progress(hw: dict) -> List[dict]:
     """Walk template_snapshot.sections (sorted by day_number) and emit a
     per-day status: locked / available / submitted / approved / needs_redo.
@@ -14578,7 +14254,11 @@ async def get_homework_detail(homework_id: str, user: dict = Depends(get_current
     hw = await db.homework.find_one({"id": homework_id}, {"_id": 0})
     if not hw:
         raise HTTPException(status_code=404, detail="Homework not found")
-    if user.get("role") != "admin" and hw.get("client_id") != user.get("client_id"):
+    # Stage 11.5 — a trainer-tier staff account (any role) reads the full record;
+    # a client reads only their own, client-safe view.
+    is_training_staff = user.get("role") == "admin" or (
+        user.get("role") == "employee" and _perms_for(user).get("manage_training_sessions"))
+    if not is_training_staff and hw.get("client_id") != user.get("client_id"):
         raise HTTPException(status_code=403, detail="Not allowed")
     await _require_school_practice_unlocked_for_client(hw, user)
     if hw.get("daily_tracker"):
@@ -14586,7 +14266,7 @@ async def get_homework_detail(homework_id: str, user: dict = Depends(get_current
         hw["daily_progress"] = prog
         hw["streak"] = _streak_count(prog)
         hw["total_days"] = len(prog)
-    if user.get("role") != "admin":
+    if not is_training_staff:
         hw = _client_safe_homework(hw)
     return hw
 
@@ -14806,7 +14486,7 @@ async def review_day(
     homework_id: str,
     day_number: int,
     body: DayReviewIn,
-    user: dict = Depends(require_admin),
+    user: dict = Depends(require_admin_and_permission("manage_training_sessions")),
 ):
     """Admin approves a submitted day (unlocks the next) or sends it back."""
     hw = await db.homework.find_one({"id": homework_id}, {"_id": 0})
@@ -15003,7 +14683,7 @@ async def answer_question(
     day_number: int,
     question_id: str,
     body: DayAnswerIn,
-    user: dict = Depends(require_admin),
+    user: dict = Depends(require_admin_and_permission("manage_training_sessions")),
 ):
     """Admin answers a client's question on a specific day."""
     hw = await db.homework.find_one({"id": homework_id}, {"_id": 0})
@@ -15077,7 +14757,7 @@ async def answer_section_question(
     log_id: str,
     question_id: str,
     body: DayAnswerIn,
-    user: dict = Depends(require_admin),
+    user: dict = Depends(require_admin_and_permission("manage_training_sessions")),
 ):
     """Admin answers a client's question on a section-log entry — the
     section-log/Coach Mode equivalent of answer_question above. Same shape,
@@ -15296,9 +14976,6 @@ async def get_resource_file(media_id: str, user: dict = Depends(get_current_user
         "data": _school_media_data_url(m),
         "filename": m.get("filename"),
     }
-
-
-
 
 
 @api.get("/homework/{homework_id}/media/{media_id}")
@@ -15586,8 +15263,6 @@ async def admin_force_weekly_digest(_: dict = Depends(require_admin)):
     await db.notification_log.delete_many({"key": {"$regex": f"^hw_digest:.*:{week_start}$"}})
     result = await run_homework_weekly_digest_job(db)
     return result
-
-
 
 
 # ────────────────────── Sprint 103 — Homework-Driven Tracker ──────────────────────
@@ -15927,7 +15602,6 @@ async def portal_today_plan(user: dict = Depends(get_current_user)):
     return {"date": today, "yesterday": yesterday, "items": plan, "count": len(plan)}
 
 
-
 # ────────────────────── Sprint 105 — Resources + Step Events ──────────────────────
 
 class ResourceIn(BaseModel):
@@ -16040,10 +15714,8 @@ async def _send_per_step_email(hw: dict, day_number: int, step_label: str, total
         pass
 
 
-
-
 @api.get("/admin/homework/unreviewed-count")
-async def homework_unreviewed_count(_: dict = Depends(require_admin)):
+async def homework_unreviewed_count(_: dict = Depends(require_admin_and_permission("manage_training_sessions"))):
     """How much practice is waiting on a trainer, split into the two things
     that were previously conflated.
 
@@ -16080,7 +15752,7 @@ async def homework_unreviewed_count(_: dict = Depends(require_admin)):
 
 
 @api.get("/admin/homework/pending-reviews")
-async def list_pending_reviews(_: dict = Depends(require_admin)):
+async def list_pending_reviews(_: dict = Depends(require_admin_and_permission("manage_training_sessions"))):
     """All days across all daily-tracker homework that are awaiting admin
     review (status=submitted). Ordered oldest-submitted first.
 
@@ -17870,8 +17542,6 @@ async def program_active_enrollments_count(program_id: str, _: dict = Depends(re
     return {"count": count}
 
 
-
-
 @api.put("/programs/{program_id}")
 async def update_program(
     program_id: str, body: ProgramIn, cascade: bool = False, save_as_draft: bool = False,
@@ -18477,7 +18147,6 @@ class GoalUpdate(BaseModel):
     notes: Optional[str] = None
 
 
-
 # ─── Sprint 110bx + 110bz · Auto-homework engine for training programs ────
 #
 # Triggers:
@@ -18753,7 +18422,6 @@ async def _auto_assign_module_homework(enrollment: dict, just_mastered_goal_id: 
     if hw:
         await _record_auto_assign(enrollment["id"], template_id, trigger, hw["id"])
     return hw
-
 
 
 async def _apply_goal_update_to_enrollment(
@@ -20514,6 +20182,10 @@ async def school_enroll(
             detail="This custom program belongs to another dog and cannot be assigned here.",
         )
 
+    # Stage 12 — naming another trainer as the owner of this dog's training is
+    # staff-management authority (assign_training_staff); naming yourself is not.
+    _require_trainer_assignment_authority(user, body.assigned_trainer_id)
+
     if body.delivery_mode in ("in_person", "hybrid"):
         return await _grant_staff_school_enrollment(
             dog, program, delivery_mode=body.delivery_mode, enrolled_by=user.get("id"),
@@ -20706,6 +20378,7 @@ async def migrate_legacy_enrollment_to_school(
         if existing.get("delivery_channel") == "online_school":
             set_doc["delivery_channel"] = "hybrid_school"
         if body.assigned_trainer_id:
+            _require_trainer_assignment_authority(user, body.assigned_trainer_id, existing.get("assigned_trainer_id"))
             trainer = await db.users.find_one({"id": body.assigned_trainer_id, "active": {"$ne": False}}, {"_id": 0})
             if not trainer or not _perms_for(trainer).get("manage_training_sessions"):
                 raise HTTPException(status_code=422, detail="Assigned trainer is not active or cannot run training sessions")
@@ -21756,7 +21429,512 @@ async def _client_practice_summary(hw: dict, enrollment: dict, *, current_hw_id:
         "sessions_logged": int(sessions),
         "last_session_at": max(stamps) if stamps else None,
         "required_practice_satisfied": bool(is_current and current_lesson_practiced and not practice_required_now),
+        # Stage 4 — plain flags the Practice screen phrases ("Trainer assigned",
+        # "Optional extra work", "From your last lesson"). Read-only; the raw
+        # assigned_by string itself stays out of the client payload.
+        "assigned_by_trainer": not str(hw.get("assigned_by") or "").startswith("Online School"),
+        "is_optional": hw.get("required") is False,
+        "session_linked": bool(hw.get("source_session_log_id")),
     }
+
+
+# ─── Training Experience Clarity Pass — Stage 2: LAST → NOW → NEXT ──────────
+#
+# One derived, read-only block on the Student Home view-model that answers, for
+# the SELECTED dog + program only: what happened most recently, what to do right
+# now, and what comes after. It introduces no state and no second progression
+# engine — current_action stays the priority decision, the roadmap/checkpoint
+# status stay the gates, and every record it reads is already client-safe.
+# Everything is keyed on this enrollment attempt (dog_programs.id /
+# school_enrollments.id), so two dogs or two programs can never blend.
+
+def _journey_excerpt(text: Optional[str], limit: int = 160) -> str:
+    t = " ".join(str(text or "").split())
+    if len(t) <= limit:
+        return t
+    cut = t[:limit].rsplit(" ", 1)[0]
+    return (cut or t[:limit]).rstrip(",;:") + "…"
+
+
+def _journey_lesson_name(enrollment: dict, lesson_id: Optional[str]) -> Optional[str]:
+    if not lesson_id:
+        return None
+    return (_find_lesson_in_snapshot(enrollment, lesson_id) or {}).get("name")
+
+
+def _journey_last_completed_lesson(roadmap: Optional[dict]) -> Optional[str]:
+    """Name of the most recently completed lesson, in curriculum order. Online
+    lesson completion carries no timestamp (the pointer just moves), so this
+    is the only client-safe evidence that a lesson was finished."""
+    last = None
+    for m in (roadmap or {}).get("modules") or []:
+        for l in m.get("lessons") or []:
+            if l.get("status") == "completed" and l.get("name"):
+                last = l["name"]
+            elif l.get("is_current"):
+                return last
+    return last
+
+
+async def _school_journey_last(se: dict, enrollment: dict, roadmap: Optional[dict]) -> dict:
+    """The most meaningful recent training event for THIS enrollment. Sources,
+    all existing and client-safe: the trainer's completed sessions (lesson
+    history), checkpoint submissions, logged Practice, and — untimestamped —
+    the last completed lesson on the roadmap. Never returns a blank card."""
+    timed: List[dict] = []
+
+    log = await db.training_session_log.find_one(
+        {"enrollment_id": enrollment["id"]},
+        {"_id": 0, "at": 1, "lesson_name_at_session": 1, "lesson_id_at_session": 1, "module_id_at_session": 1,
+         "what_went_well": 1, "client_recap_note": 1, "next_lesson_focus": 1, "goal_updates": 1},
+        sort=[("at", -1)],
+    )
+    if log and log.get("at"):
+        lesson_name = (log.get("lesson_name_at_session")
+                       or _journey_lesson_name(enrollment, log.get("lesson_id_at_session"))
+                       or _module_name_in_snapshot(enrollment, log.get("module_id_at_session")))
+        first_obs = next((g.get("client_observation") for g in (log.get("goal_updates") or [])
+                          if (g.get("client_observation") or "").strip()), None)
+        summary = next((v for v in (log.get("what_went_well"), log.get("client_recap_note"),
+                                    log.get("next_lesson_focus"), first_obs) if (v or "").strip()), None)
+        timed.append({
+            "kind": "session", "at": log["at"],
+            "eyebrow": "Last lesson with your trainer",
+            "title": lesson_name or "Lesson with your trainer",
+            "summary": _journey_excerpt(summary) if summary else "Your trainer logged this lesson.",
+        })
+
+    sub = await db.checkpoint_submissions.find_one(
+        {"school_enrollment_id": se["id"]},
+        {"_id": 0, "status": 1, "outcome": 1, "graded_at": 1, "submitted_at": 1, "lesson_name": 1,
+         "lesson_id": 1, "trainer_feedback": 1},
+        sort=[("submitted_at", -1)],
+    )
+    if sub and (sub.get("graded_at") or sub.get("submitted_at")):
+        lesson_name = sub.get("lesson_name") or _journey_lesson_name(enrollment, sub.get("lesson_id")) or "your checkpoint"
+        if sub.get("status") == "graded":
+            outcome = sub.get("outcome")
+            headline = {"advance": "Passed — you moved on.",
+                        "prescribe_practice": "Your trainer asked for more Practice first.",
+                        "trainer_assist_recommended": "Your trainer recommended a hands-on session."}.get(outcome, "Reviewed by your trainer.")
+            fb = _journey_excerpt(sub.get("trainer_feedback"), 120)
+            timed.append({
+                "kind": "checkpoint", "at": sub.get("graded_at") or sub.get("submitted_at"),
+                "eyebrow": "Last checkpoint",
+                "title": f"Checkpoint: {lesson_name}",
+                "summary": f"{headline} {fb}".strip(),
+            })
+        else:
+            timed.append({
+                "kind": "checkpoint_submitted", "at": sub.get("submitted_at"),
+                "eyebrow": "Last checkpoint",
+                "title": f"Checkpoint: {lesson_name}",
+                "summary": "Submitted — your trainer will review it.",
+            })
+
+    hw_rows = await db.homework.find(
+        {"school_enrollment_id": se["id"]},
+        {"_id": 0, "id": 1, "title": 1, "section_logs": 1, "source_lesson_id": 1, "school_lesson_id": 1, "trigger": 1, "completed_at": 1, "status": 1},
+    ).to_list(200)
+    best_hw, best_at = None, None
+    for hw in hw_rows:
+        for lg in hw.get("section_logs") or []:
+            if not _practice_log_counts_as_session(hw, lg):
+                continue
+            at = lg.get("logged_at") or lg.get("date")
+            if at and (best_at is None or str(at) > str(best_at)):
+                best_hw, best_at = hw, at
+        if hw.get("status") == "completed" and hw.get("completed_at") and (best_at is None or str(hw["completed_at"]) > str(best_at)):
+            best_hw, best_at = hw, hw["completed_at"]
+    practice_event = None
+    if best_hw:
+        # Same lesson link _client_practice_summary uses (source_lesson_id),
+        # then the older markers, so the card names the LESSON, not the template.
+        lid = best_hw.get("source_lesson_id") or best_hw.get("school_lesson_id")
+        if not lid:
+            m = re.match(r"^school_lesson:(.+)$", str(best_hw.get("trigger") or ""))
+            lid = m.group(1) if m else None
+        lesson_name = _journey_lesson_name(enrollment, lid) or best_hw.get("title") or "Practice"
+        practice_event = {
+            "kind": "practice", "at": best_at,
+            "eyebrow": "Last Practice",
+            "title": f"Practice: {lesson_name}" if not str(lesson_name).lower().startswith("practice") else str(lesson_name),
+            "summary": "Practice logged — nice work staying consistent.",
+            "lesson_id": lid,
+        }
+        timed.append(practice_event)
+
+    completed_lesson = _journey_last_completed_lesson(roadmap)
+    lesson_event = {
+        "kind": "lesson", "at": None,
+        "eyebrow": "Last lesson",
+        "title": completed_lesson or "",
+        "summary": "Lesson complete.",
+    } if completed_lesson else None
+
+    timed.sort(key=lambda e: str(e.get("at") or ""), reverse=True)
+    newest = timed[0] if timed else None
+    chosen = None
+    if newest is None:
+        chosen = lesson_event
+    elif newest["kind"] != "practice":
+        chosen = newest
+    else:
+        # Practice is the least meaningful event. It only wins over "lesson
+        # complete" when it belongs to the lesson the client is on now (so it
+        # is newer than the last completion) or when nothing was completed.
+        cur_lid = (roadmap or {}).get("current_lesson_id")
+        if lesson_event and not (newest.get("lesson_id") and newest["lesson_id"] == cur_lid):
+            chosen = lesson_event
+        else:
+            chosen = newest
+    if not chosen:
+        return {"kind": "none", "eyebrow": "Just getting started", "title": "Nothing logged yet",
+                "summary": "Your first lesson is right below.", "at": None}
+    chosen.pop("lesson_id", None)
+    return chosen
+
+
+def _school_journey_now(action: dict, current_lesson: Optional[dict], active_practice: List[dict],
+                        delivery_mode: str, dog_name: Optional[str], program_name: Optional[str]) -> dict:
+    """What to do right now — a presentation of current_action (the existing
+    priority decision) plus the ONE Practice row it refers to. cta.run tells
+    the client which EXISTING mechanism to use: "action" (run current_action)
+    or "practice_row" (open the named Practice row)."""
+    t = action.get("type")
+    dog = dog_name or "your dog"
+    lesson_name = (current_lesson or {}).get("name")
+
+    def _open_rows():
+        return [hw for hw in active_practice if hw.get("status") != "completed" and not hw.get("required_practice_satisfied")]
+
+    def _practice_block(hw: Optional[dict]) -> Optional[dict]:
+        if not hw:
+            return None
+        bits = []
+        if hw.get("minutes_per_session"):
+            bits.append(f"{hw['minutes_per_session']} minutes")
+        if hw.get("repetition_target"):
+            bits.append(f"{hw['repetition_target']} rounds")
+        if hw.get("practice_frequency"):
+            bits.append(str(hw["practice_frequency"]))
+        note = _journey_excerpt(hw.get("trainer_personalized_note") or hw.get("instructions"), 140)
+        return {"id": hw.get("id"), "title": hw.get("school_lesson_name") or hw.get("title") or "Practice",
+                "detail": " · ".join(bits), "note": note or None, "due_date": hw.get("due_date"),
+                "sessions_logged": hw.get("sessions_logged") or 0}
+
+    if t in ("practice", "remediation"):
+        rows = _open_rows()
+        hw = next((r for r in rows if r.get("is_current_lesson_practice")), rows[0] if rows else None)
+        pb = _practice_block(hw)
+        title = f"Practice {lesson_name}" if lesson_name and t == "practice" else (
+            "Your trainer's Practice plan" if t == "remediation" else "Practice")
+        body = (pb or {}).get("detail") or action.get("sublabel") or f"Get {dog} and do today's Practice."
+        return {"kind": t, "title": title, "body": body, "practice": pb,
+                "cta": {"label": "Start Practice", "run": "action"}}
+    if t == "lesson":
+        return {"kind": "lesson", "title": lesson_name or "Your current lesson",
+                "body": action.get("sublabel") or "Read this lesson one part at a time.",
+                "practice": None, "cta": {"label": action.get("label") or "Continue lesson", "run": "action"}}
+    if t == "submit_checkpoint":
+        return {"kind": "submit_checkpoint", "title": f"Checkpoint: {lesson_name}" if lesson_name else "Your checkpoint",
+                "body": action.get("sublabel") or "Film a short clip so your trainer can check it.",
+                "practice": None, "cta": {"label": action.get("label") or "Submit your checkpoint", "run": "action"}}
+    if t == "module_quiz":
+        return {"kind": "module_quiz", "title": "Module Quiz", "body": action.get("sublabel") or "A few quick questions before moving on.",
+                "practice": None, "cta": {"label": "Take the Module Quiz", "run": "action"}}
+    if t == "advance":
+        return {"kind": "advance", "title": f"You finished {lesson_name}" if lesson_name else "Lesson finished",
+                "body": "Continue to your next lesson whenever you're ready.",
+                "practice": None, "cta": {"label": "Continue to your next lesson", "run": "action"}}
+    if t == "awaiting_review":
+        return {"kind": "awaiting_review", "title": "Waiting for trainer review",
+                "body": "You don't need to do anything right now. Your trainer will review your checkpoint soon.",
+                "practice": None, "cta": None}
+    if t == "trainer_assist":
+        return {"kind": "trainer_assist", "title": action.get("label") or "Trainer Assist",
+                "body": action.get("sublabel") or "Your trainer will work through this with you in person.",
+                "practice": None, "cta": {"label": "See details", "run": "action"}}
+    if t == "trainer_guided":
+        rows = _open_rows()
+        if rows:
+            hw = rows[0]
+            pb = _practice_block(hw)
+            return {"kind": "practice_row", "title": f"Practice {pb['title']}", "body": pb["detail"] or "From your trainer.",
+                    "practice": pb, "cta": {"label": "Start Practice", "run": "practice_row"}}
+        logged = next((hw for hw in active_practice if hw.get("required_practice_satisfied")), None)
+        return {"kind": "done_today", "title": "You're done for today",
+                "body": (f"Keep practicing {lesson_name} until your next lesson with your trainer." if lesson_name
+                         else "Keep practicing until your next lesson with your trainer."),
+                "practice": _practice_block(logged),
+                "cta": {"label": "Practice again", "run": "practice_row", "secondary": True} if logged else None}
+    if t == "course_complete":
+        return {"kind": "course_complete", "title": "Program complete",
+                "body": f"You and {dog} finished {program_name or 'this program'}. Every lesson stays open for review.",
+                "practice": None, "cta": {"label": "See your progress", "run": "action"}}
+    if t == "onboarding":
+        return {"kind": "onboarding", "title": "Complete your School setup",
+                "body": action.get("sublabel") or "A few quick questions before your first lesson.",
+                "practice": None, "cta": {"label": "Complete setup", "run": "action"}}
+    if t == "start":
+        return {"kind": "start", "title": "Start your first lesson", "body": action.get("sublabel") or "Begin your first lesson.",
+                "practice": None, "cta": {"label": action.get("label") or "Start school", "run": "action"}}
+    # access_expired / course_paused / setup_required — informational only.
+    return {"kind": t or "info", "title": action.get("label") or "Nothing to do right now",
+            "body": action.get("sublabel") or "", "practice": None, "cta": None}
+
+
+# Stage 3 — post-lesson client handoff. The recap is the LAST step of the
+# journey told in full: the trainer's client-safe summary of the most recent
+# completed session for THIS enrollment, plus the Practice that session
+# assigned (the persisted link is training_session_log.homework_created /
+# homework.source_session_log_id — no new state). Prominence is derived from
+# that link and timestamps: the recap stays prominent until the client
+# starts the Practice from that session; with no Practice it fades after
+# three days. Private fields (session_note, per-skill `note`, booking/draft
+# ids, activities) are never read into it.
+_RECAP_ADVANCE_LABELS = {
+    "remain": "Staying on this lesson for now.",
+    "assign_review": "Extra review before moving on.",
+    "mark_for_assessment": "Ready for an assessment next.",
+    "advance_next": "Moved on to the next lesson.",
+    "advance_lesson": "Moved on to the next lesson.",
+    "advance_module": "Moved on to the next module.",
+    "skip_lesson": "Moved ahead in the program.",
+    "reopen_previous_lesson": "Going back over an earlier lesson.",
+    "complete_program": "Program complete.",
+}
+_RECAP_OUTCOME_LABELS = {
+    "passed": "Passed", "improving": "Improving", "needs_more_work": "Needs more work",
+    "introduced": "Introduced today", "reliable": "Reliable",
+}
+_RECAP_PROMINENT_HOURS_WITHOUT_PRACTICE = 72
+
+
+def _recap_norm(text: Optional[str]) -> str:
+    return " ".join(str(text or "").lower().split()).strip(" .!")
+
+
+async def _school_journey_recap(se: dict, enrollment: dict, last_event: Optional[dict]) -> Optional[dict]:
+    log = await db.training_session_log.find_one(
+        {"enrollment_id": enrollment["id"]},
+        {"_id": 0, "at": 1, "by_user": 1, "lesson_name_at_session": 1, "lesson_id_at_session": 1,
+         "module_id_at_session": 1, "what_went_well": 1, "needs_work": 1, "next_lesson_focus": 1,
+         "client_recap_note": 1, "goal_updates": 1, "advancement_action": 1, "homework_created": 1},
+        sort=[("at", -1)],
+    )
+    if not log or not log.get("at"):
+        return None
+    lesson_name = (log.get("lesson_name_at_session")
+                   or _journey_lesson_name(enrollment, log.get("lesson_id_at_session"))
+                   or _module_name_in_snapshot(enrollment, log.get("module_id_at_session")))
+
+    observations = []
+    for g in log.get("goal_updates") or []:
+        obs = (g.get("client_observation") or "").strip()
+        if not obs:
+            continue
+        observations.append({
+            "skill": g.get("skill_name") or "Skill",
+            "observation": _journey_excerpt(obs, 200),
+            "outcome": _RECAP_OUTCOME_LABELS.get(g.get("session_outcome")),
+        })
+    went_well = (log.get("what_went_well") or "").strip() or None
+    needs_work = (log.get("needs_work") or "").strip() or None
+    if not went_well:
+        good = next((o for o in observations if o["outcome"] in ("Passed", "Improving", "Reliable", "Introduced today")), None)
+        if good:
+            went_well = f"{good['skill']}: {good['observation']}"
+    if not needs_work:
+        work = next((o for o in observations if o["outcome"] == "Needs more work"), None)
+        if work:
+            needs_work = f"{work['skill']}: {work['observation']}"
+    next_focus = (log.get("next_lesson_focus") or "").strip() or None
+    note = (log.get("client_recap_note") or "").strip() or None
+    if note and _recap_norm(note) in {_recap_norm(x) for x in (went_well, needs_work, next_focus) if x}:
+        note = None  # the trainer wrote the same sentence twice — say it once
+    outcome_label = _RECAP_ADVANCE_LABELS.get(log.get("advancement_action") or "")
+
+    # ---- the Practice this session assigned (explicit persisted link) ----
+    hw_ids = [h for h in (log.get("homework_created") or []) if h]
+    rows = await db.homework.find(
+        {"id": {"$in": hw_ids}},
+        {"_id": 0, "id": 1, "title": 1, "status": 1, "section_logs": 1, "source_lesson_id": 1, "minutes_per_session": 1,
+         "repetition_target": 1, "practice_frequency": 1, "trainer_personalized_note": 1, "instructions": 1,
+         "school_enrollment_id": 1, "school_enrollment_record_id": 1, "assigned_by": 1, "trigger": 1, "dog_id": 1},
+    ).to_list(20) if hw_ids else []
+    practice = None
+    state = "none"
+    if rows:
+        active = [r for r in rows if r.get("status") != "completed"]
+        pick = active[0] if active else rows[0]
+        sessions_logged = 0
+        logged_since = False
+        for r in rows:
+            for lg in r.get("section_logs") or []:
+                if not _practice_log_counts_as_session(r, lg):
+                    continue
+                sessions_logged += 1
+                at = lg.get("logged_at") or lg.get("date") or ""
+                if str(at) >= str(log["at"])[:len(str(at))]:
+                    logged_since = True
+        if not active:
+            state = "completed"
+        else:
+            gate = await _school_practice_gate_state(pick)
+            if gate.get("applies") and not gate.get("unlocked"):
+                state = "locked"
+            elif logged_since or pick.get("status") == "in_progress":
+                state = "started"
+            else:
+                state = "due"
+        bits = []
+        if pick.get("minutes_per_session"):
+            bits.append(f"{pick['minutes_per_session']} minutes")
+        if pick.get("repetition_target"):
+            bits.append(f"{pick['repetition_target']} rounds")
+        if pick.get("practice_frequency"):
+            bits.append(str(pick["practice_frequency"]))
+        practice = {
+            "id": pick.get("id"),
+            "title": _journey_lesson_name(enrollment, pick.get("source_lesson_id")) or pick.get("title") or "Practice",
+            "detail": " · ".join(bits),
+            "note": _journey_excerpt(pick.get("trainer_personalized_note") or pick.get("instructions"), 160) or None,
+            "state": state,
+            "sessions_logged": sessions_logged,
+        }
+
+    # ---- prominence, derived — never a stored flag ----
+    try:
+        age_hours = (datetime.now(timezone.utc) - datetime.fromisoformat(str(log["at"]).replace("Z", "+00:00"))).total_seconds() / 3600
+    except Exception:
+        age_hours = 10 ** 6
+    last_is_session = bool(last_event and last_event.get("kind") == "session")
+    prominent = last_is_session and (
+        state in ("due", "locked") or (state == "none" and age_hours <= _RECAP_PROMINENT_HOURS_WITHOUT_PRACTICE))
+    return {
+        "session_at": log["at"],
+        "trainer_name": log.get("by_user") or None,
+        "lesson_name": lesson_name,
+        "went_well": went_well,
+        "needs_work": needs_work,
+        "next_focus": next_focus,
+        "trainer_message": note,
+        "outcome_label": outcome_label,
+        "observations": observations[:4],
+        "practice": practice,
+        "practice_state": state,
+        "prominence": "prominent" if prominent else "reduced",
+    }
+
+
+async def _school_journey_next_booking(dog_id: str) -> Optional[dict]:
+    """The dog's next training appointment, from the existing bookings ledger —
+    same filter the staff workspace uses. None when there is none: the client
+    copy then says "at your next visit" instead of inventing a date."""
+    today = business_today().isoformat()
+    b = await db.bookings.find_one(
+        {"dog_id": dog_id, "service_type": "training", "status": {"$in": ["pending", "approved"]}, "date": {"$gte": today}},
+        {"_id": 0, "date": 1, "time": 1, "status": 1},
+        sort=[("date", 1), ("time", 1)],
+    )
+    return {"date": b.get("date"), "time": b.get("time"), "status": b.get("status")} if b else None
+
+
+def _school_journey_next(action: dict, now: dict, roadmap: Optional[dict], upcoming: Optional[dict],
+                         delivery_mode: str, appointment: Optional[dict], recommended_next: List[dict]) -> dict:
+    """What comes after the current work, from real progression state: the
+    roadmap's next lesson/module, the checkpoint state, the delivery mode and
+    (trainer-led / hybrid only) the next booked training appointment."""
+    t = action.get("type")
+    cp = (roadmap or {}).get("checkpoint_status") or {}
+    cp_state = cp.get("status")
+    requires_cp = bool((roadmap or {}).get("requires_checkpoint"))
+    lesson_name = ((roadmap or {}).get("current_lesson") or {}).get("name")
+    in_person = delivery_mode == "in_person"
+    hybrid = delivery_mode == "hybrid"
+    trainer_visit = "with your trainer at your next visit"
+    appt = None
+    if appointment and (in_person or hybrid):
+        appt = appointment
+
+    def _out(kind, title, body, **extra):
+        d = {"kind": kind, "title": title, "body": body, "appointment": appt}
+        d.update(extra)
+        return d
+
+    if t == "course_complete":
+        if recommended_next:
+            nxt = recommended_next[0]
+            return _out("next_program", f"Next program: {nxt.get('name')}", "Ask your trainer when you're ready for it.")
+        return _out("program_complete", "Keep the skills sharp", "Every lesson stays open for review any time.")
+    if t == "access_expired":
+        return _out("paused", "Training resumes when access is restored", "Reach out to Sit Happens if you think this is a mistake.")
+    if t == "course_paused":
+        return _out("paused", "Training resumes when the pause ends", "Your history is safe.")
+    if t == "setup_required":
+        return _out("paused", "Your trainer updates this lesson", "Then training continues from here.")
+    if t == "onboarding":
+        return _out("first_lesson", "Your first lesson", "Opens right after setup.")
+    if t == "start":
+        return _out("first_lesson", "Your first lesson", "School opens it as soon as you begin.")
+    if t == "awaiting_review":
+        then = f" Then: {upcoming['name']}." if upcoming and upcoming.get("name") else ""
+        return _out("checkpoint_review", "Checkpoint review", "Your trainer will review your submission before you continue." + then)
+    if t == "trainer_assist":
+        ta = cp.get("trainer_assist") or {}
+        if ta.get("scheduled_date"):
+            return _out("trainer_assist", "Trainer Assist session", f"Booked for {ta['scheduled_date']}" + (f" at {ta['scheduled_time']}" if ta.get("scheduled_time") else "") + ".")
+        return _out("trainer_assist", "Trainer Assist session", "Your trainer will arrange the hands-on session with you.")
+    if t == "remediation":
+        remaining = ((cp.get("prescription") or {}).get("practice_sessions_remaining"))
+        body = (f"After {remaining} more Practice session{'s' if remaining != 1 else ''}." if isinstance(remaining, int) and remaining > 0
+                else "Once your trainer's Practice plan is done.")
+        return _out("checkpoint_resubmit", "Resubmit your checkpoint", body)
+    if t == "submit_checkpoint":
+        return _out("checkpoint_review", "Trainer review", "Your trainer reviews your checkpoint before the next lesson opens.")
+    if t == "module_quiz":
+        if upcoming and upcoming.get("name"):
+            return _out("next_module", f"Module: {upcoming['name']}", "Unlocks after the quiz.")
+        return _out("program_complete", "Program complete", "The quiz is the last step.")
+
+    # NOW is lesson / practice / advance / trainer_guided / practice_row / done_today.
+    if in_person:
+        if t in ("lesson", "practice"):
+            if requires_cp and cp_state in (None, "not_submitted"):
+                return _out("checkpoint_next", f"Checkpoint: {lesson_name}" if lesson_name else "Checkpoint",
+                            f"Your trainer checks this skill {trainer_visit}.")
+            body = "Then your trainer moves you forward at your next visit." if not appt else "Then your next lesson with your trainer."
+            return _out("next_lesson", upcoming["name"] if upcoming and upcoming.get("name") else "Your next lesson with your trainer", body)
+        if upcoming and upcoming.get("name"):
+            return _out("next_lesson", upcoming["name"],
+                        "With your trainer at your next visit. Keep practicing until then." if not appt else "With your trainer. Keep practicing until then.")
+        return _out("program_finish", "Program complete after this lesson",
+                    "Your trainer marks the program complete when the skills are solid.")
+
+    # Online and hybrid clients self-progress under the existing gating.
+    if requires_cp and cp_state in (None, "not_submitted") and t in ("lesson", "practice"):
+        return _out("checkpoint_next", f"Checkpoint: {lesson_name}" if lesson_name else "Checkpoint",
+                    "Record a short video for your trainer after today's Practice." + (" Your trainer can also check it in person." if hybrid else ""))
+    if (roadmap or {}).get("module_quiz_required") and upcoming and upcoming.get("kind") == "module" and t in ("lesson", "practice"):
+        return _out("module_quiz", "Module Quiz", "A few questions after today's Practice, then the next module opens.")
+    has_practice = bool((roadmap or {}).get("current_lesson_has_practice"))
+    if t == "advance":
+        avail = "Ready now — continue when you're ready."
+    elif t == "practice":
+        avail = "Available after today's Practice."
+    elif t == "lesson":
+        avail = "Available after this lesson and its Practice." if has_practice else "Available after this lesson."
+    else:
+        avail = "Available when School moves you forward."
+    if hybrid:
+        avail += " Your trainer also works through it with you in person."
+    if upcoming and upcoming.get("name"):
+        label = upcoming["name"] if upcoming.get("kind") == "lesson" else f"Module: {upcoming['name']}"
+        return _out("next_lesson" if upcoming.get("kind") == "lesson" else "next_module", label, avail)
+    if (roadmap or {}).get("is_final_lesson"):
+        return _out("program_finish", "Program complete after this lesson", "This is the last lesson in the program.")
+    return _out("next_lesson", "Your next lesson", avail)
 
 
 @api.get("/portal/school/{school_enrollment_id}/home")
@@ -21900,6 +22078,15 @@ async def portal_school_home(school_enrollment_id: str, user: dict = Depends(get
         # remains visible exactly as before.
         if gate.get("applies") and not gate.get("unlocked"):
             continue
+        # Stage 4 — daily-tracker rows carry the same per-day progress the
+        # single-homework read computes, so the Practice screen can show
+        # "1 of 3 days complete" / waiting-for-review from the canonical
+        # calculation instead of guessing from raw logs.
+        if hw.get("daily_tracker"):
+            _prog = _compute_daily_progress(hw)
+            hw["daily_progress"] = _prog
+            hw["streak"] = _streak_count(_prog)
+            hw["total_days"] = len(_prog)
         safe_hw = _client_safe_homework(hw)
         safe_hw.update(await _client_practice_summary(
             hw, enrollment,
@@ -21908,6 +22095,21 @@ async def portal_school_home(school_enrollment_id: str, user: dict = Depends(get
             practice_required_now=_practice_required_now,
         ))
         active_practice.append(safe_hw)
+
+    # Stage 2 — LAST → NOW → NEXT for this enrollment only (see _school_journey_*).
+    journey_now = _school_journey_now(action, current_lesson, active_practice, delivery_mode,
+                                      (dog or {}).get("name"), snap.get("name"))
+    journey_last = await _school_journey_last(se, enrollment, roadmap)
+    journey = {
+        "last": journey_last,
+        "recap": await _school_journey_recap(se, enrollment, journey_last),
+        "now": journey_now,
+        "next": _school_journey_next(
+            action, journey_now, roadmap, upcoming, delivery_mode,
+            await _school_journey_next_booking(se["dog_id"]) if delivery_mode in ("in_person", "hybrid") else None,
+            recommended_next_programs,
+        ),
+    }
 
     progress = {
         # course_pct is the ONLY number presented as Course Progress —
@@ -21948,6 +22150,7 @@ async def portal_school_home(school_enrollment_id: str, user: dict = Depends(get
         "active_practice": active_practice,
         "progress": progress,
         "upcoming": upcoming,
+        "journey": journey,
         "completion_summary": await _school_completion_summary(se, enrollment),
         "onboarding": {
             "status": se.get("onboarding_status") or ("required" if (snap.get("school_onboarding") or {}).get("enabled", True) else "not_required"),
@@ -23473,6 +23676,13 @@ async def admin_school_checkpoints_pending(_: dict = Depends(require_admin_and_p
     client_ids = list({r.get("client_id") for r in rows if r.get("client_id")})
     dogs_by_id = {d["id"]: d for d in await db.dogs.find({"id": {"$in": dog_ids}}, {"_id": 0, "id": 1, "name": 1, "photo": 1}).to_list(500)}
     clients_by_id = {c["id"]: c for c in await db.clients.find({"id": {"$in": client_ids}}, {"_id": 0, "id": 1, "name": 1}).to_list(500)}
+    # Stage 10.5A — rows whose stored rubric is empty get the same compatibility
+    # reconstruction the grader uses (read-only here), or a plain reason the UI can show.
+    def _needs_context(r):
+        rb = r.get("rubric_snapshot") or {}
+        return not (r.get("module_id") and (rb.get("handler_criteria") or rb.get("dog_criteria")))
+    enr_ids = list({r.get("enrollment_id") for r in rows if _needs_context(r) and r.get("enrollment_id")})
+    enrollments_by_id = {e["id"]: e for e in await db.dog_programs.find({"id": {"$in": enr_ids}}, {"_id": 0}).to_list(500)} if enr_ids else {}
     out = []
     for r in rows:
         sub_id = r.get("id")
@@ -23498,7 +23708,15 @@ async def admin_school_checkpoints_pending(_: dict = Depends(require_admin_and_p
                 "outcome": r.get("outcome"), "trainer_feedback": r.get("trainer_feedback"),
                 "trainer_assist_hold_active": bool(r.get("trainer_assist_hold_active")),
                 "queue_state": _checkpoint_queue_state(r),
+                "context_problem": None,
             })
+            if _needs_context(r) and r.get("status") == "pending":
+                try:
+                    ctx = _checkpoint_grading_context(r, enrollments_by_id.get(r.get("enrollment_id")))
+                    out[-1]["rubric_snapshot"] = ctx["rubric_snapshot"]
+                except HTTPException as exc:
+                    d = exc.detail
+                    out[-1]["context_problem"] = d.get("msg") if isinstance(d, dict) else str(d)
         except Exception as exc:
             logger.warning(
                 "Checkpoint pending queue: skipping malformed submission %s (dog=%s client=%s status=%s): %s",
@@ -23507,6 +23725,82 @@ async def admin_school_checkpoints_pending(_: dict = Depends(require_admin_and_p
             continue
     out.sort(key=lambda x: (0 if x["queue_state"] == "state_conflict" else 1, x["submitted_at"] or ""))
     return out
+
+
+def _checkpoint_context_detail(msg: str) -> dict:
+    return {"code": "checkpoint_context_unrecoverable", "msg": msg}
+
+
+def _checkpoint_grading_context(sub: dict, enrollment: Optional[dict]) -> dict:
+    """Stage 10.5A — the ONE compatibility path for grading a checkpoint
+    submission whose stored context is incomplete (rows written directly to
+    the database: imports, seeds, hand edits; every row the app itself writes
+    carries module_id and rubric_snapshot since the collection was born).
+
+    Returns {"module_id", "lesson_id", "rubric_snapshot", "backfill"} where
+    backfill holds only the fields that were missing and could be rebuilt
+    UNAMBIGUOUSLY from the canonical enrollment snapshot. A valid modern row
+    comes back untouched (empty backfill). Anything that would require a
+    guess raises a controlled 409 with a message the trainer can act on —
+    never an unhandled server error."""
+    lesson_id = sub.get("lesson_id")
+    if not lesson_id:
+        raise HTTPException(status_code=409, detail=_checkpoint_context_detail(
+            "This checkpoint submission has no lesson attached, so it cannot be graded. "
+            "Ask the client to submit the checkpoint again from their current lesson."))
+    module_id = sub.get("module_id") or None
+    rubric = sub.get("rubric_snapshot") or {}
+    has_criteria = bool(rubric.get("handler_criteria") or rubric.get("dog_criteria"))
+    backfill: dict = {}
+    if module_id and has_criteria:
+        return {"module_id": module_id, "lesson_id": lesson_id, "rubric_snapshot": rubric, "backfill": backfill}
+
+    if not enrollment:
+        raise HTTPException(status_code=409, detail=_checkpoint_context_detail(
+            "This checkpoint submission is missing its rubric and its School program record can no longer be found, "
+            "so it cannot be graded safely."))
+    modules = (enrollment.get("program_snapshot") or {}).get("modules") or []
+    holders = [m for m in modules if any((l or {}).get("id") == lesson_id for l in _effective_lessons(m))]
+    label = sub.get("lesson_name") or lesson_id
+    if not module_id:
+        if len(holders) == 1:
+            module_id = holders[0].get("id")
+            backfill["module_id"] = module_id
+        elif not holders:
+            raise HTTPException(status_code=409, detail=_checkpoint_context_detail(
+                f"The lesson this checkpoint was submitted for ({label}) is not part of the student's current program, "
+                "so it cannot be graded. Ask the client to submit the checkpoint again from their current lesson."))
+        else:
+            raise HTTPException(status_code=409, detail=_checkpoint_context_detail(
+                "This checkpoint submission does not say which module it belongs to and the lesson appears in more than one "
+                "module, so it cannot be graded without guessing. Ask the client to submit the checkpoint again."))
+    elif not any(m.get("id") == module_id for m in modules):
+        raise HTTPException(status_code=409, detail=_checkpoint_context_detail(
+            "This checkpoint submission points at a module that is not in the student's current program, so it cannot be graded."))
+    if not has_criteria:
+        lesson = _find_lesson_in_snapshot(enrollment, lesson_id)
+        cp = (lesson or {}).get("checkpoint") or {}
+        if cp.get("enabled") and (cp.get("handler_criteria") or cp.get("dog_criteria")):
+            rubric = cp
+            backfill["rubric_snapshot"] = cp
+        else:
+            raise HTTPException(status_code=409, detail=_checkpoint_context_detail(
+                f"This checkpoint submission has no rubric and the lesson ({label}) has no checkpoint configured in the "
+                "student's program, so there is nothing to score it against. Configure the lesson's checkpoint in "
+                "Program Studio, then ask the client to submit again."))
+    return {"module_id": module_id, "lesson_id": lesson_id, "rubric_snapshot": rubric, "backfill": backfill}
+
+
+async def _checkpoint_grade_enrollment_state(sub: dict) -> Optional[dict]:
+    """Additive, read-only: the enrollment's canonical state AFTER grading, so
+    a result panel can say "Program complete" from persisted truth, never from
+    "this was the final lesson"."""
+    enr = await db.dog_programs.find_one({"id": (sub or {}).get("enrollment_id")}, {"_id": 0, "id": 1, "status": 1, "current_lesson_id": 1, "program_snapshot": 1}) if (sub or {}).get("enrollment_id") else None
+    if not enr:
+        return None
+    lesson = _find_lesson_in_snapshot(enr, enr.get("current_lesson_id")) if enr.get("current_lesson_id") else None
+    return {"id": enr["id"], "status": enr.get("status"), "current_lesson_id": enr.get("current_lesson_id"),
+            "current_lesson_name": (lesson or {}).get("name"), "program_name": (enr.get("program_snapshot") or {}).get("name")}
 
 
 @api.post("/admin/school/checkpoints/{submission_id}/grade")
@@ -23527,7 +23821,12 @@ async def admin_school_checkpoint_grade(
         raise HTTPException(status_code=404, detail="Checkpoint submission not found")
 
     if sub["status"] == "pending":
-        rubric = sub.get("rubric_snapshot") or {}
+        # Stage 10.5A — validate/reconstruct the grading context BEFORE any
+        # scoring rule runs, so an incomplete row fails with a message, not a 500.
+        enrollment = await db.dog_programs.find_one({"id": sub.get("enrollment_id")}, {"_id": 0}) if sub.get("enrollment_id") else None
+        ctx = _checkpoint_grading_context(sub, enrollment)
+        rubric = ctx["rubric_snapshot"]
+        sub_module_id, sub_lesson_id = ctx["module_id"], ctx["lesson_id"]
         handler_ids = {c["id"] for c in (rubric.get("handler_criteria") or [])}
         dog_criteria_ids = {c["id"] for c in (rubric.get("dog_criteria") or [])}
         if set(body.handler_scores.keys()) != handler_ids:
@@ -23562,27 +23861,33 @@ async def admin_school_checkpoint_grade(
             "graded_by": user.get("id"), "graded_by_name": user.get("name"),
         }
         if body.outcome == "advance":
-            enrollment = await db.dog_programs.find_one({"id": sub["enrollment_id"]}, {"_id": 0})
             if not enrollment:
                 raise HTTPException(status_code=404, detail="Enrollment not found")
-            pos = _compute_next_school_position(enrollment, sub["module_id"], sub["lesson_id"])
+            try:
+                pos = _compute_next_school_position(enrollment, sub_module_id, sub_lesson_id)
+            except StopIteration:
+                raise HTTPException(status_code=409, detail=_checkpoint_context_detail(
+                    "This checkpoint's lesson is no longer at a gradable position in the student's program, so it cannot "
+                    "advance them. Ask the client to submit the checkpoint again from their current lesson."))
             # Module Quiz gate — decided ONCE at claim time and persisted in
             # the plan, so a resumed/retried grade can never "suddenly"
             # advance: if this checkpoint ends a quiz-gated module,
             # outcome=advance means THE CHECKPOINT PASSED, not "move into the
             # next module". The pointer stays on this final lesson; passing
             # the Module Quiz is the advancement event.
-            crosses_module = pos["is_final"] or pos["next_module_id"] != sub["module_id"]
-            deferred_for_quiz = bool(crosses_module and await _module_quiz_gate_blocks(enrollment, sub["module_id"]))
+            crosses_module = pos["is_final"] or pos["next_module_id"] != sub_module_id
+            deferred_for_quiz = bool(crosses_module and await _module_quiz_gate_blocks(enrollment, sub_module_id))
             grading_plan.update({
-                "expected_source_module_id": sub["module_id"], "expected_source_lesson_id": sub["lesson_id"],
+                "expected_source_module_id": sub_module_id, "expected_source_lesson_id": sub_lesson_id,
                 "intended_target_module_id": pos["next_module_id"], "intended_target_lesson_id": pos["next_lesson_id"],
                 "intended_target_is_final": pos["is_final"],
                 "progression_deferred_for_module_quiz": deferred_for_quiz,
             })
         claimed = await db.checkpoint_submissions.find_one_and_update(
             {"id": submission_id, "status": "pending"},
-            {"$set": {"status": "grading", "grading_plan": grading_plan}},
+            # Any reconstructed context is written WITH the claim (one write, one
+            # truth); valid rows carry an empty backfill and are left exactly as they were.
+            {"$set": {"status": "grading", "grading_plan": grading_plan, **ctx["backfill"]}},
             projection={"_id": 0}, return_document=ReturnDocument.AFTER,
         )
         sub = claimed or await db.checkpoint_submissions.find_one({"id": submission_id}, {"_id": 0})
@@ -23802,7 +24107,7 @@ async def admin_school_checkpoint_grade(
             )
         except Exception:
             pass
-    return {"checkpoint": _admin_safe_checkpoint(final_sub)}
+    return {"checkpoint": _admin_safe_checkpoint(final_sub), "enrollment": await _checkpoint_grade_enrollment_state(final_sub)}
 
 
 @api.post("/admin/school/students/{school_enrollment_id}/lessons/{lesson_id}/live-checkpoint")
@@ -23911,7 +24216,7 @@ async def admin_school_checkpoint_clear_trainer_assist_hold(
         projection={"_id": 0}, return_document=ReturnDocument.AFTER,
     )
     final_sub = claimed or sub
-    return {"checkpoint": _admin_safe_checkpoint(final_sub)}
+    return {"checkpoint": _admin_safe_checkpoint(final_sub), "enrollment": await _checkpoint_grade_enrollment_state(final_sub)}
 
 
 # ─── Online School Phase 4 — Trainer Assist queue, detail & lifecycle ─────
@@ -25123,7 +25428,7 @@ def _generate_suggested_plan(enrollment: dict) -> List[Dict[str, Any]]:
     return activities
 
 
-async def _build_pre_session_overview(enrollment: dict, dog: dict) -> Dict[str, Any]:
+async def _build_pre_session_overview(enrollment: dict, dog: dict, draft: Optional[dict] = None) -> Dict[str, Any]:
     """Staff-only payload (never served to a client-portal route) — internal
     trainer notes are included here specifically because this is a
     staff-facing endpoint gated by manage_training_sessions."""
@@ -25240,7 +25545,18 @@ async def _build_pre_session_overview(enrollment: dict, dog: dict) -> Dict[str, 
 
     suggested_plan = _generate_suggested_plan(enrollment)
 
+    # Stage 6 — the 60-second trainer briefing, built from the same records
+    # above (plus the enrollment-scoped Practice / checkpoint / message
+    # context) in this one bootstrap call. Additive key; nothing else here
+    # changes shape.
+    briefing = await _build_trainer_briefing(enrollment, dog, last_log, current_lesson, draft)
+    # Stage 9 — the trainer's teaching guide for the current lesson (same
+    # snapshot lesson the client roadmap reads; staff projection).
+    current_lesson_guide = _trainer_lesson_guide(enrollment, current_lesson, current_module, current_lesson_practice)
+
     return {
+        "briefing": briefing,
+        "current_lesson_guide": current_lesson_guide,
         "last_session": last_session,
         "homework_since_last_session": homework_summary,
         "client_questions": client_questions[:10],
@@ -25264,6 +25580,525 @@ async def _build_pre_session_overview(enrollment: dict, dog: dict) -> Dict[str, 
         # Pointer on the program's final lesson → completion modal swaps
         # "advance next" for the explicit Graduate choice (owner rule 2026-08-30).
         "is_final_lesson": training_domain_services.pointer_is_final_lesson(enrollment, _compute_next_school_position),
+    }
+
+
+# ---------------------------------------------------------------------------
+# Stage 6 — Trainer 60-second briefing
+#
+# A deterministic summary of what the trainer needs before a lesson, built
+# ONLY from records that already exist (session log, Practice/homework,
+# checkpoint submissions, client message threads, the curriculum snapshot,
+# today's draft). It is served inside the existing draft bootstrap envelope
+# (staff-only, manage_training_sessions) — never to a client route — and is
+# scoped to exactly one dog + one enrollment attempt so a household's other
+# dog, or the same dog's earlier/other program, can never leak in.
+# ---------------------------------------------------------------------------
+_BRIEFING_OUTCOME_LABELS = {
+    "skipped": "Not worked", "introduced": "Introduced", "needs_more_work": "Needs more work",
+    "improving": "Improving", "passed": "Good", "reliable": "Reliable",
+}
+_BRIEFING_MASTERY_LABELS = {"mastered": "Marked mastered", "not_yet": "Not yet mastered"}
+_BRIEFING_ADVANCE_LABELS = {
+    "remain": "Stayed on this lesson", "assign_review": "Assigned review work",
+    "mark_for_assessment": "Marked for a formal assessment", "advance_next": "Moved to the next lesson",
+    "advance_lesson": "Moved to the next lesson", "advance_module": "Moved to the next module",
+    "skip_lesson": "Skipped ahead", "reopen_previous_lesson": "Went back to the previous lesson",
+    "complete_program": "Completed the program",
+}
+_BRIEFING_REVIEW_LABELS = {"looks_good": "looked good", "keep_practicing": "keep practicing", "trainer_attention": "needs trainer attention"}
+
+
+def _briefing_day_label(iso: Optional[str]) -> Optional[str]:
+    """'Today' / 'Yesterday' / 'N days ago' / 'Sep 3' relative to the business day."""
+    if not iso:
+        return None
+    try:
+        d = date.fromisoformat(str(iso)[:10])
+    except ValueError:
+        return None
+    delta = (business_today() - d).days
+    if delta <= 0:
+        return "Today"
+    if delta == 1:
+        return "Yesterday"
+    if delta < 7:
+        return f"{delta} days ago"
+    return f"{d.strftime('%b')} {d.day}"
+
+
+def _briefing_excerpt(text: Optional[str], limit: int = 220) -> Optional[str]:
+    t = " ".join(str(text or "").split())
+    if not t:
+        return None
+    if len(t) <= limit:
+        return t
+    cut = t[:limit].rsplit(" ", 1)[0] or t[:limit]
+    return cut + "…"
+
+
+def _briefing_last_session(last_log: Optional[dict], enrollment: dict) -> Optional[Dict[str, Any]]:
+    if not last_log:
+        return None
+    went_well = _briefing_excerpt(last_log.get("what_went_well"))
+    needs_work = _briefing_excerpt(last_log.get("needs_work"))
+    next_focus = _briefing_excerpt(last_log.get("next_lesson_focus"))
+    goal_names = {
+        g["id"]: g["name"]
+        for m in (enrollment.get("program_snapshot", {}).get("modules") or [])
+        for g in (m.get("goals") or [])
+    }
+    skills = []
+    for d in last_log.get("goal_updates") or []:
+        score = d.get("session_score")
+        if score is None:
+            score = d.get("new_score")
+        outcome = d.get("session_outcome")
+        mastery = d.get("mastery_decision")
+        if score is None and not outcome and not mastery:
+            continue
+        skills.append({
+            "name": d.get("skill_name") or goal_names.get(d.get("goal_id")) or "Skill",
+            "score": score,
+            "assessment": _BRIEFING_OUTCOME_LABELS.get(outcome) if outcome else None,
+            "mastery": _BRIEFING_MASTERY_LABELS.get(mastery) if mastery else None,
+        })
+    # Weakest first — that is what the trainer acts on; at most three.
+    skills.sort(key=lambda x: (x["score"] is None, x["score"] if x["score"] is not None else 0))
+    skills = skills[:3]
+    at = last_log.get("at")
+    by = last_log.get("by_user") or None
+    when = _briefing_day_label(at)
+    lesson_name = last_log.get("lesson_name_at_session") or None
+    legacy = not (went_well or needs_work or next_focus or skills)
+    summary_bits = ["Completed" + (f" with {by}" if by else "") + (f" · {when}" if when else "")]
+    adv = _BRIEFING_ADVANCE_LABELS.get(last_log.get("advancement_action"))
+    if adv:
+        summary_bits.append(adv)
+    return {
+        "lesson_name": lesson_name, "at": at, "when": when, "by": by,
+        "same_lesson": bool(last_log.get("lesson_id_at_session")) and last_log.get("lesson_id_at_session") == enrollment.get("current_lesson_id"),
+        "what_went_well": went_well, "needs_work": needs_work, "next_lesson_focus": next_focus,
+        "skills": skills, "advancement_label": adv, "legacy": legacy,
+        "summary_line": " · ".join(summary_bits),
+    }
+
+
+def _briefing_practice(hw_rows: List[dict], last_log: Optional[dict], since: Optional[str]) -> Dict[str, Any]:
+    """Adherence AND quality from the real Practice records for this
+    enrollment. No percentages without a real denominator; optional work is
+    never framed as a failure."""
+    linked_ids = set((last_log or {}).get("homework_created") or [])
+
+    def _created_since(hw):
+        return (hw.get("id") in linked_ids) or (bool(since) and str(hw.get("created_at") or "") >= since)
+
+    def _logs_since(hw):
+        return [l for l in (hw.get("section_logs") or []) if not since or str(l.get("logged_at") or "") >= since]
+
+    assigned_since = [hw for hw in hw_rows if _created_since(hw)]
+    still_open = [hw for hw in hw_rows if hw.get("status") != "completed"]
+    relevant = assigned_since or [hw for hw in still_open if _logs_since(hw)] or still_open
+    if not relevant:
+        return {"state": "not_assigned",
+                "headline": "No home Practice was assigned after the last session." if last_log else "No home Practice assigned yet.",
+                "detail": None, "planned": None, "completed": None, "sessions_logged": 0,
+                "last_practiced_at": None, "last_practiced_label": None, "quality": [], "items": [],
+                "all_optional": False}
+
+    planned = 0
+    completed = 0
+    has_tracker = False
+    sessions_logged = 0
+    waiting = 0
+    redo_days = []
+    approved_days = 0
+    hard = 0
+    could_not = 0
+    reviews = {"looks_good": 0, "keep_practicing": 0, "trainer_attention": 0}
+    last_at = None
+    items = []
+    for hw in relevant:
+        title = hw.get("school_lesson_name") or hw.get("title") or "Practice"
+        line = None
+        if hw.get("daily_tracker"):
+            has_tracker = True
+            days = _compute_daily_progress(hw)
+            total = len([d for d in days if not d.get("is_rest_day") and not d.get("is_skipped")]) or int(hw.get("total_days") or 0)
+            done = sum(1 for d in days if d.get("status") in ("approved", "submitted"))
+            planned += total
+            completed += done
+            approved_days += sum(1 for d in days if d.get("status") == "approved")
+            for d in days:
+                dl = d.get("log") or {}
+                dfv = dl.get("field_values") or {}
+                if d.get("status") == "submitted" and (dfv.get("__video_id") or dfv.get("__could_not_complete")
+                                                        or dfv.get("__difficulty") in ("hard", "very_hard")
+                                                        or any(not q.get("answer") for q in (dl.get("questions") or []))):
+                    waiting += 1
+            for d in days:
+                if d.get("status") == "needs_redo":
+                    redo_days.append({"title": title, "day": d.get("day_number"), "note": ((d.get("log") or {}).get("review_note") or None)})
+            line = f"{done} of {total} planned days" if total else None
+        else:
+            logs = [l for l in _logs_since(hw) if _practice_log_counts_as_session(hw, l)]
+            n = len(logs)
+            sessions_logged += n
+            line = f"{n} session{'' if n == 1 else 's'} logged" if n else ("Completed" if hw.get("status") == "completed" else "Not started")
+            for l in (hw.get("section_logs") or []):
+                rs = l.get("review_status")
+                if rs in reviews and (not since or str(l.get("reviewed_at") or l.get("logged_at") or "") >= since):
+                    reviews[rs] += 1
+                fv = l.get("field_values") or {}
+                if not rs and (fv.get("__video_id") or fv.get("__could_not_complete") or fv.get("__difficulty") in ("hard", "very_hard")) \
+                        and (not since or str(l.get("logged_at") or "") >= since):
+                    waiting += 1
+        for l in hw.get("section_logs") or []:
+            fv = l.get("field_values") or {}
+            if not since or str(l.get("logged_at") or "") >= since:
+                if fv.get("__difficulty") in ("hard", "very_hard"):
+                    hard += 1
+                if fv.get("__could_not_complete"):
+                    could_not += 1
+            if _practice_log_counts_as_session(hw, l):
+                at = l.get("logged_at") or l.get("date")
+                if at and (last_at is None or str(at) > str(last_at)):
+                    last_at = at
+        if hw.get("required") is False:
+            line = (line + " · optional") if line else "Optional"
+        items.append({"title": title, "line": line})
+    all_optional = all(hw.get("required") is False for hw in relevant)
+
+    if redo_days:
+        state = "needs_redo"
+        d0 = redo_days[0]
+        headline = f"Day {d0['day']} of {d0['title']} was sent back for another try." if d0.get("day") else f"{d0['title']} was sent back for another try."
+    elif has_tracker and planned and completed >= planned:
+        state = "completed"
+        headline = f"{completed} of {planned} planned days completed."
+    elif has_tracker and planned and completed:
+        state = "partial"
+        headline = f"{completed} of {planned} planned days completed."
+    elif sessions_logged and not has_tracker:
+        state = "completed" if any(hw.get("status") == "completed" for hw in relevant) else "partial"
+        headline = f"{sessions_logged} Practice session{'' if sessions_logged == 1 else 's'} logged since the last lesson." if last_log else f"{sessions_logged} Practice session{'' if sessions_logged == 1 else 's'} logged."
+    elif has_tracker and planned:
+        state = "optional_incomplete" if all_optional else "none"
+        headline = f"0 of {planned} planned days completed." if not all_optional else "Optional Practice — not started."
+    else:
+        state = "optional_incomplete" if all_optional else "none"
+        headline = ("Optional Practice — nothing logged." if all_optional
+                    else ("No Practice logged since the last lesson." if last_log else "No Practice logged yet."))
+
+    quality = []
+    if approved_days:
+        quality.append(f"{approved_days} day{'' if approved_days == 1 else 's'} approved by trainer")
+    if redo_days:
+        quality.append(f"{len(redo_days)} day{'' if len(redo_days) == 1 else 's'} sent back for another try")
+    for k, n in reviews.items():
+        if n:
+            quality.append(f"{n} session{'' if n == 1 else 's'} reviewed: {_BRIEFING_REVIEW_LABELS[k]}")
+    if hard:
+        quality.append(f"Client marked {hard} session{'' if hard == 1 else 's'} hard")
+    if could_not:
+        quality.append(f"Could not complete {could_not} time{'' if could_not == 1 else 's'}")
+    if waiting:
+        quality.append(f"{waiting} waiting for your review")
+    return {
+        "state": state, "headline": headline,
+        "detail": (redo_days[0].get("note") if redo_days and redo_days[0].get("note") else None),
+        "planned": planned if has_tracker else None, "completed": completed if has_tracker else None,
+        "sessions_logged": sessions_logged,
+        "last_practiced_at": last_at, "last_practiced_label": _briefing_day_label(last_at),
+        "quality": quality[:4], "items": items[:3], "all_optional": all_optional,
+        "review_waiting": waiting,
+    }
+
+
+def _briefing_client_reports(hw_rows: List[dict], checkpoint_sub: Optional[dict], threads: List[dict], since: Optional[str]) -> List[Dict[str, Any]]:
+    """Client-originated text only. Staff replies, admin notes and unrelated
+    (billing / boarding) conversations never appear."""
+    out: List[Dict[str, Any]] = []
+    for hw in hw_rows:
+        title = hw.get("school_lesson_name") or hw.get("title") or "Practice"
+        for l in hw.get("section_logs") or []:
+            if l.get("is_rest_day") or l.get("is_skipped"):
+                continue
+            at = l.get("logged_at") or ""
+            day = l.get("day_number")
+            src = f"Practice note · {title}" + (f" · Day {day}" if day else "")
+            fv = l.get("field_values") or {}
+            note = _briefing_excerpt(l.get("note"))
+            if note and (not since or str(at) >= since):
+                out.append({"kind": "practice_note", "text": note, "at": at, "source": src})
+            reason = _briefing_excerpt(fv.get("__could_not_complete_reason"))
+            if reason and (not since or str(at) >= since):
+                out.append({"kind": "practice_note", "text": f"Could not complete: {reason}", "at": at, "source": src})
+            for q in l.get("questions") or []:
+                text = _briefing_excerpt(q.get("text"))
+                if not text:
+                    continue
+                unanswered = not q.get("answer")
+                if unanswered or not since or str(q.get("asked_at") or at) >= since:
+                    out.append({"kind": "question", "text": text, "at": q.get("asked_at") or at,
+                                "source": f"Client question · {title}" + (f" · Day {day}" if day else ""),
+                                "unanswered": unanswered})
+    if checkpoint_sub and _briefing_excerpt(checkpoint_sub.get("client_note")):
+        out.append({"kind": "checkpoint_note", "text": _briefing_excerpt(checkpoint_sub.get("client_note")),
+                    "at": checkpoint_sub.get("submitted_at") or "", "source": f"Checkpoint note · {checkpoint_sub.get('lesson_name') or 'Checkpoint'}"})
+    for t in threads:
+        client_msgs = [m for m in (t.get("messages") or []) if m.get("sender_role") == "client" and _briefing_excerpt(m.get("body"))]
+        if not client_msgs:
+            continue
+        last = client_msgs[-1]
+        unanswered = t.get("status") != "resolved" and t.get("last_message_role") == "client"
+        if unanswered or not since or str(last.get("created_at") or "") >= since:
+            out.append({"kind": "message", "text": _briefing_excerpt(last.get("body")), "at": last.get("created_at") or "",
+                        "source": f"Message · {t.get('subject') or 'Conversation'}", "unanswered": unanswered})
+    out.sort(key=lambda r: str(r.get("at") or ""), reverse=True)
+    return out[:5]
+
+
+def _briefing_checkpoint(current_lesson: Optional[dict], sub: Optional[dict], practice_remaining: Optional[int]) -> Optional[Dict[str, Any]]:
+    cp = (current_lesson or {}).get("checkpoint") or {}
+    if not cp.get("enabled"):
+        return None
+    title = cp.get("title") or "Checkpoint"
+    lesson_name = (current_lesson or {}).get("name") or ""
+    base = {"title": title, "lesson_name": lesson_name, "submission_id": (sub or {}).get("id"),
+            "submitted_at": (sub or {}).get("submitted_at"), "action": None, "remaining": None,
+            "trainer_feedback": _briefing_excerpt((sub or {}).get("trainer_feedback"))}
+    if not sub:
+        return {**base, "state": "ready", "label": "Checkpoint lesson",
+                "detail": f"This lesson ends with the checkpoint “{title}”. Grade it live when the dog is ready — it gates advancement."}
+    status = sub.get("status")
+    if status in ("pending", "grading"):
+        when = _briefing_day_label(sub.get("submitted_at"))
+        when_txt = (" " + when.lower()) if when in ("Today", "Yesterday") else (f" on {when}" if when else "")
+        return {**base, "state": "submitted", "label": "Checkpoint needs review", "action": "review",
+                "detail": f"Client submitted {title}{when_txt}. Review it before advancing."}
+    outcome = sub.get("outcome")
+    if outcome == "advance":
+        when = _briefing_day_label(sub.get("graded_at"))
+        when_txt = (" " + when.lower()) if when in ("Today", "Yesterday") else (f" · {when}" if when else "")
+        return {**base, "state": "passed", "label": "Checkpoint passed",
+                "detail": f"Passed{when_txt}. This dog is clear to advance."}
+    if outcome == "prescribe_practice":
+        return {**base, "state": "more_practice", "label": "More Practice required", "remaining": practice_remaining,
+                "detail": (f"{practice_remaining} more Practice session{'' if practice_remaining == 1 else 's'} before the client can try again."
+                           if practice_remaining is not None else "You asked for more Practice before the next attempt.")}
+    if outcome == "trainer_assist_recommended":
+        done = sub.get("trainer_assist_status") == "completed"
+        return {**base, "state": "trainer_assist", "label": "Trainer Assist" + (" done" if done else " recommended"),
+                "detail": "The hands-on session is complete — grade the checkpoint when ready." if done else "You recommended a hands-on session for this checkpoint. Today may be it."}
+    return {**base, "state": "graded", "label": "Checkpoint reviewed", "detail": "Reviewed."}
+
+
+def _briefing_focus(last: Optional[Dict[str, Any]], current_lesson: Optional[dict], checkpoint: Optional[Dict[str, Any]]) -> Dict[str, Any]:
+    """Deterministic: previous trainer focus → lesson objective → checkpoint
+    remediation → last session's needs-work. When the pointer moved since
+    the previous focus was written and the lesson has its own objective,
+    both are shown and the trainer decides."""
+    objective = _briefing_excerpt((current_lesson or {}).get("success_criteria"))
+    purpose = _briefing_excerpt((current_lesson or {}).get("trainer_purpose"))
+    prev = (last or {}).get("next_lesson_focus")
+    remediation = None
+    if checkpoint and checkpoint.get("state") == "more_practice":
+        remediation = checkpoint.get("trainer_feedback") or checkpoint.get("detail")
+    if prev and objective and last and not last.get("same_lesson"):
+        return {"text": None, "source": None, "source_label": None, "goal": objective, "purpose": purpose,
+                "conflict": {"previous": prev, "previous_lesson": last.get("lesson_name"), "current_objective": objective}}
+    if prev:
+        return {"text": prev, "source": "previous_focus", "source_label": "From your last session", "goal": objective, "purpose": purpose, "conflict": None}
+    if objective:
+        return {"text": objective, "source": "lesson_objective", "source_label": "Lesson objective", "goal": None, "purpose": purpose, "conflict": None}
+    if remediation:
+        return {"text": remediation, "source": "remediation", "source_label": "Checkpoint remediation", "goal": None, "purpose": purpose, "conflict": None}
+    nw = (last or {}).get("needs_work")
+    if nw:
+        return {"text": nw, "source": "needs_work", "source_label": "Needs work from last session", "goal": None, "purpose": purpose, "conflict": None}
+    return {"text": None, "source": None, "source_label": None, "goal": None, "purpose": purpose, "conflict": None}
+
+
+def _trainer_lesson_guide(enrollment: dict, current_lesson: Optional[dict], current_module: Optional[dict],
+                          practice: Optional[dict] = None) -> Optional[Dict[str, Any]]:
+    """Stage 9 — the TRAINER's reading of the one canonical lesson.
+
+    Same snapshot lesson the client roadmap serialises through
+    _client_safe_lesson; this is the staff-side projection (trainer_purpose,
+    trainer_instructions, prep notes, advancement criteria, skill pass/reset
+    criteria, checkpoint mark scheme) organised as a teaching guide. Nothing is
+    generated: every section is an authored field, and empty sections are
+    omitted so a legacy lesson renders only what it has. Served ONLY inside the
+    staff draft bootstrap (manage_training_sessions) — never to a client route.
+    """
+    if not current_lesson:
+        return None
+    lesson = current_lesson
+    module = current_module or {}
+    goals_by_id = {g.get("id"): g for g in (module.get("goals") or []) if g.get("id")}
+
+    def _t(v):
+        return " ".join(str(v or "").split()) or None
+
+    skills = []
+    for sid in lesson.get("skill_ids") or []:
+        g = goals_by_id.get(sid)
+        if not g:
+            continue
+        skills.append({
+            "id": g.get("id"), "name": g.get("name") or "Skill",
+            "objective": _t(g.get("training_objective")),
+            "pass_criteria": _t(g.get("pass_criteria")),
+            "starting_criteria": _t(g.get("starting_criteria")),
+            "reset_criteria": _t(g.get("reset_criteria")),
+            "trainer_only_guidance": _t(g.get("trainer_only_guidance")),
+            "client_explanation": _t(g.get("client_facing_explanation")),
+            "targets": {k: g.get(k) for k in ("target_duration", "target_distance", "target_repetitions",
+                                              "target_distraction_level", "target_environment") if g.get(k)},
+            "manual_only": bool(g.get("manual_only")),
+        })
+
+    cp = lesson.get("checkpoint") or {}
+    checkpoint = None
+    if cp.get("enabled"):
+        checkpoint = {
+            "title": _t(cp.get("title")) or lesson.get("name"),
+            "assessment_type": cp.get("assessment_type") or "checkpoint",
+            "submission_instructions": _t(cp.get("submission_instructions")),
+            "submission_requirements": _t(cp.get("submission_requirements")),
+            "pass_readiness_guidance": _t(cp.get("pass_readiness_guidance")),
+            "handler_criteria": [{"id": c.get("id"), "name": c.get("name"), "guidance": _t(c.get("guidance"))} for c in (cp.get("handler_criteria") or [])],
+            "dog_criteria": [{"id": c.get("id"), "name": c.get("name"), "guidance": _t(c.get("guidance"))} for c in (cp.get("dog_criteria") or [])],
+        }
+
+    blocks = [b for b in (lesson.get("content_blocks") or []) if isinstance(b, dict) and b.get("active") is not False]
+    watch = [x for x in (_t(lesson.get("common_mistakes")), _t(lesson.get("troubleshooting"))) if x]
+    guide = {
+        "lesson_id": lesson.get("id"), "lesson_name": lesson.get("name"), "module_name": module.get("name"),
+        "estimated_minutes": lesson.get("estimated_minutes"),
+        # The four teaching sections — each falls back to the client-facing
+        # authored text when no trainer-specific text exists.
+        "goal": _t(lesson.get("trainer_purpose")) or _t(lesson.get("success_criteria")) or _t(lesson.get("client_overview")),
+        "how_to_teach": _t(lesson.get("trainer_instructions")) or _t(lesson.get("client_instructions")),
+        "watch_for": " ".join(watch) if watch else None,
+        "success_looks_like": _t(lesson.get("success_criteria")) or _t(lesson.get("advancement_criteria")),
+        "advancement_criteria": _t(lesson.get("advancement_criteria")),
+        "safety_notes": _t(lesson.get("safety_notes")),
+        "setup": _t(lesson.get("trainer_prep_notes")),
+        "equipment": _t(lesson.get("equipment_needed")),
+        "why_it_matters": _t(lesson.get("why_it_matters")),
+        "client_overview": _t(lesson.get("client_overview")),
+        "client_instructions": _t(lesson.get("client_instructions")),
+        "demo_video_url": lesson.get("demo_video_url") or None,
+        "skills": skills,
+        "practice": practice if (practice or {}).get("configured") else None,
+        "checkpoint": checkpoint,
+        # The SAME authored blocks the client lesson renders (images keep their
+        # resource_id → School resource → media lookup); trainer full guide only.
+        "content_blocks": blocks,
+        "has_structured_content": bool(blocks) or any(lesson.get(k) for k in (
+            "trainer_instructions", "client_instructions", "success_criteria", "common_mistakes", "trainer_purpose")),
+    }
+    return guide
+
+
+async def _build_trainer_briefing(enrollment: dict, dog: dict, last_log: Optional[dict],
+                                  current_lesson: Optional[dict], draft: Optional[dict]) -> Dict[str, Any]:
+    enrollment_id = enrollment["id"]
+    dog_id = enrollment["dog_id"]
+    summary = _enrollment_summary(enrollment)
+    current_module = summary.get("current_module") or {}
+    lessons = _effective_lessons(current_module)
+    lesson_ids = [l.get("id") for l in lessons]
+    cur_id = enrollment.get("current_lesson_id")
+    se = await db.school_enrollments.find_one({"enrollment_id": enrollment_id}, {"_id": 0, "id": 1, "delivery_mode": 1})
+    se_id = (se or {}).get("id")
+    mode = _school_delivery_mode(se, enrollment)
+    if last_log and last_log.get("dog_id") not in (None, dog_id):
+        last_log = None  # defensive: never narrate another dog's session
+    since = (last_log or {}).get("at") or None
+
+    # Practice for THIS enrollment attempt only (School companion id, the
+    # dog_programs id, or a session log from this attempt) — never dog-wide.
+    log_ids = [r["id"] for r in await db.training_session_log.find(
+        {"enrollment_id": enrollment_id}, {"_id": 0, "id": 1}).limit(300).to_list(300)]
+    ors: List[dict] = [{"school_enrollment_record_id": enrollment_id}]
+    if se_id:
+        ors.append({"school_enrollment_id": se_id})
+    if log_ids:
+        ors.append({"source_session_log_id": {"$in": log_ids}})
+    hw_rows = await db.homework.find({"dog_id": dog_id, "$or": ors}, {"_id": 0}).sort("created_at", -1).limit(20).to_list(20)
+
+    checkpoint_sub = None
+    remaining = None
+    if current_lesson and (current_lesson.get("checkpoint") or {}).get("enabled"):
+        checkpoint_sub = await db.checkpoint_submissions.find_one(
+            {"enrollment_id": enrollment_id, "dog_id": dog_id, "lesson_id": cur_id}, {"_id": 0}, sort=[("submitted_at", -1)])
+        presc = (checkpoint_sub or {}).get("prescription") or {}
+        if checkpoint_sub and checkpoint_sub.get("outcome") == "prescribe_practice" and presc.get("min_practice_sessions_required"):
+            count = await _count_practice_sessions_since(presc.get("tracked_homework_id"), presc.get("practice_count_since"))
+            remaining = max(0, int(presc["min_practice_sessions_required"]) - count)
+
+    thread_q: dict = {"dog_id": dog_id, "$or": [{"category": "training"}]}
+    if se_id:
+        thread_q["$or"].append({"school_enrollment_id": se_id})
+    threads = await db.client_message_threads.find(thread_q, {"_id": 0, "id": 1, "subject": 1, "status": 1,
+                                                              "last_message_role": 1, "messages": 1, "school_enrollment_id": 1}) \
+        .sort("last_message_at", -1).limit(8).to_list(8)
+    if se_id:
+        threads = [t for t in threads if not t.get("school_enrollment_id") or t.get("school_enrollment_id") == se_id]
+
+    last = _briefing_last_session(last_log, enrollment)
+    practice = _briefing_practice(hw_rows, last_log, since)
+    reports = _briefing_client_reports(hw_rows, checkpoint_sub, threads, since)
+    checkpoint = _briefing_checkpoint(current_lesson, checkpoint_sub, remaining)
+    focus = _briefing_focus(last, current_lesson, checkpoint)
+
+    attention: List[Dict[str, str]] = []
+    if checkpoint and checkpoint.get("state") == "submitted":
+        attention.append({"kind": "checkpoint_review", "text": "Checkpoint submitted — review it before this lesson."})
+    if checkpoint and checkpoint.get("state") == "more_practice":
+        attention.append({"kind": "remediation", "text": "Checkpoint remediation in progress — more Practice before the retry."})
+    if practice.get("state") == "needs_redo":
+        attention.append({"kind": "practice_redo", "text": practice.get("headline")})
+    if practice.get("review_waiting"):
+        n = practice["review_waiting"]
+        attention.append({"kind": "practice_review", "text": f"{n} Practice session{'' if n == 1 else 's'} waiting for your review."})
+    unanswered = [r for r in reports if r.get("unanswered")]
+    if unanswered:
+        attention.append({"kind": "client_question", "text": f"{len(unanswered)} client question{'' if len(unanswered) == 1 else 's'} unanswered."})
+
+    session = None
+    if draft:
+        actuals = draft.get("actuals") or {}
+        recorded = sum(1 for a in actuals.values() if isinstance(a, dict) and (a.get("score") is not None or a.get("outcome") or a.get("mastery_decision")))
+        notes_started = any((draft.get(k) or "").strip() for k in ("session_note", "client_recap_note", "what_went_well", "needs_work", "next_lesson_focus", "practice_note"))
+        session = {"status": draft.get("status"), "has_recorded_work": bool(recorded or notes_started),
+                   "recorded_skills": recorded, "created_at": draft.get("created_at"),
+                   "created_by_name": draft.get("created_by_name") or None, "session_label": draft.get("session_label") or ""}
+        if session["has_recorded_work"] and draft.get("status") == "draft":
+            attention.append({"kind": "resume_session", "text": "A session is already in progress for today — resume it, don't start over."})
+
+    return {
+        "today": {
+            "lesson_name": (current_lesson or {}).get("name") or None,
+            "lesson_number": (lesson_ids.index(cur_id) + 1) if cur_id in lesson_ids else None,
+            "lesson_count": len(lesson_ids) or None,
+            "program_name": (enrollment.get("program_snapshot") or {}).get("name") or "",
+            "module_name": current_module.get("name") or None,
+            "training_mode": mode,
+            "is_final_lesson": training_domain_services.pointer_is_final_lesson(enrollment, _compute_next_school_position),
+            "is_checkpoint_lesson": bool(checkpoint),
+            "objective": _briefing_excerpt((current_lesson or {}).get("success_criteria")),
+        },
+        "last_session": last,
+        "practice": practice,
+        "client_reports": reports,
+        "focus": focus,
+        "checkpoint": checkpoint,
+        "attention": attention[:5],
+        "session": session,
     }
 
 
@@ -25481,7 +26316,7 @@ async def start_training_session_draft_for_booking(
         }
     draft = await _get_or_create_session_draft(enrollment, booking_id, session_label, user)
     dog = await db.dogs.find_one({"id": dog_id}, {"_id": 0}) or {}
-    overview = await _build_pre_session_overview(enrollment, dog)
+    overview = await _build_pre_session_overview(enrollment, dog, draft)
     return {"resolution": "ready", "draft": draft, "overview": overview,
             "dog": {"id": dog_id, "name": dog.get("name") or "", "photo": dog.get("photo") or ""}, "booking_id": booking_id}
 
@@ -25490,6 +26325,7 @@ async def start_training_session_draft_for_booking(
 async def start_training_session_draft_direct(
     dog_id: str, enrollment_id: str, session_label: str = "",
     user: dict = Depends(require_admin_and_permission("manage_training_sessions")),
+    draft_id: str = "",
 ):
     """Direct entry point (Care Board / dog profile / Pipeline — no booking)."""
     # Online School hardening audit — a trainer session-draft can never be
@@ -25511,9 +26347,17 @@ async def start_training_session_draft_direct(
     if not readiness["ok"]:
         return {"resolution": readiness["reason"], "dog_id": dog_id,
                 **{k: v for k, v in readiness.items() if k not in ("ok", "reason")}}
-    draft = await _get_or_create_session_draft(enrollment, None, session_label, user)
+    if draft_id:
+        # Stage 11.5 — resume THIS unfinished draft (typically from an earlier
+        # day) instead of opening today's; a finalized draft is never reopened here.
+        draft = await db.training_session_drafts.find_one(
+            {"id": draft_id, "enrollment_id": enrollment_id, "status": {"$in": ["draft", "completing"]}}, {"_id": 0})
+        if not draft:
+            raise HTTPException(status_code=404, detail="That unfinished session no longer exists or was already finished")
+    else:
+        draft = await _get_or_create_session_draft(enrollment, None, session_label, user)
     dog = await db.dogs.find_one({"id": dog_id}, {"_id": 0}) or {}
-    overview = await _build_pre_session_overview(enrollment, dog)
+    overview = await _build_pre_session_overview(enrollment, dog, draft)
     return {"resolution": "ready", "draft": draft, "overview": overview,
             "dog": {"id": dog_id, "name": dog.get("name") or "", "photo": dog.get("photo") or ""}}
 
@@ -25529,7 +26373,7 @@ async def get_training_session_draft(draft_id: str, user: dict = Depends(require
     if enrollment:
         await _require_training_session_assignment(enrollment, user, booking_id=draft.get("booking_id"))
     dog = await db.dogs.find_one({"id": draft["dog_id"]}, {"_id": 0}) or {}
-    overview = await _build_pre_session_overview(enrollment, dog) if enrollment else None
+    overview = await _build_pre_session_overview(enrollment, dog, draft) if enrollment else None
     return {"draft": draft, "overview": overview, "dog": {"id": draft["dog_id"], "name": dog.get("name") or "", "photo": dog.get("photo") or ""}}
 
 
@@ -26146,13 +26990,24 @@ async def _apply_completion_plan(draft_id: str, plan: Dict[str, Any], claim_toke
         except Exception as exc:
             logger.warning("School session timeline event failed for %s: %s", plan["log_doc"]["id"], exc)
 
+    # Stage 8 — the workspace's "Session finished" panel names the dog's
+    # actual next training step from this response (never optimistic text).
+    # Additive, read-only: names resolved from the enrollment's own snapshot.
+    _after_module_id = (enrollment or {}).get("current_module_id", plan["final_module_id"])
+    _after_lesson_id = (enrollment or {}).get("current_lesson_id", plan["final_lesson_id"])
+    _after_lesson = _find_lesson_in_snapshot(enrollment or {}, _after_lesson_id) if _after_lesson_id else None
+    _after_module = next((m for m in ((enrollment or {}).get("program_snapshot") or {}).get("modules") or []
+                          if m.get("id") == _after_module_id), None)
     return {
         "already_completed": False, "session_log": log_doc, "draft": draft,
         "enrollment": {
             "id": plan["enrollment_id"],
             "status": (enrollment or {}).get("status", plan["final_status"]),
-            "current_module_id": (enrollment or {}).get("current_module_id", plan["final_module_id"]),
-            "current_lesson_id": (enrollment or {}).get("current_lesson_id", plan["final_lesson_id"]),
+            "current_module_id": _after_module_id,
+            "current_lesson_id": _after_lesson_id,
+            "current_lesson_name": (_after_lesson or {}).get("name"),
+            "current_module_name": (_after_module or {}).get("name"),
+            "program_name": ((enrollment or {}).get("program_snapshot") or {}).get("name"),
         },
         "homework_created": homework_created,
         # Includes newly-created OR an already-active lesson Practice reused
@@ -26443,11 +27298,17 @@ async def reopen_training_session(
     whatever the enrollment's state is at that time. Every reopen is
     appended to the draft's own reopen_history — who, when, why — so
     "a completed session got edited" is never silent."""
-    if user.get("role") != "admin":
-        raise HTTPException(status_code=403, detail="Only an Admin can reopen a completed training session.")
     draft = await db.training_session_drafts.find_one({"id": draft_id}, {"_id": 0})
     if not draft:
         raise HTTPException(status_code=404, detail="Draft not found")
+    # Stage 13 — capability, not role name: whoever manages training staff may reopen any
+    # session; a trainer may reopen only a session on a dog assigned to them (their own
+    # correction). Nobody else touches another trainer's finished work.
+    if not _can_assign_training_staff(user):
+        enrollment = await db.dog_programs.find_one({"id": draft.get("enrollment_id")}, {"_id": 0}) or {}
+        owned = await _training_session_assignment(enrollment, user, booking_id=draft.get("booking_id"))
+        if not owned.get("ok"):
+            raise HTTPException(status_code=403, detail="Only the trainer assigned to this dog, or someone who manages training staff, can reopen a completed session.")
     if draft.get("status") != "completed":
         raise HTTPException(status_code=409, detail="Only a completed session can be reopened.")
     reopen_event = {
@@ -26801,6 +27662,24 @@ async def admin_training_today(user: dict):
     )
 
 
+# Stage 11-13 Trainer Daily Queue lives in domains/training/trainer_day.py. The two
+# capability helpers below stay here because the program SALE and the day-assignment
+# endpoint (both still owned by this module) depend on them.
+def _can_assign_training_staff(user: dict) -> bool:
+    return bool(_perms_for(user).get("assign_training_staff"))
+
+
+def _require_trainer_assignment_authority(user: dict, trainer_id: Optional[str], current: Optional[str] = None) -> None:
+    """Stage 12 — changing who owns training work needs `assign_training_staff`.
+
+    Naming YOURSELF as the trainer (a trainer enrolling a dog they will teach)
+    stays allowed — that is the one pre-existing self-assignment path and it is
+    now explicit. Leaving an assignment unchanged never needs the permission."""
+    if not trainer_id or trainer_id == (current or None):
+        return
+    if _can_assign_training_staff(user) or trainer_id == user.get("id"):
+        return
+    raise HTTPException(status_code=403, detail="Assigning a trainer to training work requires the 'Assign training staff' permission.")
 
 
 class TrainingDayTrainerAssignmentIn(BaseModel):
@@ -26815,11 +27694,12 @@ async def assign_training_booking_trainer(
     """Assign/reassign one TODAY training booking to the trainer responsible.
 
     Kept on the existing booking instead of inventing a second daily schedule.
-    Only an Admin may change ownership; the target must be active staff with
-    manage_training_sessions.  Every change is appended to an audit history.
+    Stage 12 — ownership changes need the `assign_training_staff` capability
+    (owner/manager by default), not the admin role; the target must be active
+    staff with manage_training_sessions.  Every change is appended to an audit history.
     """
-    if user.get("role") != "admin":
-        raise HTTPException(status_code=403, detail="Admin access required to assign today's training dogs.")
+    if not _can_assign_training_staff(user):
+        raise HTTPException(status_code=403, detail="Assigning today's training dogs requires the 'Assign training staff' permission.")
     booking = await db.bookings.find_one({"id": booking_id}, {"_id": 0})
     if not booking:
         raise HTTPException(status_code=404, detail="Booking not found")
@@ -27078,9 +27958,6 @@ async def trainer_scorecard(days: int = 30, _: dict = Depends(require_admin_and_
     }
 
 
-
-
-
 class CustomProgramIn(BaseModel):
     name: str = Field(min_length=1)
     description: Optional[str] = ""
@@ -27145,7 +28022,16 @@ async def programs_pipeline(
     query: Dict = {"delivery_channel": {"$in": list(STAFF_SCHOOL_DELIVERY_CHANNELS)}}
     if status:
         query["status"] = status
+    # Stage 12 — `trainer` as a user id is the trainer's own "My students" roster: ONLY the
+    # programs assigned to them (server-side). A name fragment keeps the owner's text filter
+    # below (assigned trainer OR the trainer who last worked the dog).
+    trainer_by_id = bool(trainer) and await db.users.count_documents({"id": trainer, "role": {"$in": ["admin", "employee"]}}) > 0
+    if trainer_by_id:
+        query["assigned_trainer_id"] = trainer
     rows = await db.dog_programs.find(query, {"_id": 0}).to_list(2000)
+    trainer_names = {u["id"]: (u.get("display_name") or u.get("name") or u.get("email")) for u in await db.users.find(
+        {"id": {"$in": list({r.get("assigned_trainer_id") for r in rows if r.get("assigned_trainer_id")})}},
+        {"_id": 0, "id": 1, "name": 1, "display_name": 1, "email": 1}).to_list(500)}
     if type:
         rows = [r for r in rows if (r.get("program_snapshot") or {}).get("type") == type]
 
@@ -27212,9 +28098,9 @@ async def programs_pipeline(
             except Exception:
                 pass
         # Trainer filter — match against by_user OR by_email
-        if trainer:
+        if trainer and not trainer_by_id:
             t = trainer.lower()
-            hay = f"{last_log.get('by_user','')} {last_log.get('by_email','')}".lower()
+            hay = f"{last_log.get('by_user','')} {last_log.get('by_email','')} {trainer_names.get(r.get('assigned_trainer_id')) or ''}".lower()
             if t not in hay:
                 continue
         is_stalled = False
@@ -27241,6 +28127,8 @@ async def programs_pipeline(
             "last_trainer_email": last_log.get("by_email"),
             "days_since_session": days_since_session,
             "is_stalled": is_stalled,
+            "assigned_trainer_id": r.get("assigned_trainer_id"),
+            "assigned_trainer_name": trainer_names.get(r.get("assigned_trainer_id")),
         })
 
     # Sort: active first, then overdue (negative days_to_target), then by recency
@@ -27339,7 +28227,6 @@ async def admin_run_daily_jobs(_: dict = Depends(require_admin)):
     )
     result = await maybe_run_daily(db)
     return {"ok": True, "result": result}
-
 
 
 # ─── Action Required / Pending Actions ─────────────────────────────────────
@@ -28721,8 +29608,6 @@ async def admin_today_brain_restore(body: TodayBrainDismissIn, _: dict = Depends
     return {"ok": True, "removed": res.deleted_count}
 
 
-
-
 # -------- Calendar Events --------
 async def _dog_visit_counts(dog_ids: List[str]) -> Dict[str, int]:
     """Lifetime visits per dog across hot + archived bookings."""
@@ -28966,17 +29851,6 @@ _BACKUP_PROCESS_ID = f"{socket.gethostname()}:{os.getpid()}:{uuid.uuid4()}"
 _BACKUP_LEASE_ID = "auto_backup_lease"
 
 
-def _safe_backup_dir(path: Optional[str] = None) -> str:
-    requested = os.path.realpath(path or BACKUP_ROOT)
-    try:
-        common = os.path.commonpath([BACKUP_ROOT, requested])
-    except ValueError:
-        common = ""
-    if common != BACKUP_ROOT:
-        raise ValueError(f"Backup folder must be {BACKUP_ROOT} or a subfolder inside it")
-    return requested
-
-
 async def _export_collection_docs(collection_name: str) -> List[Dict[str, Any]]:
     """Export every document without Motor's old 50,000-document cap."""
     projection = None if collection_name in STRING_ID_COLLECTIONS else {"_id": 0}
@@ -28994,79 +29868,6 @@ async def _export_collection_docs(collection_name: str) -> List[Dict[str, Any]]:
     return docs
 
 
-async def _acquire_backup_lease(trigger: str, ttl_minutes: int = 240) -> bool:
-    """Mongo-backed mutex shared by every uvicorn worker."""
-    now = datetime.now(timezone.utc)
-    expires = now + timedelta(minutes=max(15, ttl_minutes))
-    query = {
-        "_id": _BACKUP_LEASE_ID,
-        "$or": [
-            {"owner": _BACKUP_PROCESS_ID},
-            {"expires_at": {"$exists": False}},
-            {"expires_at": {"$lte": now}},
-        ],
-    }
-    update = {"$set": {
-        "owner": _BACKUP_PROCESS_ID,
-        "trigger": trigger,
-        "acquired_at": now,
-        "expires_at": expires,
-    }}
-    try:
-        row = await db.app_settings.find_one_and_update(
-            query, update, upsert=True, return_document=ReturnDocument.AFTER
-        )
-        return bool(row and row.get("owner") == _BACKUP_PROCESS_ID)
-    except DuplicateKeyError:
-        return False
-
-
-async def _release_backup_lease() -> None:
-    await db.app_settings.delete_one({"_id": _BACKUP_LEASE_ID, "owner": _BACKUP_PROCESS_ID})
-
-@api.post("/admin/compress-photos")
-async def admin_compress_photos(_: dict = Depends(require_admin)):
-    """Kick off a one-time background job that recompresses every base64
-    photo in dogs, bookings.report_card, and incidents to the smaller JPEG
-    format used by the frontend compressor. Idempotent: photos already
-    under ~350 KB are skipped, so re-running is cheap. Returns the current
-    progress snapshot — poll `GET /admin/compress-photos/status` to watch."""
-    import photo_backfill
-    return photo_backfill.start_backfill(db)
-
-
-@api.get("/admin/compress-photos/status")
-async def admin_compress_photos_status(_: dict = Depends(require_admin)):
-    """Snapshot of the photo backfill (running / counts / bytes saved)."""
-    import photo_backfill
-    return photo_backfill.get_status()
-
-
-@api.get("/backup/export")
-async def backup_export(user: dict = Depends(require_admin)):
-    """Download a full JSON backup of every business collection. User accounts
-    are intentionally excluded — passwords are hashed and migration of users
-    should go through a separate restore flow.
-
-    Sprint 110di-24 — Permission Matrix wiring: `data_export` matrix key is
-    now consulted so admins with that toggle off can't pull a full data dump."""
-    perms = _perms_for(user)
-    if not perms.get("data_export"):
-        raise HTTPException(status_code=403, detail="Missing permission: data_export")
-    return await _build_backup_payload()
-
-
-# ─────────────── Sprint 110di-23 · Config-only Export/Import ───────────────
-# A trimmed slice of the backup that ONLY contains "configurability" data:
-# the master `settings` blob (branding, feature_visibility,
-# client_portal_controls, booking_flow_controls, dashboard_widgets,
-# interface appearance, email templates/branding, payment-plan settings,
-# and named app_settings rows (auto_backup, quarterly_tax, …).
-#
-# Lets the operator carry their configuration between staging/prod or back
-# up just their themes/toggles WITHOUT bundling client/dog/booking data.
-# Restore is always a full overwrite of the named config keys ("replace"
-# semantics for these specific collections only) — predictable backup/restore.
 CONFIG_COLLECTIONS = [
     "settings",
     "app_settings",
@@ -29092,73 +29893,6 @@ async def _build_config_payload() -> Dict[str, Any]:
     return payload
 
 
-async def _write_pre_restore_snapshot(kind: str) -> Dict[str, Any]:
-    """Atomically write and parse-verify the current state before a restore."""
-    snapshot_dir = _safe_backup_dir()
-    temp_path: Optional[str] = None
-    media_archive_path: Optional[str] = None
-    try:
-        os.makedirs(snapshot_dir, exist_ok=True)
-        if kind == "config":
-            payload = await _build_config_payload()
-        else:
-            payload = await _build_backup_payload()
-        ts = datetime.now(timezone.utc).strftime("%Y%m%d-%H%M%S-%f")
-        filename = f"pre-restore-{kind}-{ts}.json"
-        full_path = os.path.join(snapshot_dir, filename)
-        temp_path = full_path + f".{os.getpid()}.tmp"
-        body = _json.dumps(payload, separators=(",", ":"), default=str).encode("utf-8")
-        import hashlib
-        checksum = hashlib.sha256(body).hexdigest()
-        with open(temp_path, "wb") as fh:
-            fh.write(body)
-            fh.flush()
-            os.fsync(fh.fileno())
-        with open(temp_path, "rb") as fh:
-            readback = fh.read()
-        if hashlib.sha256(readback).hexdigest() != checksum:
-            raise RuntimeError("Pre-restore snapshot checksum verification failed")
-        verified = _json.loads(readback.decode("utf-8"))
-        if not isinstance(verified.get("collections"), dict):
-            raise RuntimeError("Pre-restore snapshot is missing its collections map")
-        os.replace(temp_path, full_path)
-        temp_path = None
-        size = os.path.getsize(full_path)
-        return {
-            "ok": True,
-            "verified": True,
-            "path": full_path,
-            "filename": filename,
-            "size_bytes": size,
-            "sha256": checksum,
-            "created_at": now_iso(),
-        }
-    except Exception as exc:
-        if temp_path and os.path.exists(temp_path):
-            try:
-                os.remove(temp_path)
-            except Exception:
-                pass
-        logger.warning("pre-restore snapshot (%s) failed: %s", kind, exc)
-        return {"ok": False, "verified": False, "error": str(exc), "created_at": now_iso()}
-
-
-@api.get("/backup/export-config")
-async def backup_export_config(user: dict = Depends(require_admin)):
-    """Download a JSON snapshot of just the configuration collections —
-    branding, feature visibility, portal controls, dashboard widgets, card
-    themes, email templates, payment-plan settings, and named app_settings
-    rows. No client/dog/booking data is included.
-
-    Sprint 110di-24 — Gated on the `settings` matrix key (which is what
-    governs editing settings in the first place) so a non-settings admin
-    can't smuggle config out via export."""
-    perms = _perms_for(user)
-    if not perms.get("settings"):
-        raise HTTPException(status_code=403, detail="Missing permission: settings")
-    return await _build_config_payload()
-
-
 class ConfigRestoreIn(BaseModel):
     version: int
     collections: dict
@@ -29168,66 +29902,6 @@ class ConfigRestoreIn(BaseModel):
     kind: Optional[str] = None
 
 
-@api.post("/backup/restore-config")
-async def backup_restore_config(body: ConfigRestoreIn, _: dict = Depends(require_admin_and_permission("data_export"))):
-    """Restore configuration from a config-only backup file. Always replaces
-    the listed config collections with the snapshot contents. Collections
-    NOT in the payload are left untouched. Anything outside the configured
-    allow-list is silently ignored — so you can't accidentally wipe clients
-    by uploading the wrong file."""
-    if body.kind != "config":
-        raise HTTPException(
-            status_code=400,
-            detail=(
-                f"This file looks like a '{body.kind or 'full'}' export, not a config export. "
-                "Use the full Restore panel for full backups, or re-download via Config Export."
-            ),
-        )
-    if body.version > CONFIG_BACKUP_VERSION:
-        raise HTTPException(
-            status_code=400,
-            detail=f"Config backup version {body.version} is newer than this server (v{CONFIG_BACKUP_VERSION}). Update the server first.",
-        )
-    # Safety net: snapshot the CURRENT config to disk BEFORE we touch anything
-    # so a bad restore can always be rolled back from /app/backups. Failure to
-    # write the snapshot is logged but doesn't abort the restore — better to
-    # let the operator restore than block on a disk error.
-    pre_snapshot = await _write_pre_restore_snapshot("config")
-    if not pre_snapshot.get("ok"):
-        raise HTTPException(
-            status_code=507,
-            detail=f"Restore stopped because the safety snapshot could not be verified: {pre_snapshot.get('error')}",
-        )
-    summary = {}
-    for c, docs in (body.collections or {}).items():
-        if c not in CONFIG_COLLECTIONS:
-            continue
-        docs = [d for d in (docs or []) if isinstance(d, dict)]
-        # Full-replace semantics: drop the collection, then bulk-insert.
-        # Config docs are tiny (handful of rows max) so wiping is cheap and
-        # predictable — matches user expectation for "restore this config".
-        await db[c].delete_many({})
-        if docs:
-            await db[c].insert_many(docs)
-        summary[c] = {"mode": "replace", "inserted": len(docs)}
-    return {
-        "ok": True,
-        "summary": summary,
-        "restored_at": now_iso(),
-        "pre_restore_snapshot": pre_snapshot,
-    }
-
-
-# ─────────────── Sprint 110av · Disk Usage Monitor ───────────────
-# Shows free/used space for every path the container can see. Helps the
-# operator know when they're running out of room for backups / Mongo data
-# before disaster strikes. Works inside an unprivileged container — uses
-# pure shutil.disk_usage (no host privileges needed).
-import shutil
-
-# Paths the container is *likely* to care about. Anything that doesn't
-# exist is silently skipped; anything mounted from the host shows up via
-# /proc/mounts scan below.
 _DISK_PROBE_PATHS = [
     ("/app",            "App code & data"),
     ("/app/data",       "App data dir"),
@@ -29302,117 +29976,6 @@ def _disk_row(path: str, label: str, mounts: List[Dict[str, str]]) -> Optional[D
     }
 
 
-@api.get("/admin/disk-usage")
-async def admin_disk_usage(_: dict = Depends(require_admin_and_permission("data_export"))):
-    """Snapshot of disk usage for every meaningful path inside the container.
-    Includes a `likely_ephemeral` flag so the operator knows when a path lives
-    on the container overlay (i.e. will be lost on rebuild) vs a real host
-    mount. Used by Admin → Settings → Backup & Restore → Disk usage tile.
-    """
-    mounts = _read_mounts()
-    rows: List[Dict[str, Any]] = []
-    seen_paths = set()
-    # Probe the curated list first so labels are nice
-    for path, label in _DISK_PROBE_PATHS:
-        if not os.path.exists(path):
-            continue
-        row = _disk_row(path, label, mounts)
-        if row:
-            rows.append(row)
-            seen_paths.add(path)
-    # Now scan /proc/mounts for any real host-mounted filesystems we missed
-    interesting_fs = {"ext4", "xfs", "btrfs", "zfs", "nfs", "nfs4", "cifs", "smb"}
-    for m in mounts:
-        mp = m["mountpoint"]
-        if mp in seen_paths:
-            continue
-        if m["fs_type"] not in interesting_fs:
-            continue
-        # Skip system paths the operator can't act on
-        if mp == "/" or mp.startswith("/proc") or mp.startswith("/sys") or mp.startswith("/dev"):
-            continue
-        row = _disk_row(mp, mp, mounts)
-        if row:
-            rows.append(row)
-            seen_paths.add(mp)
-    return {
-        "checked_at": now_iso(),
-        "mountpoints": rows,
-    }
-
-
-# ─────────────── Sprint 110av · Auto-Backup (Tier A) ───────────────
-# Nightly snapshot of every business collection → gzipped JSON file. Runs
-# inside the FastAPI process via a lightweight asyncio loop (no extra
-# dependency). The operator points `path` at a host-mounted folder so
-# backups survive container rebuilds.
-import gzip
-import json as _json
-
-
-async def _get_auto_backup_config() -> Dict[str, Any]:
-    """Returns the auto-backup config, seeding defaults if missing."""
-    row = await db.app_settings.find_one({"_id": "auto_backup"}, {"_id": 0})
-    if not row:
-        row = {
-            "enabled": False,
-            "hour": 3,             # 3 AM local
-            "minute": 0,
-            "path": BACKUP_ROOT,
-            "retain_days": 30,
-            "last_run": None,      # filled in by the runner
-            "last_ok": None,
-            "last_verified": None,
-            "last_error": None,
-            "last_size_bytes": None,
-            "last_sha256": None,
-            "last_file": None,
-        }
-        await db.app_settings.update_one(
-            {"_id": "auto_backup"}, {"$set": row}, upsert=True
-        )
-    # Migrate legacy/unsafe paths back to the persistent bind mount.
-    try:
-        safe_path = _safe_backup_dir(row.get("path"))
-    except ValueError:
-        safe_path = BACKUP_ROOT
-        await db.app_settings.update_one(
-            {"_id": "auto_backup"},
-            {"$set": {
-                "path": safe_path,
-                "last_error": f"Unsafe legacy backup path reset to {safe_path}",
-            }},
-            upsert=True,
-        )
-        row["path"] = safe_path
-        row["last_error"] = f"Unsafe legacy backup path reset to {safe_path}"
-    else:
-        row["path"] = safe_path
-    return row
-
-
-async def _save_auto_backup_config(patch: Dict[str, Any]) -> Dict[str, Any]:
-    await db.app_settings.update_one(
-        {"_id": "auto_backup"}, {"$set": patch}, upsert=True
-    )
-    return await _get_auto_backup_config()
-
-
-async def _build_backup_payload() -> Dict[str, Any]:
-    payload = {
-        "version": BACKUP_VERSION,
-        "exported_at": now_iso(),
-        "collections": {},
-    }
-    for c in BACKUP_COLLECTIONS:
-        payload["collections"][c] = await _export_collection_docs(c)
-    payload["collection_counts"] = {
-        name: len(items) for name, items in payload["collections"].items()
-    }
-    payload["total_docs"] = sum(payload["collection_counts"].values())
-    return payload
-
-
 def _write_school_media_archive(target_dir: str, stamp: str) -> Dict[str, Any]:
     """Atomically archive filesystem-backed Online School media next to JSON backup.
 
@@ -29445,206 +30008,6 @@ def _write_school_media_archive(target_dir: str, stamp: str) -> Dict[str, Any]:
             except Exception: pass
 
 
-async def _run_auto_backup_once(trigger: str = "scheduled") -> Dict[str, Any]:
-    """Write, atomically publish, parse-verify, and prune one backup."""
-    cfg = await _get_auto_backup_config()
-    started = now_iso()
-    acquired = await _acquire_backup_lease(trigger)
-    if not acquired:
-        return {
-            "id": str(uuid.uuid4()),
-            "trigger": trigger,
-            "started_at": started,
-            "finished_at": now_iso(),
-            "ok": False,
-            "status": "skipped",
-            "path": None,
-            "size_bytes": 0,
-            "collections": 0,
-            "total_docs": 0,
-            "pruned": [],
-            "error": "Another backup is already running",
-        }
-    temp_path: Optional[str] = None
-    try:
-        # The Mongo lease serializes workers. This second check prevents a
-        # second worker from starting another scheduled backup immediately
-        # after a very fast first run releases the lease. Failed runs remain
-        # retryable on the same day.
-        if trigger == "scheduled":
-            day_start, day_end = _business_day_utc_bounds(business_today().isoformat())
-            existing = await db.auto_backup_runs.find_one({
-                "trigger": "scheduled",
-                "ok": True,
-                "started_at": {"$gte": day_start, "$lt": day_end},
-            })
-            if existing:
-                return {
-                    "id": str(uuid.uuid4()),
-                    "trigger": trigger,
-                    "started_at": started,
-                    "finished_at": now_iso(),
-                    "ok": False,
-                    "status": "skipped",
-                    "path": existing.get("path"),
-                    "size_bytes": 0,
-                    "collections": 0,
-                    "total_docs": 0,
-                    "pruned": [],
-                    "error": "A verified scheduled backup already completed today",
-                }
-        target_dir = _safe_backup_dir(cfg.get("path"))
-        os.makedirs(target_dir, exist_ok=True)
-        payload = await _build_backup_payload()
-        ts = datetime.now(timezone.utc).strftime("%Y-%m-%d_%H%M%S_%f")
-        fname = f"sit-happens-{ts}.json.gz"
-        full_path = os.path.join(target_dir, fname)
-        temp_path = full_path + f".{os.getpid()}.tmp"
-        body = _json.dumps(payload, separators=(",", ":"), default=str).encode("utf-8")
-        import hashlib
-        body_sha256 = hashlib.sha256(body).hexdigest()
-        with gzip.open(temp_path, "wb", compresslevel=6) as fh:
-            fh.write(body)
-        with gzip.open(temp_path, "rb") as fh:
-            verified_body = fh.read()
-        readback_sha256 = hashlib.sha256(verified_body).hexdigest()
-        if readback_sha256 != body_sha256:
-            raise RuntimeError("Backup checksum verification failed after disk write")
-        verified = _json.loads(verified_body.decode("utf-8"))
-        verified_collections = verified.get("collections") or {}
-        missing_critical = [c for c in _CRITICAL_BACKUP_COLLECTIONS if c not in verified_collections]
-        verified_counts = {k: len(v or []) for k, v in verified_collections.items() if isinstance(v, list)}
-        expected_counts = payload.get("collection_counts") or {}
-        mismatched_counts = {
-            k: {"expected": expected_counts.get(k), "actual": verified_counts.get(k)}
-            for k in expected_counts
-            if verified_counts.get(k) != expected_counts.get(k)
-        }
-        if missing_critical or mismatched_counts:
-            raise RuntimeError(
-                f"Backup verification failed; missing={missing_critical}, count_mismatches={mismatched_counts}"
-            )
-        media_backup = _write_school_media_archive(target_dir, ts)
-        media_archive_path = media_backup.get("path")
-        os.replace(temp_path, full_path)
-        temp_path = None
-        size = os.path.getsize(full_path)
-        retain = max(1, int(cfg.get("retain_days") or 30))
-        cutoff = datetime.now(timezone.utc) - timedelta(days=retain)
-        recent_window = datetime.now(timezone.utc) - timedelta(days=7)
-        pruned: List[str] = []
-        all_files = sorted(
-            (f for f in os.listdir(target_dir)
-             if f.startswith("sit-happens-") and f.endswith(".json.gz")),
-            reverse=True,
-        )
-        seen_days: set = set()
-        for old in all_files:
-            try:
-                stamp = old.split("sit-happens-", 1)[1].split(".json.gz", 1)[0]
-                # Accept both legacy filenames and new microsecond filenames.
-                try:
-                    file_dt = datetime.strptime(stamp, "%Y-%m-%d_%H%M%S_%f").replace(tzinfo=timezone.utc)
-                except ValueError:
-                    file_dt = datetime.strptime(stamp, "%Y-%m-%d_%H%M%S").replace(tzinfo=timezone.utc)
-            except Exception:
-                continue
-            day_key = file_dt.date().isoformat()
-            if file_dt < cutoff:
-                try:
-                    os.remove(os.path.join(target_dir, old))
-                    media_old = os.path.join(target_dir, f"sit-happens-school-media-{stamp}.tar.gz")
-                    if os.path.exists(media_old):
-                        os.remove(media_old); pruned.append(os.path.basename(media_old))
-                    pruned.append(old)
-                except Exception:
-                    pass
-                continue
-            if file_dt >= recent_window:
-                seen_days.add(day_key)
-                continue
-            if day_key in seen_days:
-                try:
-                    os.remove(os.path.join(target_dir, old))
-                    media_old = os.path.join(target_dir, f"sit-happens-school-media-{stamp}.tar.gz")
-                    if os.path.exists(media_old):
-                        os.remove(media_old); pruned.append(os.path.basename(media_old))
-                    pruned.append(old)
-                except Exception:
-                    pass
-            else:
-                seen_days.add(day_key)
-        run_row = {
-            "id": str(uuid.uuid4()),
-            "trigger": trigger,
-            "started_at": started,
-            "finished_at": now_iso(),
-            "ok": True,
-            "status": "ok",
-            "verified": True,
-            "path": full_path,
-            "size_bytes": size,
-            "sha256": body_sha256,
-            "school_media_archive": media_backup.get("path"),
-            "school_media_verified": media_backup.get("verified", False),
-            "school_media_files": media_backup.get("files", 0),
-            "school_media_size_bytes": media_backup.get("size_bytes", 0),
-            "collections": len(payload["collections"]),
-            "collection_counts": expected_counts,
-            "total_docs": payload.get("total_docs", 0),
-            "pruned": pruned,
-            "error": None,
-        }
-        await db.auto_backup_runs.insert_one(dict(run_row))
-        await _save_auto_backup_config({
-            "path": target_dir,
-            "last_run": run_row["finished_at"],
-            "last_ok": True,
-            "last_verified": True,
-            "last_error": None,
-            "last_size_bytes": size,
-            "last_sha256": body_sha256,
-            "last_file": full_path,
-        })
-        return run_row
-    except Exception as e:
-        if media_archive_path and os.path.exists(media_archive_path):
-            try: os.remove(media_archive_path)
-            except Exception: pass
-        if temp_path and os.path.exists(temp_path):
-            try:
-                os.remove(temp_path)
-            except Exception:
-                pass
-        err = f"{type(e).__name__}: {e}"
-        run_row = {
-            "id": str(uuid.uuid4()),
-            "trigger": trigger,
-            "started_at": started,
-            "finished_at": now_iso(),
-            "ok": False,
-            "status": "failed",
-            "verified": False,
-            "path": None,
-            "size_bytes": 0,
-            "collections": 0,
-            "total_docs": 0,
-            "pruned": [],
-            "error": err,
-        }
-        await db.auto_backup_runs.insert_one(dict(run_row))
-        await _save_auto_backup_config({
-            "last_run": run_row["finished_at"],
-            "last_ok": False,
-            "last_verified": False,
-            "last_error": err,
-        })
-        logger.warning("auto-backup run failed: %s", err)
-        return run_row
-    finally:
-        await _release_backup_lease()
-
-
 def _seconds_until_next_run(hour: int, minute: int) -> float:
     """Compute seconds until the next HH:MM (US Eastern wall clock)."""
     now = now_local()
@@ -29652,37 +30015,6 @@ def _seconds_until_next_run(hour: int, minute: int) -> float:
     if target <= now:
         target = target + timedelta(days=1)
     return max(60.0, (target - now).total_seconds())
-
-
-async def _maybe_auto_backup_tick() -> Dict[str, Any]:
-    """Scheduler job replacing the old per-worker `_auto_backup_loop` (which
-    every uvicorn worker started, so scheduled backups fired twice). Runs the
-    scheduled backup once per business day at/after the configured HH:MM;
-    `_run_auto_backup_once` keeps its own lease + same-day guard, and a failed
-    attempt is retried no more than hourly."""
-    cfg = await _get_auto_backup_config()
-    if not cfg.get("enabled"):
-        return {"skipped": "disabled"}
-    now = now_local()
-    hour, minute = int(cfg.get("hour") or 3), int(cfg.get("minute") or 0)
-    if (now.hour, now.minute) < (hour, minute):
-        return {"skipped": "before_window", "at": f"{hour:02d}:{minute:02d}"}
-    today = business_today().isoformat()
-    marker = await db.system_runs.find_one({"_id": "auto_backup_tick"}) or {}
-    if marker.get("date") == today and marker.get("ok"):
-        return {"skipped": "done_today", "path": marker.get("path")}
-    last_attempt = marker.get("attempted_at") or ""
-    if marker.get("date") == today and last_attempt and last_attempt > (datetime.now(timezone.utc) - timedelta(hours=1)).isoformat():
-        return {"skipped": "retry_later", "error": marker.get("error")}
-    result = await _run_auto_backup_once(trigger="scheduled")
-    ok = bool(result.get("ok")) or (result.get("status") == "skipped" and bool(result.get("path")))
-    await db.system_runs.update_one(
-        {"_id": "auto_backup_tick"},
-        {"$set": {"date": today, "attempted_at": now_iso(), "ok": ok, "status": result.get("status"),
-                  "path": result.get("path"), "error": result.get("error")}},
-        upsert=True,
-    )
-    return {"ok": ok, "status": result.get("status"), "path": result.get("path"), "error": result.get("error")}
 
 
 _scheduler_task: Optional[asyncio.Task] = None
@@ -29702,75 +30034,6 @@ def _scheduler_jobs() -> List[job_scheduler.Job]:
     ]
 
 
-@api.get("/admin/scheduler/status")
-async def admin_scheduler_status(_: dict = Depends(require_admin)):
-    st = await job_scheduler.status(db, SCHEDULER_MARKER_IDS)
-    st["enabled"] = os.environ.get("SCHEDULER_ENABLED", "1") == "1"
-    st["running_in_this_worker"] = bool(_scheduler_task and not _scheduler_task.done())
-    st["jobs"] = [n for n, _ in _scheduler_jobs()]
-    return st
-
-
-@api.post("/admin/scheduler/run-now")
-async def admin_scheduler_run_now(user: dict = Depends(require_admin)):
-    """Run one scheduler tick immediately (same idempotent jobs the loop runs)."""
-    return await job_scheduler.run_jobs_once(db, _scheduler_jobs(), holder=f"manual:{user.get('id', 'admin')}")
-
-
-class AutoBackupConfigIn(BaseModel):
-    enabled: Optional[bool] = None
-    hour: Optional[int] = Field(default=None, ge=0, le=23)
-    minute: Optional[int] = Field(default=None, ge=0, le=59)
-    path: Optional[str] = Field(default=None, max_length=500)
-    retain_days: Optional[int] = Field(default=None, ge=1, le=3650)
-
-
-@api.get("/admin/auto-backup/config")
-async def get_auto_backup_config(_: dict = Depends(require_admin_and_permission("settings"))):
-    cfg = await _get_auto_backup_config()
-    # Augment with current path state so the UI can warn about ephemeral mounts
-    mounts = _read_mounts()
-    safe_path = _safe_backup_dir(cfg.get("path"))
-    path_row = _disk_row(safe_path, "Backup target", mounts) if os.path.exists(safe_path) else None
-    cfg["path_exists"] = path_row is not None
-    cfg["path_info"] = path_row
-    cfg["backup_root"] = BACKUP_ROOT
-    cfg["persistent_mount_required"] = True
-    return cfg
-
-
-@api.put("/admin/auto-backup/config")
-async def put_auto_backup_config(body: AutoBackupConfigIn, _: dict = Depends(require_admin_and_permission("settings"))):
-    patch = {k: v for k, v in body.model_dump(exclude_unset=True).items() if v is not None}
-    if "path" in patch:
-        try:
-            patch["path"] = _safe_backup_dir(patch["path"])
-            os.makedirs(patch["path"], exist_ok=True)
-            probe = os.path.join(patch["path"], f".write-test-{os.getpid()}")
-            with open(probe, "w", encoding="utf-8") as fh:
-                fh.write("ok")
-            os.remove(probe)
-        except Exception as exc:
-            raise HTTPException(status_code=400, detail=f"Backup folder is not safe/writable: {exc}")
-    cfg = await _save_auto_backup_config(patch)
-    cfg["backup_root"] = BACKUP_ROOT
-    cfg["persistent_mount_required"] = True
-    return cfg
-
-
-@api.post("/admin/auto-backup/run-now")
-async def run_auto_backup_now(_: dict = Depends(require_admin_and_permission("data_export"))):
-    """Trigger a backup immediately, regardless of the schedule."""
-    return await _run_auto_backup_once(trigger="manual")
-
-
-@api.get("/admin/auto-backup/runs")
-async def list_auto_backup_runs(limit: int = 30, _: dict = Depends(require_admin_and_permission("data_export"))):
-    rows = await db.auto_backup_runs.find({}, {"_id": 0}).sort("started_at", -1).to_list(limit)
-    return rows
-
-
-# ─────────────── Phase 7 · Backup / Restore Safety + Pre-Update Guardrails ───────────────
 def _safe_parse_iso(value: Optional[str]) -> Optional[datetime]:
     if not value:
         return None
@@ -29780,35 +30043,6 @@ def _safe_parse_iso(value: Optional[str]) -> Optional[datetime]:
         return None
 
 
-def _backup_age_hours(run: Optional[Dict[str, Any]]) -> Optional[float]:
-    if not run:
-        return None
-    dt = _safe_parse_iso(run.get("finished_at") or run.get("started_at") or run.get("last_run"))
-    if not dt:
-        return None
-    if dt.tzinfo is None:
-        dt = dt.replace(tzinfo=timezone.utc)
-    return round((datetime.now(timezone.utc) - dt.astimezone(timezone.utc)).total_seconds() / 3600, 2)
-
-
-def _backup_file_info(path: Optional[str]) -> Dict[str, Any]:
-    if not path:
-        return {"path": None, "exists": False, "size_bytes": 0, "size_mb": 0}
-    try:
-        exists = os.path.exists(path)
-        size = os.path.getsize(path) if exists else 0
-        mtime = datetime.fromtimestamp(os.path.getmtime(path), tz=timezone.utc).isoformat() if exists else None
-        return {
-            "path": path,
-            "exists": exists,
-            "size_bytes": size,
-            "size_mb": round(size / (1024 ** 2), 2),
-            "modified_at": mtime,
-        }
-    except Exception as e:
-        return {"path": path, "exists": False, "size_bytes": 0, "size_mb": 0, "error": str(e)}
-
-
 _CRITICAL_BACKUP_COLLECTIONS = [
     "clients", "dogs", "bookings", "bookings_archive",
     "credit_lots", "credit_adjustments", "payment_ledger", "checkout_groups", "retail_sales",
@@ -29816,235 +30050,6 @@ _CRITICAL_BACKUP_COLLECTIONS = [
     "vaccine_uploads", "referrals", "rewards_ledger", "audit_log", "duplicate_merge_audit",
     "school_enrollments", "checkpoint_submissions", "school_events", "school_notifications",
 ]
-
-
-@api.get("/admin/backup-safety/report")
-async def admin_backup_safety_report(_: dict = Depends(require_admin_and_permission("data_export"))):
-    """Pre-update safety report. Read-only.
-
-    This does not replace the host-level ./backup-now.sh tarball, but it gives the
-    operator a fast app-side sanity check: recent backup, file existence/size,
-    disk pressure, critical collection counts, and a clear go/no-go flag before
-    pulling a new branch on the Bazzite box.
-    """
-    cfg = await _get_auto_backup_config()
-    runs = await db.auto_backup_runs.find({}, {"_id": 0}).sort("started_at", -1).to_list(10)
-    successful = [r for r in runs if (r.get("ok") or r.get("status") == "ok") and r.get("verified", True)]
-    latest_ok = successful[0] if successful else None
-    latest_file = (latest_ok or {}).get("path") or cfg.get("last_file")
-    file_info = _backup_file_info(latest_file)
-    age_hours = _backup_age_hours(latest_ok) if latest_ok else None
-
-    counts: Dict[str, int] = {}
-    for c in _CRITICAL_BACKUP_COLLECTIONS:
-        try:
-            counts[c] = await db[c].count_documents({})
-        except Exception:
-            counts[c] = -1
-
-    disk = await admin_disk_usage(_={})
-    backup_target = _safe_backup_dir(cfg.get("path"))
-    target_row = None
-    for row in disk.get("mountpoints", []):
-        if row.get("path") == backup_target or backup_target.startswith(str(row.get("path", "")).rstrip("/") + "/"):
-            target_row = row
-            break
-    danger_paths = [d for d in disk.get("mountpoints", []) if d.get("verdict") == "danger"]
-    warn_paths = [d for d in disk.get("mountpoints", []) if d.get("verdict") == "warn"]
-
-    warnings: List[Dict[str, Any]] = []
-    def warn(key: str, severity: str, title: str, detail: str):
-        warnings.append({"key": key, "severity": severity, "title": title, "detail": detail})
-
-    if not latest_ok:
-        warn("no_in_app_backup", "danger", "No successful in-app backup found", "Run Auto-Backup → Run now, or use ./backup-now.sh before updates.")
-    elif age_hours is not None and age_hours > 72:
-        warn("backup_old", "danger", "Latest in-app backup is older than 72 hours", f"Latest successful run is about {age_hours} hours old.")
-    elif age_hours is not None and age_hours > 24:
-        warn("backup_stale", "warn", "Latest in-app backup is older than 24 hours", f"Latest successful run is about {age_hours} hours old.")
-
-    if latest_ok and not file_info.get("exists"):
-        warn("backup_file_missing", "danger", "Latest backup file is missing", f"Expected file: {latest_file}")
-    if latest_ok and int((latest_ok or {}).get("school_media_files") or 0) > 0:
-        media_path = (latest_ok or {}).get("school_media_archive")
-        if not media_path or not os.path.isfile(str(media_path)):
-            warn("school_media_backup_missing", "danger", "School media backup is missing", "The latest database backup references School videos/resources, but its matching media archive is not present.")
-        elif not (latest_ok or {}).get("school_media_verified", False):
-            warn("school_media_backup_unverified", "danger", "School media backup was not verified", "Run a fresh Auto-Backup before an update or restore.")
-    if file_info.get("exists") and file_info.get("size_bytes", 0) < 10_000 and (counts.get("clients", 0) or counts.get("dogs", 0)):
-        warn("backup_tiny", "danger", "Latest backup file looks suspiciously small", f"File size is only {file_info.get('size_mb')} MB.")
-    if danger_paths:
-        warn("disk_danger", "danger", "Disk space danger", f"{len(danger_paths)} mount/path(s) are over the danger threshold.")
-    elif warn_paths:
-        warn("disk_warn", "warn", "Disk space warning", f"{len(warn_paths)} mount/path(s) need attention or may be ephemeral.")
-    if target_row and target_row.get("likely_ephemeral"):
-        warn("backup_ephemeral", "danger", "Backup target may be ephemeral", f"{backup_target} is on {target_row.get('fs_type')} storage. Backups may not survive rebuilds.")
-
-    # Login users are intentionally separate because hashed-password migration
-    # is a sensitive operation. Make this clear every time before migrations.
-    warn("users_separate", "info", "User login accounts are separate", "Full data backup protects business data. For new-machine migration, also use Users → Export with hashes.")
-
-    checklist = [
-        {
-            "key": "fresh_backup",
-            "ok": bool(latest_ok and (age_hours is None or age_hours <= 24) and file_info.get("exists")),
-            "label": "Fresh app backup exists",
-            "detail": "Run Settings → Backup & Restore → Auto-Backup → Run now before code updates.",
-        },
-        {
-            "key": "host_backup",
-            "ok": None,
-            "label": "Host tarball backup confirmed",
-            "detail": "On Bazzite, run ./backup-now.sh and confirm ~/sit-happens-backups has a new .tar.gz file.",
-        },
-        {
-            "key": "disk_ok",
-            "ok": not danger_paths,
-            "label": "Disk has safe free space",
-            "detail": f"{len(danger_paths)} danger path(s), {len(warn_paths)} warning path(s).",
-        },
-        {
-            "key": "rollback_branch",
-            "ok": None,
-            "label": "Rollback branch/tag exists",
-            "detail": "Before changing branches, keep backup-before-top-tier-test or create a new rollback branch.",
-        },
-        {
-            "key": "no_volume_delete",
-            "ok": True,
-            "label": "Never use destructive Docker volume commands",
-            "detail": "Do not run docker compose down -v, docker volume rm, reset_db.py unless intentionally restoring with a verified backup.",
-        },
-    ]
-    danger_count = sum(1 for w in warnings if w.get("severity") == "danger")
-    return {
-        "checked_at": now_iso(),
-        "pre_update_ok": danger_count == 0,
-        "auto_backup": cfg,
-        "latest_success": latest_ok,
-        "latest_age_hours": age_hours,
-        "latest_file": file_info,
-        "critical_counts": counts,
-        "disk_summary": {"danger": len(danger_paths), "warn": len(warn_paths), "backup_target": target_row},
-        "warnings": warnings,
-        "checklist": checklist,
-        "runs": runs,
-    }
-
-
-@api.post("/admin/backup-safety/validate-latest")
-async def admin_backup_safety_validate_latest(_: dict = Depends(require_admin_and_permission("data_export"))):
-    """Open and parse the latest in-app backup without restoring it.
-
-    This is a safe restore-drill-light: it proves the backup file is readable JSON,
-    contains the expected structure, and includes business-critical collections.
-    It does NOT write to MongoDB and does NOT mutate data.
-    """
-    cfg = await _get_auto_backup_config()
-    runs = await db.auto_backup_runs.find({}, {"_id": 0}).sort("started_at", -1).to_list(25)
-    latest = next((r for r in runs if (r.get("ok") or r.get("status") == "ok") and r.get("verified", True) and r.get("path")), None)
-    path = (latest or {}).get("path") or cfg.get("last_file")
-    info = _backup_file_info(path)
-    if not path or not info.get("exists"):
-        raise HTTPException(status_code=404, detail="No readable latest in-app backup file found")
-    try:
-        import hashlib
-        if str(path).endswith(".gz"):
-            with gzip.open(path, "rb") as fh:
-                raw_payload = fh.read()
-        else:
-            with open(path, "rb") as fh:
-                raw_payload = fh.read()
-        calculated_sha256 = hashlib.sha256(raw_payload).hexdigest()
-        payload = _json.loads(raw_payload.decode("utf-8"))
-    except Exception as e:
-        return {
-            "ok": False,
-            "path": path,
-            "file": info,
-            "error": f"Could not parse backup: {type(e).__name__}: {e}",
-            "validated_at": now_iso(),
-        }
-    collections = payload.get("collections") or {}
-    missing_critical = [c for c in _CRITICAL_BACKUP_COLLECTIONS if c not in collections]
-    missing_known = [c for c in BACKUP_COLLECTIONS if c not in collections]
-    counts = {k: len(v or []) for k, v in collections.items() if isinstance(v, list)}
-    total_docs = sum(counts.values())
-    warnings: List[Dict[str, Any]] = []
-    expected_sha256 = (latest or {}).get("sha256") or cfg.get("last_sha256")
-    if expected_sha256 and calculated_sha256 != expected_sha256:
-        warnings.append({"severity": "danger", "title": "Checksum mismatch", "detail": "The backup file no longer matches the checksum recorded when it was created."})
-    if missing_critical:
-        warnings.append({"severity": "danger", "title": "Missing critical collections", "detail": ", ".join(missing_critical)})
-    if missing_known:
-        warnings.append({"severity": "warn", "title": "Backup missing newer known collections", "detail": ", ".join(missing_known[:20]) + ("…" if len(missing_known) > 20 else "")})
-    if total_docs == 0:
-        warnings.append({"severity": "danger", "title": "Backup contains zero documents", "detail": "This does not look like a usable business backup."})
-    media_validation = {"required": False, "verified": True, "files": 0, "archive": None, "error": None}
-    if int((latest or {}).get("school_media_files") or 0) > 0:
-        import tarfile
-        media_validation["required"] = True
-        media_validation["archive"] = (latest or {}).get("school_media_archive")
-        media_validation["files"] = int((latest or {}).get("school_media_files") or 0)
-        try:
-            media_path = str(media_validation["archive"] or "")
-            if not media_path or not os.path.isfile(media_path):
-                raise RuntimeError("Matching School media archive is missing")
-            with tarfile.open(media_path, "r:gz") as tf:
-                members = _validated_school_media_members(tf)
-                archived_files = sum(1 for m in members if m.isfile())
-            if archived_files != media_validation["files"]:
-                raise RuntimeError(f"Expected {media_validation['files']} School media files but archive contains {archived_files}")
-            media_validation["verified"] = True
-        except Exception as exc:
-            media_validation["verified"] = False
-            media_validation["error"] = str(getattr(exc, "detail", exc))
-            warnings.append({"severity": "danger", "title": "School media backup is not restorable", "detail": media_validation["error"]})
-    ok = not any(w.get("severity") == "danger" for w in warnings)
-    run_row = {
-        "id": str(uuid.uuid4()),
-        "type": "validate_latest",
-        "created_at": now_iso(),
-        "ok": ok,
-        "path": path,
-        "size_bytes": info.get("size_bytes"),
-        "sha256": calculated_sha256,
-        "expected_sha256": expected_sha256,
-        "version": payload.get("version"),
-        "exported_at": payload.get("exported_at"),
-        "collections": len(collections),
-        "total_docs": total_docs,
-        "school_media": media_validation,
-        "warnings": warnings,
-    }
-    try:
-        await db.backup_restore_drills.insert_one(run_row)
-    except Exception:
-        pass
-    run_row.pop("_id", None)
-    return {
-        "ok": ok,
-        "path": path,
-        "file": info,
-        "sha256": calculated_sha256,
-        "expected_sha256": expected_sha256,
-        "version": payload.get("version"),
-        "exported_at": payload.get("exported_at"),
-        "collections": len(collections),
-        "total_docs": total_docs,
-        "counts": counts,
-        "missing_critical": missing_critical,
-        "missing_known": missing_known,
-        "school_media": media_validation,
-        "warnings": warnings,
-        "validated_at": run_row["created_at"],
-    }
-
-
-@api.get("/admin/backup-safety/validations")
-async def admin_backup_safety_validations(limit: int = 10, _: dict = Depends(require_admin_and_permission("data_export"))):
-    rows = await db.backup_restore_drills.find({}, {"_id": 0}).sort("created_at", -1).to_list(limit)
-    return rows
 
 
 class SchoolMediaRestoreIn(BaseModel):
@@ -30088,131 +30093,10 @@ def _validated_school_media_members(tf) -> List[Any]:
     return members
 
 
-@api.get("/admin/backup-safety/school-media-archives")
-async def admin_school_media_archives(_: dict = Depends(require_admin_and_permission("data_export"))):
-    """List verified-looking School media sidecars available for recovery."""
-    root = _safe_backup_dir()
-    os.makedirs(root, exist_ok=True)
-    rows: List[Dict[str, Any]] = []
-    import tarfile
-    for name in sorted(os.listdir(root), reverse=True):
-        if not (name.startswith("sit-happens-school-media-") and name.endswith(".tar.gz")):
-            continue
-        path = os.path.join(root, name)
-        if not os.path.isfile(path):
-            continue
-        verified = False
-        file_count = 0
-        error = None
-        try:
-            with tarfile.open(path, "r:gz") as tf:
-                members = _validated_school_media_members(tf)
-                file_count = sum(1 for m in members if m.isfile())
-                verified = True
-        except HTTPException as exc:
-            error = str(exc.detail)
-        except Exception as exc:
-            error = f"{type(exc).__name__}: {exc}"
-        rows.append({
-            "filename": name,
-            "size_bytes": os.path.getsize(path),
-            "modified_at": datetime.fromtimestamp(os.path.getmtime(path), timezone.utc).isoformat(),
-            "files": file_count,
-            "verified": verified,
-            "error": error,
-        })
-    return {"archives": rows, "media_root": SCHOOL_MEDIA_ROOT}
-
-
-@api.get("/admin/backup-safety/school-media-archives/{filename}")
-async def admin_download_school_media_archive(filename: str, _: dict = Depends(require_admin_and_permission("data_export"))):
-    """Download one verified-path School media archive for off-machine storage."""
-    path = _school_media_archive_path(filename)
-    return FileResponse(path, filename=os.path.basename(path), media_type="application/gzip")
-
-
-@api.post("/admin/backup-safety/restore-school-media")
-async def admin_restore_school_media(body: SchoolMediaRestoreIn, _: dict = Depends(require_owner)):
-    """Restore filesystem-backed School media from a verified backup sidecar.
-
-    The archive must already live in BACKUP_ROOT. Before replacement we archive
-    the currently-live media, validate every tar member against path traversal,
-    extract alongside the live directory, and then swap directories. Mongo is
-    untouched; pair this with the matching JSON restore when doing full DR.
-    """
-    import tarfile
-    import tempfile
-
-    archive_path = _school_media_archive_path(body.filename)
-    media_root = os.path.realpath(SCHOOL_MEDIA_ROOT)
-    media_parent = os.path.dirname(media_root)
-    os.makedirs(media_parent, exist_ok=True)
-
-    # Preserve the current bytes before touching the live media directory.
-    pre_stamp = "pre-restore-" + datetime.now(timezone.utc).strftime("%Y-%m-%d_%H%M%S_%f")
-    pre_restore = _write_school_media_archive(_safe_backup_dir(), pre_stamp)
-
-    temp_parent = tempfile.mkdtemp(prefix=".school-media-restore-", dir=media_parent)
-    staged_root = os.path.join(temp_parent, "school_media")
-    old_root = media_root + ".pre-restore-" + uuid.uuid4().hex
-    old_moved = False
-    try:
-        with tarfile.open(archive_path, "r:gz") as tf:
-            members = _validated_school_media_members(tf)
-            tf.extractall(temp_parent, members=members)
-        if not os.path.isdir(staged_root):
-            raise HTTPException(status_code=400, detail="Archive does not contain a school_media folder")
-        restored_files = sum(len(names) for _, _, names in os.walk(staged_root))
-
-        if os.path.exists(media_root):
-            os.replace(media_root, old_root)
-            old_moved = True
-        os.replace(staged_root, media_root)
-        if old_moved and os.path.isdir(old_root):
-            shutil.rmtree(old_root, ignore_errors=True)
-            old_moved = False
-
-        run_row = {
-            "id": str(uuid.uuid4()),
-            "type": "restore_school_media",
-            "created_at": now_iso(),
-            "ok": True,
-            "archive": body.filename,
-            "restored_files": restored_files,
-            "pre_restore_archive": pre_restore.get("filename"),
-            "pre_restore_verified": pre_restore.get("verified", False),
-        }
-        try:
-            await db.backup_restore_drills.insert_one(dict(run_row))
-        except Exception:
-            pass
-        run_row.pop("_id", None)
-        return run_row
-    except Exception:
-        # If the live directory was moved but the staged swap failed, put it back.
-        if old_moved and os.path.exists(old_root) and not os.path.exists(media_root):
-            try:
-                os.replace(old_root, media_root)
-                old_moved = False
-            except Exception:
-                logger.exception("Could not roll back School media restore directory swap")
-        raise
-    finally:
-        shutil.rmtree(temp_parent, ignore_errors=True)
-        if old_moved and os.path.isdir(old_root):
-            shutil.rmtree(old_root, ignore_errors=True)
-
-
-# ─────────────── Sprint 110ax · Dog Fact of the Day ───────────────
-# Daily sticky engagement: a single curated "fun fact" appears on both the
-# client portal and the admin dashboard. Same fact for everyone same day —
-# deterministic rotation by day-of-year over active facts, so two users
-# comparing notes both see the same one.
-from dog_facts_seed import DOG_FACTS_SEED
-
-
 async def _seed_dog_facts_if_empty():
     """Idempotent. Seeds the curated library on first boot."""
+    from dog_facts_seed import DOG_FACTS_SEED
+
     n = await db.dog_facts.count_documents({})
     if n > 0:
         return
@@ -30637,7 +30521,6 @@ async def _get_trivia_rewards() -> List[dict]:
     if row and isinstance(row.get("milestones"), list) and row["milestones"]:
         return row["milestones"]
     return list(DEFAULT_TRIVIA_MILESTONES)
-
 
 
 async def _ensure_trivia_seeded(min_count: int = 30) -> int:
@@ -31072,7 +30955,6 @@ async def portal_trivia_quiz_answer(
         "correct": body.chosen_index == q["correct_index"],
         "correct_index": q["correct_index"],
     }
-
 
 
 # ── Rewards Center: referrals, trivia perks, and credit audit ─────────────
@@ -32508,7 +32390,6 @@ async def payroll_year_end_csv(
 # Download Backup / Restore and the host-side rclone systemd timer instead.
 
 
-
 # -------- User credential migration (admin-only) --------
 # Use this when moving an instance to a new host and you want clients to keep
 # their existing passwords (bcrypt hashes are portable as long as both ends use
@@ -32600,8 +32481,6 @@ async def admin_users_import_with_hashes(body: UserImportIn, current: dict = Dep
     }
 
 
-
-
 # -------- Recent server errors (admin only) --------
 @api.get("/admin/recent-errors")
 async def admin_recent_errors(_: dict = Depends(require_admin)):
@@ -32616,7 +32495,6 @@ async def admin_recent_errors_clear(_: dict = Depends(require_admin)):
     """Empty the recent-errors ring buffer."""
     RECENT_ERRORS.clear()
     return {"cleared": True}
-
 
 
 @api.get("/admin/income/export.csv")
@@ -32823,7 +32701,6 @@ async def admin_marketing_qr(
     )
 
 
-
 @api.post("/admin/clients/{client_id}/impersonation-token")
 async def admin_impersonation_token(client_id: str, _: dict = Depends(require_admin)):
     """Mint a short-lived (15 min) access token for the user record linked to a
@@ -32929,186 +32806,8 @@ async def admin_client_portal_snapshot(client_id: str, _: dict = Depends(require
     }
 
 
-class BackupRestoreIn(BaseModel):
-    version: int
-    collections: dict
-    mode: Literal["replace", "merge"] = "replace"  # replace = wipe & restore; merge = upsert by id
-
-
-@api.post("/backup/restore")
-async def backup_restore(body: BackupRestoreIn, _: dict = Depends(require_owner)):
-    """Restore from a backup JSON. Two modes:
-       - replace: drops each collection and bulk-inserts the backup contents
-       - merge:   upserts each document by `id` (existing docs with same id are overwritten; new ones added)
-    User accounts are never touched."""
-    if body.version > BACKUP_VERSION:
-        raise HTTPException(
-            status_code=400,
-            detail=f"Backup version {body.version} is newer than this server (v{BACKUP_VERSION}). Update the server first.",
-        )
-    # Safety net: snapshot the CURRENT full state to disk BEFORE we touch
-    # anything so a bad restore can always be rolled back from /app/backups.
-    # Logged + returned to the UI; non-fatal on disk errors.
-    pre_snapshot = await _write_pre_restore_snapshot("full")
-    if not pre_snapshot.get("ok"):
-        raise HTTPException(
-            status_code=507,
-            detail=f"Restore stopped because the safety snapshot could not be verified: {pre_snapshot.get('error')}",
-        )
-    # Older versions are accepted — they simply contain fewer collections.
-    # Collections not in the payload are left alone (never wiped), so restoring
-    # a v1 snapshot won't blow away homework_templates, trophies, etc.
-    summary = {}
-    for c, docs in (body.collections or {}).items():
-        if c not in BACKUP_COLLECTIONS:
-            continue
-        docs = [d for d in (docs or []) if isinstance(d, dict)]
-        is_string_id = c in STRING_ID_COLLECTIONS
-        if body.mode == "replace":
-            await db[c].delete_many({})
-            if docs:
-                await db[c].insert_many(docs)
-            summary[c] = {"mode": "replace", "inserted": len(docs)}
-        else:  # merge
-            upserts = 0
-            for doc in docs:
-                # Pick the right natural key per collection
-                if is_string_id and isinstance(doc.get("_id"), str):
-                    key_filter = {"_id": doc["_id"]}
-                    await db[c].update_one(key_filter, {"$set": doc}, upsert=True)
-                    upserts += 1
-                    continue
-                key = doc.get("id")
-                if not key:
-                    await db[c].insert_one(doc)
-                    upserts += 1
-                    continue
-                await db[c].update_one({"id": key}, {"$set": doc}, upsert=True)
-                upserts += 1
-            summary[c] = {"mode": "merge", "upserted": upserts}
-    return {
-        "ok": True,
-        "summary": summary,
-        "restored_at": now_iso(),
-        "pre_restore_snapshot": pre_snapshot,
-    }
-
-
-# ───────────────────────── Trophies ─────────────────────────────
-
-class TrophyIn(BaseModel):
-    code: str = Field(min_length=2, max_length=64)
-    name: str = Field(min_length=1)
-    description: Optional[str] = ""
-    category: Literal["dog", "client"]
-    tier: Literal["bronze", "silver", "gold", "platinum"] = "bronze"
-    icon: Optional[str] = "fa-trophy"
-    custom_image: Optional[str] = ""  # base64 data URL
-    # Sprint 110ak — how the uploaded custom_image is displayed:
-    #   "circle"   — current behaviour, cover-crop into a perfect circle
-    #   "contain"  — fit the whole design inside the circle (tier ring kept)
-    #   "freeform" — no clip, rectangular card, no tier ring (image IS the trophy)
-    image_fit: Literal["circle", "contain", "freeform"] = "circle"
-    # Sprint 110al — focal point inside the badge for `circle` mode (0-100%).
-    # CSS object-position semantics: 50/50 is centred (legacy default), 0/0
-    # pins the image's top-left to the badge's top-left, 100/100 the opposite
-    # corner. Ignored for `contain` and `freeform`.
-    image_offset_x: int = Field(default=50, ge=0, le=100)
-    image_offset_y: int = Field(default=50, ge=0, le=100)
-    trigger_type: Literal["auto", "manual"] = "manual"
-    trigger_kind: Optional[str] = ""
-    threshold: int = 0
-    active: bool = True
-
-
-class TrophyPatch(BaseModel):
-    name: Optional[str] = None
-    description: Optional[str] = None
-    tier: Optional[Literal["bronze", "silver", "gold", "platinum"]] = None
-    icon: Optional[str] = None
-    custom_image: Optional[str] = None
-    image_fit: Optional[Literal["circle", "contain", "freeform"]] = None
-    image_offset_x: Optional[int] = Field(default=None, ge=0, le=100)
-    image_offset_y: Optional[int] = Field(default=None, ge=0, le=100)
-    threshold: Optional[int] = None
-    active: Optional[bool] = None
-
-
 class ManualAwardIn(BaseModel):
     note: Optional[str] = ""
-
-
-@api.get("/trophies/catalog")
-async def list_trophy_catalog(_: dict = Depends(get_current_user)):
-    """Return all trophy definitions. Tier color palette returned alongside."""
-    items = await db.trophies.find({}, {"_id": 0}).to_list(500)
-    items.sort(key=lambda t: (t.get("category", ""), t.get("trigger_type", ""), int(t.get("threshold") or 0)))
-    return {"trophies": items, "tier_colors": TIER_COLORS}
-
-
-@api.post("/trophies/catalog")
-async def create_custom_trophy(body: TrophyIn, _: dict = Depends(require_admin_and_permission("manage_engagement_content"))):
-    if await db.trophies.find_one({"code": body.code}):
-        raise HTTPException(status_code=400, detail="A trophy with that code already exists")
-    doc = body.model_dump()
-    doc.update({"id": str(uuid.uuid4()), "is_default": False, "created_at": now_iso()})
-    await db.trophies.insert_one(doc)
-    doc.pop("_id", None)
-    return doc
-
-
-@api.put("/trophies/catalog/{code}")
-async def update_trophy(code: str, body: TrophyPatch, _: dict = Depends(require_admin_and_permission("manage_engagement_content"))):
-    existing = await db.trophies.find_one({"code": code}, {"_id": 0})
-    if not existing:
-        raise HTTPException(status_code=404, detail="Trophy not found")
-    patch = {k: v for k, v in body.model_dump().items() if v is not None}
-    if patch:
-        await db.trophies.update_one({"code": code}, {"$set": patch})
-        existing.update(patch)
-        # If the admin changed the custom image (uploaded one or cleared it),
-        # propagate it onto ALL previously-awarded rows for this trophy so the
-        # new picture immediately shows up on dog/client cards, share-cards, etc.
-        # Without this, awards made before the upload would stay stuck on the
-        # icon placeholder.
-        if "custom_image" in patch:
-            await db.awarded_trophies.update_many(
-                {"trophy_code": code},
-                {"$set": {"trophy_custom_image": patch["custom_image"] or ""}},
-            )
-        # Sprint 110ak — same propagation for the new image_fit toggle so
-        # historical awards reflect the admin's latest layout choice on the
-        # wall + share cards.
-        if "image_fit" in patch:
-            await db.awarded_trophies.update_many(
-                {"trophy_code": code},
-                {"$set": {"trophy_image_fit": patch["image_fit"] or "circle"}},
-            )
-        # Sprint 110al — propagate focal-point repositioning to historical awards.
-        offset_patch = {}
-        if "image_offset_x" in patch:
-            offset_patch["trophy_image_offset_x"] = int(patch["image_offset_x"])
-        if "image_offset_y" in patch:
-            offset_patch["trophy_image_offset_y"] = int(patch["image_offset_y"])
-        if offset_patch:
-            await db.awarded_trophies.update_many(
-                {"trophy_code": code},
-                {"$set": offset_patch},
-            )
-    return existing
-
-
-@api.delete("/trophies/catalog/{code}")
-async def delete_trophy(code: str, _: dict = Depends(require_admin_and_permission("manage_engagement_content"))):
-    existing = await db.trophies.find_one({"code": code}, {"_id": 0})
-    if not existing:
-        raise HTTPException(status_code=404, detail="Trophy not found")
-    if existing.get("is_default"):
-        # Soft-disable defaults rather than deleting (keeps history valid).
-        await db.trophies.update_one({"code": code}, {"$set": {"active": False}})
-        return {"ok": True, "deactivated": True}
-    await db.trophies.delete_one({"code": code})
-    return {"ok": True, "deleted": True}
 
 
 def _serialize_awarded(rows: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
@@ -33117,239 +32816,6 @@ def _serialize_awarded(rows: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
         r = {k: v for k, v in r.items() if k != "_id"}
         out.append(r)
     return out
-
-
-@api.get("/dogs/{dog_id}/trophies")
-async def list_dog_trophies(dog_id: str, user: dict = Depends(get_current_user)):
-    dog = await db.dogs.find_one({"id": dog_id}, {"_id": 0, "owner_id": 1})
-    if not dog:
-        raise HTTPException(status_code=404, detail="Dog not found")
-    if user.get("role") != "admin" and dog.get("owner_id") != user.get("client_id"):
-        raise HTTPException(status_code=403, detail="Not allowed")
-    rows = await db.awarded_trophies.find(
-        {"recipient_type": "dog", "recipient_id": dog_id, "revoked": {"$ne": True}},
-        {"_id": 0},
-    ).sort("awarded_at", -1).to_list(200)
-    return _serialize_awarded(rows)
-
-
-async def _recheck_client_trophies_after_practice(hw: dict, user: dict) -> None:
-    """Best-effort client trophy re-evaluation after a Practice session log.
-    Admin/trainer logs are bookkeeping, not the client's practice, so they
-    never trigger it (and practice_days ignores them anyway)."""
-    if user.get("role") == "admin" or not hw.get("client_id"):
-        return
-    try:
-        await check_client_trophies(db, hw["client_id"])
-    except Exception as exc:
-        logger.warning("Client trophy check after practice log failed: %s", exc)
-
-
-@api.post("/admin/trophies/recheck")
-async def admin_recheck_trophies(_: dict = Depends(require_admin)):
-    """Re-run every client AND dog auto-award evaluator now (visits, practice
-    streaks, practice completions, referrals; skills mastered, graduations,
-    checkpoints). Idempotent; returns what was awarded.
-    Use after fixing an evaluator or editing thresholds so earned-but-never-
-    fired awards land immediately instead of waiting for the next checkout."""
-    summary = await recheck_all_trophies(db)
-    await db.system_runs.update_one(
-        {"_id": "trophy_recheck"},
-        {"$set": {"date": business_today().isoformat(), "ran_at": now_iso(), "awarded": summary["awarded"]}},
-        upsert=True,
-    )
-    return summary
-
-
-async def _maybe_recheck_trophies_today():
-    """Lazy once-per-business-day sweep (same pattern as _maybe_archive_today):
-    catches awards whose inputs changed outside a hook — e.g. visit tiers
-    after the archive job moved bookings, or a client who crossed a threshold
-    before an evaluator fix shipped."""
-    try:
-        today = business_today().isoformat()
-        marker = await db.system_runs.find_one({"_id": "trophy_recheck"})
-        if marker and marker.get("date") == today:
-            return
-        summary = await recheck_all_trophies(db)
-        await db.system_runs.update_one(
-            {"_id": "trophy_recheck"},
-            {"$set": {"date": today, "ran_at": now_iso(), "awarded": summary["awarded"]}},
-            upsert=True,
-        )
-    except Exception as e:
-        logger.warning("trophy recheck failed (non-fatal): %s", e)
-
-
-# Sprint 110ef — Batch endpoint to avoid the 429 storm caused by N parallel
-# `GET /dogs/{id}/trophies` calls when the Dogs admin page loads (one per
-# dog). Returns a `{dog_id: [trophies]}` map in a single round trip.
-@api.get("/admin/dog-trophies-summary")
-async def all_dog_trophies_summary(_: dict = Depends(require_admin)):
-    rows = await db.awarded_trophies.find(
-        {"recipient_type": "dog", "revoked": {"$ne": True}},
-        {"_id": 0},
-    ).sort("awarded_at", -1).to_list(10000)
-    out: Dict[str, list] = {}
-    for r in _serialize_awarded(rows):
-        out.setdefault(r.get("recipient_id"), []).append(r)
-    return out
-
-
-@api.get("/clients/{client_id}/trophies")
-async def list_client_trophies(client_id: str, user: dict = Depends(get_current_user)):
-    if user.get("role") != "admin" and user.get("client_id") != client_id:
-        raise HTTPException(status_code=403, detail="Not allowed")
-    rows = await db.awarded_trophies.find(
-        {"recipient_type": "client", "recipient_id": client_id, "revoked": {"$ne": True}},
-        {"_id": 0},
-    ).sort("awarded_at", -1).to_list(200)
-    return _serialize_awarded(rows)
-
-
-@api.get("/clients/{client_id}/visits")
-async def client_visits_summary(client_id: str, user: dict = Depends(get_current_user)):
-    """Lifetime visits for a client, the way the award engine counts them
-    (checked-out or completed bookings, live + archived, across all their
-    dogs), with the visit-award tier they hold and the next one. One source
-    for the Client hub's visit count so it can never disagree with the
-    trophy that gets awarded."""
-    if user.get("role") != "admin" and user.get("client_id") != client_id:
-        raise HTTPException(status_code=403, detail="Not allowed")
-    total = await _client_visit_count(db, client_id)
-    dogs = await db.dogs.find({"owner_id": client_id, "deleted_at": {"$exists": False}}, {"_id": 0, "id": 1, "name": 1}).to_list(100)
-    per_dog_counts = await _dog_visit_counts([d["id"] for d in dogs])
-    per_dog = sorted(
-        [{"dog_id": d["id"], "dog_name": d.get("name") or "Dog", "visits": int(per_dog_counts.get(d["id"], 0))} for d in dogs],
-        key=lambda r: (-r["visits"], r["dog_name"]),
-    )
-    # Most recent visit: newest check-out (or completed booking date) in either collection.
-    filt = _visit_filter(client_id)
-    last_visit = None
-    for coll in (db.bookings, db.bookings_archive):
-        try:
-            row = await coll.find(filt, {"_id": 0, "checked_out_at": 1, "date": 1, "end_date": 1}).sort("date", -1).limit(1).to_list(1)
-        except Exception:
-            row = []
-        if row:
-            stamp = row[0].get("end_date") or row[0].get("date") or (row[0].get("checked_out_at") or "")[:10]
-            if stamp and (last_visit is None or stamp > last_visit):
-                last_visit = stamp
-    tiers = await _eligible_trophies(db, category="client", kind="visit_count")
-    held = None
-    nxt = None
-    for t in tiers:  # sorted by threshold ascending
-        th = int(t.get("threshold") or 0)
-        entry = {"code": t.get("code"), "name": t.get("name"), "threshold": th, "icon": t.get("icon"), "tier": t.get("tier")}
-        if total >= th:
-            held = entry
-        elif nxt is None:
-            nxt = {**entry, "remaining": th - total}
-    return {"client_id": client_id, "visits": int(total), "per_dog": per_dog, "last_visit": last_visit, "held": held, "next": nxt,
-            "tiers": [{"code": t.get("code"), "name": t.get("name"), "threshold": int(t.get("threshold") or 0)} for t in tiers]}
-
-
-@api.get("/admin/client-visit-counts")
-async def client_visit_counts(client_ids: Optional[str] = None, _: dict = Depends(require_admin)):
-    """Lifetime visits for a page of clients in ONE round trip (the Clients
-    directory renders 48 cards; one call per card would 429). Same visit rule
-    as the award engine, live + archived bookings, grouped server-side with no
-    result ceiling — a client with 400 visits reads 400. Returns
-    {client_id: {visits, held, next}} for every requested id (zeros included)."""
-    ids = [v.strip() for v in (client_ids or "").split(",") if v.strip()][:500]
-    if not ids:
-        return {}
-    counts: Dict[str, int] = {cid: 0 for cid in ids}
-    match = {"client_id": {"$in": ids}, "$or": [
-        {"checked_out_at": {"$nin": [None, ""]}},
-        {"status": {"$in": ["completed", "checked_out"]}},
-    ]}
-    pipeline = [{"$match": match}, {"$group": {"_id": "$client_id", "n": {"$sum": 1}}}]
-    for coll in (db.bookings, db.bookings_archive):
-        try:
-            async for row in coll.aggregate(pipeline):
-                counts[row["_id"]] = counts.get(row["_id"], 0) + int(row.get("n") or 0)
-        except Exception as exc:
-            logger.warning("client visit counts: %s unavailable: %s", getattr(coll, "name", "?"), exc)
-    tiers = await _eligible_trophies(db, category="client", kind="visit_count")
-    out: Dict[str, Any] = {}
-    for cid in ids:
-        total = int(counts.get(cid, 0))
-        held = None
-        nxt = None
-        for t in tiers:
-            th = int(t.get("threshold") or 0)
-            entry = {"code": t.get("code"), "name": t.get("name"), "threshold": th}
-            if total >= th:
-                held = entry
-            elif nxt is None:
-                nxt = {**entry, "remaining": th - total}
-        out[cid] = {"visits": total, "held": held, "next": nxt}
-    return out
-
-
-# Sprint 110ef — Sibling batch endpoint to `/admin/dog-trophies-summary`.
-@api.get("/admin/client-trophies-summary")
-async def all_client_trophies_summary(
-    client_ids: Optional[str] = None, _: dict = Depends(require_admin),
-):
-    query: Dict[str, Any] = {"recipient_type": "client", "revoked": {"$ne": True}}
-    if client_ids:
-        ids = [value.strip() for value in client_ids.split(",") if value.strip()][:100]
-        if ids:
-            query["recipient_id"] = {"$in": ids}
-    rows = await db.awarded_trophies.find(
-        query,
-        {"_id": 0},
-    ).sort("awarded_at", -1).to_list(10000)
-    out: Dict[str, list] = {}
-    for r in _serialize_awarded(rows):
-        out.setdefault(r.get("recipient_id"), []).append(r)
-    return out
-
-
-@api.post("/dogs/{dog_id}/trophies/{code}/award")
-async def manual_award_dog(dog_id: str, code: str, body: ManualAwardIn, user: dict = Depends(require_admin)):
-    row = await award_trophy(
-        db, recipient_type="dog", recipient_id=dog_id, trophy_code=code,
-        awarded_by=user.get("name") or "Admin", note=body.note or "",
-    )
-    if not row:
-        raise HTTPException(status_code=400, detail="Dog already has this trophy (or trophy/code invalid)")
-    return row
-
-
-@api.post("/clients/{client_id}/trophies/{code}/award")
-async def manual_award_client(client_id: str, code: str, body: ManualAwardIn, user: dict = Depends(require_admin)):
-    row = await award_trophy(
-        db, recipient_type="client", recipient_id=client_id, trophy_code=code,
-        awarded_by=user.get("name") or "Admin", note=body.note or "",
-    )
-    if not row:
-        raise HTTPException(status_code=400, detail="Client already has this trophy (or trophy/code invalid)")
-    return row
-
-
-@api.delete("/awarded-trophies/{awarded_id}")
-async def revoke_awarded_trophy(awarded_id: str, _: dict = Depends(require_admin)):
-    res = await db.awarded_trophies.update_one({"id": awarded_id}, {"$set": {"revoked": True, "revoked_at": now_iso()}})
-    if res.matched_count == 0:
-        raise HTTPException(status_code=404, detail="Trophy award not found")
-    return {"ok": True}
-
-
-@api.post("/awarded-trophies/{awarded_id}/seen")
-async def mark_awarded_seen(awarded_id: str, user: dict = Depends(get_current_user)):
-    """Client portal calls this after showing the new-trophy celebration toast."""
-    row = await db.awarded_trophies.find_one({"id": awarded_id}, {"_id": 0, "client_id": 1})
-    if not row:
-        raise HTTPException(status_code=404, detail="Award not found")
-    if user.get("role") != "admin" and user.get("client_id") != row.get("client_id"):
-        raise HTTPException(status_code=403, detail="Not allowed")
-    await db.awarded_trophies.update_one({"id": awarded_id}, {"$set": {"seen_by_client": True}})
-    return {"ok": True}
-
-
 
 
 class QuoteRequestIn(BaseModel):
@@ -33643,119 +33109,6 @@ async def public_certificate_view(token: str):
         "filename": hw.get("certificate_filename") or "certificate",
         "brand_name": settings.get("brand_footer_text") or "Sit Happens",
     }
-
-
-@api.get("/portal/trophies")
-async def portal_trophies(user: dict = Depends(get_current_user)):
-    """Returns trophies for the current client + their dogs, plus an
-    `unseen` list for the celebration toast."""
-    cid = user.get("client_id")
-    if user.get("role") != "client" or not cid:
-        return {"client_trophies": [], "dog_trophies": [], "unseen": []}
-    client_rows = await db.awarded_trophies.find(
-        {"recipient_type": "client", "recipient_id": cid, "revoked": {"$ne": True}},
-        {"_id": 0},
-    ).sort("awarded_at", -1).to_list(200)
-    dogs = await db.dogs.find({"owner_id": cid}, {"_id": 0, "id": 1, "name": 1}).to_list(50)
-    dog_ids = [d["id"] for d in dogs]
-    dog_rows = []
-    if dog_ids:
-        dog_rows = await db.awarded_trophies.find(
-            {"recipient_type": "dog", "recipient_id": {"$in": dog_ids}, "revoked": {"$ne": True}},
-            {"_id": 0},
-        ).sort("awarded_at", -1).to_list(500)
-    unseen = [r for r in (client_rows + dog_rows) if not r.get("seen_by_client")]
-    return {
-        "client_trophies": _serialize_awarded(client_rows),
-        "dog_trophies": _serialize_awarded(dog_rows),
-        "unseen": _serialize_awarded(unseen),
-    }
-
-
-@api.get("/trophies/share-card/{awarded_id}.png")
-async def trophy_share_card(awarded_id: str):
-    """Public PNG share card. Anyone with the awarded_id (uuid) can fetch — safe
-    since IDs are unguessable and the image only shows public info."""
-    row = await db.awarded_trophies.find_one({"id": awarded_id, "revoked": {"$ne": True}}, {"_id": 0})
-    if not row:
-        raise HTTPException(status_code=404, detail="Award not found")
-    # Backfill the trophy image for awards minted before we started snapshotting
-    # it (so the share PNG always reflects the *current* catalog image when the
-    # award doesn't have its own).
-    if not row.get("trophy_custom_image"):
-        trophy = await db.trophies.find_one(
-            {"code": row.get("trophy_code")},
-            {"_id": 0, "custom_image": 1, "image_fit": 1, "image_offset_x": 1, "image_offset_y": 1},
-        )
-        if trophy and trophy.get("custom_image"):
-            row["trophy_custom_image"] = trophy["custom_image"]
-            row["trophy_image_fit"] = trophy.get("image_fit") or "circle"
-            row["trophy_image_offset_x"] = trophy.get("image_offset_x", 50)
-            row["trophy_image_offset_y"] = trophy.get("image_offset_y", 50)
-    # Backfill image_fit for awards minted before Sprint 110ak (defaults to
-    # legacy "circle" behaviour so historical shares stay pixel-identical).
-    if not row.get("trophy_image_fit"):
-        trophy = await db.trophies.find_one(
-            {"code": row.get("trophy_code")},
-            {"_id": 0, "image_fit": 1, "image_offset_x": 1, "image_offset_y": 1},
-        )
-        row["trophy_image_fit"] = (trophy or {}).get("image_fit") or "circle"
-        row.setdefault("trophy_image_offset_x", (trophy or {}).get("image_offset_x", 50))
-        row.setdefault("trophy_image_offset_y", (trophy or {}).get("image_offset_y", 50))
-    try:
-        png = render_share_card_png(row)
-    except Exception as exc:
-        logger.warning("Share card render failed: %s", exc)
-        raise HTTPException(status_code=500, detail="Failed to render share card")
-    return Response(content=png, media_type="image/png")
-
-
-@api.get("/trophies/leaderboard")
-async def trophies_leaderboard(_: dict = Depends(require_admin), limit: int = 5):
-    """Top dogs and top clients by trophy count (excluding revoked)."""
-    pipeline_dog = [
-        {"$match": {"recipient_type": "dog", "revoked": {"$ne": True}}},
-        {"$group": {"_id": "$recipient_id", "count": {"$sum": 1}, "last": {"$max": "$awarded_at"}}},
-        {"$sort": {"count": -1, "last": -1}},
-        {"$limit": limit},
-    ]
-    pipeline_client = [
-        {"$match": {"recipient_type": "client", "revoked": {"$ne": True}}},
-        {"$group": {"_id": "$recipient_id", "count": {"$sum": 1}, "last": {"$max": "$awarded_at"}}},
-        {"$sort": {"count": -1, "last": -1}},
-        {"$limit": limit},
-    ]
-    dog_rows = await db.awarded_trophies.aggregate(pipeline_dog).to_list(limit)
-    client_rows = await db.awarded_trophies.aggregate(pipeline_client).to_list(limit)
-    dog_ids = [r["_id"] for r in dog_rows]
-    client_ids = [r["_id"] for r in client_rows]
-    dogs = {d["id"]: d for d in await db.dogs.find({"id": {"$in": dog_ids}}, {"_id": 0, "id": 1, "name": 1, "breed": 1, "owner_id": 1, "photo": 1}).to_list(50)}
-    owner_ids = [d.get("owner_id") for d in dogs.values() if d.get("owner_id")]
-    clients = {c["id"]: c for c in await db.clients.find({"id": {"$in": client_ids + owner_ids}}, {"_id": 0, "id": 1, "name": 1}).to_list(100)}
-    return {
-        "top_dogs": [
-            {
-                "dog_id": r["_id"],
-                "dog_name": (dogs.get(r["_id"]) or {}).get("name", "—"),
-                "breed": (dogs.get(r["_id"]) or {}).get("breed", ""),
-                "photo": (dogs.get(r["_id"]) or {}).get("photo", ""),
-                "owner_id": (dogs.get(r["_id"]) or {}).get("owner_id"),
-                "owner_name": (clients.get((dogs.get(r["_id"]) or {}).get("owner_id")) or {}).get("name", ""),
-                "trophy_count": r["count"],
-            }
-            for r in dog_rows
-        ],
-        "top_clients": [
-            {
-                "client_id": r["_id"],
-                "client_name": (clients.get(r["_id"]) or {}).get("name", "—"),
-                "trophy_count": r["count"],
-            }
-            for r in client_rows
-        ],
-    }
-
-
 
 
 RETAIL_SALES_PAYMENT_ID_UNIQUE_INDEX_NAME = "payment_id_unique_partial"
@@ -35158,8 +34511,6 @@ def _cash_revenue(booking: dict) -> float:
     return 0.0
 
 
-
-
 def _sales_tax_collected_on_booking(booking: dict) -> float:
     """Estimated sales tax actually collected for a booking.
 
@@ -36299,181 +35650,6 @@ def _ensure_employee(user: dict) -> None:
         raise HTTPException(status_code=403, detail="Staff access required")
 
 
-@api.get("/time-clock/current")
-async def time_clock_current(user: dict = Depends(require_employee_or_admin)):
-    """Returns the currently-open clock entry for the calling user (or None)."""
-    open_entry = await db.time_clock_entries.find_one(
-        {"user_id": user["id"], "clock_out_at": None}, {"_id": 0}
-    )
-    return {"open": open_entry}
-
-
-@api.post("/time-clock/clock-in")
-async def time_clock_in(body: ClockInIn, user: dict = Depends(require_employee_or_admin)):
-    # Prevent double clock-in
-    existing = await db.time_clock_entries.find_one(
-        {"user_id": user["id"], "clock_out_at": None}, {"_id": 0, "id": 1}
-    )
-    if existing:
-        raise HTTPException(status_code=400, detail="You're already clocked in. Clock out first.")
-    entry = {
-        "id": str(uuid.uuid4()),
-        "user_id": user["id"],
-        "user_name": user.get("display_name") or user.get("name", ""),
-        "clock_in_at": now_iso(),
-        "clock_in_lat": body.lat,
-        "clock_in_lng": body.lng,
-        "clock_in_accuracy_m": body.accuracy_m,
-        "clock_in_note": (body.note or "").strip(),
-        "clock_out_at": None,
-        "break_minutes": 0,
-        "hours": None,
-        "created_at": now_iso(),
-    }
-    await db.time_clock_entries.insert_one(entry)
-    entry.pop("_id", None)
-    return entry
-
-
-@api.post("/time-clock/clock-out")
-async def time_clock_out(body: ClockOutIn, user: dict = Depends(require_employee_or_admin)):
-    open_entry = await db.time_clock_entries.find_one(
-        {"user_id": user["id"], "clock_out_at": None}, {"_id": 0}
-    )
-    if not open_entry:
-        raise HTTPException(status_code=400, detail="No open clock-in to close.")
-    out_iso = now_iso()
-    ci = datetime.fromisoformat(open_entry["clock_in_at"].replace("Z", "+00:00"))
-    co = datetime.fromisoformat(out_iso.replace("Z", "+00:00"))
-    break_min = float(body.break_minutes or 0)
-    hours = max((co - ci).total_seconds() / 3600.0 - (break_min / 60.0), 0.0)
-    update = {
-        "clock_out_at": out_iso,
-        "clock_out_lat": body.lat,
-        "clock_out_lng": body.lng,
-        "clock_out_accuracy_m": body.accuracy_m,
-        "clock_out_note": (body.note or "").strip(),
-        "break_minutes": break_min,
-        "hours": round(hours, 3),
-    }
-    await db.time_clock_entries.update_one({"id": open_entry["id"]}, {"$set": update})
-    open_entry.update(update)
-    return open_entry
-
-
-@api.get("/time-clock/me")
-async def time_clock_me(
-    days: int = 30,
-    user: dict = Depends(require_employee_or_admin),
-):
-    """Return the calling user's clock entries from the last N days plus totals.
-
-    Sprint 110ba — adds pay calculations using the user's `hourly_rate`:
-      • per-entry `gross` (hours × rate)
-      • `total_gross` for the window
-      • `this_week` / `last_week` totals (weekly period Sun → Sat)
-      • `ytd_hours` / `ytd_gross` (calendar-year totals)
-      • `live` block: if a shift is currently open, running hours + pay so far
-    No-op friendly: when `hourly_rate` is unset, gross values come back as 0
-    so the UI can fall back to hours-only.
-    """
-    cutoff = (datetime.now(timezone.utc) - timedelta(days=int(days))).isoformat()
-    entries = await db.time_clock_entries.find(
-        {"user_id": user["id"], "clock_in_at": {"$gte": cutoff}},
-        {"_id": 0},
-    ).sort("clock_in_at", -1).to_list(2000)
-    me = await db.users.find_one(
-        {"id": user["id"]}, {"_id": 0, "hourly_rate": 1, "name": 1, "display_name": 1, "email": 1}
-    ) or {}
-    rate = float(me.get("hourly_rate") or 0)
-
-    def _gross(hrs: float) -> float:
-        return round(float(hrs or 0) * rate, 2)
-
-    # Annotate per-entry gross
-    for e in entries:
-        e["gross"] = _gross(e.get("hours"))
-        e["hourly_rate"] = rate
-
-    closed = [e for e in entries if e.get("clock_out_at") and e.get("hours") is not None]
-    total_hours = round(sum(float(e["hours"]) for e in closed), 2)
-    total_gross = round(total_hours * rate, 2)
-
-    # Week boundary helper (Sunday start, Saturday end — U.S. payroll standard)
-    today = business_today()
-    sunday = today - timedelta(days=(today.weekday() + 1) % 7)
-    last_sunday = sunday - timedelta(days=7)
-    last_saturday = sunday - timedelta(days=1)
-
-    def _in_range(e, start_d: date, end_d: date) -> bool:
-        try:
-            d = datetime.fromisoformat((e.get("clock_in_at") or "").replace("Z", "+00:00")).date()
-        except Exception:
-            return False
-        return start_d <= d <= end_d
-
-    this_week_entries = [e for e in closed if _in_range(e, sunday, today)]
-    last_week_entries = [e for e in closed if _in_range(e, last_sunday, last_saturday)]
-    this_week_hours = round(sum(float(e["hours"]) for e in this_week_entries), 2)
-    last_week_hours = round(sum(float(e["hours"]) for e in last_week_entries), 2)
-
-    # YTD — query independently of the `days` window so it's accurate even
-    # for short windows
-    ytd_start = f"{today.year}-01-01T00:00:00"
-    ytd = await db.time_clock_entries.find(
-        {"user_id": user["id"], "clock_in_at": {"$gte": ytd_start},
-         "clock_out_at": {"$ne": None, "$exists": True}, "hours": {"$ne": None}},
-        {"_id": 0, "hours": 1},
-    ).to_list(5000)
-    ytd_hours = round(sum(float(r.get("hours") or 0) for r in ytd), 2)
-    ytd_gross = round(ytd_hours * rate, 2)
-
-    # Live running shift (if any)
-    live = None
-    open_entry = next((e for e in entries if not e.get("clock_out_at")), None)
-    if open_entry:
-        try:
-            t_in = datetime.fromisoformat((open_entry["clock_in_at"] or "").replace("Z", "+00:00"))
-            elapsed_hrs = max(0.0, (datetime.now(timezone.utc) - t_in).total_seconds() / 3600.0)
-            br = float(open_entry.get("break_minutes") or 0) / 60.0
-            elapsed_hrs = max(0.0, elapsed_hrs - br)
-            hours_rounded = round(elapsed_hrs, 2)
-            live = {
-                "entry_id": open_entry["id"],
-                "clock_in_at": open_entry["clock_in_at"],
-                "hours_so_far": hours_rounded,
-                "gross_so_far": round(hours_rounded * rate, 2),
-            }
-        except Exception:
-            pass
-
-    return {
-        "entries": entries,
-        "total_hours": total_hours,
-        "total_gross": total_gross,
-        "hourly_rate": rate,
-        "days": days,
-        "this_week": {
-            "start": sunday.isoformat(),
-            "end": today.isoformat(),
-            "hours": this_week_hours,
-            "gross": _gross(this_week_hours),
-        },
-        "last_week": {
-            "start": last_sunday.isoformat(),
-            "end": last_saturday.isoformat(),
-            "hours": last_week_hours,
-            "gross": _gross(last_week_hours),
-        },
-        "ytd": {"year": today.year, "hours": ytd_hours, "gross": ytd_gross},
-        "live": live,
-    }
-
-
-# Sprint 110fz — Staff Ops readiness. Read-only daily summary used by the
-# Staff Hub and the dashboard Start Day checklist. This does not change
-# schedules, clock entries, bookings, or payroll rows; it only points out
-# staffing risks before the day gets away from the operator.
 def _time_to_minutes(value: Optional[str]) -> Optional[int]:
     try:
         hh, mm = (value or "").split(":")[:2]
@@ -36751,7 +35927,6 @@ async def staff_pay_snapshot(_: dict = Depends(require_admin_and_permission("fin
         "week_end": today.isoformat(),
     }
     return {"snapshot": snapshot, "totals": totals}
-
 
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -37529,7 +36704,6 @@ async def _register_day_summary(day: Optional[str] = None) -> Dict[str, Any]:
     }
 
 
-
 def _date_range_for_register(start_date: Optional[str], end_date: Optional[str], *, max_days: int = 370) -> Tuple[str, str, List[str]]:
     """Safe register reporting range helper.
 
@@ -37744,7 +36918,6 @@ def _csv_response(rows: List[List[Any]], filename: str) -> Response:
         media_type="text/csv",
         headers={"Content-Disposition": f'attachment; filename="{filename}"'},
     )
-
 
 
 async def admin_register_range(
@@ -46814,7 +45987,6 @@ async def mileage_recent_trips(_: dict = Depends(require_admin_and_permission("f
     return {"trips": out}
 
 
-
 @api.get("/admin/mileage/summary")
 async def mileage_summary(
     year: Optional[int] = None,
@@ -47008,116 +46180,6 @@ TIME_OFF_TYPES = {"vacation", "sick", "personal", "unpaid", "other"}
 TIME_OFF_STATUSES = {"pending", "approved", "rejected", "cancelled"}
 
 
-class TimeOffIn(BaseModel):
-    start_date: str
-    end_date: str
-    request_type: str = "vacation"
-    reason: Optional[str] = ""
-
-
-class TimeOffReview(BaseModel):
-    status: str           # "approved" | "rejected"
-    admin_notes: Optional[str] = ""
-
-
-@api.get("/employee/time-off")
-async def employee_list_time_off(user: dict = Depends(require_employee_or_admin)):
-    rows = await db.time_off_requests.find(
-        {"user_id": user["id"]}, {"_id": 0},
-    ).sort("created_at", -1).to_list(500)
-    return {"requests": rows}
-
-
-@api.post("/employee/time-off")
-async def employee_submit_time_off(
-    body: TimeOffIn,
-    user: dict = Depends(require_employee_or_admin),
-):
-    if body.start_date > body.end_date:
-        raise HTTPException(400, "start_date must be on or before end_date")
-    if body.request_type not in TIME_OFF_TYPES:
-        raise HTTPException(400, f"request_type must be one of {sorted(TIME_OFF_TYPES)}")
-    # Try to look up the requester's display name for admin lists
-    me = await db.users.find_one(
-        {"id": user["id"]}, {"_id": 0, "name": 1, "display_name": 1, "email": 1}
-    ) or {}
-    doc = {
-        "id": str(uuid.uuid4()),
-        "user_id": user["id"],
-        "user_name": me.get("display_name") or me.get("name") or me.get("email") or "Employee",
-        "start_date": body.start_date,
-        "end_date": body.end_date,
-        "request_type": body.request_type,
-        "reason": (body.reason or "").strip(),
-        "status": "pending",
-        "created_at": now_iso(),
-        "reviewed_at": None,
-        "reviewed_by": None,
-        "admin_notes": "",
-    }
-    await db.time_off_requests.insert_one(doc)
-    doc.pop("_id", None)
-    return doc
-
-
-@api.delete("/employee/time-off/{rid}")
-async def employee_cancel_time_off(
-    rid: str,
-    user: dict = Depends(require_employee_or_admin),
-):
-    row = await db.time_off_requests.find_one({"id": rid}, {"_id": 0})
-    if not row:
-        raise HTTPException(404, "Request not found")
-    if row.get("user_id") != user["id"] and user.get("role") != "admin":
-        raise HTTPException(403, "Not your request")
-    if row.get("status") not in ("pending",):
-        raise HTTPException(400, "Only pending requests can be cancelled")
-    await db.time_off_requests.update_one(
-        {"id": rid}, {"$set": {"status": "cancelled", "reviewed_at": now_iso()}}
-    )
-    return {"ok": True}
-
-
-@api.get("/admin/time-off")
-async def admin_list_time_off(
-    _: dict = Depends(require_admin_and_permission("manage_staff_scheduling")),
-    status: Optional[str] = None,
-):
-    q: Dict[str, Any] = {}
-    if status:
-        if status not in TIME_OFF_STATUSES:
-            raise HTTPException(400, f"status must be one of {sorted(TIME_OFF_STATUSES)}")
-        q["status"] = status
-    rows = await db.time_off_requests.find(q, {"_id": 0}).sort("created_at", -1).to_list(2000)
-    return {
-        "requests": rows,
-        "pending_count": sum(1 for r in rows if r.get("status") == "pending"),
-    }
-
-
-@api.put("/admin/time-off/{rid}")
-async def admin_review_time_off(
-    rid: str,
-    body: TimeOffReview,
-    admin: dict = Depends(require_admin_and_permission("manage_staff_scheduling")),
-):
-    if body.status not in ("approved", "rejected"):
-        raise HTTPException(400, "status must be 'approved' or 'rejected'")
-    res = await db.time_off_requests.update_one(
-        {"id": rid},
-        {"$set": {
-            "status": body.status,
-            "reviewed_at": now_iso(),
-            "reviewed_by": admin["id"],
-            "admin_notes": (body.admin_notes or "").strip(),
-        }},
-    )
-    if not res.matched_count:
-        raise HTTPException(404, "Request not found")
-    return await db.time_off_requests.find_one({"id": rid}, {"_id": 0})
-
-
-# ─── Weekly pay history (last N weeks) ────────────────────────────────────────
 @api.get("/employee/pay-history")
 async def employee_pay_history(
     weeks: int = 12,
@@ -47191,102 +46253,6 @@ async def employee_pay_history(
     }
 
 
-@api.get("/time-clock/me.csv")
-async def time_clock_me_csv(
-    days: int = 90,
-    user: dict = Depends(require_employee_or_admin),
-):
-    """Download a CSV of the caller's own timecard for the last `days` days.
-    Includes per-entry gross pay. Handy for staff to keep their own records."""
-    cutoff = (datetime.now(timezone.utc) - timedelta(days=int(days))).isoformat()
-    entries = await db.time_clock_entries.find(
-        {"user_id": user["id"], "clock_in_at": {"$gte": cutoff}},
-        {"_id": 0},
-    ).sort("clock_in_at", 1).to_list(5000)
-    me = await db.users.find_one(
-        {"id": user["id"]}, {"_id": 0, "hourly_rate": 1, "name": 1, "display_name": 1, "email": 1}
-    ) or {}
-    rate = float(me.get("hourly_rate") or 0)
-    buf = io.StringIO()
-    w = csv.writer(buf)
-    name = me.get("display_name") or me.get("name") or me.get("email") or "Me"
-    w.writerow([f"Timecard — {name} — last {days} days"])
-    w.writerow([f"Hourly rate: ${rate:.2f}"])
-    w.writerow([])
-    w.writerow(["Date", "Clock-in", "Clock-out", "Break (min)", "Hours", "Gross ($)"])
-    grand_h = 0.0
-    for e in entries:
-        date_str = (e.get("clock_in_at") or "")[:10]
-        hrs = float(e.get("hours") or 0)
-        grand_h += hrs
-        w.writerow([
-            date_str,
-            e.get("clock_in_at", ""),
-            e.get("clock_out_at", "") or "",
-            int(e.get("break_minutes") or 0),
-            f"{hrs:.2f}",
-            f"{hrs * rate:.2f}",
-        ])
-    w.writerow([])
-    w.writerow(["TOTAL", "", "", "", f"{grand_h:.2f}", f"{grand_h * rate:.2f}"])
-    buf.seek(0)
-    fname = f"timecard-{name.replace(' ', '_')}-{business_today().isoformat()}.csv"
-    return StreamingResponse(
-        iter([buf.getvalue()]),
-        media_type="text/csv",
-        headers={"Content-Disposition": f"attachment; filename={fname}"},
-    )
-
-
-@api.get("/admin/time-clock")
-async def admin_time_clock_list(
-    start_date: str,
-    end_date: str,
-    user_id: Optional[str] = None,
-    _: dict = Depends(require_admin),
-):
-    """Admin view: all clock entries in a date window, optionally filtered to one employee.
-    Returns entries + per-employee subtotals + grand total + estimated payroll cost."""
-    q: Dict[str, Any] = {
-        "clock_in_at": {"$gte": f"{start_date}T00:00:00", "$lte": f"{end_date}T23:59:59.999Z"}
-    }
-    if user_id:
-        q["user_id"] = user_id
-    entries = await db.time_clock_entries.find(q, {"_id": 0}).sort("clock_in_at", -1).to_list(5000)
-    # Pull rate per user for payroll cost
-    user_ids = list({e["user_id"] for e in entries})
-    users = await db.users.find(
-        {"id": {"$in": user_ids}}, {"_id": 0, "id": 1, "name": 1, "display_name": 1, "hourly_rate": 1}
-    ).to_list(1000) if user_ids else []
-    user_map = {u["id"]: u for u in users}
-
-    per_user: Dict[str, Dict[str, Any]] = {}
-    grand_hours = 0.0
-    grand_cost = 0.0
-    for e in entries:
-        u = user_map.get(e["user_id"], {})
-        name = u.get("display_name") or u.get("name") or "Unknown"
-        rate = float(u.get("hourly_rate") or 0)
-        slot = per_user.setdefault(e["user_id"], {
-            "user_id": e["user_id"], "name": name, "hourly_rate": rate,
-            "hours": 0.0, "cost": 0.0, "entry_count": 0,
-        })
-        hrs = float(e.get("hours") or 0)
-        slot["hours"] = round(slot["hours"] + hrs, 2)
-        slot["cost"] = round(slot["cost"] + hrs * rate, 2)
-        slot["entry_count"] += 1
-        grand_hours += hrs
-        grand_cost += hrs * rate
-    return {
-        "start_date": start_date,
-        "end_date": end_date,
-        "entries": entries,
-        "per_user": sorted(per_user.values(), key=lambda x: -x["hours"]),
-        "grand_hours": round(grand_hours, 2),
-        "grand_cost": round(grand_cost, 2),
-    }
-
-
 class TimeClockEditIn(BaseModel):
     clock_in_at: Optional[str] = None
     clock_out_at: Optional[str] = None
@@ -47294,51 +46260,6 @@ class TimeClockEditIn(BaseModel):
     note: Optional[str] = None
 
 
-@api.put("/admin/time-clock/{entry_id}")
-async def admin_edit_time_clock(
-    entry_id: str, body: TimeClockEditIn, admin: dict = Depends(require_admin),
-):
-    """Admin override — fix a missed clock-out, adjust times, etc. Stamps edit metadata."""
-    entry = await db.time_clock_entries.find_one({"id": entry_id}, {"_id": 0})
-    if not entry:
-        raise HTTPException(status_code=404, detail="Entry not found")
-    update: Dict[str, Any] = {
-        "edited_by_admin_at": now_iso(),
-        "edited_by_admin_id": admin["id"],
-    }
-    if body.clock_in_at is not None:
-        update["clock_in_at"] = body.clock_in_at
-    if body.clock_out_at is not None:
-        update["clock_out_at"] = body.clock_out_at
-    if body.break_minutes is not None:
-        update["break_minutes"] = float(body.break_minutes)
-    if body.note is not None:
-        update["admin_note"] = body.note
-    # Recompute hours
-    ci_raw = update.get("clock_in_at", entry.get("clock_in_at"))
-    co_raw = update.get("clock_out_at", entry.get("clock_out_at"))
-    brk = update.get("break_minutes", entry.get("break_minutes") or 0)
-    if ci_raw and co_raw:
-        try:
-            ci = datetime.fromisoformat(ci_raw.replace("Z", "+00:00"))
-            co = datetime.fromisoformat(co_raw.replace("Z", "+00:00"))
-            update["hours"] = round(max((co - ci).total_seconds() / 3600.0 - (float(brk) / 60.0), 0.0), 3)
-        except Exception:
-            pass
-    await db.time_clock_entries.update_one({"id": entry_id}, {"$set": update})
-    entry.update(update)
-    return entry
-
-
-@api.delete("/admin/time-clock/{entry_id}")
-async def admin_delete_time_clock(entry_id: str, _: dict = Depends(require_admin)):
-    res = await db.time_clock_entries.delete_one({"id": entry_id})
-    if res.deleted_count == 0:
-        raise HTTPException(status_code=404, detail="Entry not found")
-    return {"ok": True}
-
-
-# ── Employee-portal helpers (read-only data the staff need to do their job) ──
 @api.get("/employee/me")
 async def employee_me(user: dict = Depends(require_employee_or_admin)):
     """Self-profile + today's clock status for the employee dashboard."""
@@ -47379,218 +46300,6 @@ async def employee_me(user: dict = Depends(require_employee_or_admin)):
 
 VARIANCE_FLAG_MINUTES = 30  # |scheduled - actual| > this many minutes flips a "flag"
 
-
-class ShiftTemplateIn(BaseModel):
-    user_id: str
-    day_of_week: int = Field(ge=0, le=6)  # 0=Mon..6=Sun
-    start_time: str  # HH:MM
-    end_time: str
-    role: Optional[str] = ""
-    active: bool = True
-
-
-class ShiftIn(BaseModel):
-    user_id: str
-    date: str  # YYYY-MM-DD
-    start_time: str
-    end_time: str
-    role: Optional[str] = ""
-    notes: Optional[str] = ""
-
-
-@api.get("/admin/shift-templates")
-async def list_shift_templates(_: dict = Depends(require_admin_and_permission("manage_staff_scheduling"))):
-    rows = await db.shift_templates.find({}, {"_id": 0}).sort([("user_id", 1), ("day_of_week", 1)]).to_list(500)
-    return rows
-
-
-@api.post("/admin/shift-templates")
-async def create_shift_template(body: ShiftTemplateIn, _: dict = Depends(require_admin_and_permission("manage_staff_scheduling"))):
-    doc = body.model_dump()
-    doc["id"] = str(uuid.uuid4())
-    doc["created_at"] = now_iso()
-    await db.shift_templates.insert_one(doc)
-    doc.pop("_id", None)
-    return doc
-
-
-@api.put("/admin/shift-templates/{tid}")
-async def update_shift_template(tid: str, body: ShiftTemplateIn, _: dict = Depends(require_admin_and_permission("manage_staff_scheduling"))):
-    res = await db.shift_templates.update_one({"id": tid}, {"$set": body.model_dump()})
-    if res.matched_count == 0:
-        raise HTTPException(status_code=404, detail="Template not found")
-    return {"ok": True}
-
-
-@api.delete("/admin/shift-templates/{tid}")
-async def delete_shift_template(tid: str, _: dict = Depends(require_admin_and_permission("manage_staff_scheduling"))):
-    await db.shift_templates.delete_one({"id": tid})
-    return {"ok": True}
-
-
-@api.get("/admin/shifts")
-async def list_shifts(
-    start_date: str,
-    end_date: str,
-    user_id: Optional[str] = None,
-    _: dict = Depends(require_admin_and_permission("manage_staff_scheduling")),
-):
-    q: Dict[str, Any] = {"date": {"$gte": start_date, "$lte": end_date}}
-    if user_id:
-        q["user_id"] = user_id
-    rows = await db.shifts.find(q, {"_id": 0}).sort([("date", 1), ("start_time", 1)]).to_list(2000)
-    return rows
-
-
-@api.post("/admin/shifts")
-async def create_shift(body: ShiftIn, admin: dict = Depends(require_admin_and_permission("manage_staff_scheduling"))):
-    doc = body.model_dump()
-    doc["id"] = str(uuid.uuid4())
-    doc["source"] = "manual"
-    doc["template_id"] = None
-    doc["status"] = "scheduled"
-    doc["created_by"] = admin["id"]
-    doc["created_at"] = now_iso()
-    await db.shifts.insert_one(doc)
-    doc.pop("_id", None)
-    return doc
-
-
-@api.put("/admin/shifts/{sid}")
-async def update_shift(sid: str, body: ShiftIn, _: dict = Depends(require_admin_and_permission("manage_staff_scheduling"))):
-    res = await db.shifts.update_one({"id": sid}, {"$set": body.model_dump()})
-    if res.matched_count == 0:
-        raise HTTPException(status_code=404, detail="Shift not found")
-    return {"ok": True}
-
-
-@api.delete("/admin/shifts/{sid}")
-async def delete_shift(sid: str, _: dict = Depends(require_admin_and_permission("manage_staff_scheduling"))):
-    await db.shifts.delete_one({"id": sid})
-    return {"ok": True}
-
-
-@api.post("/admin/shifts/generate")
-async def generate_shifts_from_templates(body: dict, _: dict = Depends(require_admin_and_permission("manage_staff_scheduling"))):
-    """Apply all active shift_templates to every weekday in [start_date, end_date].
-    Idempotent: skips dates where the same user already has a shift covering the same
-    start_time (so re-running won't duplicate)."""
-    start_date = body.get("start_date")
-    end_date = body.get("end_date")
-    if not start_date or not end_date:
-        raise HTTPException(status_code=400, detail="start_date and end_date required")
-    start = datetime.strptime(start_date, "%Y-%m-%d").date()
-    end = datetime.strptime(end_date, "%Y-%m-%d").date()
-    if end < start:
-        raise HTTPException(status_code=400, detail="end_date must be after start_date")
-    templates = await db.shift_templates.find({"active": True}, {"_id": 0}).to_list(500)
-    created = 0
-    skipped = 0
-    d = start
-    while d <= end:
-        dow = d.weekday()  # 0=Mon..6=Sun
-        for t in templates:
-            if t["day_of_week"] != dow:
-                continue
-            iso = d.isoformat()
-            existing = await db.shifts.find_one(
-                {"user_id": t["user_id"], "date": iso, "start_time": t["start_time"]},
-                {"_id": 0, "id": 1},
-            )
-            if existing:
-                skipped += 1
-                continue
-            doc = {
-                "id": str(uuid.uuid4()),
-                "user_id": t["user_id"],
-                "date": iso,
-                "start_time": t["start_time"],
-                "end_time": t["end_time"],
-                "role": t.get("role", ""),
-                "notes": "",
-                "source": "template",
-                "template_id": t["id"],
-                "status": "scheduled",
-                "created_at": now_iso(),
-            }
-            await db.shifts.insert_one(doc)
-            created += 1
-        d = d + timedelta(days=1)
-    return {"created": created, "skipped": skipped, "start_date": start_date, "end_date": end_date}
-
-
-@api.get("/admin/shifts/scheduled-vs-actual")
-async def shifts_scheduled_vs_actual(
-    start_date: str, end_date: str,
-    user_id: Optional[str] = None,
-    _: dict = Depends(require_admin_and_permission("manage_staff_scheduling")),
-):
-    """For each scheduled shift in the range, find the matching clock entry (same
-    user, same date) and compute variance. Flags shifts where |sched - actual|
-    > VARIANCE_FLAG_MINUTES."""
-    qs: Dict[str, Any] = {"date": {"$gte": start_date, "$lte": end_date}}
-    if user_id:
-        qs["user_id"] = user_id
-    shifts = await db.shifts.find(qs, {"_id": 0}).sort("date", 1).to_list(2000)
-    # Pull all entries in window
-    entries = await db.time_clock_entries.find(
-        {"clock_in_at": {"$gte": f"{start_date}T00:00:00", "$lte": f"{end_date}T23:59:59.999Z"}},
-        {"_id": 0},
-    ).to_list(5000)
-    # Group entries by (user_id, date)
-    entries_by_key: Dict[tuple, List[dict]] = {}
-    for e in entries:
-        ci = e.get("clock_in_at", "")
-        dt = ci[:10] if len(ci) >= 10 else ""
-        entries_by_key.setdefault((e["user_id"], dt), []).append(e)
-
-    def parse_hhmm(s):
-        try:
-            h, m = s.split(":")
-            return int(h) * 60 + int(m)
-        except Exception:
-            return None
-
-    rows = []
-    for s in shifts:
-        sched_start_min = parse_hhmm(s["start_time"])
-        sched_end_min = parse_hhmm(s["end_time"])
-        sched_minutes = (sched_end_min - sched_start_min) if (sched_start_min is not None and sched_end_min is not None) else 0
-        matches = entries_by_key.get((s["user_id"], s["date"]), [])
-        actual_minutes = 0
-        first_in = None
-        last_out = None
-        for e in matches:
-            if e.get("clock_out_at"):
-                actual_minutes += round(float(e.get("hours") or 0) * 60)
-                if not first_in or e["clock_in_at"] < first_in:
-                    first_in = e["clock_in_at"]
-                if not last_out or e["clock_out_at"] > last_out:
-                    last_out = e["clock_out_at"]
-        variance_min = actual_minutes - sched_minutes
-        flagged = abs(variance_min) > VARIANCE_FLAG_MINUTES
-        status = "missed" if actual_minutes == 0 else ("matched" if not flagged else ("over" if variance_min > 0 else "under"))
-        rows.append({
-            **s,
-            "scheduled_minutes": sched_minutes,
-            "actual_minutes": actual_minutes,
-            "variance_minutes": variance_min,
-            "flagged": flagged,
-            "match_status": status,
-            "first_in": first_in,
-            "last_out": last_out,
-        })
-    return {"shifts": rows, "variance_threshold_minutes": VARIANCE_FLAG_MINUTES}
-
-
-# ────────────────────────── Payroll Tax Estimator (Sprint 96) ──────────────────────────
-# Sensible defaults for Warren, Ohio (2026 rates). Every rate is editable via
-# /api/admin/payroll-tax-settings so the owner can adjust as they get rated
-# (e.g. Ohio SUTA changes yearly, BWC rate depends on policy/class code).
-#
-# IMPORTANT: This is an ESTIMATOR for budgeting only — not a substitute for
-# payroll software or a CPA. Withholding amounts vary by W-4 selections,
-# YTD totals, exemptions, etc. The take-home estimate uses simple flat brackets.
 
 DEFAULT_PAYROLL_TAX_SETTINGS = {
     # Employer-paid (added on top of gross)
@@ -48042,21 +46751,6 @@ async def employee_my_tasks(user: dict = Depends(require_employee_or_admin)):
 
 
 # ── Employee schedule view ──
-@api.get("/employee/my-shifts")
-async def employee_my_shifts(
-    start_date: Optional[str] = None,
-    end_date: Optional[str] = None,
-    user: dict = Depends(require_employee_or_admin),
-):
-    """Upcoming + recent shifts for the calling user. Defaults to next 14 days."""
-    s = start_date or business_today().isoformat()
-    e = end_date or (business_today() + timedelta(days=14)).isoformat()
-    rows = await db.shifts.find(
-        {"user_id": user["id"], "date": {"$gte": s, "$lte": e}},
-        {"_id": 0},
-    ).sort([("date", 1), ("start_time", 1)]).to_list(500)
-    return {"start_date": s, "end_date": e, "shifts": rows}
-
 
 
 async def _admin_end_of_day_snapshot(day: Optional[str] = None) -> Dict[str, Any]:
@@ -48159,8 +46853,6 @@ async def admin_end_of_day(
     _: dict = Depends(require_admin_and_permission("finance_reports")),
 ):
     return await _admin_end_of_day_snapshot(date)
-
-
 
 
 @api.get("/admin/today-pnl")
@@ -48449,7 +47141,6 @@ async def today_pnl(_: dict = Depends(require_admin_and_permission("finance_repo
     }
 
 
-
 @api.get("/employee/roster-today")
 async def employee_roster_today(user: dict = Depends(require_employee_or_admin)):
     """Today's run-sheet roster — dogs on-site + emergency contact phone for each.
@@ -48675,100 +47366,8 @@ async def employee_create_incident(body: EmployeeIncidentIn, user: dict = Depend
 
 
 # ──────────── Punch correction requests ────────────
-class PunchCorrectionIn(BaseModel):
-    target_entry_id: Optional[str] = ""          # which time_clock_entries row, optional
-    target_date: str = Field(min_length=10, max_length=10)  # YYYY-MM-DD
-    requested_clock_in: Optional[str] = ""       # ISO datetime
-    requested_clock_out: Optional[str] = ""      # ISO datetime
-    reason: str = Field(min_length=3, max_length=500)
 
 
-@api.get("/employee/punch-corrections")
-async def employee_list_punch_corrections(user: dict = Depends(require_employee_or_admin)):
-    """Staff sees their own correction requests. Admin sees all."""
-    q: Dict[str, Any] = {} if user.get("role") == "admin" else {"user_id": user.get("id")}
-    items = await db.punch_corrections.find(q, {"_id": 0}).sort("created_at", -1).to_list(500)
-    return items
-
-
-@api.post("/employee/punch-corrections")
-async def employee_create_punch_correction(body: PunchCorrectionIn, user: dict = Depends(require_employee_or_admin)):
-    """Submit a correction request — admin will approve/deny + apply."""
-    doc = {
-        "id": str(uuid.uuid4()),
-        "user_id": user.get("id"),
-        "user_name": user.get("name") or user.get("email"),
-        "target_entry_id": body.target_entry_id or "",
-        "target_date": body.target_date,
-        "requested_clock_in": body.requested_clock_in or "",
-        "requested_clock_out": body.requested_clock_out or "",
-        "reason": body.reason.strip(),
-        "status": "pending",                     # pending | approved | denied
-        "decided_by_id": "",
-        "decided_by_name": "",
-        "decided_at": "",
-        "admin_note": "",
-        "created_at": now_iso(),
-    }
-    await db.punch_corrections.insert_one(doc)
-    doc.pop("_id", None)
-    return doc
-
-
-class PunchCorrectionDecisionIn(BaseModel):
-    decision: Literal["approved", "denied"]
-    admin_note: Optional[str] = Field(default="", max_length=500)
-
-
-@api.post("/employee/punch-corrections/{cid}/decision")
-async def employee_decide_punch_correction(
-    cid: str, body: PunchCorrectionDecisionIn, user: dict = Depends(require_admin_and_permission("manage_staff_scheduling")),
-):
-    """Admin approves/denies a correction. On approve, the requested
-    clock_in/clock_out get applied to the time_clock_entries row (or a new
-    row is created if target_entry_id is empty)."""
-    req = await db.punch_corrections.find_one({"id": cid}, {"_id": 0})
-    if not req:
-        raise HTTPException(status_code=404, detail="Request not found")
-    if req["status"] != "pending":
-        raise HTTPException(status_code=409, detail="Already decided")
-    update = {
-        "status": body.decision,
-        "decided_by_id": user.get("id"),
-        "decided_by_name": user.get("name") or user.get("email"),
-        "decided_at": now_iso(),
-        "admin_note": (body.admin_note or "").strip(),
-    }
-    await db.punch_corrections.update_one({"id": cid}, {"$set": update})
-
-    if body.decision == "approved":
-        # Apply to a time_clock_entries row.
-        target_id = req.get("target_entry_id")
-        patch = {}
-        if req.get("requested_clock_in"):
-            patch["clock_in_at"] = req["requested_clock_in"]
-        if req.get("requested_clock_out"):
-            patch["clock_out_at"] = req["requested_clock_out"]
-        if target_id:
-            await db.time_clock_entries.update_one({"id": target_id}, {"$set": patch})
-        elif patch:
-            # Create a fresh entry — staff forgot to clock in/out entirely.
-            row = {
-                "id": str(uuid.uuid4()),
-                "user_id": req["user_id"],
-                "user_name": req["user_name"],
-                "clock_in_at": patch.get("clock_in_at", ""),
-                "clock_out_at": patch.get("clock_out_at", ""),
-                "created_at": now_iso(),
-                "corrected_via_request_id": cid,
-            }
-            await db.time_clock_entries.insert_one(row)
-
-    req.update(update)
-    return req
-
-
-# ──────────── Staff trivia (no scoring, just learning) ────────────
 @api.get("/employee/trivia/quiz")
 async def employee_trivia_quiz(count: int = 5, _: dict = Depends(require_employee_or_admin)):
     """Adaptive practice quiz for staff. Same question pool as the client
@@ -48807,9 +47406,6 @@ async def employee_trivia_answer(body: TriviaAnswerIn, _: dict = Depends(require
         "correct_index": q["correct_index"],
         "explanation": q.get("explanation") or "",
     }
-
-
-
 
 
 # ────────────────────────── Expenses ──────────────────────────
@@ -49314,7 +47910,6 @@ async def _apply_client_overrides(
         it["has_legacy_override"] = True
         it[price_field] = float(ovr.get("override_price") or 0)
     return items
-
 
 
 async def resolve_client_price(
@@ -50374,6 +48969,11 @@ class SellProgramIn(BaseModel):
     # difference lands on client.account_balance and only amount_paid is
     # recognized as revenue today (cash-basis — option 1c).
     amount_paid: Optional[float] = Field(default=None, ge=0)
+    # Release closure — selling a program the dog is ALREADY actively enrolled in is
+    # refused by default so an accidental repeat never charges twice. The operator can
+    # deliberately sell another block of sessions on top of the existing enrollment by
+    # setting this; no second enrollment is ever created either way.
+    allow_additional_sessions: bool = False
 
 
 @api.post("/clients/{client_id}/sell-program")
@@ -50427,6 +49027,35 @@ async def sell_training_program(
         _require_program_min_age(dog, program)
     if dog and program.get("purchase_fulfillment") == "online_school":
         await _require_program_prerequisites(dog["id"], program)
+
+    # Release closure — duplicate program sale.
+    #
+    # An active enrollment for this dog+program is the canonical entitlement: the sale
+    # cannot create a second one (rule B5), so charging again and quietly returning the
+    # existing row would take money for nothing. Checked HERE, with the other eligibility
+    # rules, so it happens before the credit lot / income row / balance are written.
+    #
+    # A COMPLETED or withdrawn enrollment does not block: buying the program again is a
+    # legitimate retake and goes on to create a fresh enrollment below.
+    existing_active = await db.dog_programs.find_one(
+        {"dog_id": dog["id"], "program_id": program["id"], "status": "active"}, {"_id": 0},
+    ) if dog else None
+    if existing_active and not body.allow_additional_sessions:
+        raise HTTPException(status_code=409, detail={
+            "code": "dog_already_enrolled",
+            "msg": (f"{dog.get('name') or 'This dog'} is already enrolled in {program['name']} "
+                    f"({(_school_delivery_mode_for_enrollment(existing_active) or 'in person').replace('_', ' ')}). "
+                    "Nothing was charged. To sell another block of sessions on top of that enrollment, "
+                    "confirm below — the existing enrollment stays the one training record."),
+            "enrollment_id": existing_active["id"],
+            "enrollment": _enrollment_summary(existing_active),
+            "program_id": program["id"],
+            "program_name": program["name"],
+            "dog_id": dog["id"],
+            "dog_name": dog.get("name") or "",
+            "delivery_mode": _school_delivery_mode_for_enrollment(existing_active),
+            "resolution": "allow_additional_sessions",
+        })
 
     lot = {
         "id": str(uuid.uuid4()),
@@ -50510,7 +49139,19 @@ async def sell_training_program(
 
     enrollment_summary = None
     enrollment_warning = None
-    if dog and program.get("purchase_fulfillment") == "online_school":
+    already_enrolled = None
+    if existing_active:
+        # Confirmed additional-sessions sale: the credits are real, the enrollment is not new.
+        already_enrolled = {
+            "enrollment_id": existing_active["id"],
+            "delivery_mode": _school_delivery_mode_for_enrollment(existing_active),
+            "sold_additional_sessions": True,
+        }
+        enrollment_summary = _enrollment_summary(existing_active)
+        enrollment_warning = (
+            f"{qty} more {unit} added. {dog.get('name') or 'This dog'} was already enrolled in "
+            f"{program['name']}, so the existing enrollment stays the one training record — no second one was created.")
+    elif dog and program.get("purchase_fulfillment") == "online_school":
         # Commerce still determines how entitlement is acquired. Once granted,
         # Online School uses the same canonical curriculum/progress architecture.
         try:
@@ -50679,6 +49320,8 @@ async def sell_training_program(
         "lot": lot,
         "enrollment": enrollment_summary,  # null when dog_id not provided
         "enrollment_warning": enrollment_warning,
+        # present only when this sale added sessions to an enrollment that already existed
+        "already_enrolled": already_enrolled,
         "client_balance": int((client.get("training_credits") or 0)) + qty,
         "scheduled_bookings": scheduled_bookings,
         "schedule_warnings": schedule_warnings,
@@ -50725,7 +49368,6 @@ async def reschedule_prepaid_session(booking_id: str, _: dict = Depends(require_
             raise
         return {"ok": True, "booking": updated, "from": bk["date"], "to": iso}
     raise HTTPException(409, "No open slot found in the next 12 weeks on that weekday")
-
 
 
 # ────────── Sprint 110cf · Client-initiated reschedule requests ──────────
@@ -50962,9 +49604,6 @@ async def decline_reschedule_request(
     return updated
 
 
-
-
-
 @api.get("/admin/clients/{client_id}/training-credits")
 async def client_training_credits_breakdown(
     client_id: str,
@@ -51012,7 +49651,6 @@ async def client_training_credits_breakdown(
         "by_program": list(by_program.values()),
         "lots_count": len(lots),
     }
-
 
 
 @api.post("/clients/{client_id}/sell-pack")
@@ -52070,12 +50708,9 @@ async def portal_homework_streak(current: dict = Depends(get_current_user)):
     }
 
 
-
 @api.get("/")
 async def root():
     return {"service": "sit-happens", "status": "ok"}
-
-
 
 
 # ============================================================
@@ -52457,8 +51092,6 @@ async def reverse_installment_payment(
     return await db.payment_plans.find_one({"id": plan_id}, {"_id": 0})
 
 
-
-
 @api.post("/admin/payment-plans/{plan_id}/cancel")
 async def cancel_payment_plan(plan_id: str, _: dict = Depends(require_admin_and_permission("finance_reports"))):
     p = await db.payment_plans.find_one({"id": plan_id}, {"_id": 0})
@@ -52525,7 +51158,6 @@ async def receivables_this_week(_: dict = Depends(require_admin_and_permission("
         "upcoming": upcoming[:5],
         "as_of": today_iso,
     }
-
 
 
 # ──────── Client portal endpoints ────────
@@ -54633,6 +53265,10 @@ PERMISSION_KEYS = (
     # front-desk employee who can check a training dog in must NOT
     # automatically be able to edit that dog's training progress.
     "manage_training_sessions",
+    # Stage 12 — assigning / reassigning WHICH trainer owns a dog's training work
+    # is staff-management authority, not a by-product of being able to run a
+    # session. Owner + manager hold it (full matrix); trainers default to False.
+    "assign_training_staff",
     # Online School Phase 1 — School HQ (the admin operations hub: activity
     # feed, Needs Attention queue, notifications, checkpoint/Trainer-Assist
     # oversight). A dedicated key rather than reusing manage_training_sessions
@@ -54817,8 +53453,6 @@ def require_permission(key: str):
             raise HTTPException(status_code=403, detail=f"Missing permission: {key}")
         return user
     return _dep
-
-
 
 
 @api.get("/me/permissions")
@@ -57452,7 +56086,98 @@ register_domains(
     enrollment_summary=_enrollment_summary, effective_lessons=_effective_lessons,
     recommended_focus=_light_recommended_focus,
     booking_training_assignment_for_day=_booking_training_assignment_for_day,
+    school_enrollment_for_client=_school_enrollment_for_client,
+    compute_daily_progress=_compute_daily_progress, streak_count=_streak_count,
+    client_safe_homework=_client_safe_homework, client_practice_summary=_client_practice_summary,
 )
+
+# Staff time clock / shifts / time off / punch corrections (domains/staff) — pure move.
+from domains.staff.routes import make_staff_domain  # noqa: E402
+
+globals().update(make_staff_domain(
+    ClockInIn=ClockInIn, ClockOutIn=ClockOutIn, TIME_OFF_STATUSES=TIME_OFF_STATUSES,
+    TIME_OFF_TYPES=TIME_OFF_TYPES, TimeClockEditIn=TimeClockEditIn,
+    VARIANCE_FLAG_MINUTES=VARIANCE_FLAG_MINUTES, api=api, business_today=business_today,
+    db=db, now_iso=now_iso, require_admin=require_admin,
+    require_admin_and_permission=require_admin_and_permission,
+    require_employee_or_admin=require_employee_or_admin,
+))
+
+# Trophies (domains/engagement/trophies) — pure move; names re-exported below.
+from domains.engagement.trophies import make_trophy_domain  # noqa: E402
+
+globals().update(make_trophy_domain(
+    ManualAwardIn=ManualAwardIn, TIER_COLORS=TIER_COLORS, _serialize_awarded=_serialize_awarded,
+    api=api, award_trophy=award_trophy, business_today=business_today,
+    check_client_trophies=check_client_trophies, db=db, get_current_user=get_current_user,
+    logger=logger, now_iso=now_iso, recheck_all_trophies=recheck_all_trophies,
+    render_share_card_png=render_share_card_png, require_admin=require_admin,
+    require_admin_and_permission=require_admin_and_permission,
+))
+
+# Backup / restore / auto-backup / backup-safety (domains/backup) — pure move.
+# Every moved name is re-exported below so the rest of this module and the existing
+# in-process suite keep reaching them exactly as before.
+from domains.backup.routes import make_backup_domain  # noqa: E402
+
+globals().update(make_backup_domain(
+    BACKUP_COLLECTIONS=BACKUP_COLLECTIONS, backup_root_ref=lambda: globals()["BACKUP_ROOT"], BACKUP_VERSION=BACKUP_VERSION,
+    CONFIG_BACKUP_VERSION=CONFIG_BACKUP_VERSION, CONFIG_COLLECTIONS=CONFIG_COLLECTIONS,
+    ConfigRestoreIn=ConfigRestoreIn, DuplicateKeyError=DuplicateKeyError, ReturnDocument=ReturnDocument,
+    school_media_root_ref=lambda: globals()["SCHOOL_MEDIA_ROOT"], STRING_ID_COLLECTIONS=STRING_ID_COLLECTIONS,
+    SchoolMediaRestoreIn=SchoolMediaRestoreIn, _BACKUP_LEASE_ID=_BACKUP_LEASE_ID,
+    _BACKUP_PROCESS_ID=_BACKUP_PROCESS_ID, _CRITICAL_BACKUP_COLLECTIONS=_CRITICAL_BACKUP_COLLECTIONS,
+    _DISK_PROBE_PATHS=_DISK_PROBE_PATHS, _build_config_payload=_build_config_payload,
+    _business_day_utc_bounds=_business_day_utc_bounds, _disk_row=_disk_row,
+    _export_collection_docs=_export_collection_docs, _perms_for=_perms_for,
+    _read_mounts=_read_mounts, _safe_parse_iso=_safe_parse_iso,
+    _school_media_archive_path=_school_media_archive_path,
+    _validated_school_media_members=_validated_school_media_members,
+    _write_school_media_archive=_write_school_media_archive,
+    api=api, business_today=business_today, db=db, logger=logger, now_iso=now_iso,
+    now_local=now_local, require_admin=require_admin,
+    require_admin_and_permission=require_admin_and_permission, require_owner=require_owner,
+))
+
+# Trainer Daily Queue (domains/training/trainer_day) — pure move; same path,
+# same payload, same permission. The callable is re-exported for the in-process suite.
+from domains.training.trainer_day import make_trainer_day  # noqa: E402
+
+_build_trainer_day, admin_training_day = make_trainer_day(
+    api_dep=require_admin_and_permission("manage_training_sessions"), db=db, perms_for=_perms_for, business_today=business_today,
+    business_date_from_timestamp=_business_date_from_timestamp, business_tz=BUSINESS_TZ,
+    staff_school_delivery_channels=STAFF_SCHOOL_DELIVERY_CHANNELS,
+    booking_training_assignment_for_day=_booking_training_assignment_for_day,
+    find_lesson_in_snapshot=_find_lesson_in_snapshot,
+    module_name_in_snapshot=_module_name_in_snapshot,
+    practice_review_rows=_practice_review_rows,
+    admin_school_checkpoints_pending=admin_school_checkpoints_pending,
+    admin_school_trainer_assist_queue=admin_school_trainer_assist_queue,
+    admin_training_today=admin_training_today,
+    list_pending_reviews=list_pending_reviews,
+)
+api.get("/admin/training/day")(admin_training_day)
+
+# Public website + contact questionnaire (domains/public_site) — moved out of this
+# file unchanged; the two in-process callables below keep the existing test contract.
+from domains.public_site.routes import (  # noqa: E402,F401
+    INQUIRY_CONCERNS, INQUIRY_INTERESTS, INQUIRY_PREFERRED_CONTACT, INQUIRY_START_TIMING,
+    INQUIRY_STATUSES, INQUIRY_YES_NO_UNSURE, ContactInquiryIn, InquiryPatchIn,
+    register_public_site_routes,
+)
+
+_public_site_callables = register_public_site_routes(
+    api=api, db=db, logger=logger,
+    require_admin_and_permission=require_admin_and_permission,
+    get_settings=get_settings, now_iso=now_iso,
+    enforce_rate_limit=_enforce_rate_limit, client_ip=_client_ip,
+    default_feature_visibility=_default_feature_visibility, stay_policies=stay_policies,
+    notify_admin_contact_inquiry=notify_admin_contact_inquiry,
+    send_contact_inquiry_received=send_contact_inquiry_received,
+    default_settings=_default_settings,
+)
+list_inquiries = _public_site_callables["list_inquiries"]
+update_inquiry = _public_site_callables["update_inquiry"]
 
 # Public event preregistration (events_domain.py) — public page + register,
 # client prefill, and the permission-gated admin dashboard/check-in/exports.

@@ -109,7 +109,7 @@ test("reviewing a log offers no way to complete the assignment", () => {
 
 test("every active assignment offers an explicit Complete action", () => {
   expect(screenSrc).toMatch(/data-testid=\{`hw-complete-\$\{h\.id\}`\}/);
-  expect(screenSrc).toMatch(/Complete assignment/);
+  expect(screenSrc).toMatch(/Complete Practice/);
   expect(screenSrc).toMatch(/\{h\.status !== "completed" && \(/);
 });
 
@@ -121,7 +121,7 @@ test("completion goes through the trainer endpoint that reuses canonical state",
 
 test("completion is confirmed, and names the assignment and the dog", () => {
   expect(screenSrc).toMatch(/title: `Complete \$\{h\.title\} for \$\{h\.dog_name\}\?`/);
-  expect(screenSrc).toMatch(/confirmText: "Complete assignment"/);
+  expect(screenSrc).toMatch(/confirmText: "Complete Practice"/);
   // uses the app's own confirm dialog, not window.confirm
   expect(code(screenSrc)).not.toMatch(/window\.confirm/);
 });

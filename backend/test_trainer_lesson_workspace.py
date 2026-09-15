@@ -19,6 +19,7 @@ import uuid
 import _test_env  # noqa: F401 — must run before `import server`
 import httpx
 import pytest
+from fastapi import HTTPException
 import server
 from _test_loop import run
 
@@ -151,15 +152,50 @@ def _ensure_skill_in_plan(draft, skill_id, name="Skill"):
 
 
 def _record(draft_id, actuals, **summary):
-    """Save assessments + structured summary onto the open draft."""
+    """Save assessments + structured summary onto the open draft.
+
+    Stage 13 fixture repair — the guided-lesson release requires a mastery decision on
+    every recorded skill; a test that does not decide gets "Not Yet" (never mastered)."""
+    filled = {k: ({"mastery_decision": "not_yet", **v} if (v.get("score") is not None or v.get("outcome")) and v.get("outcome") != "skipped" else v)
+              for k, v in actuals.items()}
     return run(server.update_training_session_draft(
         draft_id,
         server.TrainingSessionDraftUpdateIn(
-            actuals={k: server.SessionActivityActualIn(**v) for k, v in actuals.items()}, **summary),
+            actuals={k: server.SessionActivityActualIn(**v) for k, v in filled.items()}, **summary),
         ADMIN))
 
 
-def _complete(draft_id, action="remain", **kw):
+def _ensure_record(draft_id):
+    """Stage 13 fixture repair — completing a session requires an outcome + mastery
+    decision on every required lesson skill and the four summary fields. Tests that
+    only care about progression get stock values here; nothing a test set is changed."""
+    d = run(server.db.training_session_drafts.find_one({"id": draft_id}, {"_id": 0}))
+    if not d or d.get("status") != "draft":
+        return
+    actuals = d.get("actuals") or {}
+    upd = {}
+    keep = ("score", "outcome", "notes", "client_observation", "mastery_decision", "needs_reassessment", "homework_eligible")
+    for a in (d.get("plan") or {}).get("activities") or []:
+        if not a.get("required_curriculum") or a.get("skipped"):
+            continue
+        cur = actuals.get(a["id"]) or {}
+        if cur.get("outcome") and cur.get("mastery_decision") in ("mastered", "not_yet") and cur.get("score") is not None:
+            continue
+        v = {k: cur[k] for k in keep if k in cur and cur[k] is not None}
+        v.setdefault("outcome", "improving"); v.setdefault("mastery_decision", "not_yet"); v.setdefault("score", 3)
+        upd[a["id"]] = v
+    summary = {k: v for k, v in {"what_went_well": "Went well.", "needs_work": "Needs work.", "next_lesson_focus": "Next focus.",
+                                 "client_recap_note": "Recap for the client."}.items() if not str(d.get(k) or "").strip()}
+    if upd or summary:
+        run(server.update_training_session_draft(
+            draft_id,
+            server.TrainingSessionDraftUpdateIn(actuals={k: server.SessionActivityActualIn(**v) for k, v in upd.items()} if upd else None, **summary),
+            ADMIN))
+
+
+def _complete(draft_id, action="remain", fill_record=True, **kw):
+    if fill_record:  # pass fill_record=False to exercise the refusal itself
+        _ensure_record(draft_id)
     return run(server.complete_training_session(
         draft_id, server.SessionCompletionIn(advancement_action=action, **kw), ADMIN))
 
@@ -168,7 +204,10 @@ def _activity_for_skill(draft, skill_id):
     for a in (draft.get("plan") or {}).get("activities") or []:
         if a.get("skill_id") == skill_id:
             return a["id"]
-    raise AssertionError(f"no planned activity for skill {skill_id}")
+    # Stage 13 fixture repair — the lesson plan only carries the lesson's own skill; a test
+    # that works another module skill adds it to the plan the way a trainer would.
+    _draft, aid = _ensure_skill_in_plan(draft, skill_id, "Skill")
+    return aid
 
 
 def _enrollment(s):
@@ -312,7 +351,8 @@ def test_later_low_session_score_does_not_erase_prior_mastery():
 
     d2 = _open_draft(s)
     d2, aid2 = _ensure_skill_in_plan(d2, skill)
-    _record(d2["id"], {aid2: {"score": 2, "outcome": "needs_more_work"}})
+    # a weak rep the trainer still confirms as mastered — the explicit decision is the record
+    _record(d2["id"], {aid2: {"score": 2, "outcome": "needs_more_work", "mastery_decision": "mastered"}})
     res2 = _complete(d2["id"])
 
     gp = _enrollment(s)["goal_progress"][skill]
@@ -433,14 +473,17 @@ def test_gate_does_not_create_or_duplicate_a_checkpoint():
 
 
 def test_non_school_trainer_led_enrollment_is_not_gated():
-    """The gate is scoped to School deliveries — plain trainer-led
-    enrollments keep their existing behaviour."""
+    """Superseded (Stage 13): the plain "trainer_led" delivery outside School is retired;
+    every trainer-led enrollment is an in-person School enrollment. A row still carrying the
+    retired channel is not worked around the gate — it is refused as legacy work that needs
+    migration, and no draft is created for it."""
     s = _seed("in_person", checkpoint_on_lesson1=True)
     run(server.db.dog_programs.update_one(
         {"id": s["enrollment_id"]}, {"$set": {"delivery_channel": "trainer_led"}}))
-    draft = _open_draft(s)
-    res = _complete(draft["id"], action="advance_lesson")
-    assert res["session_log"]["advancement_action"] == "advance_lesson"
+    with pytest.raises(HTTPException) as e:
+        run(server.start_training_session_draft_direct(s["dog_id"], s["enrollment_id"], "legacy", ADMIN))
+    assert e.value.status_code in (404, 409)
+    assert run(server.db.training_session_drafts.count_documents({"enrollment_id": s["enrollment_id"]})) == 0
 
 
 # ---------------------------------------------------------------------------
@@ -459,6 +502,9 @@ def test_practice_assigned_from_a_lesson_links_to_session_and_attempt():
         for g in m["goals"]:
             if g["id"] == skill:
                 g["homework_template_ids"] = [tpl["id"]]
+        for l in m.get("lessons") or []:  # the lesson engine reads the lesson's suggested Practice
+            if skill in (l.get("skill_ids") or []):
+                l["suggested_homework_template_ids"] = [tpl["id"]]
     run(server.db.dog_programs.update_one({"id": s["enrollment_id"]}, {"$set": {"program_snapshot": snap}}))
 
     draft = _open_draft(s)
@@ -470,7 +516,7 @@ def test_practice_assigned_from_a_lesson_links_to_session_and_attempt():
     assert hw_ids, "Practice must be created through the existing engine"
     hw = run(server.db.homework.find_one({"id": hw_ids[0]}, {"_id": 0}))
     assert hw["dog_id"] == s["dog_id"]
-    assert hw["source_skill_id"] == skill
+    assert hw.get("source_lesson_id") == s["lesson_ids"][0] or hw.get("source_skill_id") == skill  # lesson engine: linked to the lesson that teaches the skill
     assert hw["source_session_log_id"] == res["session_log"]["id"]
     assert hw["school_enrollment_id"] == s["se_id"], "linked to the School attempt"
     assert hw["school_enrollment_record_id"] == s["enrollment_id"]

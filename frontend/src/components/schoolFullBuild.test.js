@@ -88,7 +88,7 @@ test("School search covers reached lessons, resources, and trainer feedback with
   expect(schoolApp).toMatch(/aria-label="Search School"/);
   expect(search).toMatch(/lessons/);
   expect(search).toMatch(/resources/);
-  expect(search).toMatch(/Trainer Feedback/);
+  expect(search).toMatch(/title: "Coach"/);
 });
 
 

@@ -178,11 +178,12 @@ test("Dashboard opens CheckpointReviewQueue as a modal, not a screen navigation"
 test("Pipeline surfaces the checkpoint queue next to Today's Training Dogs, not on a separate screen", () => {
   expect(pipelineScreenSrc).toMatch(/import CheckpointReviewQueue from "\.\.\/components\/CheckpointReviewQueue"/);
   expect(pipelineScreenSrc).toMatch(/data-testid="open-checkpoint-queue-pipeline"/);
-  const todayHeaderIdx = pipelineScreenSrc.indexOf("Today&rsquo;s Training Dogs");
+  // Stage 11: the button lives inside the Trainer Daily Queue block, right under the queue
+  const queueIdx = pipelineScreenSrc.indexOf('data-testid="today-training-dogs"');
   const checkpointButtonIdx = pipelineScreenSrc.indexOf("open-checkpoint-queue-pipeline");
-  expect(todayHeaderIdx).toBeGreaterThan(-1);
-  expect(checkpointButtonIdx).toBeGreaterThan(-1);
-  expect(checkpointButtonIdx - todayHeaderIdx).toBeLessThan(600); // physically adjacent, not elsewhere on the screen
+  expect(queueIdx).toBeGreaterThan(-1);
+  expect(checkpointButtonIdx).toBeGreaterThan(queueIdx);
+  expect(checkpointButtonIdx - queueIdx).toBeLessThan(900); // physically adjacent, not elsewhere on the screen
 });
 
 // ---------------------------------------------------------------------------

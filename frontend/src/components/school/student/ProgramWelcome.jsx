@@ -1,5 +1,6 @@
 import { useState } from "react";
 import EmptyState from "../../training/EmptyState";
+import TrainingModeNote from "./TrainingModeNote";
 import HuskyDogImage from "../../brand/HuskyDogImage";
 import ModuleIconTile from "../ModuleIconTile";
 import { moduleHue } from "../../../lib/moduleIcons";
@@ -147,11 +148,9 @@ export default function ProgramWelcome({ detail, progress, onStart, onViewCourse
         <div className="mt-3">
           <OrientationSteps dogName={detail.dog_name} inPerson={inPerson} testid="welcome-orientation-steps" />
         </div>
-        <p className="text-[15px] text-shTextMuted mt-3 leading-relaxed">
-          {inPerson
-            ? "Train with your trainer: your trainer advances your lessons during your in-person sessions and keeps your plan on track."
-            : "Your trainer checks in: send videos, ask questions, and pass each module's check before the next one unlocks."}
-          {" "}If you ever get lost, go back to <strong className="text-shText">Today</strong>.
+        <TrainingModeNote mode={detail.delivery_mode} testid="welcome-training-mode" className="mt-3" />
+        <p className="text-[15px] text-shTextMuted mt-2 leading-relaxed">
+          If you ever get lost, go back to <strong className="text-shText">Today</strong>.
         </p>
       </section>
 
@@ -181,7 +180,7 @@ export default function ProgramWelcome({ detail, progress, onStart, onViewCourse
           <p className="text-[13px] font-black uppercase tracking-[0.18em] text-shSecondary">Program index</p>
         </div>
         {syllabus.length === 0 ? (
-          <p className="text-[15px] text-shTextMuted italic px-4 pb-4">This program's curriculum is being prepared.</p>
+          <p className="text-[15px] text-shTextMuted italic px-4 pb-4">This program's lessons are being prepared.</p>
         ) : (
           <>
             <div>

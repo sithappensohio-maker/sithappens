@@ -239,7 +239,7 @@ export default function ModuleQuizPanel({ enrollmentId, moduleId, checkpointPass
 
               {result.passed ? (
                 <PremiumButton onClick={continueOn} data-testid="module-quiz-continue" className="w-full justify-center min-h-[50px]">
-                  {result.course_completed ? <>See your journey <i className="fas fa-graduation-cap text-[14px]" /></> : <>Continue <i className="fas fa-arrow-right text-[14px]" /></>}
+                  {result.course_completed ? <>View Progress <i className="fas fa-graduation-cap text-[14px]" /></> : <>Continue <i className="fas fa-arrow-right text-[14px]" /></>}
                 </PremiumButton>
               ) : (
                 <PremiumButton onClick={retry} disabled={busy} data-testid="module-quiz-try-again" className="w-full justify-center min-h-[50px]">

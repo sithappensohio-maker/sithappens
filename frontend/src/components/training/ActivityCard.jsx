@@ -12,19 +12,19 @@ const STATUS_META = {
   not_started:         { tone: "border-l-shBorder", icon: "fa-circle", iconColor: "text-shTextMuted", label: "Not Started" },
 };
 
-export default function ActivityCard({ activity: a, index, total, expanded, onToggleExpand, onMove, onRemove, onToggleSkip, onSkipReason, locked = false, children, testid }) {
+export default function ActivityCard({ activity: a, index, total, expanded, onToggleExpand, onMove, onRemove, onToggleSkip, onSkipReason, locked = false, badge = null, children, testid }) {
   const meta = a.skipped
     ? { tone: "border-l-shBorder", icon: "fa-forward", iconColor: "text-shTextMuted", label: "Skipped" }
     : (STATUS_META[a.current_status] || STATUS_META.not_started);
 
   return (
     <div className={`bg-black/20 border border-shBorder border-l-4 rounded-lg ${meta.tone} ${a.skipped ? "opacity-60" : ""}`} data-testid={testid}>
-      <div className="flex items-center gap-2 px-3 py-2.5">
-        <span className="text-[10px] text-shTextMuted w-5 text-center shrink-0">{index + 1}</span>
-        <i className={`fas ${meta.icon} ${meta.iconColor} text-[13px] shrink-0`} title={meta.label}/>
-        <button onClick={onToggleExpand} data-testid={testid ? `${testid}-toggle` : undefined} className="flex-1 min-w-0 text-left">
+      <div className="flex items-start gap-2 px-3 py-2.5 flex-wrap">
+        <span className="text-[10px] text-shTextMuted w-5 text-center shrink-0 mt-3">{index + 1}</span>
+        <i className={`fas ${meta.icon} ${meta.iconColor} text-[13px] shrink-0 mt-3`} title={meta.label}/>
+        <button onClick={onToggleExpand} data-testid={testid ? `${testid}-toggle` : undefined} aria-expanded={!!expanded} className="flex-1 min-w-0 text-left min-h-[44px] basis-40">
           <div className="flex items-center gap-2 flex-wrap">
-            <p className="text-[14px] font-black text-shText truncate">{a.name}</p>
+            <p className="text-[15px] font-black text-shText">{a.name}</p>
             {a.estimated_minutes ? (
               <span className="text-[10px] font-black uppercase tracking-widest text-shTextMuted bg-shBorder/30 rounded px-1.5 py-0.5 shrink-0">
                 <i className="fas fa-clock mr-1"/>{a.estimated_minutes} min
@@ -32,7 +32,9 @@ export default function ActivityCard({ activity: a, index, total, expanded, onTo
             ) : null}
           </div>
           {a.objective && !expanded && <p className="text-[12px] text-shTextMuted truncate mt-0.5">{a.objective}</p>}
+          {badge && <div className="mt-1">{badge}</div>}
         </button>
+        <div className="flex items-center gap-1 flex-wrap justify-end mt-2 ml-auto max-w-full">
         {!a.manual_only && !expanded && <SkillLevelIndicator score={a.current_score || 0} size="sm" testid={testid ? `${testid}-score` : undefined}/>}
         {locked ? (
           <span className="px-2 py-1 rounded text-[10px] font-black uppercase tracking-widest border border-shPrimary/35 text-shPrimary shrink-0" title="Required by the current curriculum lesson">
@@ -44,9 +46,10 @@ export default function ActivityCard({ activity: a, index, total, expanded, onTo
             <button onClick={() => onMove(1)} disabled={index === total - 1} className="w-6 h-6 rounded text-shTextMuted hover:bg-white/10 disabled:opacity-25 shrink-0"><i className="fas fa-chevron-down text-[11px]"/></button>
             <button onClick={onToggleSkip} title="Skip this activity" data-testid={testid ? `${testid}-skip` : undefined}
                     className={`px-2 py-1 rounded text-[11px] font-black uppercase tracking-widest border shrink-0 ${a.skipped ? "bg-shAccent/20 text-shAccent border-shAccent/40" : "border-shBorder text-shTextMuted"}`}>Skip</button>
-            <button onClick={onRemove} className="w-6 h-6 rounded text-red-400 hover:bg-red-500/15 shrink-0"><i className="fas fa-trash text-[11px]"/></button>
+            <button onClick={onRemove} aria-label="Remove activity" className="w-8 h-8 rounded text-red-400 hover:bg-red-500/15 shrink-0"><i className="fas fa-trash text-[11px]"/></button>
           </>
         )}
+        </div>
       </div>
       {a.skipped && (
         <div className="px-3 pb-2">

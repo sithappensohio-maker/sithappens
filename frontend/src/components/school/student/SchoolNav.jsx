@@ -16,7 +16,8 @@ export const NAV_ITEMS = [
   { view: "course", label: "Course", icon: "fa-route" },
   { view: "practice", label: "Practice", icon: "fa-bullseye" },
   { view: "progress", label: "Progress", icon: "fa-chart-line" },
-  { view: "feedback", label: "Feedback", icon: "fa-comment-dots" },
+  // Stage 5 — visible label only; the view/route key stays "feedback".
+  { view: "feedback", label: "Coach", icon: "fa-comments" },
 ];
 
 export default function SchoolNav({ active, onNavigate }) {
@@ -42,8 +43,10 @@ export default function SchoolNav({ active, onNavigate }) {
         })}
       </nav>
 
-      {/* Mobile: fixed bottom bar. Five items divide 320px cleanly, so the
-          labels stay readable without truncation on the narrowest phone. */}
+      {/* Mobile: fixed bottom bar. Five items share the width; below 360px
+          each tab is ~64px, so the label steps down one size and drops its
+          letter-spacing (see .sh-school-tab-label in index.css) instead of
+          clipping "Practice" / "Progress". Targets stay >= 56px tall. */}
       <nav
         className="md:hidden fixed bottom-0 inset-x-0 z-30 border-t border-shBorder bg-[var(--sh-card-base)] flex"
         style={{ paddingBottom: "env(safe-area-inset-bottom)" }}
@@ -63,7 +66,7 @@ export default function SchoolNav({ active, onNavigate }) {
               data-testid={`school-nav-m-${it.view}`}
             >
               <i className={`fas ${it.icon} text-[19px]`} />
-              <span className="text-[13px] font-bold uppercase tracking-wide truncate max-w-full">{it.label}</span>
+              <span className="sh-school-tab-label text-[13px] font-bold uppercase tracking-wide max-w-full whitespace-nowrap">{it.label}</span>
             </button>
           );
         })}

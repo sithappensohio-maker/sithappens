@@ -20,6 +20,7 @@ import contextlib
 import uuid
 
 import httpx
+import pytest
 
 import _test_env  # noqa: F401 — must run before `import server`, see its docstring
 import server
@@ -92,10 +93,38 @@ def _make_program_in(name, modules=None):
     )
 
 
+def _author_lessons(prog, admin, name_suffix=" lesson", skills="first"):
+    """Stage 13 fixture repair — School only assigns lesson-by-lesson curricula
+    (the old modules/goals-only shape is retired for NEW assignments), so every
+    module gets one explicit lesson that references ALL of its goals as skills.
+    The modules/goals the older tests inspect are unchanged."""
+    modules = []
+    for m in prog["modules"]:
+        gids = [g["id"] for g in m.get("goals") or []]
+        allowed = set(server.LessonIn.model_fields)
+        lessons = [server.LessonIn(**{k: v for k, v in l.items() if k in allowed}) for l in (m.get("lessons") or [])]
+        if not lessons:
+            # one lesson per module, teaching the module's FIRST goal (the tests record that one skill);
+            # a goal-level homework template (legacy shape) becomes the lesson's suggested Practice
+            tpl = [t for g in (m.get("goals") or [])[:1] for t in (g.get("homework_template_ids") or [])]
+            lessons = [server.LessonIn(name=f"{m['name']}{name_suffix}", order=0, active=True, skill_ids=(gids if skills == "all" else gids[:1]),
+                                       suggested_homework_template_ids=tpl,
+                                       client_overview="overview", why_it_matters="matters.", success_criteria="5 in a row.")]
+        modules.append(server.ModuleIn(id=m["id"], name=m["name"], order=m.get("order", 0),
+                                       goals=[server.GoalIn(**{k: v for k, v in g.items() if k in set(server.GoalIn.model_fields)}) for g in m.get("goals") or []],
+                                       lessons=lessons))
+    return run(server.update_program(
+        prog["id"],
+        server.ProgramIn(name=prog["name"], type=prog.get("type") or "private_lessons", format=prog["format"], price=prog.get("price") or 0,
+                         delivery_mode=prog.get("delivery_mode") or "both", modules=modules),
+        cascade=False, save_as_draft=False, _=admin))
+
+
 @contextlib.contextmanager
 def _program(modules=None):
     admin = _admin_user()
     prog = run(server.create_program(_make_program_in(f"{TAG} {uuid.uuid4().hex[:6]}", modules), admin))
+    prog = _author_lessons(prog, admin)
     try:
         yield prog, admin
     finally:
@@ -223,27 +252,37 @@ def test_multiple_active_enrollments_returns_choices():
 
 
 def test_no_current_module_returns_resolution():
-    with _program(modules=[]) as (prog, admin):
+    # Stage 13 — a program with no modules can no longer be ASSIGNED (School refuses the
+    # retired structure at enrollment: see test_legacy_structure_cannot_be_newly_assigned),
+    # but historical rows without a current module still exist; establish that legacy
+    # state on the enrollment row itself and prove the workspace resolves it honestly.
+    with _program() as (prog, admin):
         with _client_and_dog() as (c, dog):
             enr = run(server.enroll_dog(dog["id"], server.EnrollIn(program_id=prog["id"]), admin))
+            run(server.db.dog_programs.update_one({"id": enr["id"]}, {"$set": {"current_module_id": None, "current_lesson_id": None, "program_snapshot.modules": []}}))
             booking = _make_booking(dog["id"], admin)
             try:
                 r = run(server.start_training_session_draft_for_booking(booking["id"], None, "", admin))
-                assert r["resolution"] == "no_current_module"
+                # superseded: every legacy snapshot state resolves to ONE migration resolution
+                assert r["resolution"] == "legacy_curriculum_requires_migration"
             finally:
                 _cleanup_booking(booking["id"])
                 run(server.db.dog_programs.delete_one({"id": enr["id"]}))
 
 
 def test_module_with_no_lessons_or_skills_returns_resolution():
-    with _program(modules=[server.ModuleIn(name="Empty Week", order=0, goals=[])]) as (prog, admin):
+    # Stage 13 — same idea: a lesson-less module is a legacy SNAPSHOT state, not something
+    # School assigns today, so strip the snapshot after a valid enrollment.
+    with _program() as (prog, admin):
         with _client_and_dog() as (c, dog):
             enr = run(server.enroll_dog(dog["id"], server.EnrollIn(program_id=prog["id"]), admin))
+            run(server.db.dog_programs.update_one({"id": enr["id"]}, {"$set": {
+                "program_snapshot.modules": [{"id": "m-empty", "name": "Empty Week", "order": 0, "goals": [], "lessons": []}],
+                "current_module_id": "m-empty", "current_lesson_id": None}}))
             booking = _make_booking(dog["id"], admin)
             try:
                 r = run(server.start_training_session_draft_for_booking(booking["id"], None, "", admin))
-                assert r["resolution"] == "no_lessons_in_module"
-                assert r["module_name"] == "Empty Week"
+                assert r["resolution"] == "legacy_curriculum_requires_migration"
             finally:
                 _cleanup_booking(booking["id"])
                 run(server.db.dog_programs.delete_one({"id": enr["id"]}))
@@ -447,7 +486,8 @@ def test_pre_session_overview_includes_last_session_and_recommended_objectives()
             run(server.update_training_session_draft(
                 draft1_id,
                 server.TrainingSessionDraftUpdateIn(
-                    actuals={sit_activity["id"]: server.SessionActivityActualIn(score=3, outcome="improving")},
+                    actuals={sit_activity["id"]: server.SessionActivityActualIn(score=3, outcome="improving", mastery_decision="not_yet")},
+                    what_went_well="Went well.", needs_work="Needs work.", next_lesson_focus="Next focus.", client_recap_note="Recap for the client.",  # Stage 13 fixture repair
                     session_note="Worked on Sit",
                 ),
                 admin,
@@ -486,3 +526,17 @@ def test_board_train_roster_and_trainer_assignment_are_date_scoped():
     assert server._booking_training_assignment_for_day(booking, "2026-08-26")["assigned_trainer_id"] == "trainer-a"
     assert server._booking_training_assignment_for_day(booking, "2026-08-27")["assigned_trainer_id"] == "trainer-b"
     assert server._booking_training_assignment_for_day(booking, "2026-08-28") == {}
+
+
+def test_legacy_structure_cannot_be_newly_assigned():
+    """Stage 13 — the retired modules/goals-only shape is refused at assignment with a
+    plain-English 422 naming the module, never a 500 and never a half-made enrollment."""
+    from fastapi import HTTPException
+    admin = _admin_user()
+    prog = run(server.create_program(_make_program_in(f"{TAG} legacy {uuid.uuid4().hex[:6]}"), admin))  # goals only, no lessons
+    with _client_and_dog() as (c, dog):
+        with pytest.raises(HTTPException) as e:
+            run(server.enroll_dog(dog["id"], server.EnrollIn(program_id=prog["id"]), admin))
+        assert e.value.status_code == 422 and "retired legacy training structure" in str(e.value.detail) and "Week 1" in str(e.value.detail)
+        assert run(server.db.dog_programs.count_documents({"dog_id": dog["id"]})) == 0
+    run(server.db.programs.delete_one({"id": prog["id"]}))

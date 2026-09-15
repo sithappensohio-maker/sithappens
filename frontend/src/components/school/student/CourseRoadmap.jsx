@@ -3,7 +3,8 @@ import { api } from "../../../lib/api";
 import EmptyState from "../../training/EmptyState";
 import { buildSchoolRoadmap, moduleQuizChip } from "../../../lib/onlineSchoolPolish";
 import { moduleHue, GOLD } from "../../../lib/moduleIcons";
-import { CourseHero, ModuleCard, LockedModuleRun, groupCourseModules } from "./course/CourseCards";
+import { CourseHero, CurrentLessonCard, ComingNextCard, ModuleCard, LockedModuleRun, groupCourseModules } from "./course/CourseCards";
+import { buildCourseJourney } from "../../../lib/courseJourney";
 
 const QUIZ_CHIP_CLS = {
   passed: "text-[#3a2e00]",
@@ -75,7 +76,7 @@ function GraduationStop({ completed, dogName }) {
   );
 }
 
-export default function CourseRoadmap({ detail, progress, loading, onOpenLesson, onResume, onAbout }) {
+export default function CourseRoadmap({ detail, progress, home, loading, onOpenLesson, onOpenPractice, onResume, onAbout }) {
   /* Trophy count for the hero tile — the same /portal/trophies read Student
      Home already does, filtered to this course's dog. Real data only: the
      tile renders once the count (possibly 0) has actually loaded. */
@@ -113,14 +114,26 @@ export default function CourseRoadmap({ detail, progress, loading, onOpenLesson,
   const roadmap = detail.roadmap;
   /* position (1-based roadmap order) rides each module so the trail nodes and
      hue cycle survive locked-run folding untouched. */
-  const modules = buildSchoolRoadmap(roadmap).map((m, i) => ({ ...m, position: i + 1 }));
+  /* Stage 9 — the journey projection: the same server roadmap/current_action
+     read once, then presented as CURRENT → COMING NEXT → chapters. Lesson
+     rows get their state/reason from it; module status still comes straight
+     from buildSchoolRoadmap. */
+  const journey = buildCourseJourney({ detail, home });
+  const chapterById = Object.fromEntries(journey.chapters.map((c) => [c.id, c]));
+  const modules = buildSchoolRoadmap(roadmap).map((m, i) => ({ ...m, position: i + 1, lessons: chapterById[m.id]?.lessons || m.lessons, meta: chapterById[m.id]?.meta || null }));
   const currentLessonId = roadmap?.current_lesson?.id || null;
   const isCompleted = detail.status === "completed";
 
   return (
     <div className="space-y-4" data-testid="course-roadmap">
-      <CourseHero detail={detail} roadmap={roadmap} progress={progress}
-                  onResume={isCompleted ? null : onOpenLesson} onAbout={onAbout} trophyCount={trophyCount} />
+      <CourseHero detail={detail} roadmap={roadmap} progress={progress} onAbout={onAbout} trophyCount={trophyCount} />
+
+      {/* CURRENT — the one thing the client is learning now, then what is
+          coming. Both are the server's own pointer and current_action. */}
+      {!isCompleted && journey.current && (
+        <CurrentLessonCard journey={journey} roadmap={roadmap} onResume={onResume} onOpenLesson={onOpenLesson} onOpenPractice={onOpenPractice} />
+      )}
+      {!isCompleted && journey.next && <ComingNextCard next={journey.next} />}
 
       {/* Open lesson access — say WHY nothing is locked (the roadmap data
           already reflects it; this is presentation only). */}

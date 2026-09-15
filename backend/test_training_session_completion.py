@@ -107,7 +107,12 @@ def _program(homework_template_id=None):
                     server.LessonIn(name="Lesson B", order=1, skill_ids=[down_id]),
                 ],
             ),
-            server.ModuleIn(**prog["modules"][1]),
+            server.ModuleIn(
+                id=prog["modules"][1]["id"], name=prog["modules"][1]["name"], order=1,
+                goals=[server.GoalIn(**g) for g in prog["modules"][1]["goals"]],
+                # Stage 13 fixture repair — School refuses a module with no explicit lesson
+                lessons=[server.LessonIn(name="Lesson C", order=0, skill_ids=[g["id"] for g in prog["modules"][1]["goals"]])],
+            ),
         ],
     )
     prog = run(server.update_program(prog["id"], fixed, cascade=False, save_as_draft=False, _=admin))
@@ -152,17 +157,17 @@ def _start_and_record_for_enrollment(enr, admin, dog, sit_id, score=3, homework_
     activities = started["draft"]["plan"]["activities"]
     sit_activity = next(a for a in activities if a.get("skill_id") == sit_id)
     if skip:
-        new_plan = [server.SessionActivityIn(**{**a, "skipped": True} if a["id"] == sit_activity["id"] else a) for a in activities]
-        run(server.update_training_session_draft(draft_id, server.TrainingSessionDraftUpdateIn(plan=new_plan), admin))
+        new_plan = [server.SessionActivityIn(**{**a, "skipped": True, "skip_reason": "not today"} if a["id"] == sit_activity["id"] else a) for a in activities]
+        run(server.update_training_session_draft(draft_id, server.TrainingSessionDraftUpdateIn(plan=new_plan, what_went_well="Went well.", needs_work="Needs work.", next_lesson_focus="Next focus.", client_recap_note="Recap for the client."), admin))
     else:
         run(server.update_training_session_draft(
             draft_id,
             server.TrainingSessionDraftUpdateIn(actuals={
                 sit_activity["id"]: server.SessionActivityActualIn(
-                    score=score, outcome="improving", notes="test note",
+                    score=score, outcome="improving", notes="test note", mastery_decision="not_yet",
                     homework_eligible=homework_eligible, needs_reassessment=needs_reassessment,
                 ),
-            }),
+            }, what_went_well="Went well.", needs_work="Needs work.", next_lesson_focus="Next focus.", client_recap_note="Recap for the client."),  # Stage 13 fixture repair — completion requires the trainer record
             admin,
         ))
     return booking, draft_id, sit_activity["id"]
@@ -178,17 +183,17 @@ def _start_and_record(prog, admin, dog, sit_id, score=3, homework_eligible=False
     activities = started["draft"]["plan"]["activities"]
     sit_activity = next(a for a in activities if a.get("skill_id") == sit_id)
     if skip:
-        new_plan = [server.SessionActivityIn(**{**a, "skipped": True} if a["id"] == sit_activity["id"] else a) for a in activities]
-        run(server.update_training_session_draft(draft_id, server.TrainingSessionDraftUpdateIn(plan=new_plan), admin))
+        new_plan = [server.SessionActivityIn(**{**a, "skipped": True, "skip_reason": "not today"} if a["id"] == sit_activity["id"] else a) for a in activities]
+        run(server.update_training_session_draft(draft_id, server.TrainingSessionDraftUpdateIn(plan=new_plan, what_went_well="Went well.", needs_work="Needs work.", next_lesson_focus="Next focus.", client_recap_note="Recap for the client."), admin))
     else:
         run(server.update_training_session_draft(
             draft_id,
             server.TrainingSessionDraftUpdateIn(actuals={
                 sit_activity["id"]: server.SessionActivityActualIn(
-                    score=score, outcome="improving", notes="test note",
+                    score=score, outcome="improving", notes="test note", mastery_decision="not_yet",
                     homework_eligible=homework_eligible, needs_reassessment=needs_reassessment,
                 ),
-            }),
+            }, what_went_well="Went well.", needs_work="Needs work.", next_lesson_focus="Next focus.", client_recap_note="Recap for the client."),  # Stage 13 fixture repair — completion requires the trainer record
             admin,
         ))
     return enr, booking, draft_id, sit_activity["id"]
@@ -224,15 +229,24 @@ def test_completing_session_writes_one_log_and_updates_progress_in_sync():
 
 
 def test_skipped_activity_does_not_update_progress_or_create_homework():
+    # Stage 13 — a REQUIRED lesson skill can no longer be skipped (the workspace locks
+    # its skip control and completion refuses it), so the skipped activity here is an
+    # EXTRA one the trainer added for Down: skipping it, with a reason, must leave
+    # Down's progress untouched and create no Practice for it.
     with _program() as (prog, admin, sit_id, down_id):
         with _client_and_dog() as (c, dog):
-            enr, booking, draft_id, sit_aid = _start_and_record(prog, admin, dog, sit_id, skip=True)
+            enr, booking, draft_id, sit_aid = _start_and_record(prog, admin, dog, sit_id)
             try:
+                draft = run(server.db.training_session_drafts.find_one({"id": draft_id}, {"_id": 0}))
+                extra = {"id": f"extra-{uuid.uuid4().hex[:6]}", "source": "custom", "skill_id": down_id, "name": "Down", "order": 9,
+                         "skipped": True, "skip_reason": "not today"}
+                new_plan = [server.SessionActivityIn(**a) for a in draft["plan"]["activities"]] + [server.SessionActivityIn(**extra)]
+                run(server.update_training_session_draft(draft_id, server.TrainingSessionDraftUpdateIn(plan=new_plan), admin))
                 result = run(server.complete_training_session(draft_id, server.SessionCompletionIn(), admin))
-                assert result["session_log"]["goal_updates"] == []
+                assert all(u.get("goal_id") != down_id for u in result["session_log"]["goal_updates"])
                 assert result["homework_created"] == []
                 updated_enr = run(server.db.dog_programs.find_one({"id": enr["id"]}, {"_id": 0}))
-                assert updated_enr["goal_progress"][sit_id]["status"] == "not_started"
+                assert updated_enr["goal_progress"][down_id]["status"] == "not_started"
             finally:
                 _cleanup(booking["id"], enr["id"])
 
@@ -293,8 +307,8 @@ def test_current_lesson_plan_is_locked_to_that_lesson_and_advance_next_is_gated(
                 run(server.update_training_session_draft(
                     draft_id,
                     server.TrainingSessionDraftUpdateIn(actuals={
-                        aid: server.SessionActivityActualIn(score=4, outcome="passed")
-                    }),
+                        aid: server.SessionActivityActualIn(score=4, outcome="passed", mastery_decision="not_yet")
+                    }, what_went_well="Went well.", needs_work="Needs work.", next_lesson_focus="Next focus.", client_recap_note="Recap for the client."),
                     admin,
                 ))
                 result = run(server.complete_training_session(
@@ -551,6 +565,8 @@ def test_trainer_can_complete_session_front_desk_cannot():
             enr, booking, draft_id, sit_aid = _start_and_record(prog, admin, dog, sit_id, score=3)
             trainer_uid, trainer_h = _insert_staff("trainer")
             fd_uid, fd_h = _insert_staff("front_desk")
+            # Stage 13 fixture repair — an employee trainer must be the dog's assigned trainer to work the session
+            run(server.assign_training_booking_trainer(booking["id"], server.TrainingDayTrainerAssignmentIn(assigned_trainer_id=trainer_uid), admin))
             try:
                 r_fd = client.post(f"/api/training-session-drafts/{draft_id}/complete", headers=fd_h, json={})
                 assert r_fd.status_code == 403, r_fd.text

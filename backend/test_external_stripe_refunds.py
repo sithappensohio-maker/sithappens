@@ -133,8 +133,12 @@ def test_cn_external_partial():
         assert len(rows) == 1 and rows[0]["amount"] == -20.0 and rows[0]["tax_amount"] == 0.0
         assert _tax(d) == base.at(0.0)
         w = run(server.weekly_summary(ADMIN, ref_date=d))
-        # 4B-4 trio for this pair: gross keeps 110, reversal magnitude 20.
-        assert w["gross_total"] >= 110.0 and w["refunds_reversals_total"] >= 20.0
+        # 4B-4 trio for this pair, as RH1 left it: business revenue EXCLUDES the collected
+        # sales-tax slice (a pass-through liability reported beside revenue), so true gross
+        # is the 100 of revenue, not the 110 the customer paid, and the reversal is 20.
+        assert w["gross_total"] >= 100.0 and w["refunds_reversals_total"] >= 20.0
+        assert w["sales_tax_collected"] >= 10.0            # the tax is reported, never inside revenue
+        assert w["gross_total"] < 110.0
     finally:
         _cleanup()
 

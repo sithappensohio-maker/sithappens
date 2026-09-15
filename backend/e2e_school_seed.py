@@ -24,6 +24,7 @@ import json
 import os
 import sys
 import uuid
+from datetime import timedelta
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 os.environ.setdefault("SIT_HAPPENS_TEST_DB_NAME", "sit_happens_test_e2e_school")
@@ -183,6 +184,161 @@ def build_client(prog, admin, index, general_tpl=None):
     }
 
 
+def build_trainer_day(prog, admin, clients):
+    """Stage 11 — the trainer's day needs real canonical rows: an in-person
+    student with a training lesson booked today (client 5 / Milo), and a
+    pending, fully-formed checkpoint submission (client 14 / Nala, lesson 4).
+    Nothing here is a queue flag — the queue derives from these records."""
+    today = server.business_today().isoformat()
+    # Dedicated clients OUTSIDE the spec pool (slots 0..N-1 are owned by the
+    # client specs, half per phone project) — never touch a spec's client.
+    c5 = build_client(prog, admin, len(clients))
+    c14 = build_client(prog, admin, len(clients) + 1)
+    run(server.db.school_enrollments.update_one({"id": c5["enrollment_id"]}, {"$set": {"delivery_mode": "in_person", "onboarding_status": "not_required"}}))
+    run(server.db.dog_programs.update_one({"id": c5["dog_program_id"]}, {"$set": {"delivery_channel": "in_person_school"}}))
+    dog5 = run(server.db.dogs.find_one({"owner_id": c5["client_id"]}, {"_id": 0, "id": 1}))
+    booking = run(server.create_booking(server.BookingIn(dog_id=dog5["id"], service_type="training", date=today, time="10:30", override_capacity=True), admin))
+    se14 = run(server.db.school_enrollments.find_one({"id": c14["enrollment_id"]}, {"_id": 0}))
+    enr14 = run(server.db.dog_programs.find_one({"id": c14["dog_program_id"]}, {"_id": 0}))
+    cp_lesson = next(l for m in enr14["program_snapshot"]["modules"] for l in m["lessons"] if (l.get("checkpoint") or {}).get("enabled"))
+    cp_module = next(m for m in enr14["program_snapshot"]["modules"] if any(l["id"] == cp_lesson["id"] for l in m["lessons"]))
+    run(server.db.dog_programs.update_one({"id": enr14["id"]}, {"$set": {"current_module_id": cp_module["id"], "current_lesson_id": cp_lesson["id"]}}))
+    sub = {
+        "id": str(uuid.uuid4()), "school_enrollment_id": se14["id"], "enrollment_id": enr14["id"], "dog_id": se14["dog_id"], "client_id": se14["client_id"],
+        "lesson_id": cp_lesson["id"], "module_id": cp_module["id"], "lesson_name": cp_lesson["name"], "video_media_id": None, "homework_id": None,
+        "client_note": "Filmed in the yard.", "rubric_snapshot": cp_lesson["checkpoint"], "status": "pending", "submitted_at": server.now_iso(), "created_at": server.now_iso(),
+    }
+    run(server.db.checkpoint_submissions.insert_one(dict(sub)))
+    return {"booking_id": booking["id"], "session_dog": c5["dog_name"], "session_client": f"E2E Client {c5['index']}",
+            "checkpoint_submission_id": sub["id"], "checkpoint_dog": c14["dog_name"], "checkpoint_lesson": cp_lesson["name"]}
+
+
+def _staff_user(email, name, staff_role):
+    uid = str(uuid.uuid4())
+    run(server.db.users.insert_one({
+        "id": uid, "email": email, "password_hash": server.hash_password(PASSWORD), "name": name,
+        "role": "employee", "staff_role": staff_role, "created_at": server.now_iso(),
+        "token_version": 0, "must_change_password": False, "needs_password": False, "active": True,
+    }))
+    return {"id": uid, "email": email, "password": PASSWORD, "name": name, "role": "employee", "staff_role": staff_role}
+
+
+def _in_person(c, trainer_id=None):
+    run(server.db.school_enrollments.update_one({"id": c["enrollment_id"]}, {"$set": {"delivery_mode": "in_person", "onboarding_status": "not_required"}}))
+    upd = {"delivery_channel": "in_person_school"}
+    if trainer_id:
+        upd["assigned_trainer_id"] = trainer_id
+    run(server.db.dog_programs.update_one({"id": c["dog_program_id"]}, {"$set": upd}))
+    return run(server.db.dogs.find_one({"owner_id": c["client_id"]}, {"_id": 0, "id": 1}))
+
+
+def _booked_today(prog, admin, index, trainer, time):
+    c = build_client(prog, admin, index)
+    dog = _in_person(c, trainer["id"])
+    b = run(server.create_booking(server.BookingIn(dog_id=dog["id"], service_type="training", date=server.business_today().isoformat(), time=time, override_capacity=True), admin))
+    run(server.assign_training_booking_trainer(b["id"], server.TrainingDayTrainerAssignmentIn(assigned_trainer_id=trainer["id"]), admin))
+    return {"booking_id": b["id"], "dog": c["dog_name"], "client": f"E2E Client {c['index']}", "dog_id": dog["id"], "enrollment_id": c["dog_program_id"]}
+
+
+def _pending_checkpoint(prog, admin, index, trainer):
+    c = build_client(prog, admin, index)
+    run(server.db.dog_programs.update_one({"id": c["dog_program_id"]}, {"$set": {"assigned_trainer_id": trainer["id"]}}))
+    se = run(server.db.school_enrollments.find_one({"id": c["enrollment_id"]}, {"_id": 0}))
+    enr = run(server.db.dog_programs.find_one({"id": c["dog_program_id"]}, {"_id": 0}))
+    cp_lesson = next(l for m in enr["program_snapshot"]["modules"] for l in m["lessons"] if (l.get("checkpoint") or {}).get("enabled"))
+    cp_module = next(m for m in enr["program_snapshot"]["modules"] if any(l["id"] == cp_lesson["id"] for l in m["lessons"]))
+    run(server.db.dog_programs.update_one({"id": enr["id"]}, {"$set": {"current_module_id": cp_module["id"], "current_lesson_id": cp_lesson["id"]}}))
+    sub = {
+        "id": str(uuid.uuid4()), "school_enrollment_id": se["id"], "enrollment_id": enr["id"], "dog_id": se["dog_id"], "client_id": se["client_id"],
+        "lesson_id": cp_lesson["id"], "module_id": cp_module["id"], "lesson_name": cp_lesson["name"], "video_media_id": None, "homework_id": None,
+        "client_note": "Filmed on the porch.", "rubric_snapshot": cp_lesson["checkpoint"], "status": "pending", "submitted_at": server.now_iso(), "created_at": server.now_iso(),
+    }
+    run(server.db.checkpoint_submissions.insert_one(dict(sub)))
+    return {"submission_id": sub["id"], "dog": c["dog_name"], "lesson": cp_lesson["name"]}
+
+
+def _practice_to_review(prog, admin, index, trainer):
+    c = build_client(prog, admin, index)
+    run(server.db.dog_programs.update_one({"id": c["dog_program_id"]}, {"$set": {"assigned_trainer_id": trainer["id"]}}))
+    dog = run(server.db.dogs.find_one({"owner_id": c["client_id"]}, {"_id": 0, "id": 1}))
+    hw_id = str(uuid.uuid4()); log_id = str(uuid.uuid4())
+    run(server.db.homework.insert_one({
+        "id": hw_id, "dog_id": dog["id"], "client_id": c["client_id"], "dog_name": c["dog_name"], "client_name": f"E2E Client {c['index']}",
+        "title": f"{c['lessons'][0]['name']} practice", "status": "assigned", "source_lesson_id": c["lessons"][0]["id"],
+        "school_enrollment_id": c["enrollment_id"], "enrollment_id": c["dog_program_id"], "created_at": server.now_iso(),
+        "section_logs": [{"id": log_id, "logged_at": server.now_iso(), "note": "She held it for five seconds!", "field_values": {"__video_id": "e2e-video"}, "review_status": None}],
+    }))
+    return {"homework_id": hw_id, "log_id": log_id, "dog": c["dog_name"]}
+
+
+def _daily_to_approve(prog, admin, index, trainer):
+    c = build_client(prog, admin, index)
+    run(server.db.dog_programs.update_one({"id": c["dog_program_id"]}, {"$set": {"assigned_trainer_id": trainer["id"]}}))
+    dog = run(server.db.dogs.find_one({"owner_id": c["client_id"]}, {"_id": 0, "id": 1}))
+    tracker = run(server.create_daily_tracker(server.DailyTrackerCreateIn(
+        dog_id=dog["id"], title="Two-day sit plan",
+        days=[server.DailyTrackerSectionIn(day_number=1, day_focus="Sit on cue", fields=[{"id": "reps", "label": "Reps", "kind": "number"}]),
+              server.DailyTrackerSectionIn(day_number=2, day_focus="Sit with distance", fields=[{"id": "reps", "label": "Reps", "kind": "number"}])]), admin))
+    hw_id = tracker.get("id") or (tracker.get("homework") or {}).get("id")
+    cu = run(server.db.users.find_one({"email": c["email"]}, {"_id": 0}))
+    run(server.submit_day(hw_id, 1, server.DaySubmitIn(field_values={"reps": 8}, note="Eight clean sits.", difficulty="good"), cu))
+    return {"homework_id": hw_id, "dog": c["dog_name"]}
+
+
+def _stale_draft(prog, admin, index, trainer):
+    c = build_client(prog, admin, index)
+    dog = _in_person(c, trainer["id"])
+    res = run(server.start_training_session_draft_direct(dog["id"], c["dog_program_id"], "", admin))
+    assert res["resolution"] == "ready", res
+    yday = (server.business_today() - timedelta(days=1)).isoformat()
+    run(server.db.training_session_drafts.update_one({"id": res["draft"]["id"]}, {"$set": {"occurrence_date": yday, "created_by": trainer["id"], "created_by_name": trainer["name"]}}))
+    return {"draft_id": res["draft"]["id"], "dog": c["dog_name"], "dog_id": dog["id"], "enrollment_id": c["dog_program_id"]}
+
+
+def _journey_client(index):
+    """Stage 13 — a client + dog + login with NO enrollment: the owner assigns the program
+    inside the journey spec itself, through the real API."""
+    ctx = _client_and_dog()
+    _KEEP_ALIVE.append(ctx)
+    client, dog = ctx.__enter__()
+    email = f"e2e.journey{index}@example.com"
+    run(server.db.clients.update_one({"id": client["id"]}, {"$set": {"name": f"E2E Journey {index}", "email": email, "phone": "5555550199"}}))
+    run(server.db.dogs.update_one({"id": dog["id"]}, {"$set": {"name": ["Juniper", "Koda"][index % 2], "breed": "Border Collie", "age_y": 1}}))
+    run(server.db.users.insert_one({
+        "id": str(uuid.uuid4()), "email": email, "password_hash": server.hash_password(PASSWORD),
+        "name": f"E2E Journey {index}", "role": "client", "client_id": client["id"], "created_at": server.now_iso(),
+        "token_version": 0, "must_change_password": False, "active": True,
+    }))
+    run(server.db.waiver_signatures.insert_one({
+        "id": str(uuid.uuid4()), "client_id": client["id"], "waiver_version": 1, "signed_at": server.now_iso(),
+        "signature": f"E2E Journey {index}", "dog_names": [run(server.db.dogs.find_one({"id": dog["id"]}, {"_id": 0, "name": 1}))["name"]],
+    }))
+    return {"email": email, "password": PASSWORD, "client_id": client["id"], "dog_id": dog["id"],
+            "dog_name": run(server.db.dogs.find_one({"id": dog["id"]}, {"_id": 0, "name": 1}))["name"]}
+
+
+def build_trainer_employee(prog, admin, first_index):
+    """Stage 11.5 — a REAL trainer employee (role employee, staff_role trainer)
+    with a day of assigned work, plus a Front Desk employee for the negative
+    checks. Each Playwright project (390 / 320) gets its own set so the flows
+    that FINISH work (Stay Here, Ready, reviews) never collide across projects."""
+    trainer = _staff_user("e2e.trainer@example.com", "E2E Trainer", "trainer")
+    front_desk = _staff_user("e2e.frontdesk@example.com", "E2E Front Desk", "front_desk")
+    flows = []
+    for proj in range(2):
+        base = first_index + proj * 6
+        flows.append({
+            "stay": _booked_today(prog, admin, base, trainer, "09:00" if proj == 0 else "13:00"),
+            "ready": _booked_today(prog, admin, base + 1, trainer, "09:45" if proj == 0 else "13:45"),
+            "checkpoint": _pending_checkpoint(prog, admin, base + 2, trainer),
+            "practice": _practice_to_review(prog, admin, base + 3, trainer),
+            "daily": _daily_to_approve(prog, admin, base + 4, trainer),
+            "stale_draft": _stale_draft(prog, admin, base + 5, trainer),
+        })
+    journey = [_journey_client(0), _journey_client(1)]  # one per Playwright project
+    return {"trainer": trainer, "front_desk": front_desk, "flows": flows, "journey": journey}
+
+
 def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("--clients", type=int, default=12)
@@ -199,7 +355,10 @@ def main():
         build_client(prog, admin, i, general_tpl if (i % half) >= args.general_practice_from else None)
         for i in range(args.clients)
     ]
-    out = {"db_name": os.environ["DB_NAME"], "program_id": prog["id"], "program_name": prog["name"], "clients": clients}
+    trainer_day = build_trainer_day(prog, admin, clients)
+    trainer_employee = build_trainer_employee(prog, admin, len(clients) + 2)
+    out = {"db_name": os.environ["DB_NAME"], "program_id": prog["id"], "program_name": prog["name"], "clients": clients,
+           "trainer_day": trainer_day, "trainer_employee": trainer_employee}
     os.makedirs(os.path.dirname(os.path.abspath(args.out)), exist_ok=True)
     with open(args.out, "w", encoding="utf-8") as fh:
         json.dump(out, fh, indent=1)

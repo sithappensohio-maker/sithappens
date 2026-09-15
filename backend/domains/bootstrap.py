@@ -61,6 +61,8 @@ def register_domains(
     staff_school_delivery_channels, school_delivery_channels,
     check_enrollment_module_readiness, enrollment_summary, effective_lessons,
     recommended_focus, booking_training_assignment_for_day,
+    school_enrollment_for_client, compute_daily_progress, streak_count,
+    client_safe_homework, client_practice_summary,
 ):
     """Register extracted domains and startup work once."""
     # Every domain reads the database through the live proxy so that
@@ -124,12 +126,26 @@ def register_domains(
     # route order within each domain.
     register_bookings_routes(api=api, server_globals=server_globals)
     register_pricing_routes(api=api, server_globals=server_globals)
-    register_operations_routes(
+    _moved_operations = register_operations_routes(
         api=api, db=db,
         require_admin=server_globals["require_admin"],
         require_admin_and_permission=require_admin_and_permission,
         now_iso=now_iso, business_today=business_today,
+        get_current_user=get_current_user,
+        visit_filter=server_globals["_visit_filter"],
+        client_visit_count=server_globals["_client_visit_count"],
+        dog_visit_counts=server_globals["_dog_visit_counts"],
+        job_scheduler=server_globals["job_scheduler"],
+        scheduler_marker_ids=server_globals["SCHEDULER_MARKER_IDS"],
+        scheduler_jobs=server_globals["_scheduler_jobs"],
+        scheduler_task_ref=lambda: server_globals.get("_scheduler_task"),
+        recheck_all_trophies=server_globals["recheck_all_trophies"],
+        eligible_trophies=server_globals["_eligible_trophies"],
+        logger=logger,
     )
+    # Re-export the moved endpoints under their original server-module names so the
+    # in-process suite keeps calling them exactly as before (no duplicated logic).
+    server_globals.update(_moved_operations or {})
     register_register_routes(api=api, server_globals=server_globals)
     register_pos_routes(api=api, server_globals=server_globals)
     register_performance_routes(
@@ -138,7 +154,7 @@ def register_domains(
         require_clients_view=require_admin_and_permission("clients_view"),
         perms_for=perms_for, business_today=business_today,
     )
-    register_school_routes(
+    _moved_school = register_school_routes(
         api=api, db=db, server_globals=server_globals,
         get_current_user=get_current_user,
         manage_school_dep=require_admin_and_permission("manage_school"),
@@ -153,7 +169,11 @@ def register_domains(
         update_program=update_program, now_iso=now_iso,
         homework_template_model=homework_template_model,
         create_homework_template=create_homework_template,
+        school_enrollment_for_client=school_enrollment_for_client,
+        compute_daily_progress=compute_daily_progress, streak_count=streak_count,
+        client_safe_homework=client_safe_homework, client_practice_summary=client_practice_summary,
     )
+    server_globals.update(_moved_school or {})
     register_training_routes(
         api=api, db=db, get_current_user=get_current_user, perms_for=perms_for,
         manage_sessions_dep=require_admin_and_permission("manage_training_sessions"),

@@ -25,6 +25,7 @@ import httpx
 
 import _test_env  # noqa: F401 — must run before `import server`, see its docstring
 import server
+from test_training_session_workspace import _author_lessons  # noqa: E402
 from _test_loop import run
 
 TAG = "TEST_TRAINING_PERMS_PHASE8"
@@ -103,6 +104,7 @@ def _program():
         modules=[server.ModuleIn(name="Week 1", order=0, goals=[server.GoalIn(name="Sit")])],
     )
     prog = run(server.create_program(body, admin))
+    prog = _author_lessons(prog, admin)  # Stage 13 fixture repair — School assigns lesson-by-lesson curricula only
     try:
         yield prog, admin
     finally:
@@ -120,12 +122,18 @@ def test_trainer_can_enroll_and_update_enrollment_front_desk_cannot():
             fd_uid, fd_h = _insert_staff("front_desk")
             enr_id = None
             try:
+                # Stage 13 — the legacy creator is permanently retired for everyone who could
+                # reach it (410); Front Desk is refused before that (403). Assignment happens
+                # through School, where the trainer's permission is what counts.
                 r_fd = client.post(f"/api/dogs/{dog['id']}/programs", headers=fd_h, json={"program_id": prog["id"]})
                 assert r_fd.status_code == 403, r_fd.text
-
-                r_trainer = client.post(f"/api/dogs/{dog['id']}/programs", headers=trainer_h, json={"program_id": prog["id"]})
+                r_legacy = client.post(f"/api/dogs/{dog['id']}/programs", headers=trainer_h, json={"program_id": prog["id"]})
+                assert r_legacy.status_code == 410, r_legacy.text
+                r_fd_school = client.post("/api/school/enroll", headers=fd_h, json={"dog_id": dog["id"], "program_id": prog["id"], "delivery_mode": "in_person"})
+                assert r_fd_school.status_code == 403, r_fd_school.text
+                r_trainer = client.post("/api/school/enroll", headers=trainer_h, json={"dog_id": dog["id"], "program_id": prog["id"], "delivery_mode": "in_person"})
                 assert r_trainer.status_code == 200, r_trainer.text
-                enr_id = r_trainer.json()["id"]
+                enr_id = r_trainer.json()["enrollment"]["id"]
 
                 r_update_fd = client.put(f"/api/dogs/{dog['id']}/programs/{enr_id}", headers=fd_h, json={"trainer_notes": "nope"})
                 assert r_update_fd.status_code == 403
@@ -183,7 +191,9 @@ def test_client_can_view_own_dog_enrollments_not_anothers():
             try:
                 r_owner = client.get(f"/api/dogs/{dog['id']}/programs", headers=owner_h)
                 assert r_owner.status_code == 200
-                assert any(e["id"] == enr["id"] for e in r_owner.json())
+                # superseded (Stage 13): School enrollments are served by the School portal; the
+                # legacy per-dog list shows a client only retired legacy rows, never the School one
+                assert all(e["id"] != enr["id"] for e in r_owner.json()), r_owner.text[:400]
 
                 r_other = client.get(f"/api/dogs/{dog['id']}/programs", headers=other_h)
                 assert r_other.status_code == 403
@@ -214,15 +224,20 @@ def test_operational_only_trainer_cannot_create_custom_program():
 
 
 def test_trainer_with_both_permissions_can_create_custom_program():
+    """Stage 13 — the one-off Custom Program builder is deliberately retired (410) for
+    every caller: a trainer with content permission builds the curriculum in Program
+    Studio and assigns it through School instead. The permission itself still gates
+    the route (Front Desk gets 403 above), so nothing was silently opened up."""
     with _client_and_dog() as (c, dog):
         trainer_uid, trainer_h = _insert_staff("trainer")
         try:
             r = client.post(f"/api/dogs/{dog['id']}/programs/custom", headers=trainer_h, json={
                 "name": f"{TAG} Ad hoc plan", "format": {"count": 1, "unit": "sessions"}, "modules": [],
             })
-            assert r.status_code == 200, r.text
-            enr_id = r.json()["id"]
-            prog_id = r.json()["program_id"]
+            assert r.status_code == 410, r.text
+            assert "retired" in r.text
+            enr_id = None
+            prog_id = None
             run(server.db.dog_programs.delete_one({"id": enr_id}))
             run(server.db.programs.delete_one({"id": prog_id}))
         finally:

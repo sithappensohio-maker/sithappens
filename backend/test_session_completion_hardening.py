@@ -44,6 +44,7 @@ import httpx
 
 import _test_env  # noqa: F401 — must run before `import server`, see its docstring
 import server
+from test_training_session_workspace import _author_lessons  # noqa: E402
 from _test_loop import run
 from motor.motor_asyncio import AsyncIOMotorCollection
 
@@ -110,6 +111,7 @@ def _make_program_in(name, homework_template_id=None):
 def _program(homework_template_id=None):
     admin = _admin_user()
     prog = run(server.create_program(_make_program_in(f"{TAG} {uuid.uuid4().hex[:6]}", homework_template_id), admin))
+    prog = _author_lessons(prog, admin)  # Stage 13 fixture repair — School assigns lesson-by-lesson curricula only
     try:
         yield prog, admin
     finally:
@@ -141,9 +143,9 @@ def _start_session(enr, admin, dog, sit_id, score=3, session_label=None, homewor
         draft_id,
         server.TrainingSessionDraftUpdateIn(actuals={
             sit_activity["id"]: server.SessionActivityActualIn(
-                score=score, outcome="improving", notes="test note", homework_eligible=homework_eligible,
+                score=score, outcome="improving", notes="test note", homework_eligible=homework_eligible, mastery_decision="not_yet",
             ),
-        }),
+        }, what_went_well="Went well.", needs_work="Needs work.", next_lesson_focus="Next focus.", client_recap_note="Recap for the client."),  # Stage 13 fixture repair — completion requires the trainer record
         admin,
     ))
     return booking, draft_id
@@ -599,18 +601,24 @@ def test_only_admin_and_permitted_staff_can_reopen_front_desk_cannot():
             booking, draft_id = _start_session(enr, admin, dog, sit_id, session_label="reopen-perm")
             trainer_uid, trainer_h = _insert_staff("trainer")
             fd_uid, fd_h = _insert_staff("front_desk")
+            other_uid, other_h = _insert_staff("trainer")
+            # Stage 13 — a trainer may reopen only a session on a dog assigned to THEM (their own
+            # correction); anyone who manages training staff may reopen any session.
+            run(server.assign_training_booking_trainer(booking["id"], server.TrainingDayTrainerAssignmentIn(assigned_trainer_id=trainer_uid), admin))
             try:
                 r1 = run(server.complete_training_session(draft_id, server.SessionCompletionIn(), admin))
 
                 r_fd = client.post(f"/api/training-session-drafts/{draft_id}/reopen", headers=fd_h, json={"reason": "test"})
                 assert r_fd.status_code == 403, r_fd.text
+                r_other = client.post(f"/api/training-session-drafts/{draft_id}/reopen", headers=other_h, json={"reason": "not my dog"})
+                assert r_other.status_code == 403, r_other.text
 
                 r_trainer = client.post(f"/api/training-session-drafts/{draft_id}/reopen", headers=trainer_h, json={"reason": "trainer correcting a score"})
                 assert r_trainer.status_code == 200, r_trainer.text
                 assert r_trainer.json()["draft"]["status"] == "draft"
             finally:
                 run(server.db.bookings.delete_one({"id": booking["id"]}))
-                run(server.db.users.delete_many({"id": {"$in": [trainer_uid, fd_uid]}}))
+                run(server.db.users.delete_many({"id": {"$in": [trainer_uid, fd_uid, other_uid]}}))
                 _cleanup(enr["id"], r1["homework_created"])
 
 

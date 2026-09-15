@@ -31,16 +31,62 @@ export const ACTION_META = {
   start:            { icon: "fa-play",                accent: "lime" },
 };
 
+/* Training-mode language (Training Experience Clarity Pass, Stage 1).
+ *
+ * The backend already decides a program's delivery mode and normalises it to
+ * in_person | online | hybrid on every client payload (/portal/school,
+ * /portal/school/{id}, /portal/school/{id}/home via _school_delivery_mode).
+ * Some staff payloads still carry the raw vocabularies — the program's
+ * trainer_led | self_guided | both and the enrollment's delivery_channel
+ * in_person_school | online_school | hybrid_school — so this accepts every
+ * spelling and maps it to ONE client-facing explanation. Nothing here decides
+ * behaviour; it only names what the server already chose.
+ *
+ * Unknown / missing → trainer-led: the program model's own default, and the
+ * only rows that reach the client without a channel are pre-School
+ * trainer-led enrollments (they never carried delivery_channel). */
+export const TRAINING_MODES = {
+  trainer_led: {
+    key: "trainer_led",
+    label: "Trainer-Led",
+    title: "Trainer-Led Program",
+    icon: "fa-person-chalkboard",
+    body: "Your trainer guides you through the lessons. Complete the Practice assigned between visits.",
+  },
+  hybrid: {
+    key: "hybrid",
+    label: "Hybrid",
+    title: "Hybrid Program",
+    icon: "fa-shuffle",
+    body: "Complete lessons and Practice in the app while your trainer also works through the program with you during in-person sessions.",
+  },
+  online: {
+    key: "online",
+    label: "Online",
+    title: "Online Program",
+    icon: "fa-laptop",
+    body: "Work through lessons and Practice in the app at your own pace. Trainer help and review are available where the program supports it.",
+  },
+};
+
+export function trainingModeKey(mode) {
+  const m = typeof mode === "string" ? mode.trim().toLowerCase() : "";
+  if (m === "in_person" || m === "trainer_led" || m === "in_person_school") return "trainer_led";
+  if (m === "hybrid" || m === "hybrid_school" || m === "both") return "hybrid";
+  if (m === "online" || m === "self_guided" || m === "online_school") return "online";
+  return "trainer_led";
+}
+
+export function trainingMode(mode) {
+  return TRAINING_MODES[trainingModeKey(mode)];
+}
+
 export function deliveryLabel(mode) {
-  if (mode === "in_person" || mode === "trainer_led") return "In Person";
-  if (mode === "hybrid") return "Hybrid";
-  return "Online";
+  return trainingMode(mode).label;
 }
 
 export function deliveryIcon(mode) {
-  if (mode === "in_person" || mode === "trainer_led") return "fa-person-chalkboard";
-  if (mode === "hybrid") return "fa-shuffle";
-  return "fa-laptop";
+  return trainingMode(mode).icon;
 }
 
 export function actionMeta(type) {
@@ -76,12 +122,17 @@ export function parseSchoolPath(pathname) {
   // "home" is a legacy alias — normalise it so the app only ever renders,
   // and only ever highlights, the single Today destination.
   if (seg === "home") return { view: SCHOOL_DEFAULT_VIEW, enrollmentId: null, lessonId: null };
+  // Stage 5 — the client destination is labelled Coach; its route stays
+  // /school/feedback so every existing link and deep link keeps working, and
+  // /school/coach is accepted as an alias.
+  if (seg === "coach") return { view: "feedback", enrollmentId: null, lessonId: null };
   if (SCHOOL_VIEWS.includes(seg)) return { view: seg, enrollmentId: null, lessonId: null };
   return { view: SCHOOL_DEFAULT_VIEW, enrollmentId: null, lessonId: null };
 }
 
 export function schoolPathFor(view, enrollmentId, lessonId) {
   if (view === "home" || view === SCHOOL_DEFAULT_VIEW) return "/school";
+  if (view === "coach") return "/school/feedback";
   if (view === "lesson" && enrollmentId && lessonId) return `/school/course/${enrollmentId}/lesson/${lessonId}`;
   if (view === "welcome" && enrollmentId) return `/school/course/${enrollmentId}/welcome`;
   if (view === "course" && enrollmentId) return `/school/course/${enrollmentId}`;

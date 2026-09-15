@@ -75,6 +75,11 @@ test.describe("Practice Coach", () => {
     await expectInPanel(page, submit, "Save practice button");
     await submit.click();
     await expect(page.getByTestId("practice-complete-state")).toBeVisible();
+    // Stage 4 — the save ends on a real handoff ("Practice complete" + Next),
+    // and the client chooses when to continue.
+    await expect(page.getByTestId("practice-complete-title")).toHaveText(/practice complete/i);
+    await expect(page.getByTestId("practice-complete-next")).toBeVisible();
+    await page.getByTestId("practice-complete-continue").click();
 
     // Return: Today, at the top, with the next action in view.
     await expect(page).toHaveURL(/\/school$/, { timeout: 15_000 });
@@ -110,6 +115,7 @@ test.describe("Practice Coach", () => {
     await expect(submit).toBeEnabled();
     await submit.click();
     await expect(page.getByTestId("practice-complete-state")).toBeVisible();
+    await page.getByTestId("practice-complete-continue").click();
     await expect(page).toHaveURL(/\/school$/, { timeout: 15_000 });
     await H.expectInUsable(page, page.getByTestId("today-primary-action"), "Today primary action after quick log");
   });

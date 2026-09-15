@@ -40,7 +40,7 @@ test("Pipeline.jsx imports TrainingSessionWorkspace and the per-row button opens
 });
 
 test("Pipeline.jsx's booking-based Open Plan button still opens the same TrainingSessionWorkspace, not a second component", () => {
-  expect(pipelineSrc).toMatch(/setWorkspaceFor\(\{ bookingId: r\.booking_id \}\)/);
+  expect(pipelineSrc).toMatch(/if \(t\.booking_id\) setWorkspaceFor\(\{ bookingId: t\.booking_id \}\);/); // Stage 11: the queue action carries the booking
   expect(pipelineSrc).toMatch(/<TrainingSessionWorkspace[\s\S]*?bookingId=\{workspaceFor\.bookingId\}/);
 });
 

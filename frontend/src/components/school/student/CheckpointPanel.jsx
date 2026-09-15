@@ -82,7 +82,7 @@ export default function CheckpointPanel({
             offered, because nothing in this payload can create one. */}
         <WhatHappensNext items={[
           "Your trainer will be in touch to arrange the hands-on session.",
-          "Keep working any practice that is still assigned to you.",
+          "Keep working on any Practice that's still open.",
           "This checkpoint reopens once your trainer clears the hold.",
         ]} testid="checkpoint-assist-next" />
       </NeonEdge>
@@ -170,8 +170,8 @@ export default function CheckpointPanel({
     const canResubmit = !remaining || remaining <= 0;
     const actionLabel = p.action === "assign_refresher_lesson" && p.refresher_lesson_name
       ? `Refresher lesson: ${p.refresher_lesson_name}`
-      : p.action === "assign_recipe" ? "New practice assigned"
-      : "Repeat this lesson's practice";
+      : p.action === "assign_recipe" ? "New Practice from your trainer"
+      : "Repeat this lesson's Practice";
     return (
       <div className="space-y-3" data-testid="school-checkpoint-prescribed">
         <NeonEdge accentRgb="242,101,34" intensity="standard" className="p-5 space-y-4">

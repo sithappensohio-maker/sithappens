@@ -90,7 +90,7 @@ export default function TrainerScorecardTab() {
             <div className="bg-[var(--sh-card-base)] border border-shBorder rounded-xl p-8 text-center text-shTextMuted" data-testid="scorecard-empty">
               <i className="fas fa-clipboard text-3xl mb-2 opacity-40"/>
               <p className="text-sm">No training sessions logged in the last {data.days} days.</p>
-              <p className="text-[12px] mt-1">Trainers will appear here after their first logged session via the Training Tracker.</p>
+              <p className="text-[12px] mt-1">Trainers will appear here after their first logged session in the lesson workspace.</p>
             </div>
           ) : (
             <div className="bg-[var(--sh-card-base)] border border-shBorder rounded-xl overflow-hidden" data-testid="scorecard-table">

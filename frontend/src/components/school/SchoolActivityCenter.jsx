@@ -19,7 +19,7 @@ const TYPE_OPTIONS = [
   ["trainer_review", "Trainer review completed"],
   ["trainer_assist", "Trainer Assist"],
   ["course_completed", "Course / week completed"],
-  ["enrollment", "Enrollment"],
+  ["enrollment", "Program start"],
 ];
 
 const RANGE_OPTIONS = [

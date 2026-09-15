@@ -147,7 +147,7 @@ export default function Homework() {
       : "This ends the assignment. Its logs and history stay available.";
     if (!(await confirm({
       title: `Complete ${h.title} for ${h.dog_name}?`,
-      body, confirmText: "Complete assignment",
+      body, confirmText: "Complete Practice",
     }))) return;
     setCompletingId(h.id);
     try {
@@ -174,7 +174,7 @@ export default function Homework() {
   };
 
   const confirm = useConfirm();
-  const remove = async (id) => { if (!(await confirm({ title: "Delete Practice?", body: "This will remove the assignment and all its session logs. This cannot be undone.", confirmText: "Delete", tone: "danger" }))) return; await api.delete(`/homework/${id}`); load(); };
+  const remove = async (id) => { if (!(await confirm({ title: "Delete Practice?", body: "This will remove this Practice and all its session logs. This cannot be undone.", confirmText: "Delete", tone: "danger" }))) return; await api.delete(`/homework/${id}`); load(); };
 
   const filtered = list;
   const counts = assignmentCounts;
@@ -183,7 +183,7 @@ export default function Homework() {
   return (
     <div className="space-y-6 animate-slide-in" data-testid="homework-screen">
       <PageHero
-        eyebrow={{ icon: "fa-graduation-cap", text: "Curriculum control room", color: "text-purple-300" }}
+        eyebrow={{ icon: "fa-graduation-cap", text: "Practice control room", color: "text-purple-300" }}
         title="Training Practice."
         highlight="Built around the dog."
         subtitle="Assign exercises, run daily trackers, and review every submission."
@@ -293,7 +293,7 @@ export default function Homework() {
                   {h.status !== "completed" && (
                     <button onClick={()=>completeAssignment(h)} disabled={completingId === h.id} data-testid={`hw-complete-${h.id}`}
                             className="bg-shPrimary text-bgHeader px-3 py-2 rounded-lg text-[12px] font-black uppercase tracking-widest whitespace-nowrap hover:bg-shPrimary/90 disabled:opacity-50 transition">
-                      <i className="fas fa-check mr-1.5"/>{completingId === h.id ? "Completing…" : "Complete assignment"}
+                      <i className="fas fa-check mr-1.5"/>{completingId === h.id ? "Completing…" : "Complete Practice"}
                     </button>
                   )}
                   {snap && (
@@ -344,7 +344,7 @@ export default function Homework() {
       {open && (
         <div className="fixed inset-0 bg-black/80 flex items-center justify-center p-4 z-50">
           <div className="bg-[var(--sh-card-base)] border border-shBorder rounded-2xl w-full max-w-lg p-6 md:p-8 shadow-2xl animate-slide-in">
-            <h4 className="text-xl font-black text-shText uppercase italic tracking-tight mb-4">Custom Homework</h4>
+            <h4 className="text-xl font-black text-shText uppercase italic tracking-tight mb-4">Custom Practice</h4>
             <div className="space-y-4">
               <div>
                 <label className="text-[14px] font-black text-shTextMuted uppercase tracking-widest">Dog</label>

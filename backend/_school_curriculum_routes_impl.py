@@ -46,7 +46,10 @@ class CurriculumPackageIn(BaseModel):
     # "merge" (default) adds what is new and leaves anything an author has
     # already touched alone. "replace" deliberately refreshes declared nodes
     # from the package. Neither deletes.
-    mode: str = "replace"
+    # Stage 13 — this default had drifted to "replace", which silently reverted an
+    # author's Program Studio edits on every re-import. Back to the documented contract:
+    # merge protects the author; a caller asks for "replace" explicitly.
+    mode: str = "merge"
     # Program Studio's normal "upload a newer ZIP" workflow refreshes the
     # curriculum from the package but must not accidentally reset business
     # settings the owner may have changed after the first import (price, Shop

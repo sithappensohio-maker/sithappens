@@ -15,6 +15,8 @@ import LessonGuide, {
 import { CheckpointResultPanel } from "./checkpoint/CheckpointCards";
 import { practiceButtonLabel } from "../../../lib/onlineSchoolPolish";
 import { revealInSchool } from "../../../lib/schoolViewport";
+import HandoffPanel from "../../HandoffPanel";
+import { makeHandoff, checkpointSubmittedHandoff, HANDOFF_LABELS } from "../../../lib/handoff";
 
 /* Native School Lesson screen (Phase 2B). Presents existing lesson content via
  * the shared LessonDetailPanel and drives the Phase-2A Learn boundary:
@@ -24,7 +26,7 @@ import { revealInSchool } from "../../../lib/schoolViewport";
  *   - completed lessons → review-only (+ Practice Again; never re-complete,
  *     never touches the current enrollment pointer)
  * All progression state comes from the backend; nothing is derived here. */
-export default function LessonScreen({
+export default function LessonScreen({ onBackToToday,
   enrollmentId, lessonId, detail, dogName, dogPhoto, deliveryMode,
   onStartPractice, onStartPrescribedPractice, onAdvanced, onStateChanged, onBackToCourse, onAskTrainer, onTakeQuiz,
 }) {
@@ -74,6 +76,11 @@ export default function LessonScreen({
   }, [load, checkOnboarding]);
 
   const [cpResult, setCpResult] = useState(null);
+  // Stage 10 — this visit's own transitions: a no-Practice lesson just
+  // completed here, or a checkpoint just sent from here. Neither is persisted;
+  // a reload shows the canonical state instead.
+  const [lessonJustCompleted, setLessonJustCompleted] = useState(false);
+  const [cpJustSubmitted, setCpJustSubmitted] = useState(false);
   useEffect(() => {
     if (!enrollmentId || !lessonId) return undefined;
     let live = true;
@@ -151,6 +158,7 @@ export default function LessonScreen({
     try {
       await api.post(`/portal/school/${enrollmentId}/lessons/${lessonId}/complete-lesson`);
       await load();
+      setLessonJustCompleted(true);
       onStateChanged?.();
     } catch (e) {
       setActionErr(e.response?.data?.detail || "Couldn't complete the lesson — try again.");
@@ -161,7 +169,7 @@ export default function LessonScreen({
     setBusy(true); setActionErr("");
     try {
       const { data: res } = await api.post(`/portal/school/${enrollmentId}/advance`);
-      onAdvanced?.(res);
+      onAdvanced?.(res, data?.lesson?.name || null);
     } catch (e) {
       const d = e.response?.data?.detail;
       if (d && typeof d === "object" && d.error_code === "module_quiz_required") {
@@ -176,6 +184,7 @@ export default function LessonScreen({
     setBusy(true); setActionErr("");
     try {
       await api.post(`/portal/school/${enrollmentId}/lessons/${lid}/checkpoint`, { video, filename, note });
+      setCpJustSubmitted(true);
       await load();
       onStateChanged?.();
     } catch (e) {
@@ -237,6 +246,11 @@ export default function LessonScreen({
   }
 
   const learnDone = !!data.learn_completed;
+  const nextLessonName = (() => {
+    const flat = (roadmap?.modules || []).flatMap((m) => m.lessons || []);
+    const i = flat.findIndex((l) => l.id === lessonId);
+    return i >= 0 ? flat[i + 1]?.name || null : null;
+  })();
   const hasPractice = !!data.has_practice;
   const setupRequired = requiresCp && !hasPractice;
   const prescribedRemediation = isCurrent && roadmap?.checkpoint_status?.status === "graded" && roadmap?.checkpoint_status?.outcome === "prescribe_practice";
@@ -416,7 +430,18 @@ export default function LessonScreen({
             </SectionCard>
           )}
 
-          {isCurrent && !requiresCp && !quizAvailable
+          {lessonJustCompleted && isCurrent && !hasPractice && learnDone && !requiresCp && !quizAvailable && (
+            <HandoffPanel testid="lesson-complete-handoff"
+                          handoff={makeHandoff({
+                            state: "complete", title: "Lesson complete",
+                            summary: `You finished ${lesson?.name || "this lesson"}.`,
+                            next: nextLessonName ? { label: `Lesson — ${nextLessonName}`, description: "Continue when you're ready. School keeps your place." } : { label: "Continue your course", description: "School opens the next step when you continue." },
+                            action: { label: HANDOFF_LABELS.continue_course, run: "advance" },
+                            secondary: { label: HANDOFF_LABELS.back_to_today, run: "today" },
+                          })}
+                          onAction={advance} onSecondary={() => onBackToToday?.()} />
+          )}
+          {isCurrent && !requiresCp && !quizAvailable && !(lessonJustCompleted && !hasPractice && learnDone)
             && ((hasPractice && practiceUnlocked && data.practiced) || (!hasPractice && learnDone)) && (
             <PremiumButton onClick={advance} disabled={busy} data-testid="lesson-advance" data-school-primary="true"
                            className="w-full justify-center min-h-[52px]">
@@ -430,13 +455,19 @@ export default function LessonScreen({
               <i className="fas fa-clipboard-check mr-1.5 text-shSecondary" aria-hidden="true" />{checkpointAhead}
             </p>
           )}
-          {showCheckpointPanel && (
+          {showCheckpointPanel && (<>
+            {cpJustSubmitted && (
+              <HandoffPanel testid="checkpoint-submitted-handoff" handoff={checkpointSubmittedHandoff({ lessonName: lesson?.name })}
+                            onSecondary={() => onBackToToday?.()} />
+            )}
             <CheckpointPanel
               lessonId={lessonId}
               deliveryMode={deliveryMode}
               practiced={data.practiced}
               rubric={roadmap.checkpoint_rubric}
-              status={roadmap.checkpoint_status}
+              status={cpJustSubmitted && roadmap.checkpoint_status?.status !== "awaiting_review" && roadmap.checkpoint_status?.status !== "graded"
+                ? { ...(roadmap.checkpoint_status || {}), status: "awaiting_review" }
+                : roadmap.checkpoint_status}
               onSubmit={submitCheckpoint}
               onStartPrescribedPractice={onStartPrescribedPractice}
               onGoToRefresher={(rid) => onStateChanged?.({ openLessonId: rid })}
@@ -447,7 +478,7 @@ export default function LessonScreen({
               roadmap={roadmap}
               onContinue={advance}
             />
-          )}
+          </>)}
 
           {practiceAgainLate && (
             <PremiumButton variant="secondary" onClick={() => onStartPractice(lessonId)} disabled={busy} data-testid="lesson-start-practice"

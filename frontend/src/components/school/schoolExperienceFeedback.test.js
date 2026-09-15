@@ -10,7 +10,7 @@ const schoolHq = read("..", "..", "screens", "SchoolHQ.jsx");
 const adminFeedback = read("SchoolExperienceFeedbackAdmin.jsx");
 
 test("School Feedback screen keeps trainer feedback and adds a separate School experience survey", () => {
-  expect(feedbackScreen).toContain("Trainer Feedback");
+  expect(feedbackScreen).toContain(">Coach</h1>");
   expect(feedbackScreen).toMatch(/<SchoolExperienceFeedbackCard enrollmentId=\{enrollmentId\} source="feedback_screen"/);
   expect(feedbackScreen).toContain('data-testid="school-experience-feedback-section"');
 });

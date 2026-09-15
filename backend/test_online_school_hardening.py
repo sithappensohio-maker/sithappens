@@ -38,6 +38,7 @@ from motor.motor_asyncio import AsyncIOMotorCollection
 
 import _test_env  # noqa: F401 — must run before `import server`, see its docstring
 import server
+from test_training_session_workspace import _author_lessons  # noqa: E402
 import _school_client_flow
 from _test_loop import run
 
@@ -154,6 +155,7 @@ def _trainer_program():
         modules=[server.ModuleIn(name="Week 1", order=0, goals=[server.GoalIn(name="Sit"), server.GoalIn(name="Down")])],
     )
     prog = run(server.create_program(body, admin))
+    prog = _author_lessons(prog, admin)  # Stage 13 fixture repair — School assigns lesson-by-lesson curricula only
     try:
         yield prog, admin
     finally:
@@ -208,8 +210,19 @@ def _enroll_both(prog, dog, admin):
     """Give a dog BOTH a trainer-led and an online_school active
     enrollment in the same "both"-delivery program — the exact simultaneous
     state the entire hardening audit is about."""
+    # Stage 13 — ONE active School enrollment per dog+program is the rule now (B5), so the
+    # online enrollment lives on a second program of the same shape; the audit's point —
+    # trainer surfaces never pick up online work for the same dog — is unchanged.
     trainer_enr = run(server.enroll_dog(dog["id"], server.EnrollIn(program_id=prog["id"]), admin))
-    res = run(server.school_enroll(server.SchoolEnrollIn(dog_id=dog["id"], program_id=prog["id"]), admin))
+    import pytest as _pt
+    with _pt.raises(server.HTTPException) as dup:
+        run(server.school_enroll(server.SchoolEnrollIn(dog_id=dog["id"], program_id=prog["id"]), admin))
+    assert dup.value.status_code == 409
+    online_prog = run(server.create_program(server.ProgramIn(
+        name=f"{prog['name']} online", type="private_lessons", format=prog["format"], price=prog.get("price") or 0, delivery_mode="both",
+        modules=[server.ModuleIn(name=m["name"], order=m.get("order", 0), goals=[server.GoalIn(name=g["name"]) for g in m.get("goals") or []]) for m in prog["modules"]]), admin))
+    online_prog = _author_lessons(online_prog, admin)
+    res = run(server.school_enroll(server.SchoolEnrollIn(dog_id=dog["id"], program_id=online_prog["id"]), admin))
     se, school_enr = res["school_enrollment"], res["enrollment"]
     return trainer_enr, se, school_enr
 
@@ -572,7 +585,7 @@ def test_delete_school_enrollment_normal_removal_touches_only_the_intended_pair(
                 still_there = run(server.db.dog_programs.find_one({"id": trainer_enr["id"]}))
                 assert still_there is not None
                 assert still_there["status"] == "active"
-                assert "delivery_channel" not in still_there
+                assert still_there.get("delivery_channel") == "in_person_school"  # unified model: trainer-led = in-person School
             finally:
                 run(server.db.dog_programs.delete_one({"id": trainer_enr["id"]}))
 

@@ -22,6 +22,7 @@ import uuid
 
 import _test_env  # noqa: F401 — must run before `import server`, see its docstring
 import server
+from test_training_session_workspace import _author_lessons  # noqa: E402
 from _test_loop import run
 from datetime import date
 
@@ -65,6 +66,7 @@ def _make_program_in(name):
 def _program():
     admin = _admin_user()
     prog = run(server.create_program(_make_program_in(f"{TAG} {uuid.uuid4().hex[:6]}"), admin))
+    prog = _author_lessons(prog, admin)  # Stage 13 fixture repair — School assigns lesson-by-lesson curricula only
     try:
         yield prog, admin
     finally:
@@ -134,7 +136,9 @@ def test_publish_affects_only_enrollments_created_after_publish():
                     modules=[
                         server.ModuleIn(**prog["modules"][0]),
                         server.ModuleIn(**prog["modules"][1]),
-                        server.ModuleIn(name="Week 3 · New", order=2, goals=[server.GoalIn(name="Stay")]),
+                        # Stage 13 fixture repair — a published module needs an explicit lesson to stay assignable
+                        server.ModuleIn(name="Week 3 · New", order=2, goals=[server.GoalIn(name="Stay")],
+                                        lessons=[server.LessonIn(name="Week 3 lesson", order=0, skill_ids=[])]),
                     ],
                 )
                 run(server.update_program(prog["id"], draft_body, cascade=False, save_as_draft=True, _=admin))
@@ -191,7 +195,8 @@ def test_removed_skill_name_preserved_in_session_log_history():
                 sit_activity = next(a for a in started["draft"]["plan"]["activities"] if a["name"] == "Sit")
                 run(server.update_training_session_draft(
                     started["draft"]["id"], server.TrainingSessionDraftUpdateIn(
-                        actuals={sit_activity["id"]: server.SessionActivityActualIn(score=4)},
+                        actuals={sit_activity["id"]: server.SessionActivityActualIn(score=4, outcome="passed", mastery_decision="not_yet")},
+                        what_went_well="Went well.", needs_work="Needs work.", next_lesson_focus="Next focus.", client_recap_note="Recap.",  # Stage 13 fixture repair
                     ), admin,
                 ))
                 result = run(server.complete_training_session(started["draft"]["id"], server.SessionCompletionIn(), admin))

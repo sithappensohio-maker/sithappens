@@ -49,5 +49,5 @@ test("client measurement vocabulary is round plus repetition everywhere in the w
 
 test("School save button promises the next step instead of a vague finish", () => {
   expect(panel).toMatch(/Save Practice & Show Me What's Next/);
-  expect(panel).toMatch(/School is checking what comes next/);
+  expect(panel).toMatch(/Checking what comes next…/);
 });

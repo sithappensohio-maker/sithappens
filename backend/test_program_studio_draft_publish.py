@@ -23,6 +23,7 @@ import uuid
 
 import _test_env  # noqa: F401 — must run before `import server`, see its docstring
 import server
+from test_training_session_workspace import _author_lessons  # noqa: E402
 from _test_loop import run
 
 TAG = "TEST_PROGRAM_STUDIO"
@@ -69,6 +70,7 @@ def _base_program_in(name):
 def _program():
     admin = _admin_user()
     prog = run(server.create_program(_base_program_in(f"{TAG} {uuid.uuid4().hex[:6]}"), admin))
+    prog = _author_lessons(prog, admin)  # Stage 13 fixture repair — School assigns lesson-by-lesson curricula only
     try:
         yield prog, admin
     finally:

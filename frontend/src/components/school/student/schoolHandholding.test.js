@@ -142,6 +142,6 @@ test("part completion visibly leads to the server-selected next lesson destinati
 });
 
 test("completed courses explicitly become a reusable library without resetting completion", () => {
-  expect(completionSrc).toMatch(/Review any lesson/);
+  expect(completionSrc).toMatch(/Review Course/);
   expect(completionSrc).toMatch(/original completion stays saved/);
 });

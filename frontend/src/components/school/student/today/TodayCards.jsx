@@ -160,7 +160,7 @@ export function PracticeCard({ practice, onOpen }) {
         <span className="block text-[18px] font-black text-shText truncate mt-0.5">{practiceTitle(next)}</span>
         <span className="block text-[14px] text-shTextMuted mt-0.5">
           {overdue ? "Was due " + next.due_date : dueToday ? "Due today to stay on track" : next.due_date ? `Due ${next.due_date}` : "Ready when you are"}
-          {items.length > 1 ? ` · ${items.length} assigned` : ""}
+          {items.length > 1 ? ` · ${items.length} to do` : ""}
         </span>
       </span>
       <i className="fas fa-chevron-right text-[14px] text-shTextMuted shrink-0" />

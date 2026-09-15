@@ -21,6 +21,7 @@ import uuid
 
 import _test_env  # noqa: F401 — must run before `import server`, see its docstring
 import server
+from test_training_session_workspace import _author_lessons  # noqa: E402
 from _test_loop import run
 from datetime import date
 
@@ -109,6 +110,7 @@ def _rich_program():
         ],
     )
     prog = run(server.create_program(body, admin))
+    prog = _author_lessons(prog, admin)  # Stage 13 fixture repair — School assigns lesson-by-lesson curricula only
     sit_id = next(g["id"] for g in prog["modules"][0]["goals"] if g["name"] == "Sit")
     down_id = next(g["id"] for g in prog["modules"][0]["goals"] if g["name"] == "Down")
     fixed = server.ProgramIn(
@@ -119,7 +121,11 @@ def _rich_program():
                 goals=[server.GoalIn(**g) for g in prog["modules"][0]["goals"]],
                 lessons=[_rich_lesson("Lesson A", 0, [sit_id]), _rich_lesson("Lesson B", 1, [down_id])],
             ),
-            server.ModuleIn(**prog["modules"][1]),
+            server.ModuleIn(
+                id=prog["modules"][1]["id"], name=prog["modules"][1]["name"], order=1,
+                goals=[server.GoalIn(**g) for g in prog["modules"][1]["goals"]],
+                lessons=[_rich_lesson("Lesson C", 0, [g["id"] for g in prog["modules"][1]["goals"]])],  # Stage 13 fixture repair
+            ),
         ],
     )
     prog = run(server.update_program(prog["id"], fixed, cascade=False, save_as_draft=False, _=admin))
@@ -243,9 +249,9 @@ def test_progress_session_history_excludes_internal_session_note():
                 run(server.update_training_session_draft(
                     draft_id,
                     server.TrainingSessionDraftUpdateIn(
-                        actuals={sit_activity["id"]: server.SessionActivityActualIn(score=4, outcome="passed")},
+                        actuals={sit_activity["id"]: server.SessionActivityActualIn(score=4, outcome="passed", mastery_decision="not_yet")},
                         session_note="INTERNAL — dog was reactive to other dogs today",
-                        client_recap_note="Great progress on Sit today!",
+                        client_recap_note="Great progress on Sit today!", what_went_well="Went well.", needs_work="Needs work.", next_lesson_focus="Next focus.",  # Stage 13 fixture repair
                     ),
                     admin,
                 ))
@@ -283,7 +289,11 @@ def test_session_recaps_only_includes_sessions_with_a_recap_note():
             try:
                 # Session 1 — no recap note.
                 s1 = run(server.start_training_session_draft_for_booking(booking1["id"], enr["id"], "", admin))
-                run(server.complete_training_session(s1["draft"]["id"], server.SessionCompletionIn(), admin))
+                # Stage 13 fixture repair — the record is required; the recap is deliberately NOT sent
+                run(server.update_training_session_draft(s1["draft"]["id"], server.TrainingSessionDraftUpdateIn(
+                    actuals={a["id"]: server.SessionActivityActualIn(score=3, outcome="improving", mastery_decision="not_yet") for a in s1["draft"]["plan"]["activities"]},
+                    what_went_well="Went well.", needs_work="Needs work.", next_lesson_focus="Next focus."), admin))
+                run(server.complete_training_session(s1["draft"]["id"], server.SessionCompletionIn(send_recap=False), admin))
 
                 # Session 2 — has a recap note. Distinct session_label: once
                 # session 1 completes, _get_or_create_session_draft correctly
@@ -292,7 +302,8 @@ def test_session_recaps_only_includes_sessions_with_a_recap_note():
                 booking2 = _make_booking(dog["id"], admin)
                 s2 = run(server.start_training_session_draft_for_booking(booking2["id"], enr["id"], "session-2", admin))
                 run(server.update_training_session_draft(
-                    s2["draft"]["id"], server.TrainingSessionDraftUpdateIn(client_recap_note="Nice work on Down!"), admin,
+                    s2["draft"]["id"], server.TrainingSessionDraftUpdateIn(client_recap_note="Nice work on Down!", what_went_well="Went well.", needs_work="Needs work.", next_lesson_focus="Next focus.",
+                        actuals={a["id"]: server.SessionActivityActualIn(score=3, outcome="improving", mastery_decision="not_yet") for a in s2["draft"]["plan"]["activities"]}), admin,
                 ))
                 run(server.complete_training_session(s2["draft"]["id"], server.SessionCompletionIn(), admin))
 
