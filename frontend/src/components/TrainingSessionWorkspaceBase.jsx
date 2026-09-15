@@ -1150,7 +1150,7 @@ function MetricFields({ activity: a, actual, onChange }) {
             <label className={SMALL_LABEL_CLS}>Difficulty</label>
             <SegmentedOptions options={DISTRACTION_LEVELS} value={details.distraction?.difficulty || null}
                               onChange={(v) => patchMetric("distraction", "distraction_level")({ difficulty: v })}
-                              columns="grid-cols-3" testid={`activity-${a.id}-metric-distraction-difficulty`}/>
+                              testid={`activity-${a.id}-metric-distraction-difficulty`}/>
             <label className={`${SMALL_LABEL_CLS} mt-2`}>Details <span className="normal-case tracking-normal font-semibold">(optional)</span></label>
             <input value={details.distraction?.note || ""} placeholder="e.g. Dog walking nearby"
                    onChange={(e) => patchMetric("distraction", "distraction_level")({ note: e.target.value })}
@@ -1164,7 +1164,7 @@ function MetricFields({ activity: a, actual, onChange }) {
                       testid={`activity-${a.id}-metric-environment`}>
             <SegmentedOptions options={ENVIRONMENT_CHOICES} value={details.environment?.choice || null}
                               onChange={(v) => patchMetric("environment", "environment")({ choice: v })}
-                              columns="grid-cols-2 sm:grid-cols-3" testid={`activity-${a.id}-metric-environment-choice`}/>
+                              testid={`activity-${a.id}-metric-environment-choice`}/>
             {details.environment?.choice === "Other" && (
               <input value={details.environment?.other || ""} placeholder="Describe the location"
                      onChange={(e) => patchMetric("environment", "environment")({ other: e.target.value })}
@@ -1180,7 +1180,7 @@ function MetricFields({ activity: a, actual, onChange }) {
             <label className={SMALL_LABEL_CLS}>Level</label>
             <SegmentedOptions options={HANDLER_LEVELS} value={details.handler_help?.level || null}
                               onChange={(v) => patchMetric("handler_help", "handler_assistance")({ level: v })}
-                              columns="grid-cols-3 sm:grid-cols-5" testid={`activity-${a.id}-metric-handler-level`}/>
+                              testid={`activity-${a.id}-metric-handler-level`}/>
             <label className={`${SMALL_LABEL_CLS} mt-2`}>Methods used <span className="normal-case tracking-normal font-semibold">(check all that apply)</span></label>
             <div className="grid grid-cols-2 gap-x-2 gap-y-1">
               {HANDLER_METHODS.map(m => {
@@ -1214,7 +1214,7 @@ function MetricFields({ activity: a, actual, onChange }) {
             <label className={SMALL_LABEL_CLS}>Leash use</label>
             <SegmentedOptions options={LEASH_USES} value={details.leash?.use || null}
                               onChange={(v) => patchMetric("leash", "leash_off_leash")({ use: v })}
-                              columns="grid-cols-2 sm:grid-cols-3" testid={`activity-${a.id}-metric-leash-use`}/>
+                              testid={`activity-${a.id}-metric-leash-use`}/>
             <label className={`${SMALL_LABEL_CLS} mt-2`}>Notes <span className="normal-case tracking-normal font-semibold">(optional)</span></label>
             <input value={details.leash?.note || ""} placeholder="e.g. Loose most of the session"
                    onChange={(e) => patchMetric("leash", "leash_off_leash")({ note: e.target.value })}
