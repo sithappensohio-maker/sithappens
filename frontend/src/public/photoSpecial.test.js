@@ -153,3 +153,75 @@ test("the admin never implies the reservation priced anything", () => {
   expect(adminSrc).toMatch(/the Register still prices the sale/i);
   expect(adminSrc).not.toMatch(/total|subtotal|amount due/i);
 });
+
+// --------------------------------------------------- schedule configuration
+
+test("a special can run on a date range with different hours by day of week", () => {
+  // The Howl-O-Ween promotion runs six weeks with 4–7pm weekdays and
+  // 7am–7pm weekends. Typing 46 dates by hand is not a schedule editor.
+  for (const id of ["photo-special-start-date", "photo-special-end-date"]) {
+    expect(adminSrc).toContain(id);
+  }
+  expect(adminSrc).toContain('data-testid={`photo-special-hours-${testid}`}');
+  expect(adminSrc).toMatch(/days=\{WEEKDAYS\} testid="weekday"/);
+  expect(adminSrc).toMatch(/days=\{WEEKEND\} testid="weekend"/);
+  expect(adminSrc).toMatch(/const WEEKDAYS = DAY_KEYS\.slice\(0, 5\)/);
+  expect(adminSrc).toMatch(/const WEEKEND = DAY_KEYS\.slice\(5\)/);
+  // editing a group writes every day in it, so Mon–Fri is one action
+  expect(adminSrc).toMatch(/for \(const d of days\) next\[d\] = \{ \.\.\.\(next\[d\] \|\| \{\}\), \.\.\.patch \}/);
+});
+
+test("the schedule controls still fit on a 320px phone", () => {
+  // A native date or time input has a floor of roughly 90px, so three of them
+  // on one line is an overflow, not a layout. They wrap instead.
+  const sched = adminSrc.slice(adminSrc.indexOf('data-testid="photo-special-schedule"'));
+  expect(sched).toMatch(/grid-cols-1 min-\[360px\]:grid-cols-2/);
+  const group = adminSrc.slice(adminSrc.indexOf("function HoursGroup"));
+  expect(group).toMatch(/flex flex-wrap items-center gap-2/);
+  expect(group).toMatch(/flex-1 basis-\[190px\] min-w-0/);
+  expect(sched).toMatch(/flex-1 basis-\[92px\] min-w-0/);
+});
+
+test("the group control admits when the days underneath it disagree", () => {
+  // Otherwise one odd Wednesday silently shows as if it were all five days.
+  expect(adminSrc).toContain('data-testid={`photo-special-${testid}-mixed`}');
+  expect(adminSrc).toMatch(/These days currently differ/);
+});
+
+test("a single day can be skipped without dismantling the schedule", () => {
+  expect(adminSrc).toContain('data-testid="photo-special-closed-dates"');
+  expect(adminSrc).toMatch(/skip a day without changing the range/);
+  // and per-day exceptions are still reachable
+  expect(adminSrc).toContain('data-testid="photo-special-per-day"');
+  expect(adminSrc).toContain('data-testid={`photo-special-closed-${d}`}');
+  expect(adminSrc).toMatch(/const DAY_KEYS = \["monday", "tuesday", "wednesday", "thursday", "friday", "saturday", "sunday"\]/);
+});
+
+test("explicit dates remain available for a one-off event, and win", () => {
+  expect(adminSrc).toContain('data-testid="photo-special-explicit-dates"');
+  expect(adminSrc).toContain('data-testid="photo-special-dates"');
+  expect(adminSrc).toMatch(/if you fill this in, it wins/i);
+});
+
+test("a new special starts on the rules, not on a list of dates", () => {
+  const blank = adminSrc.slice(adminSrc.indexOf("const BLANK = {"), adminSrc.indexOf("};", adminSrc.indexOf("const BLANK = {")));
+  expect(blank).toMatch(/start_date: null, end_date: null, day_hours: \{\}, closed_dates: \[\]/);
+  expect(blank).toMatch(/slot_minutes: 15/);
+});
+
+test("a six-week run is described as a range, not as dozens of pills", () => {
+  // Public page: the hero summarises, the picker offers a fortnight up front.
+  expect(pageSrc).toContain('data-testid="photo-special-date-range"');
+  expect(pageSrc).toMatch(/const DATE_PREVIEW = 14/);
+  expect(pageSrc).toContain('data-testid="photo-special-more-dates"');
+  expect(pageSrc).toMatch(/setAllDates\(true\)/);
+  // every date stays reachable — nothing is dropped
+  expect(pageSrc).toMatch(/allDates \? dates : dates\.slice\(0, DATE_PREVIEW\)/);
+});
+
+test("the event-day list opens on today when the special is running", () => {
+  // A promotion that started in September must not open on its first date.
+  expect(adminSrc).toMatch(/const running = data\.special\?\.dates \|\| sp\.running_dates \|\| sp\.dates \|\| \[\]/);
+  expect(adminSrc).toMatch(/running\.includes\(today\) \? today : running\[0\]/);
+  expect(adminSrc).toContain('data-testid="photo-special-roster-days"');
+});

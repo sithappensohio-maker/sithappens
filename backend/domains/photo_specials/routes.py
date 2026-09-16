@@ -83,6 +83,18 @@ def _digits(v: Optional[str]) -> str:
     return re.sub(r"\D", "", v or "")
 
 
+WEEKDAY_KEYS = ["monday", "tuesday", "wednesday", "thursday", "friday", "saturday", "sunday"]
+MAX_RANGE_DAYS = 400
+
+
+class DayHours(BaseModel):
+    """One weekday's window, in the same shape as Settings -> service_hours."""
+
+    open: str = Field(default="", max_length=5)
+    close: str = Field(default="", max_length=5)
+    closed: bool = False
+
+
 class PhotoSpecialIn(BaseModel):
     """Everything the owner configures. Creating the next portrait event is
     filling this in again — never another build."""
@@ -100,7 +112,18 @@ class PhotoSpecialIn(BaseModel):
     # Which photography service the Register prices from. Reused across every
     # special — Christmas does not need its own service.
     service_id: Optional[str] = Field(default=None, max_length=64)
-    dates: List[str] = Field(default_factory=list, max_length=31)
+    # A special usually runs over a RANGE with different hours on different
+    # days — a promotion is "weekday evenings and all weekend for six weeks",
+    # not a hand-typed list of forty-six dates. `dates` stays supported for the
+    # one-off case (a two-day event), and wins when it is set.
+    start_date: Optional[str] = Field(default=None, max_length=10)
+    end_date: Optional[str] = Field(default=None, max_length=10)
+    day_hours: Dict[str, DayHours] = Field(default_factory=dict)
+    # Exclude a single day — a holiday, a day off — without touching the range.
+    closed_dates: List[str] = Field(default_factory=list, max_length=200)
+    dates: List[str] = Field(default_factory=list, max_length=200)
+    # Used only when day_hours is empty, so specials created before per-day
+    # hours existed keep working exactly as they did.
     start_time: str = Field(default="09:00", max_length=5)
     end_time: str = Field(default="15:00", max_length=5)
     slot_minutes: int = Field(default=15, ge=5, le=240)
@@ -179,6 +202,74 @@ def register_photo_special_routes(
         svc.pop("_id", None)
         return svc
 
+    def _day_window(sp: dict, day: str):
+        """(open_min, close_min) for one calendar date, or None if closed.
+
+        Hours come from the weekday rules when a special has them, so one
+        special can run 4-7pm on weekdays and 7am-7pm at weekends. A special
+        with no weekday rules falls back to its single global window, which is
+        how every special created before this existed keeps working.
+        """
+        try:
+            the_date = date.fromisoformat(day)
+        except Exception:
+            return None
+        if day in (sp.get("closed_dates") or []):
+            return None
+
+        hours = sp.get("day_hours") or {}
+        if hours:
+            row = hours.get(WEEKDAY_KEYS[the_date.weekday()]) or {}
+            if row.get("closed"):
+                return None
+            start, end = _hhmm_to_min(row.get("open") or ""), _hhmm_to_min(row.get("close") or "")
+        else:
+            start, end = _hhmm_to_min(sp.get("start_time") or ""), _hhmm_to_min(sp.get("end_time") or "")
+        if start is None or end is None or end <= start:
+            return None
+        return start, end
+
+    def _special_dates(sp: dict) -> List[str]:
+        """Every date this special actually runs, in order.
+
+        Explicit `dates` win when present — that is the one-off two-day event.
+        Otherwise the range is expanded and each day kept only if its weekday
+        is open and it is not individually closed, so the owner configures a
+        six-week promotion once instead of typing out forty-six dates.
+        """
+        explicit = [d for d in (sp.get("dates") or []) if d]
+        if explicit:
+            return [d for d in sorted(set(explicit)) if _day_window(sp, d)]
+
+        start_raw, end_raw = sp.get("start_date"), sp.get("end_date")
+        if not start_raw or not end_raw:
+            return []
+        try:
+            start, end = date.fromisoformat(start_raw), date.fromisoformat(end_raw)
+        except Exception:
+            return []
+        if end < start:
+            return []
+        out, cursor, guard = [], start, 0
+        while cursor <= end and guard < MAX_RANGE_DAYS:
+            iso = cursor.isoformat()
+            if _day_window(sp, iso):
+                out.append(iso)
+            cursor += timedelta(days=1)
+            guard += 1
+        return out
+
+    def _upcoming(dates: List[str]) -> List[str]:
+        """The dates a customer can still book.
+
+        A six-week promotion is half in the past by the middle of it. The
+        public page must not open on a date that has been and gone, and the
+        reservation endpoint must not accept one. Admin keeps the whole list —
+        the desk still needs to look back at last Tuesday.
+        """
+        today = date.today().isoformat()
+        return [d for d in dates if d >= today]
+
     async def _special_by(query: dict, *, published_only: bool = False) -> dict:
         q = dict(query)
         if published_only:
@@ -230,15 +321,14 @@ def register_photo_special_routes(
         which cannot express a fifteen-minute portrait. The conflict rules are
         the shared ones.
         """
-        if day not in (sp.get("dates") or []):
-            return {"date": day, "slot_minutes": sp.get("slot_minutes"), "closed": True, "slots": []}
-
-        start = _hhmm_to_min(sp.get("start_time") or "")
-        end = _hhmm_to_min(sp.get("end_time") or "")
         dur = int(sp.get("slot_minutes") or 15)
         per_slot = int(sp.get("dogs_per_slot") or 1)
-        if start is None or end is None or dur <= 0 or end <= start:
+        if day not in _special_dates(sp):
             return {"date": day, "slot_minutes": dur, "closed": True, "slots": []}
+        window = _day_window(sp, day)
+        if not window or dur <= 0:
+            return {"date": day, "slot_minutes": dur, "closed": True, "slots": []}
+        start, end = window
 
         mine = await _booked_times(sp["id"], day)
         others = await _other_service_blocks(day)
@@ -282,7 +372,12 @@ def register_photo_special_routes(
             "packages_blurb": sp.get("packages_blurb") or "",
             "arrival_notes": sp.get("arrival_notes") or "",
             "cancellation_notes": sp.get("cancellation_notes") or "",
-            "dates": sp.get("dates") or [],
+            # The page never sees the rules — it sees the dates they produce,
+            # already filtered for closed weekdays and excluded days.
+            "dates": _upcoming(_special_dates(sp)),
+            "start_date": sp.get("start_date"),
+            "end_date": sp.get("end_date"),
+            "day_hours": sp.get("day_hours") or {},
             "start_time": sp.get("start_time"),
             "end_time": sp.get("end_time"),
             "slot_minutes": sp.get("slot_minutes"),
@@ -411,7 +506,7 @@ def register_photo_special_routes(
         sp = await _special_by({"slug": slug}, published_only=True)
         if not sp.get("booking_open"):
             return {"date": date, "closed": True, "slots": [], "slot_minutes": sp.get("slot_minutes")}
-        day = (date or "").strip() or ((sp.get("dates") or [None])[0] or "")
+        day = (date or "").strip() or ((_upcoming(_special_dates(sp)) or [None])[0] or "")
         if not day:
             return {"date": "", "closed": True, "slots": [], "slot_minutes": sp.get("slot_minutes")}
         return await _availability(sp, day)
@@ -449,6 +544,8 @@ def register_photo_special_routes(
             raise HTTPException(status_code=409, detail="Booking for this session has closed.")
 
         day, when = body.date.strip(), body.time.strip()
+        if day and day not in _upcoming(_special_dates(sp)):
+            raise HTTPException(status_code=409, detail="That date is no longer available. Please choose another.")
         avail = await _availability(sp, day)
         if avail.get("closed") or not any(s["time"] == when and s["available"] for s in avail.get("slots") or []):
             raise HTTPException(status_code=409, detail="That time has just been taken. Please choose another.")
@@ -502,6 +599,7 @@ def register_photo_special_routes(
         rows = await db.photo_specials.find({}, {"_id": 0}).sort("created_at", -1).to_list(200)
         for sp in rows:
             sp["booked_count"] = await _total_booked(sp["id"])
+            sp["running_dates"] = _special_dates(sp)
         return {"specials": rows}
 
     @api.post("/admin/photo-specials")
@@ -534,7 +632,8 @@ def register_photo_special_routes(
         """
         from datetime import date as _date
         day = (date or "").strip() or _date.today().isoformat()
-        specials = await db.photo_specials.find({"dates": day}, {"_id": 0}).to_list(50)
+        candidates = await db.photo_specials.find({}, {"_id": 0}).to_list(200)
+        specials = [sp for sp in candidates if day in _special_dates(sp)]
         out = []
         for sp in specials:
             rows = await db.bookings.find(
@@ -621,7 +720,7 @@ def register_photo_special_routes(
         dogs = {d["id"]: d for d in await db.dogs.find({"id": {"$in": dog_ids}}, {"_id": 0, "id": 1, "vaccines": 1}).to_list(3000)}
         live = [b for b in rows if b.get("status") in ACTIVE_BOOKING_STATUSES]
         return {
-            "special": sp,
+            "special": {**sp, "dates": _special_dates(sp)},
             "reservations": [_reservation_row(b, dogs.get(b.get("dog_id"))) for b in rows],
             "booked_count": len(live),
             "max_bookings": sp.get("max_bookings"),
@@ -689,4 +788,5 @@ def register_photo_special_routes(
         "admin_photo_specials_today": admin_photo_specials_today,
         "portrait_service": _portrait_service,
         "photo_special_availability": _availability,
+        "photo_special_dates": _special_dates,
     }

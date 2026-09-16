@@ -112,6 +112,135 @@ def test_two_specials_share_the_one_service_so_christmas_needs_no_new_code():
     assert halloween["slug"] != christmas["slug"]
 
 
+# ------------------------------------------------------- recurring schedules
+
+def _howl_o_ween(**over):
+    """The real shape: a six-week promotion, weekday evenings and full
+    weekends — not a hand-typed list of dates."""
+    cfg = {
+        "dates": [],
+        "start_date": "2026-09-16", "end_date": "2026-10-31",
+        "day_hours": {
+            "monday": {"open": "16:00", "close": "19:00"},
+            "tuesday": {"open": "16:00", "close": "19:00"},
+            "wednesday": {"open": "16:00", "close": "19:00"},
+            "thursday": {"open": "16:00", "close": "19:00"},
+            "friday": {"open": "16:00", "close": "19:00"},
+            "saturday": {"open": "07:00", "close": "19:00"},
+            "sunday": {"open": "07:00", "close": "19:00"},
+        },
+        "slot_minutes": 15,
+    }
+    cfg.update(over)
+    return _special(**cfg)
+
+
+def test_a_date_range_generates_its_own_dates_so_nobody_types_forty_six():
+    sp = _howl_o_ween()
+    dates = server.photo_special_dates(sp)
+    assert len(dates) == 46, f"16 Sep to 31 Oct inclusive is 46 days, got {len(dates)}"
+    assert dates[0] == "2026-09-16" and dates[-1] == "2026-10-31"
+    assert dates == sorted(dates)
+
+
+def test_weekday_evenings_and_weekend_mornings_are_different_windows():
+    sp = _howl_o_ween()
+    # 2026-09-16 is a Wednesday; 2026-09-19 is a Saturday.
+    wed = run(server.public_photo_special_availability(sp["slug"], "2026-09-16"))
+    sat = run(server.public_photo_special_availability(sp["slug"], "2026-09-19"))
+    assert [s["time"] for s in wed["slots"]][:2] == ["16:00", "16:15"]
+    assert wed["slots"][-1]["time"] == "18:45", "weekday evenings end at 7pm"
+    assert len(wed["slots"]) == 12, "3 hours of 15-minute slots"
+    assert [s["time"] for s in sat["slots"]][:2] == ["07:00", "07:15"]
+    assert sat["slots"][-1]["time"] == "18:45", "weekends also end at 7pm"
+    assert len(sat["slots"]) == 48, "12 hours of 15-minute slots"
+
+
+def test_a_closed_weekday_drops_out_of_the_schedule_entirely():
+    sp = _howl_o_ween(day_hours={
+        "monday": {"closed": True},
+        "tuesday": {"open": "16:00", "close": "19:00"},
+        "wednesday": {"open": "16:00", "close": "19:00"},
+        "thursday": {"open": "16:00", "close": "19:00"},
+        "friday": {"open": "16:00", "close": "19:00"},
+        "saturday": {"open": "07:00", "close": "19:00"},
+        "sunday": {"open": "07:00", "close": "19:00"},
+    })
+    dates = server.photo_special_dates(sp)
+    mondays = [d for d in dates if dt.date.fromisoformat(d).weekday() == 0]
+    assert mondays == [], "a closed weekday must not appear at all"
+    assert len(dates) == 46 - 6, "six Mondays fall in this range"
+
+
+def test_one_day_can_be_excluded_without_touching_the_rest_of_the_schedule():
+    sp = _howl_o_ween(closed_dates=["2026-10-31"])
+    dates = server.photo_special_dates(sp)
+    assert "2026-10-31" not in dates, "an excluded day is gone"
+    assert "2026-10-30" in dates, "and its neighbours are untouched"
+    assert len(dates) == 45
+    # and it is genuinely unbookable, not merely hidden
+    av = run(server.public_photo_special_availability(sp["slug"], "2026-10-31"))
+    assert av["closed"] is True and av["slots"] == []
+
+
+def test_an_explicit_date_list_still_wins_for_a_one_off_event():
+    sp = _special(dates=[DAY_1, DAY_2], start_time="09:00", end_time="10:00")
+    view = run(server.public_photo_special(sp["slug"]))
+    assert view["dates"] == sorted([DAY_1, DAY_2]), "a two-day event does not need a range"
+
+
+def test_a_special_with_no_weekday_rules_keeps_its_single_window():
+    # Everything created before per-day hours existed must behave identically.
+    sp = _special(dates=[DAY_1], start_time="09:00", end_time="10:00", day_hours={})
+    av = run(server.public_photo_special_availability(sp["slug"], DAY_1))
+    assert [s["time"] for s in av["slots"]] == ["09:00", "09:15", "09:30", "09:45"]
+
+
+def test_the_range_cannot_be_asked_to_generate_forever():
+    sp = _howl_o_ween(start_date="2026-01-01", end_date="2099-12-31")
+    dates = server.photo_special_dates(sp)
+    assert len(dates) <= 400, "a runaway range is capped rather than hanging the page"
+
+
+def test_an_inverted_or_missing_range_offers_nothing_rather_than_erroring():
+    for bad in ({"start_date": "2026-10-31", "end_date": "2026-09-16"}, {"start_date": None, "end_date": None}):
+        sp = _howl_o_ween(**bad)
+        assert server.photo_special_dates(sp) == []
+
+
+def test_the_public_page_never_offers_a_date_that_has_already_passed():
+    # Half of a six-week promotion is in the past by the middle of it.
+    yesterday = (dt.date.today() - dt.timedelta(days=1)).isoformat()
+    long_ago = (dt.date.today() - dt.timedelta(days=10)).isoformat()
+    ahead = (dt.date.today() + dt.timedelta(days=10)).isoformat()
+    sp = _special(dates=[], start_date=long_ago, end_date=ahead, start_time="09:00", end_time="10:00", day_hours={})
+    generated = server.photo_special_dates(sp)
+    assert long_ago in generated and yesterday in generated, "the schedule itself still knows those days"
+    offered = run(server.public_photo_special(sp["slug"]))["dates"]
+    assert long_ago not in offered and yesterday not in offered
+    assert offered[0] == dt.date.today().isoformat(), "it opens on today, not on week one"
+    assert ahead in offered
+
+
+def test_a_reservation_cannot_be_made_on_a_date_that_has_passed():
+    yesterday = (dt.date.today() - dt.timedelta(days=1)).isoformat()
+    ahead = (dt.date.today() + dt.timedelta(days=10)).isoformat()
+    sp = _special(dates=[], start_date=yesterday, end_date=ahead, start_time="09:00", end_time="10:00", day_hours={})
+    with pytest.raises(HTTPException) as e:
+        _reserve(sp, day=yesterday, time="09:00")
+    assert e.value.status_code == 409
+
+
+def test_front_desk_sees_a_recurring_special_on_a_day_inside_its_range():
+    sp = _howl_o_ween()
+    out = run(server.admin_photo_specials_today("2026-09-19", ADMIN))
+    mine = [x for x in out["specials"] if x["special"]["id"] == sp["id"]]
+    assert mine, "a special defined by rules must still show on the day"
+    assert mine[0]["timeline"][0]["time"] == "07:00"
+    off = run(server.admin_photo_specials_today("2026-11-05", ADMIN))
+    assert not [x for x in off["specials"] if x["special"]["id"] == sp["id"]], "and not outside its range"
+
+
 # ------------------------------------------------------------------ availability
 
 def test_slots_are_generated_at_the_specials_own_length_inside_its_own_window():

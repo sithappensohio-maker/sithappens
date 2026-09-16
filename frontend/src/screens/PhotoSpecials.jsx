@@ -12,11 +12,79 @@ import { useConfirm } from "../lib/useConfirm";
  * know about it; this screen only configures the special and gives the owner
  * the event-day list with the actions that matter at the desk.
  */
+const DAY_KEYS = ["monday", "tuesday", "wednesday", "thursday", "friday", "saturday", "sunday"];
+const WEEKDAYS = DAY_KEYS.slice(0, 5);
+const WEEKEND = DAY_KEYS.slice(5);
+
 const BLANK = {
   name: "", headline: "", description: "", location_name: "Sit Happens", location_address: "",
   what_to_expect: [], packages_blurb: "", arrival_notes: "", cancellation_notes: "",
+  start_date: null, end_date: null, day_hours: {}, closed_dates: [],
   dates: [], start_time: "09:00", end_time: "15:00", slot_minutes: 15,
   dogs_per_slot: 1, max_bookings: null, booking_open: true, published: false,
+};
+
+/** Write one weekday's hours without disturbing the others. */
+function setDay(editing, setEditing, day, row) {
+  setEditing({ ...editing, day_hours: { ...(editing.day_hours || {}), [day]: row } });
+}
+
+/**
+ * Hours for a group of days that normally share a window — the weekdays, or
+ * the weekend. Editing here writes every day in the group, which is what makes
+ * "Monday to Friday, 4pm to 7pm" one action instead of five. The per-day rows
+ * underneath still exist for the day that does not follow the pattern; when
+ * that happens this control says so rather than quietly showing one day's
+ * hours as if they were all of them.
+ */
+function HoursGroup({ label, sub, days, testid, editing, setEditing, field, labelCls }) {
+  const hours = editing.day_hours || {};
+  const rows = days.map((d) => hours[d] || {});
+  const first = rows[0] || {};
+  const mixed = rows.some((r) => (r.open || "") !== (first.open || "") || (r.close || "") !== (first.close || "") || !!r.closed !== !!first.closed);
+  const apply = (patch) => {
+    const next = { ...hours };
+    for (const d of days) next[d] = { ...(next[d] || {}), ...patch };
+    setEditing({ ...editing, day_hours: next });
+  };
+  return (
+    <div data-testid={`photo-special-hours-${testid}`}>
+      <div className="flex items-baseline justify-between gap-2">
+        <label className={labelCls}>{label}</label>
+        <span className="text-[11px] text-shTextMuted">{sub}</span>
+      </div>
+      <div className="flex flex-wrap items-center gap-2">
+        <label className="inline-flex items-center gap-1 text-[11px] text-shTextMuted shrink-0">
+          <input type="checkbox" checked={!!first.closed} data-testid={`photo-special-${testid}-closed`}
+                 onChange={(e) => apply({ closed: e.target.checked })}/>
+          Closed
+        </label>
+        <div className="flex items-center gap-2 flex-1 basis-[190px] min-w-0">
+          <input type="time" className={`${field} min-w-0 flex-1`} value={first.open || ""} disabled={!!first.closed}
+                 data-testid={`photo-special-${testid}-open`}
+                 onChange={(e) => apply({ open: e.target.value })}/>
+          <span className="text-shTextMuted shrink-0">→</span>
+          <input type="time" className={`${field} min-w-0 flex-1`} value={first.close || ""} disabled={!!first.closed}
+                 data-testid={`photo-special-${testid}-close`}
+                 onChange={(e) => apply({ close: e.target.value })}/>
+        </div>
+      </div>
+      {mixed && (
+        <p className="text-[11.5px] text-shAccent mt-1" data-testid={`photo-special-${testid}-mixed`}>
+          These days currently differ — see per-day hours below. Editing here sets them all the same.
+        </p>
+      )}
+    </div>
+  );
+}
+
+const todayISO = () => {
+  const d = new Date();
+  return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`;
+};
+const fmtRosterDay = (iso) => {
+  if (!iso) return "";
+  return new Date(`${iso}T00:00:00`).toLocaleDateString(undefined, { weekday: "short", month: "short", day: "numeric" });
 };
 
 const fmtTime = (hhmm) => {
@@ -68,7 +136,12 @@ export default function PhotoSpecials() {
     try {
       const { data } = await api.get(`/admin/photo-specials/${sp.id}/reservations`, { params: day ? { date: day } : {} });
       setRoster(data);
-      setRosterDay(day || (sp.dates || [])[0] || "");
+      // A special built from day-of-week rules has no explicit `dates`; the
+      // list endpoint hands back the generated ones. Open on today when the
+      // special is running, so the desk is not scrolled back to week one.
+      const running = data.special?.dates || sp.running_dates || sp.dates || [];
+      const today = todayISO();
+      setRosterDay(day || (running.includes(today) ? today : running[0]) || "");
     } catch (e) {
       toast.error(formatErr(e) || "Could not load reservations");
     }
@@ -142,7 +215,9 @@ export default function PhotoSpecials() {
                 <div className="min-w-0">
                   <p className="text-[15px] font-black text-shText truncate">{sp.name}</p>
                   <p className="text-[12px] text-shTextMuted">
-                    {(sp.dates || []).length} date{(sp.dates || []).length === 1 ? "" : "s"} · {sp.slot_minutes} min · {sp.booked_count} booked
+                    {sp.start_date && sp.end_date && !(sp.dates || []).length
+                      ? `${sp.start_date} → ${sp.end_date}`
+                      : `${(sp.dates || []).length} date${(sp.dates || []).length === 1 ? "" : "s"}`} · {sp.slot_minutes} min · {sp.booked_count} booked
                   </p>
                 </div>
                 <div className="flex flex-col items-end gap-1 shrink-0">
@@ -208,35 +283,91 @@ export default function PhotoSpecials() {
                 <textarea rows={3} className={`${field} py-2`} value={editing.description} data-testid="photo-special-description"
                           onChange={(e) => setEditing({ ...editing, description: e.target.value })}/>
               </div>
-              <div>
-                <label className={label}>Dates (one per line, YYYY-MM-DD) *</label>
-                <textarea rows={3} className={`${field} py-2`} data-testid="photo-special-dates"
-                          value={(editing.dates || []).join("\n")}
-                          onChange={(e) => setEditing({ ...editing, dates: e.target.value.split("\n").map((d) => d.trim()).filter(Boolean) })}/>
+              {/* Schedule. A promotion runs over a range with different hours on
+                  different days; nobody should type forty-six dates. The two
+                  group controls are the normal case, and the per-day rows
+                  underneath are there for the exceptions. */}
+              <div className="rounded-xl border border-shBorder/60 p-3 space-y-3" data-testid="photo-special-schedule">
+                <p className="text-[11px] font-black uppercase tracking-widest text-shPrimary">Date range</p>
+                <div className="grid grid-cols-1 min-[360px]:grid-cols-2 gap-3">
+                  <div>
+                    <label className={label}>Start date</label>
+                    <input type="date" className={`${field} min-w-0`} value={editing.start_date || ""} data-testid="photo-special-start-date"
+                           onChange={(e) => setEditing({ ...editing, start_date: e.target.value || null })}/>
+                  </div>
+                  <div>
+                    <label className={label}>End date</label>
+                    <input type="date" className={`${field} min-w-0`} value={editing.end_date || ""} data-testid="photo-special-end-date"
+                           onChange={(e) => setEditing({ ...editing, end_date: e.target.value || null })}/>
+                  </div>
+                </div>
+
+                <HoursGroup label="Weekday hours" sub="Monday – Friday" days={WEEKDAYS} testid="weekday"
+                            editing={editing} setEditing={setEditing} field={field} labelCls={label}/>
+                <HoursGroup label="Weekend hours" sub="Saturday – Sunday" days={WEEKEND} testid="weekend"
+                            editing={editing} setEditing={setEditing} field={field} labelCls={label}/>
+
+                <details data-testid="photo-special-per-day">
+                  <summary className="cursor-pointer text-[11px] font-black uppercase tracking-widest text-shTextMuted">
+                    Per-day hours (for exceptions)
+                  </summary>
+                  <div className="mt-2 space-y-1.5">
+                    {DAY_KEYS.map((d) => {
+                      const row = (editing.day_hours || {})[d] || {};
+                      return (
+                        <div key={d} className="flex flex-wrap items-center gap-2">
+                          <span className="w-[86px] text-[12px] font-black uppercase tracking-widest text-shTextMuted">{d.slice(0, 3)}</span>
+                          <label className="inline-flex items-center gap-1 text-[11px] text-shTextMuted">
+                            <input type="checkbox" checked={!!row.closed} data-testid={`photo-special-closed-${d}`}
+                                   onChange={(e) => setDay(editing, setEditing, d, { ...row, closed: e.target.checked })}/>
+                            Closed
+                          </label>
+                          <input type="time" className={`${field} flex-1 basis-[92px] min-w-0`} value={row.open || ""} disabled={!!row.closed}
+                                 data-testid={`photo-special-open-${d}`}
+                                 onChange={(e) => setDay(editing, setEditing, d, { ...row, open: e.target.value })}/>
+                          <input type="time" className={`${field} flex-1 basis-[92px] min-w-0`} value={row.close || ""} disabled={!!row.closed}
+                                 data-testid={`photo-special-close-${d}`}
+                                 onChange={(e) => setDay(editing, setEditing, d, { ...row, close: e.target.value })}/>
+                        </div>
+                      );
+                    })}
+                  </div>
+                </details>
+
+                <div className="grid gap-3 sm:grid-cols-2">
+                  <div>
+                    <label className={label}>Slot length (minutes)</label>
+                    <input type="number" className={field} value={editing.slot_minutes} data-testid="photo-special-slot-minutes"
+                           onChange={(e) => setEditing({ ...editing, slot_minutes: Number(e.target.value) || 15 })}/>
+                  </div>
+                  <div>
+                    <label className={label}>Max bookings</label>
+                    <input type="number" className={field} value={editing.max_bookings ?? ""} data-testid="photo-special-max"
+                           placeholder="No cap"
+                           onChange={(e) => setEditing({ ...editing, max_bookings: e.target.value === "" ? null : Number(e.target.value) })}/>
+                  </div>
+                </div>
+
+                <div>
+                  <label className={label}>Closed dates <span className="normal-case tracking-normal font-semibold">(one per line — skip a day without changing the range)</span></label>
+                  <textarea rows={2} className={`${field} py-2`} data-testid="photo-special-closed-dates"
+                            value={(editing.closed_dates || []).join("\n")}
+                            onChange={(e) => setEditing({ ...editing, closed_dates: e.target.value.split("\n").map((d) => d.trim()).filter(Boolean) })}/>
+                </div>
+
+                <details data-testid="photo-special-explicit-dates">
+                  <summary className="cursor-pointer text-[11px] font-black uppercase tracking-widest text-shTextMuted">
+                    Specific dates instead of a range
+                  </summary>
+                  <p className="text-[12px] text-shTextMuted mt-1.5">
+                    For a one-off event on set days. Leave empty to use the range above — if you fill this in, it wins.
+                  </p>
+                  <textarea rows={2} className={`${field} py-2 mt-1.5`} data-testid="photo-special-dates"
+                            value={(editing.dates || []).join("\n")}
+                            onChange={(e) => setEditing({ ...editing, dates: e.target.value.split("\n").map((d) => d.trim()).filter(Boolean) })}/>
+                </details>
               </div>
-              <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
-                <div>
-                  <label className={label}>Start</label>
-                  <input type="time" className={field} value={editing.start_time} data-testid="photo-special-start"
-                         onChange={(e) => setEditing({ ...editing, start_time: e.target.value })}/>
-                </div>
-                <div>
-                  <label className={label}>End</label>
-                  <input type="time" className={field} value={editing.end_time} data-testid="photo-special-end"
-                         onChange={(e) => setEditing({ ...editing, end_time: e.target.value })}/>
-                </div>
-                <div>
-                  <label className={label}>Slot (min)</label>
-                  <input type="number" className={field} value={editing.slot_minutes} data-testid="photo-special-slot-minutes"
-                         onChange={(e) => setEditing({ ...editing, slot_minutes: Number(e.target.value) || 15 })}/>
-                </div>
-                <div>
-                  <label className={label}>Max bookings</label>
-                  <input type="number" className={field} value={editing.max_bookings ?? ""} data-testid="photo-special-max"
-                         placeholder="No cap"
-                         onChange={(e) => setEditing({ ...editing, max_bookings: e.target.value === "" ? null : Number(e.target.value) })}/>
-                </div>
-              </div>
+
               <div className="grid gap-3 sm:grid-cols-2">
                 <div>
                   <label className={label}>Location name</label>
@@ -304,11 +435,13 @@ export default function PhotoSpecials() {
             <p className="text-[12.5px] text-shTextMuted mb-3">
               {roster.booked_count} booked{roster.max_bookings ? ` of ${roster.max_bookings}` : ""}
             </p>
-            <div className="flex flex-wrap gap-1.5 mb-3">
+            {/* A six-week promotion has dozens of dates, so the strip scrolls
+                rather than pushing the actual list off the screen. */}
+            <div className="flex flex-wrap gap-1.5 mb-3 max-h-[132px] overflow-y-auto" data-testid="photo-special-roster-days">
               {(roster.special.dates || []).map((d) => (
                 <button key={d} onClick={() => openRoster(roster.special, d)}
                         className={`min-h-[36px] px-3 rounded-lg border text-[11px] font-black uppercase tracking-widest ${rosterDay === d ? "border-shPrimary bg-shPrimary/15 text-shPrimary" : "border-shBorder text-shTextMuted"}`}>
-                  {d}
+                  {fmtRosterDay(d)}
                 </button>
               ))}
             </div>

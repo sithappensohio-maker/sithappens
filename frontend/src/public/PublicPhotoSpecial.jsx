@@ -51,6 +51,10 @@ export default function PublicPhotoSpecial() {
   const [busy, setBusy] = useState(false);
   const [err, setErr] = useState("");
   const [confirmed, setConfirmed] = useState(null);
+  // A six-week promotion has dozens of dates. Showing all of them as buttons
+  // is unusable on a phone, so the nearest fortnight is offered up front and
+  // the rest are one tap away.
+  const [allDates, setAllDates] = useState(false);
   // One key per visit, so a double tap or a browser retry returns the booking
   // they already made instead of taking a second slot.
   const [idemKey] = useState(() => `ps-${Math.random().toString(36).slice(2)}${Date.now().toString(36)}`);
@@ -82,6 +86,10 @@ export default function PublicPhotoSpecial() {
   const free = useMemo(() => (slots?.slots || []).filter((s) => s.available), [slots]);
   const soldOut = open && slots && !slots.closed && (slots.slots || []).length > 0 && free.length === 0;
   const detailsReady = form.first_name.trim() && form.email.trim() && form.phone.trim() && form.dog_name.trim();
+  const dates = useMemo(() => special?.dates || [], [special]);
+  const DATE_PREVIEW = 14;
+  const visibleDates = allDates ? dates : dates.slice(0, DATE_PREVIEW);
+  const hiddenDateCount = Math.max(dates.length - visibleDates.length, 0);
 
   const reserve = async () => {
     setBusy(true); setErr("");
@@ -187,7 +195,14 @@ export default function PublicPhotoSpecial() {
               <p className="text-white/75 text-[16px] leading-relaxed mt-4">{special.description}</p>
             )}
             <div className="flex flex-wrap gap-2 mt-5" data-testid="photo-special-facts">
-              {(special.dates || []).map((d) => (
+              {/* A handful of dates reads as dates; a six-week run reads as a
+                  range. Same data, described the way a person would say it. */}
+              {(special.dates || []).length > 3 ? (
+                <span className="rounded-full border border-shGreen/50 bg-shGreen/10 px-3 py-1.5 text-[12.5px] font-black text-shGreen"
+                      data-testid="photo-special-date-range">
+                  {fmtDayShort(special.dates[0])} – {fmtDayShort(special.dates[special.dates.length - 1])}
+                </span>
+              ) : (special.dates || []).map((d) => (
                 <span key={d} className="rounded-full border border-shGreen/50 bg-shGreen/10 px-3 py-1.5 text-[12.5px] font-black text-shGreen">
                   {fmtDayShort(d)}
                 </span>
@@ -215,7 +230,14 @@ export default function PublicPhotoSpecial() {
         <Eyebrow icon="fa-calendar-check">Book your session</Eyebrow>
         <Title>Pick your time</Title>
 
-        {!open ? (
+        {open && dates.length === 0 ? (
+          /* A promotion that has run its course still has a page. Say so,
+             rather than showing a grid with nothing in it. */
+          <div className="mt-5 rounded-2xl border border-shOrange/50 bg-shOrange/10 p-5" data-testid="photo-special-finished">
+            <p className="text-shOrange font-black uppercase tracking-widest text-[12px]">No dates left</p>
+            <p className="text-white/80 mt-1.5">There are no more sessions available on this one. Give us a call and we&apos;ll let you know when we run it again.</p>
+          </div>
+        ) : !open ? (
           <div className="mt-5 rounded-2xl border border-shOrange/50 bg-shOrange/10 p-5" data-testid="photo-special-closed">
             <p className="text-shOrange font-black uppercase tracking-widest text-[12px]">Booking closed</p>
             <p className="text-white/80 mt-1.5">Booking for this session is closed. Give us a call and we&apos;ll see what we can do.</p>
@@ -226,7 +248,7 @@ export default function PublicPhotoSpecial() {
             <div className="mt-5" data-testid="photo-special-step-date">
               <p className={label}>1 · Choose a date</p>
               <div className="flex flex-wrap gap-2">
-                {(special.dates || []).map((d) => (
+                {visibleDates.map((d) => (
                   <button key={d} type="button" data-testid={`photo-special-date-${d}`}
                           onClick={() => { setDay(d); setTime(""); setStep("time"); }}
                           className={`min-h-[52px] px-4 rounded-2xl border text-[14px] font-black transition ${
@@ -234,6 +256,12 @@ export default function PublicPhotoSpecial() {
                     {fmtDayShort(d)}
                   </button>
                 ))}
+                {hiddenDateCount > 0 && (
+                  <button type="button" onClick={() => setAllDates(true)} data-testid="photo-special-more-dates"
+                          className="min-h-[52px] px-4 rounded-2xl border border-dashed border-bgHover text-[13.5px] font-black text-white/70 hover:border-shGreen/50">
+                    +{hiddenDateCount} more {hiddenDateCount === 1 ? "date" : "dates"}
+                  </button>
+                )}
               </div>
             </div>
 
