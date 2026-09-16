@@ -12,6 +12,7 @@ import TrainingWorkspace from "./screens/TrainingWorkspace";
 import Clients from "./screens/Clients";
 import Inquiries from "./screens/Inquiries";
 import Events from "./screens/Events";
+import PhotoSpecials from "./screens/PhotoSpecials";
 import Dogs from "./screens/Dogs";
 import Portal from "./screens/Portal";
 import EmployeePortal from "./screens/EmployeePortal";
@@ -36,6 +37,7 @@ import Claim from "./screens/Claim";
 import ShareCertificate from "./screens/ShareCertificate";
 import PublicShop from "./screens/PublicShop";
 import PublicHome from "./public/PublicHome";
+import PublicPhotoSpecial from "./public/PublicPhotoSpecial";
 import PublicTraining from "./public/PublicTraining";
 import { PublicAbout, PublicPhotography, PublicContact } from "./public/PublicPages";
 import PublicEvent from "./public/PublicEvent";
@@ -714,6 +716,7 @@ function AdminShell() {
             openCreateOnMount={pendingCreateTab === "clients"} onCreateConsumed={()=>setPendingCreateTab(null)} userId={user?.id} can={can} />}
           {tab === "inquiries" && navAllowed("inquiries") && <Inquiries can={can} onOpenClient={(id)=>navigateAdmin("clients", {kind:"client", id, mode:"open"})} />}
           {tab === "events" && navAllowed("events") && <Events can={can} />}
+          {tab === "photo_specials" && navAllowed("photo_specials") && <PhotoSpecials />}
           {tab === "dogs" && navAllowed("dogs") && <Dogs focusId={searchTarget?.kind==="dog"?searchTarget.id:null} focusMode={searchTarget?.mode || "scroll"} onConsumed={clearSearchTarget} openCreateOnMount={pendingCreateTab === "dogs"} onCreateConsumed={()=>setPendingCreateTab(null)} userId={user?.id}
             can={can}
             onBookForDog={(dogId, ownerId)=>{ setPendingBookingPreset({ clientId: ownerId || null, dogId }); setGlobalModal("new_booking"); }}
@@ -877,6 +880,7 @@ export const NAV_ITEMS = [
     { id: "waitlist", label: "Waitlist", icon: "fa-hourglass-half", perm: "booking_edit", feature: "waitlist", sidebar: false },
     { id: "recurring", label: "Recurring", icon: "fa-rotate", sidebar: false },
     { id: "events", label: "Events", icon: "fa-calendar-day", perm: "manage_events" },
+    { id: "photo_specials", label: "Photo Specials", icon: "fa-camera-retro", perm: "manage_events" },
     { id: "clients", label: "Clients", icon: "fa-users", perm: "clients_view" },
     { id: "inquiries", label: "Inquiries", icon: "fa-inbox", perm: "clients_edit" },
     { id: "dogs", label: "Dogs", icon: "fa-paw", perm: "dogs_view" },
@@ -943,6 +947,7 @@ export default function App() {
       <Route path="/contact" element={<AppProviders><PublicContact /></AppProviders>} />
       <Route path="/events" element={<AppProviders><PublicEvents /></AppProviders>} />
       <Route path="/events/:slug" element={<AppProviders><PublicEvent /></AppProviders>} />
+      <Route path="/photo-specials/:slug" element={<AppProviders><PublicPhotoSpecial /></AppProviders>} />
       <Route path="/shop/*" element={<AppProviders><ShopGate /></AppProviders>} />
       <Route path="/admin/*" element={<AppProviders><Gate /></AppProviders>} />
       <Route path="*" element={<AppProviders><Gate /></AppProviders>} />

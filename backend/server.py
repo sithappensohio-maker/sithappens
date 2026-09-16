@@ -1053,6 +1053,14 @@ class BookingOut(BaseModel):
     cancellation_fee: Optional[float] = None
     cancellation_fee_pct: Optional[float] = None  # Sprint 110dm — tier % applied
     cancellation_hours_notice: Optional[float] = None  # Sprint 110dm — hours of advance notice given
+    # Photo Specials. `photo_special_id` links a portrait reservation back to
+    # the event that sold it; `vaccine_booking_exception` records that this one
+    # booking was allowed without vaccine documentation and why. Both are read
+    # here as well as stored so the exception is visible wherever a booking is,
+    # rather than being a fact only the database knows.
+    photo_special_id: Optional[str] = None
+    vaccine_booking_exception: Optional[str] = None
+    no_show: Optional[bool] = None
     # Sprint 110aw — Sales tax snapshot. When `sales_tax.enabled` and the
     # service type is in `applies_to`, `actual_price` includes tax and these
     # fields carry the breakdown so year-end filing / reports stay honest.
@@ -33431,6 +33439,11 @@ DP_ONLINE_ACTIVE_UNIQUE_INDEX_NAME = "dp_online_active_unique"
 #     grade must still block a duplicate new submission.
 CS_ID_UNIQUE_INDEX_NAME = "cs_id_unique"
 CS_ACTIVE_UNIQUE_INDEX_NAME = "cs_active_unique"
+# Photo Specials — the database, not a read-then-write check, is what stops two
+# members of the public taking the same portrait slot. Cancelled and rejected
+# reservations fall outside the partial filter, so cancelling a booking reopens
+# its slot with no extra bookkeeping anywhere.
+PS_SLOT_UNIQUE_INDEX_NAME = "ps_slot_unique"
 
 
 class CriticalIndexError(RuntimeError):
@@ -33529,6 +33542,9 @@ async def _ensure_critical_training_indexes() -> None:
         (db.checkpoint_submissions, [("id", 1)], True, None, CS_ID_UNIQUE_INDEX_NAME),
         (db.checkpoint_submissions, [("school_enrollment_id", 1), ("lesson_id", 1)], True,
          {"status": {"$in": ["pending", "grading"]}}, CS_ACTIVE_UNIQUE_INDEX_NAME),
+        (db.bookings, [("photo_special_id", 1), ("date", 1), ("time", 1)], True,
+         {"photo_special_id": {"$exists": True}, "status": {"$in": ["pending", "approved", "completed"]}},
+         PS_SLOT_UNIQUE_INDEX_NAME),
     ]
     for coll, key, unique, partial, name in specs:
         create_kwargs: Dict[str, Any] = {"unique": unique, "name": name}
@@ -56193,6 +56209,24 @@ _walk_in_callables = register_clients_routes(
     require_admin_and_permission=require_admin_and_permission,
 )
 create_walk_in = _walk_in_callables["create_walk_in"]
+
+# Photo Specials — reusable one-off portrait events (Halloween first, then
+# Christmas, Valentine's and the rest) sitting on top of ordinary photography
+# bookings. Configuration only; every reservation is a canonical booking.
+from domains.photo_specials.routes import (  # noqa: E402,F401
+    PhotoSpecialIn, PhotoSpecialImageIn, ReserveIn as PhotoSpecialReserveIn,
+    ManualReservationIn as PhotoSpecialManualReservationIn,
+    register_photo_special_routes,
+)
+
+_photo_special_callables = register_photo_special_routes(
+    api=api, db=db, logger=logger, now_iso=now_iso, get_settings=get_settings,
+    enforce_rate_limit=_enforce_rate_limit, client_ip=_client_ip,
+    require_admin_and_permission=require_admin_and_permission,
+    slot_overlaps=_slot_overlaps,
+    notify_client_booking_approved=notify_client_booking_approved,
+)
+globals().update(_photo_special_callables)
 update_inquiry = _public_site_callables["update_inquiry"]
 
 # Public event preregistration (events_domain.py) — public page + register,
