@@ -92,6 +92,18 @@ test("tap targets on the slot and date grids are big enough for a phone", () => 
   expect(dateBtn).toMatch(/min-h-\[52px\]/);
 });
 
+test("the hero fits a portrait flyer as well as a wide one", () => {
+  // The flyer sets its own shape. A tall poster must not be cropped to a
+  // letterbox, and must not eat the whole screen on a short phone either.
+  const hero = pageSrc.slice(pageSrc.indexOf('data-testid="photo-special-hero-image"') - 400,
+                             pageSrc.indexOf('data-testid="photo-special-hero-image"'));
+  expect(hero).toMatch(/object-contain/);
+  expect(hero).not.toMatch(/object-cover/);
+  expect(hero).toMatch(/w-auto max-w-full/);
+  expect(hero).toMatch(/max-h-\[min\(70vh,560px\)\]/);
+  expect(hero).toMatch(/mx-auto/);
+});
+
 test("the public page uses the site's own shell and styling", () => {
   expect(pageSrc).toMatch(/import PublicSiteShell from "\.\/PublicSiteShell"/);
   expect(pageSrc).toMatch(/import \{ Section, Title, Eyebrow, Cta \} from "\.\/PublicBits"/);

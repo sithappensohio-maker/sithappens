@@ -218,8 +218,12 @@ export default function PublicPhotoSpecial() {
             </div>
           </div>
           {special.has_hero_image && (
+            /* The flyer sets its own shape. A tall portrait poster is as
+               likely as a wide banner, so the height is capped and the width
+               follows the picture — the frame hugs the image instead of
+               cropping a phone number off the bottom of it. */
             <img src={`${api.defaults.baseURL}/public/photo-specials/${slug}/hero`} alt=""
-                 className="w-full rounded-3xl border border-bgHover object-cover max-h-[420px]"
+                 className="mx-auto w-auto max-w-full max-h-[min(70vh,560px)] rounded-3xl border border-bgHover object-contain"
                  data-testid="photo-special-hero-image"/>
           )}
         </div>
