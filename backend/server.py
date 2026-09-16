@@ -744,7 +744,12 @@ class ClientIn(BaseModel):
     # → require_evaluation_first` is on, *new* clients are created as
     # `prospect` and can only book the evaluation service until staff mark them
     # `active` (or `rejected`).
-    client_status: Optional[Literal["prospect", "evaluation_scheduled", "evaluated", "active", "rejected"]] = "active"
+    # `walk_in` is a different thing from `prospect`: not someone working
+    # through the evaluation pipeline, but a one-off who came in for a quick
+    # service (nail trim, bath). They are a real record so the visit, the dog
+    # and the money have somewhere to live, but they are not counted as a
+    # family on file until staff convert them to `active`.
+    client_status: Optional[Literal["prospect", "evaluation_scheduled", "evaluated", "active", "rejected", "walk_in"]] = "active"
     evaluation_notes: Optional[str] = ""  # admin notes from the meet-n-greet
     # Sprint 110di-51 — Per-client running tab. POSITIVE = client owes the
     # business (accounts receivable). NEGATIVE = client has pre-paid credit
@@ -1845,7 +1850,7 @@ async def create_client(body: ClientIn, user: dict = Depends(require_admin_and_p
 # → `active` / `rejected`). Cleaner than dumping into PUT /clients since
 # it tracks an audit timestamp + accepts an optional admin note.
 class ClientStatusIn(BaseModel):
-    status: Literal["prospect", "evaluation_scheduled", "evaluated", "active", "rejected"]
+    status: Literal["prospect", "evaluation_scheduled", "evaluated", "active", "rejected", "walk_in"]
     note: Optional[str] = ""
 
 
@@ -56177,6 +56182,17 @@ _public_site_callables = register_public_site_routes(
     default_settings=_default_settings,
 )
 list_inquiries = _public_site_callables["list_inquiries"]
+
+# Walk-in intake — the owner + dog who arrive for a quick service without being
+# on file. An ordinary client row marked `walk_in`, so everything downstream
+# (booking, check-in, register, history) needs no special case.
+from domains.clients.routes import WalkInIn, register_clients_routes  # noqa: E402,F401
+
+_walk_in_callables = register_clients_routes(
+    api=api, db=db, now_iso=now_iso,
+    require_admin_and_permission=require_admin_and_permission,
+)
+create_walk_in = _walk_in_callables["create_walk_in"]
 update_inquiry = _public_site_callables["update_inquiry"]
 
 # Public event preregistration (events_domain.py) — public page + register,

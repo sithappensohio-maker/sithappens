@@ -1,5 +1,6 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import { api, formatErr } from "../lib/api";
+import WalkInModal from "./WalkInModal";
 import MultiDatePicker from "./MultiDatePicker";
 import { useEditLock } from "../lib/useLiveRefresh";
 import { todayISO } from "../lib/date";
@@ -175,6 +176,9 @@ export default function AdminBookingModal({ defaultCheckIn = false, defaultDate 
   const [kennels, setKennels] = useState([]);
   const [closedDates, setClosedDates] = useState([]);
   const [clientId, setClientId] = useState(existing?.client_id || presetClientId || "");
+  // Booking someone who is not on file yet (a walk-in here for a nail trim)
+  // must not mean abandoning this modal to go and create them first.
+  const [walkInOpen, setWalkInOpen] = useState(false);
   const [dogId, setDogId] = useState(existing?.dog_id || presetDogId || "");
   // Quick Check-in mode: dog-first selection (the common drop-off flow).
   // Normal booking creation stays client-first.
@@ -848,7 +852,13 @@ export default function AdminBookingModal({ defaultCheckIn = false, defaultDate 
           ) : (
             <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
               <div>
-                <label className="text-[14px] font-black text-shTextMuted uppercase tracking-widest">Client</label>
+                <div className="flex items-baseline justify-between gap-2">
+                  <label className="text-[14px] font-black text-shTextMuted uppercase tracking-widest">Client</label>
+                  <button type="button" onClick={()=>setWalkInOpen(true)} data-testid="ab-new-walk-in"
+                          className="text-[11px] font-black uppercase tracking-widest text-shPrimary hover:opacity-80">
+                    <i className="fas fa-plus mr-1"/>New walk-in
+                  </button>
+                </div>
                 <select value={clientId} onChange={(e)=>setClientId(e.target.value)} data-testid="ab-client"
                         className="w-full mt-1 bg-[var(--sh-card-base)] border border-shBorder rounded p-2 text-shText text-sm">
                   {clients.map(c => <option key={c.id} value={c.id}>{c.name} · {c.credits} credits</option>)}
@@ -1383,6 +1393,22 @@ export default function AdminBookingModal({ defaultCheckIn = false, defaultDate 
           </div>
         </div>
       </div>
+
+      {walkInOpen && (
+        <WalkInModal
+          title="New walk-in"
+          onClose={() => setWalkInOpen(false)}
+          onCreated={({ client, dog }) => {
+            // Seat the new pair into the pickers and select them, so the
+            // booking carries straight on from where it was interrupted.
+            setClients(prev => (prev.some(c => c.id === client.id) ? prev : [client, ...prev]));
+            setDogs(prev => (prev.some(d => d.id === dog.id) ? prev : [dog, ...prev]));
+            setClientId(client.id);
+            setDogId(dog.id);
+            setWalkInOpen(false);
+          }}
+        />
+      )}
     </div>
   );
 }

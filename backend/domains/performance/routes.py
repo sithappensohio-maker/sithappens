@@ -207,6 +207,11 @@ def register_performance_routes(
             base = {"$or": [{"name": rx}, {"email": rx}, {"phone": rx}]}
         query = _with_deleted(base, include_deleted)
         total = await db.clients.count_documents(query)
+        # Walk-ins are real rows and stay searchable here — you need to find one
+        # to rebook it or convert it — but they are not families on file, so the
+        # headline count excludes them rather than being inflated by every
+        # one-off nail trim.
+        total_clients = await db.clients.count_documents({**query, "client_status": {"$ne": "walk_in"}})
         pages = max(1, math.ceil(total / size)) if total else 1
         page_num = min(page_num, pages)
         rows = await db.clients.find(query, {"_id": 0}).sort("name", 1).skip((page_num - 1) * size).limit(size).to_list(size)
@@ -218,7 +223,8 @@ def register_performance_routes(
         # because this optimized endpoint bypasses FastAPI's List[ClientOut].
         client_model = server_globals["ClientOut"]
         safe_rows = [client_model.model_validate(row).model_dump() for row in rows]
-        return {"items": safe_rows, "total": total, "page": page_num, "page_size": size, "pages": pages, "query": needle}
+        return {"items": safe_rows, "total": total, "total_clients": total_clients,
+                "page": page_num, "page_size": size, "pages": pages, "query": needle}
 
     @api.get("/clients/options")
     async def client_options(

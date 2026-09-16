@@ -46,7 +46,7 @@ export default function Clients({ focusId = null, focusMode = "scroll", onConsum
   const [clientSearch, setClientSearch] = useState("");
   const [clientQuery, setClientQuery] = useState("");
   const [clientPage, setClientPage] = useState(1);
-  const [clientMeta, setClientMeta] = useState({ total: 0, page: 1, pages: 1, page_size: 48 });
+  const [clientMeta, setClientMeta] = useState({ total: 0, total_clients: 0, page: 1, pages: 1, page_size: 48 });
   const [clientsLoading, setClientsLoading] = useState(true);
   const [open, setOpen] = useState(false);
   const [editing, setEditing] = useState(null);
@@ -413,7 +413,7 @@ export default function Clients({ focusId = null, focusMode = "scroll", onConsum
   return (
     <div className="space-y-6 animate-slide-in" data-testid="clients-screen">
       <PageHero
-        eyebrow={{ icon: "fa-users", text: `${clientMeta.total} families on file`, color: "text-shSecondary" }}
+        eyebrow={{ icon: "fa-users", text: `${clientMeta.total_clients ?? clientMeta.total} families on file`, color: "text-shSecondary" }}
         title="Client Hub."
         highlight="Where humans live."
         subtitle="Profiles, dogs, credits, and waivers — all in one place."
@@ -668,7 +668,7 @@ export default function Clients({ focusId = null, focusMode = "scroll", onConsum
             <i className="fas fa-chevron-left mr-2"/>Previous
           </button>
           <span className="text-[12px] font-black uppercase tracking-widest text-shTextMuted">
-            {clientMeta.total} families · {clientMeta.page} / {clientMeta.pages}
+            {clientMeta.total_clients ?? clientMeta.total} families · {clientMeta.page} / {clientMeta.pages}
           </span>
           <button type="button" disabled={clientMeta.page >= clientMeta.pages || clientsLoading}
                   onClick={()=>setClientPage((p)=>Math.min(clientMeta.pages, p + 1))}
@@ -1913,6 +1913,9 @@ function ClientStatusPill({ status, clientId, onChange }) {
     evaluated: { text: "Evaluated", color: "bg-purple-500/20 text-purple-400 border-purple-500/40" },
     rejected: { text: "Rejected", color: "bg-red-500/20 text-red-400 border-red-500/40" },
     active: { text: "Active", color: "bg-shPrimary/20 text-shPrimary border-shPrimary/40" },
+    // A one-off who came in for a quick service — a real record, but not a
+    // family on file until someone converts them.
+    walk_in: { text: "Walk-In", color: "bg-orange-500/20 text-orange-300 border-orange-500/40" },
   };
   const meta = labels[status] || labels.prospect;
   const setStatus = async (newStatus) => {
@@ -1942,7 +1945,7 @@ function ClientStatusPill({ status, clientId, onChange }) {
                       data-testid="client-status-note"
                       className="block w-full bg-[var(--sh-card-base)] border border-shBorder rounded p-2 text-shText text-sm mb-3" rows={2}/>
             <div className="grid grid-cols-1 gap-2">
-              {["evaluation_scheduled", "evaluated", "active", "rejected"].filter(s => s !== status).map(s => (
+              {["evaluation_scheduled", "evaluated", "active", "rejected", "walk_in"].filter(s => s !== status).map(s => (
                 <button key={s} onClick={()=>setStatus(s)} disabled={busy}
                         data-testid={`client-status-set-${s}`}
                         className={`px-3 py-2 rounded font-black text-[12px] uppercase tracking-widest border text-left ${labels[s].color} hover:opacity-80 disabled:opacity-50`}>

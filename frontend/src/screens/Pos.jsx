@@ -30,6 +30,7 @@ import StripeRefundModal from "../components/StripeRefundModal";
 import ShopRefundModal from "../components/ShopRefundModal";
 import ItemThumbnail from "../components/ItemThumbnail";
 import AdminBookingModal from "../components/AdminBookingModal";
+import WalkInModal from "../components/WalkInModal";
 import { RegisterTab } from "./Staff";
 import {
   checkPosHealth,
@@ -55,6 +56,9 @@ export default function Pos({ onOpenShopManager } = {}) {
   const { can } = useAuth();
   const confirm = useConfirm();
   const canBookingEdit = can("booking_edit");
+  // Walk-in intake creates an owner + dog, so it follows clients_edit — the
+  // same permission the Client Hub uses — rather than booking_edit.
+  const canClientsEdit = can("clients_edit");
   // Permission-bug checkpoint: these used to gate on a blanket `role ===
   // "admin"` check, which — since every account that can even open Front
   // Desk has `role: "admin"` regardless of its restricted `staff_role` — showed
@@ -148,6 +152,11 @@ export default function Pos({ onOpenShopManager } = {}) {
   const VISITS_COLLAPSED_LIMIT = 5;
   const [checkInBusyId, setCheckInBusyId] = useState(null);
   const [quickCheckinOpen, setQuickCheckinOpen] = useState(false);
+  // Walk-in intake: someone not on file, here for a quick service. Creating
+  // the record is never the goal on its own — the point is to serve the dog —
+  // so the new pair is handed straight to the booking modal.
+  const [walkInOpen, setWalkInOpen] = useState(false);
+  const [walkInBooking, setWalkInBooking] = useState(null);
   // Front Desk V2 — "Book a Service" quick action opens the SAME existing
   // AdminBookingModal used everywhere else, just without the check-in preset.
   const [bookServiceOpen, setBookServiceOpen] = useState(false);
@@ -940,6 +949,11 @@ export default function Pos({ onOpenShopManager } = {}) {
                                   sub="Make a reservation" onClick={() => setBookServiceOpen(true)}
                                   testid="pos-quick-book-service"/>
           )}
+          {canClientsEdit && (
+            <FrontDeskQuickAction icon="fa-paw" tone="orange" title="New Walk-In"
+                                  sub="Not a client yet — nail trim, bath" onClick={() => setWalkInOpen(true)}
+                                  testid="pos-quick-walk-in"/>
+          )}
           <FrontDeskQuickAction icon="fa-bag-shopping" tone="purple" title="Online Orders"
                                 sub="Manage pickups & fulfillment" onClick={() => toggleRegisterPanel("orders")}
                                 active={onlineOrdersOpen} badge={onlineOrdersUnseenCount}
@@ -1642,6 +1656,25 @@ export default function Pos({ onOpenShopManager } = {}) {
             loadRoster();
             if (selectedClient) refreshClientInvoice(selectedClient.id);
           }}
+        />
+      )}
+      {walkInOpen && (
+        <WalkInModal
+          onClose={() => setWalkInOpen(false)}
+          onCreated={({ client, dog }) => {
+            setWalkInOpen(false);
+            setWalkInBooking({ clientId: client.id, dogId: dog.id });
+          }}
+        />
+      )}
+      {walkInBooking && (
+        <AdminBookingModal
+          defaultCheckIn={true}
+          presetClientId={walkInBooking.clientId}
+          presetDogId={walkInBooking.dogId}
+          presetServiceType="grooming"
+          onClose={() => setWalkInBooking(null)}
+          onCreated={() => { setWalkInBooking(null); loadRoster(); }}
         />
       )}
       {quickCheckinOpen && (
