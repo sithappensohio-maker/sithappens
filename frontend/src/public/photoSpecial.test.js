@@ -104,11 +104,31 @@ test("the public route is registered", () => {
 
 // ------------------------------------------------------------------- admin
 
-test("the admin tab is registered everywhere a tab has to be registered", () => {
+test("the admin tab is registered in all FOUR places a tab has to be registered", () => {
+  // Four, not three. An earlier version of this test checked the first three
+  // and passed while the tab was invisible in the running app, because the
+  // sidebar renders from NAV_GROUPS and nothing had put the tab in a group.
   expect(appSrc).toMatch(/\{ id: "photo_specials", label: "Photo Specials", icon: "fa-[a-z-]+", perm: "manage_events" \}/);
   expect(appSrc).toMatch(/tab === "photo_specials" && navAllowed\("photo_specials"\) && <PhotoSpecials \/>/);
   expect(routesSrc).toMatch(/photo_specials: "\/admin\/photo-specials"/);
   expect(routesSrc).toMatch(/"photo-specials": "photo_specials"/);
+
+  const groups = appSrc.slice(appSrc.indexOf("const NAV_GROUPS = ["), appSrc.indexOf("];", appSrc.indexOf("const NAV_GROUPS = [")));
+  expect(groups).toContain('"photo_specials"');
+});
+
+test("every sidebar-visible admin tab actually belongs to a nav group", () => {
+  // The general version of the same bug: a tab defined but never grouped is
+  // reachable only by typing its URL, which is indistinguishable from "the
+  // feature was never deployed".
+  const tabsBlock = appSrc.slice(appSrc.indexOf('{ id: "today", label: "Today"'));
+  const tabsEnd = tabsBlock.indexOf("\n  ];");
+  const tabs = [...tabsBlock.slice(0, tabsEnd).matchAll(/\{ id: "([a-z_]+)"[^}]*\}/g)]
+    .filter((m) => !/sidebar: false/.test(m[0]))
+    .map((m) => m[1]);
+  const groups = appSrc.slice(appSrc.indexOf("const NAV_GROUPS = ["), appSrc.indexOf("];", appSrc.indexOf("const NAV_GROUPS = [")));
+  const ungrouped = tabs.filter((id) => !groups.includes(`"${id}"`));
+  expect(ungrouped).toEqual([]);
 });
 
 test("admin can configure everything the event needs without a code change", () => {

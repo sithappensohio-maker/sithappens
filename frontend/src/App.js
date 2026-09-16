@@ -183,7 +183,7 @@ function AdminShell() {
   // landing workspace while Dashboard-only tools are migrated into it.
   const NAV_GROUPS = [
     { label: "Daily Work", ids: ["today", "dashboard", "action_center", "pos", "clients", "inquiries", "dogs", "messages"] },
-    { label: "Schedule", ids: ["schedule", "bookings", "waitlist", "recurring", "events"] },
+    { label: "Schedule", ids: ["schedule", "bookings", "waitlist", "recurring", "events", "photo_specials"] },
     { label: "Care", ids: ["runsheet", "care", "kennel", "incidents"] },
     { label: "Training", ids: ["pipeline", "school_hq", "rewards_center", "trophies"] },
     { label: "Shop", ids: ["shop_manager"] },

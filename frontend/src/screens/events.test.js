@@ -59,7 +59,11 @@ describe("admin Events tab", () => {
   test("registered in nav, render and adminRoutes (the three places a tab needs)", () => {
     expect(app).toMatch(/\{ id: "events", label: "Events", icon: "fa-[a-z-]+", perm: "manage_events" \}/);
     expect(app).toMatch(/\{tab === "events" && navAllowed\("events"\) && <Events can=\{can\} \/>\}/);
-    expect(app).toMatch(/ids: \["schedule", "bookings", "waitlist", "recurring", "events"\]/);
+    // Events must be IN the Schedule group — but not that the group contains
+    // only these tabs. Pinning the whole list made adding any new Schedule tab
+    // fail here, which says nothing about whether Events is still registered.
+    const schedule = app.slice(app.indexOf('{ label: "Schedule", ids: ['));
+    expect(schedule.slice(0, schedule.indexOf("]"))).toContain('"events"');
     expect(adminPathForTab("events")).toBe("/admin/events");
     expect(parseAdminLocation("/admin/events").tab).toBe("events");
   });
