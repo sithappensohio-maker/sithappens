@@ -8,15 +8,19 @@ server -> domain service, never domain service -> server.
 from __future__ import annotations
 
 import logging
+import uuid
+from datetime import datetime, timezone
 from typing import Any, Awaitable, Callable, Dict, List, Optional
 
 from fastapi import HTTPException
+from pydantic import BaseModel, Field
 
 from board_train_scheduling import apply_board_train_span, repair_open_board_train_booking_spans
 from board_train_workspace_access import SUPPLEMENTAL_LABEL, _draft_lesson_id
 from trainer_delivery_enforcement import (
     BOARD_TRAIN_SLOTS,
     _auto_closeout_if_ready,
+    _closed_closeout,
     _booking_drafts_for_day,
     _draft_status,
     _today_row_board_train_status,
@@ -318,26 +322,215 @@ async def after_completion_worker(*, db: Any, draft_id: str, plan: Dict[str, Any
         logger.exception("Board & Train daily closeout failed after session %s", draft_id)
 
 
-async def ensure_board_train_checkout_ready(*, db: Any, booking: dict, business_day: str) -> None:
-    if not booking or not await is_board_train_booking(db, booking):
-        return
-    readiness = await board_train_readiness(db, booking, business_day=business_day)
-    if readiness.get("ready"):
-        return
-    incomplete = readiness.get("incomplete_days") or []
+# The three genuinely different reasons a required session has no record.
+# They are kept apart because they mean different things commercially: one is
+# the owner changing their plans, one is us not delivering what was sold, and
+# one is only paperwork. Collapsing them would make the report useless.
+SESSION_RESOLUTIONS = {
+    "ended_early": "Stay ended early",
+    "not_delivered": "Not delivered",
+    "recorded_late": "Done, not written up",
+}
+
+
+class BoardTrainSessionResolution(BaseModel):
+    """One answer about one missing AM or PM session."""
+
+    date: str = Field(min_length=10, max_length=10)
+    slot: str = Field(min_length=2, max_length=2)
+    outcome: str = Field(min_length=3, max_length=32)
+
+
+def _unresolved_sessions(incomplete_days: List[dict]) -> List[dict]:
+    """Every AM/PM slot that still needs an answer before checkout can run.
+
+    A day whose two sessions are both finished but which never got its
+    closeout row written contributes NO sessions — nothing was missed there,
+    the day just needs closing, and asking "did this happen?" about a session
+    that demonstrably happened would be nonsense.
+    """
+    out: List[dict] = []
+    for row in incomplete_days or []:
+        for slot in BOARD_TRAIN_SLOTS:
+            status = _text(row.get(slot.lower()))
+            if status != "completed":
+                out.append({"date": _text(row.get("date")), "slot": slot, "status": status})
+    return out
+
+
+def _resolution_closeout(day_answers: Dict[str, str], actor: dict, slots: Dict[str, dict]) -> dict:
+    """The closeout row a resolved day gets.
+
+    `mode` says plainly that this day was closed at the counter rather than by
+    the trainer finishing the work, so nothing downstream can mistake it for a
+    normally completed day. It carries no outcomes, scores or lesson movement:
+    "done, not written up" is a statement about paperwork, never a substitute
+    for the training record that was never made.
+    """
+    return {
+        "status": "closed",
+        "mode": "checkout_resolution",
+        "required_slots": list(BOARD_TRAIN_SLOTS),
+        "session_outcomes": dict(day_answers),
+        "session_draft_ids": {
+            slot: (slots.get(slot) or {}).get("draft_id") or (slots.get(slot) or {}).get("id")
+            for slot in BOARD_TRAIN_SLOTS
+        },
+        "closed_at": datetime.now(timezone.utc).isoformat(),
+        "closed_by": actor.get("id") or "",
+        "closed_by_name": actor.get("name") or actor.get("email") or "",
+    }
+
+
+def _checkout_blocked(incomplete: List[dict], sessions: List[dict], *, message: str,
+                      booking: Optional[dict] = None) -> HTTPException:
     missing = "; ".join(
         f"{row.get('date')}: AM {row.get('am')}, PM {row.get('pm')}" for row in incomplete[:8]
     )
-    raise HTTPException(
+    return HTTPException(
         status_code=409,
         detail={
             "code": "board_train_training_incomplete",
-            "message": "Board & Train checkout is blocked until every required AM/PM training day is complete.",
-            "msg": "Board & Train checkout is blocked until every required AM/PM training day is complete."
-                   + (f" Missing: {missing}" if missing else ""),
+            "message": message,
+            "msg": message + (f" Missing: {missing}" if missing else ""),
             "incomplete_days": incomplete,
+            # Which dog, so a household checkout can name the one that stopped
+            # it instead of reporting a nameless failure for the whole group.
+            "booking_id": (booking or {}).get("id"),
+            "dog_name": (booking or {}).get("dog_name") or "",
+            # What the checkout screen needs in order to ask the question:
+            # one row per session still waiting on an answer, and the answers
+            # on offer. The screen never hard-codes the list.
+            "unresolved_sessions": sessions,
+            "resolutions": [{"value": k, "label": v} for k, v in SESSION_RESOLUTIONS.items()],
         },
     )
+
+
+async def ensure_board_train_checkout_ready(
+    *,
+    db: Any,
+    booking: dict,
+    business_day: str,
+    resolutions: Optional[List[Any]] = None,
+    actor: Optional[dict] = None,
+) -> Optional[dict]:
+    """Block a Board & Train checkout until every required day is accounted for.
+
+    Finishing the training is still the normal way through. What this adds is
+    a way to say what happened when it was not — because an owner who collects
+    their dog two days early leaves sessions that were never going to happen,
+    and until now that stay could not be checked out at all.
+
+    Whoever runs the checkout answers for each missing session and their name
+    goes on the record. There is no separate permission: there is nothing here
+    that someone trusted to check the dog out should not be able to say. The
+    record is what makes it accountable, not a gate.
+    """
+    if not booking or not await is_board_train_booking(db, booking):
+        return None
+    readiness = await board_train_readiness(db, booking, business_day=business_day)
+    if readiness.get("ready"):
+        return None
+
+    incomplete = readiness.get("incomplete_days") or []
+
+    # Answers given on an earlier attempt still count. A day resolved at the
+    # counter never becomes "complete" in the trainer's sense — the sessions
+    # really are missing and the record must keep saying so — so readiness
+    # alone would ask the same questions again after any later failure.
+    answers: Dict[str, str] = {}
+    for day, row in (booking.get("training_daily_closeouts") or {}).items():
+        if isinstance(row, dict) and row.get("mode") == "checkout_resolution":
+            for slot, outcome in (row.get("session_outcomes") or {}).items():
+                answers[f"{_text(day)}|{_text(slot)}"] = _text(outcome)
+
+    outstanding = [s for s in _unresolved_sessions(incomplete)
+                   if f"{s['date']}|{s['slot']}" not in answers]
+
+    supplied: Dict[str, str] = {}
+    for item in resolutions or []:
+        data = item if isinstance(item, dict) else item.model_dump()
+        outcome = _text(data.get("outcome"))
+        if outcome not in SESSION_RESOLUTIONS:
+            raise HTTPException(
+                status_code=400,
+                detail=f"'{outcome or 'blank'}' is not one of the answers for a missing session.",
+            )
+        day = _text(data.get("date"))
+        slot = normalize_bt_label(_text(data.get("slot"))) or _text(data.get("slot")).upper()
+        if day and slot:
+            supplied[f"{day}|{slot}"] = outcome
+            answers[f"{day}|{slot}"] = outcome
+
+    still_open = [s for s in outstanding if f"{s['date']}|{s['slot']}" not in answers]
+    if still_open:
+        raise _checkout_blocked(
+            incomplete, still_open,
+            message=("Board & Train checkout is blocked until every required AM/PM training day is complete."
+                     if not answers else
+                     "Some missing sessions still need an answer before this stay can be checked out."),
+            booking=booking,
+        )
+
+    # Every gap has an answer. Close the days out and record what was said.
+    actor = actor or {}
+    by_day: Dict[str, Dict[str, str]] = {}
+    for key, outcome in answers.items():
+        day, slot = key.split("|", 1)
+        by_day.setdefault(day, {})[slot] = outcome
+
+    resolved: List[dict] = []
+    wrote_closeout = False
+    for row in incomplete:
+        day = _text(row.get("date"))
+        if not day:
+            continue
+        for slot, outcome in sorted((by_day.get(day) or {}).items()):
+            resolved.append({"date": day, "slot": slot, "outcome": outcome})
+        if _closed_closeout(booking, day):
+            continue
+        drafts = await _booking_drafts_for_day(db, booking, day)
+        closeout = _resolution_closeout(by_day.get(day) or {}, actor, slots_from_drafts(drafts))
+        field = f"training_daily_closeouts.{day}"
+        await db.bookings.update_one(
+            {"id": booking.get("id"), field: {"$exists": False}},
+            {"$set": {field: closeout},
+             "$push": {"training_daily_closeout_history": {**closeout, "business_date": day,
+                                                           "event": "board_train_daily_closeout"}}},
+        )
+        wrote_closeout = True
+
+    if not supplied and not wrote_closeout:
+        # Everything was already answered on an earlier attempt and there is
+        # nothing new to write. Hand back what was recorded then, so a retry
+        # cannot overwrite the name of whoever actually made the call.
+        return booking.get("board_train_checkout_resolution") or None
+
+    counts = {key: 0 for key in SESSION_RESOLUTIONS}
+    for item in resolved:
+        counts[item["outcome"]] = counts.get(item["outcome"], 0) + 1
+    record = {
+        "id": str(uuid.uuid4()),
+        "at": datetime.now(timezone.utc).isoformat(),
+        "by": actor.get("id") or "",
+        "by_name": actor.get("name") or actor.get("email") or "",
+        "sessions": resolved,
+        "counts": counts,
+        "days_closed": sorted({item["date"] for item in resolved}),
+    }
+    # Written here rather than folded into the checkout's own update, so the
+    # answers and the closeouts they produced land together. A checkout that
+    # then fails on price or payment does not throw away what the operator has
+    # already told us, and the retry sails through instead of asking again.
+    await db.bookings.update_one(
+        {"id": booking.get("id")},
+        {"$set": {"board_train_checkout_resolution": record},
+         "$push": {"board_train_checkout_resolution_history": record}},
+    )
+    logger.info("Board & Train checkout resolution on %s by %s: %s",
+                booking.get("id"), record["by_name"] or record["by"], counts)
+    return record
 
 
 async def enrich_training_today_rows(*, db: Any, rows: List[dict], business_day: str) -> List[dict]:

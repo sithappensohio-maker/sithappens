@@ -20,6 +20,14 @@ import ReceiptLogo from "./ReceiptLogo";
  *   onClose          — fires when the modal should close (after success or cancel)
  *   onRequestCancel  — optional; fires when the user clicks "Cancel booking instead"
  */
+const fmtBtDay = (iso) => {
+  if (!iso) return "";
+  const d = new Date(`${iso}T00:00:00`);
+  return Number.isNaN(d.getTime())
+    ? iso
+    : d.toLocaleDateString(undefined, { weekday: "short", month: "short", day: "numeric" });
+};
+
 export function CheckoutModal({ booking, services, onClose, onRequestCancel }) {
   // Sprint 110ao — pauses background polling while this modal is open so
   // the booking row can't churn under the admin's input.
@@ -204,6 +212,11 @@ export function CheckoutModal({ booking, services, onClose, onRequestCancel }) {
 
   const [busy, setBusy] = useState(false);
   const [err, setErr] = useState("");
+  // A Board & Train stay whose training record has gaps in it. The backend
+  // refuses the checkout and hands back the sessions it wants accounted for;
+  // this holds that question, and the answers given to it.
+  const [btBlock, setBtBlock] = useState(null);
+  const [btAnswers, setBtAnswers] = useState({});
   // Front-desk POS hardware integration — once the checkout itself has
   // already fully committed, this tracks the SEPARATE, purely physical
   // outcome of printing/opening the drawer. A hardware failure here never
@@ -420,6 +433,22 @@ export function CheckoutModal({ booking, services, onClose, onRequestCancel }) {
   const preTaxChargedToday = Math.max(0, preTaxBeforeCheckoutDiscount - checkoutDiscountApplied);
   const checkoutDiscountTooHigh = checkoutDiscountRequested > preTaxBeforeCheckoutDiscount + 0.005;
   const checkoutDiscountReasonMissing = checkoutDiscountRequested > 0 && checkoutDiscountReason.trim().length < 3;
+
+  // ── Board & Train sessions with no record ─────────────────────────────
+  // Every session the backend is asking about, grouped into the days they
+  // belong to so the list reads like a calendar rather than a queue.
+  const btSessions = btBlock?.unresolved_sessions || [];
+  const btChoices = btBlock?.resolutions || [];
+  const btDays = btSessions.reduce((acc, s) => {
+    (acc[s.date] = acc[s.date] || []).push(s);
+    return acc;
+  }, {});
+  const btUnanswered = btSessions.filter((s) => !btAnswers[`${s.date}|${s.slot}`]).length;
+  const answerAll = (outcome) => setBtAnswers(
+    Object.fromEntries(btSessions.map((s) => [`${s.date}|${s.slot}`, outcome])));
+  const btCounts = btChoices.map((c) => ({
+    ...c, n: btSessions.filter((s) => btAnswers[`${s.date}|${s.slot}`] === c.value).length,
+  })).filter((c) => c.n > 0);
   const salesTaxCfg = moneyModifierPreview?.sales_tax || {};
   const salesTaxRate = salesTaxCfg.enabled && salesTaxCfg.applies
     ? Math.max(0, Number(salesTaxCfg.rate_pct || 0))
@@ -449,6 +478,11 @@ export function CheckoutModal({ booking, services, onClose, onRequestCancel }) {
       if (checkoutDiscountRequested > 0) {
         body.checkout_discount_amount = Number(checkoutDiscountRequested.toFixed(2));
         body.checkout_discount_reason = checkoutDiscountReason.trim();
+      }
+      if (btSessions.length) {
+        body.board_train_resolution = btSessions.map((s) => ({
+          date: s.date, slot: s.slot, outcome: btAnswers[`${s.date}|${s.slot}`],
+        })).filter((s) => s.outcome);
       }
       if (isBoarding && extraNights > 0) {
         body.extra_nights = Number(extraNights);
@@ -535,7 +569,15 @@ export function CheckoutModal({ booking, services, onClose, onRequestCancel }) {
         onClose();
       }
     } catch (e) {
-      setErr(e.response?.data?.detail || "Check-out failed");
+      // The interceptor flattens `detail` to a sentence, so anything that
+      // needs to branch on a structured error has to read detail_object.
+      const detail = e.response?.data?.detail_object;
+      if (detail?.code === "board_train_training_incomplete") {
+        setBtBlock(detail);
+        setErr("");
+      } else {
+        setErr(e.response?.data?.detail || "Check-out failed");
+      }
       setBusy(false);
     }
   };
@@ -1115,7 +1157,80 @@ export function CheckoutModal({ booking, services, onClose, onRequestCancel }) {
           </div>
         </div>
 
-        {err && <p className="text-red-400 text-[15px] mb-3">{err}</p>}
+        {err && <p className="text-red-400 text-[15px] mb-3" data-testid="checkout-error">{err}</p>}
+
+        {btBlock && (
+          /* The stay cannot just be waved through, but it must not be a dead
+             end either — an owner collecting early leaves sessions that were
+             never going to happen. So instead of a red sentence, the desk is
+             asked what happened to each one. */
+          <div className="mb-4 rounded-xl border border-shOrange/60 bg-shOrange/[0.07] p-3.5"
+               data-testid="checkout-board-train-block">
+            <p className="text-shOrange font-black uppercase tracking-widest text-[12px]">
+              Training sessions with no record
+            </p>
+            <p className="text-white/80 text-[14px] mt-1.5">
+              {btBlock.dog_name ? `${btBlock.dog_name}'s stay has ` : "This stay has "}
+              {btSessions.length} session{btSessions.length === 1 ? "" : "s"} that were never written up.
+              Say what happened to each one and the checkout can go ahead.
+            </p>
+
+            {/* The usual case is that the whole tail of the stay has the same
+                answer — the owner came early. One control for that beats
+                tapping fourteen identical ones. */}
+            <div className="flex items-center gap-2 mt-3">
+              <span className="text-[11px] font-black uppercase tracking-widest text-white/50 shrink-0">Set all</span>
+              <select value="" data-testid="checkout-bt-all"
+                      onChange={(e) => e.target.value && answerAll(e.target.value)}
+                      className="flex-1 min-w-0 min-h-[40px] rounded-lg border border-bgHover bg-bgHeader/60 px-2.5 text-[13px] font-black text-white/60 focus:outline-none focus:border-shOrange">
+                <option value="">Same answer for all {btSessions.length}…</option>
+                {btChoices.map((c) => (
+                  <option key={c.value} value={c.value}>{c.label}</option>
+                ))}
+              </select>
+            </div>
+
+            <div className="mt-3 space-y-2.5 max-h-[300px] overflow-y-auto" data-testid="checkout-bt-sessions">
+              {Object.entries(btDays).map(([day, sessions]) => (
+                <div key={day}>
+                  <p className="text-[11.5px] font-black uppercase tracking-widest text-white/50">{fmtBtDay(day)}</p>
+                  {sessions.map((s) => {
+                    const key = `${s.date}|${s.slot}`;
+                    return (
+                      /* One line per session. Three buttons each would be a
+                         wall of eighty-odd controls on a fortnight's stay,
+                         and would not fit across a phone anyway. */
+                      <div key={key} className="flex items-center gap-2 mt-1.5">
+                        <span className="w-[34px] text-[13px] font-black text-white/85 shrink-0">{s.slot}</span>
+                        <select value={btAnswers[key] || ""}
+                                onChange={(e) => setBtAnswers((prev) => ({ ...prev, [key]: e.target.value }))}
+                                data-testid={`checkout-bt-session-${s.date}-${s.slot}`}
+                                className={`flex-1 min-w-0 min-h-[40px] rounded-lg border bg-bgHeader/60 px-2.5 text-[13px] font-black focus:outline-none focus:border-shOrange ${
+                                  btAnswers[key] ? "border-shOrange/70 text-white" : "border-bgHover text-white/50"}`}>
+                          <option value="">What happened?</option>
+                          {btChoices.map((c) => (
+                            <option key={c.value} value={c.value}>{c.label}</option>
+                          ))}
+                        </select>
+                      </div>
+                    );
+                  })}
+                </div>
+              ))}
+            </div>
+
+            {btUnanswered > 0 ? (
+              <p className="text-white/55 text-[13px] mt-3" data-testid="checkout-bt-remaining">
+                {btUnanswered} still to answer.
+              </p>
+            ) : (
+              <p className="text-white/75 text-[13px] mt-3" data-testid="checkout-bt-summary">
+                {btCounts.map((c) => `${c.n} ${c.label.toLowerCase()}`).join(" · ")}.
+                {" Nothing is adjusted automatically — use the discount above if money should come off."}
+              </p>
+            )}
+          </div>
+        )}
 
         <div className="flex items-center justify-between gap-3">
           {onRequestCancel ? (
@@ -1126,7 +1241,7 @@ export function CheckoutModal({ booking, services, onClose, onRequestCancel }) {
           ) : <span/>}
           <div className="flex gap-3">
             <button onClick={onClose} className="text-gray-500 font-black uppercase text-[14px] tracking-widest">Close</button>
-            <button onClick={submit} disabled={busy || groupLoading || checkoutDiscountTooHigh || checkoutDiscountReasonMissing} data-testid="confirm-checkout"
+            <button onClick={submit} disabled={busy || groupLoading || checkoutDiscountTooHigh || checkoutDiscountReasonMissing || btUnanswered > 0} data-testid="confirm-checkout"
                     className="bg-shBlue text-white px-8 py-3 rounded font-black text-[14px] uppercase tracking-widest shadow-lg disabled:opacity-50">
               {busy ? "Checking out…" : (groupLoading ? "Loading household…" : (isGroupCheckout ? `Check Out All ${groupDogNames.length} Dogs` : "Complete Check-out"))}
             </button>

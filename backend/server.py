@@ -1137,6 +1137,9 @@ class CheckoutIn(BaseModel):
     # Short operator note for why the price was manually changed — stored on
     # the booking's manual_price_override audit stamp alongside who/when.
     base_price_reason: Optional[str] = Field(default=None, max_length=300)
+    # What happened to each Board & Train session that has no record — see
+    # training_domain_services.ensure_board_train_checkout_ready.
+    board_train_resolution: List[training_domain_services.BoardTrainSessionResolution] = []
     additional_cash_charge: float = Field(default=0, ge=0, le=100000)
     add_ons: List[CheckoutAddOn] = []
     # Sprint 110di-51 — Partial payment. When provided AND less than the
@@ -9559,7 +9562,8 @@ async def _check_out_locked(
     if not booking:
         raise HTTPException(status_code=404, detail="Booking not found")
     await training_domain_services.ensure_board_train_checkout_ready(
-        db=db, booking=booking, business_day=business_today().isoformat())
+        db=db, booking=booking, business_day=business_today().isoformat(),
+        resolutions=(body.board_train_resolution if body else None), actor=user)
     # Client-specific pricing fix — see _refresh_booking_price_for_current_override's
     # docstring. Refreshes the in-memory booking so every downstream read of
     # estimated_price/unit_price/pricing_snapshot below already reflects the
