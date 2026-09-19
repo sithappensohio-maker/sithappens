@@ -161,18 +161,31 @@ def test_c_training_untaxed_full_revenue():
     _service_checkout_case("training")
 
 
-# ── grooming stays configurable (existing engine untouched where intended) ──
-def test_grooming_toggle_still_works():
-    cid, did = _mk_client_dog()
-    bid = _mk_booking(cid, did, "grooming")
-    with _OpenRegisterDay() as day:
-        try:
-            _checkout(bid, 100.0)
-            b = run(server.db.bookings.find_one({"id": bid}, {"_id": 0}))
-            assert abs(float(b["tax_amount"]) - 7.0) < 0.005
-            assert float(b["actual_price"]) == 107.0
-        finally:
-            _cleanup_booking(cid, did, [bid])
+# ── grooming and photography are services too ─────────────────────
+# These two used to be owner-configurable and were taxed by default. They are
+# services, so under the one rule they are not taxed either — no matter what
+# the old applies_to toggles say, which the fixture turns all the way on.
+def test_grooming_is_a_service_and_is_never_taxed():
+    _service_checkout_case("grooming")
+
+
+def test_photography_is_a_service_and_is_never_taxed():
+    _service_checkout_case("photography")
+
+
+def test_no_booking_of_any_kind_is_taxed():
+    # The catch-all: whatever a stay is called, a booking is a service.
+    for service_type in ("assessment", "meet_and_greet", "", "something_new"):
+        cid, did = _mk_client_dog()
+        bid = _mk_booking(cid, did, service_type)
+        with _OpenRegisterDay():
+            try:
+                _checkout(bid, 100.0)
+                b = run(server.db.bookings.find_one({"id": bid}, {"_id": 0}))
+                assert float(b["actual_price"]) == 100.0, service_type
+                assert not b.get("tax_amount"), service_type
+            finally:
+                _cleanup_booking(cid, did, [bid])
 
 
 # ── POS/pricing helpers ─────────────────────────────────────────────────────

@@ -21,6 +21,7 @@ from collections import deque
 from difflib import SequenceMatcher
 import bcrypt
 import jwt
+import sales_tax_policy
 from datetime import datetime, timezone, timedelta, date, time
 from zoneinfo import ZoneInfo
 from urllib.parse import urlsplit, quote
@@ -1061,9 +1062,13 @@ class BookingOut(BaseModel):
     photo_special_id: Optional[str] = None
     vaccine_booking_exception: Optional[str] = None
     no_show: Optional[bool] = None
-    # Sprint 110aw — Sales tax snapshot. When `sales_tax.enabled` and the
-    # service type is in `applies_to`, `actual_price` includes tax and these
-    # fields carry the breakdown so year-end filing / reports stay honest.
+    # Merchandise sold at this pickup, as its own Register sale — id, subtotal
+    # and the tax on it. Declared here because BookingOut silently drops what
+    # it does not declare, and the screen has to be able to show what was sold.
+    pickup_sale: Optional[Dict[str, Any]] = None
+    # Sales tax snapshot on HISTORICAL bookings. Nothing on a booking is
+    # sales-taxable any more (services never are — see sales_tax_policy), so
+    # these only ever carry what older checkouts already stored.
     tax_amount: Optional[float] = None
     tax_rate_pct: Optional[float] = None
     taxable_cash_amount: Optional[float] = None
@@ -1140,6 +1145,12 @@ class CheckoutIn(BaseModel):
     # What happened to each Board & Train session that has no record — see
     # training_domain_services.ensure_board_train_checkout_ready.
     board_train_resolution: List[training_domain_services.BoardTrainSessionResolution] = []
+    # Merchandise sold at pickup. These are NOT booking add-ons: they ring
+    # through the ordinary Register sale, so stock, sales tax, retail revenue
+    # and the receipt all behave exactly as they do at the till. See
+    # _ring_pickup_merchandise.
+    retail_lines: List["PosSaleLineIn"] = []
+    retail_idempotency_key: Optional[str] = Field(default=None, min_length=8, max_length=128)
     additional_cash_charge: float = Field(default=0, ge=0, le=100000)
     add_ons: List[CheckoutAddOn] = []
     # Sprint 110di-51 — Partial payment. When provided AND less than the
@@ -7016,27 +7027,13 @@ async def early_checkout_quote(booking_id: str, _: dict = Depends(require_employ
     }
 
 
-# Step 4C-1 — Ohio taxability policy: Sit Happens SERVICES are never
-# sales-taxable, no matter how the owner-facing sales_tax.applies_to
-# toggles are (or were) configured. Dog training, daycare, and boarding /
-# kenneling are services under Ohio law for this business — they remain
-# BUSINESS INCOME everywhere (Finance, P&L, Schedule C, quarterly), they
-# just never generate sales tax. Enforced server-side at every booking
-# tax computation; grooming/photography stay owner-configurable because
-# their Ohio treatment differs and was already deliberately toggleable.
-# Assessment/meet-&-greet and any unknown service type fall through to
-# the applies_to lookup, which defaults to NOT taxable.
-SALES_TAX_EXEMPT_SERVICE_TYPES = frozenset({"daycare", "boarding", "training"})
-
-
-def _service_type_sales_taxable(service_type: Optional[str], tax_cfg: Dict[str, Any]) -> bool:
-    """THE booking-service taxability rule: exempt service kinds are
-    deterministically non-taxable; everything else only if explicitly
-    enabled in sales_tax.applies_to (absent → not taxable)."""
-    svc = (service_type or "").strip().lower()
-    if not svc or svc in SALES_TAX_EXEMPT_SERVICE_TYPES:
-        return False
-    return bool(((tax_cfg or {}).get("applies_to") or {}).get(svc))
+def _service_type_sales_taxable(service_type: Optional[str] = None,
+                                tax_cfg: Optional[Dict[str, Any]] = None) -> bool:
+    """False, always. A booking is a service, and services are never
+    sales-taxable — see sales_tax_policy for the rule and why there is no
+    longer a per-category toggle. Grooming and photography used to be
+    switchable here; they are services too, so they are not any more."""
+    return bool(sales_tax_policy.service_tax_rate(tax_cfg))
 
 
 async def money_modifier_preview(
@@ -9235,6 +9232,10 @@ async def check_out_group(
                 payload["add_ons"] = []
                 payload["base_price"] = None
                 payload["additional_cash_charge"] = 0
+                # Merchandise belongs to the one checkout it was rung on, not
+                # to every dog in the household. Ringing it per dog would sell
+                # the same bag of food three times.
+                payload["retail_lines"] = []
             # In a mixed credits + cash group, each row calculates its own exact
             # uncovered cash. A combined amount_paid must not be copied to every dog.
             if bool(body.use_credits):
@@ -9564,6 +9565,13 @@ async def _check_out_locked(
     await training_domain_services.ensure_board_train_checkout_ready(
         db=db, booking=booking, business_day=business_today().isoformat(),
         resolutions=(body.board_train_resolution if body else None), actor=user)
+    # Merchandise bought at pickup rings FIRST, through the Register's own
+    # sale. First because it is the part that can legitimately refuse — out of
+    # stock, drawer closed — and refusing before the stay is touched leaves
+    # nothing half-done. If the checkout below then fails, the goods are still
+    # genuinely sold (the customer has them) and a retry replays that sale on
+    # its idempotency key rather than ringing it twice.
+    pickup_sale = await pos_domain_services.ring_pickup_merchandise(booking, body, user)
     # Client-specific pricing fix — see _refresh_booking_price_for_current_override's
     # docstring. Refreshes the in-memory booking so every downstream read of
     # estimated_price/unit_price/pricing_snapshot below already reflects the
@@ -10144,33 +10152,11 @@ async def _check_out_locked(
 
     # Resolve payment_status / payment_method when a charge is involved.
     is_paid_today = update.get("payment_method") == "credits"
-    # Sales tax is calculated on the portion being paid in money today.
-    # Prepaid credits are not taxed again, but cash add-ons, uncovered credit
-    # units, late fees, and other mixed-credit charges still receive tax when
-    # this service category is configured as taxable.
-    if (update.get("actual_price") or 0) > 0:
-        try:
-            settings_tx = await get_settings()
-            tx_cfg = (settings_tx or {}).get("sales_tax") or {}
-            if tx_cfg.get("enabled"):
-                svc = booking.get("service_type") or ""
-                # Step 4C-1 — services (daycare/boarding/training) are never
-                # sales-taxable regardless of the applies_to toggles.
-                if _service_type_sales_taxable(svc, tx_cfg):
-                    rate_pct = float(tx_cfg.get("rate_pct") or 0)
-                    if rate_pct > 0:
-                        pre_tax_total = float(update["actual_price"])
-                        taxable_amount = pre_tax_total
-                        if is_paid_today:
-                            taxable_amount = max(0.0, pre_tax_total - float(update.get("credit_value") or booking.get("credit_value") or 0))
-                        tax_amount = round(taxable_amount * (rate_pct / 100.0), 2)
-                        if tax_amount > 0:
-                            update["tax_amount"] = tax_amount
-                            update["tax_rate_pct"] = rate_pct
-                            update["taxable_cash_amount"] = round(taxable_amount, 2)
-                            update["actual_price"] = round(pre_tax_total + tax_amount, 2)
-        except Exception as exc:
-            logger.warning("sales tax calc failed for %s: %s", booking_id, exc)
+    # No sales tax is charged here, on any stay. Everything a booking can
+    # contain — the stay itself and every add-on sold at pickup — is a
+    # service, and services are never sales-taxable (sales_tax_policy).
+    # Merchandise is sold through the Register, which taxes it there.
+    # Bookings checked out before this keep whatever tax they stored.
     if not is_paid_today and (update.get("actual_price") or 0) > 0:
         if body.payment_method:
             update["payment_method"] = _normalize_payment_method(body.payment_method, store=True)
@@ -10406,6 +10392,11 @@ async def _check_out_locked(
         await _maybe_send_report_card_email(booking)
     except Exception as exc:
         logger.warning("Report card email on checkout failed for %s: %s", booking_id, exc)
+
+    if pickup_sale:
+        # The merchandise rang as its own Register sale; the screen shows what
+        # was sold alongside the stay rather than pretending it was one record.
+        booking["pickup_sale"] = pickup_sale
 
     return booking
 
@@ -10774,20 +10765,15 @@ def _default_settings() -> dict:
             "existing_client_pricing_message": "Existing clients may have different pricing. Sign in to view your account rate.",
             "guest_sign_in_message": "Create a free account or sign in to complete your purchase.",
         },
-        # Sprint 110aw — Sales tax (single flat rate, configurable scope).
+        # Sales tax — a single flat rate on merchandise. What it applies to
+        # is not configurable: goods are taxed, services never are. See
+        # sales_tax_policy. `applies_to` is left here, unread, only so an
+        # older stored settings document round-trips without losing keys.
         "sales_tax": {
             "enabled": False,
-            "rate_pct": 0.0,           # e.g. 8.875 for NY
+            "rate_pct": 0.0,           # Summit County OH is 6.75
             "label": "Sales Tax",
-            "applies_to": {            # which revenue lines are taxable
-                "daycare": False,
-                "boarding": False,
-                "training": False,
-                "grooming": True,      # commonly taxable in many states
-                "photography": True,
-                "retail": True,
-                "credit_packs": False,
-            },
+            "applies_to": {},
         },
         # Sit Happens pricing rule: first dog pays the normal daycare/boarding
         # rate; every additional dog in the same client booking is 50% off the
@@ -42005,11 +41991,11 @@ async def _price_shop_cart(items: List[ShopCartItemIn], client_id: Optional[str]
         try:
             settings_tx = await get_settings()
             tx_cfg = (settings_tx or {}).get("sales_tax") or {}
-            if tx_cfg.get("enabled") and float(tx_cfg.get("rate_pct") or 0) > 0:
-                applies = (tx_cfg.get("applies_to") or {})
-                if applies.get("retail", True):
-                    tax_rate_pct = float(tx_cfg["rate_pct"])
-                    tax_amount = round(taxable_subtotal * (tax_rate_pct / 100.0), 2)
+            # Same rule as the Register: goods are taxed whenever tax is on.
+            rate = sales_tax_policy.merchandise_tax_rate(tx_cfg)
+            if rate > 0:
+                tax_rate_pct = rate
+                tax_amount = sales_tax_policy.tax_on(taxable_subtotal, rate)
         except Exception as exc:
             logger.warning("Shop cart tax calc failed: %s", exc)
 
@@ -43652,6 +43638,11 @@ class PosSaleLineIn(BaseModel):
     # merchandise so existing callers keep today's (taxed) behavior; the
     # register UI presents the choice explicitly.
     custom_kind: Literal["merchandise", "service"] = "merchandise"
+
+
+# CheckoutIn carries retail lines but is declared thousands of lines earlier,
+# so its forward reference resolves here, once PosSaleLineIn actually exists.
+CheckoutIn.model_rebuild()
 
 
 class PosSaleDiscountIn(BaseModel):
@@ -47692,8 +47683,9 @@ async def _build_retail_sale_doc(
             settings_tx = await get_settings()
             tx_cfg = (settings_tx or {}).get("sales_tax") or {}
             if tx_cfg.get("enabled") and float(tx_cfg.get("rate_pct") or 0) > 0:
-                applies = (tx_cfg.get("applies_to") or {})
-                should_tax = apply_tax if apply_tax is not None else applies.get("retail", True)
+                # This form logs merchandise, so it is taxable unless the
+                # caller explicitly says otherwise for this one row.
+                should_tax = apply_tax if apply_tax is not None else True
                 if should_tax:
                     rate_pct = float(tx_cfg["rate_pct"])
                     # Treat `amount` as TOTAL incl. tax (matches a typical POS receipt).

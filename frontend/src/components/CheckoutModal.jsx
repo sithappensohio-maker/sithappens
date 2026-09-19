@@ -217,6 +217,15 @@ export function CheckoutModal({ booking, services, onClose, onRequestCancel }) {
   // this holds that question, and the answers given to it.
   const [btBlock, setBtBlock] = useState(null);
   const [btAnswers, setBtAnswers] = useState({});
+  // Merchandise bought while the dog is collected. These are NOT add-on
+  // services: they ring through the Register's own sale, so stock, sales tax
+  // and retail revenue stay where they already work.
+  const [shopItems, setShopItems] = useState([]);
+  const [shopCart, setShopCart] = useState({});
+  const [shopOpen, setShopOpen] = useState(false);
+  // One key per open modal, so a retry replays the sale instead of selling
+  // the same bag of food twice.
+  const [retailKey] = useState(() => `pickup-${Math.random().toString(36).slice(2)}${Date.now().toString(36)}`);
   // Front-desk POS hardware integration — once the checkout itself has
   // already fully committed, this tracks the SEPARATE, purely physical
   // outcome of printing/opening the drawer. A hardware failure here never
@@ -446,15 +455,49 @@ export function CheckoutModal({ booking, services, onClose, onRequestCancel }) {
   const btUnanswered = btSessions.filter((s) => !btAnswers[`${s.date}|${s.slot}`]).length;
   const answerAll = (outcome) => setBtAnswers(
     Object.fromEntries(btSessions.map((s) => [`${s.date}|${s.slot}`, outcome])));
+  // What is in the shop basket, and what it costs. The tax shown here is the
+  // same arithmetic the Register does; the server prices it again for real,
+  // so this is a preview, never the number that gets charged.
+  const shopLines = shopItems
+    .map((it) => ({ item: it, qty: shopCart[it.id] || 0 }))
+    .filter((l) => l.qty > 0);
+  const shopSubtotal = shopLines.reduce((n, l) => n + l.item.effective_price * l.qty, 0);
+  const shopTaxable = shopLines.reduce((n, l) => n + (l.item.taxable ? l.item.effective_price * l.qty : 0), 0);
+  const shopTax = Math.round(shopTaxable * (salesTaxRateRaw / 100) * 100) / 100;
+  const shopTotal = Math.round((shopSubtotal + shopTax) * 100) / 100;
+  const setShopQty = (id, qty) => setShopCart((prev) => {
+    const next = { ...prev };
+    if (qty > 0) next[id] = qty; else delete next[id];
+    return next;
+  });
+
   const btCounts = btChoices.map((c) => ({
     ...c, n: btSessions.filter((s) => btAnswers[`${s.date}|${s.slot}`] === c.value).length,
   })).filter((c) => c.n > 0);
   const salesTaxCfg = moneyModifierPreview?.sales_tax || {};
+  // The stay is never taxed (services aren't), but merchandise is — so the
+  // shop basket needs the configured rate itself, not the booking's answer.
+  const salesTaxRateRaw = salesTaxCfg.enabled ? Math.max(0, Number(salesTaxCfg.rate_pct || 0)) : 0;
   const salesTaxRate = salesTaxCfg.enabled && salesTaxCfg.applies
     ? Math.max(0, Number(salesTaxCfg.rate_pct || 0))
     : 0;
   const salesTaxAmount = Math.round(preTaxChargedToday * (salesTaxRate / 100) * 100) / 100;
   const chargedToday = Math.round((preTaxChargedToday + salesTaxAmount) * 100) / 100;
+  // One number at the counter: the stay plus anything bought with it.
+  const dueToday = Math.round((chargedToday + shopTotal) * 100) / 100;
+
+  useEffect(() => {
+    let alive = true;
+    api.get("/pos/catalog", { params: booking.client_id ? { client_id: booking.client_id } : {} })
+      .then(({ data }) => {
+        if (!alive) return;
+        // Products only. Credit packs and training programs are services and
+        // belong in the Register, not on a pickup.
+        setShopItems((data?.items || []).filter((it) => it.kind === "product" && it.in_stock));
+      })
+      .catch(() => { if (alive) setShopItems([]); });
+    return () => { alive = false; };
+  }, [booking.client_id]);
 
   const submit = async () => {
     setErr("");
@@ -478,6 +521,12 @@ export function CheckoutModal({ booking, services, onClose, onRequestCancel }) {
       if (checkoutDiscountRequested > 0) {
         body.checkout_discount_amount = Number(checkoutDiscountRequested.toFixed(2));
         body.checkout_discount_reason = checkoutDiscountReason.trim();
+      }
+      if (shopLines.length) {
+        body.retail_lines = shopLines.map((l) => ({ kind: "retail", product_id: l.item.id, qty: l.qty }));
+        body.retail_idempotency_key = retailKey;
+        // Merchandise always takes real money, whatever the stay is doing.
+        body.payment_method = payMethod;
       }
       if (btSessions.length) {
         body.board_train_resolution = btSessions.map((s) => ({
@@ -893,6 +942,80 @@ export function CheckoutModal({ booking, services, onClose, onRequestCancel }) {
           )}
         </div>
 
+        {/* Section 2b — Merchandise. Folded away by default: most pickups
+            sell nothing, and an open shelf of products would push the actual
+            checkout down the screen every single time. */}
+        {shopItems.length > 0 && (
+          <div className="mb-5 border border-bgHover rounded-lg p-4 bg-bgBase" data-testid="checkout-shop">
+            <button type="button" onClick={() => setShopOpen((v) => !v)} data-testid="checkout-shop-toggle"
+                    className="w-full flex items-center justify-between gap-2 text-left">
+              <span className="text-[13px] uppercase tracking-widest text-gray-500 font-black">
+                <i className="fas fa-shopping-basket mr-1.5"/>Buying anything?
+              </span>
+              <span className="text-[13px] font-black text-white/70">
+                {shopLines.length > 0 ? `$${shopTotal.toFixed(2)}` : ""}
+                <i className={`fas fa-chevron-${shopOpen || shopLines.length > 0 ? "up" : "down"} ml-2 text-gray-500`}/>
+              </span>
+            </button>
+
+            {(shopOpen || shopLines.length > 0) && (
+              <div className="mt-3">
+                <div className="grid grid-cols-1 sm:grid-cols-2 gap-2 max-h-[240px] overflow-y-auto">
+                  {shopItems.map((it) => {
+                    const qty = shopCart[it.id] || 0;
+                    return (
+                      <div key={it.id} data-testid={`checkout-product-${it.id}`}
+                           className={`flex items-center justify-between gap-2 p-2.5 rounded border transition ${
+                             qty > 0 ? "border-shGreen bg-shGreen/10" : "border-bgHover"}`}>
+                        <button type="button" onClick={() => setShopQty(it.id, qty + 1)}
+                                data-testid={`checkout-product-add-${it.id}`}
+                                className="min-w-0 flex-1 text-left">
+                          <p className="text-[15px] font-black text-white truncate">{it.name}</p>
+                          <p className="text-[13px] text-gray-400 font-bold">
+                            ${Number(it.effective_price || 0).toFixed(2)}
+                            {!it.taxable && <span className="text-gray-500"> · no tax</span>}
+                            {it.track_inventory && <span className="text-gray-500"> · {it.stock_on_hand} left</span>}
+                          </p>
+                        </button>
+                        {qty > 0 && (
+                          <div className="flex items-center gap-1 shrink-0">
+                            <button type="button" onClick={() => setShopQty(it.id, qty - 1)}
+                                    data-testid={`checkout-product-minus-${it.id}`}
+                                    className="bg-bgHover w-7 h-7 rounded text-white font-black hover:bg-red-500/40">−</button>
+                            <span className="text-white font-black w-5 text-center text-sm">{qty}</span>
+                          </div>
+                        )}
+                      </div>
+                    );
+                  })}
+                </div>
+
+                {shopLines.length > 0 && (
+                  <div className="mt-3 pt-3 border-t border-bgHover text-[13px] space-y-1" data-testid="checkout-shop-total">
+                    <div className="flex justify-between text-gray-400">
+                      <span>Merchandise</span><span>${shopSubtotal.toFixed(2)}</span>
+                    </div>
+                    {shopTax > 0 && (
+                      <div className="flex justify-between text-gray-400" data-testid="checkout-shop-tax">
+                        <span>{salesTaxCfg.label || "Sales Tax"} ({salesTaxRateRaw.toFixed(2)}%)</span>
+                        <span>${shopTax.toFixed(2)}</span>
+                      </div>
+                    )}
+                    {shopTaxable > 0 && salesTaxRateRaw === 0 && (
+                      <p className="text-[12px] text-shOrange font-black" data-testid="checkout-shop-no-tax-notice">
+                        No sales tax is being charged on merchandise — switch it on in Settings → Sales Tax.
+                      </p>
+                    )}
+                    <p className="text-[12px] text-gray-500 italic">
+                      Rung through the Register, so stock and sales tax are handled there.
+                    </p>
+                  </div>
+                )}
+              </div>
+            )}
+          </div>
+        )}
+
         {/* Section 3 — Payment method + Service value */}
         <div className="mb-5 border border-bgHover rounded-lg p-4 bg-bgBase">
           <p className="text-[13px] uppercase tracking-widest text-gray-500 font-black mb-3">Payment</p>
@@ -1153,7 +1276,14 @@ export function CheckoutModal({ booking, services, onClose, onRequestCancel }) {
           </div>
           <div className="text-right">
             <p className="text-[12px] uppercase tracking-widest text-gray-500 font-black">{useCredits && hadCredit && addOnTotal === 0 && existingAddonTotal === 0 ? "Total" : "Charged today"}</p>
-            <p className="text-shGreen text-3xl font-black" data-testid="checkout-total">${chargedToday.toFixed(2)}</p>
+            {/* One number at the counter. The stay and the merchandise are
+                two records underneath, but nobody hands over money twice. */}
+            <p className="text-shGreen text-3xl font-black" data-testid="checkout-total">${dueToday.toFixed(2)}</p>
+            {shopTotal > 0 && (
+              <p className="text-[12px] text-gray-400 font-bold" data-testid="checkout-total-split">
+                stay ${chargedToday.toFixed(2)} + shop ${shopTotal.toFixed(2)}
+              </p>
+            )}
           </div>
         </div>
 
@@ -1243,7 +1373,7 @@ export function CheckoutModal({ booking, services, onClose, onRequestCancel }) {
             <button onClick={onClose} className="text-gray-500 font-black uppercase text-[14px] tracking-widest">Close</button>
             <button onClick={submit} disabled={busy || groupLoading || checkoutDiscountTooHigh || checkoutDiscountReasonMissing || btUnanswered > 0} data-testid="confirm-checkout"
                     className="bg-shBlue text-white px-8 py-3 rounded font-black text-[14px] uppercase tracking-widest shadow-lg disabled:opacity-50">
-              {busy ? "Checking out…" : (groupLoading ? "Loading household…" : (isGroupCheckout ? `Check Out All ${groupDogNames.length} Dogs` : "Complete Check-out"))}
+              {busy ? "Checking out…" : (groupLoading ? "Loading household…" : (isGroupCheckout ? `Check Out All ${groupDogNames.length} Dogs` : (shopTotal > 0 ? `Complete Check-out · $${dueToday.toFixed(2)}` : "Complete Check-out")))}
             </button>
           </div>
         </div>

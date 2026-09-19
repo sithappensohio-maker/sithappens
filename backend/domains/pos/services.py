@@ -9,6 +9,8 @@ from __future__ import annotations
 from typing import Any, Dict, List, Optional
 from fastapi import HTTPException
 
+import sales_tax_policy
+
 _db = None
 _resolve_client_price_fn = None
 _get_settings_fn = None
@@ -16,11 +18,20 @@ _credit_pack_display_fields_fn = None
 _free_claim_program_blockers_fn = None
 _logger = None
 _create_sale_impl_fn = None
+_sale_model = None
+_tender_model = None
+_normalize_payment_method_fn = None
+_perms_for_fn = None
 
 
-def configure(*, db, resolve_client_price, get_settings, credit_pack_display_fields, free_claim_program_blockers, logger, create_sale_impl) -> None:
+def configure(*, db, resolve_client_price, get_settings, credit_pack_display_fields, free_claim_program_blockers, logger, create_sale_impl, sale_model=None, tender_model=None, normalize_payment_method=None, perms_for=None) -> None:
     global _db, _resolve_client_price_fn, _get_settings_fn, _credit_pack_display_fields_fn
     global _free_claim_program_blockers_fn, _logger, _create_sale_impl_fn
+    global _sale_model, _tender_model, _normalize_payment_method_fn, _perms_for_fn
+    _sale_model = sale_model
+    _tender_model = tender_model
+    _normalize_payment_method_fn = normalize_payment_method
+    _perms_for_fn = perms_for
     _db = db
     _resolve_client_price_fn = resolve_client_price
     _get_settings_fn = get_settings
@@ -33,6 +44,68 @@ def configure(*, db, resolve_client_price, get_settings, credit_pack_display_fie
 async def create_sale(body, user):
     """Stable POS-domain seam around the proven atomic sale transaction body."""
     return await _create_sale_impl_fn(body, user)
+
+
+# Tenders the till understands. A stay can be settled by "transfer" or by
+# prepaid credits; merchandise cannot be, so those two are handled explicitly
+# below rather than being allowed to fail validation deep inside the sale.
+_TILL_TENDERS = ("cash", "card", "check", "venmo", "paypal", "other")
+
+
+async def ring_pickup_merchandise(booking: dict, body, user: dict) -> Optional[dict]:
+    """Sell merchandise at a dog's pickup as an ordinary Register sale.
+
+    Deliberately NOT a booking add-on. Add-ons are services priced onto the
+    stay; a bag of food is retail, and retail already has a home that handles
+    stock, sales tax, retail revenue, the receipt and idempotency. Rebuilding
+    any of that on the booking would be a second till with its own bugs, so
+    this calls the one that already works.
+    """
+    lines = list(getattr(body, "retail_lines", None) or [])
+    if not lines:
+        return None
+    if not getattr(body, "payment_method", None):
+        raise HTTPException(status_code=400, detail="Choose how the products are being paid for.")
+    if not getattr(body, "retail_idempotency_key", None):
+        raise HTTPException(status_code=400,
+                            detail="This sale is missing its idempotency key. Reopen the checkout and try again.")
+
+    method = _normalize_payment_method_fn(body.payment_method, store=True)
+    if method == "credits":
+        # Credits are prepaid VISITS. They buy daycare, not dog food.
+        raise HTTPException(status_code=400,
+                            detail="Credits can't pay for products. Choose cash, card or another method for the merchandise.")
+    if method not in _TILL_TENDERS:
+        method = "other"   # a bank transfer is a real tender the till calls "other"
+
+    priced, _ = await price_pos_cart(
+        lines, None, can_price=bool(_perms_for_fn(user).get("pricing")), client_id=booking.get("client_id"))
+    total = round(float(priced["total"]), 2)
+    if total <= 0:
+        return None
+
+    sale = await create_sale(
+        _sale_model(
+            lines=lines, client_id=booking.get("client_id"),
+            # Cash is tendered at exactly the merchandise total: this record
+            # owes no change of its own, because the desk settles the whole
+            # pickup — stay and goods — in one go at the counter.
+            tenders=[_tender_model(method=method, amount=total,
+                                   **({"tendered_amount": total} if method == "cash" else {}))],
+            workstation_id=getattr(body, "workstation_id", None),
+            idempotency_key=body.retail_idempotency_key,
+        ),
+        user,
+    )
+    return {
+        # The two return shapes differ: a fresh sale answers with `sale`, an
+        # idempotent replay answers with `pos_sale_id`. Read both.
+        "pos_sale_id": sale.get("pos_sale_id") or (sale.get("sale") or {}).get("id"),
+        "subtotal": round(float(priced.get("subtotal") or 0), 2),
+        "tax_amount": round(float(priced.get("tax_amount") or 0), 2),
+        "total": total,
+        "item_count": len(priced.get("line_items") or []),
+    }
 
 
 async def build_register_catalog(client_id: Optional[str]) -> dict:
@@ -425,11 +498,13 @@ async def price_pos_cart(lines: List[PosSaleLineIn], discount: Optional[PosSaleD
     try:
         settings_tx = await _get_settings_fn()
         tx_cfg = (settings_tx or {}).get("sales_tax") or {}
-        if tx_cfg.get("enabled") and float(tx_cfg.get("rate_pct") or 0) > 0 and taxable_base > 0:
-            applies = (tx_cfg.get("applies_to") or {})
-            if applies.get("retail", True):
-                tax_rate_pct = float(tx_cfg["rate_pct"])
-                tax_amount = round(taxable_base * (tax_rate_pct / 100.0), 2)
+        # Merchandise is taxed whenever tax is switched on, full stop. There
+        # is no category toggle that can quietly exempt it — see
+        # sales_tax_policy for why that switch was removed.
+        rate = sales_tax_policy.merchandise_tax_rate(tx_cfg)
+        if rate > 0 and taxable_base > 0:
+            tax_rate_pct = rate
+            tax_amount = sales_tax_policy.tax_on(taxable_base, rate)
     except Exception as exc:
         _logger.warning("POS cart tax calc failed: %s", exc)
 
@@ -478,6 +553,11 @@ async def price_pos_cart(lines: List[PosSaleLineIn], discount: Optional[PosSaleD
         "line_items": line_items, "subtotal": subtotal,
         "discount_amount": discount_amount, "discount_kind": discount_kind, "discount_reason": discount_reason,
         "tax_amount": tax_amount, "tax_rate_pct": tax_rate_pct, "total": total,
+        # How much of this cart is merchandise. The register compares it with
+        # tax_amount so that "there is tax to charge and none is being
+        # charged" can be SAID out loud instead of just looking like a cart
+        # with no tax line — which is how goods went out untaxed unnoticed.
+        "taxable_subtotal": taxable_base,
     }
     catalog_caches = {"products": product_cache, "packs": pack_cache, "programs": program_cache}
     return priced, catalog_caches

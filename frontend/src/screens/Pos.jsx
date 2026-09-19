@@ -1600,7 +1600,14 @@ export default function Pos({ onOpenShopManager } = {}) {
             <div className="mt-3 pt-3 border-t border-shBorder space-y-1 text-sm">
               <div className="flex justify-between text-shTextMuted"><span>Subtotal</span><span>{money(priced?.subtotal)}</span></div>
               {priced?.discount_amount > 0 && <div className="flex justify-between text-shTextMuted"><span>Discount</span><span>-{money(priced.discount_amount)}</span></div>}
-              {priced?.tax_amount > 0 && <div className="flex justify-between text-shTextMuted"><span>Tax</span><span>{money(priced.tax_amount)}</span></div>}
+              {priced?.tax_amount > 0 && <div className="flex justify-between text-shTextMuted"><span>Tax{priced.tax_rate_pct > 0 ? ` (${priced.tax_rate_pct}%)` : ""}</span><span>{money(priced.tax_amount)}</span></div>}
+              {priced?.taxable_subtotal > 0 && !(priced?.tax_amount > 0) && (
+                /* There is merchandise in this cart and no tax on it. Silence
+                   here is how untaxed sales go out unnoticed, so say it. */
+                <div className="text-[12px] text-shOrange font-black" data-testid="pos-no-tax-notice">
+                  No sales tax is being charged on merchandise — switch it on in Settings → Sales Tax.
+                </div>
+              )}
               <div className="flex justify-between items-baseline text-shText font-black"><span className="text-[15px]">Total</span><span className="text-[24px]">{money(total)}</span></div>
             </div>
 

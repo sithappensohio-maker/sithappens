@@ -597,11 +597,12 @@ function DetailsModal({ p, onClose }) {
         <p className="flex justify-between"><span className="text-shTextMuted">Gross tax charged</span><b>{money(d.gross_tax_charged)}</b></p>
         <p className="flex justify-between"><span className="text-shTextMuted">Tax reversed (voids / refunds)</span><b>{money(d.tax_reversed)}</b></p>
         <p className="flex justify-between border-t border-shBorder pt-1 mt-1"><span className="text-shTextMuted">Net Sales-Tax Liability</span><b data-testid="stt-details-net">{money(d.total_tax_collected)}</b></p>
-        {/* Step 4C-1 — these are TAX dollars by source row type, never revenue.
-            Services (daycare/boarding/training/programs/packs) are not
-            sales-taxable, so booking tax can only be grooming/photography
-            (if enabled) or historical rows recorded before the policy fix. */}
-        <p className="flex justify-between mt-2"><span className="text-shTextMuted">· booking tax (grooming/photography or historical)</span><span>{money(d.bookings_tax_total)}</span></p>
+        {/* These are TAX dollars by source row type, never revenue. Nothing
+            on a booking is sales-taxable any more — every service is exempt —
+            so this line can only be historical rows recorded before the rule
+            was made one rule. It is shown, not hidden, because those dollars
+            were really collected and really have to be remitted. */}
+        <p className="flex justify-between mt-2"><span className="text-shTextMuted">· booking tax (historical only — services are not taxed)</span><span>{money(d.bookings_tax_total)}</span></p>
         <p className="flex justify-between"><span className="text-shTextMuted">· merchandise tax — retail / shop / POS (net)</span><span>{money(d.retail_tax_total)}</span></p>
       </div>
       {snap && (

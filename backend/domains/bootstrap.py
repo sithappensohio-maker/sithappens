@@ -111,6 +111,10 @@ def register_domains(
         free_claim_program_blockers=server_globals["_free_claim_program_blockers"],
         logger=logger,
         create_sale_impl=server_globals["_create_pos_sale_impl"],
+        sale_model=server_globals["PosSaleIn"],
+        tender_model=server_globals["PosSaleTenderIn"],
+        normalize_payment_method=server_globals["_normalize_payment_method"],
+        perms_for=server_globals["_perms_for"],
     )
 
     performance_services.configure(

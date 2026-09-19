@@ -3767,9 +3767,7 @@ function SalesTaxPanel() {
   const [busy, setBusy] = useState(false);
   useEffect(() => {
     api.get("/settings").then(r => {
-      const tx = r.data?.sales_tax || { enabled: false, rate_pct: 0, label: "Sales Tax",
-        applies_to: { daycare: false, boarding: false, training: false,
-                       grooming: true, photography: true, retail: true, credit_packs: false } };
+      const tx = r.data?.sales_tax || { enabled: false, rate_pct: 0, label: "Sales Tax" };
       setCfg(tx); setDraft(tx);
     }).catch(() => {});
     api.get("/admin/sales-tax/summary").then(r => setSummary(r.data)).catch(() => {});
@@ -3781,6 +3779,8 @@ function SalesTaxPanel() {
         enabled: !!draft.enabled,
         rate_pct: Number(draft.rate_pct) || 0,
         label: draft.label || "Sales Tax",
+        // Kept only so an older stored document round-trips unchanged; the
+        // server stopped reading it when merchandise became the whole rule.
         applies_to: draft.applies_to || {},
       }});
       setCfg(draft); setMsg("Saved ✓");
@@ -3792,20 +3792,11 @@ function SalesTaxPanel() {
     } finally { setBusy(false); }
   };
   if (!draft) return null;
-  const toggleAt = (k) => setDraft({ ...draft, applies_to: { ...(draft.applies_to||{}), [k]: !draft.applies_to?.[k] } });
-  // Step 4C-1 — Sit Happens services (daycare, boarding, training, credit
-  // packs, programs) are NEVER sales-taxable; the server enforces this
-  // regardless of any saved toggle, so the toggles are no longer offered.
-  // Grooming/photography stay configurable (their Ohio treatment differs).
-  const services = [
-    ["grooming", "Grooming"], ["photography", "Photography"],
-    ["retail", "Retail merchandise"],
-  ];
   return (
     <div className="border-t border-shBorder pt-6" data-testid="sales-tax-panel">
       <h4 className="text-sm font-black text-shPrimary uppercase tracking-widest mb-2"><i className="fas fa-percent mr-2"/>Sales Tax</h4>
       <p className="text-[14px] text-shTextMuted mb-3 leading-relaxed">
-        Single flat rate. When enabled, tax is added to checkouts of the selected service types and back-calculated from retail amounts (POS convention: customer pays the total, tax is the slice). Year-to-date totals power the summary card below.
+        Single flat rate on merchandise. Products are taxed; services never are. Tax is added on top of the shelf price at the register, so the customer pays the total shown. Year-to-date totals power the summary card below.
       </p>
       <div className="space-y-3">
         <label className="flex items-center gap-3 cursor-pointer">
@@ -3835,21 +3826,16 @@ function SalesTaxPanel() {
         </div>
         <div>
           <p className="text-[12px] font-black text-shTextMuted uppercase tracking-widest mb-2">Applies to</p>
-          <p className="text-[12px] text-shTextMuted mb-2" data-testid="sales-tax-services-exempt-note">
-            Services — daycare, boarding, training, training programs, and service credit packs — are never
-            charged sales tax. They stay in business income; they just aren't sales-taxable.
+          <p className="text-[12px] text-shTextMuted" data-testid="sales-tax-services-exempt-note">
+            <b className="text-shText">Merchandise only.</b> Anything you sell as a product — treats, toys,
+            food, leashes — is taxed at this rate. Services are never charged sales tax: daycare, boarding,
+            training, grooming, photography, training programs and credit packs all stay in business income,
+            they just aren't sales-taxable. There is nothing to switch on here, because a switch that can
+            quietly stop taxing products is how a filing goes wrong.
           </p>
-          <div className="grid grid-cols-2 md:grid-cols-3 gap-2">
-            {services.map(([k, label]) => (
-              <label key={k} className={`cursor-pointer rounded px-3 py-2 border text-[13px] font-black uppercase tracking-widest ${
-                  draft.applies_to?.[k] ? "bg-shPrimary/15 border-shPrimary/40 text-shPrimary" : "bg-[var(--sh-card-base)] border-shBorder text-shTextMuted"
-                }`}>
-                <input type="checkbox" checked={!!draft.applies_to?.[k]} onChange={() => toggleAt(k)}
-                       data-testid={`sales-tax-applies-${k}`}
-                       className="mr-2 accent-shPrimary"/>{label}
-              </label>
-            ))}
-          </div>
+          <p className="text-[12px] text-shTextMuted mt-1.5">
+            One product at a time can still be marked exempt on the product itself.
+          </p>
         </div>
         <div className="flex items-center gap-3">
           <button onClick={save} disabled={busy} data-testid="sales-tax-save"
