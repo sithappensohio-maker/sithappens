@@ -250,6 +250,7 @@ def test_financial_route_registries_build_real_fastapi_routes():
     actual = {(next(iter(route.methods)), route.path) for route in api.routes}
     expected = {(method, "/api" + path) for method, path, *_ in all_rows}
     assert actual == expected
-    # 94 = 91 phase-5 routes + /policies/stay (client-facing stay policy),
+    # 96 = 91 phase-5 routes + /policies/stay (client-facing stay policy),
+    # + the two POS return routes (return-preview + return),
     # /admin/register/no-sale, and /register/pin (PIN-verified drawer opens).
-    assert len(actual) == 94
+    assert len(actual) == 96

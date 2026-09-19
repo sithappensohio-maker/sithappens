@@ -719,6 +719,76 @@ export default function Pos({ onOpenShopManager } = {}) {
     setVoidBusy(false);
   };
 
+  // Returns — a void cancels a whole sale on the day it happened; this gives
+  // back one item from a sale that could be weeks old. Open to anyone who can
+  // take payments, because giving the money back is the same job as taking it,
+  // and the return records who did it.
+  const [returnSale, setReturnSale] = useState(null);     // the loaded preview
+  const [returnQty, setReturnQty] = useState({});          // line_index -> qty
+  const [returnRestock, setReturnRestock] = useState({});  // line_index -> bool
+  const [returnReason, setReturnReason] = useState("");
+  const [returnBusy, setReturnBusy] = useState(false);
+  const [receiptSearch, setReceiptSearch] = useState("");
+
+  const openReturn = async (saleId) => {
+    try {
+      const { data } = await api.get(`/pos/sales/${saleId}/return-preview`);
+      setReturnSale(data);
+      setReturnQty({});
+      setReturnRestock(Object.fromEntries((data.lines || []).map((l) => [l.line_index, true])));
+      setReturnReason("");
+    } catch (e) {
+      toast.error(e?.response?.data?.detail || "Could not open that sale");
+    }
+  };
+
+  const findByReceipt = async () => {
+    const term = receiptSearch.trim();
+    if (!term) { loadRecent(); return; }
+    try {
+      const { data } = await api.get("/pos/sales", { params: { receipt: term } });
+      setRecentSales(data || []);
+      if (!(data || []).length) toast.error(`No sale found for #${term} in the last 30 days`);
+    } catch (e) {
+      toast.error(e?.response?.data?.detail || "Lookup failed");
+    }
+  };
+
+  // What the customer gets back, shown before anything is committed. The
+  // server prices it again for real — this is a preview, never the number
+  // that gets refunded.
+  const returnLines = (returnSale?.lines || []).filter((l) => Number(returnQty[l.line_index] || 0) > 0);
+  const returnTotal = returnLines.reduce((n, l) => {
+    const qty = Number(returnQty[l.line_index] || 0);
+    return n + qty * Number(l.unit_price || 0);
+  }, 0);
+
+  const submitReturn = async () => {
+    if (returnReason.trim().length < 3) { toast.error("Enter a reason (3+ characters)"); return; }
+    if (!returnLines.length) { toast.error("Choose what is coming back"); return; }
+    setReturnBusy(true);
+    try {
+      const { data } = await api.post(`/pos/sales/${returnSale.sale_id}/return`, {
+        lines: returnLines.map((l) => ({
+          line_index: l.line_index,
+          qty: Number(returnQty[l.line_index]),
+          restock: returnRestock[l.line_index] !== false,
+        })),
+        reason: returnReason.trim(),
+        idempotency_key: crypto.randomUUID(),
+      });
+      const back = data?.returned?.total;
+      const how = (data?.returned?.tenders || []).map((t) => `${money(t.amount)} ${t.method}`).join(" + ");
+      toast.success(`Returned ${money(back)}${how ? ` — give back ${how}` : ""}`);
+      emitRegisterChanged(); // refund committed — refresh register displays
+      setReturnSale(null);
+      loadRecent();
+    } catch (e) {
+      toast.error(e?.response?.data?.detail || "Could not complete the return");
+    }
+    setReturnBusy(false);
+  };
+
   // ── Sale-complete screen ─────────────────────────────────────────────────
   if (saleResult) {
     const s = saleResult.sale;
@@ -1008,6 +1078,23 @@ export default function Pos({ onOpenShopManager } = {}) {
       {recentOpen && (
         <div data-register-panel="" data-testid="pos-recent-sales-panel" className="bg-[var(--sh-card-base)] border border-shBorder rounded-2xl p-4">
           <p className="text-shTextMuted text-[13px] uppercase tracking-widest font-black mb-2">Recent Sales</p>
+          {/* Someone returning a bag of food has the receipt in their hand,
+              not the date the till calls that day. */}
+          <div className="flex gap-2 mb-3">
+            <input value={receiptSearch} onChange={(e) => setReceiptSearch(e.target.value)}
+                   onKeyDown={(e) => { if (e.key === "Enter") findByReceipt(); }}
+                   placeholder="Returning something? Receipt #"
+                   data-testid="pos-receipt-search"
+                   className="flex-1 min-w-0 bg-[var(--sh-card-base)] border border-shBorder rounded p-2 text-shText text-sm"/>
+            <button onClick={findByReceipt} data-testid="pos-receipt-find"
+                    className="bg-[var(--sh-card-base)] border border-shPrimary/50 text-shPrimary rounded px-3 text-[11px] font-black uppercase tracking-widest">
+              Find
+            </button>
+            {receiptSearch && (
+              <button onClick={() => { setReceiptSearch(""); loadRecent(); }} data-testid="pos-receipt-clear"
+                      className="text-shTextMuted text-[11px] font-black uppercase tracking-widest px-1">Today</button>
+            )}
+          </div>
           <div className="space-y-1 max-h-64 overflow-y-auto">
             {recentSales.length === 0 && <p className="text-shTextMuted text-sm">No sales yet today.</p>}
             {recentSales.map((s) => (
@@ -1020,6 +1107,10 @@ export default function Pos({ onOpenShopManager } = {}) {
                   <div className="flex items-center gap-3">
                     <span className={s.status === "voided" ? "text-shTextMuted line-through" : "text-shText font-bold"}>{money(s.total)}</span>
                     <button onClick={() => reprintSale(s)} className="text-shPrimary text-[11px] font-black uppercase tracking-widest">Reprint</button>
+                    {s.status !== "voided" && (
+                      <button onClick={() => openReturn(s.id)} data-testid={`pos-return-${s.id}`}
+                              className="text-shPrimary text-[11px] font-black uppercase tracking-widest">Return</button>
+                    )}
                     {canVoid && s.status !== "voided" && (
                       <button onClick={() => { setVoidingSaleId(s.id); setVoidReason(""); }}
                               className="text-shAccent text-[11px] font-black uppercase tracking-widest">Void</button>
@@ -1041,6 +1132,93 @@ export default function Pos({ onOpenShopManager } = {}) {
                 )}
               </div>
             ))}
+          </div>
+        </div>
+      )}
+
+      {returnSale && (
+        <div className="fixed inset-0 bg-black/70 flex items-start justify-center p-4 z-[120] overflow-y-auto"
+             onClick={() => setReturnSale(null)} data-testid="pos-return-panel">
+          <div className="bg-[var(--sh-card-base)] border border-shBorder rounded-2xl p-5 w-full max-w-lg my-8"
+               onClick={(e) => e.stopPropagation()}>
+            <h4 className="text-lg font-black text-shText uppercase italic">
+              Return · #{returnSale.receipt_number}
+            </h4>
+            <p className="text-[12.5px] text-shTextMuted mb-3">
+              Sold {returnSale.business_date}
+              {returnSale.days_old != null && ` · ${returnSale.days_old} day${returnSale.days_old === 1 ? "" : "s"} ago`}
+              {" · money goes back the way it was paid"}
+            </p>
+
+            {returnSale.blocked_reason ? (
+              <p className="text-shAccent text-[14px] font-black" data-testid="pos-return-blocked">
+                {returnSale.blocked_reason}
+              </p>
+            ) : (
+              <>
+                <div className="space-y-2.5">
+                  {returnSale.lines.map((l) => (
+                    <div key={l.line_index} className="border border-shBorder rounded-xl p-3"
+                         data-testid={`pos-return-line-${l.line_index}`}>
+                      <div className="flex items-start justify-between gap-2">
+                        <div className="min-w-0">
+                          <p className="text-shText font-black text-[14px] truncate">{l.description}</p>
+                          <p className="text-[12px] text-shTextMuted">
+                            {money(l.unit_price)} each · {l.remaining_qty} of {l.qty} left to return
+                          </p>
+                        </div>
+                        {l.returnable && l.remaining_qty > 0 ? (
+                          <input type="number" min={0} max={l.remaining_qty} step="1"
+                                 value={returnQty[l.line_index] ?? ""}
+                                 onChange={(e) => setReturnQty((p) => ({ ...p, [l.line_index]: e.target.value }))}
+                                 placeholder="0"
+                                 data-testid={`pos-return-qty-${l.line_index}`}
+                                 className="w-[72px] shrink-0 bg-[var(--sh-card-base)] border border-shBorder rounded p-2 text-shText text-center font-black"/>
+                        ) : (
+                          <span className="text-[11px] text-shTextMuted text-right max-w-[150px]">
+                            {l.not_returnable_reason || "All returned"}
+                          </span>
+                        )}
+                      </div>
+                      {Number(returnQty[l.line_index] || 0) > 0 && (
+                        /* Restock is a real decision, not a formality — an
+                           unopened bag goes back, a chewed toy does not. */
+                        <label className="flex items-center gap-2 mt-2 text-[12.5px] text-shTextMuted cursor-pointer">
+                          <input type="checkbox" checked={returnRestock[l.line_index] !== false}
+                                 onChange={(e) => setReturnRestock((p) => ({ ...p, [l.line_index]: e.target.checked }))}
+                                 data-testid={`pos-return-restock-${l.line_index}`}/>
+                          Back on the shelf (uncheck if it can&apos;t be resold)
+                        </label>
+                      )}
+                    </div>
+                  ))}
+                </div>
+
+                {returnTotal > 0 && (
+                  <p className="text-shTextMuted text-[12.5px] mt-3" data-testid="pos-return-estimate">
+                    About {money(returnTotal)} before tax — the register works out the exact refund,
+                    including the tax that was charged.
+                  </p>
+                )}
+
+                <input value={returnReason} onChange={(e) => setReturnReason(e.target.value)}
+                       placeholder="Reason for the return (required)"
+                       data-testid="pos-return-reason"
+                       className="w-full mt-3 bg-[var(--sh-card-base)] border border-shBorder rounded p-2.5 text-shText text-sm"/>
+
+                <div className="flex gap-3 mt-4">
+                  <button onClick={() => setReturnSale(null)}
+                          className="flex-1 text-shTextMuted font-black uppercase text-sm tracking-widest py-3">
+                    Cancel
+                  </button>
+                  <button onClick={submitReturn} disabled={returnBusy || !returnLines.length}
+                          data-testid="pos-return-confirm"
+                          className="flex-1 bg-shPrimary text-bgHeader rounded-xl py-3 font-black uppercase tracking-widest disabled:opacity-40">
+                    {returnBusy ? "Refunding…" : "Refund"}
+                  </button>
+                </div>
+              </>
+            )}
           </div>
         </div>
       )}

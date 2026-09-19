@@ -6,8 +6,12 @@ boundary so register preview and checkout cannot drift apart.
 """
 from __future__ import annotations
 
+import uuid
+from datetime import date as _date, datetime, timedelta, timezone
 from typing import Any, Dict, List, Optional
+
 from fastapi import HTTPException
+from pydantic import BaseModel, Field
 
 import sales_tax_policy
 
@@ -22,12 +26,17 @@ _sale_model = None
 _tender_model = None
 _normalize_payment_method_fn = None
 _perms_for_fn = None
+_mutate_product_stock_fn = None
+_require_register_day_open_fn = None
 
 
-def configure(*, db, resolve_client_price, get_settings, credit_pack_display_fields, free_claim_program_blockers, logger, create_sale_impl, sale_model=None, tender_model=None, normalize_payment_method=None, perms_for=None) -> None:
+def configure(*, db, resolve_client_price, get_settings, credit_pack_display_fields, free_claim_program_blockers, logger, create_sale_impl, sale_model=None, tender_model=None, normalize_payment_method=None, perms_for=None, mutate_product_stock=None, require_register_day_open=None) -> None:
     global _db, _resolve_client_price_fn, _get_settings_fn, _credit_pack_display_fields_fn
     global _free_claim_program_blockers_fn, _logger, _create_sale_impl_fn
     global _sale_model, _tender_model, _normalize_payment_method_fn, _perms_for_fn
+    global _mutate_product_stock_fn, _require_register_day_open_fn
+    _mutate_product_stock_fn = mutate_product_stock
+    _require_register_day_open_fn = require_register_day_open
     _sale_model = sale_model
     _tender_model = tender_model
     _normalize_payment_method_fn = normalize_payment_method
@@ -106,6 +115,303 @@ async def ring_pickup_merchandise(booking: dict, body, user: dict) -> Optional[d
         "total": total,
         "item_count": len(priced.get("line_items") or []),
     }
+
+
+# ─────────────────────────────────────────────────────────── returns
+#
+# A VOID cancels a whole sale on the day it happened. A RETURN is the other
+# thing a shop needs: someone brings one item back on Thursday for something
+# they bought on Monday, and wants that item's money — not the whole sale's.
+#
+# Returns are merchandise only. Credit packs and training programs grant
+# entitlements that may already be partly spent, and unpicking that is what
+# the void path's clawback is for; letting a return touch them would be a
+# second, worse version of it.
+
+RETURN_WINDOW_DAYS = 30
+RETURNABLE_KINDS = ("retail", "custom")
+
+
+class PosSaleReturnLineIn(BaseModel):
+    """One line of the original sale, and how much of it is coming back."""
+
+    line_index: int = Field(ge=0)
+    qty: float = Field(gt=0, le=999)
+    # Whether this one goes back on the shelf. An unopened bag of food does;
+    # a chewed toy does not, and pretending otherwise is how stock drifts.
+    restock: bool = True
+
+
+class PosSaleReturnIn(BaseModel):
+    lines: List[PosSaleReturnLineIn] = Field(min_length=1)
+    reason: str = Field(min_length=3, max_length=300)
+    idempotency_key: str = Field(min_length=8, max_length=128)
+    workstation_id: Optional[str] = Field(default=None, max_length=100)
+
+
+def _money(value: Any) -> float:
+    return round(float(value or 0), 2)
+
+
+def return_preview(sale: dict) -> dict:
+    """What is still returnable on this sale, and why it might not be.
+
+    The screen needs this before it can ask anything sensible: which lines
+    came back already, how many are left, and whether the window has passed.
+    """
+    reason = None
+    if (sale.get("status") or "") != "completed":
+        reason = "This sale was voided, so there is nothing to return."
+    days_old = None
+    try:
+        sold = _date.fromisoformat(str(sale.get("business_date"))[:10])
+        days_old = (_date.today() - sold).days
+        if days_old > RETURN_WINDOW_DAYS:
+            reason = (f"This sale is {days_old} days old. Returns are accepted for "
+                      f"{RETURN_WINDOW_DAYS} days.")
+    except ValueError:
+        reason = "This sale has no usable date, so it cannot be returned against."
+
+    lines = []
+    for i, li in enumerate(sale.get("line_items") or []):
+        sold_qty = float(li.get("qty") or 0)
+        done = float(li.get("returned_qty") or 0)
+        returnable = li.get("kind") in RETURNABLE_KINDS and li.get("custom_kind") != "service"
+        lines.append({
+            "line_index": i,
+            "description": li.get("description"),
+            "kind": li.get("kind"),
+            "qty": sold_qty,
+            "returned_qty": done,
+            "remaining_qty": max(0.0, round(sold_qty - done, 3)),
+            "unit_price": _money(li.get("unit_price")),
+            "returnable": bool(returnable),
+            "not_returnable_reason": None if returnable else "Services and prepaid packs are not returned here — void the sale instead.",
+        })
+    return {
+        "sale_id": sale.get("id"),
+        "receipt_number": sale.get("receipt_number"),
+        "business_date": sale.get("business_date"),
+        "days_old": days_old,
+        "window_days": RETURN_WINDOW_DAYS,
+        "can_return": reason is None and any(l["returnable"] and l["remaining_qty"] > 0 for l in lines),
+        "blocked_reason": reason,
+        "lines": lines,
+        "tenders": [{"method": t.get("method"), "amount": _money(t.get("amount"))}
+                    for t in (sale.get("tenders") or [])],
+    }
+
+
+def _refund_by_tender(sale: dict, refund_total: float) -> List[dict]:
+    """Split a refund back across however the customer originally paid.
+
+    Money goes back the way it came: a card sale refunds to card, a cash sale
+    to cash, and a split sale in the same proportion it was taken. The last
+    slice absorbs the rounding so the parts always sum to the whole.
+    """
+    tenders = [t for t in (sale.get("tenders") or []) if _money(t.get("amount")) > 0]
+    paid = round(sum(_money(t.get("amount")) for t in tenders), 2)
+    if not tenders or paid <= 0:
+        return [{"method": "other", "amount": refund_total}]
+    if len(tenders) == 1:
+        return [{"method": tenders[0].get("method") or "other", "amount": refund_total}]
+    out, allocated = [], 0.0
+    for i, t in enumerate(tenders):
+        if i == len(tenders) - 1:
+            share = round(refund_total - allocated, 2)
+        else:
+            share = round(refund_total * (_money(t.get("amount")) / paid), 2)
+            allocated = round(allocated + share, 2)
+        if share > 0:
+            out.append({"method": t.get("method") or "other", "amount": share})
+    return out
+
+
+def _returned_line_amounts(line: dict, qty: float) -> tuple:
+    """This line's refund, pro-rata: its share of the money and of the tax.
+
+    Taken from what was actually CHARGED (net of any discount) and the tax
+    that was actually collected on it — never recomputed from today's price
+    or today's tax rate, which may both have moved since.
+    """
+    sold_qty = float(line.get("qty") or 0)
+    if sold_qty <= 0:
+        return 0.0, 0.0
+    ratio = qty / sold_qty
+    net = round(_money(line.get("net_amount")) * ratio, 2)
+    tax = round(_money(line.get("allocated_tax")) * ratio, 2)
+    return net, tax
+
+
+async def return_pos_sale(*, sale_id: str, body, user: dict) -> dict:
+    """Take merchandise back and give that merchandise's money back.
+
+    The money goes back the way it came, the tax that was collected on those
+    items goes back with it, and each item is either restocked or written off
+    according to what the desk said. Nothing here recomputes a price or a tax
+    rate from today's settings: a refund returns what was actually charged.
+    """
+    sale = await _db.pos_sales.find_one({"id": sale_id}, {"_id": 0})
+    if not sale:
+        raise HTTPException(status_code=404, detail="Sale not found")
+
+    preview = return_preview(sale)
+    if preview["blocked_reason"]:
+        raise HTTPException(status_code=409, detail=preview["blocked_reason"])
+
+    # Refunds are money leaving the till today, so today has to be open.
+    today = _date.today().isoformat()
+    await _require_register_day_open_fn(today)
+
+    items = sale.get("line_items") or []
+    wanted: Dict[int, dict] = {}
+    for req in body.lines:
+        idx = int(req.line_index)
+        if idx < 0 or idx >= len(items):
+            raise HTTPException(status_code=400, detail="That line is not on this sale.")
+        line = items[idx]
+        if line.get("kind") not in RETURNABLE_KINDS or line.get("custom_kind") == "service":
+            raise HTTPException(
+                status_code=400,
+                detail=f"'{line.get('description')}' is a service, not merchandise. Void the sale instead.")
+        remaining = round(float(line.get("qty") or 0) - float(line.get("returned_qty") or 0), 3)
+        qty = round(float(req.qty), 3)
+        prev = wanted.get(idx)
+        total_wanted = round((prev["qty"] if prev else 0.0) + qty, 3)
+        if total_wanted > remaining + 0.0005:
+            raise HTTPException(
+                status_code=400,
+                detail=f"Only {remaining:g} of '{line.get('description')}' can still be returned.")
+        wanted[idx] = {"qty": total_wanted, "restock": bool(req.restock)}
+
+    # Claim the key before touching anything, so a retry replays instead of
+    # refunding twice - the same discipline the sale and the void use.
+    ts = datetime.now(timezone.utc).isoformat()
+    claim_id = str(uuid.uuid4())
+    try:
+        await _db.pos_sale_return_claims.insert_one({
+            "id": claim_id, "idempotency_key": body.idempotency_key, "pos_sale_id": sale_id,
+            "status": "processing", "created_at": ts,
+        })
+    except Exception as exc:
+        if "duplicate key" not in str(exc).lower():
+            raise
+        prior = await _db.pos_sale_return_claims.find_one({"idempotency_key": body.idempotency_key}, {"_id": 0})
+        if prior and prior.get("status") == "completed" and prior.get("pos_sale_id") == sale_id:
+            done = await _db.pos_sale_returns.find_one({"id": prior.get("return_id")}, {"_id": 0})
+            if done:
+                return {"ok": True, "returned": done, "replayed": True}
+        raise HTTPException(status_code=409,
+                            detail="That return is already being processed. Wait a moment and try again.")
+
+    reserved = False
+    try:
+        # Reserve the quantities atomically. The filter refuses if anyone
+        # else's return landed first, which is what stops the same last item
+        # going back twice from two tills.
+        query: Dict[str, Any] = {"id": sale_id, "status": "completed"}
+        inc: Dict[str, Any] = {}
+        for idx, req in wanted.items():
+            allowed = round(float(items[idx].get("qty") or 0) - req["qty"], 3)
+            query[f"line_items.{idx}.returned_qty"] = {"$not": {"$gt": allowed}}
+            inc[f"line_items.{idx}.returned_qty"] = req["qty"]
+        claimed = await _db.pos_sales.find_one_and_update(query, {"$inc": inc})
+        if claimed is None:
+            raise HTTPException(
+                status_code=409,
+                detail="Some of those items have already been returned. Reopen the sale and check what is left.")
+        reserved = True
+
+        refund_lines, refund_net, refund_tax = [], 0.0, 0.0
+        for idx, req in sorted(wanted.items()):
+            line = items[idx]
+            net, tax = _returned_line_amounts(line, req["qty"])
+            refund_net = round(refund_net + net, 2)
+            refund_tax = round(refund_tax + tax, 2)
+            refund_lines.append({
+                "line_index": idx, "product_id": line.get("product_id"),
+                "description": line.get("description"), "qty": req["qty"],
+                "restock": req["restock"], "net_amount": net, "tax_amount": tax,
+                "refund_amount": round(net + tax, 2),
+            })
+        refund_total = round(refund_net + refund_tax, 2)
+        if refund_total <= 0:
+            raise HTTPException(status_code=400, detail="That return comes to nothing. Check the quantities.")
+
+        tenders = _refund_by_tender(sale, refund_total)
+        cash_back = round(sum(t["amount"] for t in tenders if t["method"] == "cash"), 2)
+        if cash_back > 0:
+            drawer = await _db.cash_drawer_sessions.find_one({"date": today}, {"_id": 0, "date": 1})
+            if not drawer:
+                raise HTTPException(status_code=400, detail="Open the register before giving cash back.")
+
+        record = {
+            "id": str(uuid.uuid4()),
+            "pos_sale_id": sale_id,
+            "receipt_number": sale.get("receipt_number"),
+            "original_business_date": sale.get("business_date"),
+            "business_date": today,
+            "client_id": sale.get("client_id"), "client_name": sale.get("client_name"),
+            "lines": refund_lines,
+            "subtotal": refund_net, "tax_amount": refund_tax, "total": refund_total,
+            "tenders": tenders,
+            "reason": body.reason.strip(),
+            "workstation_id": body.workstation_id,
+            "created_at": ts,
+            "created_by": user.get("id"),
+            "created_by_name": user.get("name") or user.get("email") or "",
+        }
+        await _db.pos_sale_returns.insert_one(dict(record))
+        record.pop("_id", None)
+
+        # One negative revenue row PER REFUND METHOD, so the register buckets
+        # each slice against the tender it actually went back on and expected
+        # drawer cash only moves by the cash part.
+        allocated_tax = 0.0
+        for i, t in enumerate(tenders):
+            share = (t["amount"] / refund_total) if refund_total else 0
+            tax_slice = (round(refund_tax - allocated_tax, 2) if i == len(tenders) - 1
+                         else round(refund_tax * share, 2))
+            allocated_tax = round(allocated_tax + tax_slice, 2)
+            await _db.retail_sales.insert_one({
+                "id": str(uuid.uuid4()), "date": today, "amount": -t["amount"],
+                "payment_method": t["method"],
+                "client_id": sale.get("client_id"), "client_name": sale.get("client_name"),
+                "pos_sale_id": sale_id, "pos_sale_return_id": record["id"],
+                "source_kind": "pos_sale_return",
+                "tax_amount": -tax_slice,
+                "tax_rate_pct": float(sale.get("tax_rate_pct") or 0),
+                "pre_tax_amount": -round(t["amount"] - tax_slice, 2),
+                "description": f"Return against POS Sale #{sale.get('receipt_number')} - {body.reason.strip()}",
+                "created_at": ts, "created_by": user.get("id"),
+                "logged_by": user.get("name") or user.get("email") or "admin",
+            })
+
+        # Put back only what the desk said was resellable.
+        for row in refund_lines:
+            if not row["restock"] or not row["product_id"]:
+                continue
+            try:
+                await _mutate_product_stock_fn(
+                    row["product_id"], row["qty"], "RETURN",
+                    f"Return against #{sale.get('receipt_number')}: {body.reason.strip()}",
+                    user=user, pos_sale_id=sale_id,
+                )
+            except Exception:
+                _logger.exception("Return %s could not restock %s", record["id"], row["product_id"])
+
+        await _db.pos_sale_return_claims.update_one(
+            {"id": claim_id}, {"$set": {"status": "completed", "return_id": record["id"]}})
+        _logger.info("POS return %s on sale %s by %s: %s refunded",
+                     record["id"], sale_id, record["created_by_name"] or record["created_by"], refund_total)
+        return {"ok": True, "returned": record}
+    except Exception:
+        if reserved:
+            await _db.pos_sales.update_one(
+                {"id": sale_id},
+                {"$inc": {f"line_items.{i}.returned_qty": -r["qty"] for i, r in wanted.items()}})
+        await _db.pos_sale_return_claims.delete_one({"id": claim_id})
+        raise
 
 
 async def build_register_catalog(client_id: Optional[str]) -> dict:

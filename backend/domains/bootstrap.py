@@ -115,6 +115,8 @@ def register_domains(
         tender_model=server_globals["PosSaleTenderIn"],
         normalize_payment_method=server_globals["_normalize_payment_method"],
         perms_for=server_globals["_perms_for"],
+        mutate_product_stock=server_globals["_mutate_product_stock"],
+        require_register_day_open=server_globals["_require_register_day_open"],
     )
 
     performance_services.configure(

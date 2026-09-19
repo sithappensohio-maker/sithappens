@@ -29,6 +29,8 @@ ROUTES = [
     ('GET', '/pos/sales/{sale_id}', 'get_pos_sale', None),
     ('POST', '/pos/sales/{sale_id}/pos-tokens', 'issue_pos_tokens_for_sale', None),
     ('POST', '/pos/sales/{sale_id}/void', 'void_pos_sale', None),
+    ('GET', '/pos/sales/{sale_id}/return-preview', 'get_pos_sale_return_preview', None),
+    ('POST', '/pos/sales/{sale_id}/return', 'return_pos_sale', None),
 ]
 
 def _response_model(server_globals: dict, token):

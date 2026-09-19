@@ -72,6 +72,21 @@ const priceCart = (lines) => {
   };
 };
 
+// Three sold on Monday, one already back — so the screen has to show what is
+// LEFT, not what was bought.
+const RETURN_PREVIEW = {
+  sale_id: "sale-1", receipt_number: "AB12CD34", business_date: "2026-09-16",
+  days_old: 3, window_days: 30, can_return: true, blocked_reason: null,
+  lines: [
+    { line_index: 0, description: "Ear Wipes", kind: "retail", qty: 3, returned_qty: 1,
+      remaining_qty: 2, unit_price: 12.99, returnable: true, not_returnable_reason: null },
+    { line_index: 1, description: "Nail trim", kind: "custom", qty: 1, returned_qty: 0,
+      remaining_qty: 1, unit_price: 15, returnable: false,
+      not_returnable_reason: "Services and prepaid packs are not returned here — void the sale instead." },
+  ],
+  tenders: [{ method: "cash", amount: 32.03 }],
+};
+
 let container, root, posted;
 
 const GET = {
@@ -79,7 +94,9 @@ const GET = {
   "/admin/register/day": { totals: { expected_cash: 100 }, activity: [], register_closed: false, method_labels: {} },
   "/employee/roster-today": { roster: [] },
   "/pos/catalog": { items: [WIPES, TOY] },
-  "/clients": [], "/services": [], "/pos/sales": [],
+  "/clients": [], "/services": [],
+  "/pos/sales": [{ id: "sale-1", receipt_number: "AB12CD34", client_name: "Dana",
+                   status: "completed", total: 32.03, created_at: "2026-09-19T10:00:00Z" }],
   "/admin/shop-orders": { orders: [] },
   "/admin/shop-orders/unseen-count": { unseen: 0 },
   "/admin/stripe-online-payments": { payments: [] },
@@ -96,7 +113,10 @@ beforeEach(() => {
   posAgent.openDrawer.mockImplementation(() => Promise.resolve({ ok: true }));
   toast.error.mockReset?.();
   api.get.mockReset();
-  api.get.mockImplementation((path) => Promise.resolve({ data: path in GET ? GET[path] : {} }));
+  api.get.mockImplementation((path) => {
+    if (String(path).includes("/return-preview")) return Promise.resolve({ data: RETURN_PREVIEW });
+    return Promise.resolve({ data: path in GET ? GET[path] : {} });
+  });
   api.post.mockReset();
   api.post.mockImplementation((path, body) => {
     posted.push({ path, body });
@@ -323,4 +343,86 @@ test("nothing taxable in the cart means no scary notice", async () => {
   await mount();
   await click("pos-product-p-wipes");
   expect(q("pos-no-tax-notice")).toBeFalsy();
+});
+
+// ----------------------------------------------------------------- returns
+
+const openReturns = async () => {
+  await mount();
+  await click("pos-recent-sales-toggle");
+  await click("pos-return-sale-1");
+  expect(q("pos-return-panel")).toBeTruthy();
+};
+
+test("a receipt can be looked up instead of hunting through today", async () => {
+  await mount();
+  await click("pos-recent-sales-toggle");
+  await type("pos-receipt-search", "AB12");
+  await click("pos-receipt-find");
+  const lookup = api.get.mock.calls.find(([p, cfg]) => String(p) === "/pos/sales" && cfg?.params?.receipt);
+  expect(lookup).toBeTruthy();
+  expect(lookup[1].params.receipt).toBe("AB12");
+});
+
+test("the return panel shows what is LEFT, not what was sold", async () => {
+  await openReturns();
+  const line = q("pos-return-line-0");
+  expect(line.textContent).toContain("2 of 3 left to return");
+  expect(q("pos-return-panel").textContent).toContain("3 days ago");
+});
+
+test("a service line cannot be returned and says why", async () => {
+  await openReturns();
+  expect(q("pos-return-qty-1")).toBeFalsy();
+  expect(q("pos-return-line-1").textContent).toMatch(/void the sale instead/i);
+});
+
+test("nothing can be refunded until something is actually coming back", async () => {
+  await openReturns();
+  expect(q("pos-return-confirm").disabled).toBe(true);
+  await type("pos-return-qty-0", "1");
+  expect(q("pos-return-confirm").disabled).toBe(false);
+});
+
+test("a reason is required before any money goes back", async () => {
+  await openReturns();
+  await type("pos-return-qty-0", "1");
+  await click("pos-return-confirm");
+  expect(posted.some((p) => String(p.path).includes("/return"))).toBe(false);
+  expect(toast.error).toHaveBeenCalled();
+});
+
+test("the restock choice reaches the server per item", async () => {
+  await openReturns();
+  await type("pos-return-qty-0", "2");
+  await click("pos-return-restock-0");                 // it was chewed
+  await type("pos-return-reason", "Dog would not touch it");
+  await click("pos-return-confirm");
+  const req = posted.find((p) => String(p.path).includes("/return"));
+  expect(req).toBeTruthy();
+  expect(req.body.lines).toEqual([{ line_index: 0, qty: 2, restock: false }]);
+  expect(req.body.reason).toBe("Dog would not touch it");
+  expect(req.body.idempotency_key).toBeTruthy();
+});
+
+test("a resellable item defaults to going back on the shelf", async () => {
+  await openReturns();
+  await type("pos-return-qty-0", "1");
+  await type("pos-return-reason", "Unopened, wrong size");
+  await click("pos-return-confirm");
+  const req = posted.find((p) => String(p.path).includes("/return"));
+  expect(req.body.lines[0].restock).toBe(true);
+});
+
+test("a blocked sale explains itself instead of offering a refund", async () => {
+  api.get.mockImplementation((path) => {
+    if (String(path).includes("/return-preview")) {
+      return Promise.resolve({ data: { ...RETURN_PREVIEW, can_return: false,
+        blocked_reason: "This sale is 94 days old. Returns are accepted for 30 days." } });
+    }
+    return Promise.resolve({ data: path in GET ? GET[path] : {} });
+  });
+  await openReturns();
+  expect(q("pos-return-blocked").textContent).toContain("94 days old");
+  expect(q("pos-return-confirm")).toBeFalsy();
 });

@@ -33742,6 +33742,9 @@ async def startup():
         (db.pos_sale_claims, "idempotency_key", {"unique": True}),
         (db.pos_sale_void_claims, "idempotency_key", {"unique": True}),
         (db.pos_sale_void_claims, "pos_sale_id", {"unique": True}),
+        # Returns are partial and repeatable, so unlike a void there is NO
+        # one-per-sale index here — only the key stops a double refund.
+        (db.pos_sale_return_claims, "idempotency_key", {"unique": True}),
         # Simple retail stock tracking.
         (db.pos_products, "track_inventory", {}),
         (db.inventory_movements, "product_id", {}),
@@ -36519,7 +36522,10 @@ async def _register_day_summary(day: Optional[str] = None) -> Dict[str, Any]:
             continue
         pos_id = r.get("pos_sale_id")
         row_kind = r.get("source_kind") or ""
-        if pos_id and pos_id in pos_tenders_by_sale:
+        # A RETURN is its own money movement with its own method (money goes
+        # back the way it came, which on a split sale is more than one row),
+        # so it buckets by the row rather than by the original sale's tenders.
+        if pos_id and pos_id in pos_tenders_by_sale and row_kind != "pos_sale_return":
             if row_kind == "pos_sale_void":
                 if pos_id not in pos_voids_bucketed:
                     pos_voids_bucketed.add(pos_id)
@@ -36533,7 +36539,7 @@ async def _register_day_summary(day: Optional[str] = None) -> Dict[str, Any]:
         else:
             _add_method_total(incoming_by_method, r.get("payment_method"), amt)
         kind = r.get("source_kind") or "manual_sale"
-        if kind == "refund" or amt < 0:
+        if kind in ("refund", "pos_sale_return") or amt < 0:
             incoming_sources["refunds"] = round(incoming_sources["refunds"] + abs(amt), 2)
         elif kind == "credit_pack_sale":
             incoming_sources["credit_pack_sales"] = round(incoming_sources["credit_pack_sales"] + amt, 2)
@@ -43657,6 +43663,20 @@ class PosSaleLineIn(BaseModel):
 CheckoutIn.model_rebuild()
 
 
+async def get_pos_sale_return_preview(sale_id: str, user: dict = Depends(require_employee_or_admin)):
+    """What can still be returned on this sale. See domains.pos.services."""
+    sale = await db.pos_sales.find_one({"id": sale_id}, {"_id": 0})
+    if not sale:
+        raise HTTPException(status_code=404, detail="Sale not found")
+    return pos_domain_services.return_preview(sale)
+
+
+async def return_pos_sale(sale_id: str, body: pos_domain_services.PosSaleReturnIn,
+                          user: dict = Depends(require_admin_and_permission("take_payments"))):
+    """Return merchandise from a completed sale and refund it."""
+    return await pos_domain_services.return_pos_sale(sale_id=sale_id, body=body, user=user)
+
+
 class PosSaleDiscountIn(BaseModel):
     kind: Literal["fixed", "percent"]
     value: float = Field(gt=0)
@@ -44035,11 +44055,23 @@ async def create_pos_sale(body: PosSaleIn, user: dict = Depends(require_employee
 
 
 async def list_pos_sales(
-    date: Optional[str] = None, limit: int = 50,
+    date: Optional[str] = None, limit: int = 50, receipt: Optional[str] = None,
     user: dict = Depends(require_employee_or_admin),
 ):
-    """Recent Sales panel — defaults to today's business date. Newest first."""
+    """Recent Sales panel — defaults to today's business date. Newest first.
+
+    With a receipt number, searches by it back through the return window
+    instead: someone returning a bag of food bought last Tuesday has the
+    receipt in their hand, not the date the till calls that day."""
     _require_take_payments(user)
+    if (receipt or "").strip():
+        window_start = (business_today() - timedelta(days=pos_domain_services.RETURN_WINDOW_DAYS)).isoformat()
+        cursor = db.pos_sales.find(
+            {"receipt_number": {"$regex": f"^{re.escape(receipt.strip())}", "$options": "i"},
+             "business_date": {"$gte": window_start}},
+            {"_id": 0},
+        ).sort("created_at", -1)
+        return await cursor.to_list(25)
     date_value = date or business_today().isoformat()
     cursor = db.pos_sales.find({"business_date": date_value}, {"_id": 0}).sort("created_at", -1)
     return await cursor.to_list(max(1, min(limit, 500)))
