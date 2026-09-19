@@ -6,6 +6,7 @@
        still on-site, unpaid completed bookings, missing report cards,
        cash collected, care-log roll-up. Designed to take 30s. */
 import { useCallback, useEffect, useState } from "react";
+import { onRegisterChanged } from "../lib/registerBus";
 import { api, formatErr } from "../lib/api";
 import { toast } from "sonner";
 
@@ -151,6 +152,9 @@ export function EndOfDayPanel({ onJump = () => {} }) {
     } catch { /* dashboard card should not be noisy */ }
   }, [hydrateStartDay]);
   useEffect(() => { loadStatus(); }, [loadStatus]);
+  // End of Day quotes expected drawer cash, so it follows the register bus
+  // too — closing out against a stale number is the worst version of this.
+  useEffect(() => onRegisterChanged(loadStatus), [loadStatus]);
   const openPanel = async () => {
     setOpen(true);
     setLoading(true);

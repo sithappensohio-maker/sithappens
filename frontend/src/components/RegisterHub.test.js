@@ -205,3 +205,33 @@ test("activity rows use the backend's decomposed tender label and sort newest fi
   expect(rows[1].method).toBe("Cash $40.00 + Venmo $60.00");
   expect(rows[0].method).toContain("Void — Cash $40.00");
 });
+
+// ── the bus contract, across every screen that shows register money ────────
+describe("every screen showing expected drawer cash follows the register bus", () => {
+  const fs = require("fs");
+  const path = require("path");
+  const read = (...p) => fs.readFileSync(path.join(__dirname, ...p), "utf8");
+
+  // registerBus.js states the rule in its own docstring: "A component that
+  // shows expected cash / today's activity subscribes with onRegisterChanged".
+  // Three of them did not, so a cash sale rung at the till left their number
+  // stale and it read as "the sale didn't count".
+  const SCREENS = [
+    ["RegisterHub", read("RegisterHub.jsx")],
+    ["Today", read("..", "screens", "Today.jsx")],
+    ["Dashboard", read("..", "screens", "Dashboard.jsx")],
+    ["OwnerClockAndEndOfDay", read("OwnerClockAndEndOfDay.jsx")],
+  ];
+
+  test.each(SCREENS)("%s subscribes", (_name, src) => {
+    expect(src).toMatch(/import \{[^}]*onRegisterChanged[^}]*\} from ".*registerBus"/);
+    expect(src).toMatch(/useEffect\(\(\) => onRegisterChanged\(/);
+  });
+
+  test("each of them really does display expected cash", () => {
+    // Guards the list above from rotting into a set of arbitrary files.
+    for (const [name, src] of SCREENS) {
+      expect([name, /expected_cash/.test(src)]).toEqual([name, true]);
+    }
+  });
+});

@@ -1,4 +1,5 @@
 import { useEffect, useMemo, useState } from "react";
+import { onRegisterChanged } from "../lib/registerBus";
 import { api } from "../lib/api";
 import AdminStatCard from "../components/admin/AdminStatCard";
 import PageHero from "../components/PageHero";
@@ -76,6 +77,11 @@ export default function Today({ onNavigate = () => {}, onJumpToDog = () => {}, o
   };
   useEffect(() => { load(); }, []); // eslint-disable-line react-hooks/exhaustive-deps
   useLiveRefresh(load, { intervalMs: 30_000 });
+  // This screen shows expected drawer cash, so it has to follow the register
+  // bus like every other surface that does. Without it a sale rung at the
+  // till left this number stale until the 30-second poll came round, which
+  // reads as "the sale didn't count".
+  useEffect(() => onRegisterChanged(load), []); // eslint-disable-line react-hooks/exhaustive-deps
   // The global "+ New" launcher's booking modal lives outside this screen
   // (mounted in App.js so it works from anywhere), so it can't call our
   // `load` directly the way the old screen-local modal did. App.js bumps

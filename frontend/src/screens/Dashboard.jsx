@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { api, formatErr } from "../lib/api";
+import { onRegisterChanged } from "../lib/registerBus";
 import { compressImage } from "../lib/imageCompress";
 import AdminBookingModal from "../components/AdminBookingModal";
 import HelpRequestsTile from "../components/HelpRequestsTile";
@@ -170,6 +171,9 @@ export default function Dashboard({ onNavigate = () => {}, onJumpToDog = () => {
     } catch {}
   }, []);
   useEffect(() => { load(); }, [load]);
+  // Same contract as RegisterHub: this screen shows expected drawer cash, so
+  // it refreshes when the register changes rather than on the poll alone.
+  useEffect(() => onRegisterChanged(load), [load]);
   // Sprint 110ao — Live refresh every 30 s. Auto-pauses while a modal is
   // open (CheckoutModal / ReportCardModal acquire the edit lock).
   // A full dashboard refresh is intentionally limited to once per minute.
