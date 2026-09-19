@@ -126,3 +126,77 @@ test("the total is a real number, not NaN", async () => {
   expect(total).toBeTruthy();
   expect(total.textContent).toMatch(/^\$\d+\.\d{2}$/);
 });
+
+// ─────────────────────────────────────────────────────── the money path
+// Mounting proves it does not crash. These prove it charges the right amount
+// and asks the server for the right thing.
+
+const q = (id) => container.querySelector(`[data-testid="${id}"]`);
+const click = async (id) => {
+  const el = q(id);
+  if (!el) throw new Error(`no [data-testid="${id}"]`);
+  await act(async () => { el.click(); });
+};
+const posts = () => api.post.mock.calls.map(([path, body]) => ({ path, body }));
+const checkoutBody = () =>
+  (posts().find((p) => String(p.path).includes("/check-out")) || {}).body;
+
+test("the merchandise shelf is folded away until it is opened", async () => {
+  await mount();
+  expect(q("checkout-shop-toggle")).toBeTruthy();
+  expect(q("checkout-product-p-1")).toBeFalsy();
+  await click("checkout-shop-toggle");
+  expect(q("checkout-product-p-1")).toBeTruthy();
+});
+
+test("adding a product raises the amount due by price plus tax", async () => {
+  await mount();
+  const before = q("checkout-total").textContent;
+  await click("checkout-shop-toggle");
+  await click("checkout-product-add-p-1");          // $20.00 taxable @ 6.75%
+  const after = q("checkout-total").textContent;
+  expect(after).not.toBe(before);
+  // the stay is untaxed, the goods are not: 20.00 + 1.35
+  expect(q("checkout-shop-total").textContent).toContain("20.00");
+  expect(q("checkout-shop-tax").textContent).toContain("1.35");
+  expect(q("checkout-total-split").textContent).toMatch(/shop \$21\.35/);
+});
+
+test("an exempt product adds no tax", async () => {
+  await mount();
+  await click("checkout-shop-toggle");
+  await click("checkout-product-add-p-2");          // gift card, taxable: false
+  expect(q("checkout-shop-total").textContent).toContain("25.00");
+  expect(q("checkout-shop-tax")).toBeFalsy();
+  expect(q("checkout-total-split").textContent).toMatch(/shop \$25\.00/);
+});
+
+test("the goods travel as retail lines with an idempotency key, never as add-ons", async () => {
+  await mount();
+  await click("checkout-shop-toggle");
+  await click("checkout-product-add-p-1");
+  await click("confirm-checkout");
+  const body = checkoutBody();
+  expect(body).toBeTruthy();
+  expect(body.retail_lines).toEqual([{ kind: "retail", product_id: "p-1", qty: 1 }]);
+  expect(body.retail_idempotency_key).toBeTruthy();
+  expect(body.payment_method).toBeTruthy();
+  // a product must never be smuggled onto the booking as a service add-on
+  expect(JSON.stringify(body.add_ons || [])).not.toContain("p-1");
+});
+
+test("a checkout with nothing bought sends no retail lines at all", async () => {
+  await mount();
+  await click("confirm-checkout");
+  const body = checkoutBody();
+  expect(body).toBeTruthy();
+  expect(body.retail_lines).toBeUndefined();
+  expect(body.retail_idempotency_key).toBeUndefined();
+});
+
+test("a refused checkout surfaces the reason instead of looking like it worked", async () => {
+  api.post.mockRejectedValue({ response: { data: { detail: "Open the register before taking cash payments." } } });
+  await mount();
+  await click("confirm-checkout");
+  expect(container.textContent).toContain("Open the register");
+});

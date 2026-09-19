@@ -811,16 +811,16 @@ export default function Pos({ onOpenShopManager } = {}) {
       <div className="max-w-xl mx-auto space-y-4 animate-slide-in" data-testid="pos-tender-screen">
         <div className="bg-[var(--sh-card-base)] border border-shBorder rounded-2xl p-6 text-center">
           <p className="text-shTextMuted text-[13px] uppercase tracking-widest font-black">Total Due</p>
-          <p className="text-shText text-4xl font-black">{money(total)}</p>
+          <p className="text-shText text-4xl font-black" data-testid="pos-tender-total">{money(total)}</p>
           {tenders.length > 0 && (
-            <p className="text-shPrimary text-sm mt-1">Remaining: {money(remaining)}</p>
+            <p className="text-shPrimary text-sm mt-1" data-testid="pos-tender-remaining">Remaining: {money(remaining)}</p>
           )}
         </div>
 
         {tenders.length > 0 && (
           <div className="bg-[var(--sh-card-base)] border border-shBorder rounded-2xl p-4 space-y-1">
             {tenders.map((t, i) => (
-              <div key={i} className="flex items-center justify-between text-sm">
+              <div key={i} className="flex items-center justify-between text-sm" data-testid="pos-tender-row">
                 <span className="text-shTextMuted">
                   {TENDER_LABELS[t.method]}{t.notes ? ` — ${t.notes}` : ""}
                   {t.method === "cash" && t.tendered_amount > t.amount && (
@@ -829,7 +829,7 @@ export default function Pos({ onOpenShopManager } = {}) {
                 </span>
                 <div className="flex items-center gap-2">
                   <span className="text-shText font-bold">{money(t.amount)}</span>
-                  <button onClick={() => removeTender(i)} className="text-shTextMuted hover:text-shDanger"><i className="fas fa-times" /></button>
+                  <button onClick={() => removeTender(i)} data-testid={`pos-tender-remove-${i}`} className="text-shTextMuted hover:text-shDanger"><i className="fas fa-times" /></button>
                 </div>
               </div>
             ))}
@@ -847,7 +847,7 @@ export default function Pos({ onOpenShopManager } = {}) {
           <div className="bg-[var(--sh-card-base)] border border-shBorder rounded-2xl p-4 space-y-3">
             <div className="grid grid-cols-5 gap-2">
               {Object.entries(TENDER_LABELS).map(([k, label]) => (
-                <button key={k} onClick={() => setTenderMethod(k)}
+                <button key={k} onClick={() => setTenderMethod(k)} data-testid={`pos-tender-method-${k}`}
                         className={`py-2 rounded text-[11px] font-black uppercase tracking-wide ${tenderMethod === k ? "bg-shPrimary text-bgHeader" : "bg-[var(--sh-card-base)] text-shTextMuted"}`}>
                   {label}
                 </button>
@@ -856,14 +856,14 @@ export default function Pos({ onOpenShopManager } = {}) {
 
             <div>
               <label className="text-[11px] text-shTextMuted uppercase tracking-widest">Amount to apply</label>
-              <input type="number" value={tenderAmount} onChange={(e) => setTenderAmount(e.target.value)}
+              <input type="number" value={tenderAmount} onChange={(e) => setTenderAmount(e.target.value)} data-testid="pos-tender-amount"
                      className="w-full bg-[var(--sh-card-base)] border border-shBorder rounded p-3 text-shText text-xl font-black" />
             </div>
 
             {tenderMethod === "cash" && (
               <div>
                 <label className="text-[11px] text-shTextMuted uppercase tracking-widest">Cash received</label>
-                <input type="number" value={cashReceived} onChange={(e) => setCashReceived(e.target.value)}
+                <input type="number" value={cashReceived} onChange={(e) => setCashReceived(e.target.value)} data-testid="pos-tender-cash-received"
                        placeholder={tenderAmount} className="w-full bg-[var(--sh-card-base)] border border-shBorder rounded p-3 text-shText text-xl font-black" />
                 <div className="flex gap-2 mt-2">
                   {[Number(tenderAmount) || 0, 50, 60, 100].filter((v, i, arr) => arr.indexOf(v) === i && v > 0).map((v) => (
@@ -884,7 +884,7 @@ export default function Pos({ onOpenShopManager } = {}) {
                      className="w-full bg-[var(--sh-card-base)] border border-shBorder rounded p-3 text-shText" />
             )}
 
-            <button onClick={addTender} className="w-full bg-[var(--sh-card-base)] border border-shPrimary/50 text-shPrimary rounded-xl py-3 font-black uppercase tracking-widest">
+            <button onClick={addTender} data-testid="pos-tender-add" className="w-full bg-[var(--sh-card-base)] border border-shPrimary/50 text-shPrimary rounded-xl py-3 font-black uppercase tracking-widest">
               Add Tender
             </button>
           </div>
@@ -1598,9 +1598,9 @@ export default function Pos({ onOpenShopManager } = {}) {
             )}
 
             <div className="mt-3 pt-3 border-t border-shBorder space-y-1 text-sm">
-              <div className="flex justify-between text-shTextMuted"><span>Subtotal</span><span>{money(priced?.subtotal)}</span></div>
+              <div className="flex justify-between text-shTextMuted" data-testid="pos-cart-subtotal"><span>Subtotal</span><span>{money(priced?.subtotal)}</span></div>
               {priced?.discount_amount > 0 && <div className="flex justify-between text-shTextMuted"><span>Discount</span><span>-{money(priced.discount_amount)}</span></div>}
-              {priced?.tax_amount > 0 && <div className="flex justify-between text-shTextMuted"><span>Tax{priced.tax_rate_pct > 0 ? ` (${priced.tax_rate_pct}%)` : ""}</span><span>{money(priced.tax_amount)}</span></div>}
+              {priced?.tax_amount > 0 && <div className="flex justify-between text-shTextMuted" data-testid="pos-cart-tax"><span>Tax{priced.tax_rate_pct > 0 ? ` (${priced.tax_rate_pct}%)` : ""}</span><span>{money(priced.tax_amount)}</span></div>}
               {priced?.taxable_subtotal > 0 && !(priced?.tax_amount > 0) && (
                 /* There is merchandise in this cart and no tax on it. Silence
                    here is how untaxed sales go out unnoticed, so say it. */
