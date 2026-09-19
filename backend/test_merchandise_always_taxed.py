@@ -179,3 +179,69 @@ def test_taxable_goods_with_tax_switched_off_are_still_reported_as_taxable():
         assert priced["taxable_subtotal"] == 40.00, "the register can see it should have been taxed"
     finally:
         _drop(p)
+
+
+# ------------------------------------------- the per-item flag is settable
+
+def _create(**over):
+    body = {"name": f"{TAG} widget", "category": "", "description": "", "sku": "",
+            "price": 20.0, "cost": None, "active": True, "starting_stock": 0,
+            "track_inventory": False, "low_stock_threshold": None,
+            "show_online": False, "show_at_register": True,
+            "online_description": None, "image_id": None, "online_sort_order": None,
+            "category_id": None, "subcategory_id": None, "featured": False}
+    body.update(over)
+    return run(server.create_pos_product(server.PosProductCreateIn(**body), ADMIN))
+
+
+ADMIN = {"id": "merch-admin", "name": "Merch QA", "email": "merch@test", "role": "admin"}
+
+
+def test_a_new_product_is_taxable_and_says_so_in_the_record():
+    # It used to be taxable only by ABSENCE — the field was never written, so
+    # nothing could see it and nothing could change it.
+    doc = _create()
+    try:
+        stored = run(server.db.pos_products.find_one({"id": doc["id"]}, {"_id": 0}))
+        assert stored["taxable"] is True, "stored explicitly, not merely defaulted"
+        assert stored["tax_exempt_reason"] is None
+    finally:
+        run(server.db.pos_products.delete_many({"id": doc["id"]}))
+
+
+def test_a_product_can_be_made_exempt_with_a_reason_and_it_sticks():
+    doc = _create(taxable=False, tax_exempt_reason="Gift card — taxed when spent")
+    try:
+        stored = run(server.db.pos_products.find_one({"id": doc["id"]}, {"_id": 0}))
+        assert stored["taxable"] is False
+        assert stored["tax_exempt_reason"] == "Gift card — taxed when spent"
+        # and the register honours it
+        priced = _priced([{"kind": "retail", "product_id": doc["id"], "qty": 1}])
+        assert priced["tax_amount"] == 0.0
+        assert priced["line_items"][0]["tax_exempt_reason"] == "Gift card — taxed when spent"
+    finally:
+        run(server.db.pos_products.delete_many({"id": doc["id"]}))
+
+
+def test_an_exemption_can_be_taken_back_off_again():
+    doc = _create(taxable=False, tax_exempt_reason="Set in error")
+    try:
+        run(server.update_pos_product(doc["id"], server.PosProductIn(
+            name=doc["name"], price=20.0, active=True, taxable=True), ADMIN))
+        stored = run(server.db.pos_products.find_one({"id": doc["id"]}, {"_id": 0}))
+        assert stored["taxable"] is True
+        assert stored["tax_exempt_reason"] is None, "a stale reason must not linger"
+        assert _priced([{"kind": "retail", "product_id": doc["id"], "qty": 1}])["tax_amount"] == 1.35
+    finally:
+        run(server.db.pos_products.delete_many({"id": doc["id"]}))
+
+
+def test_a_duplicated_product_keeps_its_exemption():
+    doc = _create(taxable=False, tax_exempt_reason="Gift card")
+    copy_id = None
+    try:
+        copy = run(server.duplicate_pos_product(doc["id"], ADMIN))
+        copy_id = copy["id"]
+        assert copy["taxable"] is False and copy["tax_exempt_reason"] == "Gift card"
+    finally:
+        run(server.db.pos_products.delete_many({"id": {"$in": [doc["id"], copy_id]}}))

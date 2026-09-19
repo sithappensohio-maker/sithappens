@@ -27,6 +27,9 @@ const BLANK_FORM = {
   // temporary local cart placement.
   publicly_visible: false, guest_cart_allowed: false, show_public_price: true,
   requires_approval: false, requires_completed_onboarding: false,
+  // Merchandise is taxable. This is the exemption for the rare thing that
+  // genuinely is not — a gift card, say — so it starts switched on.
+  taxable: true, tax_exempt_reason: "",
 };
 
 // Shared product add/edit form — used by this panel AND the unified Shop
@@ -173,6 +176,34 @@ export function ProductEditor({ form, setForm, editingId, originalImageId, savin
                  data-testid="product-show-at-register" />
           <label htmlFor="show-at-register" className="text-shText text-sm">Show at Register</label>
         </div>
+      </div>
+
+      {/* Sales tax. Merchandise is taxed — that is the rule and it is not
+          per-category any more — so this is only ever about the rare item
+          that genuinely is not, and it asks why so the answer survives the
+          person who knew it. */}
+      <div className="border-t border-shBorder pt-3 mt-1 space-y-2">
+        <div className="flex items-center gap-2">
+          <input type="checkbox" id="product-taxable" checked={form.taxable}
+                 onChange={(e) => setForm((f) => ({ ...f, taxable: e.target.checked }))}
+                 data-testid="product-taxable" />
+          <label htmlFor="product-taxable" className="text-shText text-sm">Charge sales tax on this item</label>
+        </div>
+        {!form.taxable ? (
+          <div>
+            <label className="text-[11px] text-shTextMuted uppercase tracking-widest">Why is it exempt?</label>
+            <input value={form.tax_exempt_reason} maxLength={300}
+                   onChange={(e) => setForm((f) => ({ ...f, tax_exempt_reason: e.target.value }))}
+                   placeholder="e.g. Gift card — taxed when it is spent, not when it is sold"
+                   data-testid="product-tax-exempt-reason"
+                   className="mt-1 w-full bg-[var(--sh-card-base)] border border-shBorder rounded p-2 text-shText text-sm" />
+            <p className="text-[11px] text-shTextMuted mt-1">Kept with the product and shown against the No-tax badge in this list.</p>
+          </div>
+        ) : (
+          <p className="text-[11px] text-shTextMuted">
+            Turn this off only for something genuinely not taxable. Services are handled separately — they are never taxed.
+          </p>
+        )}
       </div>
 
       {/* Shop Organization — purely organizational, independent of online
@@ -365,6 +396,9 @@ export default function ManageProductsPanel({ onClose, onChanged }) {
       online_sort_order: p.online_sort_order != null ? String(p.online_sort_order) : "",
       category_id: p.category_id || null, subcategory_id: p.subcategory_id || null,
       featured: !!p.featured, show_at_register: p.show_at_register !== false,
+      // Absent means taxable — the same default the pricing engine uses, so
+      // a product saved before this field existed reads back honestly.
+      taxable: p.taxable !== false, tax_exempt_reason: p.tax_exempt_reason || "",
       sales_destination: p.sales_destination === "shopify_external" ? "shopify_external" : "internal",
       shopify_product_url: p.shopify_product_url || "",
       shopify_display_price: p.shopify_display_price != null ? String(p.shopify_display_price) : "",
@@ -414,6 +448,8 @@ export default function ManageProductsPanel({ onClose, onChanged }) {
       online_sort_order: form.online_sort_order !== "" ? parseInt(form.online_sort_order, 10) : null,
       category_id: form.category_id || null, subcategory_id: form.subcategory_id || null,
       featured: form.featured, show_at_register: form.show_at_register,
+      taxable: form.taxable,
+      tax_exempt_reason: form.taxable ? null : (form.tax_exempt_reason.trim() || null),
       sales_destination: form.sales_destination,
       shopify_product_url: isShopify ? form.shopify_product_url.trim() : null,
       shopify_display_price: (isShopify && form.shopify_display_price !== "") ? Number(form.shopify_display_price) : null,
@@ -640,6 +676,17 @@ export default function ManageProductsPanel({ onClose, onChanged }) {
                             </span>
                           )}
                           {p.featured && <span className="ml-2 px-1.5 py-0.5 rounded text-[9px] font-black uppercase tracking-widest bg-shPrimary/10 text-shPrimary align-middle">Featured</span>}
+                          {p.taxable === false && (
+                            /* Visible in the list, not just buried in the
+                               editor: "which of my products are not taxed?"
+                               is the question you ask when a filing looks
+                               wrong, and it should take one glance. */
+                            <span title={p.tax_exempt_reason || "No reason recorded"}
+                                  data-testid={`product-no-tax-${p.id}`}
+                                  className="ml-2 px-1.5 py-0.5 rounded text-[9px] font-black uppercase tracking-widest bg-shOrange/10 text-shOrange align-middle">
+                              No tax
+                            </span>
+                          )}
                         </td>
                         <td className="py-2 pr-2 text-shTextMuted">{shopCategoryLabel(p)}</td>
                         <td className="py-2 pr-2 text-shTextMuted">{p.sales_destination === "shopify_external" ? "—" : (p.category || "—")}</td>

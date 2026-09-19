@@ -43338,6 +43338,12 @@ async def create_pos_product(body: PosProductCreateIn, user: dict = Depends(requ
         "requires_dog": body.requires_dog,
         "requires_approval": body.requires_approval,
         "requires_completed_onboarding": body.requires_completed_onboarding,
+        # Sales tax. Merchandise is taxable by default (sales_tax_policy);
+        # this is the per-ITEM exemption for the genuinely exempt thing, and
+        # it is stored explicitly so it can be seen and changed rather than
+        # only ever being the absence of a field.
+        "taxable": body.taxable,
+        "tax_exempt_reason": (body.tax_exempt_reason or "").strip() or None,
         **destination_fields,
     }
     await db.pos_products.insert_one(doc)
@@ -43377,6 +43383,12 @@ async def update_pos_product(product_id: str, body: PosProductIn, user: dict = D
         "requires_dog": body.requires_dog,
         "requires_approval": body.requires_approval,
         "requires_completed_onboarding": body.requires_completed_onboarding,
+        # Sales tax. Merchandise is taxable by default (sales_tax_policy);
+        # this is the per-ITEM exemption for the genuinely exempt thing, and
+        # it is stored explicitly so it can be seen and changed rather than
+        # only ever being the absence of a field.
+        "taxable": body.taxable,
+        "tax_exempt_reason": (body.tax_exempt_reason or "").strip() or None,
         **_resolve_pos_product_destination_fields(body),
     }
     await db.pos_products.update_one({"id": product_id}, {"$set": patch})

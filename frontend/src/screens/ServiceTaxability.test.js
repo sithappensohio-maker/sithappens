@@ -65,6 +65,38 @@ describe("Settings sales-tax panel matches the server policy", () => {
   });
 });
 
+describe("a product's own tax exemption is reachable", () => {
+  const src = read("../components/ManageProductsPanel.jsx");
+
+  test("the editor has the flag at all", () => {
+    // It was supported by the model and honoured by the pricer, but there was
+    // no field and the endpoints never wrote it — so an exempt item could not
+    // be configured, and one set by any other route could not be undone.
+    expect(src).toContain('data-testid="product-taxable"');
+    expect(src).toMatch(/Charge sales tax on this item/);
+  });
+
+  test("it defaults to taxable, and an old product reads back as taxable", () => {
+    expect(src).toMatch(/taxable: true, tax_exempt_reason: ""/);
+    // absent means taxable — the same default the pricing engine uses
+    expect(src).toMatch(/taxable: p\.taxable !== false/);
+  });
+
+  test("turning it off asks why, and turning it back on clears the answer", () => {
+    expect(src).toContain('data-testid="product-tax-exempt-reason"');
+    expect(src).toMatch(/\{!form\.taxable \? \(/);
+    expect(src).toMatch(/tax_exempt_reason: form\.taxable \? null : \(form\.tax_exempt_reason\.trim\(\) \|\| null\)/);
+  });
+
+  test("an exempt product is visible in the list, not just in its editor", () => {
+    // "which of my products are not taxed?" is the question you ask when a
+    // filing looks wrong; it should take one glance.
+    expect(src).toContain("data-testid={`product-no-tax-${p.id}`}");
+    expect(src).toMatch(/p\.taxable === false &&/);
+    expect(src).toMatch(/title=\{p\.tax_exempt_reason \|\| "No reason recorded"\}/);
+  });
+});
+
 describe("the register cannot quietly sell merchandise untaxed", () => {
   const src = read("./Pos.jsx");
 
