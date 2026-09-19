@@ -455,6 +455,14 @@ export function CheckoutModal({ booking, services, onClose, onRequestCancel }) {
   const btUnanswered = btSessions.filter((s) => !btAnswers[`${s.date}|${s.slot}`]).length;
   const answerAll = (outcome) => setBtAnswers(
     Object.fromEntries(btSessions.map((s) => [`${s.date}|${s.slot}`, outcome])));
+  const btCounts = btChoices.map((c) => ({
+    ...c, n: btSessions.filter((s) => btAnswers[`${s.date}|${s.slot}`] === c.value).length,
+  })).filter((c) => c.n > 0);
+  const salesTaxCfg = moneyModifierPreview?.sales_tax || {};
+  // The stay is never taxed (services aren't), but merchandise is — so the
+  // shop basket needs the configured rate itself, not the booking's answer.
+  const salesTaxRateRaw = salesTaxCfg.enabled ? Math.max(0, Number(salesTaxCfg.rate_pct || 0)) : 0;
+
   // What is in the shop basket, and what it costs. The tax shown here is the
   // same arithmetic the Register does; the server prices it again for real,
   // so this is a preview, never the number that gets charged.
@@ -470,14 +478,6 @@ export function CheckoutModal({ booking, services, onClose, onRequestCancel }) {
     if (qty > 0) next[id] = qty; else delete next[id];
     return next;
   });
-
-  const btCounts = btChoices.map((c) => ({
-    ...c, n: btSessions.filter((s) => btAnswers[`${s.date}|${s.slot}`] === c.value).length,
-  })).filter((c) => c.n > 0);
-  const salesTaxCfg = moneyModifierPreview?.sales_tax || {};
-  // The stay is never taxed (services aren't), but merchandise is — so the
-  // shop basket needs the configured rate itself, not the booking's answer.
-  const salesTaxRateRaw = salesTaxCfg.enabled ? Math.max(0, Number(salesTaxCfg.rate_pct || 0)) : 0;
   const salesTaxRate = salesTaxCfg.enabled && salesTaxCfg.applies
     ? Math.max(0, Number(salesTaxCfg.rate_pct || 0))
     : 0;
