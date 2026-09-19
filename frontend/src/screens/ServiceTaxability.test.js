@@ -65,6 +65,29 @@ describe("Settings sales-tax panel matches the server policy", () => {
   });
 });
 
+describe("the sales-tax setting is somewhere a person would look", () => {
+  const src = read("./Settings.jsx");
+
+  test("it is its own entry under Finance & Bookkeeping", () => {
+    // It used to render at the BOTTOM of Backup & Restore, under "what's in
+    // a backup?", user migration and photo compression. Nobody found it, and
+    // an un-ticked box there looks exactly like "tax is broken".
+    const finance = src.slice(src.indexOf('label: "Finance & Bookkeeping"'),
+                              src.indexOf('label: "Rewards & Referrals"'));
+    expect(finance).toMatch(/id: "sales_tax", label: "Sales Tax"/);
+    expect(src).toMatch(/\{tab === "sales_tax" && <SalesTaxPanel \/>\}/);
+  });
+
+  test("it is no longer buried in Backup & Restore", () => {
+    const backup = src.slice(src.indexOf("function BackupPanel"), src.indexOf("function SalesTaxPanel"));
+    expect(backup).not.toMatch(/<SalesTaxPanel \/>/);
+  });
+
+  test("it is in the quick-jump list beside the other money settings", () => {
+    expect(src).toMatch(/\{ key: "sales_tax", label: "Sales Tax", icon: "fa-percent", id: "sales_tax" \}/);
+  });
+});
+
 describe("a product's own tax exemption is reachable", () => {
   const src = read("../components/ManageProductsPanel.jsx");
 

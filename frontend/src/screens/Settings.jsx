@@ -31,6 +31,7 @@ const COMMON_SETTINGS_SHORTCUTS = [
   { key: "vaccines", label: "Vaccine Requirements", icon: "fa-shield-virus", id: "vaccines" },
   { key: "booking_flow", label: "Booking Rules & Approval", icon: "fa-calendar-check", id: "booking_flow_controls" },
   { key: "payment_options", label: "Payment Methods", icon: "fa-money-bill-wave", id: "payment_options" },
+  { key: "sales_tax", label: "Sales Tax", icon: "fa-percent", id: "sales_tax" },
   { key: "receipts", label: "Receipt Settings", icon: "fa-receipt", id: "receipts" },
   { key: "pricing_tiers", label: "Pricing Tiers", icon: "fa-users-viewfinder", id: "pricing_tiers" },
   { key: "client_portal_controls", label: "Client Portal Controls", icon: "fa-mobile-screen-button", id: "client_portal_controls" },
@@ -294,6 +295,9 @@ export default function Settings({ initialSection = null, onSectionChange = () =
         { id: "_d2d_finance", label: "Finance Defaults", icon: "fa-chart-pie",
           desc: "Fiscal year start, bookkeeping export format, mileage rate, 1099 threshold.",
           badges: ["Live", "Admin-only"], d2dSection: "finance" },
+        { id: "sales_tax", label: "Sales Tax", icon: "fa-percent",
+          desc: "Whether you collect sales tax and at what rate. Merchandise is taxed; services never are.",
+          badges: ["Live", "Admin-only"] },
         { id: "payment_options", label: "Payment Options", icon: "fa-money-bill-wave",
           desc: "Venmo / PayPal / Card / Cash / Check — toggle which payment methods to show clients in the portal and on booking confirmations. Manual Payment Tracking remains the source of truth.",
           badges: ["Live", "Client-facing"] },
@@ -587,6 +591,7 @@ export default function Settings({ initialSection = null, onSectionChange = () =
               {tab === "dashboard_widgets" && <DashboardWidgetsPanel />}
               {tab === "permission_matrix" && <PermissionMatrixPanel />}
               {tab === "payment_options" && <PaymentOptionsPanel />}
+              {tab === "sales_tax" && <SalesTaxPanel />}
               {tab === "capacity" && <CapacityPanel s={s} save={save} saving={saving} />}
               {tab === "rules" && <RulesPanel s={s} save={save} saving={saving} />}
               {tab === "vaccines" && <VaccinesPanel s={s} save={save} saving={saving} />}
@@ -3751,7 +3756,6 @@ function BackupPanel() {
       <BulkClaimEmailsSection />
 
       <PhotoCompressionPanel />
-      <SalesTaxPanel />
       <YearEndPayrollPanel />
       <MeetNGreetPanel />
     </div>
