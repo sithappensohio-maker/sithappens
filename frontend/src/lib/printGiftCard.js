@@ -77,8 +77,15 @@ export function giftCardHtml(card, { businessName, note = "", colors, brand, log
   // it. Printing "$0.00" on it would be a lie in the most alarming place on
   // the card, so the amount slot carries the code instead and the balance
   // lives where it belongs: in the till.
-  const blank = card.status === "stock" || card.origin === "stock";
-  const amount = money(card.balance != null ? card.balance : card.amount);
+  const onRack = card.status === "stock" || card.origin === "stock";
+  // A $25 card off a denomination stack DOES print its value: that number is
+  // the promise the customer is buying, and it is enforced at the till. Only
+  // a true blank has nothing to show, and gets its code in that space.
+  const face = card.face_value == null ? null : money(card.face_value);
+  const blank = onRack && face === null;
+  const amount = onRack && face !== null
+    ? face
+    : money(card.balance != null ? card.balance : card.amount);
   const to = esc(card.recipient_name || "");
   const issued = esc(String(card.issued_at || new Date().toISOString()).slice(0, 10));
   const scriptLines = b.script.split("\n").map((l) => `<span>${esc(l)}</span>`).join("");
@@ -197,7 +204,8 @@ export function giftCardHtml(card, { businessName, note = "", colors, brand, log
         ${blank
           ? `<p class="frontcode" style="margin:0">${code}</p>
              <p class="loadme" style="margin:0">Ask us to load or check it</p>`
-          : `<p class="amount" style="margin:0">${esc(amount)}</p>`}
+          : `<p class="amount" style="margin:0">${esc(amount)}</p>
+             ${onRack ? `<p class="loadme" style="margin:0">${code}</p>` : ""}`}
         <div class="pad"></div>
         ${!blank && to ? `<p class="to" style="margin:0">for ${to}</p>` : ""}
       </div>
@@ -228,7 +236,8 @@ export function giftCardHtml(card, { businessName, note = "", colors, brand, log
           <span class="issued">Issued ${issued}</span>
           <div class="footright">
             <div class="footmark">${esc(b.footMark)}</div>
-            <div class="footamount">${blank ? "Not yet loaded" : esc(amount)}</div>
+            <div class="footamount">${
+              blank ? "Not yet loaded" : onRack ? `${esc(amount)} card` : esc(amount)}</div>
           </div>
         </div>
       </div>
@@ -276,9 +285,13 @@ export function giftCardSheetHtml(cards, { businessName, colors, brand, logo } =
 
   const cell = (card) => {
     const code = esc(card.code_display || card.code || "");
-    const blank = card.status === "stock" || card.origin === "stock"
-                  || (card.balance == null && card.amount == null);
-    const amount = money(card.balance != null ? card.balance : card.amount);
+    const onRack = card.status === "stock" || card.origin === "stock"
+                   || (card.balance == null && card.amount == null);
+    const face = card.face_value == null ? null : money(card.face_value);
+    const blank = onRack && face === null;
+    const amount = onRack && face !== null
+      ? face
+      : money(card.balance != null ? card.balance : card.amount);
     return `<div class="card">
       <svg class="swoosh" viewBox="0 0 340 88" preserveAspectRatio="none" xmlns="http://www.w3.org/2000/svg">
         <path d="M0 62 C 70 92, 150 30, 218 44" fill="none" stroke="${c.green}" stroke-width="2.4"/>

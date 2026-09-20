@@ -65,7 +65,8 @@ def register_gift_card_routes(*, api, server_globals: dict) -> None:
         when somebody buys it and the Register loads it. That is why this can
         make a hundred at once without the books moving a cent.
         """
-        made = await services.mint_stock(quantity=body.quantity, actor=user)
+        made = await services.mint_stock(quantity=body.quantity, actor=user,
+                                         face_value=body.face_value)
         return {"ok": True, "count": len(made), "cards": made}
 
     @api.post("/gift-cards/{code}/adjust")

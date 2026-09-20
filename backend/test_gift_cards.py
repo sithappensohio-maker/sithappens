@@ -729,3 +729,99 @@ def test_a_whole_sheet_of_blanks_is_individually_trackable():
     for c in codes[1:]:
         other = run(gift.find_by_code(c))
         assert other["status"] == "stock" and other["balance"] == 0.0
+
+
+# ──────────────────────────────────── fixed-denomination cards ($25 stack)
+# The amount is PRINTED on these, so the printed number and the balance have
+# to agree or the card lies to whoever is holding it.
+
+def _denom(value=25.00, qty=1):
+    return run(gift.mint_stock(quantity=qty, actor=ADMIN, face_value=value))
+
+
+def test_a_denomination_stack_prints_its_value():
+    made = _denom(25.00, 4)
+    assert len(made) == 4
+    assert all(c["face_value"] == 25.00 for c in made)
+    assert len({c["code"] for c in made}) == 4, "still its own code each"
+
+
+def test_a_printed_value_is_not_a_balance():
+    # A $25 card nobody has bought is worth nothing. If face value counted as
+    # balance, a rack of 40 would show $1,000 owed before a penny came in.
+    rev, cash = _revenue(), _expected_cash()
+    before = run(gift.list_cards())["outstanding_balance"]
+    _denom(25.00, 40)
+    assert _revenue() == rev and _expected_cash() == cash
+    after = run(gift.list_cards())
+    assert after["outstanding_balance"] == before, "a printed number is not money"
+    assert all(c["balance"] == 0.0 for c in after["cards"] if c["status"] == "stock")
+
+
+def test_a_blank_and_a_denomination_can_share_the_rack():
+    blank = _blank()
+    fixed = _denom(50.00)[0]
+    assert blank["face_value"] is None
+    assert fixed["face_value"] == 50.00
+
+
+def test_a_twenty_five_dollar_card_sells_for_twenty_five():
+    card = _denom(25.00)[0]
+    _sell_blank(card["code"], 25.00)
+    live = run(server.db.gift_cards.find_one({"id": card["id"]}, {"_id": 0}))
+    assert live["status"] == "active" and live["balance"] == 25.00
+
+
+def test_a_twenty_five_dollar_card_cannot_be_sold_for_ten():
+    # Otherwise the customer holds a card that says $25 with $10 on it.
+    card = _denom(25.00)[0]
+    with pytest.raises(HTTPException) as e:
+        _sell_blank(card["code"], 10.00)
+    assert e.value.status_code == 400
+    assert "$25.00" in str(e.value.detail)
+    live = run(server.db.gift_cards.find_one({"id": card["id"]}, {"_id": 0}))
+    assert live["status"] == "stock", "the card must stay on the rack"
+
+
+def test_the_wrong_price_takes_no_money():
+    card = _denom(25.00)[0]
+    cash, rev = _expected_cash(), _revenue()
+    sales_before = run(server.db.pos_sales.count_documents({}))
+    with pytest.raises(HTTPException):
+        _sell_blank(card["code"], 100.00)
+    assert _expected_cash() == cash and _revenue() == rev
+    assert run(server.db.pos_sales.count_documents({})) == sales_before
+
+
+def test_activation_enforces_the_printed_value_on_its_own():
+    # The till checks first, but activation is the only path that moves
+    # money, so it must not depend on the caller having checked.
+    card = _denom(25.00)[0]
+    with pytest.raises(HTTPException) as e:
+        run(gift.activate_stock_card(code=card["code"], amount=999.00,
+                                     actor=ADMIN, pos_sale_id="direct"))
+    assert e.value.status_code == 400
+
+
+def test_a_blank_still_sells_for_anything():
+    blank = _blank()
+    _sell_blank(blank["code"], 63.47)
+    live = run(server.db.gift_cards.find_one({"id": blank["id"]}, {"_id": 0}))
+    assert live["balance"] == 63.47
+
+
+def test_a_denomination_card_spends_like_any_other():
+    card = _denom(50.00)[0]
+    _sell_blank(card["code"], 50.00)
+    after_sale = _revenue()
+    pid = _product(20.00)
+    _sale([{"kind": "retail", "product_id": pid, "qty": 1}],
+          [{"method": "gift_card", "amount": 21.35, "gift_card_code": card["code"]}])
+    assert round(_revenue() - after_sale, 2) == 0.00
+    live = run(server.db.gift_cards.find_one({"id": card["id"]}, {"_id": 0}))
+    assert live["balance"] == 28.65
+
+
+def test_a_silly_printed_value_is_refused():
+    with pytest.raises(Exception):
+        run(gift.mint_stock(quantity=1, actor=ADMIN, face_value=99999.0))

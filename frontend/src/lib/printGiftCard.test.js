@@ -231,3 +231,54 @@ test("a blocked pop-up on a sheet is reported, not silently nothing", () => {
   expect(global.URL.revokeObjectURL).toHaveBeenCalled();
   open.mockRestore();
 });
+
+
+// ─────────────────────────────────────────── fixed-denomination cards
+
+const FIXED = { code_display: "AAAA-BBBB-CCCC", status: "stock", origin: "stock",
+                balance: 0, face_value: 25 };
+
+test("a $25 card prints $25, because that is what it promises", () => {
+  const html = giftCardHtml(FIXED);
+  expect(html).toContain("$25.00");
+  expect(html).not.toContain("$0.00");
+});
+
+test("a $25 card still prints its own code, so it can be tracked", () => {
+  const html = giftCardHtml(FIXED);
+  expect(html).toContain("AAAA-BBBB-CCCC");
+});
+
+test("a true blank still shows its code instead of a value", () => {
+  const html = giftCardHtml(BLANK);
+  expect(html).not.toContain("$0.00");
+  expect(html).toMatch(/class="frontcode"/);
+});
+
+test("a sheet of $50 cards prints the value on every one", () => {
+  const cards = ["AAAA-1111-2222", "BBBB-3333-4444"].map((code_display) => ({
+    code_display, status: "stock", balance: 0, face_value: 50 }));
+  const html = giftCardSheetHtml(cards);
+  expect((html.match(/\$50\.00/g) || []).length).toBe(2);
+  for (const c of cards) expect(html).toContain(c.code_display);
+  expect(html).not.toContain("$0.00");
+});
+
+test("a sheet can mix blanks and fixed amounts", () => {
+  const html = giftCardSheetHtml([
+    { code_display: "AAAA-1111-2222", status: "stock", balance: 0, face_value: 25 },
+    { code_display: "BBBB-3333-4444", status: "stock", balance: 0 },
+  ]);
+  expect(html).toContain("$25.00");
+  expect(html).toContain("Ask us to load or check it");
+  expect(html).not.toContain("$0.00");
+});
+
+test("a sold card prints its balance, not the value it was printed with", () => {
+  // Spend $10 off a $25 card and the card is worth $15. The printed 25 is
+  // history; a reprint has to say what is actually on it.
+  const html = giftCardHtml({ code_display: "AAAA-BBBB-CCCC", status: "active",
+                              face_value: 25, balance: 15 });
+  expect(html).toContain("$15.00");
+  expect(html).not.toContain("$25.00");
+});

@@ -72,6 +72,10 @@ export default function GiftCards() {
   // ── printing blanks for the rack ────────────────────────────────────
   const [rackOpen, setRackOpen] = useState(false);
   const [rackQty, setRackQty] = useState("10");
+  // Empty means a blank stack, sellable for any amount. A number means a
+  // denomination stack: that value is printed on the card and the Register
+  // will not sell it for anything else.
+  const [rackValue, setRackValue] = useState("");
   const [madeCards, setMadeCards] = useState(null);
 
   const makeRack = async () => {
@@ -79,7 +83,10 @@ export default function GiftCards() {
     if (!(n >= 1 && n <= 100)) { toast.error("Between 1 and 100 cards."); return; }
     setBusy(true);
     try {
-      const { data: d } = await api.post("/gift-cards/stock", { quantity: n });
+      const face = rackValue.trim() === "" ? null : Number(rackValue);
+      if (face !== null && !(face > 0)) { toast.error("Enter a real amount, or leave it empty."); setBusy(false); return; }
+      const { data: d } = await api.post("/gift-cards/stock",
+                                         { quantity: n, face_value: face });
       // Held on screen rather than printed straight away: if the print is
       // blocked or the paper jams, the codes are still here to print again.
       setMadeCards(d.cards || []);
@@ -194,12 +201,20 @@ export default function GiftCards() {
             <div>
               <p className="text-shText text-xl font-black tracking-widest">{found.code_display}</p>
               <p className="text-[12.5px] text-shTextMuted">
-                {money(found.initial_amount)} issued · {money(found.spent)} spent
+                {found.status === "stock"
+                  ? (found.face_value != null
+                      ? `${money(found.face_value)} card · not sold yet`
+                      : "Blank · sells for any amount")
+                  : `${money(found.initial_amount)} issued · ${money(found.spent)} spent`}
                 {found.recipient_name ? ` · for ${found.recipient_name}` : ""}
               </p>
             </div>
             <div className="text-right">
-              <p className="text-shPrimary text-3xl font-black">{money(found.balance)}</p>
+              {/* A card nobody has bought is worth nothing, and "$0.00" in
+                  32px reads as an empty card rather than an unsold one. */}
+              <p className="text-shPrimary text-3xl font-black">
+                {found.status === "stock" ? "—" : money(found.balance)}
+              </p>
               <span className={`inline-block mt-1 px-2 py-0.5 rounded text-[10px] font-black uppercase tracking-widest border ${
                     (STATUS[found.status] || STATUS.spent).cls}`}>
                 {(STATUS[found.status] || {}).label || found.status}
@@ -208,6 +223,10 @@ export default function GiftCards() {
           </div>
 
           <div className="flex flex-wrap gap-2 mt-3">
+            {/* Loading a blank by hand is refused by the backend on purpose —
+                money on a card has to arrive through a sale. Offering the
+                button anyway just hands the operator an error. */}
+            {found.status !== "stock" && (
             <button onClick={() => {
                       const v = window.prompt("Add how much to this card?");
                       const why = v && window.prompt("Why?");
@@ -217,6 +236,7 @@ export default function GiftCards() {
                     className="min-h-[40px] px-3 rounded border border-shBorder text-[11px] font-black uppercase tracking-widest text-shTextMuted">
               Add to balance
             </button>
+            )}
             <button onClick={() => print(found)} data-testid="gift-print"
                     className="min-h-[40px] px-3 rounded border border-shPrimary/50 text-[11px] font-black uppercase tracking-widest text-shPrimary">
               <i className="fas fa-print mr-1.5"/>Print
@@ -287,6 +307,18 @@ export default function GiftCards() {
                        data-testid="gift-rack-qty" className={input}/>
                 <p className="text-[11px] text-shTextMuted mt-1">
                   {PER_SHEET} to a sheet, cut lines included.
+                </p>
+              </div>
+              <div>
+                <label className={label}>Amount printed on them</label>
+                <input type="number" min="1" value={rackValue}
+                       onChange={(e) => setRackValue(e.target.value)}
+                       placeholder="Leave empty for blanks"
+                       data-testid="gift-rack-value" className={input}/>
+                <p className="text-[11px] text-shTextMuted mt-1">
+                  {rackValue.trim() === ""
+                    ? "Blanks — sell each one for whatever the customer wants."
+                    : `A $${Number(rackValue) || 0} stack — the Register will only sell these for $${Number(rackValue) || 0}.`}
                 </p>
               </div>
             </div>
@@ -377,7 +409,12 @@ export default function GiftCards() {
                 </div>
                 <div className="flex items-center gap-3 shrink-0">
                   <span className="text-shText font-black">
-                    {c.status === "stock" ? "—" : money(c.balance)}
+                    {c.status !== "stock" ? money(c.balance)
+                     : c.face_value != null ? (
+                        <span className="text-shTextMuted text-[12px] font-bold">
+                          {money(c.face_value)} card
+                        </span>)
+                     : "—"}
                   </span>
                   <span className={`px-2 py-0.5 rounded text-[10px] font-black uppercase tracking-widest border ${
                         (STATUS[c.status] || STATUS.spent).cls}`}>

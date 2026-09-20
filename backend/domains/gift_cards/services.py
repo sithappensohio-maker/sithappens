@@ -101,9 +101,14 @@ class GiftCardVoidIn(BaseModel):
 
 
 class GiftCardStockIn(BaseModel):
-    """Blank cards for the rack. No amount: a blank is worth nothing until
-    somebody buys it, which is the whole point of printing them ahead."""
+    """Cards for the rack.
+
+    `face_value` is the amount PRINTED on them, for a $25 or $50 stack. It is
+    not a balance: the card is still worth nothing until somebody buys it.
+    Leave it out for blanks, which can be sold for any amount.
+    """
     quantity: int = Field(default=10, ge=1, le=MAX_STOCK_BATCH)
+    face_value: Optional[float] = Field(default=None, gt=0, le=MAX_AMOUNT)
 
 
 def _money(v: Any) -> float:
@@ -142,6 +147,10 @@ def public_view(card: dict) -> dict:
         # A screen needs to tell "blank on the rack" from "sold and spent" —
         # both have a zero balance and they mean opposite things.
         "origin": card.get("origin") or "",
+        # What is printed on the card, for a fixed-denomination stack. NOT a
+        # balance — an unsold $25 card is still worth nothing to anybody.
+        "face_value": (None if card.get("face_value") is None
+                       else _money(card.get("face_value"))),
         "recipient_name": card.get("recipient_name") or "",
         "note": card.get("note") or "",
         "client_id": card.get("client_id"),
@@ -190,6 +199,26 @@ async def mint_card(*, amount: float, actor: dict, recipient_name: str = "", not
     return card
 
 
+def assert_face_value(card: dict, amount: float) -> None:
+    """A card with a printed amount can only be sold for that amount.
+
+    Otherwise the customer walks out holding a card that says $25 with $10 on
+    it, and the only record that they are different lives in the app. The
+    printed number is a promise; this is what keeps it.
+
+    Checked in TWO places on purpose: at the till before the sale commits, so
+    a mistake costs nobody anything, and again inside activation, which is
+    the only path that can actually move the money.
+    """
+    face = card.get("face_value")
+    if face is None:
+        return
+    if abs(_money(amount) - _money(face)) > 0.005:
+        raise HTTPException(
+            status_code=400,
+            detail=f"That card has ${_money(face):.2f} printed on it, so it sells for ${_money(face):.2f}.")
+
+
 async def ensure_indexes() -> None:
     """One code, one card — enforced by the database, not by hope.
 
@@ -205,7 +234,8 @@ async def ensure_indexes() -> None:
         _logger.warning("Gift card code index not created (non-fatal): %s", exc)
 
 
-async def mint_stock(*, quantity: int, actor: dict) -> List[dict]:
+async def mint_stock(*, quantity: int, actor: dict,
+                     face_value: Optional[float] = None) -> List[dict]:
     """Print-ahead blanks: real codes, zero balance, not yet sold.
 
     A blank is NOT money. It books no revenue and appears in no liability —
@@ -214,6 +244,11 @@ async def mint_stock(*, quantity: int, actor: dict) -> List[dict]:
     rack of promises, and it is why these are `status="stock"` rather than
     active cards worth $0.
     """
+    face = None if face_value is None else _money(face_value)
+    if face is not None and (face < MIN_AMOUNT or face > MAX_AMOUNT):
+        raise HTTPException(
+            status_code=400,
+            detail=f"A gift card has to be between ${MIN_AMOUNT:.2f} and ${MAX_AMOUNT:.2f}.")
     made: List[dict] = []
     ts = _now_iso_fn()
     for _ in range(max(1, min(int(quantity), MAX_STOCK_BATCH))):
@@ -225,6 +260,7 @@ async def mint_stock(*, quantity: int, actor: dict) -> List[dict]:
             "balance": 0.0,
             "status": "stock",
             "origin": "stock",
+            "face_value": face,
             "recipient_name": "", "note": "", "client_id": None,
             "sold_via_pos_sale_id": None,
             "issued_at": ts,
@@ -234,7 +270,9 @@ async def mint_stock(*, quantity: int, actor: dict) -> List[dict]:
         }
         await _db.gift_cards.insert_one(dict(card))
         card.pop("_id", None)
-        await _log(card["id"], "stock", 0.0, 0.0, actor, note="Printed for the rack")
+        await _log(card["id"], "stock", 0.0, 0.0, actor,
+                   note=("Printed for the rack" if face is None
+                         else f"Printed for the rack · ${face:.2f} card"))
         made.append({**public_view(card), "code": card["code"]})
     return made
 
@@ -260,6 +298,7 @@ async def activate_stock_card(*, code: str, amount: float, actor: dict,
             status_code=409,
             detail=("That card was already sold." if card.get("status") == "active"
                     else "That card cannot be sold — look it up to see why."))
+    assert_face_value(card, amount)
     ts = _now_iso_fn()
     loaded = await _db.gift_cards.find_one_and_update(
         {"id": card["id"], "status": "stock"},

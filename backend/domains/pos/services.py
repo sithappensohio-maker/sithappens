@@ -94,6 +94,10 @@ async def create_sale(body, user):
                 status_code=409,
                 detail=("That card was already sold." if card.get("status") == "active"
                         else "That card cannot be sold — look it up to see why."))
+        # A $25 card sells for $25. Checked here so a mistyped amount is
+        # refused while the customer is still standing there, rather than
+        # inside settlement after the till has already taken the money.
+        gift_cards_services.assert_face_value(card, _money(getattr(l, "gift_card_amount", 0)))
         if code in rack_codes:
             raise HTTPException(
                 status_code=400,

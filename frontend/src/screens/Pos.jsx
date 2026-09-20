@@ -353,6 +353,30 @@ export default function Pos({ onOpenShopManager } = {}) {
   // new code instead; fill it in and the sale LOADS the card the customer is
   // already holding, so the code on the plastic is the code with the money.
   const [giftStockCode, setGiftStockCode] = useState("");
+  // What the rack card turned out to be. A denomination card fills its own
+  // amount in and locks it, so the price on the plastic and the price rung
+  // cannot drift apart — the backend refuses a mismatch anyway, but finding
+  // out by error message while a customer waits is a poor way to learn it.
+  const [giftStockCard, setGiftStockCard] = useState(null);
+  const lookupStockCard = async () => {
+    const code = giftStockCode.trim();
+    if (!code) { setGiftStockCard(null); return; }
+    try {
+      const { data } = await api.get(`/gift-cards/lookup/${encodeURIComponent(code)}`);
+      if (data?.status !== "stock") {
+        setGiftStockCard(null);
+        toast.error(data?.status === "active"
+          ? "That card has already been sold."
+          : "That card is not on the rack.");
+        return;
+      }
+      setGiftStockCard(data);
+      if (data.face_value != null) setGiftAmount(String(data.face_value));
+    } catch (e) {
+      setGiftStockCard(null);
+      toast.error(formatErr(e) || "No card with that code.");
+    }
+  };
   const addGiftCard = () => {
     const amount = Number(giftAmount);
     if (!(amount > 0)) { toast.error("Enter what the gift card is worth."); return; }
@@ -364,7 +388,8 @@ export default function Pos({ onOpenShopManager } = {}) {
       description: stock ? `Gift card ${money(amount)} · ${stock}` : `Gift card ${money(amount)}`,
       qty: 1,
     }]);
-    setGiftOpen(false); setGiftAmount(""); setGiftRecipient(""); setGiftStockCode("");
+    setGiftOpen(false); setGiftAmount(""); setGiftRecipient("");
+    setGiftStockCode(""); setGiftStockCard(null);
   };
 
   // Spending one. The balance is checked before it is offered as a tender,
@@ -1810,13 +1835,22 @@ export default function Pos({ onOpenShopManager } = {}) {
               <div className="mt-2 space-y-2" data-testid="pos-gift-card-form">
                 <input type="number" value={giftAmount} onChange={(e) => setGiftAmount(e.target.value)}
                        placeholder="Amount on the card" data-testid="pos-gift-amount"
-                       className="w-full bg-[var(--sh-card-base)] border border-shBorder rounded p-2 text-shText text-sm" />
+                       disabled={giftStockCard?.face_value != null}
+                       className="w-full bg-[var(--sh-card-base)] border border-shBorder rounded p-2 text-shText text-sm disabled:opacity-60" />
                 <input value={giftRecipient} onChange={(e) => setGiftRecipient(e.target.value)}
                        placeholder="Who is it for? (optional)" data-testid="pos-gift-recipient"
                        className="w-full bg-[var(--sh-card-base)] border border-shBorder rounded p-2 text-shText text-sm" />
-                <input value={giftStockCode} onChange={(e) => setGiftStockCode(e.target.value)}
+                <input value={giftStockCode}
+                       onChange={(e) => { setGiftStockCode(e.target.value); setGiftStockCard(null); }}
+                       onBlur={lookupStockCard}
                        placeholder="Code off a printed card (optional)" data-testid="pos-gift-stock-code"
                        className="w-full bg-[var(--sh-card-base)] border border-shBorder rounded p-2 text-shText text-sm" />
+                {giftStockCard?.face_value != null && (
+                  <p className="text-[11px] text-shPrimary font-black uppercase tracking-widest"
+                     data-testid="pos-gift-fixed-note">
+                    {money(giftStockCard.face_value)} card — that is what it sells for.
+                  </p>
+                )}
                 <p className="text-[11px] text-shTextMuted">
                   Selling a card off the rack? Type its code and this sale loads
                   <b className="text-shText"> that</b> card. Leave it empty and a new

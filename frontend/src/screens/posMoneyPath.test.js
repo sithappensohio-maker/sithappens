@@ -599,3 +599,69 @@ test("a gift card line shows its price in the cart, not $0.00", async () => {
   expect(line.textContent).toContain("$50.00");
   expect(line.textContent).not.toContain("$0.00");
 });
+
+
+// ─────────────────────────── selling a fixed-denomination card at the till
+
+const blurCode = async () => {
+  // React delegates onBlur to the bubbling focusout event; a plain "blur"
+  // does not bubble and never reaches the handler.
+  const el = q("pos-gift-stock-code");
+  await act(async () => { el.dispatchEvent(new FocusEvent("focusout", { bubbles: true })); });
+  await settle();
+};
+
+test("scanning a $25 card fills in $25 and locks it", async () => {
+  // The price on the plastic and the price rung must not be able to drift.
+  api.get.mockImplementation((url) =>
+    String(url).includes("/gift-cards/lookup/")
+      ? Promise.resolve({ data: { code_display: "AAAA-1111-2222", status: "stock",
+                                  face_value: 25, balance: 0 } })
+      : Promise.resolve({ data: {} }));
+  await mount();
+  await click("pos-gift-card-toggle");
+  await type("pos-gift-stock-code", "AAAA-1111-2222");
+  await blurCode();
+  expect(q("pos-gift-amount").value).toBe("25");
+  expect(q("pos-gift-amount").disabled).toBe(true);
+  expect(q("pos-gift-fixed-note").textContent).toMatch(/\$25\.00 card/);
+});
+
+test("a blank leaves the amount alone and unlocked", async () => {
+  api.get.mockImplementation((url) =>
+    String(url).includes("/gift-cards/lookup/")
+      ? Promise.resolve({ data: { code_display: "BBBB-3333-4444", status: "stock",
+                                  face_value: null, balance: 0 } })
+      : Promise.resolve({ data: {} }));
+  await mount();
+  await click("pos-gift-card-toggle");
+  await type("pos-gift-stock-code", "BBBB-3333-4444");
+  await blurCode();
+  expect(q("pos-gift-amount").disabled).toBe(false);
+  expect(q("pos-gift-fixed-note")).toBeFalsy();
+});
+
+test("an already-sold card is caught at the counter, not at checkout", async () => {
+  api.get.mockImplementation((url) =>
+    String(url).includes("/gift-cards/lookup/")
+      ? Promise.resolve({ data: { code_display: "CCCC-5555-6666", status: "active",
+                                  balance: 40 } })
+      : Promise.resolve({ data: {} }));
+  await mount();
+  await click("pos-gift-card-toggle");
+  await type("pos-gift-stock-code", "CCCC-5555-6666");
+  await blurCode();
+  expect(toast.error).toHaveBeenCalledWith(expect.stringMatching(/already been sold/i));
+});
+
+test("a code that is not a card says so", async () => {
+  api.get.mockImplementation((url) =>
+    String(url).includes("/gift-cards/lookup/")
+      ? Promise.reject({ response: { data: { detail: "No gift card with that code." } } })
+      : Promise.resolve({ data: {} }));
+  await mount();
+  await click("pos-gift-card-toggle");
+  await type("pos-gift-stock-code", "ZZZZ-ZZZZ-ZZZZ");
+  await blurCode();
+  expect(toast.error).toHaveBeenCalled();
+});

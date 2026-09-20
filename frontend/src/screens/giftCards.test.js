@@ -257,7 +257,8 @@ test("making a rack asks the backend for that many blanks", async () => {
   await click("gift-rack-toggle");
   await type("gift-rack-qty", "25");
   await click("gift-rack-go");
-  expect(api.post).toHaveBeenCalledWith("/gift-cards/stock", { quantity: 25 });
+  expect(api.post).toHaveBeenCalledWith("/gift-cards/stock",
+    { quantity: 25, face_value: null });
 });
 
 test("a silly quantity is refused before it reaches the backend", async () => {
@@ -317,4 +318,97 @@ test("blanks are not counted in what you owe", async () => {
                                   cards: [] } }));
   await mount();
   expect(q("gift-outstanding").textContent).toContain("$0.00");
+});
+
+
+// ────────────────────────────────── fixed-amount stacks, and rack display
+
+test("a stack can have an amount printed on it", async () => {
+  api.post.mockResolvedValue({ data: { ok: true, count: 10, cards: [] } });
+  await mount();
+  await click("gift-rack-toggle");
+  await type("gift-rack-qty", "10");
+  await type("gift-rack-value", "25");
+  await click("gift-rack-go");
+  expect(api.post).toHaveBeenCalledWith("/gift-cards/stock",
+    { quantity: 10, face_value: 25 });
+});
+
+test("the form says what each choice means before you commit", async () => {
+  await mount();
+  await click("gift-rack-toggle");
+  expect(q("gift-rack-form").textContent).toMatch(/Blanks — sell each one for whatever/i);
+  await type("gift-rack-value", "50");
+  expect(q("gift-rack-form").textContent).toMatch(/only sell these for \$50/i);
+});
+
+test("a nonsense printed amount is refused before the backend sees it", async () => {
+  await mount();
+  await click("gift-rack-toggle");
+  await type("gift-rack-value", "-5");
+  await click("gift-rack-go");
+  expect(api.post).not.toHaveBeenCalled();
+  expect(toast.error).toHaveBeenCalled();
+});
+
+const rackList = (card) => {
+  api.get.mockImplementation((url) =>
+    String(url).includes("/lookup/")
+      ? Promise.resolve({ data: { ...card, history: [] } })
+      : Promise.resolve({ data: { outstanding_balance: 0, outstanding_count: 0,
+                                  stock_count: 1, cards: [card] } }));
+};
+
+test("a $25 card on the rack shows its printed value, not a balance", async () => {
+  rackList({ id: "s1", code_display: "AAAA-1111-2222", balance: 0, initial_amount: 0,
+             spent: 0, status: "stock", origin: "stock", face_value: 25,
+             issued_at: "2026-09-20T10:00:00Z" });
+  await mount();
+  const row = q("gift-row-s1");
+  expect(row.textContent).toContain("$25.00 card");
+  expect(row.textContent).toContain("On the rack");
+});
+
+test("looking up a rack card does not claim it is worth $0.00", async () => {
+  // It reported "$0.00" in 32px and "$0.00 issued · $0.00 spent", which
+  // reads as an empty card rather than one nobody has bought.
+  rackList({ id: "s1", code_display: "AAAA-1111-2222", balance: 0, initial_amount: 0,
+             spent: 0, status: "stock", origin: "stock", face_value: 25,
+             issued_at: "2026-09-20T10:00:00Z" });
+  await mount();
+  await type("gift-lookup-code", "AAAA-1111-2222");
+  await click("gift-lookup-go");
+  const panel = q("gift-found");
+  expect(panel.textContent).not.toContain("$0.00");
+  expect(panel.textContent).toMatch(/not sold yet/i);
+});
+
+test("a blank says it sells for any amount", async () => {
+  rackList({ id: "s1", code_display: "AAAA-1111-2222", balance: 0, initial_amount: 0,
+             spent: 0, status: "stock", origin: "stock", face_value: null,
+             issued_at: "2026-09-20T10:00:00Z" });
+  await mount();
+  await type("gift-lookup-code", "AAAA-1111-2222");
+  await click("gift-lookup-go");
+  expect(q("gift-found").textContent).toMatch(/sells for any amount/i);
+});
+
+test("a rack card is not offered an Add to balance it cannot have", async () => {
+  // The backend refuses it on purpose: money reaches a card through a sale.
+  rackList({ id: "s1", code_display: "AAAA-1111-2222", balance: 0, initial_amount: 0,
+             spent: 0, status: "stock", origin: "stock",
+             issued_at: "2026-09-20T10:00:00Z" });
+  await mount();
+  await type("gift-lookup-code", "AAAA-1111-2222");
+  await click("gift-lookup-go");
+  expect(q("gift-found")).toBeTruthy();
+  expect(q("gift-add")).toBeFalsy();
+  expect(q("gift-print")).toBeTruthy();   // printing one is still fine
+});
+
+test("a sold card keeps its Add to balance", async () => {
+  await mount();
+  await type("gift-lookup-code", "ABCD-EFGH-JKMN");
+  await click("gift-lookup-go");
+  expect(q("gift-add")).toBeTruthy();
 });
