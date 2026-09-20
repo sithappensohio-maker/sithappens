@@ -87,6 +87,9 @@ const RETURN_PREVIEW = {
   tenders: [{ method: "cash", amount: 32.03 }],
 };
 
+const GIFT_CARD = { id: "gc-1", code_display: "ABCD-EFGH-JKMN", last4: "JKMN",
+                    balance: 40.00, initial_amount: 100.00, status: "active" };
+
 let container, root, posted;
 
 const GET = {
@@ -115,6 +118,11 @@ beforeEach(() => {
   api.get.mockReset();
   api.get.mockImplementation((path) => {
     if (String(path).includes("/return-preview")) return Promise.resolve({ data: RETURN_PREVIEW });
+    if (String(path).includes("/gift-cards/lookup/")) {
+      return String(path).includes("EMPTY")
+        ? Promise.resolve({ data: { ...GIFT_CARD, balance: 0, status: "spent" } })
+        : Promise.resolve({ data: GIFT_CARD });
+    }
     return Promise.resolve({ data: path in GET ? GET[path] : {} });
   });
   api.post.mockReset();
@@ -425,4 +433,79 @@ test("a blocked sale explains itself instead of offering a refund", async () => 
   await openReturns();
   expect(q("pos-return-blocked").textContent).toContain("94 days old");
   expect(q("pos-return-confirm")).toBeFalsy();
+});
+
+// -------------------------------------------------------------- gift cards
+
+test("a gift card can be sold as a cart line, untaxed", async () => {
+  await mount();
+  await click("pos-gift-card-toggle");
+  await type("pos-gift-amount", "100");
+  await type("pos-gift-recipient", "For Dana");
+  // the screen tells the operator why there is no tax on it, before they commit
+  expect(q("pos-gift-card-form").textContent).toMatch(/No sales tax on the card itself/);
+  await click("pos-gift-add");
+  const preview = posted.filter((p) => String(p.path).includes("preview")).pop();
+  expect(preview.body.lines).toEqual([
+    { kind: "gift_card", gift_card_amount: 100, recipient_name: "For Dana", qty: 1 },
+  ]);
+});
+
+test("the code box only appears when paying by gift card", async () => {
+  await mount();
+  await click("pos-product-p-wipes");
+  await click("pos-checkout-button");
+  expect(q("pos-gift-tender")).toBeFalsy();
+  await click("pos-tender-method-gift_card");
+  expect(q("pos-gift-tender")).toBeTruthy();
+});
+
+test("the balance is checked before the card is offered as payment", async () => {
+  await mount();
+  await click("pos-product-p-wipes");
+  await click("pos-checkout-button");
+  await click("pos-tender-method-gift_card");
+  await type("pos-gift-code", "ABCD-EFGH-JKMN");
+  await click("pos-gift-lookup");
+  expect(q("pos-gift-balance").textContent).toContain("40.00");
+});
+
+test("a card cannot be tendered for more than it holds", async () => {
+  await mount();
+  await click("pos-product-p-wipes");
+  await click("pos-checkout-button");
+  await click("pos-tender-method-gift_card");
+  await type("pos-gift-code", "ABCD-EFGH-JKMN");
+  await click("pos-gift-lookup");
+  await type("pos-tender-amount", "13.87");
+  await click("pos-tender-add");          // fine, 13.87 <= 40
+  expect(all("pos-tender-row")).toHaveLength(1);
+  const sent = posted;
+  await click("pos-complete-sale");
+  const sale = lastSale();
+  expect(sale.body.tenders[0]).toMatchObject({ method: "gift_card", gift_card_code: "ABCD-EFGH-JKMN" });
+  expect(sent).toBeDefined();
+});
+
+test("an unchecked card cannot be tendered at all", async () => {
+  await mount();
+  await click("pos-product-p-wipes");
+  await click("pos-checkout-button");
+  await click("pos-tender-method-gift_card");
+  await type("pos-tender-amount", "13.87");
+  await click("pos-tender-add");
+  expect(all("pos-tender-row")).toHaveLength(0);
+  expect(toast.error).toHaveBeenCalled();
+});
+
+test("an empty card is refused rather than quietly accepted", async () => {
+  await mount();
+  await click("pos-product-p-wipes");
+  await click("pos-checkout-button");
+  await click("pos-tender-method-gift_card");
+  await type("pos-gift-code", "EMPTY-CARD");
+  await click("pos-gift-lookup");
+  await type("pos-tender-amount", "13.87");
+  await click("pos-tender-add");
+  expect(all("pos-tender-row")).toHaveLength(0);
 });

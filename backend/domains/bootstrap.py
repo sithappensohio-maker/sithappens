@@ -4,10 +4,12 @@ from __future__ import annotations
 import logging
 
 from domains.bookings.routes import register_bookings_routes
+from domains.gift_cards.routes import register_gift_card_routes
 from domains.pos.routes import register_pos_routes
 from domains.pricing.routes import register_pricing_routes
 from domains.register.routes import register_register_routes
 from domains.pricing import services as pricing_services
+from domains.gift_cards import services as gift_card_services
 from domains.pos import services as pos_services
 from domains.bookings import services as booking_services
 from domains.register import services as register_services
@@ -105,6 +107,9 @@ def register_domains(
         now_iso=now_iso,
         default_boarding_cutoff=server_globals["DEFAULT_BOARDING_FULL_DAY_PICKUP_CUTOFF"],
     )
+    gift_card_services.configure(
+        db=db, now_iso=now_iso, business_today=business_today, logger=logger)
+
     pos_services.configure(
         db=db,
         resolve_client_price=pricing_services.resolve_client_price,
@@ -156,6 +161,7 @@ def register_domains(
     server_globals.update(_moved_operations or {})
     register_register_routes(api=api, server_globals=server_globals)
     register_pos_routes(api=api, server_globals=server_globals)
+    register_gift_card_routes(api=api, server_globals=server_globals)
     register_performance_routes(
         api=api, db=db, server_globals=server_globals,
         get_current_user=get_current_user,

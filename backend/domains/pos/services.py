@@ -14,6 +14,7 @@ from fastapi import HTTPException
 from pydantic import BaseModel, Field
 
 import sales_tax_policy
+from domains.gift_cards import services as gift_cards_services
 
 _db = None
 _resolve_client_price_fn = None
@@ -51,8 +52,77 @@ def configure(*, db, resolve_client_price, get_settings, credit_pack_display_fie
 
 
 async def create_sale(body, user):
-    """Stable POS-domain seam around the proven atomic sale transaction body."""
-    return await _create_sale_impl_fn(body, user)
+    """The proven atomic sale, with gift cards wrapped around it.
+
+    Gift cards touch a sale from both ends — one can be bought on it, and one
+    can pay for it — and neither belongs inside the sale transaction itself.
+    So the order here is deliberate:
+
+      1. refuse the nonsense cases before anything moves;
+      2. take the money off the cards being spent — BEFORE the sale, so a card
+         with too little on it stops the sale instead of leaving a committed
+         sale that was never really paid for;
+      3. commit the sale;
+      4. if that throws, put the card money straight back;
+      5. only once the sale is real, mint the cards it sold and record what
+         the redeemed cards paid for.
+    """
+    spend = [t for t in (body.tenders or []) if getattr(t, "method", "") == "gift_card"]
+    selling = [l for l in (body.lines or []) if getattr(l, "kind", "") == "gift_card"]
+
+    if spend and selling:
+        # Otherwise a card buys a card buys a card, and the money never lands.
+        raise HTTPException(
+            status_code=400,
+            detail="A gift card can't be bought with another gift card. Take a different payment for it.")
+
+    cards = []
+    for t in spend:
+        code = gift_cards_services.normalize_code(getattr(t, "gift_card_code", None))
+        if not code:
+            raise HTTPException(status_code=400, detail="Enter the gift card's code to spend it.")
+        card = await gift_cards_services.find_by_code(code)
+        gift_cards_services.assert_spendable(card, _money(t.amount))
+        cards.append((card, _money(t.amount)))
+
+    seen = {}
+    for card, amount in cards:
+        seen[card["id"]] = round(seen.get(card["id"], 0.0) + amount, 2)
+        if seen[card["id"]] > gift_cards_services.spendable(card) + 0.005:
+            raise HTTPException(
+                status_code=400,
+                detail=f"That card only has ${gift_cards_services.spendable(card):.2f} left.")
+
+    redeemed = []
+    for card, amount in cards:
+        redeemed.append(await gift_cards_services.redeem(
+            code=card["code"], amount=amount, actor=user, note="Register sale"))
+
+    try:
+        sale = await _create_sale_impl_fn(body, user)
+    except Exception:
+        # The sale never happened, so neither did the spending.
+        for r in redeemed:
+            await gift_cards_services.refund_to_card(
+                card_id=r["gift_card_id"], amount=r["redeemed"], actor=user,
+                note="Sale failed — balance returned")
+        raise
+
+    sale_id = sale.get("pos_sale_id") or (sale.get("sale") or {}).get("id")
+    if sale.get("replayed") or not sale_id:
+        return sale
+
+    try:
+        await gift_cards_services.settle_sale(
+            sale_id=sale_id, sale=sale.get("sale") or {}, user=user,
+            redeemed=redeemed, selling=selling)
+    except Exception:
+        _logger.exception("Gift card settlement failed for sale %s", sale_id)
+    return sale
+
+
+def _money(v) -> float:
+    return round(float(v or 0), 2)
 
 
 # Tenders the till understands. A stay can be settled by "transfer" or by
@@ -147,10 +217,6 @@ class PosSaleReturnIn(BaseModel):
     reason: str = Field(min_length=3, max_length=300)
     idempotency_key: str = Field(min_length=8, max_length=128)
     workstation_id: Optional[str] = Field(default=None, max_length=100)
-
-
-def _money(value: Any) -> float:
-    return round(float(value or 0), 2)
 
 
 def return_preview(sale: dict) -> dict:
@@ -682,6 +748,23 @@ async def price_pos_cart(lines: List[PosSaleLineIn], discount: Optional[PosSaleD
                 "taxable": taxable, "tax_exempt_reason": None if taxable else product.get("tax_exempt_reason"),
             })
             qty_by_product[product["id"]] = qty_by_product.get(product["id"], 0) + qty
+        elif line.kind == "gift_card":
+            amount = round(float(line.gift_card_amount or 0), 2)
+            if amount <= 0:
+                raise HTTPException(status_code=400, detail="A gift card needs an amount.")
+            qty = int(line.qty or 1)
+            amount = round(amount * qty, 2)
+            line_items.append({
+                "kind": "gift_card", "product_id": None,
+                "description": (line.description or f"Gift card ${round(amount / max(qty, 1), 2):.2f}").strip(),
+                "qty": qty, "unit_price": round(amount / max(qty, 1), 2), "amount": amount,
+                "recipient_name": (line.recipient_name or "").strip(),
+                # NEVER taxed. A gift card is money, not a good; the tax
+                # belongs on whatever it later buys. Taxing both would charge
+                # the customer tax twice on the same dollars.
+                "taxable": False,
+                "tax_exempt_reason": "A gift card is money — tax applies to what it buys",
+            })
         elif line.kind == "credit_pack":
             has_entitlement_line = True
             if not line.pack_id:

@@ -197,6 +197,11 @@ def _add_method_total(totals: Dict[str, float], method: Optional[str], amount: f
     amt = round(float(amount or 0), 2)
     if abs(amt) < 0.005:
         return
+    # A gift card is not money arriving. The money arrived when the card was
+    # SOLD; redeeming one moves no cash today, exactly like a prepaid credit.
+    # Checked BEFORE normalisation, which would flatten it into "other".
+    if (method or "") == "gift_card":
+        return
     key = _normalize_payment_method(method, store=store_mode)
     if key == "credits":
         return
@@ -34638,7 +34643,13 @@ def _business_revenue_net_of_sales_tax(row: dict) -> float:
     quarterly projection, and the accountant CSV — calls THIS function, so
     the same activity can never produce two different revenue numbers.
     """
-    net = round(float(row.get("amount") or 0) - float(row.get("tax_amount") or 0), 2)
+    # `gift_card_funded` is the pre-tax slice of this row that a gift card
+    # paid for. That money was already recognised as revenue when the CARD
+    # was sold, so counting it again here would book $200 of income on $100
+    # of cash. The sales tax on those goods is untouched — it really was
+    # collected and really is owed. See domains.gift_cards.services.
+    net = round(float(row.get("amount") or 0) - float(row.get("tax_amount") or 0)
+                - float(row.get("gift_card_funded") or 0), 2)
     if (row.get("source_kind") or "") in _INCOME_REVERSAL_KINDS or float(row.get("amount") or 0) < 0:
         return net
     return round(max(0.0, net), 2)
@@ -43626,7 +43637,7 @@ async def list_inventory_movements(product_id: str, limit: int = 100, user: dict
 # now ties all of this together as a single all-or-nothing commit.
 
 class PosSaleLineIn(BaseModel):
-    kind: Literal["retail", "custom", "credit_pack", "training_program"] = "retail"
+    kind: Literal["retail", "custom", "credit_pack", "training_program", "gift_card"] = "retail"
     product_id: Optional[str] = None  # required when kind == "retail"
     pack_id: Optional[str] = None  # required when kind == "credit_pack"
     program_id: Optional[str] = None  # required when kind == "training_program"
@@ -43642,6 +43653,10 @@ class PosSaleLineIn(BaseModel):
     # merchandise so existing callers keep today's (taxed) behavior; the
     # register UI presents the choice explicitly.
     custom_kind: Literal["merchandise", "service"] = "merchandise"
+    # Required when kind == "gift_card" — what the card is worth. Never
+    # sales-taxed; the tax belongs on whatever the card later buys.
+    gift_card_amount: Optional[float] = Field(default=None, gt=0, le=1000)
+    recipient_name: Optional[str] = Field(default=None, max_length=120)
 
 
 # CheckoutIn carries retail lines but is declared thousands of lines earlier,
@@ -43675,9 +43690,10 @@ class PosSaleTenderIn(BaseModel):
     # reports into the existing card register bucket and never touches
     # expected drawer cash. It is NOT a processor integration; Stripe
     # Terminal remains a separate, future step.
-    method: Literal["cash", "card", "check", "venmo", "paypal", "other"]
+    method: Literal["cash", "card", "check", "venmo", "paypal", "other", "gift_card"]
     amount: float = Field(gt=0)
     tendered_amount: Optional[float] = Field(default=None, ge=0)  # cash only
+    gift_card_code: Optional[str] = Field(default=None, max_length=40)  # gift_card only
     notes: Optional[str] = Field(default=None, max_length=500)  # required when method == "other"
     # Forward-compat placeholder only — unused today. When Stripe Card/
     # Terminal is added later, "method" gains new literals and this field

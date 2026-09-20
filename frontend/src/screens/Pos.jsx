@@ -49,7 +49,7 @@ import ReceiptLogo from "../components/ReceiptLogo";
 
 // "card" here is a manually-recorded/offline card payment (external reader),
 // not a Stripe Terminal integration.
-const TENDER_LABELS = { cash: "Cash", card: "Card", check: "Check", venmo: "Venmo", paypal: "PayPal", other: "Other" };
+const TENDER_LABELS = { cash: "Cash", card: "Card", check: "Check", venmo: "Venmo", paypal: "PayPal", other: "Other", gift_card: "Gift Card" };
 const money = (n) => `$${Number(n || 0).toFixed(2)}`;
 
 export default function Pos({ onOpenShopManager } = {}) {
@@ -342,6 +342,44 @@ export default function Pos({ onOpenShopManager } = {}) {
     setCustomOpen(false); setCustomDesc(""); setCustomAmount(""); setCustomReason(""); setCustomKind("merchandise");
   };
 
+  // Selling a gift card. It is a cart line like any other, so it rings on
+  // one receipt with whatever else is being bought, and it is never taxed —
+  // the tax lands on what the card is eventually spent on.
+  const [giftOpen, setGiftOpen] = useState(false);
+  const [giftAmount, setGiftAmount] = useState("");
+  const [giftRecipient, setGiftRecipient] = useState("");
+  const addGiftCard = () => {
+    const amount = Number(giftAmount);
+    if (!(amount > 0)) { toast.error("Enter what the gift card is worth."); return; }
+    setCartLines((lines) => [...lines, {
+      kind: "gift_card", gift_card_amount: Math.round(amount * 100) / 100,
+      recipient_name: giftRecipient.trim(),
+      description: `Gift card ${money(amount)}`, qty: 1,
+    }]);
+    setGiftOpen(false); setGiftAmount(""); setGiftRecipient("");
+  };
+
+  // Spending one. The balance is checked before it is offered as a tender,
+  // so the desk finds out the card is empty while the customer is still
+  // standing there rather than when the sale is submitted.
+  const [giftCode, setGiftCode] = useState("");
+  const [giftCard, setGiftCard] = useState(null);
+  const [giftLookupBusy, setGiftLookupBusy] = useState(false);
+  const lookupGiftCard = async () => {
+    const code = giftCode.trim();
+    if (!code) { toast.error("Enter the code from the card."); return; }
+    setGiftLookupBusy(true);
+    try {
+      const { data } = await api.get(`/gift-cards/lookup/${encodeURIComponent(code)}`);
+      setGiftCard(data);
+      if (Number(data.balance || 0) <= 0) toast.error("That card has nothing left on it.");
+    } catch (e) {
+      setGiftCard(null);
+      toast.error(e?.response?.data?.detail || "No gift card with that code.");
+    }
+    setGiftLookupBusy(false);
+  };
+
   const [discountOpen, setDiscountOpen] = useState(false);
   const [discountKind, setDiscountKind] = useState("fixed");
   const [discountValue, setDiscountValue] = useState("");
@@ -362,6 +400,7 @@ export default function Pos({ onOpenShopManager } = {}) {
   // instead of several unrelated ones.
   const cartLinesPayload = () => cartLines.map((l) => {
     if (l.kind === "custom") return { kind: "custom", description: l.description, custom_amount: l.custom_amount, custom_reason: l.custom_reason, custom_kind: l.custom_kind || "merchandise" };
+    if (l.kind === "gift_card") return { kind: "gift_card", gift_card_amount: l.gift_card_amount, recipient_name: l.recipient_name || null, qty: 1 };
     if (l.kind === "credit_pack") return { kind: "credit_pack", pack_id: l.pack_id, qty: l.qty };
     if (l.kind === "training_program") return { kind: "training_program", program_id: l.program_id, qty: l.qty };
     return { kind: "retail", product_id: l.product_id, qty: l.qty };
@@ -520,7 +559,14 @@ export default function Pos({ onOpenShopManager } = {}) {
     if (!(amount > 0)) { toast.error("Enter a positive amount"); return; }
     if (amount > remaining + 0.005) { toast.error(`Amount can't exceed the remaining ${money(remaining)} due`); return; }
     if (tenderMethod === "other" && !tenderNotes.trim()) { toast.error("A note is required for Other"); return; }
+    if (tenderMethod === "gift_card") {
+      if (!giftCard) { toast.error("Look the gift card up first."); return; }
+      if (amount > Number(giftCard.balance || 0) + 0.005) {
+        toast.error(`That card only has ${money(giftCard.balance)} left.`); return;
+      }
+    }
     const row = { method: tenderMethod, amount: Math.round(amount * 100) / 100, notes: tenderNotes.trim() || undefined };
+    if (tenderMethod === "gift_card") row.gift_card_code = giftCard.code_display;
     if (tenderMethod === "cash") {
       const received = Number(cashReceived || amount);
       if (received < amount - 0.005) { toast.error("Cash received cannot be less than the amount applied"); return; }
@@ -945,6 +991,29 @@ export default function Pos({ onOpenShopManager } = {}) {
                 </div>
                 {cashReceived && Number(cashReceived) >= Number(tenderAmount || 0) && (
                   <p className="text-shPrimary text-sm mt-1">Change due: {money(Number(cashReceived) - Number(tenderAmount || 0))}</p>
+                )}
+              </div>
+            )}
+
+            {tenderMethod === "gift_card" && (
+              <div data-testid="pos-gift-tender">
+                <label className="text-[11px] text-shTextMuted uppercase tracking-widest">Gift card code</label>
+                <div className="flex gap-2">
+                  <input value={giftCode} onChange={(e) => setGiftCode(e.target.value)}
+                         onKeyDown={(e) => { if (e.key === "Enter") lookupGiftCard(); }}
+                         placeholder="XXXX-XXXX-XXXX" data-testid="pos-gift-code"
+                         className="flex-1 min-w-0 bg-[var(--sh-card-base)] border border-shBorder rounded p-3 text-shText font-black" />
+                  <button onClick={lookupGiftCard} disabled={giftLookupBusy} data-testid="pos-gift-lookup"
+                          className="bg-[var(--sh-card-base)] border border-shPrimary/50 text-shPrimary rounded px-4 text-[11px] font-black uppercase tracking-widest disabled:opacity-50">
+                    {giftLookupBusy ? "…" : "Check"}
+                  </button>
+                </div>
+                {giftCard && (
+                  <p className={`text-sm mt-1 font-black ${Number(giftCard.balance) > 0 ? "text-shPrimary" : "text-shAccent"}`}
+                     data-testid="pos-gift-balance">
+                    {giftCard.code_display} · {money(giftCard.balance)} left
+                    {giftCard.status !== "active" ? ` · ${giftCard.status}` : ""}
+                  </p>
                 )}
               </div>
             )}
@@ -1693,6 +1762,30 @@ export default function Pos({ onOpenShopManager } = {}) {
                   ))}
                 </div>
                 <button onClick={addCustom} className="w-full bg-shPrimary text-bgHeader rounded py-2 font-black uppercase text-[12px] tracking-widest">
+                  Add to Cart
+                </button>
+              </div>
+            )}
+
+            {/* Gift cards. A line like any other, so it rings on one receipt
+                with whatever else is being bought. */}
+            <button onClick={() => setGiftOpen((v) => !v)} data-testid="pos-gift-card-toggle"
+                    className="mt-2 w-full bg-[var(--sh-card-base)] border border-shBorder rounded-xl py-2.5 text-[12px] font-black uppercase tracking-widest text-shTextMuted hover:border-shPrimary/50">
+              <i className="fas fa-gift mr-1.5"/>Sell a gift card
+            </button>
+            {giftOpen && (
+              <div className="mt-2 space-y-2" data-testid="pos-gift-card-form">
+                <input type="number" value={giftAmount} onChange={(e) => setGiftAmount(e.target.value)}
+                       placeholder="Amount on the card" data-testid="pos-gift-amount"
+                       className="w-full bg-[var(--sh-card-base)] border border-shBorder rounded p-2 text-shText text-sm" />
+                <input value={giftRecipient} onChange={(e) => setGiftRecipient(e.target.value)}
+                       placeholder="Who is it for? (optional)" data-testid="pos-gift-recipient"
+                       className="w-full bg-[var(--sh-card-base)] border border-shBorder rounded p-2 text-shText text-sm" />
+                <p className="text-[11px] text-shTextMuted">
+                  No sales tax on the card itself — tax is charged on whatever it buys.
+                </p>
+                <button onClick={addGiftCard} data-testid="pos-gift-add"
+                        className="w-full bg-shPrimary text-bgHeader rounded py-2 font-black uppercase text-[12px] tracking-widest">
                   Add to Cart
                 </button>
               </div>
