@@ -2,6 +2,7 @@ import { useCallback, useEffect, useState } from "react";
 import { toast } from "sonner";
 import { api, formatErr } from "../lib/api";
 import PageHero from "../components/PageHero";
+import { printGiftCard } from "../lib/printGiftCard";
 
 /**
  * Gift cards — the ones you have sold, and the ones you hand out.
@@ -94,6 +95,10 @@ export default function GiftCards() {
     setBusy(false);
   };
 
+  const print = (card) => {
+    if (!printGiftCard(card)) toast.error("Allow pop-ups to print the gift card.");
+  };
+
   const input = "w-full bg-[var(--sh-card-base)] border border-shBorder rounded p-2.5 text-shText text-sm";
   const label = "text-[11px] font-black uppercase tracking-widest text-shTextMuted";
 
@@ -138,10 +143,17 @@ export default function GiftCards() {
             {issued.code}
           </p>
           <p className="text-shText font-black">{money(issued.amount)}</p>
-          <button onClick={() => setIssued(null)} data-testid="gift-issued-done"
-                  className="mt-3 min-h-[44px] px-6 rounded-xl bg-shPrimary text-bgHeader font-black uppercase text-[12px] tracking-widest">
-            Written it down
-          </button>
+          <div className="flex flex-wrap gap-2 justify-center mt-3">
+            <button onClick={() => print({ code_display: issued.code, balance: issued.amount })}
+                    data-testid="gift-issued-print"
+                    className="min-h-[44px] px-6 rounded-xl bg-shPrimary text-bgHeader font-black uppercase text-[12px] tracking-widest">
+              <i className="fas fa-print mr-1.5"/>Print the card
+            </button>
+            <button onClick={() => setIssued(null)} data-testid="gift-issued-done"
+                    className="min-h-[44px] px-6 rounded-xl border border-shBorder text-shTextMuted font-black uppercase text-[12px] tracking-widest">
+              Written it down
+            </button>
+          </div>
         </div>
       )}
 
@@ -173,6 +185,10 @@ export default function GiftCards() {
                     }} disabled={busy} data-testid="gift-add"
                     className="min-h-[40px] px-3 rounded border border-shBorder text-[11px] font-black uppercase tracking-widest text-shTextMuted">
               Add to balance
+            </button>
+            <button onClick={() => print(found)} data-testid="gift-print"
+                    className="min-h-[40px] px-3 rounded border border-shPrimary/50 text-[11px] font-black uppercase tracking-widest text-shPrimary">
+              <i className="fas fa-print mr-1.5"/>Print
             </button>
             <button onClick={() => {
                       const why = window.prompt("Why is this card being voided?");

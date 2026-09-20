@@ -29,6 +29,7 @@ jest.mock("../components/StripeRefundModal", () => ({ __esModule: true, default:
 jest.mock("../components/ShopRefundModal", () => ({ __esModule: true, default: () => null }));
 jest.mock("../components/ItemThumbnail", () => ({ __esModule: true, default: () => null }));
 jest.mock("../components/AdminBookingModal", () => ({ __esModule: true, default: () => null }));
+jest.mock("../lib/printGiftCard", () => ({ printGiftCard: jest.fn(() => true) }));
 jest.mock("./Staff", () => {
   const React = require("react");
   return { RegisterTab: () => React.createElement("div", null, "register tools") };
@@ -61,13 +62,17 @@ const TOY = { kind: "product", id: "p-toy", name: "Rope Toy", effective_price: 7
 // What the SERVER says the cart costs. The screen must show this, never its
 // own arithmetic — the server is the one that will actually charge it.
 const priceCart = (lines) => {
-  const subtotal = lines.reduce((n, l) => n + ({ "p-wipes": 12.99, "p-toy": 7.00 }[l.product_id] || 0) * l.qty, 0);
-  const tax = Math.round(subtotal * 0.0675 * 100) / 100;
+  // A gift card is money, so it is priced at face value and never taxed —
+  // the same rule the server applies.
+  const taxable = lines.reduce((n, l) => n + ({ "p-wipes": 12.99, "p-toy": 7.00 }[l.product_id] || 0) * l.qty, 0);
+  const cards = lines.reduce((n, l) => n + (l.kind === "gift_card" ? Number(l.gift_card_amount || 0) : 0), 0);
+  const subtotal = Math.round((taxable + cards) * 100) / 100;
+  const tax = Math.round(taxable * 0.0675 * 100) / 100;
   return {
     line_items: lines.map((l) => ({ ...l, amount: 0, taxable: true })),
-    subtotal: Math.round(subtotal * 100) / 100,
+    subtotal,
     discount_amount: 0, tax_amount: tax, tax_rate_pct: 6.75,
-    taxable_subtotal: Math.round(subtotal * 100) / 100,
+    taxable_subtotal: Math.round(taxable * 100) / 100,
     total: Math.round((subtotal + tax) * 100) / 100,
   };
 };
@@ -508,4 +513,32 @@ test("an empty card is refused rather than quietly accepted", async () => {
   await type("pos-tender-amount", "13.87");
   await click("pos-tender-add");
   expect(all("pos-tender-row")).toHaveLength(0);
+});
+
+test("a gift card sold at the till is offered for printing straight away", async () => {
+  // It is the thing the customer walks out with, so it comes before the
+  // receipt — and the code is on screen in case the printer is down.
+  const { printGiftCard } = require("../lib/printGiftCard");
+  api.post.mockImplementation((path, body) => {
+    posted.push({ path, body });
+    if (String(path).includes("preview")) return Promise.resolve({ data: priceCart(body?.lines || []) });
+    return Promise.resolve({ data: { ok: true, pos_sale_id: "sale-9",
+      sale: { id: "sale-9", receipt_number: "RC99", total: 100, tenders: [] },
+      gift_cards: [{ id: "gc-9", code_display: "WXYZ-2345-6789", balance: 100 }] } });
+  });
+  await mount();
+  await click("pos-gift-card-toggle");
+  await type("pos-gift-amount", "100");
+  await click("pos-gift-add");
+  await click("pos-checkout-button");
+  await click("pos-tender-method-cash");
+  await type("pos-tender-amount", "100");
+  await type("pos-tender-cash-received", "100");
+  await click("pos-tender-add");
+  await click("pos-complete-sale");
+
+  expect(q("pos-sold-gift-cards")).toBeTruthy();
+  expect(q("pos-gift-sold-gc-9").textContent).toContain("WXYZ-2345-6789");
+  await click("pos-gift-print-gc-9");
+  expect(printGiftCard).toHaveBeenCalled();
 });

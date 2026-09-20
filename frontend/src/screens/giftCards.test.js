@@ -20,9 +20,11 @@ jest.mock("../lib/api", () => ({
 }));
 jest.mock("sonner", () => ({ toast: { success: jest.fn(), error: jest.fn() } }));
 jest.mock("../components/PageHero", () => ({ __esModule: true, default: () => null }));
+jest.mock("../lib/printGiftCard", () => ({ printGiftCard: jest.fn(() => true) }));
 
 const { api } = require("../lib/api");
 const { toast } = require("sonner");
+const { printGiftCard } = require("../lib/printGiftCard");
 
 global.IS_REACT_ACT_ENVIRONMENT = true;
 
@@ -59,6 +61,8 @@ beforeEach(() => {
   api.post.mockReset();
   api.post.mockResolvedValue({ data: { ok: true, code: "WXYZ-2345-6789" } });
   toast.error.mockReset();
+  printGiftCard.mockClear();
+  printGiftCard.mockReturnValue(true);
 });
 
 afterEach(async () => {
@@ -195,4 +199,36 @@ test("it lives under Money, where an owner would look for it", () => {
   const appSrc = fs.readFileSync(path.join(__dirname, "..", "App.js"), "utf8");
   const money = appSrc.slice(appSrc.indexOf('{ label: "Money"'));
   expect(money.slice(0, money.indexOf("]"))).toContain('"gift_cards"');
+});
+
+
+// ------------------------------------------------------------- printing
+
+test("a freshly issued card can be printed on the spot", async () => {
+  await mount();
+  await click("gift-issue-toggle");
+  await type("gift-issue-amount", "25");
+  await type("gift-issue-reason", "Make-good");
+  await click("gift-issue-go");
+  await click("gift-issued-print");
+  expect(printGiftCard).toHaveBeenCalledWith(
+    expect.objectContaining({ code_display: "WXYZ-2345-6789", balance: 25 }));
+});
+
+test("a looked-up card can be reprinted", async () => {
+  await mount();
+  await type("gift-lookup-code", "ABCD-EFGH-JKMN");
+  await click("gift-lookup-go");
+  await click("gift-print");
+  expect(printGiftCard).toHaveBeenCalledWith(
+    expect.objectContaining({ code_display: "ABCD-EFGH-JKMN" }));
+});
+
+test("a blocked pop-up tells the operator instead of doing nothing", async () => {
+  printGiftCard.mockReturnValue(false);
+  await mount();
+  await type("gift-lookup-code", "ABCD-EFGH-JKMN");
+  await click("gift-lookup-go");
+  await click("gift-print");
+  expect(toast.error).toHaveBeenCalledWith(expect.stringMatching(/pop-ups/i));
 });

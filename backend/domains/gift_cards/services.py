@@ -326,7 +326,7 @@ async def list_cards(*, status: Optional[str] = None, limit: int = 100) -> dict:
 # ──────────────────────────────────────────────────── settling a register sale
 
 async def settle_sale(*, sale_id: str, sale: dict, user: dict,
-                      redeemed: List[dict], selling: List[Any]) -> None:
+                      redeemed: List[dict], selling: List[Any]) -> List[dict]:
     """Everything a gift card owes the books once a sale has committed.
 
     Two halves, and they pull in opposite directions:
@@ -339,13 +339,18 @@ async def settle_sale(*, sale_id: str, sale: dict, user: dict,
         subtracted by the one canonical revenue helper. No phantom negative
         row, which would otherwise show up as a refund it is not.
     """
+    minted: List[dict] = []
     if selling:
-        await _mint_sold_cards(sale_id=sale_id, sale=sale, user=user, selling=selling)
+        minted = await _mint_sold_cards(sale_id=sale_id, sale=sale, user=user, selling=selling)
     if redeemed:
         await _record_funding(sale_id=sale_id, sale=sale, redeemed=redeemed)
+    # Handed back so the register can print the card the moment it is sold —
+    # this is the only point the code is available to a person.
+    return minted
 
 
-async def _mint_sold_cards(*, sale_id: str, sale: dict, user: dict, selling: List[Any]) -> None:
+async def _mint_sold_cards(*, sale_id: str, sale: dict, user: dict, selling: List[Any]) -> List[dict]:
+    minted: List[dict] = []
     lines = [li for li in (sale.get("line_items") or []) if li.get("kind") == "gift_card"]
     business_date = sale.get("business_date") or _business_today_fn().isoformat()
     receipt = sale.get("receipt_number") or ""
@@ -374,6 +379,8 @@ async def _mint_sold_cards(*, sale_id: str, sale: dict, user: dict, selling: Lis
                 "created_at": _now_iso_fn(), "created_by": user.get("id"),
                 "logged_by": user.get("name") or user.get("email") or "admin",
             })
+            minted.append({**public_view(card), "code": card["code"]})
+    return minted
 
 
 async def _record_funding(*, sale_id: str, sale: dict, redeemed: List[dict]) -> None:

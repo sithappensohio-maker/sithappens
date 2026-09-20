@@ -20,6 +20,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { api, formatErr } from "../lib/api";
 import { useAuth } from "../lib/auth";
 import { emitRegisterChanged } from "../lib/registerBus";
+import { printGiftCard } from "../lib/printGiftCard";
 import { toast } from "sonner";
 import PageHero from "../components/PageHero";
 import RegisterHub from "../components/RegisterHub";
@@ -851,6 +852,31 @@ export default function Pos({ onOpenShopManager } = {}) {
             </div>
           )}
         </div>
+        {(saleResult.gift_cards || []).length > 0 && (
+          /* A gift card is the thing the customer walks out with, so it is
+             offered before the receipt — and the code is on screen in case
+             the printer is down and it has to be written by hand. */
+          <div className="bg-shPrimary/10 border-2 border-shPrimary rounded-2xl p-4 space-y-2"
+               data-testid="pos-sold-gift-cards">
+            <p className="text-shTextMuted text-[12px] uppercase tracking-widest font-black text-center">
+              {saleResult.gift_cards.length === 1 ? "Gift card sold" : `${saleResult.gift_cards.length} gift cards sold`}
+            </p>
+            {saleResult.gift_cards.map((c) => (
+              <div key={c.id} className="flex flex-wrap items-center justify-between gap-2"
+                   data-testid={`pos-gift-sold-${c.id}`}>
+                <div>
+                  <p className="text-shPrimary text-[22px] font-black tracking-[0.14em]">{c.code_display}</p>
+                  <p className="text-shTextMuted text-[12px]">{money(c.balance)}</p>
+                </div>
+                <button onClick={() => { if (!printGiftCard(c)) toast.error("Allow pop-ups to print the gift card."); }}
+                        data-testid={`pos-gift-print-${c.id}`}
+                        className="min-h-[44px] px-4 rounded-xl bg-shPrimary text-bgHeader text-[12px] font-black uppercase tracking-widest">
+                  <i className="fas fa-print mr-1.5"/>Print card
+                </button>
+              </div>
+            ))}
+          </div>
+        )}
         <div className="bg-[var(--sh-card-base)] border border-shBorder rounded-2xl p-4 space-y-2">
           <div className="flex items-center justify-between">
             <span className="text-shTextMuted text-sm">Print receipt</span>

@@ -113,9 +113,11 @@ async def create_sale(body, user):
         return sale
 
     try:
-        await gift_cards_services.settle_sale(
+        minted = await gift_cards_services.settle_sale(
             sale_id=sale_id, sale=sale.get("sale") or {}, user=user,
             redeemed=redeemed, selling=selling)
+        if minted:
+            sale["gift_cards"] = minted
     except Exception:
         _logger.exception("Gift card settlement failed for sale %s", sale_id)
     return sale
