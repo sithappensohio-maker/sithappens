@@ -17,16 +17,22 @@ _client_ip_fn = None
 _perms_for_fn = None
 _issue_pos_token_fn = None
 _invalidate_auth_user_cache_fn = None
+_normalize_payment_method_fn = None
+_require_register_day_open_fn = None
 
 
 def configure(*, active_register_closeout, closeout_rollover_cash, db=None,
               verify_password=None, hash_password=None, now_iso=None,
               business_today=None, enforce_rate_limit=None, client_ip=None,
-              perms_for=None, issue_pos_token=None, invalidate_auth_user_cache=None) -> None:
+              perms_for=None, issue_pos_token=None, invalidate_auth_user_cache=None,
+              normalize_payment_method=None, require_register_day_open=None) -> None:
     global _active_register_closeout_fn, _closeout_rollover_cash_fn, _db
     global _verify_password_fn, _hash_password_fn, _now_iso_fn, _business_today_fn
     global _enforce_rate_limit_fn, _client_ip_fn, _perms_for_fn, _issue_pos_token_fn
     global _invalidate_auth_user_cache_fn
+    global _normalize_payment_method_fn, _require_register_day_open_fn
+    _normalize_payment_method_fn = normalize_payment_method
+    _require_register_day_open_fn = require_register_day_open
     _active_register_closeout_fn = active_register_closeout
     _closeout_rollover_cash_fn = closeout_rollover_cash
     _db = db
@@ -212,3 +218,108 @@ async def record_no_sale(*, pin: str, reason: str, workstation_id: Optional[str]
     except Exception:
         token = None
     return {"ok": True, "no_sale": doc, "pos_open_drawer_token": token}
+
+async def record_register_refund(body, user: dict) -> dict:
+    """A manual money-back correction from the register tools.
+
+    This is the free-form path — a cancellation, an overcharge, something a
+    return cannot express. Merchandise coming back over the counter should go
+    through a RETURN instead, which knows what was sold and prices the refund
+    itself.
+
+    Two things used to be wrong here, and both cost real money:
+
+      * Sales tax was never reversed. Refunding a taxed sale gave the customer
+        their tax back out of the drawer while the liability still said it was
+        owed to Ohio, so it got remitted on a sale that no longer existed.
+      * There was no ceiling of any kind. A slipped decimal refunded far more
+        than was ever taken and landed straight in the drawer, the P&L and the
+        books with nothing to catch it.
+
+    So a refund now either points at the sale it reverses — in which case the
+    tax and the ceiling are worked out from that sale and cannot be wrong — or
+    it states its own tax portion explicitly, which for a service refund is
+    correctly zero but has to be a decision rather than an oversight.
+    """
+    d = body.date or _business_today_fn().isoformat()
+    await _require_register_day_open_fn(d)
+
+    amount = round(float(body.amount), 2)
+    sale = None
+    tax_part = round(float(getattr(body, "tax_amount", 0) or 0), 2)
+
+    sale_id = (getattr(body, "sale_id", None) or "").strip()
+    if sale_id:
+        sale = await _db.pos_sales.find_one({"id": sale_id}, {"_id": 0})
+        if not sale:
+            raise HTTPException(status_code=404, detail="That sale could not be found.")
+        already = await _already_given_back(sale_id)
+        remaining = round(float(sale.get("total") or 0) - already, 2)
+        if remaining <= 0:
+            raise HTTPException(
+                status_code=409,
+                detail=f"Sale #{sale.get('receipt_number')} has already been fully refunded.")
+        if amount > remaining + 0.005:
+            raise HTTPException(
+                status_code=400,
+                detail=f"Only {_fmt(remaining)} is left to refund on sale "
+                       f"#{sale.get('receipt_number')} — it was {_fmt(sale.get('total'))}.")
+        # The tax comes from the sale, in the same proportion as the refund.
+        # Deriving it beats asking, because the operator cannot get it wrong.
+        sale_total = round(float(sale.get("total") or 0), 2)
+        sale_tax = round(float(sale.get("tax_amount") or 0), 2)
+        tax_part = round(sale_tax * (amount / sale_total), 2) if sale_total > 0 else 0.0
+    elif tax_part > amount + 0.005:
+        raise HTTPException(status_code=400, detail="The tax portion cannot exceed the refund.")
+
+    client_name = ""
+    if body.client_id:
+        c = await _db.clients.find_one({"id": body.client_id}, {"_id": 0, "name": 1})
+        if c:
+            client_name = c.get("name") or ""
+
+    doc = {
+        "id": str(uuid.uuid4()),
+        "date": d,
+        "description": f"Refund · {body.reason.strip()}"
+                       + (f" · against #{sale.get('receipt_number')}" if sale else ""),
+        "amount": -amount,
+        "category": "Refund",
+        "notes": (body.notes or "").strip(),
+        "payment_method": _normalize_payment_method_fn(body.payment_method, store=True),
+        "client_id": body.client_id or None,
+        "client_name": client_name,
+        "source_kind": "refund",
+        # Negated, like every other reversal row, so the sales-tax liability
+        # falls by exactly what was handed back. Written even when zero, which
+        # marks the row as tax-explicit rather than merely tax-less.
+        "tax_amount": -tax_part,
+        "pre_tax_amount": -round(amount - tax_part, 2),
+        "tax_rate_pct": float((sale or {}).get("tax_rate_pct") or 0),
+        "pos_sale_id": sale_id or None,
+        "created_at": _now_iso_fn(),
+        "created_by": user.get("id"),
+        "logged_by": user.get("name") or user.get("email") or "admin",
+    }
+    await _db.retail_sales.insert_one(doc.copy())
+    doc.pop("_id", None)
+    return doc
+
+
+def _fmt(value) -> str:
+    return f"${round(float(value or 0), 2):.2f}"
+
+
+async def _already_given_back(sale_id: str) -> float:
+    """Every dollar already handed back on this sale, however it was done —
+    a void, a return, or an earlier manual refund. One sale cannot be
+    refunded three ways for three times the money."""
+    total = 0.0
+    rows = await _db.retail_sales.find(
+        {"pos_sale_id": sale_id, "amount": {"$lt": 0}}, {"_id": 0, "amount": 1},
+    ).to_list(500)
+    for r in rows:
+        total += abs(float(r.get("amount") or 0))
+    return round(total, 2)
+
+

@@ -285,24 +285,65 @@ def test_g_unlinked_register_refund_fabricates_no_tax():
         r = run(server.admin_register_refund(server.RegisterRefundIn(
             reason=f"{TAG} live refund", amount=15.0, payment_method="cash",
             date=server.business_today().isoformat()), ADMIN))
-        assert "tax_amount" not in r["refund"]
+        # It now writes tax_amount EXPLICITLY as 0.0 rather than omitting it,
+        # which marks the row tax-explicit instead of merely tax-less.
+        assert r["refund"]["tax_amount"] == 0.0
     finally:
         _cleanup(dates=[d])
 
 
-# ── Test H — linked full generic refund: documented as unsupported ──────────
-def test_h_generic_refund_linkage_not_supported_documented():
-    """RegisterRefundIn carries no original-transaction linkage (client_id,
-    amount, method, reason, notes, date only) — so a 'safely linked full
-    refund with automatic exact tax reversal' cannot exist for the generic
-    register refund today. This test pins that fact so the day linkage IS
-    added, this assertion fails and the tax handling must be designed in.
-    The linked flows that DO reverse tax are POS voids (tests B/D/E/F) and
-    booking refunds (test I)."""
+# -- Test H -- a linked refund now reverses the exact tax ------------------
+def test_h_a_linked_register_refund_reverses_the_exact_tax():
+    """This used to pin the ABSENCE of linkage, and said in its own docstring
+    that the day linkage was added it should fail and the tax handling be
+    designed in. That day came: RegisterRefundIn now takes sale_id, the refund
+    is capped at what the sale has left, and the tax comes from the sale in the
+    same proportion as the refund rather than being guessed or forgotten."""
+    from fastapi import HTTPException
     fields = set(server.RegisterRefundIn.model_fields.keys())
-    assert "original_retail_sales_id" not in fields
-    assert "pos_sale_id" not in fields
-    assert "tax_amount" not in fields
+    assert "sale_id" in fields and "tax_amount" in fields
+
+    day = server.business_today().isoformat()
+    run(server.db.cash_drawer_sessions.find_one_and_update(
+        {"date": day},
+        {"$setOnInsert": {"date": day, "opening_cash": 300.0, "opened_at": server.now_iso(),
+                          "opened_by": TAG, "opened_by_name": TAG, "notes": TAG}},
+        upsert=True, projection={"_id": 0}))
+    prev = run(server.db.settings.find_one({}, {"_id": 0, "sales_tax": 1})) or {}
+    run(server.db.settings.update_one({}, {"$set": {"sales_tax": {
+        "enabled": True, "rate_pct": 10.0, "label": "Sales Tax", "applies_to": {}}}}, upsert=True))
+    pid = str(uuid.uuid4())
+    sale_id = None
+    try:
+        run(server.db.pos_products.insert_one({
+            "id": pid, "name": f"{TAG} widget", "price": 100.0, "active": True, "archived": False,
+            "show_at_register": True, "track_inventory": False, "stock_on_hand": 0, "taxable": True,
+            "category": "", "description": "", "sku": "", "category_id": None, "subcategory_id": None}))
+        out = run(server._create_pos_sale_impl(server.PosSaleIn(
+            lines=[server.PosSaleLineIn(kind="retail", product_id=pid, qty=1)],
+            tenders=[server.PosSaleTenderIn(method="cash", amount=110.0, tendered_amount=110.0)],
+            idempotency_key=f"{TAG}-{uuid.uuid4()}"), ADMIN))
+        sale_id = out.get("pos_sale_id") or (out.get("sale") or {}).get("id")
+
+        doc = run(server.admin_register_refund(server.RegisterRefundIn(
+            reason=f"{TAG} linked refund", amount=55.0, payment_method="cash",
+            sale_id=sale_id, date=day), ADMIN))["refund"]
+        assert doc["amount"] == -55.0
+        assert doc["tax_amount"] == -5.0, "half the sale refunded, half its tax reversed"
+        assert doc["pos_sale_id"] == sale_id
+
+        with pytest.raises(HTTPException):
+            run(server.admin_register_refund(server.RegisterRefundIn(
+                reason=f"{TAG} too much", amount=500.0, payment_method="cash",
+                sale_id=sale_id, date=day), ADMIN))
+    finally:
+        run(server.db.pos_products.delete_many({"id": pid}))
+        if sale_id:
+            run(server.db.pos_sales.delete_many({"id": sale_id}))
+            run(server.db.retail_sales.delete_many({"pos_sale_id": sale_id}))
+        run(server.db.cash_drawer_sessions.delete_many({"notes": TAG}))
+        run(server.db.settings.update_one(
+            {}, {"$set": {"sales_tax": prev.get("sales_tax") or {"enabled": False}}}, upsert=True))
 
 
 # ── Test I — booking refund proportional tax regression ─────────────────────

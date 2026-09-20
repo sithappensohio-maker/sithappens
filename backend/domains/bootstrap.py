@@ -90,6 +90,8 @@ def register_domains(
         perms_for=server_globals["_perms_for"],
         issue_pos_token=server_globals["_issue_pos_token"],
         invalidate_auth_user_cache=server_globals["_invalidate_auth_user_cache"],
+        normalize_payment_method=server_globals["_normalize_payment_method"],
+        require_register_day_open=server_globals["_require_register_day_open"],
     )
     pricing_services.configure(
         db=db,

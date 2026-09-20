@@ -36522,10 +36522,13 @@ async def _register_day_summary(day: Optional[str] = None) -> Dict[str, Any]:
             continue
         pos_id = r.get("pos_sale_id")
         row_kind = r.get("source_kind") or ""
-        # A RETURN is its own money movement with its own method (money goes
-        # back the way it came, which on a split sale is more than one row),
-        # so it buckets by the row rather than by the original sale's tenders.
-        if pos_id and pos_id in pos_tenders_by_sale and row_kind != "pos_sale_return":
+        # A full VOID reverses the sale's own tenders, once. Everything else
+        # that gives money back against a sale — a partial RETURN, a manual
+        # REFUND — is its own movement with its own method and amount, so it
+        # buckets by the ROW. Folding those into the sale's tenders makes them
+        # vanish entirely, because the sale was bucketed once already.
+        partial_reversal = row_kind in ("pos_sale_return", "refund") or amt < 0
+        if pos_id and pos_id in pos_tenders_by_sale and not (partial_reversal and row_kind != "pos_sale_void"):
             if row_kind == "pos_sale_void":
                 if pos_id not in pos_voids_bucketed:
                     pos_voids_bucketed.add(pos_id)
@@ -37296,6 +37299,11 @@ class RegisterRefundIn(BaseModel):
     reason: str = Field(min_length=1, max_length=200)
     client_id: Optional[str] = None
     notes: Optional[str] = ""
+    # The sale being reversed, when there is one: it caps the refund and
+    # derives the tax. Otherwise tax_amount says the portion explicitly (0 for
+    # a service). See domains.register.services.record_register_refund.
+    sale_id: Optional[str] = None
+    tax_amount: float = Field(default=0, ge=0)
 
 
 class RegisterCashPayoutIn(BaseModel):
@@ -37309,31 +37317,9 @@ class RegisterCashPayoutIn(BaseModel):
 
 
 async def admin_register_refund(body: RegisterRefundIn, user: dict = Depends(require_admin_and_permission("delete_records"))):
-    d = body.date or business_today().isoformat()
-    await _require_register_day_open(d)
-    client_name = ""
-    if body.client_id:
-        c = await db.clients.find_one({"id": body.client_id}, {"_id": 0, "name": 1})
-        if c:
-            client_name = c.get("name") or ""
-    doc = {
-        "id": str(uuid.uuid4()),
-        "date": d,
-        "description": f"Refund · {body.reason.strip()}",
-        "amount": -round(float(body.amount), 2),
-        "category": "Refund",
-        "notes": (body.notes or "").strip(),
-        "payment_method": _normalize_payment_method(body.payment_method, store=True),
-        "client_id": body.client_id or None,
-        "client_name": client_name,
-        "source_kind": "refund",
-        "created_at": now_iso(),
-        "created_by": user.get("id"),
-        "logged_by": user.get("name") or user.get("email") or "admin",
-    }
-    await db.retail_sales.insert_one(doc.copy())
-    doc.pop("_id", None)
-    return {"ok": True, "refund": doc, "register": await _register_day_summary(d)}
+    """Manual money-back correction. See domains.register.services."""
+    doc = await register_domain_services.record_register_refund(body, user)
+    return {"ok": True, "refund": doc, "register": await _register_day_summary(doc["date"])}
 
 
 async def admin_register_cash_payout(body: RegisterCashPayoutIn, user: dict = Depends(require_admin_and_permission("finance_reports"))):
