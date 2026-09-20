@@ -182,7 +182,7 @@ def _normalize_payment_method(method: Optional[str], *, store: bool = False) -> 
         return "paypal"
     if m in ("transfer", "bank_transfer", "venmo_paypal", "venmo/paypal"):
         return "venmo" if store else "venmo_paypal"
-    if m in ("cash", "check", "credits", "other"):
+    if m in ("cash", "check", "credits", "other", "gift_card"):
         return m
     return "other" if m else "other"
 
@@ -197,9 +197,8 @@ def _add_method_total(totals: Dict[str, float], method: Optional[str], amount: f
     amt = round(float(amount or 0), 2)
     if abs(amt) < 0.005:
         return
-    # A gift card is not money arriving. The money arrived when the card was
-    # SOLD; redeeming one moves no cash today, exactly like a prepaid credit.
-    # Checked BEFORE normalisation, which would flatten it into "other".
+    # Not money arriving — it arrived when the card was SOLD. Checked before
+    # normalisation, which would flatten it into "other".
     if (method or "") == "gift_card":
         return
     key = _normalize_payment_method(method, store=store_mode)
@@ -1136,7 +1135,8 @@ class CheckoutIn(BaseModel):
     callers (legacy clients) still work — defaults to the previous behaviour:
     use any pre-deducted credits, no add-ons, no payment-method override."""
     use_credits: Optional[bool] = True  # False → refund pre-deducted credits, charge instead
-    payment_method: Optional[Literal["cash", "card", "transfer", "venmo", "paypal", "credits", "check", "other"]] = None
+    payment_method: Optional[Literal["cash", "card", "transfer", "venmo", "paypal", "credits", "check", "other", "gift_card"]] = None
+    gift_card_code: Optional[str] = Field(default=None, max_length=40)  # payment_method == "gift_card"
     # "paid_partial" is an explicit CALLER-asserted tab/partial intent (e.g.
     # the Dashboard checkout modal's "Partial / on tab" pill) — belt-and-
     # suspenders so a partial/tab checkout can never silently collapse into
@@ -10243,6 +10243,8 @@ async def _check_out_locked(
     else:
         update.setdefault("amount_paid", 0.0)
         update["balance_due"] = 0.0
+    merged_money = {**booking, **update}
+    await pos_domain_services.settle_booking_gift_card(booking, body, user, update)
     merged_money = {**booking, **update}
     update["cash_revenue"] = _cash_revenue(merged_money)
     if float(update.get("cash_revenue") or 0) > 0:
@@ -34486,6 +34488,8 @@ def _cash_revenue(booking: dict) -> float:
     status = booking.get("payment_status")
     method = booking.get("payment_method")
 
+    if method == "gift_card":  # the money arrived when the CARD was sold
+        return round(max(0.0, paid - float(booking.get("gift_card_applied") or 0)), 2)
     if method == "credits":
         credit_value = float(booking.get("credit_value") or 0)
         # Pure prepaid credit redemption is not new cash. Only a cash amount
@@ -34643,11 +34647,9 @@ def _business_revenue_net_of_sales_tax(row: dict) -> float:
     quarterly projection, and the accountant CSV — calls THIS function, so
     the same activity can never produce two different revenue numbers.
     """
-    # `gift_card_funded` is the pre-tax slice of this row that a gift card
-    # paid for. That money was already recognised as revenue when the CARD
-    # was sold, so counting it again here would book $200 of income on $100
-    # of cash. The sales tax on those goods is untouched — it really was
-    # collected and really is owed. See domains.gift_cards.services.
+    # `gift_card_funded` — the pre-tax slice a gift card paid for, already
+    # recognised when the CARD was sold. Counting it again would book $200 of
+    # income on $100 of cash. Its sales tax stands: that was really collected.
     net = round(float(row.get("amount") or 0) - float(row.get("tax_amount") or 0)
                 - float(row.get("gift_card_funded") or 0), 2)
     if (row.get("source_kind") or "") in _INCOME_REVERSAL_KINDS or float(row.get("amount") or 0) < 0:

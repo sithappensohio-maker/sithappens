@@ -173,6 +173,23 @@ export function CheckoutModal({ booking, services, onClose, onRequestCancel }) {
     }
   }, [clientBal, creditsToUseNow, hadCredit, defaultedFromBal, booking.actual_price]);
   const [payMethod, setPayMethod] = useState("cash");
+  // Paying a pickup with a gift card. The balance is checked while the
+  // customer is still standing there, not when the checkout is submitted.
+  const [giftCode, setGiftCode] = useState("");
+  const [giftCard, setGiftCard] = useState(null);
+  const [giftBusy, setGiftBusy] = useState(false);
+  const lookupGiftCard = async () => {
+    if (!giftCode.trim()) return;
+    setGiftBusy(true);
+    try {
+      const { data } = await api.get(`/gift-cards/lookup/${encodeURIComponent(giftCode.trim())}`);
+      setGiftCard(data);
+    } catch (e) {
+      setGiftCard(null);
+      setErr(formatErr(e) || "No gift card with that code.");
+    }
+    setGiftBusy(false);
+  };
   const [basePrice, setBasePrice] = useState("");
   // Reason for a manual price change — stored on the booking's
   // manual_price_override audit stamp (who/when/from/to/why).
@@ -521,6 +538,10 @@ export function CheckoutModal({ booking, services, onClose, onRequestCancel }) {
       if (checkoutDiscountRequested > 0) {
         body.checkout_discount_amount = Number(checkoutDiscountRequested.toFixed(2));
         body.checkout_discount_reason = checkoutDiscountReason.trim();
+      }
+      if (payMethod === "gift_card") {
+        if (!giftCard) { setErr("Check the gift card's balance first."); setBusy(false); return; }
+        body.gift_card_code = giftCode.trim();
       }
       if (shopLines.length) {
         body.retail_lines = shopLines.map((l) => ({ kind: "retail", product_id: l.item.id, qty: l.qty }));
@@ -1022,8 +1043,33 @@ export function CheckoutModal({ booking, services, onClose, onRequestCancel }) {
           {(!useCredits || chargedToday > 0) && (
             <select value={payMethod} onChange={(e)=>setPayMethod(e.target.value)} data-testid="checkout-pay-method"
                     className="w-full bg-bgPanel border border-bgHover rounded p-2 text-white text-sm mb-3">
-              <option value="cash">Cash</option><option value="card">Card</option><option value="venmo">Venmo</option><option value="paypal">PayPal</option><option value="check">Check</option><option value="other">Other</option>
+              <option value="cash">Cash</option><option value="card">Card</option><option value="venmo">Venmo</option><option value="paypal">PayPal</option><option value="check">Check</option><option value="other">Other</option><option value="gift_card">Gift Card</option>
             </select>
+          )}
+          {payMethod === "gift_card" && (
+            <div className="mb-3" data-testid="checkout-gift-tender">
+              <div className="flex gap-2">
+                <input value={giftCode} onChange={(e) => setGiftCode(e.target.value)}
+                       onKeyDown={(e) => { if (e.key === "Enter") { e.preventDefault(); lookupGiftCard(); } }}
+                       placeholder="Gift card code" data-testid="checkout-gift-code"
+                       className="flex-1 min-w-0 min-h-[48px] bg-bgPanel border border-bgHover rounded px-3 text-white text-sm"/>
+                <button type="button" onClick={lookupGiftCard} disabled={giftBusy}
+                        data-testid="checkout-gift-lookup"
+                        className="min-h-[48px] px-4 rounded-xl border border-shGreen/50 text-shGreen text-[12px] font-black uppercase tracking-widest disabled:opacity-50">
+                  {giftBusy ? "…" : "Check"}
+                </button>
+              </div>
+              {giftCard && (
+                <p className={`text-[13px] mt-1.5 font-black ${
+                     Number(giftCard.balance) >= dueToday ? "text-shGreen" : "text-shOrange"}`}
+                   data-testid="checkout-gift-balance">
+                  {giftCard.code_display} · ${Number(giftCard.balance).toFixed(2)} left
+                  {Number(giftCard.balance) < dueToday
+                    ? ` — not enough for $${dueToday.toFixed(2)}`
+                    : ""}
+                </p>
+              )}
+            </div>
           )}
           <div>
             <label className="text-[13px] uppercase tracking-widest text-gray-500 font-black">

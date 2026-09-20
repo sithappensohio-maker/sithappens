@@ -128,7 +128,7 @@ def _money(v) -> float:
 # Tenders the till understands. A stay can be settled by "transfer" or by
 # prepaid credits; merchandise cannot be, so those two are handled explicitly
 # below rather than being allowed to fail validation deep inside the sale.
-_TILL_TENDERS = ("cash", "card", "check", "venmo", "paypal", "other")
+_TILL_TENDERS = ("cash", "card", "check", "venmo", "paypal", "other", "gift_card")
 
 
 async def ring_pickup_merchandise(booking: dict, body, user: dict) -> Optional[dict]:
@@ -149,7 +149,7 @@ async def ring_pickup_merchandise(booking: dict, body, user: dict) -> Optional[d
         raise HTTPException(status_code=400,
                             detail="This sale is missing its idempotency key. Reopen the checkout and try again.")
 
-    method = _normalize_payment_method_fn(body.payment_method, store=True)
+    method = "gift_card" if body.payment_method == "gift_card" else         _normalize_payment_method_fn(body.payment_method, store=True)
     if method == "credits":
         # Credits are prepaid VISITS. They buy daycare, not dog food.
         raise HTTPException(status_code=400,
@@ -169,8 +169,10 @@ async def ring_pickup_merchandise(booking: dict, body, user: dict) -> Optional[d
             # Cash is tendered at exactly the merchandise total: this record
             # owes no change of its own, because the desk settles the whole
             # pickup — stay and goods — in one go at the counter.
-            tenders=[_tender_model(method=method, amount=total,
-                                   **({"tendered_amount": total} if method == "cash" else {}))],
+            tenders=[_tender_model(
+                method=method, amount=total,
+                **({"tendered_amount": total} if method == "cash" else {}),
+                **({"gift_card_code": getattr(body, "gift_card_code", None)} if method == "gift_card" else {}))],
             workstation_id=getattr(body, "workstation_id", None),
             idempotency_key=body.retail_idempotency_key,
         ),
@@ -185,6 +187,34 @@ async def ring_pickup_merchandise(booking: dict, body, user: dict) -> Optional[d
         "total": total,
         "item_count": len(priced.get("line_items") or []),
     }
+
+
+async def settle_booking_gift_card(booking: dict, body, user: dict, update: dict) -> None:
+    """Pay for a dog's stay with a gift card.
+
+    A stay is a service, so the money for it arrived when the CARD was sold,
+    not today. `gift_card_applied` records how much of this checkout the card
+    covered, and `_cash_revenue` subtracts it — otherwise the same money would
+    be counted once when the card was bought and again when it was spent.
+
+    Anything collected on TOP of the card is ordinary money and counts.
+    """
+    if not body or getattr(body, "payment_method", None) != "gift_card":
+        return
+    owed = round(float(update.get("amount_paid") or 0), 2)
+    if owed <= 0:
+        return
+    code = gift_cards_services.normalize_code(getattr(body, "gift_card_code", None))
+    if not code:
+        raise HTTPException(status_code=400, detail="Enter the gift card's code to pay with it.")
+    card = await gift_cards_services.find_by_code(code)
+    gift_cards_services.assert_spendable(card, owed)
+    done = await gift_cards_services.redeem(
+        code=code, amount=owed, actor=user,
+        note=f"Checkout for {booking.get('dog_name') or 'a stay'}")
+    update["gift_card_applied"] = owed
+    update["gift_card_id"] = done["gift_card_id"]
+    update["gift_card_balance_after"] = done["balance_after"]
 
 
 # ─────────────────────────────────────────────────────────── returns

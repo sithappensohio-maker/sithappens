@@ -240,3 +240,115 @@ def test_merchandise_belongs_to_one_checkout_not_to_every_dog_in_the_house():
     src = inspect.getsource(server.check_out_group)
     assert 'payload["retail_lines"] = []' in src
     assert src.index('payload["retail_lines"] = []') > src.index('if target.get("id") != booking_id:')
+
+
+# ---------------------------------------------------- paying with a gift card
+
+def _gift_card(value=100.00):
+    from domains.gift_cards import services as gift
+    return run(gift.mint_card(amount=value, actor=ADMIN, note=f"{TAG} test card", origin="issued"))
+
+
+def _day():
+    return server.business_today().isoformat()
+
+
+def _revenue():
+    import pl_report
+    pl = run(pl_report.build_pl_data(server.db, _day(), _day()))
+    return round(float(pl.get("net") or 0), 2)
+
+
+def _pay_by_card(card, **over):
+    """What the pickup screen sends when the customer hands over a card."""
+    payload = {"payment_method": "gift_card", "gift_card_code": card["code"],
+               "payment_status": "paid"}
+    payload.update(over)
+    return payload
+
+
+def test_a_stay_can_be_paid_with_a_gift_card():
+    cid, did = _client_dog()
+    bid = _booking(cid, did, price=40.0)
+    card = _gift_card(100.00)
+    try:
+        out = _checkout(bid, **_pay_by_card(card))
+        assert out["status"] == "completed"
+        assert out.get("gift_card_applied") == 40.0
+        after = run(server.db.gift_cards.find_one({"id": card["id"]}, {"_id": 0}))
+        assert after["balance"] == 60.00
+    finally:
+        run(server.db.gift_cards.delete_many({"id": card["id"]}))
+        _cleanup(cid, [did], [bid])
+
+
+def test_a_stay_paid_by_card_books_no_new_revenue():
+    # The $40 was earned when the card was sold. Counting it again here would
+    # book the same money twice.
+    cid, did = _client_dog()
+    bid = _booking(cid, did, price=40.0)
+    card = _gift_card(100.00)
+    before = _revenue()
+    try:
+        _checkout(bid, **_pay_by_card(card))
+        assert round(_revenue() - before, 2) == 0.00
+    finally:
+        run(server.db.gift_cards.delete_many({"id": card["id"]}))
+        _cleanup(cid, [did], [bid])
+
+
+def test_a_stay_paid_by_card_puts_nothing_in_the_drawer():
+    cid, did = _client_dog()
+    bid = _booking(cid, did, price=40.0)
+    card = _gift_card(100.00)
+    before = round(float(run(server._register_day_summary(_day()))["totals"]["expected_cash"]), 2)
+    try:
+        _checkout(bid, **_pay_by_card(card))
+        after = round(float(run(server._register_day_summary(_day()))["totals"]["expected_cash"]), 2)
+        assert after == before
+    finally:
+        run(server.db.gift_cards.delete_many({"id": card["id"]}))
+        _cleanup(cid, [did], [bid])
+
+
+def test_a_card_without_enough_on_it_stops_the_checkout():
+    cid, did = _client_dog()
+    bid = _booking(cid, did, price=40.0)
+    card = _gift_card(10.00)
+    try:
+        with pytest.raises(HTTPException) as e:
+            _checkout(bid, **_pay_by_card(card))
+        assert e.value.status_code == 400
+        assert run(server.db.bookings.find_one({"id": bid}, {"_id": 0}))["status"] == "checked_in"
+        assert run(server.db.gift_cards.find_one({"id": card["id"]}, {"_id": 0}))["balance"] == 10.00
+    finally:
+        run(server.db.gift_cards.delete_many({"id": card["id"]}))
+        _cleanup(cid, [did], [bid])
+
+
+def test_paying_by_card_without_a_code_is_refused():
+    cid, did = _client_dog()
+    bid = _booking(cid, did, price=40.0)
+    try:
+        with pytest.raises(HTTPException) as e:
+            _checkout(bid, payment_method="gift_card", payment_status="paid")
+        assert e.value.status_code == 400
+        assert "code" in str(e.value.detail).lower()
+    finally:
+        _cleanup(cid, [did], [bid])
+
+
+def test_merchandise_at_pickup_can_be_bought_with_the_same_card():
+    cid, did = _client_dog()
+    bid, prod = _booking(cid, did, price=40.0), _product(20.00)
+    card = _gift_card(100.00)
+    try:
+        out = _checkout(bid, **_pay_by_card(card), retail_lines=_lines(prod),
+                        retail_idempotency_key=f"pickup-{uuid.uuid4()}")
+        assert out["pickup_sale"]["total"] == 21.35
+        after = run(server.db.gift_cards.find_one({"id": card["id"]}, {"_id": 0}))
+        # 100 - 21.35 goods - 40.00 stay
+        assert after["balance"] == 38.65
+    finally:
+        run(server.db.gift_cards.delete_many({"id": card["id"]}))
+        _cleanup(cid, [did], [bid], [prod["id"]])

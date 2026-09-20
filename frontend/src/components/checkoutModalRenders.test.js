@@ -51,7 +51,15 @@ const PRODUCTS = {
 
 let container, root;
 
+const GIFT_CARD = { id: "gc-1", code_display: "ABCD-EFGH-JKMN", balance: 80.00,
+                    initial_amount: 100.00, status: "active" };
+
 const respond = (url) => {
+  if (url.includes("/gift-cards/lookup/")) {
+    return url.includes("SMALL")
+      ? Promise.resolve({ data: { ...GIFT_CARD, balance: 5.00 } })
+      : Promise.resolve({ data: GIFT_CARD });
+  }
   if (url.includes("/pos/catalog")) return Promise.resolve({ data: PRODUCTS });
   if (url.includes("checkout-group-preview")) return Promise.resolve({ data: { bookings: [BOOKING] } });
   if (url.includes("money-modifier-preview")) {
@@ -199,4 +207,68 @@ test("a refused checkout surfaces the reason instead of looking like it worked",
   await mount();
   await click("confirm-checkout");
   expect(container.textContent).toContain("Open the register");
+});
+
+// ------------------------------------------------------ paying by gift card
+
+const setSelect = async (id, value) => {
+  const el = q(id);
+  if (!el) throw new Error(`no [data-testid="${id}"]`);
+  const setter = Object.getOwnPropertyDescriptor(window.HTMLSelectElement.prototype, "value").set;
+  await act(async () => {
+    setter.call(el, value);
+    el.dispatchEvent(new Event("change", { bubbles: true }));
+  });
+};
+const typeIn = async (id, value) => {
+  const el = q(id);
+  if (!el) throw new Error(`no [data-testid="${id}"]`);
+  const setter = Object.getOwnPropertyDescriptor(window.HTMLInputElement.prototype, "value").set;
+  await act(async () => {
+    setter.call(el, value);
+    el.dispatchEvent(new Event("input", { bubbles: true }));
+  });
+};
+
+test("the code box only appears when paying by gift card", async () => {
+  await mount();
+  expect(q("checkout-gift-tender")).toBeFalsy();
+  await setSelect("checkout-pay-method", "gift_card");
+  expect(q("checkout-gift-tender")).toBeTruthy();
+});
+
+test("the balance is shown before the money is taken", async () => {
+  await mount();
+  await setSelect("checkout-pay-method", "gift_card");
+  await typeIn("checkout-gift-code", "ABCD-EFGH-JKMN");
+  await click("checkout-gift-lookup");
+  expect(q("checkout-gift-balance").textContent).toContain("80.00");
+});
+
+test("a card that cannot cover the pickup says so plainly", async () => {
+  await mount();
+  await setSelect("checkout-pay-method", "gift_card");
+  await typeIn("checkout-gift-code", "SMALL-CARD");
+  await click("checkout-gift-lookup");
+  expect(q("checkout-gift-balance").textContent).toMatch(/not enough/);
+});
+
+test("the code travels with the checkout", async () => {
+  await mount();
+  await setSelect("checkout-pay-method", "gift_card");
+  await typeIn("checkout-gift-code", "ABCD-EFGH-JKMN");
+  await click("checkout-gift-lookup");
+  await click("confirm-checkout");
+  const body = checkoutBody();
+  expect(body.payment_method).toBe("gift_card");
+  expect(body.gift_card_code).toBe("ABCD-EFGH-JKMN");
+});
+
+test("an unchecked card cannot be used to pay", async () => {
+  await mount();
+  await setSelect("checkout-pay-method", "gift_card");
+  await typeIn("checkout-gift-code", "ABCD-EFGH-JKMN");
+  await click("confirm-checkout");          // never pressed Check
+  expect(checkoutBody()).toBeUndefined();
+  expect(container.textContent).toMatch(/Check the gift card/);
 });
