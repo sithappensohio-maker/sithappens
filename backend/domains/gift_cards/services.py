@@ -351,10 +351,12 @@ async def settle_sale(*, sale_id: str, sale: dict, user: dict,
 
 async def _mint_sold_cards(*, sale_id: str, sale: dict, user: dict, selling: List[Any]) -> List[dict]:
     minted: List[dict] = []
-    lines = [li for li in (sale.get("line_items") or []) if li.get("kind") == "gift_card"]
     business_date = sale.get("business_date") or _business_today_fn().isoformat()
     receipt = sale.get("receipt_number") or ""
-    for li in lines:
+    for idx, li in enumerate(sale.get("line_items") or []):
+        if li.get("kind") != "gift_card":
+            continue
+        codes: List[str] = []
         count = int(li.get("qty") or 1)
         each = _money(_money(li.get("net_amount") if li.get("net_amount") is not None
                              else li.get("amount")) / max(count, 1))
@@ -380,6 +382,20 @@ async def _mint_sold_cards(*, sale_id: str, sale: dict, user: dict, selling: Lis
                 "logged_by": user.get("name") or user.get("email") or "admin",
             })
             minted.append({**public_view(card), "code": card["code"]})
+            codes.append(_display(card["code"]))
+        if codes:
+            # Put the code into the SALE's own line so it lands on the printed
+            # receipt. The thermal printer is driven by the local agent from a
+            # fixed payload shape — it renders line descriptions, and nothing
+            # here can teach it a new kind of document. Writing the code into
+            # the description means the till receipt itself is proof of the
+            # card, on the printer that is already at the counter, and a
+            # reprint works months later. The full certificate is a separate,
+            # page-printer thing.
+            await _db.pos_sales.update_one(
+                {"id": sale_id, f"line_items.{idx}.kind": "gift_card"},
+                {"$set": {f"line_items.{idx}.description":
+                          f"{li.get('description')} · {' · '.join(codes)}"}})
     return minted
 
 

@@ -373,3 +373,30 @@ def test_looking_codes_up_is_rate_limited():
     from domains.gift_cards import routes
     src = inspect.getsource(routes)
     assert "gift_card_lookup" in src and "enforce_rate_limit" in src
+
+
+def test_the_code_lands_on_the_printed_receipt():
+    """The thermal printer at the counter is driven from a fixed payload the
+    local agent renders — nothing here can teach it a new document. So the
+    code goes into the sale's own line description, which means the ordinary
+    till receipt is itself proof of the card, and a reprint still works."""
+    _sale_id, card = _sell_card(50.00)
+    sale = run(server.db.pos_sales.find_one({"id": _sale_id}, {"_id": 0}))
+    line = [li for li in sale["line_items"] if li["kind"] == "gift_card"][0]
+    assert card["code"][:4] in line["description"].replace("-", "")
+    assert "Gift card" in line["description"]
+
+    payload = run(server._build_pos_sale_receipt_payload(_sale_id))
+    printed = " ".join(str(li.get("description")) for li in payload["line_items"])
+    assert card["code"][:4] in printed.replace("-", ""), "the code reaches the printer"
+
+
+def test_two_cards_on_one_sale_both_reach_the_receipt():
+    sale_id = _sale([{"kind": "gift_card", "gift_card_amount": 25.00, "qty": 2}],
+                    [{"method": "cash", "amount": 50.00, "tendered_amount": 50.00}])
+    cards = run(server.db.gift_cards.find({"sold_via_pos_sale_id": sale_id}, {"_id": 0}).to_list(10))
+    assert len(cards) == 2
+    payload = run(server._build_pos_sale_receipt_payload(sale_id))
+    printed = " ".join(str(li.get("description")) for li in payload["line_items"]).replace("-", "")
+    for c in cards:
+        assert c["code"] in printed
