@@ -13,6 +13,7 @@ import Clients from "./screens/Clients";
 import Inquiries from "./screens/Inquiries";
 import Events from "./screens/Events";
 import PhotoSpecials from "./screens/PhotoSpecials";
+import GiftCards from "./screens/GiftCards";
 import Dogs from "./screens/Dogs";
 import Portal from "./screens/Portal";
 import EmployeePortal from "./screens/EmployeePortal";
@@ -187,7 +188,7 @@ function AdminShell() {
     { label: "Care", ids: ["runsheet", "care", "kennel", "incidents"] },
     { label: "Training", ids: ["pipeline", "school_hq", "rewards_center", "trophies"] },
     { label: "Shop", ids: ["shop_manager"] },
-    { label: "Money", ids: ["income", "credit_reconciliation"] },
+    { label: "Money", ids: ["income", "gift_cards", "credit_reconciliation"] },
     { label: "Communication", ids: ["announcements", "bulkemail", "intake"] },
     { label: "Administration", ids: ["staff", "duplicate_check", "audit", "settings", "tutorials"] },
   ];
@@ -717,6 +718,7 @@ function AdminShell() {
           {tab === "inquiries" && navAllowed("inquiries") && <Inquiries can={can} onOpenClient={(id)=>navigateAdmin("clients", {kind:"client", id, mode:"open"})} />}
           {tab === "events" && navAllowed("events") && <Events can={can} />}
           {tab === "photo_specials" && navAllowed("photo_specials") && <PhotoSpecials />}
+          {tab === "gift_cards" && navAllowed("gift_cards") && <GiftCards />}
           {tab === "dogs" && navAllowed("dogs") && <Dogs focusId={searchTarget?.kind==="dog"?searchTarget.id:null} focusMode={searchTarget?.mode || "scroll"} onConsumed={clearSearchTarget} openCreateOnMount={pendingCreateTab === "dogs"} onCreateConsumed={()=>setPendingCreateTab(null)} userId={user?.id}
             can={can}
             onBookForDog={(dogId, ownerId)=>{ setPendingBookingPreset({ clientId: ownerId || null, dogId }); setGlobalModal("new_booking"); }}
@@ -881,6 +883,7 @@ export const NAV_ITEMS = [
     { id: "recurring", label: "Recurring", icon: "fa-rotate", sidebar: false },
     { id: "events", label: "Events", icon: "fa-calendar-day", perm: "manage_events" },
     { id: "photo_specials", label: "Photo Specials", icon: "fa-camera-retro", perm: "manage_events" },
+    { id: "gift_cards", label: "Gift Cards", icon: "fa-gift", perm: "finance_reports" },
     { id: "clients", label: "Clients", icon: "fa-users", perm: "clients_view" },
     { id: "inquiries", label: "Inquiries", icon: "fa-inbox", perm: "clients_edit" },
     { id: "dogs", label: "Dogs", icon: "fa-paw", perm: "dogs_view" },
