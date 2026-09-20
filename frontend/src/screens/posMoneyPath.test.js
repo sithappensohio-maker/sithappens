@@ -452,7 +452,8 @@ test("a gift card can be sold as a cart line, untaxed", async () => {
   await click("pos-gift-add");
   const preview = posted.filter((p) => String(p.path).includes("preview")).pop();
   expect(preview.body.lines).toEqual([
-    { kind: "gift_card", gift_card_amount: 100, recipient_name: "For Dana", qty: 1 },
+    { kind: "gift_card", gift_card_amount: 100, recipient_name: "For Dana",
+      gift_card_code: null, qty: 1 },
   ]);
 });
 
@@ -541,4 +542,60 @@ test("a gift card sold at the till is offered for printing straight away", async
   expect(q("pos-gift-sold-gc-9").textContent).toContain("WXYZ-2345-6789");
   await click("pos-gift-print-gc-9");
   expect(printGiftCard).toHaveBeenCalled();
+});
+
+
+test("selling a card off the rack sends that card's code, not a new one", async () => {
+  // The customer is holding a printed card. The sale has to load THAT one,
+  // or the code on the plastic is worthless and the money is on a code
+  // nobody has.
+  await mount();
+  await click("pos-gift-card-toggle");
+  await type("pos-gift-amount", "50");
+  await type("pos-gift-stock-code", "ABCD-EFGH-JKMN");
+  await click("pos-gift-add");
+  const preview = posted.filter((p) => String(p.path).includes("preview")).pop();
+  expect(preview.body.lines).toEqual([
+    { kind: "gift_card", gift_card_amount: 50, recipient_name: null,
+      gift_card_code: "ABCD-EFGH-JKMN", qty: 1 },
+  ]);
+});
+
+test("the rack code is optional — an empty box still mints a fresh card", async () => {
+  await mount();
+  await click("pos-gift-card-toggle");
+  await type("pos-gift-amount", "20");
+  await click("pos-gift-add");
+  const preview = posted.filter((p) => String(p.path).includes("preview")).pop();
+  expect(preview.body.lines[0].gift_card_code).toBeNull();
+});
+
+test("a rack card shows its code on the cart line so the desk can check it", async () => {
+  // Ringing the wrong card is the one mistake that cannot be undone from the
+  // customer's side, so the code is visible before the sale is taken.
+  await mount();
+  await click("pos-gift-card-toggle");
+  await type("pos-gift-amount", "50");
+  await type("pos-gift-stock-code", "ABCD-EFGH-JKMN");
+  await click("pos-gift-add");
+  expect(container.textContent).toContain("ABCD-EFGH-JKMN");
+});
+
+test("the register explains what the rack-code box is for", async () => {
+  await mount();
+  await click("pos-gift-card-toggle");
+  expect(q("pos-gift-card-form").textContent).toMatch(/off the rack/i);
+});
+
+
+test("a gift card line shows its price in the cart, not $0.00", async () => {
+  // gift_card lines carry gift_card_amount and no unit_price, so the cart
+  // read NaN and rendered $0.00 beside a card somebody is paying $50 for.
+  await mount();
+  await click("pos-gift-card-toggle");
+  await type("pos-gift-amount", "50");
+  await click("pos-gift-add");
+  const line = container.querySelector('[data-testid="pos-cart-line"]');
+  expect(line.textContent).toContain("$50.00");
+  expect(line.textContent).not.toContain("$0.00");
 });

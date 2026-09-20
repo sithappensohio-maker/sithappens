@@ -4,7 +4,8 @@
  * code legibly, say what the card can be spent on, and not promise anything
  * that is not true. It prints on ordinary paper — a curling till receipt is
  * a poor thing to give as a gift. */
-import { giftCardHtml, printGiftCard } from "./printGiftCard";
+import { giftCardHtml, giftCardSheetHtml, printGiftCard, printGiftCardSheet,
+         PER_SHEET } from "./printGiftCard";
 
 const CARD = { code_display: "ABCD-EFGH-JKMN", balance: 75, recipient_name: "Dana",
                issued_at: "2026-09-20T10:00:00Z" };
@@ -146,5 +147,87 @@ test("a successful print reports success", () => {
   global.URL.createObjectURL = jest.fn(() => "blob:x");
   global.URL.revokeObjectURL = jest.fn();
   expect(printGiftCard(CARD)).toBe(true);
+  open.mockRestore();
+});
+
+
+// ───────────────────────────────────────────── blanks, and sheets of them
+
+const BLANK = { code_display: "QRST-UVWX-YZ23", balance: 0, status: "stock", origin: "stock" };
+
+test("a blank prints its code where the amount would go, not $0.00", () => {
+  // "$0.00" in 31pt lime on a card somebody is about to buy is a lie in the
+  // most alarming place on it.
+  const html = giftCardHtml(BLANK);
+  expect(html).not.toContain("$0.00");
+  expect(html).toContain("QRST-UVWX-YZ23");
+  expect(html).toMatch(/class="frontcode"/);
+});
+
+test("a blank does not print a recipient line it cannot know", () => {
+  const html = giftCardHtml({ ...BLANK, recipient_name: "Dana" });
+  expect(html).not.toContain("for Dana");
+});
+
+test("a sold card still prints its amount", () => {
+  const html = giftCardHtml(CARD);
+  expect(html).toContain("$75.00");
+  expect(html).not.toMatch(/class="frontcode"/);
+});
+
+test("a sheet prints every card, each with its own code", () => {
+  // The whole point of a rack: 25 cards is 25 balances, not 25 copies.
+  const cards = ["AAAA-1111-2222", "BBBB-3333-4444", "CCCC-5555-6666"]
+    .map((code_display) => ({ code_display, status: "stock", balance: 0 }));
+  const html = giftCardSheetHtml(cards);
+  for (const c of cards) expect(html).toContain(c.code_display);
+  expect((html.match(/class="card"/g) || []).length).toBe(3);
+});
+
+test("a sheet breaks pages between cards, never through one", () => {
+  const cards = Array.from({ length: PER_SHEET + 1 }, (_, i) => ({
+    code_display: `AAAA-BBBB-${String(1000 + i)}`, status: "stock", balance: 0 }));
+  const html = giftCardSheetHtml(cards);
+  expect((html.match(/class="sheet"/g) || []).length).toBe(2);
+  expect(html).toMatch(/\.sheet \{[^}]*page-break-after:always/);
+});
+
+test("a sheet of 25 comes out as 25 distinct cards over 4 pages", () => {
+  const cards = Array.from({ length: 25 }, (_, i) => ({
+    code_display: `ZZ${String(i).padStart(2, "0")}-AAAA-BBBB`, status: "stock", balance: 0 }));
+  const html = giftCardSheetHtml(cards);
+  expect((html.match(/class="card"/g) || []).length).toBe(25);
+  expect((html.match(/class="sheet"/g) || []).length).toBe(Math.ceil(25 / PER_SHEET));
+  expect(new Set(cards.map((c) => c.code_display)).size).toBe(25);
+});
+
+test("an empty rack prints nothing rather than a blank page", () => {
+  expect(giftCardSheetHtml([])).toBe("");
+  expect(printGiftCardSheet([])).toBe(false);
+});
+
+test("a sheet is real card size, so the cuts line up", () => {
+  const html = giftCardSheetHtml([BLANK]);
+  expect(html).toMatch(/width:85\.6mm/);
+  expect(html).toMatch(/height:53\.98mm/);
+});
+
+test("a sheet waits for the husky before printing", () => {
+  const html = giftCardSheetHtml([BLANK]);
+  expect(html).toMatch(/document\.images/);
+});
+
+test("a hostile code cannot smuggle markup onto a sheet", () => {
+  const html = giftCardSheetHtml([{ code_display: '"><script>alert(1)</script>', status: "stock" }]);
+  expect(html).not.toContain("<script>alert");
+  expect(html).toContain("&lt;script&gt;");
+});
+
+test("a blocked pop-up on a sheet is reported, not silently nothing", () => {
+  const open = jest.spyOn(window, "open").mockReturnValue(null);
+  global.URL.createObjectURL = jest.fn(() => "blob:x");
+  global.URL.revokeObjectURL = jest.fn();
+  expect(printGiftCardSheet([BLANK])).toBe(false);
+  expect(global.URL.revokeObjectURL).toHaveBeenCalled();
   open.mockRestore();
 });

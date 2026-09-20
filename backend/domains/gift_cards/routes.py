@@ -55,6 +55,19 @@ def register_gift_card_routes(*, api, server_globals: dict) -> None:
         return {"ok": True, "card": services.public_view(card),
                 "code": services._display(card["code"])}
 
+    @api.post("/gift-cards/stock")
+    async def make_gift_card_stock(body: services.GiftCardStockIn,
+                                   user: dict = Depends(require_admin_and_permission("pricing"))):
+        """Print-ahead blanks for the rack.
+
+        Deliberately NOT an income event and NOT a liability: a blank card is
+        a piece of printed plastic with a code on it. It becomes money only
+        when somebody buys it and the Register loads it. That is why this can
+        make a hundred at once without the books moving a cent.
+        """
+        made = await services.mint_stock(quantity=body.quantity, actor=user)
+        return {"ok": True, "count": len(made), "cards": made}
+
     @api.post("/gift-cards/{code}/adjust")
     async def adjust_gift_card(code: str, body: services.GiftCardAdjustIn,
                                user: dict = Depends(require_admin_and_permission("pricing"))):

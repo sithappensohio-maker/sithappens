@@ -76,6 +76,30 @@ async def create_sale(body, user):
             status_code=400,
             detail="A gift card can't be bought with another gift card. Take a different payment for it.")
 
+    # A line may name a blank off the rack. Check it BEFORE the sale commits:
+    # a wrong code, an already-sold card or a voided one are all things an
+    # operator does at the counter, and settlement runs after the money has
+    # been taken — its failures are logged, not shown. Refusing here is the
+    # difference between "that card is already sold" and a charged customer
+    # holding a dead card.
+    rack_codes = []
+    for l in selling:
+        raw = getattr(l, "gift_card_code", None)
+        if not raw:
+            continue
+        code = gift_cards_services.normalize_code(raw)
+        card = await gift_cards_services.find_by_code(code)
+        if (card.get("status") or "") != "stock":
+            raise HTTPException(
+                status_code=409,
+                detail=("That card was already sold." if card.get("status") == "active"
+                        else "That card cannot be sold — look it up to see why."))
+        if code in rack_codes:
+            raise HTTPException(
+                status_code=400,
+                detail="That card is on this sale twice. Each printed card has its own code.")
+        rack_codes.append(code)
+
     cards = []
     for t in spend:
         code = gift_cards_services.normalize_code(getattr(t, "gift_card_code", None))
@@ -785,12 +809,22 @@ async def price_pos_cart(lines: List[PosSaleLineIn], discount: Optional[PosSaleD
             if amount <= 0:
                 raise HTTPException(status_code=400, detail="A gift card needs an amount.")
             qty = int(line.qty or 1)
+            stock_code = (getattr(line, "gift_card_code", None) or "").strip()
+            if stock_code and qty != 1:
+                # One printed card, one code. A quantity here would silently
+                # load the same card twice and lose the customer's money.
+                raise HTTPException(
+                    status_code=400,
+                    detail="Ring a card from the rack one at a time — each has its own code.")
             amount = round(amount * qty, 2)
             line_items.append({
                 "kind": "gift_card", "product_id": None,
                 "description": (line.description or f"Gift card ${round(amount / max(qty, 1), 2):.2f}").strip(),
                 "qty": qty, "unit_price": round(amount / max(qty, 1), 2), "amount": amount,
                 "recipient_name": (line.recipient_name or "").strip(),
+                # Set when the customer picked a printed card off the rack;
+                # the settlement loads THAT card instead of minting a new one.
+                "gift_card_code": stock_code,
                 # NEVER taxed. A gift card is money, not a good; the tax
                 # belongs on whatever it later buys. Taxing both would charge
                 # the customer tax twice on the same dollars.

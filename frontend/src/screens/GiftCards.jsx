@@ -2,7 +2,7 @@ import { useCallback, useEffect, useState } from "react";
 import { toast } from "sonner";
 import { api, formatErr } from "../lib/api";
 import PageHero from "../components/PageHero";
-import { printGiftCard } from "../lib/printGiftCard";
+import { printGiftCard, printGiftCardSheet, PER_SHEET } from "../lib/printGiftCard";
 
 /**
  * Gift cards — the ones you have sold, and the ones you hand out.
@@ -22,6 +22,10 @@ const STATUS = {
   active: { label: "Active", cls: "bg-shPrimary/15 text-shPrimary border-shPrimary/40" },
   spent: { label: "Spent", cls: "bg-shBorder/40 text-shTextMuted border-shBorder" },
   voided: { label: "Voided", cls: "bg-red-500/15 text-red-300 border-red-500/40" },
+  // A printed blank waiting to be bought. Worth nothing, owed to nobody, and
+  // deliberately NOT called "Active" — the difference between a rack of cards
+  // and a rack of promises.
+  stock: { label: "On the rack", cls: "bg-shBlue/15 text-shBlue border-shBlue/40" },
 };
 
 export default function GiftCards() {
@@ -63,6 +67,33 @@ export default function GiftCards() {
       toast.error(formatErr(e) || "Could not issue the card");
     }
     setBusy(false);
+  };
+
+  // ── printing blanks for the rack ────────────────────────────────────
+  const [rackOpen, setRackOpen] = useState(false);
+  const [rackQty, setRackQty] = useState("10");
+  const [madeCards, setMadeCards] = useState(null);
+
+  const makeRack = async () => {
+    const n = Math.floor(Number(rackQty));
+    if (!(n >= 1 && n <= 100)) { toast.error("Between 1 and 100 cards."); return; }
+    setBusy(true);
+    try {
+      const { data: d } = await api.post("/gift-cards/stock", { quantity: n });
+      // Held on screen rather than printed straight away: if the print is
+      // blocked or the paper jams, the codes are still here to print again.
+      setMadeCards(d.cards || []);
+      setRackOpen(false);
+      load();
+      toast.success(`${d.count} card${d.count === 1 ? "" : "s"} ready to print.`);
+    } catch (e) {
+      toast.error(formatErr(e) || "Could not make the cards");
+    }
+    setBusy(false);
+  };
+
+  const printRack = (cards) => {
+    if (!printGiftCardSheet(cards)) toast.error("Allow pop-ups to print the cards.");
   };
 
   // ── looking one up ───────────────────────────────────────────────────
@@ -220,20 +251,75 @@ export default function GiftCards() {
       <div className="sh-front-desk-panel p-4">
         <div className="flex flex-wrap items-center justify-between gap-2 mb-3">
           <p className="text-shText text-[14px] uppercase tracking-widest font-black">All cards</p>
-          <div className="flex gap-2">
+          <div className="flex flex-wrap gap-2 w-full sm:w-auto">
             <select value={filter} onChange={(e) => setFilter(e.target.value)} data-testid="gift-filter"
                     className="bg-[var(--sh-card-base)] border border-shBorder rounded p-2 text-shText text-[12px]">
               <option value="">All</option>
               <option value="active">Active</option>
               <option value="spent">Spent</option>
+              <option value="stock">On the rack</option>
               <option value="voided">Voided</option>
             </select>
+            <button onClick={() => setRackOpen((v) => !v)} data-testid="gift-rack-toggle"
+                    className="min-h-[40px] px-4 rounded border border-shPrimary text-shPrimary text-[12px] font-black uppercase tracking-widest whitespace-nowrap flex-1 sm:flex-none">
+              <i className="fas fa-print mr-1.5"/>Make cards
+            </button>
             <button onClick={() => setIssueOpen((v) => !v)} data-testid="gift-issue-toggle"
-                    className="min-h-[40px] px-4 rounded bg-shPrimary text-bgHeader text-[12px] font-black uppercase tracking-widest">
+                    className="min-h-[40px] px-4 rounded bg-shPrimary text-bgHeader text-[12px] font-black uppercase tracking-widest whitespace-nowrap flex-1 sm:flex-none">
               <i className="fas fa-plus mr-1.5"/>Issue a card
             </button>
           </div>
         </div>
+
+        {rackOpen && (
+          <div className="border border-shBorder rounded-xl p-3 mb-3 space-y-2" data-testid="gift-rack-form">
+            <p className="text-[12px] text-shTextMuted">
+              Prints blank cards with real codes to hang on the rack. Each one is
+              <b className="text-shText"> its own card</b> with its own code and its own balance.
+              A blank is worth <b className="text-shText">nothing</b> until somebody buys it —
+              no income and nothing owed until the Register loads it.
+            </p>
+            <div className="grid gap-2 sm:grid-cols-3">
+              <div>
+                <label className={label}>How many</label>
+                <input type="number" min="1" max="100" value={rackQty}
+                       onChange={(e) => setRackQty(e.target.value)}
+                       data-testid="gift-rack-qty" className={input}/>
+                <p className="text-[11px] text-shTextMuted mt-1">
+                  {PER_SHEET} to a sheet, cut lines included.
+                </p>
+              </div>
+            </div>
+            <button onClick={makeRack} disabled={busy} data-testid="gift-rack-go"
+                    className="min-h-[44px] px-5 rounded bg-shPrimary text-bgHeader text-[12px] font-black uppercase tracking-widest disabled:opacity-50">
+              {busy ? "Making…" : "Make cards"}
+            </button>
+          </div>
+        )}
+
+        {madeCards && madeCards.length > 0 && (
+          <div className="rounded-2xl border-2 border-shPrimary bg-shPrimary/10 p-4 mb-3"
+               data-testid="gift-rack-made">
+            <p className="text-[12px] uppercase tracking-widest text-shPrimary font-black">
+              {madeCards.length} blank card{madeCards.length === 1 ? "" : "s"} ready
+            </p>
+            <p className="text-[12px] text-shTextMuted mt-1">
+              Print them, cut them up and hang them. They are already saved, so you can
+              print again from the list if anything goes wrong.
+            </p>
+            <div className="flex flex-wrap gap-2 mt-3">
+              <button onClick={() => printRack(madeCards)} data-testid="gift-rack-print"
+                      className="min-h-[44px] px-5 rounded bg-shPrimary text-bgHeader text-[12px] font-black uppercase tracking-widest">
+                <i className="fas fa-print mr-1.5"/>
+                Print {Math.ceil(madeCards.length / PER_SHEET)} sheet{Math.ceil(madeCards.length / PER_SHEET) === 1 ? "" : "s"}
+              </button>
+              <button onClick={() => setMadeCards(null)} data-testid="gift-rack-done"
+                      className="min-h-[44px] px-5 rounded border border-shBorder text-shText text-[12px] font-black uppercase tracking-widest">
+                Done
+              </button>
+            </div>
+          </div>
+        )}
 
         {issueOpen && (
           <div className="border border-shBorder rounded-xl p-3 mb-3 space-y-2" data-testid="gift-issue-form">
@@ -290,7 +376,9 @@ export default function GiftCards() {
                   </p>
                 </div>
                 <div className="flex items-center gap-3 shrink-0">
-                  <span className="text-shText font-black">{money(c.balance)}</span>
+                  <span className="text-shText font-black">
+                    {c.status === "stock" ? "—" : money(c.balance)}
+                  </span>
                   <span className={`px-2 py-0.5 rounded text-[10px] font-black uppercase tracking-widest border ${
                         (STATUS[c.status] || STATUS.spent).cls}`}>
                     {(STATUS[c.status] || {}).label || c.status}

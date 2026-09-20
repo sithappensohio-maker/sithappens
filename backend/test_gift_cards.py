@@ -15,6 +15,7 @@ fails must hand the balance straight back.
 
 Disposable tag TEST_GIFT.
 """
+import asyncio
 import uuid
 
 import _test_env  # noqa: F401 — must run before `import server`
@@ -305,6 +306,7 @@ def test_the_endpoints_exist_and_are_gated_sensibly():
     paths = {r.path: r for r in server.app.routes if "gift-card" in getattr(r, "path", "")}
     assert set(paths) == {
         "/api/gift-cards", "/api/gift-cards/lookup/{code}", "/api/gift-cards/issue",
+        "/api/gift-cards/stock",
         "/api/gift-cards/{code}/adjust", "/api/gift-cards/{code}/void",
     }
 
@@ -468,3 +470,262 @@ def test_the_cash_flow_ledger_counts_the_money_once():
     drawer1 = _expected_cash()
     assert round(cf1 - cf0, 2) == round(drawer1 - drawer0, 2) == 100.00, \
         "the cash-flow ledger and the till disagree about how much came in"
+
+
+# ────────────────────────────────────────────── blanks on the rack (stock)
+# Printed ahead, hung up, sold later. The whole risk is that a rack of
+# plastic starts looking like money before anybody has paid for any of it.
+
+def _blank():
+    return run(gift.mint_stock(quantity=1, actor=ADMIN))[0]
+
+
+def _sell_blank(code, value=75.00, method="cash"):
+    tender = {"method": method, "amount": value}
+    if method == "cash":
+        tender["tendered_amount"] = value
+    return _sale([{"kind": "gift_card", "gift_card_amount": value, "gift_card_code": code}],
+                 [tender])
+
+
+def test_printing_blanks_creates_real_codes_worth_nothing():
+    made = run(gift.mint_stock(quantity=5, actor=ADMIN))
+    assert len(made) == 5
+    assert len({c["code"] for c in made}) == 5, "every blank needs its own code"
+    for c in made:
+        assert c["balance"] == 0.0 and c["status"] == "stock"
+        assert len(c["code"]) == 12 and not (set(c["code"]) & set("01OIL"))
+
+
+def test_a_rack_of_blanks_is_not_income_and_is_not_owed():
+    rev, cash, owed = _revenue(), _expected_cash(), _tax_owed()
+    before = run(gift.list_cards())["outstanding_balance"]
+    run(gift.mint_stock(quantity=25, actor=ADMIN))
+    assert _revenue() == rev, "printing cards is not earning money"
+    assert _expected_cash() == cash
+    assert _tax_owed() == owed
+    after = run(gift.list_cards())
+    assert after["outstanding_balance"] == before, "a blank is owed to nobody"
+    assert after["stock_count"] >= 25
+
+
+def test_a_blank_cannot_be_spent_before_it_is_sold():
+    blank = _blank()
+    pid = _product(10.00)
+    with pytest.raises(HTTPException) as e:
+        _sale([{"kind": "retail", "product_id": pid, "qty": 1}],
+              [{"method": "gift_card", "amount": 10.68, "gift_card_code": blank["code"]}])
+    assert e.value.status_code == 409
+    assert "not been sold" in str(e.value.detail), "say WHY, not 'no balance left'"
+
+
+def test_a_blank_cannot_be_loaded_with_a_balance_correction():
+    # Otherwise you could put $500 on a card with no sale behind it: a
+    # liability with no income, and no money in the till.
+    blank = _blank()
+    with pytest.raises(HTTPException) as e:
+        run(gift.adjust(code=blank["code"], actor=ADMIN,
+                        body=gift.GiftCardAdjustIn(amount=500.0, direction="add",
+                                                   reason=f"{TAG} sneaky")))
+    assert e.value.status_code == 409
+
+
+def test_selling_a_blank_loads_the_card_the_customer_is_holding():
+    blank = _blank()
+    _sell_blank(blank["code"], 75.00)
+    live = run(server.db.gift_cards.find_one({"id": blank["id"]}, {"_id": 0}))
+    assert live["code"] == blank["code"], "the printed code must not change"
+    assert live["status"] == "active" and live["balance"] == 75.00
+    assert live["initial_amount"] == 75.00
+
+
+def test_selling_a_blank_mints_nothing_new():
+    blank = _blank()
+    before = run(server.db.gift_cards.count_documents({}))
+    _sell_blank(blank["code"], 40.00)
+    assert run(server.db.gift_cards.count_documents({})) == before, \
+        "loading a rack card must not also create a second card"
+
+
+def test_selling_a_blank_books_the_revenue_and_takes_the_cash():
+    blank = _blank()
+    rev, cash, owed = _revenue(), _expected_cash(), _tax_owed()
+    _sell_blank(blank["code"], 60.00)
+    assert round(_revenue() - rev, 2) == 60.00
+    assert round(_expected_cash() - cash, 2) == 60.00
+    assert _tax_owed() == owed, "a gift card is money, not a taxable good"
+
+
+def test_a_sold_blank_then_spends_like_any_other_card():
+    blank = _blank()
+    _sell_blank(blank["code"], 50.00)
+    after_sale = _revenue()
+    pid = _product(20.00)
+    _sale([{"kind": "retail", "product_id": pid, "qty": 1}],
+          [{"method": "gift_card", "amount": 21.35, "gift_card_code": blank["code"]}])
+    assert round(_revenue() - after_sale, 2) == 0.00, "already earned when it was sold"
+    live = run(server.db.gift_cards.find_one({"id": blank["id"]}, {"_id": 0}))
+    assert live["balance"] == 28.65
+
+
+def test_the_same_blank_cannot_be_sold_twice():
+    blank = _blank()
+    _sell_blank(blank["code"], 50.00)
+    with pytest.raises(HTTPException) as e:
+        _sell_blank(blank["code"], 500.00)
+    assert e.value.status_code == 409
+    live = run(server.db.gift_cards.find_one({"id": blank["id"]}, {"_id": 0}))
+    assert live["balance"] == 50.00, "the second sale must not overwrite the first"
+
+
+def test_a_quantity_of_rack_cards_is_refused_rather_than_guessed():
+    # One printed card, one code. Two would silently load the same card.
+    blank = _blank()
+    with pytest.raises(HTTPException) as e:
+        _sale([{"kind": "gift_card", "gift_card_amount": 25.00,
+                "gift_card_code": blank["code"], "qty": 2}],
+              [{"method": "cash", "amount": 50.00, "tendered_amount": 50.00}])
+    assert e.value.status_code == 400
+
+
+def test_selling_a_blank_that_does_not_exist_is_refused():
+    with pytest.raises(HTTPException) as e:
+        _sell_blank("ZZZZ-ZZZZ-ZZZZ", 25.00)
+    assert e.value.status_code == 404
+
+
+def test_the_rack_code_lands_on_the_printed_receipt():
+    blank = _blank()
+    sale_id = _sell_blank(blank["code"], 35.00)
+    payload = run(server._build_pos_sale_receipt_payload(sale_id))
+    printed = " ".join(str(li.get("description")) for li in payload["line_items"])
+    assert blank["code"] in printed.replace("-", "")
+
+
+def test_a_lost_blank_can_be_voided_off_the_rack():
+    blank = _blank()
+    run(gift.void_card(code=blank["code"], actor=ADMIN,
+                       body=gift.GiftCardVoidIn(reason=f"{TAG} lost in the post")))
+    with pytest.raises(HTTPException) as e:
+        _sell_blank(blank["code"], 25.00)
+    assert e.value.status_code == 409
+
+
+def test_a_bad_rack_code_takes_no_money_at_all():
+    """Settlement runs AFTER the sale commits and its failures are logged,
+    not shown. So a wrong code has to be refused before the money moves, or
+    the customer pays and walks out holding a dead card."""
+    cash, rev = _expected_cash(), _revenue()
+    sales_before = run(server.db.pos_sales.count_documents({}))
+    with pytest.raises(HTTPException):
+        _sell_blank("ZZZZ-ZZZZ-ZZZZ", 80.00)
+    assert _expected_cash() == cash, "the till moved on a sale that could not work"
+    assert _revenue() == rev
+    assert run(server.db.pos_sales.count_documents({})) == sales_before
+
+
+def test_selling_an_already_sold_card_takes_no_money_either():
+    blank = _blank()
+    _sell_blank(blank["code"], 50.00)
+    cash, rev = _expected_cash(), _revenue()
+    sales_before = run(server.db.pos_sales.count_documents({}))
+    with pytest.raises(HTTPException):
+        _sell_blank(blank["code"], 90.00)
+    assert _expected_cash() == cash
+    assert _revenue() == rev
+    assert run(server.db.pos_sales.count_documents({})) == sales_before
+
+
+def test_one_card_cannot_be_on_the_same_sale_twice():
+    blank = _blank()
+    with pytest.raises(HTTPException) as e:
+        _sale([{"kind": "gift_card", "gift_card_amount": 25.00, "gift_card_code": blank["code"]},
+               {"kind": "gift_card", "gift_card_amount": 25.00, "gift_card_code": blank["code"]}],
+              [{"method": "cash", "amount": 50.00, "tendered_amount": 50.00}])
+    assert e.value.status_code == 400
+
+
+def test_a_blank_does_not_count_as_a_card_in_circulation():
+    run(gift.mint_stock(quantity=3, actor=ADMIN))
+    listed = run(gift.list_cards())
+    rack = [c for c in listed["cards"] if c["status"] == "stock"]
+    assert rack, "the rack should be visible"
+    assert all(c["balance"] == 0.0 and c["origin"] == "stock" for c in rack)
+    # the headline liability figure counts only what is actually owed
+    owed = run(server.db.gift_cards.find({"status": "active"}, {"_id": 0, "balance": 1}).to_list(900))
+    assert listed["outstanding_balance"] == round(sum(c["balance"] for c in owed), 2)
+
+
+def test_a_stale_read_still_cannot_sell_a_card_twice():
+    """The deterministic version of two tills racing.
+
+    Both tills look the card up, both see "on the rack", and only then does
+    either try to load it. The in-function status check is useless here — it
+    is reading a snapshot taken before the other till won. The atomic status
+    precondition on the write is the ONLY thing left, so this test hands
+    activation a deliberately stale card to prove it holds.
+
+    Without it the card ends up worth whichever sale wrote last, and one of
+    the two customers has paid for nothing.
+    """
+    blank = _blank()
+    stale = run(server.db.gift_cards.find_one({"id": blank["id"]}, {"_id": 0}))
+    assert stale["status"] == "stock"
+
+    _sell_blank(blank["code"], 50.00)          # the other till got there first
+
+    async def _stale_lookup(_raw_code):
+        return stale                            # what this till read a moment ago
+
+    real = gift.find_by_code
+    gift.find_by_code = _stale_lookup
+    try:
+        with pytest.raises(HTTPException) as e:
+            run(gift.activate_stock_card(code=blank["code"], amount=500.00,
+                                         actor=ADMIN, pos_sale_id="till-B"))
+    finally:
+        gift.find_by_code = real
+
+    assert e.value.status_code == 409
+    live = run(server.db.gift_cards.find_one({"id": blank["id"]}, {"_id": 0}))
+    assert live["balance"] == 50.00, "the second till overwrote a card already sold"
+    logged = run(server.db.gift_card_transactions.count_documents(
+        {"gift_card_id": blank["id"], "kind": "activate"}))
+    assert logged == 1, "the losing till logged an activation it never made"
+
+
+def test_the_index_is_registered_to_run_on_startup():
+    """The index only protects anything if the app actually creates it.
+    _test_loop calls server.startup() directly and never runs FastAPI's
+    lifespan, so nothing else here would notice if this were dropped."""
+    handlers = [getattr(h, "__name__", "") for h in server.app.router.on_startup]
+    assert "ensure_indexes" in handlers
+
+
+def test_the_database_itself_refuses_a_duplicate_code():
+    """Minting checks for a collision then inserts, which is a race. The
+    unique index is what actually makes "one code, one card" true."""
+    run(gift.ensure_indexes())
+    blank = _blank()
+    import pymongo
+    with pytest.raises(pymongo.errors.DuplicateKeyError):
+        run(server.db.gift_cards.insert_one({
+            "id": str(uuid.uuid4()), "code": blank["code"], "balance": 0.0,
+            "initial_amount": 0.0, "status": "stock", "origin": "stock"}))
+
+
+def test_a_whole_sheet_of_blanks_is_individually_trackable():
+    """Printing 25 for the rack has to give 25 separately redeemable cards,
+    not 25 copies of one. Each is looked up, sold and spent on its own."""
+    sheet = run(gift.mint_stock(quantity=25, actor=ADMIN))
+    codes = [c["code"] for c in sheet]
+    assert len(set(codes)) == 25
+    # each one really resolves to its own card
+    ids = {run(gift.find_by_code(c))["id"] for c in codes}
+    assert len(ids) == 25
+    # selling one leaves the other 24 untouched on the rack
+    _sell_blank(codes[0], 25.00)
+    assert run(gift.find_by_code(codes[0]))["balance"] == 25.00
+    for c in codes[1:]:
+        other = run(gift.find_by_code(c))
+        assert other["status"] == "stock" and other["balance"] == 0.0

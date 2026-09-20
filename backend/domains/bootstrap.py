@@ -210,3 +210,4 @@ def register_domains(
 
     install_request_timing(app)
     app.add_event_handler("startup", _repair_board_train_spans)
+    app.add_event_handler("startup", gift_card_services.ensure_indexes)

@@ -56,6 +56,9 @@ _ALPHABET = "23456789ABCDEFGHJKMNPQRSTUVWXYZ"
 CODE_GROUPS = 3
 CODE_GROUP_LEN = 4
 
+# One print run. Big enough for a rack, small enough that a slipped keypress
+# cannot mint a thousand codes.
+MAX_STOCK_BATCH = 100
 MIN_AMOUNT = 1.0
 MAX_AMOUNT = 1000.0
 
@@ -97,6 +100,12 @@ class GiftCardVoidIn(BaseModel):
     reason: str = Field(min_length=3, max_length=300)
 
 
+class GiftCardStockIn(BaseModel):
+    """Blank cards for the rack. No amount: a blank is worth nothing until
+    somebody buys it, which is the whole point of printing them ahead."""
+    quantity: int = Field(default=10, ge=1, le=MAX_STOCK_BATCH)
+
+
 def _money(v: Any) -> float:
     return round(float(v or 0), 2)
 
@@ -130,6 +139,9 @@ def public_view(card: dict) -> dict:
         "initial_amount": _money(card.get("initial_amount")),
         "balance": _money(card.get("balance")),
         "status": card.get("status"),
+        # A screen needs to tell "blank on the rack" from "sold and spent" —
+        # both have a zero balance and they mean opposite things.
+        "origin": card.get("origin") or "",
         "recipient_name": card.get("recipient_name") or "",
         "note": card.get("note") or "",
         "client_id": card.get("client_id"),
@@ -178,6 +190,97 @@ async def mint_card(*, amount: float, actor: dict, recipient_name: str = "", not
     return card
 
 
+async def ensure_indexes() -> None:
+    """One code, one card — enforced by the database, not by hope.
+
+    Minting checks for a collision and then inserts, which is a
+    check-then-write and therefore a race: two blanks printed in the same
+    instant could in principle both pass the check. The odds are absurd
+    (31^12 codes), but a duplicate means two customers sharing one balance,
+    and that is not a thing to leave to probability when an index is free.
+    """
+    try:
+        await _db.gift_cards.create_index("code", unique=True, name="gift_card_code_unique")
+    except Exception as exc:  # a pre-existing duplicate would block creation
+        _logger.warning("Gift card code index not created (non-fatal): %s", exc)
+
+
+async def mint_stock(*, quantity: int, actor: dict) -> List[dict]:
+    """Print-ahead blanks: real codes, zero balance, not yet sold.
+
+    A blank is NOT money. It books no revenue and appears in no liability —
+    there is nothing owed to anybody until a customer pays for one and the
+    register loads it. That is the difference between a rack of cards and a
+    rack of promises, and it is why these are `status="stock"` rather than
+    active cards worth $0.
+    """
+    made: List[dict] = []
+    ts = _now_iso_fn()
+    for _ in range(max(1, min(int(quantity), MAX_STOCK_BATCH))):
+        code = await _fresh_code()
+        card = {
+            "id": str(uuid.uuid4()),
+            "code": code,
+            "initial_amount": 0.0,
+            "balance": 0.0,
+            "status": "stock",
+            "origin": "stock",
+            "recipient_name": "", "note": "", "client_id": None,
+            "sold_via_pos_sale_id": None,
+            "issued_at": ts,
+            "issued_by": actor.get("id"),
+            "issued_by_name": actor.get("name") or actor.get("email") or "",
+            "business_date": _business_today_fn().isoformat(),
+        }
+        await _db.gift_cards.insert_one(dict(card))
+        card.pop("_id", None)
+        await _log(card["id"], "stock", 0.0, 0.0, actor, note="Printed for the rack")
+        made.append({**public_view(card), "code": card["code"]})
+    return made
+
+
+async def activate_stock_card(*, code: str, amount: float, actor: dict,
+                              pos_sale_id: str, recipient_name: str = "",
+                              note: str = "") -> dict:
+    """Load a blank from the rack because somebody just paid for it.
+
+    The status precondition is the whole guard: two tills scanning the same
+    card at once, or a double-submitted sale, and exactly one wins. The loser
+    gets told the card is already sold rather than silently overwriting a
+    balance somebody has already walked out with.
+    """
+    amount = _money(amount)
+    if amount < MIN_AMOUNT or amount > MAX_AMOUNT:
+        raise HTTPException(
+            status_code=400,
+            detail=f"A gift card has to be between ${MIN_AMOUNT:.2f} and ${MAX_AMOUNT:.2f}.")
+    card = await find_by_code(code)
+    if (card.get("status") or "") != "stock":
+        raise HTTPException(
+            status_code=409,
+            detail=("That card was already sold." if card.get("status") == "active"
+                    else "That card cannot be sold — look it up to see why."))
+    ts = _now_iso_fn()
+    loaded = await _db.gift_cards.find_one_and_update(
+        {"id": card["id"], "status": "stock"},
+        {"$set": {"status": "active", "balance": amount, "initial_amount": amount,
+                  "sold_via_pos_sale_id": pos_sale_id, "activated_at": ts,
+                  "recipient_name": (recipient_name or "").strip(),
+                  "note": (note or "").strip(),
+                  "sold_by": actor.get("id"),
+                  "sold_by_name": actor.get("name") or actor.get("email") or ""}},
+    )
+    # find_one_and_update returns the doc as it was BEFORE the write, so None
+    # means the precondition lost: somebody else sold this card first.
+    if loaded is None:
+        raise HTTPException(status_code=409, detail="That card was already sold.")
+    await _log(card["id"], "activate", amount, amount, actor,
+               note=note or "", pos_sale_id=pos_sale_id)
+    return {**card, "status": "active", "balance": amount, "initial_amount": amount,
+            "sold_via_pos_sale_id": pos_sale_id, "activated_at": ts,
+            "recipient_name": (recipient_name or "").strip()}
+
+
 async def _log(card_id: str, kind: str, amount: float, balance_after: float, actor: dict,
                *, note: str = "", pos_sale_id: Optional[str] = None) -> None:
     await _db.gift_card_transactions.insert_one({
@@ -221,6 +324,13 @@ def assert_spendable(card: dict, amount: float) -> None:
     status = card.get("status") or ""
     if status == "voided":
         raise HTTPException(status_code=409, detail="That gift card was voided.")
+    if status == "stock":
+        # A blank off the rack. "No balance left" would send the operator
+        # hunting for a spending mistake; the real answer is that nobody has
+        # bought it yet.
+        raise HTTPException(
+            status_code=409,
+            detail="That card has not been sold yet — sell it at the Register first.")
     if status != "active" or spendable(card) <= 0:
         raise HTTPException(status_code=409, detail="That gift card has no balance left.")
     if _money(amount) > spendable(card) + 0.005:
@@ -279,8 +389,16 @@ async def refund_to_card(*, card_id: str, amount: float, actor: dict,
 
 
 async def adjust(*, code: str, body, actor: dict) -> dict:
-    """Correct a balance by hand. Always leaves a reason behind."""
+    """Correct a balance by hand. Always leaves a reason behind.
+
+    NOT a way to load a blank: money on a card has to arrive through a sale,
+    or the liability appears from nowhere with no income behind it.
+    """
     card = await find_by_code(code)
+    if (card.get("status") or "") == "stock":
+        raise HTTPException(
+            status_code=409,
+            detail="That card is a blank from the rack. Sell it at the Register to load it.")
     delta = _money(body.amount) * (1 if body.direction == "add" else -1)
     after = _money(_money(card.get("balance")) + delta)
     if after < 0:
@@ -311,15 +429,19 @@ async def void_card(*, code: str, body, actor: dict) -> dict:
 
 async def list_cards(*, status: Optional[str] = None, limit: int = 100) -> dict:
     query: Dict[str, Any] = {}
-    if status in ("active", "spent", "voided"):
+    if status in ("active", "spent", "voided", "stock"):
         query["status"] = status
     rows = await _db.gift_cards.find(query, {"_id": 0}).sort("issued_at", -1).to_list(max(1, min(limit, 500)))
+    # Only ACTIVE cards are owed. Blanks on the rack are worth nothing to
+    # anybody until they are sold, so they must never inflate this.
     outstanding = await _db.gift_cards.find({"status": "active"}, {"_id": 0, "balance": 1}).to_list(2000)
+    on_the_rack = await _db.gift_cards.count_documents({"status": "stock"})
     return {
         "cards": [public_view(c) for c in rows],
         # What you owe the people holding cards. Worth seeing in one number.
         "outstanding_balance": round(sum(_money(c.get("balance")) for c in outstanding), 2),
         "outstanding_count": len(outstanding),
+        "stock_count": on_the_rack,
     }
 
 
@@ -360,12 +482,23 @@ async def _mint_sold_cards(*, sale_id: str, sale: dict, user: dict, selling: Lis
         count = int(li.get("qty") or 1)
         each = _money(_money(li.get("net_amount") if li.get("net_amount") is not None
                              else li.get("amount")) / max(count, 1))
+        # A line may name a blank that is already printed and on the rack.
+        # Then the sale LOADS that card rather than minting a new one: the
+        # customer walks out with the physical card they chose, and the code
+        # on it is the code that now has money on it.
+        stock_code = (li.get("gift_card_code") or "").strip()
         for _ in range(count):
-            card = await mint_card(
-                amount=each, actor=user,
-                recipient_name=li.get("recipient_name") or "",
-                note=f"Sold on register sale #{receipt}",
-                client_id=sale.get("client_id"), pos_sale_id=sale_id, origin="sold")
+            if stock_code:
+                card = await activate_stock_card(
+                    code=stock_code, amount=each, actor=user, pos_sale_id=sale_id,
+                    recipient_name=li.get("recipient_name") or "",
+                    note=f"Sold on register sale #{receipt}")
+            else:
+                card = await mint_card(
+                    amount=each, actor=user,
+                    recipient_name=li.get("recipient_name") or "",
+                    note=f"Sold on register sale #{receipt}",
+                    client_id=sale.get("client_id"), pos_sale_id=sale_id, origin="sold")
             # Revenue, now — the owner's chosen treatment, and the right one
             # on a cash basis. Never sales-taxable: the tax lands on whatever
             # the card is eventually spent on.

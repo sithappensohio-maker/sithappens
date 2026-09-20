@@ -43660,6 +43660,7 @@ class PosSaleLineIn(BaseModel):
     # Required when kind == "gift_card" — what the card is worth. Never
     # sales-taxed; the tax belongs on whatever the card later buys.
     gift_card_amount: Optional[float] = Field(default=None, gt=0, le=1000)
+    gift_card_code: Optional[str] = Field(default=None, max_length=40)  # load a printed blank off the rack
     recipient_name: Optional[str] = Field(default=None, max_length=120)
 
 

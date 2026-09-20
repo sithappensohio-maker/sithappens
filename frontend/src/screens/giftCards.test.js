@@ -20,11 +20,15 @@ jest.mock("../lib/api", () => ({
 }));
 jest.mock("sonner", () => ({ toast: { success: jest.fn(), error: jest.fn() } }));
 jest.mock("../components/PageHero", () => ({ __esModule: true, default: () => null }));
-jest.mock("../lib/printGiftCard", () => ({ printGiftCard: jest.fn(() => true) }));
+jest.mock("../lib/printGiftCard", () => ({
+  printGiftCard: jest.fn(() => true),
+  printGiftCardSheet: jest.fn(() => true),
+  PER_SHEET: 8,
+}));
 
 const { api } = require("../lib/api");
 const { toast } = require("sonner");
-const { printGiftCard } = require("../lib/printGiftCard");
+const { printGiftCard, printGiftCardSheet } = require("../lib/printGiftCard");
 
 global.IS_REACT_ACT_ENVIRONMENT = true;
 
@@ -63,6 +67,8 @@ beforeEach(() => {
   toast.error.mockReset();
   printGiftCard.mockClear();
   printGiftCard.mockReturnValue(true);
+  printGiftCardSheet.mockClear();
+  printGiftCardSheet.mockReturnValue(true);
 });
 
 afterEach(async () => {
@@ -231,4 +237,84 @@ test("a blocked pop-up tells the operator instead of doing nothing", async () =>
   await click("gift-lookup-go");
   await click("gift-print");
   expect(toast.error).toHaveBeenCalledWith(expect.stringMatching(/pop-ups/i));
+});
+
+
+// ─────────────────────────────────────────────── making a rack of blanks
+
+test("you can make blank cards to sell, and it says they are not income", async () => {
+  await mount();
+  await click("gift-rack-toggle");
+  const form = q("gift-rack-form");
+  expect(form).toBeTruthy();
+  expect(form.textContent).toMatch(/worth\s+nothing/i);
+  expect(form.textContent).toMatch(/its own code/i);
+});
+
+test("making a rack asks the backend for that many blanks", async () => {
+  api.post.mockResolvedValue({ data: { ok: true, count: 25, cards: [] } });
+  await mount();
+  await click("gift-rack-toggle");
+  await type("gift-rack-qty", "25");
+  await click("gift-rack-go");
+  expect(api.post).toHaveBeenCalledWith("/gift-cards/stock", { quantity: 25 });
+});
+
+test("a silly quantity is refused before it reaches the backend", async () => {
+  await mount();
+  await click("gift-rack-toggle");
+  await type("gift-rack-qty", "500");
+  await click("gift-rack-go");
+  expect(api.post).not.toHaveBeenCalled();
+  expect(toast.error).toHaveBeenCalled();
+});
+
+test("the new blanks can be printed as a sheet", async () => {
+  const cards = [
+    { id: "s1", code_display: "AAAA-1111-2222", status: "stock", balance: 0 },
+    { id: "s2", code_display: "BBBB-3333-4444", status: "stock", balance: 0 },
+  ];
+  api.post.mockResolvedValue({ data: { ok: true, count: 2, cards } });
+  await mount();
+  await click("gift-rack-toggle");
+  await type("gift-rack-qty", "2");
+  await click("gift-rack-go");
+  expect(q("gift-rack-made")).toBeTruthy();
+  await click("gift-rack-print");
+  expect(printGiftCardSheet).toHaveBeenCalledWith(cards);
+});
+
+test("a blocked pop-up on the sheet tells the operator", async () => {
+  printGiftCardSheet.mockReturnValue(false);
+  api.post.mockResolvedValue({ data: { ok: true, count: 1, cards: [{ id: "s1", code_display: "A" }] } });
+  await mount();
+  await click("gift-rack-toggle");
+  await click("gift-rack-go");
+  await click("gift-rack-print");
+  expect(toast.error).toHaveBeenCalledWith(expect.stringMatching(/pop-ups/i));
+});
+
+test("a card on the rack shows no balance, because it has none yet", async () => {
+  // "$0.00" next to a brand new card reads like a bug or an empty card.
+  api.get.mockImplementation((url) =>
+    String(url).includes("/lookup/")
+      ? Promise.resolve({ data: DETAIL })
+      : Promise.resolve({ data: { outstanding_balance: 0, outstanding_count: 0, stock_count: 1,
+          cards: [{ id: "s1", code_display: "AAAA-1111-2222", balance: 0, initial_amount: 0,
+                    spent: 0, status: "stock", origin: "stock", issued_at: "2026-09-20T10:00:00Z" }] } }));
+  await mount();
+  const row = q("gift-row-s1");
+  expect(row.textContent).toContain("On the rack");
+  expect(row.textContent).not.toContain("$0.00");
+});
+
+test("blanks are not counted in what you owe", async () => {
+  // A rack of cards is not a rack of promises until somebody pays.
+  api.get.mockImplementation((url) =>
+    String(url).includes("/lookup/")
+      ? Promise.resolve({ data: DETAIL })
+      : Promise.resolve({ data: { outstanding_balance: 0, outstanding_count: 0, stock_count: 40,
+                                  cards: [] } }));
+  await mount();
+  expect(q("gift-outstanding").textContent).toContain("$0.00");
 });

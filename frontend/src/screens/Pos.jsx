@@ -349,15 +349,22 @@ export default function Pos({ onOpenShopManager } = {}) {
   const [giftOpen, setGiftOpen] = useState(false);
   const [giftAmount, setGiftAmount] = useState("");
   const [giftRecipient, setGiftRecipient] = useState("");
+  // A printed card off the rack. Leave it blank and the sale mints a brand
+  // new code instead; fill it in and the sale LOADS the card the customer is
+  // already holding, so the code on the plastic is the code with the money.
+  const [giftStockCode, setGiftStockCode] = useState("");
   const addGiftCard = () => {
     const amount = Number(giftAmount);
     if (!(amount > 0)) { toast.error("Enter what the gift card is worth."); return; }
+    const stock = giftStockCode.trim();
     setCartLines((lines) => [...lines, {
       kind: "gift_card", gift_card_amount: Math.round(amount * 100) / 100,
       recipient_name: giftRecipient.trim(),
-      description: `Gift card ${money(amount)}`, qty: 1,
+      gift_card_code: stock,
+      description: stock ? `Gift card ${money(amount)} · ${stock}` : `Gift card ${money(amount)}`,
+      qty: 1,
     }]);
-    setGiftOpen(false); setGiftAmount(""); setGiftRecipient("");
+    setGiftOpen(false); setGiftAmount(""); setGiftRecipient(""); setGiftStockCode("");
   };
 
   // Spending one. The balance is checked before it is offered as a tender,
@@ -401,7 +408,7 @@ export default function Pos({ onOpenShopManager } = {}) {
   // instead of several unrelated ones.
   const cartLinesPayload = () => cartLines.map((l) => {
     if (l.kind === "custom") return { kind: "custom", description: l.description, custom_amount: l.custom_amount, custom_reason: l.custom_reason, custom_kind: l.custom_kind || "merchandise" };
-    if (l.kind === "gift_card") return { kind: "gift_card", gift_card_amount: l.gift_card_amount, recipient_name: l.recipient_name || null, qty: 1 };
+    if (l.kind === "gift_card") return { kind: "gift_card", gift_card_amount: l.gift_card_amount, recipient_name: l.recipient_name || null, gift_card_code: l.gift_card_code || null, qty: 1 };
     if (l.kind === "credit_pack") return { kind: "credit_pack", pack_id: l.pack_id, qty: l.qty };
     if (l.kind === "training_program") return { kind: "training_program", program_id: l.program_id, qty: l.qty };
     return { kind: "retail", product_id: l.product_id, qty: l.qty };
@@ -1807,6 +1814,14 @@ export default function Pos({ onOpenShopManager } = {}) {
                 <input value={giftRecipient} onChange={(e) => setGiftRecipient(e.target.value)}
                        placeholder="Who is it for? (optional)" data-testid="pos-gift-recipient"
                        className="w-full bg-[var(--sh-card-base)] border border-shBorder rounded p-2 text-shText text-sm" />
+                <input value={giftStockCode} onChange={(e) => setGiftStockCode(e.target.value)}
+                       placeholder="Code off a printed card (optional)" data-testid="pos-gift-stock-code"
+                       className="w-full bg-[var(--sh-card-base)] border border-shBorder rounded p-2 text-shText text-sm" />
+                <p className="text-[11px] text-shTextMuted">
+                  Selling a card off the rack? Type its code and this sale loads
+                  <b className="text-shText"> that</b> card. Leave it empty and a new
+                  code is made, printed on the receipt.
+                </p>
                 <p className="text-[11px] text-shTextMuted">
                   No sales tax on the card itself — tax is charged on whatever it buys.
                 </p>
@@ -1848,7 +1863,11 @@ export default function Pos({ onOpenShopManager } = {}) {
               {cartLines.map((l, i) => (
                 <div key={i} className="flex items-center justify-between text-sm border-b border-shBorder pb-2" data-testid="pos-cart-line">
                   <div className="flex-1 min-w-0">
-                    <p className="text-shText truncate">{l.kind === "custom" ? l.description : l.name}</p>
+                    {/* Gift card lines carry a description and no name, so
+                        falling straight through to l.name rendered an empty
+                        row — and now the rack code has to be readable here
+                        before the sale is taken. */}
+                    <p className="text-shText truncate">{l.name || l.description}</p>
                     {l.kind === "credit_pack" && <p className="text-shTextMuted text-[10px] uppercase tracking-widest">Credit Pack</p>}
                     {l.kind === "training_program" && <p className="text-shTextMuted text-[10px] uppercase tracking-widest">Training Program</p>}
                     {l.has_price_override && <p className="text-shPrimary text-[10px] font-black uppercase tracking-widest">Client price applied</p>}
@@ -1861,7 +1880,13 @@ export default function Pos({ onOpenShopManager } = {}) {
                     )}
                   </div>
                   <div className="text-right">
-                    <p className="text-shText font-bold">{money(l.kind === "custom" ? l.custom_amount : l.unit_price * l.qty)}</p>
+                    {/* Gift card lines carry gift_card_amount and no unit_price,
+                        so this read NaN and rendered $0.00 next to a card the
+                        customer is paying real money for. */}
+                    <p className="text-shText font-bold">{money(
+                      l.kind === "custom" ? l.custom_amount
+                      : l.kind === "gift_card" ? l.gift_card_amount * l.qty
+                      : l.unit_price * l.qty)}</p>
                     <button onClick={() => removeLine(i)} className="text-shTextMuted hover:text-shDanger text-xs">Remove</button>
                   </div>
                 </div>

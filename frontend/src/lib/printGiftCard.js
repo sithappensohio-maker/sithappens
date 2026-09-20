@@ -73,6 +73,11 @@ export function giftCardHtml(card, { businessName, note = "", colors, brand, log
   const b = { ...BRAND, ...(brand || {}) };
   const name = esc(businessName || b.name);
   const code = esc(card.code_display || card.code || "");
+  // A blank off the rack has no value yet — it gets one when somebody buys
+  // it. Printing "$0.00" on it would be a lie in the most alarming place on
+  // the card, so the amount slot carries the code instead and the balance
+  // lives where it belongs: in the till.
+  const blank = card.status === "stock" || card.origin === "stock";
   const amount = money(card.balance != null ? card.balance : card.amount);
   const to = esc(card.recipient_name || "");
   const issued = esc(String(card.issued_at || new Date().toISOString()).slice(0, 10));
@@ -112,6 +117,12 @@ export function giftCardHtml(card, { businessName, note = "", colors, brand, log
            margin-top:4.6mm; color:#f5f7fb; text-transform:uppercase; }
     .dash { width:10mm; height:1mm; background:${c.green}; border-radius:1mm; margin:2mm 0 1.2mm; }
     .amount { font-size:31pt; font-weight:900; color:${c.green}; line-height:1; letter-spacing:-.025em; }
+    /* The rack card's front: the code is the only thing on it that matters,
+       so it takes the space the amount would have had. */
+    .frontcode { font-size:15pt; font-weight:700; letter-spacing:.16em; color:${c.green};
+                 font-family:ui-monospace,"Courier New",monospace; line-height:1; }
+    .loadme { font-size:6pt; letter-spacing:.18em; text-transform:uppercase;
+              color:#b9c6e4; margin-top:1.4mm; }
     .pad { margin-top:auto; }
     .to { font-size:9pt; font-style:italic; color:#e8edf8; }
 
@@ -183,9 +194,12 @@ export function giftCardHtml(card, { businessName, note = "", colors, brand, log
         <p class="tagline" style="margin:0">${esc(b.rule)}</p>
         <p class="big" style="margin:0">Gift Card</p>
         <div class="dash"></div>
-        <p class="amount" style="margin:0">${esc(amount)}</p>
+        ${blank
+          ? `<p class="frontcode" style="margin:0">${code}</p>
+             <p class="loadme" style="margin:0">Ask us to load or check it</p>`
+          : `<p class="amount" style="margin:0">${esc(amount)}</p>`}
         <div class="pad"></div>
-        ${to ? `<p class="to" style="margin:0">for ${to}</p>` : ""}
+        ${!blank && to ? `<p class="to" style="margin:0">for ${to}</p>` : ""}
       </div>
     </div>
 
@@ -214,7 +228,7 @@ export function giftCardHtml(card, { businessName, note = "", colors, brand, log
           <span class="issued">Issued ${issued}</span>
           <div class="footright">
             <div class="footmark">${esc(b.footMark)}</div>
-            <div class="footamount">${esc(amount)}</div>
+            <div class="footamount">${blank ? "Not yet loaded" : esc(amount)}</div>
           </div>
         </div>
       </div>
@@ -233,8 +247,130 @@ export function giftCardHtml(card, { businessName, note = "", colors, brand, log
   </body></html>`;
 }
 
-export function printGiftCard(card, opts) {
-  const blob = new Blob([giftCardHtml(card, opts)], { type: "text/html" });
+/** How many CR80 cards fit a portrait Letter/A4 page inside a 10mm margin:
+ *  2 across (2 x 85.6 = 171.2mm) and 4 down (4 x 54 = 216mm). */
+export const SHEET_COLS = 2;
+export const SHEET_ROWS = 4;
+export const PER_SHEET = SHEET_COLS * SHEET_ROWS;
+
+/**
+ * A whole rack's worth of cards, laid out to be cut up.
+ *
+ * Fronts only, deliberately. Backs would need duplex printing registered to
+ * within a millimetre on both sides of the same sheet, which no ordinary
+ * office printer does reliably — and a card whose terms are 4mm out of
+ * alignment looks worse than one with a plain back. Everything the holder
+ * needs is on the front: who it is from, and their code.
+ *
+ * Every card carries its OWN code. That is the whole point of a rack: 25
+ * cards is 25 separately trackable balances, not 25 copies of one.
+ */
+export function giftCardSheetHtml(cards, { businessName, colors, brand, logo } = {}) {
+  const list = Array.isArray(cards) ? cards.filter(Boolean) : [];
+  if (!list.length) return "";
+  const c = colors || brandColors();
+  const b = { ...BRAND, ...(brand || {}) };
+  const name = esc(businessName || b.name);
+  const husky = logo === null ? "" : esc(logo || logoUrl());
+  const scriptLines = b.script.split("\n").map((l) => `<span>${esc(l)}</span>`).join("");
+
+  const cell = (card) => {
+    const code = esc(card.code_display || card.code || "");
+    const blank = card.status === "stock" || card.origin === "stock"
+                  || (card.balance == null && card.amount == null);
+    const amount = money(card.balance != null ? card.balance : card.amount);
+    return `<div class="card">
+      <svg class="swoosh" viewBox="0 0 340 88" preserveAspectRatio="none" xmlns="http://www.w3.org/2000/svg">
+        <path d="M0 62 C 70 92, 150 30, 218 44" fill="none" stroke="${c.green}" stroke-width="2.4"/>
+        <path d="M218 44 c 8 -16, 32 -12, 32 4 c 0 14, -22 22, -32 30 c -10 -8, -32 -16, -32 -30
+                 c 0 -16, 24 -20, 32 -4 z" fill="none" stroke="${c.green}" stroke-width="2.4"/>
+        <path d="M250 48 C 286 40, 314 52, 340 40" fill="none" stroke="${c.green}" stroke-width="2.4"/>
+      </svg>
+      ${husky ? `<div class="husky"><img src="${husky}" alt=""></div>` : ""}
+      <div class="script">${scriptLines}</div>
+      <div class="inner">
+        <div class="brandrow">${paw(c.green)}<span class="bizname">${name}</span></div>
+        <div class="rule"></div>
+        <p class="tagline" style="margin:0">${esc(b.rule)}</p>
+        <p class="big" style="margin:0">Gift Card</p>
+        <div class="dash"></div>
+        ${blank
+          ? `<p class="frontcode" style="margin:0">${code}</p>
+             <p class="loadme" style="margin:0">Ask us to load or check it</p>`
+          : `<p class="amount" style="margin:0">${esc(amount)}</p>
+             <p class="loadme" style="margin:0">${code}</p>`}
+        <div class="pad"></div>
+      </div>
+    </div>`;
+  };
+
+  const pages = [];
+  for (let i = 0; i < list.length; i += PER_SHEET) {
+    pages.push(`<section class="sheet">${list.slice(i, i + PER_SHEET).map(cell).join("")}</section>`);
+  }
+
+  return `<!doctype html><html><head><meta charset="utf-8">
+  <title>${list.length} gift card${list.length === 1 ? "" : "s"}</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link href="https://fonts.googleapis.com/css2?family=Caveat:wght@600&display=swap" rel="stylesheet">
+  <style>
+    * { -webkit-print-color-adjust: exact; print-color-adjust: exact; box-sizing: border-box; }
+    @page { size: auto; margin: 10mm; }
+    body { margin:0; background:#fff;
+           font-family: Inter, "Segoe UI", "Helvetica Neue", system-ui, sans-serif; }
+
+    .sheet { display:grid; grid-template-columns:repeat(${SHEET_COLS}, 85.6mm);
+             grid-auto-rows:53.98mm; gap:0; justify-content:center;
+             /* Page breaks go BETWEEN sheets, never through a card. */
+             break-after:page; page-break-after:always; }
+    .sheet:last-child { break-after:auto; page-break-after:auto; }
+
+    .card { width:85.6mm; height:53.98mm; overflow:hidden; position:relative; color:#fff;
+            outline:.2mm dashed rgba(0,0,0,.35); outline-offset:-.1mm;
+            background:linear-gradient(150deg, ${c.header} 0%, ${c.navy} 60%, ${c.panel} 100%); }
+    .inner { position:absolute; inset:0; padding:4.6mm 5mm; display:flex; flex-direction:column; }
+
+    .brandrow { display:flex; align-items:center; gap:2mm; }
+    .brandrow svg { width:6.4mm; height:6.4mm; flex:none; }
+    .bizname { font-size:11pt; font-weight:800; letter-spacing:.26em; text-transform:uppercase;
+               line-height:1; }
+    .rule { border-top:.25mm solid rgba(255,255,255,.35); margin:1.4mm 0 1mm; width:56mm; }
+    .tagline { font-size:5.2pt; letter-spacing:.32em; text-transform:uppercase; color:#b9c6e4; }
+    .big { font-size:26pt; font-weight:900; letter-spacing:-.01em; line-height:.92;
+           margin-top:4.6mm; color:#f5f7fb; text-transform:uppercase; }
+    .dash { width:10mm; height:1mm; background:${c.green}; border-radius:1mm; margin:2mm 0 1.2mm; }
+    .amount { font-size:31pt; font-weight:900; color:${c.green}; line-height:1; letter-spacing:-.025em; }
+    .frontcode { font-size:15pt; font-weight:700; letter-spacing:.16em; color:${c.green};
+                 font-family:ui-monospace,"Courier New",monospace; line-height:1; }
+    .loadme { font-size:6pt; letter-spacing:.18em; text-transform:uppercase;
+              color:#b9c6e4; margin-top:1.4mm; }
+    .pad { margin-top:auto; }
+    .script { position:absolute; right:2.5mm; top:39.5mm; text-align:center; line-height:1.0;
+              font-family:Caveat, "Segoe Script", "Brush Script MT", cursive;
+              font-size:11pt; color:rgba(255,255,255,.55); display:flex; flex-direction:column; }
+    .husky { position:absolute; right:0; top:1.5mm; width:26mm; height:37mm;
+             overflow:hidden; opacity:.44;
+             -webkit-mask-image:linear-gradient(to bottom,#000 62%,transparent 100%),
+                                linear-gradient(to right,transparent 0,#000 26%);
+             mask-image:linear-gradient(to bottom,#000 62%,transparent 100%),
+                        linear-gradient(to right,transparent 0,#000 26%);
+             -webkit-mask-composite:source-in; mask-composite:intersect; }
+    .husky img { position:absolute; left:-21.4mm; top:0; width:68.25mm; height:auto; }
+    .swoosh { position:absolute; left:0; right:0; bottom:0; height:22mm; }
+  </style></head><body>
+  ${pages.join("")}
+  <script>
+    window.onload = () => {
+      const pending = [...document.images].filter((i) => !i.complete);
+      Promise.all(pending.map((i) => new Promise((r) => { i.onload = i.onerror = r; })))
+        .then(() => setTimeout(() => window.print(), 250));
+    };
+  </script>
+  </body></html>`;
+}
+
+function openPrintWindow(html) {
+  const blob = new Blob([html], { type: "text/html" });
   const url = URL.createObjectURL(blob);
   const win = window.open(url, "_blank", "noopener");
   if (!win) {
@@ -245,4 +381,16 @@ export function printGiftCard(card, opts) {
   }
   setTimeout(() => URL.revokeObjectURL(url), 60000);
   return true;
+}
+
+/** Print a whole rack of cards. False if the pop-up was blocked. */
+export function printGiftCardSheet(cards, opts) {
+  const html = giftCardSheetHtml(cards, opts);
+  if (!html) return false;
+  return openPrintWindow(html);
+}
+
+/** Print ONE card, front and back. False if the pop-up was blocked. */
+export function printGiftCard(card, opts) {
+  return openPrintWindow(giftCardHtml(card, opts));
 }
