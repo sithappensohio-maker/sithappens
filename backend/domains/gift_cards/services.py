@@ -30,8 +30,7 @@ Two rules follow from that and must not be softened:
 """
 from __future__ import annotations
 
-import random
-import string
+import secrets
 import uuid
 from datetime import datetime, timezone
 from typing import Any, Dict, List, Optional
@@ -46,6 +45,13 @@ _logger = None
 
 # No 0/O/1/I/L — a code gets read off a card by a person, over the phone,
 # under bad lighting.
+#
+# 31 characters over 12 places is ~59.5 bits: 7.9 x 10^17 possibilities, so
+# guessing one at random is hopeless. That only holds if the numbers are
+# genuinely unpredictable, which is why this uses `secrets` and NOT `random`.
+# Python's `random` is a Mersenne Twister — see enough of its output and you
+# can reconstruct its state and compute every code it will ever produce next.
+# For money that is not a theoretical distinction.
 _ALPHABET = "23456789ABCDEFGHJKMNPQRSTUVWXYZ"
 CODE_GROUPS = 3
 CODE_GROUP_LEN = 4
@@ -107,7 +113,7 @@ def _display(code: str) -> str:
 
 async def _fresh_code() -> str:
     for _ in range(12):
-        code = "".join(random.choice(_ALPHABET) for _ in range(CODE_GROUPS * CODE_GROUP_LEN))
+        code = "".join(secrets.choice(_ALPHABET) for _ in range(CODE_GROUPS * CODE_GROUP_LEN))
         if not await _db.gift_cards.find_one({"code": code}, {"_id": 0, "id": 1}):
             return code
     raise HTTPException(status_code=500, detail="Could not generate a gift card code. Try again.")

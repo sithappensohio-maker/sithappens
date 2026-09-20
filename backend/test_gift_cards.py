@@ -315,3 +315,61 @@ def test_two_tills_cannot_spend_the_same_last_ten_dollars():
     with pytest.raises(HTTPException) as e:
         run(gift.redeem(code=card["code"], amount=10.00, actor=ADMIN))
     assert e.value.status_code == 409
+
+
+# ------------------------------------------------- the code must be unguessable
+
+def test_codes_come_from_a_cryptographic_generator():
+    """`random` is a Mersenne Twister: see enough of its output and you can
+    reconstruct its state and compute every code it will produce next. For
+    money that is not a theoretical distinction, so the generator must be
+    `secrets`. This pins the import, because the two are one word apart."""
+    import inspect
+    src = inspect.getsource(gift)
+    assert "secrets.choice" in src
+    assert "random.choice" not in src
+    assert "import random" not in src
+
+
+def test_the_code_space_is_far_too_big_to_guess():
+    import math
+    bits = gift.CODE_GROUPS * gift.CODE_GROUP_LEN * math.log2(len(gift._ALPHABET))
+    assert bits > 55, f"only {bits:.1f} bits of code — too few to be unguessable"
+
+
+def test_two_hundred_codes_are_all_different():
+    codes = {run(gift._fresh_code()) for _ in range(200)}
+    assert len(codes) == 200
+
+
+def test_a_code_is_never_reused_even_if_the_generator_repeats():
+    # The uniqueness check is what makes a collision impossible rather than
+    # merely unlikely, so it is exercised directly.
+    _sale_id, card = _sell_card(10.00)
+    existing = card["code"]
+    seen = {"n": 0}
+    real = gift.secrets.choice
+
+    def once(alphabet):
+        # force the first attempt to rebuild the code that already exists
+        if seen["n"] < len(existing):
+            ch = existing[seen["n"]]
+            seen["n"] += 1
+            return ch
+        return real(alphabet)
+
+    gift.secrets.choice = once
+    try:
+        fresh = run(gift._fresh_code())
+    finally:
+        gift.secrets.choice = real
+    assert fresh != existing, "a duplicate must be rejected and regenerated"
+
+
+def test_looking_codes_up_is_rate_limited():
+    # Guessing is hopeless on the numbers; being allowed a million tries is
+    # what would make it less hopeless.
+    import inspect
+    from domains.gift_cards import routes
+    src = inspect.getsource(routes)
+    assert "gift_card_lookup" in src and "enforce_rate_limit" in src
