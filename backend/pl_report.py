@@ -188,6 +188,26 @@ async def _compute_payroll_for_range(db, start_date: str, end_date: str) -> Dict
     }
 
 
+def _cash_received_on_row(row: dict) -> float:
+    """What a retail row actually put in the till.
+
+    A gift card pays with money the business already took when the CARD was
+    sold, so the redeemed slice is not new cash — counting it again makes
+    this block disagree with the drawer it exists to explain.
+
+    The row stores `gift_card_funded`, the PRE-TAX slice the card paid for.
+    The card also paid that slice's sales tax, so scale back up to the real
+    tender before subtracting it.
+    """
+    amount = float(row.get("amount") or 0)
+    funded = float(row.get("gift_card_funded") or 0)
+    if funded <= 0:
+        return round(amount, 2)          # refunds keep their sign
+    pre_tax = amount - float(row.get("tax_amount") or 0)
+    tender = (funded * amount / pre_tax) if pre_tax > 0 else funded
+    return round(max(0.0, amount - tender), 2)
+
+
 async def build_pl_data(db, start_date: str, end_date: str) -> Dict[str, Any]:
     """Build the full Profit & Loss dataset for a date range."""
     bookings = await _booking_rows_anywhere(
@@ -497,7 +517,12 @@ async def build_pl_data(db, start_date: str, end_date: str) -> Dict[str, Any]:
         ytd_retail_rows = await db.retail_sales.find(
             {"date": {"$gte": ytd_start, "$lte": end_date}},
             # RH1 — tax_amount/source_kind required to net out collected tax.
-            {"_id": 0, "amount": 1, "tax_amount": 1, "source_kind": 1},
+            # gift_card_funded likewise: the canonical revenue helper
+            # subtracts it, and a field left out of the projection reads as
+            # zero, so the subtraction runs on nothing and every gift card
+            # redemption gets counted a second time in the YTD line.
+            {"_id": 0, "amount": 1, "tax_amount": 1, "source_kind": 1,
+             "gift_card_funded": 1},
         ).to_list(50000)
         ytd_retail = round(
             sum(_business_revenue_net_of_sales_tax(r) for r in ytd_retail_rows), 2)
@@ -520,7 +545,7 @@ async def build_pl_data(db, start_date: str, end_date: str) -> Dict[str, Any]:
     prepaid_credit_pack = round(sum(float(r.get("amount") or 0) for r in retail_sales if r.get("source_kind") == "credit_pack_sale"), 2)
     prepaid_training = round(sum(float(r.get("amount") or 0) for r in retail_sales if r.get("source_kind") == "training_program_sale"), 2)
     prepaid_payment_plan = round(sum(float(r.get("amount") or 0) for r in retail_sales if r.get("source_kind") == "payment_plan_installment"), 2)
-    retail_items_cash = round(sum(float(r.get("amount") or 0) for r in retail_sales if r.get("source_kind") not in PREPAID_SOURCE_KINDS), 2)
+    retail_items_cash = round(sum(_cash_received_on_row(r) for r in retail_sales if r.get("source_kind") not in PREPAID_SOURCE_KINDS), 2)
     prepaid_total = round(prepaid_credit_pack + prepaid_training + prepaid_payment_plan, 2)
     register_cash = completed_total  # already cash-basis
     # Operational burn — counts ALL credit-paid completed bookings (including

@@ -34855,7 +34855,9 @@ async def weekly_summary(_: dict = Depends(require_admin_and_permission("finance
         {"date": {"$gte": monday_iso, "$lte": sunday_iso}},
         # RH1 — tax_amount is required: business revenue EXCLUDES collected
         # sales tax, so the projection must carry the tax decomposition.
-        {"_id": 0, "amount": 1, "source_kind": 1, "tax_amount": 1},
+        # gift_card_funded likewise — the revenue helper subtracts it, and an
+        # omitted field reads as zero, double-counting every redemption.
+        {"_id": 0, "amount": 1, "source_kind": 1, "tax_amount": 1, "gift_card_funded": 1},
     )]
     # Step 4B-4 — magnitude of this week's refund/void/reversal rows (any
     # negative retail row, matching the register's bucketing rule) so the

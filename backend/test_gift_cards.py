@@ -400,3 +400,71 @@ def test_two_cards_on_one_sale_both_reach_the_receipt():
     printed = " ".join(str(li.get("description")) for li in payload["line_items"]).replace("-", "")
     for c in cards:
         assert c["code"] in printed
+
+
+# ---------------------------------------- the same story, on every surface
+# The daily P&L reads the whole retail_sales document, so it nets the
+# redemption out correctly. Surfaces that ask Mongo for a NAMED list of
+# fields get a row with `gift_card_funded` missing, and the canonical
+# revenue helper's `row.get("gift_card_funded") or 0` then quietly reads
+# zero — the subtraction still runs, on nothing. Nothing raises; the number
+# is just bigger. Each of these pins one surface to the daily P&L.
+
+def _sell_then_spend():
+    """$100 card sold for cash, then $50 of goods bought with it.
+
+    Total business revenue for the day is $100: the goods were paid for when
+    the card was sold. Anything reporting $150 has counted the card twice.
+    """
+    _sale_id, card = _sell_card(100.00)
+    pid = _product(50.00)
+    _sale([{"kind": "retail", "product_id": pid, "qty": 1}],
+          [{"method": "gift_card", "amount": 53.38, "gift_card_code": card["code"]}])
+    return card
+
+
+def test_the_pl_ytd_line_does_not_double_count_a_redeemed_card():
+    before = run(pl_report.build_pl_data(server.db, _day(), _day()))["ytd"]["income"]
+    _sell_then_spend()
+    after = run(pl_report.build_pl_data(server.db, _day(), _day()))["ytd"]["income"]
+    assert round(after - before, 2) == 100.00, \
+        "the year-to-date line counted the $50 of goods on top of the card"
+
+
+def test_the_pl_ytd_line_agrees_with_the_pl_above_it():
+    # Same report, same day, two numbers that must not disagree.
+    rev0 = _revenue()
+    ytd0 = run(pl_report.build_pl_data(server.db, _day(), _day()))["ytd"]["income"]
+    _sell_then_spend()
+    pl = run(pl_report.build_pl_data(server.db, _day(), _day()))
+    assert round(pl["net"] - rev0, 2) == round(pl["ytd"]["income"] - ytd0, 2)
+
+
+def test_the_weekly_summary_does_not_double_count_a_redeemed_card():
+    before = run(server.weekly_summary(ADMIN))["retail_total"]
+    _sell_then_spend()
+    after = run(server.weekly_summary(ADMIN))["retail_total"]
+    assert round(after - before, 2) == 100.00, \
+        "the weekly summary counted the $50 of goods on top of the card"
+
+
+def test_the_weekly_net_total_does_not_double_count_a_redeemed_card():
+    before = run(server.weekly_summary(ADMIN))["net_total"]
+    _sell_then_spend()
+    after = run(server.weekly_summary(ADMIN))["net_total"]
+    assert round(after - before, 2) == 100.00, \
+        "the week's net counted the $50 of goods on top of the card"
+
+
+def test_the_cash_flow_ledger_counts_the_money_once():
+    """The P&L's cash-flow block answers "where did this period's cash come
+    from". A redemption brings in none: the cash arrived when the card was
+    sold. Counting the redeemed sale again makes the report disagree with
+    the drawer it is supposed to explain."""
+    cf0 = run(pl_report.build_pl_data(server.db, _day(), _day()))["cash_flow"]["total_cash_in"]
+    drawer0 = _expected_cash()
+    _sell_then_spend()
+    cf1 = run(pl_report.build_pl_data(server.db, _day(), _day()))["cash_flow"]["total_cash_in"]
+    drawer1 = _expected_cash()
+    assert round(cf1 - cf0, 2) == round(drawer1 - drawer0, 2) == 100.00, \
+        "the cash-flow ledger and the till disagree about how much came in"
