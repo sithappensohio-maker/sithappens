@@ -37,6 +37,7 @@ import Announcements from "./screens/Announcements";
 import Claim from "./screens/Claim";
 import ShareCertificate from "./screens/ShareCertificate";
 import PublicShop from "./screens/PublicShop";
+import GuestOrderStatus from "./screens/GuestOrderStatus";
 import PublicHome from "./public/PublicHome";
 import PublicPhotoSpecial from "./public/PublicPhotoSpecial";
 import PublicTraining from "./public/PublicTraining";
@@ -951,6 +952,12 @@ export default function App() {
       <Route path="/events" element={<AppProviders><PublicEvents /></AppProviders>} />
       <Route path="/events/:slug" element={<AppProviders><PublicEvent /></AppProviders>} />
       <Route path="/photo-specials/:slug" element={<AppProviders><PublicPhotoSpecial /></AppProviders>} />
+      {/* Ahead of /shop/* on purpose: a guest order is reached by its token,
+          not by a session, so this page must render the same for a visitor
+          with no account and for one who happens to be signed in. Falling
+          through to ShopGate would show a signed-in visitor the storefront
+          instead of the order they followed a link to. */}
+      <Route path="/shop/order/:orderId" element={<AppProviders><GuestOrderStatus /></AppProviders>} />
       <Route path="/shop/*" element={<AppProviders><ShopGate /></AppProviders>} />
       <Route path="/admin/*" element={<AppProviders><Gate /></AppProviders>} />
       <Route path="*" element={<AppProviders><Gate /></AppProviders>} />

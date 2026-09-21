@@ -7,6 +7,7 @@ import io
 import logging
 import os
 import re
+import html as _html_mod
 import time
 from datetime import datetime, timedelta, timezone
 from typing import Optional
@@ -114,15 +115,82 @@ async def _get_email_settings() -> dict:
 _VAR_RE = re.compile(r"\{\{\s*(\w+)\s*\}\}")
 
 
-def _substitute(text: str, ctx: dict) -> str:
+class TrustedHtml(str):
+    """Markup that is ALREADY HTML and must not be escaped again.
+
+    This is the ONLY way to get raw markup through the renderer, and it has
+    to be asked for by name. Everything else — every client name, dog name,
+    note, reason and title that reaches an email — is text, and text is
+    escaped. That is the right way round: a new field added a year from now
+    is safe because somebody did nothing, not because they remembered
+    something.
+
+    Wrap the smallest possible thing. `TrustedHtml("<br/>".join(...))` around
+    a list whose ITEMS have been escaped is right; wrapping a whole string
+    that still has a client's name inside it is how this gets defeated.
+    """
+    __slots__ = ()
+
+
+def _h(value) -> str:
+    """One value, ready to sit in HTML. TrustedHtml passes through untouched;
+    everything else is escaped, quotes included, because these values land in
+    attributes (`alt`, `title`) as well as in text."""
+    if isinstance(value, TrustedHtml):
+        return str(value)
+    if value is None:
+        return ""
+    return _html_mod.escape(str(value), quote=True)
+
+
+# Schemes we are willing to write into an href/src. An allowlist, because
+# escaping does nothing about `javascript:` — the quotes are all perfectly
+# well-formed, and the browser still runs it. `data:` is permitted for
+# images only (the install-QR code is one, and an operator may paste a
+# data-URL logo); `data:text/html` is exactly the thing being excluded.
+_URL_SCHEME_OK = ("http://", "https://", "mailto:", "tel:", "sms:", "cid:", "data:image/")
+_URL_RELATIVE_OK = ("/", "#", "./", "../")
+
+
+def _safe_url(url) -> str:
+    """A URL fit to put in an attribute, or "" if it is not a link we will
+    write. Never returns something that could execute."""
+    raw = str(url or "").strip()
+    if not raw:
+        return ""
+    low = raw.lower()
+    if low.startswith(_URL_SCHEME_OK) or raw.startswith(_URL_RELATIVE_OK):
+        return _html_mod.escape(raw, quote=True)
+    return ""
+
+
+def _substitute(text: str, ctx: dict, *, into: str) -> str:
     """Replace `{{var}}` placeholders using `ctx`. Missing vars stay as-is so
-    the operator can spot typos in their template."""
+    the operator can spot typos in their template.
+
+    `into` says what the result becomes, and there is no default, so every
+    call site has to have decided:
+
+      into="html"  the TEMPLATE is markup (an intro_html, an agreement) and
+                   the VALUES are not. Each value is escaped on the way in,
+                   unless it is TrustedHtml. The template's own tags survive.
+      into="text"  the result is plain text — a subject line, or a title that
+                   something downstream will escape when it places it. Values
+                   go in as they are, and escaping happens once, later.
+
+    Escaping in exactly one place is the whole point. Doing it here AND at
+    output is how `Garrett &amp; Lexi` reaches somebody's inbox.
+    """
+    if into not in ("html", "text"):
+        raise ValueError("_substitute(into=) must be 'html' or 'text'")
     if not text:
         return text
+    escape_values = into == "html"
+
     def _r(m):
         k = m.group(1)
         if k in ctx and ctx[k] is not None:
-            return str(ctx[k])
+            return _h(ctx[k]) if escape_values else str(ctx[k])
         return m.group(0)
     return _VAR_RE.sub(_r, text)
 
@@ -177,6 +245,24 @@ def _wrap(title: str, intro: str, rows: list, cta_text: str | None = None, cta_u
 
     `settings` is the admin-customizable branding doc (logo, colors, signature,
     footer text). When omitted, the original hardcoded Sit Happens look is used.
+
+    This function is where values become markup, so this is where escaping
+    happens — once, and here.
+
+      TEXT, escaped:  title, cta_text, brand_name, and every row key and
+                      value. These carry client names, dog names, notes,
+                      reasons, order details — anything somebody typed.
+      URLs, checked:  cta_url and logo_url go into attributes, where escaping
+                      alone would still happily run a `javascript:` link.
+      HTML, as-is:    intro, body_html, signature_html, footer_html. These are
+                      deliberately markup — an operator writes bold text and
+                      links into them on purpose, and anything untrusted
+                      inside them was escaped before it got here (see
+                      _substitute).
+
+    A row value that really is markup must say so by being TrustedHtml. There
+    is exactly one of those today (the bulk-booking "Skipped" list), and it
+    escapes its own parts before joining them.
     """
     s = settings or {}
     brand_green = s.get("brand_green") or BRAND_GREEN
@@ -187,20 +273,22 @@ def _wrap(title: str, intro: str, rows: list, cta_text: str | None = None, cta_u
     signature_html = s.get("signature_html") or ""
     footer_html = s.get("footer_html") or "Sit Happens Dog Training · Daycare · Boarding<br/>You're receiving this because of activity on your Sit Happens account."
     rows_html = "".join(
-        f'<tr><td style="padding:8px 0;color:#64748b;font-size:13px;font-weight:700;text-transform:uppercase;letter-spacing:0.08em;width:140px;">{k}</td>'
-        f'<td style="padding:8px 0;color:#0f172a;font-size:15px;font-weight:600;">{v}</td></tr>'
+        f'<tr><td style="padding:8px 0;color:#64748b;font-size:13px;font-weight:700;text-transform:uppercase;letter-spacing:0.08em;width:140px;">{_h(k)}</td>'
+        f'<td style="padding:8px 0;color:#0f172a;font-size:15px;font-weight:600;">{_h(v)}</td></tr>'
         for k, v in rows
     )
+    cta_href = _safe_url(cta_url)
     cta_html = (
-        f'<a href="{cta_url}" style="display:inline-block;background:{brand_blue};color:#fff;text-decoration:none;'
-        f'padding:14px 28px;border-radius:6px;font-weight:800;text-transform:uppercase;letter-spacing:0.1em;font-size:13px;">{cta_text}</a>'
-        if cta_text and cta_url else ""
+        f'<a href="{cta_href}" style="display:inline-block;background:{brand_blue};color:#fff;text-decoration:none;'
+        f'padding:14px 28px;border-radius:6px;font-weight:800;text-transform:uppercase;letter-spacing:0.1em;font-size:13px;">{_h(cta_text)}</a>'
+        if cta_text and cta_href else ""
     )
     install_html = _install_footer() if show_install else ""
     rows_block = f'<table cellpadding="0" cellspacing="0" style="width:100%;border-top:1px solid #e2e8f0;border-bottom:1px solid #e2e8f0;margin:8px 0 20px 0;">{rows_html}</table>' if rows_html else ""
+    logo_href = _safe_url(logo_url)
     logo_block = (
-        f'<img src="{logo_url}" alt="{brand_name}" style="max-height:48px;max-width:200px;display:block;margin-bottom:10px;" />'
-        if logo_url else ""
+        f'<img src="{logo_href}" alt="{_h(brand_name)}" style="max-height:48px;max-width:200px;display:block;margin-bottom:10px;" />'
+        if logo_href else ""
     )
     signature_block = (
         f'<div style="margin-top:20px;color:#334155;font-size:14px;line-height:1.6;">{signature_html}</div>'
@@ -213,8 +301,8 @@ def _wrap(title: str, intro: str, rows: list, cta_text: str | None = None, cta_u
       <table width="100%" cellpadding="0" cellspacing="0" style="max-width:560px;background:#fff;border-radius:12px;overflow:hidden;box-shadow:0 4px 24px rgba(0,0,0,0.08);">
         <tr><td style="background:{brand_dark};padding:24px 32px;">
           {logo_block}
-          <p style="margin:0;color:{brand_green};font-size:11px;font-weight:900;text-transform:uppercase;letter-spacing:0.25em;">{brand_name}</p>
-          <h1 style="margin:6px 0 0 0;color:#fff;font-size:22px;font-weight:900;letter-spacing:-0.01em;">{title}</h1>
+          <p style="margin:0;color:{brand_green};font-size:11px;font-weight:900;text-transform:uppercase;letter-spacing:0.25em;">{_h(brand_name)}</p>
+          <h1 style="margin:6px 0 0 0;color:#fff;font-size:22px;font-weight:900;letter-spacing:-0.01em;">{_h(title)}</h1>
         </td></tr>
         <tr><td style="padding:28px 32px;">
           <p style="margin:0 0 18px 0;color:#334155;font-size:15px;line-height:1.5;">{intro}</p>
@@ -595,17 +683,22 @@ async def _render(
     """
     reg = _registry_get_template(slug) or {}
     override = await _get_template_override(slug)
+    # A subject is a mail header, not markup — nothing escapes it, here or
+    # later. A title IS destined for HTML, but _wrap is the one that puts it
+    # there, so it escapes there; doing it twice is how "Garrett &amp; Lexi"
+    # happens. intro_html is the operator's own markup with somebody else's
+    # words dropped into it, which is exactly what into="html" is for.
     subject = _substitute(
         override.get("subject") or reg.get("default_subject") or fallback_subject or "",
-        ctx,
+        ctx, into="text",
     )
     title = _substitute(
         override.get("title") or reg.get("default_title") or fallback_title or "",
-        ctx,
+        ctx, into="text",
     )
     intro = _substitute(
         override.get("intro_html") or reg.get("default_intro_html") or fallback_intro or "",
-        ctx,
+        ctx, into="html",
     )
     # cta_text may legitimately be "" to hide the button; respect explicit empty strings
     if "cta_text" in override:
@@ -614,8 +707,8 @@ async def _render(
         cta_text_raw = reg.get("default_cta_text") or ""
     else:
         cta_text_raw = fallback_cta_text or ""
-    cta_text = _substitute(cta_text_raw, ctx) if cta_text_raw else None
-    signoff_html = _substitute(override.get("signoff_html") or "", ctx) if override.get("signoff_html") else ""
+    cta_text = _substitute(cta_text_raw, ctx, into="text") if cta_text_raw else None
+    signoff_html = _substitute(override.get("signoff_html") or "", ctx, into="html") if override.get("signoff_html") else ""
     settings = await _get_email_settings()
     html = _wrap(
         title=title,
@@ -945,7 +1038,7 @@ async def queue_receipt_email(payload: dict, to_email: str, attempt_key: str) ->
     is_test = bool(payload.get("test_receipt"))
     rows_html = "".join(
         f'<tr><td style="padding:8px 12px;color:#0f172a;font-size:14px;font-weight:700;border-bottom:1px solid #e2e8f0;">'
-        f'{li.get("description") or "Item"}{" × " + str(li.get("qty")) if li.get("qty") and li.get("qty") != 1 else ""}</td>'
+        f'{_h(li.get("description") or "Item")}{" × " + _h(li.get("qty")) if li.get("qty") and li.get("qty") != 1 else ""}</td>'
         f'<td style="padding:8px 12px;color:#0f172a;font-size:14px;font-weight:800;text-align:right;border-bottom:1px solid #e2e8f0;">${float(li.get("amount") or 0):.2f}</td></tr>'
         for li in (payload.get("line_items") or [])
     )
@@ -965,8 +1058,8 @@ async def queue_receipt_email(payload: dict, to_email: str, attempt_key: str) ->
     <tr><td align="center">
       <table width="100%" cellpadding="0" cellspacing="0" style="max-width:600px;background:#fff;border-radius:12px;overflow:hidden;box-shadow:0 4px 24px rgba(0,0,0,0.08);">
         <tr><td style="background:{BRAND_DARK};padding:24px 32px;">
-          <p style="margin:0;color:{BRAND_GREEN};font-size:11px;font-weight:900;text-transform:uppercase;letter-spacing:0.25em;">{business_name} · Receipt</p>
-          <h1 style="margin:6px 0 0 0;color:#fff;font-size:20px;font-weight:900;">Receipt #{payload.get("receipt_number") or ""}</h1>
+          <p style="margin:0;color:{BRAND_GREEN};font-size:11px;font-weight:900;text-transform:uppercase;letter-spacing:0.25em;">{_h(business_name)} · Receipt</p>
+          <h1 style="margin:6px 0 0 0;color:#fff;font-size:20px;font-weight:900;">Receipt #{_h(payload.get("receipt_number") or "")}</h1>
         </td></tr>
         {test_banner}
         <tr><td style="padding:24px 32px;">
@@ -975,11 +1068,11 @@ async def queue_receipt_email(payload: dict, to_email: str, attempt_key: str) ->
             <tr><td style="padding:12px 12px 4px 12px;color:#0f172a;font-size:18px;font-weight:900;">Total</td>
                 <td style="padding:12px 12px 4px 12px;color:{BRAND_GREEN};font-size:22px;font-weight:900;text-align:right;">${float(total or 0):.2f}</td></tr>
           </table>
-          {f'<p style="margin:18px 0 0 0;color:#64748b;font-size:13px;">{thank_you}</p>' if thank_you else ""}
+          {f'<p style="margin:18px 0 0 0;color:#64748b;font-size:13px;">{_h(thank_you)}</p>' if thank_you else ""}
         </td></tr>
         <tr><td style="padding:20px 32px;background:#f8fafc;border-top:1px solid #e2e8f0;">
-          <p style="margin:0;color:#94a3b8;font-size:12px;line-height:1.5;">{business_name}{f" · {address_line}" if address_line else ""}</p>
-          {f'<p style="margin:8px 0 0 0;color:#94a3b8;font-size:11px;">{policy_footer}</p>' if policy_footer else ""}
+          <p style="margin:0;color:#94a3b8;font-size:12px;line-height:1.5;">{_h(business_name)}{f" · {_h(address_line)}" if address_line else ""}</p>
+          {f'<p style="margin:8px 0 0 0;color:#94a3b8;font-size:11px;">{_h(policy_footer)}</p>' if policy_footer else ""}
         </td></tr>
       </table>
     </td></tr>
@@ -1027,7 +1120,11 @@ async def notify_admin_bulk_booking(
         skipped_lines = [f"{s.get('date','?')} — {s.get('reason','?')}" for s in skipped[:6]]
         if len(skipped) > 6:
             skipped_lines.append(f"… (+{len(skipped) - 6} more)")
-        rows.append(("Skipped", "<br/>".join(skipped_lines)))
+        # The only row in the whole system that is deliberately markup. Its
+        # own lines carry a skip REASON, which is text somebody wrote, so
+        # they are escaped before the <br/>s go between them.
+        rows.append(("Skipped", TrustedHtml(
+            "<br/>".join(_h(line) for line in skipped_lines))))
     cta_url = f"{APP_PUBLIC_URL}/" if APP_PUBLIC_URL else None
     kind_label = "recurring schedule" if kind == "recurring" else "multi-date booking"
     await _dispatch(
@@ -1267,7 +1364,7 @@ async def notify_client_quote_received(client: dict, item: dict, message: str) -
     if message:
         rows.append(("Your message", message))
     intro = (
-        f"Hey {first_name}! 🐾 Thanks for asking about <strong>{item_label}</strong> — "
+        f"Hey {_h(first_name)}! 🐾 Thanks for asking about <strong>{_h(item_label)}</strong> — "
         f"we got your request and someone will be in touch within <strong>24 hours</strong> "
         f"with availability and any other details you need."
         f"<br/><br/>"
@@ -1505,48 +1602,48 @@ async def notify_trainer_monday_digest(data: dict, *, delivery_key: str | None =
         return f"""
         <div style='margin:18px 0;'>
           <h3 style='margin:0 0 8px 0;color:{BRAND_DARK};font-size:15px;font-weight:900;text-transform:uppercase;letter-spacing:.06em;'>
-            {icon} {title}
+            {icon} {_h(title)}
           </h3>
-          {rows_html or f"<p style='margin:0;color:#94a3b8;font-style:italic;font-size:14px;'>{empty}</p>"}
+          {rows_html or f"<p style='margin:0;color:#94a3b8;font-style:italic;font-size:14px;'>{_h(empty)}</p>"}
         </div>
         """
 
     leaders_rows = "".join(
         f"<div style='padding:6px 0;border-bottom:1px solid #e2e8f0;font-size:14px;color:{BRAND_DARK};'>"
-        f"<strong style='color:{BRAND_GREEN};'>🔥 {it['streak']}-day</strong> · <strong>{it['dog']}</strong> ({it['client']}) — {it['title']}</div>"
+        f"<strong style='color:{BRAND_GREEN};'>🔥 {_h(it['streak'])}-day</strong> · <strong>{_h(it['dog'])}</strong> ({_h(it['client'])}) — {_h(it['title'])}</div>"
         for it in data.get("streak_leaders", [])
     )
 
     lost_rows = "".join(
         f"<div style='padding:6px 0;border-bottom:1px solid #e2e8f0;font-size:14px;color:{BRAND_DARK};'>"
-        f"<strong>{it['dog']}</strong> ({it['client']}) lost a <strong>{it['streak_was']}-day</strong> streak on {it['title']}</div>"
+        f"<strong>{_h(it['dog'])}</strong> ({_h(it['client'])}) lost a <strong>{_h(it['streak_was'])}-day</strong> streak on {_h(it['title'])}</div>"
         for it in data.get("lost_streak", [])
     )
 
     pending_rows = "".join(
         f"<div style='padding:6px 0;border-bottom:1px solid #e2e8f0;font-size:14px;color:{BRAND_DARK};'>"
-        f"<strong>Day {it['day']}</strong> · {it['dog']} ({it['client']}) · {it['title']} "
-        f"<span style='color:#94a3b8;font-size:12px;'>· submitted {(it.get('submitted_at') or '')[:10]}</span></div>"
+        f"<strong>Day {_h(it['day'])}</strong> · {_h(it['dog'])} ({_h(it['client'])}) · {_h(it['title'])} "
+        f"<span style='color:#94a3b8;font-size:12px;'>· submitted {_h((it.get('submitted_at') or '')[:10])}</span></div>"
         for it in data.get("pending_reviews", [])
     )
 
     qs_rows = "".join(
         f"<div style='padding:8px 0;border-bottom:1px solid #e2e8f0;font-size:14px;color:{BRAND_DARK};'>"
-        f"<strong>{it['dog']}</strong> ({it['client']}) · Day {it['day']}<br/>"
-        f"<em style='color:#475569;'>\"{it.get('text','')[:240]}\"</em></div>"
+        f"<strong>{_h(it['dog'])}</strong> ({_h(it['client'])}) · Day {_h(it['day'])}<br/>"
+        f"<em style='color:#475569;'>\"{_h(it.get('text','')[:240])}\"</em></div>"
         for it in data.get("unanswered_qs", [])
     )
 
     done_rows = "".join(
         f"<div style='padding:6px 0;border-bottom:1px solid #e2e8f0;font-size:14px;color:{BRAND_DARK};'>"
-        f"🎓 <strong>{it['dog']}</strong> ({it['client']}) finished <strong>{it['title']}</strong> on {it['completed_at']} "
+        f"🎓 <strong>{_h(it['dog'])}</strong> ({_h(it['client'])}) finished <strong>{_h(it['title'])}</strong> on {_h(it['completed_at'])} "
         f"<span style='color:#dc2626;font-size:12px;font-weight:900;text-transform:uppercase;letter-spacing:.06em;'>· upload cert</span></div>"
         for it in data.get("just_completed", [])
     )
 
     vax_rows = "".join(
         f"<div style='padding:6px 0;border-bottom:1px solid #e2e8f0;font-size:14px;color:{BRAND_DARK};'>"
-        f"<strong>{it['dog']}</strong> ({it['client']}) · {it['vaccine']} expires {it['expires']}</div>"
+        f"<strong>{_h(it['dog'])}</strong> ({_h(it['client'])}) · {_h(it['vaccine'])} expires {_h(it['expires'])}</div>"
         for it in data.get("expiring_vax", [])
     )
 
@@ -1631,10 +1728,10 @@ async def notify_client_homework_reminder(client: dict, plans: list, *, delivery
         f"""
         <div style='border:1px solid #e2e8f0;border-radius:10px;padding:14px;margin:10px 0;background:#fff;'>
           <p style='margin:0 0 4px 0;color:#64748b;font-size:12px;font-weight:900;text-transform:uppercase;letter-spacing:.08em;'>
-            {p.get('dog_name','')} · {("Session " + str(p.get('day_number', 0))) if not p.get('total_days') else ("Day " + str(p.get('day_number', 0)) + " of " + str(p.get('total_days', 0)))}
+            {_h(p.get('dog_name',''))} · {("Session " + str(p.get('day_number', 0))) if not p.get('total_days') else ("Day " + str(p.get('day_number', 0)) + " of " + str(p.get('total_days', 0)))}
           </p>
-          <h3 style='margin:0 0 6px 0;color:{BRAND_DARK};font-size:17px;font-weight:900;'>{p.get('hw_title','')}</h3>
-          <p style='margin:0;color:#0f172a;font-size:14px;'>Today's focus: <strong>{p.get('today_focus','')}</strong></p>
+          <h3 style='margin:0 0 6px 0;color:{BRAND_DARK};font-size:17px;font-weight:900;'>{_h(p.get('hw_title',''))}</h3>
+          <p style='margin:0;color:#0f172a;font-size:14px;'>Today's focus: <strong>{_h(p.get('today_focus',''))}</strong></p>
         </div>
         """
         for p in plans
@@ -1678,7 +1775,7 @@ async def notify_client_weekly_homework_digest(client: dict, items: list, week_s
     first_name = (client.get('name') or 'there').split(' ')[0]
     rows = []
     for it in items:
-        streak_chip = f"<span style='display:inline-block;background:{BRAND_GREEN}15;color:{BRAND_GREEN};font-weight:900;font-size:12px;letter-spacing:.08em;text-transform:uppercase;padding:2px 8px;border-radius:4px;'>🔥 {it['streak']}-day streak</span>" if it.get("streak", 0) > 0 else ""
+        streak_chip = f"<span style='display:inline-block;background:{BRAND_GREEN}15;color:{BRAND_GREEN};font-weight:900;font-size:12px;letter-spacing:.08em;text-transform:uppercase;padding:2px 8px;border-radius:4px;'>🔥 {_h(it['streak'])}-day streak</span>" if it.get("streak", 0) > 0 else ""
         progress = (f"{it.get('approved_total', 0)} session{'s' if it.get('approved_total', 0) != 1 else ''} logged"
                     if not it.get("total_days") else f"{it.get('approved_total', 0)} of {it.get('total_days', 0)} approved")
         this_week = f"{it.get('approved_this_week', 0)} this week"
@@ -1686,27 +1783,27 @@ async def notify_client_weekly_homework_digest(client: dict, items: list, week_s
         for n in (it.get("notes") or [])[:3]:
             notes_html += f"""
               <div style='background:#f8fafc;border-left:3px solid {BRAND_BLUE};padding:8px 12px;margin:6px 0;border-radius:4px;'>
-                <p style='margin:0 0 4px 0;color:#64748b;font-size:12px;font-weight:900;text-transform:uppercase;letter-spacing:.06em;'>Day {n['day']} · {n.get('focus','')}</p>
-                <p style='margin:0;color:#0f172a;font-size:14px;font-style:italic;'>"{n['note']}"</p>
+                <p style='margin:0 0 4px 0;color:#64748b;font-size:12px;font-weight:900;text-transform:uppercase;letter-spacing:.06em;'>Day {_h(n['day'])} · {_h(n.get('focus',''))}</p>
+                <p style='margin:0;color:#0f172a;font-size:14px;font-style:italic;'>"{_h(n['note'])}"</p>
               </div>
             """
         photos_html = ""
         for p in (it.get("photos") or [])[:3]:
-            photos_html += f"<img src='{p}' alt='' width='110' height='110' style='display:inline-block;width:110px;height:110px;object-fit:cover;border-radius:6px;border:2px solid #fff;box-shadow:0 1px 4px rgba(0,0,0,.08);margin-right:6px;' />"
+            photos_html += f"<img src='{_safe_url(p)}' alt='' width='110' height='110' style='display:inline-block;width:110px;height:110px;object-fit:cover;border-radius:6px;border:2px solid #fff;box-shadow:0 1px 4px rgba(0,0,0,.08);margin-right:6px;' />"
         next_html = ""
         if it.get("next_focus"):
             next_html = f"""
               <p style='margin:12px 0 0 0;color:{BRAND_DARK};font-size:14px;'>
                 <span style='color:#64748b;font-weight:900;text-transform:uppercase;letter-spacing:.06em;font-size:11px;'>Up next:</span>
-                <strong>{it['next_focus']}</strong>
+                <strong>{_h(it['next_focus'])}</strong>
               </p>
             """
         rows.append(f"""
           <div style='border:1px solid #e2e8f0;border-radius:10px;padding:18px;margin:14px 0;background:#fff;'>
-            <p style='margin:0 0 4px 0;color:#64748b;font-size:12px;font-weight:900;text-transform:uppercase;letter-spacing:.08em;'>{it.get('dog_name','')}</p>
-            <h3 style='margin:0 0 8px 0;color:{BRAND_DARK};font-size:18px;font-weight:900;'>{it.get('hw_title','')}</h3>
+            <p style='margin:0 0 4px 0;color:#64748b;font-size:12px;font-weight:900;text-transform:uppercase;letter-spacing:.08em;'>{_h(it.get('dog_name',''))}</p>
+            <h3 style='margin:0 0 8px 0;color:{BRAND_DARK};font-size:18px;font-weight:900;'>{_h(it.get('hw_title',''))}</h3>
             <p style='margin:0 0 10px 0;color:#475569;font-size:14px;'>
-              {streak_chip} <span style='color:#64748b;'>{progress} · {this_week}</span>
+              {streak_chip} <span style='color:#64748b;'>{_h(progress)} · {_h(this_week)}</span>
             </p>
             {photos_html and f"<div style='margin:10px 0;'>{photos_html}</div>" or ""}
             {notes_html and f"<div style='margin-top:8px;'>{notes_html}</div>" or ""}
@@ -1750,14 +1847,14 @@ async def notify_client_day_reviewed(hw: dict, day_number: int, action: str, rev
         emoji = "✅"
         verb = "approved your Day {n} check-in"
         body_intro = (
-            f"Great work, {first_name}! Your trainer just <strong>approved Day {day_number}</strong> "
-            f"for <strong>{hw.get('dog_name', 'your pup')}</strong>. Day {day_number + 1} is now unlocked."
+            f"Great work, {_h(first_name)}! Your trainer just <strong>approved Day {_h(day_number)}</strong> "
+            f"for <strong>{_h(hw.get('dog_name', 'your pup'))}</strong>. Day {day_number + 1} is now unlocked."
         )
     else:
         emoji = "↩️"
         verb = "asked you to redo Day {n}"
         body_intro = (
-            f"Hi {first_name}, your trainer sent <strong>Day {day_number}</strong> back for a redo. "
+            f"Hi {_h(first_name)}, your trainer sent <strong>Day {_h(day_number)}</strong> back for a redo. "
             f"Check the note below and re-submit when you're ready."
         )
     rows = [
@@ -1932,7 +2029,7 @@ async def notify_client_pack_receipt(client: dict, lines: list, totals: dict, pa
     rows_html = "".join(
         f'<tr>'
         f'<td style="padding:10px 12px;color:#0f172a;font-size:14px;font-weight:700;border-bottom:1px solid #e2e8f0;">'
-        f'{ln["name"]}<br/><span style="font-size:11px;color:#64748b;text-transform:uppercase;letter-spacing:0.08em;">{ln["qty"]} × ${ln["unit_price"]:.2f} · {("training sessions" if ln.get("service_type")=="training" else "daycare credits")}</span></td>'
+        f'{_h(ln["name"])}<br/><span style="font-size:11px;color:#64748b;text-transform:uppercase;letter-spacing:0.08em;">{_h(ln["qty"])} × ${ln["unit_price"]:.2f} · {("training sessions" if ln.get("service_type")=="training" else "daycare credits")}</span></td>'
         f'<td style="padding:10px 12px;color:#0f172a;font-size:14px;font-weight:800;text-align:right;border-bottom:1px solid #e2e8f0;">${ln["line_total"]:.2f}</td>'
         f'</tr>'
         for ln in lines
@@ -1945,7 +2042,7 @@ async def notify_client_pack_receipt(client: dict, lines: list, totals: dict, pa
         pool_breakdown += f"<tr><td style='padding:6px 12px;color:#64748b;font-size:12px;text-transform:uppercase;letter-spacing:0.08em;font-weight:700;'>Training added</td><td style='padding:6px 12px;color:#0f172a;font-size:14px;font-weight:800;text-align:right;'>+{totals['training']['qty']} sessions</td></tr>"
 
     method_label = (payment_method or "cash").title()
-    note_html = f'<p style="margin:14px 0 0 0;color:#64748b;font-size:13px;font-style:italic;">Note: {note}</p>' if note else ""
+    note_html = f'<p style="margin:14px 0 0 0;color:#64748b;font-size:13px;font-style:italic;">Note: {_h(note)}</p>' if note else ""
     cta_url = f"{APP_PUBLIC_URL}/" if APP_PUBLIC_URL else None
     cta_html = (
         f'<a href="{cta_url}" style="display:inline-block;background:{BRAND_BLUE};color:#fff;text-decoration:none;'
@@ -2007,7 +2104,7 @@ async def notify_client_pack_receipt(client: dict, lines: list, totals: dict, pa
         override.get("subject")
         or reg.get("default_subject")
         or f"Receipt · ${grand_total:.2f} · Sit Happens credit packs",
-        ctx,
+        ctx, into="text",
     )
     await _send(to_email, subject, body_html)
 
@@ -2083,7 +2180,7 @@ async def notify_client_booking_rejected(booking: dict, client: dict) -> None:
         fallback_subject="Your booking request couldn't be approved",
         fallback_title="Booking request declined",
         fallback_intro=(
-            f"Hi {first_name} — we're not able to approve this booking request. "
+            f"Hi {_h(first_name)} — we're not able to approve this booking request. "
             f"Reach out to us and we'll help find another time that works."
         ),
     )
@@ -2110,7 +2207,7 @@ async def _build_report_card_email_body(booking: dict, client: dict, dog: dict |
         rows_html = ""
         for i in range(0, len(photos), 2):
             row_cells = "".join(
-                f'<td style="padding:4px;width:50%;"><img src="{p}" alt="{dog_name}" '
+                f'<td style="padding:4px;width:50%;"><img src="{_safe_url(p)}" alt="{_h(dog_name)}" '
                 f'style="width:100%;max-width:240px;border-radius:10px;display:block;"/></td>'
                 for p in photos[i:i+2]
             )
@@ -2126,7 +2223,7 @@ async def _build_report_card_email_body(booking: dict, client: dict, dog: dict |
         chips = "".join(
             f'<span style="display:inline-block;background:#8cc63f15;border:1px solid #8cc63f55;'
             f'color:#577d22;border-radius:999px;padding:6px 12px;margin:2px;font-size:13px;'
-            f'font-weight:800;text-transform:uppercase;letter-spacing:0.05em;">{t if isinstance(t, str) else t.get("label", "")}</span>'
+            f'font-weight:800;text-transform:uppercase;letter-spacing:0.05em;">{_h(t if isinstance(t, str) else t.get("label", ""))}</span>'
             for t in tags
         )
         body_parts.append(f'<div style="margin:14px 0;">{chips}</div>')
@@ -2137,7 +2234,7 @@ async def _build_report_card_email_body(booking: dict, client: dict, dog: dict |
         body_parts.append(
             f'<div style="margin:16px 0;padding:14px;background:#f8fafc;border-left:4px solid #8cc63f;'
             f'border-radius:6px;"><p style="margin:0;color:#0f172a;font-style:italic;font-size:15px;'
-            f'line-height:1.45;">"{note}"</p></div>'
+            f'line-height:1.45;">"{_h(note)}"</p></div>'
         )
 
     # ─── Care log ─────────────────────────────────────────────────────
@@ -2146,9 +2243,9 @@ async def _build_report_card_email_body(booking: dict, client: dict, dog: dict |
         items = "".join(
             f'<li style="margin:4px 0;color:#0f172a;font-size:14px;">'
             f'<strong>Meal {f.get("index", 0) + 1}</strong> given'
-            f'{(" · " + _short_time(f.get("at"))) if f.get("at") else ""}'
-            f'{(" · " + str(f.get("by_name"))) if f.get("by_name") else ""}'
-            f'{(" — " + str(f.get("note"))) if f.get("note") else ""}'
+            f'{(" · " + _h(_short_time(f.get("at")))) if f.get("at") else ""}'
+            f'{(" · " + _h(f.get("by_name"))) if f.get("by_name") else ""}'
+            f'{(" — " + _h(f.get("note"))) if f.get("note") else ""}'
             f'</li>'
             for f in feedings
         )
@@ -2163,15 +2260,15 @@ async def _build_report_card_email_body(booking: dict, client: dict, dog: dict |
             photo_html = ""
             if m.get("photo"):
                 photo_html = (
-                    f' <a href="{m["photo"]}" style="color:#3a99fb;text-decoration:none;'
+                    f' <a href="{_safe_url(m["photo"])}" style="color:#3a99fb;text-decoration:none;'
                     f'font-weight:800;">📷 photo</a>'
                 )
             items += (
                 f'<li style="margin:4px 0;color:#0f172a;font-size:14px;">'
                 f'<strong>Dose {m.get("index", 0) + 1}</strong> given'
-                f'{(" · " + _short_time(m.get("at"))) if m.get("at") else ""}'
-                f'{(" · " + str(m.get("by_name"))) if m.get("by_name") else ""}'
-                f'{(" — " + str(m.get("note"))) if m.get("note") else ""}'
+                f'{(" · " + _h(_short_time(m.get("at")))) if m.get("at") else ""}'
+                f'{(" · " + _h(m.get("by_name"))) if m.get("by_name") else ""}'
+                f'{(" — " + _h(m.get("note"))) if m.get("note") else ""}'
                 f'{photo_html}'
                 f'</li>'
             )
@@ -2186,13 +2283,13 @@ async def _build_report_card_email_body(booking: dict, client: dict, dog: dict |
             chips.append(
                 f'<span style="display:inline-block;background:#3a99fb1a;border:1px solid #3a99fb55;'
                 f'color:#0c5fbb;border-radius:6px;padding:4px 10px;margin-right:6px;font-weight:800;'
-                f'font-size:13px;">💧 {bathroom["pee"]}</span>'
+                f'font-size:13px;">💧 {_h(bathroom["pee"])}</span>'
             )
         if bathroom.get("poop"):
             chips.append(
                 f'<span style="display:inline-block;background:#f78c401a;border:1px solid #f78c4055;'
                 f'color:#a85a18;border-radius:6px;padding:4px 10px;margin-right:6px;font-weight:800;'
-                f'font-size:13px;">💩 {bathroom["poop"]}</span>'
+                f'font-size:13px;">💩 {_h(bathroom["poop"])}</span>'
             )
         care_chunks.append(
             f'<p style="margin:10px 0 4px 0;font-weight:800;color:#1e293b;text-transform:uppercase;'
@@ -2236,7 +2333,7 @@ async def _build_report_card_email_body(booking: dict, client: dict, dog: dict |
             f'<p style="margin:0;color:#577d22;font-size:11px;font-weight:800;text-transform:uppercase;'
             f'letter-spacing:0.22em;">Your referral code</p>'
             f'<p style="margin:6px 0 4px 0;color:#0f172a;font-size:28px;font-weight:900;letter-spacing:0.08em;">'
-            f'{referral_code}</p>'
+            f'{_h(referral_code)}</p>'
             f'<p style="margin:0;color:#64748b;font-size:13px;line-height:1.4;">'
             f'Share with a fellow dog parent — when they book their first visit, you both get credit. 🐾</p>'
             f'</div>'
@@ -2259,7 +2356,7 @@ async def _build_report_card_email_body(booking: dict, client: dict, dog: dict |
     if review_url:
         button_cells.append(
             f'<td style="padding:4px;">'
-            f'<a href="{review_url}" style="display:inline-block;background:#fbbf24;color:#0f172a;'
+            f'<a href="{_safe_url(review_url)}" style="display:inline-block;background:#fbbf24;color:#0f172a;'
             f'padding:11px 18px;border-radius:8px;text-decoration:none;font-weight:800;font-size:13px;'
             f'text-transform:uppercase;letter-spacing:0.06em;">⭐ Leave a Google review</a></td>'
         )
@@ -2277,7 +2374,7 @@ async def _build_report_card_email_body(booking: dict, client: dict, dog: dict |
             f'<div style="margin:20px 0 4px 0;padding:18px 16px;background:#fefce8;border:1px solid '
             f'#fde68a;border-radius:12px;">'
             f'<p style="margin:0 0 10px 0;color:#854d0e;font-size:14px;font-weight:800;text-align:center;'
-            f'text-transform:uppercase;letter-spacing:0.18em;">💚 Loved {dog_name}\'s day?</p>'
+            f'text-transform:uppercase;letter-spacing:0.18em;">💚 Loved {_h(dog_name)}\'s day?</p>'
             f'<p style="margin:0 0 8px 0;color:#475569;font-size:14px;text-align:center;line-height:1.5;">'
             f'Help us out — it takes 10 seconds and means the world to a small business.</p>'
             + "".join(share_pieces) +
@@ -2403,7 +2500,7 @@ async def send_account_claim(
     if override.get("subject"):
         subject = _substitute(override["subject"], {
             "first_name": first, "client_name": client_name, "dog_name_or_dogs": "",
-        })
+        }, into="text")
     await _send(to_email, subject, html)
 
 
@@ -2483,11 +2580,11 @@ async def notify_admin_contact_inquiry(inquiry: dict, labels: dict) -> bool:
     rows.append(("Received", inquiry.get("created_at") or _utc_now_iso()))
     links = []
     if email:
-        links.append(f'<a href="mailto:{email}" style="color:#00a9e0;font-weight:700">Reply by email</a>')
+        links.append(f'<a href="{_safe_url("mailto:" + email)}" style="color:#00a9e0;font-weight:700">Reply by email</a>')
     if phone:
         tel = "".join(ch for ch in phone if ch.isdigit() or ch == "+")
-        links.append(f'<a href="tel:{tel}" style="color:#00a9e0;font-weight:700">Call {phone}</a>')
-        links.append(f'<a href="sms:{tel}" style="color:#00a9e0;font-weight:700">Text {phone}</a>')
+        links.append(f'<a href="{_safe_url("tel:" + tel)}" style="color:#00a9e0;font-weight:700">Call {_h(phone)}</a>')
+        links.append(f'<a href="{_safe_url("sms:" + tel)}" style="color:#00a9e0;font-weight:700">Text {_h(phone)}</a>')
     body_html = ('<p style="margin:16px 0 0;font-size:14px">' + " &nbsp;·&nbsp; ".join(links) + "</p>") if links else ""
     key = f"admin_contact_inquiry:{inquiry.get('id')}"
     cta_url = f"{APP_PUBLIC_URL}/" if APP_PUBLIC_URL else None
@@ -2547,10 +2644,10 @@ async def notify_admin_event_registration(event: dict, registration: dict, total
     ]
     links = []
     if email:
-        links.append(f'<a href="mailto:{email}" style="color:#00a9e0;font-weight:700">Reply by email</a>')
+        links.append(f'<a href="{_safe_url("mailto:" + email)}" style="color:#00a9e0;font-weight:700">Reply by email</a>')
     if phone:
         tel = "".join(ch for ch in phone if ch.isdigit() or ch == "+")
-        links.append(f'<a href="tel:{tel}" style="color:#00a9e0;font-weight:700">Call {phone}</a>')
+        links.append(f'<a href="{_safe_url("tel:" + tel)}" style="color:#00a9e0;font-weight:700">Call {_h(phone)}</a>')
     body_html = ('<p style="margin:16px 0 0;font-size:14px">' + " &nbsp;·&nbsp; ".join(links) + "</p>") if links else ""
     key = f"admin_event_registration:{registration.get('id')}"
     cta_url = f"{APP_PUBLIC_URL}/admin/events" if APP_PUBLIC_URL else None
@@ -2720,8 +2817,8 @@ async def notify_client_dog_birthday(client: dict, dog: dict, *, delivery_key: s
         )
     intro = (
         f"{hero_html}"
-        f"Hi {first_name} — it's a special day! 🎂<br/><br/>"
-        f"All of us at Sit Happens want to wish <strong>{dog_name}</strong> "
+        f"Hi {_h(first_name)} — it's a special day! 🎂<br/><br/>"
+        f"All of us at Sit Happens want to wish <strong>{_h(dog_name)}</strong> "
         f"the happiest birthday. Whether it's their 1st or their 15th, every "
         f"birthday with a great pup is one worth celebrating."
     )
@@ -2760,11 +2857,11 @@ async def notify_client_vaccine_expiring(client: dict, dog: dict, vaccines_expir
     dog_name = (dog.get("name") or "your dog").strip()
     first_name = (client.get("name") or "there").split(" ")[0]
     list_html = "".join(
-        f'<li style="margin:4px 0;color:#0f172a;"><strong>{v["name"]}</strong> — expires {v["expires_on"]}</li>'
+        f'<li style="margin:4px 0;color:#0f172a;"><strong>{_h(v["name"])}</strong> — expires {_h(v["expires_on"])}</li>'
         for v in vaccines_expiring
     )
     intro = (
-        f"Hi {first_name}, a quick heads-up — <strong>{dog_name}</strong>'s "
+        f"Hi {_h(first_name)}, a quick heads-up — <strong>{_h(dog_name)}</strong>'s "
         f"vaccines are coming up for renewal in the next 30 days. Please book "
         f"your vet visit and upload the updated record through your portal so "
         f"we never have to turn {dog_name} away at drop-off."
@@ -2834,12 +2931,12 @@ async def notify_admin_pl_report(pdf_bytes: bytes, start_date: str, end_date: st
         "expenses": f"${expenses:,.2f}",
         "net": f"${net:,.2f}",
     }
-    title = _substitute(override.get("title") or reg.get("default_title") or f"📊 P&L Report · {period_label}", ctx)
+    title = _substitute(override.get("title") or reg.get("default_title") or f"📊 P&L Report · {period_label}", ctx, into="text")
     intro = _substitute(override.get("intro_html") or reg.get("default_intro_html") or (
         f"Your monthly Profit & Loss report is attached as a PDF. "
         f"<strong style='color:{net_color}'>Net: ${net:,.2f}</strong> for this period."
-    ), ctx)
-    subject = _substitute(override.get("subject") or reg.get("default_subject") or f"📊 P&L Report · {period_label} · Net ${net:,.2f}", ctx)
+    ), ctx, into="html")
+    subject = _substitute(override.get("subject") or reg.get("default_subject") or f"📊 P&L Report · {period_label} · Net ${net:,.2f}", ctx, into="text")
     html = _wrap(
         title=title,
         intro=intro,
@@ -2875,19 +2972,20 @@ async def broadcast_announcement_email(announcement: dict) -> dict:
     image = announcement.get("image") or ""
     portal_url = f"{APP_PUBLIC_URL}/" if APP_PUBLIC_URL else None
 
-    # Convert plain-text linebreaks to HTML.
-    body_html_safe = (
-        body.replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;").replace("\n", "<br/>")
-    )
+    # An announcement body is typed as PLAIN TEXT in the admin UI, so it is
+    # escaped and then its newlines — and only its newlines — become markup.
+    # Uses the shared escaper rather than a hand-rolled one, so there is a
+    # single place where "what counts as escaped" is decided.
+    body_html_safe = TrustedHtml(_h(body).replace("\n", "<br/>"))
 
     image_html = (
-        f"<div style='margin:12px 0;'><img src='{image}' alt='' "
+        f"<div style='margin:12px 0;'><img src='{_safe_url(image)}' alt='' "
         f"style='max-width:100%;border-radius:10px;border:1px solid #e2e8f0;'/></div>"
-        if image else ""
+        if _safe_url(image) else ""
     )
     body_html = (
         f"<div style='font-size:15px;line-height:1.55;color:#0f172a;'>"
-        f"{image_html}{body_html_safe}</div>"
+        f"{image_html}{_h(body_html_safe)}</div>"
     )
 
     sent = skipped = 0

@@ -7,8 +7,7 @@ import {
   sectionMetaFor, visibleSectionsInOrder, categoryCoverImageId, shouldHideEmptyCategory,
   orderCategoryGroupsFeaturedFirst, filterFeaturedItems, guestItemCta,
   creditPackCardLine, creditPackDetailLine, creditPackStaffLine,
-  creditPackAdminSummaryLines, creditPackEditorPreview,
-} from "./shopPolish";
+  creditPackAdminSummaryLines, creditPackEditorPreview, shopBackTarget } from "./shopPolish";
 
 const categories = [
   { id: "cat-merch", name: "Merch", subcategories: [{ id: "sub-collars", name: "Collars" }, { id: "sub-toys", name: "Toys" }] },
@@ -451,4 +450,46 @@ describe("credit-pack customer-facing wording", () => {
     expect(creditPackEditorPreview({ qty: 15, price: 375, service_type: "daycare" })).toBeNull();
     expect(creditPackEditorPreview({ qty: 15, price: 375, service_type: "daycare", display_quantity: 0 })).toBeNull();
   });
+});
+
+// ---------------------------------------------------------------------------
+// Leaving a product page — shopBackTarget
+// ---------------------------------------------------------------------------
+
+test("coming from the Shop pops history, so scroll and filters are restored", () => {
+  expect(shopBackTarget({ hasOwnHistoryEntry: true, kind: "product" }))
+    .toEqual({ action: "back" });
+});
+
+test("a direct product link goes back to the Shop, not the app root", () => {
+  // The defect: this pushed "/" and dropped the shopper at the app root,
+  // which is not the Shop at all.
+  const t = shopBackTarget({ hasOwnHistoryEntry: false, kind: "product" });
+  expect(t.action).toBe("push");
+  expect(t.path).toBe("/shop");
+  expect(t.path).not.toBe("/");
+});
+
+test("a direct link opens the department the item belongs to", () => {
+  // The closest thing to context for somebody who never had any.
+  expect(shopBackTarget({ hasOwnHistoryEntry: false, kind: "product" }).tab)
+    .toBe("product");
+  expect(shopBackTarget({ hasOwnHistoryEntry: false, kind: "credit_pack" }).tab)
+    .toBe("credit_pack");
+  expect(shopBackTarget({ hasOwnHistoryEntry: false, kind: "training_program" }).tab)
+    .toBe("training_program");
+});
+
+test("a kind with no department of its own still lands on the Shop", () => {
+  const t = shopBackTarget({ hasOwnHistoryEntry: false, kind: "gift_card" });
+  expect(t.path).toBe("/shop");
+  expect(t.tab).toBeNull();
+});
+
+test("an unknown or missing kind never invents a department", () => {
+  for (const kind of [undefined, null, "", "nonsense"]) {
+    const t = shopBackTarget({ hasOwnHistoryEntry: false, kind });
+    expect(t.path).toBe("/shop");
+    expect(t.tab).toBeNull();
+  }
 });

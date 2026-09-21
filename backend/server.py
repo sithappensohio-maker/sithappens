@@ -79,6 +79,13 @@ from domains.bookings import services as bookings_domain_services
 from domains.register import services as register_domain_services
 from domains.performance import services as performance_domain_services
 from domains.gift_cards import online as gift_card_online
+from domains.shop import media as shop_media_services
+from domains.shop import relationships as shop_relationships
+from domains.shop import orders as shop_orders_view
+from domains.shop import analytics as shop_analytics
+from domains.shop import analytics_reports as shop_analytics_reports
+from domains.shop import guest as shop_guest
+from domains.shop import checkout as shop_checkout
 from domains.gift_cards import services as gift_card_services
 from domains.gift_cards import shop as gift_card_shop
 from school_events import EventType as SchoolEvent
@@ -8282,6 +8289,7 @@ async def _claim_auto_receipt_email_once(kind: str, ref_id: str) -> bool:
 
 async def _maybe_auto_email_receipt(
     kind: str, ref_id: str, client_id: Optional[str], claim_key: Optional[str] = None,
+    fallback_email: Optional[str] = None,
 ) -> None:
     """Best-effort auto-send of the branded, settings-aware receipt right
     after a transaction commits — gated by Settings -> Receipts ->
@@ -8299,7 +8307,10 @@ async def _maybe_auto_email_receipt(
     invoice_id, which stays the same across every subsequent top-up payment
     on that invoice; each such payment is its own real event and deserves its
     own receipt email, so its claim is keyed by payment_id instead."""
-    if not client_id:
+    # `fallback_email` is for a sale with no account behind it — a guest
+    # Shop order. Somebody paid us; they get a receipt. It is only ever an
+    # address the buyer themselves supplied at checkout, never a lookup.
+    if not client_id and not fallback_email:
         return
     try:
         rs = await get_receipt_settings()
@@ -8308,8 +8319,10 @@ async def _maybe_auto_email_receipt(
         effective_key = claim_key or ref_id
         if not await _claim_auto_receipt_email_once(kind, effective_key):
             return
-        client = await db.clients.find_one({"id": client_id}, {"_id": 0, "email": 1})
-        to_email = (client or {}).get("email")
+        to_email = fallback_email
+        if client_id:
+            client = await db.clients.find_one({"id": client_id}, {"_id": 0, "email": 1})
+            to_email = (client or {}).get("email") or fallback_email
         if not to_email:
             return
         if kind == "invoice":
@@ -15712,12 +15725,13 @@ async def _send_per_step_email(hw: dict, day_number: int, step_label: str, total
     if not ADMIN_NOTIFICATION_EMAIL:
         return
     subj = f"[Step done] {hw.get('dog_name', '?')} · Day {day_number} · {step_label[:60]}"
+    _e = email_service._h
     body_html = f"""
-    <p>Step completed for <strong>{hw.get('dog_name', '?')}</strong> ({hw.get('client_name', '?')}).</p>
+    <p>Step completed for <strong>{_e(hw.get('dog_name', '?'))}</strong> ({_e(hw.get('client_name', '?'))}).</p>
     <ul>
-      <li><strong>Plan:</strong> {hw.get('title', '—')}</li>
-      <li><strong>Day:</strong> {day_number} of {hw.get('total_days') or '?'}</li>
-      <li><strong>Step:</strong> {step_label}</li>
+      <li><strong>Plan:</strong> {_e(hw.get('title', '—'))}</li>
+      <li><strong>Day:</strong> {day_number} of {_e(hw.get('total_days') or '?')}</li>
+      <li><strong>Step:</strong> {_e(step_label)}</li>
     </ul>
     <p style="color:#9ca3af; font-size:12px;">To turn off per-step emails, go to Settings → Notifications and switch off "Email me on every step".</p>
     """
@@ -16706,6 +16720,12 @@ class ProgramIn(BaseModel):
         # arrive mid-edit as empty strings — drop them at the boundary rather
         # than persisting padding into every program document.
         return [s.strip()[:300] for s in (v or []) if s and s.strip()][:12]
+    # Shop merchandising, additive. `online_sort_order` is what lets an owner
+    # decide the order featured items appear in; `shop_relationships` is the
+    # same curated "pairs well with" model products already use — one
+    # architecture, not a second one per item kind.
+    online_sort_order: Optional[int] = None
+    shop_relationships: Optional[List[dict]] = None
 
 
 # Optional skill-measurement fields carried on a goal/skill — see GoalIn's
@@ -17537,6 +17557,9 @@ async def create_program(body: ProgramIn, _: dict = Depends(require_admin_and_pe
     doc["id"] = _gid()
     doc["slug"] = doc.get("slug") or doc["name"].lower().replace(" ", "_")[:40]
     doc["modules"] = _stamp_ids(doc.get("modules") or [])
+    shop_relationships.merge_into(doc, body.shop_relationships,
+                                  self_kind="training_program", self_id=doc["id"])
+    doc.setdefault("shop_relationships", [])
     pathway_validation = await _validate_program_pathways(doc)
     if not pathway_validation["valid"]:
         raise HTTPException(status_code=422, detail={"message": "Program has invalid course pathways.", "errors": pathway_validation["errors"]})
@@ -17585,6 +17608,11 @@ async def update_program(
     if not save_as_draft:
         _validate_purchase_fulfillment(body)
     update = body.model_dump()
+    # Unmentioned means "leave them alone"; an explicit list replaces them.
+    # model_dump() turns an unmentioned field into None, so without this a
+    # save from the training editor would wipe merchandising curation.
+    shop_relationships.merge_into(update, body.shop_relationships,
+                                  self_kind="training_program", self_id=program_id)
     update["modules"] = _stamp_ids(update.get("modules") or [])
 
     if save_as_draft:
@@ -33777,6 +33805,31 @@ async def startup():
         (db.client_message_threads, "unread_admin", {"name": "message_threads_unread_admin"}),
         (db.client_message_threads, "status", {"name": "message_threads_status"}),
         (db.shop_checkout_claims, "idempotency_key", {"unique": True}),
+        # One favourite per client per item. This is what makes a double tap
+        # on a heart leave one favourite even when the two taps race — the
+        # code checks first, but only an index can decide a tie. Brand-new
+        # collection, so it can never fail to build against historical rows.
+        (db.shop_favorites, [("client_id", 1), ("kind", 1), ("ref_id", 1)],
+         {"unique": True, "name": "shop_favorites_unique"}),
+        (db.shop_favorites, [("client_id", 1), ("created_at", -1)],
+         {"name": "shop_favorites_recent"}),
+        # Shop analytics. Raw events are BOUNDED: the TTL index below is what
+        # keeps this collection from growing forever, and it is safe because
+        # revenue/units/orders are read from shop_orders (never deleted), not
+        # from here. Only the behavioural funnel is capped.
+        (db.shop_events, "expires_at",
+         {"expireAfterSeconds": 0, "name": "shop_events_ttl"}),
+        (db.shop_events, [("event", 1), ("at", 1)], {"name": "shop_events_event_at"}),
+        (db.shop_events, [("at", 1)], {"name": "shop_events_at"}),
+        (db.shop_events, [("ref_id", 1), ("event", 1), ("at", 1)],
+         {"name": "shop_events_ref"}),
+        (db.shop_events, [("session_id", 1), ("at", 1)], {"name": "shop_events_session"}),
+        # The idempotency handle: one checkout_started per attempt, one
+        # order_completed per order, however many times either is replayed.
+        # Sparse, because most events have no reason to be deduplicated.
+        (db.shop_events, "dedupe_key",
+         {"unique": True, "name": "shop_events_dedupe",
+          "partialFilterExpression": {"dedupe_key": {"$type": "string"}}}),
         # Practice assignment idempotency — one active assignment of a given
         # template to a given dog. Brand-new collection, so this unique index
         # can never fail to build against historical data.
@@ -39874,27 +39927,25 @@ async def upload_shop_media(body: ShopMediaUploadIn, user: dict = Depends(requir
     byte length, never trusted from the client. Returns a media_id decoupled
     from any specific product/pack/program — callers just store the id on
     their own `image_id` field."""
+    # Validation and derivative-building live with the pipeline. It decodes
+    # the bytes and OPENS them, so a file that merely claims to be a JPEG is
+    # refused here rather than stored and served later.
     raw = body.data
-    if not raw.startswith("data:"):
-        raise HTTPException(status_code=400, detail="Expected base64 data URL")
-    try:
-        header, b64 = raw.split(",", 1)
-        mime = header.split(";")[0].replace("data:", "").lower().strip()
-    except Exception:
-        raise HTTPException(status_code=400, detail="Malformed data URL")
-    if mime not in SHOP_MEDIA_ALLOWED_MIME:
-        raise HTTPException(status_code=400, detail=f"Unsupported image type ({mime}). Allowed: JPEG, PNG, WEBP.")
-    approx_bytes = (len(b64) * 3) // 4
-    if approx_bytes > MAX_SHOP_MEDIA_BYTES:
-        raise HTTPException(status_code=400, detail=f"Image too large ({approx_bytes // (1024 * 1024)} MB). Max is 5 MB.")
+    mime, blob = shop_media_services.decode_data_url(raw)
+    derivatives = shop_media_services.build_derivatives(blob)
     media_id = str(uuid.uuid4())
     await db.shop_media.insert_one({
         "id": media_id, "mime": mime, "data": raw,
         "filename": (body.filename or "image")[:140],
-        "size_bytes": approx_bytes,
+        "size_bytes": len(blob),
+        "derivatives": derivatives,
+        "derivatives_built_at": now_iso(),
         "uploaded_at": now_iso(), "uploaded_by": user.get("id"),
     })
-    return {"media_id": media_id, "mime": mime, "filename": body.filename, "size_bytes": approx_bytes}
+    return {"media_id": media_id, "mime": mime, "filename": body.filename,
+            "size_bytes": len(blob),
+            "sizes": {k: {"w": v["w"], "h": v["h"], "bytes": v["bytes"]}
+                      for k, v in derivatives.items()}}
 
 
 @api.get("/shop/media/{media_id}")
@@ -39920,6 +39971,11 @@ async def _shop_media_referenced_by(media_id: str) -> Optional[str]:
     would miss a category still using a media_id only as its mobile image."""
     if await db.pos_products.find_one({"image_id": media_id}, {"_id": 0, "id": 1}):
         return "a product"
+    # Galleries store every image in `image_ids`; without this an image still
+    # showing on a product could be deleted because only the primary field
+    # was ever checked.
+    if await db.pos_products.find_one({"image_ids": media_id}, {"_id": 0, "id": 1}):
+        return "a product gallery"
     if await db.credit_packs.find_one({"image_id": media_id}, {"_id": 0, "id": 1}):
         return "a credit pack"
     if await db.programs.find_one({"image_id": media_id}, {"_id": 0, "id": 1}):
@@ -40837,21 +40893,23 @@ def _public_purchase_state(kind: str, item_doc: dict, *, global_show_public_pric
     nor if its price isn't visible to guests. account_required is NEVER a
     stored/input field — only ever computed here, so it can never be
     misconfigured into a guest-checkout bypass."""
-    is_product = kind == "product"
     publicly_visible = item_doc.get("publicly_visible")
     if publicly_visible is None:
         publicly_visible = True  # caller already filtered to show_online/available_online rows
     requires_dog = bool(item_doc.get("requires_dog", False))
     requires_approval = bool(item_doc.get("requires_approval", False))
     requires_completed_onboarding = bool(item_doc.get("requires_completed_onboarding", False))
-    has_account_requirement = requires_dog or requires_approval or requires_completed_onboarding
     price_visible = global_show_public_prices and bool(item_doc.get("show_public_price", True))
-    stored_guest_cart_allowed = is_product and bool(item_doc.get("guest_cart_allowed", False))
-    # Effective eligibility: kind must be product, the stored flag must be
-    # True, NONE of the account-dependent requirements may apply, AND price
-    # must actually be visible — any one of these overrides the stored flag.
-    guest_cart_allowed = stored_guest_cart_allowed and not has_account_requirement and price_visible
-    account_required = (not is_product) or has_account_requirement or not stored_guest_cart_allowed
+    # The guest rule lives in ONE place (domains.shop.guest) because the
+    # storefront and the checkout must never disagree about it: this decides
+    # which button a visitor sees, and the same function decides whether the
+    # charge is allowed to happen. Computing it twice is how a Buy button
+    # ends up leading to a 400.
+    guest_cart_allowed = shop_guest.guest_purchasable(kind, item_doc, price_visible=price_visible)
+    # account_required answers a different question: "would signing in
+    # help?". A price-hidden item is NOT account_required — signing in is
+    # exactly what reveals the price — so it is asked with price set aside.
+    account_required = not shop_guest.guest_purchasable(kind, item_doc, price_visible=True)
     # Free Online School claim eligibility is COMPUTED here for the same
     # reason account_required is: a storefront must never decide that
     # something is claimable just because a stored flag says so. This mirrors
@@ -40892,6 +40950,30 @@ def _credit_pack_display_fields(pk: dict, qty: int, effective_price: float) -> d
         out["display_price_each"] = round(float(effective_price) / dq, 2)
         out["credits_per_display_unit"] = round(float(qty) / dq, 2)
     return out
+
+
+def _listed_on(doc: dict) -> Optional[str]:
+    """The DAY a catalog item was put on the shelf, for "New" badges and the
+    Newest sort — never the raw stored timestamp.
+
+    The client/public catalog is an allowlist of safe, customer-facing
+    fields; `created_at` is bookkeeping and stays on the admin side of that
+    line (test_client_shop_catalog's no-internal-leak contract asserts as
+    much). A date with no time is the whole of what merchandising needs,
+    and it is the business's own day, not UTC's, so an item added at 9pm
+    is "listed on" the evening it was actually added.
+    """
+    raw = doc.get("created_at")
+    if isinstance(raw, str):
+        try:
+            raw = datetime.fromisoformat(raw.replace("Z", "+00:00"))
+        except ValueError:
+            return raw[:10] or None
+    if not isinstance(raw, datetime):
+        return None
+    if raw.tzinfo is None:
+        raw = raw.replace(tzinfo=timezone.utc)
+    return raw.astimezone(BUSINESS_TZ).date().isoformat()
 
 
 async def _build_shop_catalog(client_id: Optional[str]) -> dict:
@@ -40970,6 +41052,9 @@ async def _build_shop_catalog(client_id: Optional[str]) -> dict:
                 "shopify_display_price": p.get("shopify_display_price"),
                 "shopify_from_price": bool(p.get("shopify_from_price")),
                 "featured": bool(p.get("featured")),
+                # The day it went on the shelf, so the storefront can say "New"
+                # from a real date instead of guessing. No date, no badge.
+                "listed_on": _listed_on(p),
                 "image_id": p.get("image_id"),
                 "sort_order": p.get("online_sort_order"),
                 # Public no-account storefront (Phase 1c fields) — carried
@@ -41006,12 +41091,17 @@ async def _build_shop_catalog(client_id: Optional[str]) -> dict:
             "category": p.get("category") or "",
             "sales_destination": "internal",
             "featured": bool(p.get("featured")),
+            "listed_on": _listed_on(p),
             "list_price": list_price,
             "effective_price": effective_price,
             "pricing_source": pricing["pricing_source"],
             "price_override_id": pricing["override_id"],
             "has_price_override": has_override,
             "image_id": p.get("image_id"),
+            # Every image, primary first. A product from before galleries
+            # existed reads back as a one-image gallery, so the storefront
+            # can be written against this alone.
+            "image_ids": shop_media_services.gallery_ids(p),
             "sort_order": p.get("online_sort_order"),
             "track_inventory": track,
             "in_stock": (not track) or (stock > 0.0005),
@@ -41061,6 +41151,7 @@ async def _build_shop_catalog(client_id: Optional[str]) -> dict:
             "value_each": round(effective_price / max(qty, 1), 2),
             "image_id": pk.get("image_id"),
             "featured": bool(pk.get("featured")),
+            "listed_on": _listed_on(pk),
             # Backward-compatible aliases for existing consumers — new code
             # should read the clearer fields above instead.
             "price": effective_price,
@@ -41093,6 +41184,7 @@ async def _build_shop_catalog(client_id: Optional[str]) -> dict:
             "price": round(float(prog.get("price") or 0), 2),
             "image_id": prog.get("image_id"),
             "featured": bool(prog.get("featured")),
+            "listed_on": _listed_on(prog),
             "publicly_visible": prog.get("publicly_visible"),
             "show_public_price": bool(prog.get("show_public_price", True)),
             "requires_dog": bool(prog.get("requires_dog", False)),
@@ -41123,6 +41215,20 @@ async def _build_shop_catalog(client_id: Optional[str]) -> dict:
         })
 
     items += await gift_card_shop.catalog_items()
+
+    # Truthful Best Seller, tagged on at the end and never computed per item.
+    # This is the ORDERS talking: an admin cannot set it, and it is absent
+    # entirely when the shop has not sold enough for the badge to mean
+    # anything. Cached for a few minutes, and swallowed on failure — a badge
+    # must never be the reason a catalogue fails to load.
+    try:
+        best = await shop_analytics_reports.best_seller_ids(
+            db, today_iso=business_today().isoformat(), bounds=_business_range_utc_bounds)
+        for item in items:
+            if item.get("id") in best:
+                item["best_seller"] = True
+    except Exception:
+        logger.warning("best-seller tagging failed; catalog served without badges", exc_info=True)
 
     return {"items": items}
 
@@ -41159,6 +41265,11 @@ async def get_shop_catalog(user: dict = Depends(get_current_user)):
 # strings used by the cart/checkout (ShopCartItemIn.kind), not the admin
 # Shop Manager's "physical_product" spelling.
 _SHOP_ITEM_DETAIL_SECTION = {"product": "merch", "credit_pack": "prepaid_visits", "training_program": "training"}
+# A gift card has no section — it is money, not a department of the business
+# — but it IS a thing with its own product page. Keeping it out of the map
+# above and listing it here means the detail route serves it while nothing
+# tries to look up a section it does not have.
+_SHOP_ITEM_DETAIL_KINDS = frozenset(_SHOP_ITEM_DETAIL_SECTION) | {"gift_card"}
 
 
 @api.get("/shop/item/{kind}/{item_id}")
@@ -41173,15 +41284,17 @@ async def get_shop_item_detail(kind: str, item_id: str, user: dict = Depends(get
     state."""
     if user.get("role") != "client":
         raise HTTPException(status_code=403, detail="Client account required")
-    if kind not in _SHOP_ITEM_DETAIL_SECTION:
+    if kind not in _SHOP_ITEM_DETAIL_KINDS:
         raise HTTPException(status_code=404, detail="This item is unavailable.")
     catalog = await _build_shop_catalog(user.get("client_id"))
     item = next((dict(i) for i in catalog["items"] if i["kind"] == kind and i["id"] == item_id), None)
     if not item:
         raise HTTPException(status_code=404, detail="This item is unavailable.")
-    section = _SHOP_ITEM_DETAIL_SECTION[kind]
-    item["section"] = section
-    item["section_label"] = SHOP_SECTION_LABELS[section]
+    # A gift card belongs to no section; everything else does.
+    section = _SHOP_ITEM_DETAIL_SECTION.get(kind)
+    if section:
+        item["section"] = section
+        item["section_label"] = SHOP_SECTION_LABELS[section]
     if kind == "training_program":
         prog = await db.programs.find_one({"id": item_id}, {"_id": 0})
         prereq_slugs = (prog or {}).get("prereq_slugs") or []
@@ -41292,11 +41405,15 @@ async def shop_manager_catalog_preview_taxonomy(_: dict = Depends(require_admin_
 # ─────────────────────────────────────────────────────────────────────────────
 
 _PUBLIC_FIELDS_COMMON = {
-    "kind", "id", "name", "description", "image_id",
+    "kind", "id", "name", "description", "image_id", "image_ids",
     "category_id", "category_name", "subcategory_id", "subcategory_name",
     "sort_order", "featured", "publicly_visible", "account_required",
     "guest_cart_allowed", "requires_dog", "requires_approval",
     "requires_completed_onboarding", "availability",
+    # The day it went on the shelf, so a public storefront can say "New"
+    # from a real date rather than guessing. A day, never the stored
+    # timestamp; an item with no date simply gets no badge.
+    "listed_on", "best_seller",
 }
 # ALL price-ish fields, including Shopify's own displayed price — stripped
 # under the exact same show_public_prices/show_public_price gate as every
@@ -41396,14 +41513,16 @@ async def _public_visible_shop_items() -> list[dict]:
     show_public_prices_global = bool(sp.get("show_public_prices", True))
     out = []
     for raw in catalog["items"]:
-        # Gift cards are for signed-in clients: the card is delivered by
-        # email, so there has to be an account behind it. A kind with no
-        # public section is simply not part of the public storefront.
-        if raw["kind"] not in _PUBLIC_SECTION_FOR_KIND:
-            continue
-        section = _PUBLIC_SECTION_FOR_KIND[raw["kind"]]
-        if not bool(sp.get(_PUBLIC_SECTION_FLAG_FOR_SECTION[section], True)):
-            continue
+        # A gift card belongs to no section, because it is not a department
+        # — it is money, and it is the one thing here a stranger can buy
+        # outright. Its own switch is the amounts list: turn gift cards off
+        # and the catalog offers none, so there is nothing to filter.
+        if raw["kind"] != "gift_card":
+            if raw["kind"] not in _PUBLIC_SECTION_FOR_KIND:
+                continue
+            section = _PUBLIC_SECTION_FOR_KIND[raw["kind"]]
+            if not bool(sp.get(_PUBLIC_SECTION_FLAG_FOR_SECTION[section], True)):
+                continue
         built = _build_public_shop_item(raw, global_show_public_prices=show_public_prices_global)
         if built is None:
             continue
@@ -41436,15 +41555,16 @@ async def get_public_shop_item_detail(kind: str, item_id: str, request: Request)
     state shown even when show_out_of_stock hides it from browsing. Same
     404-never-403 behavior as the authenticated item-detail route."""
     await _enforce_rate_limit(request, "public_shop_catalog", _client_ip(request), limit=60, window_seconds=60)
-    if kind not in _SHOP_ITEM_DETAIL_SECTION:
+    if kind not in _SHOP_ITEM_DETAIL_KINDS:
         raise HTTPException(status_code=404, detail="This item is unavailable.")
     items = await _public_visible_shop_items()
     item = next((dict(i) for i in items if i["kind"] == kind and i["id"] == item_id), None)
     if not item:
         raise HTTPException(status_code=404, detail="This item is unavailable.")
-    section = _SHOP_ITEM_DETAIL_SECTION[kind]
-    item["section"] = section
-    item["section_label"] = SHOP_SECTION_LABELS[section]
+    section = _SHOP_ITEM_DETAIL_SECTION.get(kind)
+    if section:
+        item["section"] = section
+        item["section_label"] = SHOP_SECTION_LABELS[section]
     return item
 
 
@@ -41546,7 +41666,12 @@ async def _is_public_shop_media(media_id: str) -> bool:
 
     for coll, online_field in ((db.pos_products, "show_online"), (db.credit_packs, "available_online"), (db.programs, "available_online")):
         doc = await coll.find_one(
-            {"image_id": media_id, "active": True, online_field: True, "publicly_visible": {"$ne": False}},
+            # Matches the primary field OR anywhere in the gallery. Checking
+            # only image_id meant every photo after the first 404'd on the
+            # public storefront — the product page showed one picture and
+            # two broken thumbnails.
+            {"$or": [{"image_id": media_id}, {"image_ids": media_id}],
+             "active": True, online_field: True, "publicly_visible": {"$ne": False}},
             {"_id": 0, "id": 1, "category_id": 1, "subcategory_id": 1},
         )
         if not doc:
@@ -41641,88 +41766,14 @@ SHOP_PAYMENT_ATTEMPT_TERMINAL_STATUSES = ("applied", "failed", "expired", "cance
 SHOP_PICKUP_INITIALIZED_STATES = ("preparing", "ready_for_pickup", "picked_up", "not_applicable")
 
 
-class ShopCartItemIn(BaseModel):
-    kind: Literal["product", "credit_pack", "training_program", "gift_card"]
-    ref_id: str = Field(min_length=1)
-    quantity: int = Field(ge=1, le=50)
-    # Phase 5 — Online School commerce. Only meaningful for a
-    # training_program line whose program is configured
-    # purchase_fulfillment="online_school" (see _validate_shop_item_eligibility);
-    # every other line kind/fulfillment ignores this field entirely, same
-    # as before it existed. Never trusted as proof of ownership by itself —
-    # ownership is re-validated server-side at eligibility-check time.
-    dog_id: Optional[str] = None
-    # gift_card lines only — who the emailed card goes to. Left out, it goes
-    # to the buyer, which is the common case (buying one for yourself, or to
-    # forward on yourself).
-    recipient_email: Optional[str] = Field(default=None, max_length=200)
+# The Shop cart lives with the Shop; imported back so every existing
+# reference to these names in server.py keeps resolving.
+from domains.shop.cart import (  # noqa: E402
+    ShopCartItemIn, ShopCheckoutIn, _normalize_cart_lines)
 
 
-class ShopCheckoutIn(BaseModel):
-    items: List[ShopCartItemIn] = Field(min_length=1, max_length=40)
-    idempotency_key: str = Field(min_length=8, max_length=128)
 
 
-def _normalize_cart_lines(items: List[ShopCartItemIn]) -> List[ShopCartItemIn]:
-    """Aggregates duplicate (kind, ref_id) cart lines into ONE summed-
-    quantity line each, in first-seen order — called before pricing, stock
-    checks, idempotency fingerprinting, reservation, entitlement creation,
-    or Stripe session creation, so a cart split into several small
-    duplicate lines can never bypass a stock ceiling or eligibility check
-    that only looked at each line individually.
-
-    Explicitly validates kind/ref_id/quantity itself rather than trusting
-    the caller's Pydantic model instance — the combined line below is built
-    via `model_construct` (bypassing Pydantic's own per-line `le=50` cap,
-    which was only ever a per-request-line sanity bound, not a true
-    aggregate ceiling — the real ceiling is the stock check downstream),
-    so this function is the one place a malformed line is guaranteed to be
-    rejected with a clean 422, never an unhandled construction error.
-
-    Phase 5 — the aggregation key includes `dog_id` so two different dogs
-    buying the same online_school-fulfillment program stay as separate
-    lines (each needs its own enrollment) rather than being summed into a
-    single quantity>1 line, which _validate_shop_item_eligibility rejects
-    for that fulfillment kind. Every non-dog-targeted line (dog_id=None,
-    i.e. every line kind/program that existed before Phase 5) aggregates
-    exactly as it always has.
-
-    Commerce-integrity hardening — a dog_id-carrying line represents ONE
-    Online School entitlement for that one dog (dog_id is only ever set by
-    the client for that purpose; see ShopCartItemIn.dog_id). Quantity must
-    equal exactly 1 for such a line, enforced HERE, before pricing/stock/
-    eligibility/Stripe ever run — not merely by _validate_shop_item_eligibility
-    (defense-in-depth, kept below) and never only by hiding the UI quantity
-    stepper. Rejects a single request line requesting >1, and rejects two
-    requests for the SAME (kind, ref_id, dog_id) combining to >1 — neither
-    a single oversized line nor a client re-submitting the same dog+course
-    twice can turn into a quantity>1 charge for one entitlement."""
-    combined: Dict[Tuple[str, str, Optional[str]], int] = {}
-    order_seen: List[Tuple[str, str, Optional[str]]] = []
-    for it in items:
-        kind = it.kind
-        ref_id = (it.ref_id or "").strip()
-        qty = it.quantity
-        dog_id = (it.dog_id or "").strip() or None
-        if kind not in ("product", "credit_pack", "training_program"):
-            raise HTTPException(status_code=422, detail="Invalid item kind in cart.")
-        if not ref_id:
-            raise HTTPException(status_code=422, detail="Invalid item in cart.")
-        if not isinstance(qty, int) or isinstance(qty, bool) or qty <= 0:
-            raise HTTPException(status_code=422, detail="Invalid quantity in cart.")
-        if dog_id and qty != 1:
-            raise HTTPException(status_code=422, detail="An Online School course can only be purchased one at a time per dog.")
-        key = (kind, ref_id, dog_id)
-        if key not in combined:
-            order_seen.append(key)
-            combined[key] = 0
-        combined[key] += qty
-        if dog_id and combined[key] > 1:
-            raise HTTPException(status_code=422, detail="An Online School course can only be purchased one at a time per dog.")
-    return [
-        ShopCartItemIn.model_construct(kind=k, ref_id=rid, quantity=combined[(k, rid, did)], dog_id=did)
-        for (k, rid, did) in order_seen
-    ]
 
 
 _SHOP_ITEM_ONLINE_FIELD = {"product": "show_online", "credit_pack": "available_online", "training_program": "available_online"}
@@ -41935,6 +41986,8 @@ async def _price_shop_cart(items: List[ShopCartItemIn], client_id: Optional[str]
         line = {
             "item_id": str(uuid.uuid4()), "kind": cart_item.kind, "ref_id": cart_item.ref_id,
             "recipient_email": (getattr(cart_item, "recipient_email", None) or "").strip(),
+            "recipient_name": (getattr(cart_item, "recipient_name", None) or "").strip(),
+            "gift_message": (getattr(cart_item, "gift_message", None) or "").strip(),
             "name": name, "unit_price": unit_price, "quantity": qty,
             "line_subtotal": line_subtotal, "allocated_tax": 0.0,
             "line_total": line_subtotal, "fulfillment_status": "pending",
@@ -42464,7 +42517,12 @@ async def _queue_new_shop_order_notification(order: dict) -> None:
     already_delivered = await db.notification_log.find_one({"key": f"shop_order_new:{order_id}"}, {"_id": 0, "key": 1})
     if already_delivered is not None:
         return
-    client = await db.clients.find_one({"id": order.get("client_id")}, {"_id": 0})
+    # A guest order has no client_id, and {"id": None} is a real query that
+    # would match any document whose id happens to be null. Ask only when
+    # there is something to ask about; the email falls back to the order's
+    # own client_name/client_email, which a guest order carries.
+    client_id = order.get("client_id")
+    client = await db.clients.find_one({"id": client_id}, {"_id": 0}) if client_id else None
     await queue_admin_new_shop_order(order, client)
 
 
@@ -42526,9 +42584,21 @@ async def _apply_shop_payment(attempt: dict, session_obj: Optional[dict] = None)
             # call that finds the order already flipped takes the `fresh`
             # branch above instead, so this can never double-send.
             try:
-                asyncio.create_task(_maybe_auto_email_receipt("shop_order", order_id, order.get("client_id")))
+                asyncio.create_task(_maybe_auto_email_receipt(
+                    "shop_order", order_id, order.get("client_id"),
+                    fallback_email=order.get("client_email") if order.get("is_guest_order") else None))
             except Exception as exc:
                 logger.warning("auto-email receipt spawn failed for shop order %s: %s", order_id, exc)
+            # Analytics, from the ONE place an order becomes paid. Idempotent
+            # on the order id, so a replayed webhook leaves one row. It is
+            # deliberately not where revenue comes from — the dashboard reads
+            # these orders directly — so failing here costs a funnel join and
+            # never a dollar, which is why it can be swallowed.
+            try:
+                await shop_analytics.record_order_completed(
+                    db, order, business_date=business_date)
+            except Exception as exc:
+                logger.warning("shop analytics order_completed failed for %s: %s", order_id, exc)
 
     # ── Step B1 — canonical Payment row, reusing the EXISTING check-before-
     # insert idempotency helper. invoice_id=None, shop_order_id set. ──
@@ -42833,188 +42903,22 @@ async def claim_free_program(body: FreeCourseClaimIn, user: dict = Depends(get_c
 
 @api.post("/shop/checkout")
 async def create_shop_checkout(body: ShopCheckoutIn, user: dict = Depends(get_current_user)):
-    """Client Shop Phase 2 — the ONE checkout entry point. Claim-first
-    idempotency preassigns a shop_order_id so a retried request always
-    resumes the SAME order/reservation/Stripe session rather than pricing,
-    reserving, or charging a second time."""
+    """Client Shop Phase 2 — the ONE checkout entry point for a signed-in
+    client. The sequence itself (claim-first idempotency, per-line
+    eligibility, reservation, Stripe session, cleanup) lives in
+    domains.shop.checkout and is shared byte-for-byte with guest checkout,
+    so the two can never drift apart. All this adds is who is buying."""
     if user.get("role") != "client":
         raise HTTPException(status_code=403, detail="Client account required")
-    _require_stripe_online_enabled()
     client_id = user.get("client_id")
-    client = await db.clients.find_one({"id": client_id}, {"_id": 0})
+    client = await db.clients.find_one({"id": client_id}, {"_id": 0}) if client_id else None
     if not client:
         raise HTTPException(status_code=404, detail="Client not found")
-
-    # Combine duplicate (kind, ref_id) lines into one BEFORE anything else —
-    # fingerprinting, pricing, stock checks, eligibility, reservation,
-    # entitlement creation, and Stripe session creation all operate on this
-    # normalized list, never the raw, possibly-duplicated request body.
-    normalized_items = _normalize_cart_lines(body.items)
-
-    cart_fingerprint_items = [{"kind": it.kind, "ref_id": it.ref_id, "quantity": it.quantity, "dog_id": it.dog_id} for it in normalized_items]
-    fingerprint = _request_fingerprint(client_id, cart_fingerprint_items)
-    order_id = str(uuid.uuid4())
-    ts = now_iso()
-
-    try:
-        await db.shop_checkout_claims.insert_one({
-            "id": str(uuid.uuid4()), "idempotency_key": body.idempotency_key, "request_fingerprint": fingerprint,
-            "client_id": client_id, "shop_order_id": order_id, "created_at": ts, "updated_at": ts,
-        })
-    except DuplicateKeyError:
-        existing_claim = await db.shop_checkout_claims.find_one({"idempotency_key": body.idempotency_key}, {"_id": 0})
-        if not existing_claim or existing_claim.get("client_id") != client_id or existing_claim.get("request_fingerprint") != fingerprint:
-            raise HTTPException(status_code=409, detail="This idempotency key was already used for a different request.")
-        order_id = existing_claim["shop_order_id"]  # resume the SAME order this key already claimed
-
-    order = await db.shop_orders.find_one({"id": order_id}, {"_id": 0})
-    if not order:
-        priced = await _price_shop_cart(normalized_items, client_id=client_id)
-        if priced["total"] <= 0.005:
-            raise HTTPException(status_code=400, detail="Cart total must be greater than zero.")
-
-        # Additive eligibility/state revalidation — immediately before the
-        # order (and therefore any reservation, entitlement, inventory
-        # movement, or Stripe session) is created. A rejection here means
-        # no order row is ever inserted — the idempotency claim row above
-        # is the only trace of the attempt, and the same idempotency key
-        # can be retried later once the underlying issue is fixed. Runs
-        # only on first creation, never when resuming an already-created
-        # order, so a fully eligible cart's idempotent-retry behavior is
-        # completely unaffected.
-        for line in priced["lines"]:
-            if line["kind"] == "gift_card":
-                continue  # no catalog row, no stock, no eligibility to check
-            item_doc = await db[_SHOP_ITEM_COLLECTION_NAME[line["kind"]]].find_one({"id": line["ref_id"]}, {"_id": 0})
-            await _validate_shop_item_eligibility(client, line["kind"], item_doc, int(line["quantity"]), dog_id=line.get("dog_id"))
-
-        order_doc = {
-            "id": order_id, "client_id": client_id, "client_name": client.get("name") or "",
-            # Where a digital gift card goes when the buyer did not name
-            # somebody else. Stored on the order so fulfilment (which runs
-            # later, from a webhook) does not have to re-read the client.
-            "client_email": client.get("email") or "",
-            "status": "pending_payment", "fulfillment_status": "pending", "pickup_status": None,
-            "lines": priced["lines"], "subtotal": priced["subtotal"], "tax_amount": priced["tax_amount"],
-            "tax_rate_pct": priced["tax_rate_pct"], "total": priced["total"], "currency": "USD",
-            "stripe_active_attempt_id": None, "stripe_reserved_amount_cents": None,
-            "shop_last_applied_attempt_id": None,
-            # Front Desk "new order" badge marker. Initialized ONCE here at
-            # creation (never inside _apply_shop_payment, which is
-            # replayable) so a webhook replay/Retry Fulfillment can never
-            # reset it back to true once staff has seen it. Historical
-            # orders predating this field simply lack it — the unseen-count
-            # query requires admin_unseen == True by exact match, so a
-            # missing field never counts (never treated as unseen).
-            "admin_unseen": True,
-            "created_at": ts, "updated_at": ts,
-        }
-        try:
-            await db.shop_orders.insert_one(order_doc)
-            order = order_doc
-        except DuplicateKeyError:
-            order = await db.shop_orders.find_one({"id": order_id}, {"_id": 0})
-
-    if order.get("status") in ("payment_failed", "canceled"):
-        raise HTTPException(status_code=409, detail="This order can no longer be paid — please start a new checkout.")
-
-    # Reserve inventory for every physical line — per-line independent, using
-    # the exact retry precedence documented on _reserve_shop_inventory_line.
-    for line in order["lines"]:
-        await _reserve_shop_inventory_line(order, line)
-
-    amount_cents = _stripe_amount_cents(order["total"])
-    attempt_id = str(uuid.uuid4())
-    try:
-        await db.shop_payment_attempts.insert_one({
-            "id": attempt_id, "idempotency_key": body.idempotency_key, "request_fingerprint": fingerprint,
-            "shop_order_id": order_id, "client_id": client_id, "amount_cents": amount_cents,
-            "status": "pending",
-            "stripe_checkout_session_id": None, "stripe_checkout_session_url": None,
-            "stripe_payment_intent_id": None, "stripe_customer_id": None,
-            "card_brand": None, "card_last4": None, "applied_payment_id": None,
-            "created_at": ts, "updated_at": ts, "expires_at": None,
-        })
-    except DuplicateKeyError:
-        existing = await db.shop_payment_attempts.find_one({"idempotency_key": body.idempotency_key}, {"_id": 0})
-        if not existing or existing.get("shop_order_id") != order_id:
-            raise HTTPException(status_code=409, detail="This idempotency key was already used for a different request.")
-        if existing.get("stripe_checkout_session_url"):
-            return {"url": existing["stripe_checkout_session_url"], "order_id": order_id}
-        if existing.get("status") in SHOP_PAYMENT_ATTEMPT_TERMINAL_STATUSES:
-            raise HTTPException(status_code=409, detail="This payment attempt has already been resolved.")
-        attempt_id = existing["id"]
-
-    reserved_order = await _acquire_shop_order_reservation(order_id, attempt_id, amount_cents)
-    if reserved_order is None:
-        current_order = await db.shop_orders.find_one({"id": order_id}, {"_id": 0, "stripe_active_attempt_id": 1})
-        if not (current_order and current_order.get("stripe_active_attempt_id") == attempt_id):
-            await db.shop_payment_attempts.delete_one({"id": attempt_id, "stripe_checkout_session_id": None})
-            raise HTTPException(status_code=409, detail="This order already has an active online payment in progress.")
-
-    expires_at = datetime.now(timezone.utc) + timedelta(seconds=STRIPE_CHECKOUT_EXPIRES_SECONDS)
-    stripe_customer_id = client.get("stripe_customer_id")
-    try:
-        if not stripe_customer_id:
-            customer = stripe.Customer.create(
-                name=client.get("name") or None, email=client.get("email") or None,
-                metadata={"sithappens_client_id": client_id},
-            )
-            stripe_customer_id = customer["id"]
-            await db.clients.update_one({"id": client_id}, {"$set": {"stripe_customer_id": stripe_customer_id}})
-
-        line_items = [{
-            "price_data": {
-                "currency": "usd", "product_data": {"name": l["name"]},
-                "unit_amount": _stripe_amount_cents(l["unit_price"]),
-            },
-            "quantity": l["quantity"],
-        } for l in order["lines"]]
-        if order.get("tax_amount"):
-            line_items.append({
-                "price_data": {
-                    "currency": "usd", "product_data": {"name": "Sales tax"},
-                    "unit_amount": _stripe_amount_cents(order["tax_amount"]),
-                },
-                "quantity": 1,
-            })
-
-        session = stripe.checkout.Session.create(
-            mode="payment",
-            customer=stripe_customer_id,
-            line_items=line_items,
-            success_url=f"{_app_public_url()}/portal?shop_order={order_id}&stripe=success",
-            cancel_url=f"{_app_public_url()}/portal?shop_order={order_id}&stripe=cancel",
-            expires_at=int(expires_at.timestamp()),
-            metadata={
-                "sithappens_attempt_id": attempt_id, "sithappens_shop_order_id": order_id,
-                "sithappens_client_id": client_id,
-            },
-            idempotency_key=f"shop_attempt_create:{attempt_id}",
-        )
-    except Exception as exc:
-        await db.shop_payment_attempts.update_one({"id": attempt_id}, {"$set": {"status": "failed", "updated_at": now_iso()}})
-        await _release_shop_order_reservation_if_owned(order_id, attempt_id)
-        # Unlike an invoice (no separate inventory concept), a shop order may
-        # already hold real stock reservations at this point — those must
-        # never be left dangling just because Stripe itself was unreachable.
-        # Mark the order failed and release every physical line's claim.
-        await db.shop_orders.update_one(
-            {"id": order_id, "status": {"$ne": "paid"}},
-            {"$set": {"status": "payment_failed", "updated_at": now_iso()}},
-        )
-        await _release_shop_order_inventory(order_id)
-        logger.warning("Stripe Checkout Session creation failed for shop attempt %s: %s", attempt_id, exc)
-        raise HTTPException(status_code=502, detail="Could not start the online payment — please try again.")
-
-    await db.shop_payment_attempts.update_one(
-        {"id": attempt_id},
-        {"$set": {
-            "stripe_checkout_session_id": session["id"], "stripe_checkout_session_url": session["url"],
-            "stripe_customer_id": stripe_customer_id, "expires_at": expires_at.isoformat(), "updated_at": now_iso(),
-        }},
+    return await shop_checkout.create_checkout(
+        buyer=shop_checkout.client_buyer(client),
+        items=body.items,
+        idempotency_key=body.idempotency_key,
     )
-    return {"url": session["url"], "order_id": order_id}
 
 
 @api.get("/portal/shop-orders")
@@ -43029,16 +42933,15 @@ async def portal_shop_orders(user: dict = Depends(get_current_user)):
     orders = []
     if cid:
         rows = await db.shop_orders.find({"client_id": cid}, {"_id": 0}).sort("created_at", -1).to_list(200)
-        for o in rows:
-            orders.append({
-                "order_id": o["id"], "created_at": o.get("created_at"),
-                "status": o.get("status"), "fulfillment_status": o.get("fulfillment_status"),
-                "pickup_status": o.get("pickup_status"), "total": o.get("total"),
-                "lines": [
-                    {"kind": l["kind"], "name": l["name"], "quantity": l["quantity"], "fulfillment_status": l.get("fulfillment_status")}
-                    for l in (o.get("lines") or [])
-                ],
-            })
+        # One projection, shared with the guest order view (domains/shop/
+        # orders.py). Two hand-written dictionaries drift, and the way they
+        # drift is that one starts returning a field nobody meant to publish.
+        #
+        # One catalogue read for the whole list, purely so each row can show
+        # a thumbnail — never one read per order, and never one per line.
+        catalog = await _build_shop_catalog(cid)
+        items_by_ref = {(i["kind"], i["id"]): i for i in catalog["items"]}
+        orders = [shop_orders_view.summary(o, items_by_ref) for o in rows]
     return {"orders": orders}
 
 
@@ -43047,7 +42950,13 @@ async def portal_shop_order_status(order_id: str, user: dict = Depends(get_curre
     if user.get("role") != "client":
         raise HTTPException(status_code=403, detail="Client account required")
     order = await db.shop_orders.find_one({"id": order_id}, {"_id": 0})
-    if not order or order.get("client_id") != user.get("client_id"):
+    # `not user.get("client_id")` first, and on its own: a client-role
+    # session that somehow carries no client_id would otherwise compare
+    # None to a guest order's None client_id, agree, and read a stranger's
+    # order. Guest orders are reachable only with their own token.
+    if not user.get("client_id") or not order or order.get("is_guest_order"):
+        raise HTTPException(status_code=404, detail="Order not found")
+    if order.get("client_id") != user.get("client_id"):
         raise HTTPException(status_code=404, detail="Order not found")
 
     attempt = await db.shop_payment_attempts.find_one({"shop_order_id": order_id}, {"_id": 0})
@@ -43059,14 +42968,22 @@ async def portal_shop_order_status(order_id: str, user: dict = Depends(get_curre
         except HTTPException:
             pass  # verification itself failed — client just sees the current state and can poll again
 
-    return {
-        "order_id": order_id, "status": order.get("status"), "fulfillment_status": order.get("fulfillment_status"),
-        "pickup_status": order.get("pickup_status"), "total": order.get("total"),
-        "lines": [
-            {"kind": l["kind"], "name": l["name"], "quantity": l["quantity"], "fulfillment_status": l.get("fulfillment_status")}
-            for l in (order.get("lines") or [])
-        ],
-    }
+    # Pictures, stock and "can they buy this again" all come from the LIVE
+    # catalogue, read ONCE for the whole order — never once per line, and
+    # never from the order's own frozen pricing. What a thing cost is
+    # history; what it costs is a question only today can answer.
+    catalog = await _build_shop_catalog(user.get("client_id"))
+    items_by_ref = {(i["kind"], i["id"]): i for i in catalog["items"]}
+    enrollments = await shop_orders_view.enrollments_for(db, order, user.get("client_id"))
+    actions_by_item_id = {}
+    for line in (order.get("lines") or []):
+        actions_by_item_id[str(line.get("item_id"))] = await shop_orders_view.line_actions(
+            db=db, order=order, line=line,
+            item=items_by_ref.get((line.get("kind"), line.get("ref_id"))),
+            viewer_client_id=user.get("client_id"), enrollment_by_key=enrollments,
+        )
+    return shop_orders_view.detail(
+        order, items_by_ref=items_by_ref, actions_by_item_id=actions_by_item_id)
 
 
 # ── Front Desk — Online Orders surface ──────────────────────────────────────
@@ -43180,6 +43097,18 @@ async def update_shop_order_fulfillment(order_id: str, body: ShopOrderFulfillmen
 # never edited directly by the product edit form, only by a sale, a void, or
 # an explicit stock adjustment.
 
+def _product_image_fields(body) -> dict:
+    """Keep `image_ids` (the gallery) and `image_id` (the primary) in step.
+
+    Written in ONE place so they can never disagree: whatever is first in the
+    gallery IS the primary image, and a caller that only sent image_id still
+    gets a one-image gallery it can be read back as.
+    """
+    gallery = shop_media_services.normalize_gallery(
+        getattr(body, "image_ids", None), getattr(body, "image_id", None))
+    return {"image_ids": gallery, "image_id": gallery[0] if gallery else None}
+
+
 class PosProductIn(BaseModel):
     name: str = Field(min_length=1, max_length=200)
     sku: Optional[str] = Field(default=None, max_length=100)
@@ -43200,6 +43129,11 @@ class PosProductIn(BaseModel):
     show_online: bool = False
     online_description: Optional[str] = Field(default=None, max_length=1000)
     image_id: Optional[str] = None
+    # A gallery, primary first. Additive: a caller that only knows about
+    # image_id keeps working, and image_id is kept in step below so every
+    # existing reader — Shop Manager tables, the register grid, receipts —
+    # still sees the primary image exactly where it always was.
+    image_ids: Optional[List[str]] = None
     online_sort_order: Optional[int] = None
     # Shop Organization (Phase 1) — purely organizational, additive to the
     # legacy free-text `category` field above (which stays untouched, still
@@ -43242,6 +43176,12 @@ class PosProductIn(BaseModel):
     requires_dog: bool = False
     requires_approval: bool = False
     requires_completed_onboarding: bool = False
+    # Curated "pairs well with" / "you may also like" references. A list of
+    # {rel, kind, ref_id} and nothing more — never a copied name, price or
+    # picture, which belong to the item being pointed at and are read from
+    # it live (see domains/shop/relationships.py). Absent means none, so no
+    # existing product needs migrating.
+    shop_relationships: Optional[List[dict]] = None
 
 
 class PosProductCreateIn(PosProductIn):
@@ -43372,7 +43312,7 @@ async def create_pos_product(body: PosProductCreateIn, user: dict = Depends(requ
         "show_online": body.show_online,
         "show_at_register": body.show_at_register,
         "online_description": (body.online_description or "").strip() or None,
-        "image_id": body.image_id,
+        **_product_image_fields(body),
         "online_sort_order": body.online_sort_order,
         "category_id": body.category_id,
         "subcategory_id": body.subcategory_id,
@@ -43390,6 +43330,10 @@ async def create_pos_product(body: PosProductCreateIn, user: dict = Depends(requ
         "tax_exempt_reason": (body.tax_exempt_reason or "").strip() or None,
         **destination_fields,
     }
+    # Validated against the id this product is about to have, so "related to
+    # itself" is caught on the very first save rather than only on edits.
+    doc["shop_relationships"] = shop_relationships.normalize(
+        body.shop_relationships, self_kind="product", self_id=doc["id"])
     await db.pos_products.insert_one(doc)
     doc.pop("_id", None)
     return doc
@@ -43417,7 +43361,7 @@ async def update_pos_product(product_id: str, body: PosProductIn, user: dict = D
         "show_online": body.show_online,
         "show_at_register": body.show_at_register,
         "online_description": (body.online_description or "").strip() or None,
-        "image_id": body.image_id,
+        **_product_image_fields(body),
         "online_sort_order": body.online_sort_order,
         "category_id": body.category_id,
         "subcategory_id": body.subcategory_id,
@@ -43433,7 +43377,15 @@ async def update_pos_product(product_id: str, body: PosProductIn, user: dict = D
         # only ever being the absence of a field.
         "taxable": body.taxable,
         "tax_exempt_reason": (body.tax_exempt_reason or "").strip() or None,
+        **_product_image_fields(body),
         **_resolve_pos_product_destination_fields(body),
+        # Omitted means "leave them alone"; an explicit [] means "clear
+        # them". Treating a missing field as an empty list would let any
+        # caller that predates this field silently erase an admin's
+        # curation on an unrelated save.
+        **({"shop_relationships": shop_relationships.normalize(
+            body.shop_relationships, self_kind="product", self_id=product_id)}
+           if body.shop_relationships is not None else {}),
     }
     await db.pos_products.update_one({"id": product_id}, {"$set": patch})
     return {**existing, **patch}
@@ -48520,6 +48472,12 @@ class CreditPackIn(BaseModel):
         if (self.display_quantity is None) != (self.display_unit is None):
             raise ValueError("display_quantity and display_unit must be set together, or both left unset.")
         return self
+    # Shop merchandising, additive. `online_sort_order` is what lets an owner
+    # decide the order featured items appear in; `shop_relationships` is the
+    # same curated "pairs well with" model products already use — one
+    # architecture, not a second one per item kind.
+    online_sort_order: Optional[int] = None
+    shop_relationships: Optional[List[dict]] = None
 
 
 class SellCreditPackIn(BaseModel):
@@ -48570,6 +48528,9 @@ async def create_credit_pack(body: CreditPackIn, _: dict = Depends(require_admin
     doc["slug"] = doc.get("slug") or doc["name"].lower().replace(" ", "_")[:40]
     doc["is_default"] = False
     doc["created_at"] = now_iso()
+    shop_relationships.merge_into(doc, body.shop_relationships,
+                                  self_kind="credit_pack", self_id=doc["id"])
+    doc.setdefault("shop_relationships", [])
     await db.credit_packs.insert_one(doc)
     doc.pop("_id", None)
     doc["value_each"] = round(doc["price"] / max(doc["qty"], 1), 2)
@@ -48589,6 +48550,8 @@ async def update_credit_pack(pack_id: str, body: CreditPackIn, _: dict = Depends
     update = body.model_dump()
     update.pop("slug", None)
     update.pop("is_default", None)
+    shop_relationships.merge_into(update, body.shop_relationships,
+                                  self_kind="credit_pack", self_id=pack_id)
     await db.credit_packs.update_one({"id": pack_id}, {"$set": update})
     merged = {**existing, **update}
     merged["value_each"] = round(float(merged.get("price") or 0) / max(int(merged.get("qty") or 1), 1), 2)
@@ -50473,10 +50436,13 @@ async def preview_custom_email_draft(body: EmailTemplatePreviewRequest, current:
         "total_label": "$120.00",
         "payment_method": "Card",
     }
-    subject_rendered = email_service._substitute(body.subject, sample_ctx)
-    title_rendered = email_service._substitute(body.title or "🐾 Welcome!", sample_ctx)
-    intro_rendered = email_service._substitute(body.intro_html, sample_ctx)
-    cta_rendered = email_service._substitute(body.cta_text or "", sample_ctx) or None
+    # The preview renders through the SAME path a real send does, escaping
+    # and all — an operator previewing a template needs to see what the
+    # customer will see, not a friendlier version of it.
+    subject_rendered = email_service._substitute(body.subject, sample_ctx, into="text")
+    title_rendered = email_service._substitute(body.title or "🐾 Welcome!", sample_ctx, into="text")
+    intro_rendered = email_service._substitute(body.intro_html, sample_ctx, into="html")
+    cta_rendered = email_service._substitute(body.cta_text or "", sample_ctx, into="text") or None
     settings = await email_service._get_email_settings()
     html = email_service._wrap(
         title=title_rendered,
@@ -50844,10 +50810,13 @@ def _fmt_money(n: float) -> str:
 
 def _render_agreement(plan: dict, settings: dict) -> str:
     """Render the agreement HTML for `plan` using current settings + variables."""
-    sched_lines = "<br/>".join(
-        f"• <strong>{i['due_date']}</strong> — {_fmt_money(i['amount'])}"
+    # Deliberate markup, built here from dates and money this server
+    # computed — so it is marked trusted, and its own pieces are escaped
+    # first in case an installment ever carries something typed.
+    sched_lines = email_service.TrustedHtml("<br/>".join(
+        f"• <strong>{email_service._h(i['due_date'])}</strong> — {email_service._h(_fmt_money(i['amount']))}"
         for i in plan["installments"]
-    )
+    ))
     ctx = {
         "business_name": settings.get("business_name", "Sit Happens"),
         "client_name": plan.get("client_name", ""),
@@ -50857,8 +50826,12 @@ def _render_agreement(plan: dict, settings: dict) -> str:
         "installment_amount": _fmt_money(plan["installments"][0]["amount"]) if plan["installments"] else "$0.00",
         "schedule_list": sched_lines,
     }
+    # The agreement template is markup the operator writes; client_name and
+    # program_name are not. This is a document somebody signs — a name with
+    # an ampersand in it has to survive intact, and a name with a tag in it
+    # must not become one.
     template = settings.get("agreement_html") or DEFAULT_PAYMENT_AGREEMENT_HTML
-    return email_service._substitute(template, ctx)
+    return email_service._substitute(template, ctx, into="html")
 
 
 @api.post("/admin/payment-plans")
@@ -54398,8 +54371,12 @@ async def bulk_email_send(body: BulkEmailSendIn, user: dict = Depends(require_ad
         }
         rendered_subj = _bulk_email_render(subj, ctx)
         rendered_body = _bulk_email_render(body.body, ctx)
-        # Lightweight HTML body — wrap rendered text in the existing brand wrapper.
-        text_paragraphs = "".join(f"<p style='margin:0 0 12px;font-size:15px;line-height:1.55;'>{p}</p>"
+        # Lightweight HTML body — wrap rendered text in the existing brand
+        # wrapper. The body is PLAIN TEXT an admin typed (that is why it is
+        # split on newlines into paragraphs), and the merge tags have just
+        # dropped a client's own name into it, so it is escaped on the way
+        # into the markup.
+        text_paragraphs = "".join(f"<p style='margin:0 0 12px;font-size:15px;line-height:1.55;'>{email_service._h(p)}</p>"
                                   for p in rendered_body.split("\n") if p.strip())
         try:
             html = email_service._wrap(  # type: ignore
@@ -54407,12 +54384,12 @@ async def bulk_email_send(body: BulkEmailSendIn, user: dict = Depends(require_ad
                 intro="",
                 rows=[],
                 show_install=False,
-                body_html=text_paragraphs or f"<p>{rendered_body}</p>",
+                body_html=text_paragraphs or f"<p>{email_service._h(rendered_body)}</p>",
             )
         except Exception:
-            html = f"<html><body>{text_paragraphs or rendered_body}</body></html>"
+            html = f"<html><body>{text_paragraphs or email_service._h(rendered_body)}</body></html>"
         unsubscribe_url = _marketing_unsubscribe_url(r.get("id") or "", r["email"])
-        unsubscribe_html = f"<div style='margin-top:28px;padding-top:14px;border-top:1px solid #ddd;font-size:11px;color:#777'>Marketing email · <a href='{unsubscribe_url}' style='color:#777'>Unsubscribe</a></div>"
+        unsubscribe_html = f"<div style='margin-top:28px;padding-top:14px;border-top:1px solid #ddd;font-size:11px;color:#777'>Marketing email · <a href='{email_service._safe_url(unsubscribe_url)}' style='color:#777'>Unsubscribe</a></div>"
         html = html.replace("</body>", unsubscribe_html + "</body>") if "</body>" in html else html + unsubscribe_html
         try:
             ok = await email_service._send(r["email"], rendered_subj, html)  # type: ignore

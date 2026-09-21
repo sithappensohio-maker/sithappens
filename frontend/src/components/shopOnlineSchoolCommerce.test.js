@@ -53,12 +53,37 @@ test("handlePurchase threads the selected dog into the cart line for online_scho
 // identical-program lines into one
 // ---------------------------------------------------------------------------
 
+// These two were pinned to the EXACT source line, which made them fail the
+// moment gift-card recipients joined the same cart-line identity — even
+// though the dog behaviour they protect was untouched and extended. Pinned
+// to the rule instead of the punctuation: the identity must still consider
+// the dog, and the checkout must still send it.
+
 test("cart line identity is dog-aware so two dogs buying the same program stay separate lines", () => {
-  expect(shopSrc).toMatch(/const sameLine = \(c\) => c\.kind === item\.kind && c\.ref_id === item\.id && c\.dog_id === dogId;/);
+  const sameLine = shopSrc.match(/const sameLine = \(c\) =>[\s\S]{0,240}?;/);
+  expect(sameLine).toBeTruthy();
+  expect(sameLine[0]).toMatch(/c\.dog_id === dogId/);
+  expect(sameLine[0]).toMatch(/c\.kind === item\.kind/);
+  expect(sameLine[0]).toMatch(/c\.ref_id === item\.id/);
+});
+
+test("changing a quantity or removing a line is dog-aware too", () => {
+  // Otherwise a quantity change on one dog's course moves the other dog's.
+  for (const fn of ["changeQty", "removeFromCart"]) {
+    const at = shopSrc.indexOf(`const ${fn} = (`);
+    expect(at).toBeGreaterThan(-1);
+    const body = shopSrc.slice(at, at + 400);
+    expect(body).toMatch(/dog_id === dogId/);
+  }
 });
 
 test("checkout posts dog_id per line to the server", () => {
-  expect(shopSrc).toMatch(/items: cart\.map\(\(c\) => \(\{ kind: c\.kind, ref_id: c\.ref_id, quantity: c\.quantity, dog_id: c\.dog_id \}\)\)/);
+  const payload = shopSrc.match(/items: cart\.map\([\s\S]{0,400}?\)\),/);
+  expect(payload).toBeTruthy();
+  expect(payload[0]).toMatch(/kind: c\.kind/);
+  expect(payload[0]).toMatch(/ref_id: c\.ref_id/);
+  expect(payload[0]).toMatch(/quantity: c\.quantity/);
+  expect(payload[0]).toMatch(/dog_id: c\.dog_id/);
 });
 
 test("PortalShop fetches only the authenticated client's own dogs, the same scoped endpoint used elsewhere in the portal", () => {

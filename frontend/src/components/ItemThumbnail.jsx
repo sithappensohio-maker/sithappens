@@ -1,12 +1,16 @@
 import { useEffect, useState } from "react";
 import { api } from "../lib/api";
+import { shopImageProps, shopImageUrl, primaryImageId } from "../lib/shopImage";
 
 /**
- * The ONE shared image-resolution hook. Physical products, credit packs,
- * and training programs all store only an `image_id` — this is the single
- * place that fetches GET /shop/media/{id}, reused by ItemThumbnail below
- * and by the client Shop's item-detail hero image/lightbox, so there is
- * never a second copy of this fetch-by-id logic.
+ * Legacy image-resolution hook — kept for callers that genuinely need the
+ * image BYTES rather than a URL (the Shop Manager upload preview shows a
+ * file that is not on any product yet, so it has no servable URL).
+ *
+ * Nothing that merely DISPLAYS a catalog image should use this any more:
+ * it fetches a base64 data URL inside JSON, which is what made a 44-pixel
+ * thumbnail cost 3.12 MB. Use `shopImageUrl`/`shopImageProps` instead, so
+ * the browser fetches a real image it can cache.
  */
 export function useShopMediaSrc(imageId, { public: isPublic = false } = {}) {
   const [src, setSrc] = useState(null);
@@ -26,7 +30,7 @@ export function useShopMediaSrc(imageId, { public: isPublic = false } = {}) {
  * The ONE shared item-image thumbnail. Reused by the POS register grid,
  * Shop Manager's Items table, Shop Manager's Categories & Layout item
  * lists, and the client Shop, so there is never a second copy of this
- * fetch-by-id + render logic.
+ * render logic.
  *
  * `variant="square"` (default) — a small fixed square, sized via `size`
  * (px, default 44 — the "beside the name" thumbnail used in lists/tables).
@@ -35,10 +39,26 @@ export function useShopMediaSrc(imageId, { public: isPublic = false } = {}) {
  * exact box size up front via inline width/height (never intrinsic), so
  * nothing shifts layout while the image is still loading or if it's
  * missing entirely.
+ *
+ * `surface` picks which derivative to request. A 44px row asks for the
+ * 128px file, not the 1600px one.
  */
-export default function ItemThumbnail({ imageId, alt, size = 44, variant = "square", fit = "cover", className = "", public: isPublic = false }) {
-  const src = useShopMediaSrc(imageId, { public: isPublic });
+export default function ItemThumbnail({
+  imageId, alt, size = 44, variant = "square", fit = "cover", className = "",
+  public: isPublic = false, surface,
+}) {
   const isBanner = variant === "banner";
+  const chosen = surface || (isBanner ? "card" : "thumb");
+  const img = shopImageProps(imageId, chosen, { public: isPublic });
+  const [failed, setFailed] = useState(false);
+  useEffect(() => { setFailed(false); }, [imageId]);
+  // The fast image route serves PUBLICLY VISIBLE catalog imagery only. An
+  // account-only product's photo 404s there by design, so those fall back
+  // to the authenticated route — the same one this component used before
+  // the pipeline existed. Slower, but only for the few items it applies to,
+  // and it means tightening the rule broke nothing.
+  const fallback = useShopMediaSrc(failed ? imageId : null, { public: isPublic });
+
   const boxStyle = isBanner
     ? { height: size, width: "100%" }
     : { width: size, height: size, minWidth: size, minHeight: size };
@@ -49,9 +69,18 @@ export default function ItemThumbnail({ imageId, alt, size = 44, variant = "squa
   // the unused gutter looking intentional rather than broken.
   const fitClass = fit === "contain" ? "object-contain bg-black/25" : "object-cover";
 
-  if (src) {
+  if (img && !failed) {
     return (
-      <img src={src} alt={alt || ""} style={boxStyle}
+      <img {...img} alt={alt || ""} style={boxStyle}
+           onError={() => setFailed(true)}
+           data-testid="item-thumbnail-img"
+           className={`${shapeClass} rounded-md border border-shBorder ${fitClass} ${className}`} />
+    );
+  }
+  if (fallback) {
+    return (
+      <img src={fallback} alt={alt || ""} style={boxStyle}
+           data-testid="item-thumbnail-fallback"
            className={`${shapeClass} rounded-md border border-shBorder ${fitClass} ${className}`} />
     );
   }
@@ -62,3 +91,11 @@ export default function ItemThumbnail({ imageId, alt, size = 44, variant = "squa
     </div>
   );
 }
+
+/** A catalog item's primary image, however that item stores it. Saves every
+ *  caller from repeating the gallery-or-legacy-field dance. */
+export function ItemImage({ item, ...rest }) {
+  return <ItemThumbnail imageId={primaryImageId(item)} {...rest} />;
+}
+
+export { shopImageUrl };

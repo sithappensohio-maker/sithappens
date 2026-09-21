@@ -11,7 +11,9 @@
 import { useEffect, useMemo, useState } from "react";
 import { api } from "../lib/api";
 import { toast } from "sonner";
-import ShopImageUpload from "./ShopImageUpload";
+import RelatedItemsEditor from "./shop/RelatedItemsEditor";
+import ShopGalleryUpload from "./ShopGalleryUpload";
+import { galleryIds as productGallery } from "../lib/shopImage";
 import ShopCategoryFields from "./ShopCategoryFields";
 
 const money = (n) => `$${Number(n || 0).toFixed(2)}`;
@@ -19,7 +21,7 @@ const money = (n) => `$${Number(n || 0).toFixed(2)}`;
 const BLANK_FORM = {
   name: "", category: "", description: "", price: "", cost: "",
   starting_stock: "0", low_stock_threshold: "", track_inventory: false, active: true,
-  show_online: false, online_description: "", image_id: null, online_sort_order: "",
+  show_online: false, online_description: "", image_id: null, image_ids: [], online_sort_order: "",
   category_id: null, subcategory_id: null, featured: false, show_at_register: true,
   sales_destination: "internal", shopify_product_url: "", shopify_display_price: "", shopify_from_price: false,
   // Public no-account storefront — see the "Public Storefront" section of
@@ -30,6 +32,8 @@ const BLANK_FORM = {
   // Merchandise is taxable. This is the exemption for the rare thing that
   // genuinely is not — a gift card, say — so it starts switched on.
   taxable: true, tax_exempt_reason: "",
+  // Curated relationships — references only, never a copied name or price.
+  shop_relationships: [],
 };
 
 // Shared product add/edit form — used by this panel AND the unified Shop
@@ -37,7 +41,11 @@ const BLANK_FORM = {
 // and the actual save call (mirrors ProgramEditor's pattern in Programs.jsx);
 // this component is purely presentational/input-bound so there is exactly
 // ONE product form implementation, never a second copy to keep in sync.
-export function ProductEditor({ form, setForm, editingId, originalImageId, saving, onSave, onClose }) {
+export function ProductEditor({ form, setForm, editingId, originalImageId, saving, onSave, onClose,
+  // Everything an admin could relate this item TO, so the picker searches by
+  // name instead of asking anyone to paste an id. Optional: a caller that has
+  // not loaded a catalogue simply gets no picker rather than a broken one.
+  relatableItems = [] }) {
   return (
     <div className="space-y-3">
       <p className="text-shTextMuted text-[13px] uppercase tracking-widest font-black">{editingId ? "Edit Product" : "Add Product"}</p>
@@ -106,8 +114,8 @@ export function ProductEditor({ form, setForm, editingId, originalImageId, savin
             Shop both render it, so it must never require Show Online. */}
         <div className="col-span-2">
           <label className="text-[11px] text-shTextMuted uppercase tracking-widest mb-1 block">Product Photo (shown at the register and in the client Shop)</label>
-          <ShopImageUpload imageId={form.image_id} originalImageId={originalImageId}
-                           onChange={(id) => setForm((f) => ({ ...f, image_id: id }))} />
+          <ShopGalleryUpload imageIds={form.image_ids} originalImageIds={originalImageIds}
+                             onChange={(ids) => setForm((f) => ({ ...f, image_ids: ids, image_id: ids[0] || null }))} />
         </div>
 
         {form.sales_destination === "internal" && form.cost !== "" && form.cost != null && form.price !== "" && Number(form.price) > 0 && (
@@ -241,6 +249,20 @@ export function ProductEditor({ form, setForm, editingId, originalImageId, savin
           </div>
         )}
       </div>
+
+      {/* Curated "pairs well with". Only for items that are actually in the
+          shop — relating two products nobody can see achieves nothing. */}
+      {form.show_online && form.sales_destination === "internal" && (
+        <div className="border-t border-shBorder pt-3 mt-1">
+          <RelatedItemsEditor
+            value={form.shop_relationships}
+            onChange={(next) => setForm((f) => ({ ...f, shop_relationships: next }))}
+            candidates={relatableItems}
+            selfKind="product"
+            selfId={editingId}
+          />
+        </div>
+      )}
 
       {/* Public no-account storefront — only meaningful for internally-
           fulfilled, online-shown products. Shopify listings always bypass
@@ -380,11 +402,23 @@ export default function ManageProductsPanel({ onClose, onChanged }) {
   // by ShopImageUpload itself; only this panel deletes it, and only after
   // a successful save that actually replaced/removed it.
   const [originalImageId, setOriginalImageId] = useState(null);
+  // Every image the product ALREADY had when the form opened. Only images
+  // uploaded during this session may be deleted on removal; these survive
+  // until a save actually drops them.
+  const [originalImageIds, setOriginalImageIds] = useState([]);
 
-  const openAdd = () => { setEditingId(null); setForm(BLANK_FORM); setOriginalImageId(null); setFormOpen(true); };
+  // This panel only knows about products, so that is what it offers to
+  // relate to. The unified Shop Manager passes packs and programs too.
+  const relatableItems = useMemo(
+    () => products.filter((p) => p.active !== false)
+      .map((p) => ({ kind: "product", id: p.id, name: p.name, sku: p.sku })),
+    [products]);
+
+  const openAdd = () => { setEditingId(null); setForm(BLANK_FORM); setOriginalImageId(null); setOriginalImageIds([]); setFormOpen(true); };
   const openEdit = (p) => {
     setEditingId(p.id);
     setOriginalImageId(p.image_id || null);
+    setOriginalImageIds(productGallery(p));
     setForm({
       name: p.name || "", category: p.category || "", description: p.description || "",
       price: String(p.price ?? ""), cost: p.cost != null ? String(p.cost) : "",
@@ -393,6 +427,9 @@ export default function ManageProductsPanel({ onClose, onChanged }) {
       track_inventory: !!p.track_inventory, active: p.active !== false,
       show_online: !!p.show_online, online_description: p.online_description || "",
       image_id: p.image_id || null,
+      // A product that only ever had one photo opens as a one-image gallery
+      // — no migration, nothing for the admin to redo.
+      image_ids: productGallery(p),
       online_sort_order: p.online_sort_order != null ? String(p.online_sort_order) : "",
       category_id: p.category_id || null, subcategory_id: p.subcategory_id || null,
       featured: !!p.featured, show_at_register: p.show_at_register !== false,
@@ -406,6 +443,9 @@ export default function ManageProductsPanel({ onClose, onChanged }) {
       publicly_visible: !!p.publicly_visible, guest_cart_allowed: !!p.guest_cart_allowed,
       show_public_price: p.show_public_price !== false,
       requires_approval: !!p.requires_approval, requires_completed_onboarding: !!p.requires_completed_onboarding,
+      shop_relationships: Array.isArray(p.shop_relationships)
+        ? p.shop_relationships.map((r) => ({ rel: r.rel, kind: r.kind, ref_id: r.ref_id }))
+        : [],
     });
     setFormOpen(true);
   };
@@ -414,8 +454,12 @@ export default function ManageProductsPanel({ onClose, onChanged }) {
   // session, delete it; the original persisted image (if any) is left
   // alone since nothing about the product actually changed.
   const cleanupUnsavedImageIfAny = () => {
-    if (form.image_id && form.image_id !== originalImageId) {
-      api.delete(`/shop/media/${form.image_id}`).catch(() => {});
+    // Every image added in this session, not just the primary one — with a
+    // gallery, abandoning the form could otherwise strand seven uploads.
+    for (const id of form.image_ids || []) {
+      if (id && !originalImageIds.includes(id)) {
+        api.delete(`/shop/media/${id}`).catch(() => {});
+      }
     }
   };
 
@@ -445,6 +489,7 @@ export default function ManageProductsPanel({ onClose, onChanged }) {
       track_inventory: !isShopify && form.track_inventory, active: form.active,
       show_online: form.show_online, online_description: form.online_description.trim() || null,
       image_id: form.image_id || null,
+      image_ids: form.image_ids || [],
       online_sort_order: form.online_sort_order !== "" ? parseInt(form.online_sort_order, 10) : null,
       category_id: form.category_id || null, subcategory_id: form.subcategory_id || null,
       featured: form.featured, show_at_register: form.show_at_register,
@@ -459,6 +504,11 @@ export default function ManageProductsPanel({ onClose, onChanged }) {
       show_public_price: form.show_public_price,
       requires_approval: !isShopify && form.publicly_visible && form.requires_approval,
       requires_completed_onboarding: !isShopify && form.publicly_visible && form.requires_completed_onboarding,
+      // Always sent, so clearing the list actually clears it. The server
+      // treats an OMITTED field as "leave them alone" precisely so a caller
+      // that predates this cannot wipe curation by accident — which means
+      // the editor has to be explicit about an empty list being deliberate.
+      shop_relationships: form.shop_relationships || [],
     };
     setSaving(true);
     try {
@@ -470,8 +520,12 @@ export default function ManageProductsPanel({ onClose, onChanged }) {
         toast.success("Product added");
       }
       // Save succeeded — NOW it's safe to drop the old image, if replaced/removed.
-      if (originalImageId && originalImageId !== form.image_id) {
-        api.delete(`/shop/media/${originalImageId}`).catch(() => {});
+      // Safe only now the save succeeded: anything the product used to have
+      // and no longer does.
+      for (const id of originalImageIds) {
+        if (!(form.image_ids || []).includes(id)) {
+          api.delete(`/shop/media/${id}`).catch(() => {});
+        }
       }
       setFormOpen(false);
       load();
@@ -605,6 +659,7 @@ export default function ManageProductsPanel({ onClose, onChanged }) {
 
         {formOpen ? (
           <ProductEditor form={form} setForm={setForm} editingId={editingId} originalImageId={originalImageId}
+                         relatableItems={relatableItems}
                          saving={saving} onSave={saveForm} onClose={closeFormWithoutSaving} />
         ) : historyProduct ? (
           <div className="space-y-3">

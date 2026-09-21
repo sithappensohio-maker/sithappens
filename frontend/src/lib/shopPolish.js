@@ -203,7 +203,7 @@ export function sectionMetaFor(sectionKey, shopPage) {
 }
 
 // The 3 permanent section keys, filtered to visible and sorted by
-// configured order — drives TABS/SectionIndex display order/labels without
+// configured order — drives department display order/labels without
 // ever touching the permanent key values themselves.
 export function visibleSectionsInOrder(shopPage) {
   return Object.keys(DEFAULT_SECTION_META)
@@ -267,6 +267,17 @@ export function filterFeaturedItems(items) {
 // fields the public catalog/item-detail endpoints already compute
 // server-side (account_required, guest_cart_allowed, requires_approval,
 // requires_dog) — never re-derives eligibility client-side.
+/** What makes two gift-card cart lines the same line. Mirrors the server's
+ *  own key (domains/shop/cart._gift_identity) — a card for Dana and one for
+ *  Sam are different things even at the same value, and a quantity change on
+ *  one must never move the other. */
+export function cartGiftKey(g) {
+  if (!g) return "";
+  return [(g.recipient_email || "").trim().toLowerCase(),
+          (g.recipient_name || "").trim(),
+          (g.gift_message || "").trim()].join("|");
+}
+
 export function guestItemCta(item) {
   if (item.kind === "product" && item.sales_destination === "shopify_external") {
     return { type: "shopify" };
@@ -276,8 +287,11 @@ export function guestItemCta(item) {
   if (!hasPrice) return { type: "hidden_price" };
   if (item.requires_approval) return { type: "contact_required", reason: "approval" };
   if (item.requires_dog) return { type: "contact_required", reason: "dog" };
-  if (item.account_required) return { type: "sign_in" };
-  if (item.kind === "product" && item.guest_cart_allowed) return { type: "add_to_cart" };
+  // The server's own verdict, mirrored rather than recomputed. It already
+  // weighs kind, opt-in, requirements, price visibility and Shopify — and
+  // it is the same function the checkout enforces, so a card that offers to
+  // add cannot lead to a refusal. Anything else is a sign-in prompt.
+  if (item.guest_cart_allowed) return { type: "add_to_cart" };
   return { type: "sign_in" };
 }
 
@@ -436,4 +450,33 @@ export function orderStatusLabel(o) {
   if (o.pickup_status === "ready_for_pickup") return "Ready for Pickup";
   if (o.pickup_status === "preparing") return "Preparing for Pickup";
   return "Payment Processing";
+}
+
+// ---------------------------------------------------------------------------
+// Leaving a product page
+// ---------------------------------------------------------------------------
+
+/**
+ * Where "Back to Shop" should actually go.
+ *
+ * Two different situations, and they were being treated as one:
+ *
+ *   - the shopper opened the item FROM the Shop, so there is a history entry
+ *     of ours to pop and popping it restores their scroll, their department
+ *     and their filters exactly;
+ *   - the shopper arrived DIRECTLY — a shared link, a refresh, a new tab —
+ *     so there is nothing to pop. This used to push "/" and drop them at the
+ *     app root, which is not the Shop and loses them entirely.
+ *
+ * In the direct case we send them to the Shop and open the department the
+ * item belongs to, which is the closest thing to the context they never had.
+ *
+ * `kind` is the catalog kind; it maps to a department tab for everything
+ * that has one. A gift card has no department of its own, so it simply
+ * lands on the Shop.
+ */
+export function shopBackTarget({ hasOwnHistoryEntry, kind }) {
+  if (hasOwnHistoryEntry) return { action: "back" };
+  const tab = ["product", "credit_pack", "training_program"].includes(kind) ? kind : null;
+  return { action: "push", path: "/shop", tab };
 }

@@ -20,6 +20,12 @@ const code = (src) => src.replace(/\/\*[\s\S]*?\*\//g, "").replace(/^\s*\/\/.*$/
 const logicOnly = (src) => code(src).replace(/"[^"]*"/g, '""').replace(/`[^`]*`/g, "``");
 
 const detailSrc = read("ShopItemDetail.jsx");
+// Two different files now carry the two halves of this rule. The CARD is in
+// components/shop/ShopCards.jsx after the Shop redesign; the claim FLOW — the
+// endpoint, the double-click guard, the success screen — is still PortalShop's.
+// The rule itself is unchanged: a genuinely free course is claimed, never
+// carted, and never produces a $0 order.
+const cardSrc = read("shop", "ShopCards.jsx");
 const shopSrc = read("PortalShop.jsx");
 const studioSrc = read("ProgramStudio.jsx");
 const libSrc = read("..", "lib", "freeCourseClaim.js");
@@ -68,16 +74,23 @@ test("non-programs are never claimable", () => {
 test("a claimable course shows FREE rather than $0.00", () => {
   expect(freePriceLabel(FREE)).toBe("FREE");
   expect(detailSrc).toMatch(/data-testid="shop-detail-free-price"/);
-  expect(shopSrc).toMatch(/data-testid=\{`shop-free-badge-\$\{item\.id\}`\}/);
+  expect(cardSrc).toMatch(/data-testid=\{`shop-free-badge-\$\{item\.id\}`\}/);
 });
 
 test("a free course never renders a cart or checkout CTA", () => {
   // The grid card opens the detail view; the detail view claims. Neither
   // reaches addToCart for a free course.
-  const gridStart = shopSrc.indexOf("isFreeClaimable(item) ? (");
-  const grid = shopSrc.slice(gridStart, shopSrc.indexOf("isShopifyMerch ? (", gridStart));
-  expect(grid).toMatch(/Start Free Course/);
-  expect(grid).not.toMatch(/onAdd\(|addToCart/);
+  // The card's action row decides this now, and it decides it FIRST — the
+  // free branch returns before any of the cart/sign-in/sold-out branches
+  // can run, so a free course can never fall through to an add-to-cart.
+  const actionStart = cardSrc.indexOf("function CardAction(");
+  const action = cardSrc.slice(actionStart, cardSrc.indexOf("\n}", actionStart));
+  expect(action).toMatch(/Start Free Course/);
+  const freeIdx = action.indexOf("isFreeClaimable(item)");
+  expect(freeIdx).toBeGreaterThan(-1);
+  expect(freeIdx).toBeLessThan(action.indexOf("onAdd?."));
+  expect(action.slice(freeIdx, action.indexOf("if (s.shopify)")))
+    .not.toMatch(/onAdd\(|onAdd\?\.|addToCart/);
   const detailBranch = detailSrc.slice(detailSrc.indexOf("{freeClaim ? (() => {"), detailSrc.indexOf(") : isShopifyMerch ? ("));
   expect(detailBranch).not.toMatch(/onAddToCart|handlePurchase/);
   expect(detailBranch).toMatch(/onClaimFreeCourse/);
@@ -231,7 +244,10 @@ test("a paid program keeps its existing purchase CTA untouched", () => {
   expect(freeCourseCta({ item: PAID, isGuest: false, dogs: [{ id: "d1" }], selectedDogId: "d1" })).toBeNull();
   expect(detailSrc).toMatch(/data-testid="shop-detail-purchase"/);
   expect(detailSrc).toMatch(/Buy Course/);
-  expect(shopSrc).toMatch(/data-testid=\{`shop-buy-\$\{item\.kind\}-\$\{item\.id\}`\}/);
+  // The card builds the purchase testid from the same kind/id pair the rest
+  // of the Shop keys on; it is assembled once in CardAction rather than
+  // repeated in each of the four cards.
+  expect(cardSrc).toMatch(/shop-buy-\$\{item\.kind\}-\$\{item\.id\}/);
 });
 
 test("the checkout path is not referenced by any free-course code", () => {

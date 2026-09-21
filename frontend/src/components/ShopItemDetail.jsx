@@ -1,12 +1,15 @@
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { api } from "../lib/api";
 import { toast } from "sonner";
 import { isFreeClaimable, freePriceLabel, freeCourseCta, rememberFreeClaimIntent } from "../lib/freeCourseClaim";
+import { useDocumentMeta, publicOrigin } from "../lib/useDocumentMeta";
+import { itemMetaFor } from "../lib/shopSeo";
 import PremiumButton from "./premium/PremiumButton";
 import NeonEdge from "./premium/NeonEdge";
 import HuskyDogImage from "./brand/HuskyDogImage";
-import { useShopMediaSrc } from "./ItemThumbnail";
+import { shopImageProps, galleryIds } from "../lib/shopImage";
 import { guestItemCta, creditPackDetailLine } from "../lib/shopPolish";
+import ProductFacts from "./shop/ProductFacts";
 
 const money = (n) => `$${Number(n || 0).toFixed(2)}`;
 
@@ -107,59 +110,66 @@ function purchaseButtonLabel(kind) {
   return "Add to Cart";
 }
 
-/* Related items reuse the already-loaded, already-priced catalog array —
- * no second backend call, guaranteed to already be visibility-filtered and
- * resolver-priced exactly like the grid. */
-function RelatedItems({ item, allItems, onOpenItem, isPublic }) {
-  if (!allItems || allItems.length === 0) return null;
-  let related = allItems.filter((i) => !(i.kind === item.kind && i.id === item.id) && i.kind === item.kind && i.category_id === item.category_id);
-  if (related.length < 2) {
-    related = allItems.filter((i) => !(i.kind === item.kind && i.id === item.id) && i.kind === item.kind);
-  }
-  related = related.slice(0, 4);
-  if (related.length === 0) return null;
-  return (
-    <div className="mt-10 pt-6 border-t border-shBorder" data-testid="shop-detail-related">
-      <p className="text-[12px] font-black uppercase tracking-widest text-shPrimary mb-3">More in This Category</p>
-      <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
-        {related.map((r) => (
-          <button key={`${r.kind}-${r.id}`} onClick={() => onOpenItem(r)} data-testid={`shop-related-${r.kind}-${r.id}`}
-                  className="text-left border border-shBorder rounded-lg p-2 hover:border-shPrimary/50 transition" style={{ background: "var(--sh-card-base)" }}>
-            <ImgOrPlaceholder imageId={r.image_id} alt={r.name} isPublic={isPublic} />
-            <p className="text-shText font-bold text-[12px] mt-1.5 truncate">{r.name}</p>
-            {/* A claimable free course reads FREE here too, so the label a
-                client sees never depends on which strip they found it in. */}
-            {isFreeClaimable(r) ? (
-              <p className="text-shPrimary font-black text-[13px]" data-testid={`shop-related-free-${r.id}`}>FREE</p>
-            ) : (r.price ?? r.effective_price) != null && (
-              <p className="text-shPrimary font-black text-[13px]">{money(r.price ?? r.effective_price)}</p>
-            )}
-          </button>
-        ))}
-      </div>
-    </div>
-  );
-}
 
-function ImgOrPlaceholder({ imageId, alt, isPublic }) {
-  const src = useShopMediaSrc(imageId, { public: isPublic });
-  if (src) return <img src={src} alt={alt || ""} style={{ height: 80 }} className="w-full object-cover rounded" />;
-  return (
-    <div style={{ height: 80 }} className="w-full rounded border border-shBorder grid place-items-center text-shTextMuted">
-      <i className="fas fa-image" />
-    </div>
-  );
-}
-
-function HeroImage({ imageId, alt, isPublic, fallbackSrc }) {
-  const src = useShopMediaSrc(imageId, { public: isPublic });
+/**
+ * The product gallery.
+ *
+ * Restrained on purpose — the visual PDP redesign comes later. What this
+ * provides is the MECHANICS the redesign will need: a primary image, a
+ * thumbnail strip when there is more than one, selection by click or
+ * keyboard, and a zoom view that is the only place the large file is ever
+ * fetched.
+ *
+ * A one-image product renders exactly as it did before: no strip, no extra
+ * requests, nothing to notice.
+ */
+function ProductGallery({ ids, alt, isPublic, fallbackSrc }) {
+  const [active, setActive] = useState(0);
   const [enlarged, setEnlarged] = useState(false);
+  const stripRef = useRef(null);
+  useEffect(() => { setActive(0); }, [ids.join(",")]);
+
+  const current = ids[active] || null;
+  const hero = shopImageProps(current, "pdp", { public: isPublic });
+  const zoom = shopImageProps(current, "zoom", { public: isPublic });
+
+  // Arrow keys move along the strip the way a listbox does, so the gallery
+  // is operable without a mouse.
+  const onStripKey = (e) => {
+    if (e.key !== "ArrowRight" && e.key !== "ArrowLeft") return;
+    e.preventDefault();
+    const next = e.key === "ArrowRight"
+      ? Math.min(ids.length - 1, active + 1)
+      : Math.max(0, active - 1);
+    setActive(next);
+    stripRef.current?.querySelector(`[data-thumb="${next}"]`)?.focus();
+  };
+
   return (
     <>
-      <button type="button" onClick={() => src && setEnlarged(true)} data-testid="shop-detail-hero-image"
-              className="block w-full rounded-xl border border-shBorder overflow-hidden" style={{ background: "var(--sh-card-base)", cursor: src ? "zoom-in" : "default" }}>
-        {src ? (
-          <img src={src} alt={alt || ""} className="w-full object-cover" style={{ height: 360 }} />
+      <button type="button" onClick={() => hero && setEnlarged(true)}
+              data-testid="shop-detail-hero-image"
+              aria-label={hero ? `${alt || "Product image"} — view larger` : undefined}
+              className="block w-full rounded-xl border border-shBorder overflow-hidden"
+              style={{ background: "var(--sh-card-base)", cursor: hero ? "zoom-in" : "default" }}>
+        {hero ? (
+          // CONTAIN, not cover. A grid card crops to keep the grid tidy; a
+          // product page has one job, which is showing the product. A
+          // 900x1400 portrait centre-cropped into a 360px band lost its
+          // subject completely — the page showed the background and nothing
+          // else. The box keeps its fixed height so nothing below it jumps,
+          // and the letterboxing sits on the card colour so it reads as
+          // deliberate rather than broken.
+          <div className="w-full" style={{ height: 360, background: "rgba(0,0,0,0.25)" }}>
+            {/* The WRAPPER owns the height, so the box is reserved before the
+                bytes arrive and nothing below it jumps. The image then fills
+                that box and contains itself inside it. The intrinsic
+                width/height attributes are deliberately absent: with them the
+                element laid itself out at 900x360, overflowed the box and was
+                clipped by the parent — which is the very cropping this was
+                meant to stop. */}
+            <img {...hero} alt={alt || ""} className="w-full h-full object-contain" />
+          </div>
         ) : fallbackSrc ? (
           <div className="relative overflow-hidden" style={{ height: 360 }}>
             <img src={fallbackSrc} alt={alt || ""} className="absolute inset-0 w-full h-full object-cover object-top" />
@@ -171,16 +181,55 @@ function HeroImage({ imageId, alt, isPublic, fallbackSrc }) {
           </div>
         )}
       </button>
+
+      {ids.length > 1 && (
+        <div ref={stripRef} role="listbox" aria-label="Product images"
+             onKeyDown={onStripKey} data-testid="shop-detail-thumbs"
+             className="flex gap-2 mt-2 overflow-x-auto pb-1">
+          {ids.map((id, i) => (
+            <button key={id} type="button" role="option" aria-selected={i === active}
+                    data-thumb={i} data-testid={`shop-detail-thumb-${i}`}
+                    onClick={() => setActive(i)}
+                    aria-label={`${alt || "Product"} image ${i + 1} of ${ids.length}`}
+                    className={`shrink-0 rounded-lg overflow-hidden border-2 transition ${
+                      i === active ? "border-shPrimary" : "border-shBorder hover:border-shPrimary/40"}`}>
+              <img {...shopImageProps(id, "thumb", { public: isPublic })}
+                   alt="" width={64} height={64}
+                   className="w-16 h-16 object-cover" />
+            </button>
+          ))}
+        </div>
+      )}
+
       {enlarged && (
-        <div className="fixed inset-0 z-[70] bg-black/90 flex items-center justify-center p-4" onClick={() => setEnlarged(false)} data-testid="shop-detail-lightbox">
-          <img src={src} alt={alt || ""} className="max-w-full max-h-full object-contain rounded" />
+        <div className="fixed inset-0 z-[70] bg-black/90 flex items-center justify-center p-4"
+             onClick={() => setEnlarged(false)} data-testid="shop-detail-lightbox"
+             role="dialog" aria-modal="true" aria-label={`${alt || "Product"} enlarged`}>
+          {/* The only place the 1600px file is ever requested. */}
+          <img {...zoom} alt={alt || ""} className="max-w-full max-h-full object-contain rounded" />
         </div>
       )}
     </>
   );
 }
 
-export default function ShopItemDetail({ kind, itemId, cart, onAddToCart, onBack, allItems, onOpenItem, mode = "authenticated", onRequireAccount, onGoToOnlineSchool, onClaimFreeCourse, onAddDog, dogs = [] }) {
+export default function ShopItemDetail({ kind, itemId, cart, onAddToCart, onBack, allItems, onOpenItem, mode = "authenticated", onRequireAccount, onGoToOnlineSchool, onClaimFreeCourse, onAddDog, dogs = [],
+  // Curated suggestions and this browser's own history, both resolved by
+  // the server against the catalogue this viewer is allowed to see. Passed
+  // in as a rendered node rather than fetched here, so the page makes ONE
+  // discovery request no matter how many places it is shown.
+  discoverySlot,
+  // The heart, as a function of the loaded item rather than a ready-made
+  // node: the page that opens this only knows a kind and an id, so a node
+  // built up there is labelled "this item" instead of naming the product.
+  favoriteSlot }) {
+  // Buying a gift card is buying a present, so the screen asks who it is
+  // for. Left blank it simply comes to the buyer, which is the other real
+  // case — somebody topping themselves up or handing it over in person.
+  const [isGift, setIsGift] = useState(false);
+  const [giftEmail, setGiftEmail] = useState("");
+  const [giftName, setGiftName] = useState("");
+  const [giftMessage, setGiftMessage] = useState("");
   const [item, setItem] = useState(null);
   const [loading, setLoading] = useState(true);
   const [notFound, setNotFound] = useState(false);
@@ -209,11 +258,28 @@ export default function ShopItemDetail({ kind, itemId, cart, onAddToCart, onBack
   // stale across items.
   const isOnlineSchoolProgram = !isGuest && item?.kind === "training_program" && item.purchase_fulfillment === "online_school";
   const freeClaim = isFreeClaimable(item);
+
+  // Described from the item this page actually loaded, rather than guessed
+  // from the route — so the tab, a bookmark and Googlebot all get the real
+  // product. A link-preview bot never reaches this code; it is served the
+  // server-rendered document instead, built from the same catalogue so the
+  // two say the same thing.
+  useDocumentMeta({
+    ...itemMetaFor(item, { origin: publicOrigin(), isPublic: isGuest }),
+    enabled: !!item && !loading && mode !== "preview",
+  });
   const [schoolEnrollments, setSchoolEnrollments] = useState(null);
   useEffect(() => {
     if (!isOnlineSchoolProgram) { setSchoolEnrollments(null); return; }
     let cancelled = false;
-    api.get("/portal/school").then(({ data }) => { if (!cancelled) setSchoolEnrollments(data || []); }).catch(() => { if (!cancelled) setSchoolEnrollments([]); });
+    // `data || []` is not enough: the endpoint can hand back an OBJECT, and
+    // an object is truthy, so it sailed through and then `?.find` threw —
+    // `?.` guards null, not the wrong type. Two crashes on this page have
+    // now had exactly this shape, so the state is coerced at the boundary
+    // and everything downstream can assume an array.
+    api.get("/portal/school")
+      .then(({ data }) => { if (!cancelled) setSchoolEnrollments(Array.isArray(data) ? data : []); })
+      .catch(() => { if (!cancelled) setSchoolEnrollments([]); });
     return () => { cancelled = true; };
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [isOnlineSchoolProgram, itemId]);
@@ -292,6 +358,21 @@ export default function ShopItemDetail({ kind, itemId, cart, onAddToCart, onBack
       toast.success(`${item.name} added to cart`);
       return;
     }
+    if (item.kind === "gift_card") {
+      const email = giftEmail.trim();
+      if (isGift && !email.includes("@")) {
+        toast.error("Enter the email address to send this gift card to.");
+        return;
+      }
+      onAddToCart(item, qty, undefined, isGift ? {
+        recipient_email: email,
+        recipient_name: giftName.trim(),
+        gift_message: giftMessage.trim(),
+      } : undefined);
+      toast.success(isGift ? `Gift card for ${giftName.trim() || email} added to cart`
+                           : `${item.name} added to cart`);
+      return;
+    }
     onAddToCart(item, item.kind === "product" ? qty : 1);
     toast.success(item.kind === "product" ? `Added ${qty} to cart` : `${item.name} added to cart`);
   };
@@ -304,7 +385,7 @@ export default function ShopItemDetail({ kind, itemId, cart, onAddToCart, onBack
 
       <div className="grid grid-cols-1 lg:grid-cols-2 gap-6 lg:gap-10">
         <div>
-          <HeroImage imageId={item.image_id} alt={item.name} isPublic={isGuest} fallbackSrc={isOnlineSchoolProgram ? "/brand/husky-placeholder-silver-white.png" : null} />
+          <ProductGallery ids={galleryIds(item)} alt={item.name} isPublic={isGuest} fallbackSrc={isOnlineSchoolProgram ? "/brand/husky-placeholder-silver-white.png" : null} />
         </div>
 
         <div className="flex flex-col">
@@ -320,7 +401,13 @@ export default function ShopItemDetail({ kind, itemId, cart, onAddToCart, onBack
               <span className="text-[11px] text-shTextMuted">Train from home with the Sit Happens system</span>
             </div>
           )}
-          <h1 className={`${isOnlineSchoolProgram ? "sh-display text-3xl sm:text-4xl leading-none" : "text-2xl font-bold"} text-shText mt-1`}>{item.name}</h1>
+          {/* The heart sits with the title, not on the photograph: on a
+              product page the picture is the thing being examined, and a
+              control floating on top of it competes with the zoom. */}
+          <div className="flex items-start gap-3 mt-1">
+            <h1 className={`${isOnlineSchoolProgram ? "sh-display text-3xl sm:text-4xl leading-none" : "text-2xl font-bold"} text-shText flex-1 min-w-0`}>{item.name}</h1>
+            {favoriteSlot?.(item, { size: "md" })}
+          </div>
 
           <div className="mt-3">
             <PriceBlock item={item} hiddenPriceMessage={isGuest ? "Sign In for Pricing" : null} />
@@ -421,8 +508,72 @@ export default function ShopItemDetail({ kind, itemId, cart, onAddToCart, onBack
             <FormattedDescription text={item.description} />
           </div>
 
+          {/* The description stays prose, because some of it is prose.
+              Everything that is actually a FACT — how many sessions, how
+              long, what it helps with, whether a dog must be chosen, how it
+              reaches you — lives here instead, laid out by department, and
+              renders nothing at all when there is nothing to say. */}
+          <ProductFacts item={item} mode={mode} />
+
           <div className="mt-auto pt-6 space-y-3">
-            {item.kind === "product" && !isShopifyMerch && !outOfStock && !atMaxInCart && !guestBlocked && (
+            {/* Buying a gift card is buying a present. Asking here — rather
+                than at checkout — means the buyer decides who it is for while
+                they are still thinking about the gift, and the cart can then
+                show them one line per recipient. */}
+            {item.kind === "gift_card" && (
+              <div className="rounded-xl border border-shBorder/60 bg-black/20 p-3 space-y-2"
+                   data-testid="shop-detail-gift">
+                <label className="flex items-center gap-2 cursor-pointer">
+                  <input type="checkbox" checked={isGift}
+                         onChange={(e) => setIsGift(e.target.checked)}
+                         data-testid="shop-detail-gift-toggle"
+                         className="w-4 h-4 accent-shPrimary"/>
+                  <span className="text-[13px] font-black text-shText">
+                    This is a gift — email it to someone
+                  </span>
+                </label>
+                {!isGift ? (
+                  <p className="text-[11px] text-shTextMuted">
+                    We will email it to you, so you can hand it on however you like.
+                  </p>
+                ) : (
+                  <div className="space-y-2">
+                    <div>
+                      <label htmlFor="gift-to" className="block text-[11px] uppercase tracking-widest text-shTextMuted font-black mb-1">
+                        Send it to
+                      </label>
+                      <input id="gift-to" type="email" value={giftEmail}
+                             onChange={(e) => setGiftEmail(e.target.value)}
+                             placeholder="their@email.com" data-testid="shop-detail-gift-email"
+                             className="w-full bg-[var(--sh-card-base)] border border-shBorder rounded p-2.5 text-shText text-sm"/>
+                    </div>
+                    <div>
+                      <label htmlFor="gift-name" className="block text-[11px] uppercase tracking-widest text-shTextMuted font-black mb-1">
+                        Their name (optional)
+                      </label>
+                      <input id="gift-name" value={giftName}
+                             onChange={(e) => setGiftName(e.target.value)}
+                             data-testid="shop-detail-gift-name"
+                             className="w-full bg-[var(--sh-card-base)] border border-shBorder rounded p-2.5 text-shText text-sm"/>
+                    </div>
+                    <div>
+                      <label htmlFor="gift-msg" className="block text-[11px] uppercase tracking-widest text-shTextMuted font-black mb-1">
+                        A short message (optional)
+                      </label>
+                      <input id="gift-msg" value={giftMessage} maxLength={300}
+                             onChange={(e) => setGiftMessage(e.target.value)}
+                             data-testid="shop-detail-gift-message"
+                             className="w-full bg-[var(--sh-card-base)] border border-shBorder rounded p-2.5 text-shText text-sm"/>
+                    </div>
+                    <p className="text-[11px] text-shTextMuted">
+                      It arrives as soon as the payment goes through.
+                    </p>
+                  </div>
+                )}
+              </div>
+            )}
+
+            {(item.kind === "product" || item.kind === "gift_card") && !isShopifyMerch && !outOfStock && !atMaxInCart && !guestBlocked && (
               <div className="flex items-center gap-2" data-testid="shop-detail-qty">
                 <button onClick={() => setQty((q) => Math.max(1, q - 1))} className="w-9 h-9 rounded border border-shBorder text-shTextMuted hover:text-shText" style={{ background: "var(--sh-card-base)" }}>−</button>
                 <span className="w-8 text-center text-shText font-bold">{qty}</span>
@@ -566,7 +717,7 @@ export default function ShopItemDetail({ kind, itemId, cart, onAddToCart, onBack
         </div>
       </div>
 
-      <RelatedItems item={item} allItems={allItems} onOpenItem={onOpenItem} isPublic={isGuest} />
+      {discoverySlot}
     </div>
   );
 }

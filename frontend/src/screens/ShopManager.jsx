@@ -5,6 +5,7 @@ import PageHero from "../components/PageHero";
 import AdminTabs from "../components/admin/AdminTabs";
 import { useConfirm } from "../lib/useConfirm";
 import { ProductEditor } from "../components/ManageProductsPanel";
+import ShopAnalyticsDashboard from "../components/shop/ShopAnalyticsDashboard";
 import { PackEditor } from "../components/CreditPacksSettings";
 import { ProgramEditor, fetchProgramById } from "../components/Programs";
 import ItemThumbnail from "../components/ItemThumbnail";
@@ -1507,6 +1508,31 @@ export default function ShopManager({ openCreateOnMount = false, onCreateConsume
   const [refreshKey, setRefreshKey] = useState(0);
   const bumpRefresh = () => setRefreshKey((k) => k + 1);
 
+  // Everything an admin can relate an item TO, in the SHOP's vocabulary.
+  // The Shop Manager calls a product a "physical_product"; the catalog, the
+  // cart and a relationship reference all call it a "product". Translating
+  // here, once, is what stops a reference being saved in the admin spelling
+  // and then never resolving anywhere a customer can see.
+  //
+  // Loaded HERE rather than in ItemsTab because this is the component that
+  // renders the editors — the first version of this read a list that lives
+  // in a sibling component, which builds cleanly and throws a ReferenceError
+  // the moment an editor opens.
+  const [relatableItems, setRelatableItems] = useState([]);
+  useEffect(() => {
+    api.get("/shop-manager/items")
+      .then(({ data }) => setRelatableItems(
+        (data.items || [])
+          .filter((it) => it.active !== false && !it.archived)
+          .map((it) => ({
+            kind: it.kind === "physical_product" ? "product" : it.kind,
+            id: it.id, name: it.name, sku: it.sku,
+          }))
+          .filter((it) => ["product", "credit_pack", "training_program"].includes(it.kind)),
+      ))
+      .catch(() => setRelatableItems([]));
+  }, [refreshKey]);
+
   useEffect(() => {
     api.get("/admin/email-templates").then((r) => setEmailTemplates((r.data || []).filter((t) => t.audience === "client"))).catch(() => setEmailTemplates([]));
     api.get("/programs/meta").then((r) => setProgramMeta(r.data)).catch(() => {});
@@ -1727,6 +1753,7 @@ export default function ShopManager({ openCreateOnMount = false, onCreateConsume
         onChange={setTab}
         items={[
           { key: "items", label: "Items", icon: "fa-boxes-stacked", testid: "sm-tab-items" },
+          { key: "insights", label: "Insights", icon: "fa-chart-simple", testid: "sm-tab-insights", accent: "cyan" },
           { key: "categories", label: "Categories & Layout", icon: "fa-layer-group", testid: "sm-tab-categories", accent: "cyan" },
           { key: "shop_settings", label: "Shop Settings", icon: "fa-sliders", testid: "sm-tab-shop_settings", accent: "cyan" },
           { key: "orders", label: "Online Orders", icon: "fa-receipt", testid: "sm-tab-orders", accent: "orange" },
@@ -1735,6 +1762,7 @@ export default function ShopManager({ openCreateOnMount = false, onCreateConsume
       />
 
       {tab === "items" && <ItemsTab key={refreshKey} onEditItem={editItem} onAddShopItem={() => setPickerOpen(true)} />}
+      {tab === "insights" && <ShopAnalyticsDashboard key={`insights-${refreshKey}`} />}
       {tab === "categories" && <CategoriesTab key={`cat-${refreshKey}`} />}
       {tab === "shop_settings" && <ShopSettingsTab key={`shop-settings-${refreshKey}`} />}
       {tab === "orders" && <OnlineOrdersTab key={`orders-${refreshKey}`} />}
@@ -1745,7 +1773,8 @@ export default function ShopManager({ openCreateOnMount = false, onCreateConsume
       {productForm && (
         <div className="fixed inset-0 bg-black/70 flex items-center justify-center z-50 p-4" data-testid="sm-product-editor-modal">
           <div className="bg-[var(--sh-card-base)] border border-shBorder rounded-2xl w-full max-w-2xl max-h-[90vh] overflow-y-auto p-6">
-            <ProductEditor form={productForm} setForm={setProductForm} editingId={productEditingId}
+            <ProductEditor relatableItems={relatableItems}
+                           form={productForm} setForm={setProductForm} editingId={productEditingId}
                            originalImageId={productOriginalImageId} saving={productSaving}
                            onSave={saveProduct} onClose={closeProductWithoutSaving} />
           </div>
@@ -1759,14 +1788,16 @@ export default function ShopManager({ openCreateOnMount = false, onCreateConsume
               <h5 className="text-shText font-black text-[16px] uppercase italic tracking-tight">{packEditing ? `Edit · ${packEditing.name}` : "New Pack"}</h5>
               <button onClick={closePackWithoutSaving} className="text-shTextMuted hover:text-shText"><i className="fas fa-xmark text-xl" /></button>
             </div>
-            <PackEditor form={packForm} setForm={setPackForm} editing={packEditing} originalImageId={packOriginalImageId}
+            <PackEditor relatableItems={relatableItems}
+                        form={packForm} setForm={setPackForm} editing={packEditing} originalImageId={packOriginalImageId}
                         emailTemplates={emailTemplates} err={packErr} onSave={savePack} onClose={closePackWithoutSaving} />
           </div>
         </div>
       )}
 
       {programForm && programMeta && (
-        <ProgramEditor program={programForm} setProgram={setProgramForm} meta={programMeta} allPrograms={allPrograms}
+        <ProgramEditor relatableItems={relatableItems}
+                       program={programForm} setProgram={setProgramForm} meta={programMeta} allPrograms={allPrograms}
                        onSave={saveProgram} onClose={closeProgramWithoutSaving} originalImageId={programOriginalImageId} />
       )}
     </div>

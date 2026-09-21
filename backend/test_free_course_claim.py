@@ -415,8 +415,11 @@ def test_the_claim_path_never_touches_stripe():
 
 def test_the_zero_dollar_cart_guard_is_still_in_place():
     # The free path is a different door, not a hole in the checkout guard.
-    src = server.__file__
-    with open(src, encoding="utf-8") as fh:
+    # Pinned to the checkout ENGINE, which is where the sequence lives now
+    # that the signed-in and guest paths share it — one guard covering both,
+    # rather than a copy per door.
+    from domains.shop import checkout as shop_checkout
+    with open(shop_checkout.__file__, encoding="utf-8") as fh:
         code = fh.read()
     assert 'detail="Cart total must be greater than zero."' in code
     assert 'if priced["total"] <= 0.005:' in code

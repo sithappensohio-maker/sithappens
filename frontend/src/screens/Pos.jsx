@@ -1452,7 +1452,15 @@ export default function Pos({ onOpenShopManager } = {}) {
                   <div className="flex items-center justify-between flex-wrap gap-2">
                     <div>
                       <p className="text-shText font-bold text-sm">
-                        Order #{o.id.slice(0, 8).toUpperCase()} · {o.client_name || "Unknown client"}
+                        Order #{o.id.slice(0, 8).toUpperCase()} · {o.client_name || (o.is_guest_order ? "Guest" : "Unknown client")}
+                        {/* Say so plainly. A guest order has no account
+                            behind it by design, and without this the name
+                            on it looks like a client record somebody is
+                            about to go looking for and never find. */}
+                        {o.is_guest_order && (
+                          <span className="ml-2 inline-block border border-shSecondary/40 text-shSecondary text-[10px] font-black px-1.5 py-0.5 rounded-full align-middle"
+                                data-testid={`online-order-guest-${o.id}`}>GUEST</span>
+                        )}
                         {o.admin_unseen === true && (
                           <span className="ml-2 inline-block bg-shAccent text-bgHeader text-[10px] font-black px-1.5 py-0.5 rounded-full align-middle"
                                 data-testid={`online-order-new-${o.id}`}>NEW</span>
@@ -1460,6 +1468,7 @@ export default function Pos({ onOpenShopManager } = {}) {
                       </p>
                       <p className="text-shTextMuted text-[12px]">
                         {o.created_at ? new Date(o.created_at).toLocaleString() : "—"} · {money(o.total)}
+                        {o.is_guest_order && o.client_email ? ` · ${o.client_email}` : ""}
                       </p>
                       <p className="text-[11px] text-shTextMuted mt-1">
                         {(o.lines || []).map((l) => `${l.quantity}× ${l.name}`).join(", ")}

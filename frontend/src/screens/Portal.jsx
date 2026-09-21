@@ -1,6 +1,7 @@
 import { useEffect, useState, useCallback } from "react";
 import { api, formatErr } from "../lib/api";
 import { useAuth } from "../lib/auth";
+import { useAuthCart } from "../lib/useAuthCart";
 import { useFeature, useTheme } from "../lib/theme";
 import WaiverModal from "../components/WaiverModal";
 import PortalAgreements from "../components/PortalAgreements";
@@ -597,7 +598,14 @@ export default function Portal() {
   // Shop view (Portal itself never unmounts) and so the nav badge below can
   // show the live quantity. Still the ONE cart — PortalShop is a fully
   // controlled consumer of this same state, not a second cart.
-  const [shopCart, setShopCart] = useState([]); // [{kind, ref_id, quantity}]
+  const [shopCart, setShopCart] = useState([]); // [{kind, ref_id, quantity, dog_id?, gift?}]
+  // ...and now survives a reload too. useAuthCart remembers only what this
+  // client MEANT to buy, under their own client_id, and rebuilds the cart
+  // from the live catalogue every time — prices, stock and eligibility are
+  // re-read, never restored. See lib/cartIntent.js for what may be stored
+  // and lib/cartRestore.js for what is checked on the way back.
+  const { notices: cartRestoreNotices, dismissNotices: dismissCartNotices } =
+    useAuthCart(user?.client_id, shopCart, setShopCart);
 
   // Public no-account storefront (Phase 4) — once, on mount: (1) a strictly
   // validated pending /shop or /shop/item/:kind/:id redirect stashed by the
@@ -646,8 +654,8 @@ export default function Portal() {
   // Refreshes the resumable-banner count (never force-reopens the dialog
   // itself) each time the Shop view is opened, not just on Portal's initial
   // mount — Portal itself never unmounts when toggling in and out of the
-  // Shop, so the authenticated cart survives that toggle even though it
-  // resets on a real page reload.
+  // Shop, so the authenticated cart survives that toggle, and useAuthCart
+  // above now carries it across a real page reload as well.
   useEffect(() => {
     if (!shopOpen) return;
     const count = readGuestCart().reduce((n, l) => n + l.quantity, 0);
@@ -1056,10 +1064,25 @@ export default function Portal() {
             {guestCartPendingCount} item{guestCartPendingCount !== 1 ? "s" : ""} saved from browsing — Review &amp; Add to Cart
           </button>
         )}
+        {cartRestoreNotices.length > 0 && (
+          <div className="shrink-0 w-full px-3 sm:px-8 py-2 bg-shOrange/10 border-b border-shOrange/30 flex items-start gap-2"
+               data-testid="cart-restore-notice">
+            <i className="fas fa-circle-info text-shOrange mt-0.5 shrink-0" />
+            <div className="flex-1 min-w-0 text-[12px] text-shText">
+              <p className="font-black uppercase tracking-widest text-shOrange">Your saved cart changed</p>
+              {cartRestoreNotices.map((n) => <p key={n} className="truncate">{n}</p>)}
+            </div>
+            <button onClick={dismissCartNotices} data-testid="cart-restore-notice-dismiss"
+                    className="text-shTextMuted hover:text-shText shrink-0" aria-label="Dismiss">
+              <i className="fas fa-xmark" />
+            </button>
+          </div>
+        )}
         <div className="app-scroll-root flex-1 min-h-0 overflow-y-auto overscroll-contain p-3 sm:p-6" data-scroll-root>
           <PortalShop initialTab={shopInitialTab} fullScreen shopifyStoreUrl={pubSettings?.client_portal_links?.shopify_store_url}
                       cart={shopCart} onCartChange={setShopCart}
                       onGoToOnlineSchool={() => { setShopOpen(false); openSchool(); }}
+                      onGoToCredits={() => setShopOpen(false)}
                       onAddDog={() => { setShopOpen(false); setDogModal({ open: true, dog: null }); }} />
         </div>
         {showGuestMergeReview && (

@@ -743,11 +743,20 @@ def test_shop_cart_item_model_has_no_client_controlled_price_or_fulfillment_fiel
     set — both are ALWAYS resolved server-side from the real program doc
     looked up by ref_id (see _price_shop_cart)."""
     fields = set(server.ShopCartItemIn.model_fields.keys())
-    assert fields == {"kind", "ref_id", "quantity", "dog_id"}
+    # The exact set is deliberate: a new field on the client-facing cart
+    # model has to be a conscious decision, not something that arrives by
+    # accident. The three gift fields say WHO an emailed gift card goes to
+    # and what it says — they are validated in _normalize_cart_lines and
+    # never touch price, eligibility, quantity or fulfillment kind, all of
+    # which stay server-resolved from the real catalog document.
+    assert fields == {"kind", "ref_id", "quantity", "dog_id",
+                      "recipient_email", "recipient_name", "gift_message"}
     assert "price" not in fields
     assert "unit_price" not in fields
     assert "fulfillment_kind" not in fields
     assert "purchase_fulfillment" not in fields
+    assert "amount" not in fields      # a gift card's value comes from ref_id
+    assert "balance" not in fields
 
 
 def test_price_shop_cart_ignores_smuggled_price_and_fulfillment_fields():

@@ -1,4 +1,5 @@
 import { useEffect, useState } from "react";
+import RelatedItemsEditor from "./shop/RelatedItemsEditor";
 import { api, formatErr } from "../lib/api";
 import { useConfirm } from "../lib/useConfirm";
 import IconPicker from "./IconPicker";
@@ -19,6 +20,7 @@ const empty = {
   // (kind-based hard rule, never a stored flag) — these only affect
   // BROWSING, never whether a guest can complete a purchase.
   publicly_visible: false, show_public_price: true, requires_completed_onboarding: false,
+  shop_relationships: [],
   // Customer-facing quantity fix — presentation-only marketing metadata.
   // `qty` above stays the sole authoritative credit count; these never
   // affect granting, redemption, FIFO lots, balances, voids, or refunds.
@@ -33,7 +35,10 @@ const DEFAULT_COLOR_BY_POOL = { daycare: "#8cc63f", training: "#a855f7", boardin
 // state and the actual save call (mirrors ProgramEditor's pattern in
 // Programs.jsx); this component is purely presentational/input-bound so
 // there is exactly ONE pack form implementation, never a second copy.
-export function PackEditor({ form, setForm, editing, originalImageId, emailTemplates, err, onSave, onClose }) {
+export function PackEditor({ form, setForm, editing, originalImageId, emailTemplates, err, onSave, onClose,
+  // The SAME curated-relationship model products use — one architecture for
+  // every kind of thing the shop sells, not one per kind.
+  relatableItems = [] }) {
   return (
     <div className="p-5">
       <div className="grid grid-cols-1 md:grid-cols-4 gap-3">
@@ -199,6 +204,18 @@ export function PackEditor({ form, setForm, editing, originalImageId, emailTempl
           ) : null;
         })()}
       </div>
+
+      {form.available_online && (
+        <div className="mt-4 border-t border-shBorder pt-4">
+          <RelatedItemsEditor
+            value={form.shop_relationships}
+            onChange={(next) => setForm({ ...form, shop_relationships: next })}
+            candidates={relatableItems}
+            selfKind="credit_pack"
+            selfId={editing?.id || null}
+          />
+        </div>
+      )}
 
       {/* Public no-account storefront — credit packs always require signing
           in to buy, regardless of these toggles; they only affect browsing. */}

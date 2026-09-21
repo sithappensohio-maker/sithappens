@@ -61,7 +61,9 @@ test("the Shop card explains what a gift card is", () => {
   const fs = require("fs");
   const path = require("path");
   const src = fs.readFileSync(
-    path.join(__dirname, "..", "components", "PortalShop.jsx"), "utf8");
+    // The Shop redesign moved cards out of PortalShop into their own
+    // per-kind components; the gift-card line is on the gift-card CARD now.
+    path.join(__dirname, "..", "components", "shop", "ShopCards.jsx"), "utf8");
   expect(src).toMatch(/shop-gift-card-line-/);
   expect(src).toMatch(/Emailed straight through/);
   expect(src).toMatch(/no sales tax/);

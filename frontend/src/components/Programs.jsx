@@ -1,4 +1,5 @@
 import { useEffect, useRef, useState } from "react";
+import RelatedItemsEditor from "./shop/RelatedItemsEditor";
 import { api, formatErr } from "../lib/api";
 import { useConfirm } from "../lib/useConfirm";
 import { useProgramsData, useSharedData } from "../lib/sharedData";
@@ -415,7 +416,9 @@ export function ProgramsPanel() {
 /* ============================================================
  *  Program editor modal — used for both standard and custom programs
  * ============================================================ */
-export function ProgramEditor({ program, setProgram, meta, allPrograms = [], onSave, onClose, hideTypePicker = false, extraError = "", originalImageId = null }) {
+export function ProgramEditor({ program, setProgram, meta, allPrograms = [], onSave, onClose, hideTypePicker = false, extraError = "", originalImageId = null,
+  // The SAME curated-relationship model products use.
+  relatableItems = [] }) {
   // Sprint 110bx — load homework templates so we can pick which one auto-sends
   // on enrollment (welcome) and after a module is mastered.
   const [hwTemplates, setHwTemplates] = useState([]);
@@ -522,6 +525,18 @@ export function ProgramEditor({ program, setProgram, meta, allPrograms = [], onS
                                onChange={(id)=>set({image_id: id})} />
             </Field>
           </div>
+
+          {program.available_online && (
+            <div className="border-t border-bgHover pt-3">
+              <RelatedItemsEditor
+                value={program.shop_relationships}
+                onChange={(next) => set({ shop_relationships: next })}
+                candidates={relatableItems}
+                selfKind="training_program"
+                selfId={program.id || null}
+              />
+            </div>
+          )}
 
           {/* Public no-account storefront — training programs always
               require signing in to buy; these only affect browsing. */}

@@ -1,8 +1,9 @@
 import { useEffect, useMemo, useState } from "react";
 import { api } from "../lib/api";
 import PremiumButton from "./premium/PremiumButton";
-import { stockCeiling } from "../lib/shopPolish";
+import { cartGiftKey } from "../lib/shopPolish";
 import { readGuestCart, clearGuestCart } from "../lib/shopGuestCart";
+import { resolveCartLines, applyResolved } from "../lib/cartRestore";
 
 const money = (n) => `$${Number(n || 0).toFixed(2)}`;
 
@@ -30,51 +31,29 @@ export default function GuestCartMergeReview({ authCart, onApply, onDismiss }) {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
-  const resolved = useMemo(() => {
-    if (!catalogItems) return [];
-    return guestLines.map((line) => {
-      const item = catalogItems.find((i) => i.kind === line.kind && i.id === line.ref_id);
-      const existingLine = (authCart || []).find((c) => c.kind === line.kind && c.ref_id === line.ref_id);
-      const existingQty = existingLine ? existingLine.quantity : 0;
-      const requested = line.quantity;
-      if (!item) {
-        return { line, item: null, requested, existingQty, finalQty: existingQty, actuallyAdded: 0, rejected: "No longer available" };
-      }
-      if (item.kind === "product" && item.sales_destination === "shopify_external") {
-        return { line, item, requested, existingQty, finalQty: existingQty, actuallyAdded: 0, rejected: "Fulfilled by Shopify — use its own listing" };
-      }
-      const ceiling = stockCeiling(item);
-      const requestedTotal = existingQty + requested;
-      const finalQty = ceiling != null ? Math.min(requestedTotal, ceiling) : requestedTotal;
-      const actuallyAdded = Math.max(0, finalQty - existingQty);
-      const rejected = actuallyAdded === 0 && requested > 0
-        ? (ceiling != null && ceiling <= existingQty ? "Already at the maximum available quantity" : null)
-        : null;
-      return { line, item, requested, existingQty, finalQty, actuallyAdded, rejected };
-    });
-  }, [catalogItems, guestLines, authCart]);
+  // The same resolution the signed-in cart uses when it comes back after a
+  // reload (lib/cartRestore): real catalogue, real stock, real eligibility,
+  // and stock counted against what the account cart ALREADY holds — never
+  // the incoming guest quantity on its own. No guest-side price is shown or
+  // compared, because none of it can be trusted to still be current.
+  const resolved = useMemo(
+    () => (catalogItems ? resolveCartLines(guestLines, { catalog: catalogItems, existing: authCart || [] }) : []),
+    [catalogItems, guestLines, authCart],
+  );
 
   if (guestLines.length === 0) return null;
 
   const anyApplicable = resolved.some((r) => r.actuallyAdded > 0);
 
   const handleConfirm = () => {
-    const next = [...(authCart || [])];
-    for (const r of resolved) {
-      if (r.actuallyAdded <= 0 || !r.item) continue;
-      const idx = next.findIndex((c) => c.kind === r.line.kind && c.ref_id === r.line.ref_id);
-      if (idx >= 0) {
-        next[idx] = { ...next[idx], quantity: r.finalQty };
-      } else {
-        next.push({ kind: r.line.kind, ref_id: r.line.ref_id, quantity: r.finalQty });
-      }
-    }
-    onApply(next);
+    onApply(applyResolved(authCart || [], resolved));
     clearGuestCart();
   };
 
   return (
-    <div className="fixed inset-0 bg-black/70 flex items-center justify-center z-[60] p-4" data-testid="guest-cart-merge-review">
+    <div className="fixed inset-0 bg-black/70 flex items-center justify-center z-[60] p-4"
+         role="dialog" aria-modal="true" aria-label="Review your cart"
+         data-testid="guest-cart-merge-review">
       <div className="border border-shBorder rounded-2xl w-full max-w-lg p-5 space-y-3 max-h-[85vh] overflow-y-auto shadow-sh" style={{ background: "var(--sh-card-base)" }}>
         <div>
           <p className="text-shText font-bold uppercase tracking-widest text-sm">Review Your Cart</p>
@@ -91,8 +70,13 @@ export default function GuestCartMergeReview({ authCart, onApply, onDismiss }) {
         {catalogItems !== null && (
           <div className="space-y-2">
             {resolved.map((r) => (
-              <div key={`${r.line.kind}:${r.line.ref_id}`} className="border border-shBorder rounded-lg p-3" data-testid={`guest-merge-line-${r.line.kind}-${r.line.ref_id}`}>
+              <div key={`${r.line.kind}:${r.line.ref_id}:${cartGiftKey(r.line.gift)}`} className="border border-shBorder rounded-lg p-3" data-testid={`guest-merge-line-${r.line.kind}-${r.line.ref_id}`}>
                 <p className="text-shText font-bold text-sm truncate">{r.item ? r.item.name : "Item"}</p>
+                {r.line.gift?.recipient_email && (
+                  <p className="text-[11px] text-shSecondary font-bold" data-testid="guest-merge-line-gift">
+                    Gift for {r.line.gift.recipient_name || r.line.gift.recipient_email}
+                  </p>
+                )}
                 {r.rejected ? (
                   <p className="text-[12px] text-shDanger mt-1" data-testid="guest-merge-line-rejected">
                     <i className="fas fa-triangle-exclamation mr-1" />{r.rejected}

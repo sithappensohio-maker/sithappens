@@ -1,5 +1,7 @@
 import { createContext, useContext, useEffect, useState, useCallback } from "react";
 import { api, clearSharedApiCache, formatErr } from "./api";
+import { clearAllAuthCarts } from "./cartIntent";
+import { clearAllRecent } from "./shopRecent";
 
 const AuthCtx = createContext(null);
 export const useAuth = () => useContext(AuthCtx);
@@ -108,6 +110,15 @@ export function AuthProvider({ children }) {
 
   const logout = () => {
     localStorage.removeItem("sh_token");
+    // A signed-in cart can name a dog and a gift recipient. Signing out of a
+    // shared computer should not leave somebody's family in localStorage, so
+    // the cart goes with the session. Per-client keys (lib/cartIntent) remain
+    // as the second line of defence for the times this never runs — a closed
+    // tab, an expired token, a crash.
+    clearAllAuthCarts();
+    // Same reasoning as the cart: what someone was shopping for is theirs,
+    // and a shared computer should not hand it to whoever signs in next.
+    clearAllRecent();
     clearSharedApiCache({ notify: false });
     setUser(false);
     setPermissions(null);

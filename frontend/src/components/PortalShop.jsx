@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { createPortal } from "react-dom";
 import { api } from "../lib/api";
 import { toast } from "sonner";
@@ -9,11 +9,35 @@ import ItemThumbnail from "./ItemThumbnail";
 import { isFreeClaimable } from "../lib/freeCourseClaim";
 import { SELECTED_ENROLLMENT_KEY } from "../lib/studentSchool";
 import ShopItemDetail from "./ShopItemDetail";
+import GuestCheckoutPanel from "./GuestCheckoutPanel";
+import ShopLanding from "./shop/ShopLanding";
+import CartPanel from "./shop/ShopCart";
+import {
+  DepartmentNav, ShopSearch, SortSelect, FilterControls, ProductGrid,
+} from "./shop/ShopBrowse";
+import {
+  visibleDepartments, departmentByKey, resolveDepartmentParam, browseItems,
+  itemsInDepartment, EMPTY_FILTERS, activeFilterCount,
+} from "../lib/shopDepartments";
+import { cartGiftKey } from "../lib/shopPolish";
+import { useAuth } from "../lib/auth";
+import { useDiscovery, useFavorites, useRememberViewed } from "../lib/useShopDiscovery";
+import {
+  trackShop, trackOnce, trackImpressions, trackProductView, flushShopEvents,
+  startShopAnalytics,
+} from "../lib/shopAnalytics";
+import { useDocumentMeta, publicOrigin } from "../lib/useDocumentMeta";
+import { shopMetaFor } from "../lib/shopSeo";
+import {
+  FavoriteButton, FavoritesList, Recommendations, RecentlyViewed,
+} from "./shop/ShopDiscovery";
+import { MyOrders } from "./shop/ShopOrders";
 import HuskyDogImage from "./brand/HuskyDogImage";
 import OnlineSchoolStorefront from "./OnlineSchoolStorefront";
 import {
   itemsForTab, subcategoryOptionsForTab, nextFiltersForTab,
-  sortShopItems, singularUnit, stockCeiling, isInternalPhysical, orderStatusLabel,
+  sortShopItems, singularUnit, stockCeiling, isInternalPhysical,
+  shopBackTarget,
   categoryGroupsForTab, matchesSearchQuery, OTHER_CATEGORY_ID,
   sectionMetaFor, visibleSectionsInOrder, categoryCoverImageId, shouldHideEmptyCategory,
   orderCategoryGroupsFeaturedFirst, filterFeaturedItems, guestItemCta, creditPackCardLine,
@@ -45,12 +69,6 @@ const TABS = [
   { key: "online_school", label: "Online School" },
 ];
 
-// Bridges the cart/catalog kind vocabulary above ("product"/"credit_pack"/
-// "training_program") to shop_page.sections' permanent BACKEND section
-// vocabulary ("merch"/"prepaid_visits"/"training", matching
-// SHOP_SECTION_FOR_KIND server-side) — the one place this mapping lives.
-const SECTION_KEY_FOR_TAB = { product: "merch", credit_pack: "prepaid_visits", training_program: "training", online_school: "online_school" };
-const TAB_KEY_FOR_SECTION = { merch: "product", prepaid_visits: "credit_pack", training: "training_program", online_school: "online_school" };
 
 function useIsMobileViewport() {
   const [isMobile, setIsMobile] = useState(
@@ -72,6 +90,7 @@ function useIsMobileViewport() {
 // browser back button, refresh, and direct links all behave normally. `kind`
 // here matches the catalog's own discriminator ("product"/"credit_pack"/
 // "training_program"), the same strings the cart/checkout already use.
+
 function parseDetailRoute() {
   if (typeof window === "undefined") return null;
   const m = window.location.pathname.match(/^\/shop\/item\/([^/]+)\/([^/]+)/);
@@ -99,6 +118,10 @@ function readReturnParams() {
 // and the client needs to clearly land on Shopify. Click is logged (best-
 // effort, nonfinancial) before navigating — never blocks the navigation.
 function openShopifyListing(item) {
+  // They are leaving for Shopify's own checkout, so this is the last thing
+  // this shop will hear about that sale — which is exactly why it is worth
+  // counting.
+  trackShop({ event: "shopify_outbound", kind: item.kind, ref_id: item.id });
   api.post("/shop/merch-click", { product_id: item.id }).catch(() => {});
   const url = item.shopify_product_url;
   if (!url) return;
@@ -113,291 +136,11 @@ function openShopifyListing(item) {
 const PURCHASE_LABELS = { credit_pack: "Purchase Pack", training_program: "Purchase Program" };
 const purchaseLabel = (kind) => PURCHASE_LABELS[kind] || "Add to Cart";
 
-function ItemCard({ item, cartQty, onAdd, onOpenDetail, mode = "authenticated", onRequireAccount }) {
-  const isGuest = mode === "guest";
-  const isShopifyMerch = item.kind === "product" && item.sales_destination === "shopify_external";
-  // Public no-account storefront — the public item shape has no
-  // track_inventory/in_stock/stock_on_hand (see availabilityText's comment
-  // in ShopItemDetail.jsx for why), only the computed `availability`
-  // string, so out-of-stock detection is derived from that instead in
-  // guest mode. stockCeiling itself already returns null (no ceiling) for
-  // an item missing track_inventory — real stock enforcement for a guest's
-  // locally-held cart line happens at the post-login merge-review step
-  // against the authenticated catalog, never client-side here.
-  const outOfStock = isGuest
-    ? item.kind === "product" && !isShopifyMerch && item.availability === "out_of_stock"
-    : item.kind === "product" && !isShopifyMerch && item.track_inventory && !item.in_stock;
-  const ceiling = stockCeiling(item);
-  const atMax = ceiling != null && cartQty >= ceiling;
-  const cta = isGuest ? guestItemCta(item) : null;
-  const guestBlocked = isGuest && cta && cta.type !== "add_to_cart" && cta.type !== "shopify";
-  const isOnlineSchool = item.kind === "training_program" && item.purchase_fulfillment === "online_school";
-  return (
-    <NeonEdge accentRgb={isOnlineSchool ? accentRgb("cyan") : accentRgb("lime")} intensity={isOnlineSchool ? "standard" : "subtle"} onClick={() => onOpenDetail(item)}
-              className="p-3 flex flex-col hover:-translate-y-0.5 transition duration-200 text-left cursor-pointer" data-testid={`shop-card-${item.kind}-${item.id}`}>
-      <div className="relative overflow-hidden rounded-xl bg-black/25">
-        {isOnlineSchool && !item.image_id ? (
-          <div className="h-[128px] relative overflow-hidden rounded-lg bg-[radial-gradient(circle_at_50%_20%,rgba(0,169,224,0.16),transparent_58%)]">
-            <HuskyDogImage name={item.name} className="w-full h-full object-contain object-center scale-[1.06]"/>
-            <div className="absolute inset-x-0 bottom-0 h-14 bg-gradient-to-t from-black/80 to-transparent"/>
-          </div>
-        ) : (
-          <ItemThumbnail imageId={item.image_id} alt={item.name} variant="banner" size={128} className="rounded-lg" public={isGuest} />
-        )}
-        {isOnlineSchool && (
-          <span className="absolute top-1.5 right-1.5 px-2 py-1 rounded-lg text-[9px] font-black uppercase tracking-[0.12em] bg-shSecondary text-[#041018] shadow-lg">
-            <i className="fas fa-graduation-cap mr-1"/>Online School
-          </span>
-        )}
-        {item.featured && (
-          <span className="absolute top-1.5 left-1.5 px-1.5 py-0.5 rounded text-[9px] font-black uppercase tracking-widest bg-shPrimary text-bgHeader">
-            Featured
-          </span>
-        )}
-      </div>
-      <p className={`${isOnlineSchool ? "sh-display text-[17px] leading-tight" : "text-[14px] font-bold"} text-shText mt-3 line-clamp-2 min-h-[2.25em]`}>{item.name}</p>
-      {item.category_name && (
-        <p className="text-[11px] text-shSecondary font-bold mt-0.5 truncate">
-          {item.category_name}{item.subcategory_name ? ` → ${item.subcategory_name}` : ""}
-        </p>
-      )}
-      {item.description && <p className="text-shTextMuted text-[12px] mt-1 line-clamp-2">{item.description}</p>}
 
-      {isShopifyMerch ? (
-        <p className="text-[11px] text-shSecondary uppercase tracking-widest font-bold mt-1" data-testid={`shop-merch-badge-${item.id}`}>
-          <i className="fas fa-arrow-up-right-from-square mr-1" />Fulfilled by Shopify
-        </p>
-      ) : item.kind === "product" ? (
-        <p className="text-[11px] text-shTextMuted uppercase tracking-widest font-bold mt-1">
-          {isGuest
-            ? (item.availability === "out_of_stock" ? "Out of stock" : item.availability === "low_stock" ? "Low stock" : "Available")
-            : item.track_inventory
-              ? (item.in_stock ? `${item.stock_on_hand} in stock` : "Out of stock")
-              : "Available"}
-        </p>
-      ) : null}
-      {item.kind === "gift_card" && (
-        <p className="text-[11px] text-shTextMuted uppercase tracking-widest font-bold mt-1"
-           data-testid={`shop-gift-card-line-${item.id}`}>
-          Emailed straight through · never expires · no sales tax
-        </p>
-      )}
-      {item.kind === "credit_pack" && (
-        <p className="text-[11px] text-shTextMuted uppercase tracking-widest font-bold mt-1">
-          {creditPackCardLine(item)}
-        </p>
-      )}
-      {item.kind === "training_program" && (
-        <p className={`text-[11px] mt-1 ${isOnlineSchool ? "text-shSecondary font-bold" : "text-shTextMuted uppercase tracking-widest font-bold"}`}>
-          {isOnlineSchool ? (
-            <><i className="fas fa-circle-play mr-1"/>Self-paced lessons · guided practice · trainer feedback</>
-          ) : (
-            <>{item.format_count} {item.format_unit}
-            {item.format_count > 0 && item.price != null
-              ? ` · ${money(item.price / item.format_count)} per ${singularUnit(item.format_unit)}`
-              : ""}</>
-          )}
-        </p>
-      )}
 
-      <div className="mt-auto pt-3 space-y-2">
-        {isShopifyMerch ? (
-          item.shopify_display_price != null && (
-            <p className="text-shPrimary font-black text-[18px]">
-              {item.shopify_from_price ? "From " : ""}{money(item.shopify_display_price)}
-            </p>
-          )
-        ) : guestBlocked && cta.type === "hidden_price" ? null
-        : (item.kind === "credit_pack" || item.kind === "product") && item.has_price_override ? (
-          <div data-testid={`shop-price-override-${item.id}`}>
-            <p className="text-shPrimary font-black text-[18px]">Your price: {money(item.effective_price)}</p>
-            <p className="text-[11px] text-shTextMuted font-bold uppercase tracking-widest">Client-specific price</p>
-            <p className="text-[12px] text-shTextMuted mt-0.5">
-              Standard price: <span className="line-through">{money(item.list_price)}</span>
-            </p>
-          </div>
-        ) : (
-          isFreeClaimable(item)
-            ? <p className="text-shPrimary font-black text-[18px]" data-testid={`shop-free-badge-${item.id}`}>FREE</p>
-            : <p className="text-shPrimary font-black text-[18px]">{money(item.price)}</p>
-        )}
-        {/* A free course never gets a cart CTA on the grid. It opens its own
-            detail view, which is where dog selection and the claim live. */}
-        {isFreeClaimable(item) ? (
-          <PremiumButton variant="primary" onClick={(e) => { e.stopPropagation(); onOpenDetail?.(item); }}
-                         data-testid={`shop-start-free-${item.id}`} className="w-full justify-center">
-            Start Free Course
-          </PremiumButton>
-        ) : isShopifyMerch ? (
-          <PremiumButton variant="primary" onClick={(e) => { e.stopPropagation(); openShopifyListing(item); }} data-testid={`shop-view-options-${item.id}`} className="w-full justify-center">
-            View Options <i className="fas fa-arrow-up-right-from-square ml-1 text-[11px]" />
-          </PremiumButton>
-        ) : guestBlocked ? (
-          cta.type === "hidden_price" ? (
-            <PremiumButton variant="primary" onClick={(e) => { e.stopPropagation(); onRequireAccount?.(item, "hidden_price"); }} data-testid={`shop-buy-${item.kind}-${item.id}`} className="w-full justify-center">
-              Sign In for Pricing
-            </PremiumButton>
-          ) : cta.type === "contact_required" ? (
-            <PremiumButton variant="secondary" onClick={(e) => { e.stopPropagation(); onRequireAccount?.(item, cta.reason); }} data-testid={`shop-buy-${item.kind}-${item.id}`} className="w-full justify-center">
-              {cta.reason === "dog" ? "Contact Us — Dog Required" : "Contact Us — Approval Required"}
-            </PremiumButton>
-          ) : (
-            <PremiumButton variant="primary" onClick={(e) => { e.stopPropagation(); onRequireAccount?.(item, null); }} data-testid={`shop-buy-${item.kind}-${item.id}`} className="w-full justify-center">
-              Sign In to Purchase
-            </PremiumButton>
-          )
-        ) : outOfStock ? (
-          <button disabled onClick={(e) => e.stopPropagation()} data-testid={`shop-buy-${item.kind}-${item.id}`}
-                  className="w-full px-3 py-2 rounded-md text-[11px] font-black uppercase tracking-widest border border-shBorder text-shTextMuted cursor-not-allowed"
-                  style={{ background: "var(--sh-card-base)" }} title="This item is currently out of stock">
-            Out of Stock
-          </button>
-        ) : atMax ? (
-          <button disabled onClick={(e) => e.stopPropagation()} data-testid={`shop-buy-${item.kind}-${item.id}`}
-                  className="w-full px-3 py-2 rounded-md text-[11px] font-black uppercase tracking-widest border border-shBorder text-shTextMuted cursor-not-allowed"
-                  style={{ background: "var(--sh-card-base)" }} title="You already have the maximum available quantity in your cart">
-            Max in Cart ({cartQty})
-          </button>
-        ) : (
-          <PremiumButton variant="primary" onClick={(e) => { e.stopPropagation(); onAdd(item); }} data-testid={`shop-buy-${item.kind}-${item.id}`} className="w-full justify-center">
-            {cartQty > 0 ? `In Cart (${cartQty})` : purchaseLabel(item.kind)}
-          </PremiumButton>
-        )}
-      </div>
-    </NeonEdge>
-  );
-}
 
-// Section cards (Merch & Gear / Prepaid Visits / Training) — the Shop's
-// top-level landing screen when the "All" tab is active and nothing else
-// (search/category) is selected. Clicking one just switches the active tab;
-// it never sets a category filter itself.
-function SectionCard({ tabKey, label, count, group, showCount, onClick, mode = "authenticated" }) {
-  const isMobile = useIsMobileViewport();
-  const coverImageId = categoryCoverImageId(group, { preferMobile: isMobile });
-  return (
-    <NeonEdge accentRgb={accentRgb("lime")} intensity="subtle" onClick={onClick}
-              className="p-5 flex flex-col items-center text-center gap-3 hover:-translate-y-0.5 transition duration-200 cursor-pointer"
-              data-testid={`shop-section-card-${tabKey}`}>
-      <ItemThumbnail imageId={coverImageId} alt={label} variant="banner" size={140} className="rounded-lg" public={mode === "guest"} />
-      <div>
-        <p className="text-shText font-black text-[16px]">{label}</p>
-        {showCount !== false && (
-          <p className="text-shTextMuted text-[11px] font-bold uppercase tracking-widest mt-1">{count} item{count !== 1 ? "s" : ""}</p>
-        )}
-      </div>
-    </NeonEdge>
-  );
-}
 
-// Category cards — a tab's category-index screen, shown instead of an
-// immediate flat item grid so "Merch & Gear" doesn't dump tags, shirts, and
-// mugs into one scattered pile. `group` comes from categoryGroupsForTab (see
-// ../lib/shopPolish.js) and already carries the matching items/count; the
-// cover image is resolved via categoryCoverImageId, never a second API call.
-function CategoryCard({ group, showCount, onClick, mode = "authenticated" }) {
-  const { category, count } = group;
-  const isMobile = useIsMobileViewport();
-  const coverImageId = categoryCoverImageId(group, { preferMobile: isMobile });
-  return (
-    <NeonEdge accentRgb={accentRgb("lime")} intensity="subtle" onClick={onClick}
-              className="p-4 flex flex-col text-left gap-1.5 hover:-translate-y-0.5 transition duration-200 cursor-pointer"
-              data-testid={`shop-category-card-${category.id}`}>
-      <ItemThumbnail imageId={coverImageId} alt={category.name} variant="banner" size={120} className="rounded-lg" public={mode === "guest"} />
-      <p className="text-shText font-bold text-[15px] mt-1.5 line-clamp-1">
-        {category.name}
-        {category.is_featured && <span className="ml-1.5 text-[10px] text-shPrimary align-middle">★</span>}
-      </p>
-      {category.description && <p className="text-shTextMuted text-[12px] line-clamp-2">{category.description}</p>}
-      {showCount !== false && (
-        <p className="text-shSecondary text-[11px] font-bold uppercase tracking-widest mt-auto pt-1">{count} item{count !== 1 ? "s" : ""}</p>
-      )}
-    </NeonEdge>
-  );
-}
 
-// Section-index screen ("All" tab, nothing selected) — one card per kind.
-function SectionIndex({ sections, showCount, onSelect, onViewAll, mode = "authenticated" }) {
-  if (sections.length === 0) {
-    return <p className="text-gray-500 text-sm text-center py-6">Nothing here yet — check back soon.</p>;
-  }
-  return (
-    <div data-testid="shop-section-index">
-      <div className="grid grid-cols-2 md:grid-cols-3 gap-3 max-w-2xl mx-auto">
-        {sections.map((s) => (
-          <SectionCard key={s.key} tabKey={s.key} label={s.label} count={s.count} group={s} showCount={showCount} onClick={() => onSelect(s.key)} mode={mode} />
-        ))}
-      </div>
-      <div className="text-center mt-4">
-        <button onClick={onViewAll} data-testid="shop-view-all-products-top"
-                className="text-[11px] font-black uppercase tracking-widest text-shTextMuted hover:text-shPrimary transition">
-          View All Products <i className="fas fa-arrow-right ml-1" />
-        </button>
-      </div>
-    </div>
-  );
-}
-
-// Category-index screen (a specific tab, no category selected yet). Groups
-// are already ordered featured-first by the caller (orderCategoryGroupsFeaturedFirst).
-function CategoryIndex({ groups, showCount, onSelectCategory, onViewAll, sectionLabel, mode = "authenticated" }) {
-  if (groups.length === 0) {
-    return <p className="text-gray-500 text-sm text-center py-6">Nothing here yet — check back soon.</p>;
-  }
-  return (
-    <div data-testid="shop-category-index">
-      <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-4 gap-3">
-        {groups.map((g) => (
-          <CategoryCard key={g.category.id} group={g} showCount={showCount} onClick={() => onSelectCategory(g.category.id)} mode={mode} />
-        ))}
-      </div>
-      <div className="text-center mt-4">
-        <button onClick={onViewAll} data-testid="shop-view-all-products"
-                className="text-[11px] font-black uppercase tracking-widest text-shTextMuted hover:text-shPrimary transition">
-          View All {sectionLabel} <i className="fas fa-arrow-right ml-1" />
-        </button>
-      </div>
-    </div>
-  );
-}
-
-// Breadcrumb/heading + "Back to Categories" control shown above the product
-// grid whenever a category is selected (or the "View All Products" escape
-// hatch from a category-index screen is active) — never shown on the index
-// screens themselves.
-function CategoryGridHeader({ eyebrow, title, description, count, showCount, onBack, backLabel }) {
-  return (
-    <div className="mb-4" data-testid="shop-category-grid-header">
-      <button onClick={onBack} data-testid="shop-back-to-categories"
-              className="mb-3 inline-flex items-center gap-1.5 text-[11px] font-black uppercase tracking-widest text-shPrimary hover:text-shText transition">
-        <i className="fas fa-arrow-left" />{backLabel}
-      </button>
-      <div className="flex items-start justify-between gap-3 flex-wrap">
-        <div className="min-w-0">
-          {eyebrow && <p className="text-[11px] font-bold uppercase tracking-widest text-shTextMuted">{eyebrow}</p>}
-          <p className="text-shText font-black text-lg">{title}</p>
-          {description && <p className="text-shTextMuted text-sm mt-0.5 max-w-xl">{description}</p>}
-        </div>
-        {showCount !== false && (
-          <p className="text-[11px] font-bold uppercase tracking-widest text-shTextMuted shrink-0 pt-1" data-testid="shop-item-count">
-            {count} item{count !== 1 ? "s" : ""}
-          </p>
-        )}
-      </div>
-    </div>
-  );
-}
-
-// Tone classes for orderStatusLabel's output (see ../lib/shopPolish.js).
-const ORDER_STATUS_TONE = {
-  "Needs Attention": "text-shOrange",
-  "Not Completed": "text-shDanger",
-  "Completed": "text-shGreen",
-  "Picked Up": "text-shGreen",
-  "Ready for Pickup": "text-shGreen",
-};
-
-const cartKey = (kind, refId, dogId) => `${kind}:${refId}:${dogId || ""}`;
 
 // Shared by CartPanel, the header Cart button, and CheckoutTray so every
 // surface that shows a total is reading the exact same numbers — never a
@@ -412,80 +155,6 @@ function useCartLines(cart, items, dogs = []) {
     const subtotal = lines.reduce((sum, l) => sum + (l.item.price || 0) * l.quantity, 0);
     return { lines, subtotal };
   }, [cart, items, dogs]);
-}
-
-function CartPanel({ lines, subtotal, onQtyChange, onRemove, onCheckout, busy, previewMode, onClose, guestMode, onSignIn }) {
-  // Portaled to document.body — this panel must NEVER be a direct child of
-  // a .bg-bgPanel.rounded-2xl/.rounded-xl container (index.css's `> *`
-  // dialog-content rule forces position:relative on direct children of
-  // those, which would silently break this backdrop's `fixed` positioning
-  // since PortalShop's own root wrapper carries those exact classes).
-  return createPortal(
-    <div className="fixed inset-0 bg-black/70 flex items-center justify-center z-50 p-4" data-testid="shop-cart-panel">
-      <div className="border border-shBorder rounded-2xl w-full max-w-md p-5 space-y-3 max-h-[85vh] overflow-y-auto shadow-sh" style={{ background: "var(--sh-card-base)" }}>
-        <div className="flex items-center justify-between">
-          <p className="text-shText font-bold uppercase tracking-widest text-sm">Your Cart</p>
-          <button onClick={onClose} className="text-shTextMuted hover:text-shText"><i className="fas fa-xmark" /></button>
-        </div>
-
-        {lines.length === 0 && <p className="text-shTextMuted text-sm py-6 text-center">Your cart is empty.</p>}
-
-        <div className="space-y-2">
-          {lines.map((l) => {
-            const ceiling = stockCeiling(l.item);
-            const atMax = ceiling != null && l.quantity >= ceiling;
-            return (
-              <div key={cartKey(l.kind, l.ref_id, l.dog_id)} className="border border-shBorder rounded-lg p-3 flex items-center justify-between gap-2"
-                   style={{ background: "var(--sh-card-base)" }}
-                   data-testid={`shop-cart-line-${l.kind}-${l.ref_id}`}>
-                <div className="min-w-0">
-                  <p className="text-shText font-bold text-sm truncate">{l.item.name}</p>
-                  {l.dog_name && <p className="text-[11px] text-shPrimary font-bold">For {l.dog_name}</p>}
-                  <p className="text-[11px] text-shTextMuted">{money(l.item.price)} each · {money(l.item.price * l.quantity)} total</p>
-                </div>
-                <div className="flex items-center gap-2 shrink-0">
-                  <button onClick={() => onQtyChange(l.kind, l.ref_id, l.quantity - 1, l.dog_id)}
-                          className="w-7 h-7 rounded border border-shBorder text-shTextMuted hover:text-shText transition bg-[var(--sh-card-base)]">−</button>
-                  <span className="text-shText font-bold w-5 text-center">{l.quantity}</span>
-                  <button onClick={() => onQtyChange(l.kind, l.ref_id, l.quantity + 1, l.dog_id)} disabled={atMax}
-                          title={atMax ? "Maximum available quantity is already in your cart" : undefined}
-                          className="w-7 h-7 rounded border border-shBorder text-shTextMuted hover:text-shText transition bg-[var(--sh-card-base)] disabled:opacity-30 disabled:cursor-not-allowed disabled:hover:text-shTextMuted">+</button>
-                  <button onClick={() => onRemove(l.kind, l.ref_id, l.dog_id)} className="text-shTextMuted hover:text-shDanger ml-1">
-                    <i className="fas fa-trash-can text-xs" />
-                  </button>
-                </div>
-              </div>
-            );
-          })}
-        </div>
-
-        {lines.length > 0 && (
-          <>
-            {lines.some((l) => isInternalPhysical(l.item)) && (
-              <p className="text-[11px] text-shOrange bg-shOrange/10 border border-shOrange/30 rounded p-2" data-testid="shop-cart-pickup-notice">
-                <i className="fas fa-store mr-1" />Local pickup at Sit Happens — shipping is not available for this item.
-              </p>
-            )}
-            <div className="flex items-center justify-between pt-2 border-t border-shBorder">
-              <p className="text-shTextMuted text-sm">Subtotal</p>
-              <p className="text-shText font-black">{money(subtotal)}</p>
-            </div>
-            <p className="text-[11px] text-shTextMuted">Tax (if applicable) is calculated on the next step. You&apos;ll be taken to Stripe&apos;s secure checkout — Sit Happens never sees or stores your card details.</p>
-            {guestMode ? (
-              <PremiumButton variant="primary" onClick={onSignIn} data-testid="shop-checkout-button" className="w-full justify-center py-3">
-                Sign In to Checkout
-              </PremiumButton>
-            ) : (
-              <PremiumButton variant="primary" onClick={onCheckout} disabled={busy || previewMode} data-testid="shop-checkout-button" className="w-full justify-center py-3">
-                {previewMode ? "Preview Only — No Real Orders" : busy ? "Redirecting…" : "Continue to Secure Checkout"}
-              </PremiumButton>
-            )}
-          </>
-        )}
-      </div>
-    </div>,
-    document.body,
-  );
 }
 
 // Persistent checkout CTA — floats above the shop content whenever the cart
@@ -529,8 +198,8 @@ function CheckoutTray({ cartCount, subtotal, onViewCart, onCheckout, busy, justA
           <PremiumButton variant="secondary" onClick={onViewCart} data-testid="shop-tray-view-cart" className="py-2.5 px-4">
             View Cart
           </PremiumButton>
-          <PremiumButton variant="primary" onClick={guestMode ? onSignIn : onCheckout} disabled={!guestMode && (busy || previewMode)} data-testid="shop-tray-checkout" className="py-2.5 px-6">
-            {guestMode ? "Sign In to Checkout" : previewMode ? "Preview Only" : busy ? "Redirecting…" : "Checkout"}
+          <PremiumButton variant="primary" onClick={onCheckout} disabled={!guestMode && (busy || previewMode)} data-testid="shop-tray-checkout" className="py-2.5 px-6">
+            {previewMode ? "Preview Only" : busy ? "Redirecting…" : "Checkout"}
           </PremiumButton>
         </div>
       </div>
@@ -547,8 +216,8 @@ function CheckoutTray({ cartCount, subtotal, onViewCart, onCheckout, busy, justA
             <i className="fas fa-cart-shopping text-shPrimary text-lg shrink-0" aria-hidden="true" />
             <span className="text-shText font-bold text-sm truncate">{cartCount} · {money(subtotal)}</span>
           </button>
-          <PremiumButton variant="primary" onClick={guestMode ? onSignIn : onCheckout} disabled={!guestMode && (busy || previewMode)} data-testid="shop-tray-checkout-mobile" className="py-2.5 px-5 shrink-0">
-            {guestMode ? "Sign In" : previewMode ? "Preview" : busy ? "…" : "Checkout"}
+          <PremiumButton variant="primary" onClick={onCheckout} disabled={!guestMode && (busy || previewMode)} data-testid="shop-tray-checkout-mobile" className="py-2.5 px-5 shrink-0">
+            {previewMode ? "Preview" : busy ? "…" : "Checkout"}
           </PremiumButton>
         </div>
       </div>
@@ -582,12 +251,68 @@ function ApparelSection({ storeUrl }) {
   );
 }
 
+/**
+ * Everything shown beneath a product: what pairs with it, and what you were
+ * looking at before.
+ *
+ * One request for both, because they need the same catalogue read behind
+ * them. Rendering nothing at all is the normal case for a brand-new visitor
+ * with no history and a product nobody has curated yet, and that is the
+ * correct output — an empty "you may also like" is worse than whitespace.
+ */
+export function DetailDiscovery({ detail, clientId, mode, cardProps }) {
+  const guest = mode === "guest";
+  const live = mode !== "preview";
+  useRememberViewed({ kind: detail.kind, refId: detail.id, clientId, guest, enabled: live });
+  const { recommendations, recentlyViewed } = useDiscovery({
+    kind: detail.kind, refId: detail.id, clientId, guest, enabled: live,
+  });
+
+  // One per meaningful visit to this product, not one per render.
+  useEffect(() => {
+    if (live) trackProductView(detail.kind, detail.id);
+  }, [live, detail.kind, detail.id]);
+
+  // Which suggestions were actually shown, and where they came from — the
+  // pair of numbers that says whether curation is worth the effort.
+  useEffect(() => {
+    if (!live || recommendations.length === 0) return;
+    for (const r of recommendations) {
+      trackShop({ event: "recommendation_impression", kind: r.item.kind,
+                  ref_id: r.item.id, rec_source: r.rel });
+    }
+  }, [live, recommendations]);
+
+  const cardPropsWithTracking = {
+    ...cardProps,
+    onOpenDetail: (item) => {
+      const source = recommendations.find((r) => r.item.id === item.id)?.rel;
+      if (live) {
+        trackShop({ event: "recommendation_click", kind: item.kind, ref_id: item.id,
+                    rec_source: source || "recently_viewed" });
+      }
+      cardProps.onOpenDetail?.(item);
+    },
+  };
+
+  if (recommendations.length === 0 && recentlyViewed.length === 0) return null;
+  return (
+    <div className="mt-10 pt-8 border-t border-shBorder space-y-8">
+      <Recommendations recommendations={recommendations} cardProps={cardPropsWithTracking} />
+      <RecentlyViewed items={recentlyViewed} cardProps={cardPropsWithTracking} />
+    </div>
+  );
+}
+
 export default function PortalShop({
   initialTab = "all", fullScreen = false, shopifyStoreUrl = "", cart: cartProp, onCartChange,
   // mode: "authenticated" (default, real client) | "preview" (admin Shop
   // Manager Client Preview — reuses this exact same presentation instead of
   // a second fake storefront) | "guest" (public no-account storefront).
   mode = "authenticated", previewClientId = null,
+  // Called with the catalog once it loads, so a wrapper never has to fetch
+  // the same list a second time for its own purposes.
+  onItemsLoaded,
   // guest mode only — called whenever a guest clicks a CTA that requires an
   // account (sign-in, hidden-price, or an approval/dog contact-required
   // blocker). `(item, reason)` — reason is "hidden_price"|"approval"|"dog"|null.
@@ -601,11 +326,140 @@ export default function PortalShop({
   // client's add-dog workflow, so a client with no dog is routed into the
   // real onboarding rather than being offered a placeholder.
   onAddDog,
+  // Post-purchase — "View balance" on a credit-pack line. Wired by
+  // Portal.jsx to closing the Shop and returning to the portal, which is
+  // where a client's visit balance already lives; the Shop deliberately does
+  // not grow a second place to show it.
+  onGoToCredits,
+  // Real Online School numbers (dogs trained, review average), already
+  // fetched by whoever mounts this. Passed through rather than fetched here
+  // so the authenticated Shop does not make a request it has no use for.
+  schoolStats,
 }) {
   const [items, setItems] = useState([]);
   const [loading, setLoading] = useState(true);
   const [err, setErr] = useState("");
   const [tab, setTab] = useState(initialTab);
+
+  // ── saved items, and the things worth showing beside a product ──
+  //
+  // Both are for a real signed-in client only. Preview mode is an admin
+  // looking at somebody else's storefront, and a guest has no account to
+  // save anything to — in both cases the heart would be a promise we cannot
+  // keep, so it is simply absent rather than present and broken.
+  // `|| {}` because useAuth returns null outside an AuthProvider, and this
+  // component is mounted without one (the render-smoke tests, and the admin
+  // Shop Manager preview). All it wants is client_id; crashing the whole
+  // storefront over a missing context would be a poor trade for a heart.
+  const { user } = useAuth() || {};
+
+  // ── analytics ──
+  //
+  // Every event below answers a question an owner asks. Nothing here is a
+  // generic interaction log: a re-render reports nothing, and a component
+  // mounting twice reports once. Preview mode reports nothing at all — an
+  // admin looking at the storefront is not a customer, and counting them
+  // would quietly inflate every funnel the admin then reads.
+  const analyticsOn = mode !== "preview";
+
+  // Which products the ORDERS say are best sellers. Server-computed from
+  // completed sales — an admin cannot set this, and it is empty when the
+  // shop has not sold enough for the badge to mean anything. Read from the
+  // catalogue response rather than a second request, so a storefront never
+  // pays for a badge.
+  const bestSellerIds = useMemo(
+    () => new Set((items || []).filter((i) => i.best_seller).map((i) => i.id)),
+    [items],
+  );
+  useEffect(() => {
+    if (!analyticsOn) return undefined;
+    const stop = startShopAnalytics();
+    // Once per page load, not once per effect run — StrictMode runs this
+    // twice and browser QA caught it reporting two visits for one.
+    trackOnce("shop_view", { event: "shop_view" });
+    return stop;
+  }, [analyticsOn]);
+  const isRealClient = mode === "authenticated";
+  const clientId = isRealClient ? user?.client_id : null;
+  const favorites = useFavorites(isRealClient);
+  const [favoriteItems, setFavoriteItems] = useState(null); // null = not fetched
+  const [favoritesOpen, setFavoritesOpen] = useState(false);
+  const [favoriteBusy, setFavoriteBusy] = useState(null);
+
+  const toggleFavorite = useCallback(async (kind, refId) => {
+    setFavoriteBusy(`${kind}:${refId}`);
+    try {
+      const nowSaved = await favorites.toggle(kind, refId);
+      trackShop({ event: nowSaved ? "favorite_add" : "favorite_remove", kind, ref_id: refId });
+      // Keep the saved-items view honest without re-fetching the whole list
+      // on every heart: only the list currently on screen needs to change.
+      if (favoriteItems) setFavoriteItems(await favorites.reload());
+      toast.success(nowSaved ? "Saved for later" : "Removed from saved");
+    } catch (e) {
+      toast.error(e?.response?.data?.detail || "Could not update your saved items");
+    } finally {
+      setFavoriteBusy(null);
+    }
+  }, [favorites, favoriteItems]);
+
+  // Fetch the saved list only when somebody asks to see it. The header
+  // count comes from the light /shop/favorites read the hook already does;
+  // the resolved items are a second, larger payload nobody needs until the
+  // panel opens.
+  useEffect(() => {
+    if (!favoritesOpen || !isRealClient) return;
+    favorites.reload().then(setFavoriteItems);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [favoritesOpen, isRealClient]);
+
+  // A heart on a card, or nothing at all. Gift cards are deliberately
+  // excluded: a gift card is money with a value printed on it, not
+  // something you come back to later.
+  const favoriteSlot = useCallback((item, { size = "sm" } = {}) => {
+    if (!isRealClient || !item || item.kind === "gift_card") return null;
+    return (
+      <FavoriteButton
+        kind={item.kind} refId={item.id} name={item.name}
+        saved={favorites.isSaved(item.kind, item.id)}
+        busy={favoriteBusy === `${item.kind}:${item.id}`}
+        onToggle={toggleFavorite}
+        size={size}
+      />
+    );
+  }, [isRealClient, favorites, favoriteBusy, toggleFavorite]);
+
+  // ── buying something again ──
+  //
+  // A reference and a quantity, handed to the ordinary add-to-cart path.
+  // Deliberately NOT a copy of the old order line: the item is looked up in
+  // today's catalogue, priced by the cart from that catalogue, and priced
+  // again by the server at checkout. There is no code path here through
+  // which an old price could become authoritative, because no old price is
+  // ever read.
+  const [buyAgainBusy, setBuyAgainBusy] = useState(null);
+  const buyAgain = useCallback((action) => {
+    const item = items.find((i) => i.kind === action.kind && i.id === action.ref_id);
+    if (!item) {
+      // The server said this was buyable when it built the receipt; if the
+      // catalogue in this tab disagrees it is stale, and adding a line we
+      // cannot price would be worse than saying so.
+      toast.error("That item is no longer available");
+      return;
+    }
+    setBuyAgainBusy(action.ref_id);
+    trackShop({ event: "buy_again", kind: action.kind, ref_id: action.ref_id,
+                quantity: Math.max(1, action.quantity || 1) });
+    addToCart(item, Math.max(1, action.quantity || 1));
+    setOrdersOpen(false);
+    setCartOpen(true);
+    setBuyAgainBusy(null);
+  }, [items]);
+
+  const openEnrolledCourse = useCallback((enrollmentId) => {
+    // School's OWN selection key, rather than a second routing mechanism.
+    try { sessionStorage.setItem(SELECTED_ENROLLMENT_KEY, enrollmentId); } catch { /* ignore */ }
+    onGoToOnlineSchool?.();
+  }, [onGoToOnlineSchool]);
   // Shop Appearance & Organization settings — read via the public/no-auth
   // /settings/public endpoint (works in every mode, including guest) so
   // title/subtitle/banner/landing-mode/section labels/order/visibility all
@@ -627,6 +481,31 @@ export default function PortalShop({
   const [categoryFilter, setCategoryFilter] = useState("");
   const [subcategoryFilter, setSubcategoryFilter] = useState("");
   const [search, setSearch] = useState("");
+  // Departments replace the old kind-named tabs. `null` is the storefront
+  // front page; a key is a department. Read from the URL on first render so
+  // a department link is shareable and survives a reload, which is the whole
+  // difference between a shop and a filter.
+  const [department, setDepartment] = useState(() => {
+    if (typeof window === "undefined") return null;
+    return resolveDepartmentParam(new URLSearchParams(window.location.search));
+  });
+  const [sort, setSort] = useState("featured");
+  const [filters, setFilters] = useState(EMPTY_FILTERS);
+
+  // Filtering and sorting are reported as "somebody used this control",
+  // never as what they chose to see — the useful business question is
+  // whether the controls earn their place on the page, and the answer does
+  // not need anyone's browsing preferences stored alongside it.
+  const changeSort = useCallback((next) => {
+    trackShop({ event: "sort_used", department: department || undefined });
+    setSort(next);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [department]);
+  const changeFilters = useCallback((next) => {
+    trackShop({ event: "filter_used", department: department || undefined });
+    setFilters(next);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [department]);
   // Phase 5 — Online School commerce. Only the authenticated client's own
   // dogs (server already scopes GET /dogs by owner for role="client",
   // same endpoint Portal.jsx itself uses) — needed for the dog-selection
@@ -665,6 +544,9 @@ export default function PortalShop({
   const cart = cartProp !== undefined ? cartProp : localCart;
   const setCart = onCartChange || setLocalCart;
   const [cartOpen, setCartOpen] = useState(false);
+  // Guest checkout is its own step rather than part of the cart: it has to
+  // ask for an email, and it re-prices server-side before anything is paid.
+  const [guestCheckoutOpen, setGuestCheckoutOpen] = useState(false);
   const [checkoutBusy, setCheckoutBusy] = useState(false);
   const idemKeyRef = useRef(null);
 
@@ -694,12 +576,15 @@ export default function PortalShop({
   };
 
   const closeDetail = () => {
-    if (window.history.state?.shDetail) {
+    const target = shopBackTarget({
+      hasOwnHistoryEntry: !!window.history.state?.shDetail,
+      kind: detail?.kind,
+    });
+    if (target.action === "back") {
       window.history.back();
     } else {
-      // Reached directly (refresh/shared link) — no history entry of ours
-      // to pop back to, so just drop the item segment from the URL.
-      window.history.pushState({}, "", "/");
+      window.history.pushState({}, "", target.path);
+      if (target.tab) setTab(target.tab);
       setDetail(null);
     }
     setTimeout(() => {
@@ -722,7 +607,14 @@ export default function PortalShop({
   const load = () => {
     setLoading(true);
     api.get(catalogUrl, { params: catalogParams })
-      .then(({ data }) => setItems(data.items || []))
+      .then(({ data }) => {
+        const loaded = data.items || [];
+        setItems(loaded);
+        // Hand the catalog to whoever wrapped us. PublicShop needs it to
+        // find the free course for its hero, and was fetching the whole
+        // catalog a second time to get it.
+        onItemsLoaded?.(loaded);
+      })
       .catch((e) => setErr(e?.response?.data?.detail || "Could not load the shop"))
       .finally(() => setLoading(false));
   };
@@ -748,60 +640,96 @@ export default function PortalShop({
     return items.filter((i) => !(i.kind === "product" && i.track_inventory && !i.in_stock));
   }, [items, shopPage.show_out_of_stock, mode]);
 
-  // Category-card groups for the active tab (configured categories in their
-  // configured order, plus a generated "Other" bucket for uncategorized
-  // visible items — see categoryGroupsForTab in ../lib/shopPolish.js).
-  // Additionally re-includes any configured category categoryGroupsForTab
-  // dropped for having zero matching items, IF that category's effective
-  // hide_when_empty rule says "never hide" — categoryGroupsForTab's own
-  // tested contract (drop empty categories) stays unchanged; this is a
-  // composed wrapper, not an edit to it. Powers both the category-index
-  // screen's cards and the selected category's breadcrumb/heading below;
-  // never a second API request.
-  const categoryGroups = useMemo(() => {
-    const base = categoryGroupsForTab(categories, browsableItems, tab);
-    const baseById = new Map(base.map((g) => [g.category.id, g]));
-    const other = base.find((g) => g.category.id === OTHER_CATEGORY_ID);
-    const ordered = categories.map((c) => {
-      const existing = baseById.get(c.id);
-      if (existing) return existing;
-      const emptyGroup = { category: c, items: [], count: 0 };
-      return shouldHideEmptyCategory(emptyGroup, shopPage) ? null : emptyGroup;
-    }).filter(Boolean);
-    return other ? [...ordered, other] : ordered;
-  }, [categories, browsableItems, tab, shopPage]);
-  const selectedGroup = categoryGroups.find((g) => g.category.id === categoryFilter);
-  const subcategoryOptions = useMemo(
-    () => subcategoryOptionsForTab(categories, browsableItems, tab, categoryFilter),
-    [categories, browsableItems, tab, categoryFilter],
-  );
 
-  // Section-card groups for the "All" tab's landing screen — one per
-  // permanent section, ordered/labeled per shop_page settings
-  // (visibleSectionsInOrder/sectionMetaFor), reusing the same
-  // categoryCoverImageId cover-resolution logic as category cards via a
-  // synthetic `category: {image_id}` so a configured section cover image
-  // always wins over any item-based fallback.
-  const sectionGroups = useMemo(() => (
-    visibleSectionsInOrder(shopPage).map((sec) => {
-      const tabKey = TAB_KEY_FOR_SECTION[sec.key];
-      const kindItems = itemsForTab(browsableItems, tabKey);
-      return {
-        key: tabKey, label: sec.label, description: sec.description,
-        items: kindItems, count: kindItems.length,
-        category: { image_id: sec.image_id },
-      };
-    }).filter((s) => s.count > 0)
-  ), [browsableItems, shopPage]);
 
   // Tab-button row + breadcrumb labels — permanent `key`s from TABS, but
   // the displayed label/order come from settings (sectionMetaFor), falling
   // back to TABS' own hardcoded strings when unconfigured.
-  const visibleTabs = useMemo(() => {
-    const configured = visibleSectionsInOrder(shopPage).map((sec) => ({ key: TAB_KEY_FOR_SECTION[sec.key], label: sec.label }));
-    return [{ key: "all", label: "All" }, ...configured];
-  }, [shopPage]);
-  const tabLabel = (key) => visibleTabs.find((t) => t.key === key)?.label || TABS.find((t) => t.key === key)?.label || "";
+  // Only departments with something in them, and only those the admin's
+  // existing section switches allow. Asked of the real catalog every time
+  // rather than hardcoded, so an empty Shop shows no empty shelves.
+  const departments = useMemo(() => visibleDepartments(browsableItems, {
+    sectionVisible: (sectionKey) =>
+      ((shopPage.sections || {})[sectionKey] || {}).visible !== false,
+  }), [browsableItems, shopPage]);
+
+  // Changing department resets filters, because a category filter from Gear
+  // means nothing in Training and silently hiding half of a department the
+  // shopper just opened is the sort of thing that reads as a bug.
+  const selectDepartment = useCallback((key) => {
+    if (key) trackShop({ event: "department_view", department: key });
+    setDepartment(key || null);
+    setFilters(EMPTY_FILTERS);
+    setSearch("");
+    if (typeof window !== "undefined") {
+      const params = new URLSearchParams(window.location.search);
+      if (key) params.set("dept", key); else params.delete("dept");
+      params.delete("section"); params.delete("tab");
+      const q = params.toString();
+      window.history.pushState({}, "", `${window.location.pathname}${q ? `?${q}` : ""}`);
+    }
+    try { document.querySelector("[data-scroll-root]")?.scrollTo({ top: 0, behavior: "smooth" }); }
+    catch { /* not fatal */ }
+  }, []);
+
+  // Back/forward must move between departments, not just between the Shop
+  // and the item pages.
+  useEffect(() => {
+    const onPop = () => {
+      setDepartment(resolveDepartmentParam(new URLSearchParams(window.location.search)));
+    };
+    window.addEventListener("popstate", onPop);
+    return () => window.removeEventListener("popstate", onPop);
+  }, []);
+
+  const browsing = useMemo(
+    () => browseItems(browsableItems, { department, query: search, filters, sort }),
+    [browsableItems, department, search, filters, sort],
+  );
+  const currentDept = departmentByKey(department);
+
+  // Products that were genuinely on screen. Deduplicated per view CONTEXT
+  // (this department, this search), so scrolling a grid counts each product
+  // once, opening a different department counts them again because it is a
+  // different list, and a re-render counts nothing at all.
+  useEffect(() => {
+    if (!analyticsOn || loading) return;
+    trackImpressions(browsing.slice(0, 24), { department: department || "", search });
+  }, [analyticsOn, loading, browsing, department, search]);
+
+  // One search event per settled query, not one per keystroke. The debounce
+  // is what makes the report a list of things people searched for rather
+  // than a list of prefixes they typed on the way.
+  const lastSearchRef = useRef("");
+  useEffect(() => {
+    if (!analyticsOn) return undefined;
+    const query = search.trim();
+    if (!query || query === lastSearchRef.current) return undefined;
+    const id = setTimeout(() => {
+      lastSearchRef.current = query;
+      const count = browsing.length;
+      trackShop({ event: "search", query, result_count: count,
+                  department: department || undefined });
+      if (count === 0) {
+        // The most useful row in the whole dashboard: something a customer
+        // expected to find here and did not.
+        trackShop({ event: "search_zero_results", query, result_count: 0,
+                    department: department || undefined });
+      }
+    }, 900);
+    return () => clearTimeout(id);
+  }, [analyticsOn, search, browsing.length, department]);
+
+  // What one visit costs normally, so a prepaid pack can say what it saves
+  // — and say nothing when the catalog cannot prove it. Never invented: if
+  // no single-visit price exists, this is undefined and no saving shows.
+  const baselineVisitPrice = useMemo(() => {
+    const singles = itemsInDepartment(browsableItems, "prepaid")
+      .map((p) => ({ qty: Number(p.display_quantity ?? p.qty ?? 0), price: Number(p.price || 0) }))
+      .filter((p) => p.qty === 1 && p.price > 0);
+    return singles.length ? Math.max(...singles.map((p) => p.price)) : undefined;
+  }, [browsableItems]);
+
 
   // "" means no category filter is set. Whether that renders the
   // category/section index (cards to click through) or a flat grid of every
@@ -811,50 +739,11 @@ export default function PortalShop({
   // leak into a freshly selected section.
   const [showAllItems, setShowAllItems] = useState(false);
 
-  // Selecting a tab can invalidate the current category/subcategory choice
-  // (e.g. a category that only ever contained Training items, while
-  // switching to the Merch & Gear tab) — clear whatever no longer applies
-  // rather than silently showing a filter that can never match anything.
-  const selectTab = (key) => {
-    setTab(key);
-    setShowAllItems(false);
-    const next = nextFiltersForTab(browsableItems, key, categoryFilter, subcategoryFilter);
-    if (next.categoryFilter !== categoryFilter) setCategoryFilter(next.categoryFilter);
-    if (next.subcategoryFilter !== subcategoryFilter) setSubcategoryFilter(next.subcategoryFilter);
-  };
 
-  const openCategory = (categoryId) => {
-    setCategoryFilter(categoryId);
-    setSubcategoryFilter("");
-    setShowAllItems(false);
-  };
 
-  // "Back to Categories"/"Back to Sections" — clears the category filter
-  // and the View All escape hatch, returning to whichever index screen
-  // applies to the current tab.
-  const backToCategories = () => {
-    setCategoryFilter("");
-    setSubcategoryFilter("");
-    setShowAllItems(false);
-  };
 
-  const viewAllInTab = () => {
-    setCategoryFilter("");
-    setSubcategoryFilter("");
-    setShowAllItems(true);
-  };
 
   const searching = search.trim().length > 0;
-  // Online School tab — a rich storefront landing (hero, how-it-works,
-  // course cards, testimonials, FAQ) replaces the generic category/grid
-  // browsing for this one tab. A live search still wins: typing drops the
-  // visitor into the normal flat results grid exactly like every other tab.
-  const onlineSchoolLanding = tab === "online_school" && !searching;
-  // Search always shows a flat grid immediately — even from an index screen
-  // with no category selected — rather than staying on category/section
-  // cards while results exist underneath them unseen.
-  const showIndexScreen = !searching && !categoryFilter && !showAllItems;
-  const showGridHeader = !!categoryFilter || (showAllItems && !searching);
 
   const filtered = useMemo(() => {
     let list = itemsForTab(browsableItems, tab);
@@ -894,9 +783,13 @@ export default function PortalShop({
   // line identity includes dogId so two different dogs buying the SAME
   // program stay as two separate lines — matches the server's own
   // dog_id-aware _normalize_cart_lines aggregation key.
-  const addToCart = (item, qty = 1, dogId = undefined) => {
+  const addToCart = (item, qty = 1, dogId = undefined, gift = undefined) => {
     const ceiling = stockCeiling(item);
-    const sameLine = (c) => c.kind === item.kind && c.ref_id === item.id && c.dog_id === dogId;
+    // A gift card for Dana and one for Sam are different things even at the
+    // same value, so the recipient is part of what makes a cart line the
+    // same line — matching how the server keys them.
+    const sameLine = (c) => c.kind === item.kind && c.ref_id === item.id
+      && c.dog_id === dogId && cartGiftKey(c.gift) === cartGiftKey(gift);
     const existingQty = cart.find(sameLine)?.quantity || 0;
     if (ceiling != null && existingQty >= ceiling) {
       toast.error(`Only ${ceiling} are currently available`);
@@ -912,15 +805,22 @@ export default function PortalShop({
       if (existing) {
         return prev.map((c) => (c === existing ? { ...c, quantity: nextQty } : c));
       }
-      return [...prev, { kind: item.kind, ref_id: item.id, quantity: nextQty, dog_id: dogId }];
+      return [...prev, { kind: item.kind, ref_id: item.id, quantity: nextQty, dog_id: dogId, gift }];
     });
+    // The reference and how many. Deliberately not the gift fields beside
+    // it — a recipient's name and address are exactly what analytics must
+    // never carry, and the server would refuse them anyway.
+    trackShop({ event: "add_to_cart", kind: item.kind, ref_id: item.id, quantity: qty });
     idemKeyRef.current = null; // cart changed — a fresh checkout attempt needs a fresh key
     pulseTray();
   };
 
-  const changeQty = (kind, refId, qty, dogId = undefined) => {
+  const changeQty = (kind, refId, qty, dogId = undefined, gift = undefined) => {
     idemKeyRef.current = null;
-    const sameLine = (c) => c.kind === kind && c.ref_id === refId && c.dog_id === dogId;
+    // Must match addToCart's identity exactly, or changing the quantity on
+    // Dana's card silently changes Sam's as well.
+    const sameLine = (c) => c.kind === kind && c.ref_id === refId
+      && c.dog_id === dogId && cartGiftKey(c.gift) === cartGiftKey(gift);
     if (qty <= 0) {
       setCart((prev) => prev.filter((c) => !sameLine(c)));
       return;
@@ -934,9 +834,11 @@ export default function PortalShop({
     setCart((prev) => prev.map((c) => (sameLine(c) ? { ...c, quantity: qty } : c)));
   };
 
-  const removeFromCart = (kind, refId, dogId = undefined) => {
+  const removeFromCart = (kind, refId, dogId = undefined, gift = undefined) => {
     idemKeyRef.current = null;
-    setCart((prev) => prev.filter((c) => !(c.kind === kind && c.ref_id === refId && c.dog_id === dogId)));
+    trackShop({ event: "remove_from_cart", kind, ref_id: refId });
+    setCart((prev) => prev.filter((c) => !(c.kind === kind && c.ref_id === refId
+      && c.dog_id === dogId && cartGiftKey(c.gift) === cartGiftKey(gift))));
   };
 
   // My Orders — a compact panel over the client's own existing order history
@@ -960,16 +862,38 @@ export default function PortalShop({
   }, [ordersOpen]);
 
   const submitCheckout = async () => {
-    // Preview/guest modes never call the real checkout endpoint — preview
-    // has no real client session to charge, and guest checkout isn't built
-    // (see Phase 4/the shop_page.allow_guest_merch_checkout note).
-    if (mode !== "authenticated") return;
     if (cart.length === 0) return;
+    if (mode === "guest") {
+      // A guest pays through the public endpoint, which prices the basket
+      // again and refuses anything that needs an account. Opening the panel
+      // is all this does — the panel itself does the asking and the paying.
+      setCartOpen(false);
+      setGuestCheckoutOpen(true);
+      return;
+    }
+    // Preview mode never calls the real checkout endpoint: there is no
+    // client session to charge.
+    if (mode !== "authenticated") return;
     if (!idemKeyRef.current) idemKeyRef.current = crypto.randomUUID();
+    // One per ATTEMPT, keyed on the same idempotency key the server uses to
+    // recognise a retry — so a customer who presses Checkout twice is one
+    // checkout start, not two, without the browser having to remember.
+    // Note what is NOT reported: completion. A browser may say an attempt
+    // began; only the payment path may say an order was paid.
+    trackShop({ event: "checkout_started", dedupe_key: idemKeyRef.current,
+                quantity: cartCount });
+    flushShopEvents();
     setCheckoutBusy(true);
     try {
       const { data } = await api.post("/shop/checkout", {
-        items: cart.map((c) => ({ kind: c.kind, ref_id: c.ref_id, quantity: c.quantity, dog_id: c.dog_id })),
+        // The gift travels with the line. Leaving it out here is how a
+        // recipient silently becomes the buyer.
+        items: cart.map((c) => ({
+          kind: c.kind, ref_id: c.ref_id, quantity: c.quantity, dog_id: c.dog_id,
+          recipient_email: c.gift?.recipient_email || null,
+          recipient_name: c.gift?.recipient_name || null,
+          gift_message: c.gift?.gift_message || null,
+        })),
         idempotency_key: idemKeyRef.current,
       });
       window.location.href = data.url; // plain navigation — no Stripe SDK involved
@@ -1033,6 +957,40 @@ export default function PortalShop({
   // single-page shop has to a separate "payment screen").
   const trayVisible = cartCount > 0 && !cartOpen && !returning;
 
+  // The tab title and the rendered-page tags. Social preview bots never run
+  // this — they read the server-rendered document (backend domains/shop/seo)
+  // — but Googlebot does, and so does every bookmark and browser tab.
+  // Deliberately suppressed on the item-detail branch, where ShopItemDetail
+  // describes the item it actually loaded rather than guessing from a route.
+  useDocumentMeta({
+    ...shopMetaFor({
+      department: detail ? null : department,
+      shopPage,
+      origin: publicOrigin(),
+    }),
+    // An account-only storefront is not for search engines. The public one
+    // is, and it is the same component — so the flag follows the mode.
+    noindex: mode !== "guest",
+    enabled: !detail && mode !== "preview",
+  });
+
+  // One set of props for every card the shop draws outside the main grid —
+  // the recommendation rows, the recently-viewed row, the saved-items page.
+  // Sharing it is what keeps a card in a suggestion row behaving exactly
+  // like the same card in the grid, heart and all.
+  const cardProps = {
+    mode, onOpenDetail: openDetail, onAdd: addToCart,
+    onRequireAccount, onShopify: openShopifyListing, favoriteSlot, bestSellerIds,
+  };
+
+  // "Pick up where you left off" on the front page. No product page is being
+  // viewed here, so this asks only for the recently-viewed resolution — and
+  // asks for nothing at all when this browser has remembered nothing.
+  const landingDiscovery = useDiscovery({
+    kind: null, refId: null, clientId, guest: mode === "guest",
+    enabled: mode !== "preview",
+  });
+
   return (
     <div id="portal-shop-anchor" data-testid="portal-shop"
          className={fullScreen ? "w-full max-w-6xl mx-auto" : "p-6 rounded-2xl border border-shBorder shadow-sh"}
@@ -1046,19 +1004,30 @@ export default function PortalShop({
       )}
 
       <div className="flex items-center justify-between mb-1 gap-2">
-        <div>
-          <p className="text-[12px] font-black uppercase tracking-[0.3em] text-shPrimary">
-            <i className="fas fa-bag-shopping mr-1" />{shopPage.title || "Shop"}
-          </p>
-          {shopPage.subtitle && <p className="text-shTextMuted text-[12px] mt-0.5">{shopPage.subtitle}</p>}
-        </div>
+        {/* The storefront hero says the shop's name and strapline. Repeating
+            them here made three copies of the same two lines above the fold
+            — this row keeps only what the hero cannot carry: the account
+            actions. Inside a department the heading is the department, so
+            they are not repeated there either. */}
+        <div aria-hidden="true" />
         <div className="flex items-center gap-2">
-          <button onClick={() => setOrdersOpen((o) => !o)} data-testid="shop-my-orders-toggle"
+          {isRealClient && (
+            <button onClick={() => { setFavoritesOpen((v) => !v); setOrdersOpen(false); }}
+                    data-testid="shop-saved-toggle"
+                    aria-expanded={favoritesOpen}
+                    className="border border-shBorder text-shTextMuted hover:text-shText px-3 py-2 rounded-md text-[11px] font-bold uppercase tracking-widest hover:border-shPrimary/50 transition"
+                    style={{ background: "var(--sh-card-base)" }}>
+              <i className={`${favorites.count > 0 ? "fas" : "far"} fa-heart mr-1`} aria-hidden="true" />
+              Saved{favorites.count > 0 && <span className="hidden sm:inline"> ({favorites.count})</span>}
+            </button>
+          )}
+          <button onClick={() => { setOrdersOpen((o) => !o); setFavoritesOpen(false); }} data-testid="shop-my-orders-toggle"
                   className="border border-shBorder text-shTextMuted hover:text-shText px-3 py-2 rounded-md text-[11px] font-bold uppercase tracking-widest hover:border-shPrimary/50 transition"
                   style={{ background: "var(--sh-card-base)" }}>
             <i className="fas fa-receipt mr-1" />My Orders
           </button>
-          <button onClick={() => setCartOpen(true)} data-testid="shop-cart-open"
+          <button onClick={() => { trackShop({ event: "cart_view", quantity: cartCount }); setCartOpen(true); }}
+                  data-testid="shop-cart-open"
                   aria-label={cartCount > 0 ? `Open cart, ${cartCount} item${cartCount !== 1 ? "s" : ""}, ${money(cartSubtotal)}` : "Open cart"}
                   className="relative border border-shBorder text-shTextMuted hover:text-shText px-3 py-2 rounded-md text-[11px] font-bold uppercase tracking-widest hover:border-shPrimary/50 transition"
                   style={{ background: "var(--sh-card-base)" }}>
@@ -1098,49 +1067,49 @@ export default function PortalShop({
         </div>
       )}
 
-      {ordersOpen && (
-        <div className="mb-4 border border-shBorder rounded-xl p-4" style={{ background: "var(--sh-card-base)" }} data-testid="shop-my-orders-panel">
-          <div className="flex items-center justify-between mb-2">
-            <p className="text-shText font-bold uppercase tracking-widest text-sm">My Orders</p>
-            <button onClick={loadOrders} className="text-[11px] uppercase tracking-widest font-black text-shTextMuted hover:text-shPrimary">
-              <i className="fas fa-rotate-right mr-1" />Refresh
+      {favoritesOpen && isRealClient && (
+        <div className="mb-4 border border-shBorder rounded-xl p-4" style={{ background: "var(--sh-card-base)" }}
+             data-testid="shop-saved-panel">
+          <div className="flex items-center justify-between mb-3">
+            <h2 className="text-shText font-bold uppercase tracking-widest text-sm">Saved Items</h2>
+            <button onClick={() => setFavoritesOpen(false)} data-testid="shop-saved-close"
+                    aria-label="Close saved items"
+                    className="text-shTextMuted hover:text-shText focus-visible:outline-none
+                               focus-visible:ring-2 focus-visible:ring-shPrimary rounded px-2 py-1">
+              <i className="fas fa-xmark" aria-hidden="true" />
             </button>
           </div>
-          {orders.length === 0 ? (
-            <p className="text-shTextMuted text-sm py-2">No orders yet.</p>
-          ) : (
-            <>
-              <div className="space-y-2">
-                {(ordersExpanded ? orders : orders.slice(0, 3)).map((o) => {
-                  const label = orderStatusLabel(o);
-                  return (
-                    <div key={o.order_id} className="border border-shBorder rounded-lg p-3" data-testid={`shop-order-${o.order_id}`}>
-                      <div className="flex items-start justify-between gap-2 flex-wrap">
-                        <div className="min-w-0">
-                          <p className="text-shText font-bold text-sm">Order #{o.order_id.slice(0, 8).toUpperCase()}</p>
-                          <p className="text-shTextMuted text-[12px]">
-                            {o.created_at ? new Date(o.created_at).toLocaleDateString() : "—"} · {money(o.total)}
-                          </p>
-                          <p className="text-[11px] text-shTextMuted mt-1 line-clamp-1">
-                            {(o.lines || []).map((l) => `${l.quantity}× ${l.name}`).join(", ")}
-                          </p>
-                        </div>
-                        <span className={`shrink-0 text-[11px] font-black uppercase tracking-widest ${ORDER_STATUS_TONE[label] || "text-shTextMuted"}`}>
-                          {label}
-                        </span>
-                      </div>
-                    </div>
-                  );
-                })}
-              </div>
-              {orders.length > 3 && (
-                <button onClick={() => setOrdersExpanded((v) => !v)} data-testid="shop-my-orders-expand"
-                        className="mt-2 text-[11px] font-black uppercase tracking-widest text-shPrimary">
-                  {ordersExpanded ? "Show fewer" : `Show ${orders.length - 3} more`}
-                </button>
-              )}
-            </>
-          )}
+          <FavoritesList
+            favorites={favoriteItems}
+            loading={favoriteItems === null}
+            cardProps={cardProps}
+            onRemove={toggleFavorite}
+            onBrowse={() => setFavoritesOpen(false)}
+          />
+        </div>
+      )}
+
+      {ordersOpen && (
+        <div className="mb-4 border border-shBorder rounded-xl p-4" style={{ background: "var(--sh-card-base)" }}
+             data-testid="shop-my-orders-panel">
+          <div className="flex items-center justify-between mb-3">
+            <h2 className="text-shText font-bold uppercase tracking-widest text-sm">My Orders</h2>
+            <button onClick={() => setOrdersOpen(false)} data-testid="shop-my-orders-close"
+                    aria-label="Close orders"
+                    className="text-shTextMuted hover:text-shText focus-visible:outline-none
+                               focus-visible:ring-2 focus-visible:ring-shPrimary rounded px-2 py-1">
+              <i className="fas fa-xmark" aria-hidden="true" />
+            </button>
+          </div>
+          <MyOrders
+            orders={orders}
+            onRefresh={loadOrders}
+            onBuyAgain={buyAgain}
+            onOpenItem={(a) => { setOrdersOpen(false); openDetail({ kind: a.kind, id: a.ref_id }); }}
+            onOpenCourse={(a) => openEnrolledCourse(a.enrollment_id)}
+            onOpenCredits={onGoToCredits}
+            busyRef={buyAgainBusy}
+          />
         </div>
       )}
 
@@ -1194,6 +1163,9 @@ export default function PortalShop({
           onClaimFreeCourse={claimFreeCourse}
           onAddDog={onAddDog}
           dogs={dogs}
+          favoriteSlot={favoriteSlot}
+          discoverySlot={<DetailDiscovery detail={detail} clientId={clientId} mode={mode}
+                                          cardProps={cardProps} />}
         />
       ) : (
       <>
@@ -1223,140 +1195,133 @@ export default function PortalShop({
         </div>
       )}
 
-      <div className="flex flex-wrap gap-2 justify-center mb-4">
-        {visibleTabs.map((t) => (
-          <button key={t.key} onClick={() => selectTab(t.key)} data-testid={`shop-tab-${t.key}`}
-                  className={`px-3 py-1.5 rounded-md text-[11px] font-bold uppercase tracking-widest transition border ${
-                    tab === t.key ? "bg-shPrimary text-bgHeader border-shPrimary" : "border-shBorder text-shTextMuted hover:border-shPrimary/50 hover:text-shText"
-                  }`}
-                  style={tab === t.key ? undefined : { background: "var(--sh-card-base)" }}>
-            {t.label}
-          </button>
-        ))}
-      </div>
-
-      {/* Search — the only free-standing filter left in the normal browsing
-          experience; category/subcategory dropdowns were replaced by the
-          clickable section/category cards and subcategory pills below. A
-          non-empty search always forces the flat item grid immediately,
-          regardless of which index/category screen was showing. */}
-      {shopPage.show_search !== false && (
-        <div className="max-w-2xl mx-auto mb-4">
-          <div className="relative">
-            <i className="fas fa-magnifying-glass absolute left-3 top-1/2 -translate-y-1/2 text-shTextMuted text-[13px]" />
-            <input value={search} onChange={(e) => setSearch(e.target.value)} placeholder="Search the shop…"
-                   data-testid="shop-search-input"
-                   className="w-full pl-9 pr-3 py-2 rounded-md border border-shBorder text-shText text-sm focus:outline-none focus:border-shPrimary/60"
-                   style={{ background: "var(--sh-card-base)" }} />
-          </div>
+      {loading && (
+        <div className="space-y-6" data-testid="shop-loading">
+          <div className="h-40 sm:h-52 rounded-2xl bg-white/5 animate-pulse motion-reduce:animate-none" />
+          <ProductGrid items={[]} layout="grid" loading skeletonCount={8} />
         </div>
       )}
+      {!loading && err && (
+        <p className="text-shDanger text-sm text-center py-6" role="alert">{err}</p>
+      )}
 
-      {loading && <p className="text-gray-500 text-sm text-center py-6">Loading the shop…</p>}
-      {!loading && err && <p className="text-red-400 text-sm text-center py-6">{err}</p>}
-
-      {!loading && !err && onlineSchoolLanding && (
-        <OnlineSchoolStorefront
-          items={sortShopItems(itemsForTab(browsableItems, "online_school"))}
+      {/* ── the storefront front page ──
+          No department chosen and nothing searched: merchandising, not a
+          filtered list. This is what replaced a page whose first product sat
+          two screens down on a phone. */}
+      {!loading && !err && !department && !searching && (
+        <ShopLanding
+          items={browsableItems}
+          departments={departments}
+          shopPage={shopPage}
           mode={mode}
+          baselineVisitPrice={baselineVisitPrice}
+          schoolStats={schoolStats}
+          onSelectDepartment={selectDepartment}
           onOpenDetail={openDetail}
-          /* The guest page already opens with PublicShop's own Online School
-             marketing hero directly above these tabs — rendering a second
-             full hero here would stack two of them. */
-          showHero={mode !== "guest"}
+          onAdd={addToCart}
+          onRequireAccount={onRequireAccount}
+          onShopify={openShopifyListing}
+          favoriteSlot={favoriteSlot}
+          bestSellerIds={bestSellerIds}
+          recentlyViewed={
+            <RecentlyViewed items={landingDiscovery.recentlyViewed} cardProps={cardProps} />
+          }
         />
       )}
 
-      {!loading && !err && !onlineSchoolLanding && showIndexScreen && (
-        tab === "all" && shopPage.landing_mode === "featured_items" ? (
-          // Featured Items landing mode — flat grid of catalog items flagged
-          // featured, reusing the exact same item.featured field sortShopItems
-          // already reads. Only shapes the very first "all tab" screen.
-          (() => {
-            const featured = sortShopItems(filterFeaturedItems(itemsForTab(browsableItems, "all")));
-            return featured.length === 0
-              ? <p className="text-gray-500 text-sm text-center py-6">Nothing here yet — check back soon.</p>
-              : (
-                <div className={`grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 ${fullScreen ? "lg:grid-cols-4" : ""} gap-3`}>
-                  {featured.map((item) => {
-                    const inCart = cart.find((c) => c.kind === item.kind && c.ref_id === item.id);
-                    return <ItemCard key={`${item.kind}-${item.id}`} item={item} cartQty={inCart ? inCart.quantity : 0} onAdd={addToCart} onOpenDetail={openDetail} mode={mode} onRequireAccount={onRequireAccount} />;
-                  })}
-                </div>
-              );
-          })()
-        ) : tab === "all" && shopPage.landing_mode === "all_items" ? (
-          // All Items landing mode — flat grid of everything, equivalent to
-          // the existing "View All Products" escape hatch being the default.
-          <div className={`grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 ${fullScreen ? "lg:grid-cols-4" : ""} gap-3`}>
-            {sortShopItems(itemsForTab(browsableItems, "all")).map((item) => {
-              const inCart = cart.find((c) => c.kind === item.kind && c.ref_id === item.id);
-              return <ItemCard key={`${item.kind}-${item.id}`} item={item} cartQty={inCart ? inCart.quantity : 0} onAdd={addToCart} onOpenDetail={openDetail} mode={mode} onRequireAccount={onRequireAccount} />;
-            })}
+      {/* ── inside a department, or searching ── */}
+      {!loading && !err && (department || searching) && (
+        <div data-testid="shop-department-view">
+          <DepartmentNav departments={departments} current={department}
+                         onSelect={selectDepartment} />
+
+          {currentDept && !searching && (
+            <div className="mt-5 mb-1">
+              <h1 className="sh-display text-[26px] sm:text-[32px] text-shText leading-tight">
+                {currentDept.label}
+              </h1>
+              <p className="text-[13.5px] text-shTextMuted mt-1">{currentDept.tagline}</p>
+            </div>
+          )}
+
+          <div className="flex items-center gap-2 mt-4 mb-5">
+            <ShopSearch value={search} onChange={setSearch} resultCount={browsing.length} />
+            <FilterControls items={itemsInDepartment(browsableItems, department)}
+                            filters={filters} onChange={changeFilters} compact />
+            <SortSelect value={sort} onChange={changeSort} />
           </div>
-        ) : tab === "all" ? (
-          <SectionIndex sections={sectionGroups} showCount={shopPage.show_item_counts} onSelect={selectTab} onViewAll={viewAllInTab} mode={mode} />
-        ) : (
-          <CategoryIndex
-            groups={orderCategoryGroupsFeaturedFirst(categoryGroups)}
-            showCount={shopPage.show_item_counts}
-            onSelectCategory={openCategory}
-            onViewAll={viewAllInTab}
-            mode={mode}
-            sectionLabel={tabLabel(tab)}
-          />
-        )
-      )}
 
-      {!loading && !err && !onlineSchoolLanding && !showIndexScreen && (
-        <>
-          {showGridHeader && (
-            <CategoryGridHeader
-              eyebrow={tab !== "all" ? tabLabel(tab) : undefined}
-              title={categoryFilter && !searching ? (selectedGroup?.category?.name || "") : `All ${tabLabel(tab) || "Products"}`}
-              description={categoryFilter && !searching ? selectedGroup?.category?.description : undefined}
-              count={filtered.length}
-              showCount={shopPage.show_item_counts}
-              onBack={backToCategories}
-              backLabel={tab === "all" ? "Back to Sections" : "Back to Categories"}
-            />
-          )}
+          <div className="flex gap-7 items-start">
+            <FilterControls items={itemsInDepartment(browsableItems, department)}
+                            filters={filters} onChange={changeFilters} />
 
-          {categoryFilter && !searching && subcategoryOptions.length > 0 && (
-            <div className="flex flex-wrap gap-2 justify-center mb-4" data-testid="shop-subcategory-pills">
-              <button onClick={() => setSubcategoryFilter("")} data-testid="shop-subcategory-pill-all"
-                      className={`px-3 py-1.5 rounded-full text-[11px] font-bold uppercase tracking-widest transition border ${
-                        subcategoryFilter === "" ? "bg-shPrimary text-bgHeader border-shPrimary" : "border-shBorder text-shTextMuted hover:border-shPrimary/50 hover:text-shText"
-                      }`}
-                      style={subcategoryFilter === "" ? undefined : { background: "var(--sh-card-base)" }}>
-                All
-              </button>
-              {subcategoryOptions.map((s) => (
-                <button key={s.id} onClick={() => setSubcategoryFilter(s.id)} data-testid={`shop-subcategory-pill-${s.id}`}
-                        className={`px-3 py-1.5 rounded-full text-[11px] font-bold uppercase tracking-widest transition border ${
-                          subcategoryFilter === s.id ? "bg-shPrimary text-bgHeader border-shPrimary" : "border-shBorder text-shTextMuted hover:border-shPrimary/50 hover:text-shText"
-                        }`}
-                        style={subcategoryFilter === s.id ? undefined : { background: "var(--sh-card-base)" }}>
-                  {s.name}
-                </button>
-              ))}
+            <div className="flex-1 min-w-0">
+              {/* Online School keeps its own, stronger educational sell —
+                  the brief is explicit that it should not be flattened into
+                  a product grid. Only its chrome is unified. */}
+              {department === "online_school" && !searching ? (
+                <OnlineSchoolStorefront
+                  items={browsing}
+                  mode={mode}
+                  onOpenDetail={openDetail}
+                  showHero={mode !== "guest"}
+                />
+              ) : browsing.length === 0 ? (
+                <div className="py-14 text-center" data-testid="shop-empty">
+                  <i className="fas fa-magnifying-glass text-shTextMuted/40 text-2xl" aria-hidden="true" />
+                  <p className="text-[15px] font-bold text-shText mt-3">
+                    {searching ? `Nothing matches “${search}”` : "Nothing here just yet"}
+                  </p>
+                  <p className="text-[13px] text-shTextMuted mt-1.5 max-w-[42ch] mx-auto">
+                    {searching
+                      ? "Try a shorter word, or browse a department below."
+                      : "We are restocking this one — the rest of the shop is open."}
+                  </p>
+                  <div className="flex flex-wrap gap-2 justify-center mt-5">
+                    {searching && (
+                      <button type="button" onClick={() => setSearch("")}
+                              data-testid="shop-empty-clear"
+                              className="px-4 py-2.5 rounded-xl bg-shPrimary text-bgHeader text-[12px] font-black uppercase tracking-widest">
+                        Clear search
+                      </button>
+                    )}
+                    {activeFilterCount(filters) > 0 && (
+                      <button type="button" onClick={() => setFilters(EMPTY_FILTERS)}
+                              data-testid="shop-empty-reset-filters"
+                              className="px-4 py-2.5 rounded-xl border border-shBorder text-shText text-[12px] font-black uppercase tracking-widest">
+                        Reset filters
+                      </button>
+                    )}
+                    <button type="button" onClick={() => selectDepartment(null)}
+                            data-testid="shop-empty-home"
+                            className="px-4 py-2.5 rounded-xl border border-shBorder text-shText text-[12px] font-black uppercase tracking-widest">
+                      Back to the shop
+                    </button>
+                  </div>
+                </div>
+              ) : (
+                <>
+                  <p className="sr-only" role="status" aria-live="polite">
+                    {browsing.length} {browsing.length === 1 ? "product" : "products"}
+                  </p>
+                  <ProductGrid
+                    items={browsing}
+                    layout={searching ? "grid" : (currentDept?.layout || "grid")}
+                    mode={mode}
+                    baselinePrice={baselineVisitPrice}
+                    onOpenDetail={openDetail}
+                    onAdd={addToCart}
+                    onRequireAccount={onRequireAccount}
+                    onShopify={openShopifyListing}
+                    favoriteSlot={favoriteSlot}
+                    bestSellerIds={bestSellerIds}
+                  />
+                </>
+              )}
             </div>
-          )}
-
-          {filtered.length === 0 && (
-            <p className="text-gray-500 text-sm text-center py-6">Nothing here yet — check back soon.</p>
-          )}
-          {filtered.length > 0 && (
-            <div className={`grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 ${fullScreen ? "lg:grid-cols-4" : ""} gap-3`}>
-              {filtered.map((item) => {
-                const inCart = cart.find((c) => c.kind === item.kind && c.ref_id === item.id);
-                return (
-                  <ItemCard key={`${item.kind}-${item.id}`} item={item} cartQty={inCart ? inCart.quantity : 0} onAdd={addToCart} onOpenDetail={openDetail} mode={mode} onRequireAccount={onRequireAccount} />
-                );
-              })}
-            </div>
-          )}
-        </>
+          </div>
+        </div>
       )}
       </>
       )}
@@ -1366,6 +1331,21 @@ export default function PortalShop({
           each breakpoint rather than a guess. */}
       {trayVisible && <div className="h-24 md:h-20" aria-hidden="true" />}
 
+      {guestCheckoutOpen && (
+        <GuestCheckoutPanel
+          cart={cart}
+          onClose={() => setGuestCheckoutOpen(false)}
+          onSignIn={() => { setGuestCheckoutOpen(false); onRequireAccount?.(null, null); }}
+          onRemoveLines={(lines) => {
+            // Only the lines the SERVER named. Nothing else leaves the cart,
+            // and the visitor is put back in it so they can see what is left.
+            setCart((prev) => prev.filter((c) => !lines.some(
+              (b) => b.kind === c.kind && b.ref_id === c.ref_id)));
+            setGuestCheckoutOpen(false);
+            setCartOpen(true);
+          }}
+        />
+      )}
       {cartOpen && (
         <CartPanel
           lines={cartLines}

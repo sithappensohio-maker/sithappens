@@ -144,9 +144,11 @@ async def fulfill_line(order: dict, line: dict, *, mint, email) -> dict:
                 card = await mint(
                     amount=amount,
                     actor={"id": order.get("client_id"), "name": "Shop"},
-                    recipient_name=order.get("client_name") or "",
+                    recipient_name=(line.get("recipient_name")
+                                    or order.get("client_name") or ""),
                     recipient_email=to,
-                    note=f"Bought in the Shop · order #{str(order['id'])[:8].upper()}",
+                    note=(line.get("gift_message")
+                          or f"Bought in the Shop · order #{str(order['id'])[:8].upper()}"),
                     client_id=order.get("client_id"), origin="digital",
                     card_id=card_id)
             except Exception:

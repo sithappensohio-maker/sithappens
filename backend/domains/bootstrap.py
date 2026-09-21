@@ -10,6 +10,13 @@ from domains.pricing.routes import register_pricing_routes
 from domains.register.routes import register_register_routes
 from domains.pricing import services as pricing_services
 from domains.gift_cards import online as gift_card_online
+from domains.shop import media as shop_media_services
+from domains.shop.routes import register_shop_routes
+from domains.shop.guest_routes import register_guest_shop_routes
+from domains.shop.discovery_routes import register_shop_discovery_routes
+from domains.shop.analytics_routes import register_shop_analytics_routes
+from domains.shop.seo_routes import register_shop_seo_routes
+from domains.shop import checkout as shop_checkout_services
 from domains.gift_cards import shop as gift_card_shop
 from domains.gift_cards import services as gift_card_services
 from domains.pos import services as pos_services
@@ -116,6 +123,11 @@ def register_domains(
         public_url=server_globals["_app_public_url"],
         expires_seconds=server_globals["STRIPE_CHECKOUT_EXPIRES_SECONDS"],
         email_service=server_globals["email_service"])
+    shop_media_services.configure(db=db, logger=logger)
+    # The checkout engine reads server globals live rather than being
+    # handed them: it needs about twenty of them, and the suite rebinds
+    # server.db per test loop.
+    shop_checkout_services.configure(server_globals=server_globals)
     gift_card_shop.configure(
         db=db, logger=logger, get_settings=server_globals["get_settings"])
     gift_card_services.configure(
@@ -221,6 +233,12 @@ def register_domains(
                 logger.info("Board & Train scheduling migration: repaired %d open booking span(s)", repaired)
         except Exception as exc:
             logger.warning("Board & Train scheduling migration skipped (non-fatal): %s", exc)
+
+    register_shop_routes(api=api, server_globals=server_globals)
+    register_guest_shop_routes(api=api, server_globals=server_globals)
+    register_shop_discovery_routes(api=api, server_globals=server_globals)
+    register_shop_analytics_routes(api=api, server_globals=server_globals)
+    register_shop_seo_routes(api=api, server_globals=server_globals)
 
     install_request_timing(app)
     app.add_event_handler("startup", _repair_board_train_spans)

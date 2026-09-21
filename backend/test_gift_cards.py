@@ -1718,11 +1718,43 @@ def test_the_shop_price_is_the_amount_the_card_is_worth():
     assert run(gift.find_by_code(out["codes"][0]))["balance"] == line["unit_price"]
 
 
-def test_gift_cards_are_not_on_the_public_storefront():
-    """A digital card is delivered by email, so there has to be an account
-    behind it — a guest with no sign-in has nowhere for it to go. Adding
-    them to the shared catalog without this broke 18 storefront tests with a
-    KeyError, because the public side maps every kind to a section."""
+def test_gift_cards_are_on_the_public_storefront_without_a_section():
+    """Gift cards used to be kept off the public storefront, on the grounds
+    that a digital card is emailed and therefore needs an account. Guest
+    checkout removed that grounds — a guest supplies the address themselves —
+    so they belong there now (Phase 8).
+
+    What this still guards is the crash that made them unwelcome in the
+    first place: the public side maps every kind to a SECTION, and a kind
+    with no section raised a KeyError that took 18 storefront tests with it.
+    A gift card is not a department, so it must pass through without one.
+    """
+    prev = run(server.get_settings()).get("shop_page") or {}
+    run(server.db.settings.update_one(
+        {"id": "global"},
+        {"$set": {"shop_page.public_shop_enabled": True,
+                  "shop_page.public_browsing_enabled": True}}, upsert=True))
+    try:
+        items = run(server._public_visible_shop_items())  # must not raise
+        cards = [i for i in items if i.get("kind") == "gift_card"]
+        assert cards, "a stranger should be able to buy a gift card"
+        # No section, and it does not pretend to have one.
+        assert all("section" not in c for c in cards)
+        assert all(c["guest_cart_allowed"] for c in cards)
+    finally:
+        run(server.db.settings.update_one(
+            {"id": "global"}, {"$set": {"shop_page": prev}}, upsert=True))
+
+
+def test_a_gift_card_has_a_product_page_of_its_own():
+    """It is listed in the catalog, so it needs a page to click through to.
+
+    Both item-detail routes gated on a kind-to-SECTION map, and a gift card
+    has no section — so every gift-card product link 404'd with "This item
+    is unavailable" while the card sat right there in the grid. Same shape
+    of bug as the section KeyError that kept them off the storefront in the
+    first place: a kind that legitimately belongs to no department.
+    """
     prev = run(server.get_settings()).get("shop_page") or {}
     run(server.db.settings.update_one(
         {"id": "global"},
@@ -1730,14 +1762,208 @@ def test_gift_cards_are_not_on_the_public_storefront():
                   "shop_page.public_browsing_enabled": True}}, upsert=True))
     try:
         items = run(server._public_visible_shop_items())
-        assert all(i.get("kind") != "gift_card" for i in items)
+        card = next(i for i in items if i["kind"] == "gift_card")
+
+        class _Req:
+            client = type("C", (), {"host": "198.18.7.7"})()
+            headers = {}
+            url = type("U", (), {"path": "/api/public/shop/item"})()
+
+        detail = run(server.get_public_shop_item_detail("gift_card", card["id"], _Req()))
+        assert detail["id"] == card["id"]
+        assert detail["price"] > 0
+        # It carries no section, and nothing pretends it does.
+        assert "section" not in detail
+        # A made-up amount still 404s.
+        try:
+            run(server.get_public_shop_item_detail("gift_card", "gc-1", _Req()))
+            assert False, "an unoffered amount must not have a page"
+        except server.HTTPException as e:
+            assert e.status_code == 404
     finally:
         run(server.db.settings.update_one(
             {"id": "global"}, {"$set": {"shop_page": prev}}, upsert=True))
 
 
-def test_gift_cards_ARE_in_the_signed_in_shop():
-    # The other half of the same rule: hidden from guests, offered to clients.
+def test_gift_cards_are_in_the_signed_in_shop_too():
     catalog = run(server._build_shop_catalog(None))
     kinds = {i["kind"] for i in catalog["items"]}
     assert "gift_card" in kinds
+
+
+# ══════════════════════════════ the cart, through the door checkout uses
+# _normalize_cart_lines is the choke point EVERY checkout passes before
+# pricing, stock, eligibility, idempotency or Stripe. A kind it rejects
+# cannot be bought however well the rest of the system understands it —
+# which is exactly how gift cards ended up catalogued, priced and
+# fulfillable while still being unbuyable. These tests go through that door
+# rather than around it.
+from domains.shop import cart as shopcart  # noqa: E402
+
+
+def _item(**kw):
+    kw.setdefault("kind", "gift_card")
+    kw.setdefault("ref_id", gcshop.ref_id_for(25.0))
+    kw.setdefault("quantity", 1)
+    return server.ShopCartItemIn(**kw)
+
+
+def test_a_gift_card_survives_cart_normalization_at_all():
+    # The defect: this raised 422 "Invalid item kind in cart" and no gift
+    # card could ever be bought in the Shop.
+    out = shopcart._normalize_cart_lines([_item()])
+    assert len(out) == 1 and out[0].kind == "gift_card"
+
+
+def test_the_recipient_is_not_lost_on_the_way_through():
+    # The line is REBUILT by model_construct, so anything not named there is
+    # gone with no error — a card delivered to the wrong person, silently.
+    out = shopcart._normalize_cart_lines([_item(
+        recipient_email="Dana@Example.com", recipient_name="Dana",
+        gift_message="Happy birthday")])
+    assert out[0].recipient_email == "dana@example.com"
+    assert out[0].recipient_name == "Dana"
+    assert out[0].gift_message == "Happy birthday"
+
+
+def test_two_cards_for_two_people_stay_two_lines():
+    # Summing them would send both to whoever happened to be first.
+    out = shopcart._normalize_cart_lines([
+        _item(recipient_email="a@example.com", recipient_name="A"),
+        _item(recipient_email="b@example.com", recipient_name="B"),
+    ])
+    assert len(out) == 2
+    assert {l.recipient_email for l in out} == {"a@example.com", "b@example.com"}
+    assert all(l.quantity == 1 for l in out)
+
+
+def test_two_cards_for_the_SAME_person_still_combine():
+    out = shopcart._normalize_cart_lines([
+        _item(recipient_email="a@example.com"),
+        _item(recipient_email="A@EXAMPLE.COM"),   # same person, typed differently
+    ])
+    assert len(out) == 1 and out[0].quantity == 2
+
+
+def test_a_card_for_yourself_and_one_for_a_friend_are_separate():
+    out = shopcart._normalize_cart_lines([
+        _item(),                                     # no recipient — goes to the buyer
+        _item(recipient_email="dana@example.com"),
+    ])
+    assert len(out) == 2
+
+
+def test_a_broken_email_is_refused_at_the_cart():
+    for bad in ("nope", "@example.com", "dana@", "dana at example"):
+        with pytest.raises(HTTPException) as e:
+            shopcart._normalize_cart_lines([_item(recipient_email=bad)])
+        assert e.value.status_code == 422
+
+
+def test_a_message_with_nowhere_to_send_it_is_refused():
+    # A name and a message and no address is a present the recipient never
+    # gets. Say so at the cart rather than delivering a blank card.
+    with pytest.raises(HTTPException) as e:
+        shopcart._normalize_cart_lines([_item(recipient_name="Dana",
+                                              gift_message="Happy birthday")])
+    assert e.value.status_code == 422
+    assert "email" in str(e.value.detail).lower()
+
+
+def test_the_other_kinds_normalize_exactly_as_they_did():
+    # The regression guard on the lift: nothing about products, packs or
+    # programs may have changed.
+    out = shopcart._normalize_cart_lines([
+        server.ShopCartItemIn(kind="product", ref_id="p1", quantity=2),
+        server.ShopCartItemIn(kind="product", ref_id="p1", quantity=3),
+        server.ShopCartItemIn(kind="credit_pack", ref_id="cp1", quantity=1),
+    ])
+    assert [(l.kind, l.ref_id, l.quantity) for l in out] == [
+        ("product", "p1", 5), ("credit_pack", "cp1", 1)]
+
+
+def test_one_dog_one_course_still_holds():
+    with pytest.raises(HTTPException):
+        shopcart._normalize_cart_lines([
+            server.ShopCartItemIn(kind="training_program", ref_id="pr1",
+                                  quantity=1, dog_id="d1"),
+            server.ShopCartItemIn(kind="training_program", ref_id="pr1",
+                                  quantity=1, dog_id="d1"),
+        ])
+
+
+def test_a_made_up_kind_is_still_refused():
+    with pytest.raises(HTTPException) as e:
+        shopcart._normalize_cart_lines([
+            server.ShopCartItemIn.model_construct(
+                kind="free_money", ref_id="x", quantity=1, dog_id=None)])
+    assert e.value.status_code == 422
+
+
+# ---------------------------------------- normalization straight into pricing
+
+def test_a_normalized_gift_card_line_prices_correctly():
+    # The two halves joined up: the door, then the till.
+    lines = shopcart._normalize_cart_lines([_item(
+        recipient_email="dana@example.com", recipient_name="Dana")])
+    priced = run(server._price_shop_cart(lines, client_id=None))
+    line = priced["lines"][0]
+    assert line["kind"] == "gift_card" and line["unit_price"] == 25.00
+    assert line["recipient_email"] == "dana@example.com"
+    assert line["recipient_name"] == "Dana"
+    assert line["allocated_tax"] == 0.0
+
+
+def test_a_mixed_basket_normalizes_and_prices_end_to_end():
+    pid = _online_product(20.00)
+    lines = shopcart._normalize_cart_lines([
+        server.ShopCartItemIn(kind="product", ref_id=pid, quantity=1),
+        _item(recipient_email="dana@example.com", gift_message="Enjoy"),
+    ])
+    assert len(lines) == 2
+    priced = run(server._price_shop_cart(lines, client_id=None))
+    card = [l for l in priced["lines"] if l["kind"] == "gift_card"][0]
+    goods = [l for l in priced["lines"] if l["kind"] == "product"][0]
+    assert card["gift_message"] == "Enjoy"
+    assert card["allocated_tax"] == 0.0 and goods["allocated_tax"] > 0
+    assert priced["tax_amount"] == goods["allocated_tax"]
+
+
+def test_the_gift_reaches_the_card_that_is_finally_minted():
+    # All the way: cart → normalize → price → fulfil → the card itself.
+    lines = shopcart._normalize_cart_lines([_item(
+        recipient_email="dana@example.com", recipient_name="Dana Marie",
+        gift_message="Happy birthday")])
+    priced = run(server._price_shop_cart(lines, client_id=None))
+    out = _fulfil(_shop_order(), priced["lines"][0])
+    card = run(gift.find_by_code(out["codes"][0]))
+    assert card["recipient_email"] == "dana@example.com"
+    assert card["recipient_name"] == "Dana Marie"
+    assert card["note"] == "Happy birthday"
+    assert card["balance"] == 25.00
+
+
+def test_gift_fields_cannot_influence_what_a_card_costs():
+    """The gift fields say who a card goes to, nothing more. A smuggled
+    price, amount or balance on the cart line must have no effect — the
+    value comes from ref_id, resolved against the configured list."""
+    smuggled = server.ShopCartItemIn.model_construct(
+        kind="gift_card", ref_id=gcshop.ref_id_for(25.0), quantity=1, dog_id=None,
+        recipient_email="dana@example.com", recipient_name="Dana",
+        gift_message="Happy birthday",
+        price=1.0, unit_price=1.0, amount=1.0, balance=999.0)
+    priced = run(server._price_shop_cart([smuggled], client_id=None))
+    line = priced["lines"][0]
+    assert line["unit_price"] == 25.00, "the cart named its own price"
+    assert priced["total"] == 25.00
+    assert line["allocated_tax"] == 0.0
+
+
+def test_a_gift_card_cannot_be_smuggled_in_as_a_taxable_product():
+    # Kind decides taxability; a card claiming to be a product would be
+    # priced from the product catalog and fail, not become a cheap card.
+    with pytest.raises(HTTPException):
+        run(server._price_shop_cart(
+            [server.ShopCartItemIn(kind="product",
+                                   ref_id=gcshop.ref_id_for(25.0), quantity=1)],
+            client_id=None))

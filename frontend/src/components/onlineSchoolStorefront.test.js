@@ -14,6 +14,7 @@ const read = (...p) => fs.readFileSync(path.join(__dirname, ...p), "utf8");
 const storefrontSrc = read("OnlineSchoolStorefront.jsx");
 const portalShopSrc = read("PortalShop.jsx");
 const publicShopSrc = read("..", "screens", "PublicShop.jsx");
+const landingSrc = read("shop", "ShopLanding.jsx");
 const studioSrc = read("ProgramStudio.jsx");
 const adminFeedbackSrc = read("school", "SchoolExperienceFeedbackAdmin.jsx");
 const serverSrc = read("..", "..", "..", "backend", "server.py");
@@ -69,22 +70,36 @@ test("cards have ONE action — open the detail route — so purchase/claim gati
   expect(storefrontSrc).not.toMatch(/addToCart|onAdd\b/);
 });
 
-test("PortalShop routes the Online School tab to the storefront, and a live search still wins", () => {
-  expect(portalShopSrc).toMatch(/const onlineSchoolLanding = tab === "online_school" && !searching/);
-  expect(portalShopSrc).toMatch(/onlineSchoolLanding && \(\s*<OnlineSchoolStorefront/);
-  expect(portalShopSrc).toMatch(/!onlineSchoolLanding && showIndexScreen/);
-  expect(portalShopSrc).toMatch(/!onlineSchoolLanding && !showIndexScreen/);
+test("Online School keeps its own storefront, and a live search still wins", () => {
+  // The rule, not the variable that used to carry it: the old kind-named
+  // tabs became departments in the Shop redesign, so `onlineSchoolLanding`
+  // no longer exists. What must stay true is that the Online School
+  // DEPARTMENT renders the educational storefront rather than a product
+  // grid, and that typing a search overrides it — otherwise searching from
+  // inside Online School would silently show you nothing.
+  expect(portalShopSrc).toMatch(/department === "online_school" && !searching \?\s*\(?\s*<OnlineSchoolStorefront/);
+  // ...and the grid is the other branch of that same ternary, so the two
+  // cannot both render or both vanish.
+  expect(portalShopSrc).toMatch(/<OnlineSchoolStorefront[\s\S]{0,400}\) : browsing\.length === 0 \?/);
 });
 
-test("guests don't get two stacked heroes — PublicShop keeps its hero, the embedded storefront drops its own", () => {
+test("guests don't get two stacked heroes", () => {
   expect(portalShopSrc).toMatch(/showHero=\{mode !== "guest"\}/);
-  expect(publicShopSrc).toMatch(/public-online-school-hero/);
+  // After the redesign there is exactly ONE hero on the guest Shop — the
+  // storefront's own. PublicShop contributes brand chrome and a sign-in
+  // button, and no heading of its own.
+  expect(publicShopSrc).not.toMatch(/public-online-school-hero/);
+  expect(publicShopSrc).not.toMatch(/title="SHOP SIT HAPPENS/i);
 });
 
-test("the public hero upgrades its pills to REAL stat chips only when thresholds clear", () => {
-  expect(publicShopSrc).toMatch(/dogsTrainedLabel\(schoolStats\?\.dogs_trained\)/);
-  expect(publicShopSrc).toMatch(/if \(!dogs && !rating\)/);
-  expect(publicShopSrc).toMatch(/public-school-stat-dogs/);
+test("the Online School spotlight upgrades its pills to REAL stat chips only when thresholds clear", () => {
+  // Moved from the removed public hero into the Shop's own spotlight during
+  // the redesign. The rule is unchanged and is the point: a fresh install
+  // shows the plain value pills, never "4.9 from 0 reviews".
+  expect(landingSrc).toMatch(/dogsTrainedLabel\(schoolStats\?\.dogs_trained\)/);
+  expect(landingSrc).toMatch(/ratingSummary\(schoolStats\)/);
+  expect(landingSrc).toMatch(/!dogs && !rating/);
+  expect(landingSrc).toMatch(/shop-school-stat-/);
 });
 
 // ---------------------------------------------------------------------------
