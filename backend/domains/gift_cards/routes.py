@@ -6,9 +6,9 @@ what is left on it, issue one by hand, correct a balance, and kill a lost one.
 """
 from __future__ import annotations
 
-from fastapi import Depends, Request
+from fastapi import Depends, HTTPException, Request
 
-from domains.gift_cards import services
+from domains.gift_cards import online, services
 
 
 def register_gift_card_routes(*, api, server_globals: dict) -> None:
@@ -16,6 +16,15 @@ def register_gift_card_routes(*, api, server_globals: dict) -> None:
     require_admin_and_permission = server_globals["require_admin_and_permission"]
     enforce_rate_limit = server_globals["_enforce_rate_limit"]
     client_ip = server_globals["_client_ip"]
+    get_current_user = server_globals["get_current_user"]
+    _require_stripe_online_enabled = server_globals["_require_stripe_online_enabled"]
+
+    def require_stripe(user: dict) -> None:
+        """Portal money paths are for signed-in CLIENTS, and only when online
+        payments are actually switched on."""
+        if (user or {}).get("role") != "client":
+            raise HTTPException(status_code=403, detail="Client account required")
+        _require_stripe_online_enabled()
 
     @api.get("/gift-cards")
     async def list_gift_cards(status: str = "", limit: int = 100,
@@ -55,6 +64,38 @@ def register_gift_card_routes(*, api, server_globals: dict) -> None:
         return {"ok": True, "card": services.public_view(card),
                 "code": services._display(card["code"])}
 
+    @api.get("/portal/gift-cards/{code}")
+    async def portal_gift_card(code: str, request: Request,
+                               user: dict = Depends(get_current_user)):
+        """Balance on a card the customer is holding. Rate-limited for the
+        same reason the staff lookup is: a code is a bearer token, and the
+        only way to make guessing viable is to allow a lot of guesses."""
+        await enforce_rate_limit(
+            request, "gift_card_portal_lookup", client_ip(request), limit=30, window_seconds=300)
+        return online.portal_view(await services.find_by_code(code))
+
+    @api.post("/portal/gift-cards/{code}/topup-session")
+    async def portal_gift_card_topup(code: str, body: online.GiftCardTopupSessionIn,
+                                     user: dict = Depends(get_current_user)):
+        """Start paying to add money to a card. Grants nothing by itself —
+        only a verified Stripe webhook ever moves a balance."""
+        require_stripe(user)
+        return await online.start_topup(code=code, body=body, user=user)
+
+    @api.post("/portal/gift-cards/purchase-session")
+    async def portal_gift_card_purchase(body: online.GiftCardPurchaseIn,
+                                        user: dict = Depends(get_current_user)):
+        """Buy a digital card for somebody. Mints nothing by itself."""
+        require_stripe(user)
+        return await online.start_purchase(body=body, user=user)
+
+    @api.get("/portal/gift-card-attempts/{attempt_id}")
+    async def portal_gift_card_attempt(attempt_id: str,
+                                       user: dict = Depends(get_current_user)):
+        """What happened, read from our own records rather than from the
+        query string the browser came back with."""
+        return await online.attempt_status(attempt_id, user)
+
     @api.post("/gift-cards/stock")
     async def make_gift_card_stock(body: services.GiftCardStockIn,
                                    user: dict = Depends(require_admin_and_permission("pricing"))):
@@ -73,6 +114,12 @@ def register_gift_card_routes(*, api, server_globals: dict) -> None:
     async def adjust_gift_card(code: str, body: services.GiftCardAdjustIn,
                                user: dict = Depends(require_admin_and_permission("pricing"))):
         return {"ok": True, "card": await services.adjust(code=code, body=body, actor=user)}
+
+    @api.post("/gift-cards/{code}/details")
+    async def edit_gift_card_details(code: str, body: services.GiftCardDetailsIn,
+                                     user: dict = Depends(require_admin_and_permission("pricing"))):
+        """Who the card is for, and the note on it. No money moves here."""
+        return {"ok": True, "card": await services.edit_details(code=code, body=body, actor=user)}
 
     @api.post("/gift-cards/{code}/void")
     async def void_gift_card(code: str, body: services.GiftCardVoidIn,

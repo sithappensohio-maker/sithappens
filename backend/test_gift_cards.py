@@ -306,8 +306,15 @@ def test_the_endpoints_exist_and_are_gated_sensibly():
     paths = {r.path: r for r in server.app.routes if "gift-card" in getattr(r, "path", "")}
     assert set(paths) == {
         "/api/gift-cards", "/api/gift-cards/lookup/{code}", "/api/gift-cards/issue",
-        "/api/gift-cards/stock",
+        "/api/gift-cards/stock", "/api/gift-cards/{code}/details",
         "/api/gift-cards/{code}/adjust", "/api/gift-cards/{code}/void",
+        # Customer-facing. Every one of these is gated to a signed-in client
+        # and none of them can move money on its own — only a verified
+        # Stripe webhook does that.
+        "/api/portal/gift-cards/{code}",
+        "/api/portal/gift-cards/{code}/topup-session",
+        "/api/portal/gift-cards/purchase-session",
+        "/api/portal/gift-card-attempts/{attempt_id}",
     }
 
 
@@ -825,3 +832,554 @@ def test_a_denomination_card_spends_like_any_other():
 def test_a_silly_printed_value_is_refused():
     with pytest.raises(Exception):
         run(gift.mint_stock(quantity=1, actor=ADMIN, face_value=99999.0))
+
+
+# ──────────────────────────────────────── adding money to a card you own
+# A top-up is a SALE, not a correction: cash arrives, revenue is recognised
+# now, and what you owe the holder grows by the same amount.
+
+def _topup(code, amount, method="cash"):
+    tender = {"method": method, "amount": amount}
+    if method == "cash":
+        tender["tendered_amount"] = amount
+    return _sale([{"kind": "gift_card", "gift_card_amount": amount,
+                   "gift_card_code": code, "gift_card_topup": True}], [tender])
+
+
+def _live_card(value=20.00):
+    blank = _blank()
+    _sell_blank(blank["code"], value)
+    return blank
+
+
+def test_a_customer_can_add_to_a_card_they_already_have():
+    card = _live_card(20.00)
+    _topup(card["code"], 50.00)
+    live = run(server.db.gift_cards.find_one({"id": card["id"]}, {"_id": 0}))
+    assert live["balance"] == 70.00 and live["status"] == "active"
+
+
+def test_a_topup_is_income_and_cash_like_any_other_sale():
+    card = _live_card(20.00)
+    rev, cash, owed = _revenue(), _expected_cash(), \
+        run(gift.list_cards())["outstanding_balance"]
+    _topup(card["code"], 50.00)
+    assert round(_revenue() - rev, 2) == 50.00, "the money came in, so it is income"
+    assert round(_expected_cash() - cash, 2) == 50.00
+    assert round(run(gift.list_cards())["outstanding_balance"] - owed, 2) == 50.00
+
+
+def test_a_topup_is_not_sales_taxed():
+    card = _live_card(20.00)
+    owed = _tax_owed()
+    _topup(card["code"], 50.00)
+    assert _tax_owed() == owed, "a gift card is money — tax lands on what it buys"
+
+
+def test_topping_up_does_not_mint_a_second_card():
+    card = _live_card(20.00)
+    before = run(server.db.gift_cards.count_documents({}))
+    _topup(card["code"], 50.00)
+    assert run(server.db.gift_cards.count_documents({})) == before
+
+
+def test_a_spent_out_card_can_be_brought_back_to_life():
+    # $20 of goods is $21.35 with Ohio tax on top, so the card has to hold
+    # that much to be spent flat.
+    card = _live_card(21.35)
+    pid = _product(20.00)
+    _sale([{"kind": "retail", "product_id": pid, "qty": 1}],
+          [{"method": "gift_card", "amount": 21.35, "gift_card_code": card["code"]}])
+    assert run(server.db.gift_cards.find_one({"id": card["id"]}))["status"] == "spent"
+    _topup(card["code"], 30.00)
+    live = run(server.db.gift_cards.find_one({"id": card["id"]}, {"_id": 0}))
+    assert live["balance"] == 30.00 and live["status"] == "active"
+
+
+def test_a_blank_cannot_be_topped_up():
+    # It has not been sold, so there is no sale behind the balance. Selling
+    # it is the thing that books the revenue.
+    blank = _blank()
+    with pytest.raises(HTTPException) as e:
+        _topup(blank["code"], 50.00)
+    assert e.value.status_code == 409
+    assert "not been sold" in str(e.value.detail)
+
+
+def test_a_voided_card_cannot_be_topped_up():
+    card = _live_card(20.00)
+    run(gift.void_card(code=card["code"], actor=ADMIN,
+                       body=gift.GiftCardVoidIn(reason=f"{TAG} stolen")))
+    with pytest.raises(HTTPException) as e:
+        _topup(card["code"], 50.00)
+    assert e.value.status_code == 409
+
+
+def test_a_topup_without_a_code_is_refused_rather_than_guessed():
+    with pytest.raises(HTTPException) as e:
+        _sale([{"kind": "gift_card", "gift_card_amount": 50.00, "gift_card_topup": True}],
+              [{"method": "cash", "amount": 50.00, "tendered_amount": 50.00}])
+    assert e.value.status_code == 400
+
+
+def test_a_failed_topup_takes_no_money():
+    blank = _blank()
+    cash, rev = _expected_cash(), _revenue()
+    sales_before = run(server.db.pos_sales.count_documents({}))
+    with pytest.raises(HTTPException):
+        _topup(blank["code"], 50.00)
+    assert _expected_cash() == cash and _revenue() == rev
+    assert run(server.db.pos_sales.count_documents({})) == sales_before
+
+
+def test_a_topup_cannot_push_a_card_over_the_limit():
+    card = _live_card(900.00)
+    with pytest.raises(HTTPException) as e:
+        _topup(card["code"], 500.00)
+    assert e.value.status_code == 400
+    assert run(server.db.gift_cards.find_one({"id": card["id"]}))["balance"] == 900.00
+
+
+def test_the_printed_value_does_not_govern_a_topup():
+    # A $25 card sells for $25. Once sold, the 25 on the plastic is history
+    # and the holder can put any amount back on it.
+    fixed = _denom(25.00)[0]
+    _sell_blank(fixed["code"], 25.00)
+    _topup(fixed["code"], 60.00)
+    live = run(server.db.gift_cards.find_one({"id": fixed["id"]}, {"_id": 0}))
+    assert live["balance"] == 85.00
+
+
+def test_a_topup_shows_in_the_cards_history():
+    card = _live_card(20.00)
+    _topup(card["code"], 50.00)
+    view = run(gift.card_detail(card["code"]))
+    assert any(h["kind"] == "topup" and h["amount"] == 50.00 for h in view["history"])
+    assert view["balance"] == 70.00
+
+
+def test_two_tills_topping_up_at_once_cannot_lose_a_payment():
+    """Both read $20, both add $50. Without the balance precondition both
+    write $70 and one of the two payments vanishes off the card."""
+    card = _live_card(20.00)
+    stale = run(server.db.gift_cards.find_one({"id": card["id"]}, {"_id": 0}))
+    run(gift.topup_card(code=card["code"], amount=50.00, actor=ADMIN,
+                        pos_sale_id="till-A"))          # the other till won
+
+    real = gift.find_by_code
+    seen = {"n": 0}
+
+    async def _stale_once(raw):
+        """First read is the snapshot this till took before the other one
+        wrote — that is the race. Afterwards it reads reality, which is what
+        the retry exists to do."""
+        seen["n"] += 1
+        return stale if seen["n"] == 1 else await real(raw)
+
+    gift.find_by_code = _stale_once
+    try:
+        run(gift.topup_card(code=card["code"], amount=50.00, actor=ADMIN,
+                            pos_sale_id="till-B"))
+    finally:
+        gift.find_by_code = real
+    assert seen["n"] >= 2, "the stale attempt must have been rejected and retried"
+    live = run(server.db.gift_cards.find_one({"id": card["id"]}, {"_id": 0}))
+    assert live["balance"] == 120.00, "one of the two $50 payments was lost"
+
+
+# ──────────────────────────────── editing the two things that are not money
+
+def test_who_a_card_is_for_can_be_fixed_afterwards():
+    # The till usually takes the money before anybody knows whose name goes
+    # on it, and a typo on a card about to be printed is worth fixing.
+    card = _live_card(20.00)
+    out = run(gift.edit_details(code=card["code"], actor=ADMIN,
+                                body=gift.GiftCardDetailsIn(
+                                    recipient_name="Dana", note="Birthday")))
+    assert out["recipient_name"] == "Dana" and out["note"] == "Birthday"
+    live = run(gift.card_detail(card["code"]))
+    assert live["recipient_name"] == "Dana"
+
+
+def test_editing_details_cannot_touch_the_money():
+    card = _live_card(20.00)
+    rev, cash = _revenue(), _expected_cash()
+    owed = run(gift.list_cards())["outstanding_balance"]
+    run(gift.edit_details(code=card["code"], actor=ADMIN,
+                          body=gift.GiftCardDetailsIn(recipient_name="Dana")))
+    live = run(server.db.gift_cards.find_one({"id": card["id"]}, {"_id": 0}))
+    assert live["balance"] == 20.00 and live["status"] == "active"
+    assert _revenue() == rev and _expected_cash() == cash
+    assert run(gift.list_cards())["outstanding_balance"] == owed
+
+
+def test_the_edit_model_has_no_way_to_set_an_amount():
+    # The guard is the model itself: extra keys are not silently accepted
+    # into something that could move a balance.
+    body = gift.GiftCardDetailsIn(recipient_name="Dana")
+    assert not hasattr(body, "amount")
+    assert not hasattr(body, "balance")
+    assert not hasattr(body, "status")
+
+
+def test_an_edit_leaves_a_trail_without_claiming_money_moved():
+    card = _live_card(20.00)
+    run(gift.edit_details(code=card["code"], actor=ADMIN,
+                          body=gift.GiftCardDetailsIn(note=f"{TAG} note")))
+    view = run(gift.card_detail(card["code"]))
+    edits = [h for h in view["history"] if h["kind"] == "edit"]
+    assert edits and edits[-1]["amount"] == 0.0
+    assert edits[-1]["balance_after"] == 20.00
+
+
+def test_a_voided_card_cannot_be_edited():
+    card = _live_card(20.00)
+    run(gift.void_card(code=card["code"], actor=ADMIN,
+                       body=gift.GiftCardVoidIn(reason=f"{TAG} gone")))
+    with pytest.raises(HTTPException) as e:
+        run(gift.edit_details(code=card["code"], actor=ADMIN,
+                              body=gift.GiftCardDetailsIn(recipient_name="Nope")))
+    assert e.value.status_code == 409
+
+
+def test_editing_only_one_field_leaves_the_other_alone():
+    card = _live_card(20.00)
+    run(gift.edit_details(code=card["code"], actor=ADMIN,
+                          body=gift.GiftCardDetailsIn(recipient_name="Dana", note="Keep me")))
+    run(gift.edit_details(code=card["code"], actor=ADMIN,
+                          body=gift.GiftCardDetailsIn(recipient_name="Sam")))
+    live = run(gift.card_detail(card["code"]))
+    assert live["recipient_name"] == "Sam" and live["note"] == "Keep me"
+
+
+def test_a_blank_on_the_rack_can_be_named_before_it_is_sold():
+    blank = _blank()
+    run(gift.edit_details(code=blank["code"], actor=ADMIN,
+                          body=gift.GiftCardDetailsIn(recipient_name="Dana")))
+    live = run(server.db.gift_cards.find_one({"id": blank["id"]}, {"_id": 0}))
+    assert live["recipient_name"] == "Dana"
+    assert live["status"] == "stock" and live["balance"] == 0.0, "still unsold"
+
+
+# ══════════════════════════════════ online: top-ups, digital cards, webhooks
+# The browser is never financial authority here. Every test below drives the
+# webhook handlers directly — that is the only path that moves money — so
+# nothing depends on Stripe being reachable.
+import json as _json  # noqa: E402
+
+from domains.gift_cards import online as gconline  # noqa: E402
+
+
+@pytest.fixture(autouse=True)
+def _online_configured():
+    gconline.configure(
+        db=server.db, stripe_mod=None, now_iso=server.now_iso,
+        business_today=server.business_today, logger=server.logger,
+        amount_cents=server._stripe_amount_cents,
+        public_url=server._app_public_url,
+        expires_seconds=server.STRIPE_CHECKOUT_EXPIRES_SECONDS,
+        email_service=None)
+    yield
+
+
+def _attempt(kind="topup", **kw):
+    """An attempt in the state Stripe would leave it in just before paying."""
+    a = {"id": str(uuid.uuid4()), "kind": kind, "status": "pending",
+         "stripe_checkout_session_id": "cs_" + str(uuid.uuid4()),
+         "business_date": _day(), "created_at": server.now_iso(),
+         "updated_at": server.now_iso()}
+    a.update(kw)
+    run(server.db.gift_card_topup_attempts.insert_one(dict(a)))
+    a.pop("_id", None)
+    return a
+
+
+def _paid(attempt, cents=None):
+    return {"id": attempt["stripe_checkout_session_id"], "payment_status": "paid",
+            "amount_total": cents if cents is not None else attempt["amount_cents"],
+            "payment_intent": "pi_" + str(uuid.uuid4()),
+            "metadata": {"sithappens_gift_card_topup_id": attempt["id"]}}
+
+
+# ------------------------------------------------------------- top-ups
+
+def test_an_online_topup_puts_the_money_on_the_card():
+    card = _live_card(20.00)
+    a = _attempt(gift_card_id=card["id"], code=card["code"], amount_cents=5000)
+    run(gconline.handle_paid(_paid(a)))
+    live = run(server.db.gift_cards.find_one({"id": card["id"]}, {"_id": 0}))
+    assert live["balance"] == 70.00 and live["status"] == "active"
+
+
+def test_an_online_topup_is_income_but_never_till_cash():
+    # The money is real, so it is revenue. It is not in the drawer, so the
+    # drawer must not claim it — a cash count would catch that.
+    card = _live_card(20.00)
+    rev, cash = _revenue(), _expected_cash()
+    a = _attempt(gift_card_id=card["id"], code=card["code"], amount_cents=5000)
+    run(gconline.handle_paid(_paid(a)))
+    assert round(_revenue() - rev, 2) == 50.00
+    assert _expected_cash() == cash, "online money is not in the till"
+
+
+def test_stripe_delivering_the_same_event_twice_only_pays_once():
+    # Stripe retries. This is THE test: a repeat delivery must be a no-op.
+    card = _live_card(20.00)
+    rev = _revenue()
+    a = _attempt(gift_card_id=card["id"], code=card["code"], amount_cents=5000)
+    ev = _paid(a)
+    run(gconline.handle_paid(ev))
+    run(gconline.handle_paid(ev))
+    run(gconline.handle_paid(ev))
+    live = run(server.db.gift_cards.find_one({"id": card["id"]}, {"_id": 0}))
+    assert live["balance"] == 70.00, "the card was credited more than once"
+    assert round(_revenue() - rev, 2) == 50.00, "the income was booked more than once"
+
+
+def test_re_driving_a_half_finished_apply_finishes_it():
+    # Crash after the balance moved but before the revenue row was written:
+    # calling apply again must write the row and NOT move the balance twice.
+    card = _live_card(20.00)
+    rev = _revenue()
+    a = _attempt(gift_card_id=card["id"], code=card["code"], amount_cents=5000)
+    run(gconline.apply_topup(a))
+    run(server.db.retail_sales.delete_one({"id": "gctopup-" + a["id"]}))
+    run(gconline.apply_topup(a))
+    live = run(server.db.gift_cards.find_one({"id": card["id"]}, {"_id": 0}))
+    assert live["balance"] == 70.00, "balance moved twice"
+    assert round(_revenue() - rev, 2) == 50.00, "revenue row was not restored"
+
+
+def test_an_unpaid_session_puts_nothing_on_the_card():
+    card = _live_card(20.00)
+    a = _attempt(gift_card_id=card["id"], code=card["code"], amount_cents=5000)
+    ev = _paid(a)
+    ev["payment_status"] = "unpaid"
+    run(gconline.handle_paid(ev))
+    assert run(server.db.gift_cards.find_one({"id": card["id"]}))["balance"] == 20.00
+
+
+def test_paying_a_different_amount_is_held_back_rather_than_guessed():
+    # What Stripe actually collected is the authority. If it disagrees with
+    # what we asked for, crediting either number is a guess.
+    card = _live_card(20.00)
+    a = _attempt(gift_card_id=card["id"], code=card["code"], amount_cents=5000)
+    run(gconline.handle_paid(_paid(a, cents=1000)))
+    assert run(server.db.gift_cards.find_one({"id": card["id"]}))["balance"] == 20.00
+    live = run(server.db.gift_card_topup_attempts.find_one({"id": a["id"]}))
+    assert live["status"] == "reconciliation_required"
+
+
+def test_a_failed_or_expired_session_never_credits():
+    card = _live_card(20.00)
+    for handler, status in ((gconline.handle_failed, "failed"),
+                            (gconline.handle_expired, "expired")):
+        a = _attempt(gift_card_id=card["id"], code=card["code"], amount_cents=5000)
+        run(handler({"id": a["stripe_checkout_session_id"]}))
+        assert run(server.db.gift_card_topup_attempts.find_one(
+            {"id": a["id"]}))["status"] == status
+    assert run(server.db.gift_cards.find_one({"id": card["id"]}))["balance"] == 20.00
+
+
+def test_a_stale_failure_after_payment_cannot_take_the_money_back():
+    # Stripe does not guarantee delivery order.
+    card = _live_card(20.00)
+    a = _attempt(gift_card_id=card["id"], code=card["code"], amount_cents=5000)
+    run(gconline.handle_paid(_paid(a)))
+    run(gconline.handle_failed({"id": a["stripe_checkout_session_id"]}))
+    live = run(server.db.gift_cards.find_one({"id": card["id"]}, {"_id": 0}))
+    assert live["balance"] == 70.00
+    assert run(server.db.gift_card_topup_attempts.find_one(
+        {"id": a["id"]}))["status"] == "applied"
+
+
+def test_an_unknown_session_is_ignored_quietly():
+    run(gconline.handle_paid({"id": "cs_nothing", "payment_status": "paid"}))
+
+
+# --------------------------------------------------- digital cards, online
+
+def test_buying_a_digital_card_online_mints_it_and_books_it():
+    rev = _revenue()
+    a = _attempt(kind="purchase", card_id=str(uuid.uuid4()), amount_cents=4000,
+                 recipient_email="dana@example.com", recipient_name="Dana")
+    run(gconline.handle_paid(_paid(a)))
+    card = run(server.db.gift_cards.find_one({"id": a["card_id"]}, {"_id": 0}))
+    assert card and card["balance"] == 40.00 and card["status"] == "active"
+    assert card["origin"] == "digital" and card["delivery"] == "email"
+    assert card["recipient_email"] == "dana@example.com"
+    assert round(_revenue() - rev, 2) == 40.00
+
+
+def test_a_repeated_delivery_does_not_mint_a_second_card():
+    # THE risk of minting from a webhook: two cards for one payment.
+    run(gift.ensure_indexes())
+    rev = _revenue()
+    a = _attempt(kind="purchase", card_id=str(uuid.uuid4()), amount_cents=4000,
+                 recipient_email="dana@example.com")
+    ev = _paid(a)
+    run(gconline.handle_paid(ev))
+    run(gconline.handle_paid(ev))
+    run(gconline.handle_paid(ev))
+    assert run(server.db.gift_cards.count_documents({"id": a["card_id"]})) == 1
+    assert round(_revenue() - rev, 2) == 40.00
+
+
+def test_a_digital_card_spends_like_any_other():
+    a = _attempt(kind="purchase", card_id=str(uuid.uuid4()), amount_cents=4000,
+                 recipient_email="dana@example.com")
+    run(gconline.handle_paid(_paid(a)))
+    card = run(server.db.gift_cards.find_one({"id": a["card_id"]}, {"_id": 0}))
+    after = _revenue()
+    pid = _product(20.00)
+    _sale([{"kind": "retail", "product_id": pid, "qty": 1}],
+          [{"method": "gift_card", "amount": 21.35, "gift_card_code": card["code"]}])
+    assert round(_revenue() - after, 2) == 0.00, "already earned when it was bought"
+    assert run(server.db.gift_cards.find_one({"id": a["card_id"]}))["balance"] == 18.65
+
+
+def test_an_online_card_is_owed_to_its_holder():
+    owed = run(gift.list_cards())["outstanding_balance"]
+    a = _attempt(kind="purchase", card_id=str(uuid.uuid4()), amount_cents=4000,
+                 recipient_email="dana@example.com")
+    run(gconline.handle_paid(_paid(a)))
+    assert round(run(gift.list_cards())["outstanding_balance"] - owed, 2) == 40.00
+
+
+# ------------------------------------------------ what a customer may see
+
+def test_a_customer_looking_up_a_code_sees_the_balance_and_nothing_else():
+    card = _live_card(20.00)
+    run(gift.edit_details(code=card["code"], actor=ADMIN,
+                          body=gift.GiftCardDetailsIn(recipient_name="Dana",
+                                                      note="secret note")))
+    full = run(server.db.gift_cards.find_one({"id": card["id"]}, {"_id": 0}))
+    view = gconline.portal_view(full)
+    assert view["balance"] == 20.00 and view["can_top_up"] is True
+    blob = _json.dumps(view)
+    assert "Dana" not in blob and "secret note" not in blob, \
+        "whoever holds a code is not necessarily who it was bought for"
+
+
+def test_a_blank_reads_as_not_toppable_to_a_customer():
+    blank = _blank()
+    full = run(server.db.gift_cards.find_one({"id": blank["id"]}, {"_id": 0}))
+    assert gconline.portal_view(full)["can_top_up"] is False
+
+
+# ------------------------------------------------ digital cards at the till
+
+def test_a_card_sold_with_an_email_is_a_digital_card():
+    sent = []
+
+    async def _catch(card):
+        sent.append(card["code"])
+        return True
+
+    gift.configure(db=server.db, now_iso=server.now_iso,
+                   business_today=server.business_today, logger=server.logger,
+                   email_sender=_catch)
+    try:
+        sale_id = _sale([{"kind": "gift_card", "gift_card_amount": 40.00,
+                          "gift_card_recipient_email": "dana@example.com"}],
+                        [{"method": "cash", "amount": 40.00, "tendered_amount": 40.00}])
+        card = run(server.db.gift_cards.find_one(
+            {"sold_via_pos_sale_id": sale_id}, {"_id": 0}))
+        assert card["delivery"] == "email"
+        assert card["recipient_email"] == "dana@example.com"
+        assert sent == [card["code"]], "the code has to actually be sent somewhere"
+        assert card["balance"] == 40.00
+    finally:
+        gift.configure(db=server.db, now_iso=server.now_iso,
+                       business_today=server.business_today, logger=server.logger,
+                       email_sender=None)
+
+
+def test_a_card_sold_without_an_email_is_still_a_printed_card():
+    sale_id = _sale([{"kind": "gift_card", "gift_card_amount": 40.00}],
+                    [{"method": "cash", "amount": 40.00, "tendered_amount": 40.00}])
+    card = run(server.db.gift_cards.find_one(
+        {"sold_via_pos_sale_id": sale_id}, {"_id": 0}))
+    assert card["delivery"] == "print" and not card["recipient_email"]
+
+
+def test_the_code_is_emailed_once_even_if_asked_twice():
+    calls = []
+
+    async def _catch(card):
+        calls.append(card["id"])
+        return True
+
+    card = _live_card(20.00)
+    run(server.db.gift_cards.update_one(
+        {"id": card["id"]}, {"$set": {"recipient_email": "dana@example.com"}}))
+    full = run(server.db.gift_cards.find_one({"id": card["id"]}, {"_id": 0}))
+    assert run(gift.send_card_email(full, sender=_catch)) is True
+    assert run(gift.send_card_email(full, sender=_catch)) is False
+    assert len(calls) == 1, "the recipient was emailed their card twice"
+
+
+def test_a_failed_send_can_be_retried_rather_than_lost():
+    # A card that never arrives is worse than one that arrives twice, so a
+    # failure must release the claim.
+    async def _fail(card):
+        return False
+
+    async def _ok(card):
+        return True
+
+    card = _live_card(20.00)
+    run(server.db.gift_cards.update_one(
+        {"id": card["id"]}, {"$set": {"recipient_email": "dana@example.com"}}))
+    full = run(server.db.gift_cards.find_one({"id": card["id"]}, {"_id": 0}))
+    assert run(gift.send_card_email(full, sender=_fail)) is False
+    assert run(server.db.gift_cards.find_one(
+        {"id": card["id"]})).get("code_emailed_at") is None
+    assert run(gift.send_card_email(full, sender=_ok)) is True
+
+
+def test_a_mail_provider_falling_over_never_fails_the_sale():
+    async def _boom(card):
+        raise RuntimeError("Resend is down")
+
+    card = _live_card(20.00)
+    run(server.db.gift_cards.update_one(
+        {"id": card["id"]}, {"$set": {"recipient_email": "dana@example.com"}}))
+    full = run(server.db.gift_cards.find_one({"id": card["id"]}, {"_id": 0}))
+    assert run(gift.send_card_email(full, sender=_boom)) is False
+    assert run(server.db.gift_cards.find_one({"id": card["id"]}))["balance"] == 20.00
+
+
+def test_a_payment_arriving_after_we_gave_up_is_flagged_not_dropped():
+    """Stripe should never do this, so if it does, something is wrong. The
+    customer's money is real either way, and quietly ignoring it would mean
+    they paid and got nothing — so it goes to a human rather than nowhere."""
+    card = _live_card(20.00)
+    a = _attempt(gift_card_id=card["id"], code=card["code"], amount_cents=5000)
+    run(gconline.handle_expired({"id": a["stripe_checkout_session_id"]}))
+    run(gconline.handle_paid(_paid(a)))
+    live = run(server.db.gift_card_topup_attempts.find_one({"id": a["id"]}))
+    assert live["status"] == "reconciliation_required"
+    assert run(server.db.gift_cards.find_one({"id": card["id"]}))["balance"] == 20.00
+
+
+def test_an_applied_attempt_paid_again_stays_applied():
+    card = _live_card(20.00)
+    a = _attempt(gift_card_id=card["id"], code=card["code"], amount_cents=5000)
+    run(gconline.handle_paid(_paid(a)))
+    run(gconline.handle_paid(_paid(a)))
+    live = run(server.db.gift_card_topup_attempts.find_one({"id": a["id"]}))
+    assert live["status"] == "applied"
+    assert run(server.db.gift_cards.find_one({"id": card["id"]}))["balance"] == 70.00
+
+
+def test_the_database_refuses_two_cards_with_the_same_id():
+    """An online purchase pins the card id before paying so a repeated
+    webhook cannot mint twice — which only holds if the index is real."""
+    import pymongo
+    run(gift.ensure_indexes())
+    card = _live_card(20.00)
+    with pytest.raises(pymongo.errors.DuplicateKeyError):
+        run(server.db.gift_cards.insert_one({
+            "id": card["id"], "code": "ZZZZZZZZZZZZ", "balance": 0.0,
+            "initial_amount": 0.0, "status": "stock", "origin": "stock"}))

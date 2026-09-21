@@ -358,22 +358,37 @@ export default function Pos({ onOpenShopManager } = {}) {
   // cannot drift apart — the backend refuses a mismatch anyway, but finding
   // out by error message while a customer waits is a poor way to learn it.
   const [giftStockCard, setGiftStockCard] = useState(null);
+  // True when the code belongs to a card somebody already owns, so this line
+  // adds to it rather than selling a new one.
+  const [giftTopup, setGiftTopup] = useState(false);
+  // An address turns this into a DIGITAL card: no plastic, the code is
+  // emailed, and the email is the card.
+  const [giftEmail, setGiftEmail] = useState("");
   const lookupStockCard = async () => {
     const code = giftStockCode.trim();
-    if (!code) { setGiftStockCard(null); return; }
+    if (!code) { setGiftStockCard(null); setGiftTopup(false); return; }
     try {
       const { data } = await api.get(`/gift-cards/lookup/${encodeURIComponent(code)}`);
-      if (data?.status !== "stock") {
+      if (data?.status === "voided") {
         setGiftStockCard(null);
-        toast.error(data?.status === "active"
-          ? "That card has already been sold."
-          : "That card is not on the rack.");
+        toast.error("That card was voided.");
+        return;
+      }
+      if (data?.status !== "stock") {
+        // Already somebody's card. Adding to it is a sale like any other:
+        // money in, balance up. The operator is shown the balance so a
+        // mistyped code looks wrong before they take any money.
+        setGiftStockCard(data);
+        setGiftTopup(true);
+        setGiftAmount("");
         return;
       }
       setGiftStockCard(data);
+      setGiftTopup(false);
       if (data.face_value != null) setGiftAmount(String(data.face_value));
     } catch (e) {
       setGiftStockCard(null);
+      setGiftTopup(false);
       toast.error(formatErr(e) || "No card with that code.");
     }
   };
@@ -385,11 +400,16 @@ export default function Pos({ onOpenShopManager } = {}) {
       kind: "gift_card", gift_card_amount: Math.round(amount * 100) / 100,
       recipient_name: giftRecipient.trim(),
       gift_card_code: stock,
-      description: stock ? `Gift card ${money(amount)} · ${stock}` : `Gift card ${money(amount)}`,
+      gift_card_topup: giftTopup,
+      gift_card_recipient_email: giftEmail.trim(),
+      description: !stock ? `Gift card ${money(amount)}`
+        : giftTopup ? `Top-up ${money(amount)} · ${stock}`
+        : `Gift card ${money(amount)} · ${stock}`,
       qty: 1,
     }]);
     setGiftOpen(false); setGiftAmount(""); setGiftRecipient("");
-    setGiftStockCode(""); setGiftStockCard(null);
+    setGiftStockCode(""); setGiftStockCard(null); setGiftTopup(false);
+    setGiftEmail("");
   };
 
   // Spending one. The balance is checked before it is offered as a tender,
@@ -433,7 +453,7 @@ export default function Pos({ onOpenShopManager } = {}) {
   // instead of several unrelated ones.
   const cartLinesPayload = () => cartLines.map((l) => {
     if (l.kind === "custom") return { kind: "custom", description: l.description, custom_amount: l.custom_amount, custom_reason: l.custom_reason, custom_kind: l.custom_kind || "merchandise" };
-    if (l.kind === "gift_card") return { kind: "gift_card", gift_card_amount: l.gift_card_amount, recipient_name: l.recipient_name || null, gift_card_code: l.gift_card_code || null, qty: 1 };
+    if (l.kind === "gift_card") return { kind: "gift_card", gift_card_amount: l.gift_card_amount, recipient_name: l.recipient_name || null, gift_card_code: l.gift_card_code || null, gift_card_topup: !!l.gift_card_topup, gift_card_recipient_email: l.gift_card_recipient_email || null, qty: 1 };
     if (l.kind === "credit_pack") return { kind: "credit_pack", pack_id: l.pack_id, qty: l.qty };
     if (l.kind === "training_program") return { kind: "training_program", program_id: l.program_id, qty: l.qty };
     return { kind: "retail", product_id: l.product_id, qty: l.qty };
@@ -1835,17 +1855,37 @@ export default function Pos({ onOpenShopManager } = {}) {
               <div className="mt-2 space-y-2" data-testid="pos-gift-card-form">
                 <input type="number" value={giftAmount} onChange={(e) => setGiftAmount(e.target.value)}
                        placeholder="Amount on the card" data-testid="pos-gift-amount"
-                       disabled={giftStockCard?.face_value != null}
+                       disabled={!giftTopup && giftStockCard?.face_value != null}
                        className="w-full bg-[var(--sh-card-base)] border border-shBorder rounded p-2 text-shText text-sm disabled:opacity-60" />
                 <input value={giftRecipient} onChange={(e) => setGiftRecipient(e.target.value)}
                        placeholder="Who is it for? (optional)" data-testid="pos-gift-recipient"
                        className="w-full bg-[var(--sh-card-base)] border border-shBorder rounded p-2 text-shText text-sm" />
+                {!giftTopup && (
+                  <>
+                    <input value={giftEmail} onChange={(e) => setGiftEmail(e.target.value)}
+                           type="email" placeholder="Email it instead of printing (optional)"
+                           data-testid="pos-gift-email"
+                           className="w-full bg-[var(--sh-card-base)] border border-shBorder rounded p-2 text-shText text-sm" />
+                    {giftEmail.trim() && (
+                      <p className="text-[11px] text-shPrimary font-black uppercase tracking-widest"
+                         data-testid="pos-gift-digital-note">
+                        Digital card — the code is emailed, nothing to print.
+                      </p>
+                    )}
+                  </>
+                )}
                 <input value={giftStockCode}
                        onChange={(e) => { setGiftStockCode(e.target.value); setGiftStockCard(null); }}
                        onBlur={lookupStockCard}
                        placeholder="Code off a printed card (optional)" data-testid="pos-gift-stock-code"
                        className="w-full bg-[var(--sh-card-base)] border border-shBorder rounded p-2 text-shText text-sm" />
-                {giftStockCard?.face_value != null && (
+                {giftTopup && giftStockCard && (
+                  <p className="text-[11px] text-shPrimary font-black uppercase tracking-widest"
+                     data-testid="pos-gift-topup-note">
+                    Adding to this card · {money(giftStockCard.balance)} on it now
+                  </p>
+                )}
+                {!giftTopup && giftStockCard?.face_value != null && (
                   <p className="text-[11px] text-shPrimary font-black uppercase tracking-widest"
                      data-testid="pos-gift-fixed-note">
                     {money(giftStockCard.face_value)} card — that is what it sells for.

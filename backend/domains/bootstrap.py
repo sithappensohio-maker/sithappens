@@ -9,6 +9,7 @@ from domains.pos.routes import register_pos_routes
 from domains.pricing.routes import register_pricing_routes
 from domains.register.routes import register_register_routes
 from domains.pricing import services as pricing_services
+from domains.gift_cards import online as gift_card_online
 from domains.gift_cards import services as gift_card_services
 from domains.pos import services as pos_services
 from domains.bookings import services as booking_services
@@ -107,8 +108,18 @@ def register_domains(
         now_iso=now_iso,
         default_boarding_cutoff=server_globals["DEFAULT_BOARDING_FULL_DAY_PICKUP_CUTOFF"],
     )
+    gift_card_online.configure(
+        db=db, stripe_mod=server_globals["stripe"], now_iso=now_iso,
+        business_today=business_today, logger=logger,
+        amount_cents=server_globals["_stripe_amount_cents"],
+        public_url=server_globals["_app_public_url"],
+        expires_seconds=server_globals["STRIPE_CHECKOUT_EXPIRES_SECONDS"],
+        email_service=server_globals["email_service"])
     gift_card_services.configure(
-        db=db, now_iso=now_iso, business_today=business_today, logger=logger)
+        db=db, now_iso=now_iso, business_today=business_today, logger=logger,
+        # Sending a digital card lives with the online flow (it is the same
+        # email either way); the domain only needs to be able to call it.
+        email_sender=gift_card_online.email_card)
 
     pos_services.configure(
         db=db,

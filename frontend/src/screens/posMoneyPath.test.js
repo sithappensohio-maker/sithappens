@@ -453,7 +453,8 @@ test("a gift card can be sold as a cart line, untaxed", async () => {
   const preview = posted.filter((p) => String(p.path).includes("preview")).pop();
   expect(preview.body.lines).toEqual([
     { kind: "gift_card", gift_card_amount: 100, recipient_name: "For Dana",
-      gift_card_code: null, qty: 1 },
+      gift_card_code: null, gift_card_topup: false,
+      gift_card_recipient_email: null, qty: 1 },
   ]);
 });
 
@@ -557,7 +558,8 @@ test("selling a card off the rack sends that card's code, not a new one", async 
   const preview = posted.filter((p) => String(p.path).includes("preview")).pop();
   expect(preview.body.lines).toEqual([
     { kind: "gift_card", gift_card_amount: 50, recipient_name: null,
-      gift_card_code: "ABCD-EFGH-JKMN", qty: 1 },
+      gift_card_code: "ABCD-EFGH-JKMN", gift_card_topup: false,
+      gift_card_recipient_email: null, qty: 1 },
   ]);
 });
 
@@ -641,17 +643,82 @@ test("a blank leaves the amount alone and unlocked", async () => {
   expect(q("pos-gift-fixed-note")).toBeFalsy();
 });
 
-test("an already-sold card is caught at the counter, not at checkout", async () => {
+test("a card the customer already owns becomes a top-up, not an error", async () => {
+  // Adding to a card is a sale like any other: money in, balance up. The
+  // balance is shown so a mistyped code looks wrong BEFORE money is taken.
   api.get.mockImplementation((url) =>
     String(url).includes("/gift-cards/lookup/")
       ? Promise.resolve({ data: { code_display: "CCCC-5555-6666", status: "active",
-                                  balance: 40 } })
+                                  balance: 12.4 } })
       : Promise.resolve({ data: {} }));
   await mount();
   await click("pos-gift-card-toggle");
   await type("pos-gift-stock-code", "CCCC-5555-6666");
   await blurCode();
-  expect(toast.error).toHaveBeenCalledWith(expect.stringMatching(/already been sold/i));
+  expect(q("pos-gift-topup-note").textContent).toMatch(/adding to this card/i);
+  expect(q("pos-gift-topup-note").textContent).toContain("$12.40");
+  expect(q("pos-gift-amount").disabled).toBe(false);   // any amount may be added
+});
+
+test("a top-up line tells the backend it is a top-up", async () => {
+  api.get.mockImplementation((url) =>
+    String(url).includes("/gift-cards/lookup/")
+      ? Promise.resolve({ data: { code_display: "CCCC-5555-6666", status: "active",
+                                  balance: 12.4 } })
+      : Promise.resolve({ data: {} }));
+  await mount();
+  await click("pos-gift-card-toggle");
+  await type("pos-gift-stock-code", "CCCC-5555-6666");
+  await blurCode();
+  await type("pos-gift-amount", "50");
+  await click("pos-gift-add");
+  const preview = posted.filter((p) => String(p.path).includes("preview")).pop();
+  expect(preview.body.lines[0]).toEqual(expect.objectContaining({
+    gift_card_code: "CCCC-5555-6666", gift_card_topup: true, gift_card_amount: 50,
+  }));
+});
+
+test("the cart calls a top-up a top-up, not a new card", async () => {
+  api.get.mockImplementation((url) =>
+    String(url).includes("/gift-cards/lookup/")
+      ? Promise.resolve({ data: { code_display: "CCCC-5555-6666", status: "active",
+                                  balance: 12.4 } })
+      : Promise.resolve({ data: {} }));
+  await mount();
+  await click("pos-gift-card-toggle");
+  await type("pos-gift-stock-code", "CCCC-5555-6666");
+  await blurCode();
+  await type("pos-gift-amount", "50");
+  await click("pos-gift-add");
+  const line = container.querySelector('[data-testid="pos-cart-line"]');
+  expect(line.textContent).toMatch(/Top-up/i);
+});
+
+test("a spent-out card can still be topped up", async () => {
+  api.get.mockImplementation((url) =>
+    String(url).includes("/gift-cards/lookup/")
+      ? Promise.resolve({ data: { code_display: "DDDD-7777-8888", status: "spent",
+                                  balance: 0 } })
+      : Promise.resolve({ data: {} }));
+  await mount();
+  await click("pos-gift-card-toggle");
+  await type("pos-gift-stock-code", "DDDD-7777-8888");
+  await blurCode();
+  expect(q("pos-gift-topup-note")).toBeTruthy();
+});
+
+test("a voided card is refused rather than topped up", async () => {
+  api.get.mockImplementation((url) =>
+    String(url).includes("/gift-cards/lookup/")
+      ? Promise.resolve({ data: { code_display: "EEEE-9999-2222", status: "voided",
+                                  balance: 30 } })
+      : Promise.resolve({ data: {} }));
+  await mount();
+  await click("pos-gift-card-toggle");
+  await type("pos-gift-stock-code", "EEEE-9999-2222");
+  await blurCode();
+  expect(toast.error).toHaveBeenCalledWith(expect.stringMatching(/voided/i));
+  expect(q("pos-gift-topup-note")).toBeFalsy();
 });
 
 test("a code that is not a card says so", async () => {
@@ -664,4 +731,43 @@ test("a code that is not a card says so", async () => {
   await type("pos-gift-stock-code", "ZZZZ-ZZZZ-ZZZZ");
   await blurCode();
   expect(toast.error).toHaveBeenCalled();
+});
+
+
+// ────────────────────────────────── digital cards sold at the counter
+
+test("an email address turns the sale into a digital card", async () => {
+  await mount();
+  await click("pos-gift-card-toggle");
+  await type("pos-gift-amount", "40");
+  await type("pos-gift-email", "dana@example.com");
+  expect(q("pos-gift-digital-note").textContent).toMatch(/nothing to print/i);
+  await click("pos-gift-add");
+  const preview = posted.filter((p) => String(p.path).includes("preview")).pop();
+  expect(preview.body.lines[0]).toEqual(expect.objectContaining({
+    gift_card_recipient_email: "dana@example.com", gift_card_amount: 40,
+  }));
+});
+
+test("no email means an ordinary printed card", async () => {
+  await mount();
+  await click("pos-gift-card-toggle");
+  await type("pos-gift-amount", "40");
+  await click("pos-gift-add");
+  const preview = posted.filter((p) => String(p.path).includes("preview")).pop();
+  expect(preview.body.lines[0].gift_card_recipient_email).toBeNull();
+  expect(q("pos-gift-digital-note")).toBeFalsy();
+});
+
+test("topping up a card offers no email — there is nothing to deliver", async () => {
+  api.get.mockImplementation((url) =>
+    String(url).includes("/gift-cards/lookup/")
+      ? Promise.resolve({ data: { code_display: "CCCC-5555-6666", status: "active",
+                                  balance: 12.4 } })
+      : Promise.resolve({ data: {} }));
+  await mount();
+  await click("pos-gift-card-toggle");
+  await type("pos-gift-stock-code", "CCCC-5555-6666");
+  await blurCode();
+  expect(q("pos-gift-email")).toBeFalsy();
 });

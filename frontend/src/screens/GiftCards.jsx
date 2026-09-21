@@ -103,6 +103,47 @@ export default function GiftCards() {
     if (!printGiftCardSheet(cards)) toast.error("Allow pop-ups to print the cards.");
   };
 
+  // ── picking which cards to print ────────────────────────────────────
+  // A batch you just made is easy; reprinting one from last month is the
+  // case that matters, because that is when a card goes missing.
+  const [picked, setPicked] = useState(() => new Set());
+  const togglePick = (id) => setPicked((prev) => {
+    const next = new Set(prev);
+    if (next.has(id)) next.delete(id); else next.add(id);
+    return next;
+  });
+  const pickedCards = () => (data?.cards || []).filter((c) => picked.has(c.id));
+  const printPicked = () => {
+    const cards = pickedCards();
+    if (!cards.length) { toast.error("Tick the cards you want to print."); return; }
+    if (!printGiftCardSheet(cards)) toast.error("Allow pop-ups to print the cards.");
+  };
+
+  // ── editing the two things that are not money ───────────────────────
+  const [editOpen, setEditOpen] = useState(false);
+  const [editName, setEditName] = useState("");
+  const [editNote, setEditNote] = useState("");
+  const openEdit = () => {
+    setEditName(found?.recipient_name || "");
+    setEditNote(found?.note || "");
+    setEditOpen(true);
+  };
+  const saveEdit = async () => {
+    setBusy(true);
+    try {
+      const { data: d } = await api.post(
+        `/gift-cards/${encodeURIComponent(found.code_display)}/details`,
+        { recipient_name: editName.trim(), note: editNote.trim() });
+      setFound((f) => ({ ...f, ...(d.card || {}) }));
+      setEditOpen(false);
+      load();
+      toast.success("Card updated.");
+    } catch (e) {
+      toast.error(formatErr(e) || "Could not update the card");
+    }
+    setBusy(false);
+  };
+
   // ── looking one up ───────────────────────────────────────────────────
   const [code, setCode] = useState("");
   const [found, setFound] = useState(null);
@@ -222,6 +263,38 @@ export default function GiftCards() {
             </div>
           </div>
 
+          {editOpen && (
+            <div className="border border-shBorder rounded-xl p-3 mt-3 space-y-2"
+                 data-testid="gift-edit-form">
+              <p className="text-[12px] text-shTextMuted">
+                Who it is for, and a note. <b className="text-shText">No money moves here</b> —
+                the balance is changed by selling, spending or topping the card up.
+              </p>
+              <div className="grid gap-2 sm:grid-cols-2">
+                <div>
+                  <label className={label}>Who is it for?</label>
+                  <input value={editName} onChange={(e) => setEditName(e.target.value)}
+                         data-testid="gift-edit-name" className={input}/>
+                </div>
+                <div>
+                  <label className={label}>Note</label>
+                  <input value={editNote} onChange={(e) => setEditNote(e.target.value)}
+                         data-testid="gift-edit-note" className={input}/>
+                </div>
+              </div>
+              <div className="flex flex-wrap gap-2">
+                <button onClick={saveEdit} disabled={busy} data-testid="gift-edit-save"
+                        className="min-h-[44px] px-5 rounded bg-shPrimary text-bgHeader text-[12px] font-black uppercase tracking-widest disabled:opacity-50">
+                  {busy ? "Saving…" : "Save"}
+                </button>
+                <button onClick={() => setEditOpen(false)} data-testid="gift-edit-cancel"
+                        className="min-h-[44px] px-5 rounded border border-shBorder text-shText text-[12px] font-black uppercase tracking-widest">
+                  Cancel
+                </button>
+              </div>
+            </div>
+          )}
+
           <div className="flex flex-wrap gap-2 mt-3">
             {/* Loading a blank by hand is refused by the backend on purpose —
                 money on a card has to arrive through a sale. Offering the
@@ -237,6 +310,10 @@ export default function GiftCards() {
               Add to balance
             </button>
             )}
+            <button onClick={openEdit} data-testid="gift-edit"
+                    className="min-h-[40px] px-3 rounded border border-shBorder text-[11px] font-black uppercase tracking-widest text-shTextMuted">
+              Edit details
+            </button>
             <button onClick={() => print(found)} data-testid="gift-print"
                     className="min-h-[40px] px-3 rounded border border-shPrimary/50 text-[11px] font-black uppercase tracking-widest text-shPrimary">
               <i className="fas fa-print mr-1.5"/>Print
@@ -280,6 +357,12 @@ export default function GiftCards() {
               <option value="stock">On the rack</option>
               <option value="voided">Voided</option>
             </select>
+            {picked.size > 0 && (
+              <button onClick={printPicked} data-testid="gift-print-picked"
+                      className="min-h-[40px] px-4 rounded bg-shBlue text-bgHeader text-[12px] font-black uppercase tracking-widest whitespace-nowrap flex-1 sm:flex-none">
+                <i className="fas fa-print mr-1.5"/>Print {picked.size}
+              </button>
+            )}
             <button onClick={() => setRackOpen((v) => !v)} data-testid="gift-rack-toggle"
                     className="min-h-[40px] px-4 rounded border border-shPrimary text-shPrimary text-[12px] font-black uppercase tracking-widest whitespace-nowrap flex-1 sm:flex-none">
               <i className="fas fa-print mr-1.5"/>Make cards
@@ -396,7 +479,13 @@ export default function GiftCards() {
             {data.cards.map((c) => (
               <div key={c.id} className="flex flex-wrap items-center justify-between gap-2 border-b border-shBorder/60 py-2"
                    data-testid={`gift-row-${c.id}`}>
-                <div className="min-w-0">
+                <div className="min-w-0 flex items-center gap-2">
+                  <input type="checkbox" checked={picked.has(c.id)}
+                         onChange={() => togglePick(c.id)}
+                         aria-label={`Print ${c.code_display}`}
+                         data-testid={`gift-pick-${c.id}`}
+                         className="w-4 h-4 accent-shPrimary shrink-0"/>
+                  <div className="min-w-0">
                   <button onClick={() => { setCode(c.code_display); setFound(null); lookup(); }}
                           className="text-shText font-black tracking-widest text-[14px] hover:text-shPrimary">
                     {c.code_display}
@@ -406,6 +495,7 @@ export default function GiftCards() {
                     {c.recipient_name ? ` · ${c.recipient_name}` : ""}
                     {c.issued_by_name ? ` · by ${c.issued_by_name}` : ""}
                   </p>
+                  </div>
                 </div>
                 <div className="flex items-center gap-3 shrink-0">
                   <span className="text-shText font-black">

@@ -11,6 +11,7 @@ import PortalTrainingCard from "../components/PortalTrainingCard";
 import PortalLearn from "../components/PortalLearn";
 import PortalProgress from "../components/PortalProgress";
 import PortalFilesSection from "../components/PortalFilesSection";
+import PortalGiftCards from "../components/PortalGiftCards";
 import IntakePortalSection from "../components/IntakePortalSection";
 import PortalBookWizard from "../components/PortalBookWizard";
 import HomeworkIncentivesPanel from "../components/HomeworkIncentivesPanel";
@@ -2180,6 +2181,10 @@ export default function Portal() {
 
           <div id="portal-files-anchor">
             <PortalFilesSection dogs={dogs} />
+          </div>
+
+          <div id="portal-gift-cards-anchor" className="mt-4">
+            <PortalGiftCards />
           </div>
           </div>
 

@@ -89,7 +89,12 @@ async def create_sale(body, user):
             continue
         code = gift_cards_services.normalize_code(raw)
         card = await gift_cards_services.find_by_code(code)
-        if (card.get("status") or "") != "stock":
+        if getattr(l, "gift_card_topup", False):
+            # Adding to a card somebody owns. Same checks, opposite
+            # expectation: it has to already BE sold.
+            gift_cards_services.assert_toppable(
+                card, _money(getattr(l, "gift_card_amount", 0)))
+        elif (card.get("status") or "") != "stock":
             raise HTTPException(
                 status_code=409,
                 detail=("That card was already sold." if card.get("status") == "active"
@@ -97,7 +102,11 @@ async def create_sale(body, user):
         # A $25 card sells for $25. Checked here so a mistyped amount is
         # refused while the customer is still standing there, rather than
         # inside settlement after the till has already taken the money.
-        gift_cards_services.assert_face_value(card, _money(getattr(l, "gift_card_amount", 0)))
+        if not getattr(l, "gift_card_topup", False):
+            # A printed value governs the SALE of that card. Once it is sold,
+            # the number on the plastic is history and a top-up is any amount.
+            gift_cards_services.assert_face_value(
+                card, _money(getattr(l, "gift_card_amount", 0)))
         if code in rack_codes:
             raise HTTPException(
                 status_code=400,
@@ -814,6 +823,10 @@ async def price_pos_cart(lines: List[PosSaleLineIn], discount: Optional[PosSaleD
                 raise HTTPException(status_code=400, detail="A gift card needs an amount.")
             qty = int(line.qty or 1)
             stock_code = (getattr(line, "gift_card_code", None) or "").strip()
+            if getattr(line, "gift_card_topup", False) and not stock_code:
+                raise HTTPException(
+                    status_code=400,
+                    detail="Enter the code of the card you are adding to.")
             if stock_code and qty != 1:
                 # One printed card, one code. A quantity here would silently
                 # load the same card twice and lose the customer's money.
@@ -829,6 +842,8 @@ async def price_pos_cart(lines: List[PosSaleLineIn], discount: Optional[PosSaleD
                 # Set when the customer picked a printed card off the rack;
                 # the settlement loads THAT card instead of minting a new one.
                 "gift_card_code": stock_code,
+                "gift_card_topup": bool(getattr(line, "gift_card_topup", False)),
+                "recipient_email": (getattr(line, "gift_card_recipient_email", None) or "").strip(),
                 # NEVER taxed. A gift card is money, not a good; the tax
                 # belongs on whatever it later buys. Taxing both would charge
                 # the customer tax twice on the same dollars.

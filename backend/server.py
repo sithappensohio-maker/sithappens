@@ -78,6 +78,7 @@ from domains.pos import services as pos_domain_services
 from domains.bookings import services as bookings_domain_services
 from domains.register import services as register_domain_services
 from domains.performance import services as performance_domain_services
+from domains.gift_cards import online as gift_card_online
 from school_events import EventType as SchoolEvent
 
 from trophy_service import (
@@ -38376,6 +38377,10 @@ async def stripe_webhook(request: Request):
     # payment architecture below — a shop-order event takes a completely
     # separate branch into its own handlers.
     is_shop_order = bool((obj.get("metadata") or {}).get("sithappens_shop_order_id"))
+    # Gift cards route to their own domain, which owns every gift-card flow.
+    if (obj.get("metadata") or {}).get("sithappens_gift_card_topup_id"):
+        await gift_card_online.handle_event(event_type, obj)
+        return {"ok": True}
     if event_type in ("checkout.session.completed", "checkout.session.async_payment_succeeded"):
         if is_shop_order:
             await _handle_shop_checkout_session_paid_event(obj)
@@ -43640,28 +43645,10 @@ async def list_inventory_movements(product_id: str, limit: int = 100, user: dict
 # create_pos_sale's docstring for the atomicity/idempotency discipline that
 # now ties all of this together as a single all-or-nothing commit.
 
-class PosSaleLineIn(BaseModel):
-    kind: Literal["retail", "custom", "credit_pack", "training_program", "gift_card"] = "retail"
-    product_id: Optional[str] = None  # required when kind == "retail"
-    pack_id: Optional[str] = None  # required when kind == "credit_pack"
-    program_id: Optional[str] = None  # required when kind == "training_program"
-    description: Optional[str] = Field(default=None, max_length=200)  # required when kind == "custom"; optional display override for retail/pack/program
-    qty: float = Field(default=1, gt=0, le=999)
-    # Required when kind == "custom" — the line's total amount (custom lines
-    # are always qty-of-one conceptually, e.g. "Replacement leash $12.00").
-    custom_amount: Optional[float] = Field(default=None, gt=0)
-    custom_reason: Optional[str] = Field(default=None, max_length=300)
-    # Step 4C-1 — what a custom line actually IS decides its taxability
-    # (structured, never inferred from the description): "merchandise" is
-    # taxable retail goods, "service" is never sales-taxable. Defaults to
-    # merchandise so existing callers keep today's (taxed) behavior; the
-    # register UI presents the choice explicitly.
-    custom_kind: Literal["merchandise", "service"] = "merchandise"
-    # Required when kind == "gift_card" — what the card is worth. Never
-    # sales-taxed; the tax belongs on whatever the card later buys.
-    gift_card_amount: Optional[float] = Field(default=None, gt=0, le=1000)
-    gift_card_code: Optional[str] = Field(default=None, max_length=40)  # load a printed blank off the rack
-    recipient_name: Optional[str] = Field(default=None, max_length=120)
+# POS request models now live with the domain that owns them; imported
+# back so `server.PosSaleLineIn` and friends still resolve everywhere.
+from domains.pos.models import (  # noqa: E402
+    PosSaleDiscountIn, PosSaleIn, PosSaleLineIn, PosSalePreviewIn, PosSaleTenderIn)
 
 
 # CheckoutIn carries retail lines but is declared thousands of lines earlier,
@@ -43683,45 +43670,12 @@ async def return_pos_sale(sale_id: str, body: pos_domain_services.PosSaleReturnI
     return await pos_domain_services.return_pos_sale(sale_id=sale_id, body=body, user=user)
 
 
-class PosSaleDiscountIn(BaseModel):
-    kind: Literal["fixed", "percent"]
-    value: float = Field(gt=0)
-    reason: str = Field(min_length=3, max_length=300)
 
 
-class PosSaleTenderIn(BaseModel):
-    # "card" is the SAME manually-recorded/offline card method used by
-    # checkout, refunds, and tab payments everywhere else in the app — it
-    # reports into the existing card register bucket and never touches
-    # expected drawer cash. It is NOT a processor integration; Stripe
-    # Terminal remains a separate, future step.
-    method: Literal["cash", "card", "check", "venmo", "paypal", "other", "gift_card"]
-    amount: float = Field(gt=0)
-    tendered_amount: Optional[float] = Field(default=None, ge=0)  # cash only
-    gift_card_code: Optional[str] = Field(default=None, max_length=40)  # gift_card only
-    notes: Optional[str] = Field(default=None, max_length=500)  # required when method == "other"
-    # Forward-compat placeholder only — unused today. When Stripe Card/
-    # Terminal is added later, "method" gains new literals and this field
-    # carries the provider's charge/transaction id. Nothing reads or writes
-    # this field yet.
-    provider_ref: Optional[str] = None
 
 
-class PosSalePreviewIn(BaseModel):
-    lines: List[PosSaleLineIn] = Field(min_length=1)
-    discount: Optional[PosSaleDiscountIn] = None
-    # Front Desk product/register-integration fix — when a client is
-    # selected, retail lines must resolve THEIR grandfathered/tier price,
-    # not the raw catalog price. Present on the preview body too (not just
-    # the commit body) so the live cart total the cashier sees already
-    # reflects it before checkout.
-    client_id: Optional[str] = None
 
 
-class PosSaleIn(PosSalePreviewIn):
-    tenders: List[PosSaleTenderIn] = Field(min_length=1)
-    workstation_id: Optional[str] = Field(default=None, max_length=100)
-    idempotency_key: str = Field(min_length=8, max_length=128)
 
 
 async def _price_pos_cart(

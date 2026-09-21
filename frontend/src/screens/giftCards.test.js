@@ -412,3 +412,112 @@ test("a sold card keeps its Add to balance", async () => {
   await click("gift-lookup-go");
   expect(q("gift-add")).toBeTruthy();
 });
+
+
+// ───────────────────────────── picking which cards to print, and editing
+
+test("nothing to print until you tick something", async () => {
+  await mount();
+  expect(q("gift-print-picked")).toBeFalsy();
+});
+
+test("ticking cards offers to print exactly those", async () => {
+  // Reprinting one card from last month is the case that matters, because
+  // that is when a card has gone missing.
+  await mount();
+  await click("gift-pick-gc-1");
+  expect(q("gift-print-picked").textContent).toMatch(/Print 1/);
+  await click("gift-pick-gc-2");
+  expect(q("gift-print-picked").textContent).toMatch(/Print 2/);
+  await click("gift-print-picked");
+  expect(printGiftCardSheet).toHaveBeenCalledWith(
+    expect.arrayContaining([expect.objectContaining({ id: "gc-1" }),
+                            expect.objectContaining({ id: "gc-2" })]));
+  expect(printGiftCardSheet.mock.calls[0][0]).toHaveLength(2);
+});
+
+test("unticking a card takes it back out of the print", async () => {
+  await mount();
+  await click("gift-pick-gc-1");
+  await click("gift-pick-gc-2");
+  await click("gift-pick-gc-1");
+  await click("gift-print-picked");
+  expect(printGiftCardSheet.mock.calls[0][0]).toHaveLength(1);
+  expect(printGiftCardSheet.mock.calls[0][0][0].id).toBe("gc-2");
+});
+
+test("a blocked pop-up on a picked print is reported", async () => {
+  printGiftCardSheet.mockReturnValue(false);
+  await mount();
+  await click("gift-pick-gc-1");
+  await click("gift-print-picked");
+  expect(toast.error).toHaveBeenCalledWith(expect.stringMatching(/pop-ups/i));
+});
+
+test("a card's recipient and note can be fixed after the fact", async () => {
+  await mount();
+  await type("gift-lookup-code", "ABCD-EFGH-JKMN");
+  await click("gift-lookup-go");
+  await click("gift-edit");
+  expect(q("gift-edit-form").textContent).toMatch(/No money moves here/i);
+  await type("gift-edit-name", "Dana Marie");
+  await type("gift-edit-note", "Birthday");
+  await click("gift-edit-save");
+  expect(api.post).toHaveBeenCalledWith(
+    "/gift-cards/ABCD-EFGH-JKMN/details",
+    { recipient_name: "Dana Marie", note: "Birthday" });
+});
+
+test("the edit form opens with what the card already says", async () => {
+  await mount();
+  await type("gift-lookup-code", "ABCD-EFGH-JKMN");
+  await click("gift-lookup-go");
+  await click("gift-edit");
+  expect(q("gift-edit-name").value).toBe("Dana");
+});
+
+test("cancelling an edit changes nothing", async () => {
+  await mount();
+  await type("gift-lookup-code", "ABCD-EFGH-JKMN");
+  await click("gift-lookup-go");
+  await click("gift-edit");
+  await type("gift-edit-name", "Wrong");
+  await click("gift-edit-cancel");
+  expect(q("gift-edit-form")).toBeFalsy();
+  expect(api.post).not.toHaveBeenCalled();
+});
+
+test("a failed edit says so instead of looking saved", async () => {
+  api.post.mockRejectedValue({ response: { data: { detail: "That gift card was voided." } } });
+  await mount();
+  await type("gift-lookup-code", "ABCD-EFGH-JKMN");
+  await click("gift-lookup-go");
+  await click("gift-edit");
+  await type("gift-edit-name", "Dana");
+  await click("gift-edit-save");
+  expect(toast.error).toHaveBeenCalled();
+  expect(q("gift-edit-form")).toBeTruthy();   // still open, so it can be retried
+});
+
+
+test("a ticked card that filters out of view does not print an empty sheet", async () => {
+  // Tick a card, then narrow the filter so it is no longer listed. The
+  // button is still showing (something is ticked) but there is nothing left
+  // to print, and silently opening a blank page would look like a failure.
+  await mount();
+  await click("gift-pick-gc-1");
+  api.get.mockImplementation((url) =>
+    String(url).includes("/lookup/")
+      ? Promise.resolve({ data: DETAIL })
+      : Promise.resolve({ data: { outstanding_balance: 0, outstanding_count: 0,
+                                  stock_count: 0, cards: [] } }));
+  const sel = q("gift-filter");
+  const setter = Object.getOwnPropertyDescriptor(window.HTMLSelectElement.prototype, "value").set;
+  await act(async () => {
+    setter.call(sel, "voided");
+    sel.dispatchEvent(new Event("change", { bubbles: true }));
+  });
+  await click("gift-print-picked");
+  expect(printGiftCardSheet).not.toHaveBeenCalled();
+  expect(toast.error).toHaveBeenCalledWith(expect.stringMatching(/tick the cards/i));
+});

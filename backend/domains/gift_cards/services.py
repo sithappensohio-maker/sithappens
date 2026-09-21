@@ -39,6 +39,7 @@ from fastapi import HTTPException
 from pydantic import BaseModel, Field
 
 _db = None
+_email_sender = None
 _now_iso_fn = None
 _business_today_fn = None
 _logger = None
@@ -63,8 +64,9 @@ MIN_AMOUNT = 1.0
 MAX_AMOUNT = 1000.0
 
 
-def configure(*, db, now_iso, business_today, logger) -> None:
-    global _db, _now_iso_fn, _business_today_fn, _logger
+def configure(*, db, now_iso, business_today, logger, email_sender=None) -> None:
+    global _db, _now_iso_fn, _business_today_fn, _logger, _email_sender
+    _email_sender = email_sender
     _db = db
     _now_iso_fn = now_iso
     _business_today_fn = business_today
@@ -98,6 +100,18 @@ class GiftCardAdjustIn(BaseModel):
 
 class GiftCardVoidIn(BaseModel):
     reason: str = Field(min_length=3, max_length=300)
+
+
+class GiftCardDetailsIn(BaseModel):
+    """The two things about a card that are a note to yourselves, not money.
+
+    Deliberately narrow: there is no amount, no status and no code here.
+    Everything that moves money has its own path with its own reasons and
+    its own audit trail, and this must never become a back door into any of
+    them.
+    """
+    recipient_name: Optional[str] = Field(default=None, max_length=120)
+    note: Optional[str] = Field(default=None, max_length=300)
 
 
 class GiftCardStockIn(BaseModel):
@@ -152,6 +166,9 @@ def public_view(card: dict) -> dict:
         "face_value": (None if card.get("face_value") is None
                        else _money(card.get("face_value"))),
         "recipient_name": card.get("recipient_name") or "",
+        "recipient_email": card.get("recipient_email") or "",
+        "delivery": card.get("delivery") or "print",
+        "code_emailed_at": card.get("code_emailed_at"),
         "note": card.get("note") or "",
         "client_id": card.get("client_id"),
         "issued_at": card.get("issued_at"),
@@ -165,7 +182,8 @@ def public_view(card: dict) -> dict:
 
 async def mint_card(*, amount: float, actor: dict, recipient_name: str = "", note: str = "",
                     client_id: Optional[str] = None, pos_sale_id: Optional[str] = None,
-                    origin: str = "sold") -> dict:
+                    origin: str = "sold", recipient_email: str = "",
+                    card_id: Optional[str] = None) -> dict:
     """Create one card and its opening transaction. Money accounting is the
     CALLER's job — a sold card is recognised as revenue by the sale that sold
     it, and an issued one by the issuing endpoint."""
@@ -177,13 +195,20 @@ async def mint_card(*, amount: float, actor: dict, recipient_name: str = "", not
     code = await _fresh_code()
     ts = _now_iso_fn()
     card = {
-        "id": str(uuid.uuid4()),
+        # Callers that must be replay-safe (an online purchase re-driven by a
+        # repeated webhook) pin the id, so a second attempt collides on the
+        # unique index instead of minting a second card.
+        "id": card_id or str(uuid.uuid4()),
         "code": code,
         "initial_amount": amount,
         "balance": amount,
         "status": "active",
         "origin": origin,
         "recipient_name": (recipient_name or "").strip(),
+        "recipient_email": (recipient_email or "").strip().lower(),
+        # A card with an address to send it to is a digital card: there is no
+        # plastic, the email IS the card, and the code has to reach somebody.
+        "delivery": "email" if (recipient_email or "").strip() else "print",
         "note": (note or "").strip(),
         "client_id": client_id or None,
         "sold_via_pos_sale_id": pos_sale_id,
@@ -197,6 +222,93 @@ async def mint_card(*, amount: float, actor: dict, recipient_name: str = "", not
     await _log(card["id"], "issue", amount, amount, actor,
                note=note or "", pos_sale_id=pos_sale_id)
     return card
+
+
+async def edit_details(*, code: str, body, actor: dict) -> dict:
+    """Change who a card is for, and the note on it. Nothing else.
+
+    Useful because the register often takes the money before anybody knows
+    whose name goes on it, and because a typo on a card you are about to
+    print is worth fixing rather than reprinting around.
+    """
+    card = await find_by_code(code)
+    if (card.get("status") or "") == "voided":
+        raise HTTPException(status_code=409, detail="That gift card was voided.")
+    changes = {}
+    if body.recipient_name is not None:
+        changes["recipient_name"] = body.recipient_name.strip()
+    if body.note is not None:
+        changes["note"] = body.note.strip()
+    if not changes:
+        return public_view(card)
+    changes["details_edited_at"] = _now_iso_fn()
+    changes["details_edited_by_name"] = actor.get("name") or actor.get("email") or ""
+    await _db.gift_cards.update_one({"id": card["id"]}, {"$set": changes})
+    # Logged at zero so it appears in the card's history without pretending
+    # any money moved — the balance is carried through unchanged.
+    await _log(card["id"], "edit", 0.0, _money(card.get("balance")), actor,
+               note=(changes.get("recipient_name") or changes.get("note") or "details updated"))
+    return public_view({**card, **changes})
+
+
+def assert_toppable(card: dict, amount: float) -> None:
+    """Can this card take more money, and is the amount sane?
+
+    A blank is refused on purpose: it has not been sold, so the thing to do
+    is sell it, not top it up. Selling it is what books the revenue, and
+    topping up a blank would create a balance with no sale behind it.
+    """
+    status = card.get("status") or ""
+    if status == "voided":
+        raise HTTPException(status_code=409, detail="That gift card was voided.")
+    if status == "stock":
+        raise HTTPException(
+            status_code=409,
+            detail="That card has not been sold yet — sell it rather than adding to it.")
+    if status not in ("active", "spent"):
+        raise HTTPException(status_code=409, detail="That card cannot take a top-up.")
+    amount = _money(amount)
+    if amount < MIN_AMOUNT or amount > MAX_AMOUNT:
+        raise HTTPException(
+            status_code=400,
+            detail=f"A top-up has to be between ${MIN_AMOUNT:.2f} and ${MAX_AMOUNT:.2f}.")
+    if _money(card.get("balance")) + amount > MAX_AMOUNT + 0.005:
+        raise HTTPException(
+            status_code=400,
+            detail=(f"That would put ${_money(card.get('balance')) + amount:.2f} on the card, "
+                    f"over the ${MAX_AMOUNT:.2f} limit."))
+
+
+async def topup_card(*, code: str, amount: float, actor: dict,
+                     pos_sale_id: str, note: str = "") -> dict:
+    """Put more money on a card somebody already owns.
+
+    Accounting is identical to selling a card, because that is what it is:
+    cash arrives, revenue is recognised now, and the liability grows by the
+    same amount. No sales tax — the tax lands on whatever the card buys.
+
+    The balance precondition is the guard: two tills topping up the same card
+    at once must not both read $10 and both write $60, losing one of the
+    payments. Same retry-on-contention shape as spending.
+    """
+    amount = _money(amount)
+    for _ in range(5):
+        card = await find_by_code(code)
+        assert_toppable(card, amount)
+        before = _money(card.get("balance"))
+        after = _money(before + amount)
+        updated = await _db.gift_cards.find_one_and_update(
+            {"id": card["id"], "balance": before,
+             "status": {"$in": ["active", "spent"]}},
+            {"$set": {"balance": after, "status": "active",
+                      "last_topped_up_at": _now_iso_fn()}},
+        )
+        if updated is None:
+            continue  # somebody else moved the balance — re-read and retry
+        await _log(card["id"], "topup", amount, after, actor,
+                   note=note, pos_sale_id=pos_sale_id)
+        return {**card, "balance": after, "status": "active"}
+    raise HTTPException(status_code=409, detail="That card is being used somewhere else. Try again.")
 
 
 def assert_face_value(card: dict, amount: float) -> None:
@@ -219,6 +331,40 @@ def assert_face_value(card: dict, amount: float) -> None:
             detail=f"That card has ${_money(face):.2f} printed on it, so it sells for ${_money(face):.2f}.")
 
 
+async def send_card_email(card: dict, *, sender=None) -> bool:
+    """Send a digital card to whoever it is for.
+
+    Claimed before sending so two deliveries cannot both email the same
+    card, and UNCLAIMED again if the send fails — a duplicate email is a
+    nuisance, a gift card that never arrives is a lost gift. That trade is
+    deliberate and is why this is not a plain "mark and forget".
+
+    Never raises. A sale must not fail because a mail provider is down; the
+    card exists either way and can be sent again from the card's own screen.
+    """
+    to = (card.get("recipient_email") or "").strip()
+    if not to:
+        return False
+    send = sender or _email_sender
+    if send is None:
+        return False
+    claimed = await _db.gift_cards.find_one_and_update(
+        {"id": card["id"], "code_emailed_at": None},
+        {"$set": {"code_emailed_at": _now_iso_fn()}},
+    )
+    if claimed is None:
+        return False  # already sent, or being sent right now
+    try:
+        ok = await send(card)
+    except Exception as exc:  # a mail provider is not a reason to lose a sale
+        ok = False
+        _logger.warning("Gift card email failed for %s: %s", card.get("id"), exc)
+    if not ok:
+        await _db.gift_cards.update_one({"id": card["id"]},
+                                        {"$set": {"code_emailed_at": None}})
+    return bool(ok)
+
+
 async def ensure_indexes() -> None:
     """One code, one card — enforced by the database, not by hope.
 
@@ -230,6 +376,10 @@ async def ensure_indexes() -> None:
     """
     try:
         await _db.gift_cards.create_index("code", unique=True, name="gift_card_code_unique")
+        # Also unique on our own id: an online purchase pins the id up front
+        # so a repeated webhook delivery cannot mint the card twice, and that
+        # only holds if the database refuses the second insert.
+        await _db.gift_cards.create_index("id", unique=True, name="gift_card_id_unique")
     except Exception as exc:  # a pre-existing duplicate would block creation
         _logger.warning("Gift card code index not created (non-fatal): %s", exc)
 
@@ -526,8 +676,13 @@ async def _mint_sold_cards(*, sale_id: str, sale: dict, user: dict, selling: Lis
         # customer walks out with the physical card they chose, and the code
         # on it is the code that now has money on it.
         stock_code = (li.get("gift_card_code") or "").strip()
+        topping_up = bool(li.get("gift_card_topup")) and bool(stock_code)
         for _ in range(count):
-            if stock_code:
+            if topping_up:
+                card = await topup_card(
+                    code=stock_code, amount=each, actor=user, pos_sale_id=sale_id,
+                    note=f"Topped up on register sale #{receipt}")
+            elif stock_code:
                 card = await activate_stock_card(
                     code=stock_code, amount=each, actor=user, pos_sale_id=sale_id,
                     recipient_name=li.get("recipient_name") or "",
@@ -536,8 +691,13 @@ async def _mint_sold_cards(*, sale_id: str, sale: dict, user: dict, selling: Lis
                 card = await mint_card(
                     amount=each, actor=user,
                     recipient_name=li.get("recipient_name") or "",
+                    recipient_email=li.get("recipient_email") or "",
                     note=f"Sold on register sale #{receipt}",
                     client_id=sale.get("client_id"), pos_sale_id=sale_id, origin="sold")
+                # A digital card has no plastic to hand over, so the email is
+                # the delivery. Best effort: the card is already real.
+                if card.get("recipient_email"):
+                    await send_card_email(card)
             # Revenue, now — the owner's chosen treatment, and the right one
             # on a cash basis. Never sales-taxable: the tax lands on whatever
             # the card is eventually spent on.
