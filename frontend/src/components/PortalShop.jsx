@@ -176,6 +176,12 @@ function ItemCard({ item, cartQty, onAdd, onOpenDetail, mode = "authenticated", 
               : "Available"}
         </p>
       ) : null}
+      {item.kind === "gift_card" && (
+        <p className="text-[11px] text-shTextMuted uppercase tracking-widest font-bold mt-1"
+           data-testid={`shop-gift-card-line-${item.id}`}>
+          Emailed straight through · never expires · no sales tax
+        </p>
+      )}
       {item.kind === "credit_pack" && (
         <p className="text-[11px] text-shTextMuted uppercase tracking-widest font-bold mt-1">
           {creditPackCardLine(item)}

@@ -10,6 +10,7 @@ from domains.pricing.routes import register_pricing_routes
 from domains.register.routes import register_register_routes
 from domains.pricing import services as pricing_services
 from domains.gift_cards import online as gift_card_online
+from domains.gift_cards import shop as gift_card_shop
 from domains.gift_cards import services as gift_card_services
 from domains.pos import services as pos_services
 from domains.bookings import services as booking_services
@@ -115,6 +116,8 @@ def register_domains(
         public_url=server_globals["_app_public_url"],
         expires_seconds=server_globals["STRIPE_CHECKOUT_EXPIRES_SECONDS"],
         email_service=server_globals["email_service"])
+    gift_card_shop.configure(
+        db=db, logger=logger, get_settings=server_globals["get_settings"])
     gift_card_services.configure(
         db=db, now_iso=now_iso, business_today=business_today, logger=logger,
         # Sending a digital card lives with the online flow (it is the same

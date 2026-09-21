@@ -1383,3 +1383,361 @@ def test_the_database_refuses_two_cards_with_the_same_id():
         run(server.db.gift_cards.insert_one({
             "id": card["id"], "code": "ZZZZZZZZZZZZ", "balance": 0.0,
             "initial_amount": 0.0, "status": "stock", "origin": "stock"}))
+
+
+# ══════════════════════════════════ a code must never belong to two cards
+# A duplicate means two customers sharing one balance and no way to tell
+# whose money is whose. Three things stand between us and that, and each is
+# tested on its own because any one of them alone is not enough.
+
+def test_the_index_is_actually_on_the_collection():
+    # The generator only makes a duplicate unlikely. THIS is what makes one
+    # impossible, and a log line saying it failed is not something anybody
+    # reads — so ask the database.
+    run(gift.ensure_indexes())
+    assert run(gift.code_uniqueness_enforced()) is True
+
+
+def test_no_two_cards_share_a_code_right_now():
+    run(gift.mint_stock(quantity=30, actor=ADMIN))
+    assert run(gift.find_duplicate_codes()) == []
+
+
+def test_a_code_collision_is_retried_rather_than_losing_the_sale():
+    """A collision is astronomically unlikely, but it surfaces inside
+    settlement — which is logged and swallowed — so without a retry the
+    customer is charged and gets no card. Forced here by making the
+    generator hand out a code that is already taken."""
+    run(gift.ensure_indexes())
+    taken = _blank()["code"]
+    handed = []
+    real = gift._fresh_code
+
+    async def _collide_once():
+        if not handed:
+            handed.append(taken)
+            return taken           # already on another card
+        return await real()
+
+    gift._fresh_code = _collide_once
+    try:
+        card = run(gift.mint_card(amount=25.0, actor=ADMIN))
+    finally:
+        gift._fresh_code = real
+
+    assert card["code"] != taken, "it kept the code that was already taken"
+    assert card["balance"] == 25.00
+    assert len(handed) == 1, "the collision was never actually hit"
+    assert run(gift.find_duplicate_codes()) == []
+
+
+def test_a_clash_on_the_card_id_is_reported_as_itself():
+    """An online purchase pins its card id, so a repeated webhook hits the id
+    index. The unique index stops the second card either way — but the caller
+    has to be able to tell "this card already exists" from "we could not
+    generate a code", and it should find out immediately rather than after
+    six pointless attempts to re-code a card that is already there.
+    """
+    import pymongo
+    run(gift.ensure_indexes())
+    first = run(gift.mint_card(amount=10.0, actor=ADMIN, card_id="fixed-id-1"))
+    before = run(server.db.gift_cards.count_documents({}))
+    with pytest.raises(pymongo.errors.DuplicateKeyError):
+        run(gift.mint_card(amount=10.0, actor=ADMIN, card_id="fixed-id-1"))
+    assert run(server.db.gift_cards.count_documents({})) == before
+    assert first["code"] == run(
+        server.db.gift_cards.find_one({"id": "fixed-id-1"}))["code"]
+
+
+def test_every_way_of_making_a_card_goes_through_the_guarded_insert():
+    # Sold, issued by hand, printed for the rack, bought online — all of them
+    # have to be covered, not just the one that was written first.
+    import inspect
+    src = inspect.getsource(gift)
+    direct = src.count("gift_cards.insert_one")
+    assert direct == 1, (
+        f"{direct} direct inserts into gift_cards; every card must be written "
+        "through _insert_with_fresh_code so a collision is retried")
+
+
+def test_a_thousand_codes_in_a_row_are_all_different():
+    made = []
+    for _ in range(10):
+        made += [c["code"] for c in run(gift.mint_stock(quantity=100, actor=ADMIN))]
+    assert len(made) == 1000
+    assert len(set(made)) == 1000
+    assert run(gift.find_duplicate_codes()) == []
+
+
+def test_duplicates_are_reported_if_they_somehow_exist():
+    # The reporting has to work, or the startup check cannot tell anybody
+    # what is wrong. Written straight past the index to simulate a legacy row.
+    run(server.db.gift_cards.drop_indexes())
+    code = "ZZZZZZZZZZZZ"
+    for _ in range(2):
+        run(server.db.gift_cards.insert_one({
+            "id": str(uuid.uuid4()), "code": code, "balance": 0.0,
+            "initial_amount": 0.0, "status": "stock", "origin": "stock"}))
+    assert code in run(gift.find_duplicate_codes())
+    # and with duplicates present the index cannot build, which must be
+    # visible rather than assumed
+    run(gift.ensure_indexes())
+    assert run(gift.code_uniqueness_enforced()) is False
+    run(server.db.gift_cards.delete_many({"code": code}))
+    run(gift.ensure_indexes())
+    assert run(gift.code_uniqueness_enforced()) is True
+
+
+# ══════════════════════════════════════════ gift cards in the Shop basket
+# A shop gift card is a DIGITAL card bought alongside anything else, on the
+# Shop's own order/payment/fulfilment machinery. It is money, so it is never
+# taxed and never stocked.
+from domains.gift_cards import shop as gcshop  # noqa: E402
+
+
+def _shop_line(amount=25.0, qty=1, recipient=""):
+    return {"item_id": "li-" + str(uuid.uuid4())[:8], "kind": "gift_card",
+            "ref_id": gcshop.ref_id_for(amount), "unit_price": amount,
+            "quantity": qty, "recipient_email": recipient}
+
+
+def _shop_order(**kw):
+    o = {"id": "ord-" + str(uuid.uuid4())[:8], "client_id": "cli-1",
+         "client_name": "Dana", "client_email": "buyer@example.com"}
+    o.update(kw)
+    return o
+
+
+def test_the_shop_offers_gift_cards():
+    items = run(gcshop.catalog_items())
+    assert items, "the Shop should offer gift cards out of the box"
+    assert all(i["kind"] == "gift_card" for i in items)
+    amounts = [i["price"] for i in items]
+    assert amounts == sorted(amounts)
+    assert 25.0 in amounts
+
+
+def test_a_shop_gift_card_is_never_taxed_and_never_stocked():
+    # It is money, not goods. Both of these being wrong would be invisible
+    # until a tax return.
+    for i in run(gcshop.catalog_items()):
+        assert i["taxable"] is False
+        assert i["in_stock"] is True   # nothing physical to run out of
+
+
+def test_the_amount_comes_from_the_server_not_the_cart():
+    # A cart that can name its own price is not a price.
+    priced = run(gcshop.price_line(gcshop.ref_id_for(50.0), 1))
+    assert priced["unit_price"] == 50.00
+
+
+def test_an_amount_we_do_not_offer_is_refused():
+    with pytest.raises(HTTPException) as e:
+        run(gcshop.price_line(gcshop.ref_id_for(37.13), 1))
+    assert e.value.status_code == 400
+
+
+def test_a_made_up_reference_is_refused_rather_than_priced_at_zero():
+    for bogus in ("", "gc-", "nonsense", "gc-abc", "../../etc"):
+        with pytest.raises(HTTPException):
+            run(gcshop.price_line(bogus, 1))
+
+
+def test_the_offered_amounts_can_be_changed_without_a_deploy():
+    prev = run(server.db.settings.find_one({}, {"_id": 0, "gift_cards": 1})) or {}
+    run(server.db.settings.update_one(
+        {}, {"$set": {"gift_cards": {"shop_amounts": [15, 75]}}}, upsert=True))
+    try:
+        assert run(gcshop.offered_amounts()) == [15.0, 75.0]
+        assert run(gcshop.price_line(gcshop.ref_id_for(75.0), 1))["unit_price"] == 75.0
+        with pytest.raises(HTTPException):
+            run(gcshop.price_line(gcshop.ref_id_for(25.0), 1))   # no longer offered
+    finally:
+        run(server.db.settings.update_one(
+            {}, {"$set": {"gift_cards": prev.get("gift_cards") or {}}}, upsert=True))
+
+
+def test_gift_cards_can_be_taken_out_of_the_shop_entirely():
+    prev = run(server.db.settings.find_one({}, {"_id": 0, "gift_cards": 1})) or {}
+    run(server.db.settings.update_one(
+        {}, {"$set": {"gift_cards": {"shop_enabled": False}}}, upsert=True))
+    try:
+        assert run(gcshop.offered_amounts()) == []
+        assert run(gcshop.catalog_items()) == []
+        with pytest.raises(HTTPException):
+            run(gcshop.price_line(gcshop.ref_id_for(25.0), 1))
+    finally:
+        run(server.db.settings.update_one(
+            {}, {"$set": {"gift_cards": prev.get("gift_cards") or {}}}, upsert=True))
+
+
+def test_a_silly_configured_amount_is_ignored_rather_than_sold():
+    prev = run(server.db.settings.find_one({}, {"_id": 0, "gift_cards": 1})) or {}
+    run(server.db.settings.update_one(
+        {}, {"$set": {"gift_cards": {"shop_amounts": [25, 0, -5, 99999, "abc", None]}}},
+        upsert=True))
+    try:
+        assert run(gcshop.offered_amounts()) == [25.0]
+    finally:
+        run(server.db.settings.update_one(
+            {}, {"$set": {"gift_cards": prev.get("gift_cards") or {}}}, upsert=True))
+
+
+# ------------------------------------------------------------- fulfilment
+
+def _fulfil(order, line, sent=None):
+    """Mirrors how server.py wires this: the email goes through
+    services.send_card_email, which is what claims the card so it can only
+    be sent once. Passing a raw sender here would test a path production
+    does not use."""
+    async def _capture(card):
+        if sent is not None:
+            sent.append(card.get("recipient_email"))
+        return True
+
+    async def _email(card):
+        return await gift.send_card_email(card, sender=_capture)
+
+    return run(gcshop.fulfill_line(order, line, mint=gift.mint_card, email=_email))
+
+
+def test_buying_one_in_the_shop_mints_a_digital_card_and_sends_it():
+    sent = []
+    order, line = _shop_order(), _shop_line(25.0)
+    out = _fulfil(order, line, sent)
+    assert out["count"] == 1
+    card = run(gift.find_by_code(out["codes"][0]))
+    assert card["balance"] == 25.00 and card["status"] == "active"
+    assert card["origin"] == "digital" and card["delivery"] == "email"
+    assert sent == ["buyer@example.com"], "it has to actually be sent somewhere"
+
+
+def test_it_goes_to_the_named_recipient_when_there_is_one():
+    sent = []
+    out = _fulfil(_shop_order(), _shop_line(25.0, recipient="dana@example.com"), sent)
+    assert sent == ["dana@example.com"]
+    assert run(gift.find_by_code(out["codes"][0]))["recipient_email"] == "dana@example.com"
+
+
+def test_buying_three_gives_three_separate_cards():
+    out = _fulfil(_shop_order(), _shop_line(25.0, qty=3))
+    assert out["count"] == 3
+    assert len(set(out["codes"])) == 3, "three cards, three codes"
+    for c in out["codes"]:
+        assert run(gift.find_by_code(c))["balance"] == 25.00
+
+
+def test_re_running_fulfilment_does_not_mint_a_second_set():
+    # The Shop re-drives fulfilment on retry and from the admin Retry
+    # Fulfillment action, so this WILL happen.
+    run(gift.ensure_indexes())
+    order, line = _shop_order(), _shop_line(50.0, qty=2)
+    first = _fulfil(order, line)
+    before = run(server.db.gift_cards.count_documents({}))
+    second = _fulfil(order, line)
+    assert run(server.db.gift_cards.count_documents({})) == before
+    assert sorted(first["codes"]) == sorted(second["codes"]), "different cards on a retry"
+
+
+def test_re_running_fulfilment_does_not_email_the_code_twice():
+    run(gift.ensure_indexes())
+    sent = []
+    order, line = _shop_order(), _shop_line(25.0)
+    _fulfil(order, line, sent)
+    _fulfil(order, line, sent)
+    assert len(sent) == 1, "the recipient got their card twice"
+
+
+def test_a_shop_card_is_owed_to_its_holder_and_spends_normally():
+    owed = run(gift.list_cards())["outstanding_balance"]
+    out = _fulfil(_shop_order(), _shop_line(50.0))
+    assert round(run(gift.list_cards())["outstanding_balance"] - owed, 2) == 50.00
+    code = out["codes"][0]
+    after = _revenue()
+    pid = _product(20.00)
+    _sale([{"kind": "retail", "product_id": pid, "qty": 1}],
+          [{"method": "gift_card", "amount": 21.35, "gift_card_code": code}])
+    assert round(_revenue() - after, 2) == 0.00, "already earned when it was bought"
+    assert run(gift.find_by_code(code))["balance"] == 28.65
+
+
+def test_two_shop_orders_never_share_a_card():
+    a = _fulfil(_shop_order(), _shop_line(25.0))
+    b = _fulfil(_shop_order(), _shop_line(25.0))
+    assert a["codes"] != b["codes"]
+    assert run(gift.find_duplicate_codes()) == []
+
+
+def _online_product(price=20.00):
+    """A product the SHOP can sell — show_online, not show_at_register."""
+    pid = str(uuid.uuid4())
+    run(server.db.pos_products.insert_one({
+        "id": pid, "name": f"{TAG} online item", "price": price, "active": True,
+        "archived": False, "show_online": True, "show_at_register": True,
+        "track_inventory": False, "stock_on_hand": 0, "taxable": True,
+        "category": "", "description": "", "sku": "", "category_id": None,
+        "subcategory_id": None}))
+    return pid
+
+
+def test_a_gift_card_adds_no_sales_tax_to_a_basket_that_has_goods_in_it():
+    """The case that matters: a $25 card next to a $20 chew. Ohio is owed
+    tax on the chew and nothing at all on the card, and the order total has
+    to reflect exactly that."""
+    pid = _online_product(20.00)
+    items = [server.ShopCartItemIn(kind="product", ref_id=pid, quantity=1),
+             server.ShopCartItemIn(kind="gift_card",
+                                   ref_id=gcshop.ref_id_for(25.0), quantity=1)]
+    priced = run(server._price_shop_cart(items, client_id=None))
+
+    card_line = [l for l in priced["lines"] if l["kind"] == "gift_card"][0]
+    goods_line = [l for l in priced["lines"] if l["kind"] == "product"][0]
+    assert card_line["allocated_tax"] == 0.0, "a gift card is money, not a good"
+    assert goods_line["allocated_tax"] > 0, "the chew is still taxed"
+    # the whole order's tax is the tax on the goods alone
+    assert priced["tax_amount"] == goods_line["allocated_tax"]
+    assert priced["subtotal"] == 45.00
+    assert priced["total"] == round(45.00 + priced["tax_amount"], 2)
+
+
+def test_a_basket_of_only_gift_cards_owes_no_tax_at_all():
+    items = [server.ShopCartItemIn(kind="gift_card",
+                                   ref_id=gcshop.ref_id_for(50.0), quantity=2)]
+    priced = run(server._price_shop_cart(items, client_id=None))
+    assert priced["tax_amount"] == 0.0
+    assert priced["subtotal"] == 100.00 and priced["total"] == 100.00
+
+
+def test_the_shop_price_is_the_amount_the_card_is_worth():
+    # If these ever drift, somebody pays $25 for a $50 card or the reverse.
+    items = [server.ShopCartItemIn(kind="gift_card",
+                                   ref_id=gcshop.ref_id_for(50.0), quantity=1)]
+    priced = run(server._price_shop_cart(items, client_id=None))
+    line = priced["lines"][0]
+    out = _fulfil(_shop_order(), {**line, "recipient_email": ""})
+    assert run(gift.find_by_code(out["codes"][0]))["balance"] == line["unit_price"]
+
+
+def test_gift_cards_are_not_on_the_public_storefront():
+    """A digital card is delivered by email, so there has to be an account
+    behind it — a guest with no sign-in has nowhere for it to go. Adding
+    them to the shared catalog without this broke 18 storefront tests with a
+    KeyError, because the public side maps every kind to a section."""
+    prev = run(server.get_settings()).get("shop_page") or {}
+    run(server.db.settings.update_one(
+        {"id": "global"},
+        {"$set": {"shop_page.public_shop_enabled": True,
+                  "shop_page.public_browsing_enabled": True}}, upsert=True))
+    try:
+        items = run(server._public_visible_shop_items())
+        assert all(i.get("kind") != "gift_card" for i in items)
+    finally:
+        run(server.db.settings.update_one(
+            {"id": "global"}, {"$set": {"shop_page": prev}}, upsert=True))
+
+
+def test_gift_cards_ARE_in_the_signed_in_shop():
+    # The other half of the same rule: hidden from guests, offered to clients.
+    catalog = run(server._build_shop_catalog(None))
+    kinds = {i["kind"] for i in catalog["items"]}
+    assert "gift_card" in kinds

@@ -36,6 +36,7 @@ from datetime import datetime, timezone
 from typing import Any, Dict, List, Optional
 
 from fastapi import HTTPException
+from pymongo.errors import DuplicateKeyError
 from pydantic import BaseModel, Field
 
 _db = None
@@ -140,11 +141,52 @@ def _display(code: str) -> str:
 
 
 async def _fresh_code() -> str:
+    """A code nothing else is using, as far as a read can tell.
+
+    This is a check-then-use and therefore a race — deliberately. The thing
+    that makes a duplicate IMPOSSIBLE is the unique index; this only makes
+    hitting it vanishingly unlikely so the retry below almost never runs.
+    """
     for _ in range(12):
         code = "".join(secrets.choice(_ALPHABET) for _ in range(CODE_GROUPS * CODE_GROUP_LEN))
         if not await _db.gift_cards.find_one({"code": code}, {"_id": 0, "id": 1}):
             return code
     raise HTTPException(status_code=500, detail="Could not generate a gift card code. Try again.")
+
+
+def _duplicate_field(exc) -> str:
+    """Which unique index a DuplicateKeyError came from.
+
+    It matters: a clash on `code` should be retried with a different code,
+    while a clash on `id` means this card already exists — an online purchase
+    pins its id precisely so a repeated webhook lands here, and retrying that
+    would mint the second card the id was supposed to prevent.
+    """
+    try:
+        return next(iter((exc.details or {}).get("keyPattern") or {}), "")
+    except Exception:
+        return ""
+
+
+async def _insert_with_fresh_code(doc: dict) -> dict:
+    """Write a card, taking a new code if the database says that one is taken.
+
+    Without this a collision surfaces as a 500 in the middle of settlement —
+    which is logged and swallowed — so the customer would be charged and get
+    no card. The odds are absurd (31^12), but "absurd" is not "never", and
+    the failure mode is somebody's money.
+    """
+    for _ in range(6):
+        doc["code"] = await _fresh_code()
+        try:
+            await _db.gift_cards.insert_one(dict(doc))
+            return doc
+        except DuplicateKeyError as exc:
+            if _duplicate_field(exc) != "code":
+                raise          # an id clash is the caller's business, not ours
+            _logger.warning("Gift card code collision on %s — retrying", doc["code"])
+    raise HTTPException(status_code=500,
+                        detail="Could not generate a gift card code. Try again.")
 
 
 def public_view(card: dict) -> dict:
@@ -192,14 +234,13 @@ async def mint_card(*, amount: float, actor: dict, recipient_name: str = "", not
         raise HTTPException(
             status_code=400,
             detail=f"A gift card has to be between ${MIN_AMOUNT:.2f} and ${MAX_AMOUNT:.2f}.")
-    code = await _fresh_code()
     ts = _now_iso_fn()
     card = {
         # Callers that must be replay-safe (an online purchase re-driven by a
         # repeated webhook) pin the id, so a second attempt collides on the
         # unique index instead of minting a second card.
         "id": card_id or str(uuid.uuid4()),
-        "code": code,
+        "code": "",              # filled in by _insert_with_fresh_code
         "initial_amount": amount,
         "balance": amount,
         "status": "active",
@@ -217,7 +258,7 @@ async def mint_card(*, amount: float, actor: dict, recipient_name: str = "", not
         "issued_by_name": actor.get("name") or actor.get("email") or "",
         "business_date": _business_today_fn().isoformat(),
     }
-    await _db.gift_cards.insert_one(dict(card))
+    await _insert_with_fresh_code(card)
     card.pop("_id", None)
     await _log(card["id"], "issue", amount, amount, actor,
                note=note or "", pos_sale_id=pos_sale_id)
@@ -365,6 +406,31 @@ async def send_card_email(card: dict, *, sender=None) -> bool:
     return bool(ok)
 
 
+async def find_duplicate_codes() -> list:
+    """Any code held by more than one card. Should always be empty; worth
+    being able to ask rather than assume."""
+    rows = await _db.gift_cards.aggregate([
+        {"$group": {"_id": "$code", "n": {"$sum": 1}}},
+        {"$match": {"n": {"$gt": 1}}},
+        {"$limit": 50},
+    ]).to_list(50)
+    return [r["_id"] for r in rows]
+
+
+async def code_uniqueness_enforced() -> bool:
+    """Is the unique index actually on the collection right now?
+
+    Startup logs a failure, but a log is not something anybody checks. This
+    lets a test — and a human — ask the database directly.
+    """
+    try:
+        info = await _db.gift_cards.index_information()
+    except Exception:
+        return False
+    return any(spec.get("unique") and [("code", 1)] == list(spec.get("key") or [])
+               for spec in info.values())
+
+
 async def ensure_indexes() -> None:
     """One code, one card — enforced by the database, not by hope.
 
@@ -380,8 +446,14 @@ async def ensure_indexes() -> None:
         # so a repeated webhook delivery cannot mint the card twice, and that
         # only holds if the database refuses the second insert.
         await _db.gift_cards.create_index("id", unique=True, name="gift_card_id_unique")
-    except Exception as exc:  # a pre-existing duplicate would block creation
-        _logger.warning("Gift card code index not created (non-fatal): %s", exc)
+    except Exception as exc:
+        # The ONLY thing making a duplicate code impossible is this index. If
+        # it will not build, say so loudly and name the codes that are in the
+        # way, rather than leaving a quiet warning nobody reads and a
+        # guarantee that is no longer true.
+        dupes = await find_duplicate_codes()
+        _logger.error("GIFT CARD CODE UNIQUENESS IS NOT ENFORCED: index could not "
+                      "be created (%s). Duplicate codes present: %s", exc, dupes or "none")
 
 
 async def mint_stock(*, quantity: int, actor: dict,
@@ -402,10 +474,9 @@ async def mint_stock(*, quantity: int, actor: dict,
     made: List[dict] = []
     ts = _now_iso_fn()
     for _ in range(max(1, min(int(quantity), MAX_STOCK_BATCH))):
-        code = await _fresh_code()
         card = {
             "id": str(uuid.uuid4()),
-            "code": code,
+            "code": "",          # filled in by _insert_with_fresh_code
             "initial_amount": 0.0,
             "balance": 0.0,
             "status": "stock",
@@ -418,7 +489,7 @@ async def mint_stock(*, quantity: int, actor: dict,
             "issued_by_name": actor.get("name") or actor.get("email") or "",
             "business_date": _business_today_fn().isoformat(),
         }
-        await _db.gift_cards.insert_one(dict(card))
+        await _insert_with_fresh_code(card)
         card.pop("_id", None)
         await _log(card["id"], "stock", 0.0, 0.0, actor,
                    note=("Printed for the rack" if face is None

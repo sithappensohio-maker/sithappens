@@ -79,6 +79,8 @@ from domains.bookings import services as bookings_domain_services
 from domains.register import services as register_domain_services
 from domains.performance import services as performance_domain_services
 from domains.gift_cards import online as gift_card_online
+from domains.gift_cards import services as gift_card_services
+from domains.gift_cards import shop as gift_card_shop
 from school_events import EventType as SchoolEvent
 
 from trophy_service import (
@@ -41120,6 +41122,8 @@ async def _build_shop_catalog(client_id: Optional[str]) -> dict:
             **_shop_org_fields(prog.get("category_id"), prog.get("subcategory_id")),
         })
 
+    items += await gift_card_shop.catalog_items()
+
     return {"items": items}
 
 
@@ -41392,6 +41396,11 @@ async def _public_visible_shop_items() -> list[dict]:
     show_public_prices_global = bool(sp.get("show_public_prices", True))
     out = []
     for raw in catalog["items"]:
+        # Gift cards are for signed-in clients: the card is delivered by
+        # email, so there has to be an account behind it. A kind with no
+        # public section is simply not part of the public storefront.
+        if raw["kind"] not in _PUBLIC_SECTION_FOR_KIND:
+            continue
         section = _PUBLIC_SECTION_FOR_KIND[raw["kind"]]
         if not bool(sp.get(_PUBLIC_SECTION_FLAG_FOR_SECTION[section], True)):
             continue
@@ -41633,7 +41642,7 @@ SHOP_PICKUP_INITIALIZED_STATES = ("preparing", "ready_for_pickup", "picked_up", 
 
 
 class ShopCartItemIn(BaseModel):
-    kind: Literal["product", "credit_pack", "training_program"]
+    kind: Literal["product", "credit_pack", "training_program", "gift_card"]
     ref_id: str = Field(min_length=1)
     quantity: int = Field(ge=1, le=50)
     # Phase 5 — Online School commerce. Only meaningful for a
@@ -41643,6 +41652,10 @@ class ShopCartItemIn(BaseModel):
     # as before it existed. Never trusted as proof of ownership by itself —
     # ownership is re-validated server-side at eligibility-check time.
     dog_id: Optional[str] = None
+    # gift_card lines only — who the emailed card goes to. Left out, it goes
+    # to the buyer, which is the common case (buying one for yourself, or to
+    # forward on yourself).
+    recipient_email: Optional[str] = Field(default=None, max_length=200)
 
 
 class ShopCheckoutIn(BaseModel):
@@ -41880,6 +41893,14 @@ async def _price_shop_cart(items: List[ShopCartItemIn], client_id: Optional[str]
             unit_price = round(float(product_pricing["effective_price"]), 2)
             name = product.get("name") or "Product"
             org_source = product
+        elif cart_item.kind == "gift_card":
+            # Never taxed and never stocked — it is money, not goods. The
+            # amount comes from the configured list, so a cart cannot name
+            # its own price.
+            priced = await gift_card_shop.price_line(cart_item.ref_id, qty)
+            unit_price = priced["unit_price"]
+            name = priced["name"]
+            org_source = {}
         elif cart_item.kind == "credit_pack":
             pack = await db.credit_packs.find_one(
                 {"id": cart_item.ref_id, "available_online": True, "active": True}, {"_id": 0},
@@ -41913,6 +41934,7 @@ async def _price_shop_cart(items: List[ShopCartItemIn], client_id: Optional[str]
         org_snapshot = await _shop_org_snapshot(org_source.get("category_id"), org_source.get("subcategory_id"))
         line = {
             "item_id": str(uuid.uuid4()), "kind": cart_item.kind, "ref_id": cart_item.ref_id,
+            "recipient_email": (getattr(cart_item, "recipient_email", None) or "").strip(),
             "name": name, "unit_price": unit_price, "quantity": qty,
             "line_subtotal": line_subtotal, "allocated_tax": 0.0,
             "line_total": line_subtotal, "fulfillment_status": "pending",
@@ -42571,6 +42593,10 @@ async def _apply_shop_payment(attempt: dict, session_obj: Optional[dict] = None)
         try:
             if line["kind"] == "product":
                 await _commit_shop_inventory_line(order_id, line)
+            elif line["kind"] == "gift_card":
+                await gift_card_shop.fulfill_line(
+                    order, line, mint=gift_card_services.mint_card,
+                    email=gift_card_services.send_card_email)
             elif line["kind"] == "credit_pack":
                 await _fulfill_shop_credit_pack_line(order, line)
             elif line["kind"] == "training_program" and line.get("fulfillment_kind") == "online_school":
@@ -42857,11 +42883,17 @@ async def create_shop_checkout(body: ShopCheckoutIn, user: dict = Depends(get_cu
         # order, so a fully eligible cart's idempotent-retry behavior is
         # completely unaffected.
         for line in priced["lines"]:
+            if line["kind"] == "gift_card":
+                continue  # no catalog row, no stock, no eligibility to check
             item_doc = await db[_SHOP_ITEM_COLLECTION_NAME[line["kind"]]].find_one({"id": line["ref_id"]}, {"_id": 0})
             await _validate_shop_item_eligibility(client, line["kind"], item_doc, int(line["quantity"]), dog_id=line.get("dog_id"))
 
         order_doc = {
             "id": order_id, "client_id": client_id, "client_name": client.get("name") or "",
+            # Where a digital gift card goes when the buyer did not name
+            # somebody else. Stored on the order so fulfilment (which runs
+            # later, from a webhook) does not have to re-read the client.
+            "client_email": client.get("email") or "",
             "status": "pending_payment", "fulfillment_status": "pending", "pickup_status": None,
             "lines": priced["lines"], "subtotal": priced["subtotal"], "tax_amount": priced["tax_amount"],
             "tax_rate_pct": priced["tax_rate_pct"], "total": priced["total"], "currency": "USD",
