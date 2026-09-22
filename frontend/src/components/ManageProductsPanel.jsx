@@ -42,6 +42,13 @@ const BLANK_FORM = {
 // this component is purely presentational/input-bound so there is exactly
 // ONE product form implementation, never a second copy to keep in sync.
 export function ProductEditor({ form, setForm, editingId, originalImageId, saving, onSave, onClose,
+  // The photos the product already had when this editor opened. The gallery
+  // deletes anything OUTSIDE this list the moment it is removed, because that
+  // can only be a this-session upload -- so an empty list here would delete a
+  // product's real photos before the admin ever saved. It was read as a bare
+  // identifier from the parent's scope, which is a ReferenceError the moment
+  // the editor renders; both callers pass it now.
+  originalImageIds = [],
   // Everything an admin could relate this item TO, so the picker searches by
   // name instead of asking anyone to paste an id. Optional: a caller that has
   // not loaded a catalogue simply gets no picker rather than a broken one.
@@ -659,6 +666,7 @@ export default function ManageProductsPanel({ onClose, onChanged }) {
 
         {formOpen ? (
           <ProductEditor form={form} setForm={setForm} editingId={editingId} originalImageId={originalImageId}
+                         originalImageIds={originalImageIds}
                          relatableItems={relatableItems}
                          saving={saving} onSave={saveForm} onClose={closeFormWithoutSaving} />
         ) : historyProduct ? (

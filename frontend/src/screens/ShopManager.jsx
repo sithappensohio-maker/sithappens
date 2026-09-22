@@ -10,6 +10,7 @@ import { PackEditor } from "../components/CreditPacksSettings";
 import { ProgramEditor, fetchProgramById } from "../components/Programs";
 import ItemThumbnail from "../components/ItemThumbnail";
 import ShopImageUpload from "../components/ShopImageUpload";
+import { galleryIds } from "../lib/shopImage";
 import PortalShop from "../components/PortalShop";
 import NeonEdge from "../components/premium/NeonEdge";
 import HuskyDogImage from "../components/brand/HuskyDogImage";
@@ -1490,6 +1491,10 @@ export default function ShopManager({ openCreateOnMount = false, onCreateConsume
   const [productForm, setProductForm] = useState(null);
   const [productEditingId, setProductEditingId] = useState(null);
   const [productOriginalImageId, setProductOriginalImageId] = useState(null);
+  // Gallery equivalent of the above. This screen still spoke the
+  // single-photo language after ProductEditor moved to a gallery, so a
+  // product edited here showed no photos and saved none back.
+  const [productOriginalImageIds, setProductOriginalImageIds] = useState([]);
   const [productSaving, setProductSaving] = useState(false);
 
   // Pack editor state (shared shape with CreditPacksSettings)
@@ -1563,7 +1568,8 @@ export default function ShopManager({ openCreateOnMount = false, onCreateConsume
     if (key === "physical_product" || key === "shopify_external") {
       setProductEditingId(null);
       setProductOriginalImageId(null);
-      setProductForm({ ...BLANK_PRODUCT_FORM, sales_destination: key === "shopify_external" ? "shopify_external" : "internal" });
+      setProductOriginalImageIds([]);
+      setProductForm({ ...BLANK_PRODUCT_FORM, image_ids: [], sales_destination: key === "shopify_external" ? "shopify_external" : "internal" });
     } else if (key === "credit_pack") {
       setPackEditing(null);
       setPackOriginalImageId(null);
@@ -1582,6 +1588,7 @@ export default function ShopManager({ openCreateOnMount = false, onCreateConsume
       if (!raw) { toast.error("Could not load product"); return; }
       setProductEditingId(raw.id);
       setProductOriginalImageId(raw.image_id || null);
+      setProductOriginalImageIds(galleryIds(raw));
       setProductForm({
         name: raw.name || "", category: raw.category || "", description: raw.description || "",
         price: String(raw.price ?? ""), cost: raw.cost != null ? String(raw.cost) : "",
@@ -1590,6 +1597,7 @@ export default function ShopManager({ openCreateOnMount = false, onCreateConsume
         track_inventory: !!raw.track_inventory, active: raw.active !== false,
         show_online: !!raw.show_online, online_description: raw.online_description || "",
         image_id: raw.image_id || null,
+        image_ids: galleryIds(raw),
         online_sort_order: raw.online_sort_order != null ? String(raw.online_sort_order) : "",
         category_id: raw.category_id || null, subcategory_id: raw.subcategory_id || null,
         featured: !!raw.featured, show_at_register: raw.show_at_register !== false,
@@ -1632,6 +1640,7 @@ export default function ShopManager({ openCreateOnMount = false, onCreateConsume
       track_inventory: !isShopify && productForm.track_inventory, active: productForm.active,
       show_online: productForm.show_online, online_description: productForm.online_description.trim() || null,
       image_id: productForm.image_id || null,
+      image_ids: productForm.image_ids || [],
       online_sort_order: productForm.online_sort_order !== "" ? parseInt(productForm.online_sort_order, 10) : null,
       category_id: productForm.category_id || null, subcategory_id: productForm.subcategory_id || null,
       featured: productForm.featured, show_at_register: productForm.show_at_register,
@@ -1654,8 +1663,12 @@ export default function ShopManager({ openCreateOnMount = false, onCreateConsume
         await api.post("/pos/products", { ...body, starting_stock: isShopify ? 0 : Number(productForm.starting_stock || 0) });
         toast.success("Product added");
       }
-      if (productOriginalImageId && productOriginalImageId !== productForm.image_id) {
-        api.delete(`/shop/media/${productOriginalImageId}`).catch(() => {});
+      // Safe only now the save succeeded: anything the product used to have
+      // and no longer does. Mirrors ManageProductsPanel.
+      for (const id of productOriginalImageIds) {
+        if (!(productForm.image_ids || []).includes(id)) {
+          api.delete(`/shop/media/${id}`).catch(() => {});
+        }
       }
       setProductForm(null);
       bumpRefresh();
@@ -1665,8 +1678,12 @@ export default function ShopManager({ openCreateOnMount = false, onCreateConsume
     setProductSaving(false);
   };
   const closeProductWithoutSaving = () => {
-    if (productForm?.image_id && productForm.image_id !== productOriginalImageId) {
-      api.delete(`/shop/media/${productForm.image_id}`).catch(() => {});
+    // Every image added this session, not just the primary one -- with a
+    // gallery, abandoning the form could otherwise strand seven uploads.
+    for (const id of productForm?.image_ids || []) {
+      if (id && !productOriginalImageIds.includes(id)) {
+        api.delete(`/shop/media/${id}`).catch(() => {});
+      }
     }
     setProductForm(null);
   };
@@ -1775,7 +1792,8 @@ export default function ShopManager({ openCreateOnMount = false, onCreateConsume
           <div className="bg-[var(--sh-card-base)] border border-shBorder rounded-2xl w-full max-w-2xl max-h-[90vh] overflow-y-auto p-6">
             <ProductEditor relatableItems={relatableItems}
                            form={productForm} setForm={setProductForm} editingId={productEditingId}
-                           originalImageId={productOriginalImageId} saving={productSaving}
+                           originalImageId={productOriginalImageId}
+                           originalImageIds={productOriginalImageIds} saving={productSaving}
                            onSave={saveProduct} onClose={closeProductWithoutSaving} />
           </div>
         </div>
