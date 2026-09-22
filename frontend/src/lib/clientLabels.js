@@ -23,7 +23,10 @@ export const CLIENT_LABELS = {
  * (pending/approved/rejected/completed/cancelled) is never renamed in the
  * database — this only maps it to plain language wherever a client sees it. */
 export const BOOKING_STATUS_LABELS = {
-  pending: "We'll confirm your request",
+  // Stage 1 — matches the wizard's success screen word for word. A client
+  // who was told "Request submitted" must not then find a badge using
+  // different language for the same row.
+  pending: "Pending approval",
   approved: "Confirmed",
   rejected: "Not able to confirm",
   completed: "Completed",

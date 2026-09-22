@@ -35,7 +35,10 @@ import HomeworkStreakTile from "../components/HomeworkStreakTile";
 import RescheduleRequestModal from "../components/RescheduleRequestModal";
 import PortalPaymentPlans from "../components/PortalPaymentPlans";
 import PortalMessages from "../components/PortalMessages";
-import PortalSetupChecklist, { PortalSetupSuccess } from "../components/PortalSetupChecklist";
+import PortalSetupChecklist, { PortalSetupSuccess, PortalSetupPreview } from "../components/PortalSetupChecklist";
+import PortalBookingBlockedModal from "../components/PortalBookingBlockedModal";
+import { dogVaccineRollup, humanDate, vaccineState, vaccineSummary, vaccineStateTone, VACCINE_STATES } from "../lib/vaccineStatus";
+import { portalGreeting, portalGreetingSubtitle } from "../lib/portalGreeting";
 import NeedsPasswordCard from "../components/NeedsPasswordCard";
 import PaymentOptionsCard from "../components/PaymentOptionsCard";
 import PortalInvoices from "../components/PortalInvoices";
@@ -763,7 +766,17 @@ export default function Portal() {
   // Redesign — the full step-by-step setup checklist is collapsed behind a
   // compact "Action Needed" summary on Home by default; expanding it doesn't
   // change any of its own logic, just whether its (unchanged) markup is shown.
-  const [setupExpanded, setSetupExpanded] = useState(false);
+  // Stage 1 — the checklist starts OPEN. It used to start collapsed behind a
+  // compact banner whose button never called setSetupExpanded, so the full
+  // checklist was unreachable and onboarding degraded into one surprise task
+  // at a time. A client who still has setup to do should see the whole
+  // journey. Once they are ready to book, PortalSetupChecklist returns null on
+  // its own, so this staying true costs nothing.
+  const [setupExpanded, setSetupExpanded] = useState(true);
+  // Stage 1 — when a booking attempt is refused by the setup gate we keep the
+  // live status here and explain it, rather than opening a wizard that will
+  // reject them three steps later.
+  const [bookingBlocked, setBookingBlocked] = useState(null);
   const [vaccineWizard, setVaccineWizard] = useState(null); // [{dog, vaccine}, ...]
   // Sprint 110dh-9 — once the client has seen the "Setup Complete" hero and
   // clicked through (or dismissed) it, remember that locally so it doesn't
@@ -822,18 +835,24 @@ export default function Portal() {
       // route to the checklist to be safe (never silently bypass the gate).
     }
     if (!live || live.booking_locked === true) {
-      // Refresh the checklist so the user sees the latest steps, then
-      // scroll to it. window+scrollRoot fallbacks keep mobile happy.
+      // Intercept BEFORE the wizard opens. Letting someone pick a service, a
+      // date and review a price only to be refused at Confirm is the single
+      // worst moment in the old flow — the gate is knowable up front, so it
+      // is answered up front.
+      //
+      // The checklist must be VISIBLE before we scroll to it: it lives inside
+      // a `hidden` wrapper, and scrollIntoView on a display:none element is a
+      // no-op, which is why this button used to do nothing but jump the page
+      // to the top.
+      setSetupExpanded(true);
       setSetupRefresh(n => n + 1);
-      const target = document.querySelector('[data-testid="portal-setup-checklist"]');
-      if (target && typeof target.scrollIntoView === "function") {
-        target.scrollIntoView({ behavior: "smooth", block: "start" });
-      }
-      try { window.scrollTo({ top: 0, behavior: "smooth" }); } catch {}
-      try {
-        const sr = document.querySelector('[data-scroll-root]');
-        if (sr) sr.scrollTo({ top: 0, behavior: "smooth" });
-      } catch {}
+      setBookingBlocked(live || null);
+      window.setTimeout(() => {
+        const target = document.querySelector('[data-testid="portal-setup-checklist"]');
+        if (target && typeof target.scrollIntoView === "function") {
+          target.scrollIntoView({ behavior: "smooth", block: "start" });
+        }
+      }, 60);
       return;
     }
     setShowBookWizard(true);
@@ -861,7 +880,9 @@ export default function Portal() {
       setPublicServices((svcRes.data || []).filter(s => s.active));
       setPublicPrograms((prgRes.data || []));
       setSchoolEntries(schRes.data || []);
-      if (dRes.data.length > 0 && !bookDogId) setBookDogId(dRes.data[0].id);
+      // Only auto-select when there is no choice to make. With more than one
+      // dog the customer picks; see PortalBookWizard.
+      if (dRes.data.length === 1 && !bookDogId) setBookDogId(dRes.data[0].id);
       // Only auto-open the waiver modal AFTER the user has added at least one dog
       // (otherwise the onboarding banner takes them through profile → dog → waiver in order).
       const needsSign = !wRes.data?.signed || wRes.data?.needs_resign;
@@ -1014,7 +1035,31 @@ export default function Portal() {
   const toggleRecDay = (d) => setRecDays(recDays.includes(d) ? recDays.filter(x=>x!==d) : [...recDays, d]);
 
   const cancel = async (id) => {
-    if (!(await confirm({ title: "Cancel this booking?", body: "Credits aren't charged until check-out, so cancelling is free.", confirmText: "Cancel booking", cancelText: "Keep it", tone: "danger" }))) return;
+    // Name the booking being cancelled. The old dialog said only "Cancel this
+    // booking?" — from a list of several, with a red button one tap away,
+    // that is not enough to tell which one is about to disappear.
+    //
+    // It also claimed "Credits aren't charged until check-out, so cancelling
+    // is free." No cancellation-policy field exists anywhere in the backend,
+    // so that reassurance was not something the app could stand behind. Until
+    // a policy is actually configurable, this confirms and says nothing more.
+    const b = bookings.find(x => x.id === id);
+    const dog = b?.dog_name || "this dog";
+    const raw = String(b?.service_type || "booking").replace(/_/g, " ");
+    const service = raw.charAt(0).toUpperCase() + raw.slice(1);
+    const when = b?.date
+      ? humanDate(b.date) + (b.end_date && b.end_date !== b.date ? ` → ${humanDate(b.end_date)}` : "")
+      : "";
+    const statusLine = b?.status ? `Currently: ${bookingStatusLabel(b.status)}.` : "";
+    const body = [when, statusLine, "This will cancel the booking. Are you sure?"]
+      .filter(Boolean).join(String.fromCharCode(10));
+    if (!(await confirm({
+      title: `Cancel ${dog}'s ${service.toLowerCase()} booking?`,
+      body,
+      confirmText: "Cancel booking",
+      cancelText: "Keep booking",
+      tone: "danger",
+    }))) return;
     try { await api.delete(`/bookings/${id}`); loadAll(); } catch (e) { toast.error(formatErr(e.response?.data?.detail) || "Could not cancel booking"); }
   };
 
@@ -1117,6 +1162,7 @@ export default function Portal() {
             client={client}
             services={publicServices.filter(s => s.service_type === "photography")}
             onBookSession={goPhotographyBookSession}
+            onAskAboutPhotography={sectionOn("messages") ? (() => { setPhotographyOpen(false); setMessagesOpen(true); }) : null}
           />
         </div>
       </div>
@@ -1271,11 +1317,13 @@ export default function Portal() {
           <div className="flex items-center gap-3 min-w-0">
             <img src="/logo.png" alt="Sit Happens" className="h-9 w-auto shrink-0 md:hidden" data-testid="portal-logo" />
             <div className="hidden sm:block min-w-0">
-              <p className="text-xl text-shText font-bold truncate">
-                Welcome back, {user.name.split(" ")[0] || user.name}!
+              {/* Derived from setup status + booking history, never a timer —
+                  an account created seconds ago was being told "Welcome back". */}
+              <p className="text-xl text-shText font-bold truncate" data-testid="portal-greeting">
+                {portalGreeting(user.name, setupStatus, bookings)}
               </p>
-              <p className="text-[13px] text-shTextMuted truncate">
-                Here&apos;s what&apos;s happening with your pup.
+              <p className="text-[13px] text-shTextMuted truncate" data-testid="portal-greeting-sub">
+                {portalGreetingSubtitle(setupStatus, bookings, dogs)}
               </p>
             </div>
           </div>
@@ -1446,6 +1494,14 @@ export default function Portal() {
             of whether the compact banner above is expanded — only its
             visual output is hidden/shown, its own internals/props/behavior
             are completely unchanged. */}
+        {bookingBlocked && (
+          <PortalBookingBlockedModal
+            status={bookingBlocked}
+            onAction={handlePortalSetupAction}
+            onHelp={sectionOn("messages") ? (() => setMessagesOpen(true)) : null}
+            onClose={() => setBookingBlocked(null)}
+          />
+        )}
         <div className={setupExpanded ? "" : "hidden"} data-testid="portal-setup-checklist-wrap">
         <PortalSetupChecklist
           refreshKey={setupRefresh}
@@ -1453,6 +1509,11 @@ export default function Portal() {
           onHelp={sectionOn("messages") ? (() => setMessagesOpen(true)) : null}
           onAction={handlePortalSetupAction}
         />
+        {/* Orientation for the locked state. "Portal Unlocked" cannot be shown
+            before the portal is unlocked, so while booking is still gated the
+            same information appears in the future tense, understated, under
+            the checklist rather than competing with it. */}
+        {setupStatus?.booking_locked === true && <PortalSetupPreview />}
         </div>
 
         {/* Phase 10A — One organized client overview replaces the old stack of
@@ -1595,7 +1656,7 @@ export default function Portal() {
                 <span className="w-10 h-10 rounded-full bg-shOrange/15 text-shOrange grid place-items-center shrink-0"><i className="fas fa-bone"/></span>
                 <div className="min-w-0">
                   <p className="text-[11px] font-black uppercase tracking-[0.3em] text-shOrange">Optional fun</p>
-                  <p className="text-[15px] sm:text-base font-black text-white uppercase italic tracking-tight truncate">Dog facts, training tips & trivia</p>
+                  <p className="text-[15px] sm:text-base font-black text-white uppercase italic tracking-tight break-words">Dog facts, training tips & trivia</p>
                 </div>
               </div>
               <i className="fas fa-chevron-down text-gray-500 group-open:rotate-180 transition-transform"/>
@@ -1615,8 +1676,19 @@ export default function Portal() {
           <IntakePortalSection />
         </div>
 
-        <div className="grid grid-cols-1 md:grid-cols-3 gap-8">
-        <div className="col-span-1 space-y-6">
+        {/* Stage 1 — this went to three columns at `md` (768px). With the
+            persistent 208px client sidebar also taking width, the narrow
+            column landed around 140px, and the Book hero inside it (48px
+            icon + gaps + padding) was left roughly 40px for text. Headings
+            were measured rendering into 4px and 22px columns with body copy
+            clipped on the left edge.
+
+            The fix is the breakpoint, not the strings: stay stacked and
+            readable until there is genuinely room for three columns, and
+            scope the spans to that same breakpoint so they cannot apply
+            while the grid is single-column. */}
+        <div className="grid grid-cols-1 lg:grid-cols-3 gap-6 lg:gap-8" data-testid="portal-home-grid">
+        <div className="lg:col-span-1 space-y-6 min-w-0">
           {/* Focused Client Usability phase — Credits/Prepaid-visits and the
               Waiver reference card are secondary on Home; tucked behind the
               "More" disclosure below (unchanged markup/logic, just hidden
@@ -1936,7 +2008,7 @@ export default function Portal() {
 
         </div>
 
-        <div className="col-span-2 space-y-6">
+        <div className="lg:col-span-2 space-y-6 min-w-0">
           {/* Training UI Phase 3 — Client Today, promoted to the top of the
               main column so active practice is never buried behind "More"
               (the brief's core complaint about the previous layout). Reads
@@ -2068,10 +2140,16 @@ export default function Portal() {
                 // expiring soon" so the alert badge no longer lies after a
                 // client uploads a fresh cert that happens to be < 30 days
                 // from today.
+                // Stage 1 — a certificate sitting in our review queue is not a
+                // record the client still owes us. This strip used to say
+                // "3 records needed" on the screen right after they uploaded
+                // all three.
                 const needsUpload = ["rabies", "bordetella", "dhpp"].filter(v => {
-                  const exp = d.vaccines?.[v];
-                  return !exp || exp < today;
+                  const st = vaccineState(d, v, today).state;
+                  return st === VACCINE_STATES.MISSING || st === VACCINE_STATES.EXPIRED;
                 });
+                const awaitingReview = ["rabies", "bordetella", "dhpp"].filter(
+                  v => vaccineState(d, v, today).state === VACCINE_STATES.PENDING);
                 const expiringSoon = ["rabies", "bordetella", "dhpp"].filter(v => {
                   const exp = d.vaccines?.[v];
                   return exp && exp >= today && exp < soonStr;
@@ -2079,17 +2157,19 @@ export default function Portal() {
                 // Sprint 110dh-8 — dog card status badge derived from existing
                 // data only (no schema changes). Priority: expired > missing >
                 // missing-info > complete.
-                const reallyExpired = ["rabies", "bordetella", "dhpp"].filter(v => {
-                  const exp = d.vaccines?.[v]; return exp && exp < today;
-                });
-                const reallyMissing = ["rabies", "bordetella", "dhpp"].filter(v => !d.vaccines?.[v]);
                 const missingDogInfo = !((d.name || "").trim() && (d.breed || "").trim() &&
                                           ((d.birthday || "").trim() || d.age_y || d.age_m));
+                // Stage 1 — the rollup consults dog.vaccine_certs as well as
+                // dog.vaccines, so a certificate the client already uploaded
+                // reads as "with us" instead of "Needs vaccines".
+                const vaxRollup = dogVaccineRollup(d, ["rabies", "bordetella", "dhpp"], today);
                 let cardBadge;
-                if (reallyExpired.length > 0) {
+                if (vaxRollup === VACCINE_STATES.EXPIRED) {
                   cardBadge = { label: "Expired records", cls: "bg-red-500/15 text-red-300 border-red-500/40", icon: "fa-circle-xmark" };
-                } else if (reallyMissing.length > 0) {
+                } else if (vaxRollup === VACCINE_STATES.MISSING) {
                   cardBadge = { label: "Needs vaccines", cls: "bg-shOrange/15 text-shOrange border-shOrange/40", icon: "fa-shield-virus" };
+                } else if (vaxRollup === VACCINE_STATES.PENDING) {
+                  cardBadge = { label: "With us for review", cls: "bg-shBlue/15 text-shBlue border-shBlue/40", icon: "fa-clock" };
                 } else if (missingDogInfo) {
                   cardBadge = { label: "Missing info", cls: "bg-shBlue/15 text-shBlue border-shBlue/40", icon: "fa-circle-info" };
                 } else {
@@ -2134,29 +2214,47 @@ export default function Portal() {
                           </span>
                         )}
                       </div>
-                      <p className="text-[13px] text-gray-400 mt-2"><i className="fas fa-shield-virus text-shBlue mr-1"/>Rabies: <span className={d.vaccines?.rabies && d.vaccines.rabies>=today?"text-shGreen font-black":"text-red-400 font-black"}>{d.vaccines?.rabies||"Missing"}</span></p>
+                      {(() => {
+                        // Stage 1 — four explicit states with a human date,
+                        // replacing `rabies || "Missing"` printing a raw ISO
+                        // string (or lying about a pending upload).
+                        const rab = vaccineSummary(d, "rabies", today);
+                        return (
+                          <p className="text-[13px] text-gray-400 mt-2" data-testid={`dog-card-rabies-${d.id}`}>
+                            <i className="fas fa-shield-virus text-shBlue mr-1"/>Rabies:{" "}
+                            <span className={`${vaccineStateTone(rab.state)} font-black`}>{rab.text}</span>
+                          </p>
+                        );
+                      })()}
                     </div>
                   </button>
                   {needsUpload.length > 0 && (
                     <div className="border-t border-red-500/30 bg-red-500/10 px-4 py-2 flex items-center justify-between gap-2" data-testid={`vaccine-alert-${d.id}`}>
-                      <p className="text-[12px] sm:text-[13px] text-red-300 font-black uppercase tracking-widest min-w-0 truncate">
+                      <p className="text-[12px] sm:text-[13px] text-red-300 font-black uppercase tracking-widest min-w-0 break-words">
                         <i className="fas fa-shield-virus mr-1"/>{needsUpload.length} record{needsUpload.length > 1 ? "s" : ""} needed
                       </p>
                       <button onClick={()=>setVaccineQuick({ initialDogId: d.id })}
                               data-testid={`vaccine-upload-btn-${d.id}`}
-                              className="shrink-0 text-[12px] sm:text-[13px] font-black uppercase tracking-widest text-shGreen hover:underline whitespace-nowrap">
+                              className="shrink-0 text-[12px] sm:text-[13px] font-black uppercase tracking-widest text-shGreen hover:underline whitespace-nowrap inline-flex items-center min-h-[44px] py-2 -my-2 px-2 -mr-2">
                         Upload Vaccines <i className="fas fa-arrow-right ml-1"/>
                       </button>
                     </div>
                   )}
-                  {needsUpload.length === 0 && expiringSoon.length > 0 && (
+                  {needsUpload.length === 0 && awaitingReview.length > 0 && (
+                    <div className="border-t border-shBlue/30 bg-shBlue/10 px-4 py-2" data-testid={`vaccine-pending-${d.id}`}>
+                      <p className="text-[12px] sm:text-[13px] text-shBlue font-black uppercase tracking-widest break-words">
+                        <i className="fas fa-clock mr-1"/>{awaitingReview.length} record{awaitingReview.length > 1 ? "s" : ""} with us for review
+                      </p>
+                    </div>
+                  )}
+                  {needsUpload.length === 0 && awaitingReview.length === 0 && expiringSoon.length > 0 && (
                     <div className="border-t border-shOrange/30 bg-shOrange/10 px-4 py-2 flex items-center justify-between gap-2" data-testid={`vaccine-soon-${d.id}`}>
                       <p className="text-[12px] sm:text-[13px] text-shOrange font-black uppercase tracking-widest min-w-0 truncate">
                         <i className="fas fa-hourglass-half mr-1"/>{expiringSoon.length} expiring soon
                       </p>
                       <button onClick={()=>setVaccineQuick({ initialDogId: d.id })}
                               data-testid={`vaccine-renew-btn-${d.id}`}
-                              className="shrink-0 text-[12px] sm:text-[13px] font-black uppercase tracking-widest text-shGreen hover:underline whitespace-nowrap">
+                              className="shrink-0 text-[12px] sm:text-[13px] font-black uppercase tracking-widest text-shGreen hover:underline whitespace-nowrap inline-flex items-center min-h-[44px] py-2 -my-2 px-2 -mr-2">
                         Renew Now <i className="fas fa-arrow-right ml-1"/>
                       </button>
                     </div>
@@ -2171,12 +2269,12 @@ export default function Portal() {
                         <>
                           <a href={`tel:${d.vet_phone}`} data-testid={`vet-call-${d.id}`}
                              onClick={(e)=>e.stopPropagation()}
-                             className="text-[13px] font-black uppercase tracking-widest text-shBlue hover:text-white">
+                             className="text-[13px] font-black uppercase tracking-widest text-shBlue hover:text-white inline-flex items-center min-h-[44px] py-2 -my-2 px-1">
                             <i className="fas fa-phone mr-1"/>Call
                           </a>
                           <a href={`sms:${d.vet_phone}`} data-testid={`vet-sms-${d.id}`}
                              onClick={(e)=>e.stopPropagation()}
-                             className="text-[13px] font-black uppercase tracking-widest text-shGreen hover:text-white">
+                             className="text-[13px] font-black uppercase tracking-widest text-shGreen hover:text-white inline-flex items-center min-h-[44px] py-2 -my-2 px-1">
                             <i className="fas fa-message mr-1"/>Text
                           </a>
                         </>
@@ -2294,10 +2392,10 @@ export default function Portal() {
               <div className="flex items-center gap-2 flex-wrap mb-3" data-testid="dog-filter-pills">
                 <span className="text-[12px] font-black uppercase tracking-widest text-gray-500">Filter:</span>
                 <button onClick={()=>setDogFilter("")} data-testid="dog-filter-all"
-                        className={`px-3 py-1 rounded-full text-[12px] font-black uppercase tracking-widest border ${!dogFilter ? "bg-shGreen text-bgHeader border-shGreen" : "border-bgHover text-gray-400 hover:text-white"}`}>All Dogs</button>
+                        className={`shrink-0 px-3 min-h-[40px] py-2 rounded-full text-[12px] font-black uppercase tracking-widest border whitespace-nowrap ${!dogFilter ? "bg-shGreen text-bgHeader border-shGreen" : "border-bgHover text-gray-400 hover:text-white"}`}>All Dogs</button>
                 {dogs.map(d => (
                   <button key={d.id} onClick={()=>setDogFilter(d.id)} data-testid={`dog-filter-${d.id}`}
-                          className={`px-3 py-1 rounded-full text-[12px] font-black uppercase tracking-widest border flex items-center gap-1.5 ${dogFilter === d.id ? "bg-shGreen text-bgHeader border-shGreen" : "border-bgHover text-gray-400 hover:text-white"}`}>
+                          className={`shrink-0 px-3 min-h-[40px] py-2 rounded-full text-[12px] font-black uppercase tracking-widest border flex items-center gap-1.5 whitespace-nowrap ${dogFilter === d.id ? "bg-shGreen text-bgHeader border-shGreen" : "border-bgHover text-gray-400 hover:text-white"}`}>
                     {d.photo && <img src={d.photo} alt="" className="w-4 h-4 rounded-full object-cover"/>}
                     <span>{d.name}</span>
                   </button>
@@ -2381,11 +2479,12 @@ export default function Portal() {
                   <div className="relative flex items-center justify-between p-4 gap-3">
                     <div className="min-w-0 flex-1">
                       <p className="text-base font-black text-white uppercase italic tracking-tight">{b.dog_name}</p>
-                      <p className="text-[12px] text-gray-400 font-black uppercase tracking-widest mt-1">{b.service_type} · {b.date}{b.end_date && b.end_date!==b.date?` → ${b.end_date}`:""}</p>
+                      <p className="text-[12px] text-gray-400 font-black uppercase tracking-widest mt-1 break-words">{b.service_type} · {humanDate(b.date)}{b.end_date && b.end_date!==b.date?` → ${humanDate(b.end_date)}`:""}</p>
                     </div>
                     <div className="flex items-center gap-2 flex-wrap justify-end shrink-0">
                       <span className={`text-[11px] font-black uppercase tracking-widest px-2 py-1 rounded border ${b.status==="approved"?"bg-shGreen/15 text-shGreen border-shGreen/40":b.status==="pending"?"bg-shOrange/15 text-shOrange border-shOrange/40":b.status==="rejected"?"bg-red-500/15 text-red-400 border-red-500/40":b.status==="completed"?"bg-shBlue/15 text-shBlue border-shBlue/40":"bg-gray-500/15 text-gray-400 border-bgHover"}`}>{bookingStatusLabel(b.status)}</span>
-                      {(b.status==="pending"||b.status==="approved") && <button onClick={()=>cancel(b.id)} className="text-[12px] font-black uppercase text-red-400 hover:text-red-300 tracking-widest px-2 py-1 rounded border border-red-500/30 hover:border-red-500/60 transition">Cancel</button>}
+                      {(b.status==="pending"||b.status==="approved") && <button onClick={()=>cancel(b.id)} data-testid={`booking-cancel-${b.id}`}
+                        className="text-[12px] font-black uppercase text-red-400 hover:text-red-300 tracking-widest px-3 min-h-[44px] py-2 rounded border border-red-500/30 hover:border-red-500/60 transition">Cancel</button>}
                       {/* Sprint 110cf — prepaid program sessions get a Reschedule Request button */}
                       {b.status==="approved" && b.is_prepaid_program_session && !isPast(b) && (
                         <button onClick={()=>setRescheduleFor(b)}
@@ -2530,7 +2629,17 @@ export default function Portal() {
       {dogModal.open && (
         <PortalDogModal dog={dogModal.dog}
                         onClose={()=>setDogModal({open:false, dog:null})}
-                        onSaved={async () => { await loadAll(); bumpSetupRefresh(); }}
+                        onSaved={async (saved) => {
+                          // Stage 1 — the modal used to just vanish, with no
+                          // confirmation that the dog saved and no hint at what
+                          // comes next.
+                          const isNew = !dogModal.dog;
+                          const nm = saved?.name || dogModal.dog?.name || "Your dog";
+                          await loadAll(); bumpSetupRefresh();
+                          toast.success(isNew ? `${nm} added` : `${nm} updated`, {
+                            description: isNew ? "Next: add their vaccine records so booking can unlock." : undefined,
+                          });
+                        }}
                         onUploadVaccines={(dog) => { setDogModal({open:false, dog:null}); setVaccineQuick({ initialDogId: dog.id }); }} />
       )}
       {profileOpen && client && (

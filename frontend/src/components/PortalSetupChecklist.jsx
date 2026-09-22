@@ -153,7 +153,7 @@ export default function PortalSetupChecklist({ onAction = () => {}, onHelp = nul
            style={{ background: "radial-gradient(circle at 10% 10%, rgba(242,101,34,0.5) 0%, transparent 40%), radial-gradient(circle at 90% 90%, rgba(140,198,63,0.35) 0%, transparent 45%)" }}/>
       <div className="relative">
         <div className="flex items-start justify-between gap-3 flex-wrap mb-2">
-          <div className="min-w-0 flex-1">
+          <div className="min-w-0 basis-full sm:basis-auto sm:flex-1">
             <p className="text-[12px] font-bold uppercase tracking-[0.35em] text-shAccent mb-1">
               <i className="fas fa-route mr-1.5"/>Start Here · New Client Setup
             </p>
@@ -163,7 +163,7 @@ export default function PortalSetupChecklist({ onAction = () => {}, onHelp = nul
           </div>
           <span className={`shrink-0 text-[11px] font-black uppercase tracking-widest px-3 py-1.5 rounded-full border ${overallMeta.cls}`}
                 data-testid="portal-setup-overall-badge">
-            <i className={`fas ${overallMeta.icon} mr-1.5`}/>{completed_count} / {total_count} done
+            <i className={`fas ${overallMeta.icon} mr-1.5`}/>Step {Math.min(completed_count + 1, total_count)} of {total_count}
           </span>
         </div>
 
@@ -196,7 +196,7 @@ export default function PortalSetupChecklist({ onAction = () => {}, onHelp = nul
           <div className="mt-5 rounded-2xl border-2 border-shPrimary bg-shPrimary/10 p-4 sm:p-6 shadow-2xl ring-2 ring-shPrimary/20"
                data-testid="portal-setup-next-step">
             <div className="flex items-start justify-between gap-3 flex-wrap">
-              <div className="min-w-0 flex-1">
+              <div className="min-w-0 basis-full sm:basis-auto sm:flex-1">
                 <p className="inline-flex items-center rounded-full bg-shPrimary text-bgHeader px-3 py-1 text-[11px] font-black uppercase tracking-[0.25em]">
                   <i className="fas fa-arrow-right mr-1.5"/>Do This Next · Step {nextIndex + 1} of {total_count}
                 </p>
@@ -300,11 +300,21 @@ export default function PortalSetupChecklist({ onAction = () => {}, onHelp = nul
                          : "bg-[var(--sh-card-base)] border-shBorder hover:border-shAccent/60"
                    }`}>
                 <div className="flex items-start justify-between gap-2">
-                  <div className="min-w-0 flex-1">
+                  <div className="min-w-0 basis-full sm:basis-auto sm:flex-1">
                     <div className="flex items-center gap-2 flex-wrap mb-1">
                       <span className="text-[10px] font-black text-shTextMuted uppercase tracking-widest">
-                        Step {idx + 1}
+                        Step {idx + 1} of {steps.length}
                       </span>
+                      {/* Stage 1 — the vaccine wizard tells you which item is
+                          "do this one now" and which are "next". The setup
+                          checklist now says the same, so a client can see the
+                          whole journey and their place in it rather than
+                          meeting one surprise task at a time. */}
+                      {!isComplete && (
+                        <span className={`text-[10px] font-black uppercase tracking-widest ${isNext ? "text-shPrimary" : "text-shTextMuted"}`}>
+                          {isNext ? "· Do this one now" : "· Coming next"}
+                        </span>
+                      )}
                       <span className={`text-[10px] font-black uppercase tracking-widest px-1.5 py-0.5 rounded border ${meta.cls}`}>
                         <i className={`fas ${meta.icon} mr-1`}/>{meta.label}
                       </span>
@@ -415,6 +425,42 @@ const DEFAULT_OFFERINGS = [
 ];
 
 /**
+ * Quiet orientation for someone whose setup is NOT finished yet.
+ *
+ * The full "Portal Unlocked" panel below only appears once booking is open,
+ * which is backwards: the person who most needs to know what this portal is
+ * for is the one who has just arrived. This says the same thing in the
+ * future tense and without the celebration, because claiming the portal is
+ * unlocked while it is locked is the contradiction Stage 1 set out to kill.
+ *
+ * Deliberately understated — no border glow, no big type, no button. The
+ * setup checklist above it stays the primary action; this is a footnote that
+ * answers "what am I doing all this for?".
+ */
+export function PortalSetupPreview({ offerings = DEFAULT_OFFERINGS }) {
+  const items = Array.isArray(offerings) && offerings.length ? offerings : DEFAULT_OFFERINGS;
+  return (
+    <div className="rounded-2xl border border-shBorder p-4 sm:p-5 mb-4" style={{ background: "var(--sh-card-base)" }}
+         data-testid="portal-setup-preview">
+      <p className="text-[11px] font-black uppercase tracking-[0.3em] text-shTextMuted">
+        <i className="fas fa-circle-info mr-1.5"/>Your Sit Happens account
+      </p>
+      <p className="text-[14px] text-shText font-bold mt-1">
+        Once setup is complete, you&apos;ll be able to:
+      </p>
+      <ul className="mt-3 grid grid-cols-1 sm:grid-cols-2 gap-x-5 gap-y-2">
+        {items.map((o) => (
+          <li key={o.id} className="text-[13px] text-shTextMuted flex items-start gap-2 min-w-0">
+            <i className={`fas ${o.icon} text-shTextMuted/70 mt-0.5 shrink-0`} aria-hidden="true"/>
+            <span className="break-words">{o.title}</span>
+          </li>
+        ))}
+      </ul>
+    </div>
+  );
+}
+
+/**
  * Full success / mini-tour shown after setup unlocks booking.
  */
 export function PortalSetupSuccess({ onBook, onDismiss, onHelp, dismissable = true, offerings = DEFAULT_OFFERINGS }) {
@@ -433,7 +479,7 @@ export function PortalSetupSuccess({ onBook, onDismiss, onHelp, dismissable = tr
       )}
       <div className="relative">
         <div className="flex items-start justify-between gap-3 flex-wrap">
-          <div className="min-w-0 flex-1">
+          <div className="min-w-0 basis-full sm:basis-auto sm:flex-1">
             <p className="text-[12px] font-black uppercase tracking-[0.35em] text-shPrimary mb-1">
               <i className="fas fa-circle-check mr-1.5"/>Portal Unlocked
             </p>

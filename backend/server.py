@@ -76,6 +76,8 @@ from domains.training import services as training_domain_services
 from domains.pricing import services as pricing_domain_services
 from domains.pos import services as pos_domain_services
 from domains.bookings import services as bookings_domain_services
+from domains import booking_rules
+from domains import vaccines as vaccines_domain
 from domains.register import services as register_domain_services
 from domains.performance import services as performance_domain_services
 from domains.gift_cards import online as gift_card_online
@@ -864,6 +866,8 @@ class DogOut(DogIn):
     id: str
     training_logs: List[TrainingLog] = []
     created_at: str
+    # Which vaccines have a client upload awaiting review — see domains/vaccines.
+    vaccines_pending_review: Dict[str, bool] = {}
 
 class TrainingLogIn(BaseModel):
     date: str
@@ -3022,6 +3026,8 @@ async def list_dogs(user: dict = Depends(get_current_user), include_deleted: boo
     # multiple dogs have 5+ images each. Detail endpoint `/dogs/{id}` returns
     # the full record (with gallery) for the edit modal.
     cap = _DOGS_SAFETY_CEILING if limit is None else max(1, min(int(limit), _DOGS_PAGE_MAX))
+    # vaccine_certs survives the projection only long enough to be reduced to
+    # booleans below — no certificate photo reaches a list payload.
     cursor = db.dogs.find(q, {"_id": 0, "photos": 0}).sort("name", 1)
     if offset:
         cursor = cursor.skip(max(0, int(offset)))
@@ -3034,12 +3040,16 @@ async def list_dogs(user: dict = Depends(get_current_user), include_deleted: boo
     # (e.g. sex='male' lowercase from an old import or hand-edit) can't 500
     # the entire endpoint and lock the client out of their portal. The
     # response_model is intentionally strict; we normalise inputs here.
-    return [_normalize_dog_doc(d) for d in items]
+    rows = [_normalize_dog_doc(d) for d in items]
+    for r in rows:
+        r.pop("vaccine_certs", None)
+    return rows
 
 
 def _normalize_dog_doc(d: dict) -> dict:
     """Coerce legacy/malformed dog rows into the shape DogOut expects so the
     strict response_model never trips on a single bad apple. Idempotent."""
+    d["vaccines_pending_review"] = vaccines_domain.pending_review(d)
     sex = d.get("sex")
     if isinstance(sex, str):
         s = sex.strip().lower()
@@ -4372,15 +4382,10 @@ async def _create_booking_impl(body: BookingIn, user: dict = Depends(get_current
     )
     estimated_price = float(quote.get("estimated_price") or 0)
 
-    auto_approve = bool(rules.get("auto_approve", False))
-    if is_admin:
-        status_val = "approved"
-    elif svc_rules.get("require_approval") is True:
-        status_val = "pending"
-    elif svc_rules.get("instant_book") is True:
-        status_val = "approved"
-    else:
-        status_val = "approved" if auto_approve else "pending"
+    # Single source of truth — see _booking_outcome_for. The client wizard
+    # reads the same resolution through GET /services so what it promises is
+    # what gets written here.
+    status_val = _booking_outcome_for(settings, body.service_type, body.service_id, is_admin=is_admin)
 
     doc = {
         "id": str(uuid.uuid4()),
@@ -11082,6 +11087,15 @@ def _booking_flow_rules_for(settings: dict, service_type: str, service_id: Optio
             category["_exact_min_lead"] = "min_lead_hours" in exact and exact.get("min_lead_hours") is not None
             category["_exact_max_advance"] = "max_advance_days" in exact and exact.get("max_advance_days") is not None
     return category
+
+
+def _booking_outcome_for(settings: dict, service_type: str, service_id: Optional[str] = None,
+                         *, is_admin: bool = False) -> str:
+    """Status a NEW booking of this service gets — see domains/booking_rules."""
+    controls = _merge_booking_flow_controls((settings or {}).get("booking_flow_controls"))
+    return booking_rules.booking_outcome(
+        _booking_flow_rules_for(settings, service_type, service_id),
+        auto_approve=bool(controls.get("auto_approve", False)), is_admin=is_admin)
 
 
 def _default_dashboard_widgets() -> dict:
@@ -34157,6 +34171,23 @@ async def list_services(
     # locked-in legacy rates so the portal never shows the wrong price.
     if user.get("role") == "client" and user.get("client_id"):
         await _apply_client_overrides(items, user["client_id"], "service", "base_price")
+    # Stage 1 — tell the caller how a booking of this service will actually
+    # come out. The client booking wizard had no way to know, so it hardcoded
+    # "your booking will be reviewed and approved", which was wrong for every
+    # instant-book service. `books_as` is resolved by the same function the
+    # creation endpoint uses.
+    settings = await get_settings()
+    for it in items:
+        svc_rules = _booking_flow_rules_for(settings, it.get("service_type") or "other", it.get("id"))
+        it["books_as"] = _booking_outcome_for(settings, it.get("service_type") or "other", it.get("id"))
+        it["booking_flow"] = {
+            "instant_book": bool(svc_rules.get("instant_book")),
+            "require_approval": bool(svc_rules.get("require_approval")),
+            "client_booking_enabled": svc_rules.get("client_booking_enabled") is not False,
+            "same_day": svc_rules.get("same_day"),
+            "min_lead_hours": svc_rules.get("min_lead_hours"),
+            "max_advance_days": svc_rules.get("max_advance_days"),
+        }
     return items
 
 

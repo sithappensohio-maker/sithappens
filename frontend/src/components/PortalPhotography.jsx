@@ -134,7 +134,7 @@ function Lightbox({ photos, index, onClose, onPrev, onNext }) {
   );
 }
 
-export default function PortalPhotography({ pubSettings, client, services = [], onBookSession }) {
+export default function PortalPhotography({ pubSettings, client, services = [], onBookSession, onAskAboutPhotography }) {
   const [photos, setPhotos] = useState([]);
   const [lightboxIndex, setLightboxIndex] = useState(null);
 
@@ -147,6 +147,12 @@ export default function PortalPhotography({ pubSettings, client, services = [], 
     || "Professional pet photography sessions. Capture your pup's personality with a custom shoot.";
   const portfolioUrl = pubSettings?.client_portal_links?.photography_portfolio_url || "";
   const clientGalleryUrl = client?.photo_gallery_url || pubSettings?.client_portal_links?.photo_gallery_url || "";
+
+  // A session is bookable only when one is actually configured AND the client
+  // booking flow allows it — `client_booking_enabled` comes from the same
+  // booking_flow_controls the server enforces with.
+  const bookable = (services || []).some(
+    (svc) => svc && svc.active !== false && svc.booking_flow?.client_booking_enabled !== false);
 
   const closeLightbox = () => setLightboxIndex(null);
   const prevPhoto = () => setLightboxIndex((i) => (i - 1 + photos.length) % photos.length);
@@ -163,9 +169,19 @@ export default function PortalPhotography({ pubSettings, client, services = [], 
             <h1 className="text-2xl sm:text-4xl font-bold text-shText tracking-tight leading-tight mb-3">{headline}</h1>
             <p className="text-[14px] sm:text-[15px] text-shTextMuted max-w-xl leading-relaxed mb-5">{summary}</p>
             <div className="flex flex-wrap justify-center sm:justify-start gap-3">
-              <PremiumButton variant="orange" onClick={() => onBookSession()} data-testid="photography-book-session-btn">
-                <i className="fas fa-calendar-plus" /> Book a Session
-              </PremiumButton>
+              {/* Stage 1 — this button used to open the generic Book a Service
+                  wizard, which has no photography category at all, so a client
+                  who pressed it landed somewhere photography did not exist.
+                  It now only appears when there is a real bookable session. */}
+              {bookable ? (
+                <PremiumButton variant="orange" onClick={() => onBookSession()} data-testid="photography-book-session-btn">
+                  <i className="fas fa-calendar-plus" /> Book a Session
+                </PremiumButton>
+              ) : (
+                <PremiumButton variant="secondary" onClick={() => onAskAboutPhotography?.()} data-testid="photography-enquire-btn">
+                  <i className="fas fa-comments" /> Ask about a session
+                </PremiumButton>
+              )}
               {portfolioUrl && (
                 <PremiumButton variant="secondary" as="a" href={portfolioUrl} target="_blank" rel="noreferrer" data-testid="photography-view-galleries-btn">
                   <i className="fas fa-images" /> View Galleries
@@ -199,7 +215,10 @@ export default function PortalPhotography({ pubSettings, client, services = [], 
         </p>
         {services.length === 0 ? (
           <SectionCard accent="orange" intensity="subtle">
-            <p className="text-shTextMuted text-[13px]">No photography sessions have been configured yet — add them under Settings → Services &amp; Programs → Photography.</p>
+            <p className="text-shTextMuted text-[13px]">
+              Photo sessions are arranged with us directly at the moment — send us a message
+              and we&apos;ll sort out a date that works for you and your dog.
+            </p>
           </SectionCard>
         ) : (
           <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-3">

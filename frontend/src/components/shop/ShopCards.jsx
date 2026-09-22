@@ -274,7 +274,10 @@ export function GiftCardCard(props) {
         <i className="fas fa-gift text-shPrimary text-lg" aria-hidden="true" />
         <span className="text-[10px] font-black uppercase tracking-[0.18em] text-shTextMuted">Gift card</span>
       </div>
-      <p className="text-[40px] font-black text-shText leading-none mt-4 tabular-nums">
+      {/* Stage 1 — a fixed 40px was wider than the tile in a two-up phone
+          grid, so "$100.00" — the whole product — overflowed its own card.
+          The type now starts smaller and grows with the room available. */}
+      <p className="text-[28px] sm:text-[36px] lg:text-[40px] font-black text-shText leading-none mt-4 tabular-nums break-words">
         {money(item.price)}
       </p>
       <p className="text-[12px] text-shTextMuted mt-3 leading-relaxed"

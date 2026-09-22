@@ -7,8 +7,11 @@ import { usePublicEvents, eventsNavItem } from "./publicEvents";
 /**
  * The public website's frame: brand header with the site's navigation, a
  * phone-friendly drawer, and a footer with the business facts. Every public
- * page renders inside it. Signed-in visitors get "My portal" instead of
- * "Client login" so the website never hides the app from them.
+ * page renders inside it. Signed-in visitors get "My portal" instead.
+ *
+ * The signed-out label says "Sign in / Create account", not "Client login":
+ * registration lives behind this same door, and a first-time visitor has no
+ * reason to believe a button called Login is where you go to sign up.
  */
 function isActive(item, pathname) {
   if (item.to === "/") return pathname === "/";
@@ -35,7 +38,7 @@ export default function PublicSiteShell({ children, testid = "public-site" }) {
 
   const signedIn = !!user;
   const accountHref = signedIn ? "/" : "/login";
-  const accountLabel = signedIn ? "My portal" : "Client login";
+  const accountLabel = signedIn ? "My portal" : "Sign in / Create account";
   const phone = site?.phone;
   const tel = phone ? phone.replace(/[^\d+]/g, "") : "";
   const rows = hoursRows(data?.business_hours);

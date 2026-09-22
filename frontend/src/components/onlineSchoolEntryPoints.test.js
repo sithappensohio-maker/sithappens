@@ -29,7 +29,8 @@ test("the School entry point is the full-width HERO above the portal grid — ne
   // rendered full-width BEFORE the column grid (maximum prominence on
   // desktop and mobile alike).
   const heroIdx = portalSrc.indexOf("<OnlineSchoolHeroCard");
-  const gridIdx = portalSrc.indexOf('"grid grid-cols-1 md:grid-cols-3 gap-8"');
+  // Stable marker, not a Tailwind class string — see portal-home-grid.
+  const gridIdx = portalSrc.indexOf('data-testid="portal-home-grid"');
   const firstMoreWrapperIdx = portalSrc.indexOf('data-testid="portal-more-homeworkstreak-plans"');
   expect(heroIdx).toBeGreaterThan(-1);
   expect(gridIdx).toBeGreaterThan(-1);

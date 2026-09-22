@@ -98,7 +98,7 @@ export default function PublicHome() {
               <div className="mt-7 flex flex-col sm:flex-row flex-wrap gap-3" data-testid="site-hero-ctas">
                 <Cta color="green" onClick={bookFree} icon="fa-paw" testid="site-hero-book" className="sm:min-w-[240px]">Book a free consultation</Cta>
                 {showSchool && <Cta color="blue" href={ONLINE_SCHOOL_HREF} icon="fa-graduation-cap" testid="site-hero-free-course">Start the free course</Cta>}
-                <Cta color="ghost" to={user ? "/" : "/login"} icon={user ? "fa-house" : "fa-user"} testid="site-hero-login">{user ? "Go to my portal" : "Client login"}</Cta>
+                <Cta color="ghost" to={user ? "/" : "/login"} icon={user ? "fa-house" : "fa-user"} testid="site-hero-login">{user ? "Go to my portal" : "Sign in / Create account"}</Cta>
               </div>
               <p className="mt-4 text-[12px] uppercase tracking-widest font-black text-gray-500">
                 <i className="fas fa-shield-halved text-shGreen mr-1.5" />Vaccine-checked · <i className="fas fa-camera text-shOrange mx-1.5" />Daily report cards · <i className="fas fa-graduation-cap text-shBlue mx-1.5" />Trainer-built courses

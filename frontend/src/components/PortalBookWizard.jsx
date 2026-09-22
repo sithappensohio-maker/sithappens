@@ -1,5 +1,6 @@
 import { useEffect, useMemo, useState } from "react";
 import { api, formatErr } from "../lib/api";
+import { outcomeForService, outcomeForBooking, reviewPromise, successHeadline, successDetail } from "../lib/bookingOutcome";
 import MultiDatePicker from "./MultiDatePicker";
 import { useEditLock } from "../lib/useLiveRefresh";
 import { todayISO } from "../lib/date";
@@ -105,7 +106,11 @@ export default function PortalBookWizard({ dogs, seed, onClose, onBooked }) {
     [FEATURE_BY_SERVICE]
   );
   const [step, setStep] = useState(1);
-  const [dogId, setDogId] = useState(seed?.dog_id || dogs?.[0]?.id || "");
+  // One dog: pick it, there is nothing to choose. More than one: choose
+  // nothing. `dogs[0]` was whichever dog sorted first alphabetically, which
+  // is a guess dressed up as an answer — and the customer who skims lands on
+  // the review screen having booked for a dog they never picked.
+  const [dogId, setDogId] = useState(seed?.dog_id || (dogs?.length === 1 ? dogs[0].id : ""));
   const [serviceType, setServiceType] = useState(seed?.service_type || "");
   const [serviceId, setServiceId] = useState(seed?.service_id || "");
   const [catalogServices, setCatalogServices] = useState([]);
@@ -502,7 +507,9 @@ export default function PortalBookWizard({ dogs, seed, onClose, onBooked }) {
               <i className="fas fa-calendar-plus text-shSecondary mr-2"/>Book a Service
             </h3>
             <p className="text-[13px] font-semibold text-shTextMuted uppercase tracking-widest mt-1">
-              Step {step} of 3 · {step===1?"Pick service":step===2?"Pick date & time":"Review & confirm"}
+              {step >= 4
+                ? "Done"
+                : `Step ${step} of 3 · ${step===1?"Pick service":step===2?"Pick date & time":"Review & confirm"}`}
             </p>
           </div>
           <button onClick={onClose} className="text-shTextMuted hover:text-shText text-xl"><i className="fas fa-times"/></button>
@@ -519,14 +526,21 @@ export default function PortalBookWizard({ dogs, seed, onClose, onBooked }) {
         {step === 1 && (
           <div className="space-y-4">
             {dogs.length > 1 && (
-              <div>
-                <label className="text-[13px] uppercase tracking-widest text-gray-500 font-black">For which dog?</label>
+              <div data-testid="wiz-dog-picker">
+                <label className="text-[13px] uppercase tracking-widest text-gray-500 font-black">Who is this booking for?</label>
                 <select value={dogId} onChange={(e)=>setDogId(e.target.value)} data-testid="wiz-dog"
                         style={{ background: "var(--sh-card-base)" }}
-                        className="w-full mt-1 border border-shBorder rounded p-2 text-shText text-sm focus:outline-none focus:border-shSecondary/60">
+                        className={`w-full mt-1 min-h-[44px] border rounded p-2 text-shText text-sm focus:outline-none focus:border-shSecondary/60 ${
+                          dogId ? "border-shBorder" : "border-shAccent/70"}`}>
+                  <option value="">Choose a dog…</option>
                   {dogs.map(d => <option key={d.id} value={d.id}>{d.name} ({d.breed || "—"})</option>)}
                 </select>
               </div>
+            )}
+            {dogs.length === 1 && (
+              <p className="text-[13px] text-shTextMuted" data-testid="wiz-dog-only">
+                <i className="fas fa-paw text-shPrimary mr-1.5"/>Booking for <span className="font-black text-shText">{dogs[0].name}</span>
+              </p>
             )}
             <div>
               {!activeCategory ? (
@@ -598,6 +612,14 @@ export default function PortalBookWizard({ dogs, seed, onClose, onBooked }) {
                 </div>
               )}
             </div>
+            {/* A disabled control that says nothing is indistinguishable from a
+                broken one. Say which thing is still missing. */}
+            {(!dogId || !serviceType) && (
+              <p className="text-[13px] text-shAccent font-bold text-right" data-testid="wiz-step1-hint">
+                <i className="fas fa-circle-info mr-1.5"/>
+                {!dogId ? "Choose a dog to continue." : "Choose a service to continue."}
+              </p>
+            )}
             <div className="flex justify-end gap-2 pt-3">
               <PremiumButton variant="secondary" onClick={onClose}>Cancel</PremiumButton>
               <PremiumButton variant="cyan" onClick={()=>setStep(2)} disabled={!serviceType || !dogId} data-testid="wiz-step1-next">
@@ -1047,7 +1069,20 @@ export default function PortalBookWizard({ dogs, seed, onClose, onBooked }) {
               />
             )}
 
-            <p className="text-[14px] text-gray-500 text-center">Your booking will be reviewed and approved by Sit Happens.</p>
+            {(() => {
+              // Stage 1 — was hardcoded to "will be reviewed and approved",
+              // which contradicted every instant-book service. Silent when
+              // the server hasn't told us, rather than guessing.
+              const promise = reviewPromise(outcomeForService(selectedCatalogService));
+              return promise ? (
+                <p className="text-[14px] text-gray-500 text-center" data-testid="wiz-review-promise">{promise}</p>
+              ) : null;
+            })()}
+
+            {/* Payment: shown before Confirm, not only afterwards. Driven by
+                the admin's configured payment options; renders nothing when
+                none are configured, so no payment policy is invented here. */}
+            <PaymentOptionsCard compact />
 
             <div className="flex justify-between gap-2 pt-3">
               <PremiumButton variant="secondary" onClick={()=>setStep(2)}>
@@ -1074,17 +1109,15 @@ export default function PortalBookWizard({ dogs, seed, onClose, onBooked }) {
               <div className={`mx-auto w-14 h-14 rounded-full flex items-center justify-center ${acknowledgement.waitlisted ? "bg-shOrange/20" : "bg-shGreen/20"}`}>
                 <i className={`fas ${acknowledgement.waitlisted ? "fa-hourglass-half text-shOrange" : "fa-circle-check text-shGreen"} text-2xl`}/>
               </div>
-              <h2 className="text-xl font-black uppercase tracking-tight text-white mt-3">
-                {acknowledgement.waitlisted ? "Waitlist request submitted" : "Booking submitted!"}
+              <h2 className="text-xl font-black uppercase tracking-tight text-white mt-3" data-testid="wiz-ack-headline">
+                {successHeadline(outcomeForBooking(acknowledgement.booking), { waitlisted: acknowledgement.waitlisted })}
               </h2>
               <p className="text-[13px] text-gray-400 mt-1">
                 {acknowledgement.kind === "multi"
                   ? `${acknowledgement.count} booking${acknowledgement.count===1?"":"s"} sent for review${acknowledgement.waitlist_count?`, ${acknowledgement.waitlist_count} added to waitlist`:""}${acknowledgement.skipped && acknowledgement.skipped !== acknowledgement.waitlist_count?`, ${acknowledgement.skipped - (acknowledgement.waitlist_count || 0)} skipped`:""}.`
                   : acknowledgement.kind === "group"
-                    ? `${acknowledgement.count} dog${acknowledgement.count===1?"":"s"} booked together · we'll review and confirm shortly.`
-                    : (acknowledgement.waitlisted
-                        ? "We'll let you know when a spot opens up."
-                        : "We'll review and confirm your spot shortly.")}
+                    ? `${acknowledgement.count} dog${acknowledgement.count===1?"":"s"} booked together · ${successDetail(outcomeForBooking(acknowledgement.booking))}`
+                    : successDetail(outcomeForBooking(acknowledgement.booking), { waitlisted: acknowledgement.waitlisted })}
               </p>
             </div>
 

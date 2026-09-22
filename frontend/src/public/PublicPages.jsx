@@ -172,7 +172,7 @@ export function PublicContact() {
           <div className="sh-site-card">
             <p className="sh-site-footer__title">Already a client?</p>
             <p className="text-[14px] text-gray-300 leading-relaxed">Book, message us, and see report cards from your portal.</p>
-            <Link to="/login" className="inline-block mt-3 text-[12px] font-black uppercase tracking-widest text-shGreen hover:text-white" data-testid="site-contact-login">Client login <i className="fas fa-arrow-right ml-1" /></Link>
+            <Link to="/login" className="inline-block mt-3 text-[12px] font-black uppercase tracking-widest text-shGreen hover:text-white" data-testid="site-contact-login">Sign in / Create account <i className="fas fa-arrow-right ml-1" /></Link>
           </div>
         </div>
       </Section>

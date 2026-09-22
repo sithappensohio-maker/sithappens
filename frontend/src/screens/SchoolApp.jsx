@@ -413,10 +413,18 @@ export default function SchoolApp({ path, clientName, onNavigate, onExit }) {
     body = <div className="p-6"><StudentHome loading /></div>;
   } else if (list.length === 0) {
     body = (
-      <div className="p-6 max-w-md mx-auto">
+      // Stage 1 — this was a dead end: the only way out was "Back to Portal",
+      // while the marketing site invites people to start an online course.
+      // The way forward now goes first.
+      <div className="p-6 max-w-md mx-auto space-y-3">
         <EmptyState icon="fa-graduation-cap" accent="lime" title="No School program yet"
-                    description="When a Sit Happens training program is assigned to you, your in-person, online, or hybrid training home will appear here."
-                    ctaLabel="Back to Portal" onClick={onExit} />
+                    description="When a Sit Happens training program is assigned to you — or you start one yourself — your in-person, online, or hybrid training home appears here."
+                    ctaLabel="Browse Courses"
+                    onClick={() => { window.location.href = "/shop?section=online_school"; }} />
+        <button onClick={onExit} data-testid="school-empty-back"
+                className="w-full py-3 text-[12px] font-black uppercase tracking-widest text-shTextMuted hover:text-shText">
+          Back to Portal
+        </button>
       </div>
     );
   } else {

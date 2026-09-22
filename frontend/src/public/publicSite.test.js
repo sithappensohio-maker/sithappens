@@ -107,9 +107,10 @@ describe("wiring", () => {
     }
   });
 
-  test("the shell shows Client login to guests and My portal to signed-in visitors", () => {
+  test("the shell offers guests account creation, not just login, and My portal once signed in", () => {
     expect(shell).toMatch(/const accountHref = signedIn \? "\/" : "\/login";/);
-    expect(shell).toMatch(/const accountLabel = signedIn \? "My portal" : "Client login";/);
+    // The slash in the label has to be escaped or it closes the literal.
+    expect(shell).toMatch(/const accountLabel = signedIn \? "My portal" : "Sign in \/ Create account";/);
     expect(shell).toMatch(/data-testid="site-menu-toggle"/);
   });
 

@@ -43,10 +43,14 @@ export default function PremiumActionCard({
       />
 
       <div className="relative z-10 flex-1 min-w-0 sm:flex-none sm:mt-0.5">
-        <h3 className={`text-[16px] ${strong ? "sm:text-3xl" : "sm:text-2xl"} font-black text-white tracking-tight truncate sm:truncate-none sm:text-center`}>
+        <h3 className={`text-[16px] ${strong ? "sm:text-3xl" : "sm:text-2xl"} font-black text-white tracking-tight break-words sm:text-center`}>
           {title}
         </h3>
-        <p className="text-[12px] sm:text-[13px] text-gray-300/85 leading-snug mt-0.5 sm:mt-1 truncate sm:whitespace-normal sm:truncate-none sm:text-center sm:max-w-[250px] sm:mx-auto">
+        {/* Stage 1 — this was `truncate` below sm, so the three most important
+            actions on the client home screen each showed roughly half a
+            sentence on a phone ("Schedule daycare, boarding, training, groo…").
+            Vertical space on a stacked card is cheap; two lines is not. */}
+        <p className="text-[12px] sm:text-[13px] text-gray-300/85 leading-snug mt-0.5 sm:mt-1 line-clamp-2 sm:line-clamp-none sm:whitespace-normal sm:text-center sm:max-w-[250px] sm:mx-auto">
           {description}
         </p>
       </div>

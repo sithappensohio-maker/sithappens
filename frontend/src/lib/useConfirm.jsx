@@ -91,7 +91,14 @@ function ConfirmDialog({
           <h4 className="text-lg font-black text-shText tracking-tight flex-1">{title}</h4>
         </div>
         {body && <p className="text-[14px] text-shTextMuted leading-relaxed mb-5 whitespace-pre-wrap">{body}</p>}
-        <div className="flex flex-col-reverse sm:flex-row sm:justify-end gap-2">
+        {/* `flex-col-reverse` on phones puts the PRIMARY action under the
+            thumb, which is right for an ordinary confirm and wrong for a
+            destructive one — it lands the irreversible button exactly where a
+            thumb rests. Destructive dialogs stack safe-action-first instead.
+            Desktop is unchanged either way: safe on the left, destructive on
+            the right. Scoped to tone="danger", so only dialogs already marked
+            destructive are affected. */}
+        <div className={`flex ${tone === "danger" ? "flex-col" : "flex-col-reverse"} sm:flex-row sm:justify-end gap-2`}>
           <button onClick={onCancel} data-testid="confirm-no" className="min-h-11 px-5 rounded-lg border border-shBorder text-shTextMuted font-black text-[13px] hover:text-shText">
             {cancelText}
           </button>

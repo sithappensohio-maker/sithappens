@@ -6,7 +6,10 @@ import PremiumButton from "./premium/PremiumButton";
 
 const empty = {
   name: "", breed: "", age_y: 0, age_m: 0, birthday: "",
-  sex: "Male", fixed: "No",
+  // Stage 1 — these used to default to "Male" and "No", which meant every dog
+  // whose owner skipped the dropdowns was recorded as an intact male. A
+  // pre-filled guess that gets saved is worse than an empty field.
+  sex: "", fixed: "",
   vaccines: { rabies: "", bordetella: "", dhpp: "" },
   notes: "", photo: "",
   vet_name: "", vet_phone: "",
@@ -35,6 +38,7 @@ export default function PortalDogModal({ dog = null, onClose, onSaved, onUploadV
   } : empty);
   const [saving, setSaving] = useState(false);
   const [err, setErr] = useState("");
+  const [fieldErrors, setFieldErrors] = useState({});
   const isEdit = !!dog;
 
   const onFile = async (e) => {
@@ -45,23 +49,48 @@ export default function PortalDogModal({ dog = null, onClose, onSaved, onUploadV
 
   const set = (patch) => setForm((p) => ({ ...p, ...patch }));
 
+  // Stage 1 — one pass over every rule, so the client is told everything that
+  // is wrong at once. This used to `return` on the first failure and print a
+  // single sentence at the bottom of a modal three screens tall, naming a
+  // field that was scrolled off the top and not highlighted.
+  //
+  // Vet details are NOT required: backend PortalDogIn has them as
+  // Optional[str] = "", and the server's booking gate
+  // (_compute_setup_status_for_client) asks only for name, breed and an age.
+  // They were required by this form alone.
+  const validate = (f) => {
+    const problems = {};
+    if (!(f.name || "").trim())  problems.name  = "Please tell us your dog's name.";
+    if (!(f.breed || "").trim()) problems.breed = "Please add a breed — a best guess is fine.";
+    if (!f.sex)   problems.sex   = "Please choose one.";
+    if (!f.fixed) problems.fixed = "Please choose one.";
+    const hasBirthday = !!(f.birthday || "").trim();
+    const hasAge = (parseInt(f.age_y) || 0) > 0 || (parseInt(f.age_m) || 0) > 0;
+    if (!hasBirthday && !hasAge) problems.age = "Add a birthday, or an approximate age.";
+    return problems;
+  };
+  const FIELD_ORDER = ["name", "breed", "age", "sex", "fixed"];
+
   const save = async () => {
     setErr("");
-    // Sprint 110di — all dog fields required except birthday (alt to age),
-    // notes (qualitative), and photo (optional). Either birthday OR age must
-    // be filled so we still know how old the pup is.
-    const required = [
-      { k: "name",     label: "Name" },
-      { k: "breed",    label: "Breed" },
-      { k: "vet_name", label: "Vet name" },
-      { k: "vet_phone", label: "Vet phone" },
-    ];
-    for (const f of required) {
-      if (!(form[f.k] || "").toString().trim()) { setErr(`${f.label} is required`); return; }
+    const problems = validate(form);
+    setFieldErrors(problems);
+    const firstBad = FIELD_ORDER.find((k) => problems[k]);
+    if (firstBad) {
+      setErr(Object.keys(problems).length === 1
+        ? "One thing still needs your attention."
+        : `${Object.keys(problems).length} things still need your attention.`);
+      // Take them to it rather than describing it from a distance.
+      window.setTimeout(() => {
+        const el = document.querySelector(`[data-field="${firstBad}"]`);
+        if (el) {
+          el.scrollIntoView({ behavior: "smooth", block: "center" });
+          const focusable = el.querySelector("input, select, textarea");
+          if (focusable && typeof focusable.focus === "function") focusable.focus({ preventScroll: true });
+        }
+      }, 30);
+      return;
     }
-    const hasBirthday = !!(form.birthday || "").trim();
-    const hasAge = (parseInt(form.age_y) || 0) > 0 || (parseInt(form.age_m) || 0) > 0;
-    if (!hasBirthday && !hasAge) { setErr("Age (years/months) or birthday is required"); return; }
     setSaving(true);
     try {
       const body = {
@@ -75,9 +104,10 @@ export default function PortalDogModal({ dog = null, onClose, onSaved, onUploadV
         body.age_y = Math.floor(months / 12);
         body.age_m = months % 12;
       }
-      if (isEdit) await api.put(`/portal/dogs/${dog.id}`, body);
-      else await api.post("/portal/dogs", body);
-      onSaved?.();
+      const { data: saved } = isEdit
+        ? await api.put(`/portal/dogs/${dog.id}`, body)
+        : await api.post("/portal/dogs", body);
+      onSaved?.(saved || body);
       onClose();
     } catch (e) { setErr(formatErr(e.response?.data?.detail) || "Save failed"); }
     setSaving(false);
@@ -97,17 +127,24 @@ export default function PortalDogModal({ dog = null, onClose, onSaved, onUploadV
 
         <div className="space-y-4">
           <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
-            <Field label="Name" required>
+            <Field label="Name" required name="name" error={fieldErrors.name}>
               <input value={form.name} onChange={(e)=>set({name:e.target.value})} data-testid="pd-name"
                      className="w-full border border-shBorder rounded p-2 text-white text-sm focus:border-shGreen outline-none" />
             </Field>
-            <Field label="Breed" required>
+            <Field label="Breed" required name="breed" error={fieldErrors.breed}>
               <input value={form.breed} onChange={(e)=>set({breed:e.target.value})} placeholder="Golden Retriever"
                      className="w-full border border-shBorder rounded p-2 text-white text-sm focus:border-shGreen outline-none" />
             </Field>
           </div>
 
-          <div className="grid grid-cols-3 gap-3">
+          <div data-field="age" className={fieldErrors.age ? "rounded-lg -m-1 p-1 ring-1 ring-shOrange/60" : ""}>
+          {fieldErrors.age && (
+            <p className="mb-1 text-[12px] text-shOrange font-bold" data-testid="pd-error-age">
+              <i className="fas fa-circle-exclamation mr-1"/>{fieldErrors.age}
+            </p>
+          )}
+          <p className="text-[11px] text-shTextMuted mb-1">Know the birthday? Add it and we&apos;ll work out the age. Otherwise give us a rough age.</p>
+          <div className="grid grid-cols-2 sm:grid-cols-3 gap-3">
             {form.birthday ? (
               <>
                 <Field label="Age">
@@ -142,18 +179,21 @@ export default function PortalDogModal({ dog = null, onClose, onSaved, onUploadV
               </>
             )}
           </div>
+          </div>
 
-          <div className="grid grid-cols-2 gap-3">
-            <Field label="Sex">
-              <select value={form.sex} onChange={(e)=>set({sex:e.target.value})}
+          <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+            <Field label="Sex" required name="sex" error={fieldErrors.sex}>
+              <select value={form.sex} onChange={(e)=>set({sex:e.target.value})} data-testid="pd-sex"
                       className="w-full border border-shBorder rounded p-2 text-white text-sm">
-                <option>Male</option><option>Female</option>
+                <option value="">Select…</option>
+                <option value="Male">Male</option><option value="Female">Female</option>
               </select>
             </Field>
-            <Field label="Spayed / Neutered">
-              <select value={form.fixed} onChange={(e)=>set({fixed:e.target.value})}
+            <Field label="Spayed / Neutered" required name="fixed" error={fieldErrors.fixed}>
+              <select value={form.fixed} onChange={(e)=>set({fixed:e.target.value})} data-testid="pd-fixed"
                       className="w-full border border-shBorder rounded p-2 text-white text-sm">
-                <option>Yes</option><option>No</option>
+                <option value="">Select…</option>
+                <option value="Yes">Yes</option><option value="No">No</option>
               </select>
             </Field>
           </div>
@@ -167,7 +207,7 @@ export default function PortalDogModal({ dog = null, onClose, onSaved, onUploadV
               {isEdit ? " Use the button below to submit a new certificate." : " You can add certificates for this pup right after saving."}
             </p>
             <div className="grid grid-cols-1 sm:grid-cols-3 gap-2">
-              {[["rabies","Rabies"],["bordetella","Bordetella"],["dhpp","DHPP"]].map(([k,label]) => {
+              {[["rabies","Rabies"],["bordetella","Bordetella"],["dhpp","DHPP (distemper/parvo combo)"]].map(([k,label]) => {
                 const st = vaxStatusLabel(form.vaccines?.[k]);
                 return (
                   <div key={k} className="rounded border border-shBorder p-2.5" style={{ background: "var(--sh-card-base)" }} data-testid={`pd-vax-status-${k}`}>
@@ -198,11 +238,12 @@ export default function PortalDogModal({ dog = null, onClose, onSaved, onUploadV
           </Field>
 
           <div className="grid grid-cols-2 gap-3">
-            <Field label="Vet name" required>
+            <Field label="Vet name" name="vet_name"
+                   hint="Optional — so we can reach them in an emergency. You can add this later.">
               <input value={form.vet_name} onChange={(e)=>set({vet_name:e.target.value})}
                      className="w-full border border-shBorder rounded p-2 text-white text-sm" />
             </Field>
-            <Field label="Vet phone" required>
+            <Field label="Vet phone" name="vet_phone">
               <input value={form.vet_phone} onChange={(e)=>set({vet_phone:e.target.value})}
                      className="w-full border border-shBorder rounded p-2 text-white text-sm" />
             </Field>
@@ -227,11 +268,19 @@ export default function PortalDogModal({ dog = null, onClose, onSaved, onUploadV
   );
 }
 
-function Field({ label, required = false, children }) {
+function Field({ label, required = false, children, name, error, hint }) {
   return (
-    <div>
-      <label className="text-[15px] font-black text-gray-500 uppercase tracking-widest">{label}{required && <span className="text-shOrange ml-1">*</span>}</label>
+    <div data-field={name} className={error ? "rounded-lg -m-1 p-1 ring-1 ring-shOrange/60" : ""}>
+      <label className="text-[15px] font-black text-gray-500 uppercase tracking-widest break-words">
+        {label}{required && <span className="text-shOrange ml-1">*</span>}
+      </label>
       <div className="mt-1">{children}</div>
+      {error && (
+        <p className="mt-1 text-[12px] text-shOrange font-bold break-words" data-testid={`pd-error-${name}`}>
+          <i className="fas fa-circle-exclamation mr-1"/>{error}
+        </p>
+      )}
+      {!error && hint && <p className="mt-1 text-[11px] text-shTextMuted break-words">{hint}</p>}
     </div>
   );
 }

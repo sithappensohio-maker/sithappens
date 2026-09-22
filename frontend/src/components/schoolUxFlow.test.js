@@ -17,7 +17,10 @@ const schoolAppSrc = read("..", "screens", "SchoolApp.jsx");
 
 test("the Online School hero renders full-width ABOVE the portal column grid, not buried inside it", () => {
   const heroAt = portalSrc.indexOf("<OnlineSchoolHeroCard");
-  const gridAt = portalSrc.indexOf('"grid grid-cols-1 md:grid-cols-3 gap-8"');
+  // Anchored on a stable marker rather than a Tailwind class string, which
+  // broke the moment the home grid's breakpoints were fixed even though the
+  // School hero had not moved at all.
+  const gridAt = portalSrc.indexOf('data-testid="portal-home-grid"');
   expect(heroAt).toBeGreaterThan(-1);
   expect(gridAt).toBeGreaterThan(-1);
   expect(heroAt).toBeLessThan(gridAt);

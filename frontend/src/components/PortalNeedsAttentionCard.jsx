@@ -127,6 +127,23 @@ export function buildNeedsAttention({
     };
   }
 
+  // 5a. Vaccines the client HAS supplied that are sitting in our review queue.
+  //
+  // This tier used to not exist. Branch 5 only fires on `missing`, so a client
+  // who had uploaded everything and was waiting on us matched none of the
+  // setup branches and fell all the way through to the "You're all caught up"
+  // welcome state below — while the booking gate still said locked and the
+  // dog card still said the vaccine was missing. Three answers, one client.
+  if (vaccines && (vaccines.awaiting_review || []).length > 0) {
+    const first = vaccines.awaiting_review[0];
+    return {
+      kind: "setup", icon: "fa-clock", tone: "blue",
+      title: "We're reviewing your vaccine records",
+      text: `${first} is uploaded and waiting for our review. Booking unlocks automatically once it's approved.`,
+      entity: null, actionLabel: "View Vaccine Records", actionTarget: "vaccines",
+    };
+  }
+
   // 5b. Assigned required forms (same "must finish before booking" tier)
   const intake = byId.intake_forms;
   if (intake && intake.status !== "complete" && !intake.optional) {
@@ -205,6 +222,26 @@ export function buildNeedsAttention({
   }
 
   // Simple welcome state — nothing needs attention right now.
+  //
+  // Guarded by the server's own booking gate. If anything above was missed,
+  // "all caught up" is the one sentence this card must never print while
+  // `booking_locked` is true, so the gate gets the last word rather than the
+  // absence of a matching branch.
+  if (setupStatus && setupStatus.booking_locked === true) {
+    const remaining = steps.filter((x) => x.status !== "complete" && !(x.optional && x.status !== "in_progress"));
+    const next = remaining[0];
+    return {
+      kind: "setup", icon: "fa-list-check", tone: "orange",
+      title: "Finish your setup to unlock booking",
+      text: next
+        ? `Next: ${next.label}. ${setupStatus.completed_count ?? 0} of ${setupStatus.total_count ?? steps.length} steps done.`
+        : "A few setup steps are still outstanding.",
+      entity: null,
+      actionLabel: next?.action_label || "Open My Checklist",
+      actionTarget: next?.action_target || "intake",
+    };
+  }
+
   return {
     kind: "welcome", icon: "fa-paw", tone: "green",
     title: dogs.length ? "You're all caught up" : "Welcome to Sit Happens",
@@ -237,7 +274,10 @@ export default function PortalNeedsAttentionCard({
   return (
     <div className={`mb-4 sm:mb-6 rounded-2xl border ${tone.border} ${tone.bg} p-4 sm:p-5 shadow-sh`}
          data-testid="portal-needs-attention-card" data-kind={item.kind}>
-      <div className="flex flex-col sm:flex-row sm:items-center gap-4">
+      {/* Stage 1 — went to a row at `sm`, which with the 208px portal sidebar
+          left the headline about 95px of width at 768px. Same reasoning as the
+          home grid: stay stacked until there is room for a row. */}
+      <div className="flex flex-col lg:flex-row lg:items-center gap-4">
         <div className={`w-12 h-12 sm:w-14 sm:h-14 shrink-0 rounded-full ${tone.bg} border ${tone.border} ${tone.text} grid place-items-center text-xl sm:text-2xl`}>
           <i className={`fas ${item.icon}`}/>
         </div>
@@ -245,7 +285,7 @@ export default function PortalNeedsAttentionCard({
           <p className={`text-[12px] font-black uppercase tracking-[0.15em] ${tone.text}`}>
             {item.kind === "welcome" ? "Welcome" : "What you need to do"}
           </p>
-          <h2 className="text-[18px] sm:text-xl font-bold text-shText mt-1 leading-snug">{item.title}</h2>
+          <h2 className="text-[18px] sm:text-xl font-bold text-shText mt-1 leading-snug break-words">{item.title}</h2>
           <p className="text-[15px] text-shTextMuted mt-1 leading-relaxed">{item.text}</p>
           {item.entity && (
             <p className="text-[15px] text-shText font-semibold mt-1.5" data-testid="portal-needs-attention-entity">
@@ -254,7 +294,7 @@ export default function PortalNeedsAttentionCard({
           )}
         </div>
         <button type="button" onClick={handlePrimaryAction} data-testid="portal-needs-attention-action"
-                className={`${tone.button} min-h-[46px] px-5 py-3 rounded-xl font-black uppercase tracking-widest text-[14px] shadow-sh hover:brightness-110 active:scale-[0.98] transition shrink-0 w-full sm:w-auto`}>
+                className={`${tone.button} min-h-[46px] px-5 py-3 rounded-xl font-black uppercase tracking-widest text-[14px] shadow-sh hover:brightness-110 active:scale-[0.98] transition shrink-0 w-full lg:w-auto`}>
           {item.actionLabel}<i className="fas fa-arrow-right ml-2"/>
         </button>
       </div>

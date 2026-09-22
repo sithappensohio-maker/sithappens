@@ -2747,3 +2747,14 @@ html, body, #root {
 /* With an uploaded picture behind it, the banner's words get a shadow so they
    read over bright artwork, and the band grows so more of the picture shows. */
 .sh-event-banner--photo p, .sh-event-banner--photo span { text-shadow: 0 2px 4px rgba(0,0,0,.85), 0 0 18px rgba(0,0,0,.6); }
+
+/* Stage 1 — the decorative "Sit Happens" pill lives in the bottom-right
+   corner, which is exactly where sticky action bars put their primary button.
+   On the Shop it overlapped Checkout by 94x15px and, at z-50, won the hit
+   test: taps in that corner went to a watermark instead of to checkout.
+   Lowering its z-index and making it inert fixed the interception; this
+   removes the visual collision too, so the corner is not just clickable but
+   looks it. Any dock marks itself with data-bottom-dock. */
+body:has([data-bottom-dock]) [data-testid="brand-footer"] {
+  display: none !important;
+}

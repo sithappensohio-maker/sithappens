@@ -111,8 +111,8 @@ api.interceptors.response.use(
       err.response.data.detail = d.map((e) => {
         if (!e || typeof e !== "object") return String(e);
         const loc = Array.isArray(e.loc) ? e.loc.filter((x) => x !== "body").join(".") : "";
-        return loc ? `${loc}: ${e.msg || "invalid"}` : (e.msg || JSON.stringify(e));
-      }).join("; ");
+        return humanizeValidationMessage(loc, e.msg);
+      }).join(" ");
     } else if (d && typeof d === "object") {
       // Flattening `detail` to a string is what keeps legacy JSX renderers
       // from crashing on an object — but it also destroys every structured
@@ -344,6 +344,33 @@ for (const method of ["post", "put", "patch", "delete"]) {
     if (resources.length) invalidateSharedApiData(resources);
     return response;
   };
+}
+
+/* Stage 1 — Pydantic writes for developers, and this is the one place its
+ * words reach a customer. A short password came back as
+ * "password: String should have at least 8 characters", which a client read
+ * on the registration form with no idea what a "String" is.
+ *
+ * Only phrasings we recognise are rewritten; anything else passes through
+ * unchanged so no real error is ever swallowed or disguised.
+ */
+const FIELD_NAMES = {
+  password: "Password", email: "Email", name: "Name", phone: "Phone",
+  address: "Address", emerg: "Emergency contact", breed: "Breed",
+  vet_name: "Vet name", vet_phone: "Vet phone",
+};
+
+export function humanizeValidationMessage(loc, msg) {
+  const field = FIELD_NAMES[loc] || (loc ? loc.replace(/_/g, " ") : "");
+  const text = String(msg || "invalid");
+  let m = text.match(/should have at least (\d+) characters?/i);
+  if (m) return field ? `${field} needs at least ${m[1]} characters.` : `Needs at least ${m[1]} characters.`;
+  m = text.match(/should have at most (\d+) characters?/i);
+  if (m) return field ? `${field} must be ${m[1]} characters or fewer.` : `Must be ${m[1]} characters or fewer.`;
+  if (/field required/i.test(text)) return field ? `${field} is required.` : "A required field is missing.";
+  if (/valid email/i.test(text)) return "Please enter a valid email address.";
+  if (/should be a valid (integer|number)/i.test(text)) return field ? `${field} must be a number.` : "Must be a number.";
+  return field ? `${field}: ${text}` : text;
 }
 
 export function formatErr(detail) {

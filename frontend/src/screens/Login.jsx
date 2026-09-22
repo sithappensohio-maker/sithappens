@@ -101,6 +101,8 @@ export default function Login({ focus = false }) {
   const [password, setPassword] = useState("");
   const [name, setName] = useState("");
   const [refCode, setRefCode] = useState("");
+  // Referral entry is folded away until asked for; a ?ref= link opens it.
+  const [refOpen, setRefOpen] = useState(false);
   const [loading, setLoading] = useState(false);
   const [mfaCode, setMfaCode] = useState("");
   const [forgotOpen, setForgotOpen] = useState(false);
@@ -113,7 +115,7 @@ export default function Login({ focus = false }) {
     try {
       const params = new URLSearchParams(window.location.search);
       const ref = (params.get("ref") || "").toUpperCase().trim();
-      if (ref) { setRefCode(ref); setMode("register"); }
+      if (ref) { setRefCode(ref); setRefOpen(true); setMode("register"); }
     } catch {}
     // Pull the live services catalog so the "browse all" link shows a real
     // count and the modal renders genuine offerings.
@@ -122,9 +124,19 @@ export default function Login({ focus = false }) {
       .catch(() => setServices([]));
   }, []);
 
+  // Stage 1 — answer locally what we already know locally. This used to cost a
+  // round trip and come back as the raw validator string
+  // "PASSWORD: STRING SHOULD HAVE AT LEAST 8 CHARACTERS".
+  const pwTooShort = mode === "register" && password.length > 0 && password.length < 8;
+
   const onSubmit = async (e) => {
     e.preventDefault();
-    setLoading(true); setError("");
+    setError("");
+    if (!mfaChallenge && mode === "register") {
+      if (!name.trim()) { setError("Please enter your name."); return; }
+      if (password.length < 8) { setError("Your password needs at least 8 characters."); return; }
+    }
+    setLoading(true);
     if (mfaChallenge) await verifyMfa(mfaCode);
     else if (mode === "login") await login(email, password);
     else await register(email, password, name, refCode || undefined);
@@ -144,7 +156,7 @@ export default function Login({ focus = false }) {
   const authCard = (
     <div id="landing-auth" className="mt-8 max-w-md scroll-mt-24" data-testid="landing-auth-card">
       <p className="text-[11px] font-black uppercase tracking-[0.3em] text-gray-500 mb-3">
-        Already a client, or ready to sign up now?
+        {mode === "register" ? "Create your Sit Happens account" : "Already a client, or ready to sign up now?"}
       </p>
       <div className="relative bg-bgPanel border border-bgHover rounded-2xl p-6 sm:p-7 shadow-2xl sh-public-auth-card">
         <div className="flex gap-2 mb-5 bg-bgBase rounded-lg p-1">
@@ -177,13 +189,6 @@ export default function Login({ focus = false }) {
                 <input value={name} onChange={(e)=>setName(e.target.value)} required data-testid="register-name-input"
                        className="w-full mt-1 bg-bgBase border border-bgHover rounded p-2.5 text-white text-sm focus:border-shGreen outline-none"/>
               </div>
-              <div>
-                <label className="text-[12px] font-black text-gray-500 uppercase tracking-widest">Referral Code <span className="text-gray-600 normal-case font-normal">(optional)</span></label>
-                <input value={refCode} onChange={(e)=>setRefCode(e.target.value.toUpperCase())} maxLength={12} data-testid="register-refcode-input"
-                       placeholder="e.g. 7KTUMQ"
-                       className="w-full mt-1 bg-bgBase border border-bgHover rounded p-2.5 text-white text-sm font-mono uppercase focus:border-shGreen outline-none"/>
-                {refCode && <p className="text-[12px] text-shGreen mt-1 uppercase tracking-widest">Your friend gets a free daycare day once you finish your first appointment!</p>}
-              </div>
             </>
           )}
           <div>
@@ -197,7 +202,11 @@ export default function Login({ focus = false }) {
                    minLength={mode === "register" ? 8 : undefined} autoComplete={mode === "register" ? "new-password" : "current-password"}
                    data-testid="login-password-input"
                    className="w-full mt-1 bg-bgBase border border-bgHover rounded p-2.5 text-white text-sm focus:border-shBlue outline-none"/>
-            {mode === "register" && <p className="mt-1 text-[11px] text-gray-500">Use at least 8 characters.</p>}
+            {mode === "register" && (
+              <p className={`mt-1 text-[11px] ${pwTooShort ? "text-shOrange" : "text-gray-500"}`} data-testid="register-password-hint">
+                {pwTooShort ? `${password.length} of 8 characters minimum.` : "Use at least 8 characters."}
+              </p>
+            )}
             {mode === "login" && (
               <button type="button" onClick={()=>setForgotOpen(true)} data-testid="forgot-password-link"
                       className="mt-2 text-[12px] font-black uppercase tracking-widest text-shGreen hover:text-shGreen/80 transition">
@@ -205,6 +214,27 @@ export default function Login({ focus = false }) {
               </button>
             )}
           </div>
+          {/* Stage 1 — optional, rarely-used, and it used to sit second in the
+              form where a new customer read it as something they were missing.
+              Now it is last and folded away until asked for. */}
+          {mode === "register" && (
+            <div>
+              {refOpen ? (
+                <div>
+                  <label className="text-[12px] font-black text-gray-500 uppercase tracking-widest">Referral code <span className="text-gray-600 normal-case font-normal">(optional)</span></label>
+                  <input value={refCode} onChange={(e)=>setRefCode(e.target.value.toUpperCase())} maxLength={12} data-testid="register-refcode-input"
+                         placeholder="e.g. 7KTUMQ" autoFocus
+                         className="w-full mt-1 bg-bgBase border border-bgHover rounded p-2.5 text-white text-sm font-mono uppercase focus:border-shGreen outline-none"/>
+                  {refCode && <p className="text-[12px] text-shGreen mt-1 uppercase tracking-widest">Your friend gets a free daycare day once you finish your first appointment!</p>}
+                </div>
+              ) : (
+                <button type="button" onClick={()=>setRefOpen(true)} data-testid="register-refcode-toggle"
+                        className="py-2 text-[12px] font-black uppercase tracking-widest text-gray-500 hover:text-white">
+                  Have a referral code?
+                </button>
+              )}
+            </div>
+          )}
           </>}
           {error && <div data-testid="login-error" className="text-[13px] text-red-400 bg-red-500/10 rounded p-2.5 uppercase font-black">{error}</div>}
           <button type="submit" disabled={loading} data-testid="login-submit-button"
@@ -242,7 +272,9 @@ export default function Login({ focus = false }) {
         <div className="relative max-w-4xl mx-auto px-4 sm:px-6 py-10 sm:py-16 sh-splatter">
           <div className="max-w-md mx-auto">
             <p className="text-[11px] sm:text-[12px] font-black uppercase tracking-[0.35em] text-shGreen mb-3"><i className="fas fa-paw mr-2"/>Client portal</p>
-            <h1 className="sh-display text-4xl sm:text-5xl text-white leading-[0.95] mb-6">Welcome back.</h1>
+            <h1 className="sh-display text-4xl sm:text-5xl text-white leading-[0.95] mb-6" data-testid="login-heading">
+              {mode === "register" ? "Let's get started." : "Welcome back."}
+            </h1>
             {authCard}
             <div className="mt-6 flex flex-wrap gap-x-5 gap-y-2 text-[12px] uppercase tracking-widest font-black text-gray-500">
               <button type="button" onClick={() => setMeetGreetOpen(true)} className="hover:text-white" data-testid="login-meet-greet">New here? Request a Meet &amp; Greet</button>
