@@ -1,7 +1,7 @@
 import { guestItemCta, creditPackDisplayInfo, singularUnit } from "../../lib/shopPolish";
 import { isFreeClaimable } from "../../lib/freeCourseClaim";
 import { packValue } from "../../lib/shopDepartments";
-import { Price, Badges, Availability, ProductImage, CardShell, money } from "./ShopPrimitives";
+import { Price, Badges, Availability, ProductImage, CardShell, money, priceProps } from "./ShopPrimitives";
 
 /**
  * Four cards, because we sell four different kinds of thing.
@@ -116,7 +116,7 @@ export function MerchCard(props) {
             <p className="text-shPrimary font-black text-[18px]"
                data-testid={`shop-free-badge-${item.id}`}>FREE</p>
           ) : (
-            <Price amount={item.price} />
+            <Price {...priceProps(item)} />
           )}
           <Availability item={item} />
         </div>
@@ -194,7 +194,7 @@ export function TrainingCard(props) {
               <p className="text-shPrimary font-black text-[18px]"
                  data-testid={`shop-free-badge-${item.id}`}>FREE</p>
             ) : (
-              <Price amount={item.price} size="md" />
+              <Price {...priceProps(item)} size="md" />
             )}
             <div className="w-[150px] shrink-0">
               <CardAction {...props} addLabel={isSchool ? "Enrol" : "Add to Cart"} />

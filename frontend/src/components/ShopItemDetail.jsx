@@ -4,6 +4,7 @@ import { toast } from "sonner";
 import { isFreeClaimable, freePriceLabel, freeCourseCta, rememberFreeClaimIntent } from "../lib/freeCourseClaim";
 import { useDocumentMeta, publicOrigin } from "../lib/useDocumentMeta";
 import { itemMetaFor } from "../lib/shopSeo";
+import { Price, priceProps } from "./shop/ShopPrimitives";
 import PremiumButton from "./premium/PremiumButton";
 import NeonEdge from "./premium/NeonEdge";
 import HuskyDogImage from "./brand/HuskyDogImage";
@@ -48,11 +49,12 @@ function FormattedDescription({ text }) {
 function PriceBlock({ item, hiddenPriceMessage }) {
   const isShopify = item.kind === "product" && item.sales_destination === "shopify_external";
   if (isShopify) {
-    return item.shopify_display_price != null ? (
-      <p className="text-shPrimary font-black text-[26px]">
-        {item.shopify_from_price ? "From " : ""}{money(item.shopify_display_price)}
-      </p>
-    ) : null;
+    // One rule for both surfaces: the grid card and this page ask the same
+    // helper, so a variant-priced product cannot read "From $24.99" in one
+    // place and "$24.99" in the other. Saying where to find the price beats
+    // a blank space when Shopify never gave us one.
+    const resolved = priceProps(item);
+    return <Price {...resolved} size="lg" unknownLabel={resolved.unknownLabel || null} />;
   }
   // Public no-account storefront — price fields are simply ABSENT from the
   // response when hidden (never a zero/malformed value), so this must be

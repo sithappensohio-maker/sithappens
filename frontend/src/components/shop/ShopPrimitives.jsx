@@ -13,18 +13,61 @@ import { badgesFor } from "../../lib/shopDepartments";
 export const money = (n) => `$${Number(n || 0).toFixed(2)}`;
 
 /**
+ * The price line for one catalogue item.
+ *
+ * Shopify-linked products do not carry `price` the way our own products do —
+ * Shopify owns their price and we only mirror it (see
+ * backend/domains/shop/shopify_pricing). Reading `item.price` for one of them
+ * used to produce `money(undefined)`, which is `$0.00`, so the entire merch
+ * grid advertised itself as free.
+ *
+ * `null` means "we do not know", which is not the same as zero and must never
+ * be rendered as a number.
+ */
+export function priceProps(item) {
+  if (item?.sales_destination === "shopify_external") {
+    const resolved = item.shopify_price;
+    if (resolved && resolved.has_price) return { display: resolved.display };
+    // Older responses (and any client holding a cached payload from before
+    // the fix) only have the flat fields — read them rather than showing $0.
+    const flat = item.shopify_display_price;
+    if (flat != null && Number.isFinite(Number(flat)) && Number(flat) > 0) {
+      return { display: `${item.shopify_from_price ? "From " : ""}${money(flat)}` };
+    }
+    return { unknownLabel: "View price on Shopify" };
+  }
+  const amount = item?.price != null ? item.price : item?.effective_price;
+  return { amount };
+}
+
+/**
  * A price, at one of three weights.
  *
  * `was` renders a struck-through original ONLY when it is genuinely higher —
  * a "was" price that isn't higher is a lie, and passing one by accident
  * should show nothing rather than an insult.
+ *
+ * `display` is a string the server already formatted (so "From $24.99" is
+ * decided in one place); `unknownLabel` is what to say when there is no price
+ * to show. With neither, an unknown price renders nothing at all — silence
+ * beats inventing a number.
  */
-export function Price({ amount, was, size = "md", className = "" }) {
+export function Price({ amount, was, size = "md", className = "", display = null, unknownLabel = null }) {
   const scale = { sm: "text-[13px]", md: "text-[17px]", lg: "text-[26px] sm:text-[30px]" }[size] || "text-[17px]";
-  const showWas = was != null && Number(was) > Number(amount || 0);
+  const known = display != null || (amount != null && Number.isFinite(Number(amount)));
+  if (!known) {
+    if (!unknownLabel) return null;
+    return (
+      <span className={`text-shTextMuted font-bold ${size === "lg" ? "text-[15px]" : "text-[12px]"} ${className}`}
+            data-testid="shop-price-unknown">
+        {unknownLabel}
+      </span>
+    );
+  }
+  const showWas = display == null && was != null && Number(was) > Number(amount || 0);
   return (
     <span className={`inline-flex items-baseline gap-2 ${className}`} data-testid="shop-price">
-      <span className={`font-black text-shPrimary ${scale} tabular-nums`}>{money(amount)}</span>
+      <span className={`font-black text-shPrimary ${scale} tabular-nums`}>{display != null ? display : money(amount)}</span>
       {showWas && (
         <span className="text-[12px] text-shTextMuted line-through tabular-nums">{money(was)}</span>
       )}

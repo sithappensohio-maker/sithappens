@@ -76,6 +76,7 @@ from domains.training import services as training_domain_services
 from domains.pricing import services as pricing_domain_services
 from domains.pos import services as pos_domain_services
 from domains.bookings import services as bookings_domain_services
+from domains.shop import shopify_pricing
 from domains import booking_rules
 from domains import vaccines as vaccines_domain
 from domains import payment_timing
@@ -40743,6 +40744,7 @@ def _shop_manager_item_view(doc: dict, kind: str) -> dict:
             "shopify_product_url": doc.get("shopify_product_url"),
             "shopify_display_price": doc.get("shopify_display_price"),
             "shopify_from_price": bool(doc.get("shopify_from_price")),
+            **(_shopify_price_fields(doc) if is_shopify else {}),
             "track_inventory": bool(doc.get("track_inventory")),
             "stock_on_hand": round(float(doc.get("stock_on_hand") or 0), 2) if doc.get("track_inventory") else None,
             "low_stock_threshold": doc.get("low_stock_threshold"),
@@ -40913,6 +40915,13 @@ def _credit_pack_display_fields(pk: dict, qty: int, effective_price: float) -> d
     return out
 
 
+def _shopify_price_fields(doc: dict) -> dict:
+    """Price keys for a Shopify-linked catalogue row. See
+    domains/shop/shopify_pricing — `price` is None when unknown, never 0."""
+    r = shopify_pricing.resolve(doc)
+    return {"price": r["amount"], "shopify_price": r}
+
+
 def _listed_on(doc: dict) -> Optional[str]:
     """The DAY a catalog item was put on the shelf, for "New" badges and the
     Newest sort — never the raw stored timestamp.
@@ -41012,6 +41021,11 @@ async def _build_shop_catalog(client_id: Optional[str]) -> dict:
                 "shopify_product_url": p.get("shopify_product_url"),
                 "shopify_display_price": p.get("shopify_display_price"),
                 "shopify_from_price": bool(p.get("shopify_from_price")),
+                # This row used to carry no `price` at all, so the storefront
+                # card rendered money(undefined) and every Shopify product
+                # advertised itself as $0.00. None means "we do not know" and
+                # the card says so; it never falls back to zero.
+                **_shopify_price_fields(p),
                 "featured": bool(p.get("featured")),
                 # The day it went on the shelf, so the storefront can say "New"
                 # from a real date instead of guessing. No date, no badge.
@@ -41382,7 +41396,7 @@ _PUBLIC_FIELDS_COMMON = {
 # display_price_each are both derived from effective_price, so they belong
 # here too — a price-hidden pack must not leak its per-credit/per-unit rate
 # through these side-channel fields.
-_PUBLIC_FIELDS_PRICE = {"price", "list_price", "effective_price", "shopify_display_price", "shopify_from_price", "value_each", "display_price_each"}
+_PUBLIC_FIELDS_PRICE = {"price", "list_price", "effective_price", "shopify_display_price", "shopify_from_price", "value_each", "display_price_each", "shopify_price"}
 # sales_destination/shopify_product_url are NEVER price-gated — View Options
 # must keep working even when pricing is hidden.
 _PUBLIC_FIELDS_PRODUCT = {"sales_destination", "shopify_product_url"}
