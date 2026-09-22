@@ -154,3 +154,46 @@ def test_the_price_is_stripped_when_public_pricing_is_hidden():
     """shopify_price carries the amount, so it has to be gated like every
     other price field — otherwise it is a side channel around the setting."""
     assert "shopify_price" in server._PUBLIC_FIELDS_PRICE
+
+
+# ───────────────────────────────────── public storefront eligibility
+
+def test_a_public_shopify_listing_is_visible_but_never_guest_purchasable():
+    """Shopify listings may now be published to the guest storefront (both
+    editors used to hardcode publicly_visible False for them). The line that
+    must not move: a guest can LOOK at it and follow the link, but nothing is
+    bought on our side, so it can never be carted or checked out as a guest."""
+    from domains.shop import guest as shop_guest
+
+    doc = _shopify_product(shopify_display_price=15.99, publicly_visible=True,
+                           show_public_price=True, guest_cart_allowed=True)
+    # Even with guest_cart_allowed stored True -- the storefront must not be
+    # able to talk the server into a Shopify guest purchase.
+    reason = shop_guest.guest_block_reason("product", doc, price_visible=True)
+    assert reason, "a Shopify listing must never be guest-purchasable"
+    assert shop_guest.guest_purchasable("product", doc, price_visible=True) is False
+
+    state = server._public_purchase_state("product", doc)
+    assert state["publicly_visible"] is True, "it is allowed to be seen"
+    assert state["guest_cart_allowed"] is False, "but never bought here"
+
+
+def test_publishing_a_shopify_listing_restores_its_photography():
+    """The flag and the photo are the same story: is_catalog_public_image
+    serves an image only while its item is publicly_visible != False, so the
+    hardcoded False was also what broke these listings' pictures."""
+    from domains.shop import media as shop_media
+
+    mid = str(uuid.uuid4())
+    pid = str(uuid.uuid4())
+    run(server.db.pos_products.insert_one({
+        "id": pid, "name": f"{TAG} public shopify", "kind": "physical_product",
+        "active": True, "show_online": True, "archived": False,
+        "sales_destination": "shopify_external", "image_id": mid, "image_ids": [mid],
+        "publicly_visible": False}))
+    try:
+        assert run(shop_media.is_catalog_public_image(mid)) is False
+        run(server.db.pos_products.update_one({"id": pid}, {"$set": {"publicly_visible": True}}))
+        assert run(shop_media.is_catalog_public_image(mid)) is True
+    finally:
+        run(server.db.pos_products.delete_many({"id": pid}))

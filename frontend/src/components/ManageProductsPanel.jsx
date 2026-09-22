@@ -271,10 +271,14 @@ export function ProductEditor({ form, setForm, editingId, originalImageId, savin
         </div>
       )}
 
-      {/* Public no-account storefront — only meaningful for internally-
-          fulfilled, online-shown products. Shopify listings always bypass
-          these fields entirely (Shopify governs its own guest browsing). */}
-      {form.show_online && form.sales_destination === "internal" && (
+      {/* Public no-account storefront. A Shopify listing belongs here too:
+          on the guest storefront it is a display-only card whose button
+          hands the visitor to Shopify, which is exactly what we want a
+          stranger to be able to find. What it must never gain is a guest
+          CART or an account-gate, because nothing is bought on our side —
+          domains/shop/guest refuses it regardless, and those controls stay
+          internal-only so the form cannot imply otherwise. */}
+      {form.show_online && (
         <div className="border-t border-shBorder pt-3 mt-1 space-y-3">
           <p className="text-[11px] text-shTextMuted uppercase tracking-widest font-black">Public Storefront (signed-out visitors)</p>
           <div className="flex items-center gap-2">
@@ -284,18 +288,27 @@ export function ProductEditor({ form, setForm, editingId, originalImageId, savin
             <label htmlFor="publicly-visible" className="text-shText text-sm">Publicly Visible (shown to signed-out visitors)</label>
           </div>
           {form.publicly_visible && (
+            <div className="flex items-center gap-2">
+              <input type="checkbox" id="show-public-price" checked={form.show_public_price}
+                     onChange={(e) => setForm((f) => ({ ...f, show_public_price: e.target.checked }))}
+                     data-testid="product-show-public-price" />
+              <label htmlFor="show-public-price" className="text-shText text-sm">Show Price to Guests</label>
+            </div>
+          )}
+          {form.publicly_visible && form.sales_destination !== "internal" && (
+            <p className="text-[11px] text-shTextMuted" data-testid="product-shopify-public-note">
+              Guests will see this listing and can open it on Shopify. Checkout,
+              stock and payment stay with Shopify, so there is no guest cart or
+              account requirement to set here.
+            </p>
+          )}
+          {form.publicly_visible && form.sales_destination === "internal" && (
             <>
               <div className="flex items-center gap-2">
                 <input type="checkbox" id="guest-cart-allowed" checked={form.guest_cart_allowed}
                        onChange={(e) => setForm((f) => ({ ...f, guest_cart_allowed: e.target.checked }))}
                        data-testid="product-guest-cart-allowed" />
                 <label htmlFor="guest-cart-allowed" className="text-shText text-sm">Allow guests to add to cart — never allows guest checkout</label>
-              </div>
-              <div className="flex items-center gap-2">
-                <input type="checkbox" id="show-public-price" checked={form.show_public_price}
-                       onChange={(e) => setForm((f) => ({ ...f, show_public_price: e.target.checked }))}
-                       data-testid="product-show-public-price" />
-                <label htmlFor="show-public-price" className="text-shText text-sm">Show Price to Guests</label>
               </div>
               <div className="flex items-center gap-2">
                 <input type="checkbox" id="requires-approval" checked={form.requires_approval}
@@ -506,7 +519,10 @@ export default function ManageProductsPanel({ onClose, onChanged }) {
       shopify_product_url: isShopify ? form.shopify_product_url.trim() : null,
       shopify_display_price: (isShopify && form.shopify_display_price !== "") ? Number(form.shopify_display_price) : null,
       shopify_from_price: isShopify && form.shopify_from_price,
-      publicly_visible: !isShopify && form.publicly_visible,
+      // A Shopify listing may be public: it is a display-only card that sends
+      // the visitor to Shopify. Everything below it stays internal-only,
+      // because none of it describes buying something here.
+      publicly_visible: !!form.publicly_visible,
       guest_cart_allowed: !isShopify && form.publicly_visible && form.guest_cart_allowed,
       show_public_price: form.show_public_price,
       requires_approval: !isShopify && form.publicly_visible && form.requires_approval,

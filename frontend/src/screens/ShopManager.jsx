@@ -1648,7 +1648,8 @@ export default function ShopManager({ openCreateOnMount = false, onCreateConsume
       shopify_product_url: isShopify ? productForm.shopify_product_url.trim() : null,
       shopify_display_price: (isShopify && productForm.shopify_display_price !== "") ? Number(productForm.shopify_display_price) : null,
       shopify_from_price: isShopify && productForm.shopify_from_price,
-      publicly_visible: !isShopify && productForm.publicly_visible,
+      // See ManageProductsPanel: a Shopify listing is allowed to be public.
+      publicly_visible: !!productForm.publicly_visible,
       guest_cart_allowed: !isShopify && productForm.publicly_visible && productForm.guest_cart_allowed,
       show_public_price: productForm.show_public_price,
       requires_approval: !isShopify && productForm.publicly_visible && productForm.requires_approval,
