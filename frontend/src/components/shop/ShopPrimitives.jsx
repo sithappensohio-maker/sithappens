@@ -1,3 +1,5 @@
+import { useEffect, useState } from "react";
+import { api } from "../../lib/api";
 import { shopImageProps } from "../../lib/shopImage";
 import { badgesFor } from "../../lib/shopDepartments";
 
@@ -121,14 +123,67 @@ export function Availability({ item, className = "" }) {
  * has its final shape on first paint and nothing jumps as photographs load.
  * That is the whole job — the derivative picking is `shopImageProps`.
  */
+/**
+ * `<img>` props for one Shop image, with the recovery every Shop surface needs.
+ *
+ * The fast derivative route (/shop/media/<id>/<size>) is unauthenticated — an
+ * `<img>` cannot send a bearer token — so it serves an image only while its
+ * item is publicly visible. A signed-in client legitimately sees products that
+ * are not: both product editors save `publicly_visible: false` for anything
+ * kept off the guest storefront, and for every Shopify listing unconditionally.
+ * Those images 404'd and the browser painted the alt text instead, which is
+ * what "changing the photo didn't work" looked like — the photo saved fine,
+ * its delivery had been revoked.
+ *
+ * On that 404 we ask the authenticated JSON route, exactly as that endpoint's
+ * own docstring says callers should. A guest has no such route and falls
+ * through to the caller's placeholder, which is the correct answer for them.
+ */
+export function useShopImage(imageId, surface, isPublic) {
+  const [fallbackSrc, setFallbackSrc] = useState(null);
+  const [unavailable, setUnavailable] = useState(false);
+
+  useEffect(() => { setFallbackSrc(null); setUnavailable(false); }, [imageId]);
+
+  if (!imageId || unavailable) return { props: null, unavailable: true };
+  const base = shopImageProps(imageId, surface, { public: isPublic });
+  if (!base) return { props: null, unavailable: true };
+
+  const onError = () => {
+    if (isPublic || fallbackSrc) { setUnavailable(true); return; }
+    api.get(`/shop/media/${encodeURIComponent(imageId)}`)
+      // `data` is stored as a complete data: URL, so it drops straight into src.
+      .then((r) => {
+        const src = r?.data?.data;
+        if (typeof src === "string" && src) setFallbackSrc(src);
+        else setUnavailable(true);
+      })
+      .catch(() => setUnavailable(true));
+  };
+
+  // A 404 from a local backend can land BEFORE React attaches its listener,
+  // and a missed error event is a permanently broken image. By the time the
+  // ref runs, an image that already failed reports complete with no width —
+  // so ask it directly rather than trusting the event to have been heard.
+  const ref = (el) => {
+    if (el && el.complete && el.naturalWidth === 0 && !fallbackSrc) onError();
+  };
+
+  // The fallback is one concrete file, so srcSet/sizes would only confuse it.
+  const props = fallbackSrc
+    ? { src: fallbackSrc, loading: base.loading, decoding: base.decoding }
+    : base;
+  return { props: { ...props, onError, ref }, unavailable: false };
+}
+
 export function ProductImage({ item, surface = "card", ratio = "4 / 5", alt, isPublic, className = "" }) {
   const imageId = (item?.image_ids || []).filter(Boolean)[0] || item?.image_id || null;
-  const img = imageId ? shopImageProps(imageId, surface, { public: isPublic }) : null;
+  const { props } = useShopImage(imageId, surface, isPublic);
   return (
     <div className={`relative overflow-hidden rounded-xl bg-black/30 ${className}`}
          style={{ aspectRatio: ratio }} data-testid="shop-product-image">
-      {img ? (
-        <img {...img} alt={alt || item?.name || ""}
+      {props ? (
+        <img {...props} alt={alt || item?.name || ""}
              className="absolute inset-0 w-full h-full object-cover transition-[transform,opacity] duration-300 motion-reduce:transition-none" />
       ) : (
         <div className="absolute inset-0 grid place-items-center text-shTextMuted/50">

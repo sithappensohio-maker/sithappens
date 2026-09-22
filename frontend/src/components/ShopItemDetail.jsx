@@ -4,7 +4,7 @@ import { toast } from "sonner";
 import { isFreeClaimable, freePriceLabel, freeCourseCta, rememberFreeClaimIntent } from "../lib/freeCourseClaim";
 import { useDocumentMeta, publicOrigin } from "../lib/useDocumentMeta";
 import { itemMetaFor } from "../lib/shopSeo";
-import { Price, priceProps } from "./shop/ShopPrimitives";
+import { Price, priceProps, useShopImage } from "./shop/ShopPrimitives";
 import PremiumButton from "./premium/PremiumButton";
 import NeonEdge from "./premium/NeonEdge";
 import HuskyDogImage from "./brand/HuskyDogImage";
@@ -132,7 +132,7 @@ function ProductGallery({ ids, alt, isPublic, fallbackSrc }) {
   useEffect(() => { setActive(0); }, [ids.join(",")]);
 
   const current = ids[active] || null;
-  const hero = shopImageProps(current, "pdp", { public: isPublic });
+  const hero = useShopImage(current, "pdp", isPublic).props;
   const zoom = shopImageProps(current, "zoom", { public: isPublic });
 
   // Arrow keys move along the strip the way a listbox does, so the gallery
