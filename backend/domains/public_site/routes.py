@@ -11,6 +11,7 @@ from pydantic import BaseModel, EmailStr, Field
 from typing import Any, Dict, List, Literal, Optional
 
 import email_service
+from domains import program_pricing
 
 # -------- Contact inquiry (public "Tell us about your dog" questionnaire) --------
 # The landing page's second door: someone who doesn't yet know whether they
@@ -290,24 +291,36 @@ def register_public_site_routes(
         A program stays off the website when it is inactive, dog-specific, or
         marked not publicly visible; its price shows only when show_public_price
         allows and a real price is set."""
+        # Publication is opt-IN. This used to read `publicly_visible != False`,
+        # so a program nobody had ever thought about was on the marketing site
+        # by default — which is how hundreds of internal and retired rows ended
+        # up publicly listed. `active` is an operational fact; being on the
+        # website is a marketing decision, and the two are not the same thing.
         rows = await db.programs.find(
             {
                 "active": True,
                 "$or": [{"owner_dog_id": None}, {"owner_dog_id": {"$exists": False}}],
-                "publicly_visible": {"$ne": False},
+                "publicly_visible": True,
                 "type": {"$nin": ["self_guided", "online"]},
                 "delivery_mode": {"$nin": ["self_guided", "online"]},
             },
             {"_id": 0, "id": 1, "slug": 1, "name": 1, "type": 1, "description": 1, "focus": 1, "format": 1,
              "min_age_months": 1, "prereq_slugs": 1, "price": 1, "show_public_price": 1, "available_online": 1,
-             "featured": 1, "image_id": 1, "online_description": 1},
+             "featured": 1, "image_id": 1, "online_description": 1,
+             "public_price_mode": 1, "public_price_amount": 1, "public_price_unit": 1},
         ).to_list(500)
         name_by_slug = {r.get("slug"): r.get("name") for r in rows if r.get("slug")}
         out = []
         for p in rows:
-            price = p.get("price")
-            show_price = p.get("show_public_price", True) is not False and isinstance(price, (int, float)) and price > 0
+            # One explicit pricing line, or "Contact us for pricing". Nothing
+            # is derived from session counts or service rates — see
+            # domains/program_pricing for why that arithmetic is a guess.
+            pricing = program_pricing.resolve(p)
+            if p.get("show_public_price") is False:
+                pricing = {"mode": program_pricing.CONTACT, "display": program_pricing.CONTACT_COPY,
+                           "amount": None, "unit": None, "has_price": False}
             out.append({
+                "pricing": pricing,
                 "id": p.get("id"), "slug": p.get("slug"), "name": p.get("name"),
                 "type": p.get("type") or "private_lessons",
                 "type_label": _PUBLIC_PROGRAM_TYPE_LABELS.get(p.get("type"), "Training"),
@@ -316,7 +329,7 @@ def register_public_site_routes(
                 "format": p.get("format") or None,
                 "min_age_months": p.get("min_age_months"),
                 "prerequisites": [name_by_slug.get(sl, sl) for sl in (p.get("prereq_slugs") or [])],
-                "price": float(price) if show_price else None,
+                "price": pricing["amount"] if pricing["has_price"] else None,
                 "available_online": bool(p.get("available_online")),
                 "featured": bool(p.get("featured")),
                 "image_url": f"/api/public/shop/media/{p['image_id']}" if p.get("image_id") else None,

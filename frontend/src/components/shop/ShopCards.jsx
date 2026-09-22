@@ -36,7 +36,10 @@ function useCta(item, mode) {
 }
 
 function ActionButton({ children, onClick, variant = "primary", disabled, testId, title }) {
-  const base = "w-full relative z-20 px-3 py-2.5 rounded-lg text-[12px] font-black uppercase "
+  // min-h-[44px]: py-2.5 on 12px text lands at 41px, just under the comfortable
+  // touch target, and this is the one button every shop card ends with.
+  const base = "w-full relative z-20 min-h-[44px] inline-flex items-center justify-center "
+    + "px-3 py-2.5 rounded-lg text-[12px] font-black uppercase "
     + "tracking-[0.1em] transition focus-visible:outline focus-visible:outline-2 "
     + "focus-visible:outline-offset-2 focus-visible:outline-shPrimary";
   const look = disabled

@@ -220,7 +220,7 @@ export default function PortalDogModal({ dog = null, onClose, onSaved, onUploadV
             </div>
             {isEdit && onUploadVaccines && (
               <button type="button" onClick={() => onUploadVaccines(dog)} data-testid="pd-upload-vaccines-cta"
-                      className="w-full bg-shBlue/15 hover:bg-shBlue/25 text-shBlue text-[12px] font-black uppercase tracking-widest px-3 py-2 rounded border border-shBlue/30 transition">
+                      className="w-full min-h-[44px] bg-shBlue/15 hover:bg-shBlue/25 text-shBlue text-[12px] font-black uppercase tracking-widest px-3 py-2 rounded border border-shBlue/30 transition">
                 <i className="fas fa-camera mr-1.5"/>Upload / update vaccine certificate
               </button>
             )}

@@ -423,7 +423,7 @@ export default function PortalEngagementHub({
               />
             </div>
           ) : (
-            <div className="relative z-10 grid grid-cols-1 sm:grid-cols-2 gap-2.5">
+            <div className="relative z-10 grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-1 xl:grid-cols-2 gap-2.5">
               {dogSnapshots.slice(0, 4).map((row) => {
                 const dogAccent = TONE_ACCENT[row.tone] || "lime";
                 return (
@@ -470,7 +470,7 @@ export default function PortalEngagementHub({
       <NeonEdge accentRgb={accentRgb("neutral")} intensity="subtle" className="p-4 sm:p-5" data-testid="portal-recent-activity">
         <div className="flex items-center justify-between gap-3 mb-3">
           <h3 className="text-[15px] font-bold text-shText">Recent Activity</h3>
-          <button type="button" onClick={onBookings} className="text-[11px] font-black uppercase tracking-widest text-shSecondary hover:underline">All bookings <i className="fas fa-arrow-right ml-1"/></button>
+          <button type="button" onClick={onBookings} className="inline-flex items-center min-h-[44px] py-2 px-1 -mx-1 text-[11px] font-black uppercase tracking-widest text-shSecondary hover:underline">All bookings <i className="fas fa-arrow-right ml-1"/></button>
         </div>
         {activity.length === 0 ? (
           <div className="border border-dashed border-shBorder rounded-xl p-5 text-center">

@@ -1,4 +1,5 @@
 import { useEffect, useState } from "react";
+import { pricingLine } from "../lib/programPricing";
 import { Link } from "react-router-dom";
 import { api } from "../lib/api";
 import RequestMeetGreetModal from "../components/RequestMeetGreetModal";
@@ -95,7 +96,9 @@ export function ProgramCard({ p, onAsk, testid }) {
       </dl>
       <div className="mt-auto pt-4 flex items-center justify-between gap-3">
         <span className="text-[18px] font-black text-white" data-testid={`${testid || `site-program-${p.id}`}-price`}>
-          {p.price != null ? money(p.price) : <span className="text-[12px] text-gray-400 uppercase tracking-widest">Ask for pricing</span>}
+          {p.pricing?.has_price
+            ? p.pricing.display
+            : <span className="text-[13px] text-gray-300 normal-case tracking-normal">{pricingLine(p)}</span>}
         </span>
         <button type="button" onClick={onAsk} className="text-[12px] font-black uppercase tracking-widest text-shGreen hover:text-white transition">
           Ask about this <i className="fas fa-arrow-right ml-1" />
@@ -164,7 +167,7 @@ export function FinalCta({ site, onMeetGreet, onInquiry, meetGreetEnabled = true
         <div className="flex-1 min-w-0">
           <Title as="h2">Ready for a better life together?</Title>
           <p className="text-[15px] text-gray-300 leading-relaxed mt-3 max-w-xl">
-            Book your free consultation today and take the first step toward a happier, better-behaved best friend. No pressure, just solutions.
+            Book a free Meet &amp; Greet and take the first step toward a happier, better-behaved best friend. No pressure, just solutions.
           </p>
           <ul className="mt-3 flex flex-wrap gap-x-5 gap-y-1.5 text-[12px] uppercase tracking-widest font-black text-gray-400">
             <li><i className="fas fa-check text-shGreen mr-1.5" />No pressure, just solutions</li>
@@ -174,10 +177,10 @@ export function FinalCta({ site, onMeetGreet, onInquiry, meetGreetEnabled = true
         </div>
         <div className="flex flex-col gap-3 shrink-0 w-full lg:w-auto">
           {meetGreetEnabled
-            ? <Cta color="green" onClick={onMeetGreet} icon="fa-paw" testid={`${testid}-meet-greet`}>Book a free consultation</Cta>
-            : <Cta color="green" onClick={onInquiry} icon="fa-paw" testid={`${testid}-meet-greet`}>Book a free consultation</Cta>}
+            ? <Cta color="green" onClick={onMeetGreet} icon="fa-paw" testid={`${testid}-meet-greet`}>Book a free Meet &amp; Greet</Cta>
+            : <Cta color="green" onClick={onInquiry} icon="fa-paw" testid={`${testid}-meet-greet`}>Tell us about your dog</Cta>}
           <Cta color="ghost" onClick={onInquiry} icon="fa-pen-to-square" testid={`${testid}-inquiry`}>Tell us about your dog</Cta>
-          {site?.phone && <a href={`tel:${site.phone.replace(/[^\d+]/g, "")}`} className="text-center text-[12px] font-black uppercase tracking-widest text-gray-400 hover:text-white"><i className="fas fa-phone mr-1.5" />or call {site.phone}</a>}
+          {site?.phone && <a href={`tel:${site.phone.replace(/[^\d+]/g, "")}`} className="inline-flex items-center justify-center min-h-[44px] py-2 text-center text-[12px] font-black uppercase tracking-widest text-gray-400 hover:text-white"><i className="fas fa-phone mr-1.5" />or call {site.phone}</a>}
         </div>
       </div>
     </div>

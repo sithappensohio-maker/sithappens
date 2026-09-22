@@ -126,7 +126,11 @@ test("removeModule's confirmation still names the skill count being removed, unc
 // ExpandableSection, never rewritten.
 test("SetupTab's price and storefront fields are unchanged controlled inputs, just regrouped", () => {
   expect(studioSrc).toMatch(/data-testid="prog-price"/);
-  expect(studioSrc).toMatch(/data-testid="prog-publicly-visible"/);
+  // Stage 2 — public visibility moved into its own "Public Website" section
+  // and got a clearer testid. The old control only rendered for online-school
+  // programs, so an in-person program had no way to be published at all.
+  expect(studioSrc).toMatch(/data-testid="prog-show-on-public-site"/);
+  expect(studioSrc).toMatch(/data-testid="prog-price-mode"/);
   expect(studioSrc).toMatch(/value=\{program\.price \?\? 0\}/);
 });
 

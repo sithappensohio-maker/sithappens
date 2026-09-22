@@ -1015,14 +1015,14 @@ export default function PortalShop({
             <button onClick={() => { setFavoritesOpen((v) => !v); setOrdersOpen(false); }}
                     data-testid="shop-saved-toggle"
                     aria-expanded={favoritesOpen}
-                    className="border border-shBorder text-shTextMuted hover:text-shText px-3 py-2 rounded-md text-[11px] font-bold uppercase tracking-widest hover:border-shPrimary/50 transition"
+                    className="border border-shBorder text-shTextMuted hover:text-shText px-3 py-2 min-h-[44px] inline-flex items-center rounded-md text-[11px] font-bold uppercase tracking-widest hover:border-shPrimary/50 transition"
                     style={{ background: "var(--sh-card-base)" }}>
               <i className={`${favorites.count > 0 ? "fas" : "far"} fa-heart mr-1`} aria-hidden="true" />
               Saved{favorites.count > 0 && <span className="hidden sm:inline"> ({favorites.count})</span>}
             </button>
           )}
           <button onClick={() => { setOrdersOpen((o) => !o); setFavoritesOpen(false); }} data-testid="shop-my-orders-toggle"
-                  className="border border-shBorder text-shTextMuted hover:text-shText px-3 py-2 rounded-md text-[11px] font-bold uppercase tracking-widest hover:border-shPrimary/50 transition"
+                  className="border border-shBorder text-shTextMuted hover:text-shText px-3 py-2 min-h-[44px] inline-flex items-center rounded-md text-[11px] font-bold uppercase tracking-widest hover:border-shPrimary/50 transition"
                   style={{ background: "var(--sh-card-base)" }}>
             <i className="fas fa-receipt mr-1" />My Orders
           </button>

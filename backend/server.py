@@ -78,6 +78,8 @@ from domains.pos import services as pos_domain_services
 from domains.bookings import services as bookings_domain_services
 from domains import booking_rules
 from domains import vaccines as vaccines_domain
+from domains import payment_timing
+from domains import program_pricing
 from domains.register import services as register_domain_services
 from domains.performance import services as performance_domain_services
 from domains.gift_cards import online as gift_card_online
@@ -11010,83 +11012,12 @@ def _default_payment_options() -> list:
     ]
 
 
-def _default_booking_flow_controls() -> dict:
-    """Booking rules at two levels.
-
-    ``per_service`` keeps the historical category defaults (daycare, boarding,
-    training, etc.). ``per_catalog_service`` stores optional overrides keyed by
-    the actual service catalog row id. This lets two services in the same
-    category — for example a Private Lesson and a Service Dog Evaluation — use
-    different booking rules without creating a second booking system.
-    """
-    return {
-        "per_service": {
-            "daycare":     {"require_approval": False, "instant_book": True,  "same_day": True,  "min_lead_hours": None, "max_advance_days": None},
-            "boarding":    {"require_approval": True,  "instant_book": False, "same_day": False, "min_lead_hours": None, "max_advance_days": None},
-            "training":    {"require_approval": True,  "instant_book": False, "same_day": False, "min_lead_hours": None, "max_advance_days": None},
-            "grooming":    {"require_approval": True,  "instant_book": False, "same_day": False, "min_lead_hours": None, "max_advance_days": None},
-            "photography": {"require_approval": True,  "instant_book": False, "same_day": False, "min_lead_hours": None, "max_advance_days": None},
-            "other":       {"require_approval": True,  "instant_book": False, "same_day": False, "min_lead_hours": None, "max_advance_days": None},
-        },
-        # Exact service-row overrides. Missing keys inherit from the category.
-        # client_booking_enabled=False removes that individual service from the
-        # client picker and rejects direct client POSTs server-side.
-        "per_catalog_service": {},
-        # When a service is at capacity, do we auto-offer the waitlist?
-        # Falls through to feature_visibility.waitlist as a master switch.
-        "waitlist_on_capacity":   True,
-        # When a service is at capacity AND waitlist is off, what to show?
-        "capacity_reached_copy":  "We're full for that day — please pick another date.",
-        # Sprint 110di-26 — Show clients a live price estimate in the
-        # booking wizard before they submit. Uses the existing service
-        # catalog (base_price, optional additional_dog_rate) and the
-        # client's existing credit balances. Does NOT auto-consume
-        # credits or require payment — it's informational only.
-        "show_price_estimate":    True,
-    }
-
-
-def _merge_booking_flow_controls(saved) -> dict:
-    """Deep-merge saved booking controls with safe defaults.
-
-    A shallow ``{**defaults, **saved}`` loses nested category defaults whenever
-    an older install has only a partial map. This helper also preserves custom
-    service-id rows while filling any missing rule keys at read time.
-    """
-    base = _default_booking_flow_controls()
-    if not isinstance(saved, dict):
-        return base
-    out = {**base, **saved}
-    saved_categories = saved.get("per_service") if isinstance(saved.get("per_service"), dict) else {}
-    out["per_service"] = {
-        key: {**defaults, **(saved_categories.get(key) or {})}
-        for key, defaults in base["per_service"].items()
-    }
-    # Preserve any non-standard categories from restored/older data.
-    for key, row in saved_categories.items():
-        if key not in out["per_service"] and isinstance(row, dict):
-            out["per_service"][key] = dict(row)
-    exact = saved.get("per_catalog_service")
-    out["per_catalog_service"] = dict(exact) if isinstance(exact, dict) else {}
-    return out
-
-
-def _booking_flow_rules_for(settings: dict, service_type: str, service_id: Optional[str] = None) -> dict:
-    """Resolve effective rules for one booking. Exact service rules override
-    category defaults; omitted exact keys inherit from the category row.
-    """
-    controls = _merge_booking_flow_controls((settings or {}).get("booking_flow_controls"))
-    category = dict((controls.get("per_service") or {}).get(service_type) or {})
-    if service_id:
-        exact = (controls.get("per_catalog_service") or {}).get(service_id)
-        if isinstance(exact, dict):
-            # None means "inherit" for numeric override fields. Booleans must
-            # keep False, so filter only null values rather than falsy values.
-            category.update({k: v for k, v in exact.items() if v is not None})
-            category["_exact_same_day"] = "same_day" in exact and exact.get("same_day") is not None
-            category["_exact_min_lead"] = "min_lead_hours" in exact and exact.get("min_lead_hours") is not None
-            category["_exact_max_advance"] = "max_advance_days" in exact and exact.get("max_advance_days") is not None
-    return category
+# Booking-flow controls — defaults, the deep merge and per-booking resolution
+# all live in domains/booking_rules now. These names are kept because ~30 call
+# sites read them; they are the same functions, not wrappers.
+_default_booking_flow_controls = booking_rules.default_controls
+_merge_booking_flow_controls = booking_rules.merge_controls
+_booking_flow_rules_for = booking_rules.rules_for
 
 
 def _booking_outcome_for(settings: dict, service_type: str, service_id: Optional[str] = None,
@@ -11099,9 +11030,7 @@ def _booking_outcome_for(settings: dict, service_type: str, service_id: Optional
 
 
 def _default_dashboard_widgets() -> dict:
-    """Admin dashboard widget visibility. All default True (current
-    behavior preserved). Hides only the visual surface — underlying
-    queries/data still run so reports stay accurate."""
+    """Widget visibility only — the underlying queries still run."""
     return {
         "hero_card":         True,
         "today_tasks":       False,  # Sprint 110di-72 — hidden by default; operator can re-enable in Settings → Dashboard widgets
@@ -11648,6 +11577,9 @@ async def save_settings(body: SettingsIn, _: dict = Depends(require_admin_and_pe
             merged["per_service"] = merged_categories
         if "per_catalog_service" in incoming:
             merged["per_catalog_service"] = dict(incoming.get("per_catalog_service") or {})
+        bad_payment = payment_timing.assert_configurable(merged)
+        if bad_payment:
+            raise HTTPException(status_code=422, detail=bad_payment)
         update["booking_flow_controls"] = merged
 
     if isinstance(update.get("shop_page"), dict):
@@ -16667,6 +16599,10 @@ class ProgramIn(BaseModel):
     # never whether they can complete a purchase.
     publicly_visible: Optional[bool] = None
     show_public_price: bool = True
+    # Explicit public pricing, never inferred — see domains/program_pricing.
+    public_price_mode: Optional[str] = None
+    public_price_amount: Optional[float] = None
+    public_price_unit: Optional[str] = None
     requires_dog: bool = False
     requires_approval: bool = False
     requires_completed_onboarding: bool = False
@@ -34171,23 +34107,13 @@ async def list_services(
     # locked-in legacy rates so the portal never shows the wrong price.
     if user.get("role") == "client" and user.get("client_id"):
         await _apply_client_overrides(items, user["client_id"], "service", "base_price")
-    # Stage 1 — tell the caller how a booking of this service will actually
-    # come out. The client booking wizard had no way to know, so it hardcoded
-    # "your booking will be reviewed and approved", which was wrong for every
-    # instant-book service. `books_as` is resolved by the same function the
-    # creation endpoint uses.
+    # Booking outcome + payment timing — see domains/booking_rules.
     settings = await get_settings()
+    auto = bool(_merge_booking_flow_controls(settings.get("booking_flow_controls")).get("auto_approve", False))
     for it in items:
-        svc_rules = _booking_flow_rules_for(settings, it.get("service_type") or "other", it.get("id"))
-        it["books_as"] = _booking_outcome_for(settings, it.get("service_type") or "other", it.get("id"))
-        it["booking_flow"] = {
-            "instant_book": bool(svc_rules.get("instant_book")),
-            "require_approval": bool(svc_rules.get("require_approval")),
-            "client_booking_enabled": svc_rules.get("client_booking_enabled") is not False,
-            "same_day": svc_rules.get("same_day"),
-            "min_lead_hours": svc_rules.get("min_lead_hours"),
-            "max_advance_days": svc_rules.get("max_advance_days"),
-        }
+        rules = _booking_flow_rules_for(settings, it.get("service_type") or "other", it.get("id"))
+        booking_rules.project_service(it, rules, auto_approve=auto,
+                                      payment=payment_timing.describe(rules.get("payment_timing")))
     return items
 
 
@@ -34219,6 +34145,10 @@ async def public_list_services():
         {"_id": 0, "id": 1, "name": 1, "description": 1, "base_price": 1,
          "service_type": 1, "color": 1, "icon": 1, "duration_minutes": 1},
     ).sort("name", 1).to_list(500)
+    settings = await get_settings()
+    for it in items:
+        rules = _booking_flow_rules_for(settings, it.get("service_type") or "other", it.get("id"))
+        it["payment"] = payment_timing.describe(rules.get("payment_timing"))
     return items
 
 

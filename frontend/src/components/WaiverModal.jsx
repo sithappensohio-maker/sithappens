@@ -5,6 +5,10 @@ import PremiumButton from "./premium/PremiumButton";
 export default function WaiverModal({ waiverText, version, dogNames, onSigned, onClose, allowClose=false }) {
   const [typedName, setTypedName] = useState("");
   const [accepted, setAccepted] = useState(false);
+  // Derived from the live waiver text, so the callout appears only when the
+  // clause is genuinely there — an operator who rewrites the waiver without
+  // tool authorisation should not see a warning about one.
+  const mentionsTools = /prong|e-?collar|electronic collar|slip lead/i.test(waiverText || "");
   const [err, setErr] = useState("");
   const [saving, setSaving] = useState(false);
 
@@ -46,6 +50,27 @@ export default function WaiverModal({ waiverText, version, dogNames, onSigned, o
           </div>
           {allowClose && <button onClick={onClose} className="text-shTextMuted hover:text-shText"><i className="fas fa-times text-xl" /></button>}
         </div>
+
+        {/* The training-tools clause lives inside the scroll box below, where
+            somebody can reasonably say they never saw it. It is called out
+            here so it is read before it is agreed to. The waiver text itself
+            is unchanged — this only points at a clause already in it. */}
+        {mentionsTools && (
+          <div className="border border-shAccent/50 bg-shAccent/10 rounded-xl p-4 mb-4" data-testid="waiver-tools-callout">
+            <p className="text-[12px] font-black uppercase tracking-widest text-shAccent">
+              <i className="fas fa-circle-exclamation mr-1.5"/>Please read this part in particular
+            </p>
+            <p className="text-[13px] text-shText mt-2 leading-relaxed">
+              This waiver includes your authorisation for balanced training tools — which can
+              include slip leads, prong collars and e-collars — to be used where our trainers
+              judge them appropriate for your dog. The full wording is in the waiver below.
+            </p>
+            <p className="text-[12px] text-shTextMuted mt-2 leading-relaxed">
+              If you would rather we didn&apos;t, talk to us before signing. We will tell you
+              what we would use with your dog and why.
+            </p>
+          </div>
+        )}
 
         <div className="border border-shBorder rounded p-5 mb-6 max-h-80 overflow-y-auto" style={{ background: "var(--sh-card-base)" }} data-testid="waiver-text">
           {renderText(waiverText)}

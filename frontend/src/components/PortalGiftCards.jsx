@@ -178,7 +178,7 @@ export default function PortalGiftCards() {
       {/* ── buying one ──────────────────────────────────────────────── */}
       <div className="mt-5 pt-4 border-t border-shBorder">
         <button onClick={() => setBuyOpen((v) => !v)} data-testid="portal-gift-buy-toggle"
-                className="text-shPrimary text-[12px] font-black uppercase tracking-widest">
+                className="inline-flex items-center min-h-[44px] py-2 px-1 -mx-1 text-shPrimary text-[12px] font-black uppercase tracking-widest">
           <i className="fas fa-gift mr-1.5" />Send someone a gift card
         </button>
 

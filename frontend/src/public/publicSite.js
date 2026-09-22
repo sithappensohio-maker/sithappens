@@ -30,6 +30,10 @@ export const PUBLIC_NAV = [
   { key: "home", label: "Home", to: "/" },
   { key: "training", label: "Training", to: "/training" },
   { key: "daycare", label: "Daycare & Boarding", to: "/#daycare-boarding" },
+  // Grooming is a real, configured service that the website never mentioned.
+  // The section hides itself when nothing is configured; this link resolves to
+  // that section, so an empty install simply lands at the top of the page.
+  { key: "grooming", label: "Grooming", to: "/#grooming" },
   { key: "school", label: "Online School", to: "/shop?section=online_school" },
   { key: "photography", label: "Pet Photography", to: "/photography" },
   { key: "about", label: "About Us", to: "/about" },

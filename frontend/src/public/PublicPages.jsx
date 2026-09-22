@@ -26,7 +26,7 @@ export function PublicAbout() {
               <p className="text-base sm:text-lg text-gray-300 leading-relaxed mt-4 max-w-2xl">{ABOUT.body}</p>
               <p className="mt-5 sh-display text-xl sm:text-2xl text-shGreen">“{ABOUT.quote}”</p>
               <div className="mt-6 flex flex-col sm:flex-row flex-wrap gap-3">
-                <Cta color="green" onClick={meetGreetEnabled ? openMeetGreet : openInquiry} icon="fa-paw" testid="site-about-book">Book a free consultation</Cta>
+                <Cta color="green" onClick={meetGreetEnabled ? openMeetGreet : openInquiry} icon="fa-paw" testid="site-about-book">Book a free Meet &amp; Greet</Cta>
                 <Cta color="ghost" to="/training" icon="fa-graduation-cap" testid="site-about-training">See training programs</Cta>
               </div>
             </div>
@@ -57,7 +57,7 @@ export function PublicAbout() {
           <div className="sh-site-card">
             <p className="sh-site-footer__title">Visit</p>
             {site?.address_line && <p className="text-[15px] text-white">{site.address_line}<br />{site.city}, {site.state} {site.zip}</p>}
-            {site?.map_url && <a href={site.map_url} target="_blank" rel="noopener noreferrer" className="inline-block mt-3 text-[12px] font-black uppercase tracking-widest text-shGreen hover:text-white" data-testid="site-about-directions">Get directions <i className="fas fa-arrow-up-right-from-square ml-1" /></a>}
+            {site?.map_url && <a href={site.map_url} target="_blank" rel="noopener noreferrer" className="inline-flex items-center min-h-[44px] py-2 mt-3 text-[12px] font-black uppercase tracking-widest text-shGreen hover:text-white" data-testid="site-about-directions">Get directions <i className="fas fa-arrow-up-right-from-square ml-1" /></a>}
           </div>
           <div className="sh-site-card">
             <p className="sh-site-footer__title">Hours</p>
@@ -141,7 +141,7 @@ export function PublicContact() {
           <p className="text-base sm:text-lg text-gray-300 leading-relaxed mt-4 max-w-2xl">Send us a message and we'll get back to you within one business day. Or skip the form and call, we answer the phone.</p>
           <div className="mt-6 flex flex-col sm:flex-row flex-wrap gap-3">
             <Cta color="green" onClick={openInquiry} icon="fa-pen-to-square" testid="site-contact-inquiry">Tell us about your dog</Cta>
-            <Cta color="orange" onClick={meetGreetEnabled ? openMeetGreet : openInquiry} icon="fa-paw" testid="site-contact-meet-greet">Request a Meet & Greet</Cta>
+            <Cta color="orange" onClick={meetGreetEnabled ? openMeetGreet : openInquiry} icon="fa-paw" testid="site-contact-meet-greet">Book a free Meet &amp; Greet</Cta>
             {tel && <Cta color="ghost" href={`tel:${tel}`} icon="fa-phone" testid="site-contact-call">Call {site.phone}</Cta>}
           </div>
         </div>
@@ -172,7 +172,7 @@ export function PublicContact() {
           <div className="sh-site-card">
             <p className="sh-site-footer__title">Already a client?</p>
             <p className="text-[14px] text-gray-300 leading-relaxed">Book, message us, and see report cards from your portal.</p>
-            <Link to="/login" className="inline-block mt-3 text-[12px] font-black uppercase tracking-widest text-shGreen hover:text-white" data-testid="site-contact-login">Sign in / Create account <i className="fas fa-arrow-right ml-1" /></Link>
+            <Link to="/login" className="inline-flex items-center min-h-[44px] py-2 mt-3 text-[12px] font-black uppercase tracking-widest text-shGreen hover:text-white" data-testid="site-contact-login">Sign in / Create account <i className="fas fa-arrow-right ml-1" /></Link>
           </div>
         </div>
       </Section>

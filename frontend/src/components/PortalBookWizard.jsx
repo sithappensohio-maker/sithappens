@@ -1079,7 +1079,16 @@ export default function PortalBookWizard({ dogs, seed, onClose, onBooked }) {
               ) : null;
             })()}
 
-            {/* Payment: shown before Confirm, not only afterwards. Driven by
+            {/* WHEN payment is expected — resolved per service on the server
+                (domains/payment_timing). Separate from PaymentOptionsCard
+                below, which answers HOW they can pay. */}
+            {selectedCatalogService?.payment?.detail && (
+              <p className="text-[14px] text-gray-400 text-center" data-testid="wiz-payment-timing">
+                <i className="fas fa-wallet text-shPrimary mr-1.5"/>{selectedCatalogService.payment.detail}
+              </p>
+            )}
+
+            {/* HOW to pay: shown before Confirm, not only afterwards. Driven by
                 the admin's configured payment options; renders nothing when
                 none are configured, so no payment policy is invented here. */}
             <PaymentOptionsCard compact />
@@ -1120,6 +1129,12 @@ export default function PortalBookWizard({ dogs, seed, onClose, onBooked }) {
                     : successDetail(outcomeForBooking(acknowledgement.booking), { waitlisted: acknowledgement.waitlisted })}
               </p>
             </div>
+
+            {selectedCatalogService?.payment?.detail && (
+              <p className="text-[13px] text-gray-400 text-center" data-testid="wiz-ack-payment-timing">
+                <i className="fas fa-wallet text-shPrimary mr-1.5"/>{selectedCatalogService.payment.detail}
+              </p>
+            )}
 
             <PaymentOptionsCard compact />
 

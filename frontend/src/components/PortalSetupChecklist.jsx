@@ -358,7 +358,7 @@ export default function PortalSetupChecklist({ onAction = () => {}, onHelp = nul
                   <button
                     onClick={() => goTo(s.action_target)}
                     data-testid={`portal-setup-step-action-${s.id}`}
-                    className="mt-3 w-full bg-shPrimary text-bgHeader text-[12px] sm:text-[13px] font-black uppercase tracking-widest py-2.5 sm:py-2 rounded hover:bg-shPrimary/90 active:scale-[0.98] transition min-h-[40px]"
+                    className="mt-3 w-full bg-shPrimary text-bgHeader text-[12px] sm:text-[13px] font-black uppercase tracking-widest py-2.5 sm:py-2 rounded hover:bg-shPrimary/90 active:scale-[0.98] transition min-h-[44px]"
                   >
                     <i className="fas fa-arrow-right mr-2"/>{s.action_label}
                   </button>
@@ -373,7 +373,7 @@ export default function PortalSetupChecklist({ onAction = () => {}, onHelp = nul
                   <button
                     onClick={() => goTo("dogs")}
                     data-testid="portal-setup-add-another-dog"
-                    className="mt-3 w-full bg-shSecondary/15 text-shSecondary text-[12px] font-black uppercase tracking-widest py-2 rounded hover:bg-shSecondary/25 transition border border-shSecondary/30"
+                    className="mt-3 w-full min-h-[44px] bg-shSecondary/15 text-shSecondary text-[12px] font-black uppercase tracking-widest py-2 rounded hover:bg-shSecondary/25 transition border border-shSecondary/30"
                   >
                     <i className="fas fa-plus mr-2"/>Add Another Dog
                   </button>
@@ -382,7 +382,7 @@ export default function PortalSetupChecklist({ onAction = () => {}, onHelp = nul
                   <button
                     onClick={() => goTo("vaccines")}
                     data-testid="portal-setup-update-vaccines"
-                    className="mt-3 w-full bg-shSecondary/15 text-shSecondary text-[12px] font-black uppercase tracking-widest py-2 rounded hover:bg-shSecondary/25 transition border border-shSecondary/30"
+                    className="mt-3 w-full min-h-[44px] bg-shSecondary/15 text-shSecondary text-[12px] font-black uppercase tracking-widest py-2 rounded hover:bg-shSecondary/25 transition border border-shSecondary/30"
                   >
                     <i className="fas fa-rotate mr-2"/>Update Vaccine Records
                   </button>

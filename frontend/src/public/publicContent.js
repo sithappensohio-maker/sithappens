@@ -8,8 +8,8 @@ export const PROBLEMS = ["Leash pulling", "Jumping", "Barking", "Not listening",
 
 export const PROMISE = {
   eyebrow: "Better behavior. Happier life.",
-  consult_title: "Your dog's path to success starts with a free consultation.",
-  consult_body: "Every training package starts with a free in-person consultation. We assess your dog's behavior, discuss your goals, and create a personalized path forward.",
+  consult_title: "Your dog's path to success starts with a free Meet & Greet.",
+  consult_body: "Every training package starts with a free in-person Meet & Greet. We assess your dog's behavior, discuss your goals, and create a personalized path forward.",
   consult_points: ["No pressure. Just solutions.", "Personalized training plan.", "Local trainers who care."],
 };
 
@@ -22,7 +22,7 @@ export const PILLARS = [
 
 export const HOW_TO_BOOK = [
   { n: 1, title: "Tell us about your dog", body: "Two minutes, no account. Or request a free Meet & Greet straight from this page." },
-  { n: 2, title: "Free consultation", body: "We meet your dog, talk through goals, and recommend a plan. No pressure." },
+  { n: 2, title: "Free Meet & Greet", body: "We meet your dog, talk through goals, and recommend a plan. No pressure." },
   { n: 3, title: "Book from your portal", body: "Daycare, boarding, lessons and photo sessions, all from your phone, with report cards after every visit." },
 ];
 

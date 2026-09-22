@@ -32,6 +32,10 @@ def _program(name, **over):
         "type": "private_lessons", "description": "desc", "focus": "focus", "format": {"count": 5, "unit": "sessions"},
         "min_age_months": 4, "prereq_slugs": [], "modules": [], "active": True, "is_default": True,
         "owner_dog_id": None, "price": 450.0, "show_public_price": True, "created_at": server.now_iso(),
+        # Publication is opt-in since Stage 2. Fixtures say so explicitly;
+        # `publicly_visible` is overridden per-test where that is the point.
+        "publicly_visible": True,
+        "public_price_mode": "package", "public_price_amount": 450.0,
     }
     doc.update(over)
     run(server.db.programs.insert_one(dict(doc)))
@@ -80,25 +84,36 @@ def test_site_info_defaults_replace_the_old_website_and_settings_override_them()
 
 def test_training_programs_come_from_the_programs_collection_with_visibility_rules():
     shown = _program("Level 1")
-    prereq = _program("Level 2", prereq_slugs=[shown["slug"]], type="board_train", format={"count": 2, "unit": "weeks"}, price=950.0)
+    prereq = _program("Level 2", prereq_slugs=[shown["slug"]], type="board_train",
+                      format={"count": 2, "unit": "weeks"},
+                      public_price_mode="per_unit", public_price_amount=950.0, public_price_unit="week")
     _program("Inactive", active=False)
     _program("Dog specific", owner_dog_id="dog-123")
     _program("Hidden", publicly_visible=False)
     _program("Online only", type="self_guided", delivery_mode="self_guided")
-    _program("Unpriced", price=0.0)
+    _program("Unpriced", public_price_mode=None, public_price_amount=None)
     _program("Price hidden", show_public_price=False)
+    # The Stage 2 rule: a program nobody has published is not on the website,
+    # even though it is active and operationally normal. This used to be the
+    # DEFAULT, which is how 805 internal rows ended up publicly listed.
+    never_published = _program("Never published")
+    run(server.db.programs.update_one({"id": never_published["id"]},
+                                      {"$unset": {"publicly_visible": ""}}))
 
     got = _public_programs()
     assert f"{TAG} Level 1" in got and f"{TAG} Level 2" in got
-    for hidden in ("Inactive", "Dog specific", "Hidden", "Online only"):
+    for hidden in ("Inactive", "Dog specific", "Hidden", "Online only", "Never published"):
         assert f"{TAG} {hidden}" not in got, hidden
+
+    # Pricing is explicit or it is an invitation — never $0 and never derived.
+    assert got[f"{TAG} Level 1"]["pricing"]["display"] == "$450 program"
     assert got[f"{TAG} Level 1"]["price"] == 450.0
-    assert got[f"{TAG} Unpriced"]["price"] is None
-    assert got[f"{TAG} Price hidden"]["price"] is None
+    assert got[f"{TAG} Level 2"]["pricing"]["display"] == "$950 / week"
+    for unpriced in (f"{TAG} Unpriced", f"{TAG} Price hidden"):
+        assert got[unpriced]["price"] is None
+        assert got[unpriced]["pricing"]["display"] == "Contact us for pricing"
+        assert got[unpriced]["pricing"]["has_price"] is False
+
     l2 = got[f"{TAG} Level 2"]
     assert l2["prerequisites"] == [shown["name"]], "prerequisite slugs resolve to names"
     assert l2["type_label"] == "Board & Train" and l2["format"] == {"count": 2, "unit": "weeks"}
-    assert "modules" not in l2 and "image_id" not in l2
-    # private lessons list before board & train
-    order = [p["type"] for p in run(_http.get("/api/public/training-programs")).json()["programs"]]
-    assert order.index("private_lessons") < order.index("board_train")

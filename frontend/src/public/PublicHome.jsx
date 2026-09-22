@@ -68,6 +68,22 @@ export default function PublicHome() {
 
   const daycareServices = services.filter((s) => s.service_type === "daycare");
   const boardingServices = services.filter((s) => s.service_type === "boarding");
+  // /public/services already returns these; the page just never rendered them,
+  // so the website has never mentioned a service the app fully supports. Shown
+  // only when grooming is switched on AND something is actually configured —
+  // an empty grooming section would be advertising nothing.
+  const groomingServices = services.filter((s) => s.service_type === "grooming");
+  const showGrooming = fv.grooming !== false && groomingServices.length > 0;
+
+  // "What does it cost" and "when do I pay" are halves of the same question,
+  // so each pricing card carries one payment line. The services in a card
+  // normally share a category default, and repeating it on every row would be
+  // noise; when they genuinely differ we say nothing rather than pick one and
+  // tell some visitors the wrong thing.
+  const paymentNote = (list) => {
+    const distinct = [...new Set(list.map((x) => x.payment?.short).filter(Boolean))];
+    return distinct.length === 1 ? distinct[0] : null;
+  };
 
   return (
     <PublicSiteShell testid="public-home">
@@ -96,7 +112,7 @@ export default function PublicHome() {
                 ))}
               </ul>
               <div className="mt-7 flex flex-col sm:flex-row flex-wrap gap-3" data-testid="site-hero-ctas">
-                <Cta color="green" onClick={bookFree} icon="fa-paw" testid="site-hero-book" className="sm:min-w-[240px]">Book a free consultation</Cta>
+                <Cta color="green" onClick={bookFree} icon="fa-paw" testid="site-hero-book" className="sm:min-w-[240px]">Book a free Meet &amp; Greet</Cta>
                 {showSchool && <Cta color="blue" href={ONLINE_SCHOOL_HREF} icon="fa-graduation-cap" testid="site-hero-free-course">Start the free course</Cta>}
                 <Cta color="ghost" to={user ? "/" : "/login"} icon={user ? "fa-house" : "fa-user"} testid="site-hero-login">{user ? "Go to my portal" : "Sign in / Create account"}</Cta>
               </div>
@@ -152,7 +168,7 @@ export default function PublicHome() {
         </div>
       </Section>
 
-      {/* ===== Free consultation ===== */}
+      {/* ===== Free Meet & Greet ===== */}
       <Section testid="site-consult">
         <div className="sh-site-band sh-splatter-explosion">
           <div className="grid grid-cols-1 lg:grid-cols-[1fr_auto] gap-6 items-center">
@@ -164,7 +180,7 @@ export default function PublicHome() {
                 {PROMISE.consult_points.map((p) => <li key={p}><i className="fas fa-check text-shGreen mr-1.5" />{p}</li>)}
               </ul>
             </div>
-            <Cta color="green" onClick={bookFree} icon="fa-calendar-check" testid="site-consult-cta" className="w-full lg:w-auto">Book a free consultation</Cta>
+            <Cta color="green" onClick={bookFree} icon="fa-calendar-check" testid="site-consult-cta" className="w-full lg:w-auto">Book a free Meet &amp; Greet</Cta>
           </div>
         </div>
       </Section>
@@ -195,13 +211,14 @@ export default function PublicHome() {
             <h3 className="text-2xl font-black uppercase italic tracking-tight text-shGreen">Dog daycare</h3>
             <p className="text-[14px] text-gray-300 mt-1">{data?.service_descriptions?.daycare || "Perfect for socialization, exercise, and burning off extra energy."}</p>
             <ul className="mt-4 space-y-2 text-[14px]">
-              {daycareServices.length === 0 && <li className="text-gray-400">Pricing is shared at your free consultation.</li>}
+              {daycareServices.length === 0 && <li className="text-gray-400">Pricing is shared at your free Meet &amp; Greet.</li>}
               {daycareServices.map((s) => (
                 <li key={s.id} className="flex items-start justify-between gap-3 border-b border-bgHover/60 pb-2">
                   <span className="text-gray-200">{s.name}{s.description ? <span className="block text-[12px] text-gray-500">{s.description}</span> : null}</span>
                   <span className="font-black text-white whitespace-nowrap">{money(s.base_price)}</span>
                 </li>
               ))}
+              {paymentNote(daycareServices) && <li className="text-[12px] text-gray-400 pt-1" data-testid="site-daycare-payment"><i className="fas fa-wallet text-shGreen mr-1.5" />{paymentNote(daycareServices)}</li>}
               {(stay?.daycare?.lines || []).map((l) => <li key={l} className="text-[12px] text-gray-400 pt-1"><i className="fas fa-circle-info text-shGreen mr-1.5" />{l}</li>)}
               {rows.length > 0 && <li className="text-[12px] text-gray-400 pt-1"><i className="fas fa-clock text-shGreen mr-1.5" />Hours: {rows.map((r) => `${r.days} ${r.hours}`).join(" · ")}</li>}
             </ul>
@@ -210,22 +227,63 @@ export default function PublicHome() {
             <h3 className="text-2xl font-black uppercase italic tracking-tight text-shOrange">Overnight boarding</h3>
             <p className="text-[14px] text-gray-300 mt-1">{data?.service_descriptions?.boarding || "A safe, comfortable home away from home. All boarding includes supervised daycare play."}</p>
             <ul className="mt-4 space-y-2 text-[14px]">
-              {boardingServices.length === 0 && <li className="text-gray-400">Pricing is shared at your free consultation.</li>}
+              {boardingServices.length === 0 && <li className="text-gray-400">Pricing is shared at your free Meet &amp; Greet.</li>}
               {boardingServices.map((s) => (
                 <li key={s.id} className="flex items-start justify-between gap-3 border-b border-bgHover/60 pb-2">
                   <span className="text-gray-200">{s.name}{s.description ? <span className="block text-[12px] text-gray-500">{s.description}</span> : null}</span>
                   <span className="font-black text-white whitespace-nowrap">{money(s.base_price)}<span className="text-[11px] text-gray-500 font-bold"> / night</span></span>
                 </li>
               ))}
+              {paymentNote(boardingServices) && <li className="text-[12px] text-gray-400 pt-1" data-testid="site-boarding-payment"><i className="fas fa-wallet text-shOrange mr-1.5" />{paymentNote(boardingServices)}</li>}
               {(stay?.boarding?.lines || []).map((l) => <li key={l} className="text-[12px] text-gray-400 pt-1"><i className="fas fa-door-open text-shOrange mr-1.5" />{l}</li>)}
             </ul>
           </div>
         </div>
         <div className="mt-6 flex flex-col sm:flex-row gap-3">
           <Cta color="green" to={bookingHref(user)} icon="fa-calendar-check" testid="site-book-now">{user ? "Book from my portal" : "Book now"}</Cta>
-          <Cta color="ghost" onClick={bookFree} icon="fa-paw" testid="site-daycare-meet-greet">New here? Start with a free Meet & Greet</Cta>
+          <Cta color="ghost" onClick={bookFree} icon="fa-paw" testid="site-daycare-meet-greet">Book a free Meet &amp; Greet</Cta>
         </div>
       </Section>
+
+      {/* ===== Grooming ===== */}
+      {showGrooming && (
+        <Section id="grooming" testid="site-grooming">
+          <Eyebrow icon="fa-scissors" color="text-shSecondary">Grooming</Eyebrow>
+          <Title>Clean ears, tidy nails, happier walks.</Title>
+          <div className="mt-8 sh-site-card" style={{ "--card-accent": "#00a9e0" }} data-testid="site-grooming-card">
+            <p className="text-[14px] text-gray-300">
+              {data?.service_descriptions?.grooming
+                || "Straightforward grooming add-ons you can book alongside a daycare or boarding stay, or on their own."}
+            </p>
+            <ul className="mt-4 space-y-2 text-[14px]">
+              {groomingServices.map((s) => (
+                <li key={s.id} className="flex items-start justify-between gap-3 border-b border-bgHover/60 pb-2">
+                  <span className="text-gray-200 min-w-0">
+                    {s.name}
+                    {s.description ? <span className="block text-[12px] text-gray-500">{s.description}</span> : null}
+                  </span>
+                  <span className="font-black text-white whitespace-nowrap">{money(s.base_price)}</span>
+                </li>
+              ))}
+            </ul>
+            <p className="text-[12px] text-gray-400 mt-3">
+              <i className="fas fa-circle-info text-shSecondary mr-1.5" />
+              Grooming is booked by request — we confirm the time with you.
+            </p>
+            {paymentNote(groomingServices) && (
+              <p className="text-[12px] text-gray-400 mt-1" data-testid="site-grooming-payment">
+                <i className="fas fa-wallet text-shSecondary mr-1.5" />{paymentNote(groomingServices)}
+              </p>
+            )}
+          </div>
+          <div className="mt-6 flex flex-col sm:flex-row gap-3">
+            <Cta color="green" to={bookingHref(user)} icon="fa-calendar-check" testid="site-grooming-book">
+              {user ? "Book from my portal" : "Book grooming"}
+            </Cta>
+            <Cta color="ghost" onClick={openInquiry} icon="fa-pen-to-square" testid="site-grooming-ask">Ask about grooming</Cta>
+          </div>
+        </Section>
+      )}
 
       {/* ===== Online School ===== */}
       {showSchool && (
@@ -236,7 +294,7 @@ export default function PublicHome() {
             Work through real Sit Happens training with step-by-step lessons, guided practice, progress tracking and course certificates, from your phone or computer.
           </p>
           <div className="mt-6"><FreeCourseCard /></div>
-          <a href={ONLINE_SCHOOL_HREF} className="inline-block mt-4 text-[13px] font-black uppercase tracking-widest text-shGreen hover:text-white" data-testid="site-school-browse">
+          <a href={ONLINE_SCHOOL_HREF} className="inline-flex items-center min-h-[44px] py-2 mt-4 text-[13px] font-black uppercase tracking-widest text-shGreen hover:text-white" data-testid="site-school-browse">
             Browse all online courses <i className="fas fa-arrow-right ml-1" />
           </a>
         </Section>
@@ -269,10 +327,14 @@ export default function PublicHome() {
             </div>
           ))}
         </div>
-        <div className="mt-6 flex flex-col sm:flex-row flex-wrap gap-3 items-start sm:items-center">
-          <Cta color="green" onClick={openInquiry} icon="fa-pen-to-square" testid="site-how-inquiry">Tell us about your dog</Cta>
-          <Cta color="ghost" onClick={bookFree} icon="fa-paw" testid="site-how-meet-greet">Request a Meet & Greet</Cta>
-          <Link to={user ? "/" : "/login"} className="text-[13px] font-black uppercase tracking-widest text-gray-400 hover:text-white" data-testid="site-how-login">
+        <p className="text-[13px] text-gray-400 mt-5" data-testid="site-how-door-hint">
+          <span className="text-white font-black">Book a free Meet &amp; Greet</span> to pick an actual time,
+          or <span className="text-white font-black">tell us about your dog</span> if you just have questions for now.
+        </p>
+        <div className="mt-3 flex flex-col sm:flex-row flex-wrap gap-3 items-start sm:items-center">
+          <Cta color="green" onClick={bookFree} icon="fa-paw" testid="site-how-meet-greet">Book a free Meet &amp; Greet</Cta>
+          <Cta color="ghost" onClick={openInquiry} icon="fa-pen-to-square" testid="site-how-inquiry">Tell us about your dog</Cta>
+          <Link to={user ? "/" : "/login"} className="inline-flex items-center min-h-[44px] py-2 text-[13px] font-black uppercase tracking-widest text-gray-400 hover:text-white" data-testid="site-how-login">
             <i className="fas fa-user mr-1.5" />{user ? "Go to my portal" : "Already a client? Sign in"}
           </Link>
         </div>
@@ -300,8 +362,8 @@ export default function PublicHome() {
             <Eyebrow icon="fa-comments">Contact us</Eyebrow>
             <Title>Questions? We answer the phone.</Title>
             <div className="mt-5 space-y-3 text-[15px]" data-testid="site-contact-details">
-              {site?.phone && <a href={`tel:${site.phone.replace(/[^\d+]/g, "")}`} className="flex items-center gap-3 text-white hover:text-shGreen"><span className="w-10 h-10 rounded-lg bg-shGreen/15 text-shGreen grid place-items-center"><i className="fas fa-phone" /></span>{site.phone}</a>}
-              {site?.email && <a href={`mailto:${site.email}`} className="flex items-center gap-3 text-white hover:text-shBlue"><span className="w-10 h-10 rounded-lg bg-shBlue/15 text-shBlue grid place-items-center"><i className="fas fa-envelope" /></span>{site.email}</a>}
+              {site?.phone && <a href={`tel:${site.phone.replace(/[^\d+]/g, "")}`} className="flex items-center gap-3 min-h-[44px] py-1 text-white hover:text-shGreen"><span className="w-10 h-10 rounded-lg bg-shGreen/15 text-shGreen grid place-items-center shrink-0"><i className="fas fa-phone" /></span>{site.phone}</a>}
+              {site?.email && <a href={`mailto:${site.email}`} className="flex items-center gap-3 min-h-[44px] py-1 text-white hover:text-shBlue break-all"><span className="w-10 h-10 rounded-lg bg-shBlue/15 text-shBlue grid place-items-center shrink-0"><i className="fas fa-envelope" /></span>{site.email}</a>}
               {site?.address_line && <a href={site.map_url || "#"} target="_blank" rel="noopener noreferrer" className="flex items-center gap-3 text-white hover:text-shOrange"><span className="w-10 h-10 rounded-lg bg-shOrange/15 text-shOrange grid place-items-center"><i className="fas fa-location-dot" /></span>{site.address_line}, {site.city}, {site.state} {site.zip}</a>}
             </div>
             {rows.length > 0 && (
@@ -309,7 +371,7 @@ export default function PublicHome() {
                 {rows.map((r) => <div key={r.days} className="contents"><dt className="text-gray-500 font-black uppercase tracking-widest text-[11px] pt-0.5">{r.days}</dt><dd className="text-gray-200">{r.hours}</dd></div>)}
               </dl>
             )}
-            <Link to="/contact" className="inline-block mt-5 text-[13px] font-black uppercase tracking-widest text-shGreen hover:text-white" data-testid="site-contact-more">
+            <Link to="/contact" className="inline-flex items-center min-h-[44px] py-2 mt-5 text-[13px] font-black uppercase tracking-widest text-shGreen hover:text-white" data-testid="site-contact-more">
               Contact page & directions <i className="fas fa-arrow-right ml-1" />
             </Link>
           </div>

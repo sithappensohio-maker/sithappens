@@ -30,10 +30,21 @@ function ServiceTile({ svc, onRequestQuote }) {
       </div>
       {svc.description && <p className="text-[14px] text-gray-300 leading-relaxed flex-1">{svc.description}</p>}
       <div className="flex items-center gap-2 mt-3 pt-3 border-t border-bgHover flex-wrap">
-        {usesCredits ? (
+        {/* Credit-eligibility says WHAT can pay for this; payment timing says
+            WHEN payment is expected. They are different facts, so they are not
+            collapsed into one badge. The timing comes from the server
+            (domains/payment_timing) — this tile used to assert
+            "Pay-on-the-day" for anything that wasn't credit-eligible, which
+            was a payment policy inferred from the service type rather than
+            the one the operator actually configured. */}
+        {usesCredits && (
           <span className="text-[12px] uppercase tracking-widest font-black text-shBlue">Credit-eligible</span>
-        ) : (
-          <span className="text-[12px] uppercase tracking-widest font-black text-shOrange">Pay-on-the-day</span>
+        )}
+        {svc.payment?.short && (
+          <span className="text-[12px] uppercase tracking-widest font-black text-shOrange"
+                data-testid={`portal-service-payment-${svc.id}`}>
+            {svc.payment.short}
+          </span>
         )}
         <button
           type="button"

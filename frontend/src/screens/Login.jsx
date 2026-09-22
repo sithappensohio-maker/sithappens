@@ -277,7 +277,7 @@ export default function Login({ focus = false }) {
             </h1>
             {authCard}
             <div className="mt-6 flex flex-wrap gap-x-5 gap-y-2 text-[12px] uppercase tracking-widest font-black text-gray-500">
-              <button type="button" onClick={() => setMeetGreetOpen(true)} className="hover:text-white" data-testid="login-meet-greet">New here? Request a Meet &amp; Greet</button>
+              <button type="button" onClick={() => setMeetGreetOpen(true)} className="hover:text-white" data-testid="login-meet-greet">Book a free Meet &amp; Greet</button>
               <button type="button" onClick={openOnlineSchool} className="hover:text-white" data-testid="login-online-school">Explore Online School</button>
             </div>
           </div>

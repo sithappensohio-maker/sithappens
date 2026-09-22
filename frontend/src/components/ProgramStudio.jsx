@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
+import { publicPriceDisplay, publicPriceProblem, priceModePatch } from "../lib/programPricing";
 import { api, formatErr } from "../lib/api";
 import { useConfirm } from "../lib/useConfirm";
 import CsvImportButton from "./CsvImportButton";
@@ -676,13 +677,101 @@ function SetupTab({ program, set, meta, allPrograms, hwTemplates, emailTemplates
             </div>
           </ExpandableSection>
 
+          {/* Marketing visibility + the price the website prints. Deliberately
+              OUTSIDE the `available_online` gate below: that section is about
+              the online storefront, and until now an in-person training
+              program had no way at all to say whether it belongs on the public
+              website. Publication is opt-in. */}
+          <ExpandableSection title="Public Website" icon="fa-globe" testid="setup-section-public-website">
+            <div className="space-y-3">
+              <label className="flex items-center justify-between gap-3 rounded-xl border border-shBorder/50 bg-black/10 p-3">
+                <span className="min-w-0">
+                  <span className="block text-[12px] font-black text-shText">Show on public website</span>
+                  <span className="block text-[10px] text-shTextMuted">
+                    Marketing visibility only. Leaving this off does not deactivate the program —
+                    staff can still enrol dogs and run it as normal.
+                  </span>
+                </span>
+                <input type="checkbox" checked={!!program.publicly_visible}
+                       onChange={(e) => set({ publicly_visible: e.target.checked })}
+                       data-testid="prog-show-on-public-site" className="w-5 h-5 shrink-0"/>
+              </label>
+
+              {program.publicly_visible && (
+                <div className="rounded-xl border border-shBorder/50 bg-black/10 p-3 space-y-2">
+                  <p className="text-[12px] font-black text-shText">Price shown on the website</p>
+                  <p className="text-[10px] text-shTextMuted">
+                    Only what you enter here is published. Nothing is worked out from session
+                    counts or service rates.
+                  </p>
+                  <select value={program.public_price_mode || "contact"}
+                          onChange={(e) => {
+                            const mode = e.target.value;
+                            // Clearing the amount is the point: "contact" with a
+                            // stale 450 sitting in the field is one careless
+                            // mode-switch away from republishing an old price.
+                            set(priceModePatch(mode, program));
+                          }}
+                          data-testid="prog-price-mode"
+                          className="w-full min-h-[40px] bg-[var(--sh-card-base)] border border-shBorder rounded px-2 text-sm text-shText">
+                    <option value="contact">Contact us for pricing</option>
+                    <option value="package">One price for the whole program</option>
+                    <option value="per_unit">A rate per session / week</option>
+                    <option value="from">Starting from a price</option>
+                  </select>
+                  {(program.public_price_mode || "contact") !== "contact" && (
+                    <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
+                      <label className="block">
+                        <span className="block text-[10px] text-shTextMuted mb-1">Amount (USD)</span>
+                        <input type="number" min="0" step="1" inputMode="decimal"
+                               value={program.public_price_amount ?? ""}
+                               onChange={(e) => set({ public_price_amount: e.target.value === "" ? null : Number(e.target.value) })}
+                               data-testid="prog-price-amount"
+                               className="w-full min-h-[40px] bg-[var(--sh-card-base)] border border-shBorder rounded px-2 text-sm text-shText"/>
+                      </label>
+                      {program.public_price_mode === "per_unit" && (
+                        <label className="block">
+                          <span className="block text-[10px] text-shTextMuted mb-1">Per</span>
+                          <select value={program.public_price_unit || "session"}
+                                  onChange={(e) => set({ public_price_unit: e.target.value })}
+                                  data-testid="prog-price-unit"
+                                  className="w-full min-h-[40px] bg-[var(--sh-card-base)] border border-shBorder rounded px-2 text-sm text-shText">
+                            <option value="session">session</option>
+                            <option value="private_lesson">private lesson</option>
+                            <option value="lesson">lesson</option>
+                            <option value="week">week</option>
+                            <option value="day">day</option>
+                            <option value="night">night</option>
+                            <option value="visit">visit</option>
+                            <option value="month">month</option>
+                          </select>
+                        </label>
+                      )}
+                    </div>
+                  )}
+                  {publicPriceProblem(program)
+                    ? (
+                      <p className="text-[11px] text-shAccent font-black" data-testid="prog-price-problem">
+                        <i className="fas fa-circle-exclamation mr-1"/>{publicPriceProblem(program)}
+                      </p>
+                    ) : (
+                      <p className="text-[11px] text-shPrimary font-black" data-testid="prog-price-preview">
+                        Website shows: {publicPriceDisplay(program)}
+                      </p>
+                    )}
+                </div>
+              )}
+            </div>
+          </ExpandableSection>
           {program.available_online && (
             <ExpandableSection title="Public Storefront" icon="fa-globe" testid="setup-section-storefront">
               <div className="space-y-3">
-                <label className="flex items-center justify-between gap-3 rounded-xl border border-shBorder/50 bg-black/10 p-3">
-                  <span><span className="block text-[12px] font-black text-shText">Publicly Visible</span><span className="block text-[10px] text-shTextMuted">Guests can see it; buying still requires sign-in.</span></span>
-                  <input type="checkbox" checked={!!program.publicly_visible} onChange={(e) => set({ publicly_visible: e.target.checked })} data-testid="prog-publicly-visible" className="w-5 h-5"/>
-                </label>
+                {/* One control, in Public Website above. Two checkboxes bound to
+                    the same field on one screen is how they end up disagreeing. */}
+                <p className="rounded-xl border border-shBorder/50 bg-black/10 p-3 text-[11px] text-shTextMuted" data-testid="prog-publicly-visible-note">
+                  Guests can see this program because <span className="text-shText font-black">Show on public website</span> is on
+                  (Public Website section above). Buying still requires sign-in.
+                </p>
                 {program.publicly_visible && (
                   <div className="grid grid-cols-1 md:grid-cols-3 gap-2">
                     <label className="rounded-xl border border-shBorder/50 bg-black/10 p-3 flex items-start gap-2"><input className="mt-0.5" type="checkbox" checked={program.show_public_price !== false} onChange={(e) => set({ show_public_price: e.target.checked })}/><span className="text-[11px] text-shText">Show Price to Guests</span></label>

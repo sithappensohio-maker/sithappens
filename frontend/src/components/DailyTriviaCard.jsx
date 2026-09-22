@@ -318,7 +318,7 @@ export function DailyTriviaCard() {
             <p className="text-[11px] text-shTextMuted italic">Same question for everyone today — build your streak!</p>
             <button onClick={submit} disabled={chosen === null || submitting}
                     data-testid="trivia-submit"
-                    className="bg-shSecondary text-bgHeader px-4 py-2 rounded text-[12px] font-black uppercase tracking-widest disabled:opacity-40">
+                    className="bg-shSecondary text-bgHeader px-4 min-h-[44px] py-2 rounded text-[12px] font-black uppercase tracking-widest disabled:opacity-40">
               {submitting ? "Submitting…" : <><i className="fas fa-paper-plane mr-1"/>Submit answer</>}
             </button>
           </div>

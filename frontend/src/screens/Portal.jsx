@@ -37,6 +37,7 @@ import PortalPaymentPlans from "../components/PortalPaymentPlans";
 import PortalMessages from "../components/PortalMessages";
 import PortalSetupChecklist, { PortalSetupSuccess, PortalSetupPreview } from "../components/PortalSetupChecklist";
 import PortalBookingBlockedModal from "../components/PortalBookingBlockedModal";
+import SignedWaiverModal from "../components/SignedWaiverModal";
 import { dogVaccineRollup, humanDate, vaccineState, vaccineSummary, vaccineStateTone, VACCINE_STATES } from "../lib/vaccineStatus";
 import { portalGreeting, portalGreetingSubtitle } from "../lib/portalGreeting";
 import NeedsPasswordCard from "../components/NeedsPasswordCard";
@@ -68,6 +69,24 @@ import HuskyDogImage from "../components/brand/HuskyDogImage";
 import { toast } from "sonner";
 
 const _WD = ["Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun"];
+/**
+ * When payment is expected for a booking the customer still has ahead of them.
+ *
+ * Only upcoming bookings get this line. On a completed or cancelled visit the
+ * question has already been answered, and repeating "pay at pickup" next to a
+ * finished stay reads like a demand rather than a heads-up. The answer comes
+ * from the service the booking was made against, which the server resolved
+ * (domains/payment_timing) — nothing here infers a policy from the service
+ * type or the price.
+ */
+export function upcomingPaymentNote(b, services) {
+  if (!["pending", "approved"].includes(b?.status)) return null;
+  const list = services || [];
+  const svc = list.find((x) => x.id === b.service_id)
+           || list.find((x) => x.service_type === b.service_type);
+  return svc?.payment?.short || null;
+}
+
 const _emptyRecurring = { dog_id: "", service_type: "daycare", service_id: "", dropoff_time: "", weekdays: [0, 2, 4], notes: "", default_horizon_weeks: 12, active: true, label: "", start_date: "" };
 
 /**
@@ -777,6 +796,7 @@ export default function Portal() {
   // live status here and explain it, rather than opening a wizard that will
   // reject them three steps later.
   const [bookingBlocked, setBookingBlocked] = useState(null);
+  const [signedWaiverOpen, setSignedWaiverOpen] = useState(false);
   const [vaccineWizard, setVaccineWizard] = useState(null); // [{dog, vaccine}, ...]
   // Sprint 110dh-9 — once the client has seen the "Setup Complete" hero and
   // clicked through (or dismissed) it, remember that locally so it doesn't
@@ -1494,6 +1514,9 @@ export default function Portal() {
             of whether the compact banner above is expanded — only its
             visual output is hidden/shown, its own internals/props/behavior
             are completely unchanged. */}
+        {signedWaiverOpen && waiver?.signature && (
+          <SignedWaiverModal signature={waiver.signature} onClose={()=>setSignedWaiverOpen(false)} />
+        )}
         {bookingBlocked && (
           <PortalBookingBlockedModal
             status={bookingBlocked}
@@ -1824,7 +1847,16 @@ export default function Portal() {
                 </button>
               </>
             ) : (
-              <p className="text-xs text-gray-400">Signed by <span className="text-white font-black">{waiver?.signature?.typed_name}</span> on {(waiver?.signature?.signed_at||"").slice(0,10)}</p>
+              <>
+                <p className="text-xs text-gray-400">Signed by <span className="text-white font-black">{waiver?.signature?.typed_name}</span> on {humanDate((waiver?.signature?.signed_at||"").slice(0,10))}</p>
+                {/* A client should be able to read back the document they put
+                    their name to. The signed text travels on /waivers/me
+                    already, so this needs no new endpoint. */}
+                <button onClick={()=>setSignedWaiverOpen(true)} data-testid="view-signed-waiver"
+                        className="mt-2 min-h-[44px] py-2 text-[12px] font-black uppercase tracking-widest text-shSecondary hover:text-white">
+                  <i className="fas fa-file-contract mr-1.5"/>View / download my signed waiver
+                </button>
+              </>
             )}
           </div>
           )}
@@ -1907,7 +1939,7 @@ export default function Portal() {
                   <i className="fas fa-ellipsis mr-1.5"/>Extra tools
                 </p>
                 <h3 className="text-xl font-black text-white uppercase italic tracking-tight mb-4">More Options.</h3>
-                <div className="grid grid-cols-2 gap-2.5">
+                <div className="grid grid-cols-2 lg:grid-cols-1 xl:grid-cols-2 gap-2.5">
                   {/* Primary actions now live in the organized overview above.
                       Keep only occasional tools here so clients do not have to
                       choose between duplicate Book, Messages, or Upload buttons. */}
@@ -2476,12 +2508,17 @@ export default function Portal() {
                          : b.status === "completed"
                          ? "radial-gradient(circle at 100% 0%, rgba(0,169,224,0.4) 0%, transparent 50%)"
                          : "transparent" }}/>
-                  <div className="relative flex items-center justify-between p-4 gap-3">
+                  <div className="relative flex flex-col sm:flex-row sm:items-center sm:justify-between p-4 gap-3">
                     <div className="min-w-0 flex-1">
                       <p className="text-base font-black text-white uppercase italic tracking-tight">{b.dog_name}</p>
                       <p className="text-[12px] text-gray-400 font-black uppercase tracking-widest mt-1 break-words">{b.service_type} · {humanDate(b.date)}{b.end_date && b.end_date!==b.date?` → ${humanDate(b.end_date)}`:""}</p>
+                      {upcomingPaymentNote(b, publicServices) && (
+                        <p className="text-[12px] text-gray-500 mt-1" data-testid={`booking-payment-${b.id}`}>
+                          <i className="fas fa-wallet text-shPrimary mr-1.5"/>{upcomingPaymentNote(b, publicServices)}
+                        </p>
+                      )}
                     </div>
-                    <div className="flex items-center gap-2 flex-wrap justify-end shrink-0">
+                    <div className="flex items-center gap-2 flex-wrap justify-start sm:justify-end shrink-0">
                       <span className={`text-[11px] font-black uppercase tracking-widest px-2 py-1 rounded border ${b.status==="approved"?"bg-shGreen/15 text-shGreen border-shGreen/40":b.status==="pending"?"bg-shOrange/15 text-shOrange border-shOrange/40":b.status==="rejected"?"bg-red-500/15 text-red-400 border-red-500/40":b.status==="completed"?"bg-shBlue/15 text-shBlue border-shBlue/40":"bg-gray-500/15 text-gray-400 border-bgHover"}`}>{bookingStatusLabel(b.status)}</span>
                       {(b.status==="pending"||b.status==="approved") && <button onClick={()=>cancel(b.id)} data-testid={`booking-cancel-${b.id}`}
                         className="text-[12px] font-black uppercase text-red-400 hover:text-red-300 tracking-widest px-3 min-h-[44px] py-2 rounded border border-red-500/30 hover:border-red-500/60 transition">Cancel</button>}

@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useRef, useState } from "react";
+import PaymentTimingSelect from "../components/PaymentTimingSelect";
 import { api, formatErr } from "../lib/api";
 import { toast } from "sonner";
 import { useAuth } from "../lib/auth";
@@ -1461,6 +1462,12 @@ function BookingFlowControlsPanel() {
           <p className="text-[13px] text-shTextMuted mt-2 max-w-2xl leading-snug">
             Set rules for each exact service clients can choose. Category defaults remain as a fallback for older bookings and any service without its own override. Admin-created bookings can still bypass client guardrails.
           </p>
+          <p className="text-[12px] text-shTextMuted mt-2 max-w-2xl leading-snug" data-testid="bfc-payment-note">
+            <i className="fas fa-circle-info text-shSecondary mr-1.5"/>
+            <span className="text-shText font-black">When payment is expected</span> lives here, per service.
+            <span className="text-shText font-black"> How you accept payment</span> (Venmo, card, cash) is a
+            separate setting under Payment Options — the two are not the same thing and are not combined.
+          </p>
         </div>
         <button onClick={save} disabled={!dirty || saving} data-testid="bfc-save"
                 className="bg-shPrimary text-bgHeader font-black uppercase tracking-widest text-[12px] px-4 py-2 rounded disabled:opacity-50">
@@ -1551,6 +1558,16 @@ function BookingFlowControlsPanel() {
                            onChange={e => e.target.value === "" ? unsetCatalogSvcKey(service.id, "min_lead_hours") : setCatalogSvc(service.id, "min_lead_hours", Number(e.target.value))}
                            disabled={masterOff} className="w-full mt-1 bg-[var(--sh-card-base)] border border-shBorder rounded px-2 py-1.5 text-[13px] text-shText"/>
                   </div>
+                  <PaymentTimingSelect
+                    value={exact.payment_timing ?? null}
+                    inheritedValue={inherited.payment_timing}
+                    allowInherit
+                    disabled={masterOff}
+                    testId={`bfc-catalog-${service.id}-payment-timing`}
+                    onChange={(v) => v === null
+                      ? unsetCatalogSvcKey(service.id, "payment_timing")
+                      : setCatalogSvc(service.id, "payment_timing", v)}
+                  />
                   <div className="bg-[var(--sh-card-base)] border border-shBorder rounded-lg p-3">
                     <p className="text-[10px] text-shTextMuted font-black uppercase tracking-widest">Maximum advance (days)</p>
                     <input type="number" min={0} value={exact.max_advance_days ?? ""} placeholder={inherited.max_advance_days != null ? `Default: ${inherited.max_advance_days}` : "Use global default"}
@@ -1595,6 +1612,12 @@ function BookingFlowControlsPanel() {
                   </span>
                 </label>
               ))}
+              <PaymentTimingSelect
+                value={cur.payment_timing ?? "none_at_booking"}
+                disabled={masterOff}
+                testId={`bfc-${svc.id}-payment-timing`}
+                onChange={(v) => setSvc(svc.id, "payment_timing", v)}
+              />
               <div className="bg-[var(--sh-card-base)] border border-shBorder rounded-lg p-3">
                 <p className="text-[11px] text-shTextMuted font-black uppercase tracking-widest">Min lead (hours)</p>
                 <input type="number" min={0} value={cur.min_lead_hours ?? ""} placeholder="—"

@@ -52,7 +52,7 @@ export default function PublicTraining() {
           <Title as="h1" className="text-4xl sm:text-5xl lg:text-6xl">Training levels, Board & Train, and a plan built for your dog.</Title>
           <p className="text-base sm:text-lg text-gray-300 leading-relaxed mt-4 max-w-2xl">{PROMISE.consult_body}</p>
           <div className="mt-6 flex flex-col sm:flex-row flex-wrap gap-3">
-            <Cta color="green" onClick={bookFree} icon="fa-paw" testid="site-training-book">Book a free consultation</Cta>
+            <Cta color="green" onClick={bookFree} icon="fa-paw" testid="site-training-book">Book a free Meet &amp; Greet</Cta>
             <Cta color="ghost" onClick={openInquiry} icon="fa-pen-to-square" testid="site-training-inquiry">Tell us about your dog</Cta>
           </div>
         </div>
@@ -92,9 +92,52 @@ export default function PublicTraining() {
           <Eyebrow icon="fa-laptop-file" color="text-shBlue">Prefer to start at home?</Eyebrow>
           <Title>Online School runs on the same lessons our trainers teach in person.</Title>
           <div className="mt-6"><FreeCourseCard testid="site-training-free-course" /></div>
-          <a href={ONLINE_SCHOOL_HREF} className="inline-block mt-4 text-[13px] font-black uppercase tracking-widest text-shGreen hover:text-white">Browse all online courses <i className="fas fa-arrow-right ml-1" /></a>
+          <a href={ONLINE_SCHOOL_HREF} className="inline-flex items-center min-h-[44px] py-2 mt-4 text-[13px] font-black uppercase tracking-widest text-shGreen hover:text-white">Browse all online courses <i className="fas fa-arrow-right ml-1" /></a>
         </Section>
       )}
+
+      {/* Balanced training, said plainly.
+          The audit found "Introduction to e-collar/prong for clear
+          communication" sitting as a lone bullet under Level 2 with nothing
+          around it. Removing it would misrepresent how Sit Happens actually
+          trains; leaving it unexplained leaves an owner to guess. So it gets
+          context — what the words mean, and that the tool is a choice made per
+          dog rather than a default applied to every one. */}
+      <Section testid="site-training-method">
+        <Eyebrow icon="fa-scale-balanced" color="text-shGreen">Our approach</Eyebrow>
+        <Title>What &ldquo;balanced training&rdquo; actually means.</Title>
+        <div className="mt-8 grid grid-cols-1 lg:grid-cols-3 gap-4">
+          <div className="sh-site-card" style={{ "--card-accent": "#8cc63f" }} data-testid="site-method-reward">
+            <h3 className="text-[16px] font-black uppercase italic tracking-tight text-shGreen">We reward what we want</h3>
+            <p className="text-[14px] text-gray-300 mt-2 leading-relaxed">
+              Food, toys, praise and play do most of the work. Your dog learns what earns
+              good things, and gets a lot of practice being right.
+            </p>
+          </div>
+          <div className="sh-site-card" style={{ "--card-accent": "#00a9e0" }} data-testid="site-method-tools">
+            <h3 className="text-[16px] font-black uppercase italic tracking-tight text-shSecondary">We're clear about &ldquo;no&rdquo;</h3>
+            <p className="text-[14px] text-gray-300 mt-2 leading-relaxed">
+              Rewards alone don&rsquo;t always answer &ldquo;what should I do instead?&rdquo; in a
+              distracting world. Where it helps, we add a fair, clearly-taught correction so
+              your dog isn&rsquo;t left guessing.
+            </p>
+          </div>
+          <div className="sh-site-card" style={{ "--card-accent": "#f26522" }} data-testid="site-method-choice">
+            <h3 className="text-[16px] font-black uppercase italic tracking-tight text-shOrange">Tools are a decision, not a default</h3>
+            <p className="text-[14px] text-gray-300 mt-2 leading-relaxed">
+              A slip lead, prong collar or e-collar is introduced only where it suits the dog
+              and the goal, after conditioning, and we show you how to use it. Plenty of dogs
+              finish without one.
+            </p>
+          </div>
+        </div>
+        <p className="mt-5 text-[13px] text-gray-400 max-w-3xl" data-testid="site-method-note">
+          Some of our levels mention e-collar or prong work. That means the tool is taught and
+          conditioned as a communication aid at that stage — never a starting point, and never
+          a substitute for teaching the behaviour first. Ask us at your Meet &amp; Greet and
+          we&rsquo;ll walk you through exactly what we&rsquo;d use with your dog, and why.
+        </p>
+      </Section>
 
       <Section testid="site-training-faq">
         <Eyebrow icon="fa-circle-question" color="text-shBlue">Frequently asked questions</Eyebrow>
