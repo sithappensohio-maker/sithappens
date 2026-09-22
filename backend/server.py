@@ -201,6 +201,18 @@ def _normalize_payment_method(method: Optional[str], *, store: bool = False) -> 
         return m
     return "other" if m else "other"
 
+def _credit_remainder_tender(body_method: Optional[str], stored_method: Optional[str]) -> Optional[str]:
+    """How the part of a credits checkout the credits did NOT cover was paid.
+
+    None means nobody said, which used to be replaced by "cash" -- so a
+    remainder (a late-pickup fee, a rate above the credit's value) was booked
+    as cash nobody had taken and the drawer opened on a credits checkout.
+    Unset reports as "other": still owed, never counted as cash.
+    """
+    chosen = body_method if body_method not in (None, "credits") else stored_method
+    return _normalize_payment_method(chosen, store=True) if chosen else None
+
+
 def _method_label(method: Optional[str]) -> str:
     return REGISTER_METHOD_LABELS.get(_normalize_payment_method(method), "Other")
 
@@ -10245,8 +10257,10 @@ async def _check_out_locked(
         cash_component = round(explicit_cash if explicit_cash > 0 else max(0.0, actual_now - credit_now), 2)
         if cash_component > 0:
             update["amount_paid"] = cash_component
-            chosen_tender = body.payment_method if body.payment_method not in (None, "credits") else booking.get("cash_payment_method")
-            update["cash_payment_method"] = _normalize_payment_method(chosen_tender or "cash", store=True)
+            chosen_tender = _credit_remainder_tender(
+                body.payment_method, booking.get("cash_payment_method"))
+            if chosen_tender:
+                update["cash_payment_method"] = chosen_tender
 
     # Finalize cash-basis bookkeeping fields. `actual_price` is what the visit
     # was worth/charged; `cash_revenue` is money collected; `balance_due` is AR.
