@@ -257,9 +257,12 @@ describe("photo booth", () => {
     expect(events).toMatch(/k !== "photos" \|\| event\.photos_enabled !== false/);
     expect(events).toMatch(/<EventPhotosPanel event=\{event\} can=\{can\} \/>/);
     const panel = read("..", "components", "EventPhotosPanel.jsx");
-    expect(panel).toMatch(/api\.post\(`\/admin\/events\/\$\{event\.id\}\/photo-orders\/\$\{order\.id\}\/checkout`/);
-    expect(panel).toMatch(/api\.post\(`\/admin\/events\/\$\{event\.id\}\/photo-orders\/\$\{order\.id\}\/preview`\)/);
-    expect(panel).toMatch(/api\.post\(`\/admin\/events\/\$\{event\.id\}\/photo-orders\/\$\{order\.id\}\/send`/);
+    // One shared panel for every photo seller; the event flavour points it at
+    // the event's own API path.
+    expect(panel).toMatch(/base=\{`\/admin\/events\/\$\{event\.id\}`\}/);
+    expect(panel).toMatch(/api\.post\(`\$\{base\}\/photo-orders\/\$\{order\.id\}\/checkout`/);
+    expect(panel).toMatch(/api\.post\(`\$\{base\}\/photo-orders\/\$\{order\.id\}\/preview`\)/);
+    expect(panel).toMatch(/api\.post\(`\$\{base\}\/photo-orders\/\$\{order\.id\}\/send`/);
     expect(panel).toMatch(/const canPay = !!can\?\.\("take_payments"\);/);
     expect(TENDER_METHODS.map(([k]) => k)).toEqual(["cash", "card", "check", "venmo", "paypal", "other"]);
     expect(Object.keys(STATUS_META)).toEqual(["ordered", "paid", "ready", "sent"]);
@@ -271,7 +274,11 @@ describe("photo booth", () => {
   });
   test("the editor carries the photo booth settings and package list", () => {
     const editor = read("..", "components", "EventEditor.jsx");
-    for (const t of ["event-editor-photos-enabled", "event-editor-photos-title", "event-editor-add-package"]) expect(editor).toContain(`testid="${t}"`);
+    for (const t of ["event-editor-photos-enabled", "event-editor-photos-title"]) expect(editor).toContain(`testid="${t}"`);
+    // The package rows are the shared editor (also used by Photo Specials).
+    expect(editor).toMatch(/<PhotoPackagesEditor packages=\{f\.photo_packages\}.*testid="event-editor"/);
+    const pkgEditor = read("..", "components", "PhotoPackagesEditor.jsx");
+    expect(pkgEditor).toContain("data-testid={`${testid}-add-package`}");
     expect(editor).toMatch(/photo_packages: \(f\.photo_packages \|\| \[\]\)\.filter/);
   });
 });

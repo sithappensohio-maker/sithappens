@@ -121,7 +121,7 @@ test("the admin tab is registered in all FOUR places a tab has to be registered"
   // and passed while the tab was invisible in the running app, because the
   // sidebar renders from NAV_GROUPS and nothing had put the tab in a group.
   expect(appSrc).toMatch(/\{ id: "photo_specials", label: "Photo Specials", icon: "fa-[a-z-]+", perm: "manage_events" \}/);
-  expect(appSrc).toMatch(/tab === "photo_specials" && navAllowed\("photo_specials"\) && <PhotoSpecials \/>/);
+  expect(appSrc).toMatch(/tab === "photo_specials" && navAllowed\("photo_specials"\) && <PhotoSpecials can=\{can\} \/>/);
   expect(routesSrc).toMatch(/photo_specials: "\/admin\/photo-specials"/);
   expect(routesSrc).toMatch(/"photo-specials": "photo_specials"/);
 
@@ -155,7 +155,8 @@ test("admin can configure everything the event needs without a code change", () 
 test("the event-day list gives the desk the actions it needs", () => {
   const roster = adminSrc.slice(adminSrc.indexOf('data-testid="photo-special-roster"'));
   expect(roster).toMatch(/Client/);
-  expect(roster).toMatch(/Register/);
+  // Photo packages are rung up from the reservation itself (through the register).
+  expect(roster).toMatch(/Photo order/);
   expect(roster).toMatch(/No show/);
   // and it is honest about the dog's real vaccine state
   expect(roster).toMatch(/Vaccine records: \{r\.vaccines_on_file \? "On file" : "Not on file"\}/);
@@ -236,4 +237,30 @@ test("the event-day list opens on today when the special is running", () => {
   expect(adminSrc).toMatch(/const running = data\.special\?\.dates \|\| sp\.running_dates \|\| sp\.dates \|\| \[\]/);
   expect(adminSrc).toMatch(/running\.includes\(today\) \? today : running\[0\]/);
   expect(adminSrc).toContain('data-testid="photo-special-roster-days"');
+});
+
+describe("photo orders on a special", () => {
+  test("each special edits its own price list with the shared package editor", () => {
+    expect(adminSrc).toMatch(/import PhotoPackagesEditor, \{ fromPackageRows, toPackageRows \} from "\.\.\/components\/PhotoPackagesEditor"/);
+    expect(adminSrc).toMatch(/<PhotoPackagesEditor packages=\{editing\.photo_packages \|\| \[\]\} testid="photo-special"/);
+    expect(adminSrc).toMatch(/photo_packages: fromPackageRows\(editing\.photo_packages\)/);
+    for (const t of ["photo-special-photos-title", "photo-special-order-prefix"]) expect(adminSrc).toContain(`data-testid="${t}"`);
+  });
+
+  test("orders ride the same panel as the event photo booth, pointed at the special", () => {
+    expect(adminSrc).toMatch(/import \{ PhotoOrdersPanel \} from "\.\.\/components\/EventPhotosPanel"/);
+    expect(adminSrc).toMatch(/base=\{`\/admin\/photo-specials\/\$\{ordersFor\.id\}`\}/);
+    expect(appSrc).toMatch(/<PhotoSpecials can=\{can\} \/>/);
+  });
+
+  test("a reservation starts a prefilled order tied to its booking, and shows what was bought", () => {
+    expect(adminSrc).toMatch(/data-testid=\{`photo-special-order-\$\{r\.booking_id\}`\}/);
+    expect(adminSrc).toMatch(/setStartOrder\(\{ booking_id: r\.booking_id/);
+    expect(adminSrc).toMatch(/\(r\.photo_orders \|\| \[\]\)\.map/);
+  });
+
+  test("the public page shows the same price list the desk sells", () => {
+    expect(pageSrc).toContain('data-testid="photo-special-price-list"');
+    expect(pageSrc).toMatch(/special\.packages\.map/);
+  });
 });

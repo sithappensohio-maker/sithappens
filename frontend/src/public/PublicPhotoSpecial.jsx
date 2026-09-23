@@ -377,7 +377,7 @@ export default function PublicPhotoSpecial() {
       </Section>
 
       {/* What to expect + packages */}
-      {((special.what_to_expect || []).length > 0 || special.packages_blurb) && (
+      {((special.what_to_expect || []).length > 0 || special.packages_blurb || (special.packages || []).length > 0) && (
         <Section testid="photo-special-expect">
           <div className="grid gap-8 lg:grid-cols-2">
             {(special.what_to_expect || []).length > 0 && (
@@ -392,11 +392,27 @@ export default function PublicPhotoSpecial() {
                 </ul>
               </div>
             )}
-            {special.packages_blurb && (
+            {(special.packages_blurb || (special.packages || []).length > 0) && (
               <div>
                 <Eyebrow icon="fa-images">Packages</Eyebrow>
-                <p className="mt-3 text-white/80 text-[15px] leading-relaxed whitespace-pre-line"
-                   data-testid="photo-special-packages">{special.packages_blurb}</p>
+                {special.packages_blurb && (
+                  <p className="mt-3 text-white/80 text-[15px] leading-relaxed whitespace-pre-line"
+                     data-testid="photo-special-packages">{special.packages_blurb}</p>
+                )}
+                {/* The same price list the desk rings up — typed once, in the editor. */}
+                {(special.packages || []).length > 0 && (
+                  <ul className="mt-3 divide-y divide-white/10 rounded-xl border border-white/10" data-testid="photo-special-price-list">
+                    {special.packages.map((p, i) => (
+                      <li key={i} className="flex items-center justify-between gap-3 px-3.5 py-2.5">
+                        <span className="min-w-0 text-white/85 text-[15px]">
+                          {p.name}
+                          {p.popular && <span className="ml-2 text-[10px] font-black uppercase tracking-widest text-shOrange">Popular</span>}
+                        </span>
+                        <span className="shrink-0 font-black text-white tabular-nums">${Number(p.price || 0).toFixed(2)}</span>
+                      </li>
+                    ))}
+                  </ul>
+                )}
                 <p className="text-white/50 text-[13.5px] mt-3">
                   You choose your package after the session — nothing is charged to book.
                 </p>

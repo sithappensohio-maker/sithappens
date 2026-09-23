@@ -56224,6 +56224,9 @@ _photo_special_callables = register_photo_special_routes(
     require_admin_and_permission=require_admin_and_permission,
     slot_overlaps=_slot_overlaps,
     notify_client_booking_approved=notify_client_booking_approved,
+    # Photo-package sales ride the real register, same as the event photo booth.
+    create_pos_sale=_create_pos_sale_impl, price_pos_cart=_price_pos_cart, require_take_payments=_require_take_payments,
+    pos_sale_model=PosSaleIn, pos_line_model=PosSaleLineIn, pos_tender_model=PosSaleTenderIn,
 )
 globals().update(_photo_special_callables)
 update_inquiry = _public_site_callables["update_inquiry"]

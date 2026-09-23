@@ -40,6 +40,11 @@ from typing import Any, Dict, List, Optional
 from fastapi import Depends, HTTPException, Query, Request
 from pydantic import BaseModel, EmailStr, Field
 
+from domains.photo_orders.engine import (
+    PhotoOrderIn, PhotoPackageIn, clean_order_prefix, normalize_packages, public_packages,
+    register_photo_order_routes,
+)
+
 PORTRAIT_SERVICE_SLUG = "portrait-session"
 PORTRAIT_SERVICE_NAME = "Portrait Session"
 # The appointment's length is the point of this service; its price is not.
@@ -107,6 +112,12 @@ class PhotoSpecialIn(BaseModel):
     location_address: str = Field(default="", max_length=300)
     what_to_expect: List[str] = Field(default_factory=list, max_length=10)
     packages_blurb: str = Field(default="", max_length=2000)
+    # The price list the desk sells from after the session — each package
+    # rings through the real register (see domains/photo_orders). Editable per
+    # special, so Christmas can have different packages from Halloween.
+    photos_title: str = Field(default="", max_length=80)
+    order_prefix: str = Field(default="", max_length=12)
+    photo_packages: List[PhotoPackageIn] = Field(default_factory=list, max_length=20)
     arrival_notes: str = Field(default="", max_length=600)
     cancellation_notes: str = Field(default="", max_length=600)
     # Which photography service the Register prices from. Reused across every
@@ -165,6 +176,8 @@ class ManualReservationIn(BaseModel):
 def register_photo_special_routes(
     *, api, db, logger, now_iso, get_settings, enforce_rate_limit, client_ip,
     require_admin_and_permission, slot_overlaps, notify_client_booking_approved,
+    create_pos_sale=None, price_pos_cart=None, require_take_payments=None,
+    pos_sale_model=None, pos_line_model=None, pos_tender_model=None,
 ) -> Dict[str, Any]:
     """Register the public + admin Photo Specials routes. Returns the callables
     the in-process suite drives directly."""
@@ -370,6 +383,7 @@ def register_photo_special_routes(
             "location_address": sp.get("location_address") or "",
             "what_to_expect": sp.get("what_to_expect") or [],
             "packages_blurb": sp.get("packages_blurb") or "",
+            "packages": public_packages(sp),
             "arrival_notes": sp.get("arrival_notes") or "",
             "cancellation_notes": sp.get("cancellation_notes") or "",
             # The page never sees the rules — it sees the dates they produce,
@@ -476,6 +490,15 @@ def register_photo_special_routes(
             "vaccines_on_file": bool(vax),
             "vaccine_exception": b.get("vaccine_booking_exception"),
         }
+
+    def _special_fields(body: PhotoSpecialIn, existing: Optional[dict]) -> dict:
+        """The saved shape of a special. Packages are normalised so each keeps
+        the hidden register product it already sells through."""
+        out = body.model_dump()
+        out["photos_title"] = _clean(body.photos_title, 80)
+        out["order_prefix"] = clean_order_prefix(body.order_prefix, "SH-PS")
+        out["photo_packages"] = normalize_packages(body.photo_packages, (existing or {}).get("photo_packages"))
+        return out
 
     # ----------------------------------------------------------------- public
 
@@ -609,7 +632,7 @@ def register_photo_special_routes(
         if await db.photo_specials.find_one({"slug": slug}, {"_id": 0}):
             slug = f"{slug}-{uuid.uuid4().hex[:6]}"
         doc = {
-            **body.model_dump(),
+            **_special_fields(body, None),
             "id": str(uuid.uuid4()),
             "slug": slug,
             "service_id": body.service_id or service["id"],
@@ -668,7 +691,7 @@ def register_photo_special_routes(
         clash = await db.photo_specials.find_one({"slug": slug, "id": {"$ne": special_id}}, {"_id": 0})
         if clash:
             slug = sp["slug"]
-        update = {**body.model_dump(), "slug": slug, "updated_at": now_iso()}
+        update = {**_special_fields(body, sp), "slug": slug, "updated_at": now_iso()}
         update["service_id"] = body.service_id or sp.get("service_id") or (await _portrait_service())["id"]
         await db.photo_specials.update_one({"id": special_id}, {"$set": update})
         return {**sp, **update}
@@ -679,6 +702,8 @@ def register_photo_special_routes(
         booked = await _total_booked(special_id)
         if booked:
             raise HTTPException(status_code=409, detail=f"{booked} reservation(s) exist. Cancel them first or just close booking.")
+        if await db.photo_special_orders.find_one({"photo_special_id": special_id}, {"_id": 1}):
+            raise HTTPException(status_code=409, detail="Photo orders exist for this special. Close booking instead of deleting it.")
         await db.photo_specials.delete_one({"id": special_id})
         await db.photo_special_media.delete_many({"special_id": special_id})
         return {"ok": True}
@@ -719,9 +744,25 @@ def register_photo_special_routes(
         dog_ids = [b.get("dog_id") for b in rows if b.get("dog_id")]
         dogs = {d["id"]: d for d in await db.dogs.find({"id": {"$in": dog_ids}}, {"_id": 0, "id": 1, "vaccines": 1}).to_list(3000)}
         live = [b for b in rows if b.get("status") in ACTIVE_BOOKING_STATUSES]
+        # Who bought what: each reservation shows the photo orders taken
+        # against it, so the desk sees at a glance who still has to order.
+        by_booking: Dict[str, List[dict]] = {}
+        for o in await db.photo_special_orders.find(
+            {"photo_special_id": special_id, "booking_id": {"$in": [b.get("id") for b in rows]}},
+            {"_id": 0, "id": 1, "booking_id": 1, "order_number": 1, "status": 1, "package_name": 1, "qty": 1},
+        ).to_list(3000):
+            by_booking.setdefault(o["booking_id"], []).append(o)
+        # Contact details so a photo order can be started from the row without
+        # retyping them. Admin-only; the public reserve response never has these.
+        contacts = {c["id"]: c for c in await db.clients.find(
+            {"id": {"$in": list({b.get("client_id") for b in rows if b.get("client_id")})}},
+            {"_id": 0, "id": 1, "email": 1, "phone": 1},
+        ).to_list(3000)}
         return {
             "special": {**sp, "dates": _special_dates(sp)},
-            "reservations": [_reservation_row(b, dogs.get(b.get("dog_id"))) for b in rows],
+            "reservations": [{**_reservation_row(b, dogs.get(b.get("dog_id"))), "photo_orders": by_booking.get(b.get("id"), []),
+                              "client_email": (contacts.get(b.get("client_id")) or {}).get("email") or "",
+                              "client_phone": (contacts.get(b.get("client_id")) or {}).get("phone") or ""} for b in rows],
             "booked_count": len(live),
             "max_bookings": sp.get("max_bookings"),
         }
@@ -770,6 +811,31 @@ def register_photo_special_routes(
         update = {"no_show": True, "status": "cancelled", "cancelled_at": now_iso()}
         await db.bookings.update_one({"id": booking_id}, {"$set": update})
         return _reservation_row({**b, **update})
+
+    # ------------------------------------------------------------ photo orders
+    async def _photo_link(sp: dict, body: PhotoOrderIn) -> Dict[str, Any]:
+        """An order taken for a reservation is tied to that booking (and its
+        client); a walk-up order has no booking."""
+        if not body.booking_id:
+            return {"booking_id": None, "reservation_date": None, "reservation_time": None, "client_id": body.client_id}
+        b = await db.bookings.find_one({"id": body.booking_id, "photo_special_id": sp["id"]},
+                                       {"_id": 0, "id": 1, "client_id": 1, "date": 1, "time": 1})
+        if not b:
+            raise HTTPException(status_code=404, detail="That reservation isn't on this photo special.")
+        return {"booking_id": b["id"], "reservation_date": b.get("date"), "reservation_time": b.get("time"),
+                "client_id": body.client_id or b.get("client_id")}
+
+    async def _load_special(special_id: str) -> dict:
+        return await _special_by({"id": special_id})
+
+    register_photo_order_routes(
+        api=api, db=db, logger=logger, manage=manage, base="/admin/photo-specials", load_owner=_load_special,
+        owners_collection="photo_specials", orders_collection="photo_special_orders", owner_field="photo_special_id",
+        product_tag="photo_special_package", order_prefix=lambda sp: sp.get("order_prefix") or "SH-PS",
+        resolve_link=_photo_link, csv_link_columns=[("Reservation date", "reservation_date"), ("Reservation time", "reservation_time")],
+        create_pos_sale=create_pos_sale, price_pos_cart=price_pos_cart, require_take_payments=require_take_payments,
+        pos_sale_model=pos_sale_model, pos_line_model=pos_line_model, pos_tender_model=pos_tender_model,
+    )
 
     return {
         "public_photo_special": public_photo_special,

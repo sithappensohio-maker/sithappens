@@ -6,6 +6,7 @@ import { useEffect, useMemo, useRef, useState } from "react";
 import { api, formatErr } from "../lib/api";
 import { toast } from "sonner";
 import { eventImageUrl } from "../public/publicEvents";
+import PhotoPackagesEditor from "./PhotoPackagesEditor";
 
 export const ICON_PRESETS = [
   ["fa-car-side", "Trunk / car"], ["fa-hat-wizard", "Costume"], ["fa-camera-retro", "Photo booth"], ["fa-bone", "Treat / trick"],
@@ -310,25 +311,12 @@ export default function EventEditor({ event, onClose, onSaved, onDeleted, onChan
         <div className="space-y-2" data-testid="event-editor-photos">
           <div className="flex items-center justify-between gap-2">
             <p className="text-[13px] font-black uppercase italic tracking-tight text-white">Photo booth <span className="text-shTextMuted font-normal normal-case not-italic">(packages rung up at the event)</span></p>
-            <button type="button" onClick={() => setF((p) => ({ ...p, photo_packages: [...p.photo_packages, { key: "", name: "", price: "", digitals: "0", print: "", popular: false, product_id: null }] }))} data-testid="event-editor-add-package"
-                    className="min-h-[40px] px-3 rounded-lg bg-shSurfaceRaised text-shText font-black text-[11px] uppercase tracking-widest"><i className="fas fa-plus mr-1" />Add</button>
           </div>
           <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
             <Toggle label="Photos at this event" hint="Shows the Photos tab on the dashboard." value={f.photos_enabled} onChange={set("photos_enabled")} testid="event-editor-photos-enabled" />
             <Field label="Photos title" hint="(on receipts and emails)"><input value={f.photos_title} onChange={(e) => set("photos_title")(e.target.value)} className={inputCls} data-testid="event-editor-photos-title" placeholder="Halloween Pet Photos" /></Field>
           </div>
-          {f.photo_packages.length === 0 && <p className="text-[13px] text-shTextMuted">No packages yet. Add one per thing you sell, e.g. 3 Edited Digitals $30.</p>}
-          {f.photo_packages.map((pk, i) => (
-            <div key={i} className="bg-bgBase border border-bgHover rounded-xl p-3 grid grid-cols-2 sm:grid-cols-[1fr_90px_80px_90px_auto_auto] gap-2 items-end" data-testid={`event-editor-package-${i}`}>
-              <div className="col-span-2 sm:col-span-1"><p className={labelCls}>Name</p><input value={pk.name} onChange={(e) => setF((p) => ({ ...p, photo_packages: p.photo_packages.map((x, j) => (j === i ? { ...x, name: e.target.value } : x)) }))} className={inputCls} data-testid={`event-editor-package-name-${i}`} placeholder="3 Edited Digitals" /></div>
-              <div><p className={labelCls}>Price</p><input type="number" min="0" step="0.01" inputMode="decimal" value={pk.price} onChange={(e) => setF((p) => ({ ...p, photo_packages: p.photo_packages.map((x, j) => (j === i ? { ...x, price: e.target.value } : x)) }))} className={inputCls} data-testid={`event-editor-package-price-${i}`} /></div>
-              <div><p className={labelCls}>Digitals</p><input type="number" min="0" inputMode="numeric" value={pk.digitals} onChange={(e) => setF((p) => ({ ...p, photo_packages: p.photo_packages.map((x, j) => (j === i ? { ...x, digitals: e.target.value } : x)) }))} className={inputCls} data-testid={`event-editor-package-digitals-${i}`} /></div>
-              <div><p className={labelCls}>Print</p><input value={pk.print} onChange={(e) => setF((p) => ({ ...p, photo_packages: p.photo_packages.map((x, j) => (j === i ? { ...x, print: e.target.value } : x)) }))} className={inputCls} data-testid={`event-editor-package-print-${i}`} placeholder="5×7" /></div>
-              <label className="flex items-center gap-2 min-h-[44px] text-[12px] text-shText"><input type="checkbox" checked={!!pk.popular} onChange={(e) => setF((p) => ({ ...p, photo_packages: p.photo_packages.map((x, j) => (j === i ? { ...x, popular: e.target.checked } : x)) }))} className="w-5 h-5 accent-shOrange" />Popular</label>
-              <button type="button" aria-label="Remove" onClick={() => setF((p) => ({ ...p, photo_packages: p.photo_packages.filter((_, j) => j !== i) }))} className="min-w-[44px] min-h-[44px] text-shTextMuted hover:text-red-300"><i className="fas fa-trash" /></button>
-            </div>
-          ))}
-          <p className="text-[12px] text-shTextMuted">Each package sells through a hidden register product, so photo sales land in the drawer, sales tax and the P&L like any merchandise.</p>
+          <PhotoPackagesEditor packages={f.photo_packages} onChange={(list) => setF((p) => ({ ...p, photo_packages: list }))} testid="event-editor" />
         </div>
 
         {/* Rules */}

@@ -1,8 +1,13 @@
-/* EventPhotosPanel — the photo booth at an event: ring up a photo package
-   for a household, record who is in the shot and how to find the file, take
-   payment through the real register, then fulfil after the event (mark
-   ready, send the digitals, track framed prints). Nothing is handed over
-   at the booth; every order is a delivery promise. */
+/* Photo orders — ring up a photo package for a customer, record who is in
+   the shot and how to find the file, take payment through the real register,
+   then fulfil afterwards (mark ready, send the digitals, track framed prints).
+   Nothing is handed over on the spot; every order is a delivery promise.
+
+   `PhotoOrdersPanel` is shared by anything that sells photos — an event's
+   photo booth (Trunk or Treat) and every Photo Special (Howl-O-Ween,
+   Christmas, ...). `base` is the owner's admin API path; the server side is
+   the one shared engine in backend/domains/photo_orders. `EventPhotosPanel`
+   (default export) is the event flavour: it searches registrations. */
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { api, formatErr } from "../lib/api";
 import { toast } from "sonner";
@@ -60,34 +65,31 @@ function Sheet({ title, icon, onClose, children, testid, wide = false }) {
 }
 
 /* ---------------- New order ---------------- */
-const emptyOrder = () => ({ registration_id: null, client_id: null, primary_contact: "", phone: "", email: "", dogs: "", contestant_numbers: [], shot_ref: "", package_key: "", qty: 1, notes: "" });
+const emptyOrder = () => ({ registration_id: null, booking_id: null, client_id: null, primary_contact: "", phone: "", email: "", dogs: "", contestant_numbers: [], shot_ref: "", package_key: "", qty: 1, notes: "" });
 
-function NewOrderSheet({ event, onClose, onCreated }) {
-  const [f, setF] = useState(emptyOrder);
+function NewOrderSheet({ base, owner, search, searchLabel, searchPlaceholder, linkedLabel, initial, onClose, onCreated }) {
+  const [f, setF] = useState(() => ({ ...emptyOrder(), ...(initial || {}) }));
   const [q, setQ] = useState("");
   const [matches, setMatches] = useState([]);
   const [searching, setSearching] = useState(false);
   const [busy, setBusy] = useState(false);
   const [err, setErr] = useState("");
-  const packages = event.photo_packages || [];
+  const packages = owner.photo_packages || [];
   const set = (k) => (v) => setF((p) => ({ ...p, [k]: v }));
 
   useEffect(() => {
-    if (!q.trim()) { setMatches([]); return undefined; }
+    if (!search || !q.trim()) { setMatches([]); return undefined; }
     let alive = true; setSearching(true);
     const t = setTimeout(async () => {
-      try { const { data } = await api.get(`/admin/events/${event.id}/registrations`, { params: { q: q.trim(), status: "registered" } }); if (alive) setMatches((data.registrations || []).slice(0, 8)); }
+      try { const found = await search(q.trim()); if (alive) setMatches((found || []).slice(0, 8)); }
       catch { if (alive) setMatches([]); }
       if (alive) setSearching(false);
     }, 200);
     return () => { alive = false; clearTimeout(t); };
-  }, [q, event.id]);
+  }, [q, search]);
 
-  const pick = (r) => {
-    setF((p) => ({ ...p, registration_id: r.id, client_id: r.client_id || null, primary_contact: r.primary_contact || "", phone: r.phone || "", email: r.email || "",
-      dogs: (r.dogs || []).map((d) => d.name).join(", "), contestant_numbers: (r.dogs || []).map((d) => d.contestant_number).filter(Boolean) }));
-    setQ(""); setMatches([]);
-  };
+  // A match is { id, title, tag, sub, fill } — `fill` is merged into the form.
+  const pick = (m) => { setF((p) => ({ ...p, ...m.fill })); setQ(""); setMatches([]); };
   const pkg = packages.find((p) => p.key === f.package_key);
   const total = pkg ? pkg.price * (Number(f.qty) || 1) : 0;
 
@@ -98,7 +100,7 @@ function NewOrderSheet({ event, onClose, onCreated }) {
     if (!f.email.trim()) { setErr("An email is needed to deliver the photos."); return; }
     setBusy(true);
     try {
-      const { data } = await api.post(`/admin/events/${event.id}/photo-orders`, {
+      const { data } = await api.post(`${base}/photo-orders`, {
         ...f, primary_contact: f.primary_contact.trim(), email: f.email.trim(), phone: f.phone.trim(),
         dogs: f.dogs.split(",").map((s) => s.trim()).filter(Boolean), qty: Number(f.qty) || 1, shot_ref: f.shot_ref.trim(), notes: f.notes.trim(),
       });
@@ -112,20 +114,22 @@ function NewOrderSheet({ event, onClose, onCreated }) {
     <Sheet title="New photo order" icon="fa-camera-retro" onClose={onClose} testid="photo-order-new" wide>
       <form onSubmit={submit} className="space-y-4">
         <div>
-          <p className={labelCls}>Find a registered household <span className="normal-case font-normal">(or fill in a walk-up below)</span></p>
-          <input value={q} onChange={(e) => setQ(e.target.value)} placeholder="Name, phone, confirmation # or dog" className={inputCls} inputMode="search" data-testid="photo-order-search" />
+          {search && <>
+          <p className={labelCls}>{searchLabel} <span className="normal-case font-normal">(or fill in a walk-up below)</span></p>
+          <input value={q} onChange={(e) => setQ(e.target.value)} placeholder={searchPlaceholder} className={inputCls} inputMode="search" data-testid="photo-order-search" />
           {(matches.length > 0 || searching) && (
             <div className="mt-1 rounded-xl border border-bgHover bg-bgBase divide-y divide-bgHover" data-testid="photo-order-matches">
               {searching && matches.length === 0 && <p className="px-3 py-2 text-[13px] text-shTextMuted">Searching…</p>}
-              {matches.map((r) => (
-                <button key={r.id} type="button" onClick={() => pick(r)} data-testid={`photo-order-match-${r.id}`} className="w-full text-left px-3 py-2.5 min-h-[44px] hover:bg-bgHover/40">
-                  <span className="font-black text-white">{r.primary_contact}</span> <span className="font-mono text-shBlue text-[12px]">{r.confirmation_number}</span>
-                  {r.dog_names && <span className="text-shTextMuted text-[12px]"> · {r.dog_names}</span>}
+              {matches.map((m) => (
+                <button key={m.id} type="button" onClick={() => pick(m)} data-testid={`photo-order-match-${m.id}`} className="w-full text-left px-3 py-2.5 min-h-[44px] hover:bg-bgHover/40">
+                  <span className="font-black text-white">{m.title}</span> {m.tag && <span className="font-mono text-shBlue text-[12px]">{m.tag}</span>}
+                  {m.sub && <span className="text-shTextMuted text-[12px]"> · {m.sub}</span>}
                 </button>
               ))}
             </div>
           )}
-          {f.registration_id && <p className="text-[12px] text-shGreen font-black mt-1" data-testid="photo-order-linked"><i className="fas fa-link mr-1" />Linked to their registration</p>}
+          </>}
+          {(f.registration_id || f.booking_id) && <p className="text-[12px] text-shGreen font-black mt-1" data-testid="photo-order-linked"><i className="fas fa-link mr-1" />{linkedLabel}</p>}
         </div>
         <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
           <div><label className={labelCls}>Name</label><input required value={f.primary_contact} onChange={(e) => set("primary_contact")(e.target.value)} className={inputCls} data-testid="photo-order-name" /></div>
@@ -145,7 +149,7 @@ function NewOrderSheet({ event, onClose, onCreated }) {
                 <span className="block text-[12px] text-shTextMuted">{packageLabel(p)}{p.popular ? " · Most popular" : ""}</span>
               </button>
             ))}
-            {packages.length === 0 && <p className="text-[13px] text-shTextMuted">No packages yet. Add them under Edit event → Photos.</p>}
+            {packages.length === 0 && <p className="text-[13px] text-shTextMuted">No packages yet. Add them in the editor under photo packages.</p>}
           </div>
         </div>
         <div className="flex items-center gap-3">
@@ -161,7 +165,7 @@ function NewOrderSheet({ event, onClose, onCreated }) {
 }
 
 /* ---------------- Payment ---------------- */
-function PaymentSheet({ event, order, onClose, onPaid }) {
+function PaymentSheet({ base, order, onClose, onPaid }) {
   const [method, setMethod] = useState("cash");
   const [tendered, setTendered] = useState("");
   const [note, setNote] = useState("");
@@ -171,9 +175,9 @@ function PaymentSheet({ event, order, onClose, onPaid }) {
   const keyRef = useRef(newKey());
   useEffect(() => {
     let alive = true;
-    api.post(`/admin/events/${event.id}/photo-orders/${order.id}/preview`).then((r) => { if (alive) setPreview(r.data); }).catch((e) => { if (alive) setErr(formatErr(e.response?.data?.detail) || "Couldn't price this order."); });
+    api.post(`${base}/photo-orders/${order.id}/preview`).then((r) => { if (alive) setPreview(r.data); }).catch((e) => { if (alive) setErr(formatErr(e.response?.data?.detail) || "Couldn't price this order."); });
     return () => { alive = false; };
-  }, [event.id, order.id]);
+  }, [base, order.id]);
   const total = preview?.total ?? 0;
   const received = method === "cash" ? Number(tendered || 0) : total;
   const change = method === "cash" && received > total ? Math.round((received - total) * 100) / 100 : 0;
@@ -184,7 +188,7 @@ function PaymentSheet({ event, order, onClose, onPaid }) {
     setBusy(true);
     try {
       const tender = { method, amount: total, tendered_amount: method === "cash" ? received : null, notes: note.trim() || null };
-      const { data } = await api.post(`/admin/events/${event.id}/photo-orders/${order.id}/checkout`, { tenders: [tender], idempotency_key: keyRef.current });
+      const { data } = await api.post(`${base}/photo-orders/${order.id}/checkout`, { tenders: [tender], idempotency_key: keyRef.current });
       toast.success(`Paid · receipt ${data.order.receipt_number}`);
       onPaid(data, change);
     } catch (ex) { setErr(formatErr(ex.response?.data?.detail) || "Payment didn't go through."); }
@@ -229,7 +233,7 @@ function PaymentSheet({ event, order, onClose, onPaid }) {
 }
 
 /* ---------------- Send digitals ---------------- */
-function SendSheet({ event, order, onClose, onSent }) {
+function SendSheet({ base, order, onClose, onSent }) {
   const [link, setLink] = useState(order.delivery_link || "");
   const [message, setMessage] = useState("");
   const [busy, setBusy] = useState(false);
@@ -238,7 +242,7 @@ function SendSheet({ event, order, onClose, onSent }) {
     setErr("");
     if (!/^https?:\/\//i.test(link.trim())) { setErr("Paste the download link (starts with http)."); return; }
     setBusy(true);
-    try { const { data } = await api.post(`/admin/events/${event.id}/photo-orders/${order.id}/send`, { delivery_link: link.trim(), message: message.trim() }); toast.success(`Sent to ${order.email}`); onSent(data); }
+    try { const { data } = await api.post(`${base}/photo-orders/${order.id}/send`, { delivery_link: link.trim(), message: message.trim() }); toast.success(`Sent to ${order.email}`); onSent(data); }
     catch (ex) { setErr(formatErr(ex.response?.data?.detail) || "Couldn't send."); }
     setBusy(false);
   };
@@ -256,7 +260,9 @@ function SendSheet({ event, order, onClose, onSent }) {
 }
 
 /* ---------------- Panel ---------------- */
-export default function EventPhotosPanel({ event, can }) {
+export function PhotoOrdersPanel({ owner, base, can, search = null, searchLabel = "Find a customer", searchPlaceholder = "Name or dog",
+  linkedLabel = "Linked to their booking", subtitle = "Ring up the package, deliver within the week.",
+  startOrder = null, onStartOrderUsed, onOrdersChanged }) {
   const [orders, setOrders] = useState([]);
   const [summary, setSummary] = useState(null);
   const [filter, setFilter] = useState("all");
@@ -269,18 +275,23 @@ export default function EventPhotosPanel({ event, can }) {
   const [busy, setBusy] = useState("");
   const [lastChange, setLastChange] = useState(0);
   const canPay = !!can?.("take_payments");
+  // Opened with a customer already in hand (a reservation): go straight to a
+  // prefilled new order.
+  useEffect(() => {
+    if (startOrder) { setCreating(startOrder); onStartOrderUsed?.(); }
+  }, [startOrder, onStartOrderUsed]);
 
   const load = useCallback(async () => {
     setLoading(true);
     try {
       const [o, s] = await Promise.all([
-        api.get(`/admin/events/${event.id}/photo-orders`, { params: { q: q.trim(), status: filter } }),
-        api.get(`/admin/events/${event.id}/photo-orders/summary`),
+        api.get(`${base}/photo-orders`, { params: { q: q.trim(), status: filter } }),
+        api.get(`${base}/photo-orders/summary`),
       ]);
       setOrders(o.data.orders || []); setSummary(s.data); setErr("");
     } catch (e) { setErr(formatErr(e.response?.data?.detail) || "Couldn't load photo orders."); }
     setLoading(false);
-  }, [event.id, q, filter]);
+  }, [base, q, filter]);
   useEffect(() => { const t = setTimeout(load, q ? 200 : 0); return () => clearTimeout(t); }, [load, q]);
 
   const apply = (data) => {
@@ -289,22 +300,22 @@ export default function EventPhotosPanel({ event, can }) {
   };
   const patch = async (order, body, msg) => {
     setBusy(order.id);
-    try { const { data } = await api.patch(`/admin/events/${event.id}/photo-orders/${order.id}`, body); apply(data); if (msg) toast.success(msg); }
+    try { const { data } = await api.patch(`${base}/photo-orders/${order.id}`, body); apply(data); if (msg) toast.success(msg); }
     catch (e) { toast.error(formatErr(e.response?.data?.detail) || "That didn't save."); }
     setBusy("");
   };
   const remove = async (order) => {
     if (!window.confirm(`Delete order ${order.order_number}? Only unpaid orders can be deleted.`)) return;
     setBusy(order.id);
-    try { await api.delete(`/admin/events/${event.id}/photo-orders/${order.id}`); setOrders((os) => os.filter((o) => o.id !== order.id)); load(); toast.success("Order deleted"); }
+    try { await api.delete(`${base}/photo-orders/${order.id}`); setOrders((os) => os.filter((o) => o.id !== order.id)); load(); toast.success("Order deleted"); }
     catch (e) { toast.error(formatErr(e.response?.data?.detail) || "Couldn't delete."); }
     setBusy("");
   };
   const exportCsv = async () => {
     try {
-      const r = await api.get(`/admin/events/${event.id}/photo-orders.csv`, { responseType: "blob" });
+      const r = await api.get(`${base}/photo-orders.csv`, { responseType: "blob" });
       const href = URL.createObjectURL(new Blob([r.data], { type: "text/csv" }));
-      const a = document.createElement("a"); a.href = href; a.download = `${event.slug}-photo-orders.csv`; document.body.appendChild(a); a.click(); a.remove(); URL.revokeObjectURL(href);
+      const a = document.createElement("a"); a.href = href; a.download = `${owner.slug || "photo"}-photo-orders.csv`; document.body.appendChild(a); a.click(); a.remove(); URL.revokeObjectURL(href);
     } catch (e) { toast.error(formatErr(e.response?.data?.detail) || "Export failed."); }
   };
 
@@ -317,8 +328,8 @@ export default function EventPhotosPanel({ event, can }) {
     <div className="space-y-3" data-testid="event-photos">
       <div className="flex flex-col sm:flex-row sm:items-center gap-2">
         <div className="min-w-0 sm:flex-1">
-          <p className="text-[15px] font-black uppercase italic tracking-tight text-white">{event.photos_title || "Event photos"}</p>
-          <p className="text-[12px] text-shTextMuted">Ring up at the booth, deliver within the week.</p>
+          <p className="text-[15px] font-black uppercase italic tracking-tight text-white">{owner.photos_title || owner.name || "Event photos"}</p>
+          <p className="text-[12px] text-shTextMuted">{subtitle}</p>
         </div>
         <div className="flex gap-2">
         <button type="button" onClick={exportCsv} data-testid="photo-orders-export" className="min-h-[44px] px-3 rounded-xl bg-shSurfaceRaised text-shText font-black text-[12px] uppercase tracking-widest border border-bgHover"><i className="fas fa-file-csv mr-1.5" />CSV</button>
@@ -379,9 +390,26 @@ export default function EventPhotosPanel({ event, can }) {
         })}
       </div>
 
-      {creating && <NewOrderSheet event={event} onClose={() => setCreating(false)} onCreated={(data) => { setCreating(false); apply(data); if (canPay) setPaying(data.order); }} />}
-      {paying && <PaymentSheet event={event} order={paying} onClose={() => setPaying(null)} onPaid={(data, change) => { setPaying(null); apply(data); if (change > 0) setLastChange(change); }} />}
-      {sending && <SendSheet event={event} order={sending} onClose={() => setSending(null)} onSent={(data) => { setSending(null); apply(data); }} />}
+      {creating && <NewOrderSheet base={base} owner={owner} search={search} searchLabel={searchLabel} searchPlaceholder={searchPlaceholder} linkedLabel={linkedLabel}
+                                  initial={creating === true ? null : creating} onClose={() => setCreating(false)}
+                                  onCreated={(data) => { setCreating(false); apply(data); onOrdersChanged?.(); if (canPay) setPaying(data.order); }} />}
+      {paying && <PaymentSheet base={base} order={paying} onClose={() => setPaying(null)} onPaid={(data, change) => { setPaying(null); apply(data); if (change > 0) setLastChange(change); }} />}
+      {sending && <SendSheet base={base} order={sending} onClose={() => setSending(null)} onSent={(data) => { setSending(null); apply(data); }} />}
     </div>
   );
+}
+
+/* The event flavour: search the event's registrations to link the order. */
+export default function EventPhotosPanel({ event, can }) {
+  const search = useCallback(async (q) => {
+    const { data } = await api.get(`/admin/events/${event.id}/registrations`, { params: { q, status: "registered" } });
+    return (data.registrations || []).map((r) => ({
+      id: r.id, title: r.primary_contact, tag: r.confirmation_number, sub: r.dog_names,
+      fill: { registration_id: r.id, client_id: r.client_id || null, primary_contact: r.primary_contact || "", phone: r.phone || "", email: r.email || "",
+        dogs: (r.dogs || []).map((d) => d.name).join(", "), contestant_numbers: (r.dogs || []).map((d) => d.contestant_number).filter(Boolean) },
+    }));
+  }, [event.id]);
+  return <PhotoOrdersPanel owner={event} base={`/admin/events/${event.id}`} can={can} search={search}
+                           searchLabel="Find a registered household" searchPlaceholder="Name, phone, confirmation # or dog"
+                           linkedLabel="Linked to their registration" subtitle="Ring up at the booth, deliver within the week." />;
 }

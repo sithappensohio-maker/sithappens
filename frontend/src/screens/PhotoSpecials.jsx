@@ -3,6 +3,8 @@ import { api, formatErr } from "../lib/api";
 import { toast } from "sonner";
 import PageHero from "../components/PageHero";
 import { useConfirm } from "../lib/useConfirm";
+import { PhotoOrdersPanel } from "../components/EventPhotosPanel";
+import PhotoPackagesEditor, { fromPackageRows, toPackageRows } from "../components/PhotoPackagesEditor";
 
 /**
  * Photo Specials admin — create a portrait event, then work it on the day.
@@ -22,7 +24,10 @@ const BLANK = {
   start_date: null, end_date: null, day_hours: {}, closed_dates: [],
   dates: [], start_time: "09:00", end_time: "15:00", slot_minutes: 15,
   dogs_per_slot: 1, max_bookings: null, booking_open: true, published: false,
+  photos_title: "", order_prefix: "", photo_packages: [],
 };
+
+const ORDER_STATUS_LABEL = { ordered: "Unpaid", paid: "Paid", ready: "Ready", sent: "Sent" };
 
 /** Write one weekday's hours without disturbing the others. */
 function setDay(editing, setEditing, day, row) {
@@ -94,7 +99,7 @@ const fmtTime = (hhmm) => {
   return `${h % 12 === 0 ? 12 : h % 12}:${String(m).padStart(2, "0")} ${ampm}`;
 };
 
-export default function PhotoSpecials() {
+export default function PhotoSpecials({ can }) {
   const confirm = useConfirm();
   const [specials, setSpecials] = useState([]);
   const [loading, setLoading] = useState(true);
@@ -102,6 +107,13 @@ export default function PhotoSpecials() {
   const [roster, setRoster] = useState(null);
   const [rosterDay, setRosterDay] = useState("");
   const [busy, setBusy] = useState(false);
+  // Photo orders: which special's orders are open, and (optionally) a
+  // reservation to start a prefilled order from.
+  const [ordersFor, setOrdersFor] = useState(null);
+  const [startOrder, setStartOrder] = useState(null);
+  const clearStartOrder = useCallback(() => setStartOrder(null), []);
+  // Other price lists to copy from when setting up the next special.
+  const [eventLists, setEventLists] = useState([]);
 
   const load = useCallback(async () => {
     setLoading(true);
@@ -119,7 +131,8 @@ export default function PhotoSpecials() {
   const save = async () => {
     setBusy(true);
     try {
-      const body = { ...editing, max_bookings: editing.max_bookings === "" ? null : editing.max_bookings };
+      const body = { ...editing, max_bookings: editing.max_bookings === "" ? null : editing.max_bookings,
+        photo_packages: fromPackageRows(editing.photo_packages) };
       if (editing.id) await api.put(`/admin/photo-specials/${editing.id}`, body);
       else await api.post("/admin/photo-specials", body);
       toast.success(editing.id ? "Photo special updated" : "Photo special created");
@@ -131,6 +144,39 @@ export default function PhotoSpecials() {
       setBusy(false);
     }
   };
+
+  const openEditor = (sp) => {
+    setEditing(sp ? { ...BLANK, ...sp, photo_packages: toPackageRows(sp.photo_packages) } : { ...BLANK });
+    // Events' price lists are copy sources too (Trunk or Treat's booth menu).
+    api.get("/admin/events").then(({ data }) => setEventLists(data.events || [])).catch(() => setEventLists([]));
+  };
+
+  const copySources = [
+    ...specials.filter((s) => s.id !== editing?.id).map((s) => ({ id: `ps:${s.id}`, label: s.name, packages: s.photo_packages || [] })),
+    ...eventLists.map((ev) => ({ id: `ev:${ev.id}`, label: ev.name, packages: ev.photo_packages || [] })),
+  ];
+
+  // The order form fills itself from the reservation: who, how to reach
+  // them, which dog — and the order is tied to that booking.
+  const orderFromReservation = (sp, r) => {
+    setRoster(null);
+    setOrdersFor(sp);
+    setStartOrder({ booking_id: r.booking_id, client_id: r.client_id || null, primary_contact: r.client_name || "",
+      email: r.client_email || "", phone: r.client_phone || "", dogs: r.dog_name || "" });
+  };
+
+  const searchReservations = useCallback(async (q) => {
+    if (!ordersFor) return [];
+    const { data } = await api.get(`/admin/photo-specials/${ordersFor.id}/reservations`);
+    const term = q.toLowerCase();
+    return (data.reservations || [])
+      .filter((r) => r.status !== "cancelled" && `${r.client_name} ${r.dog_name} ${r.client_email} ${r.client_phone}`.toLowerCase().includes(term))
+      .map((r) => ({
+        id: r.booking_id, title: r.client_name || r.dog_name, tag: `${fmtRosterDay(r.date)} ${fmtTime(r.time)}`, sub: r.dog_name,
+        fill: { booking_id: r.booking_id, client_id: r.client_id || null, primary_contact: r.client_name || "",
+          email: r.client_email || "", phone: r.client_phone || "", dogs: r.dog_name || "" },
+      }));
+  }, [ordersFor]);
 
   const openRoster = async (sp, day = "") => {
     try {
@@ -194,7 +240,7 @@ export default function PhotoSpecials() {
         title="Photo Specials. Portrait events."
         sub="Halloween, Christmas, Valentine's — one-off portrait sessions the public can book themselves."
         right={
-          <button onClick={() => setEditing({ ...BLANK })} data-testid="photo-special-new"
+          <button onClick={() => openEditor(null)} data-testid="photo-special-new"
                   className="min-h-[44px] px-4 rounded-lg bg-shPrimary text-bgHeader font-black text-[12px] uppercase tracking-widest">
             <i className="fas fa-plus mr-1.5"/>New special
           </button>
@@ -234,7 +280,11 @@ export default function PhotoSpecials() {
                         className="min-h-[36px] px-3 rounded-lg border border-shBorder text-[11px] font-black uppercase tracking-widest text-shText hover:border-shSecondary/50">
                   <i className="fas fa-list mr-1"/>Reservations
                 </button>
-                <button onClick={() => setEditing(sp)} data-testid={`photo-special-edit-${sp.id}`}
+                <button onClick={() => { setOrdersFor(sp); setStartOrder(null); }} data-testid={`photo-special-orders-${sp.id}`}
+                        className="min-h-[36px] px-3 rounded-lg border border-shBorder text-[11px] font-black uppercase tracking-widest text-shPrimary hover:border-shPrimary/50">
+                  <i className="fas fa-camera-retro mr-1"/>Photo orders
+                </button>
+                <button onClick={() => openEditor(sp)} data-testid={`photo-special-edit-${sp.id}`}
                         className="min-h-[36px] px-3 rounded-lg border border-shBorder text-[11px] font-black uppercase tracking-widest text-shText hover:border-shSecondary/50">
                   <i className="fas fa-pen mr-1"/>Edit
                 </button>
@@ -386,9 +436,35 @@ export default function PhotoSpecials() {
                           onChange={(e) => setEditing({ ...editing, what_to_expect: e.target.value.split("\n").map((s) => s.trim()).filter(Boolean) })}/>
               </div>
               <div>
-                <label className={label}>Packages / pricing copy <span className="normal-case tracking-normal font-semibold">(marketing text — the Register still prices the sale)</span></label>
-                <textarea rows={3} className={`${field} py-2`} value={editing.packages_blurb} data-testid="photo-special-packages"
+                <label className={label}>Packages intro <span className="normal-case tracking-normal font-semibold">(optional words above the price list on the public page)</span></label>
+                <textarea rows={2} className={`${field} py-2`} value={editing.packages_blurb} data-testid="photo-special-packages"
                           onChange={(e) => setEditing({ ...editing, packages_blurb: e.target.value })}/>
+              </div>
+              {/* The price list the desk sells from after the session. Each
+                  special has its own, and each package rings through the real
+                  register — see domains/photo_orders. */}
+              <div className="rounded-xl border border-shBorder/60 p-3 space-y-3" data-testid="photo-special-photo-packages">
+                <p className="text-[11px] font-black uppercase tracking-widest text-shPrimary">Photo packages</p>
+                <p className="text-[12px] text-shTextMuted">
+                  Reserving a slot costs nothing; the Register still prices the sale when a package is rung up after the session.
+                </p>
+                <div className="grid gap-3 sm:grid-cols-2">
+                  <div>
+                    <label className={label}>Photos title <span className="normal-case tracking-normal font-semibold">(receipts + emails)</span></label>
+                    <input className={field} value={editing.photos_title || ""} data-testid="photo-special-photos-title"
+                           placeholder="Howl-O-Ween Portraits"
+                           onChange={(e) => setEditing({ ...editing, photos_title: e.target.value })}/>
+                  </div>
+                  <div>
+                    <label className={label}>Order # prefix</label>
+                    <input className={field} value={editing.order_prefix || ""} data-testid="photo-special-order-prefix"
+                           placeholder="SH-PS" maxLength={12}
+                           onChange={(e) => setEditing({ ...editing, order_prefix: e.target.value.toUpperCase().replace(/[^A-Z0-9-]/g, "") })}/>
+                  </div>
+                </div>
+                <PhotoPackagesEditor packages={editing.photo_packages || []} testid="photo-special"
+                                     copySources={copySources}
+                                     onChange={(list) => setEditing((cur) => ({ ...cur, photo_packages: list }))}/>
               </div>
               <div className="grid gap-3 sm:grid-cols-2">
                 <div>
@@ -465,6 +541,13 @@ export default function PhotoSpecials() {
                             data-testid={`photo-special-vax-${r.booking_id}`}>
                         Vaccine records: {r.vaccines_on_file ? "On file" : "Not on file"}
                       </span>
+                      {/* Who bought what, right on the list. */}
+                      {(r.photo_orders || []).map((o) => (
+                        <span key={o.id} data-testid={`photo-special-reservation-order-${o.id}`}
+                              className="block text-[11px] font-black text-shSecondary truncate">
+                          <i className="fas fa-camera-retro mr-1"/>{o.order_number} · {o.package_name}{o.qty > 1 ? ` × ${o.qty}` : ""} · {ORDER_STATUS_LABEL[o.status] || o.status}
+                        </span>
+                      ))}
                     </span>
                     <span className="flex flex-wrap gap-1.5 shrink-0">
                       {r.status === "cancelled" ? (
@@ -475,8 +558,11 @@ export default function PhotoSpecials() {
                         <>
                           <a href={`/admin/clients?focus=${r.client_id}`}
                              className="min-h-[34px] px-2.5 rounded-lg border border-shBorder text-[10.5px] font-black uppercase tracking-widest text-shText inline-flex items-center">Client</a>
-                          <a href="/admin/front-desk"
-                             className="min-h-[34px] px-2.5 rounded-lg border border-shBorder text-[10.5px] font-black uppercase tracking-widest text-shPrimary inline-flex items-center">Register</a>
+                          <button onClick={() => orderFromReservation(roster.special, r)}
+                                  data-testid={`photo-special-order-${r.booking_id}`}
+                                  className="min-h-[34px] px-2.5 rounded-lg border border-shBorder text-[10.5px] font-black uppercase tracking-widest text-shPrimary">
+                            <i className="fas fa-camera-retro mr-1"/>Photo order
+                          </button>
                           <button onClick={() => markNoShow(roster.special, r)}
                                   data-testid={`photo-special-no-show-${r.booking_id}`}
                                   className="min-h-[34px] px-2.5 rounded-lg border border-shBorder text-[10.5px] font-black uppercase tracking-widest text-shAccent">No show</button>
@@ -490,6 +576,29 @@ export default function PhotoSpecials() {
             <div className="mt-4">
               <button onClick={() => setRoster(null)} className="min-h-[44px] px-4 rounded-lg border border-shBorder text-shTextMuted font-black text-[12px] uppercase tracking-widest">Close</button>
             </div>
+          </div>
+        </div>
+      )}
+
+      {/* Photo orders */}
+      {ordersFor && (
+        <div className="fixed inset-0 bg-black/70 flex items-start justify-center p-2 sm:p-4 z-[120] overflow-y-auto"
+             onClick={() => setOrdersFor(null)} data-testid="photo-special-orders">
+          <div className="bg-[var(--sh-card-base)] border border-shBorder rounded-2xl p-3 sm:p-5 w-full max-w-4xl my-4 sm:my-8 min-w-0" onClick={(e) => e.stopPropagation()}>
+            <div className="flex items-start justify-between gap-2 mb-3">
+              <h4 className="text-lg font-black text-shText uppercase italic min-w-0">{ordersFor.name} — photo orders</h4>
+              <button onClick={() => setOrdersFor(null)} aria-label="Close" data-testid="photo-special-orders-close"
+                      className="min-w-[44px] min-h-[44px] text-shTextMuted hover:text-shText text-xl shrink-0"><i className="fas fa-times"/></button>
+            </div>
+            {(ordersFor.photo_packages || []).length === 0 && (
+              <p className="text-[13px] text-shAccent mb-3" data-testid="photo-special-orders-no-packages">
+                This special has no photo packages yet — add them with Edit → Photo packages.
+              </p>
+            )}
+            <PhotoOrdersPanel owner={ordersFor} base={`/admin/photo-specials/${ordersFor.id}`} can={can}
+                              search={searchReservations} searchLabel="Find a reservation" searchPlaceholder="Owner, dog, email or phone"
+                              linkedLabel="Linked to their reservation" subtitle="Ring up the package after the session, deliver within the week."
+                              startOrder={startOrder} onStartOrderUsed={clearStartOrder}/>
           </div>
         </div>
       )}

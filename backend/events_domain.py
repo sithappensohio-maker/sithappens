@@ -36,6 +36,10 @@ from pymongo import ReturnDocument
 import qrcode
 
 import email_service
+from domains.photo_orders.engine import (  # noqa: F401 — re-exported for older imports
+    PHOTO_ORDER_STATUSES, PRINT_STATUSES, PhotoCheckoutIn, PhotoOrderIn, PhotoOrderPatchIn, PhotoPackageIn,
+    PhotoSendIn, PhotoTenderIn, normalize_packages, register_photo_order_routes,
+)
 
 # ---------------------------------------------------------------------------
 # Limits / vocabulary
@@ -119,8 +123,6 @@ TRUNK_OR_TREAT_2026 = {
         {"key": "bundle-5-8x10", "name": "5 Digitals + 8×10 Framed Print", "price": 60.0, "digitals": 5, "print": "8×10", "popular": False},
     ],
 }
-PHOTO_ORDER_STATUSES = ("ordered", "paid", "ready", "sent")
-PRINT_STATUSES = ("none", "pending", "ready", "picked_up", "mailed")
 
 
 # ---------------------------------------------------------------------------
@@ -284,59 +286,6 @@ class EventHighlightIn(BaseModel):
     body: str = Field(default="", max_length=200)
 
 
-class PhotoPackageIn(BaseModel):
-    key: Optional[str] = Field(default=None, max_length=40)
-    name: str = Field(min_length=1, max_length=80)
-    price: float = Field(ge=0, le=10000)
-    digitals: int = Field(default=0, ge=0, le=50)
-    print: str = Field(default="", max_length=20)
-    popular: bool = False
-
-
-class PhotoOrderIn(BaseModel):
-    registration_id: Optional[str] = Field(default=None, max_length=80)
-    client_id: Optional[str] = Field(default=None, max_length=80)
-    primary_contact: str = Field(min_length=2, max_length=120)
-    email: EmailStr
-    phone: str = Field(default="", max_length=40)
-    dogs: List[str] = Field(default_factory=list, max_length=10)
-    contestant_numbers: List[int] = Field(default_factory=list, max_length=10)
-    shot_ref: str = Field(default="", max_length=120)
-    package_key: str = Field(min_length=1, max_length=40)
-    qty: int = Field(default=1, ge=1, le=10)
-    notes: str = Field(default="", max_length=500)
-
-
-class PhotoOrderPatchIn(BaseModel):
-    primary_contact: Optional[str] = Field(default=None, min_length=2, max_length=120)
-    email: Optional[EmailStr] = None
-    phone: Optional[str] = Field(default=None, max_length=40)
-    dogs: Optional[List[str]] = Field(default=None, max_length=10)
-    shot_ref: Optional[str] = Field(default=None, max_length=120)
-    notes: Optional[str] = Field(default=None, max_length=500)
-    status: Optional[Literal["paid", "ready"]] = None  # ready ⇄ paid only; "sent" comes from /send, "paid" from /checkout
-    print_status: Optional[Literal["none", "pending", "ready", "picked_up", "mailed"]] = None
-    delivery_link: Optional[str] = Field(default=None, max_length=2000)
-
-
-class PhotoTenderIn(BaseModel):
-    method: Literal["cash", "card", "check", "venmo", "paypal", "other"]
-    amount: float = Field(gt=0)
-    tendered_amount: Optional[float] = Field(default=None, ge=0)
-    notes: Optional[str] = Field(default=None, max_length=500)
-
-
-class PhotoCheckoutIn(BaseModel):
-    tenders: List[PhotoTenderIn] = Field(min_length=1)
-    idempotency_key: str = Field(min_length=8, max_length=128)
-    workstation_id: Optional[str] = Field(default=None, max_length=100)
-
-
-class PhotoSendIn(BaseModel):
-    delivery_link: str = Field(min_length=8, max_length=2000)
-    message: str = Field(default="", max_length=500)
-
-
 class EventIn(BaseModel):
     """Everything about an event the owner can edit. Used to create and to
     fully update; the seed uses the same shape."""
@@ -370,17 +319,7 @@ class EventIn(BaseModel):
 def _package_docs(body: EventIn, existing: Optional[dict]) -> List[dict]:
     """Photo packages from the editor; the hidden catalog product each one
     already sells through survives an edit (matched by key)."""
-    old = {pk.get("key"): pk for pk in ((existing or {}).get("photo_packages") or [])}
-    seen: set = set()
-    out = []
-    for pk in body.photo_packages:
-        key = (pk.key or slugify(pk.name)).strip().lower()[:40] or slugify(pk.name)
-        if key in seen:
-            raise HTTPException(status_code=422, detail=f"Two photo packages share the key '{key}'.")
-        seen.add(key)
-        out.append({"key": key, "name": _clean(pk.name, 80), "price": round(float(pk.price), 2), "digitals": int(pk.digitals),
-                    "print": _clean(pk.print, 20), "popular": bool(pk.popular), "product_id": (old.get(key) or {}).get("product_id")})
-    return out
+    return normalize_packages(body.photo_packages, (existing or {}).get("photo_packages"))
 
 
 def _event_doc_from_in(body: EventIn, existing: Optional[dict] = None) -> dict:
@@ -991,236 +930,25 @@ def register_events_routes(*, api, db, get_current_user, require_admin_and_permi
         return await _remove_image(event_id, "banner")
 
     # ----- photo booth -------------------------------------------------------
-    async def _photo_product_for(ev: dict, pkg: dict) -> str:
-        """The hidden register product a package sells through. Created on
-        first use and kept in step with the package's name and price, so
-        the sale hits the register, the drawer, sales tax and the P&L
-        exactly like merchandise."""
-        title = ev.get("photos_title") or "Event photos"
-        name = f"{title} — {pkg['name']}"
-        pid = pkg.get("product_id")
-        prod = await db.pos_products.find_one({"id": pid}, {"_id": 0, "id": 1}) if pid else None
-        fields = {"name": name, "price": float(pkg["price"]), "category": "Event photos", "taxable": True,
-                  "description": f"{ev.get('name') or 'Event'} photo package", "active": True, "track_inventory": False,
-                  "show_online": False, "show_at_register": False, "sales_destination": "internal",
-                  "event_photo_package": {"event_id": ev["id"], "key": pkg["key"]}, "updated_at": _now_iso()}
-        if prod:
-            await db.pos_products.update_one({"id": pid}, {"$set": fields})
-            return pid
-        pid = str(uuid.uuid4())
-        await db.pos_products.insert_one({"id": pid, "sku": None, "cost": None, "low_stock_threshold": None, "stock_on_hand": 0,
-                                          "created_at": _now_iso(), **fields})
-        await db.events.update_one({"id": ev["id"], "photo_packages.key": pkg["key"]}, {"$set": {"photo_packages.$.product_id": pid}})
-        return pid
-
-    def _order_row(o: dict) -> dict:
-        o = {k: v for k, v in o.items() if k != "_id"}
-        o["list_total"] = round(float(o.get("package_price") or 0) * int(o.get("qty") or 1), 2)
-        o["print"] = (o.get("package") or {}).get("print") or ""
-        o["digitals"] = int((o.get("package") or {}).get("digitals") or 0)
-        return o
-
-    async def _photo_summary(event_id: str) -> dict:
-        rows = await db.event_photo_orders.find({"event_id": event_id}, {"_id": 0, "status": 1, "total": 1, "package": 1, "print_status": 1}).to_list(5000)
-        paid = [r for r in rows if r.get("status") in ("paid", "ready", "sent")]
-        return {
-            "orders": len(rows),
-            "revenue": round(sum(float(r.get("total") or 0) for r in paid), 2),
-            "unpaid": sum(1 for r in rows if r.get("status") == "ordered"),
-            "to_send": sum(1 for r in rows if r.get("status") in ("paid", "ready") and int((r.get("package") or {}).get("digitals") or 0) > 0),
-            "sent": sum(1 for r in rows if r.get("status") == "sent"),
-            "prints_pending": sum(1 for r in rows if (r.get("package") or {}).get("print") and r.get("status") != "ordered" and (r.get("print_status") or "pending") in ("pending", "ready")),
-        }
-
-    async def _photo_order(event_id: str, oid: str) -> dict:
-        o = await db.event_photo_orders.find_one({"event_id": event_id, "id": oid}, {"_id": 0})
-        if not o:
-            raise HTTPException(status_code=404, detail="Photo order not found")
-        return o
-
-    async def _photo_view(event_id: str, oid: str) -> dict:
-        return {"order": _order_row(await _photo_order(event_id, oid)), "summary": await _photo_summary(event_id)}
-
-    @api.get("/admin/events/{event_id}/photo-orders/summary")
-    async def admin_photo_summary(event_id: str, user: dict = Depends(manage)):
-        await _event_by_id(event_id)
-        return await _photo_summary(event_id)
-
-    @api.get("/admin/events/{event_id}/photo-orders")
-    async def admin_list_photo_orders(event_id: str, q: str = Query(default=""), status: str = Query(default="all"),
-                                      user: dict = Depends(manage)):
-        await _event_by_id(event_id)
-        query: Dict[str, Any] = {"event_id": event_id}
-        if status in PHOTO_ORDER_STATUSES:
-            query["status"] = status
-        term = (q or "").strip()[:80]
-        if term:
-            rx = _search_re(term)
-            query["$or"] = [{"primary_contact": rx}, {"email": rx}, {"order_number": rx}, {"dogs": rx}, {"shot_ref": rx}, {"phone_digits": _search_re(_digits(term))} if len(_digits(term)) >= 3 else {"order_number": rx}]
-        rows = await db.event_photo_orders.find(query, {"_id": 0}).sort("created_at", -1).to_list(2000)
-        return {"orders": [_order_row(r) for r in rows], "count": len(rows)}
-
-    @api.post("/admin/events/{event_id}/photo-orders")
-    async def admin_create_photo_order(event_id: str, body: PhotoOrderIn, user: dict = Depends(manage)):
-        ev = await _event_by_id(event_id)
-        if not ev.get("photos_enabled", True):
-            raise HTTPException(status_code=409, detail="Photos are switched off for this event.")
-        pkg = next((pk for pk in ev.get("photo_packages") or [] if pk.get("key") == body.package_key), None)
-        if not pkg:
-            raise HTTPException(status_code=422, detail="Pick a photo package.")
-        client_id = body.client_id
+    # The shared photo-order engine (domains/photo_orders) — the same one
+    # Photo Specials use. Paths are unchanged: /admin/events/{id}/photo-orders.
+    async def _photo_link(ev: dict, body: PhotoOrderIn) -> Dict[str, Any]:
         reg = None
         if body.registration_id:
-            reg = await db.event_registrations.find_one({"event_id": event_id, "id": body.registration_id}, {"_id": 0, "id": 1, "client_id": 1, "confirmation_number": 1})
+            reg = await db.event_registrations.find_one({"event_id": ev["id"], "id": body.registration_id}, {"_id": 0, "id": 1, "client_id": 1, "confirmation_number": 1})
             if not reg:
                 raise HTTPException(status_code=404, detail="That registration isn't on this event.")
-            client_id = client_id or reg.get("client_id")
-        if client_id and not await db.clients.find_one({"id": client_id}, {"_id": 1}):
-            client_id = None
-        product_id = await _photo_product_for(ev, pkg)
-        seq = await _next_seq(db, ev["id"], "photo")
-        now = _now_iso()
-        by = {"id": user.get("id"), "name": user.get("name") or user.get("email") or ""}
-        order = {
-            "id": str(uuid.uuid4()), "event_id": ev["id"],
-            "order_number": f"{ev.get('confirmation_prefix') or 'SH-EV'}-P{seq:04d}",
-            "registration_id": reg["id"] if reg else None, "confirmation_number": (reg or {}).get("confirmation_number"),
-            "client_id": client_id,
-            "primary_contact": _clean(body.primary_contact, 120), "email": str(body.email).strip().lower(),
-            "phone": _clean(body.phone, 40), "phone_digits": _digits(body.phone),
-            "dogs": [_clean(d, 60) for d in body.dogs if _clean(d, 60)],
-            "contestant_numbers": [int(n) for n in body.contestant_numbers if n],
-            "shot_ref": _clean(body.shot_ref, 120), "notes": _clean(body.notes, 500),
-            "package_key": pkg["key"], "package_name": pkg["name"], "package_price": float(pkg["price"]),
-            "package": {"digitals": int(pkg.get("digitals") or 0), "print": pkg.get("print") or "", "product_id": product_id},
-            "qty": int(body.qty),
-            "status": "ordered", "print_status": "pending" if pkg.get("print") else "none",
-            "pos_sale_id": None, "receipt_number": None, "subtotal": None, "tax_amount": None, "total": None, "paid_at": None, "paid_by": None,
-            "delivery_link": "", "sent_at": None, "sent_by": None,
-            "created_at": now, "created_by": by, "updated_at": now,
-        }
-        await db.event_photo_orders.insert_one(dict(order))
-        return {"order": _order_row(order), "summary": await _photo_summary(event_id)}
+        return {"registration_id": reg["id"] if reg else None, "confirmation_number": (reg or {}).get("confirmation_number"),
+                "client_id": body.client_id or (reg or {}).get("client_id")}
 
-    @api.get("/admin/events/{event_id}/photo-orders/{oid}")
-    async def admin_get_photo_order(event_id: str, oid: str, user: dict = Depends(manage)):
-        return await _photo_view(event_id, oid)
-
-    @api.patch("/admin/events/{event_id}/photo-orders/{oid}")
-    async def admin_patch_photo_order(event_id: str, oid: str, body: PhotoOrderPatchIn, user: dict = Depends(manage)):
-        o = await _photo_order(event_id, oid)
-        patch: Dict[str, Any] = {}
-        if body.primary_contact is not None:
-            patch["primary_contact"] = _clean(body.primary_contact, 120)
-        if body.email is not None:
-            patch["email"] = str(body.email).strip().lower()
-        if body.phone is not None:
-            patch["phone"] = _clean(body.phone, 40); patch["phone_digits"] = _digits(body.phone)
-        if body.dogs is not None:
-            patch["dogs"] = [_clean(d, 60) for d in body.dogs if _clean(d, 60)]
-        if body.shot_ref is not None:
-            patch["shot_ref"] = _clean(body.shot_ref, 120)
-        if body.notes is not None:
-            patch["notes"] = _clean(body.notes, 500)
-        if body.delivery_link is not None:
-            patch["delivery_link"] = body.delivery_link.strip()[:2000]
-        if body.print_status is not None:
-            patch["print_status"] = body.print_status
-        if body.status is not None:
-            if o.get("status") == "ordered":
-                raise HTTPException(status_code=409, detail="Take payment first.")
-            if o.get("status") == "sent" and body.status != "ready":
-                raise HTTPException(status_code=409, detail="This order was already sent.")
-            patch["status"] = body.status
-        patch["updated_at"] = _now_iso()
-        await db.event_photo_orders.update_one({"event_id": event_id, "id": oid}, {"$set": patch})
-        return await _photo_view(event_id, oid)
-
-    @api.delete("/admin/events/{event_id}/photo-orders/{oid}")
-    async def admin_delete_photo_order(event_id: str, oid: str, user: dict = Depends(manage)):
-        o = await _photo_order(event_id, oid)
-        if o.get("status") != "ordered":
-            raise HTTPException(status_code=409, detail="A paid order can't be deleted. Refund it through the register instead.")
-        await db.event_photo_orders.delete_one({"event_id": event_id, "id": oid})
-        return {"ok": True, "summary": await _photo_summary(event_id)}
-
-    def _pos_lines(o: dict):
-        return [pos_line_model(kind="retail", product_id=(o.get("package") or {}).get("product_id"), qty=int(o.get("qty") or 1))]
-
-    @api.post("/admin/events/{event_id}/photo-orders/{oid}/preview")
-    async def admin_preview_photo_order(event_id: str, oid: str, user: dict = Depends(manage)):
-        """What the register will charge (subtotal, tax, total) — priced by
-        the same code as every Front Desk cart."""
-        if price_pos_cart is None:
-            raise HTTPException(status_code=503, detail="The register is not available.")
-        o = await _photo_order(event_id, oid)
-        priced, _caches = await price_pos_cart(_pos_lines(o), None, can_price=False, client_id=o.get("client_id"))
-        return {"subtotal": priced.get("subtotal"), "tax_amount": priced.get("tax_amount"), "total": priced.get("total"), "tax_rate_pct": priced.get("tax_rate_pct")}
-
-    @api.post("/admin/events/{event_id}/photo-orders/{oid}/checkout")
-    async def admin_checkout_photo_order(event_id: str, oid: str, body: PhotoCheckoutIn, user: dict = Depends(manage)):
-        """Rings the order through the real register: one sale of the
-        package's hidden product, the given tenders, the same receipt, drawer,
-        tax and P&L behaviour as any Front Desk sale. Idempotent per order."""
-        if create_pos_sale is None or pos_sale_model is None:
-            raise HTTPException(status_code=503, detail="The register is not available.")
-        o = await _photo_order(event_id, oid)
-        if o.get("status") != "ordered":
-            return await _photo_view(event_id, oid)
-        if require_take_payments is not None:
-            require_take_payments(user)
-        sale_body = pos_sale_model(
-            lines=_pos_lines(o), discount=None, client_id=o.get("client_id"),
-            tenders=[pos_tender_model(method=t.method, amount=t.amount, tendered_amount=t.tendered_amount, notes=t.notes) for t in body.tenders],
-            workstation_id=body.workstation_id, idempotency_key=f"event-photo:{o['id']}:{body.idempotency_key}"[:128],
-        )
-        result = await create_pos_sale(sale_body, user)
-        sale = result.get("sale") or {}
-        now = _now_iso()
-        await db.event_photo_orders.update_one({"event_id": event_id, "id": oid}, {"$set": {
-            "status": "paid", "pos_sale_id": result.get("pos_sale_id") or sale.get("id"),
-            "receipt_number": sale.get("receipt_number"), "subtotal": sale.get("subtotal"), "tax_amount": sale.get("tax_amount"),
-            "total": sale.get("total"), "paid_at": now, "paid_by": {"id": user.get("id"), "name": user.get("name") or user.get("email") or ""},
-            "updated_at": now}})
-        view = await _photo_view(event_id, oid)
-        view["pos"] = {k: result.get(k) for k in ("pos_sale_id", "pos_print_receipt_token", "pos_open_drawer_token")}
-        return view
-
-    @api.post("/admin/events/{event_id}/photo-orders/{oid}/send")
-    async def admin_send_photo_order(event_id: str, oid: str, body: PhotoSendIn, user: dict = Depends(manage)):
-        """Email the customer their download link and mark the order sent."""
-        ev = await _event_by_id(event_id)
-        o = await _photo_order(event_id, oid)
-        if o.get("status") == "ordered":
-            raise HTTPException(status_code=409, detail="Take payment before sending the photos.")
-        link = body.delivery_link.strip()
-        if not re.match(r"^https?://", link, re.I):
-            raise HTTPException(status_code=422, detail="The download link must start with http:// or https://.")
-        if not o.get("email"):
-            raise HTTPException(status_code=422, detail="This order has no email address.")
-        sent_now = False
-        try:
-            sent_now = await email_service.send_event_photos_ready(to_email=o["email"], event=ev, order=o, link=link, message=body.message.strip())
-        except Exception as exc:
-            logger.warning("events: photos-ready email failed for %s: %s", o.get("order_number"), exc)
-        now = _now_iso()
-        await db.event_photo_orders.update_one({"event_id": event_id, "id": oid}, {"$set": {
-            "status": "sent", "delivery_link": link, "sent_at": now, "email_sent_now": bool(sent_now),
-            "sent_by": {"id": user.get("id"), "name": user.get("name") or user.get("email") or ""}, "updated_at": now}})
-        return await _photo_view(event_id, oid)
-
-    @api.get("/admin/events/{event_id}/photo-orders.csv")
-    async def admin_photo_orders_csv(event_id: str, user: dict = Depends(manage)):
-        ev = await _event_by_id(event_id)
-        rows = await db.event_photo_orders.find({"event_id": event_id}, {"_id": 0}).sort("created_at", 1).to_list(5000)
-        header = ["Order #", "Name", "Email", "Phone", "Dogs", "Contestant #s", "Shot reference", "Package", "Qty", "Digitals", "Print",
-                  "Subtotal", "Tax", "Total", "Status", "Receipt #", "Paid at", "Print status", "Download link", "Sent at", "Notes", "Confirmation #", "Created at"]
-        data = [[r.get("order_number"), r.get("primary_contact"), r.get("email"), r.get("phone"), "; ".join(r.get("dogs") or []),
-                 "; ".join(f"#{int(n):03d}" for n in (r.get("contestant_numbers") or [])), r.get("shot_ref"), r.get("package_name"), r.get("qty"),
-                 (r.get("package") or {}).get("digitals"), (r.get("package") or {}).get("print"), r.get("subtotal"), r.get("tax_amount"), r.get("total"),
-                 r.get("status"), r.get("receipt_number"), r.get("paid_at"), r.get("print_status"), r.get("delivery_link"), r.get("sent_at"),
-                 r.get("notes"), r.get("confirmation_number"), r.get("created_at")] for r in rows]
-        return _csv_response(f"{ev['slug']}-photo-orders.csv", header, data)
+    register_photo_order_routes(
+        api=api, db=db, logger=logger, manage=manage, base="/admin/events", load_owner=_event_by_id,
+        owners_collection="events", orders_collection="event_photo_orders", owner_field="event_id",
+        product_tag="event_photo_package", order_prefix=lambda ev: ev.get("confirmation_prefix") or "SH-EV",
+        resolve_link=_photo_link, csv_link_columns=[("Confirmation #", "confirmation_number")],
+        create_pos_sale=create_pos_sale, price_pos_cart=price_pos_cart, require_take_payments=require_take_payments,
+        pos_sale_model=pos_sale_model, pos_line_model=pos_line_model, pos_tender_model=pos_tender_model,
+    )
 
     @api.get("/admin/events/{event_id}/qr")
     async def admin_event_qr(event_id: str, request: Request, origin: str = Query(default=""),

@@ -718,7 +718,7 @@ function AdminShell() {
             openCreateOnMount={pendingCreateTab === "clients"} onCreateConsumed={()=>setPendingCreateTab(null)} userId={user?.id} can={can} />}
           {tab === "inquiries" && navAllowed("inquiries") && <Inquiries can={can} onOpenClient={(id)=>navigateAdmin("clients", {kind:"client", id, mode:"open"})} />}
           {tab === "events" && navAllowed("events") && <Events can={can} />}
-          {tab === "photo_specials" && navAllowed("photo_specials") && <PhotoSpecials />}
+          {tab === "photo_specials" && navAllowed("photo_specials") && <PhotoSpecials can={can} />}
           {tab === "gift_cards" && navAllowed("gift_cards") && <GiftCards />}
           {tab === "dogs" && navAllowed("dogs") && <Dogs focusId={searchTarget?.kind==="dog"?searchTarget.id:null} focusMode={searchTarget?.mode || "scroll"} onConsumed={clearSearchTarget} openCreateOnMount={pendingCreateTab === "dogs"} onCreateConsumed={()=>setPendingCreateTab(null)} userId={user?.id}
             can={can}
