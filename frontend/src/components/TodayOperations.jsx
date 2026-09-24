@@ -43,6 +43,8 @@ export default function TodayOperations({ stats, onReload = () => {}, onNavigate
   const [services, setServices] = useState([]);
   const [moodTags, setMoodTags] = useState(DEFAULT_MOOD_TAGS);
   const [pendingVax, setPendingVax] = useState([]);
+  // The review list failing used to look identical to "nothing to review".
+  const [vaxFailed, setVaxFailed] = useState(false);
   const [quoteRequests, setQuoteRequests] = useState([]);
   const [detailFor, setDetailFor] = useState(null);
   const [checkoutFor, setCheckoutFor] = useState(null);
@@ -57,11 +59,12 @@ export default function TodayOperations({ stats, onReload = () => {}, onNavigate
     const [settings, sv, vx, qr] = await Promise.all([
       api.get("/settings").catch(() => ({ data: {} })),
       api.get("/services").catch(() => ({ data: [] })),
-      api.get("/admin/vaccine-cert-uploads").catch(() => ({ data: [] })),
+      api.get("/admin/vaccine-cert-uploads").catch(() => ({ data: null })),
       api.get("/admin/quote-requests?status=open").catch(() => ({ data: [] })),
     ]);
     if (Array.isArray(settings.data?.mood_tags) && settings.data.mood_tags.length) setMoodTags(settings.data.mood_tags);
     setServices(Array.isArray(sv.data) ? sv.data : []);
+    setVaxFailed(!Array.isArray(vx.data));
     setPendingVax(Array.isArray(vx.data) ? vx.data : []);
     setQuoteRequests(Array.isArray(qr.data) ? qr.data : []);
   }, []);
@@ -232,6 +235,12 @@ export default function TodayOperations({ stats, onReload = () => {}, onNavigate
         </section>
       )}
 
+      {vaxFailed && (
+        <div className="rounded-2xl border border-shOrange/40 bg-shOrange/10 p-4 text-[14px] text-shOrange" data-testid="today-pending-vax-reviews">
+          <i className="fas fa-triangle-exclamation mr-2"/>Couldn't load the vaccine uploads waiting for approval.
+          <button type="button" onClick={loadOperations} className="ml-2 underline font-black">Try again</button>
+        </div>
+      )}
       {(pendingVax.length > 0 || quoteRequests.length > 0) && (
         <section className="grid grid-cols-1 xl:grid-cols-2 gap-4" data-testid="today-review-queues">
           {pendingVax.length > 0 && (

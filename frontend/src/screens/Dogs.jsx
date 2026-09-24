@@ -18,6 +18,7 @@ import HuskyDogImage from "../components/brand/HuskyDogImage";
 import IntakeFormsSection from "../components/IntakeFormsSection";
 import DogManageMenu from "../components/DogManageMenu";
 import SafetyFlagsManager from "../components/SafetyFlagsManager";
+import PendingVaccineUploads from "../components/PendingVaccineUploads";
 import CommunicationLog from "../components/CommunicationLog";
 import ReviewRequestButton from "../components/ReviewRequestButton";
 import LazyMount from "../components/LazyMount";
@@ -576,6 +577,14 @@ export default function Dogs({ focusId = null, focusMode = "scroll", onConsumed 
               ))}
             </nav>
             <div className="space-y-4">
+              {/* A client upload waiting for approval is findable from any tab —
+                  alerts about it open the dog, so the approval must be here. */}
+              {tab !== "vaccines" && editing?.id && Object.values(form.vaccines_pending_review || {}).some(Boolean) && (
+                <button type="button" onClick={()=>setTab("vaccines")} data-testid="dog-pending-vax-banner"
+                        className="w-full text-left rounded-xl border border-shSecondary/40 bg-shSecondary/10 p-3 text-[14px] font-black text-shSecondary">
+                  <i className="fas fa-file-medical mr-2"/>Vaccine upload waiting for your approval — tap to review
+                </button>
+              )}
               {tab === "timeline" && editing?.id && (
                 <DogTimeline dogId={editing.id} dogName={form.name || editing.name} />
               )}
@@ -653,6 +662,15 @@ export default function Dogs({ focusId = null, focusMode = "scroll", onConsumed 
 
               {tab === "vaccines" && (
                 <div className="space-y-3">
+                  {editing?.id && (
+                    <PendingVaccineUploads
+                      dogId={editing.id}
+                      onApproved={(vac, exp) => setForm(f => ({ ...f, vaccines: { ...f.vaccines, [vac]: exp } }))}
+                      onChanged={(vac) => {
+                        setForm(f => ({ ...f, vaccines_pending_review: { ...(f.vaccines_pending_review || {}), [vac]: false } }));
+                        load();
+                      }} />
+                  )}
                   <Input label="Rabies Expiration (required by default)" type="date" color="text-shAccent"
                          value={form.vaccines.rabies} onChange={(v)=>setForm({...form, vaccines:{...form.vaccines, rabies:v}})} testId="dog-rabies-input" />
                   <Input label="Bordetella" type="date" value={form.vaccines.bordetella} onChange={(v)=>setForm({...form, vaccines:{...form.vaccines, bordetella:v}})} />

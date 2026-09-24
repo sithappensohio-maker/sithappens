@@ -4656,7 +4656,7 @@ async def admin_list_vaccine_uploads(include_reviewed: bool = False, _: dict = D
         omap = {o["id"]: o["name"] for o in owners}
         for x in out:
             x["client_name"] = omap.get(x.get("owner_id"), "")
-    out.sort(key=lambda x: x.get("uploaded_at", ""), reverse=True)
+    out.sort(key=lambda x: str(x.get("uploaded_at") or ""), reverse=True)
     return out
 
 
