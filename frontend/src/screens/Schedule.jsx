@@ -117,6 +117,8 @@ export default function Schedule() {
   const [bookErr, setBookErr] = useState("");
   const [bookSaving, setBookSaving] = useState(false);
   const [dogs, setDogs] = useState([]);
+  // Add-ons eligible for the quick-add service (nail trim, bath, …).
+  const [quickAddons, setQuickAddons] = useState([]);
   // Map of client_id → { credits, training_credits, boarding_credits } so the
   // day roster can show a "credits available" chip next to each dog.
   const [clientBalById, setClientBalById] = useState({});
@@ -243,20 +245,79 @@ export default function Schedule() {
       time: "",
       grooming_type: "bath",
       notes: "",
+      addon_service_ids: [],
+      // Extra dogs from the same household: [{ dog_id, addon_service_ids }].
+      extra_dogs: [],
     });
   };
+
+  const quickService = newBooking?.service_type;
+  useEffect(() => {
+    if (!quickService) return;
+    let cancelled = false;
+    (async () => {
+      try {
+        const { data } = await api.get("/services/addons", { params: { for: quickService } });
+        if (!cancelled) setQuickAddons(Array.isArray(data) ? data : []);
+      } catch {
+        if (!cancelled) setQuickAddons([]);
+      }
+    })();
+    return () => { cancelled = true; };
+  }, [quickService]);
+
+  // Other dogs owned by the primary dog's client — these can ride along on
+  // the same appointment as a group booking (same as the client portal).
+  const householdDogs = useMemo(() => {
+    const primary = dogs.find(d => d.id === newBooking?.dog_id);
+    if (!primary?.owner_id) return [];
+    return dogs.filter(d => d.owner_id === primary.owner_id);
+  }, [dogs, newBooking?.dog_id]);
+
+  const setPrimaryDog = (dogId) => {
+    // A different dog may mean a different household — start extras over.
+    setNewBooking({ ...newBooking, dog_id: dogId, extra_dogs: [] });
+  };
+  const addExtraDog = () => {
+    const used = new Set([newBooking.dog_id, ...newBooking.extra_dogs.map(e => e.dog_id)]);
+    const next = householdDogs.find(d => !used.has(d.id));
+    if (!next) return;
+    setNewBooking({ ...newBooking, extra_dogs: [...newBooking.extra_dogs, { dog_id: next.id, addon_service_ids: [] }] });
+  };
+  const updateExtraDog = (idx, patch) =>
+    setNewBooking({ ...newBooking, extra_dogs: newBooking.extra_dogs.map((e, i) => i === idx ? { ...e, ...patch } : e) });
+  const removeExtraDog = (idx) =>
+    setNewBooking({ ...newBooking, extra_dogs: newBooking.extra_dogs.filter((_, i) => i !== idx) });
+  const toggleIn = (list, id) => (list || []).includes(id) ? list.filter(x => x !== id) : [...(list || []), id];
 
   const saveBooking = async () => {
     setBookErr(""); setBookSaving(true);
     try {
-      const payload = { ...newBooking };
+      const { extra_dogs, ...payload } = newBooking;
       // Only boarding uses end_date; everything else is a single day.
       if (payload.service_type !== "boarding") delete payload.end_date;
       // Only grooming uses grooming_type.
       if (payload.service_type !== "grooming") delete payload.grooming_type;
       // Only training/grooming use time.
       if (!["training", "grooming"].includes(payload.service_type)) delete payload.time;
-      await api.post("/bookings", payload);
+      // Drop add-ons picked for a service that no longer offers them.
+      const eligible = new Set(quickAddons.map(a => a.id));
+      const keepEligible = (ids) => (ids || []).filter(id => eligible.has(id));
+      payload.addon_service_ids = keepEligible(payload.addon_service_ids);
+      if (extra_dogs.length > 0) {
+        // Group booking: one row per dog sharing a group_id; the server
+        // rolls the whole group back if any dog fails validation.
+        const { dog_id, addon_service_ids, ...shared } = payload;
+        await api.post("/bookings/group", {
+          ...shared,
+          dogs: [
+            { dog_id, addon_service_ids, notes: payload.notes || "" },
+            ...extra_dogs.map(e => ({ dog_id: e.dog_id, addon_service_ids: keepEligible(e.addon_service_ids), notes: "" })),
+          ],
+        });
+      } else {
+        await api.post("/bookings", payload);
+      }
       setNewBooking(null);
       await load();
     } catch (e) {
@@ -434,7 +495,7 @@ export default function Schedule() {
                   <div>
                     <label className="text-[13px] font-black text-shTextMuted uppercase tracking-widest">Dog</label>
                     <select value={newBooking.dog_id}
-                            onChange={(e)=>setNewBooking({...newBooking, dog_id: e.target.value})}
+                            onChange={(e)=>setPrimaryDog(e.target.value)}
                             data-testid="day-roster-dog-select"
                             className="w-full mt-1 bg-[var(--sh-card-base)] border border-shBorder rounded p-2 text-shText text-sm">
                       <option value="">— pick a dog —</option>
@@ -484,6 +545,66 @@ export default function Schedule() {
                       </select>
                     </div>
                   )}
+                  {quickAddons.length > 0 && newBooking.dog_id && (
+                    <div data-testid="day-roster-addons">
+                      <label className="text-[13px] font-black text-amber-400 uppercase tracking-widest">
+                        <i className="fas fa-plus-circle mr-1"/>Add-ons{newBooking.extra_dogs.length > 0 ? ` for ${(dogs.find(d => d.id === newBooking.dog_id) || {}).name || "this dog"}` : ""} (optional)
+                      </label>
+                      <QuickAddonTiles addons={quickAddons} selected={newBooking.addon_service_ids} testPrefix="day-roster-addon"
+                                       onToggle={(id)=>setNewBooking({...newBooking, addon_service_ids: toggleIn(newBooking.addon_service_ids, id)})}/>
+                    </div>
+                  )}
+                  {householdDogs.length > 1 && (
+                    <div className="border border-shPrimary/30 rounded-lg p-3 space-y-3" data-testid="day-roster-multidog">
+                      <div className="flex items-center justify-between gap-2">
+                        <div>
+                          <p className="text-shPrimary font-black uppercase tracking-widest text-[13px]"><i className="fas fa-paw mr-1.5"/>More dogs on this booking?</p>
+                          <p className="text-shTextMuted text-[13px] normal-case mt-0.5">Same day and service. Per-dog add-ons.</p>
+                        </div>
+                        {newBooking.extra_dogs.length + 1 < householdDogs.length && (
+                          <button type="button" onClick={addExtraDog} data-testid="day-roster-add-dog"
+                                  className="bg-shPrimary/20 border border-shPrimary/40 text-shPrimary px-3 py-1.5 rounded text-[13px] font-black uppercase tracking-widest hover:bg-shPrimary/30 transition whitespace-nowrap">
+                            <i className="fas fa-plus mr-1"/>Add dog
+                          </button>
+                        )}
+                      </div>
+                      {newBooking.extra_dogs.map((extra, idx) => {
+                        const used = new Set([newBooking.dog_id, ...newBooking.extra_dogs.map((e, i) => i !== idx ? e.dog_id : null).filter(Boolean)]);
+                        const available = householdDogs.filter(d => !used.has(d.id));
+                        return (
+                          <div key={idx} className="border-t border-shBorder pt-3 space-y-2" data-testid={`day-roster-extra-dog-${idx}`}>
+                            <div className="flex gap-2 items-center">
+                              <select value={extra.dog_id}
+                                      onChange={(e)=>updateExtraDog(idx, { dog_id: e.target.value, addon_service_ids: [] })}
+                                      data-testid={`day-roster-extra-dog-select-${idx}`}
+                                      className="flex-1 bg-[var(--sh-card-base)] border border-shBorder rounded p-2 text-shText text-sm">
+                                {available.map(d => <option key={d.id} value={d.id}>{d.name}{d.breed ? ` · ${d.breed}` : ""}</option>)}
+                              </select>
+                              <button type="button" onClick={()=>removeExtraDog(idx)} data-testid={`day-roster-remove-dog-${idx}`}
+                                      title="Remove this dog"
+                                      className="bg-red-500/15 border border-red-500/40 text-red-300 px-2.5 py-2 rounded text-[13px] font-black hover:bg-red-500/25 transition">
+                                <i className="fas fa-times"/>
+                              </button>
+                            </div>
+                            {quickAddons.length > 0 && (
+                              <div>
+                                <p className="text-[12px] font-black uppercase tracking-widest text-amber-400">
+                                  <i className="fas fa-plus-circle mr-1"/>Add-ons for {(dogs.find(d => d.id === extra.dog_id) || {}).name || "this dog"} (optional)
+                                </p>
+                                <QuickAddonTiles addons={quickAddons} selected={extra.addon_service_ids} testPrefix={`day-roster-extra-addon-${idx}`}
+                                                 onToggle={(id)=>updateExtraDog(idx, { addon_service_ids: toggleIn(extra.addon_service_ids, id) })}/>
+                              </div>
+                            )}
+                          </div>
+                        );
+                      })}
+                      {newBooking.extra_dogs.length > 0 && (
+                        <p className="text-shPrimary text-[13px] font-black uppercase tracking-widest pt-1 border-t border-shBorder" data-testid="day-roster-group-count">
+                          <i className="fas fa-link mr-1"/>Group booking · {newBooking.extra_dogs.length + 1} dogs
+                        </p>
+                      )}
+                    </div>
+                  )}
                   <div>
                     <label className="text-[13px] font-black text-shTextMuted uppercase tracking-widest">Notes (optional)</label>
                     <input value={newBooking.notes}
@@ -495,7 +616,7 @@ export default function Schedule() {
                     <button onClick={()=>setNewBooking(null)} className="text-shTextMuted font-black uppercase text-[14px] tracking-widest">Back</button>
                     <button onClick={saveBooking} disabled={bookSaving} data-testid="day-roster-save-btn"
                             className="bg-shSecondary text-shText px-5 py-2 rounded font-black text-[14px] uppercase tracking-widest hover:bg-shSecondary/90 disabled:opacity-50">
-                      {bookSaving ? <><i className="fas fa-circle-notch fa-spin mr-2"/>Saving…</> : "Add appointment"}
+                      {bookSaving ? <><i className="fas fa-circle-notch fa-spin mr-2"/>Saving…</> : newBooking.extra_dogs.length > 0 ? `Add ${newBooking.extra_dogs.length + 1} appointments` : "Add appointment"}
                     </button>
                   </div>
                 </div>
@@ -508,3 +629,28 @@ export default function Schedule() {
   );
 }
 
+// Tile multi-select for add-ons on the Day Roster quick-add form.
+function QuickAddonTiles({ addons, selected, onToggle, testPrefix }) {
+  return (
+    <div className="grid grid-cols-1 sm:grid-cols-2 gap-2 mt-1">
+      {addons.map(a => {
+        const on = (selected || []).includes(a.id);
+        return (
+          <button key={a.id} type="button" onClick={()=>onToggle(a.id)} data-testid={`${testPrefix}-${a.id}`}
+                  aria-pressed={on}
+                  className={`flex items-center gap-2 p-2 rounded-lg border transition text-left ${
+                    on ? "bg-amber-500/15 border-amber-500/60" : "bg-[var(--sh-card-base)] border-shBorder hover:border-amber-500/40"
+                  }`}>
+            <span className="w-8 h-8 rounded grid place-items-center shrink-0"
+                  style={{ background: `${a.color || "#f59e0b"}25`, color: a.color || "#f59e0b" }}>
+              <i className={`fas ${a.icon || "fa-plus"}`}/>
+            </span>
+            <span className="flex-1 min-w-0 text-[14px] font-black text-shText truncate normal-case">{a.name}</span>
+            <span className="text-shPrimary font-black text-[13px] whitespace-nowrap">+${Number(a.base_price || 0).toFixed(2)}</span>
+            {on && <i className="fas fa-check-circle text-amber-400"/>}
+          </button>
+        );
+      })}
+    </div>
+  );
+}
