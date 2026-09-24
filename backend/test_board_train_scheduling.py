@@ -111,7 +111,7 @@ def test_ordinary_training_still_requires_appointment_time():
     try:
         server._booking_start_local(body, settings)
     except Exception as exc:
-        assert "select a time" in str(exc).lower()
+        assert "pick a time" in str(exc).lower()
     else:
         raise AssertionError("ordinary training unexpectedly bypassed appointment-time validation")
 

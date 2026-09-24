@@ -40,6 +40,8 @@ from typing import Any, Dict, List, Optional
 from fastapi import Depends, HTTPException, Query, Request
 from pydantic import BaseModel, EmailStr, Field
 
+from domains.bookings.blocks import BookingBlocked
+
 from domains.photo_orders.engine import (
     PhotoOrderIn, PhotoPackageIn, clean_order_prefix, normalize_packages, public_packages,
     register_photo_order_routes,
@@ -564,14 +566,17 @@ def register_photo_special_routes(
                 return {"ok": True, "reservation": _reservation_row(prior, dog)}
 
         if not sp.get("booking_open"):
-            raise HTTPException(status_code=409, detail="Booking for this session has closed.")
+            raise BookingBlocked(
+                409, "Booking for this session has closed. Give us a call and we'll see what we can do.",
+                code="special_closed", action="contact_us",
+            )
 
         day, when = body.date.strip(), body.time.strip()
         if day and day not in _upcoming(_special_dates(sp)):
-            raise HTTPException(status_code=409, detail="That date is no longer available. Please choose another.")
+            raise BookingBlocked(409, "That date is no longer available. Please choose another.", code="date_unavailable", action="pick_date")
         avail = await _availability(sp, day)
         if avail.get("closed") or not any(s["time"] == when and s["available"] for s in avail.get("slots") or []):
-            raise HTTPException(status_code=409, detail="That time has just been taken. Please choose another.")
+            raise BookingBlocked(409, "That time has just been taken. Please choose another.", code="slot_taken", action="pick_time")
 
         service = await _portrait_service()
         client, dog = await _resolve_owner_and_dog(body)
@@ -605,7 +610,7 @@ def register_photo_special_routes(
             if "duplicate key" not in str(e).lower():
                 raise
             # Someone else's insert landed first. The index is the authority.
-            raise HTTPException(status_code=409, detail="That time has just been taken. Please choose another.")
+            raise BookingBlocked(409, "That time has just been taken. Please choose another.", code="slot_taken", action="pick_time")
         booking.pop("_id", None)
 
         try:

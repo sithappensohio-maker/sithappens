@@ -229,6 +229,7 @@ def test_a_reservation_cannot_be_made_on_a_date_that_has_passed():
     with pytest.raises(HTTPException) as e:
         _reserve(sp, day=yesterday, time="09:00")
     assert e.value.status_code == 409
+    assert e.value.block["action"] == "pick_date", "the page sends them back to the dates"
 
 
 def test_front_desk_sees_a_recurring_special_on_a_day_inside_its_range():
@@ -294,6 +295,7 @@ def test_closed_booking_offers_no_slots_and_refuses_a_reservation():
     with pytest.raises(HTTPException) as e:
         _reserve(sp)
     assert e.value.status_code == 409
+    assert e.value.block["action"] == "contact_us" and "call" in e.value.detail
 
 
 def test_max_bookings_sells_the_whole_special_out():
@@ -352,6 +354,8 @@ def test_the_public_endpoint_turns_a_lost_race_into_a_friendly_refusal():
         _reserve(sp, time="09:45", dog="Someone Else")
     assert e.value.status_code == 409
     assert "taken" in str(e.value.detail).lower()
+    # The page branches on this code (never on the words) to reopen the grid.
+    assert e.value.block == {"code": "slot_taken", "action": "pick_time"}
 
 
 def test_resubmitting_the_same_form_returns_the_same_reservation():

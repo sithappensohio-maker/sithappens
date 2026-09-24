@@ -140,7 +140,8 @@ def test_booking_create_rejects_ineligible_addon(admin_headers, test_dog, addon_
         headers=admin_headers, timeout=15,
     )
     assert r.status_code == 400
-    assert "isn't eligible" in r.json()["detail"].lower() or "not eligible" in r.json()["detail"].lower()
+    assert "can't be added to" in r.json()["detail"].lower()
+    assert r.json()["block"] == {"code": "addon_not_eligible", "action": "edit_addons", "addon_id": r.json()["block"]["addon_id"]}
 
 
 def test_booking_create_rejects_non_addon_service(admin_headers, test_dog):
@@ -160,7 +161,8 @@ def test_booking_create_rejects_non_addon_service(admin_headers, test_dog):
         headers=admin_headers, timeout=15,
     )
     assert r.status_code == 400
-    assert "not flagged as an add-on" in r.json()["detail"].lower()
+    assert "can't be added as an extra" in r.json()["detail"].lower()
+    assert r.json()["block"]["action"] == "edit_addons"
 
 
 def test_attach_addon_endpoint_appends(admin_headers, test_dog, addon_service):

@@ -4,6 +4,8 @@ from __future__ import annotations
 from typing import Any, Optional
 from fastapi import HTTPException
 
+from domains.bookings.blocks import BookingBlocked
+
 _db = None
 _apply_booking_service_rules_fn = None
 _create_booking_impl_fn = None
@@ -37,11 +39,20 @@ async def resolve_base_service_for_booking(body: BookingIn, user: dict) -> Optio
     if body.service_id:
         selected = await _db.services.find_one({"id": body.service_id}, {"_id": 0})
         if not selected or selected.get("active") is False:
-            raise HTTPException(status_code=400, detail="That service is no longer available.")
+            raise BookingBlocked(
+                400, "That service isn't offered anymore. Please go back and pick another service.",
+                code="service_unavailable", action="pick_service",
+            )
         if selected.get("is_addon") is True:
-            raise HTTPException(status_code=400, detail="Add-ons must be attached to a base service booking.")
+            raise BookingBlocked(
+                400, "Add-ons can't be booked on their own. Please pick a main service (like daycare or grooming) and add extras to it.",
+                code="addon_as_service", action="pick_service",
+            )
         if selected.get("service_type") != body.service_type:
-            raise HTTPException(status_code=400, detail="Selected service does not match the booking category.")
+            raise BookingBlocked(
+                400, "That service doesn't match the type of booking you picked. Please go back and choose the service again.",
+                code="service_mismatch", action="pick_service",
+            )
         return await _apply_booking_service_rules_fn(_db, body, selected)
 
     candidates = await _db.services.find(
@@ -65,10 +76,13 @@ async def resolve_base_service_for_booking(body: BookingIn, user: dict) -> Optio
         return None
 
     if not candidates:
-        raise HTTPException(status_code=400, detail=f"No active {body.service_type} service is available for online booking.")
+        raise BookingBlocked(
+            400, f"{body.service_type.title()} can't be booked online right now. Please contact Sit Happens to book it.",
+            code="service_not_online", action="contact_us",
+        )
     defaults = [svc for svc in candidates if svc.get("is_default")]
     selected = candidates[0] if len(candidates) == 1 else (defaults[0] if len(defaults) == 1 else None)
     if selected is None:
-        raise HTTPException(status_code=400, detail="Please choose the exact service you want to book.")
+        raise BookingBlocked(400, "Please choose the exact service you want to book.", code="service_required", action="pick_service")
     body.service_id = selected.get("id")
     return await _apply_booking_service_rules_fn(_db, body, selected)

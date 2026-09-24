@@ -236,8 +236,9 @@ const apiSrc = fs.readFileSync(path.join(__dirname, "..", "lib", "api.js"), "utf
 
 test("the interceptor keeps the machine-readable error body", () => {
   expect(apiSrc).toMatch(/err\.response\.data\.detail_object = d;/);
-  // and it still flattens `detail` itself, so nothing existing changes
-  expect(apiSrc).toMatch(/err\.response\.data\.detail = d\.msg \|\| JSON\.stringify\(d\);/);
+  // and it still flattens `detail` itself, so nothing existing changes —
+  // preferring a human sentence the object carries, JSON only as last resort
+  expect(apiSrc).toMatch(/err\.response\.data\.detail = d\.msg \|\| d\.display_message \|\| d\.message \|\| JSON\.stringify\(d\);/);
 });
 
 test("the importer branches on the structured body, not the flattened string", () => {

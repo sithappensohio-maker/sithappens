@@ -118,6 +118,12 @@ export default function MultiDatePicker({
       <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
         {months}
       </div>
+      {/* The crossed-out days used to be explained only by a hover tooltip,
+          which phones never show. */}
+      <p className="mt-2 text-[12px] text-gray-500" data-testid={`${testid}-legend`}>
+        <span className="line-through text-gray-600 font-black mr-1">12</span>
+        Crossed-out days can't be booked — they've passed{closed.size > 0 ? " or we're closed" : ""}.
+      </p>
       <div className="mt-3 flex flex-wrap items-center gap-2 min-h-[28px]" data-testid={`${testid}-chips`}>
         {value.length === 0 ? (
           <span className="text-[13px] text-gray-500 font-black uppercase tracking-widest">No dates selected</span>

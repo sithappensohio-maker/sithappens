@@ -10,6 +10,8 @@ from typing import Any, Dict, List, Optional
 from datetime import date
 from fastapi import HTTPException
 
+from domains.bookings.blocks import BookingBlocked
+
 _db = None
 _business_today_fn = None
 _billable_boarding_units_fn = None
@@ -650,14 +652,20 @@ async def resolve_addon_snapshots(
     for aid in addon_service_ids:
         svc = by_id.get(aid)
         if not svc:
-            raise HTTPException(status_code=400, detail=f"Unknown / inactive add-on `{aid}`")
+            raise BookingBlocked(
+                400, "One of the add-ons you picked isn't offered anymore. Please remove it and try again.",
+                code="addon_unavailable", action="edit_addons", addon_id=aid,
+            )
         if not svc.get("is_addon"):
-            raise HTTPException(status_code=400, detail=f"Service `{svc.get('name')}` is not flagged as an add-on")
+            raise BookingBlocked(
+                400, f"{svc.get('name') or 'That item'} can't be added as an extra. Please remove it and try again.",
+                code="addon_invalid", action="edit_addons", addon_id=aid,
+            )
         eligible = svc.get("addon_for") or []
         if eligible and base_service_type not in eligible:
-            raise HTTPException(
-                status_code=400,
-                detail=f"`{svc.get('name')}` isn't eligible as an add-on for {base_service_type} services",
+            raise BookingBlocked(
+                400, f"{svc.get('name') or 'That add-on'} can't be added to {base_service_type}. Please remove it and try again.",
+                code="addon_not_eligible", action="edit_addons", addon_id=aid,
             )
         list_price = float(svc.get("base_price") or 0)
         pricing = await resolve_client_price(client_id, "service", aid, list_price)

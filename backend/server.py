@@ -76,6 +76,8 @@ from domains.training import services as training_domain_services
 from domains.pricing import services as pricing_domain_services
 from domains.pos import services as pos_domain_services
 from domains.bookings import services as bookings_domain_services
+from domains.bookings.blocks import BookingBlocked, block_of, pretty_date, pretty_time
+from domains.bookings import guards as booking_guards
 from domains.shop import shopify_pricing
 from domains import booking_rules
 from domains import vaccines as vaccines_domain
@@ -274,6 +276,14 @@ async def _unhandled_exception_handler(request, exc):
         "traceback": tb[-2000:],  # last 2KB is plenty for diagnosis
     })
     return JSONResponse(status_code=500, content={"detail": "Internal server error"})
+
+
+# Actionable booking refusals keep `detail` a readable sentence and add a
+# sibling `block` {code, action, ...} the portal turns into a fix-it button.
+@app.exception_handler(BookingBlocked)
+async def _booking_blocked_handler(request, exc: BookingBlocked):
+    from fastapi.responses import JSONResponse
+    return JSONResponse(status_code=exc.status_code, content={"detail": exc.detail, "block": exc.block}, headers=exc.headers)
 
 
 # -------- Health check (no auth) --------
@@ -3714,32 +3724,22 @@ def _required_vaccines_for_service(settings: dict, service_type: Optional[str]) 
     return global_required
 
 
-async def _validate_dog_vaccines(
-    dog: dict,
-    required: List[str],
-    *,
-    block_on_expiry_day: bool = True,
-    document_required: bool = False,
-) -> None:
-    """Validate the canonical approved vaccine record.
+def _dog_vaccine_block(dog: dict, required: List[str], *, block_on_expiry_day: bool = True, document_required: bool = False):
+    """First vaccine problem that stops this dog booking (domains/bookings/guards.py)."""
+    return booking_guards.dog_vaccine_block(dog, required, today=business_today().isoformat(), pending_fn=_pending_vaccine_cert_for,
+                                            block_on_expiry_day=block_on_expiry_day, document_required=document_required)
 
-    `block_on_expiry_day` and `document_required` are live Day-to-Day
-    compliance controls. Legacy callers keep the historical strict defaults.
-    """
-    today = business_today().isoformat()
-    vaccines = dog.get("vaccines") or {}
-    certs = dog.get("vaccine_certs") or {}
-    for v in required:
-        if _pending_vaccine_cert_for(dog, v):
-            raise HTTPException(status_code=400, detail=f"{v.title()} vaccine is pending admin review")
-        d = str(vaccines.get(v, "") or "")[:10]
-        expired = bool(d and (d <= today if block_on_expiry_day else d < today))
-        if not d or expired:
-            raise HTTPException(status_code=400, detail=f"{v.title()} vaccine missing or expired")
-        if document_required:
-            cert = certs.get(v) or {}
-            if not isinstance(cert, dict) or cert.get("status") != "approved":
-                raise HTTPException(status_code=400, detail=f"{v.title()} vaccine document must be approved before booking")
+
+async def _validate_dog_vaccines(dog: dict, required: List[str], *, block_on_expiry_day: bool = True, document_required: bool = False) -> None:
+    problem = _dog_vaccine_block(dog, required, block_on_expiry_day=block_on_expiry_day, document_required=document_required)
+    if problem:
+        raise problem
+
+
+def _booking_vaccine_block(settings: dict, dog: dict, service_type: str):
+    """Vaccine problem under the live booking policy — shared by booking, recurring and availability."""
+    return booking_guards.booking_vaccine_block(settings, dog, _required_vaccines_for_service(settings, service_type),
+                                                today=business_today().isoformat(), pending_fn=_pending_vaccine_cert_for)
 
 
 def _dog_vaccine_checkin_warning(dog: dict, required: List[str]) -> Optional[str]:
@@ -3761,15 +3761,21 @@ def _dog_vaccine_checkin_warning(dog: dict, required: List[str]) -> Optional[str
     return None
 
 
-def _parse_hhmm_strict(value: Optional[str], *, field_label: str) -> Optional[time]:
-    """Parse an HH:MM wall-clock value without silently accepting junk."""
+def _parse_hhmm_strict(value: Optional[str], *, field_label: str, config: bool = False) -> Optional[time]:
+    """Parse an HH:MM wall-clock value without silently accepting junk.
+
+    `config=True` marks a value from Settings (opening/closing hours): a bad
+    one is the business's setup problem, not something the client can fix.
+    """
     raw = (value or "").strip()
     if not raw:
         return None
     try:
         return datetime.strptime(raw, "%H:%M").time()
     except Exception:
-        raise HTTPException(status_code=400, detail=f"Invalid {field_label}. Please use a valid time.")
+        if config:
+            raise BookingBlocked(400, f"Online booking can't check our hours for that day (the {field_label} isn't set up correctly). " "Please contact Sit Happens to book, or pick another day.", code="hours_misconfigured", action="contact_us")
+        raise BookingBlocked(400, f"That {field_label} isn't valid. Please pick a time from the list.", code="invalid_time", action="pick_time")
 
 
 def _service_hours_for_date(settings: dict, service_type: str, target_date: date) -> dict:
@@ -3800,25 +3806,25 @@ def _booking_start_local(body: BookingIn, settings: dict) -> datetime:
     try:
         target_date = date.fromisoformat(str(body.date)[:10])
     except Exception:
-        raise HTTPException(status_code=400, detail="Invalid booking date.")
+        raise BookingBlocked(400, "That date isn't valid. Please pick a date from the calendar.", code="invalid_date", action="pick_date")
 
     effective_service_type = training_domain_services.effective_booking_service_type(body)
     hours_row = _service_hours_for_date(settings, effective_service_type, target_date)
     if hours_row.get("closed"):
-        raise HTTPException(status_code=400, detail=f"{effective_service_type.title()} is closed on that day.")
+        raise BookingBlocked(400, f"{effective_service_type.title()} is closed on {target_date.strftime('%A')}s. Please pick a different day.", code="closed_day", action="pick_date")
 
     if effective_service_type in TIME_SLOTTED_SERVICES:
         explicit = _parse_hhmm_strict(body.time, field_label="appointment time")
         if explicit is None:
-            raise HTTPException(status_code=400, detail=f"Please select a time for this {effective_service_type} service.")
+            raise BookingBlocked(400, f"Please pick a time for this {effective_service_type} appointment.", code="time_required", action="pick_time")
     else:
         explicit = _parse_hhmm_strict(body.dropoff_time, field_label="drop-off time")
 
     open_time = None
     close_time = None
     if hours_row.get("mode") != "24_7":
-        open_time = _parse_hhmm_strict(hours_row.get("open") or "07:00", field_label="service opening time")
-        close_time = _parse_hhmm_strict(hours_row.get("close") or "19:00", field_label="service closing time")
+        open_time = _parse_hhmm_strict(hours_row.get("open") or "07:00", field_label="opening time", config=True)
+        close_time = _parse_hhmm_strict(hours_row.get("close") or "19:00", field_label="closing time", config=True)
 
     if explicit is None and open_time is None:
         # Boarding is bookable 24/7, but an omitted drop-off time should not
@@ -3826,7 +3832,7 @@ def _booking_start_local(body: BookingIn, settings: dict) -> datetime:
         # opening time as the fair default for an untimed request.
         day_key = DEFAULT_DAYS[target_date.weekday()]
         business_row = ((settings.get("business_hours") or {}).get(day_key) or {})
-        open_time = _parse_hhmm_strict(business_row.get("open") or "07:00", field_label="business opening time")
+        open_time = _parse_hhmm_strict(business_row.get("open") or "07:00", field_label="opening time", config=True)
     chosen = explicit or open_time or datetime.min.time()
     local_dt = datetime.combine(target_date, chosen, tzinfo=BUSINESS_TZ)
 
@@ -3834,10 +3840,7 @@ def _booking_start_local(body: BookingIn, settings: dict) -> datetime:
     # the same window used by the slot picker. Boarding remains 24/7.
     if explicit is not None and open_time is not None and close_time is not None:
         if explicit < open_time or explicit > close_time:
-            raise HTTPException(
-                status_code=400,
-                detail=f"Selected time is outside {effective_service_type} hours ({open_time.strftime('%-I:%M %p')}–{close_time.strftime('%-I:%M %p')}).",
-            )
+            raise BookingBlocked(400, f"That time is outside {effective_service_type} hours. Please pick a time between " f"{pretty_time(open_time)} and {pretty_time(close_time)}.", code="outside_hours", action="pick_time")
     return local_dt
 
 
@@ -3855,12 +3858,20 @@ def _capacity_waitlist_allowed(settings: dict) -> bool:
     return fv.get("waitlist", True) is not False and bfc.get("waitlist_on_capacity", True) is not False
 
 
+_SLOT_CAPACITY_RESOURCES = ("time_slot", "class_or_slot")
+
+
 def _capacity_error(settings: dict, body: BookingIn, message: str, *, resource: str, target_date: Optional[str] = None) -> HTTPException:
-    copy = ((settings.get("booking_flow_controls") or {}).get("capacity_reached_copy") or message)
+    # The admin's "we're full" copy talks about the whole day, so it only
+    # replaces day-level messages. A taken time slot keeps its own message —
+    # otherwise the client is told the day is full when only that time is.
+    slot_level = resource in _SLOT_CAPACITY_RESOURCES
+    copy = message if slot_level else ((settings.get("booking_flow_controls") or {}).get("capacity_reached_copy") or message)
     return HTTPException(
         status_code=409,
         detail={
             "code": "capacity_full",
+            "action": "pick_time" if slot_level else "pick_date",
             "message": message,
             "display_message": copy,
             "resource": resource,
@@ -3936,7 +3947,10 @@ async def _acquire_capacity_locks(keys: List[str], *, owner: Optional[str] = Non
         await asyncio.sleep(0.025 * (attempt + 1))
     raise HTTPException(status_code=409, detail={
         "code": "capacity_busy",
-        "message": "That opening is being booked by someone else. Please try again.",
+        "action": "retry",
+        "message": "Someone else is booking that opening right now. Please wait a few seconds and press Confirm again.",
+        "display_message": "Someone else is booking that opening right now. Please wait a few seconds and press Confirm again.",
+        "waitlist_allowed": False,
     })
 
 
@@ -3987,7 +4001,7 @@ async def _assert_capacity_available(
         cap = max(0, int(settings.get("daycare_capacity", DAYCARE_CAPACITY) or 0))
         count = await _booking_days_count_filtered(body.date, "daycare", exclude_booking_id=exclude_booking_id)
         if cap <= 0 or count >= cap:
-            raise _capacity_error(settings, body, "Daycare is fully booked for that date.", resource="daycare", target_date=body.date)
+            raise _capacity_error(settings, body, f"Daycare is full on {pretty_date(body.date)}. Please pick another date.", resource="daycare", target_date=body.date)
         return
 
     if body.service_type == "boarding":
@@ -3995,7 +4009,7 @@ async def _assert_capacity_available(
         for stay_day in _presence_dates(body.date, body.end_date):
             count = await _booking_days_count_filtered(stay_day, "boarding", exclude_booking_id=exclude_booking_id)
             if cap <= 0 or count >= cap:
-                raise _capacity_error(settings, body, f"Boarding is fully booked for {stay_day}.", resource="boarding", target_date=stay_day)
+                raise _capacity_error(settings, body, f"Boarding is full on {pretty_date(stay_day)}. Please pick different dates.", resource="boarding", target_date=stay_day)
 
         kennel = (body.kennel or "").strip()
         if kennel:
@@ -4011,7 +4025,7 @@ async def _assert_capacity_available(
                     and stay_day in _presence_dates(b.get("date"), b.get("end_date"))
                 )
                 if used >= max_per:
-                    raise _capacity_error(settings, body, f"{kennel} is already full for {stay_day}.", resource="kennel", target_date=stay_day)
+                    raise _capacity_error(settings, body, f"{kennel} is already full on {pretty_date(stay_day)}. Please pick different dates.", resource="kennel", target_date=stay_day)
         return
 
     if body.service_type not in ("training", "grooming", "photography") or not (body.time or "").strip():
@@ -4049,13 +4063,13 @@ async def _assert_capacity_available(
         raise _capacity_error(
             settings,
             body,
-            f"That time conflicts with an existing {b.get('service_type')} appointment at {b.get('time')}.",
+            f"{pretty_time(b.get('time') or '')} is already taken on {pretty_date(body.date)}. Please pick another time.",
             resource="time_slot",
             target_date=body.date,
         )
     if same_service_overlaps >= slot_capacity:
         label = (selected_service or {}).get("name") or body.service_type.title()
-        raise _capacity_error(settings, body, f"{label} is full at {body.time}.", resource="class_or_slot", target_date=body.date)
+        raise _capacity_error(settings, body, f"{label} is full at {pretty_time(body.time or '')} on {pretty_date(body.date)}. Please pick another time.", resource="class_or_slot", target_date=body.date)
 
 
 async def _update_booking_with_capacity(booking: dict, update: Dict[str, Any]) -> dict:
@@ -4142,14 +4156,11 @@ async def _crate_conflict(booking_id: str, date: str, end_date: Optional[str], c
 
 async def _create_booking_impl(body: BookingIn, user: dict = Depends(get_current_user)):
     _require_booking_edit(user)
-    dog = await db.dogs.find_one({"id": body.dog_id}, {"_id": 0})
-    if not dog:
-        raise HTTPException(status_code=404, detail="Dog not found")
-    if user.get("role") != "admin" and dog["owner_id"] != user.get("client_id"):
-        raise HTTPException(status_code=403, detail="Not your dog")
-    client = await db.clients.find_one({"id": dog["owner_id"]}, {"_id": 0})
+    booking_guards.validate_booking_dates(body)
+    dog = await booking_guards.load_booking_dog(db, body.dog_id, user)
+    client = await db.clients.find_one({"id": dog.get("owner_id")}, {"_id": 0})
     if not client:
-        raise HTTPException(status_code=404, detail="Client not found")
+        raise BookingBlocked(404, "This dog isn't linked to a client account yet, so it can't be booked. Please contact Sit Happens to finish setting up the account.", code="client_not_found", action="contact_us")
 
     settings = await get_settings()
     rules = settings.get("booking_rules", {})
@@ -4162,7 +4173,7 @@ async def _create_booking_impl(body: BookingIn, user: dict = Depends(get_current
     svc_rules = _booking_flow_rules_for(settings, body.service_type, body.service_id)
     if user.get("role") != "admin" and svc_rules.get("client_booking_enabled") is False:
         label = (selected_service or {}).get("name") or body.service_type.title()
-        raise HTTPException(status_code=400, detail=f"{label} is not currently available for online booking.")
+        raise BookingBlocked(400, f"{label} can't be booked online right now. Please contact Sit Happens to book it, or pick another service.", code="service_not_online", action="contact_us")
     daycare_cap = int(settings.get("daycare_capacity", DAYCARE_CAPACITY))
     boarding_cap = int(settings.get("boarding_capacity", 10))
 
@@ -4172,7 +4183,7 @@ async def _create_booking_impl(body: BookingIn, user: dict = Depends(get_current
     # can still clean up historical data if needed.
     fv = settings.get("feature_visibility") or {}
     if user.get("role") != "admin" and body.service_type in fv and fv.get(body.service_type) is False:
-        raise HTTPException(status_code=400, detail=f"{body.service_type.title()} bookings are currently disabled.")
+        raise BookingBlocked(400, f"{body.service_type.title()} isn't being offered right now. Please contact Sit Happens if you need it, or pick another service.", code="service_disabled", action="contact_us")
 
     # Sprint 110di-28 — Boarding zero-night guard. The boarding price model
     # is nights × per-night rate; zero nights means no stay. Same-day
@@ -4182,10 +4193,7 @@ async def _create_booking_impl(body: BookingIn, user: dict = Depends(get_current
     # historical use-case for a zero-night boarding row.
     if body.service_type == "boarding":
         if not body.end_date or str(body.end_date)[:10] <= str(body.date)[:10]:
-            raise HTTPException(
-                status_code=400,
-                detail="Boarding requires at least one overnight stay — pickup must be on a later date than drop-off. (Same-day drop-off is fine, but pickup the same day would be zero nights.)",
-            )
+            raise BookingBlocked(400, "Boarding needs at least one night — please pick a pickup date after the drop-off date. For a same-day visit, book Daycare instead.", code="boarding_zero_nights", action="pick_date")
 
     # Per-service booking controls are evaluated against the real local start
     # time, never midnight/UTC. This makes a 4 PM appointment tomorrow count as
@@ -4197,23 +4205,24 @@ async def _create_booking_impl(body: BookingIn, user: dict = Depends(get_current
         req_date = booking_start_local.date()
         today = now_business.date()
         if req_date < today:
-            raise HTTPException(status_code=400, detail="Please choose a future booking date.")
+            raise BookingBlocked(400, "That date has already passed. Please pick today or a later date.", code="date_in_past", action="pick_date")
         has_explicit_start = bool((body.time or "").strip() or (body.dropoff_time or "").strip())
         if has_explicit_start and booking_start_local <= now_business:
-            raise HTTPException(status_code=400, detail="Please choose a future booking time.")
+            raise BookingBlocked(400, "That time has already passed. Please pick a later time.", code="time_in_past", action="pick_time")
         if svc_rules.get("same_day") is False and req_date == today:
-            raise HTTPException(status_code=400, detail=f"Same-day {body.service_type} bookings are not allowed. Please pick a future date.")
+            raise BookingBlocked(400, f"{body.service_type.title()} can't be booked for today online. Please pick tomorrow or later, or call Sit Happens about today.", code="same_day_not_allowed", action="pick_date")
         min_lead = svc_rules.get("min_lead_hours")
         if isinstance(min_lead, (int, float)) and min_lead > 0:
             hours_lead = (booking_start_local - now_business).total_seconds() / 3600.0
             if hours_lead < float(min_lead):
                 label = (selected_service or {}).get("name") or body.service_type.title()
-                raise HTTPException(status_code=400, detail=f"{label} requires at least {int(min_lead)}h advance notice.")
+                raise BookingBlocked(400, f"{label} needs at least {int(min_lead)} hours' notice. Please pick a later date or time.", code="notice_too_short", action="pick_date")
         max_adv = svc_rules.get("max_advance_days")
         if isinstance(max_adv, (int, float)) and max_adv > 0:
             if (req_date - today).days > int(max_adv):
                 label = (selected_service or {}).get("name") or body.service_type.title()
-                raise HTTPException(status_code=400, detail=f"{label} can only be booked up to {int(max_adv)} days in advance.")
+                last_day = today + timedelta(days=int(max_adv))
+                raise BookingBlocked(400, f"{label} can only be booked up to {int(max_adv)} days ahead. Please pick a date on or before {pretty_date(last_day.isoformat())}.", code="too_far_ahead", action="pick_date")
 
     # Sprint 110aw — Meet-n-Greet gate. Prospect / rejected clients cannot
     # book regular services; admin can override by passing the booking through
@@ -4223,15 +4232,15 @@ async def _create_booking_impl(body: BookingIn, user: dict = Depends(get_current
         # Admin override path: respect explicit override_capacity intent so
         # admin can still schedule the evaluation booking itself.
         if user.get("role") != "admin" or not body.override_capacity:
+            if user.get("role") == "admin":
+                if cstat == "rejected":
+                    raise HTTPException(status_code=400, detail="This client has been marked rejected — bookings are disabled.")
+                raise HTTPException(status_code=400, detail="This client needs to complete a Meet-n-Greet evaluation before booking. Please schedule one first.")
             if cstat == "rejected":
-                raise HTTPException(
-                    status_code=400,
-                    detail="This client has been marked rejected — bookings are disabled.",
-                )
-            raise HTTPException(
-                status_code=400,
-                detail="This client needs to complete a Meet-n-Greet evaluation before booking. Please schedule one first.",
-            )
+                raise BookingBlocked(400, "Online booking isn't available for your account. Please contact Sit Happens if you have questions.", code="account_not_eligible", action="contact_us")
+            if cstat == "evaluation_scheduled":
+                raise BookingBlocked(400, "Your Meet & Greet is already scheduled. Once it's done, you'll be able to book online.", code="evaluation_scheduled", action="wait")
+            raise BookingBlocked(400, "Before your first booking we need to meet your dog. Please request a Meet & Greet — once it's done you can book online.", code="evaluation_required", action="request_evaluation")
 
     # Day-to-Day money guard — this setting used to be presentation-only.
     # For client-created bookings, a configured threshold now genuinely blocks
@@ -4240,20 +4249,20 @@ async def _create_booking_impl(body: BookingIn, user: dict = Depends(get_current
     # an intentional exception after reviewing the account.
     if user.get("role") != "admin":
         money_controls = ((settings.get("day_to_day") or {}).get("money") or {})
-        decline_over = float(money_controls.get("auto_decline_if_balance_over") or 0)
+        try:
+            decline_over = float(money_controls.get("auto_decline_if_balance_over") or 0)
+        except (TypeError, ValueError):
+            decline_over = 0.0
         current_balance = round(float(client.get("account_balance") or 0), 2)
         if decline_over > 0 and current_balance > decline_over + 0.005:
-            raise HTTPException(
-                status_code=409,
-                detail=f"New bookings are paused while your account balance is ${current_balance:.2f}. Please contact Sit Happens to review the balance.",
-            )
+            raise BookingBlocked(409, f"New bookings are paused while your account has an unpaid balance of ${current_balance:.2f}. " "Please pay your balance (or contact Sit Happens to review it), then book again.", code="balance_over_limit", action="pay_balance", balance=current_balance)
 
     # Waiver check for clients
     if user.get("role") != "admin" and bool(settings.get("waiver_required_for_booking", True)):
         sig = await db.waiver_signatures.find_one({"client_id": client["id"]}, sort=[("signed_at", -1)])
         current_version = int(settings.get("waiver_version", 1))
         if not sig or int(sig.get("waiver_version", 1)) < current_version:
-            raise HTTPException(status_code=400, detail="Waiver must be signed before booking")
+            raise BookingBlocked(400, "Please sign our waiver before booking. It only takes a minute, then come back and book.", code="waiver_unsigned", action="sign_waiver")
     if user.get("role") != "admin":
         await _require_agreements_signed(client["id"], service_type=body.service_type)
 
@@ -4262,15 +4271,10 @@ async def _create_booking_impl(body: BookingIn, user: dict = Depends(get_current
     # genuinely controls client booking enforcement. Staff can still use the
     # existing explicit override_vaccines path when authorized.
     is_admin = user.get("role") == "admin"
-    compliance = ((settings.get("day_to_day") or {}).get("compliance") or {})
-    guardrails = ((settings.get("day_to_day") or {}).get("guardrails") or {})
-    should_block_vaccines = bool(guardrails.get("block_bookings_if_vaccines_expired", True))
-    if should_block_vaccines and not (is_admin and body.override_vaccines):
-        await _validate_dog_vaccines(
-            dog, required,
-            block_on_expiry_day=bool(compliance.get("block_on_expiry_day", True)),
-            document_required=bool(compliance.get("vaccine_doc_upload_required", False)),
-        )
+    if not (is_admin and body.override_vaccines):
+        vaccine_problem = _booking_vaccine_block(settings, dog, body.service_type)
+        if vaccine_problem:
+            raise vaccine_problem
 
     # Sprint 110ff — Same-dog duplicate-booking guard. GET /bookings/conflicts
     # only ever showed an informational "heads up" banner in one screen and
@@ -4284,12 +4288,9 @@ async def _create_booking_impl(body: BookingIn, user: dict = Depends(get_current
         dup = await _dog_conflicting_booking(body.dog_id, body.date, body.end_date, body.service_type)
         if dup:
             dup_end = dup.get("end_date")
-            span = f" through {dup_end}" if dup_end else ""
-            raise HTTPException(
-                status_code=409,
-                detail=f"{dog['name']} already has a {body.service_type} booking on {dup.get('date')}"
-                       f"{span} (status: {dup.get('status')}).",
-            )
+            span = f" through {pretty_date(dup_end)}" if dup_end and dup_end != dup.get("date") else ""
+            state = {"pending": "waiting for approval", "approved": "confirmed", "checked_in": "checked in"}.get(dup.get("status"), dup.get("status") or "booked")
+            raise BookingBlocked(409, f"{dog.get('name') or 'This dog'} already has a {body.service_type} booking on {pretty_date(dup.get('date'))}{span} ({state}). " "Pick a different date, or see My Bookings to change the existing one.", code="duplicate_booking", action="pick_date", booking_id=dup.get("id"))
 
     # Closed-day enforcement (clients only — admin can override by creating manually).
     # Blocks any booking whose start date OR any day in its range falls on a closed date.
@@ -4299,8 +4300,8 @@ async def _create_booking_impl(body: BookingIn, user: dict = Depends(get_current
             booking_dates = _dates_in_range(body.date, body.end_date)
             hit = [d for d in booking_dates if d in closed]
             if hit:
-                pretty = ", ".join(hit[:3]) + ("…" if len(hit) > 3 else "")
-                raise HTTPException(status_code=400, detail=f"Sit Happens is closed on {pretty}. Please pick another date.")
+                pretty = ", ".join(pretty_date(d) for d in hit[:3]) + ("…" if len(hit) > 3 else "")
+                raise BookingBlocked(400, f"Sit Happens is closed on {pretty}. Please pick another date.", code="closed_date", action="pick_date")
 
     # Advance-booking limit (clients only) — exempt daycare so regulars can
     # set up long-running recurring schedules without bumping the global cap.
@@ -4309,7 +4310,7 @@ async def _create_booking_impl(body: BookingIn, user: dict = Depends(get_current
         if max_adv > 0:
             limit_date = (business_today() + timedelta(days=max_adv)).isoformat()
             if body.date > limit_date:
-                raise HTTPException(status_code=400, detail=f"Bookings allowed up to {max_adv} days in advance")
+                raise BookingBlocked(400, f"Bookings can only be made up to {max_adv} days ahead. Please pick a date on or before {pretty_date(limit_date)}.", code="too_far_ahead", action="pick_date")
 
     # Sprint 110dm — day-to-day guardrails (min advance, same-day toggle,
     # weekend lead time, max-bookings-per-day, max-consecutive-boarding-nights).
@@ -4324,15 +4325,15 @@ async def _create_booking_impl(body: BookingIn, user: dict = Depends(get_current
 
         if not svc_rules.get("_exact_same_day"):
             if not guard.get("same_day_booking_allowed", True) and effective_start_local.date() == now_business.date():
-                raise HTTPException(status_code=400, detail="Same-day bookings are currently disabled.")
+                raise BookingBlocked(400, "Same-day bookings aren't available online. Please pick tomorrow or later, or call Sit Happens about today.", code="same_day_not_allowed", action="pick_date")
         if not svc_rules.get("_exact_min_lead"):
             min_adv_h = float(guard.get("min_advance_booking_hours", 0) or 0)
             if min_adv_h > 0 and hours_until < min_adv_h:
-                raise HTTPException(status_code=400, detail=f"Bookings require at least {int(min_adv_h)}h advance notice.")
+                raise BookingBlocked(400, f"Bookings need at least {int(min_adv_h)} hours' notice. Please pick a later date or time.", code="notice_too_short", action="pick_date")
         wknd_lead = float(guard.get("weekend_lead_time_hours", 0) or 0)
         if wknd_lead > 0 and effective_start_local.weekday() in (5, 6):
             if hours_until < wknd_lead:
-                raise HTTPException(status_code=400, detail=f"Weekend bookings require {int(wknd_lead)}h advance notice.")
+                raise BookingBlocked(400, f"Weekend bookings need at least {int(wknd_lead)} hours' notice. Please pick a later date, or a weekday.", code="notice_too_short", action="pick_date")
         max_pcd = int(guard.get("max_bookings_per_client_per_day", 0) or 0)
         if max_pcd > 0:
             same_day = await db.bookings.count_documents({
@@ -4343,15 +4344,14 @@ async def _create_booking_impl(body: BookingIn, user: dict = Depends(get_current
                 "status": {"$nin": ["cancelled", "rejected"]},
             })
             if same_day >= max_pcd:
-                raise HTTPException(status_code=400, detail=f"This client already has {max_pcd} booking(s) for that date.")
+                if is_admin:
+                    raise HTTPException(status_code=400, detail=f"This client already has {max_pcd} booking(s) for that date.")
+                raise BookingBlocked(400, f"You already have {max_pcd} booking{'s' if max_pcd != 1 else ''} on that date, which is the most we take online for one day. " "Please pick another date, or contact Sit Happens.", code="daily_limit_reached", action="pick_date")
         max_nights = int(guard.get("max_consecutive_boarding_nights", 0) or 0)
         if max_nights > 0 and body.service_type == "boarding" and body.end_date:
-            try:
-                nights = (date.fromisoformat(body.end_date) - date.fromisoformat(body.date)).days
-                if nights > max_nights:
-                    raise HTTPException(status_code=400, detail=f"Boarding stays cannot exceed {max_nights} consecutive nights.")
-            except Exception:
-                pass
+            nights = (date.fromisoformat(str(body.end_date)[:10]) - date.fromisoformat(str(body.date)[:10])).days
+            if nights > max_nights:
+                raise BookingBlocked(400, f"Boarding stays can be at most {max_nights} nights online. Please pick an earlier pickup date, or contact Sit Happens about a longer stay.", code="stay_too_long", action="pick_date")
 
     # Duration is snapshotted now; the race-safe capacity/time-slot recount is
     # performed immediately before insert while a shared Mongo lease is held.
@@ -4365,7 +4365,7 @@ async def _create_booking_impl(body: BookingIn, user: dict = Depends(get_current
                 hours_row = _service_hours_for_date(settings, body.service_type, target_day)
                 close_min = _hhmm_to_min(hours_row.get("close") or "")
                 if close_min is not None and new_start + duration_minutes_used > close_min:
-                    raise HTTPException(status_code=400, detail="That appointment would run past closing time.")
+                    raise BookingBlocked(400, f"That appointment would run past closing time ({pretty_time(hours_row.get('close'))}). Please pick an earlier time.", code="runs_past_closing", action="pick_time")
             except HTTPException:
                 raise
             except Exception:
@@ -4718,22 +4718,25 @@ async def _booking_days_count_filtered(target_date: str, service_type: str, *, e
 
 
 async def create_recurring(body: RecurringBookingIn, user: dict = Depends(get_current_user)):
-    dog = await db.dogs.find_one({"id": body.dog_id}, {"_id": 0})
-    if not dog:
-        raise HTTPException(status_code=404, detail="Dog not found")
-    if user.get("role") != "admin" and dog["owner_id"] != user.get("client_id"):
-        raise HTTPException(status_code=403, detail="Not your dog")
+    dog = await booking_guards.load_booking_dog(db, body.dog_id, user)
     settings = await get_settings()
-    required = settings.get("required_vaccines", ["rabies"])
-    await _validate_dog_vaccines(dog, required)
 
-    start = datetime.fromisoformat(body.start_date).date()
-    end = datetime.fromisoformat(body.end_date).date()
+    try:
+        start = date.fromisoformat(str(body.start_date)[:10])
+        end = date.fromisoformat(str(body.end_date)[:10])
+    except ValueError:
+        raise BookingBlocked(400, "Please pick a valid start and end date for the schedule.", code="invalid_date", action="pick_date")
     if end < start:
-        raise HTTPException(status_code=400, detail="End date before start date")
-    weekdays = set(int(w) for w in body.weekdays)
+        raise BookingBlocked(400, "The end date is before the start date. Please pick an end date on or after the start date.", code="invalid_date", action="pick_date")
+    weekdays = set(int(w) for w in body.weekdays if 0 <= int(w) <= 6)
     if not weekdays:
-        raise HTTPException(status_code=400, detail="Select at least one weekday")
+        raise BookingBlocked(400, "Please pick at least one day of the week.", code="weekdays_required", action="pick_date")
+    # Same vaccine policy as a single booking (per-service list, block switch,
+    # compliance flags). A vaccine problem would skip every date anyway, so
+    # say it once up front.
+    vaccine_problem = _booking_vaccine_block(settings, dog, body.service_type)
+    if vaccine_problem:
+        raise vaccine_problem
 
     created = []
     skipped = []
@@ -4759,7 +4762,7 @@ async def create_recurring(body: RecurringBookingIn, user: dict = Depends(get_cu
                     )
                     created.append(bk)
                 except HTTPException as e:
-                    skipped.append({"date": cur.isoformat(), "reason": e.detail})
+                    skipped.append(booking_guards.skip_entry(cur.isoformat(), e))
             cur += timedelta(days=1)
     finally:
         _suppress_admin_booking_email.reset(token)
@@ -4865,11 +4868,22 @@ async def create_booking_group(body: BookingGroupIn, user: dict = Depends(get_cu
                 # the operator gets a clean "nothing was saved" experience.
                 if created:
                     await db.bookings.delete_many({"group_id": group_id})
-                # Attach the failing dog id to the detail so the UI can
-                # highlight which row to fix.
+                # Name the dog that failed (the client sees this) and carry its
+                # id in the block so the UI can highlight the row to fix.
+                dog_doc = await db.dogs.find_one({"id": d.dog_id}, {"_id": 0, "name": 1}) or {}
+                dog_name = dog_doc.get("name") or "One of the dogs"
                 fail_detail = e.detail
                 if isinstance(fail_detail, str):
-                    fail_detail = f"{fail_detail} (dog: {d.dog_id})"
+                    if dog_name not in fail_detail:
+                        fail_detail = f"{dog_name}: {fail_detail}"
+                    fail_detail = f"{fail_detail} Nothing was booked for any dog yet."
+                elif isinstance(fail_detail, dict):
+                    fail_detail = {**fail_detail, "dog_id": d.dog_id, "dog_name": dog_name}
+                block = block_of(e)
+                if block is not None:
+                    extra = {k: v for k, v in block.items() if k not in ("code", "action")}
+                    extra.update(dog_id=d.dog_id, dog_name=dog_name)
+                    raise BookingBlocked(e.status_code, fail_detail, code=block.get("code"), action=block.get("action"), **extra)
                 raise HTTPException(status_code=e.status_code, detail=fail_detail)
             # Stamp the group_id on the inserted row (create_booking() reads
             # `body.group_id` and persists it, but we set it again here as a
@@ -5746,15 +5760,11 @@ async def availability(date_str: str, dog_id: str, user: dict = Depends(get_curr
     if not dog:
         raise HTTPException(status_code=404, detail="Dog not found")
     settings = await get_settings()
-    required = settings.get("required_vaccines", ["rabies"])
-    today = business_today().isoformat()
-    vac_ok = True
-    missing = []
-    for v in required:
-        d = (dog.get("vaccines") or {}).get(v, "")
-        if not d or d < today:
-            vac_ok = False
-            missing.append(v)
+    # Same policy the daycare booking itself enforces, so this pre-check can
+    # never say "OK" and then have Confirm refuse (or the other way round).
+    problem = _booking_vaccine_block(settings, dog, "daycare")
+    vac_ok = problem is None
+    missing = [problem.block.get("vaccine")] if problem is not None else []
     daycare_cap = int(settings.get("daycare_capacity", DAYCARE_CAPACITY))
     booked = await _booking_days_count_filtered(date_str, "daycare")
     open_slots = max(daycare_cap - booked, 0)
@@ -5765,6 +5775,7 @@ async def availability(date_str: str, dog_id: str, user: dict = Depends(get_curr
         "open_slots": open_slots,
         "vaccine_ok": vac_ok,
         "missing_vaccines": missing,
+        "vaccine_problem": {"message": problem.detail, "block": problem.block} if problem is not None else None,
         "rabies_expiration": (dog.get("vaccines") or {}).get("rabies", ""),
     }
 
@@ -11889,7 +11900,7 @@ async def _require_agreements_signed(client_id: str, *, service_type: Optional[s
     missing = await _unsigned_required_agreements(client_id, service_type=service_type, program_id=program_id)
     if missing:
         names = ", ".join((t.get("title") or t.get("name") or "agreement") for t in missing[:3])
-        raise HTTPException(status_code=409, detail=f"Required agreement must be signed before continuing: {names}")
+        raise BookingBlocked(409, f"Please sign {names} before continuing. You'll find it under Agreements in your portal.", code="agreement_unsigned", action="sign_agreements")
 
 
 @api.get("/admin/agreement-templates")
@@ -50187,11 +50198,7 @@ async def create_multi_date_bookings(body: MultiDateBookingIn, user: dict = Depe
     Per-booking admin notifications are suppressed; a single summary email
     fires after the loop so the operator gets ONE alert per multi-date action.
     """
-    dog = await db.dogs.find_one({"id": body.dog_id}, {"_id": 0})
-    if not dog:
-        raise HTTPException(status_code=404, detail="Dog not found")
-    if user.get("role") != "admin" and dog["owner_id"] != user.get("client_id"):
-        raise HTTPException(status_code=403, detail="Not your dog")
+    dog = await booking_guards.load_booking_dog(db, body.dog_id, user)
 
     created: List[Dict] = []
     skipped: List[Dict] = []
@@ -50221,20 +50228,27 @@ async def create_multi_date_bookings(body: MultiDateBookingIn, user: dict = Depe
                     and detail.get("code") == "capacity_full"
                     and detail.get("waitlist_allowed")
                 ):
-                    wait = await add_to_waitlist(
-                        WaitlistIn(
-                            dog_id=body.dog_id, service_type=body.service_type,
-                            service_id=body.service_id, requested_date=d,
-                            time=body.time or "", addon_service_ids=body.addon_service_ids or [],
-                            notes=body.notes or "",
-                        ),
-                        user,
-                    )
-                    skipped.append({"date": d, "reason": detail, "waitlisted": True, "waitlist_id": wait.get("id")})
+                    # The waitlist can itself refuse (e.g. switched off). That
+                    # must stay a skipped day — raising here would fail the
+                    # whole request while earlier days are already booked.
+                    try:
+                        wait = await add_to_waitlist(
+                            WaitlistIn(
+                                dog_id=body.dog_id, service_type=body.service_type,
+                                service_id=body.service_id, requested_date=d,
+                                time=body.time or "", addon_service_ids=body.addon_service_ids or [],
+                                notes=body.notes or "",
+                            ),
+                            user,
+                        )
+                        skipped.append({"date": d, "reason": detail, "waitlisted": True, "waitlist_id": wait.get("id")})
+                    except HTTPException:
+                        skipped.append({"date": d, "reason": detail})
                 else:
-                    skipped.append({"date": d, "reason": detail})
-            except Exception as e:
-                skipped.append({"date": d, "reason": str(e)[:200]})
+                    skipped.append(booking_guards.skip_entry(d, e))
+            except Exception:
+                logger.exception("multi-date booking failed for %s on %s", body.dog_id, d)
+                skipped.append({"date": d, "reason": "Something went wrong booking this day. Please try it again, or contact Sit Happens if it keeps happening."})
     finally:
         _suppress_admin_booking_email.reset(token)
     # ONE summary email — only for non-admin (client portal) actions.
@@ -55211,6 +55225,10 @@ async def _compute_setup_status_for_client(client: Dict[str, Any]) -> Dict[str, 
 
     settings = await get_settings()
     required_vax: List[str] = settings.get("required_vaccines", ["rabies"]) or []
+    # Booking refuses a vaccine ON its expiry day when this compliance flag is
+    # on (the default); readiness must agree or the gate says "ready" and
+    # Confirm then fails.
+    _block_on_expiry_day = bool((((settings.get("day_to_day") or {}).get("compliance") or {})).get("block_on_expiry_day", True))
 
     # ---- Step 1: client info -------------------------------------------------
     missing_info: List[str] = []
@@ -55277,7 +55295,7 @@ async def _compute_setup_status_for_client(client: Dict[str, Any]) -> Dict[str, 
                 return ""
             for r in required_vax:
                 expiry = str(_vac_expiry(r) or "")[:10]
-                if expiry and expiry >= today:
+                if expiry and (expiry > today if _block_on_expiry_day else expiry >= today):
                     continue  # approved and currently valid — nothing to report
                 # Not currently valid/approved. Check whether the client already
                 # submitted a certificate that's just sitting in the admin's

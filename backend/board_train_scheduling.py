@@ -21,6 +21,8 @@ from typing import Any, Dict, Optional
 
 from fastapi import HTTPException
 
+from domains.bookings.blocks import BookingBlocked
+
 logger = logging.getLogger("sithappens")
 
 
@@ -121,17 +123,18 @@ async def apply_board_train_span(db, body, service: Optional[Dict[str, Any]]) ->
         return None
     days = info.get("duration_days")
     if not days:
-        raise HTTPException(
-            status_code=400,
-            detail=(
-                f'{info.get("program_name") or "Board & Train"} needs a program duration '
-                "(weeks or days) before it can be scheduled as a residential stay."
-            ),
+        # Setup problem on the business side (no program length). The
+        # parenthetical tells the owner what to fix; the rest tells a client.
+        raise BookingBlocked(
+            400,
+            f"{info.get('program_name') or 'Board & Train'} isn't ready to be booked online yet "
+            "(its program length isn't set). Please contact Sit Happens to schedule it.",
+            code="program_not_ready", action="contact_us",
         )
     try:
         start = date.fromisoformat(str(body.date)[:10])
     except (TypeError, ValueError):
-        raise HTTPException(status_code=400, detail="Invalid Board & Train start date")
+        raise BookingBlocked(400, "That start date isn't valid. Please pick it from the calendar.", code="invalid_date", action="pick_date")
 
     service_type = (service or {}).get("service_type")
     if service_type != "boarding" or not getattr(body, "end_date", None):

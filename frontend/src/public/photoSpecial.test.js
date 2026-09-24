@@ -50,7 +50,12 @@ test("sold out and booking closed are real states, not an empty grid", () => {
 });
 
 test("losing a slot while the form is open puts the customer back on a fresh grid", () => {
-  expect(pageSrc).toMatch(/includes\("taken"\)/);
+  // Driven by the server's fix-it code, never by matching words in the
+  // message (the old `includes("taken")` never fired: the message it read
+  // was "AxiosError: Request failed with status code 409"). Behaviour is
+  // mounted in photoSpecialErrors.test.js.
+  expect(pageSrc).not.toMatch(/includes\("taken"\)/);
+  expect(pageSrc).toMatch(/action === "pick_time"/);
   expect(pageSrc).toMatch(/setStep\("time"\); setTime\(""\); loadSlots\(day\)/);
 });
 

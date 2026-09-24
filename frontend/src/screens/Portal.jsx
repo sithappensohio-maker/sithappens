@@ -37,6 +37,8 @@ import PortalPaymentPlans from "../components/PortalPaymentPlans";
 import PortalMessages from "../components/PortalMessages";
 import PortalSetupChecklist, { PortalSetupSuccess, PortalSetupPreview } from "../components/PortalSetupChecklist";
 import PortalBookingBlockedModal from "../components/PortalBookingBlockedModal";
+import RequestMeetGreetModal from "../components/RequestMeetGreetModal";
+import { bookingFailure, groupSkips, shortDate } from "../lib/bookingBlocks";
 import SignedWaiverModal from "../components/SignedWaiverModal";
 import { dogVaccineRollup, humanDate, vaccineState, vaccineSummary, vaccineStateTone, VACCINE_STATES } from "../lib/vaccineStatus";
 import { portalGreeting, portalGreetingSubtitle } from "../lib/portalGreeting";
@@ -115,7 +117,7 @@ function MyRecurringModal({ dogs, onClose }) {
       ]);
       setRows(templates);
       setServices((svcs || []).filter(s => s.active !== false && !s.is_addon && s.service_type === "daycare"));
-    } catch (e) { setErr(formatErr(e.response?.data?.detail) || "Load failed"); }
+    } catch (e) { setErr(bookingFailure(e, "We couldn't load your schedules. Close this and try again.").message); }
   };
   useEffect(() => { load(); }, []);
 
@@ -146,19 +148,27 @@ function MyRecurringModal({ dogs, onClose }) {
       if (editing) await api.put(`/recurring-templates/${editing.id}`, form);
       else await api.post("/recurring-templates", form);
       await load(); setStep("list");
-    } catch (e) { setErr(formatErr(e.response?.data?.detail) || "Save failed"); }
+    } catch (e) { setErr(bookingFailure(e, "We couldn't save that schedule. Please try again.").message); }
   };
 
   const extend = async (r) => {
     setBusy(r.id); setToast(null);
     try {
       const { data } = await api.post(`/recurring-templates/${r.id}/extend`, {});
-      const skipped = (data.skipped || []).length;
-      setToast({ ok: true, msg: `Booked ${data.created} day${data.created !== 1 ? "s" : ""} through ${data.window?.to}.${skipped ? ` ${skipped} skipped (already booked).` : ""}` });
+      // Every skipped day says why (it used to call them all "already booked").
+      const groups = groupSkips(data.skipped);
+      const booked = `Booked ${data.created} day${data.created !== 1 ? "s" : ""}${data.window?.to ? ` through ${shortDate(data.window.to)}` : ""}.`;
+      setToast({
+        ok: data.created > 0,
+        msg: booked,
+        details: groups.map(g => `${g.dates.map(shortDate).join(", ")}: ${g.reason}`),
+      });
       load();
     } catch (e) {
-      setToast({ ok: false, msg: formatErr(e.response?.data?.detail) || "Extend failed" });
+      setToast({ ok: false, msg: bookingFailure(e, "We couldn't book the next weeks. Please try again.").message });
     } finally { setBusy(null); }
+    // The result sits at the top of this scrolling window; bring it into view.
+    setTimeout(() => document.querySelector('[data-testid="my-recurring-toast"]')?.scrollIntoView({ behavior: "smooth", block: "nearest" }), 30);
   };
 
   const remove = async (r) => {
@@ -187,15 +197,25 @@ function MyRecurringModal({ dogs, onClose }) {
 
         <div className="p-5 space-y-3">
           {toast && (
-            <div className={`rounded-lg p-3 text-[15px] ${toast.ok ? "bg-shGreen/15 text-shGreen border border-shGreen/40" : "bg-red-500/15 text-red-400 border border-red-500/40"}`}>
+            <div data-testid="my-recurring-toast" className={`rounded-lg p-3 text-[15px] ${toast.ok ? "bg-shGreen/15 text-shGreen border border-shGreen/40" : "bg-red-500/15 text-red-400 border border-red-500/40"}`}>
               <i className={`fas ${toast.ok ? "fa-check-circle" : "fa-triangle-exclamation"} mr-2`}/>{toast.msg}
+              {(toast.details || []).length > 0 && (
+                <div className="mt-2 pt-2 border-t border-current/20 space-y-1 text-shText" data-testid="my-recurring-skipped">
+                  <p className="text-[13px] font-black uppercase tracking-widest text-shOrange">Not booked</p>
+                  {toast.details.map((line, i) => <p key={i} className="text-[14px] leading-snug">{line}</p>)}
+                </div>
+              )}
             </div>
+          )}
+
+          {step === "list" && err && (
+            <p className="text-red-400 text-[14px] normal-case" data-testid="my-recurring-load-error">{err}</p>
           )}
 
           {step === "list" && (
             <>
               <p className="text-[14px] text-gray-400 normal-case leading-relaxed">Set up a weekly daycare pattern once (e.g. M/W/F), then tap <strong className="text-white">Extend</strong> any time to roll the next batch of bookings forward.</p>
-              {rows.length === 0 ? (
+              {rows.length === 0 ? (err ? null :
                 <div className="bg-bgBase border border-dashed border-bgHover rounded-lg p-6 text-center" data-testid="my-recurring-empty">
                   <i className="fas fa-calendar-week text-gray-600 text-3xl mb-2"/>
                   <p className="text-white font-black text-[14px] uppercase tracking-widest">No saved schedules yet</p>
@@ -951,6 +971,7 @@ export default function Portal() {
   const [rebookSeed, setRebookSeed] = useState(null);  // {dog_id, service_type, service_id} preselected when "Book Again" tapped
   const [showReferModal, setShowReferModal] = useState(false);
   const [vaccineModal, setVaccineModal] = useState(null); // { dog, vaccine }
+  const [meetGreetOpen, setMeetGreetOpen] = useState(false);
   const [vaccineQuick, setVaccineQuick] = useState(null); // { initialDogId }
   // Confirmation MODAL shown after a client submits something that goes into
   // Sit Happens' review queue (vaccine certs today; other reviewed record
@@ -1279,6 +1300,30 @@ export default function Portal() {
       return true;
     }
     return false;  // let the checklist fall through to its default scroll
+  };
+
+  // A refused booking's fix-it button (PortalBookWizard → BookingBlockNotice).
+  // Close the wizard and open the one thing that unblocks them. Date/time/
+  // service fixes never reach here — the wizard steps back itself.
+  const bookingFixActions = ["upload_vaccines", "sign_waiver", "sign_agreements", "pay_balance", "request_evaluation",
+    ...(sectionOn("messages") ? ["contact_us"] : [])];
+  const handleBookingFix = (action, block) => {
+    setShowBookWizard(false);
+    setRebookSeed(null);
+    if (action === "upload_vaccines") {
+      const dog = dogs.find(d => d.id === block?.dog_id) || dogs[0];
+      if (dog) setVaccineModal({ dog, vaccine: block?.vaccine || "rabies" });
+      return;
+    }
+    if (action === "sign_waiver") { setShowWaiver(true); return; }
+    if (action === "sign_agreements") {
+      setMoreOpen(true);
+      setTimeout(() => document.querySelector('[data-testid="portal-agreements-card"]')?.scrollIntoView({ behavior: "smooth", block: "start" }), 60);
+      return;
+    }
+    if (action === "pay_balance") { setTimeout(goPayments, 60); return; }
+    if (action === "request_evaluation") { setMeetGreetOpen(true); return; }
+    if (action === "contact_us") { setMessagesOpen(true); }
   };
 
   // "What You Need to Do" card's primary action — covers the shared setup
@@ -2625,6 +2670,8 @@ export default function Portal() {
         <PortalBookWizard
           dogs={dogs}
           seed={rebookSeed}
+          onFixBlock={handleBookingFix}
+          fixActions={bookingFixActions}
           onClose={()=>{ setShowBookWizard(false); setRebookSeed(null); }}
           onBooked={(info)=>{
             // Sprint 110di-29 — when the wizard wants to keep itself open on
@@ -2812,6 +2859,7 @@ export default function Portal() {
           onClose={() => setVaccineWizard(null)} />
       )}
       {showRecurringModal && <MyRecurringModal dogs={dogs} onClose={()=>setShowRecurringModal(false)} />}
+      <RequestMeetGreetModal open={meetGreetOpen} onClose={()=>setMeetGreetOpen(false)} />
       {false && onboardingNeeded && !onboardingDismissed && (
         <OnboardingChecklist
           dogs={dogs}

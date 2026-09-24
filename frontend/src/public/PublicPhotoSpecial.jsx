@@ -1,6 +1,8 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { useParams } from "react-router-dom";
-import { api, formatErr } from "../lib/api";
+import { api } from "../lib/api";
+import { bookingFailure } from "../lib/bookingBlocks";
+import BookingBlockNotice from "../components/BookingBlockNotice";
 import PublicSiteShell from "./PublicSiteShell";
 import { Section, Title, Eyebrow, Cta } from "./PublicBits";
 
@@ -30,6 +32,20 @@ function fmtDayShort(iso) {
   const d = new Date(`${iso}T00:00:00`);
   return d.toLocaleDateString(undefined, { weekday: "short", month: "short", day: "numeric" });
 }
+// What's still missing before "Review booking" can be pressed. The button
+// used to just go faint, with nothing saying which field it was waiting on.
+function detailsProblem(form) {
+  const missing = [];
+  if (!form.first_name.trim()) missing.push("your first name");
+  if (!form.phone.trim()) missing.push("a mobile number");
+  if (!form.email.trim()) missing.push("an email address");
+  if (!form.dog_name.trim()) missing.push("your dog's name");
+  if (missing.length) return `Please add ${missing.join(", ").replace(/, ([^,]*)$/, " and $1")} to continue.`;
+  if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(form.email.trim())) return "That email address doesn't look right — please check it.";
+  if (form.phone.replace(/\D/g, "").length < 7) return "That mobile number looks too short — please check it.";
+  return "";
+}
+
 function fmtTime(hhmm) {
   if (!hhmm) return "";
   const [h, m] = hhmm.split(":").map(Number);
@@ -47,9 +63,13 @@ export default function PublicPhotoSpecial() {
   const [time, setTime] = useState("");
   const [slots, setSlots] = useState(null);
   const [slotsLoading, setSlotsLoading] = useState(false);
+  const [slotsFailed, setSlotsFailed] = useState(false);
   const [form, setForm] = useState({ first_name: "", last_name: "", email: "", phone: "", dog_name: "", breed: "", dog_notes: "" });
   const [busy, setBusy] = useState(false);
-  const [err, setErr] = useState("");
+  // Why the last attempt failed: { message, block, where } — `where` is the
+  // step the customer was sent back to, so the reason shows up right there
+  // instead of on a step that has just disappeared.
+  const [err, setErr] = useState(null);
   const [confirmed, setConfirmed] = useState(null);
   // A six-week promotion has dozens of dates. Showing all of them as buttons
   // is unusable on a phone, so the nearest fortnight is offered up front and
@@ -63,18 +83,26 @@ export default function PublicPhotoSpecial() {
     let cancelled = false;
     api.get(`/public/photo-specials/${slug}`)
       .then(({ data }) => { if (!cancelled) { setSpecial(data); setDay((data.dates || [])[0] || ""); } })
-      .catch((e) => { if (!cancelled) setLoadErr(formatErr(e) || "This session could not be found."); });
+      .catch((e) => {
+        if (cancelled) return;
+        setLoadErr(e?.response?.status === 404
+          ? "We couldn't find this photo session. It may have ended, or the link may be wrong — check our website for current sessions."
+          : bookingFailure(e, "This session couldn't be loaded. Please refresh the page.").message);
+      });
     return () => { cancelled = true; };
   }, [slug]);
 
   const loadSlots = useCallback(async (forDay) => {
     if (!forDay) return;
     setSlotsLoading(true);
+    setSlotsFailed(false);
     try {
       const { data } = await api.get(`/public/photo-specials/${slug}/availability`, { params: { date: forDay } });
       setSlots(data);
     } catch {
-      setSlots({ closed: true, slots: [] });
+      // A failed load is not "closed" — say it failed and offer a retry.
+      setSlots(null);
+      setSlotsFailed(true);
     } finally {
       setSlotsLoading(false);
     }
@@ -85,24 +113,32 @@ export default function PublicPhotoSpecial() {
   const open = special?.booking_open;
   const free = useMemo(() => (slots?.slots || []).filter((s) => s.available), [slots]);
   const soldOut = open && slots && !slots.closed && (slots.slots || []).length > 0 && free.length === 0;
-  const detailsReady = form.first_name.trim() && form.email.trim() && form.phone.trim() && form.dog_name.trim();
+  const detailsHint = detailsProblem(form);
+  const detailsReady = !detailsHint;
   const dates = useMemo(() => special?.dates || [], [special]);
   const DATE_PREVIEW = 14;
   const visibleDates = allDates ? dates : dates.slice(0, DATE_PREVIEW);
   const hiddenDateCount = Math.max(dates.length - visibleDates.length, 0);
 
   const reserve = async () => {
-    setBusy(true); setErr("");
+    setBusy(true); setErr(null);
     try {
       const { data } = await api.post(`/public/photo-specials/${slug}/reserve`, {
         date: day, time, ...form, idempotency_key: idemKey,
       });
       setConfirmed(data.reservation);
     } catch (e) {
-      const msg = formatErr(e) || "We could not reserve that time.";
-      setErr(msg);
-      // Somebody took it while the form was open — put them back on a fresh grid.
-      if (String(msg).toLowerCase().includes("taken")) { setStep("time"); setTime(""); loadSlots(day); }
+      const f = bookingFailure(e, "We couldn't reserve that time. Please try again.");
+      const action = f.block?.action;
+      if (action === "pick_time") {
+        // Somebody took it while the form was open — back to a fresh grid,
+        // with the reason shown there. Their details are kept.
+        setErr({ ...f, where: "time" }); setStep("time"); setTime(""); loadSlots(day);
+      } else if (action === "pick_date") {
+        setErr({ ...f, where: "date" }); setStep("date"); setTime("");
+      } else {
+        setErr({ ...f, where: "review" });
+      }
     } finally {
       setBusy(false);
     }
@@ -251,10 +287,11 @@ export default function PublicPhotoSpecial() {
             {/* Step 1 — date */}
             <div className="mt-5" data-testid="photo-special-step-date">
               <p className={label}>1 · Choose a date</p>
+              {err?.where === "date" && <div className="mb-3"><BookingBlockNotice testid="photo-special-error" failure={err}/></div>}
               <div className="flex flex-wrap gap-2">
                 {visibleDates.map((d) => (
                   <button key={d} type="button" data-testid={`photo-special-date-${d}`}
-                          onClick={() => { setDay(d); setTime(""); setStep("time"); }}
+                          onClick={() => { setDay(d); setTime(""); setStep("time"); setErr(null); }}
                           className={`min-h-[52px] px-4 rounded-2xl border text-[14px] font-black transition ${
                             day === d ? "border-shGreen bg-shGreen/15 text-shGreen" : "border-bgHover text-white/80 hover:border-shGreen/50"}`}>
                     {fmtDayShort(d)}
@@ -273,8 +310,21 @@ export default function PublicPhotoSpecial() {
             {day && (
               <div className="mt-6" data-testid="photo-special-step-time">
                 <p className={label}>2 · Choose a time</p>
+                {err?.where === "time" && <div className="mb-3"><BookingBlockNotice testid="photo-special-error" failure={err}/></div>}
                 {slotsLoading ? (
                   <p className="text-white/60 text-[14px]">Checking what&apos;s free…</p>
+                ) : slotsFailed ? (
+                  <div className="rounded-2xl border border-shOrange/50 bg-shOrange/10 p-5" data-testid="photo-special-slots-failed">
+                    <p className="text-white/80">We couldn&apos;t load the times for {fmtDay(day)}. Check your connection and try again.</p>
+                    <button type="button" onClick={() => loadSlots(day)} data-testid="photo-special-slots-retry"
+                            className="mt-3 min-h-[44px] px-4 rounded-xl border border-shOrange/60 text-shOrange font-black text-[13px] uppercase tracking-widest">
+                      Try again
+                    </button>
+                  </div>
+                ) : slots?.closed ? (
+                  <div className="rounded-2xl border border-shOrange/50 bg-shOrange/10 p-5" data-testid="photo-special-day-closed">
+                    <p className="text-white/80">There are no times on {fmtDay(day)}. Please choose another date above.</p>
+                  </div>
                 ) : soldOut ? (
                   <div className="rounded-2xl border border-shOrange/50 bg-shOrange/10 p-5" data-testid="photo-special-sold-out">
                     <p className="text-shOrange font-black uppercase tracking-widest text-[12px]">Fully booked</p>
@@ -285,7 +335,7 @@ export default function PublicPhotoSpecial() {
                     {(slots?.slots || []).map((s) => (
                       <button key={s.time} type="button" disabled={!s.available}
                               data-testid={`photo-special-slot-${s.time}`}
-                              onClick={() => { setTime(s.time); setStep("details"); }}
+                              onClick={() => { setTime(s.time); setStep("details"); setErr(null); }}
                               className={`min-h-[52px] rounded-2xl border text-[14px] font-black transition ${
                                 time === s.time ? "border-shGreen bg-shGreen/20 text-shGreen"
                                 : s.available ? "border-bgHover text-white hover:border-shGreen/60"
@@ -341,6 +391,11 @@ export default function PublicPhotoSpecial() {
                          value={form.dog_notes} onChange={(e) => setForm({ ...form, dog_notes: e.target.value })}/>
                 </div>
                 <p className="text-[13px] text-white/50 mt-2">One dog per appointment — book another time for a second dog.</p>
+                {detailsHint && (
+                  <p className="text-[14px] text-shOrange font-bold mt-3" data-testid="photo-special-details-hint">
+                    <i className="fas fa-circle-info mr-1.5"/>{detailsHint}
+                  </p>
+                )}
                 <div className="mt-4">
                   <Cta onClick={() => setStep("review")} testid="photo-special-to-review"
                        className={detailsReady ? "" : "opacity-40 pointer-events-none"}>
@@ -363,7 +418,7 @@ export default function PublicPhotoSpecial() {
                 <p className="text-white/70 text-[14px] mt-3">
                   <i className="fas fa-wallet mr-1.5 text-shGreen"/>Nothing to pay now — you&apos;ll pay at your session.
                 </p>
-                {err && <p className="text-shOrange text-[14px] font-black mt-3" data-testid="photo-special-error">{err}</p>}
+                {err?.where === "review" && <div className="mt-3"><BookingBlockNotice testid="photo-special-error" failure={err}/></div>}
                 <div className="flex flex-wrap gap-2 mt-4">
                   <Cta onClick={reserve} testid="photo-special-reserve" className={busy ? "opacity-60 pointer-events-none" : ""}>
                     {busy ? "Reserving…" : "Reserve my appointment"}

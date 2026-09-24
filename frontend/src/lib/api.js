@@ -131,7 +131,8 @@ api.interceptors.response.use(
         err.response.data.capacity = d;
         err.response.data.detail = d.display_message || d.message || "That opening is no longer available.";
       } else {
-        err.response.data.detail = d.msg || JSON.stringify(d);
+        // Prefer any human sentence the object carries over raw JSON.
+        err.response.data.detail = d.msg || d.display_message || d.message || JSON.stringify(d);
       }
     }
     return Promise.reject(err);

@@ -1,5 +1,7 @@
 import { useEffect, useMemo, useState } from "react";
-import { api, formatErr } from "../lib/api";
+import { api } from "../lib/api";
+import { bookingFailure, groupSkips, shortDate } from "../lib/bookingBlocks";
+import BookingBlockNotice from "./BookingBlockNotice";
 import { outcomeForService, outcomeForBooking, reviewPromise, successHeadline, successDetail } from "../lib/bookingOutcome";
 import MultiDatePicker from "./MultiDatePicker";
 import { useEditLock } from "../lib/useLiveRefresh";
@@ -87,7 +89,11 @@ function ServiceCard({ testId, selected, icon, label, summary, fullDesc, price, 
   );
 }
 
-export default function PortalBookWizard({ dogs, seed, onClose, onBooked }) {
+// Fixes the wizard handles itself (by stepping back); everything else is
+// handed to the host via onFixBlock, which closes the wizard and opens the fix.
+const IN_WIZARD_FIXES = { pick_date: 2, pick_time: 2, edit_addons: 2, pick_service: 1 };
+
+export default function PortalBookWizard({ dogs, seed, onClose, onBooked, onFixBlock, fixActions }) {
   useEditLock(true);
   // Sprint 110di-17 — Feature Visibility. Service options the admin has
   // disabled are filtered out of the picker entirely so clients can't even
@@ -130,10 +136,22 @@ export default function PortalBookWizard({ dogs, seed, onClose, onBooked }) {
   const [notes, setNotes] = useState("");
   const [slots, setSlots] = useState(null);
   const [slotLoading, setSlotLoading] = useState(false);
+  const [slotsFailed, setSlotsFailed] = useState(false);
+  const [slotRetry, setSlotRetry] = useState(0);
   const [avail, setAvail] = useState(null);
+  // "loading" | "ready" | "failed" — a null `avail` used to mean all three,
+  // leaving Review disabled with nothing on screen to say why.
+  const [availState, setAvailState] = useState("idle");
   const [closedDates, setClosedDates] = useState([]);
+  const [availRetry, setAvailRetry] = useState(0);
+  // Confirm found the opening full: offer the waitlist instead of silently
+  // joining it.
+  const [capacityOffer, setCapacityOffer] = useState(false);
   const [submitting, setSubmitting] = useState(false);
-  const [err, setErr] = useState("");
+  // Why the last Confirm was refused: { message, block } (lib/bookingBlocks).
+  const [failure, setFailure] = useState(null);
+  // A Book Again seed whose service is no longer bookable online.
+  const [seedUnavailable, setSeedUnavailable] = useState(false);
   // Multi-date mode — book several non-consecutive days at once (non-boarding only)
   const [isMultiDate, setIsMultiDate] = useState(false);
   const [multiDates, setMultiDates] = useState([]);
@@ -181,6 +199,7 @@ export default function PortalBookWizard({ dogs, seed, onClose, onBooked }) {
         if (seed?.service_id) {
           const selected = rows.find(s => s.id === seed.service_id);
           if (selected) setServiceType(selected.service_type);
+          else { setServiceId(""); setServiceType(""); setSeedUnavailable(true); }
         } else if (seed?.service_type) {
           const selected = rows.find(s => s.service_type === seed.service_type && s.is_default)
             || rows.find(s => s.service_type === seed.service_type);
@@ -251,15 +270,16 @@ export default function PortalBookWizard({ dogs, seed, onClose, onBooked }) {
   // Fetch slot availability when needed
   useEffect(() => {
     if (step !== 2) return;
-    if (!TIME_SLOTTED.has(serviceType) || !date) { setSlots(null); return; }
+    if (!TIME_SLOTTED.has(serviceType) || !date) { setSlots(null); setSlotsFailed(false); return; }
     let cancelled = false;
     setSlotLoading(true);
+    setSlotsFailed(false);
     api.get("/bookings/time-slots", { params: { date_str: date, service_type: serviceType, service_id: serviceId || undefined } })
        .then(r => { if (!cancelled) setSlots(r.data); })
-       .catch(() => { if (!cancelled) setSlots(null); })
+       .catch(() => { if (!cancelled) { setSlots(null); setSlotsFailed(true); } })
        .finally(() => { if (!cancelled) setSlotLoading(false); });
     return () => { cancelled = true; };
-  }, [step, serviceType, serviceId, date]);
+  }, [step, serviceType, serviceId, date, slotRetry]);
 
   // Sprint 110an — load add-ons whenever a service type is picked.
   useEffect(() => {
@@ -279,13 +299,18 @@ export default function PortalBookWizard({ dogs, seed, onClose, onBooked }) {
   // Daycare availability check
   useEffect(() => {
     if (step !== 2) return;
-    if (serviceType !== "daycare" || !date || !dogId) { setAvail(null); return; }
+    if (serviceType !== "daycare" || !date || !dogId) { setAvail(null); setAvailState("idle"); return; }
     let cancelled = false;
+    setAvailState("loading");
     api.get("/bookings/availability", { params: { date_str: date, dog_id: dogId } })
-       .then(r => { if (!cancelled) setAvail(r.data); })
-       .catch(() => { if (!cancelled) setAvail(null); });
+       .then(r => { if (!cancelled) { setAvail(r.data); setAvailState("ready"); } })
+       .catch(() => { if (!cancelled) { setAvail(null); setAvailState("failed"); } });
     return () => { cancelled = true; };
-  }, [step, serviceType, date, dogId]);
+  }, [step, serviceType, date, dogId, availRetry]);
+
+  // A refusal belongs to the attempt that caused it; moving between steps
+  // starts fresh instead of showing a stale error on the way back.
+  useEffect(() => { setFailure(null); setCapacityOffer(false); }, [step]);
 
   const selectedDog = useMemo(() => dogs.find(d => d.id === dogId) || null, [dogs, dogId]);
   const selectedCatalogService = useMemo(() => catalogServices.find(s => s.id === serviceId) || null, [catalogServices, serviceId]);
@@ -347,6 +372,31 @@ export default function PortalBookWizard({ dogs, seed, onClose, onBooked }) {
     return true;
   }, [serviceType, date, endDate, time, avail, dateIsClosed, endDateIsClosed, isMultiDate, multiDates, waitlistEnabled]);
 
+  // A disabled Review button must say what's missing.
+  const step2Hint = (() => {
+    if (canProceedFromStep2) return "";
+    if (isMultiDate && serviceType === "daycare") return "Pick at least one day on the calendar.";
+    if (!date) return "Pick a date to continue.";
+    if (dateIsClosed) return "We're closed on that date — pick another day.";
+    if (serviceType === "boarding") {
+      if (!endDate) return "Pick a pickup date to continue.";
+      if (endDate <= date) return "The pickup date must be after the drop-off date.";
+      if (endDateIsClosed) return "We're closed on the pickup date — pick another.";
+    }
+    if (TIME_SLOTTED.has(serviceType)) {
+      if (slotLoading) return "Checking available times…";
+      if (slotsFailed) return "We couldn't load the available times. Tap Try again, or pick another date.";
+      return "Pick a time to continue.";
+    }
+    if (serviceType === "daycare") {
+      if (availState === "loading") return "Checking availability…";
+      if (availState === "failed") return "We couldn't check availability for that date. Tap Try again.";
+      if (avail && !avail.vaccine_ok) return "Fix the vaccine record above to continue, or pick another dog.";
+      if (avail && avail.open_slots <= 0) return "That date is full — pick another day.";
+    }
+    return "";
+  })();
+
   // Sprint 110di-29 — Acknowledgement step. Holds the just-submitted
   // summary so step 4 can render payment options without re-fetching.
   const [acknowledgement, setAcknowledgement] = useState(null);
@@ -369,7 +419,7 @@ export default function PortalBookWizard({ dogs, seed, onClose, onBooked }) {
   };
 
   const book = async () => {
-    setErr(""); setSubmitting(true);
+    setFailure(null); setCapacityOffer(false); setSubmitting(true);
     try {
       if (isMultiDate && serviceType === "daycare") {
         const { data } = await api.post("/bookings/multi-dates", {
@@ -385,11 +435,14 @@ export default function PortalBookWizard({ dogs, seed, onClose, onBooked }) {
         const s = data.skipped?.length || 0;
         const w = (data.skipped || []).filter(x => x.waitlisted).length;
         if (c === 0 && w === 0) {
-          const reasonText = (data.skipped || []).slice(0,3).map(x => {
-            const r = typeof x.reason === "object" ? (x.reason.display_message || x.reason.message || "Unavailable") : x.reason;
-            return `${x.date} (${r})`;
-          }).join("; ");
-          setErr(`No bookings created — all ${s} day(s) were skipped: ${reasonText}${s>3?"…":""}`);
+          // Nothing booked: say why, grouped by reason, with the fix for the
+          // most common one.
+          const groups = groupSkips(data.skipped);
+          const lines = groups.map(g => `${g.dates.map(shortDate).join(", ")}: ${g.reason}`);
+          setFailure({
+            message: `None of those days could be booked. ${lines.join(" ")}`,
+            block: groups[0]?.block || null,
+          });
           setSubmitting(false);
           return;
         }
@@ -399,6 +452,8 @@ export default function PortalBookWizard({ dogs, seed, onClose, onBooked }) {
           kind: "multi",
           count: c, skipped: s, waitlist_count: w,
           waitlisted: w > 0 && c === 0,
+          skipped_groups: groupSkips((data.skipped || []).filter(x => !x.waitlisted)),
+          booking: data.created?.[0] || null,
         });
         setStep(4);
         setSubmitting(false);
@@ -478,23 +533,32 @@ export default function PortalBookWizard({ dogs, seed, onClose, onBooked }) {
       });
       setStep(4);
     } catch (e) {
-      const detail = e.response?.data?.detail;
-      const capacity = e.response?.data?.capacity;
-      if (capacity?.code === "capacity_full" && capacity?.waitlist_allowed && waitlistEnabled) {
-        try {
-          const waitRows = await submitWaitlist([dogId, ...extraDogs.map(x => x.dog_id)]);
-          onBooked && onBooked({ keepOpen: true });
-          setAcknowledgement({ kind: "waitlist", count: waitRows.length, waitlisted: true, waitlist_rows: waitRows });
-          setStep(4);
-          return;
-        } catch (waitErr) {
-          setErr(formatErr(waitErr.response?.data?.detail) || "The opening was taken and the waitlist request could not be saved.");
-          return;
-        }
-      }
-      setErr(formatErr(detail) || "Booking failed");
+      const f = bookingFailure(e);
+      setFailure(f);
+      // Full at Confirm: ASK before putting them on the waitlist.
+      setCapacityOffer(f.block?.code === "capacity_full" && !!f.block?.waitlist_allowed && waitlistEnabled);
     } finally { setSubmitting(false); }
   };
+
+  const joinWaitlist = async () => {
+    setSubmitting(true);
+    try {
+      const waitRows = await submitWaitlist([dogId, ...extraDogs.map(x => x.dog_id)]);
+      onBooked && onBooked({ keepOpen: true });
+      setAcknowledgement({ kind: "waitlist", count: waitRows.length, waitlisted: true, waitlist_rows: waitRows });
+      setStep(4);
+    } catch (e) {
+      setCapacityOffer(false);
+      setFailure(bookingFailure(e, "We couldn't add you to the waitlist. Please pick another date or time."));
+    } finally { setSubmitting(false); }
+  };
+
+  const fixBlock = (action, block) => {
+    if (IN_WIZARD_FIXES[action]) { setStep(IN_WIZARD_FIXES[action]); return; }
+    if (action === "refresh") { window.location.reload(); return; }
+    onFixBlock && onFixBlock(action, block);
+  };
+  const handledActions = [...Object.keys(IN_WIZARD_FIXES), "refresh", ...(fixActions || [])];
 
   return (
     <div className="fixed inset-0 z-[80] bg-black/80 flex items-center justify-center p-2 sm:p-4" onClick={onClose} data-testid="portal-book-wizard">
@@ -612,6 +676,11 @@ export default function PortalBookWizard({ dogs, seed, onClose, onBooked }) {
                 </div>
               )}
             </div>
+            {seedUnavailable && !serviceType && (
+              <p className="text-[14px] text-shOrange font-bold" data-testid="wiz-seed-unavailable">
+                <i className="fas fa-circle-info mr-1.5"/>The service from your last booking can't be booked online anymore. Please pick a service below, or message us to book it.
+              </p>
+            )}
             {/* A disabled control that says nothing is indistinguishable from a
                 broken one. Say which thing is still missing. */}
             {(!dogId || !serviceType) && (
@@ -753,14 +822,33 @@ export default function PortalBookWizard({ dogs, seed, onClose, onBooked }) {
             )}
 
             {/* Daycare availability */}
-            {serviceType === "daycare" && avail && (
-              <div className={`text-[14px] font-black uppercase tracking-widest p-3 rounded text-center ${!avail.vaccine_ok?"bg-red-500/15 text-red-400":avail.open_slots<=0?"bg-shOrange/15 text-shOrange":"bg-shGreen/10 text-shGreen"}`}
+            {serviceType === "daycare" && !isMultiDate && availState === "loading" && (
+              <p className="text-[14px] text-gray-500 text-center" data-testid="wiz-daycare-checking"><i className="fas fa-spinner fa-spin mr-1"/>Checking availability…</p>
+            )}
+            {serviceType === "daycare" && !isMultiDate && availState === "failed" && (
+              <div className="bg-shOrange/10 text-shOrange p-3 rounded text-[14px] text-center space-y-2" data-testid="wiz-daycare-avail-failed">
+                <p><i className="fas fa-triangle-exclamation mr-1.5"/>We couldn't check availability for that date.</p>
+                <button type="button" onClick={()=>setAvailRetry(n => n + 1)} data-testid="wiz-daycare-avail-retry"
+                        className="px-3 py-1.5 rounded bg-shOrange/20 border border-shOrange/40 font-black uppercase tracking-widest text-[12px]">Try again</button>
+              </div>
+            )}
+            {serviceType === "daycare" && avail && !avail.vaccine_ok && (
+              <BookingBlockNotice
+                testid="wiz-daycare-vaccine"
+                failure={{
+                  message: avail.vaccine_problem?.message
+                    || `${selectedDog?.name || "This dog"}'s ${(avail.missing_vaccines || ["rabies"]).join(", ")} vaccine record needs updating before booking.`,
+                  block: avail.vaccine_problem?.block || { code: "vaccine_missing", action: "upload_vaccines", dog_id: dogId },
+                }}
+                onFix={fixBlock} actions={handledActions} />
+            )}
+            {serviceType === "daycare" && avail && avail.vaccine_ok && (
+              <div className={`text-[14px] font-black uppercase tracking-widest p-3 rounded text-center ${avail.open_slots<=0?"bg-shOrange/15 text-shOrange":"bg-shGreen/10 text-shGreen"}`}
                    data-testid="wiz-daycare-availability">
-                {!avail.vaccine_ok ? "Rabies missing/expired"
-                  : avail.open_slots <= 0
+                {avail.open_slots <= 0
                     ? (waitlistEnabled
                         ? "This date is full, but you can request the waitlist."
-                        : "Fully booked")
+                        : "This date is full — please pick another day")
                   : `${avail.open_slots} of ${avail.capacity} daycare spots open`}
               </div>
             )}
@@ -785,6 +873,13 @@ export default function PortalBookWizard({ dogs, seed, onClose, onBooked }) {
               <div>
                 <label className="text-[13px] uppercase tracking-widest text-gray-500 font-black">Available time slots</label>
                 {slotLoading && <p className="text-[14px] text-gray-500 mt-2"><i className="fas fa-spinner fa-spin mr-1"/>Checking openings…</p>}
+                {!slotLoading && slotsFailed && (
+                  <div className="mt-2 bg-shOrange/10 text-shOrange p-3 rounded text-[14px] text-center space-y-2" data-testid="wiz-slots-failed">
+                    <p><i className="fas fa-triangle-exclamation mr-1.5"/>We couldn't load the available times for that date.</p>
+                    <button type="button" onClick={()=>setSlotRetry(n => n + 1)} data-testid="wiz-slots-retry"
+                            className="px-3 py-1.5 rounded bg-shOrange/20 border border-shOrange/40 font-black uppercase tracking-widest text-[12px]">Try again</button>
+                  </div>
+                )}
                 {!slotLoading && slots && slots.closed && (
                   <div className="mt-2 bg-shOrange/10 text-shOrange p-3 rounded text-[14px] font-black uppercase tracking-widest text-center">
                     <i className="fas fa-door-closed mr-1.5"/>Closed for {serviceType} on this date — pick another day
@@ -880,6 +975,11 @@ export default function PortalBookWizard({ dogs, seed, onClose, onBooked }) {
                         className="w-full mt-1 border border-shBorder rounded p-2 text-shText text-sm focus:outline-none focus:border-shSecondary/60 resize-none" />
             </div>
 
+            {step2Hint && (
+              <p className="text-[13px] text-shAccent font-bold text-right" data-testid="wiz-step2-hint">
+                <i className="fas fa-circle-info mr-1.5"/>{step2Hint}
+              </p>
+            )}
             <div className="flex justify-between gap-2 pt-3">
               <PremiumButton variant="secondary" onClick={()=>setStep(1)}>
                 <i className="fas fa-arrow-left"/>Back
@@ -1022,8 +1122,6 @@ export default function PortalBookWizard({ dogs, seed, onClose, onBooked }) {
               </div>
             )}
 
-            {err && <div className="text-[15px] font-black p-3 rounded uppercase tracking-widest bg-red-500/15 text-red-400 text-center">{err}</div>}
-
             {/* Sprint 110di-26 — Live booking estimate. Gated on the admin
                 toggle in Booking Flow Controls (default ON). Uses the
                 existing services catalog + client's credit balance —
@@ -1093,6 +1191,18 @@ export default function PortalBookWizard({ dogs, seed, onClose, onBooked }) {
                 none are configured, so no payment policy is invented here. */}
             <PaymentOptionsCard compact />
 
+            <BookingBlockNotice
+              testid="wiz-error"
+              failure={failure}
+              onFix={fixBlock}
+              actions={handledActions}
+              extra={capacityOffer ? (
+                <button type="button" onClick={joinWaitlist} disabled={submitting} data-testid="wiz-join-waitlist"
+                        className="px-3 py-2 rounded text-[13px] font-black uppercase tracking-widest bg-shOrange/20 border border-shOrange/50 text-shOrange hover:bg-shOrange/30 disabled:opacity-50">
+                  <i className="fas fa-hourglass-half mr-1.5"/>Join the waitlist
+                </button>
+              ) : null} />
+
             <div className="flex justify-between gap-2 pt-3">
               <PremiumButton variant="secondary" onClick={()=>setStep(2)}>
                 <i className="fas fa-arrow-left"/>Back
@@ -1123,12 +1233,23 @@ export default function PortalBookWizard({ dogs, seed, onClose, onBooked }) {
               </h2>
               <p className="text-[13px] text-gray-400 mt-1">
                 {acknowledgement.kind === "multi"
-                  ? `${acknowledgement.count} booking${acknowledgement.count===1?"":"s"} sent for review${acknowledgement.waitlist_count?`, ${acknowledgement.waitlist_count} added to waitlist`:""}${acknowledgement.skipped && acknowledgement.skipped !== acknowledgement.waitlist_count?`, ${acknowledgement.skipped - (acknowledgement.waitlist_count || 0)} skipped`:""}.`
+                  ? `${acknowledgement.count} day${acknowledgement.count===1?"":"s"} booked${acknowledgement.waitlist_count?`, ${acknowledgement.waitlist_count} added to the waitlist`:""}${acknowledgement.skipped && acknowledgement.skipped !== acknowledgement.waitlist_count?`, ${acknowledgement.skipped - (acknowledgement.waitlist_count || 0)} not booked`:""}. ${successDetail(outcomeForBooking(acknowledgement.booking), { waitlisted: acknowledgement.waitlisted })}`
                   : acknowledgement.kind === "group"
                     ? `${acknowledgement.count} dog${acknowledgement.count===1?"":"s"} booked together · ${successDetail(outcomeForBooking(acknowledgement.booking))}`
                     : successDetail(outcomeForBooking(acknowledgement.booking), { waitlisted: acknowledgement.waitlisted })}
               </p>
             </div>
+
+            {acknowledgement.kind === "multi" && (acknowledgement.skipped_groups || []).length > 0 && (
+              <div className="rounded-lg border border-shOrange/40 bg-shOrange/10 p-3 space-y-2" data-testid="wiz-ack-skipped">
+                <p className="text-[13px] font-black uppercase tracking-widest text-shOrange">These days weren't booked</p>
+                {acknowledgement.skipped_groups.map((g, i) => (
+                  <p key={i} className="text-[14px] text-shText leading-snug">
+                    <span className="font-black">{g.dates.map(shortDate).join(", ")}:</span> {g.reason}
+                  </p>
+                ))}
+              </div>
+            )}
 
             {selectedCatalogService?.payment?.detail && (
               <p className="text-[13px] text-gray-400 text-center" data-testid="wiz-ack-payment-timing">
