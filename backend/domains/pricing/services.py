@@ -741,6 +741,13 @@ def money_modifier_breakdown(
                 if checked.tzinfo is None:
                     checked = checked.replace(tzinfo=timezone.utc)
                 minutes_late = max(0.0, (checked.astimezone(_business_tz) - declared).total_seconds() / 60.0 - grace)
+                # Never run the clock overnight: a daycare dog checked out on a
+                # later day was either a forgotten checkout (no late fee) or a
+                # stay that is re-priced as boarding (domains/bookings/late_day.py).
+                later_day = (booking.get("service_type") != "boarding"
+                             and checked.astimezone(_business_tz).date().isoformat() > str(pickup_date)[:10])
+                if booking.get("late_day_resolution") or later_day:
+                    minutes_late = 0.0
                 if minutes_late > 0:
                     blocks = int(minutes_late // 15) + (1 if minutes_late % 15 else 0)
                     late_fee = round(blocks * per_15, 2)

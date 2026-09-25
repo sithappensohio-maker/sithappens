@@ -78,6 +78,7 @@ from domains.pos import services as pos_domain_services
 from domains.bookings import services as bookings_domain_services
 from domains.bookings.blocks import BookingBlocked, block_of, pretty_date, pretty_time
 from domains.bookings import guards as booking_guards
+from domains.bookings import late_day as late_day_checkout
 from domains.shop import shopify_pricing
 from domains import booking_rules
 from domains import vaccines as vaccines_domain
@@ -1109,6 +1110,8 @@ class BookingOut(BaseModel):
     # and the tax on it. Declared here because BookingOut silently drops what
     # it does not declare, and the screen has to be able to show what was sold.
     pickup_sale: Optional[Dict[str, Any]] = None
+    late_day_resolution: Optional[str] = None  # a late daycare checkout's answer — domains/bookings/late_day.py
+    late_day_checkout: Optional[Dict[str, Any]] = None
     # Sales tax snapshot on HISTORICAL bookings. Nothing on a booking is
     # sales-taxable any more (services never are — see sales_tax_policy), so
     # these only ever carry what older checkouts already stored.
@@ -1189,6 +1192,7 @@ class CheckoutIn(BaseModel):
     # What happened to each Board & Train session that has no record — see
     # training_domain_services.ensure_board_train_checkout_ready.
     board_train_resolution: List[training_domain_services.BoardTrainSessionResolution] = []
+    late_day_resolution: Optional[Literal["forgotten", "stayed_overnight"]] = None  # domains/bookings/late_day.py
     # Merchandise sold at pickup. These are NOT booking add-ons: they ring
     # through the ordinary Register sale, so stock, sales tax, retail revenue
     # and the receipt all behave exactly as they do at the till. See
@@ -9167,6 +9171,8 @@ async def check_out_group(
     targets = await _active_household_checkout_rows(anchor)
     if len(targets) < 2:
         raise HTTPException(status_code=409, detail="There are no other active dogs left in this checkout group.")
+    if not body.late_day_resolution and (late_rows := [t for t in targets if late_day_checkout.needs_answer(t)]):
+        raise HTTPException(status_code=409, detail=late_day_checkout.question_detail(late_rows, business_today().isoformat()))
 
     operation_id = str(uuid.uuid4())
     checkout_group_id = str(uuid.uuid4())
@@ -9617,6 +9623,7 @@ async def _check_out_locked(
     await training_domain_services.ensure_board_train_checkout_ready(
         db=db, booking=booking, business_day=business_today().isoformat(),
         resolutions=(body.board_train_resolution if body else None), actor=user)
+    booking = await late_day_checkout.ensure_checkout_answer(booking, body.late_day_resolution if body else None, user)
     # Merchandise bought at pickup rings FIRST, through the Register's own
     # sale. First because it is the part that can legitimately refuse — out of
     # stock, drawer closed — and refusing before the stay is touched leaves

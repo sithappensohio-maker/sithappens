@@ -339,6 +339,31 @@ def build_trainer_employee(prog, admin, first_index):
     return {"trainer": trainer, "front_desk": front_desk, "flows": flows, "journey": journey}
 
 
+def build_late_daycare():
+    """One daycare visit per phone project that was checked in YESTERDAY and
+    never checked out — the late-checkout question (domains/bookings/late_day.py).
+    The API can only check a dog in "now", so the seed backdates it."""
+    from datetime import datetime, timezone
+    day = (server.business_today() - timedelta(days=1)).isoformat()
+    checked_in = (datetime.fromisoformat(f"{day}T08:00:00").replace(tzinfo=server.BUSINESS_TZ)
+                  .astimezone(timezone.utc).isoformat())
+    out = {}
+    for project, dog_name in (("phone-390", "Clover"), ("phone-320", "Juniper")):
+        cid, did, bid = (str(uuid.uuid4()) for _ in range(3))
+        run(server.db.clients.insert_one({"id": cid, "name": f"Late Checkout {project}", "email": f"late.{project}@example.com",
+                                          "phone": "5555550100", "credits": 0, "boarding_credits": 0, "account_balance": 0.0}))
+        run(server.db.dogs.insert_one({"id": did, "owner_id": cid, "name": dog_name, "breed": "Beagle", "age_y": 3,
+                                       "vaccines": {"rabies": "2099-01-01", "bordetella": "2099-01-01", "dhpp": "2099-01-01"}}))
+        run(server.db.bookings.insert_one({
+            "id": bid, "client_id": cid, "client_name": f"Late Checkout {project}", "dog_id": did, "dog_name": dog_name,
+            "service_type": "daycare", "date": day, "end_date": day, "status": "approved",
+            "dropoff_time": "08:00", "pickup_time": "17:00", "time": "", "estimated_price": 40.0, "unit_price": 40.0,
+            "pricing_snapshot": {"unit_price": 40.0}, "credit_units_required": 1,
+            "checked_in_at": checked_in, "checked_in_by": "e2e-seed", "checked_out_at": None, "created_at": server.now_iso()}))
+        out[project] = {"booking_id": bid, "dog_name": dog_name, "client_id": cid, "date": day}
+    return out
+
+
 def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("--clients", type=int, default=12)
@@ -358,7 +383,7 @@ def main():
     trainer_day = build_trainer_day(prog, admin, clients)
     trainer_employee = build_trainer_employee(prog, admin, len(clients) + 2)
     out = {"db_name": os.environ["DB_NAME"], "program_id": prog["id"], "program_name": prog["name"], "clients": clients,
-           "trainer_day": trainer_day, "trainer_employee": trainer_employee}
+           "trainer_day": trainer_day, "trainer_employee": trainer_employee, "late_daycare": build_late_daycare()}
     os.makedirs(os.path.dirname(os.path.abspath(args.out)), exist_ok=True)
     with open(args.out, "w", encoding="utf-8") as fh:
         json.dump(out, fh, indent=1)

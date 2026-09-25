@@ -21,6 +21,7 @@ from domains.gift_cards import shop as gift_card_shop
 from domains.gift_cards import services as gift_card_services
 from domains.pos import services as pos_services
 from domains.bookings import services as booking_services
+from domains.bookings import late_day as late_day_checkout
 from domains.register import services as register_services
 from domains.school.routes import register_school_routes
 from domains.training.routes import register_training_routes
@@ -128,6 +129,7 @@ def register_domains(
     # handed them: it needs about twenty of them, and the suite rebinds
     # server.db per test loop.
     shop_checkout_services.configure(server_globals=server_globals)
+    late_day_checkout.configure(server_globals=server_globals)
     gift_card_shop.configure(
         db=db, logger=logger, get_settings=server_globals["get_settings"])
     gift_card_services.configure(
@@ -164,6 +166,7 @@ def register_domains(
     # callables or dependency signatures. Registration order mirrors the legacy
     # route order within each domain.
     register_bookings_routes(api=api, server_globals=server_globals)
+    late_day_checkout.register_late_day_routes(api=api, server_globals=server_globals)
     register_pricing_routes(api=api, server_globals=server_globals)
     _moved_operations = register_operations_routes(
         api=api, db=db,

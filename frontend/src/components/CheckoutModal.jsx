@@ -1,6 +1,7 @@
-import { useEffect, useState } from "react";
+import { useCallback, useEffect, useState } from "react";
 import { toast } from "sonner";
-import { api } from "../lib/api";
+import { api, formatErr } from "../lib/api";
+import { todayISO } from "../lib/date";
 import { emitRegisterChanged } from "../lib/registerBus";
 import { useEditLock } from "../lib/useLiveRefresh";
 import { printReceipt as posPrintReceipt, openDrawer as posOpenDrawer } from "../lib/posAgent";
@@ -28,7 +29,7 @@ const fmtBtDay = (iso) => {
     : d.toLocaleDateString(undefined, { weekday: "short", month: "short", day: "numeric" });
 };
 
-export function CheckoutModal({ booking, services, onClose, onRequestCancel }) {
+function CheckoutModalBody({ booking, services, onClose, onRequestCancel, lateDay, onLateDayQuestion, onLateDayUndo }) {
   // Sprint 110ao — pauses background polling while this modal is open so
   // the booking row can't churn under the admin's input.
   useEditLock(true);
@@ -186,7 +187,7 @@ export function CheckoutModal({ booking, services, onClose, onRequestCancel }) {
       setGiftCard(data);
     } catch (e) {
       setGiftCard(null);
-      setErr(formatErr(e) || "No gift card with that code.");
+      setErr(formatErr(e.response?.data?.detail) || "No gift card with that code.");
     }
     setGiftBusy(false);
   };
@@ -377,8 +378,13 @@ export function CheckoutModal({ booking, services, onClose, onRequestCancel }) {
     ? Math.max(0, Number(creditUnitsNeeded || 0) - Number(creditsToUseNow || 0))
     : 0;
   const baseCreditShortfallCash = Math.round(baseCreditShortfallUnits * serviceUnitRate * 100) / 100;
+  // A converted overnight picked up after the boarding checkout time owes
+  // the pickup-day daycare fee in cash even when credits cover the nights
+  // (checkout charges it the same way) — so it must show as due today.
+  const lateDayPickupCash = useCredits && !hadCredit && lateDay?.resolved === "stayed_overnight"
+    ? Number(lateDay.late_pickup_cash || 0) : 0;
   const baseCashDueOnCredits = useCredits
-    ? baseCreditShortfallCash + Math.max(0, extraCashOnCredits)
+    ? baseCreditShortfallCash + Math.max(0, extraCashOnCredits) + lateDayPickupCash
     : 0;
 
   // Early boarding checkout applies when the server quoted one, the operator
@@ -645,6 +651,11 @@ export function CheckoutModal({ booking, services, onClose, onRequestCancel }) {
       if (detail?.code === "board_train_training_incomplete") {
         setBtBlock(detail);
         setErr("");
+      } else if (detail?.code === "late_day_checkout_resolution_required" && onLateDayQuestion) {
+        // Checked out a day late and not answered yet: back to the question.
+        setBusy(false);
+        onLateDayQuestion(detail);
+        return;
       } else {
         setErr(e.response?.data?.detail || "Check-out failed");
       }
@@ -752,6 +763,19 @@ export function CheckoutModal({ booking, services, onClose, onRequestCancel }) {
           <button onClick={onClose} className="text-gray-500 hover:text-white"><i className="fas fa-times" /></button>
         </div>
         <p className="text-[14px] text-gray-400 mb-4">{booking.client_name} · {booking.service_type}</p>
+        {lateDay?.resolved && (
+          <div className="mb-4 rounded-lg border border-shOrange/40 bg-shOrange/10 p-3 text-[13px] text-shText" data-testid="checkout-late-day-banner">
+            <i className="fas fa-moon text-shOrange mr-1.5"/>
+            {lateDay.resolved === "stayed_overnight"
+              ? `Stayed the night — charged as boarding from ${fmtBtDay(lateDay.record?.booking_date)} to ${fmtBtDay(lateDay.record?.business_day)}`
+                + ` (${Number(lateDay.record?.nights || 1)} night${Number(lateDay.record?.nights || 1) === 1 ? "" : "s"}), picked up now.`
+              : "Forgotten checkout — charged as the normal daycare day, no overnight late fee."}
+            {lateDay.can_undo && onLateDayUndo && !busy && (
+              <button type="button" onClick={onLateDayUndo} data-testid="checkout-late-day-change"
+                      className="ml-2 underline font-black text-shOrange">Change answer</button>
+            )}
+          </div>
+        )}
         {isGroupCheckout && (
           <div className="mb-4 rounded-lg border border-shBlue/40 bg-shBlue/10 p-3" data-testid="group-checkout-summary">
             <p className="text-[12px] uppercase tracking-widest text-shBlue font-black mb-1"><i className="fas fa-dog mr-1"/>One checkout for the household</p>
@@ -873,8 +897,9 @@ export function CheckoutModal({ booking, services, onClose, onRequestCancel }) {
           </div>
         )}
 
-        {/* Section 1b — Boarding stay extension (extra nights) */}
-        {isBoarding && (
+        {/* Section 1b — Boarding stay extension (extra nights). Not for a
+            daycare visit converted to boarding: it already runs to today. */}
+        {isBoarding && lateDay?.resolved !== "stayed_overnight" && (
           <div className="mb-5 border border-bgHover rounded-lg p-4 bg-bgBase" data-testid="checkout-extra-nights-panel">
             <div className="flex items-center justify-between mb-3">
               <p className="text-[13px] uppercase tracking-widest text-gray-500 font-black"><i className="fas fa-moon text-shBlue mr-1.5"/>Stayed Extra Nights?</p>
@@ -1425,6 +1450,131 @@ export function CheckoutModal({ booking, services, onClose, onRequestCancel }) {
         </div>
       </div>
     </div>
+  );
+}
+
+
+/**
+ * Checking out a daycare dog that is still checked in from an earlier day.
+ *
+ * The visit could be a forgotten checkout or a dog that really stayed the
+ * night — the app never decides that on its own. Before anything is priced,
+ * this asks; the answer is saved on the booking (a stay becomes boarding,
+ * with an Undo) and the checkout below reloads with the right prices.
+ * Server side: domains/bookings/late_day.py, and checkout itself refuses a
+ * late visit that hasn't been answered.
+ */
+export function CheckoutModal(props) {
+  useEditLock(true);
+  const { booking, onClose } = props;
+  const [current, setCurrent] = useState(booking);
+  const [rev, setRev] = useState(0);
+  // Same-day and non-daycare checkouts never need the question, so they
+  // skip the extra request and open exactly as before.
+  // An already-answered visit also loads, so the answer shows with its Undo.
+  const maybeLate = !booking?.checked_out_at && (!!booking?.late_day_resolution || (
+    booking?.service_type === "daycare" && !!booking?.checked_in_at
+    && String(booking?.end_date || booking?.date || "").slice(0, 10) < todayISO()));
+  const [late, setLate] = useState(maybeLate ? undefined : {});
+  const [answering, setAnswering] = useState("");
+  const [lateErr, setLateErr] = useState("");
+
+  // `refusal` is the checkout's own 409 question, used when the check can't
+  // answer — so a refused checkout always lands on the question, never back
+  // on a fresh form that would be refused again.
+  const loadLate = useCallback(async (refusal) => {
+    try {
+      const { data } = await api.get(`/bookings/${booking.id}/late-day-checkout`);
+      // Price whatever the server holds now — another screen may already
+      // have answered, or the stay may have been re-priced to this pickup.
+      if (data?.booking) { setCurrent(data.booking); setRev((r) => r + 1); }
+      setLate(refusal && !data?.applies && !data?.resolved ? { ...refusal, applies: true } : (data || {}));
+    } catch {
+      // If the check itself fails, open the checkout anyway — the server
+      // still refuses an unanswered late checkout and we come back here.
+      setLate(refusal ? { ...refusal, applies: true } : {});
+    }
+  }, [booking.id]);
+  useEffect(() => { if (maybeLate) loadLate(); }, [maybeLate, loadLate]);
+
+  const answer = async (resolution) => {
+    setAnswering(resolution); setLateErr("");
+    try {
+      const { data } = await api.post(`/bookings/${booking.id}/late-day-checkout`, { resolution });
+      if (data?.booking) setCurrent(data.booking);
+      setRev((r) => r + 1);
+      await loadLate();
+    } catch (e) {
+      setLateErr(e.response?.data?.detail || "Couldn't save that answer. Please try again.");
+    } finally { setAnswering(""); }
+  };
+
+  if (late === undefined) {
+    return (
+      <div className="fixed inset-0 bg-black/80 flex items-center justify-center p-4 z-50" data-testid="checkout-late-day-loading">
+        <p className="text-gray-300 text-sm"><i className="fas fa-spinner fa-spin mr-2"/>Opening checkout…</p>
+      </div>
+    );
+  }
+
+  if (late.applies) {
+    const stayed = late.stayed_overnight || {};
+    const nights = Number(late.nights || 1);
+    const pickupDayFee = (stayed.rows || []).reduce((sum, r) => sum + Number(r.late_pickup_cash || 0), 0);
+    return (
+      <div className="fixed inset-0 bg-black/80 flex items-center justify-center p-4 z-50" data-testid="checkout-late-day">
+        <div className="bg-bgPanel border border-bgHover rounded-2xl w-full max-w-lg p-6 shadow-2xl space-y-4">
+          <div className="flex items-start justify-between gap-3">
+            <h4 className="text-xl font-black text-white uppercase italic tracking-tight">
+              <i className="fas fa-moon text-shOrange mr-2"/>Checked out a day late
+            </h4>
+            <button onClick={onClose} className="text-gray-500 hover:text-white" aria-label="Close"><i className="fas fa-times"/></button>
+          </div>
+          <p className="text-[15px] text-gray-200 leading-snug" data-testid="checkout-late-day-message">{late.message}</p>
+          <p className="text-[13px] text-gray-400">Nothing is charged until you choose. You can change your answer before checking out.</p>
+          <div className="grid gap-3">
+            <button type="button" onClick={() => answer("forgotten")} disabled={!!answering} data-testid="checkout-late-day-forgotten"
+                    className="text-left rounded-xl border border-shBlue/50 bg-shBlue/10 hover:bg-shBlue/20 p-4 disabled:opacity-50">
+              <p className="text-white font-black"><i className="fas fa-clock-rotate-left text-shBlue mr-2"/>Forgotten checkout</p>
+              <p className="text-[13px] text-gray-300 mt-1">They went home that day — charge the normal daycare day, with no overnight late fee.</p>
+            </button>
+            <button type="button" onClick={() => answer("stayed_overnight")} disabled={!!answering || stayed.available === false}
+                    data-testid="checkout-late-day-stayed"
+                    className="text-left rounded-xl border border-shOrange/50 bg-shOrange/10 hover:bg-shOrange/20 p-4 disabled:opacity-50">
+              <p className="text-white font-black"><i className="fas fa-bed text-shOrange mr-2"/>Stayed the night</p>
+              <p className="text-[13px] text-gray-300 mt-1">
+                {stayed.available === false
+                  ? "Can't be charged as boarding right now."
+                  : `Charge it as boarding: ${nights} night${nights === 1 ? "" : "s"}${stayed.total != null ? ` · $${Number(stayed.total).toFixed(2)}` : ""}.`}
+                {stayed.available !== false && pickupDayFee > 0 && (
+                  <span className="block text-[12px] text-gray-400 mt-0.5" data-testid="checkout-late-day-pickup-fee">
+                    Includes ${pickupDayFee.toFixed(2)} for picking up after the boarding checkout time (your late-pickup rule).
+                  </span>
+                )}
+              </p>
+            </button>
+            {stayed.available === false && stayed.reason && (
+              <p className="text-[13px] text-shOrange" data-testid="checkout-late-day-stayed-unavailable">{stayed.reason}</p>
+            )}
+          </div>
+          {lateErr && <p className="text-[14px] text-red-300" data-testid="checkout-late-day-error">{lateErr}</p>}
+          <div className="flex justify-end">
+            <button type="button" onClick={onClose} className="text-gray-400 hover:text-white text-[13px] font-black uppercase tracking-widest">Not now</button>
+          </div>
+        </div>
+      </div>
+    );
+  }
+
+  return (
+    <CheckoutModalBody
+      key={`${current.id}:${rev}`}
+      {...props}
+      booking={current}
+      lateDay={late.resolved ? late : null}
+      onLateDayQuestion={(refusal) => { setLate(undefined); loadLate(refusal); }}
+      onLateDayUndo={() => { if (!answering) answer("undo"); }}
+    />
   );
 }
 
