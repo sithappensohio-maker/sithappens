@@ -1931,12 +1931,33 @@ async def set_client_status(client_id: str, body: ClientStatusIn, user: dict = D
     existing["portal_email"] = u["email"] if u else None
     return existing
 
+class ClientUpdateIn(ClientIn):
+    # The record as the edit form showed it when it opened. With it, only the
+    # fields the operator actually changed are written, so a form left open
+    # (or opened from an hours-old list) can't undo a checkout, a payment or
+    # a note made meanwhile — and a credit edit moves the LIVE balance by the
+    # operator's change (+2), never back to a stale number.
+    base: Optional[Dict[str, Any]] = None
+    # One id per opened form: a double-click or a retry after a lost response
+    # must not apply the same credit change twice (+2 becoming +4).
+    edit_id: Optional[str] = None
+
+
 @api.put("/clients/{client_id}", response_model=ClientOut)
-async def update_client(client_id: str, body: ClientIn, user: dict = Depends(require_admin_and_permission("clients_edit"))):
+async def update_client(client_id: str, body: ClientUpdateIn, user: dict = Depends(require_admin_and_permission("clients_edit"))):
     existing = await db.clients.find_one({"id": client_id}, {"_id": 0})
     if not existing:
         raise HTTPException(status_code=404, detail="Client not found")
-    update = body.model_dump()
+    # Only what the request actually sent: a partial edit must never reset
+    # the fields it left out (it used to zero every credit pool and the tab).
+    update = body.model_dump(exclude_unset=True)
+    base = update.pop("base", None)
+    base = base if isinstance(base, dict) else None
+    edit_id = str(update.pop("edit_id", None) or "").strip()
+    # The tab only moves through checkout, payments and ledger-backed
+    # adjustments (apply_tab_adjustment) — never from the profile form, which
+    # has no field for it and used to overwrite it with a stale copy.
+    update.pop("account_balance", None)
     # Any change to a credit pool — up OR down — routes through the shared
     # credit-mutation service so the lot ledger and the displayed balance
     # never diverge (see _mutate_client_credits's docstring for the
@@ -1944,21 +1965,36 @@ async def update_client(client_id: str, body: ClientIn, user: dict = Depends(req
     # $set below — the shared service is the only thing allowed to write
     # them, and it already applies its own $inc to the client record.
     actor_name = user.get("name") or user.get("display_name") or "Admin"
+    planned = []
     for pool_field, service_type in CREDIT_POOL_FIELD_TO_SERVICE_TYPE.items():
-        new_val = round(float(update.pop(pool_field, None) or 0), 2)
-        old_val = round(float(existing.get(pool_field) or 0), 2)
-        delta = round(new_val - old_val, 2)
+        if pool_field not in update:
+            continue
+        new_val = round(float(update.pop(pool_field) or 0), 2)
+        # The operator's change is measured from what the form showed; the
+        # API without a base keeps its old meaning (set to this number).
+        seen = base[pool_field] if base is not None and pool_field in base else existing.get(pool_field)
+        delta = round(new_val - round(float(seen or 0), 2), 2)
         if abs(delta) > 0.0001:
-            mutation = await _mutate_client_credits(
-                client_id, service_type, delta,
-                source="edit_client", reason="Balance changed via client profile edit",
-                actor_id=user.get("id", "admin"), actor_name=actor_name,
-            )
-            existing[pool_field] = mutation["after"]
-        else:
-            existing[pool_field] = old_val
-    await db.clients.update_one({"id": client_id}, {"$set": update})
-    existing.update(update)
+            planned.append((pool_field, service_type, delta))
+    if planned and base is not None and edit_id:
+        claim = await db.clients.update_one(
+            {"id": client_id, "profile_edit_ids": {"$ne": edit_id}},
+            {"$push": {"profile_edit_ids": {"$each": [edit_id], "$slice": -20}}},
+        )
+        if not claim.modified_count:
+            planned = []  # this form's credit change was already applied
+    for pool_field, service_type, delta in planned:
+        mutation = await _mutate_client_credits(
+            client_id, service_type, delta,
+            source="edit_client", reason="Balance changed via client profile edit",
+            actor_id=user.get("id", "admin"), actor_name=actor_name,
+        )
+        existing[pool_field] = mutation["after"]
+    if base is not None:
+        update = {k: v for k, v in update.items() if k not in base or base[k] != v}
+    if update:
+        await db.clients.update_one({"id": client_id}, {"$set": update})
+        existing.update(update)
     u = await db.users.find_one({"client_id": client_id}, {"_id": 0, "email": 1})
     existing["portal_email"] = u["email"] if u else None
     return existing
@@ -3135,6 +3171,10 @@ async def update_dog(dog_id: str, body: DogIn, _: dict = Depends(require_admin_a
     update = body.model_dump()
     await db.dogs.update_one({"id": dog_id}, {"$set": update})
     existing.update(update)
+    try:  # the dog's care plan changed: today's visits follow it from NOW (domains/bookings/care.py)
+        await care_domain.sync_dog(dog_id)
+    except Exception as e:
+        logger.warning("update_dog: care sync failed for %s: %s", dog_id, e)
     return existing
 
 @api.delete("/dogs/{dog_id}")

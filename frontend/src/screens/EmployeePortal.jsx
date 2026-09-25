@@ -304,8 +304,10 @@ function RosterTab() {
   const [cancelFor, setCancelFor] = useState(null);
   const confirm = useConfirm();
   const load = async () => {
-    try { const r = await api.get("/employee/roster-today"); setData(r.data); }
-    catch (e) { setErr(formatErr(e.response?.data?.detail)); }
+    // A failed refresh keeps the last list on screen (and any open checkout
+    // or report card); only a first load with nothing to show is an error.
+    try { const r = await api.get("/employee/roster-today"); setData(r.data); setErr(""); }
+    catch (e) { setErr(formatErr(e.response?.data?.detail) || "Couldn't refresh the roster."); }
   };
   // Refresh every minute so a tick made on another device (or the Care Board)
   // shows here, and the list turns over to the new day at midnight.
@@ -353,8 +355,9 @@ function RosterTab() {
     finally { setBusyId(null); }
   };
 
-  if (err) return <p className="text-red-400 text-sm">{err}</p>;
+  if (err && !data) return <p className="text-red-400 text-sm">{err}</p>;
   if (!data) return <p className="text-gray-500 text-sm">Loading…</p>;
+  const refreshNote = err ? <p className="text-[12px] text-shOrange" data-testid="roster-refresh-failed"><i className="fas fa-wifi mr-1"/>{err} Showing the last list — it will retry.</p> : null;
   const { roster, date } = data;
 
   return (
@@ -365,6 +368,7 @@ function RosterTab() {
           <i className="fas fa-rotate mr-1"/>Refresh
         </button>
       </div>
+      {refreshNote}
       {roster.length === 0 && (
         <div className="bg-bgPanel border border-bgHover rounded-xl p-8 text-center text-gray-500 text-sm">
           <i className="fas fa-paw text-2xl block mb-2 opacity-40"/>
@@ -424,6 +428,17 @@ function RosterTab() {
                            index={r.care_today.filter(x => x.kind === it.kind).indexOf(it)}
                            onSite={!!r.checked_in_at && !r.checked_out_at}
                            onLogged={load}/>
+              ))}
+            </div>
+          )}
+          {/* Last night's doses nobody recorded — a late dose given after
+              midnight is recorded here, against last night, not tonight. */}
+          {(r.care_yesterday || []).length > 0 && (
+            <div className="border-t border-red-400/30 pt-2 space-y-1.5 text-[13px]" data-testid={`roster-care-yesterday-${r.booking_id}`}>
+              <p className="text-[11px] font-black uppercase tracking-widest text-red-300"><i className="fas fa-clock-rotate-left mr-1"/>Not recorded yesterday</p>
+              {r.care_yesterday.map((it, i) => (
+                <CarePoint key={`${it.id}-${it.day}`} it={it} booking_id={r.booking_id} index={i} tid={`y${i}`}
+                           onSite={false} onLogged={load}/>
               ))}
             </div>
           )}
@@ -1056,7 +1071,7 @@ function VaccineGuard({ vaccines, dogName: _dogName }) {
  *  shows. Tapping records today's meal/dose on both screens (and in the
  *  client's care log); the server refuses a second tick for the same dose
  *  today and says who gave it. Optional photo proof for medications. */
-function CarePoint({ it, booking_id, index, onSite, onLogged }) {
+function CarePoint({ it, booking_id, index, tid = index, onSite, onLogged }) {
   const kind = it.kind;
   const [busy, setBusy] = useState(false);
   const given = it.derived_status === "completed";
@@ -1077,7 +1092,7 @@ function CarePoint({ it, booking_id, index, onSite, onLogged }) {
   const confirm = (withPhoto = false) => {
     if (busy || given) return;
     // open the hidden camera input; the upload itself is the confirmation
-    if (withPhoto) { document.getElementById(`carepoint-photo-${kind}-${booking_id}-${index}`).click(); return; }
+    if (withPhoto) { document.getElementById(`carepoint-photo-${kind}-${booking_id}-${tid}`).click(); return; }
     post();
   };
   const onPhoto = async (e) => {
@@ -1089,7 +1104,7 @@ function CarePoint({ it, booking_id, index, onSite, onLogged }) {
     let data;
     try {
       const { compressImage } = await import("../lib/imageCompress");
-      data = await compressImage(f, { maxSize: 1200, quality: 0.7 });
+      data = await compressImage(f, { maxSize: 1000, quality: 0.65 });
     } catch {
       toast.error("Couldn't read that photo — try again.");
       setBusy(false);
@@ -1105,9 +1120,9 @@ function CarePoint({ it, booking_id, index, onSite, onLogged }) {
   const dueNow = onSite && !done && it.derived_status === "due_now";
   return (
     <div className={`flex items-start gap-2 px-2 py-1.5 rounded transition ${given ? "bg-shGreen/10 border border-shGreen/30" : skipped ? "bg-purple-500/10 border border-purple-400/30" : late ? "bg-red-500/10 border border-red-400/40" : "bg-bgBase/40 border border-transparent hover:border-bgHover"}`}
-         data-testid={`carepoint-${kind}-${booking_id}-${index}`}>
+         data-testid={`carepoint-${kind}-${booking_id}-${tid}`}>
       <button type="button" onClick={()=>confirm(false)} disabled={busy || given}
-              data-testid={`carepoint-confirm-${kind}-${booking_id}-${index}`}
+              data-testid={`carepoint-confirm-${kind}-${booking_id}-${tid}`}
               title={given ? "Already recorded" : skipped ? "Given after all? Tap to record it" : "Tap to record it given"}
               className={`shrink-0 w-7 h-7 rounded-full flex items-center justify-center border-2 ${given ? "bg-shGreen border-shGreen text-bgHeader" : skipped ? "bg-purple-500 border-purple-500 text-white" : "border-bgHover text-gray-500 hover:border-shGreen hover:text-shGreen"} disabled:opacity-70`}>
         <i className={`fas ${busy ? "fa-spinner fa-spin" : given ? "fa-check" : skipped ? "fa-forward" : "fa-circle"} text-[12px]`}/>
@@ -1119,7 +1134,7 @@ function CarePoint({ it, booking_id, index, onSite, onLogged }) {
           {late && <span className="ml-2 text-[10px] font-black uppercase tracking-widest text-red-300">Missed</span>}
         </p>
         {given && (
-          <p className="text-[11px] text-shGreen font-black uppercase tracking-widest" data-testid={`carepoint-given-${kind}-${booking_id}-${index}`}>
+          <p className="text-[11px] text-shGreen font-black uppercase tracking-widest" data-testid={`carepoint-given-${kind}-${booking_id}-${tid}`}>
             Given {fmtTime(it.completed_at)} · {it.completed_initials || it.completed_by_name || "—"}{it.source === "care_board" ? " · Care Board" : ""}
           </p>
         )}
@@ -1131,12 +1146,12 @@ function CarePoint({ it, booking_id, index, onSite, onLogged }) {
       </div>
       {!given && kind === "medication" && (
         <>
-          <button type="button" onClick={()=>confirm(true)} disabled={busy} data-testid={`carepoint-photo-btn-${kind}-${booking_id}-${index}`}
+          <button type="button" onClick={()=>confirm(true)} disabled={busy} data-testid={`carepoint-photo-btn-${kind}-${booking_id}-${tid}`}
                   className="shrink-0 text-gray-500 hover:text-shBlue px-1.5 py-1 text-[12px]"
                   title="Record it given with photo proof">
             <i className="fas fa-camera"/>
           </button>
-          <input id={`carepoint-photo-${kind}-${booking_id}-${index}`} type="file" accept="image/*" capture="environment"
+          <input id={`carepoint-photo-${kind}-${booking_id}-${tid}`} type="file" accept="image/*" capture="environment"
                  onChange={onPhoto} className="hidden"/>
         </>
       )}

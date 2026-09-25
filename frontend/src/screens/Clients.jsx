@@ -155,8 +155,20 @@ export default function Clients({ focusId = null, focusMode = "scroll", onConsum
     if (openCreateOnMount) { openNewClient(); onCreateConsumed(); }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
+  // The record exactly as the edit form opened with it. Sent with the save so
+  // the server writes only what the operator changed: a form opened from an
+  // older list can't undo credits a checkout used, a tab, or a note added
+  // meanwhile (audit #3).
+  const editBaseRef = useRef(null);
+  // One id per opened form, so a double-click or a retried save can't apply
+  // the same credit change twice.
+  const editIdRef = useRef("");
+  const savingRef = useRef(false);
   const openEditClient = useCallback((c) => {
-    setEditing(c); setForm({...empty, ...c}); setAddDog(false); setOpen(true); setErr("");
+    const initial = {...empty, ...c};
+    editBaseRef.current = initial;
+    editIdRef.current = `${c.id}-${Date.now()}-${Math.random().toString(36).slice(2, 10)}`;
+    setEditing(c); setForm(initial); setAddDog(false); setOpen(true); setErr("");
     addRecent(userId, { kind: "client", id: c.id, title: c.name, subtitle: c.email || c.phone || "" });
   }, [userId]);
 
@@ -276,10 +288,12 @@ export default function Clients({ focusId = null, focusMode = "scroll", onConsum
   }, [focusId]);
 
   const submitClient = async () => {
+    if (savingRef.current) return;
+    savingRef.current = true;
     setErr("");
     try {
       if (editing) {
-        await api.put(`/clients/${editing.id}`, form);
+        await api.put(`/clients/${editing.id}`, { ...form, base: editBaseRef.current || editing, edit_id: editIdRef.current });
         setOpen(false); load();
       } else {
         const { data } = await api.post("/clients", form);
@@ -366,6 +380,7 @@ export default function Clients({ focusId = null, focusMode = "scroll", onConsum
         load();
       }
     } catch (e) { setErr(formatErr(e.response?.data?.detail)); }
+    finally { savingRef.current = false; }
   };
 
   const remove = async (id) => {

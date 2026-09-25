@@ -374,10 +374,12 @@ def test_midnight_doses_sort_first_not_last(clock):
 
 def test_a_med_added_to_the_profile_mid_stay_appears_on_every_screen(clock):
     b = _stay()
+    clock(7)
     assert [c["label"] for c in _roster_row(b["id"])["care_today"]] == ["Apoquel"]
     _dog_meds(b, [("Apoquel", "1 tablet", ["08:00"]), ("Insulin", "4 units", ["09:00"])])
     assert [c["label"] for c in _roster_row(b["id"])["care_today"]] == ["Apoquel", "Insulin"], \
         "the old roster showed the profile live — the new one must too"
+    clock(10)
     insulin = _row(b["id"], "09:00")
     assert insulin["label"] == "Insulin" and insulin["derived_status"] == "missed"
     assert any(a["deep_link"]["care_item_id"] == insulin["id"] for a in _alerts(b["id"]))
@@ -395,6 +397,7 @@ def test_a_med_taken_off_the_profile_stops_being_due_but_keeps_its_history(clock
     with pytest.raises(HTTPException) as e:
         _roster_tick(b["id"], iid)
     assert e.value.status_code == 404
+    clock(7)
     _dog_meds(b, [("Apoquel", "1 tablet", ["08:00"])])
     assert _row(b["id"], "08:00")["id"] == iid, "put back on the profile, it's the same item again"
 
@@ -488,3 +491,156 @@ def test_an_oversized_photo_is_refused():
     from pydantic import ValidationError
     with pytest.raises(ValidationError):
         server.MedFeedLogIn(index=0, photo="x" * 2_000_001)
+
+
+# ─────────────── second review: identity, timing and old screens
+
+def test_renaming_or_retiming_a_med_keeps_the_dose_already_given_today(clock):
+    b = _stay(meds=(("Apoqel", ["08:00"]),))
+    iid = _row(b["id"], "08:00")["id"]
+    _complete(b["id"], iid)
+    med_id = run(server.db.dogs.find_one({"id": b["dog_id"]}))["medications"][0]["id"]
+    run(server.db.dogs.update_one({"id": b["dog_id"]}, {"$set": {
+        "medications.0.name": "Apoquel 16mg", "medications.0.times": ["8:00"]}}))
+    row = _row(b["id"], "8:00")
+    assert row["id"] == iid and row["label"] == "Apoquel 16mg", "the same item, renamed — not a new one"
+    assert row["derived_status"] == "completed", "the dose given at 8 still shows given"
+    assert [a for a in _alerts(b["id"]) if a["requested_date"] == _today().isoformat()] == []
+    run(server.db.dogs.update_one({"id": b["dog_id"]}, {"$set": {"medications.0.times": ["09:00"]}}))
+    row = _row(b["id"], "09:00")
+    assert row["id"] == iid and row["derived_status"] == "completed", "re-timing keeps today's record too"
+    assert run(server.db.dogs.find_one({"id": b["dog_id"]}))["medications"][0]["id"] == med_id
+
+
+def test_a_med_added_today_is_not_flagged_for_yesterday_or_for_doses_before_it_was_added(clock):
+    b = _stay()
+    _board()
+    clock(13)
+    _dog_meds(b, [("Apoquel", "1 tablet", ["08:00"]), ("Antibiotic", "1 capsule", ["08:00", "20:00"])])
+    rows = [(r["label"], r["time"]) for r in _board_rows(b["id"])]
+    assert ("Antibiotic", "08:00") not in rows, "the 8:00 dose before it was added was the owner's"
+    assert ("Antibiotic", "20:00") in rows
+    earlier = [r["label"] for r in _board()["earlier"] if r["booking_id"] == b["id"]]
+    assert "Antibiotic" not in earlier, "it wasn't on the plan yesterday"
+    assert not any("Antibiotic" in a["service_name"] for a in _alerts(b["id"]))
+
+
+def test_a_med_stopped_mid_day_keeps_todays_given_dose_and_drops_the_rest(clock):
+    b = _stay(meds=(("Apoquel", ["08:00", "20:00"]),))
+    morning = _row(b["id"], "08:00")["id"]
+    _complete(b["id"], morning)
+    clock(12)
+    _dog_meds(b, [])
+    rows = [(r["time"], r["derived_status"]) for r in _board_rows(b["id"])]
+    assert rows == [("08:00", "completed")], "the given dose stays visible; tonight's is no longer due"
+    clock(21)
+    assert [a for a in _alerts(b["id"]) if a["requested_date"] == _today().isoformat()] == []
+
+
+def test_an_old_app_tap_never_takes_a_dose_that_isnt_due_yet(clock):
+    b = _stay(meds=(("Apoquel", ["08:00", "20:00"]),))
+    _complete(b["id"], _row(b["id"], "08:00")["id"])
+    clock(8, 10)
+    res = run(server.employee_log_medication(b["id"], server.MedFeedLogIn(index=0), user=STAFF))
+    assert "care_item_id" not in res["entry"], "morning already given: only logged, the 20:00 dose is untouched"
+    clock(20, 45)
+    assert _row(b["id"], "20:00")["derived_status"] == "missed"
+    clock(14, 30)
+    b2 = _stay(meds=(("Apoquel", ["08:00", "20:00"]),))
+    run(server.employee_log_medication(b2["id"], server.MedFeedLogIn(index=0), user=STAFF))
+    assert _row(b2["id"], "08:00")["derived_status"] == "completed", "a late morning dose is the morning's"
+    assert _row(b2["id"], "20:00")["derived_status"] == "not_due"
+
+
+def test_a_care_log_entry_keeps_index_as_the_dogs_list_position(clock):
+    b = _stay(meds=(("Apoquel", ["08:00"]), ("Gabapentin", ["07:00"])))
+    gaba = _row(b["id"], "07:00")
+    assert gaba["label"] == "Gabapentin"
+    res = _roster_tick(b["id"], gaba["id"])
+    assert res["entry"]["index"] == 1, "Gabapentin is the dog's 2nd medication (old screens and 'Dose N' read it so)"
+
+
+def test_the_roster_lists_last_nights_unrecorded_doses(clock):
+    b = _stay(meds=(("Evening pill", ["20:00"]),))
+    yesterday = (_today() - timedelta(days=1)).isoformat()
+    clock(0, 10)
+    row = _roster_row(b["id"])
+    [late] = row["care_yesterday"]
+    assert late["day"] == yesterday and late["time"] == "20:00"
+    _roster_tick(b["id"], late["id"], day=yesterday)
+    assert _roster_row(b["id"])["care_yesterday"] == []
+    clock(20, 45)
+    assert _row(b["id"], "20:00")["derived_status"] == "missed", "tonight's dose is still tonight's"
+
+
+def test_a_photo_that_would_crowd_the_booking_is_refused(clock, monkeypatch):
+    import domains.bookings.care as care
+    b = _stay()
+    iid = _row(b["id"], "08:00")["id"]
+    monkeypatch.setattr(care, "PHOTO_ROOM_BYTES", 1000)
+    with pytest.raises(HTTPException) as e:
+        _roster_tick(b["id"], iid, photo="data:image/jpeg;base64," + "A" * 2000)
+    assert e.value.status_code == 413 and "without a photo" in e.value.detail
+    assert _row(b["id"], "08:00")["derived_status"] != "completed", "nothing half-saved"
+    _roster_tick(b["id"], iid)
+    assert _row(b["id"], "08:00")["derived_status"] == "completed"
+
+
+# ─────────────── third review: edit time, early doses, pauses, re-times
+
+def _save_dog(b, meds):
+    """Save the dog's profile the way the Dogs screen does (PUT /dogs/{id})."""
+    dog = run(server.db.dogs.find_one({"id": b["dog_id"]}, {"_id": 0}))
+    old = {m["name"]: m["id"] for m in dog.get("medications") or []}
+    dog["medications"] = [{"id": old.get(n) or str(uuid.uuid4()), "name": n, "dosage": d, "times": t,
+                           "with_food": False, "notes": ""} for n, d, t in meds]
+    body = server.DogIn(**{k: v for k, v in dog.items() if k in server.DogIn.model_fields})
+    run(server.update_dog(b["dog_id"], body, ADMIN))
+
+
+def test_a_med_added_on_the_profile_is_on_the_plan_from_the_edit_not_the_next_screen(clock):
+    b = _stay()
+    clock(6, 30)
+    _board()
+    clock(6, 40)
+    _save_dog(b, [("Apoquel", "1 tablet", ["08:00"]), ("Gabapentin", "100mg", ["07:00"])])
+    clock(7, 45)                        # first time any screen looks
+    row = _row(b["id"], "07:00")
+    assert row["label"] == "Gabapentin" and row["derived_status"] == "missed", \
+        "the 7:00 dose was on the plan from 6:40 — it isn't hidden as 'before it was added'"
+
+
+def test_an_old_app_tap_for_a_dose_given_early_counts_for_that_dose(clock):
+    b = _stay(meds=(("Apoquel", ["08:00", "20:00"]),))
+    clock(7, 15)                        # 8:00 meds given with a 7:15 breakfast
+    res = run(server.employee_log_medication(b["id"], server.MedFeedLogIn(index=0), user=STAFF))
+    assert res["entry"]["time"] == "08:00"
+    clock(8, 45)
+    assert _row(b["id"], "08:00")["derived_status"] == "completed"
+    assert _row(b["id"], "20:00")["derived_status"] == "not_due"
+
+
+def test_taking_a_med_off_and_putting_it_back_keeps_yesterdays_open_questions(clock):
+    b = _stay(meds=(("Apoquel", ["08:00", "20:00"]),))
+    yesterday = (_today() - timedelta(days=1)).isoformat()
+    clock(10)
+    before = {a["id"] for a in _alerts(b["id"]) if a["requested_date"] == yesterday}
+    assert len(before) == 2
+    _save_dog(b, [])
+    _board()
+    clock(10, 1)
+    _save_dog(b, [("Apoquel", "1 tablet", ["08:00", "20:00"])])
+    after = {a["id"] for a in _alerts(b["id"]) if a["requested_date"] == yesterday}
+    assert after == before, "a remove-and-re-add doesn't quietly erase yesterday's misses"
+    iid = _row(b["id"], "20:00")["id"]
+    _complete(b["id"], iid, day=yesterday)   # and they can still be answered
+
+
+def test_a_dose_retimed_today_is_judged_for_yesterday_by_yesterdays_time(clock):
+    b = _stay(meds=(("Apoquel", ["08:00"]),), checked_in=(-1, 8, ))
+    run(server.db.bookings.update_one({"id": b["id"]}, {"$set": {
+        "checked_in_at": _iso(_today() - timedelta(days=1), 8, 30)}}))
+    _board()
+    _save_dog(b, [("Apoquel", "1 tablet", ["09:00"])])
+    earlier = [r for r in _board()["earlier"] if r["booking_id"] == b["id"]]
+    assert earlier == [], "yesterday's dose was at 8:00, before the 8:30 arrival — the owner's"

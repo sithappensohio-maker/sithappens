@@ -189,3 +189,37 @@ test("the roster refreshes itself every minute", async () => {
     spy.mockRestore();
   }
 });
+
+test("a failed background refresh keeps the roster on screen and says it will retry", async () => {
+  const spy = jest.spyOn(global, "setInterval");
+  try {
+    await openRoster();
+    const refresh = spy.mock.calls.filter(([, ms]) => ms === 60000).pop();
+    api.get.mockImplementation((path) => (path === "/employee/roster-today"
+      ? Promise.reject({ response: { data: { detail: "Network hiccup." } } })
+      : Promise.resolve({ data: [] })));
+    await act(async () => { refresh[0](); });
+    await flush();
+    expect($("roster-care-b1")).not.toBeNull();
+    expect($("roster-refresh-failed").textContent).toContain("Showing the last list");
+  } finally {
+    spy.mockRestore();
+  }
+});
+
+test("last night's unrecorded doses are listed and recorded against last night", async () => {
+  api.post.mockResolvedValue({ data: { ok: true } });
+  const withYesterday = { ...ROSTER_ROW, care_yesterday: [
+    { id: "m2", kind: "medication", time: "20:00", label: "Apoquel", amount: "1 tablet",
+      status: "pending", derived_status: "missed", day: "2026-09-24" },
+  ] };
+  api.get.mockImplementation((path) => {
+    if (path === "/employee/roster-today") return Promise.resolve({ data: { date: "2026-09-25", roster: [withYesterday] } });
+    return Promise.resolve({ data: [] });
+  });
+  await openRoster();
+  expect($("roster-care-yesterday-b1").textContent).toContain("Not recorded yesterday");
+  await act(async () => { $("carepoint-confirm-medication-b1-y0").click(); });
+  await flush();
+  expect(api.post).toHaveBeenCalledWith("/employee/bookings/b1/log-medication", { index: 0, care_item_id: "m2", day: "2026-09-24" });
+});

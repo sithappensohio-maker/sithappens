@@ -16,12 +16,16 @@ Friday-to-Monday stay has four separate 8:00 Apoquel doses:
     Required and on the Kennel Board until someone says what happened, so a
     late-evening miss is not wiped out at midnight.
 
-The schedule FOLLOWS THE DOG'S PROFILE (`_reconcile`): a medication added
-to the dog mid-stay (or at drop-off) appears from the next read on every
-screen, a dose change updates the amount, and a medication taken off the
-profile stops being due from that day (`retired_on`) while its history
-stays. The only exception is a schedule an admin set for this one visit
-(PUT /bookings/{id}/care → `care_schedule_custom`).
+The schedule FOLLOWS THE DOG'S PROFILE (`_reconcile`). Each item remembers
+the profile entry it came from (`source_id`), so renaming a medication,
+changing its dose or re-timing it updates the SAME item and keeps what was
+already recorded today. A medication added to the profile mid-stay (or at
+drop-off) is on the plan from that moment (`active_from` + minutes: an
+earlier dose that day was the owner's, not a miss). One taken off the
+profile stops being due from that moment (`retired_on` + minutes: doses
+already recorded that day stay visible, the rest drop off) while its
+history stays. The only exception is a schedule an admin set for this one
+visit (PUT /bookings/{id}/care → `care_schedule_custom`).
 
 A day record is {status: "completed"|"skipped", completed_at (UTC),
 completed_by_id, completed_by_name, completed_initials, completion_note?,
@@ -67,11 +71,18 @@ RECORD_KEYS = (
     "completion_note", "skip_reason", "skip_note", "source",
 )
 READ_KEYS = ("derived_status", "due_minutes_delta", "day")
+# When an item joined or left the plan — never shown, only used by _active_on.
+LIFECYCLE_KEYS = ("days", "retired_on", "retired_min", "active_from", "active_from_min", "paused",
+                  "prev_time", "time_changed_on")
 # Fields the dog's profile keeps current on an item it still lists.
-PROFILE_FIELDS = ("amount", "food_type", "food_from_home", "instructions")
+PROFILE_FIELDS = ("label", "time", "amount", "food_type", "food_from_home", "instructions", "source_id")
 FINAL = ("completed", "skipped")
 _DAY_RX = re.compile(r"^\d{4}-\d{2}-\d{2}$")
 _DOG_FIELDS = {"_id": 0, "id": 1, "feeding_schedule": 1, "medications": 1}
+# A booking document may not pass Mongo's 16MB; photo proofs live inline.
+PHOTO_ROOM_BYTES = 12_000_000
+# How early an old-app roster tap may be matched to the next dose.
+EARLY_DOSE_MINUTES = 150
 
 _server_globals: Optional[dict] = None
 
@@ -131,10 +142,35 @@ def _initials(name: Any, email: Any = "") -> str:
 
 # ─────────────────────────────────────────────────────────────── reading
 
-def _active_on(item: Dict[str, Any], day: str) -> bool:
-    """False from the day the dog's profile stopped listing this item."""
+def _active_on(item: Dict[str, Any], day: str, booking_date: str = "") -> bool:
+    """Is this item on the plan on `day`?
+
+    Added mid-stay (`active_from`): not before that day, and on that day not
+    for a dose time before it was added. Taken off (`retired_on`): not after
+    that day, and on that day only the doses already recorded (a given dose
+    stays visible; nothing else is due any more)."""
+    due = _minutes(item.get("time"))
+    added = item.get("active_from")
+    if added:
+        if day < added:
+            return False
+        if day == added and due is not None and item.get("active_from_min") is not None and due < item["active_from_min"]:
+            return False
+    for w in item.get("paused") or []:     # off the plan for a while, then back on
+        start, end = w.get("from") or "", w.get("to") or ""
+        if start < day < end:
+            return False
+        after_start = day > start or (due is None or due >= (w.get("from_min") or 0))
+        before_end = day < end or (due is not None and due < (w.get("to_min") or 0))
+        if start <= day <= end and after_start and before_end and not day_record(item, day, booking_date):
+            return False
     retired = item.get("retired_on")
-    return not retired or day < retired
+    if retired:
+        if day > retired:
+            return False
+        if day == retired:
+            return bool(day_record(item, day, booking_date))
+    return True
 
 
 def _legacy_day(item: Dict[str, Any], booking_date: str) -> Optional[str]:
@@ -166,7 +202,7 @@ def derive(item: Dict[str, Any], day: str, *, today: str, booking_date: str = ""
     `due_minutes_delta` is minutes past the dose time (negative = to come).
     """
     out = {k: v for k, v in item.items()
-           if k not in RECORD_KEYS and k not in READ_KEYS and k not in ("days", "retired_on")}
+           if k not in RECORD_KEYS and k not in READ_KEYS and k not in LIFECYCLE_KEYS}
     rec = day_record(item, day, booking_date) or {}
     out.update({k: rec[k] for k in RECORD_KEYS if k in rec})
     out["day"] = day
@@ -191,7 +227,8 @@ def derive(item: Dict[str, Any], day: str, *, today: str, booking_date: str = ""
 
 
 def _view(b: Dict[str, Any], items: List[Dict[str, Any]], day: str, today: str) -> List[Dict[str, Any]]:
-    return [derive(it, day, today=today, booking_date=b.get("date") or "") for it in items if _active_on(it, day)]
+    bd = b.get("date") or ""
+    return [derive(it, day, today=today, booking_date=bd) for it in items if _active_on(it, day, bd)]
 
 
 def items_for_day(b: Dict[str, Any], day: str, today: Optional[str] = None) -> List[Dict[str, Any]]:
@@ -215,8 +252,10 @@ def _unrecorded_yesterday(b: Dict[str, Any], items: List[Dict[str, Any]], today:
     arrived_min = arrived.hour * 60 + arrived.minute if arrived else None
     out = []
     for it in items:
+        if it.get("time_changed_on") == today:   # re-timed today: yesterday's dose was at the old time
+            it = {**it, "time": it.get("prev_time") or it.get("time")}
         due = _minutes(it.get("time"))
-        if due is None or not _active_on(it, yesterday) or (arrived_min is not None and due < arrived_min):
+        if due is None or not _active_on(it, yesterday, start) or (arrived_min is not None and due < arrived_min):
             continue
         if day_record(it, yesterday, start):
             continue
@@ -226,54 +265,106 @@ def _unrecorded_yesterday(b: Dict[str, Any], items: List[Dict[str, Any]], today:
 
 # ───────────────────────────────────── keeping the schedule on the profile
 
-def _base_key(kind: Any, label: Any, time: Any) -> str:
-    if kind == "medication":
-        return f"med|{str(label or '').strip().lower() or 'medication'}|{str(time or '').strip()}"
-    return f"feed|{str(time or '').strip()}"
+def _tkey(t: Any) -> str:
+    """A dose time as a comparable key ('8:00' and '08:00' are the same)."""
+    m = _minutes(t)
+    return str(m) if m is not None else str(t or "").strip().lower()
 
 
-def _keys(items: List[Dict[str, Any]]) -> List[str]:
-    """One stable key per item: medication name + dose time, or feeding time
-    (a repeat of the same key gets '#2', '#3', …)."""
-    seen: Dict[str, int] = {}
-    out = []
-    for it in items:
-        base = _base_key(it.get("kind"), it.get("label"), it.get("time"))
-        seen[base] = seen.get(base, 0) + 1
-        out.append(base if seen[base] == 1 else f"{base}#{seen[base]}")
+def _name_key(it: Dict[str, Any]) -> str:
+    """Kind + medication name + time: how items seeded before `source_id`
+    existed (and a med deleted and re-added) are recognised."""
+    name = str(it.get("label") or "").strip().lower() if it.get("kind") == "medication" else ""
+    return f"{it.get('kind')}|{name}|{_tkey(it.get('time'))}"
+
+
+def _seed_from_dog(dog: Dict[str, Any]) -> List[Dict[str, Any]]:
+    """The dog's profile as care items: one per feeding, one per medication
+    dose time — the same shape the server's _seed_care_items_from_dog makes,
+    plus `source_id`, the profile entry each item came from."""
+    import uuid
+    out: List[Dict[str, Any]] = []
+    for i, f in enumerate(dog.get("feeding_schedule") or []):
+        f = f or {}
+        out.append({
+            "id": str(uuid.uuid4()), "kind": "feeding", "time": str(f.get("time") or "").strip(),
+            "label": "Feeding", "amount": str(f.get("amount") or "").strip(),
+            "food_type": str(f.get("food_type") or "").strip(), "food_from_home": False,
+            "instructions": str(f.get("notes") or "").strip(), "notes": "", "status": "pending",
+            "source_id": f"feed:{f.get('id') or i}",
+        })
+    for i, m in enumerate(dog.get("medications") or []):
+        m = m or {}
+        for t in (m.get("times") or [""]):
+            out.append({
+                "id": str(uuid.uuid4()), "kind": "medication", "time": str(t or "").strip(),
+                "label": str(m.get("name") or "").strip() or "Medication", "amount": str(m.get("dosage") or "").strip(),
+                "food_type": "", "food_from_home": bool(m.get("with_food")),
+                "instructions": str(m.get("notes") or "").strip(), "notes": "", "status": "pending",
+                "source_id": f"med:{m.get('id') or i}",
+            })
+    out.sort(key=_sort_key)
     return out
 
 
-def _reconcile(items: List[Dict[str, Any]], dog: Dict[str, Any], today: str) -> Tuple[List[Dict[str, Any]], bool]:
-    """Bring a visit's schedule in line with the dog's profile: add what the
-    profile lists and the visit lacks, refresh amounts and instructions, and
-    retire (from today) what the profile no longer lists. Recorded days are
-    never touched."""
-    fresh = _g("_seed_care_items_from_dog")(dog or {})
-    fresh_by_key = dict(zip(_keys(fresh), fresh))
-    current_keys = _keys(items)
-    out: List[Dict[str, Any]] = []
+def _reconcile(items: List[Dict[str, Any]], dog: Dict[str, Any], today: str, now_min: int) -> Tuple[List[Dict[str, Any]], bool]:
+    """Bring a visit's schedule in line with the dog's profile. Items are
+    matched to profile entries by identity, not by what they say:
+      1. same profile entry and same time;
+      2. (seeded before source_id) same kind, name and time;
+      3. same profile entry, time changed (a re-timed dose);
+      4. same kind, name and time (a med deleted and re-added).
+    A matched item takes the profile's label, time, dose and notes but keeps
+    its id and every recorded day. What the profile no longer lists is taken
+    off the plan from now; what it newly lists is put on from now."""
+    fresh = _seed_from_dog(dog or {})
+    out = [copy.deepcopy(it) for it in items]
+    matched: Dict[int, int] = {}
+    free = list(range(len(fresh)))
+
+    # Items still on the plan are matched before retired ones, so a
+    # re-added entry never pulls an old retired item over a current one.
+    order = sorted(range(len(out)), key=lambda oi: bool(out[oi].get("retired_on")))
+
+    def take(pred) -> None:
+        for oi in order:
+            it = out[oi]
+            if oi in matched:
+                continue
+            for fi in free:
+                if pred(it, fresh[fi]):
+                    matched[oi] = fi
+                    free.remove(fi)
+                    break
+
+    take(lambda it, f: it.get("source_id") == f["source_id"] and _tkey(it.get("time")) == _tkey(f["time"]))
+    take(lambda it, f: not it.get("source_id") and _name_key(it) == _name_key(f))
+    take(lambda it, f: it.get("source_id") == f["source_id"])
+    take(lambda it, f: _name_key(it) == _name_key(f))
+
     changed = False
-    for key, item in zip(current_keys, items):
-        item = copy.deepcopy(item)
-        source = fresh_by_key.get(key)
-        if source is None:
-            if not item.get("retired_on"):
-                item["retired_on"] = today
-                changed = True
-        else:
-            if item.pop("retired_on", None):
-                changed = True
+    for oi, item in enumerate(out):
+        if oi in matched:
+            source = fresh[matched[oi]]
+            if _tkey(item.get("time")) != _tkey(source.get("time")) and item.get("time_changed_on") != today:
+                item["prev_time"], item["time_changed_on"] = item.get("time") or "", today
             for f in PROFILE_FIELDS:
                 if item.get(f, "") != source.get(f, ""):
                     item[f] = source.get(f, "")
                     changed = True
-        out.append(item)
-    have = set(current_keys)
-    for key, source in fresh_by_key.items():
-        if key not in have:
-            out.append(source)
+            if item.get("retired_on"):
+                # Back on the profile. The days before it came off keep their
+                # history and their open questions; only the gap is skipped.
+                off_day, off_min = item.pop("retired_on"), item.pop("retired_min", 0)
+                if off_day != today or off_min is None or off_min < now_min:
+                    item.setdefault("paused", []).append({"from": off_day, "from_min": off_min, "to": today, "to_min": now_min})
+                changed = True
+        elif not item.get("retired_on"):
+            item["retired_on"], item["retired_min"] = today, now_min
             changed = True
+    for fi in free:
+        out.append({**fresh[fi], "active_from": today, "active_from_min": now_min})
+        changed = True
     if changed:
         out.sort(key=_sort_key)
     return out, changed
@@ -282,25 +373,36 @@ def _reconcile(items: List[Dict[str, Any]], dog: Dict[str, Any], today: str) -> 
 def _match_old_tap(items: List[Dict[str, Any]], dog: Dict[str, Any], kind: str, index: Any,
                    day: str, at_minutes: int, booking_date: str) -> Optional[Dict[str, Any]]:
     """An old-style roster tap names a position in the dog's list, not a
-    dose. Match it to that medication's (or feeding's) not-yet-given dose
-    closest in time to the tap; None when nothing matches."""
+    dose. Match it to that medication's (or feeding's) latest not-yet-given
+    dose that was already due when tapped — never a later one (that would
+    quietly mark tonight's dose given). None when nothing fits."""
     src = (dog.get("medications") if kind == "medication" else dog.get("feeding_schedule")) or []
     if not isinstance(index, int) or not 0 <= index < len(src):
         return None
     s = src[index] or {}
+    ids = {f"{'med' if kind == 'medication' else 'feed'}:{s.get('id') or index}"}
     if kind == "medication":
         name = str(s.get("name") or "").strip().lower() or "medication"
-        times = {str(t or "").strip() for t in (s.get("times") or [""])}
-        cands = [it for it in items if it.get("kind") == "medication"
-                 and str(it.get("label") or "").strip().lower() == name and (it.get("time") or "") in times]
+        times = {_tkey(t) for t in (s.get("times") or [""])}
+        cands = [it for it in items if it.get("kind") == "medication" and (it.get("source_id") in ids or (
+            str(it.get("label") or "").strip().lower() == name and _tkey(it.get("time")) in times))]
     else:
-        t = str(s.get("time") or "").strip()
-        cands = [it for it in items if it.get("kind") == "feeding" and (it.get("time") or "") == t]
-    cands = [it for it in cands if _active_on(it, day)
+        t = _tkey(s.get("time"))
+        cands = [it for it in items if it.get("kind") == "feeding" and (it.get("source_id") in ids or _tkey(it.get("time")) == t)]
+    grace = _g("CARE_GRACE_MINUTES")
+
+    def due(it):
+        m = _minutes(it.get("time"))
+        return -1 if m is None else m
+    open_ = [it for it in cands if _active_on(it, day, booking_date)
              and (day_record(it, day, booking_date) or {}).get("status") != "completed"]
-    if not cands:
-        return None
-    return min(cands, key=lambda it: abs((_minutes(it.get("time")) if _minutes(it.get("time")) is not None else at_minutes) - at_minutes))
+    due_now = [it for it in open_ if due(it) <= at_minutes + grace]
+    if due_now:
+        return max(due_now, key=due)
+    # Nothing outstanding yet: a dose given early (08:00 meds with a 07:15
+    # breakfast) is the next one, if it's within a couple of hours.
+    upcoming = [it for it in open_ if due(it) - at_minutes <= EARLY_DOSE_MINUTES]
+    return min(upcoming, key=due) if upcoming else None
 
 
 async def _carry_over_ticks(b: Dict[str, Any], items: List[Dict[str, Any]], dog: Dict[str, Any], today: str) -> bool:
@@ -346,7 +448,7 @@ async def ensure_schedule(b: Dict[str, Any], dog: Optional[Dict[str, Any]] = Non
     if dog is None:
         dog = await db.dogs.find_one({"id": b.get("dog_id")}, _DOG_FIELDS)
     if items is None:
-        items = _g("_seed_care_items_from_dog")(dog or {})
+        items = _seed_from_dog(dog or {})
         if items and b.get("id"):
             res = await db.bookings.update_one(
                 {"id": b["id"], "$or": [{"care_items": {"$exists": False}}, {"care_items": None}]},
@@ -361,7 +463,7 @@ async def ensure_schedule(b: Dict[str, Any], dog: Optional[Dict[str, Any]] = Non
         return items
     if dog is None or not b.get("id"):
         return items  # dog record missing — never guess
-    new, changed = _reconcile(items, dog, today)
+    new, changed = _reconcile(items, dog, today, _g("_now_business_minutes")())
     first_read = not b.get("care_per_day_since")
     if first_read and await _carry_over_ticks(b, new, dog, today):
         changed = True
@@ -473,6 +575,9 @@ async def attach_roster_care(rows: List[Dict[str, Any]], bookings: List[Dict[str
         b = by_id.get(row.get("booking_id")) or {}
         items = await ensure_schedule(b, dog_map.get(b.get("dog_id") or ""))
         row["care_today"] = sorted(_view(b, items, today, today), key=_sort_key)
+        # Last night's unrecorded doses — so a late dose given after midnight
+        # is recorded against the right night, not tonight.
+        row["care_yesterday"] = _unrecorded_yesterday(b, items, today)
         for log in ("feeding_log", "medication_log"):
             row[log] = [{**{k: v for k, v in e.items() if k != "photo"}, "has_photo": bool(e.get("photo"))}
                         for e in row.get(log) or []]
@@ -507,8 +612,8 @@ def _valid_day(b: Dict[str, Any], day: Optional[str], today: str) -> str:
     return day
 
 
-def _check_active(item: Dict[str, Any], day: str) -> None:
-    if not _active_on(item, day):
+def _check_active(item: Dict[str, Any], day: str, booking_date: str = "") -> None:
+    if not _active_on(item, day, booking_date):
         raise HTTPException(status_code=404, detail="That's no longer on this dog's care plan — refresh the screen.")
 
 
@@ -543,7 +648,7 @@ async def record(booking_id: str, item_id: str, user: Dict[str, Any], *, status:
     b = await _booking(booking_id)
     item = _item(b, item_id)
     day = _valid_day(b, day, today)
-    _check_active(item, day)
+    _check_active(item, day, b.get("date") or "")
     prev = day_record(item, day, b.get("date") or "") or {}
     if prev.get("status") == "completed":
         raise _already_given(prev, day, today)
@@ -656,9 +761,8 @@ async def roster_log(kind: str, booking_id: str, body: Any, user: Dict[str, Any]
             item = _item(b, item_id, kind)
         except HTTPException:
             raise HTTPException(status_code=404, detail="That isn't on this visit's care schedule any more — refresh the roster.")
-        _check_active(item, day)
-        same_kind = [it.get("id") for it in b.get("care_items") or [] if it.get("kind") == kind]
-        entry["index"] = min(same_kind.index(item_id), 49)
+        _check_active(item, day, b.get("date") or "")
+        entry["index"] = await _list_position(b, item, kind)
     else:
         # A roster screen still running the old app: match the list position.
         day = today
@@ -667,6 +771,8 @@ async def roster_log(kind: str, booking_id: str, body: Any, user: Dict[str, Any]
         now = _g("_now_business_minutes")()
         item = _match_old_tap(items, dog or {}, kind, body.index, today, now, b.get("date") or "")
         if item is None:
+            if entry["photo"]:
+                await _check_photo_room(booking_id, len(entry["photo"]))
             await db.bookings.update_one({"id": booking_id}, {"$push": {field: entry}})
             return {"ok": True, "entry": entry}
         item_id = item["id"]
@@ -674,6 +780,8 @@ async def roster_log(kind: str, booking_id: str, body: Any, user: Dict[str, Any]
     prev = day_record(item, day, b.get("date") or "") or {}
     if prev.get("status") == "completed":
         raise _already_given(prev, day, today)
+    if entry["photo"]:
+        await _check_photo_room(booking_id, len(entry["photo"]))
     entry.update({"care_item_id": item_id, "day": day,
                   "label": item.get("label") or "", "time": item.get("time") or ""})
     rec: Dict[str, Any] = {
@@ -691,3 +799,61 @@ async def roster_log(kind: str, booking_id: str, body: Any, user: Dict[str, Any]
         fresh = await db.bookings.find_one({"id": booking_id}, {"_id": 0, "date": 1, "care_items": 1}) or {}
         raise _already_given(day_record(_item(fresh, item_id), day, fresh.get("date") or "") or {}, day, today)
     return {"ok": True, "entry": entry, "record": rec}
+
+
+async def _list_position(b: Dict[str, Any], item: Dict[str, Any], kind: str) -> int:
+    """`index` on a care-log entry has always meant the position in the dog's
+    medication / feeding list (old roster screens and the report card's
+    "Dose N" read it that way). Keep that meaning."""
+    dog = await _g("db").dogs.find_one({"id": b.get("dog_id")}, _DOG_FIELDS) or {}
+    src = (dog.get("medications") if kind == "medication" else dog.get("feeding_schedule")) or []
+    prefix = "med" if kind == "medication" else "feed"
+    for i, s in enumerate(src):
+        if item.get("source_id") == f"{prefix}:{(s or {}).get('id') or i}":
+            return min(i, 49)
+    same_kind = [it.get("id") for it in b.get("care_items") or [] if it.get("kind") == kind]
+    return min(same_kind.index(item["id"]) if item.get("id") in same_kind else 0, 49)
+
+
+async def _check_photo_room(booking_id: str, photo_len: int) -> None:
+    """Photo proofs live inline on the booking; a document may not pass
+    Mongo's 16MB. Refuse a photo that would crowd it — the dose can still be
+    recorded without one."""
+    try:
+        rows = await _g("db").bookings.aggregate([
+            {"$match": {"id": booking_id}},
+            {"$project": {"_id": 0, "size": {"$bsonSize": "$$ROOT"}}},
+        ]).to_list(1)
+    except Exception:
+        return  # a server too old for $bsonSize: the 2MB-per-photo cap still applies
+    if rows and int(rows[0].get("size") or 0) + photo_len > PHOTO_ROOM_BYTES:
+        raise HTTPException(
+            status_code=413,
+            detail="This visit has no room for more photos. Record it without a photo — tap the circle instead of the camera.",
+        )
+
+
+async def sync_dog(dog_id: str) -> int:
+    """Run right after the dog's profile is saved: bring every visit the dog
+    is on today in line with it NOW, so a medication added at 9 PM for 7 AM
+    tomorrow is on the plan from 9 PM — not from whenever a screen next
+    happens to look (which would hide its first dose as 'before it was
+    added'). Returns how many visits were checked."""
+    db = _g("db")
+    today = _today()
+    dog = await db.dogs.find_one({"id": dog_id}, _DOG_FIELDS)
+    if not dog:
+        return 0
+    rows = await db.bookings.find(
+        {"dog_id": dog_id, "status": {"$in": ["approved", "completed"]}, "date": {"$lte": today},
+         "checked_out_at": {"$in": [None, ""]}, "care_items": {"$ne": None}},
+        {"_id": 0, "id": 1, "dog_id": 1, "date": 1, "end_date": 1, "care_items": 1, "care_schedule_custom": 1,
+         "care_per_day_since": 1, "checked_in_at": 1},
+    ).to_list(50)
+    n = 0
+    for b in rows:
+        end = b.get("end_date") or b.get("date") or ""
+        if end >= today or b.get("checked_in_at"):
+            await ensure_schedule(b, dog)
+            n += 1
+    return n
