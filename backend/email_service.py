@@ -593,6 +593,7 @@ async def _send(
     on_success: dict | None = None,
     attachments: list | None = None,
     queue_on_failure: bool = False,
+    bypass_quiet_hours: bool = False,
 ) -> bool:
     """Fire-and-forget send. Logs failures but never raises. Returns True on success.
 
@@ -613,9 +614,10 @@ async def _send(
         last_send_error = "Missing recipient address"
         return False
     # Sprint 110dm — quiet hours blackout. Skip non-critical sends during the
-    # configured window. (Auth/password-reset email paths bypass this by
-    # calling resend.Emails.send directly — see send_account_claim.)
-    if await _is_in_quiet_hours():
+    # configured window. A caller whose person is waiting on this email right
+    # now (a sign-up's claim link, a forgot-password reset) passes
+    # bypass_quiet_hours=True.
+    if not bypass_quiet_hours and await _is_in_quiet_hours():
         last_send_error = "Quiet hours active"
         logger.info("Email to %s deferred — quiet hours active. Subject: %s", to_email, subject)
         if queue_on_failure and outbox_key:
@@ -2453,9 +2455,12 @@ async def send_account_claim(
     claim_url: str,
     is_reset: bool = False,
     expires_days: int = 7,
-) -> None:
+    critical: bool = False,
+) -> bool:
     """Send a 'Claim your account' (or 'Reset your password') email to a client.
-    The claim URL embeds a single-use token that the public /claim page consumes."""
+    The claim URL embeds a single-use token that the public /claim page consumes.
+    `critical` sends even during quiet hours (someone is waiting on it).
+    Returns True when the provider accepted it."""
     first = (client_name or "there").split(" ")[0]
     if is_reset:
         title = "Reset your password"
@@ -2479,7 +2484,7 @@ async def send_account_claim(
   <p style="margin:0 0 10px 0;color:{BRAND_DARK};font-size:13px;font-weight:900;text-transform:uppercase;letter-spacing:0.1em;">How to {('reset your password' if is_reset else 'claim your account')}</p>
   <ol style="margin:0;padding-left:22px;color:#334155;font-size:14px;line-height:1.7;">
     <li>Tap the <strong>{cta_text}</strong> button below.</li>
-    <li>Choose a password (at least 6 characters) and confirm it.</li>
+    <li>Choose a password (at least 8 characters) and confirm it.</li>
     <li>You'll be signed in to your portal — bookmark it or install the app from your home screen.</li>
   </ol>
   <p style="margin:12px 0 0 0;color:#64748b;font-size:12px;">This link expires in {expires_days} days. If you didn't expect this email, you can ignore it.</p>
@@ -2501,7 +2506,7 @@ async def send_account_claim(
         subject = _substitute(override["subject"], {
             "first_name": first, "client_name": client_name, "dog_name_or_dogs": "",
         }, into="text")
-    await _send(to_email, subject, html)
+    return await _send(to_email, subject, html, bypass_quiet_hours=critical)
 
 
 async def send_meet_greet_request_received(

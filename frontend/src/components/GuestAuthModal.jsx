@@ -17,6 +17,9 @@ export default function GuestAuthModal({ open, onClose }) {
   const [name, setName] = useState("");
   const [loading, setLoading] = useState(false);
   const [mfaCode, setMfaCode] = useState("");
+  // Sign-up found this email already on file: a link went to that inbox and
+  // nobody is signed in, so the modal stays open and says so.
+  const [checkEmail, setCheckEmail] = useState(null);
 
   if (!open) return null;
 
@@ -26,7 +29,8 @@ export default function GuestAuthModal({ open, onClose }) {
     setError("");
     const ok = mfaChallenge ? await verifyMfa(mfaCode) : (mode === "login" ? await login(email, password) : await register(email, password, name));
     setLoading(false);
-    if (ok) onClose();
+    if (ok?.checkEmail) { setCheckEmail(ok); setPassword(""); return; }
+    if (ok === true) onClose();
   };
 
   return (
@@ -40,17 +44,24 @@ export default function GuestAuthModal({ open, onClose }) {
         </div>
 
         <div className="flex gap-2 rounded-lg p-1 border border-shBorder" style={{ background: "var(--sh-card-base)" }}>
-          <button type="button" onClick={() => { setMode("login"); setError(""); }} data-testid="guest-auth-tab-login"
+          <button type="button" onClick={() => { setMode("login"); setError(""); setCheckEmail(null); }} data-testid="guest-auth-tab-login"
                   className={`flex-1 py-2 rounded text-[12px] font-black uppercase tracking-widest transition ${mode === "login" ? "bg-shPrimary text-bgHeader" : "text-shTextMuted hover:text-shText"}`}>
             Sign In
           </button>
-          <button type="button" onClick={() => { setMode("register"); setError(""); }} data-testid="guest-auth-tab-register"
+          <button type="button" onClick={() => { setMode("register"); setError(""); setCheckEmail(null); }} data-testid="guest-auth-tab-register"
                   className={`flex-1 py-2 rounded text-[12px] font-black uppercase tracking-widest transition ${mode === "register" ? "bg-shPrimary text-bgHeader" : "text-shTextMuted hover:text-shText"}`}>
             Register
           </button>
         </div>
 
-        <form onSubmit={onSubmit} className="space-y-3">
+        {checkEmail && (
+          <div data-testid="guest-auth-check-email" role="status" className="rounded-lg border border-shBorder p-3 space-y-2">
+            <p className="text-[12px] font-black uppercase tracking-widest text-shPrimary">Check your email</p>
+            <p className="text-[13px] text-shText leading-relaxed">{checkEmail.message}</p>
+            <p className="text-[12px] text-shTextMuted leading-relaxed">The password you typed wasn't saved — you'll choose one from the link.</p>
+          </div>
+        )}
+        <form onSubmit={onSubmit} className="space-y-3" hidden={!!checkEmail}>
           {mfaChallenge ? (
             <div>
               <label className="text-[11px] font-black text-shTextMuted uppercase tracking-widest">Authenticator code</label>

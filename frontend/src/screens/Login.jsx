@@ -110,6 +110,9 @@ export default function Login({ focus = false }) {
   const [browseOpen, setBrowseOpen] = useState(false);
   const [meetGreetOpen, setMeetGreetOpen] = useState(false);
   const [inquiryOpen, setInquiryOpen] = useState(false);
+  // Set when sign-up found this email already on file: a link was emailed
+  // there instead of logging anyone in ({ email, message } from the server).
+  const [checkEmail, setCheckEmail] = useState(null);
 
   useEffect(() => {
     try {
@@ -139,7 +142,10 @@ export default function Login({ focus = false }) {
     setLoading(true);
     if (mfaChallenge) await verifyMfa(mfaCode);
     else if (mode === "login") await login(email, password);
-    else await register(email, password, name, refCode || undefined);
+    else {
+      const result = await register(email, password, name, refCode || undefined);
+      if (result?.checkEmail) { setCheckEmail(result); setPassword(""); }
+    }
     setLoading(false);
   };
 
@@ -160,17 +166,26 @@ export default function Login({ focus = false }) {
       </p>
       <div className="relative bg-bgPanel border border-bgHover rounded-2xl p-6 sm:p-7 shadow-2xl sh-public-auth-card">
         <div className="flex gap-2 mb-5 bg-bgBase rounded-lg p-1">
-          <button onClick={() => setMode("login")} data-testid="tab-login"
+          <button onClick={() => { setMode("login"); setCheckEmail(null); }} data-testid="tab-login"
                   className={`flex-1 py-2 rounded text-[13px] font-black uppercase tracking-widest transition ${mode==="login"?"bg-shBlue text-white":"text-gray-400 hover:text-gray-200"}`}>
             Sign In
           </button>
-          <button onClick={() => setMode("register")} data-testid="tab-register"
+          <button onClick={() => { setMode("register"); setCheckEmail(null); }} data-testid="tab-register"
                   className={`flex-1 py-2 rounded text-[13px] font-black uppercase tracking-widest transition ${mode==="register"?"bg-shGreen text-bgHeader":"text-gray-400 hover:text-gray-200"}`}>
             Register
           </button>
         </div>
 
-        <form onSubmit={onSubmit} className="space-y-3.5">
+        {checkEmail && (
+          <div data-testid="register-check-email" role="status" className="rounded-lg border border-shGreen/40 bg-shGreen/10 p-4 space-y-3">
+            <p className="text-[13px] font-black uppercase tracking-widest text-shGreen"><i className="fas fa-envelope-open-text mr-2"/>Check your email</p>
+            <p className="text-[14px] text-gray-200 leading-relaxed">{checkEmail.message}</p>
+            <p className="text-[12px] text-gray-400 leading-relaxed">The password you typed wasn't saved — you'll choose one from the link. Nothing after 15 minutes? Check spam, then try Create Account again or contact us.</p>
+            <button type="button" onClick={() => { setCheckEmail(null); setMode("login"); }} data-testid="register-check-email-back"
+                    className="text-[12px] font-black uppercase tracking-widest text-shGreen hover:text-shGreen/80">Back to sign in</button>
+          </div>
+        )}
+        <form onSubmit={onSubmit} className="space-y-3.5" hidden={!!checkEmail}>
           {mfaChallenge ? (
             <>
               <div>

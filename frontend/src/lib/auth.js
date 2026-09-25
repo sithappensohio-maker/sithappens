@@ -98,6 +98,9 @@ export function AuthProvider({ children }) {
       const payload = { email, password, name };
       if (referredByCode) payload.referred_by_code = referredByCode;
       const { data } = await api.post("/auth/register", payload);
+      // Already on file with no login: the server emailed a one-time link to
+      // that inbox instead of signing anyone in. Nothing to store — say so.
+      if (data?.status === "check_email") return { checkEmail: true, email: data.email || email, message: data.message };
       localStorage.setItem("sh_token", data.token);
       clearSharedApiCache({ notify: false });
       setUser(data.user);

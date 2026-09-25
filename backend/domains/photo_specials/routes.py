@@ -407,7 +407,10 @@ def register_photo_special_routes(
 
         Matching is by email first, then by digits-only phone — the same rule
         the Meet & Greet request already uses. Existing records are never
-        overwritten: a blank field may be filled in, nothing else is touched.
+        overwritten: a blank phone may be filled in, nothing else is touched.
+        A typed email is NEVER written onto someone else's record: the portal
+        sends its sign-up link to the email on file, so planting an address on
+        a phone-matched client would hand that stranger the account.
         Crucially the caller's response is identical either way, so this
         endpoint can never be used to discover whether an address is on file.
         """
@@ -428,8 +431,6 @@ def register_photo_special_routes(
             fill: Dict[str, Any] = {}
             if body.phone.strip() and not (client.get("phone") or "").strip():
                 fill["phone"] = body.phone.strip()
-            if email and not (client.get("email") or "").strip():
-                fill["email"] = email
             if fill:
                 await db.clients.update_one({"id": client["id"]}, {"$set": fill})
                 client = {**client, **fill}
@@ -614,7 +615,9 @@ def register_photo_special_routes(
         booking.pop("_id", None)
 
         try:
-            await notify_client_booking_approved(booking, client)
+            # No email on file: confirm to the address typed on this form, without saving it.
+            to_client = client if (client.get("email") or "").strip() else {**client, "email": str(body.email).strip().lower()}
+            await notify_client_booking_approved(booking, to_client)
         except Exception as e:
             logger.warning("photo_specials: confirmation email failed for %s: %s", booking["id"], e)
 

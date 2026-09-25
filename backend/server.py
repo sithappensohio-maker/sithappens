@@ -79,6 +79,7 @@ from domains.bookings import services as bookings_domain_services
 from domains.bookings.blocks import BookingBlocked, block_of, pretty_date, pretty_time
 from domains.bookings import guards as booking_guards
 from domains.bookings import late_day as late_day_checkout
+from domains.clients import signup_claim
 from domains.shop import shopify_pricing
 from domains import booking_rules
 from domains import vaccines as vaccines_domain
@@ -1562,20 +1563,6 @@ async def register(body: RegisterIn, request: Request):
     if existing:
         raise HTTPException(status_code=400, detail="Email already registered")
 
-    # Auto-merge (Sprint 69): if an admin already created a client record with this
-    # email and no portal account is linked yet, attach the new user to THAT client
-    # instead of creating a duplicate. Skips when the existing client already has
-    # a user — that case is handled by the email-uniqueness check above.
-    existing_client = await db.clients.find_one(
-        {"email": {"$regex": f"^{re.escape(email)}$", "$options": "i"}},
-        {"_id": 0},
-    )
-    linked_user = None
-    if existing_client:
-        linked_user = await db.users.find_one(
-            {"client_id": existing_client["id"]}, {"_id": 0, "id": 1}
-        )
-
     # Validate referral code (if any) — uppercase, must match an existing client's referral_code
     ref_code: Optional[str] = None
     raw_ref = (body.referred_by_code or "").upper().strip()
@@ -1584,32 +1571,28 @@ async def register(body: RegisterIn, request: Request):
         if ref:
             ref_code = raw_ref
 
-    if existing_client and not linked_user:
-        # Re-use the admin-created record — preserves dogs, credits, history.
-        client_id = existing_client["id"]
-        # Only fill in referral_by_code if it's not already set (don't overwrite admin's data).
-        if ref_code and not existing_client.get("referred_by_code"):
-            await db.clients.update_one(
-                {"id": client_id}, {"$set": {"referred_by_code": ref_code}}
-            )
-        client_doc = existing_client
-        merged = True
-    else:
-        client_id = str(uuid.uuid4())
-        client_doc = {
-            "id": client_id,
-            "name": body.name,
-            "address": "",
-            "phone": "",
-            "email": email,
-            "emerg": "",
-            "credits": 0,
-            "waiver": False,
-            "referred_by_code": ref_code,
-            "created_at": now_iso(),
-        }
-        await db.clients.insert_one(client_doc)
-        merged = False
+    # A client already on file with this email and no login is NOT attached to
+    # here — typing an address proves nothing. A one-time link goes to that
+    # inbox instead and the /claim page finishes it (domains/clients/signup_claim.py).
+    pending = await signup_claim.divert_existing_client(email, ref_code)
+    if pending is not None:
+        return pending
+
+    client_id = str(uuid.uuid4())
+    client_doc = {
+        "id": client_id,
+        "name": body.name,
+        "address": "",
+        "phone": "",
+        "email": email,
+        "emerg": "",
+        "credits": 0,
+        "waiver": False,
+        "referred_by_code": ref_code,
+        "created_at": now_iso(),
+    }
+    await db.clients.insert_one(client_doc)
+    merged = False
 
     user = {
         "id": str(uuid.uuid4()),
@@ -2671,6 +2654,7 @@ async def consume_claim_token(token: str, body: ClaimSetIn, request: Request):
         })
         user_email = email
         user_name = client.get("name", email)
+        await signup_claim.on_claimed(rec, client, {"id": user_id, "email": email, "name": user_name})
 
     await db.claim_tokens.update_one({"token": token}, {"$set": {"used": True, "used_at": now_iso()}})
 
@@ -2744,6 +2728,7 @@ async def claim_token_login(token: str, request: Request):
         })
         user_email = email
         user_name = client.get("name", email)
+        await signup_claim.on_claimed(rec, client, {"id": user_id, "email": email, "name": user_name})
 
     await db.claim_tokens.update_one({"token": token}, {"$set": {"used": True, "used_at": now_iso()}})
     _invalidate_auth_user_cache(user_id)
@@ -2814,6 +2799,7 @@ async def forgot_password(body: ForgotPasswordIn, request: Request):
             claim_url=claim_url,
             is_reset=True,
             expires_days=CLAIM_TOKEN_EXPIRY_DAYS,
+            critical=True,  # they're waiting on it — never held back by quiet hours
         )
     except Exception as e:
         logger.warning("forgot_password: email dispatch failed for %s: %s", email, e)
