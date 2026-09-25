@@ -1,11 +1,16 @@
 /* Sprint 110es — Phase 2: Care Board (Feeding & Medication tracker)
    Daily operational view + per-item complete/skip with staff initials.
-   Auto-refreshes every 60s to keep "due now" / "missed" pills accurate. */
+   Auto-refreshes every 60s to keep "due now" / "missed" pills accurate.
+   Every row is ONE day's meal or dose (a Fri–Mon stay has four 8:00 doses),
+   shared with the staff roster: a tick on either screen shows on both.
+   "Not recorded yesterday" keeps a late-evening miss from vanishing at
+   midnight until someone says what happened. */
 import { useEffect, useMemo, useState, useCallback } from "react";
 import { api, formatErr } from "../lib/api";
 import { useConfirm } from "../lib/useConfirm";
 import { toast } from "sonner";
 import PageHero from "../components/PageHero";
+import { fmtTime, fmtDate } from "../lib/format";
 
 const STATUS_META = {
   not_due:   { label: "Not due yet", icon: "fa-clock",  cls: "bg-shSurfaceRaised text-shTextMuted" },
@@ -36,6 +41,7 @@ export default function CareBoard() {
     try {
       const { data: d } = await api.get("/care/today");
       setData(d);
+      setErr("");
     } catch (e) {
       setErr(formatErr(e.response?.data?.detail) || "Couldn't load the care board");
     }
@@ -101,6 +107,39 @@ export default function CareBoard() {
       </div>
 
       {err && <div className="text-[14px] text-red-400 bg-red-500/10 rounded p-3 uppercase font-black">{err}</div>}
+
+      {(data?.earlier || []).length > 0 && (
+        <div className="bg-[var(--sh-card-base)] rounded-xl border border-red-400/40 border-l-4 border-l-red-400 p-4 space-y-2" data-testid="care-earlier">
+          <p className="text-[12px] font-black uppercase tracking-widest text-red-300">
+            <i className="fas fa-clock-rotate-left mr-2"/>Not recorded yesterday{data.earlier_date ? ` · ${fmtDate(data.earlier_date)}` : ""}
+          </p>
+          <p className="text-[12px] text-shTextMuted">
+            Nobody marked these given or skipped. If one was given, record it so the log is right. If it wasn't, skip it with the reason.
+          </p>
+          {data.earlier.map((it) => (
+            <div key={`${it.booking_id}-${it.id}-${it.day}`} data-testid={`care-earlier-row-${it.id}`}
+                 className="flex items-center justify-between gap-3 flex-wrap border-t border-shBorder pt-2">
+              <p className="text-[13px] text-shTextMuted min-w-0">
+                <i className={`fas ${it.kind === "feeding" ? "fa-bowl-food text-shPrimary" : "fa-pills text-purple-400"} mr-2`}/>
+                <span className="text-shText font-black">{fmtTime(it.time)} · {it.label}</span>
+                {it.amount && <span> · {it.amount}</span>}
+                <span> · </span><span className="text-shText font-black">{it.dog_name}</span>
+                {it.client_name && <span> · {it.client_name}</span>}
+              </p>
+              <div className="flex gap-2">
+                <button onClick={()=>{ setActiveItem(it); setActionKind("complete"); }} data-testid={`care-earlier-given-${it.id}`}
+                        className="text-[12px] font-black uppercase tracking-widest bg-shPrimary text-bgBase px-3 py-1.5 rounded hover:bg-shPrimary/90">
+                  <i className="fas fa-check mr-1"/>Was given
+                </button>
+                <button onClick={()=>{ setActiveItem(it); setActionKind("skip"); }} data-testid={`care-earlier-notgiven-${it.id}`}
+                        className="text-[12px] font-black uppercase tracking-widest bg-purple-500/20 text-purple-200 border border-purple-400/40 px-3 py-1.5 rounded hover:bg-purple-500/30">
+                  <i className="fas fa-forward mr-1"/>Wasn't given
+                </button>
+              </div>
+            </div>
+          ))}
+        </div>
+      )}
 
       {loading ? <p className="text-shTextMuted text-sm">Loading…</p> : rows.length === 0 ? (
         <div className="bg-[var(--sh-card-base)] rounded-xl border border-shBorder p-10 text-center" data-testid="care-empty">
@@ -191,7 +230,8 @@ function CareRow({ it, onComplete, onSkip }) {
           )}
           {isCompleted && (
             <p className="text-[12px] text-shPrimary font-black uppercase tracking-widest mt-2">
-              <i className="fas fa-check-circle mr-1"/>{it.completed_initials || "—"} · {(it.completed_at || "").slice(11,16)}
+              <i className="fas fa-check-circle mr-1"/>{it.completed_initials || "—"} · {fmtTime(it.completed_at)}
+              {it.source === "roster" && <span className="text-shTextMuted"> · staff roster</span>}
               {it.completion_note && <span className="text-shTextMuted normal-case ml-2 font-normal">— {it.completion_note}</span>}
             </p>
           )}
@@ -202,16 +242,19 @@ function CareRow({ it, onComplete, onSkip }) {
             </p>
           )}
         </div>
-        {!isCompleted && !isSkipped && (
+        {/* A skipped dose can still be given later ("will retry at 6"). */}
+        {!isCompleted && (
           <div className="flex gap-2 flex-wrap">
             <button onClick={onComplete} data-testid={`care-complete-${it.id}`}
                     className="text-[12px] font-black uppercase tracking-widest bg-shPrimary text-bgBase px-4 py-2 rounded shadow-lg hover:bg-shPrimary/90">
-              <i className="fas fa-check mr-1"/>Complete
+              <i className="fas fa-check mr-1"/>{isSkipped ? "Given after all" : "Complete"}
             </button>
-            <button onClick={onSkip} data-testid={`care-skip-${it.id}`}
-                    className="text-[12px] font-black uppercase tracking-widest bg-purple-500/20 text-purple-200 border border-purple-400/40 px-4 py-2 rounded hover:bg-purple-500/30">
-              <i className="fas fa-forward mr-1"/>Skip
-            </button>
+            {!isSkipped && (
+              <button onClick={onSkip} data-testid={`care-skip-${it.id}`}
+                      className="text-[12px] font-black uppercase tracking-widest bg-purple-500/20 text-purple-200 border border-purple-400/40 px-4 py-2 rounded hover:bg-purple-500/30">
+                <i className="fas fa-forward mr-1"/>Skip
+              </button>
+            )}
           </div>
         )}
       </div>
@@ -235,9 +278,11 @@ function CareActionModal({ it, kind, onClose, onDone }) {
     setBusy(true);
     try {
       const url = `/bookings/${it.booking_id}/care/${it.id}/${kind}`;
+      // The row's own day: a row left open past midnight, or one from
+      // "Not recorded yesterday", records against the day it shows.
       const body = kind === "complete"
-        ? { initials, note }
-        : { initials, reason, note };
+        ? { initials, note, day: it.day }
+        : { initials, reason, note, day: it.day };
       await api.post(url, body);
       toast.success(kind === "complete" ? "Logged" : "Skipped");
       onDone();
@@ -258,6 +303,7 @@ function CareActionModal({ it, kind, onClose, onDone }) {
             </h4>
             <p className="text-[13px] text-shTextMuted mt-1">
               {it.time} · {it.label} · <span className="text-shText font-black">{it.dog_name}</span>
+              {it.day && <span> · {fmtDate(it.day)}</span>}
             </p>
           </div>
           <button onClick={onClose} className="text-shTextMuted hover:text-shText"><i className="fas fa-times"/></button>

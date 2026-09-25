@@ -79,6 +79,7 @@ from domains.bookings import services as bookings_domain_services
 from domains.bookings.blocks import BookingBlocked, block_of, pretty_date, pretty_time
 from domains.bookings import guards as booking_guards
 from domains.bookings import late_day as late_day_checkout
+from domains.bookings import care as care_domain
 from domains.clients import signup_claim
 from domains.shop import shopify_pricing
 from domains import booking_rules
@@ -28457,6 +28458,7 @@ async def _collect_overdue_medication_actions(*, limit: int = 500) -> List[dict]
         {"status": {"$in": ["approved", "completed"]}, "date": {"$lte": today_local}},
         {"_id": 0, "id": 1, "dog_id": 1, "dog_name": 1, "client_id": 1, "client_name": 1,
          "service_type": 1, "date": 1, "end_date": 1, "care_items": 1,
+         "care_schedule_custom": 1, "care_per_day_since": 1,
          "checked_in_at": 1, "checked_out_at": 1, "kennel": 1},
     ).to_list(2000)
     out: List[dict] = []
@@ -28474,16 +28476,12 @@ async def _collect_overdue_medication_actions(*, limit: int = 500) -> List[dict]
         is_missed_checkout = end < today_local
         if not ((start <= today_local <= end) or is_missed_checkout):
             continue
-        items = await _hydrate_booking_care(b, today_local)
-        if b.get("care_items") is None and items:
-            bare = [{k: v for k, v in it.items() if k not in ("derived_status", "due_minutes_delta")} for it in items]
-            await db.bookings.update_one({"id": b["id"], "$or": [{"care_items": {"$exists": False}}, {"care_items": None}]}, {"$set": {"care_items": bare}})
-            b["care_items"] = bare
-        for it in items:
-            if it.get("kind") != "medication" or it.get("derived_status") != "missed":
-                continue
+        # Today's doses past their window + yesterday's nobody recorded (each
+        # carries its own `day`; logic in domains/bookings/care.py).
+        for it in await care_domain.overdue_items(b, today_local):
+            day = it.get("day") or today_local
             overdue_minutes = max(0, int(it.get("due_minutes_delta") or 0))
-            urgency = _pending_action_urgency(None, today_local, it.get("time") or None)
+            urgency = _pending_action_urgency(None, day, it.get("time") or None)
             urgency["waiting_minutes"] = overdue_minutes
             if overdue_minutes < 60:
                 urgency["waiting_label"] = f"{overdue_minutes}m overdue"
@@ -28491,17 +28489,17 @@ async def _collect_overdue_medication_actions(*, limit: int = 500) -> List[dict]
                 h, m = divmod(overdue_minutes, 60)
                 urgency["waiting_label"] = f"{h}h {m}m overdue" if m else f"{h}h overdue"
             out.append({
-                "id": f"overdue_medication:{b['id']}:{it.get('id')}",
+                "id": f"overdue_medication:{b['id']}:{it.get('id')}" + (f":{day}" if day != today_local else ""),
                 "type": "overdue_medication",
                 "type_label": _PENDING_ACTION_TYPE_LABELS["overdue_medication"],
                 "priority": "action_required", "status": "missed",
                 "created_at": None, "client_id": b.get("client_id"), "client_name": b.get("client_name"),
                 "dog_id": b.get("dog_id"), "dog_name": b.get("dog_name"),
                 "service_name": f"{it.get('label') or 'Medication'}{(' · ' + it.get('amount')) if it.get('amount') else ''}",
-                "requested_start": f"{today_local}T{it.get('time')}" if it.get("time") else today_local,
-                "requested_date": today_local, "requested_end_date": None, "requested_time": it.get("time") or None,
+                "requested_start": f"{day}T{it.get('time')}" if it.get("time") else day,
+                "requested_date": day, "requested_end_date": None, "requested_time": it.get("time") or None,
                 "notes": ((it.get("instructions") or it.get("notes") or "Medication is past the 30-minute care window.")[:300]),
-                "deep_link": {"screen": "care", "booking_id": b.get("id"), "care_item_id": it.get("id")},
+                "deep_link": {"screen": "care", "booking_id": b.get("id"), "care_item_id": it.get("id"), "day": day},
                 "required_permission": "care_complete",
                 **urgency,
             })
@@ -47231,6 +47229,8 @@ async def employee_roster_today(user: dict = Depends(require_employee_or_admin))
             "medication_log": b.get("medication_log") or [],
             "bathroom_log": b.get("bathroom_log") or {"pee": 0, "poop": 0},
         })
+    # Today's care list per row: the Care Board's own items + per-day records.
+    await care_domain.attach_roster_care(roster, bookings, dog_map, today)
     return {"date": today, "roster": roster}
 
 
@@ -47251,48 +47251,28 @@ def _is_dog_birthday_today(dob: Optional[str], today: str) -> bool:
 class MedFeedLogIn(BaseModel):
     index: int = Field(ge=0, lt=50)              # which scheduled med/feeding
     note: Optional[str] = Field(default="", max_length=200)
-    photo: Optional[str] = ""                    # data:image/...;base64 (≤ ~800kB)
+    photo: Optional[str] = Field(default="", max_length=2_000_000)  # data:image/...;base64 (compressed ≈ 200-400kB)
+    care_item_id: Optional[str] = None           # a Care Board item: also records that dose there
+    day: Optional[str] = None                    # the day the roster was showing (default today)
 
 
 @api.post("/employee/bookings/{booking_id}/log-feeding")
 async def employee_log_feeding(
     booking_id: str, body: MedFeedLogIn, user: dict = Depends(require_employee_or_admin),
 ):
-    """Append a 'fed' confirmation to the booking's feeding_log."""
-    b = await db.bookings.find_one({"id": booking_id}, {"_id": 0, "id": 1})
-    if not b:
-        raise HTTPException(status_code=404, detail="Booking not found")
-    entry = {
-        "index": body.index,
-        "note": (body.note or "").strip(),
-        "photo": body.photo or "",
-        "at": now_iso(),
-        "by_id": user.get("id"),
-        "by_name": user.get("name") or user.get("email"),
-    }
-    await db.bookings.update_one({"id": booking_id}, {"$push": {"feeding_log": entry}})
-    return {"ok": True, "entry": entry}
+    """Append a 'fed' confirmation to the booking's feeding_log (and, for a
+    care item, record today's feeding on the Care Board)."""
+    return await care_domain.roster_log("feeding", booking_id, body, user)
 
 
 @api.post("/employee/bookings/{booking_id}/log-medication")
 async def employee_log_medication(
     booking_id: str, body: MedFeedLogIn, user: dict = Depends(require_employee_or_admin),
 ):
-    """Append a 'given' confirmation to the booking's medication_log. Photo
-    proof is encouraged for liability."""
-    b = await db.bookings.find_one({"id": booking_id}, {"_id": 0, "id": 1})
-    if not b:
-        raise HTTPException(status_code=404, detail="Booking not found")
-    entry = {
-        "index": body.index,
-        "note": (body.note or "").strip(),
-        "photo": body.photo or "",
-        "at": now_iso(),
-        "by_id": user.get("id"),
-        "by_name": user.get("name") or user.get("email"),
-    }
-    await db.bookings.update_one({"id": booking_id}, {"$push": {"medication_log": entry}})
-    return {"ok": True, "entry": entry}
+    """Append a 'given' confirmation to the booking's medication_log (and, for
+    a care item, record today's dose on the Care Board). Photo proof is
+    encouraged for liability."""
+    return await care_domain.roster_log("medication", booking_id, body, user)
 
 
 class BathroomTickIn(BaseModel):
@@ -51931,16 +51911,10 @@ async def portal_submit_intake(submission_id: str, body: PortalIntakeSubmitIn, u
 # for that booking, then become fully editable per-stay (food brought from
 # home, special instructions, dose changes, etc.).
 #
-# Status state machine (computed at read-time from stored fields):
-#   stored.status="completed"          → "completed"
-#   stored.status="skipped"            → "skipped"
-#   else: compute from time vs now:
-#     - now < time - 30min             → "not_due"
-#     - time - 30min ≤ now ≤ time+30m  → "due_now"
-#     - now > time + 30min             → "missed"
-#
-# Reads embed a `derived_status` so the UI doesn't have to recompute and the
-# `due_minutes_delta` makes overdue highlighting trivial.
+# What happened to each item is recorded PER BUSINESS DAY (a Fri–Mon stay
+# has four 8:00 doses), and the staff roster and the Care Board write the
+# same record. The logic lives in domains/bookings/care.py; the handlers
+# below keep their frozen names and delegate there.
 # ────────────────────────────────────────────────────────────────────────────
 
 CARE_ITEM_KINDS = ("feeding", "medication")
@@ -51966,12 +51940,14 @@ class CareScheduleIn(BaseModel):
 class CareCompleteIn(BaseModel):
     initials: str = Field(min_length=1, max_length=8)
     note: Optional[str] = ""
+    day: Optional[str] = None  # YYYY-MM-DD business day; default today (catching up on yesterday)
 
 
 class CareSkipIn(BaseModel):
     initials: str = Field(min_length=1, max_length=8)
     reason: str = Field(min_length=1)
     note: Optional[str] = ""
+    day: Optional[str] = None
 
 
 def _hhmm_to_minutes(hhmm: str) -> Optional[int]:
@@ -51994,41 +51970,8 @@ def _now_business_minutes() -> int:
 
 
 def _derive_care_item_status(item: Dict[str, Any], booking_date: str, today_iso_local: str) -> Dict[str, Any]:
-    """Compute `derived_status` + `due_minutes_delta` from stored fields."""
-    stored = item.get("status")
-    out = dict(item)
-    if stored == "completed":
-        out["derived_status"] = "completed"
-        out["due_minutes_delta"] = None
-        return out
-    if stored == "skipped":
-        out["derived_status"] = "skipped"
-        out["due_minutes_delta"] = None
-        return out
-    # Pending — compute from time vs now
-    if booking_date != today_iso_local:
-        # Past day → if never completed, count as "missed". Future day → "not_due".
-        if booking_date < today_iso_local:
-            out["derived_status"] = "missed"
-        else:
-            out["derived_status"] = "not_due"
-        out["due_minutes_delta"] = None
-        return out
-    due = _hhmm_to_minutes(item.get("time") or "")
-    if due is None:
-        out["derived_status"] = "not_due"
-        out["due_minutes_delta"] = None
-        return out
-    now = _now_business_minutes()
-    delta = now - due
-    out["due_minutes_delta"] = delta
-    if delta < -CARE_GRACE_MINUTES:
-        out["derived_status"] = "not_due"
-    elif -CARE_GRACE_MINUTES <= delta <= CARE_GRACE_MINUTES:
-        out["derived_status"] = "due_now"
-    else:
-        out["derived_status"] = "missed"
-    return out
+    """Today's view of one care item (logic: domains/bookings/care.py)."""
+    return care_domain.derive(item, today_iso_local, today=today_iso_local, booking_date=booking_date)
 
 
 def _seed_care_items_from_dog(dog: Dict[str, Any]) -> List[Dict[str, Any]]:
@@ -52088,215 +52031,43 @@ def _normalize_care_items(items: List[CareItemSetupIn]) -> List[Dict[str, Any]]:
     return out
 
 
-async def _hydrate_booking_care(b: Dict[str, Any], today_iso_local: str) -> Dict[str, Any]:
-    """Attach derived_status to every item; seed from dog defaults on first open."""
-    items = b.get("care_items")
-    if items is None:
-        # First open — try to seed from the dog's defaults. We don't persist
-        # until the admin saves, so an unedited booking still falls back to
-        # the latest defaults.
-        dog = await db.dogs.find_one({"id": b.get("dog_id")}, {"_id": 0, "feeding_schedule": 1, "medications": 1})
-        items = _seed_care_items_from_dog(dog or {})
-    return [_derive_care_item_status(it, b.get("date") or "", today_iso_local) for it in items]
+async def _hydrate_booking_care(b: Dict[str, Any], today_iso_local: str) -> List[Dict[str, Any]]:
+    """Today's view of a booking's care items, seeding (and saving) them on first use."""
+    return await care_domain.day_items(b, today_iso_local)
 
 
 async def get_booking_care(booking_id: str, _: dict = Depends(require_employee_or_admin)):
-    b = await db.bookings.find_one({"id": booking_id}, {"_id": 0})
-    if not b:
-        raise HTTPException(status_code=404, detail="Booking not found")
-    today_local = business_today().isoformat()
-    items = await _hydrate_booking_care(b, today_local)
-    # Persist seeded items so subsequent state writes (complete/skip) have IDs
-    # to target. Idempotent — we only write when nothing was stored before.
-    if b.get("care_items") is None:
-        # Strip the derived fields before persisting; they're computed at read.
-        bare = [{k: v for k, v in it.items() if k not in ("derived_status", "due_minutes_delta")} for it in items]
-        await db.bookings.update_one({"id": booking_id}, {"$set": {"care_items": bare}})
-    return {
-        "booking_id": booking_id,
-        "dog_id": b.get("dog_id"),
-        "dog_name": b.get("dog_name"),
-        "date": b.get("date"),
-        "items": items,
-    }
+    return await care_domain.get_care(booking_id)
 
 
 async def set_booking_care(booking_id: str, body: CareScheduleIn, _: dict = Depends(require_admin)):
-    b = await db.bookings.find_one({"id": booking_id}, {"_id": 0, "id": 1, "date": 1, "care_items": 1})
-    if not b:
-        raise HTTPException(status_code=404, detail="Booking not found")
-    incoming = _normalize_care_items(body.items)
-    # Preserve any existing completion state on items the admin kept (matched by id)
-    existing_by_id = {it["id"]: it for it in (b.get("care_items") or []) if it.get("id")}
-    merged: List[Dict[str, Any]] = []
-    for it in incoming:
-        prev = existing_by_id.get(it["id"])
-        if prev and prev.get("status") in ("completed", "skipped"):
-            # Keep the completion fields intact when admin edits the schedule
-            it["status"] = prev["status"]
-            for k in ("completed_at", "completed_by_id", "completed_by_name", "completed_initials", "completion_note", "skip_reason", "skip_note"):
-                if k in prev:
-                    it[k] = prev[k]
-        merged.append(it)
-    await db.bookings.update_one({"id": booking_id}, {"$set": {"care_items": merged}})
-    today_local = business_today().isoformat()
-    return {
-        "booking_id": booking_id,
-        "items": [_derive_care_item_status(it, b.get("date") or "", today_local) for it in merged],
-    }
+    return await care_domain.set_schedule(booking_id, body)
 
 
 async def complete_care_item(booking_id: str, item_id: str, body: CareCompleteIn,
                               user: dict = Depends(require_employee_or_admin)):
-    b = await db.bookings.find_one({"id": booking_id}, {"_id": 0})
-    if not b:
-        raise HTTPException(status_code=404, detail="Booking not found")
-    items = b.get("care_items")
-    if items is None:
-        # Seed first so the item_id exists to target
-        dog = await db.dogs.find_one({"id": b.get("dog_id")}, {"_id": 0, "feeding_schedule": 1, "medications": 1})
-        items = _seed_care_items_from_dog(dog or {})
-    found = False
-    for it in items:
-        if it.get("id") == item_id:
-            it["status"] = "completed"
-            it["completed_at"] = now_iso()
-            it["completed_by_id"] = user.get("id")
-            it["completed_by_name"] = user.get("name") or user.get("email")
-            it["completed_initials"] = body.initials.strip().upper()[:8]
-            if body.note:
-                it["completion_note"] = body.note.strip()
-            # Clear any prior skip fields if re-completing
-            for k in ("skip_reason", "skip_note"):
-                it.pop(k, None)
-            found = True
-            break
-    if not found:
-        raise HTTPException(status_code=404, detail="Care item not found")
-    await db.bookings.update_one({"id": booking_id}, {"$set": {"care_items": items}})
-    today_local = business_today().isoformat()
-    return {"booking_id": booking_id, "items": [_derive_care_item_status(it, b.get("date") or "", today_local) for it in items]}
+    return await care_domain.record(booking_id, item_id, user, status="completed",
+                                    initials=body.initials, note=body.note or "", day=body.day)
 
 
 async def skip_care_item(booking_id: str, item_id: str, body: CareSkipIn,
                           user: dict = Depends(require_employee_or_admin)):
-    b = await db.bookings.find_one({"id": booking_id}, {"_id": 0})
-    if not b:
-        raise HTTPException(status_code=404, detail="Booking not found")
-    items = b.get("care_items")
-    if items is None:
-        dog = await db.dogs.find_one({"id": b.get("dog_id")}, {"_id": 0, "feeding_schedule": 1, "medications": 1})
-        items = _seed_care_items_from_dog(dog or {})
-    found = False
-    for it in items:
-        if it.get("id") == item_id:
-            it["status"] = "skipped"
-            it["completed_at"] = now_iso()
-            it["completed_by_id"] = user.get("id")
-            it["completed_by_name"] = user.get("name") or user.get("email")
-            it["completed_initials"] = body.initials.strip().upper()[:8]
-            it["skip_reason"] = body.reason.strip()
-            if body.note:
-                it["skip_note"] = body.note.strip()
-            for k in ("completion_note",):
-                it.pop(k, None)
-            found = True
-            break
-    if not found:
-        raise HTTPException(status_code=404, detail="Care item not found")
-    await db.bookings.update_one({"id": booking_id}, {"$set": {"care_items": items}})
-    today_local = business_today().isoformat()
-    return {"booking_id": booking_id, "items": [_derive_care_item_status(it, b.get("date") or "", today_local) for it in items]}
+    return await care_domain.record(booking_id, item_id, user, status="skipped", initials=body.initials,
+                                    reason=body.reason, note=body.note or "", day=body.day)
 
 
-async def reset_care_item(booking_id: str, item_id: str, _: dict = Depends(require_admin)):
-    """Undo a completion or skip — admin-only safety valve."""
-    b = await db.bookings.find_one({"id": booking_id}, {"_id": 0})
-    if not b:
-        raise HTTPException(status_code=404, detail="Booking not found")
-    items = b.get("care_items") or []
-    found = False
-    for it in items:
-        if it.get("id") == item_id:
-            it["status"] = "pending"
-            for k in ("completed_at", "completed_by_id", "completed_by_name",
-                      "completed_initials", "completion_note", "skip_reason", "skip_note"):
-                it.pop(k, None)
-            found = True
-            break
-    if not found:
-        raise HTTPException(status_code=404, detail="Care item not found")
-    await db.bookings.update_one({"id": booking_id}, {"$set": {"care_items": items}})
-    today_local = business_today().isoformat()
-    return {"booking_id": booking_id, "items": [_derive_care_item_status(it, b.get("date") or "", today_local) for it in items]}
+async def reset_care_item(booking_id: str, item_id: str, day: Optional[str] = None,
+                          _: dict = Depends(require_admin)):
+    """Undo a completion or skip for one day (today by default) — admin-only safety valve."""
+    return await care_domain.reset(booking_id, item_id, day)
 
 
 @api.get("/care/today")
 async def care_board_today(user: dict = Depends(require_employee_or_admin)):
     """Daily operational view — every feeding + medication due today across
-    every on-site booking, sorted by time, with derived status so the UI can
-    highlight overdue items at a glance."""
-    today_local = business_today().isoformat()
-    # On-site = approved or completed bookings spanning today (daycare = today
-    # only; boarding = today ∈ [date, end_date]). We pull both then filter.
-    candidates = await db.bookings.find(
-        {"status": {"$in": ["approved", "completed"]}, "date": {"$lte": today_local}},
-        {"_id": 0, "id": 1, "dog_id": 1, "dog_name": 1, "client_id": 1, "client_name": 1,
-         "service_type": 1, "date": 1, "end_date": 1, "kennel": 1, "care_items": 1,
-         "checked_in_at": 1, "checked_out_at": 1, "dropoff_time": 1, "pickup_time": 1},
-    ).to_list(2000)
-    on_site = []
-    for b in candidates:
-        d = b.get("date") or ""
-        e = b.get("end_date") or d
-        # Sprint 110di-85/86 — Same missed-checkout rescue as /dashboard/stats:
-        # if the dog is still checked in AFTER their scheduled end date, keep
-        # the row so staff can complete the checkout from the care board too.
-        # NOTE: uses `e` (end_date) not `d` — mid-boarding stays never flag.
-        checked_in = bool(b.get("checked_in_at"))
-        checked_out = bool(b.get("checked_out_at"))
-        if checked_out:
-            continue
-        is_missed_checkout = checked_in and e < today_local
-        if (d <= today_local <= e) or is_missed_checkout:
-            on_site.append(b)
-    # Hydrate care items for each on-site booking
-    feeding_items: List[Dict[str, Any]] = []
-    med_items: List[Dict[str, Any]] = []
-    summary = {"not_due": 0, "due_now": 0, "completed": 0, "missed": 0, "skipped": 0}
-    for b in on_site:
-        items = await _hydrate_booking_care(b, today_local)
-        if b.get("care_items") is None and items:
-            # Persist the exact IDs shown on the board. Without this, a first
-            # completion could reseed different UUIDs and return "Care item not found".
-            bare = [{k: v for k, v in it.items() if k not in ("derived_status", "due_minutes_delta")} for it in items]
-            await db.bookings.update_one({"id": b["id"], "$or": [{"care_items": {"$exists": False}}, {"care_items": None}]}, {"$set": {"care_items": bare}})
-            b["care_items"] = bare
-        for it in items:
-            row = {
-                **it,
-                "booking_id": b.get("id"),
-                "dog_id": b.get("dog_id"),
-                "dog_name": b.get("dog_name"),
-                "client_id": b.get("client_id"),
-                "client_name": b.get("client_name"),
-                "service_type": b.get("service_type"),
-                "kennel": b.get("kennel"),
-            }
-            summary[row.get("derived_status") or "not_due"] = summary.get(row.get("derived_status") or "not_due", 0) + 1
-            if row.get("kind") == "feeding":
-                feeding_items.append(row)
-            else:
-                med_items.append(row)
-    feeding_items.sort(key=lambda x: _hhmm_to_minutes(x.get("time") or "") or 9999)
-    med_items.sort(key=lambda x: _hhmm_to_minutes(x.get("time") or "") or 9999)
-    return {
-        "date": today_local,
-        "summary": summary,
-        "feedings": feeding_items,
-        "medications": med_items,
-        "on_site_count": len(on_site),
-    }
+    every on-site booking (plus yesterday's unrecorded ones), with a
+    per-day derived status. Logic: domains/bookings/care.py."""
+    return await care_domain.care_board_today()
 
 
 # ────────────────────────────────────────────────────────────────────────────
@@ -52651,7 +52422,7 @@ async def get_kennel_board(user: dict = Depends(require_employee_or_admin)):
          "service_type": 1, "date": 1, "end_date": 1, "status": 1,
          "kennel": 1, "room": 1, "crate": 1, "yard_group": 1, "training_group": 1,
          "dropoff_time": 1, "pickup_time": 1, "checked_in_at": 1, "checked_out_at": 1,
-         "notes": 1, "care_items": 1},
+         "notes": 1, "care_items": 1, "care_per_day_since": 1},
     ).to_list(2000)
     on_site = []
     for b in candidates:
@@ -52710,15 +52481,8 @@ async def get_kennel_board(user: dict = Depends(require_employee_or_admin)):
         care_items = b.get("care_items") or []
         has_feeding = any(it.get("kind") == "feeding" for it in care_items) or bool(dog.get("feeding_schedule"))
         has_meds    = any(it.get("kind") == "medication" for it in care_items) or bool(dog.get("medications"))
-        # Status-aware warning: meds overdue if any pending med has time < now
-        now_min = _now_business_minutes()
-        med_overdue = False
-        for it in care_items:
-            if it.get("kind") != "medication": continue
-            if it.get("status") in ("completed", "skipped"): continue
-            tmin = _hhmm_to_minutes(it.get("time") or "")
-            if tmin is not None and now_min - tmin > CARE_GRACE_MINUTES:
-                med_overdue = True; break
+        # Status-aware warning: one of TODAY's doses is past its window.
+        med_overdue = care_domain.med_overdue(b, today_local)
         card = {
             "booking_id": b.get("id"),
             "dog_id": b.get("dog_id"),

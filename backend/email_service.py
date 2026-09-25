@@ -2267,7 +2267,7 @@ async def _build_report_card_email_body(booking: dict, client: dict, dog: dict |
                 )
             items += (
                 f'<li style="margin:4px 0;color:#0f172a;font-size:14px;">'
-                f'<strong>Dose {m.get("index", 0) + 1}</strong> given'
+                f'<strong>{_h(m.get("label")) if m.get("label") else "Dose " + str((m.get("index") or 0) + 1)}</strong> given'
                 f'{(" · " + _h(_short_time(m.get("at")))) if m.get("at") else ""}'
                 f'{(" · " + _h(m.get("by_name"))) if m.get("by_name") else ""}'
                 f'{(" — " + _h(m.get("note"))) if m.get("note") else ""}'

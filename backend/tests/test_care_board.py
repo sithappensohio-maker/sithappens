@@ -59,10 +59,12 @@ def _make_dog_with_schedule(admin_headers, suffix):
         timeout=15,
     ).json()
     today = date.today().isoformat()
+    # Boarding needs at least one night (create_booking refuses date == end_date).
+    tomorrow = (date.today() + timedelta(days=1)).isoformat()
     b = requests.post(
         f"{BASE}/api/bookings", headers=admin_headers,
         json={"dog_id": dog["id"], "service_type": "boarding",
-              "date": today, "end_date": today, "status": "approved",
+              "date": today, "end_date": tomorrow, "status": "approved",
               "override_capacity": True, "override_vaccines": True},
         timeout=15,
     )

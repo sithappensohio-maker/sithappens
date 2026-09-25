@@ -22,6 +22,7 @@ from domains.gift_cards import services as gift_card_services
 from domains.pos import services as pos_services
 from domains.bookings import services as booking_services
 from domains.bookings import late_day as late_day_checkout
+from domains.bookings import care as care_domain
 from domains.clients import signup_claim
 from domains.register import services as register_services
 from domains.school.routes import register_school_routes
@@ -131,6 +132,7 @@ def register_domains(
     # server.db per test loop.
     shop_checkout_services.configure(server_globals=server_globals)
     late_day_checkout.configure(server_globals=server_globals)
+    care_domain.configure(server_globals=server_globals)
     signup_claim.configure(server_globals=server_globals)
     gift_card_shop.configure(
         db=db, logger=logger, get_settings=server_globals["get_settings"])

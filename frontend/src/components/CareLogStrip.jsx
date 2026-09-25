@@ -45,7 +45,7 @@ export default function CareLogStrip({ feedings = [], medications = [], bathroom
             <div key={i} className="flex items-start gap-2 text-[13px] text-gray-200">
               <i className="fas fa-check text-shOrange text-[10px] mt-1"/>
               <div className="min-w-0">
-                <span>Dose {(m.index ?? i) + 1} given{m.at ? ` · ${fmtTime(m.at)}` : ""}{m.by_name ? ` · ${m.by_name}` : ""}{m.note ? ` · ${m.note}` : ""}</span>
+                <span>{m.label || `Dose ${(m.index ?? i) + 1}`} given{m.at ? ` · ${fmtTime(m.at)}` : ""}{m.by_name ? ` · ${m.by_name}` : ""}{m.note ? ` · ${m.note}` : ""}</span>
                 {m.photo && (
                   <button type="button" onClick={()=>setZoom(m.photo)}
                           data-testid={`care-med-photo-${i}`}

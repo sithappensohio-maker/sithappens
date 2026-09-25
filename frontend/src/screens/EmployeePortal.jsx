@@ -17,6 +17,8 @@ import ReportCardModal from "../components/ReportCardModal";
 import { CheckoutModal, CancelBookingModal } from "../components/CheckoutModal";
 import { todayISO } from "../lib/date";
 import { useConfirm } from "../lib/useConfirm";
+import { fmtTime as fmtClock } from "../lib/format";
+import { toast } from "sonner";
 // Permission-matrix product-defect fix — Staff Portal used to be a single
 // flat experience identical for every staff_role, so the configured
 // permission matrix (Staff → role editor) had no reachable effect on what
@@ -305,7 +307,9 @@ function RosterTab() {
     try { const r = await api.get("/employee/roster-today"); setData(r.data); }
     catch (e) { setErr(formatErr(e.response?.data?.detail)); }
   };
-  useEffect(() => { load(); }, []);
+  // Refresh every minute so a tick made on another device (or the Care Board)
+  // shows here, and the list turns over to the new day at midnight.
+  useEffect(() => { load(); const t = setInterval(load, 60000); return () => clearInterval(t); }, []);
   // Services drive the add-on chips + default base prices in the checkout modal.
   useEffect(() => {
     api.get("/services").then(r => setServices(r.data || [])).catch(() => setServices([]));
@@ -411,20 +415,14 @@ function RosterTab() {
               )}
             </div>
           </div>
-          {(r.feeding_schedule?.length > 0 || r.medications?.length > 0) && (
-            <div className="border-t border-bgHover/60 pt-2 space-y-1.5 text-[13px]">
-              {r.feeding_schedule?.map((f, i) => (
-                <CarePoint key={`f${i}`} kind="feeding" booking_id={r.booking_id} index={i}
-                           icon="fa-bowl-food" iconColor="text-shGreen"
-                           label={`${f.time} · ${f.amount} ${f.food_type}${f.notes ? ` · ${f.notes}` : ""}`}
-                           confirmed={(r.feeding_log || []).some(x => x.index === i)}
-                           onLogged={load}/>
-              ))}
-              {r.medications?.map((m, i) => (
-                <CarePoint key={`m${i}`} kind="medication" booking_id={r.booking_id} index={i}
-                           icon="fa-pills" iconColor="text-shOrange"
-                           label={`${m.name} · ${m.dosage}${m.times ? ` · ${m.times}` : ""}${m.with_food ? " · w/ food" : ""}${m.notes ? ` · ${m.notes}` : ""}`}
-                           confirmed={(r.medication_log || []).some(x => x.index === i)}
+          {/* Today's care list — the Care Board's own items, one row per meal
+              and per dose time. A tick here is today's record on both screens. */}
+          {(r.care_today || []).length > 0 && (
+            <div className="border-t border-bgHover/60 pt-2 space-y-1.5 text-[13px]" data-testid={`roster-care-${r.booking_id}`}>
+              {r.care_today.map((it) => (
+                <CarePoint key={it.id} it={it} booking_id={r.booking_id}
+                           index={r.care_today.filter(x => x.kind === it.kind).indexOf(it)}
+                           onSite={!!r.checked_in_at && !r.checked_out_at}
                            onLogged={load}/>
               ))}
             </div>
@@ -1054,56 +1052,88 @@ function VaccineGuard({ vaccines, dogName: _dogName }) {
   );
 }
 
-/** A single feeding or medication row with a tap-to-confirm checkmark.
- *  Becomes solid green once confirmed (shows ✓). Optional photo can be
- *  attached at confirm-time for medications (liability proof). */
-function CarePoint({ kind, booking_id, index, icon, iconColor, label, confirmed, onLogged }) {
+/** One meal or dose on today's care list — the SAME item the Care Board
+ *  shows. Tapping records today's meal/dose on both screens (and in the
+ *  client's care log); the server refuses a second tick for the same dose
+ *  today and says who gave it. Optional photo proof for medications. */
+function CarePoint({ it, booking_id, index, onSite, onLogged }) {
+  const kind = it.kind;
   const [busy, setBusy] = useState(false);
-  const [showPhoto, setShowPhoto] = useState(false);
-  const confirm = async (withPhoto = false) => {
-    if (busy || confirmed) return;
-    if (withPhoto) {
-      // open hidden input
-      document.getElementById(`carepoint-photo-${kind}-${booking_id}-${index}`).click();
-      return;
-    }
+  const given = it.derived_status === "completed";
+  const skipped = it.derived_status === "skipped";   // can still be given later ("will retry at 6")
+  const done = given || skipped;
+  const post = async (extra = {}) => {
     setBusy(true);
     try {
-      await api.post(`/employee/bookings/${booking_id}/log-${kind}`, { index });
+      // `day` = the day this list was showing, so a tap just after midnight
+      // on a list loaded before it records last night's dose, not tonight's.
+      await api.post(`/employee/bookings/${booking_id}/log-${kind}`, { index, care_item_id: it.id, day: it.day, ...extra });
       onLogged();
-    } catch {}
-    finally { setBusy(false); }
+    } catch (e) {
+      toast.error(formatErr(e.response?.data?.detail) || "Couldn't save that — try again.");
+      if (e.response?.status === 409) onLogged();
+    } finally { setBusy(false); }
+  };
+  const confirm = (withPhoto = false) => {
+    if (busy || given) return;
+    // open the hidden camera input; the upload itself is the confirmation
+    if (withPhoto) { document.getElementById(`carepoint-photo-${kind}-${booking_id}-${index}`).click(); return; }
+    post();
   };
   const onPhoto = async (e) => {
     const f = e.target.files?.[0];
     if (!f) return;
+    // Busy from the moment the photo arrives, so a tap during compression
+    // can't record the dose without its photo.
     setBusy(true);
+    let data;
     try {
       const { compressImage } = await import("../lib/imageCompress");
-      const data = await compressImage(f, { maxSize: 1200, quality: 0.7 });
-      await api.post(`/employee/bookings/${booking_id}/log-${kind}`, { index, photo: data });
-      onLogged();
-      setShowPhoto(false);
-    } catch {}
-    finally { setBusy(false); e.target.value = ""; }
+      data = await compressImage(f, { maxSize: 1200, quality: 0.7 });
+    } catch {
+      toast.error("Couldn't read that photo — try again.");
+      setBusy(false);
+      return;
+    } finally { e.target.value = ""; }
+    post({ photo: data });
   };
+  const extra = kind === "feeding"
+    ? `${it.food_type ? ` ${it.food_type}` : ""}${it.food_from_home ? " · from home" : ""}`
+    : (it.food_from_home ? " · w/ food" : "");
+  const label = `${it.time ? `${fmtClock(it.time)} · ` : ""}${it.label}${it.amount ? ` · ${it.amount}` : ""}${extra}${it.instructions ? ` · ${it.instructions}` : ""}`;
+  const late = onSite && !done && it.derived_status === "missed";
+  const dueNow = onSite && !done && it.derived_status === "due_now";
   return (
-    <div className={`flex items-start gap-2 px-2 py-1.5 rounded transition ${confirmed ? "bg-shGreen/10 border border-shGreen/30" : "bg-bgBase/40 border border-transparent hover:border-bgHover"}`}
+    <div className={`flex items-start gap-2 px-2 py-1.5 rounded transition ${given ? "bg-shGreen/10 border border-shGreen/30" : skipped ? "bg-purple-500/10 border border-purple-400/30" : late ? "bg-red-500/10 border border-red-400/40" : "bg-bgBase/40 border border-transparent hover:border-bgHover"}`}
          data-testid={`carepoint-${kind}-${booking_id}-${index}`}>
-      <button type="button" onClick={()=>confirm(false)} disabled={busy || confirmed}
+      <button type="button" onClick={()=>confirm(false)} disabled={busy || given}
               data-testid={`carepoint-confirm-${kind}-${booking_id}-${index}`}
-              title={confirmed ? "Already logged" : "Tap to confirm"}
-              className={`shrink-0 w-7 h-7 rounded-full flex items-center justify-center border-2 ${confirmed ? "bg-shGreen border-shGreen text-bgHeader" : "border-bgHover text-gray-500 hover:border-shGreen hover:text-shGreen"} disabled:opacity-70`}>
-        <i className={`fas ${busy ? "fa-spinner fa-spin" : confirmed ? "fa-check" : "fa-circle"} text-[12px]`}/>
+              title={given ? "Already recorded" : skipped ? "Given after all? Tap to record it" : "Tap to record it given"}
+              className={`shrink-0 w-7 h-7 rounded-full flex items-center justify-center border-2 ${given ? "bg-shGreen border-shGreen text-bgHeader" : skipped ? "bg-purple-500 border-purple-500 text-white" : "border-bgHover text-gray-500 hover:border-shGreen hover:text-shGreen"} disabled:opacity-70`}>
+        <i className={`fas ${busy ? "fa-spinner fa-spin" : given ? "fa-check" : skipped ? "fa-forward" : "fa-circle"} text-[12px]`}/>
       </button>
       <div className="flex-1 min-w-0">
-        <p className="text-gray-300 text-[13px]"><i className={`fas ${icon} ${iconColor} mr-1.5`}/>{label}</p>
+        <p className="text-gray-300 text-[13px]">
+          <i className={`fas ${kind === "feeding" ? "fa-bowl-food text-shGreen" : "fa-pills text-shOrange"} mr-1.5`}/>{label}
+          {dueNow && <span className="ml-2 text-[10px] font-black uppercase tracking-widest text-shAccent">Due now</span>}
+          {late && <span className="ml-2 text-[10px] font-black uppercase tracking-widest text-red-300">Missed</span>}
+        </p>
+        {given && (
+          <p className="text-[11px] text-shGreen font-black uppercase tracking-widest" data-testid={`carepoint-given-${kind}-${booking_id}-${index}`}>
+            Given {fmtTime(it.completed_at)} · {it.completed_initials || it.completed_by_name || "—"}{it.source === "care_board" ? " · Care Board" : ""}
+          </p>
+        )}
+        {skipped && (
+          <p className="text-[11px] text-purple-300 font-black uppercase tracking-widest">
+            Skipped · {it.skip_reason || "—"} · {it.completed_initials || "—"}
+          </p>
+        )}
       </div>
-      {!confirmed && kind === "medication" && (
+      {!given && kind === "medication" && (
         <>
-          <button type="button" onClick={()=>confirm(true)} data-testid={`carepoint-photo-btn-${kind}-${booking_id}-${index}`}
+          <button type="button" onClick={()=>confirm(true)} disabled={busy} data-testid={`carepoint-photo-btn-${kind}-${booking_id}-${index}`}
                   className="shrink-0 text-gray-500 hover:text-shBlue px-1.5 py-1 text-[12px]"
-                  title="Confirm with photo proof">
+                  title="Record it given with photo proof">
             <i className="fas fa-camera"/>
           </button>
           <input id={`carepoint-photo-${kind}-${booking_id}-${index}`} type="file" accept="image/*" capture="environment"
