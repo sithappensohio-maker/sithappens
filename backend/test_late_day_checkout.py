@@ -360,3 +360,62 @@ def test_the_check_returns_the_current_booking_so_a_stale_screen_reprices():
         again = _ask(b["id"])
         assert again["booking"]["service_type"] == "boarding" and again["resolved"] == "stayed_overnight"
         assert "late_pickup_cash" in again
+
+
+# ── paying a stayed-overnight visit with DAYCARE credits ──────────────────
+
+def _daycare_credits(client_id, qty, value_each=40.0):
+    run(server.db.credit_lots.insert_one({
+        "id": str(uuid.uuid4()), "client_id": client_id, "service_type": "daycare", "pack_name": f"{TAG} pack",
+        "qty_total": qty, "qty_remaining": qty, "value_each": value_each, "recognize_at_sale": True,
+        "purchased_at": server.now_iso()}))
+    run(server.db.clients.update_one({"id": client_id}, {"$set": {"credits": qty}}))
+
+
+def _client(cid):
+    return run(server.db.clients.find_one({"id": cid}, {"_id": 0}))
+
+
+def test_a_stayed_night_can_be_paid_with_daycare_credits_at_the_price_ratio():
+    """Boarding is double daycare → 2 daycare credits per night."""
+    with _settings(booking_rules__boarding_late_pickup_mode="none"), _services(boarding_price=80.0), \
+            _household(days_ago=2) as (b,):
+        _daycare_credits(b["client_id"], 5)
+        _answer(b["id"], "stayed_overnight")
+        assert _ask(b["id"])["daycare_credit_option"] == {"available": True, "credits_per_night": 2.0}
+        _checkout(b["id"], use_credits=True, late_day_credit_pool="daycare")
+        s, c = _row(b["id"]), _client(b["client_id"])
+        assert s["credit_service_type"] == "daycare" and s["credits_deducted"] == 4.0  # 2 nights × 2
+        assert s["payment_status"] == "paid" and s["payment_method"] == "credits"
+        assert c["credits"] == 1.0 and float(c.get("boarding_credits") or 0) == 0.0
+
+
+def test_a_daycare_credit_shortfall_is_charged_at_the_daycare_rate():
+    with _settings(booking_rules__boarding_late_pickup_mode="none"), _services(boarding_price=80.0), \
+            _household(days_ago=2) as (b,):
+        _daycare_credits(b["client_id"], 3)
+        _answer(b["id"], "stayed_overnight")
+        _checkout(b["id"], use_credits=True, late_day_credit_pool="daycare", payment_method="card")
+        s = _row(b["id"])
+        assert s["credits_deducted"] == 3.0 and s["credit_shortfall"] == 1.0
+        assert float(s["actual_price"]) == 40.0  # 1 daycare credit short × $40, not the $80 boarding rate
+
+
+def test_the_late_pickup_day_stays_cash_when_daycare_credits_pay_the_nights():
+    rules = dict(booking_rules__boarding_late_pickup_mode="flat_fee", booking_rules__boarding_late_pickup_flat_fee=25,
+                 booking_rules__boarding_full_day_pickup_cutoff="00:01")
+    with _settings(**rules), _services(boarding_price=80.0), _household() as (b,):
+        _daycare_credits(b["client_id"], 5)
+        _answer(b["id"], "stayed_overnight")
+        _checkout(b["id"], use_credits=True, late_day_credit_pool="daycare", payment_method="card")
+        s = _row(b["id"])
+        assert s["credits_deducted"] == 2.0 and float(s["actual_price"]) == 25.0
+
+
+def test_the_daycare_pool_is_only_for_a_converted_overnight():
+    plain_boarding = {"service_type": "boarding", "pricing_snapshot": {"unit_price": 80.0}}
+    assert late_day.credit_plan(plain_boarding, "daycare", 2.0) == ("boarding", 2.0, 1.0)
+    converted = {"service_type": "boarding", "late_day_resolution": "stayed_overnight", "pricing_snapshot": {"unit_price": 80.0},
+                 "late_day_checkout": {"original": {"unit_price": 40.0, "pricing_snapshot": {"unit_price": 40.0}}}}
+    assert late_day.credit_plan(converted, "daycare", 2.0) == ("daycare", 4.0, 2.0)
+    assert late_day.credit_plan(converted, None, 2.0) == ("boarding", 2.0, 1.0)

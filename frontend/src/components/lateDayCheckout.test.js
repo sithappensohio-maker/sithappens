@@ -176,3 +176,28 @@ test("a converted stay doesn't offer extra nights (it already runs to today)", a
   expect(q("checkout-modal")).toBeTruthy();
   expect(q("extra-nights-input")).toBeNull();
 });
+
+test("a converted stay can be paid with daycare credits at 2 per night", async () => {
+  lateState = { ...RESOLVED, booking: { ...CONVERTED, credit_units_required: 1 },
+                daycare_credit_option: { available: true, credits_per_night: 2 } };
+  api.get.mockImplementation((url) => {
+    const u = String(url);
+    if (u.endsWith("/late-day-checkout")) return Promise.resolve({ data: lateState });
+    if (u.endsWith("/clients/c-1")) return Promise.resolve({ data: { credits: 5, boarding_credits: 0, training_credits: 0, account_balance: 0 } });
+    return Promise.resolve({ data: {} });
+  });
+  await mount(CONVERTED);
+  expect(q("checkout-credit-pool-daycare").textContent).toMatch(/5 available · 2 per night/);
+  await click("checkout-credit-pool-daycare");
+  expect(q("opt-credit-at-checkout").textContent).toMatch(/Deduct 2 daycare credits/);
+  await click("confirm-checkout");
+  const body = api.post.mock.calls.find((c) => String(c[0]).endsWith("/check-out"))[1];
+  expect(body).toMatchObject({ use_credits: true, late_day_credit_pool: "daycare" });
+});
+
+test("an ordinary boarding checkout never offers the daycare pool", async () => {
+  const plain = { ...CONVERTED, late_day_resolution: undefined };
+  await mount(plain);
+  expect(q("checkout-modal")).toBeTruthy();
+  expect(q("checkout-credit-pool")).toBeNull();
+});

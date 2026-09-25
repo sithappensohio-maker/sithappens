@@ -109,7 +109,16 @@ function CheckoutModalBody({ booking, services, onClose, onRequestCancel, lateDa
       return Math.max(1, n);
     } catch { return 1; }
   };
-  const creditUnitsNeeded = checkoutBookings.reduce((sum, row) => sum + creditUnitsFor(row), 0);
+  // A daycare visit that stayed the night can be paid from DAYCARE credits —
+  // the dog was already here on daycare — at the client's boarding/daycare
+  // price ratio (2 per night when boarding is double daycare). Server side:
+  // domains/bookings/late_day.credit_plan.
+  const daycarePerNight = lateDay?.resolved === "stayed_overnight" && lateDay?.daycare_credit_option?.available
+    ? Number(lateDay.daycare_credit_option.credits_per_night || 0) : 0;
+  const [creditPoolChoice, setCreditPoolChoice] = useState("boarding");
+  const payFromDaycare = daycarePerNight > 0 && creditPoolChoice === "daycare";
+  const poolFactor = payFromDaycare ? daycarePerNight : 1;
+  const creditUnitsNeeded = Math.round(checkoutBookings.reduce((sum, row) => sum + creditUnitsFor(row), 0) * poolFactor * 100) / 100;
   // Fetch client balance so we can offer "pay with credits" at checkout when
   // the booking was made without any pre-deduction (e.g. client had no credits
   // at booking time, then bought a pack later).
@@ -131,7 +140,8 @@ function CheckoutModalBody({ booking, services, onClose, onRequestCancel, lateDa
     return () => { alive = false; };
   }, [booking.client_id]);
 
-  const balField = booking.service_type === "training" ? "training_credits"
+  const balField = payFromDaycare ? "credits"
+                  : booking.service_type === "training" ? "training_credits"
                   : booking.service_type === "boarding" ? "boarding_credits"
                   : "credits";
   const available = clientBal ? (clientBal[balField] || 0) : 0;
@@ -149,7 +159,7 @@ function CheckoutModalBody({ booking, services, onClose, onRequestCancel, lateDa
       try {
         const { data } = await api.get(`/clients/${booking.client_id}/credit-lots`);
         if (!alive || !Array.isArray(data)) return;
-        const svc = booking.service_type || "daycare";
+        const svc = payFromDaycare ? "daycare" : (booking.service_type || "daycare");
         const next = data
           .filter(l => (l.service_type || "").toLowerCase() === svc.toLowerCase())
           .filter(l => (l.qty_remaining || 0) > 0)
@@ -158,7 +168,7 @@ function CheckoutModalBody({ booking, services, onClose, onRequestCancel, lateDa
       } catch { /* non-fatal — banner just won't show */ }
     })();
     return () => { alive = false; };
-  }, [booking.client_id, booking.service_type]);
+  }, [booking.client_id, booking.service_type, payFromDaycare]);
   const nextLotKind = nextLot
     ? (nextLot.pack_kind === "training_program" ? "program"
        : nextLot.recognize_at_sale ? "paid_at_sale"
@@ -377,7 +387,7 @@ function CheckoutModalBody({ booking, services, onClose, onRequestCancel, lateDa
   const baseCreditShortfallUnits = useCredits && !hadCredit
     ? Math.max(0, Number(creditUnitsNeeded || 0) - Number(creditsToUseNow || 0))
     : 0;
-  const baseCreditShortfallCash = Math.round(baseCreditShortfallUnits * serviceUnitRate * 100) / 100;
+  const baseCreditShortfallCash = Math.round(baseCreditShortfallUnits * (serviceUnitRate / poolFactor) * 100) / 100;
   // A converted overnight picked up after the boarding checkout time owes
   // the pickup-day daycare fee in cash even when credits cover the nights
   // (checkout charges it the same way) — so it must show as due today.
@@ -536,6 +546,7 @@ function CheckoutModalBody({ booking, services, onClose, onRequestCancel, lateDa
     try {
       const body = {
         use_credits: useCredits,
+        ...(payFromDaycare && useCredits ? { late_day_credit_pool: "daycare" } : {}),
         add_ons: cartItems.map(it => ({
           service_id: it.service.id, name: it.service.name,
           price: Number(it.service.base_price || 0), qty: it.qty,
@@ -787,6 +798,24 @@ function CheckoutModalBody({ booking, services, onClose, onRequestCancel, lateDa
         {/* Section 1 — How to pay the base service */}
         <div className="mb-5 border border-bgHover rounded-lg p-4 bg-bgBase">
           <p className="text-[13px] uppercase tracking-widest text-gray-500 font-black mb-3">Base service</p>
+          {daycarePerNight > 0 && !hadCredit && (
+            <div className="mb-3" data-testid="checkout-credit-pool">
+              <p className="text-[12px] text-gray-400 mb-1.5">Pay the night{Number(lateDay?.record?.nights || 1) === 1 ? "" : "s"} with:</p>
+              <div className="grid grid-cols-2 gap-2">
+                {[
+                  { key: "boarding", label: "Boarding credits", bal: clientBal?.boarding_credits, rate: 1 },
+                  { key: "daycare", label: "Daycare credits", bal: clientBal?.credits, rate: daycarePerNight },
+                ].map((o) => (
+                  <button key={o.key} type="button" data-testid={`checkout-credit-pool-${o.key}`}
+                          onClick={() => { setCreditPoolChoice(o.key); if (Number(o.bal || 0) > 0) setUseCredits(true); }}
+                          className={`text-left rounded-lg border p-2.5 transition ${creditPoolChoice === o.key ? "border-shGreen bg-shGreen/10" : "border-bgHover hover:border-shGreen/50"}`}>
+                    <span className="block text-sm font-black text-white">{o.label}</span>
+                    <span className="block text-[12px] text-gray-400">{fmtCredits(o.bal || 0)} available · {fmtCredits(o.rate)} per night</span>
+                  </button>
+                ))}
+              </div>
+            </div>
+          )}
           {hadCredit ? (
             <div className="space-y-2">
               <label className={`flex items-start gap-3 p-3 rounded border cursor-pointer transition ${useCredits ? "border-shGreen bg-shGreen/10" : "border-bgHover hover:border-shGreen/50"}`} data-testid="opt-use-credits">
@@ -809,7 +838,7 @@ function CheckoutModalBody({ booking, services, onClose, onRequestCancel, lateDa
               <label className={`flex items-start gap-3 p-3 rounded border cursor-pointer transition ${useCredits ? "border-shGreen bg-shGreen/10" : "border-bgHover hover:border-shGreen/50"}`} data-testid="opt-credit-at-checkout">
                 <input type="radio" checked={useCredits} onChange={()=>setUseCredits(true)} className="mt-1 accent-shGreen" />
                 <div className="flex-1">
-                  <p className="text-sm font-black text-white">{available >= creditUnitsNeeded ? "Deduct" : "Use partial"} {fmtCredits(creditsToUseNow)} {booking.service_type} credit{creditsToUseNow === 1 ? "" : "s"} now</p>
+                  <p className="text-sm font-black text-white">{available >= creditUnitsNeeded ? "Deduct" : "Use partial"} {fmtCredits(creditsToUseNow)} {payFromDaycare ? "daycare" : booking.service_type} credit{creditsToUseNow === 1 ? "" : "s"} now</p>
                   <p className="text-[14px] text-gray-400">Client has <span className="text-shGreen font-black">{fmtCredits(available)}</span> available{available < creditUnitsNeeded ? ` · ${fmtCredits(creditUnitsNeeded - available)} credit shortfall will be charged` : ""} · FIFO from oldest pack</p>
                   {useCredits && nextLot && (
                     <div

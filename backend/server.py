@@ -1193,6 +1193,7 @@ class CheckoutIn(BaseModel):
     # training_domain_services.ensure_board_train_checkout_ready.
     board_train_resolution: List[training_domain_services.BoardTrainSessionResolution] = []
     late_day_resolution: Optional[Literal["forgotten", "stayed_overnight"]] = None  # domains/bookings/late_day.py
+    late_day_credit_pool: Optional[Literal["boarding", "daycare"]] = None  # pay a stayed-overnight visit from daycare credits
     # Merchandise sold at pickup. These are NOT booking add-ons: they ring
     # through the ordinary Register sale, so stock, sales tax, retail revenue
     # and the receipt all behave exactly as they do at the till. See
@@ -9792,8 +9793,7 @@ async def _check_out_locked(
     # and the client has enough, consume them. If not, silently fall through
     # to the cash/card path below — don't block the checkout on a credit shortfall.
     elif not had_credit and use_credits and not booking.get("actual_price"):
-        svc_type = booking.get("service_type") or "daycare"
-        credit_need = _service_base_credit_units_for_booking(booking)
+        svc_type, credit_need, per_unit = late_day_checkout.credit_plan(booking, body.late_day_credit_pool, _service_base_credit_units_for_booking(booking))
         balance_field = _credit_balance_field(svc_type) or "credits"
         client_doc = await db.clients.find_one({"id": booking["client_id"]}, {"_id": 0})
         available = float((client_doc or {}).get(balance_field) or 0)
@@ -9838,7 +9838,7 @@ async def _check_out_locked(
             # always cash, so a fee routes the checkout through the
             # partial-coverage path even when the nights are fully covered.
             late_fee_cash = 0.0
-            if svc_type == "boarding" and booking.get("end_date"):
+            if booking.get("service_type") == "boarding" and booking.get("end_date"):
                 ps_row = booking.get("pricing_snapshot") or {}
                 fee_cutoff = ps_row.get("pickup_cutoff_time") or _boarding_full_day_cutoff_from_rules(settings.get("booking_rules") or {})
                 fee_pickup = booking.get("pickup_time") or fee_cutoff
@@ -9877,7 +9877,7 @@ async def _check_out_locked(
                         legacy_boarding_minimum=1,
                     )
                     unit_rate = float(q.get("unit_price") or 0)
-                remaining_cash = round(credit_shortfall * unit_rate + late_fee_cash, 2)
+                remaining_cash = round(credit_shortfall * unit_rate / per_unit + late_fee_cash, 2)
                 update["actual_price"] = remaining_cash
                 update["credit_shortfall"] = credit_shortfall
                 update["payment_method"] = _normalize_payment_method(body.payment_method, store=True)

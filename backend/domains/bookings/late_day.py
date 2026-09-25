@@ -103,6 +103,31 @@ def _open_stay(booking: Optional[dict]) -> bool:
             and not booking.get("checked_out_at") and not booking.get("financial_reopened_at"))
 
 
+def daycare_credits_per_night(booking: Optional[dict]) -> Optional[float]:
+    """For a converted stay: how many DAYCARE credits pay for one boarding
+    night — the client's boarding rate over this visit's daycare rate (2.0
+    when boarding is priced at double daycare). None if either is unknown."""
+    if not booking or booking.get("late_day_resolution") != "stayed_overnight" or booking.get("service_type") != "boarding":
+        return None
+    original = (booking.get("late_day_checkout") or {}).get("original") or {}
+    daycare_rate = float((original.get("pricing_snapshot") or {}).get("unit_price") or original.get("unit_price") or 0)
+    boarding_rate = float((booking.get("pricing_snapshot") or {}).get("unit_price") or booking.get("unit_price") or 0)
+    if daycare_rate <= 0 or boarding_rate <= 0:
+        return None
+    return round(boarding_rate / daycare_rate, 2)
+
+
+def credit_plan(booking: dict, pool: Optional[str], boarding_units: float):
+    """Checkout Case C: (credit pool, credits needed, credits per boarding
+    unit). A daycare visit that stayed the night can be paid from the DAYCARE
+    pool — the dog was already here on daycare — at daycare_credits_per_night."""
+    if pool == "daycare":
+        per_night = daycare_credits_per_night(booking)
+        if per_night:
+            return "daycare", round(float(boarding_units or 0) * per_night, 2), per_night
+    return booking.get("service_type") or "daycare", boarding_units, 1.0
+
+
 def _nights(visit_day: str, today: str) -> int:
     return max(1, (date.fromisoformat(today) - date.fromisoformat(visit_day[:10])).days)
 
@@ -417,9 +442,11 @@ def register_late_day_routes(*, api, server_globals: dict) -> None:
                     pass  # checkout re-prices (or refuses with the reason) anyway
             cash += float(((r.get("late_day_checkout") or {}).get("converted") or {}).get("late_pickup_cash") or 0)
         fresh = await db.bookings.find_one({"id": booking_id}, {"_id": 0})
+        per_night = daycare_credits_per_night(fresh)
         return {"applies": False, "resolved": fresh.get("late_day_resolution"), "can_undo": True,
                 "record": fresh.get("late_day_checkout"), "booking": fresh,
-                "dog_names": [r.get("dog_name") for r in answered], "late_pickup_cash": round(cash, 2)}
+                "dog_names": [r.get("dog_name") for r in answered], "late_pickup_cash": round(cash, 2),
+                "daycare_credit_option": {"available": bool(per_night), "credits_per_night": per_night}}
 
     async def post_late_day_checkout(booking_id: str, body: LateDayAnswerIn,
                                      user: dict = Depends(require_employee_or_admin)):
