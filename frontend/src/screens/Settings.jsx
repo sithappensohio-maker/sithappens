@@ -10,6 +10,7 @@ import AdminPhotographyPanel from "../components/AdminPhotographyPanel";
 import IconPicker from "../components/IconPicker";
 import { useTheme, FONT_OPTIONS } from "../lib/theme";
 import PageHero from "../components/PageHero";
+import FullRestorePanel from "../components/FullRestorePanel";
 import CsvImportRow from "../components/CsvImportRow";
 import EmailDesignerPanel from "../components/EmailDesignerPanel";
 import PaymentPlanSettingsPanel from "../components/PaymentPlanSettingsPanel";
@@ -3427,9 +3428,6 @@ function BackupPanel() {
   const confirm = useConfirm();
   const [busy, setBusy] = useState(false);
   const [msg, setMsg] = useState("");
-  const [restoreFile, setRestoreFile] = useState(null);
-  const [restoreMode, setRestoreMode] = useState("merge");
-  const [restorePreview, setRestorePreview] = useState(null);
   // Sprint 110di-23 — Config-only export/import (settings, themes, email
   // templates, payment-plan settings). Separate file from the full backup so
   // the operator can carry just their configuration between hosts.
@@ -3551,52 +3549,6 @@ function BackupPanel() {
     } catch { setBusy(false); setMsg("Config restore failed"); }
   };
 
-  const onPickFile = (e) => {
-    const f = e.target.files?.[0]; if (!f) return;
-    setRestoreFile(f); setRestorePreview(null); setMsg("");
-    const r = new FileReader();
-    r.onload = () => {
-      try {
-        const parsed = JSON.parse(r.result);
-        if (!parsed.version || !parsed.collections) throw new Error("Not a valid Sit Happens backup");
-        const counts = {};
-        Object.entries(parsed.collections).forEach(([k, v]) => counts[k] = (v || []).length);
-        setRestorePreview({ version: parsed.version, exportedAt: parsed.exported_at, counts });
-      } catch (err) { setMsg(`Invalid file: ${err.message}`); setRestoreFile(null); }
-    };
-    r.readAsText(f);
-  };
-
-  const doRestore = async () => {
-    if (!restoreFile || !restorePreview) return;
-    const total = Object.values(restorePreview.counts).reduce((a,b)=>a+b, 0);
-    const verb = restoreMode === "replace" ? "REPLACE all current data with" : "merge into your current data";
-    if (!(await confirm({ title: restoreMode === "replace" ? "Replace ALL data?" : "Merge into current data?", body: `This will ${verb} ${total} records from ${restoreFile.name}.\n\nA safety snapshot of your CURRENT state will be auto-saved to /app/backups/ before anything is touched — you can roll back from there if needed.`, confirmText: restoreMode === "replace" ? "Yes, replace everything" : "Yes, merge", tone: "danger" }))) return;
-    setBusy(true); setMsg("");
-    try {
-      const r = new FileReader();
-      r.onload = async () => {
-        try {
-          const payload = JSON.parse(r.result);
-          payload.mode = restoreMode;
-          const { data } = await api.post("/backup/restore", payload);
-          const summary = Object.entries(data.summary).map(([k,v])=>`${k}: ${v.inserted ?? v.upserted}${v.kept_live ? ` (${v.kept_live} kept as-is)` : ""}`).join(" · ");
-          // Merge keeps a live record when a newer one already holds the same
-          // key (the same booking's invoice, the same sale key) — say so.
-          const keptNote = data.kept_live ? ` ${data.kept_live} backed-up record(s) were kept as they are now, because a newer record already uses the same key.` : "";
-          const snap = data.pre_restore_snapshot;
-          const snapNote = snap?.ok
-            ? ` Pre-restore snapshot: ${snap.filename}.`
-            : (snap?.error ? ` (Snapshot warning: ${snap.error})` : "");
-          setMsg(`Restored ✓ ${summary}.${keptNote}${snapNote}`);
-          setRestoreFile(null); setRestorePreview(null);
-        } catch (e) { setMsg(`Restore failed: ${e.response?.data?.detail || e.message}`); }
-        setBusy(false);
-      };
-      r.readAsText(restoreFile);
-    } catch { setBusy(false); setMsg("Restore failed"); }
-  };
-
   return (
     <div className="space-y-6 max-w-2xl" data-testid="backup-panel">
       <PreUpdateSafetyPanel />
@@ -3715,56 +3667,8 @@ function BackupPanel() {
         </div>
       </div>
 
-      <div className="border-t border-shBorder pt-6">
-        <h4 className="text-sm font-black text-shAccent uppercase tracking-widest mb-2"><i className="fas fa-upload mr-2"/>Restore from Backup</h4>
-        <p className="text-[14px] text-shTextMuted mb-3 leading-relaxed">
-          Upload a previously-downloaded backup file. <span className="text-shAccent font-black">Always download a fresh backup before restoring</span> in case you need to revert.
-        </p>
-
-        <div className="space-y-3">
-          <label className="block">
-            <span className="text-[14px] font-black text-shTextMuted uppercase tracking-widest">Backup file</span>
-            <input type="file" accept=".json,application/json" onChange={onPickFile} data-testid="backup-file"
-                   className="block mt-1 w-full text-sm text-shTextMuted file:mr-3 file:py-2 file:px-4 file:rounded file:border-0 file:bg-[var(--sh-card-base)] file:text-shSecondary file:font-black file:uppercase file:text-[14px] file:tracking-widest hover:file:bg-shSurfaceRaised cursor-pointer" />
-          </label>
-
-          {restorePreview && (
-            <div className="bg-[var(--sh-card-base)] border border-shBorder rounded p-3 space-y-2" data-testid="backup-preview">
-              <p className="text-[14px] font-black text-shSecondary uppercase tracking-widest">Backup preview</p>
-              <p className="text-[14px] text-shTextMuted">Exported {restorePreview.exportedAt?.slice(0,19).replace("T", " ")}</p>
-              <div className="grid grid-cols-2 md:grid-cols-3 gap-2 text-[14px]">
-                {Object.entries(restorePreview.counts).map(([k,v]) => (
-                  <div key={k} className="bg-[var(--sh-card-base)] rounded px-2 py-1 flex justify-between">
-                    <span className="text-shTextMuted uppercase font-black tracking-widest">{k}</span>
-                    <span className="text-shText font-black">{v}</span>
-                  </div>
-                ))}
-              </div>
-            </div>
-          )}
-
-          <div>
-            <span className="text-[14px] font-black text-shTextMuted uppercase tracking-widest">Restore mode</span>
-            <div className="mt-1 grid grid-cols-1 md:grid-cols-2 gap-2">
-              <label className={`cursor-pointer rounded p-3 border ${restoreMode==="merge"?"bg-shSecondary/10 border-shSecondary/50":"bg-[var(--sh-card-base)] border-shBorder"}`}>
-                <input type="radio" name="mode" checked={restoreMode==="merge"} onChange={()=>setRestoreMode("merge")} className="mr-2 accent-shSecondary" data-testid="mode-merge" />
-                <span className="text-sm font-black text-shText uppercase tracking-tight">Merge (safer)</span>
-                <p className="text-[14px] text-shTextMuted mt-1">Adds & updates by ID. Anything not in the backup stays untouched.</p>
-              </label>
-              <label className={`cursor-pointer rounded p-3 border ${restoreMode==="replace"?"bg-red-500/10 border-red-500/50":"bg-[var(--sh-card-base)] border-shBorder"}`}>
-                <input type="radio" name="mode" checked={restoreMode==="replace"} onChange={()=>setRestoreMode("replace")} className="mr-2 accent-red-500" data-testid="mode-replace" />
-                <span className="text-sm font-black text-shText uppercase tracking-tight">Replace (wipes current)</span>
-                <p className="text-[14px] text-shTextMuted mt-1">Deletes all current data and restores exactly what's in the backup.</p>
-              </label>
-            </div>
-          </div>
-
-          <button onClick={doRestore} disabled={busy || !restorePreview} data-testid="backup-restore"
-                  className={`px-6 py-3 rounded font-black text-[14px] uppercase tracking-widest shadow-lg disabled:opacity-50 ${restoreMode==="replace"?"bg-red-500 text-shText":"bg-shSecondary text-shText"}`}>
-            <i className="fas fa-upload mr-2"/>{busy ? "Restoring…" : `Restore (${restoreMode})`}
-          </button>
-        </div>
-      </div>
+      {/* Full restore (upload in pieces or pick a server backup, runs as a job). */}
+      <FullRestorePanel />
 
       {msg && (
         <div className={`text-[14px] font-black uppercase tracking-widest p-3 rounded ${msg.startsWith("Restored") || msg.includes("✓") ? "bg-shPrimary/15 text-shPrimary":"bg-red-500/15 text-red-400"}`} data-testid="backup-msg">

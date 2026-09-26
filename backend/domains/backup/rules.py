@@ -16,11 +16,34 @@ OMIT_FIELDS: Dict[str, Tuple[str, ...]] = {
     "shop_media": ("derivatives", "derivatives_built_at"),
 }
 
-# Rows stored without an `id`. A merge matches them on their natural key; the
-# old fallback inserted a second copy, which their unique index refuses.
+# Rows stored without an `id`. A merge matches them on their natural key (the
+# one the code itself writes them by). The old fallback inserted a second
+# copy: a unique index refused it (favourites), or — found by a full-size
+# restore drill — every merge doubled the drawer sessions, email templates,
+# sign-in links and notification log.
 MERGE_KEYS: Dict[str, Tuple[str, ...]] = {
     "shop_favorites": ("client_id", "kind", "ref_id"),
+    "cash_drawer_sessions": ("date",),
+    "claim_tokens": ("token",),
+    "email_templates": ("slug",),
+    "notification_log": ("key",),
+    "settings": ("key",),            # the key/value rows; the main row has an id
+    "task_dismissals": ("item_id",),
+    "vaccine_dismissals": ("dog_id",),
 }
+
+
+def merge_filter(collection: str, doc: dict, is_string_id: bool):
+    """How a merge finds the live copy of `doc`, or None when it can't."""
+    if is_string_id:
+        return None
+    if doc.get("id"):
+        return {"id": doc["id"]}
+    natural = MERGE_KEYS.get(collection)
+    if natural and all(doc.get(f) is not None for f in natural):
+        return {f: doc[f] for f in natural}
+    return None
+
 
 # Sequences a merge may only raise. Records made after the backup stay in the
 # database during a merge, so putting the counter back would hand their

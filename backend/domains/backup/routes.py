@@ -4,6 +4,7 @@ Moved out of server.py verbatim; only the owning module changed. Everything the
 moved code still needs is injected, and every moved name is handed back so the
 host module can re-export it under its original name.
 """
+import asyncio
 import logging
 import os
 import uuid
@@ -13,6 +14,9 @@ from typing import Any, Dict, List, Literal, Optional
 from fastapi import Depends, HTTPException
 from fastapi.responses import FileResponse
 from pydantic import BaseModel, Field
+
+from pymongo import UpdateOne
+from pymongo.errors import BulkWriteError
 
 from domains.backup import rules as backup_rules
 
@@ -59,6 +63,56 @@ def make_backup_domain(*, BACKUP_COLLECTIONS, backup_root_ref, BACKUP_VERSION, C
 
     async def _release_backup_lease() -> None:
         await db.app_settings.delete_one({"_id": _BACKUP_LEASE_ID, "owner": _BACKUP_PROCESS_ID})
+
+    async def _backup_lease_held() -> bool:
+        """Is any worker writing a backup right now? The lease lasts 4 hours
+        and nothing renews it, so one left behind by a worker that died
+        mid-backup would otherwise block restores all morning; a real backup
+        is done in minutes, so a lease older than an hour is ignored."""
+        now = datetime.now(timezone.utc)
+        return bool(await db.app_settings.find_one(
+            {"_id": _BACKUP_LEASE_ID, "expires_at": {"$gt": now},
+             "acquired_at": {"$gt": now - timedelta(minutes=60)}}, {"_id": 1}))
+
+    # One restore at a time, across every worker. Kept in restore_jobs (never
+    # backed up, so a replace restore can't wipe it mid-run). A holder that
+    # stops refreshing — a worker restarted mid-restore — expires on its own.
+    _RESTORE_LOCK_TTL = timedelta(minutes=20)
+
+    async def _acquire_restore_lock(holder: str) -> bool:
+        now = datetime.now(timezone.utc)
+        try:
+            row = await db.restore_jobs.find_one_and_update(
+                {"_id": "lock", "$or": [{"holder": None}, {"expires_at": {"$lte": now}}]},
+                {"$set": {"holder": holder, "expires_at": now + _RESTORE_LOCK_TTL}},
+                upsert=True, return_document=ReturnDocument.AFTER)
+        except DuplicateKeyError:
+            return False
+        return bool(row and row.get("holder") == holder)
+
+    async def _refresh_restore_lock(holder: str) -> None:
+        await db.restore_jobs.update_one(
+            {"_id": "lock", "holder": holder},
+            {"$set": {"expires_at": datetime.now(timezone.utc) + _RESTORE_LOCK_TTL}})
+
+    async def _release_restore_lock(holder: str) -> None:
+        await db.restore_jobs.update_one({"_id": "lock", "holder": holder}, {"$set": {"holder": None}})
+
+    async def _hold_restore_lock(holder: str, touch=None) -> None:
+        """Keep a restore lock alive on a clock, whatever the restore is busy
+        with (run as a task; cancel it when the restore ends)."""
+        while True:
+            await asyncio.sleep(60)
+            try:
+                await _refresh_restore_lock(holder)
+                if touch:
+                    await touch()
+            except Exception as exc:  # a missed beat is retried next minute
+                logger.warning("restore lock heartbeat (%s) failed: %s", holder, exc)
+
+    async def _restore_lock_held() -> bool:
+        return bool(await db.restore_jobs.find_one(
+            {"_id": "lock", "holder": {"$ne": None}, "expires_at": {"$gt": datetime.now(timezone.utc)}}, {"_id": 1}))
 
     @api.post("/admin/compress-photos")
     async def admin_compress_photos(_: dict = Depends(require_admin)):
@@ -118,19 +172,26 @@ def make_backup_domain(*, BACKUP_COLLECTIONS, backup_root_ref, BACKUP_VERSION, C
             full_path = os.path.join(snapshot_dir, filename)
             temp_path = full_path + f".{os.getpid()}.tmp"
             body = _json.dumps(payload, separators=(",", ":"), default=str).encode("utf-8")
+            # Each copy is let go as soon as the next exists: on a real-size
+            # database, holding the export, its text, the read-back and the
+            # re-parse at once was the biggest memory spike of a restore.
+            del payload
             import hashlib
             checksum = hashlib.sha256(body).hexdigest()
             with open(temp_path, "wb") as fh:
                 fh.write(body)
                 fh.flush()
                 os.fsync(fh.fileno())
+            del body
             with open(temp_path, "rb") as fh:
                 readback = fh.read()
             if hashlib.sha256(readback).hexdigest() != checksum:
                 raise RuntimeError("Pre-restore snapshot checksum verification failed")
-            verified = _json.loads(readback.decode("utf-8"))
+            verified = _json.loads(readback)
+            del readback
             if not isinstance(verified.get("collections"), dict):
                 raise RuntimeError("Pre-restore snapshot is missing its collections map")
+            del verified
             os.replace(temp_path, full_path)
             temp_path = None
             size = os.path.getsize(full_path)
@@ -388,6 +449,15 @@ def make_backup_domain(*, BACKUP_COLLECTIONS, backup_root_ref, BACKUP_VERSION, C
             }
         temp_path: Optional[str] = None
         try:
+            # Checked after taking the lease (a restore checks the lease after
+            # taking its lock), so the two can never both go ahead.
+            if await _restore_lock_held():
+                return {
+                    "id": str(uuid.uuid4()), "trigger": trigger, "started_at": started,
+                    "finished_at": now_iso(), "ok": False, "status": "skipped", "path": None,
+                    "size_bytes": 0, "collections": 0, "total_docs": 0, "pruned": [],
+                    "error": "A restore is running; the backup will run after it finishes",
+                }
             # The Mongo lease serializes workers. This second check prevents a
             # second worker from starting another scheduled backup immediately
             # after a very fast first run releases the lease. Failed runs remain
@@ -1031,51 +1101,28 @@ def make_backup_domain(*, BACKUP_COLLECTIONS, backup_root_ref, BACKUP_VERSION, C
                 status_code=400,
                 detail=f"Backup version {body.version} is newer than this server (v{BACKUP_VERSION}). Update the server first.",
             )
-        # Safety net: snapshot the CURRENT full state to disk BEFORE we touch
-        # anything so a bad restore can always be rolled back from /app/backups.
-        # Logged + returned to the UI; non-fatal on disk errors.
-        pre_snapshot = await _write_pre_restore_snapshot("full")
-        if not pre_snapshot.get("ok"):
-            raise HTTPException(
-                status_code=507,
-                detail=f"Restore stopped because the safety snapshot could not be verified: {pre_snapshot.get('error')}",
-            )
-        # Older versions are accepted — they simply contain fewer collections.
-        # Collections not in the payload are left alone (never wiped), so restoring
-        # a v1 snapshot won't blow away homework_templates, trophies, etc.
-        summary = {}
-        kept_live_total = 0
-        for c, docs in (body.collections or {}).items():
-            if c not in BACKUP_COLLECTIONS:
-                continue
-            docs = [backup_rules.strip_omitted(c, d) for d in (docs or []) if isinstance(d, dict)]
-            is_string_id = c in STRING_ID_COLLECTIONS
-            if body.mode == "replace":
-                await db[c].delete_many({})
-                if docs:
-                    await db[c].insert_many(docs)
-                summary[c] = {"mode": "replace", "inserted": len(docs)}
-            else:  # merge
-                upserts = 0
-                kept_live: List[str] = []
-                for doc in docs:
-                    try:
-                        await _merge_one(c, doc, is_string_id)
-                        upserts += 1
-                    except DuplicateKeyError:
-                        # A different live row already holds this row's unique
-                        # key (the same claim key, the same booking's invoice).
-                        # Merge keeps the live row, reports it and carries on:
-                        # stopping here left every later collection unrestored.
-                        if await _take_over(c, doc):
-                            upserts += 1
-                        else:
-                            kept_live.append(str(doc.get("id") or doc.get("_id") or "")[:60])
-                summary[c] = {"mode": "merge", "upserted": upserts}
-                if kept_live:
-                    summary[c]["kept_live"] = len(kept_live)
-                    summary[c]["kept_live_ids"] = kept_live[:10]
-                    kept_live_total += len(kept_live)
+        # One restore at a time (a big one runs as a job, domains/backup/restore_jobs.py).
+        holder = f"request-{uuid.uuid4()}"
+        if not await _acquire_restore_lock(holder):
+            raise HTTPException(status_code=409, detail="A restore is already running. Wait for it to finish.")
+        try:
+            if await _backup_lease_held():
+                raise HTTPException(status_code=409, detail="A backup is being written right now. Try again in a few minutes.")
+            # Safety net: snapshot the CURRENT full state to disk BEFORE we touch
+            # anything so a bad restore can always be rolled back from /app/backups.
+            heartbeat = asyncio.create_task(_hold_restore_lock(holder))
+            try:
+                pre_snapshot = await _write_pre_restore_snapshot("full")
+                if not pre_snapshot.get("ok"):
+                    raise HTTPException(
+                        status_code=507,
+                        detail=f"Restore stopped because the safety snapshot could not be verified: {pre_snapshot.get('error')}",
+                    )
+                summary, kept_live_total = await _restore_collections(body.collections, body.mode)
+            finally:
+                heartbeat.cancel()
+        finally:
+            await _release_restore_lock(holder)
         return {
             "ok": True,
             "summary": summary,
@@ -1083,6 +1130,93 @@ def make_backup_domain(*, BACKUP_COLLECTIONS, backup_root_ref, BACKUP_VERSION, C
             "restored_at": now_iso(),
             "pre_restore_snapshot": pre_snapshot,
         }
+
+    async def _restore_collections(collections: dict, mode: str, progress=None):
+        """Restore each backed-up collection. Returns (summary, kept_live).
+
+        Older versions are accepted — they simply contain fewer collections.
+        Collections not in the payload are left alone (never wiped), so
+        restoring a v1 snapshot won't blow away homework_templates, trophies,
+        etc. `progress(collection, index, total, docs_done, finished)` is
+        awaited as it goes (the restore job reports and heartbeats with it).
+        """
+        summary: Dict[str, Any] = {}
+        kept_live_total = 0
+        todo = [(c, docs) for c, docs in (collections or {}).items() if c in BACKUP_COLLECTIONS]
+        for index, (c, docs) in enumerate(todo, start=1):
+            if progress:
+                await progress(c, index, len(todo), 0, False)
+            docs = [backup_rules.strip_omitted(c, d) for d in (docs or []) if isinstance(d, dict)]
+            is_string_id = c in STRING_ID_COLLECTIONS
+            if mode == "replace":
+                await db[c].delete_many({})
+                if docs:
+                    await db[c].insert_many(docs)
+                summary[c] = {"mode": "replace", "inserted": len(docs)}
+            else:  # merge
+                upserts = 0
+                kept_live: List[str] = []
+
+                async def _collision(doc: dict) -> None:
+                    # A different live row already holds this row's unique
+                    # key (the same claim key, the same booking's invoice).
+                    # Merge keeps the live row, reports it and carries on:
+                    # stopping here left every later collection unrestored.
+                    nonlocal upserts
+                    if await _take_over(c, doc):
+                        upserts += 1
+                    else:
+                        kept_live.append(str(doc.get("id") or doc.get("_id") or "")[:60])
+
+                # Rows with a key (`id`, or the natural key in rules.MERGE_KEYS)
+                # go in batches, on an index: one lookup per row without it
+                # scanned the whole collection, which turned a 200k-row audit
+                # log into hours.
+                keyed = [(backup_rules.merge_filter(c, d, is_string_id), d) for d in docs]
+                others = [d for f, d in keyed if f is None]
+                keyed = [(f, d) for f, d in keyed if f is not None]
+                for fields in {tuple(f) for f, _d in keyed}:
+                    await _ensure_merge_index(c, fields)
+                for start in range(0, len(keyed), 1000):
+                    chunk = keyed[start:start + 1000]
+                    batch = [d for _f, d in chunk]
+                    try:
+                        await db[c].bulk_write(
+                            [UpdateOne(f, {"$set": d}, upsert=True) for f, d in chunk], ordered=False)
+                        upserts += len(batch)
+                    except BulkWriteError as bwe:
+                        errors = (bwe.details or {}).get("writeErrors") or []
+                        if any(e.get("code") != 11000 for e in errors):
+                            raise
+                        failed = {e["index"] for e in errors}
+                        upserts += len(batch) - len(failed)
+                        for i in sorted(failed):
+                            await _collision(batch[i])
+                    if progress:
+                        await progress(c, index, len(todo), start + len(batch), False)
+                for doc in others:
+                    try:
+                        await _merge_one(c, doc, is_string_id)
+                        upserts += 1
+                    except DuplicateKeyError:
+                        await _collision(doc)
+                summary[c] = {"mode": "merge", "upserted": upserts}
+                if kept_live:
+                    summary[c]["kept_live"] = len(kept_live)
+                    summary[c]["kept_live_ids"] = kept_live[:10]
+                    kept_live_total += len(kept_live)
+            if progress:
+                await progress(c, index, len(todo), len(docs), True)
+        return summary, kept_live_total
+
+    async def _ensure_merge_index(c: str, fields: tuple) -> None:
+        """An index a merge can find rows by (created once if missing)."""
+        info = await db[c].index_information()
+        for spec in info.values():
+            lead = tuple(k for k, _dir in (spec.get("key") or [])[:len(fields)])
+            if lead == tuple(fields):
+                return
+        await db[c].create_index([(f, 1) for f in fields], name="restore_merge_" + "_".join(fields))
 
     async def _merge_one(c: str, doc: dict, is_string_id: bool) -> None:
         """Upsert one backed-up document on the key that identifies it."""
@@ -1105,7 +1239,10 @@ def make_backup_domain(*, BACKUP_COLLECTIONS, backup_root_ref, BACKUP_VERSION, C
         if natural and all(doc.get(f) is not None for f in natural):
             await db[c].update_one({f: doc[f] for f in natural}, {"$set": doc}, upsert=True)
             return
-        await db[c].insert_one(doc)
+        # Nothing identifies this row. It's added unless an identical copy is
+        # already there — merging the same backup twice used to double it.
+        if not await db[c].find_one(doc, {"_id": 1}):
+            await db[c].insert_one(doc)
 
     async def _take_over(c: str, doc: dict) -> bool:
         """Let the backed-up row replace a live row holding its natural key,
@@ -1131,4 +1268,4 @@ def make_backup_domain(*, BACKUP_COLLECTIONS, backup_root_ref, BACKUP_VERSION, C
 
     # ───────────────────────── Trophies ─────────────────────────────
 
-    return {"_safe_backup_dir": _safe_backup_dir, "_acquire_backup_lease": _acquire_backup_lease, "_release_backup_lease": _release_backup_lease, "admin_compress_photos": admin_compress_photos, "admin_compress_photos_status": admin_compress_photos_status, "backup_export": backup_export, "_write_pre_restore_snapshot": _write_pre_restore_snapshot, "backup_export_config": backup_export_config, "backup_restore_config": backup_restore_config, "admin_disk_usage": admin_disk_usage, "_get_auto_backup_config": _get_auto_backup_config, "_save_auto_backup_config": _save_auto_backup_config, "_build_backup_payload": _build_backup_payload, "_run_auto_backup_once": _run_auto_backup_once, "_maybe_auto_backup_tick": _maybe_auto_backup_tick, "AutoBackupConfigIn": AutoBackupConfigIn, "get_auto_backup_config": get_auto_backup_config, "put_auto_backup_config": put_auto_backup_config, "run_auto_backup_now": run_auto_backup_now, "list_auto_backup_runs": list_auto_backup_runs, "_backup_age_hours": _backup_age_hours, "_backup_file_info": _backup_file_info, "admin_backup_safety_report": admin_backup_safety_report, "admin_backup_safety_validate_latest": admin_backup_safety_validate_latest, "admin_backup_safety_validations": admin_backup_safety_validations, "admin_school_media_archives": admin_school_media_archives, "admin_download_school_media_archive": admin_download_school_media_archive, "admin_restore_school_media": admin_restore_school_media, "BackupRestoreIn": BackupRestoreIn, "backup_restore": backup_restore}
+    return {"_safe_backup_dir": _safe_backup_dir, "_acquire_backup_lease": _acquire_backup_lease, "_release_backup_lease": _release_backup_lease, "admin_compress_photos": admin_compress_photos, "admin_compress_photos_status": admin_compress_photos_status, "backup_export": backup_export, "_write_pre_restore_snapshot": _write_pre_restore_snapshot, "backup_export_config": backup_export_config, "backup_restore_config": backup_restore_config, "admin_disk_usage": admin_disk_usage, "_get_auto_backup_config": _get_auto_backup_config, "_save_auto_backup_config": _save_auto_backup_config, "_build_backup_payload": _build_backup_payload, "_run_auto_backup_once": _run_auto_backup_once, "_maybe_auto_backup_tick": _maybe_auto_backup_tick, "AutoBackupConfigIn": AutoBackupConfigIn, "get_auto_backup_config": get_auto_backup_config, "put_auto_backup_config": put_auto_backup_config, "run_auto_backup_now": run_auto_backup_now, "list_auto_backup_runs": list_auto_backup_runs, "_backup_age_hours": _backup_age_hours, "_backup_file_info": _backup_file_info, "admin_backup_safety_report": admin_backup_safety_report, "admin_backup_safety_validate_latest": admin_backup_safety_validate_latest, "admin_backup_safety_validations": admin_backup_safety_validations, "admin_school_media_archives": admin_school_media_archives, "admin_download_school_media_archive": admin_download_school_media_archive, "admin_restore_school_media": admin_restore_school_media, "BackupRestoreIn": BackupRestoreIn, "backup_restore": backup_restore, "_restore_collections": _restore_collections, "_backup_lease_held": _backup_lease_held, "_acquire_restore_lock": _acquire_restore_lock, "_refresh_restore_lock": _refresh_restore_lock, "_release_restore_lock": _release_restore_lock, "_restore_lock_held": _restore_lock_held, "_hold_restore_lock": _hold_restore_lock}

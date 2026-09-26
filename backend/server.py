@@ -29937,6 +29937,7 @@ BACKUP_EXCLUDED = {
     "email_outbox": "delivery queue — restoring it would resend stale emails",
     "auto_backup_runs": "the backup system's own run history",
     "shop_events": "Shop analytics funnel that deletes itself after 180 days; Shop revenue lives on shop_orders",
+    "restore_jobs": "the restore system's own job history and one-at-a-time lock",
 }
 # Collections whose primary key is a string `_id` (no separate `id` field).
 # These get special handling during export (we preserve `_id`) and restore
@@ -29946,7 +29947,7 @@ BACKUP_EXCLUDED = {
 #   • `payment_plan_settings`  — singleton {_id: "singleton", agreement_html, ...}
 STRING_ID_COLLECTIONS = {"app_settings", "email_settings", "payment_plan_settings",
                          "event_counters", "receipt_settings", "auto_receipt_email_claims",
-                         "school_experience_feedback"}
+                         "school_experience_feedback", "settings"}
 # Backup v9 adds Online School operational collections and a verified filesystem
 # media sidecar archive so videos/resources survive disaster recovery. Older
 # backups remain accepted; collections absent from an older payload are left
@@ -56073,6 +56074,19 @@ globals().update(make_backup_domain(
     api=api, business_today=business_today, db=db, logger=logger, now_iso=now_iso,
     now_local=now_local, require_admin=require_admin,
     require_admin_and_permission=require_admin_and_permission, require_owner=require_owner,
+))
+
+# Restore a real-size backup from a file on the server, as a job (domains/backup/restore_jobs.py).
+from domains.backup.restore_jobs import make_restore_jobs_domain  # noqa: E402
+
+globals().update(make_restore_jobs_domain(
+    api=api, db=db, logger=logger, now_iso=now_iso, require_owner=require_owner,
+    require_admin_and_permission=require_admin_and_permission, backup_root_ref=lambda: globals()["BACKUP_ROOT"],
+    _safe_backup_dir=_safe_backup_dir, BACKUP_VERSION=BACKUP_VERSION, _get_auto_backup_config=_get_auto_backup_config,
+    _backup_lease_held=_backup_lease_held, _write_pre_restore_snapshot=_write_pre_restore_snapshot,
+    _restore_collections=_restore_collections, _acquire_restore_lock=_acquire_restore_lock,
+    _refresh_restore_lock=_refresh_restore_lock, _release_restore_lock=_release_restore_lock,
+    _hold_restore_lock=_hold_restore_lock,
 ))
 
 # Trainer Daily Queue (domains/training/trainer_day) — pure move; same path,
