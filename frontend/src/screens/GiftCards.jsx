@@ -299,7 +299,7 @@ export default function GiftCards() {
             {/* Loading a blank by hand is refused by the backend on purpose —
                 money on a card has to arrive through a sale. Offering the
                 button anyway just hands the operator an error. */}
-            {found.status !== "stock" && (
+            {found.status !== "stock" && found.status !== "voided" && (
             <button onClick={() => {
                       const v = window.prompt("Add how much to this card?");
                       const why = v && window.prompt("Why?");

@@ -92,7 +92,9 @@ export default function ShopRefundModal({ payment, onClose, onDone }) {
                       </div>
                     )}
                   </div>
-                  {entitlement && <p className="text-[11px] text-amber-300 mt-2">Credits/program entitlements can only be automatically refunded if the remaining line is unused. Training history is preserved.</p>}
+                  {entitlement && (line.kind === "gift_card"
+                    ? <p className="text-[11px] text-amber-300 mt-2">A gift card can only be automatically refunded while it is unused. Refunding voids the card so it can't be spent.</p>
+                    : <p className="text-[11px] text-amber-300 mt-2">Credits/program entitlements can only be automatically refunded if the remaining line is unused. Training history is preserved.</p>)}
                 </div>;
               })}
             </div>

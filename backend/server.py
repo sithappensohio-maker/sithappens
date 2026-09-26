@@ -8993,6 +8993,10 @@ async def _rollback_checkout_finances(
         await db.payment_ledger.delete_many({"operation_id": operation_id})
     except Exception as exc:
         logger.critical("checkout rollback could not remove ledger rows for %s: %s", operation_id, exc)
+    try:  # the stay's gift card charges go back on the card (keyed: once)
+        await gift_card_services.return_checkout_charges(operation_id=operation_id, actor={"id": "system", "name": "Checkout rollback"})
+    except Exception as exc:
+        logger.critical("checkout rollback could not return gift card money for %s: %s", operation_id, exc)
 
 
 async def _active_household_checkout_rows(anchor: Dict[str, Any]) -> List[Dict[str, Any]]:
@@ -10327,7 +10331,7 @@ async def _check_out_locked(
         update.setdefault("amount_paid", 0.0)
         update["balance_due"] = 0.0
     merged_money = {**booking, **update}
-    await pos_domain_services.settle_booking_gift_card(booking, body, user, update)
+    await pos_domain_services.settle_booking_gift_card(booking, body, user, update, operation_id=_checkout_operation_id_ctx.get())
     merged_money = {**booking, **update}
     update["cash_revenue"] = _cash_revenue(merged_money)
     if float(update.get("cash_revenue") or 0) > 0:
@@ -38648,6 +38652,9 @@ async def _validate_shop_refund_entitlements(order: dict, line_refunds: list[dic
             )
         if kind == "training_program" and line.get("fulfillment_kind") == "online_school":
             continue
+        if kind == "gift_card":  # every card it bought must still be unspent
+            await gift_card_shop.assert_refundable(order, line)
+            continue
         for n in range(int(line.get("quantity") or 0)):
             ref = f"{_shop_inventory_ref(order['id'], line['item_id'])}:unit:{n}"
             lot = await db.credit_lots.find_one({"fulfillment_ref": ref}, {"_id": 0})
@@ -38797,6 +38804,8 @@ async def _apply_shop_refund_fulfillment(attempt: dict) -> None:
             await _revoke_refunded_online_school_line(order, line, attempt_id)
         elif kind in ("credit_pack", "training_program"):
             await _revoke_shop_credit_line(order, line, attempt_id)
+        elif kind == "gift_card":
+            await gift_card_shop.revoke_line(order, line, attempt_id)
 
         await db.shop_orders.update_one(
             {"id": order["id"], "lines": {"$elemMatch": {"item_id": item_id, "refund_attempts_applied": {"$ne": attempt_id}}}},
@@ -39132,6 +39141,8 @@ async def _finalize_stripe_refund(refund_attempt_id: str) -> None:
     # to an Online Shop order. This preserves the ONE financial finalizer
     # while keeping inventory/credit/School side effects line-aware.
     await _apply_shop_refund_fulfillment(attempt)
+    # Step F — a gift card bought or topped up online gives the money back.
+    await gift_card_online.apply_refund(attempt, payment)
 
     # Only after every applicable step above is independently confirmed
     # complete (each is safe to re-run, so simply having executed them
@@ -39180,7 +39191,14 @@ async def _handle_refund_event(refund_obj: dict) -> None:
                 {"processor": "stripe", "processor_payment_id": intent_id, "amount": {"$gt": 0}},
                 {"_id": 0},
             )
+        if not payment:  # a card bought online before its payment was recorded
+            payment = await gift_card_online.link_payment_for_intent(intent_id)
         if not payment:
+            # Kept aside: a card bought online whose paid webhook hasn't landed
+            # yet picks it up the moment it is recorded (gift_cards/online.py).
+            await db.stripe_unlinked_refunds.update_one(
+                {"refund_id": refund_id}, {"$setOnInsert": {"refund_id": refund_id, "payment_intent": intent_id,
+                                                          "refund": refund_obj, "created_at": now_iso()}}, upsert=True)
             # No reliable structured linkage — never fabricate a reversal.
             # Stripe receives 200 (the dispatcher returns ok), so this is a
             # deliberate skip, logged for reconciliation, not a retry loop.
@@ -42689,7 +42707,7 @@ async def _apply_shop_payment(attempt: dict, session_obj: Optional[dict] = None)
 
     # ── Step B3 — per-line independent fulfillment. ──
     for line in order.get("lines") or []:
-        if line.get("fulfillment_status") == "fulfilled":
+        if line.get("fulfillment_status") in ("fulfilled", "refunded"):
             continue
         try:
             if line["kind"] == "product":
@@ -42725,7 +42743,7 @@ async def _apply_shop_payment(attempt: dict, session_obj: Optional[dict] = None)
     # pure function of the order's current line states). ──
     fresh_order = await db.shop_orders.find_one({"id": order_id}, {"_id": 0})
     fresh_lines = fresh_order.get("lines") or []
-    order_fulfillment = "fulfilled" if all(l.get("fulfillment_status") == "fulfilled" for l in fresh_lines) else "needs_attention"
+    order_fulfillment = "fulfilled" if all(l.get("fulfillment_status") in ("fulfilled", "refunded") for l in fresh_lines) else "needs_attention"
     await db.shop_orders.update_one({"id": order_id}, {"$set": {"fulfillment_status": order_fulfillment, "updated_at": now_iso()}})
 
     # ── Step B5 — initialize pickup_status exactly once. Physical orders
@@ -43814,7 +43832,7 @@ async def _create_pos_sale_impl(body: PosSaleIn, user: dict = Depends(require_em
             raise HTTPException(status_code=409, detail="This idempotency key was already used for a different sale request.")
         if existing_claim.get("status") == "completed":
             sale = await db.pos_sales.find_one({"id": existing_claim.get("pos_sale_id")}, {"_id": 0})
-            return {"ok": True, "sale": sale, "pos_sale_id": sale["id"] if sale else None,
+            return {"ok": True, "sale": sale, "pos_sale_id": sale["id"] if sale else None, "replayed": True,
                     "pos_print_receipt_token": None, "pos_open_drawer_token": None}
         raise HTTPException(status_code=409, detail="This sale is already being processed. Wait a moment and try again.")
 
@@ -44154,6 +44172,9 @@ async def void_pos_sale(sale_id: str, body: PosSaleVoidIn, user: dict = Depends(
             detail="This sale's business day has been closed out. Use the financial-correction workflow instead.",
         )
 
+    # Gift cards on the sale: checked before anything moves (a sold card
+    # already spent refuses the void). Logic: domains/gift_cards/services.py.
+    gc_plan = await gift_card_services.plan_void(original)
     fingerprint = _request_fingerprint(sale_id, body.reason.strip())
     claim_id = str(uuid.uuid4())
     ts = now_iso()
@@ -44178,6 +44199,7 @@ async def void_pos_sale(sale_id: str, body: PosSaleVoidIn, user: dict = Depends(
     voided_lot_ids: List[str] = []
     balance_clawback: Dict[str, int] = {}
     balance_clawback_applied = False
+    gc_offsets: List[str] = []
     try:
         flipped = await db.pos_sales.find_one_and_update(
             {"id": sale_id, "status": "completed"},
@@ -44195,7 +44217,7 @@ async def void_pos_sale(sale_id: str, body: PosSaleVoidIn, user: dict = Depends(
             # row ever recorded.
             retail_row_original = await db.retail_sales.find_one(
                 {"id": original["retail_sales_id"]},
-                {"_id": 0, "amount": 1, "tax_amount": 1, "tax_rate_pct": 1, "pre_tax_amount": 1},
+                {"_id": 0, "amount": 1, "tax_amount": 1, "tax_rate_pct": 1, "pre_tax_amount": 1, "gift_card_funded": 1},
             )
             amount = float((retail_row_original or {}).get("amount") or 0)
             # Step 4B-1 — a void returns the customer's money INCLUDING the
@@ -44218,6 +44240,7 @@ async def void_pos_sale(sale_id: str, body: PosSaleVoidIn, user: dict = Depends(
                 "description": f"Void of POS Sale #{original.get('receipt_number')} · {body.reason.strip()}",
                 "created_at": ts, "created_by": user.get("id"),
                 "logged_by": user.get("name") or user.get("email") or "admin",
+                **gift_card_services.funded_offset(retail_row_original),  # card-paid part nets to zero revenue
             }
             await db.retail_sales.insert_one(offset_row.copy())
             retail_reversed = True
@@ -44263,7 +44286,12 @@ async def void_pos_sale(sale_id: str, body: PosSaleVoidIn, user: dict = Depends(
         if balance_clawback:
             await db.clients.update_one({"id": original.get("client_id")}, {"$inc": balance_clawback})
             balance_clawback_applied = True
+        gc_offsets = await gift_card_services.write_void_offsets(
+            gc_plan, original, business_date=business_date, ts=ts, user=user, reason=body.reason.strip())
+        await gift_card_services.apply_void(gc_plan, original, claim_id=claim_id, user=user)  # last
     except Exception:
+        if gc_offsets:
+            await db.retail_sales.delete_many({"id": {"$in": gc_offsets}})
         if balance_clawback_applied and balance_clawback:
             try:
                 await db.clients.update_one({"id": original.get("client_id")}, {"$inc": {k: -v for k, v in balance_clawback.items()}})

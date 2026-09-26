@@ -828,10 +828,14 @@ export default function Pos({ onOpenShopManager } = {}) {
   const [returnReason, setReturnReason] = useState("");
   const [returnBusy, setReturnBusy] = useState(false);
   const [receiptSearch, setReceiptSearch] = useState("");
+  // One key per opened return: a retry after a lost response replays the
+  // same return instead of refunding a second time.
+  const returnKeyRef = useRef("");
 
   const openReturn = async (saleId) => {
     try {
       const { data } = await api.get(`/pos/sales/${saleId}/return-preview`);
+      returnKeyRef.current = crypto.randomUUID();
       setReturnSale(data);
       setReturnQty({});
       setReturnRestock(Object.fromEntries((data.lines || []).map((l) => [l.line_index, true])));
@@ -874,10 +878,12 @@ export default function Pos({ onOpenShopManager } = {}) {
           restock: returnRestock[l.line_index] !== false,
         })),
         reason: returnReason.trim(),
-        idempotency_key: crypto.randomUUID(),
+        idempotency_key: returnKeyRef.current || crypto.randomUUID(),
       });
       const back = data?.returned?.total;
-      const how = (data?.returned?.tenders || []).map((t) => `${money(t.amount)} ${t.method}`).join(" + ");
+      const how = (data?.returned?.tenders || []).map((t) => (t.method === "gift_card"
+        ? `${money(t.amount)} already back on gift card${t.gift_card_last4 ? ` ••${t.gift_card_last4}` : ""}`
+        : `${money(t.amount)} ${t.method}`)).join(" + ");
       toast.success(`Returned ${money(back)}${how ? ` — give back ${how}` : ""}`);
       emitRegisterChanged(); // refund committed — refresh register displays
       setReturnSale(null);

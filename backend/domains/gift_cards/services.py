@@ -130,6 +130,15 @@ def _money(v: Any) -> float:
     return round(float(v or 0), 2)
 
 
+def _stored(card: dict) -> Any:
+    """The balance EXACTLY as stored, for a compare-and-set filter. Comparing
+    against the rounded value never matches a balance an older $inc left as
+    11.370000000000001, and the card could then never be spent or topped up.
+    Every write here stores the rounded value, so such a card heals on its
+    next use."""
+    return card.get("balance") if card.get("balance") is not None else 0
+
+
 def normalize_code(raw: Any) -> str:
     """Accept what a human types: spaces, dashes, lower case, O for 0."""
     text = "".join(ch for ch in str(raw or "").upper() if ch.isalnum())
@@ -339,7 +348,7 @@ async def topup_card(*, code: str, amount: float, actor: dict,
         before = _money(card.get("balance"))
         after = _money(before + amount)
         updated = await _db.gift_cards.find_one_and_update(
-            {"id": card["id"], "balance": before,
+            {"id": card["id"], "balance": _stored(card),
              "status": {"$in": ["active", "spent"]}},
             {"$set": {"balance": after, "status": "active",
                       "last_topped_up_at": _now_iso_fn()}},
@@ -384,6 +393,8 @@ async def send_card_email(card: dict, *, sender=None) -> bool:
     card exists either way and can be sent again from the card's own screen.
     """
     to = (card.get("recipient_email") or "").strip()
+    if (card.get("status") or "") == "voided":
+        return False   # refunded or reversed before it went out: never send a dead card
     if not to:
         return False
     send = sender or _email_sender
@@ -446,6 +457,8 @@ async def ensure_indexes() -> None:
         # so a repeated webhook delivery cannot mint the card twice, and that
         # only holds if the database refuses the second insert.
         await _db.gift_cards.create_index("id", unique=True, name="gift_card_id_unique")
+        await _db.gift_card_transactions.create_index("gift_card_id", name="gift_card_txn_card")
+        await _db.gift_card_transactions.create_index("operation_id", sparse=True, name="gift_card_txn_operation")
     except Exception as exc:
         # The ONLY thing making a duplicate code impossible is this index. If
         # it will not build, say so loudly and name the codes that are in the
@@ -542,16 +555,21 @@ async def activate_stock_card(*, code: str, amount: float, actor: dict,
 
 
 async def _log(card_id: str, kind: str, amount: float, balance_after: float, actor: dict,
-               *, note: str = "", pos_sale_id: Optional[str] = None) -> None:
+               *, note: str = "", pos_sale_id: Optional[str] = None, **extra: Any) -> str:
+    """One history row. Returns its id. `extra` carries where the money went
+    (booking_id, operation_id, source, key) so it can be found and reversed."""
+    txn_id = str(uuid.uuid4())
     await _db.gift_card_transactions.insert_one({
-        "id": str(uuid.uuid4()), "gift_card_id": card_id, "kind": kind,
+        "id": txn_id, "gift_card_id": card_id, "kind": kind,
         "amount": _money(amount), "balance_after": _money(balance_after),
         "note": (note or "").strip(), "pos_sale_id": pos_sale_id,
         "created_at": _now_iso_fn(),
         "created_by": actor.get("id"),
         "created_by_name": actor.get("name") or actor.get("email") or "",
         "business_date": _business_today_fn().isoformat(),
+        **{k: v for k, v in extra.items() if v is not None},
     })
+    return txn_id
 
 
 # ───────────────────────────────────────────────────────────────── reading
@@ -602,11 +620,15 @@ def assert_spendable(card: dict, amount: float) -> None:
 # ──────────────────────────────────────────────────────────────── spending
 
 async def redeem(*, code: str, amount: float, actor: dict,
-                 pos_sale_id: Optional[str] = None, note: str = "") -> dict:
+                 pos_sale_id: Optional[str] = None, note: str = "",
+                 booking_id: Optional[str] = None, operation_id: Optional[str] = None,
+                 source: Optional[str] = None) -> dict:
     """Take `amount` off a card, atomically.
 
     The balance is decremented with the old value as a precondition, so two
     tills spending the last $10 at the same moment cannot both succeed.
+    `booking_id` / `operation_id` / `source` tag the history row so a
+    checkout that fails afterwards can find and return exactly this money.
     """
     amount = _money(amount)
     if amount <= 0:
@@ -617,35 +639,127 @@ async def redeem(*, code: str, amount: float, actor: dict,
         before = _money(card.get("balance"))
         after = _money(before - amount)
         updated = await _db.gift_cards.find_one_and_update(
-            {"id": card["id"], "balance": before, "status": "active"},
+            {"id": card["id"], "balance": _stored(card), "status": "active"},
             {"$set": {"balance": after,
                       "status": "spent" if after <= 0.004 else "active",
                       "last_used_at": _now_iso_fn()}},
         )
         if updated is None:
             continue  # someone else moved the balance — re-read and retry
-        await _log(card["id"], "redeem", amount, after, actor,
-                   note=note, pos_sale_id=pos_sale_id)
+        txn_id = await _log(card["id"], "redeem", amount, after, actor,
+                            note=note, pos_sale_id=pos_sale_id,
+                            booking_id=booking_id, operation_id=operation_id, source=source)
         return {"gift_card_id": card["id"], "code_display": _display(card["code"]),
-                "redeemed": amount, "balance_after": after}
+                "redeemed": amount, "balance_after": after, "transaction_id": txn_id}
     raise HTTPException(status_code=409, detail="That card is being used somewhere else. Try again.")
 
 
 async def refund_to_card(*, card_id: str, amount: float, actor: dict,
-                         pos_sale_id: Optional[str] = None, note: str = "") -> Optional[dict]:
+                         pos_sale_id: Optional[str] = None, note: str = "",
+                         key: Optional[str] = None) -> Optional[dict]:
     """Put money back on a card — the other half of a return paid by gift card."""
+    return await credit_card(card_id=card_id, amount=amount, actor=actor, note=note,
+                             pos_sale_id=pos_sale_id, key=key or f"refund:{uuid.uuid4()}")
+
+
+async def credit_card(*, card_id: str, amount: float, actor: dict, key: str, note: str = "",
+                      pos_sale_id: Optional[str] = None, **tags: Any) -> Optional[dict]:
+    """Give money back to a card, EXACTLY ONCE per `key`.
+
+    Every reason money returns to a card — a sale that failed, a checkout
+    that rolled back, a return, a void — has a key naming it. The card
+    remembers the keys it has been paid under (`money_keys`), and the
+    balance moves only in the same atomic write that adds the key, so a
+    retried request, a replayed rollback or two workers racing can never
+    return the same money twice. A voided card keeps its status (the money
+    is recorded, but a dead card is not revived); a blank is never loaded.
+    """
     amount = _money(amount)
     if amount <= 0:
         return None
-    card = await _db.gift_cards.find_one({"id": card_id}, {"_id": 0})
-    if not card:
-        return None
-    after = _money(_money(card.get("balance")) + amount)
-    await _db.gift_cards.update_one(
-        {"id": card_id},
-        {"$set": {"balance": after, "status": "active" if card.get("status") != "voided" else "voided"}})
-    await _log(card_id, "refund", amount, after, actor, note=note, pos_sale_id=pos_sale_id)
-    return {"gift_card_id": card_id, "balance_after": after}
+    for _ in range(5):
+        card = await _db.gift_cards.find_one({"id": card_id}, {"_id": 0})
+        if not card or (card.get("status") or "") == "stock":
+            return None
+        if key in (card.get("money_keys") or []):
+            return {"gift_card_id": card_id, "balance_after": _money(card.get("balance")), "already": True}
+        after = _money(_money(card.get("balance")) + amount)
+        status = "voided" if card.get("status") == "voided" else "active"
+        updated = await _db.gift_cards.find_one_and_update(
+            {"id": card_id, "balance": _stored(card), "money_keys": {"$ne": key}},
+            {"$set": {"balance": after, "status": status}, "$addToSet": {"money_keys": key}},
+        )
+        if updated is None:
+            continue
+        await _log(card_id, "refund", amount, after, actor, note=note, pos_sale_id=pos_sale_id, key=key, **tags)
+        return {"gift_card_id": card_id, "balance_after": after}
+    raise HTTPException(status_code=409, detail="That card is being used somewhere else. Try again.")
+
+
+async def reverse_load(*, card_id: str, amount: float, actor: dict, key: str, note: str = "",
+                       pos_sale_id: Optional[str] = None, void_if_empty: bool = False,
+                       allow_partial: bool = False, **tags: Any) -> dict:
+    """Take back money that was LOADED onto a card (a sale, a top-up, an
+    online purchase) because that load is being undone — EXACTLY ONCE per
+    `key`. Refuses if the card no longer holds that much: the customer has
+    spent it, and taking back money they spent is not a reversal, it's a
+    debt. `void_if_empty` retires a card that existed only because of the
+    load being undone (its code is on a receipt, so it is voided, never put
+    back on the rack)."""
+    amount = _money(amount)
+    for _ in range(5):
+        card = await _db.gift_cards.find_one({"id": card_id}, {"_id": 0})
+        if not card:
+            raise HTTPException(status_code=404, detail="That gift card no longer exists.")
+        if key in (card.get("money_keys") or []):
+            return {"gift_card_id": card_id, "balance_after": _money(card.get("balance")), "already": True}
+        if allow_partial:
+            # Money already refunded outside the till (Stripe): take back what
+            # is left, and report what couldn't be — never guess further.
+            amount = min(amount, _money(card.get("balance")))
+        if _money(card.get("balance")) + 0.004 < amount:
+            raise HTTPException(
+                status_code=409,
+                detail=(f"Gift card {_display(card['code'])} only has ${_money(card.get('balance')):.2f} left of the "
+                        f"${amount:.2f} that was put on it — some of it has already been used."))
+        after = _money(_money(card.get("balance")) - amount)
+        if after <= 0.004 and void_if_empty:
+            new = {"balance": 0.0, "status": "voided", "voided_at": _now_iso_fn(),
+                   "void_reason": (note or "Reversed").strip(), "voided_by": actor.get("id"),
+                   "voided_by_name": actor.get("name") or actor.get("email") or ""}
+        else:
+            new = {"balance": after, "status": ("spent" if after <= 0.004 else "active")
+                   if card.get("status") != "voided" else "voided"}
+        updated = await _db.gift_cards.find_one_and_update(
+            {"id": card_id, "balance": _stored(card), "money_keys": {"$ne": key}},
+            {"$set": new, "$addToSet": {"money_keys": key}},
+        )
+        if updated is None:
+            continue
+        await _log(card_id, "reverse", -amount, new["balance"], actor, note=note, pos_sale_id=pos_sale_id, key=key, **tags)
+        return {"gift_card_id": card_id, "balance_after": new["balance"], "status": new["status"], "debited": amount}
+    raise HTTPException(status_code=409, detail="That card is being used somewhere else. Try again.")
+
+
+async def return_checkout_charges(*, operation_id: str, actor: dict) -> int:
+    """A checkout rolled back: give back every card charge it made for the
+    stay (merchandise rung at the same pickup is its own committed sale and
+    stays). Keyed per charge, so a rollback that runs twice returns once.
+    Returns how many charges went back."""
+    if not operation_id:
+        return 0
+    rows = await _db.gift_card_transactions.find(
+        {"operation_id": operation_id, "kind": "redeem", "source": "booking_checkout"}, {"_id": 0},
+    ).to_list(100)
+    returned = 0
+    for r in rows:
+        done = await credit_card(
+            card_id=r["gift_card_id"], amount=r["amount"], actor=actor,
+            key=f"checkout-rollback:{r['id']}", note="Checkout didn't go through — balance returned",
+            booking_id=r.get("booking_id"), operation_id=operation_id)
+        if done and not done.get("already"):
+            returned += 1
+    return returned
 
 
 async def adjust(*, code: str, body, actor: dict) -> dict:
@@ -654,20 +768,28 @@ async def adjust(*, code: str, body, actor: dict) -> dict:
     NOT a way to load a blank: money on a card has to arrive through a sale,
     or the liability appears from nowhere with no income behind it.
     """
-    card = await find_by_code(code)
-    if (card.get("status") or "") == "stock":
-        raise HTTPException(
-            status_code=409,
-            detail="That card is a blank from the rack. Sell it at the Register to load it.")
     delta = _money(body.amount) * (1 if body.direction == "add" else -1)
-    after = _money(_money(card.get("balance")) + delta)
-    if after < 0:
-        raise HTTPException(status_code=400, detail="That would take the card below zero.")
-    await _db.gift_cards.update_one(
-        {"id": card["id"]},
-        {"$set": {"balance": after, "status": "spent" if after <= 0.004 else "active"}})
-    await _log(card["id"], "adjust", delta, after, actor, note=body.reason)
-    return {**public_view({**card, "balance": after})}
+    for _ in range(5):
+        card = await find_by_code(code)
+        if (card.get("status") or "") == "stock":
+            raise HTTPException(
+                status_code=409,
+                detail="That card is a blank from the rack. Sell it at the Register to load it.")
+        if (card.get("status") or "") == "voided":
+            # A void is final: an "add" would quietly revive a card that was
+            # refunded, reversed or reported stolen.
+            raise HTTPException(status_code=409, detail="That gift card was voided. Voided cards can't be changed.")
+        after = _money(_money(card.get("balance")) + delta)
+        if after < 0:
+            raise HTTPException(status_code=400, detail="That would take the card below zero.")
+        updated = await _db.gift_cards.find_one_and_update(
+            {"id": card["id"], "balance": _stored(card)},
+            {"$set": {"balance": after, "status": "spent" if after <= 0.004 else "active"}})
+        if updated is None:
+            continue
+        await _log(card["id"], "adjust", delta, after, actor, note=body.reason)
+        return {**public_view({**card, "balance": after})}
+    raise HTTPException(status_code=409, detail="That card is being used somewhere else. Try again.")
 
 
 async def void_card(*, code: str, body, actor: dict) -> dict:
@@ -827,3 +949,157 @@ async def _record_funding(*, sale_id: str, sale: dict, redeemed: List[dict]) -> 
         {"id": row_id},
         {"$set": {"gift_card_funded": funded,
                   "gift_card_ids": [r.get("gift_card_id") for r in redeemed]}})
+
+
+# ─────────────────────────────────────────── undoing a sale: void and return
+
+async def paying_cards(sale: dict) -> List[Optional[str]]:
+    """For each gift-card tender on a sale (in order), the card that paid it.
+    Newer sales record it on the tender; older ones only in the merchandise
+    revenue row's `gift_card_ids`. None where it can't be told."""
+    ids = [t.get("gift_card_id") for t in (sale.get("tenders") or [])
+           if t.get("method") == "gift_card" and _money(t.get("amount")) > 0]
+    if all(ids):
+        return ids
+    fallback: List[str] = []
+    if sale.get("retail_sales_id"):
+        row = await _db.retail_sales.find_one({"id": sale["retail_sales_id"]}, {"_id": 0, "gift_card_ids": 1})
+        fallback = (row or {}).get("gift_card_ids") or []
+    return [i or (fallback[n] if n < len(fallback) else None) for n, i in enumerate(ids)]
+
+
+def funded_offset(row: Optional[dict]) -> dict:
+    """The `gift_card_funded` a reversal row must carry so a voided card-paid
+    sale nets to zero revenue (the original row's revenue was already reduced
+    by what the card paid). Capped at the row's pre-tax amount."""
+    funded = _money((row or {}).get("gift_card_funded"))
+    if funded <= 0:
+        return {}
+    pre_tax = _money((row or {}).get("pre_tax_amount")) or _money(
+        _money((row or {}).get("amount")) - _money((row or {}).get("tax_amount")))
+    if pre_tax <= 0:
+        return {}   # the original row's revenue was floored at $0 — there is nothing to give back
+    return {"gift_card_funded": -min(funded, pre_tax)}
+
+
+async def plan_void(sale: dict) -> dict:
+    """Read-only, BEFORE a void touches anything: what its gift cards need,
+    and a refusal if it can't be done honestly.
+
+      * a card SOLD (or topped up) on the sale gives that money back — so it
+        must still hold it. If the customer has spent some, the sale can't
+        be voided (that would take back money they already used);
+      * a card that PAID for the sale gets its money back — so we must know
+        which card it was.
+    """
+    if (sale.get("status") or "") == "voided":
+        return {"sold": [], "spent": []}   # a retry of a finished void: the void's own claim replays it
+    if await _db.pos_sale_returns.find_one({"pos_sale_id": sale.get("id")}, {"_id": 1}):
+        # Voiding would refund the returned part a second time (to the card,
+        # to cash — anywhere) and restock it twice.
+        raise HTTPException(
+            status_code=409,
+            detail="Part of this sale has already been returned, so it can't be voided. Return the rest instead.")
+    sold: List[dict] = []
+    rows = await _db.retail_sales.find(
+        {"pos_sale_id": sale.get("id"), "source_kind": "gift_card_sale"}, {"_id": 0}).to_list(100)
+    by_card: Dict[str, List[dict]] = {}
+    for r in rows:
+        if r.get("gift_card_id"):
+            by_card.setdefault(r["gift_card_id"], []).append(r)
+    for card_id, rs in by_card.items():
+        card = await _db.gift_cards.find_one({"id": card_id}, {"_id": 0})
+        amount = _money(sum(_money(r.get("amount")) for r in rs))
+        if not card:
+            raise HTTPException(status_code=409, detail="A gift card sold on this sale no longer exists, so it can't be voided.")
+        if _money(card.get("balance")) + 0.004 < amount:
+            raise HTTPException(
+                status_code=409,
+                detail=(f"Gift card {_display(card['code'])} was sold on this sale and ${amount - _money(card.get('balance')):.2f} "
+                        f"of it has already been spent, so the sale can't be voided. Give back the unused "
+                        f"${_money(card.get('balance')):.2f} by hand instead."))
+        topped_up = await _db.gift_card_transactions.find_one(
+            {"gift_card_id": card_id, "pos_sale_id": sale.get("id"), "kind": "topup"}, {"_id": 1})
+        # Loaded again since (a top-up at the till or online)? Then it holds the
+        # customer's own money too — take back only this sale's, never retire it.
+        loaded_since = bool(card.get("topup_attempts_applied")) or bool(await _db.gift_card_transactions.find_one(
+            {"gift_card_id": card_id, "kind": "topup", "pos_sale_id": {"$ne": sale.get("id")}}, {"_id": 1}))
+        sold.append({"card_id": card_id, "code": card["code"], "amount": amount, "rows": rs,
+                     "void_if_empty": not topped_up and not loaded_since,
+                     "before": {k: card.get(k) for k in ("balance", "status")}})
+    spent: List[dict] = []
+    tenders = [t for t in (sale.get("tenders") or []) if t.get("method") == "gift_card" and _money(t.get("amount")) > 0]
+    if tenders:
+        ids = await paying_cards(sale)
+        if not all(ids):
+            raise HTTPException(
+                status_code=409,
+                detail=("This sale was paid with a gift card the system can't identify, so voiding it can't put "
+                        "the money back on the card. Void it from the Gift Cards screen by hand instead."))
+        for t, cid in zip(tenders, ids):
+            card = await _db.gift_cards.find_one({"id": cid}, {"_id": 0, "balance": 1, "status": 1}) or {}
+            spent.append({"card_id": cid, "amount": _money(t.get("amount")),
+                          "before": {k: card.get(k) for k in ("balance", "status")}})
+    return {"sold": sold, "spent": spent}
+
+
+async def write_void_offsets(plan: dict, sale: dict, *, business_date: str, ts: str, user: dict, reason: str) -> List[str]:
+    """One offsetting revenue row per gift card sold on the sale (never
+    deleting the original) — the same discipline as the merchandise and
+    pack offsets. Returns the ids written, for the void's own rollback."""
+    written: List[str] = []
+    for s in plan.get("sold") or []:
+        for r in s["rows"]:
+            row_id = str(uuid.uuid4())
+            await _db.retail_sales.insert_one({
+                "id": row_id, "date": business_date, "amount": -_money(r.get("amount")),
+                "payment_method": "void", "client_id": sale.get("client_id"),
+                "client_name": sale.get("client_name"), "pos_sale_id": sale.get("id"),
+                "reversed_retail_sales_id": r["id"], "source_kind": "pos_sale_void",
+                "gift_card_id": s["card_id"], "tax_amount": 0.0, "tax_rate_pct": 0.0,
+                "pre_tax_amount": -_money(r.get("amount")),
+                "description": f"Void of POS Sale #{sale.get('receipt_number')} · gift card {_display(s['code'])} · {reason}",
+                "created_at": ts, "created_by": user.get("id"),
+                "logged_by": user.get("name") or user.get("email") or "admin",
+            })
+            written.append(row_id)
+    return written
+
+
+async def apply_void(plan: dict, sale: dict, *, claim_id: str, user: dict) -> None:
+    """The card half of a void — last, after every other step succeeded.
+    Keys carry the void claim, so each card moves once per void attempt; if
+    one move fails the ones already made are put back and the void rolls back."""
+    note = f"Sale #{sale.get('receipt_number')} voided"
+    touched: List[dict] = []
+    try:
+        for s in plan.get("sold") or []:
+            await reverse_load(card_id=s["card_id"], amount=s["amount"], actor=user,
+                               key=f"void:{claim_id}:sold:{s['card_id']}", note=note,
+                               pos_sale_id=sale.get("id"), void_if_empty=s["void_if_empty"])
+            touched.append(s)
+        for i, s in enumerate(plan.get("spent") or []):
+            await credit_card(card_id=s["card_id"], amount=s["amount"], actor=user,
+                              key=f"void:{claim_id}:spent:{i}", note=note, pos_sale_id=sale.get("id"))
+            touched.append(s)
+    except Exception:
+        for s in touched:
+            try:
+                await _db.gift_cards.update_one(
+                    {"id": s["card_id"]},
+                    {"$set": {"balance": _money(s["before"].get("balance")), "status": s["before"].get("status")},
+                     "$unset": {"voided_at": "", "void_reason": ""}} if s["before"].get("status") != "voided"
+                    else {"$set": {"balance": _money(s["before"].get("balance"))}})
+            except Exception as exc:
+                _logger.critical("Void of sale %s could not restore gift card %s: %s", sale.get("id"), s["card_id"], exc)
+        raise
+
+
+async def refill_for_return(tenders: List[dict], *, sale_id: str, key: str, user: dict, receipt: str) -> None:
+    """A return paid (partly) by gift card: that slice goes back on the card,
+    once per return request."""
+    for i, t in enumerate(tenders):
+        if t.get("method") != "gift_card" or not t.get("gift_card_id"):
+            continue
+        await credit_card(card_id=t["gift_card_id"], amount=t["amount"], actor=user,
+                          key=f"return:{key}:{i}", note=f"Return against sale #{receipt}", pos_sale_id=sale_id)

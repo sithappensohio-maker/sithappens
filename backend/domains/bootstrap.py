@@ -125,7 +125,8 @@ def register_domains(
         amount_cents=server_globals["_stripe_amount_cents"],
         public_url=server_globals["_app_public_url"],
         expires_seconds=server_globals["STRIPE_CHECKOUT_EXPIRES_SECONDS"],
-        email_service=server_globals["email_service"])
+        email_service=server_globals["email_service"],
+        on_refund=lambda refund: server_globals["_handle_refund_event"](refund))
     shop_media_services.configure(db=db, logger=logger)
     # The checkout engine reads server globals live rather than being
     # handed them: it needs about twenty of them, and the suite rebinds

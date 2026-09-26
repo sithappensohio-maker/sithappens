@@ -66,6 +66,12 @@ async def create_sale(body, user):
       4. if that throws, put the card money straight back;
       5. only once the sale is real, mint the cards it sold and record what
          the redeemed cards paid for.
+
+    A RETRY of a sale that already went through (same idempotency key — a
+    Wi-Fi drop after the server committed, a double tap) replays it and never
+    touches a card again: it used to charge the card a second time and mint a
+    second card. Every card movement back is keyed (credit_card), so it
+    happens once however often it's attempted.
     """
     spend = [t for t in (body.tenders or []) if getattr(t, "method", "") == "gift_card"]
     selling = [l for l in (body.lines or []) if getattr(l, "kind", "") == "gift_card"]
@@ -75,6 +81,18 @@ async def create_sale(body, user):
         raise HTTPException(
             status_code=400,
             detail="A gift card can't be bought with another gift card. Take a different payment for it.")
+
+    if spend or selling:
+        # Already committed under this key? Replay it — before any card check
+        # (a sold card is no longer "stock", a spent card no longer has the
+        # money) and before any card moves. The sale itself still checks the
+        # request is the same one.
+        claim = await _db.pos_sale_claims.find_one(
+            {"idempotency_key": getattr(body, "idempotency_key", None)}, {"_id": 0, "status": 1})
+        if claim and claim.get("status") == "completed":
+            return await _replayed(await _create_sale_impl_fn(body, user))
+        if claim:
+            raise HTTPException(status_code=409, detail="This sale is already being processed. Wait a moment and try again.")
 
     # A line may name a blank off the rack. Check it BEFORE the sale commits:
     # a wrong code, an already-sold card or a voided one are all things an
@@ -131,24 +149,50 @@ async def create_sale(body, user):
                 detail=f"That card only has ${gift_cards_services.spendable(card):.2f} left.")
 
     redeemed = []
-    for card, amount in cards:
-        redeemed.append(await gift_cards_services.redeem(
-            code=card["code"], amount=amount, actor=user, note="Register sale"))
-
     try:
+        for card, amount in cards:
+            redeemed.append(await gift_cards_services.redeem(
+                code=card["code"], amount=amount, actor=user, note="Register sale"))
         sale = await _create_sale_impl_fn(body, user)
-    except Exception:
-        # The sale never happened, so neither did the spending.
-        for r in redeemed:
-            await gift_cards_services.refund_to_card(
-                card_id=r["gift_card_id"], amount=r["redeemed"], actor=user,
-                note="Sale failed — balance returned")
-        raise
-
-    sale_id = sale.get("pos_sale_id") or (sale.get("sale") or {}).get("id")
-    if sale.get("replayed") or not sale_id:
+    except Exception as exc:
+        # The sale never happened, so neither did the spending — unless it
+        # DID commit and only something after the commit failed (never an
+        # HTTPException: those are refusals, and a refusal inside the commit
+        # has already rolled the sale back).
+        claim = None if isinstance(exc, HTTPException) else await _db.pos_sale_claims.find_one(
+            {"idempotency_key": getattr(body, "idempotency_key", None), "status": "completed"}, {"_id": 0, "pos_sale_id": 1})
+        committed = (await _db.pos_sales.find_one({"id": claim.get("pos_sale_id")}, {"_id": 0})) if claim else None
+        if not committed:
+            await _give_back(redeemed, user, "sale-failed", "Sale failed — balance returned")
+            raise
+        # It went through: finish the card bookkeeping now (a replay never
+        # would) and hand back the sale rather than an error.
+        _logger.critical("Sale %s committed, then failed (%s); finishing its gift card settlement",
+                         committed["id"], exc)
+        sale = {"ok": True, "sale": committed, "pos_sale_id": committed["id"]}
+        await _settle(sale, committed["id"], body, user, redeemed, selling)
         return sale
 
+    if sale.get("replayed"):
+        # Another request with this key committed first: this call's card
+        # charges bought nothing.
+        await _give_back(redeemed, user, "replay", "Duplicate request — balance returned")
+        return await _replayed(sale)
+    sale_id = sale.get("pos_sale_id") or (sale.get("sale") or {}).get("id")
+    if not sale_id:
+        return sale
+    await _settle(sale, sale_id, body, user, redeemed, selling)
+    return sale
+
+
+async def _settle(sale: dict, sale_id: str, body, user: dict, redeemed: list, selling: list) -> None:
+    """Once a sale is real: link its card tenders, mint the cards it sold and
+    record what spent cards paid for. Each part is best-effort and logged —
+    the sale itself has already happened."""
+    try:
+        await _link_card_tenders(sale_id, body, redeemed)
+    except Exception:
+        _logger.exception("Could not link gift card tenders on sale %s", sale_id)
     try:
         minted = await gift_cards_services.settle_sale(
             sale_id=sale_id, sale=sale.get("sale") or {}, user=user,
@@ -157,11 +201,58 @@ async def create_sale(body, user):
             sale["gift_cards"] = minted
     except Exception:
         _logger.exception("Gift card settlement failed for sale %s", sale_id)
-    return sale
 
 
 def _money(v) -> float:
     return round(float(v or 0), 2)
+
+
+async def _give_back(redeemed: list, user: dict, why: str, note: str) -> None:
+    for r in redeemed:
+        await gift_cards_services.credit_card(
+            card_id=r["gift_card_id"], amount=r["redeemed"], actor=user,
+            key=f"{why}:{r.get('transaction_id')}", note=note)
+
+
+async def _replayed(sale: dict) -> dict:
+    """A replay answers like the original: the same sale, and the cards it
+    sold (read back from their revenue rows — nothing is minted again)."""
+    sale = dict(sale or {})
+    sale["replayed"] = True
+    sale_id = sale.get("pos_sale_id") or (sale.get("sale") or {}).get("id")
+    if sale_id:
+        rows = await _db.retail_sales.find(
+            {"pos_sale_id": sale_id, "source_kind": "gift_card_sale"}, {"_id": 0, "gift_card_id": 1}).to_list(100)
+        ids = [r["gift_card_id"] for r in rows if r.get("gift_card_id")]
+        if ids:
+            cards = await _db.gift_cards.find({"id": {"$in": ids}, "status": {"$ne": "voided"}}, {"_id": 0}).to_list(100)
+            sale["gift_cards"] = [{**gift_cards_services.public_view(c), "code": c["code"]} for c in cards]
+    return sale
+
+
+async def _link_card_tenders(sale_id: str, body, redeemed: list) -> None:
+    """Record on the sale which card paid which tender (and on each card's
+    history, which sale it paid), so a Void or a Return can put the money
+    back on the right card."""
+    if not redeemed:
+        return
+    sale = await _db.pos_sales.find_one({"id": sale_id}, {"_id": 0, "tenders": 1}) or {}
+    paying = iter(redeemed)
+    patch = {}
+    for i, t in enumerate(sale.get("tenders") or []):
+        if t.get("method") != "gift_card":
+            continue
+        r = next(paying, None)
+        if r is None:
+            break
+        patch[f"tenders.{i}.gift_card_id"] = r["gift_card_id"]
+        patch[f"tenders.{i}.gift_card_last4"] = str(r.get("code_display") or "")[-4:]
+        patch[f"tenders.{i}.gift_card_transaction_id"] = r.get("transaction_id")
+    if patch:
+        await _db.pos_sales.update_one({"id": sale_id}, {"$set": patch})
+    txn_ids = [r.get("transaction_id") for r in redeemed if r.get("transaction_id")]
+    if txn_ids:
+        await _db.gift_card_transactions.update_many({"id": {"$in": txn_ids}}, {"$set": {"pos_sale_id": sale_id}})
 
 
 # Tenders the till understands. A stay can be settled by "transfer" or by
@@ -228,7 +319,8 @@ async def ring_pickup_merchandise(booking: dict, body, user: dict) -> Optional[d
     }
 
 
-async def settle_booking_gift_card(booking: dict, body, user: dict, update: dict) -> None:
+async def settle_booking_gift_card(booking: dict, body, user: dict, update: dict,
+                                   operation_id: Optional[str] = None) -> None:
     """Pay for a dog's stay with a gift card.
 
     A stay is a service, so the money for it arrived when the CARD was sold,
@@ -248,9 +340,13 @@ async def settle_booking_gift_card(booking: dict, body, user: dict, update: dict
         raise HTTPException(status_code=400, detail="Enter the gift card's code to pay with it.")
     card = await gift_cards_services.find_by_code(code)
     gift_cards_services.assert_spendable(card, owed)
+    # Tagged with the checkout's operation so that, if anything after this
+    # fails (a household's second dog, a refused payment), the rollback can
+    # return exactly this money to the card.
     done = await gift_cards_services.redeem(
         code=code, amount=owed, actor=user,
-        note=f"Checkout for {booking.get('dog_name') or 'a stay'}")
+        note=f"Checkout for {booking.get('dog_name') or 'a stay'}",
+        booking_id=booking.get("id"), operation_id=operation_id, source="booking_checkout")
     update["gift_card_applied"] = owed
     update["gift_card_id"] = done["gift_card_id"]
     update["gift_card_balance_after"] = done["balance_after"]
@@ -348,8 +444,15 @@ def _refund_by_tender(sale: dict, refund_total: float) -> List[dict]:
     paid = round(sum(_money(t.get("amount")) for t in tenders), 2)
     if not tenders or paid <= 0:
         return [{"method": "other", "amount": refund_total}]
+
+    def entry(t: dict, amount: float) -> dict:
+        out = {"method": t.get("method") or "other", "amount": amount}
+        if t.get("method") == "gift_card":   # which card it goes back on
+            out["gift_card_id"] = t.get("gift_card_id")
+            out["gift_card_last4"] = t.get("gift_card_last4") or ""
+        return out
     if len(tenders) == 1:
-        return [{"method": tenders[0].get("method") or "other", "amount": refund_total}]
+        return [entry(tenders[0], refund_total)]
     out, allocated = [], 0.0
     for i, t in enumerate(tenders):
         if i == len(tenders) - 1:
@@ -358,7 +461,7 @@ def _refund_by_tender(sale: dict, refund_total: float) -> List[dict]:
             share = round(refund_total * (_money(t.get("amount")) / paid), 2)
             allocated = round(allocated + share, 2)
         if share > 0:
-            out.append({"method": t.get("method") or "other", "amount": share})
+            out.append(entry(t, share))
     return out
 
 
@@ -389,6 +492,15 @@ async def return_pos_sale(*, sale_id: str, body, user: dict) -> dict:
     sale = await _db.pos_sales.find_one({"id": sale_id}, {"_id": 0})
     if not sale:
         raise HTTPException(status_code=404, detail="Sale not found")
+
+    # A retry of a return that already went through replays it — before the
+    # quantity check, which the first attempt has already used up.
+    prior = await _db.pos_sale_return_claims.find_one(
+        {"idempotency_key": body.idempotency_key, "status": "completed", "pos_sale_id": sale_id}, {"_id": 0})
+    if prior:
+        done = await _db.pos_sale_returns.find_one({"id": prior.get("return_id")}, {"_id": 0})
+        if done:
+            return {"ok": True, "returned": done, "replayed": True}
 
     preview = return_preview(sale)
     if preview["blocked_reason"]:
@@ -440,6 +552,8 @@ async def return_pos_sale(*, sale_id: str, body, user: dict) -> dict:
                             detail="That return is already being processed. Wait a moment and try again.")
 
     reserved = False
+    written_rows: List[str] = []
+    record_id = None
     try:
         # Reserve the quantities atomically. The filter refuses if anyone
         # else's return landed first, which is what stops the same last item
@@ -474,6 +588,17 @@ async def return_pos_sale(*, sale_id: str, body, user: dict) -> dict:
             raise HTTPException(status_code=400, detail="That return comes to nothing. Check the quantities.")
 
         tenders = _refund_by_tender(sale, refund_total)
+        if any(t["method"] == "gift_card" for t in tenders):
+            # Older sales record the paying card only on the revenue row.
+            ids = iter(await gift_cards_services.paying_cards(sale))
+            for t in tenders:
+                if t["method"] == "gift_card":
+                    t["gift_card_id"] = t.get("gift_card_id") or next(ids, None)
+            if not all(t.get("gift_card_id") for t in tenders if t["method"] == "gift_card"):
+                raise HTTPException(
+                    status_code=409,
+                    detail=("This sale was paid with a gift card the system can't identify, so the refund can't go "
+                            "back on the card. Put it back from the Gift Cards screen by hand instead."))
         cash_back = round(sum(t["amount"] for t in tenders if t["method"] == "cash"), 2)
         if cash_back > 0:
             drawer = await _db.cash_drawer_sessions.find_one({"date": today}, {"_id": 0, "date": 1})
@@ -497,6 +622,7 @@ async def return_pos_sale(*, sale_id: str, body, user: dict) -> dict:
             "created_by_name": user.get("name") or user.get("email") or "",
         }
         await _db.pos_sale_returns.insert_one(dict(record))
+        record_id = record["id"]
         record.pop("_id", None)
 
         # One negative revenue row PER REFUND METHOD, so the register buckets
@@ -508,8 +634,10 @@ async def return_pos_sale(*, sale_id: str, body, user: dict) -> dict:
             tax_slice = (round(refund_tax - allocated_tax, 2) if i == len(tenders) - 1
                          else round(refund_tax * share, 2))
             allocated_tax = round(allocated_tax + tax_slice, 2)
+            row_id = str(uuid.uuid4())
+            written_rows.append(row_id)
             await _db.retail_sales.insert_one({
-                "id": str(uuid.uuid4()), "date": today, "amount": -t["amount"],
+                "id": row_id, "date": today, "amount": -t["amount"],
                 "payment_method": t["method"],
                 "client_id": sale.get("client_id"), "client_name": sale.get("client_name"),
                 "pos_sale_id": sale_id, "pos_sale_return_id": record["id"],
@@ -517,6 +645,11 @@ async def return_pos_sale(*, sale_id: str, body, user: dict) -> dict:
                 "tax_amount": -tax_slice,
                 "tax_rate_pct": float(sale.get("tax_rate_pct") or 0),
                 "pre_tax_amount": -round(t["amount"] - tax_slice, 2),
+                # The card-paid slice was never new revenue (the card's sale
+                # was), so its reversal isn't either: it nets to zero, while
+                # its tax really is given back.
+                **({"gift_card_funded": -round(t["amount"] - tax_slice, 2), "gift_card_id": t.get("gift_card_id")}
+                   if t["method"] == "gift_card" else {}),
                 "description": f"Return against POS Sale #{sale.get('receipt_number')} - {body.reason.strip()}",
                 "created_at": ts, "created_by": user.get("id"),
                 "logged_by": user.get("name") or user.get("email") or "admin",
@@ -535,12 +668,21 @@ async def return_pos_sale(*, sale_id: str, body, user: dict) -> dict:
             except Exception:
                 _logger.exception("Return %s could not restock %s", record["id"], row["product_id"])
 
+        await gift_cards_services.refill_for_return(
+            tenders, sale_id=sale_id, key=body.idempotency_key, user=user, receipt=sale.get("receipt_number") or "")
         await _db.pos_sale_return_claims.update_one(
             {"id": claim_id}, {"$set": {"status": "completed", "return_id": record["id"]}})
         _logger.info("POS return %s on sale %s by %s: %s refunded",
                      record["id"], sale_id, record["created_by_name"] or record["created_by"], refund_total)
         return {"ok": True, "returned": record}
     except Exception:
+        # Undo what this attempt wrote, so a retry books the return once.
+        # (Stock put back is not undone here; a card refill is keyed and a
+        # retry finds it already done.)
+        if written_rows:
+            await _db.retail_sales.delete_many({"id": {"$in": written_rows}})
+        if record_id:
+            await _db.pos_sale_returns.delete_one({"id": record_id})
         if reserved:
             await _db.pos_sales.update_one(
                 {"id": sale_id},

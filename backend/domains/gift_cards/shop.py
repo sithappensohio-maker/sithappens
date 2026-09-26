@@ -156,7 +156,58 @@ async def fulfill_line(order: dict, line: dict, *, mint, email) -> dict:
                 card = await _db.gift_cards.find_one({"id": card_id}, {"_id": 0})
                 if card is None:
                     raise
-        if card.get("recipient_email"):
+        if card.get("recipient_email") and card.get("status") != "voided":   # a refunded card is never sent
             await email(card)
         made.append(card)
     return {"count": len(made), "codes": [c["code"] for c in made]}
+
+
+# ─────────────────────────────────────────────────── refunding a Shop card
+
+def _unit_ids(order: dict, line: dict) -> list:
+    qty = max(1, int(line.get("quantity") or 1))
+    return [f"gcshop-{order['id']}-{line.get('item_id')}-{i}" for i in range(qty)]
+
+
+async def assert_refundable(order: dict, line: dict) -> None:
+    """Before an in-app Shop refund: every card this line bought must still
+    hold what was paid for it. A card someone has spent from can't be
+    refunded automatically (the same rule as used credits)."""
+    amount = round(float(line.get("unit_price") or 0), 2)
+    for card_id in _unit_ids(order, line):
+        card = await _db.gift_cards.find_one({"id": card_id}, {"_id": 0})
+        if card is None or card.get("status") == "voided":
+            continue   # never minted (fulfilment failed) or already voided: nothing to take back
+        if round(float(card.get("balance") or 0), 2) + 0.004 < amount:
+            raise HTTPException(
+                status_code=409,
+                detail=(f"{line.get('name') or 'This gift card'} has already been used. Automatic refund is blocked "
+                        "so money and the card cannot get out of sync."))
+
+
+async def revoke_line(order: dict, line: dict, attempt_id: str) -> None:
+    """After Stripe confirms the refund: void every card the line bought, and
+    mark the line refunded so a Retry Fulfillment never mints or emails it.
+    A card spent in the meantime can't be taken back — the order is flagged
+    for a person instead (the money has already gone back)."""
+    amount = round(float(line.get("unit_price") or 0), 2)
+    problems = []
+    for i, card_id in enumerate(_unit_ids(order, line)):
+        card = await _db.gift_cards.find_one({"id": card_id}, {"_id": 0})
+        if card is None:
+            continue
+        try:
+            await services.reverse_load(
+                card_id=card_id, amount=amount, actor={"id": "stripe", "name": "Stripe shop refund"},
+                key=f"shop-refund:{attempt_id}:{i}", note=f"Shop order #{str(order['id'])[:8].upper()} refunded",
+                void_if_empty=True)
+        except HTTPException as exc:
+            problems.append(f"{services._display(card['code'])}: {exc.detail}")
+    await _db.shop_orders.update_one(
+        {"id": order["id"], "lines.item_id": line.get("item_id")},
+        {"$set": {"lines.$.fulfillment_status": "refunded"}})
+    if problems:
+        await _db.shop_orders.update_one(
+            {"id": order["id"]},
+            {"$set": {"refund_reconciliation_required": True,
+                      "refund_reconciliation_reason": "Gift card spent before the refund went through — " + "; ".join(problems)}})

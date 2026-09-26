@@ -201,11 +201,16 @@ def _cash_received_on_row(row: dict) -> float:
     """
     amount = float(row.get("amount") or 0)
     funded = float(row.get("gift_card_funded") or 0)
-    if funded <= 0:
+    if abs(funded) < 0.005:
         return round(amount, 2)          # refunds keep their sign
+    if abs(amount) < 0.005:
+        return 0.0                       # a $0 row put nothing in (or took nothing out of) the till
+    # A void or return of a card-paid sale carries a NEGATIVE funded slice:
+    # that money went back on the card, not out of the till.
     pre_tax = amount - float(row.get("tax_amount") or 0)
-    tender = (funded * amount / pre_tax) if pre_tax > 0 else funded
-    return round(max(0.0, amount - tender), 2)
+    tender = (funded * amount / pre_tax) if abs(pre_tax) > 0.005 else funded
+    left = amount - tender
+    return round(max(0.0, left) if amount >= 0 else min(0.0, left), 2)
 
 
 async def build_pl_data(db, start_date: str, end_date: str) -> Dict[str, Any]:

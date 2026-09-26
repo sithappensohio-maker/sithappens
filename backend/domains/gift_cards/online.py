@@ -44,11 +44,17 @@ _email_service = None
 TERMINAL = ("applied", "failed", "expired")
 
 
+_on_refund = None   # server._handle_refund_event: re-runs a refund Stripe sent before the purchase was recorded
+_KEEP = object()
+
+
 def configure(*, db, stripe_mod, now_iso, business_today, logger,
-              amount_cents, public_url, expires_seconds, email_service=None) -> None:
+              amount_cents, public_url, expires_seconds, email_service=None, on_refund=_KEEP) -> None:
     global _db, _stripe, _now_iso_fn, _business_today_fn, _logger
-    global _amount_cents, _public_url, _expires_seconds, _email_service
+    global _amount_cents, _public_url, _expires_seconds, _email_service, _on_refund
     _email_service = email_service
+    if on_refund is not _KEEP:   # a reconfigure that doesn't mention it keeps the wiring
+        _on_refund = on_refund
     _db = db
     _stripe = stripe_mod
     _now_iso_fn = now_iso
@@ -296,6 +302,8 @@ async def apply_purchase(attempt: dict, session_obj: Optional[dict] = None) -> N
         upsert=True,
     )
 
+    await _record_payment(attempt, card_id=card_id, amount=amount, row_id=f"gcbuy-{attempt_id}")
+
     # Its own claim, so a repeat delivery does not send the code twice.
     await services.send_card_email(card)
 
@@ -324,9 +332,12 @@ async def apply_topup(attempt: dict, session_obj: Optional[dict] = None) -> None
         {"id": card_id,
          "topup_attempts_applied": {"$ne": attempt_id},
          "status": {"$in": ["active", "spent"]}},
-        {"$inc": {"balance": amount},
-         "$addToSet": {"topup_attempts_applied": attempt_id},
-         "$set": {"status": "active", "last_topped_up_at": ts}},
+        [{"$set": {
+            # $inc on a double leaves 11.370000000000001, which the counter's
+            # compare-and-set can never match again — round in the same write.
+            "balance": {"$round": [{"$add": [{"$ifNull": ["$balance", 0]}, amount]}, 2]},
+            "topup_attempts_applied": {"$concatArrays": [{"$ifNull": ["$topup_attempts_applied", []]}, [attempt_id]]},
+            "status": "active", "last_topped_up_at": ts}}],
     )
     card = await _db.gift_cards.find_one({"id": card_id}, {"_id": 0})
     if card is None:
@@ -353,6 +364,8 @@ async def apply_topup(attempt: dict, session_obj: Optional[dict] = None) -> None
         }},
         upsert=True,
     )
+
+    await _record_payment(attempt, card_id=card_id, amount=amount, row_id=f"gctopup-{attempt_id}")
 
     # ── Step C — the card's own history, same trick. ──
     await _db.gift_card_transactions.update_one(
@@ -420,6 +433,7 @@ async def handle_paid(session_obj: dict) -> None:
     if intent and not attempt.get("stripe_payment_intent_id"):
         await _db.gift_card_topup_attempts.update_one(
             {"id": attempt["id"]}, {"$set": {"stripe_payment_intent_id": intent}})
+        attempt["stripe_payment_intent_id"] = intent   # apply_* records the payment under it
     try:
         if attempt.get("kind") == "purchase":
             await apply_purchase(attempt, session_obj)
@@ -475,3 +489,114 @@ async def attempt_status(attempt_id: str, user: dict) -> Dict[str, Any]:
         "amount": services._money(a["amount_cents"] / 100.0),
         "card": portal_view(card) if card else None,
     }
+
+
+# ───────────────────────────────────────────── refunds of online card money
+
+async def _record_payment(attempt: dict, *, card_id: str, amount: float, row_id: str) -> Optional[dict]:
+    """The online payment behind a card bought or topped up in the portal, as
+    a real payments row (like a Shop order's), with its revenue row pointing
+    at it. Without it a Stripe refund — in the app or the Dashboard — found
+    nothing: the card stayed live and the revenue stood. Keyed on the
+    attempt, so it is written once however often the webhook arrives."""
+    intent = attempt.get("stripe_payment_intent_id")
+    if not intent:
+        return None
+    ref = f"gift_card_attempt:{attempt['id']}"
+    payment = await _db.payments.find_one({"idempotency_ref": ref}, {"_id": 0})
+    if payment is None:
+        day = attempt.get("business_date") or _business_today_fn().isoformat()
+        doc = {
+            "id": f"gcpay-{attempt['id']}", "invoice_id": None, "shop_order_id": None,
+            "client_id": attempt.get("client_id"), "amount": amount, "method": "stripe_online",
+            "is_credit": False, "date": day, "business_date": day,
+            "processor": "stripe", "processor_payment_id": intent, "status": "completed",
+            "refunded_amount": 0.0,
+            "source": {"kind": "gift_card_online_payment", "gift_card_attempt_id": attempt["id"],
+                       "gift_card_id": card_id,
+                       "gift_card_kind": "purchase" if attempt.get("kind") == "purchase" else "topup",
+                       "stripe_payment_intent_id": intent,
+                       "stripe_checkout_session_id": attempt.get("stripe_checkout_session_id")},
+            "idempotency_ref": ref, "notes": "Gift card bought online", "created_at": _now_iso_fn(),
+        }
+        try:
+            await _db.payments.insert_one(dict(doc))
+            payment = doc
+        except Exception as exc:
+            if "duplicate" not in str(exc).lower():
+                raise
+            payment = await _db.payments.find_one({"idempotency_ref": ref}, {"_id": 0})
+    if payment:
+        await _db.retail_sales.update_one(
+            {"id": row_id, "payment_id": {"$exists": False}}, {"$set": {"payment_id": payment["id"]}})
+        await _replay_early_refunds(intent)
+    return payment
+
+
+async def _replay_early_refunds(intent: str) -> None:
+    """A refund Stripe reported before this purchase was recorded (the paid
+    webhook was late or failing) was kept aside. Apply it now that there is
+    a payment to reverse — otherwise the customer keeps the refund AND a
+    live card."""
+    if not _on_refund:
+        return
+    early = await _db.stripe_unlinked_refunds.find(
+        {"payment_intent": intent, "replayed_at": {"$exists": False}}, {"_id": 0}).to_list(20)
+    for r in early:
+        try:
+            await _on_refund(r["refund"])
+            await _db.stripe_unlinked_refunds.update_one(
+                {"refund_id": r["refund_id"]}, {"$set": {"replayed_at": _now_iso_fn()}})
+        except Exception as exc:
+            _logger.error("Could not apply early Stripe refund %s: %s", r.get("refund_id"), exc)
+
+
+async def link_payment_for_intent(intent: Optional[str]) -> Optional[dict]:
+    """A Stripe refund arrived for a payment the app has no row for. If it was
+    a card bought or topped up online (before payments rows were written for
+    them), write that row now so the refund can be applied."""
+    if not intent:
+        return None
+    attempt = await _db.gift_card_topup_attempts.find_one(
+        {"stripe_payment_intent_id": intent, "status": "applied"}, {"_id": 0})
+    if not attempt:
+        return None   # not applied yet: the refund is kept aside and applied when it is
+    purchase = attempt.get("kind") == "purchase"
+    return await _record_payment(
+        attempt, card_id=attempt.get("gift_card_id") or attempt.get("card_id"),
+        amount=services._money(int(attempt.get("amount_cents") or 0) / 100.0),
+        row_id=f"gcbuy-{attempt['id']}" if purchase else f"gctopup-{attempt['id']}")
+
+
+async def apply_refund(refund_attempt: dict, payment: dict) -> None:
+    """The card half of a Stripe refund of online card money — called by the
+    one refund finalizer, after Stripe says it succeeded. Takes the refunded
+    amount back off the card, once per refund. A bought card that ends empty
+    is voided; a top-up refund only takes the top-up back. If the customer
+    already spent some of it, the rest can't be taken back: that shortfall
+    is recorded on the payment for a person to look at, never guessed."""
+    src = (payment or {}).get("source") or {}
+    if src.get("kind") != "gift_card_online_payment":
+        return
+    amount = services._money(int(refund_attempt.get("amount_cents") or 0) / 100.0)
+    if amount <= 0 or not src.get("gift_card_id"):
+        return
+    try:
+        out = await services.reverse_load(
+            card_id=src["gift_card_id"], amount=amount, actor={"id": "stripe", "name": "Stripe refund"},
+            key=f"stripe-refund:{refund_attempt['id']}", note="Refunded through Stripe",
+            void_if_empty=src.get("gift_card_kind") == "purchase", allow_partial=True)
+    except HTTPException as exc:
+        _logger.warning("Stripe refund %s could not reverse gift card %s: %s",
+                        refund_attempt.get("id"), src.get("gift_card_id"), exc.detail)
+        out = {"debited": 0.0}
+    if out.get("already"):
+        return
+    shortfall = services._money(amount - services._money(out.get("debited")))
+    if shortfall > 0.004:
+        await _db.payments.update_one(
+            {"id": payment["id"]},
+            {"$set": {"gift_card_refund_shortfall": shortfall, "gift_card_refund_reconciliation_required": True}})
+        _logger.warning("Stripe refund %s: gift card %s had only part of the refunded $%.2f left "
+                        "($%.2f already spent) — reconcile by hand", refund_attempt.get("id"),
+                        src.get("gift_card_id"), amount, shortfall)
