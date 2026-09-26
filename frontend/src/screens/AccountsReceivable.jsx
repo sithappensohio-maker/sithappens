@@ -248,10 +248,28 @@ function AdjustmentModal({ client, onClose, onSuccess }) {
   const [notes, setNotes] = useState("");
   const [busy, setBusy] = useState(false);
   const [err, setErr] = useState("");
+  // A write-off names the bill it forgives, so the bill and the tab move
+  // together (or comes off the part of the balance that isn't on a bill).
+  const [bills, setBills] = useState([]);
+  const [target, setTarget] = useState("");
+  const [idemKey] = useState(() => (window.crypto?.randomUUID ? window.crypto.randomUUID() : `${Date.now()}-${Math.random().toString(36).slice(2)}`));
+  useEffect(() => {
+    api.get(`/clients/${client.id}/open-invoices`)
+      .then(({ data }) => {
+        // Only bills whose visit went on the tab can be written off here.
+        const rows = (data?.invoices || []).filter((b) => b.on_tab !== false);
+        setBills(rows); setTarget(rows.length ? rows[rows.length - 1].id : "");
+      })
+      .catch(() => setBills([]));
+  }, [client.id]);
+  const writingOff = Number(amount) < 0;
   const submit = async () => {
     setBusy(true); setErr("");
     try {
-      await api.post(`/clients/${client.id}/adjustment`, { amount: Number(amount), notes });
+      await api.post(`/clients/${client.id}/adjustment`, {
+        amount: Number(amount), notes, idempotency_key: idemKey,
+        ...(writingOff && target ? { invoice_id: target } : {}),
+      });
       onSuccess();
     } catch (e) {
       setErr(e?.response?.data?.detail || "Adjustment failed");
@@ -275,6 +293,18 @@ function AdjustmentModal({ client, onClose, onSuccess }) {
             <FormLabel>Amount (signed)</FormLabel>
             <FormInput type="number" step="0.01" value={amount} onChange={(e)=>setAmount(e.target.value)} data-testid="ar-adj-amount" placeholder="-25.00"/>
           </div>
+          {writingOff && bills.length > 0 && (
+            <div>
+              <FormLabel>Take it off</FormLabel>
+              <select value={target} onChange={(e)=>setTarget(e.target.value)} data-testid="ar-adj-target"
+                      className="w-full mt-1 bg-[var(--sh-card-base)] border border-shBorder rounded-lg p-3 text-shText">
+                {bills.map((b) => (
+                  <option key={b.id} value={b.id}>Bill #{b.invoice_number || b.id.slice(0, 8).toUpperCase()} · {fmt(b.balance)} left</option>
+                ))}
+                <option value="">The general balance (not a bill)</option>
+              </select>
+            </div>
+          )}
           <div>
             <FormLabel>Reason (required)</FormLabel>
             <FormInput value={notes} onChange={(e)=>setNotes(e.target.value)} data-testid="ar-adj-notes" placeholder="Goodwill write-off"/>

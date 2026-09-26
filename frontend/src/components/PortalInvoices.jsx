@@ -68,10 +68,13 @@ export default function PortalInvoices() {
             toast.success("Payment successful!");
             load();
             clearInterval(pollRef.current);
-          } else if (["failed", "expired", "canceled"].includes(data.status)) {
+          } else if (["failed", "expired", "canceled", "refunded", "reconciliation_required"].includes(data.status)) {
+            // reconciliation_required: the money arrived and our team finishes
+            // it by hand — polling on would just spin (audit #7).
             clearInterval(pollRef.current);
+            load();
           }
-          // pending / reconciliation_required — keep polling, still processing
+          // pending — keep polling, still processing
         })
         .catch(() => {});
     };
@@ -184,7 +187,7 @@ export default function PortalInvoices() {
           ) : returning.status === "applied" ? (
             <span className="text-shGreen font-black"><i className="fas fa-circle-check mr-2" />Payment successful</span>
           ) : returning.status === "reconciliation_required" ? (
-            <span className="text-gray-300"><i className="fas fa-circle-notch fa-spin mr-2" />Still finishing up — this can take a minute.</span>
+            <span className="text-gray-300"><i className="fas fa-circle-check mr-2 text-shGreen" />We received your payment. Our team is finishing it up — you won&apos;t be charged again.</span>
           ) : (
             <span className="text-shOrange"><i className="fas fa-triangle-exclamation mr-2" />Payment didn&apos;t go through. Nothing was charged twice — try again below.</span>
           )}
@@ -194,7 +197,9 @@ export default function PortalInvoices() {
       <div className="space-y-2">
         {invoices.map((inv) => {
           const balance = Number(inv.balance || 0);
-          const payable = balance > 0.005 && enabled;
+          // The server says whether this bill can take an online payment right
+          // now (and why not); older responses without the flag fall back.
+          const payable = inv.can_pay_online !== undefined ? !!inv.can_pay_online : (balance > 0.005 && enabled);
           return (
             <div key={inv.id} className="border border-shBorder rounded-lg p-3" style={{ background: "var(--sh-card-base)" }} data-testid={`portal-invoice-${inv.id}`}>
               <div className="flex items-center justify-between flex-wrap gap-2">
@@ -209,6 +214,11 @@ export default function PortalInvoices() {
                   <div>{CLIENT_LABELS.balanceDue}: <span className={balance > 0.005 ? "text-shAccent font-black" : "text-shPrimary font-black"}>{money(balance)}</span></div>
                 </div>
               </div>
+              {inv.pay_note && balance > 0.005 && (
+                <p className="mt-2 text-[12px] text-shTextMuted" data-testid={`portal-pay-note-${inv.id}`}>
+                  <i className={`fas ${inv.online_status === "received" ? "fa-circle-check text-shGreen" : "fa-circle-info"} mr-1`} />{inv.pay_note}
+                </p>
+              )}
               <div className="mt-2 flex flex-wrap gap-2">
                 {payable && (
                   <PremiumButton variant="primary" onClick={() => openPay(inv)} data-testid={`portal-pay-online-${inv.id}`} className="w-full sm:w-auto justify-center">

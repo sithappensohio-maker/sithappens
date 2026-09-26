@@ -43,6 +43,7 @@ const TYPE_ICON = {
   shop_refund_reconciliation: "fa-rotate-left",
   overdue_medication: "fa-pills",
   contact_inquiry: "fa-inbox",
+  online_payment_stuck: "fa-credit-card",
 };
 
 const REVIEW_LABEL = {
@@ -53,6 +54,7 @@ const REVIEW_LABEL = {
   shop_refund_reconciliation: "Review Refund",
   overdue_medication: "Open Care Board",
   contact_inquiry: "Review Inquiry",
+  online_payment_stuck: "Resolve Payment",
 };
 
 function fmtDateTime(dateStr, timeStr) {

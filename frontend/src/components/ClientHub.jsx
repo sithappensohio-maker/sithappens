@@ -6,6 +6,7 @@ import TrophyWall from "./TrophyWall";
 import AdminClientPaymentPlans from "./AdminClientPaymentPlans";
 import { BOOKING_STATUS, INVOICE_STATUS } from "../lib/statusDefs";
 import Avatar from "./Avatar";
+import BillFixModal from "./BillFixModal";
 
 const money = (n) => `$${Number(n || 0).toFixed(2)}`;
 const fmtCredits = (n) => {
@@ -47,6 +48,7 @@ export default function ClientHub({
   const [receipts, setReceipts] = useState(null);
   const [trophies, setTrophies] = useState(null);
   const [visits, setVisits] = useState(null); // lifetime visits + award tier, from the award engine's own count
+  const [fixBill, setFixBill] = useState(null); // bill id open in the Fix dialog (audit #7)
 
   useEffect(() => {
     if ((tab === "bookings" || tab === "overview") && bookings === null) {
@@ -241,7 +243,14 @@ export default function ClientHub({
                         </div>
                         <div className="text-right">
                           <p className="text-white font-black">{money(inv.total)}</p>
+                          {Number(inv.balance || 0) > 0.005 && <p className="text-[12px] text-shAccent font-bold">Owed {money(inv.balance)}</p>}
                           <span className={`px-2 py-0.5 rounded text-[10px] font-black uppercase tracking-widest ${meta.cls}`}>{meta.label}</span>
+                          {inv.needs_attention && (
+                            <button onClick={() => setFixBill(inv.id)} data-testid={`hub-invoice-fix-${inv.id}`}
+                                    className="block ml-auto mt-1 px-2 py-0.5 rounded bg-red-500/15 border border-red-500/40 text-red-300 text-[10px] font-black uppercase tracking-widest">
+                              <i className="fas fa-wrench mr-1" />{inv.online_payment_stuck ? "Online payment stuck" : "Needs fixing"}
+                            </button>
+                          )}
                         </div>
                       </div>
                     );
@@ -249,6 +258,11 @@ export default function ClientHub({
                 </div>
               </div>
             </div>
+          )}
+
+          {fixBill && (
+            <BillFixModal invoiceId={fixBill} onClose={() => setFixBill(null)}
+                          onChanged={() => api.get(`/clients/${client.id}/invoices`).then(({ data }) => setInvoices(data || [])).catch(() => {})} />
           )}
 
           {tab === "prepaid" && can("finance_reports") && (

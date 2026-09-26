@@ -214,6 +214,7 @@ def test_a_type_filter_still_returns_only_that_type():
 
 def test_the_always_visible_set_is_money_only():
     # A guarantee this strong must stay narrow: it is not a way to promote
-    # ordinary work above everything else.
+    # ordinary work above everything else. Each one is money that already
+    # moved (a stuck online payment is a customer's card already charged).
     assert server._ALWAYS_VISIBLE_ACTION_TYPES == frozenset(
-        {"stripe_dispute", "shop_refund_reconciliation"})
+        {"stripe_dispute", "shop_refund_reconciliation", "online_payment_stuck"})

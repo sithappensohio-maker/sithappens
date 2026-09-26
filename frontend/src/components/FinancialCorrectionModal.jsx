@@ -1,4 +1,4 @@
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { api } from "../lib/api";
 
 const METHODS = ["cash", "check", "venmo", "paypal", "card", "transfer", "other"];
@@ -21,12 +21,23 @@ export default function FinancialCorrectionModal({ booking, onClose, onSaved }) 
   const [refundIdempotencyKey] = useState(() => (
     window.crypto?.randomUUID ? window.crypto.randomUUID() : `${Date.now()}-${Math.random().toString(36).slice(2)}`
   ));
+  // Same idea for charge / discount / write-off.
+  const [adjustmentKey] = useState(() => (
+    window.crypto?.randomUUID ? window.crypto.randomUUID() : `adj-${Date.now()}-${Math.random().toString(36).slice(2)}`
+  ));
+  // What's still owed lives on the bill — the visit's own "due" isn't updated
+  // when the bill is paid later, so show (and let the server cap by) the bill.
+  const [bill, setBill] = useState(null);
+  useEffect(() => {
+    if (!booking?.id) return;
+    api.get(`/bookings/${booking.id}/invoice`).then(({ data }) => setBill(data || null)).catch(() => setBill(null));
+  }, [booking?.id]);
 
   const paidCash = Number(booking?.amount_paid || 0) > 0
     ? Number(booking.amount_paid)
     : Number(booking?.cash_revenue || 0);
   const maxRefund = Math.max(0, paidCash - (Number(booking?.financial_refund_total || 0) || 0));
-  const balanceDue = Number(booking?.balance_due || 0) || 0;
+  const balanceDue = bill ? (Number(bill.balance || 0) || 0) : (Number(booking?.balance_due || 0) || 0);
   const needsAmount = action !== "reopen";
   const canSubmit = useMemo(() => {
     if (reason.trim().length < (action === "reopen" ? 5 : 3)) return false;
@@ -49,7 +60,7 @@ export default function FinancialCorrectionModal({ booking, onClose, onSaved }) 
         response = await api.post(`/bookings/${booking.id}/reopen-checkout`, { reason: reason.trim() });
       } else {
         response = await api.post(`/bookings/${booking.id}/financial-adjustment`, {
-          kind: action, amount: Number(amount), reason: reason.trim(),
+          kind: action, amount: Number(amount), reason: reason.trim(), idempotency_key: adjustmentKey,
         });
       }
       onSaved?.(response.data);
@@ -97,7 +108,7 @@ export default function FinancialCorrectionModal({ booking, onClose, onSaved }) 
               <input type="number" min="0.01" step="0.01" value={amount} onChange={(e)=>setAmount(e.target.value)} autoFocus
                      className="w-full mt-1 bg-[var(--sh-card-base)] border border-shBorder rounded-lg p-3 text-shText text-xl font-black focus:border-shAccent focus:outline-none" />
               {action === "refund" && <p className="text-xs text-shTextMuted mt-1">Maximum cash refund: {money(maxRefund)}</p>}
-              {(action === "discount" || action === "writeoff") && <p className="text-xs text-shTextMuted mt-1">These can only reduce the unpaid balance. Refund money already collected instead.</p>}
+              {(action === "discount" || action === "writeoff") && <p className="text-xs text-shTextMuted mt-1" data-testid="correction-owed-note">These can only reduce what's still owed{bill ? ` on the bill (${money(balanceDue)})` : ""}. Refund money already collected instead.</p>}
             </div>
           )}
 

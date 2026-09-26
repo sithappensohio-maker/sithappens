@@ -317,19 +317,30 @@ def test_apply_tab_payment_reduces_balance(admin_headers, fresh_client_and_dog):
 
 
 def test_apply_tab_adjustment_writeoff(admin_headers, fresh_client_and_dog):
-    """Adjustment with negative amount forgives part of the tab."""
+    """Adjustment with negative amount forgives part of the tab. Audit #7
+    (2026-09-26): when the balance is on a bill, the write-off names that bill
+    so the bill and the tab move together (a general write-off over it would
+    leave the bill unpayable)."""
     client, dog = fresh_client_and_dog
     bid = _create_and_checkin(admin_headers, client, dog)
     requests.post(f"{BASE}/api/bookings/{bid}/check-out", headers=admin_headers,
                   json={"use_credits": False, "base_price": 100.0,
                         "amount_paid": 0.0, "payment_method": "cash"},
                   timeout=15)
+    general = requests.post(f"{BASE}/api/clients/{client['id']}/adjustment",
+                            headers=admin_headers,
+                            json={"amount": -25.0, "notes": "Goodwill write-off"},
+                            timeout=15)
+    assert general.status_code == 409, general.text
+    invoice = requests.get(f"{BASE}/api/bookings/{bid}/invoice", headers=admin_headers, timeout=15).json()
     ar = requests.post(f"{BASE}/api/clients/{client['id']}/adjustment",
                        headers=admin_headers,
-                       json={"amount": -25.0, "notes": "Goodwill write-off"},
+                       json={"amount": -25.0, "notes": "Goodwill write-off", "invoice_id": invoice["id"]},
                        timeout=15)
     assert ar.status_code == 200, ar.text
     assert abs(ar.json()["balance"] - 75.0) < 0.01
+    fresh = requests.get(f"{BASE}/api/bookings/{bid}/invoice", headers=admin_headers, timeout=15).json()
+    assert abs(fresh["balance"] - 75.0) < 0.01
 
 
 def test_accounts_receivable_lists_clients_with_balance(admin_headers, fresh_client_and_dog):

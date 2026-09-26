@@ -81,6 +81,7 @@ from domains.bookings import guards as booking_guards
 from domains.bookings import late_day as late_day_checkout
 from domains.bookings import care as care_domain
 from domains.clients import signup_claim
+from domains.billing import tab_sync as billing_tab_sync, resolve as billing_resolve
 from domains.shop import shopify_pricing
 from domains import booking_rules
 from domains import vaccines as vaccines_domain
@@ -1268,6 +1269,7 @@ class BookingFinancialAdjustmentIn(BaseModel):
     kind: Literal["charge", "discount", "writeoff"]
     amount: float = Field(gt=0, le=100000)
     reason: str = Field(min_length=3, max_length=500)
+    idempotency_key: Optional[str] = Field(default=None, max_length=200)  # one per opened correction
 
 
 class BookingRefundIn(BaseModel):
@@ -7200,16 +7202,24 @@ async def _apply_sale_partial_payment(
     """
     ts = ts or now_iso()
     delta = round(total - paid, 2)
+    # Tagged as the sale's own rows so they never look like a payment toward
+    # an open bill; money paid beyond the sale stays untagged (it may have been).
+    tag = {"sale_kind": sale_kind, "sale_id": sale_id}
     # Always write the charge row (audit trail for FULL ticket).
     await _write_ledger_row(
         client_id=client_id, type_="charge", amount=round(total, 2),
-        method="", notes=label, booking_id=None, ts=ts,
+        method="", notes=label, booking_id=None, ts=ts, extra=tag,
     )
-    if paid > 0:
+    if min(paid, total) > 0:
         await _write_ledger_row(
-            client_id=client_id, type_="payment", amount=-round(paid, 2),
+            client_id=client_id, type_="payment", amount=-round(min(paid, total), 2),
             method=method or "cash",
-            notes=f"Paid at sale · {label}", booking_id=None, ts=ts,
+            notes=f"Paid at sale · {label}", booking_id=None, ts=ts, extra=tag,
+        )
+    if paid > total + 0.005:
+        await _write_ledger_row(
+            client_id=client_id, type_="payment", amount=-round(paid - total, 2),
+            method=method or "cash", notes=f"Overpaid at sale · credit on file · {label}", booking_id=None, ts=ts,
         )
     new_balance = await _adjust_client_balance(client_id, delta)
 
@@ -7300,6 +7310,7 @@ async def _write_ledger_row(
     created_by: str = "system",
     ts: Optional[str] = None,
     invoice_id: Optional[str] = None,
+    extra: Optional[dict] = None,
 ) -> dict:
     """Append a ledger row. `amount` is signed (see header). Returns the row.
 
@@ -7321,6 +7332,7 @@ async def _write_ledger_row(
         "created_by": created_by,
         "created_at": ts or now_iso(),
         "operation_id": _checkout_operation_id_ctx.get(),
+        **(extra or {}),  # e.g. sale_kind / source tags (domains/billing/tab_sync.py)
     }
     await db.payment_ledger.insert_one(row.copy())
     return row
@@ -7729,55 +7741,8 @@ def _derive_invoice_status(invoice: dict, *, amount_paid: float, balance: float,
 
 
 async def _invoice_ar_status(invoice: dict) -> dict:
-    """Trace payment_ledger rows tagged to this invoice — both the original
-    checkout-time rows (booking_id in invoice.booking_ids) and any rows this
-    invoice's OWN top-ups/voids wrote (invoice_id == invoice.id, booking_id
-    None) — the only reliable, invoice-specific evidence of outstanding AR.
-    Aggregate client.account_balance alone cannot prove the requested amount
-    is still attributable to THIS invoice specifically."""
-    booking_ids = invoice.get("booking_ids") or []
-    rows = await db.payment_ledger.find(
-        {"$or": [
-            {"booking_id": {"$in": booking_ids}},
-            {"invoice_id": invoice.get("id")},
-        ]},
-        {"_id": 0},
-    ).to_list(200)
-    seen: set = set()
-    booking_net = 0.0
-    charge_row = None
-    for r in rows:
-        rid = r.get("id")
-        if rid in seen:
-            continue
-        seen.add(rid)
-        booking_net += float(r.get("amount") or 0)
-        if r.get("type") == "charge" and charge_row is None:
-            charge_row = r
-    booking_net = round(booking_net, 2)
-    ar_backed = charge_row is not None
-    balance_matches = abs(booking_net - float(invoice.get("balance") or 0)) <= 0.005
-
-    ambiguous = False
-    if ar_backed:
-        # A truly generic, untagged client-level ledger row (booking_id=None
-        # AND invoice_id=None — e.g. old-style apply_tab_payment activity
-        # from before this invoice's AR guard existed) occurring AFTER this
-        # invoice's own charge cannot be proven to have left this invoice's
-        # AR untouched, even when booking_net == invoice.balance holds —
-        # that row never touches booking_net at all, so this is a separate,
-        # independent check.
-        ambiguous_row = await db.payment_ledger.find_one({
-            "client_id": invoice.get("client_id"), "booking_id": None, "invoice_id": None,
-            "created_at": {"$gt": charge_row.get("created_at")},
-        })
-        ambiguous = ambiguous_row is not None
-
-    return {
-        "ar_backed": ar_backed,
-        "reconciled": ar_backed and balance_matches and not ambiguous,
-        "booking_net": booking_net,
-    }
+    """Is this bill in step with the account tab? (domains/billing/tab_sync.py)"""
+    return await billing_tab_sync.invoice_ar_status(invoice)
 
 
 def _request_fingerprint(*fields: Any) -> str:
@@ -8647,9 +8612,13 @@ async def _send_tab_payment_receipt(
 
 class TabAdjustmentIn(BaseModel):
     """Manual ledger adjustment — write-off, comp, correction. Signed amount
-    in BALANCE direction (positive = client owes more, negative = forgive)."""
+    in BALANCE direction (positive = client owes more, negative = forgive).
+    A write-off names the bill it forgives (invoice_id), or comes out of the
+    part of the balance that isn't on a bill."""
     amount: float
     notes: str = Field(min_length=1)
+    invoice_id: Optional[str] = Field(default=None, max_length=100)
+    idempotency_key: Optional[str] = Field(default=None, max_length=200)
 
 
 @api.post("/clients/{client_id}/adjustment")
@@ -8658,27 +8627,9 @@ async def apply_tab_adjustment(
     body: TabAdjustmentIn,
     user: dict = Depends(require_admin_and_permission("delete_records")),
 ):
-    """Manual write-off / correction. Logged as type=adjustment in the ledger."""
-    if round(body.amount, 2) == 0:
-        raise HTTPException(status_code=400, detail="Adjustment amount cannot be zero.")
-    # Sprint 110ff — every other money action (tab payments, sales, expenses)
-    # is locked once a day's register is closed out; this one wasn't, so a
-    # balance could be adjusted after the books for that day were already
-    # closed and reconciled.
-    await _require_register_day_open(business_today().isoformat())
-    client = await db.clients.find_one({"id": client_id}, {"_id": 0})
-    if not client:
-        raise HTTPException(status_code=404, detail="Client not found")
-    row = await _write_ledger_row(
-        client_id=client_id,
-        type_="adjustment",
-        amount=round(body.amount, 2),
-        method="",
-        notes=body.notes,
-        created_by=user.get("email", "admin"),
-    )
-    new_balance = await _adjust_client_balance(client_id, round(body.amount, 2))
-    return {"ok": True, "balance": new_balance, "row": row}
+    """Manual write-off / correction. Logged as type=adjustment in the ledger
+    (domains/billing/tab_sync.py keeps a named bill in step)."""
+    return await billing_tab_sync.adjust_tab(client_id, body, user)
 
 
 AR_LIST_MAX = 2000
@@ -12259,83 +12210,9 @@ async def booking_financial_adjustment(
 async def _booking_financial_adjustment_locked(
     booking_id: str, body: BookingFinancialAdjustmentIn, user: dict,
 ):
-    booking, booking_collection, _archived = await _load_booking_for_financial_correction(booking_id)
-    if not booking:
-        raise HTTPException(status_code=404, detail="Booking not found")
-    if not _booking_is_financially_locked(booking):
-        raise HTTPException(status_code=409, detail="This booking is not financially locked; edit it before checkout instead.")
-
-    amount = round(float(body.amount), 2)
-    current_total = round(float(booking.get("actual_price") or 0), 2)
-    current_paid = round(float(booking.get("amount_paid") or 0), 2)
-    current_due = round(float(booking.get("balance_due") or _booking_balance_due(booking)), 2)
-    before = {"actual_price": current_total, "amount_paid": current_paid, "balance_due": current_due, "payment_status": booking.get("payment_status")}
-
-    if body.kind == "charge":
-        new_total = round(current_total + amount, 2)
-        new_due = round(current_due + amount, 2)
-        new_status = "paid_partial" if current_paid > 0 else "unpaid"
-        balance_delta = amount
-        ledger_amount = amount
-        ledger_note = f"Post-checkout charge adjustment · {body.reason.strip()}"
-    else:
-        if current_due <= 0:
-            raise HTTPException(status_code=409, detail="There is no unpaid balance to reduce. Use Refund when money has already been collected.")
-        applied = min(amount, current_due)
-        new_total = round(max(current_paid, current_total - applied), 2)
-        new_due = round(max(0.0, current_due - applied), 2)
-        new_status = (
-            "paid" if new_due <= 0 and current_paid > 0
-            else "comped" if new_total <= 0
-            else "paid_partial" if current_paid > 0
-            else "unpaid"
-        )
-        amount = applied
-        balance_delta = -applied
-        ledger_amount = -applied
-        ledger_note = f"Post-checkout {body.kind} · {body.reason.strip()}"
-
-    update = {
-        "actual_price": new_total,
-        "balance_due": new_due,
-        "payment_status": new_status,
-        "cash_revenue": _cash_revenue({**booking, "actual_price": new_total, "balance_due": new_due, "payment_status": new_status}),
-        "financial_adjustment_total": round(float(booking.get("financial_adjustment_total") or 0) + (amount if body.kind == "charge" else -amount), 2),
-        "financial_revision": int(booking.get("financial_revision") or 0) + 1,
-        "financial_locked": True,
-        "financial_locked_at": booking.get("financial_locked_at") or now_iso(),
-    }
-    balance_applied = False
-    ledger_ids: List[str] = []
-    event_id = None
-    try:
-        if booking.get("client_id") and abs(balance_delta) > 0.005:
-            await _adjust_client_balance(booking["client_id"], balance_delta)
-            balance_applied = True
-            ledger_row = await _write_ledger_row(
-                client_id=booking["client_id"], type_="adjustment" if body.kind != "charge" else "charge",
-                amount=ledger_amount, notes=ledger_note, booking_id=booking_id,
-                created_by=user.get("id") or "admin",
-            )
-            ledger_ids.append(ledger_row["id"])
-        result = await booking_collection.update_one({"id": booking_id}, {"$set": update})
-        if result.matched_count != 1:
-            raise RuntimeError("Booking disappeared during the adjustment")
-        after = {"actual_price": new_total, "amount_paid": current_paid, "balance_due": new_due, "payment_status": new_status}
-        event = await _record_booking_financial_event(booking, kind=body.kind, amount=amount, reason=body.reason, user=user, before=before, after=after)
-        event_id = event.get("id")
-    except Exception as exc:
-        await booking_collection.replace_one({"id": booking_id}, booking, upsert=False)
-        if booking.get("client_id") and balance_applied:
-            await db.clients.update_one({"id": booking["client_id"]}, {"$inc": {"account_balance": -float(balance_delta)}})
-        if ledger_ids:
-            await db.payment_ledger.delete_many({"id": {"$in": ledger_ids}})
-        if event_id:
-            await db.booking_financial_events.delete_one({"id": event_id})
-        logger.exception("Financial adjustment rolled back for booking %s", booking_id)
-        raise HTTPException(status_code=500, detail="The adjustment could not be saved safely. No financial changes were kept.") from exc
-    booking.update(update)
-    return booking
+    """Charge / discount / write-off on a checked-out visit — keeps its bill and
+    the account tab in step (domains/billing/tab_sync.py)."""
+    return await billing_tab_sync.correct_visit(booking_id, body, user)
 
 
 async def booking_refund(booking_id: str, body: BookingRefundIn, user: dict = Depends(require_admin_and_permission("delete_records"))):
@@ -12511,6 +12388,9 @@ async def _reopen_booking_checkout_locked(booking_id: str, body: BookingReopenCh
     paid = float(booking.get("amount_paid") or booking.get("cash_revenue") or 0)
     credits = float(booking.get("credits_deducted") or 0)
     refunds = float(booking.get("financial_refund_total") or 0)
+    bill = await db.invoices.find_one({"booking_ids": booking_id, "status": {"$ne": "VOID"}}, {"_id": 0, "amount_paid": 1, "stripe_active_attempt_id": 1})
+    if bill and (float(bill.get("amount_paid") or 0) > 0.005 or bill.get("stripe_active_attempt_id")):
+        paid = max(paid, 0.01)  # paid on the bill itself, or an online payment is under way
     if paid > 0.005 or credits > 0.005 or refunds > 0.005:
         raise HTTPException(
             status_code=409,
@@ -28315,7 +28195,7 @@ async def admin_run_daily_jobs(_: dict = Depends(require_admin)):
 # Saturday slot only became noticeable when Saturday arrived. The requested
 # date now drives URGENCY only, never visibility.
 
-PENDING_ACTION_TYPES = ("meet_and_greet_request", "booking_approval", "reschedule_request", "stripe_dispute", "shop_refund_reconciliation", "overdue_medication", "contact_inquiry")
+PENDING_ACTION_TYPES = ("meet_and_greet_request", "booking_approval", "reschedule_request", "stripe_dispute", "shop_refund_reconciliation", "overdue_medication", "contact_inquiry", "online_payment_stuck")
 
 # item `type` → key on /admin/pending-actions/count
 _PENDING_ACTION_COUNT_KEYS = {
@@ -28326,6 +28206,7 @@ _PENDING_ACTION_COUNT_KEYS = {
     "shop_refund_reconciliation": "shop_refund_reconciliations",
     "overdue_medication": "overdue_medications",
     "contact_inquiry": "contact_inquiries",
+    "online_payment_stuck": "online_payments_stuck",
 }
 
 _PENDING_ACTION_TYPE_LABELS = {
@@ -28336,6 +28217,7 @@ _PENDING_ACTION_TYPE_LABELS = {
     "shop_refund_reconciliation": "Shop Refund Needs Review",
     "overdue_medication": "Overdue Medication",
     "contact_inquiry": "New Inquiry",
+    "online_payment_stuck": "Online Payment Needs Attention",
 }
 
 
@@ -28343,7 +28225,7 @@ _PENDING_ACTION_TYPE_LABELS = {
 # actions with an external consequence for being ignored (a dispute has an
 # evidence deadline; an unreconciled refund is real money already returned),
 # and both are naturally few — a business does not accumulate hundreds.
-_ALWAYS_VISIBLE_ACTION_TYPES = frozenset({"stripe_dispute", "shop_refund_reconciliation"})
+_ALWAYS_VISIBLE_ACTION_TYPES = frozenset({"stripe_dispute", "shop_refund_reconciliation", "online_payment_stuck"})
 
 
 def _pending_action_urgency(created_at: Optional[str], requested_date: Optional[str],
@@ -28675,7 +28557,7 @@ async def _collect_pending_actions(user: dict, *, type_filter: Optional[str] = N
                     f"{_humanize_enum(d.get('reason')) or 'Stripe dispute'}"),
                 "requested_start": None, "requested_date": None, "requested_end_date": None, "requested_time": None,
                 "notes": _stripe_dispute_notes(d)[:300],
-                "deep_link": {"screen": "front_desk", "panel": "online_payments", "stripe_dispute_id": d["id"]},
+                "deep_link": {"screen": "pos", "panel": "online_payments", "stripe_dispute_id": d["id"]},
                 "required_permission": "finance_reports", **urgency,
             })
         rr_rows = await db.shop_orders.find(
@@ -28691,10 +28573,12 @@ async def _collect_pending_actions(user: dict, *, type_filter: Optional[str] = N
                 "service_name": f"Shop Order #{o['id'][:8].upper()}", "requested_start": None,
                 "requested_date": None, "requested_end_date": None, "requested_time": None,
                 "notes": (o.get("refund_reconciliation_reason") or "Shop refund needs entitlement review")[:300],
-                "deep_link": {"screen": "front_desk", "panel": "online_orders", "shop_order_id": o["id"]},
+                "deep_link": {"screen": "pos", "panel": "online_orders", "shop_order_id": o["id"]},
                 "required_permission": "finance_reports", **urgency,
             })
 
+    if perms.get("delete_records"):
+        items.extend(await billing_resolve.pending_action_items())  # money already taken online
     if perms.get("care_complete"):
         items.extend(await _collect_overdue_medication_actions(limit=500))
 
@@ -28760,7 +28644,7 @@ async def admin_pending_actions_count(user: dict = Depends(require_admin)):
     rather than 403 so nav badges can poll safely for every staff role; the
     detailed list endpoint stays permission-enforced."""
     if not _user_can_see_any_pending_actions(user):
-        return {"total": 0, "meet_and_greet_requests": 0, "booking_approvals": 0, "reschedule_requests": 0, "stripe_disputes": 0, "shop_refund_reconciliations": 0, "overdue_medications": 0, "contact_inquiries": 0}
+        return {"total": 0, "meet_and_greet_requests": 0, "booking_approvals": 0, "reschedule_requests": 0, "stripe_disputes": 0, "shop_refund_reconciliations": 0, "overdue_medications": 0, "contact_inquiries": 0, "online_payments_stuck": 0}
     perms = _perms_for(user)
     # Phase 6 — these counters are independent. They previously ran one after
     # another on every nav poll, so Action Required latency was the sum of six
@@ -28783,11 +28667,12 @@ async def admin_pending_actions_count(user: dict = Depends(require_admin)):
             if perms.get("clients_edit") else asyncio.sleep(0, result=0),
     )
     overdue_meds = len(overdue_rows)
+    stuck = await billing_resolve.pending_action_count() if perms.get("delete_records") else 0
     return {
-        "total": mg + pending_bookings + resched + disputes + shop_recon + overdue_meds + inquiries,
+        "total": mg + pending_bookings + resched + disputes + shop_recon + overdue_meds + inquiries + stuck,
         "meet_and_greet_requests": mg, "booking_approvals": pending_bookings, "reschedule_requests": resched,
         "stripe_disputes": disputes, "shop_refund_reconciliations": shop_recon, "overdue_medications": overdue_meds,
-        "contact_inquiries": inquiries,
+        "contact_inquiries": inquiries, "online_payments_stuck": stuck,
     }
 
 
@@ -29922,6 +29807,7 @@ BACKUP_COLLECTIONS = [
     "pos_sale_claims", "pos_sale_void_claims", "pos_sale_return_claims",
     "payment_topup_claims", "payment_void_claims", "refund_idempotency_claims",
     "shop_checkout_claims", "auto_receipt_email_claims",
+    "financial_adjustment_claims", "tab_adjustment_claims",
 ]
 # Every collection the app writes that is deliberately NOT backed up, and why.
 # A test (test_backup_coverage_guard.py) fails when code writes a collection
@@ -34046,6 +33932,7 @@ async def startup():
     # Public events — indexes + the first event (idempotent by slug).
     try:
         await events_domain.ensure_events_indexes(db)
+        await billing_tab_sync.ensure_indexes()
         await events_domain.seed_default_events(db)
     except Exception as exc:
         logger.warning("Events setup failed: %s", exc)
@@ -37622,7 +37509,7 @@ async def get_invoice(invoice_id: str, _: dict = Depends(require_admin_and_permi
 @api.get("/clients/{client_id}/invoices")
 async def list_client_invoices(client_id: str, _: dict = Depends(require_admin_and_permission("finance_reports"))):
     invoices = await db.invoices.find({"client_id": client_id}, {"_id": 0}).sort("created_at", -1).to_list(500)
-    return invoices
+    return await billing_resolve.annotate_bills(invoices)
 
 
 @api.get("/clients/{client_id}/open-invoices")
@@ -37643,10 +37530,11 @@ async def list_client_open_invoices(client_id: str, user: dict = Depends(require
         raise HTTPException(status_code=403, detail="You don't have permission to take payments.")
     invoices = await db.invoices.find(
         {"client_id": client_id, "balance": {"$gt": 0.005}},
-        {"_id": 0, "id": 1, "status": 1, "total": 1, "amount_paid": 1, "balance": 1, "created_at": 1, "due_date": 1},
+        {"_id": 0, "id": 1, "status": 1, "total": 1, "amount_paid": 1, "balance": 1, "created_at": 1, "due_date": 1, "booking_ids": 1},
     ).sort("created_at", -1).to_list(100)
     open_rows = [
-        {**inv, "invoice_number": (inv.get("id") or "")[:8].upper()}
+        {**{k: v for k, v in inv.items() if k != "booking_ids"}, "invoice_number": (inv.get("id") or "")[:8].upper(),
+         "on_tab": (await _invoice_ar_status({**inv, "client_id": client_id}))["ar_backed"]}
         for inv in invoices
         if (inv.get("status") or "").upper() not in ("VOID", "REFUNDED", "PARTIALLY_REFUNDED")
     ]
@@ -37797,17 +37685,7 @@ async def create_invoice_payment(invoice_id: str, body: InvoicePaymentIn, user: 
         await db.retail_sales.insert_one(retail_row.copy())
         retail_sales_id = retail_row["id"]
 
-        new_balance = round(float(result.get("balance") or 0), 2)
-        if new_balance <= 0.005:
-            new_balance = 0.0
-        new_amount_paid = round(float(result.get("amount_paid") or 0), 2)
-        new_status = _derive_invoice_status(
-            result, amount_paid=new_amount_paid, balance=new_balance,
-            credit_applied=float(result.get("credit_applied") or 0),
-        )
-        await db.invoices.update_one(
-            {"id": invoice_id}, {"$set": {"status": new_status, "balance": new_balance, "updated_at": ts}},
-        )
+        await billing_tab_sync.restatus_invoice(invoice_id, ts)
     except Exception:
         # Compensating rollback, in reverse order — mirrors
         # _booking_refund_locked's established discipline. The claim is
@@ -37990,18 +37868,7 @@ async def void_payment(payment_id: str, body: PaymentVoidIn, user: dict = Depend
 
         await db.invoices.update_one({"id": invoice_id}, {"$inc": {"amount_paid": -amount, "balance": amount}})
         invoice_delta_applied = True
-        fresh_invoice = await db.invoices.find_one({"id": invoice_id}, {"_id": 0})
-        new_balance = round(float(fresh_invoice.get("balance") or 0), 2)
-        if new_balance <= 0.005:
-            new_balance = 0.0
-        new_amount_paid = round(float(fresh_invoice.get("amount_paid") or 0), 2)
-        new_status = _derive_invoice_status(
-            fresh_invoice, amount_paid=new_amount_paid, balance=new_balance,
-            credit_applied=float(fresh_invoice.get("credit_applied") or 0),
-        )
-        await db.invoices.update_one(
-            {"id": invoice_id}, {"$set": {"status": new_status, "balance": new_balance, "updated_at": ts}},
-        )
+        await billing_tab_sync.restatus_invoice(invoice_id, ts)
     except Exception:
         if invoice_delta_applied:
             await db.invoices.update_one({"id": original.get("invoice_id")}, {"$inc": {"amount_paid": float(original.get("amount") or 0), "balance": -float(original.get("amount") or 0)}})
@@ -38053,7 +37920,7 @@ async def void_payment(payment_id: str, body: PaymentVoidIn, user: dict = Depend
 # ─────────────────────────────────────────────────────────────────────────────
 
 STRIPE_ATTEMPT_BLOCKING_STATUSES = ("pending", "reconciliation_required")
-STRIPE_ATTEMPT_TERMINAL_STATUSES = ("applied", "failed", "expired", "canceled")
+STRIPE_ATTEMPT_TERMINAL_STATUSES = ("applied", "failed", "expired", "canceled", "refunded", "refunding", "disputed")
 STRIPE_REFUND_TERMINAL_STATUSES = ("succeeded", "failed", "canceled")
 
 
@@ -38186,6 +38053,7 @@ async def _apply_stripe_payment(attempt: dict) -> dict:
                 "status": {"$ne": "VOID"},
                 "stripe_active_attempt_id": attempt_id,
                 "stripe_last_applied_attempt_id": {"$ne": attempt_id},
+                "stripe_refunding_attempt_id": {"$ne": attempt_id},  # staff is refunding it (domains/billing/resolve.py)
                 "balance": {"$gte": amount - 0.005},
             },
             {
@@ -38277,15 +38145,7 @@ async def _apply_stripe_payment(attempt: dict) -> dict:
 
     # ── Step B5 — invoice status recompute. Always safe to rerun — a pure
     # function of the invoice's current fields, no marker needed. ──
-    fresh_invoice = await db.invoices.find_one({"id": invoice_id}, {"_id": 0})
-    new_balance = round(float(fresh_invoice.get("balance") or 0), 2)
-    if new_balance <= 0.005:
-        new_balance = 0.0
-    new_status = _derive_invoice_status(
-        fresh_invoice, amount_paid=round(float(fresh_invoice.get("amount_paid") or 0), 2),
-        balance=new_balance, credit_applied=float(fresh_invoice.get("credit_applied") or 0),
-    )
-    await db.invoices.update_one({"id": invoice_id}, {"$set": {"status": new_status, "balance": new_balance, "updated_at": ts}})
+    await billing_tab_sync.restatus_invoice(invoice_id, ts)
 
     # ── Every Step B write independently confirmed complete — mark applied,
     # THEN (only then) release the reservation. Never the reverse order. ──
@@ -38341,6 +38201,7 @@ async def portal_invoices(user: dict = Depends(get_current_user)):
         ).sort("created_at", -1).to_list(200)
         # Hand-picked fields only — never the raw invoice document, so
         # internal Stripe reservation-pointer fields can never leak here.
+        online = bool(STRIPE_ONLINE_ENABLED and STRIPE_SECRET_KEY)
         for inv in rows:
             invoices.append({
                 "id": inv["id"],
@@ -38351,6 +38212,7 @@ async def portal_invoices(user: dict = Depends(get_current_user)):
                 "amount_paid": inv.get("amount_paid"),
                 "balance": inv.get("balance"),
                 "status": inv.get("status"),
+                **(await billing_resolve.portal_flags(inv, online)),  # can_pay_online / online_status / pay_note
             })
     return {"invoices": invoices, "stripe_online_enabled": bool(STRIPE_ONLINE_ENABLED and STRIPE_SECRET_KEY)}
 
@@ -38373,6 +38235,10 @@ async def create_stripe_checkout_session(invoice_id: str, body: StripeCheckoutSe
         raise HTTPException(status_code=400, detail="Nothing is due on this invoice.")
     if amount > balance + 0.005:
         raise HTTPException(status_code=400, detail=f"Amount cannot exceed the current balance of ${balance:.2f}.")
+    # Only take money the app can record against this bill right now.
+    ok, _code, why = await billing_tab_sync.payable_now(invoice, amount, ignore_reservation=True)
+    if not ok:
+        raise HTTPException(status_code=409, detail=why)
     amount_cents = _stripe_amount_cents(amount)
 
     # Claim-first, exactly like every other idempotent endpoint in this codebase.

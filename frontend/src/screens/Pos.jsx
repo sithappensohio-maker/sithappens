@@ -24,7 +24,7 @@ import { printGiftCard } from "../lib/printGiftCard";
 import { toast } from "sonner";
 import PageHero from "../components/PageHero";
 import RegisterHub from "../components/RegisterHub";
-import PendingActionsPanel from "../components/PendingActionsPanel";
+import PendingActionsPanel, { PENDING_ACTION_TARGET_KEY } from "../components/PendingActionsPanel";
 import { CheckoutModal } from "../components/CheckoutModal";
 import TakePaymentModal from "../components/TakePaymentModal";
 import StripeRefundModal from "../components/StripeRefundModal";
@@ -47,6 +47,7 @@ import {
   FrontDeskDogAvatar, FrontDeskSectionHeader, CatalogCategoryTile,
 } from "../components/frontdesk/FrontDeskBits";
 import ReceiptLogo from "../components/ReceiptLogo";
+import StuckOnlinePayments from "../components/StuckOnlinePayments";
 
 // "card" here is a manually-recorded/offline card payment (external reader),
 // not a Stripe Terminal integration.
@@ -84,6 +85,25 @@ export default function Pos({ onOpenShopManager } = {}) {
   // the fix for the "buttons look dead" 8,000px-jump regression, done in
   // layout instead of scrollIntoView.
   const [activePanel, setActivePanel] = useState(null);
+  // Action Required → "Online payment needs attention" lands here with the
+  // Online payments panel already open.
+  useEffect(() => {
+    const PANELS = { online_payments: "payments", online_orders: "orders" };
+    const openTarget = () => {
+      let target = null;
+      try { target = JSON.parse(sessionStorage.getItem(PENDING_ACTION_TARGET_KEY) || "null"); } catch { /* ignore */ }
+      const panel = PANELS[target?.panel];
+      if (panel) {
+        setActivePanel(panel);
+        try { sessionStorage.removeItem(PENDING_ACTION_TARGET_KEY); } catch { /* ignore */ }
+      }
+    };
+    openTarget();
+    // Clicked from Front Desk's own Action Required panel: already mounted.
+    const onNav = () => setTimeout(openTarget, 0);
+    window.addEventListener("sh:nav", onNav);
+    return () => window.removeEventListener("sh:nav", onNav);
+  }, []);
   const toggleRegisterPanel = (key) => {
     const next = activePanel === key ? null : key;
     setActivePanel(next);
@@ -1384,6 +1404,7 @@ export default function Pos({ onOpenShopManager } = {}) {
               <i className="fas fa-rotate-right mr-1" />Refresh
             </button>
           </div>
+          <StuckOnlinePayments onChanged={loadOnlinePayments} />
           <div className="space-y-2 max-h-96 overflow-y-auto">
             {onlinePayments.length === 0 && <p className="text-shTextMuted text-sm">No Stripe Online payments yet.</p>}
             {onlinePayments.map((p) => {
