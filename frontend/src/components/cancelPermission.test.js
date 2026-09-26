@@ -55,11 +55,13 @@ afterEach(() => { act(() => root.unmount()); container.remove(); mockCan = () =>
 const q = (id) => container.querySelector(`[data-testid="${id}"]`);
 const flush = () => act(async () => { await Promise.resolve(); await Promise.resolve(); });
 
-test("staff with both permissions see refund and charge", () => {
+test("no cancellation charge is offered, even to staff who could take one", () => {
+  // The business doesn't charge for cancellations (OFFER_CANCELLATION_CHARGE).
   mockCan = () => true;
   act(() => root.render(<CancelBookingModal booking={BOOKING} onClose={() => {}} />));
   expect(q("cancel-refund")).not.toBeNull();
-  expect(q("cancel-charge")).not.toBeNull();
+  expect(q("cancel-charge")).toBeNull();
+  expect(q("cancel-modal").textContent).toContain("Nothing is charged");
 });
 
 test("without take_payments the charge option is gone, the plain cancel stays", () => {

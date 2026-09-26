@@ -5693,16 +5693,15 @@ async def _cancel_booking_impl(booking_id: str, forfeit: bool, user: dict, undo_
     taking_back = booking_guards.on_site(booking)
     if taking_back and (client_cancel or not undo_check_in):
         raise booking_guards.on_site_cancel_block(booking, client=client_cancel)
+    # Notice is counted to when the visit really starts (drop-off or
+    # appointment time, business time zone) — not 8 PM the night before.
+    settings = await get_settings()
+    starts = booking_guards.visit_start(booking, lambda b: _booking_start_local(b, settings), BUSINESS_TZ)
     # Cancellation cutoff for clients only (admins + employees bypass)
     if user.get("role") == "client":
-        settings = await get_settings()
         cutoff_hours = int(settings.get("booking_rules", {}).get("cancellation_cutoff_hours", 24))
-        try:
-            start_dt = datetime.fromisoformat(booking["date"]).replace(tzinfo=timezone.utc)
-            if start_dt - datetime.now(timezone.utc) < timedelta(hours=cutoff_hours):
-                raise HTTPException(status_code=400, detail=f"Cancellations must be at least {cutoff_hours}h in advance")
-        except ValueError:
-            pass
+        if starts and starts - datetime.now(BUSINESS_TZ) < timedelta(hours=cutoff_hours):
+            raise booking_guards.cancel_cutoff_block(cutoff_hours, starts)
     update_payload: Dict[str, Any] = {"status": "cancelled", "cancelled_at": now_iso()}
     if forfeit:
         # Snapshot the fee at the moment of cancellation so later price changes
@@ -5717,14 +5716,8 @@ async def _cancel_booking_impl(booking_id: str, forfeit: bool, user: dict, undo_
             full_fee = float((svc or {}).get("base_price") or 0)
         # Sprint 110dm — apply 3-tier cancellation policy from day_to_day.money.
         # Hours until the booking starts decide the % charged.
-        if 'settings' not in locals():
-            settings = await get_settings()
         money_rules = ((settings.get("day_to_day") or {}).get("money") or {})
-        try:
-            start_dt = datetime.fromisoformat(booking["date"]).replace(tzinfo=timezone.utc)
-            hours_until = (start_dt - datetime.now(timezone.utc)).total_seconds() / 3600.0
-        except Exception:
-            hours_until = 0
+        hours_until = (starts - datetime.now(BUSINESS_TZ)).total_seconds() / 3600.0 if starts else 0
         t1h = float(money_rules.get("cancellation_tier1_hours", 48))
         t2h = float(money_rules.get("cancellation_tier2_hours", 24))
         t1p = float(money_rules.get("cancellation_tier1_pct", 0))

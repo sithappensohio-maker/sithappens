@@ -5,7 +5,8 @@ imports: callers pass in the few server helpers these rules need.
 """
 from __future__ import annotations
 
-from datetime import date
+from datetime import date, datetime, time as dtime
+from types import SimpleNamespace
 from typing import Any, Callable, Dict, List, Optional, Tuple
 
 from fastapi import HTTPException
@@ -233,3 +234,39 @@ async def changed_refusal(db, booking_id: str, *, what: str, client: bool = Fals
         return BookingBlocked(409, f"{dog} was just checked in, so this visit can't be {what}. Check {dog} out instead.",
                               code="checked_in", action="check_out")
     return HTTPException(status_code=409, detail="This visit just changed. Refresh and try again.")
+
+
+# ─────────────────────────── when a client may still cancel online
+#
+# The cutoff ("Cancellation cutoff (hours)" in Settings) counted back from
+# midnight UTC of the visit's date — 8 PM the evening before (7 PM in
+# winter) — so a client cancelling a 7 AM Tuesday daycare 34 hours ahead was
+# told it was under 24 hours. It counts back from when the visit really
+# starts: its appointment or drop-off time, else the day's opening time.
+
+def visit_start(booking: dict, start_fn: Callable[[Any], datetime], tz) -> Optional[datetime]:
+    """When this visit starts, in the business time zone (None: no valid date).
+    `start_fn` is the booking-time rule (server `_booking_start_local`); a
+    visit it can't place (a day since closed, a lesson with no time) starts
+    at 7:00 AM that day."""
+    try:
+        day = date.fromisoformat(str((booking or {}).get("date") or "")[:10])
+    except ValueError:
+        return None
+    body = SimpleNamespace(
+        date=day.isoformat(), time=booking.get("time") or "", dropoff_time=booking.get("dropoff_time") or "",
+        service_type=booking.get("service_type") or "", service_id=booking.get("service_id"),
+    )
+    try:
+        return start_fn(body)
+    except Exception:
+        return datetime.combine(day, dtime(7, 0), tzinfo=tz)
+
+
+def cancel_cutoff_block(cutoff_hours: int, start: datetime) -> BookingBlocked:
+    when = f"{pretty_date(start.date())} at {start.strftime('%I:%M %p').lstrip('0')}"
+    return BookingBlocked(
+        400, f"Online cancellations close {cutoff_hours} hours before the visit starts ({when}), so this one "
+             "can't be cancelled here. Please message us and we'll take care of it.",
+        code="cancel_cutoff", action="contact_us",
+    )

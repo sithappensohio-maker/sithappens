@@ -46,7 +46,6 @@ test("a checked-in dog can only be cancelled as a mistaken check-in", async () =
   act(() => root.render(<CancelBookingModal booking={{ ...BOOKING, checked_in_at: "2026-10-01T13:00:00+00:00" }} onClose={onClose} />));
   expect(q("cancel-on-site").textContent).toContain("Check out");
   expect(q("cancel-refund").disabled).toBe(true);
-  expect(q("cancel-charge").disabled).toBe(true);
   await click(q("cancel-undo-check-in"));
   expect(q("cancel-refund").disabled).toBe(false);
   await click(q("cancel-refund"));

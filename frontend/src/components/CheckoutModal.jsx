@@ -1609,12 +1609,18 @@ export function CheckoutModal(props) {
 }
 
 
+// The business doesn't charge for cancellations (owner, 2026-09-26), so the
+// "Cancel · charge" option isn't offered. The server still supports it
+// (DELETE /bookings/{id}?forfeit=true, fee tiers in Settings → Day-to-Day);
+// set this to true to offer it again.
+const OFFER_CANCELLATION_CHARGE = false;
+
 export function CancelBookingModal({ booking, onClose }) {
   useEditLock(true);
   // The server's rule (DELETE /bookings/{id}): cancelling needs booking_edit,
   // and adding the cancellation charge also needs take_payments.
   const auth = useAuth();
-  const canCharge = !!(auth?.can?.("booking_edit") && auth?.can?.("take_payments"));
+  const canCharge = OFFER_CANCELLATION_CHARGE && !!(auth?.can?.("booking_edit") && auth?.can?.("take_payments"));
   const credits = Number(booking.credits_deducted || 0);
   const pool = booking.credit_service_type || booking.service_type;
   const cashPrice = Number(booking.actual_price || 0);
@@ -1658,7 +1664,9 @@ export function CancelBookingModal({ booking, onClose }) {
         </div>
 
         <p className="text-[14px] text-gray-300 leading-relaxed mb-4">
-          Removes this booking from the roster. Pick <strong>refund</strong> for honest cancels, or <strong>charge</strong> for late-cancels / no-shows where the policy is "we keep the money".
+          {canCharge
+            ? <>Removes this booking from the roster. Pick <strong>refund</strong> for honest cancels, or <strong>charge</strong> for late-cancels / no-shows where the policy is "we keep the money".</>
+            : <>Removes this booking from the roster. Nothing is charged.</>}
         </p>
 
         {onSite && (
@@ -1684,7 +1692,7 @@ export function CancelBookingModal({ booking, onClose }) {
         )}
         {credits === 0 && cashPrice === 0 && (
           <div className="bg-bgBase border border-bgHover rounded p-3 mb-2 text-[14px] text-gray-400">
-            <i className="fas fa-info-circle mr-1.5"/>No money or credits attached yet — a charge will pull from the service's catalog price.
+            <i className="fas fa-info-circle mr-1.5"/>No money or credits attached yet{canCharge ? " — a charge will pull from the service's catalog price." : "."}
           </div>
         )}
 
