@@ -137,7 +137,18 @@ export default function Bookings() {
   }, [bookings]);
   const cancel = async (id) => {
     if (!(await confirm({ title: "Cancel booking?", body: "This will remove the booking. Credits aren't charged until check-out.", confirmText: "Cancel booking", cancelText: "Keep it", tone: "danger" }))) return;
-    try { await api.delete(`/bookings/${id}`); load(); } catch (e) { setErr(formatErr(e.response?.data?.detail)); }
+    try { await api.delete(`/bookings/${id}`); load(); } catch (e) {
+      // A dog that is checked in leaves by checkout; cancelling is only for a
+      // check-in made by mistake, which the server takes back when asked.
+      if (e.response?.data?.block?.action === "undo_check_in" && await confirm({
+        title: "Take back the check-in?", body: formatErr(e.response?.data?.detail),
+        confirmText: "Take back check-in & cancel", cancelText: "Keep it", tone: "danger",
+      })) {
+        try { await api.delete(`/bookings/${id}`, { params: { undo_check_in: "true" } }); load(); return; }
+        catch (e2) { setErr(formatErr(e2.response?.data?.detail)); return; }
+      }
+      setErr(formatErr(e.response?.data?.detail));
+    }
   };
 
   // Hide completed / cancelled / rejected by default — they clutter the active queue.

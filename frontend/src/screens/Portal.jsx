@@ -2565,7 +2565,7 @@ export default function Portal() {
                     </div>
                     <div className="flex items-center gap-2 flex-wrap justify-start sm:justify-end shrink-0">
                       <span className={`text-[11px] font-black uppercase tracking-widest px-2 py-1 rounded border ${b.status==="approved"?"bg-shGreen/15 text-shGreen border-shGreen/40":b.status==="pending"?"bg-shOrange/15 text-shOrange border-shOrange/40":b.status==="rejected"?"bg-red-500/15 text-red-400 border-red-500/40":b.status==="completed"?"bg-shBlue/15 text-shBlue border-shBlue/40":"bg-gray-500/15 text-gray-400 border-bgHover"}`}>{bookingStatusLabel(b.status)}</span>
-                      {(b.status==="pending"||b.status==="approved") && <button onClick={()=>cancel(b.id)} data-testid={`booking-cancel-${b.id}`}
+                      {(b.status==="pending"||b.status==="approved") && !(b.checked_in_at && !b.checked_out_at) && <button onClick={()=>cancel(b.id)} data-testid={`booking-cancel-${b.id}`}
                         className="text-[12px] font-black uppercase text-red-400 hover:text-red-300 tracking-widest px-3 min-h-[44px] py-2 rounded border border-red-500/30 hover:border-red-500/60 transition">Cancel</button>}
                       {/* Sprint 110cf — prepaid program sessions get a Reschedule Request button */}
                       {b.status==="approved" && b.is_prepaid_program_session && !isPast(b) && (

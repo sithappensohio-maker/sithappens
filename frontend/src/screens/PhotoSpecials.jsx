@@ -121,7 +121,7 @@ export default function PhotoSpecials({ can }) {
       const { data } = await api.get("/admin/photo-specials");
       setSpecials(data.specials || []);
     } catch (e) {
-      toast.error(formatErr(e) || "Could not load photo specials");
+      toast.error(formatErr(e.response?.data?.detail) || "Could not load photo specials");
     } finally {
       setLoading(false);
     }
@@ -139,7 +139,7 @@ export default function PhotoSpecials({ can }) {
       setEditing(null);
       load();
     } catch (e) {
-      toast.error(formatErr(e) || "Save failed");
+      toast.error(formatErr(e.response?.data?.detail) || "Save failed");
     } finally {
       setBusy(false);
     }
@@ -189,7 +189,7 @@ export default function PhotoSpecials({ can }) {
       const today = todayISO();
       setRosterDay(day || (running.includes(today) ? today : running[0]) || "");
     } catch (e) {
-      toast.error(formatErr(e) || "Could not load reservations");
+      toast.error(formatErr(e.response?.data?.detail) || "Could not load reservations");
     }
   };
 
@@ -200,7 +200,7 @@ export default function PhotoSpecials({ can }) {
       toast.success("Marked as a no-show");
       openRoster(sp, rosterDay);
     } catch (e) {
-      toast.error(formatErr(e) || "Could not mark no-show");
+      toast.error(formatErr(e.response?.data?.detail) || "Could not mark no-show");
     }
   };
 
@@ -211,7 +211,7 @@ export default function PhotoSpecials({ can }) {
       toast.success("Deleted");
       load();
     } catch (e) {
-      toast.error(formatErr(e) || "Could not delete");
+      toast.error(formatErr(e.response?.data?.detail) || "Could not delete");
     }
   };
 
@@ -224,7 +224,7 @@ export default function PhotoSpecials({ can }) {
         toast.success("Hero image updated");
         load();
       } catch (e) {
-        toast.error(formatErr(e) || "Upload failed");
+        toast.error(formatErr(e.response?.data?.detail) || "Upload failed");
       }
     };
     reader.readAsDataURL(file);
@@ -563,9 +563,9 @@ export default function PhotoSpecials({ can }) {
                                   className="min-h-[34px] px-2.5 rounded-lg border border-shBorder text-[10.5px] font-black uppercase tracking-widest text-shPrimary">
                             <i className="fas fa-camera-retro mr-1"/>Photo order
                           </button>
-                          <button onClick={() => markNoShow(roster.special, r)}
+                          {!r.checked_in_at && <button onClick={() => markNoShow(roster.special, r)}
                                   data-testid={`photo-special-no-show-${r.booking_id}`}
-                                  className="min-h-[34px] px-2.5 rounded-lg border border-shBorder text-[10.5px] font-black uppercase tracking-widest text-shAccent">No show</button>
+                                  className="min-h-[34px] px-2.5 rounded-lg border border-shBorder text-[10.5px] font-black uppercase tracking-widest text-shAccent">No show</button>}
                         </>
                       )}
                     </span>

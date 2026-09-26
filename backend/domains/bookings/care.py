@@ -833,6 +833,74 @@ async def _check_photo_room(booking_id: str, photo_len: int) -> None:
         )
 
 
+def _count(value: Any) -> Optional[int]:
+    """A stored counter as a whole number (older rows may hold "3"), or None."""
+    if value is None or isinstance(value, bool):
+        return None
+    try:
+        return max(0, int(float(value)))
+    except (TypeError, ValueError):
+        return None
+
+
+async def bathroom_tick(booking_id: str, kind: str, delta: int) -> Dict[str, Any]:
+    """The roster's pee/poop counter. `bathroom_log` keeps the visit's running
+    total (the client's care log, report card and roster read it);
+    `bathroom_days` keeps each business day's count, so End of Day can count
+    one day of a multi-day stay. One atomic $inc: the old read-then-write
+    lost a tap when two landed together. Undo takes a tap back from the
+    latest day holding one (today first), and from the total, so the days
+    never add up to more than the total."""
+    db = _g("db")
+    fields = {"_id": 0, "id": 1, "bathroom_log": 1, "bathroom_days": 1}
+    b = await db.bookings.find_one({"id": booking_id}, fields)
+    if not b:
+        raise HTTPException(status_code=404, detail="Booking not found")
+    today = _today()
+    # Older data can hold a missing, null or text counter; $inc can't go
+    # through one. Each repair only lands if nobody changed it meanwhile.
+    log = b.get("bathroom_log")
+    fixed = dict(log) if isinstance(log, dict) else {}
+    for k in ("pee", "poop"):
+        fixed[k] = _count(fixed.get(k)) or 0
+    if fixed != log:
+        await db.bookings.update_one({"id": booking_id, "bathroom_log": log}, {"$set": {"bathroom_log": fixed}})
+    days = b.get("bathroom_days")
+    if "bathroom_days" in b and not isinstance(days, dict):
+        await db.bookings.update_one({"id": booking_id, "bathroom_days": days}, {"$set": {"bathroom_days": {}}})
+    elif isinstance(days, dict) and today in days:
+        entry = days[today]
+        good = dict(entry) if isinstance(entry, dict) else {}
+        for k in ("pee", "poop"):
+            if k in good:
+                good[k] = _count(good[k]) or 0
+        if good != entry:
+            await db.bookings.update_one({"id": booking_id, f"bathroom_days.{today}": entry},
+                                         {"$set": {f"bathroom_days.{today}": good}})
+    total = f"bathroom_log.{kind}"
+    if delta > 0:
+        await db.bookings.update_one({"id": booking_id}, {"$inc": {total: 1, f"bathroom_days.{today}.{kind}": 1}})
+    elif delta < 0:
+        for _attempt in range(3):
+            doc = await db.bookings.find_one({"id": booking_id}, fields) or {}
+            held = {k: v for k, v in (doc.get("bathroom_days") or {}).items()
+                    if isinstance(v, dict) and k <= today and (_count(v.get(kind)) or 0) > 0
+                    and isinstance(v.get(kind), (int, float))}
+            filt: Dict[str, Any] = {"id": booking_id}
+            inc: Dict[str, int] = {}
+            if (_count(((doc.get("bathroom_log") or {}) if isinstance(doc.get("bathroom_log"), dict) else {}).get(kind)) or 0) > 0:
+                filt[total], inc[total] = {"$gt": 0}, -1
+            if held:
+                path = f"bathroom_days.{max(held)}.{kind}"
+                filt[path], inc[path] = {"$gt": 0}, -1
+            if not inc:
+                break
+            if (await db.bookings.update_one(filt, {"$inc": inc})).matched_count:
+                break
+    fresh = await db.bookings.find_one({"id": booking_id}, {"_id": 0, "bathroom_log": 1}) or {}
+    return {"ok": True, "bathroom_log": fresh.get("bathroom_log") or {"pee": 0, "poop": 0}}
+
+
 async def sync_dog(dog_id: str) -> int:
     """Run right after the dog's profile is saved: bring every visit the dog
     is on today in line with it NOW, so a medication added at 9 PM for 7 AM

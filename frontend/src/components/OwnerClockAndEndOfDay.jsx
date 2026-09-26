@@ -400,7 +400,7 @@ export function EndOfDayPanel({ onJump = () => {} }) {
                     <EodSection title="Boarding stayovers · not blockers" icon="fa-moon" tone="blue" items={data.boarding_stayovers}
                                 render={(r)=>(<div className="flex justify-between items-center">
                                   <div><span className="text-shText font-black">{r.dog_name}</span> <span className="text-shTextMuted text-xs">· {r.client_name || "—"}</span></div>
-                                  <span className="text-[11px] text-shTextMuted">checkout {r.end_date || "later"}</span>
+                                  <span className="text-[11px] text-shTextMuted">{r.stay_kind === "board_train" ? "Board & Train · " : ""}{r.note || `checkout ${r.end_date || "later"}`}</span>
                                 </div>)}
                                 onClick={(r)=>{ onJump(r.booking_id); close(); }}/>
                   )}
@@ -415,9 +415,12 @@ export function EndOfDayPanel({ onJump = () => {} }) {
                     <>
                       {data.still_on_premises?.length > 0 && (
                         <EodSection title="Still on premises" icon="fa-paw" tone="red" items={data.still_on_premises}
-                                    render={(r)=>(<div className="flex justify-between items-center">
-                                      <div><span className="text-shText font-black">{r.dog_name}</span> <span className="text-shTextMuted text-xs">· {r.client_name || "—"}</span></div>
-                                      <span className="text-[11px] text-shTextMuted">{r.service_type}{r.kennel ? ` · ${r.kennel}` : ""}</span>
+                                    render={(r)=>(<div className="flex justify-between items-center gap-2">
+                                      <div className="min-w-0">
+                                        <span className="text-shText font-black">{r.dog_name}</span> <span className="text-shTextMuted text-xs">· {r.client_name || "—"}</span>
+                                        {r.note && <p className={`text-[11px] font-black ${r.reason === "overdue" || r.reason === "reopened" ? "text-red-300" : "text-shAccent"}`} data-testid={`eod-onsite-note-${r.booking_id}`}>{r.note}</p>}
+                                      </div>
+                                      <span className="text-[11px] text-shTextMuted shrink-0">{r.service_type}{r.kennel ? ` · ${r.kennel}` : ""}</span>
                                     </div>)}
                                     onClick={(r)=>{ onJump(r.booking_id); close(); }}/>
                       )}
@@ -441,7 +444,7 @@ export function EndOfDayPanel({ onJump = () => {} }) {
                   )}
                   <div className="grid grid-cols-2 sm:grid-cols-4 gap-2 pt-2">
                     <EodStat label="Completed" value={data.completed_count}/>
-                    <EodStat label="Cash today" value={`$${(data.revenue_cash || 0).toFixed(2)}`} color="text-shPrimary"/>
+                    <EodStat label="Paid at checkout" value={`$${(data.revenue_cash || 0).toFixed(2)}`} color="text-shPrimary"/>
                     <EodStat label="Meals · meds" value={`${data.care_log_totals?.feedings || 0} · ${data.care_log_totals?.medications || 0}`}/>
                     <EodStat label="💧 · 💩" value={`${data.care_log_totals?.pee || 0} · ${data.care_log_totals?.poop || 0}`}/>
                   </div>
@@ -524,7 +527,7 @@ export function EndOfDayPanel({ onJump = () => {} }) {
                           </div>
                         </div>
                       )}
-                      {!data.all_clear && <p className="text-[11px] text-shAccent font-black uppercase tracking-widest">There are still safety or money items to resolve. Boarding stayovers are not blockers unless due for checkout.</p>}
+                      {!data.all_clear && <p className="text-[11px] text-shAccent font-black uppercase tracking-widest">There are still safety or money items to resolve. Dogs staying past today are not blockers; dogs due out today or overdue are.</p>}
                     </div>
                   )}
                 </>

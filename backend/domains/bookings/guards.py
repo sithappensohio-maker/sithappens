@@ -6,7 +6,7 @@ imports: callers pass in the few server helpers these rules need.
 from __future__ import annotations
 
 from datetime import date
-from typing import Any, Callable, List, Optional
+from typing import Any, Callable, Dict, List, Optional, Tuple
 
 from fastapi import HTTPException
 
@@ -143,3 +143,93 @@ def skip_entry(day: str, exc) -> dict:
     if block_of(exc):
         entry["block"] = block_of(exc)
     return entry
+
+
+# ─────────────────────────── a dog on site stays on site until checked out
+#
+# A visit whose dog is checked in and not checked out is what every on-site
+# screen (End of Day, Care Board, Kennel Board, roster, Today) lists. Moving
+# it to cancelled / rejected / no-show / completed any other way than
+# checkout made a dog who was still here vanish from all of them. Only
+# checkout (or the stuck-checkout tool, for a stay past its end) closes it;
+# a check-in made by mistake is taken back explicitly by the staff cancel.
+
+CHECK_IN_FIELDS = (
+    "checked_in_at", "checked_in_by", "checked_in_by_name",
+    "checked_in_lat", "checked_in_lng", "checked_in_accuracy_m",
+)
+NOT_ON_SITE = {"$or": [{"checked_in_at": {"$in": [None, ""]}}, {"checked_out_at": {"$nin": [None, ""]}}]}
+
+
+def on_site(booking: Optional[dict]) -> bool:
+    return bool(booking) and bool(booking.get("checked_in_at")) and not booking.get("checked_out_at")
+
+
+def _dog(booking: dict) -> str:
+    return (booking or {}).get("dog_name") or "This dog"
+
+
+def on_site_cancel_block(booking: dict, *, client: bool) -> BookingBlocked:
+    dog = _dog(booking)
+    if client:
+        return BookingBlocked(
+            409, f"{dog} is checked in with us right now, so this visit can't be cancelled online. "
+                 "Please message us or talk to the front desk.",
+            code="checked_in", action="contact_us",
+        )
+    return BookingBlocked(
+        409, f"{dog} is checked in right now. If {dog} is going home, use Check out instead "
+             "(check out at $0 if nothing is owed). If the check-in was a mistake, cancel again "
+             "and choose to take the check-in back.",
+        code="checked_in", action="undo_check_in",
+    )
+
+
+def refuse_while_on_site(booking: dict, what: str) -> None:
+    """`what`: the thing that can't happen, e.g. "declined"."""
+    if on_site(booking):
+        dog = _dog(booking)
+        if booking.get("financial_reopened_at"):
+            raise BookingBlocked(409, f"This checkout was reopened, so this visit can't be {what}. Check {dog} out again instead.",
+                                 code="checked_in", action="check_out")
+        raise BookingBlocked(409, f"{dog} is checked in right now, so this visit can't be {what}. Check {dog} out instead.",
+                             code="checked_in", action="check_out")
+
+
+def refuse_no_show_after_check_in(booking: dict) -> None:
+    if (booking or {}).get("checked_in_at"):
+        dog = _dog(booking)
+        raise BookingBlocked(409, f"{dog} was checked in, so this can't be a no-show. Check {dog} out instead.",
+                             code="checked_in", action="check_out")
+
+
+def still_as_read(booking: dict) -> dict:
+    """A write filter that only matches while the visit's on-site state is
+    what was read — a check-in (or checkout) landing in between wins."""
+    if on_site(booking):
+        return {"checked_in_at": booking["checked_in_at"], "checked_out_at": {"$in": [None, ""]}}
+    return dict(NOT_ON_SITE)
+
+
+def undo_check_in_update(booking: dict, user: dict, ts: str) -> Tuple[Dict[str, Any], Dict[str, str]]:
+    """($set, $unset) that take back a check-in made by mistake, keeping a
+    record of it on the visit."""
+    record = {
+        "at": ts, "by": (user or {}).get("id"),
+        "by_name": (user or {}).get("display_name") or (user or {}).get("name") or (user or {}).get("email"),
+        "checked_in_at": booking.get("checked_in_at"), "checked_in_by": booking.get("checked_in_by"),
+    }
+    return {"check_in_undone": record}, {f: "" for f in CHECK_IN_FIELDS}
+
+
+async def changed_refusal(db, booking_id: str, *, what: str, client: bool = False, cancel: bool = False) -> HTTPException:
+    """The refusal for a write that lost to a check-in (or checkout) that
+    landed after the visit was read."""
+    now = await db.bookings.find_one({"id": booking_id}, {"_id": 0, "dog_name": 1, "checked_in_at": 1, "checked_out_at": 1}) or {}
+    if on_site(now):
+        if cancel:
+            return on_site_cancel_block(now, client=client)
+        dog = _dog(now)
+        return BookingBlocked(409, f"{dog} was just checked in, so this visit can't be {what}. Check {dog} out instead.",
+                              code="checked_in", action="check_out")
+    return HTTPException(status_code=409, detail="This visit just changed. Refresh and try again.")

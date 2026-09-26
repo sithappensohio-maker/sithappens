@@ -1623,13 +1623,22 @@ export function CancelBookingModal({ booking, onClose }) {
   const previewFee = cashPrice || Number(booking.credit_value || 0) || 0;
   const [busy, setBusy] = useState(false);
   const [err, setErr] = useState("");
+  // A dog that is checked in leaves by checkout. Cancelling it is only for a
+  // check-in made by mistake, and takes that check-in back (recorded).
+  const [onSite, setOnSite] = useState(!!booking.checked_in_at && !booking.checked_out_at);
+  const [mistake, setMistake] = useState(false);
+  const blocked = onSite && !mistake;
 
   const submit = async (forfeit) => {
     setBusy(true); setErr("");
     try {
-      await api.delete(`/bookings/${booking.id}`, { params: { forfeit: forfeit ? "true" : "false" } });
+      const params = { forfeit: forfeit ? "true" : "false" };
+      if (onSite) params.undo_check_in = "true";
+      await api.delete(`/bookings/${booking.id}`, { params });
       onClose();
     } catch (e) {
+      // Checked in on another screen since this opened: offer the take-back.
+      if (e.response?.data?.block?.action === "undo_check_in") { setOnSite(true); setMistake(false); }
       setErr(e.response?.data?.detail || "Cancel failed");
       setBusy(false);
     }
@@ -1652,6 +1661,15 @@ export function CancelBookingModal({ booking, onClose }) {
           Removes this booking from the roster. Pick <strong>refund</strong> for honest cancels, or <strong>charge</strong> for late-cancels / no-shows where the policy is "we keep the money".
         </p>
 
+        {onSite && (
+          <div className="bg-shOrange/10 border border-shOrange/40 rounded p-3 mb-3 text-[14px] text-gray-200" data-testid="cancel-on-site">
+            <p><i className="fas fa-paw text-shOrange mr-1.5"/><strong>{booking.dog_name || "This dog"} is checked in.</strong> Going home? Close this and use <strong>Check out</strong> instead (check out at $0 if nothing is owed).</p>
+            <label className="flex items-start gap-2 mt-2 cursor-pointer">
+              <input type="checkbox" checked={mistake} onChange={(e)=>setMistake(e.target.checked)} className="mt-1" data-testid="cancel-undo-check-in"/>
+              <span>The check-in was a mistake — take it back and cancel.</span>
+            </label>
+          </div>
+        )}
         {credits > 0 && (
           <div className="bg-bgBase border border-bgHover rounded p-3 mb-2 text-[14px] text-gray-300 flex items-center gap-2">
             <i className="fas fa-coins text-shGreen"/>
@@ -1673,13 +1691,13 @@ export function CancelBookingModal({ booking, onClose }) {
         {err && <p className="text-red-400 text-[15px] mt-2 mb-1" data-testid="cancel-error">{err}</p>}
 
         <div className="grid grid-cols-1 gap-2 mt-4">
-          <button onClick={()=>submit(false)} disabled={busy} data-testid="cancel-refund"
+          <button onClick={()=>submit(false)} disabled={busy || blocked} data-testid="cancel-refund"
                   className="bg-shGreen text-bgHeader px-4 py-3 rounded font-black uppercase text-[14px] tracking-widest shadow hover:bg-shGreen/90 disabled:opacity-50 flex items-center justify-between">
             <span><i className="fas fa-rotate-left mr-2"/>Cancel · refund {credits > 0 ? `${credits} credit${credits === 1 ? "" : "s"}` : "in full"}</span>
             <i className="fas fa-chevron-right text-[14px] opacity-70"/>
           </button>
           {canCharge && (
-          <button onClick={()=>submit(true)} disabled={busy} data-testid="cancel-charge"
+          <button onClick={()=>submit(true)} disabled={busy || blocked} data-testid="cancel-charge"
                   className="bg-red-500 text-white px-4 py-3 rounded font-black uppercase text-[14px] tracking-widest shadow hover:bg-red-600 disabled:opacity-50 flex items-center justify-between">
             <span>
               <i className="fas fa-ban mr-2"/>Cancel · charge {previewFee > 0 ? `$${previewFee.toFixed(2)}` : (credits > 0 ? `${credits} credit${credits === 1 ? "" : "s"}` : "no-show fee")}

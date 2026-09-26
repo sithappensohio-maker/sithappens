@@ -104,7 +104,8 @@ export default function Waitlist() {
         dog_id: form.dog_id,
         service_type: form.service_type,
         requested_date: form.requested_date,
-        requested_end_date: form.requested_end_date || form.requested_date,
+        // A day visit is one date; only a boarding stay has an end date.
+        requested_end_date: form.service_type === "boarding" ? (form.requested_end_date || form.requested_date) : form.requested_date,
         priority: form.priority,
         notes: form.notes || "",
       });
@@ -369,12 +370,12 @@ function AddModal({ form, setForm, dogs, availability, onSave, onClose }) {
                      style={{ colorScheme: "dark" }} data-testid="waitlist-date"
                      className="w-full mt-1 bg-[var(--sh-card-base)] border border-shBorder rounded p-2 text-shText text-sm" />
             </div>
-            <div>
+            {form.service_type === "boarding" && <div>
               <label className="text-[12px] font-black text-shTextMuted uppercase tracking-widest">End date (boarding)</label>
               <input type="date" value={form.requested_end_date} onChange={(e)=>setForm({ ...form, requested_end_date: e.target.value })}
                      style={{ colorScheme: "dark" }}
                      className="w-full mt-1 bg-[var(--sh-card-base)] border border-shBorder rounded p-2 text-shText text-sm" />
-            </div>
+            </div>}
           </div>
 
           {availability?.has_limit && (

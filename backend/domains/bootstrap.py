@@ -23,6 +23,7 @@ from domains.pos import services as pos_services
 from domains.bookings import services as booking_services
 from domains.bookings import late_day as late_day_checkout
 from domains.bookings import care as care_domain
+from domains.operations import end_of_day as end_of_day_domain
 from domains.clients import signup_claim
 from domains.billing import tab_sync as billing_tab_sync, resolve as billing_resolve
 from domains.register import services as register_services
@@ -135,6 +136,7 @@ def register_domains(
     shop_checkout_services.configure(server_globals=server_globals)
     late_day_checkout.configure(server_globals=server_globals)
     care_domain.configure(server_globals=server_globals)
+    end_of_day_domain.configure(server_globals=server_globals)
     signup_claim.configure(server_globals=server_globals)
     billing_tab_sync.configure(server_globals=server_globals)
     gift_card_shop.configure(
@@ -192,6 +194,7 @@ def register_domains(
         recheck_all_trophies=server_globals["recheck_all_trophies"],
         eligible_trophies=server_globals["_eligible_trophies"],
         logger=logger,
+        business_day_utc_bounds=server_globals["_business_day_utc_bounds"],
     )
     # Re-export the moved endpoints under their original server-module names so the
     # in-process suite keeps calling them exactly as before (no duplicated logic).

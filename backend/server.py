@@ -78,8 +78,10 @@ from domains.pos import services as pos_domain_services
 from domains.bookings import services as bookings_domain_services
 from domains.bookings.blocks import BookingBlocked, block_of, pretty_date, pretty_time
 from domains.bookings import guards as booking_guards
+from domains.bookings import spans as booking_spans
 from domains.bookings import late_day as late_day_checkout
 from domains.bookings import care as care_domain
+from domains.operations import end_of_day as end_of_day_domain
 from domains.clients import signup_claim
 from domains.billing import tab_sync as billing_tab_sync, resolve as billing_resolve
 from domains.shop import shopify_pricing
@@ -4228,6 +4230,8 @@ async def _create_booking_impl(body: BookingIn, user: dict = Depends(get_current
     if body.service_type == "boarding":
         if not body.end_date or str(body.end_date)[:10] <= str(body.date)[:10]:
             raise BookingBlocked(400, "Boarding needs at least one night — please pick a pickup date after the drop-off date. For a same-day visit, book Daycare instead.", code="boarding_zero_nights", action="pick_date")
+    if body.end_date and await booking_spans.span_kind(db, body.model_dump(), selected_service) == "day":
+        body.end_date = None  # a day visit is one date (booking_spans)
 
     # Per-service booking controls are evaluated against the real local start
     # time, never midnight/UTC. This makes a 4 PM appointment tomorrow count as
@@ -5053,7 +5057,8 @@ async def reschedule_booking(booking_id: str, body: RescheduleIn, _: dict = Depe
     booking = await db.bookings.find_one({"id": booking_id}, {"_id": 0})
     if not booking:
         raise HTTPException(status_code=404, detail="Booking not found")
-    update = {"date": body.date, "end_date": body.end_date}
+    update = await booking_spans.dates_update(
+        db, booking, {"date": body.date, "end_date": body.end_date}, today=business_today().isoformat())
     return await _update_booking_with_capacity(booking, update)
 
 
@@ -5621,7 +5626,10 @@ async def reject_booking(booking_id: str, user: dict = Depends(require_admin)):
     if not booking:
         raise HTTPException(status_code=404, detail="Booking not found")
     _assert_booking_financial_edit_allowed(booking, {"status"})
-    await db.bookings.update_one({"id": booking_id}, {"$set": {"status": "rejected"}})
+    booking_guards.refuse_while_on_site(booking, "declined")
+    res = await db.bookings.update_one({"id": booking_id, **booking_guards.still_as_read(booking)}, {"$set": {"status": "rejected"}})
+    if not res.matched_count:
+        raise await booking_guards.changed_refusal(db, booking_id, what="declined")
     booking["status"] = "rejected"
     # Best-effort notification — approve already emails the client, reject
     # never did, leaving a declined request with no explanation.
@@ -5633,7 +5641,8 @@ async def reject_booking(booking_id: str, user: dict = Depends(require_admin)):
         pass
     return booking
 
-async def cancel_booking(booking_id: str, forfeit: bool = False, user: dict = Depends(get_current_user)):
+async def cancel_booking(booking_id: str, forfeit: bool = False, user: dict = Depends(get_current_user),
+                         undo_check_in: bool = False):
     # Who may cancel is settled before the money lock below, so an account
     # without the right can't hold up this client's checkouts (guards.py).
     booking_guards.require_cancel_rights(user, forfeit, _perms_for)
@@ -5647,12 +5656,12 @@ async def cancel_booking(booking_id: str, forfeit: bool = False, user: dict = De
     # and then update money/credits in conflicting directions.
     owner, keys, client_id, operation_id = await _acquire_booking_financial_correction_guard(booking_id)
     try:
-        return await _cancel_booking_impl(booking_id, forfeit, user)
+        return await _cancel_booking_impl(booking_id, forfeit, user, undo_check_in)
     finally:
         await _release_booking_financial_correction_guard(owner, keys, client_id, operation_id)
 
 
-async def _cancel_booking_impl(booking_id: str, forfeit: bool, user: dict):
+async def _cancel_booking_impl(booking_id: str, forfeit: bool, user: dict, undo_check_in: bool = False):
     """Cancel a booking.
 
     Default behavior (`forfeit=False`): credits previously deducted are refunded
@@ -5678,6 +5687,12 @@ async def _cancel_booking_impl(booking_id: str, forfeit: bool, user: dict):
     # Clients cannot trigger a charge — only staff can do that.
     if forfeit and user.get("role") == "client":
         raise HTTPException(status_code=403, detail="Only staff can issue a cancellation charge")
+    # A dog that is checked in leaves by checkout. Staff may take back a
+    # check-in made by mistake in the same step (it is recorded).
+    client_cancel = user.get("role") == "client"
+    taking_back = booking_guards.on_site(booking)
+    if taking_back and (client_cancel or not undo_check_in):
+        raise booking_guards.on_site_cancel_block(booking, client=client_cancel)
     # Cancellation cutoff for clients only (admins + employees bypass)
     if user.get("role") == "client":
         settings = await get_settings()
@@ -5726,15 +5741,11 @@ async def _cancel_booking_impl(booking_id: str, forfeit: bool, user: dict):
         update_payload["cancellation_fee"] = fee
         update_payload["cancellation_fee_pct"] = pct
         update_payload["cancellation_hours_notice"] = round(hours_until, 1)
-    else:
-        # Refund credits (daycare or training) if previously approved
-        if booking["status"] == "approved":
-            refund = float(booking.get("credits_deducted") or 0)
-            if refund > 0:
-                credit_pool = booking.get("credit_service_type") or booking.get("service_type") or "daycare"
-                balance_field = _credit_balance_field(credit_pool) or "credits"
-                await db.clients.update_one({"id": booking["client_id"]}, {"$inc": {balance_field: refund}})
-                await _restore_credit_lots(booking.get("credit_lot_redemptions") or booking.get("credit_lot_ids") or [], refund)
+    guard = {"id": booking_id, **booking_guards.still_as_read(booking)}
+    unset: Dict[str, str] = {}
+    if taking_back:
+        undone, unset = booking_guards.undo_check_in_update(booking, user, now_iso())
+        update_payload.update(undone)
     # A non-zero cancellation charge becomes a locked, unpaid invoice rather
     # than a mutable note. It also lands on the client's tab and append-only
     # ledger so the booking, AR balance, and audit history cannot drift apart.
@@ -5754,6 +5765,7 @@ async def _cancel_booking_impl(booking_id: str, forfeit: bool, user: dict):
         ledger_id = None
         event_id = None
         balance_applied = False
+        booking_written = False
         try:
             if booking.get("client_id"):
                 await _adjust_client_balance(booking["client_id"], fee)
@@ -5764,9 +5776,10 @@ async def _cancel_booking_impl(booking_id: str, forfeit: bool, user: dict):
                     booking_id=booking_id, created_by=user.get("id") or "admin",
                 )
                 ledger_id = ledger.get("id")
-            result = await db.bookings.update_one({"id": booking_id}, {"$set": update_payload})
+            result = await db.bookings.update_one(guard, {"$set": update_payload, **({"$unset": unset} if unset else {})})
             if result.matched_count != 1:
-                raise RuntimeError("Booking disappeared while recording cancellation charge")
+                raise await booking_guards.changed_refusal(db, booking_id, what="cancelled", client=client_cancel, cancel=True)
+            booking_written = True
             event = await _record_booking_financial_event(
                 booking, kind="cancellation_charge", amount=fee,
                 reason=f"Cancellation policy charge ({update_payload.get('cancellation_fee_pct', 0):g}%)",
@@ -5784,17 +5797,30 @@ async def _cancel_booking_impl(booking_id: str, forfeit: bool, user: dict):
             )
             event_id = event.get("id")
         except Exception as exc:
-            await db.bookings.replace_one({"id": booking_id}, booking, upsert=False)
+            if booking_written:
+                await db.bookings.replace_one({"id": booking_id}, booking, upsert=False)
             if balance_applied and booking.get("client_id"):
                 await db.clients.update_one({"id": booking["client_id"]}, {"$inc": {"account_balance": -fee}})
             if ledger_id:
                 await db.payment_ledger.delete_one({"id": ledger_id})
             if event_id:
                 await db.booking_financial_events.delete_one({"id": event_id})
+            if isinstance(exc, HTTPException):
+                raise
             logger.exception("Charged cancellation rolled back for booking %s", booking_id)
             raise HTTPException(status_code=500, detail="The cancellation charge could not be saved safely. No financial changes were kept.") from exc
     else:
-        await db.bookings.update_one({"id": booking_id}, {"$set": update_payload})
+        res = await db.bookings.update_one(guard, {"$set": update_payload, **({"$unset": unset} if unset else {})})
+        if not res.matched_count:
+            raise await booking_guards.changed_refusal(db, booking_id, what="cancelled", client=client_cancel, cancel=True)
+        # Credits come back only once the visit really is cancelled.
+        if not forfeit and booking["status"] == "approved":
+            refund = float(booking.get("credits_deducted") or 0)
+            if refund > 0:
+                credit_pool = booking.get("credit_service_type") or booking.get("service_type") or "daycare"
+                balance_field = _credit_balance_field(credit_pool) or "credits"
+                await db.clients.update_one({"id": booking["client_id"]}, {"$inc": {balance_field: refund}})
+                await _restore_credit_lots(booking.get("credit_lot_redemptions") or booking.get("credit_lot_ids") or [], refund)
     return {"ok": True, "forfeit": forfeit, "cancellation_fee": update_payload.get("cancellation_fee", 0)}
 
 async def availability(date_str: str, dog_id: str, user: dict = Depends(get_current_user)):
@@ -12466,6 +12492,7 @@ async def patch_booking(booking_id: str, body: BookingPatchIn, _: dict = Depends
         raise HTTPException(status_code=404, detail="Booking not found")
     update = {k: v for k, v in body.model_dump(exclude_unset=True).items() if v is not None}
     _assert_booking_financial_edit_allowed(booking, update.keys())
+    update = await booking_spans.dates_update(db, booking, update, today=business_today().isoformat())
     if update:
         if update.get("crate"):
             conflict = await _crate_conflict(
@@ -29278,8 +29305,10 @@ async def admin_today_brain(_: dict = Depends(require_admin)):
             "checked_out_at": {"$in": [None, ""]},
             "$or": [
                 {"end_date": {"$lt": today_iso}},
-                {"end_date": {"$exists": False}, "date": {"$lt": today_iso}},
-                {"end_date": "", "date": {"$lt": today_iso}},
+                # Day visits store end_date null ($exists:False never matched it);
+                # a back-dated one checked in today isn't stuck.
+                {"end_date": {"$in": [None, ""]}, "date": {"$lt": today_iso},
+                 "checked_in_at": {"$lt": _business_day_utc_bounds(today_iso)[0]}},
             ],
         })
         if stuck > 0:
@@ -29661,8 +29690,12 @@ async def calendar_events(_: dict = Depends(require_admin), start: Optional[str]
                 "group_id": b.get("group_id"),
                 "dog_id": b.get("dog_id"),
                 "dog_name": b.get("dog_name"),
+                "spans_days": b["service_type"] == "boarding" or bool(
+                    b["service_type"] == "training" and str(b.get("end_date") or "")[:10] > str(b["date"])[:10]),
             },
         }
+        if b["service_type"] != "boarding":
+            event["durationEditable"] = False  # never True: that would override mobile's no-drag
         if is_timed:
             # FullCalendar prefers ISO datetime for timed events
             try:
@@ -33933,6 +33966,7 @@ async def startup():
     try:
         await events_domain.ensure_events_indexes(db)
         await billing_tab_sync.ensure_indexes()
+        await end_of_day_domain.ensure_indexes()
         await events_domain.seed_default_events(db)
     except Exception as exc:
         logger.warning("Events setup failed: %s", exc)
@@ -34291,6 +34325,7 @@ async def update_transaction(transaction_id: str, body: TransactionUpdateIn, _: 
         raise HTTPException(status_code=404, detail="Transaction not found")
     update = {k: v for k, v in body.model_dump().items() if v is not None}
     _assert_booking_financial_edit_allowed(booking, update.keys())
+    booking_guards.refuse_while_on_site(booking, "changed from Income (checkout records its payment)")
     # If a service_id is being set, also refresh service_name + default price (only if price not also being set)
     if body.service_id:
         svc = await db.services.find_one({"id": body.service_id}, {"_id": 0})
@@ -34325,7 +34360,9 @@ async def update_transaction(transaction_id: str, body: TransactionUpdateIn, _: 
     if float(update.get("cash_revenue") or 0) > 0 or float(booking.get("cash_revenue") or 0) > 0:
         money_day = _business_date_from_timestamp((update.get("paid_at") or booking.get("paid_at")))
         await _require_register_day_open(money_day)
-    await _tx_coll.update_one({"id": transaction_id}, {"$set": update})
+    res = await _tx_coll.update_one({"id": transaction_id, **booking_guards.still_as_read(booking)}, {"$set": update})
+    if not res.matched_count:
+        raise await booking_guards.changed_refusal(db, transaction_id, what="changed from Income")
     return {**booking, **update}
 
 
@@ -34343,9 +34380,10 @@ async def delete_transaction(transaction_id: str, _: dict = Depends(require_admi
         await _require_register_day_open(_business_date_from_timestamp(booking.get("paid_at")))
     # If it was created via log_service (no real check-in flow), hard-delete.
     # Otherwise, just strip the income fields and leave the booking intact.
-    if booking.get("service_id") and not booking.get("checked_in_at"):
-        await _tx_coll.delete_one({"id": transaction_id})
-    else:
+    # The delete only lands while the dog still isn't checked in (a check-in in
+    # between keeps the visit and strips the income fields instead).
+    if not (booking.get("service_id") and not booking.get("checked_in_at")
+            and (await _tx_coll.delete_one({"id": transaction_id, "checked_in_at": {"$in": [None, ""]}})).deleted_count):
         await _tx_coll.update_one(
             {"id": transaction_id},
             {"$unset": {"service_id": "", "service_name": "", "actual_price": "", "payment_status": "", "payment_method": "", "paid_at": "", "amount_paid": "", "balance_due": "", "cash_revenue": ""}},
@@ -46758,97 +46796,11 @@ async def employee_my_tasks(user: dict = Depends(require_employee_or_admin)):
 
 
 async def _admin_end_of_day_snapshot(day: Optional[str] = None) -> Dict[str, Any]:
-    """Sprint 110cr — Wrap-up snapshot for the operator at end of day:
-       - who's still on-site (checked in, never checked out)
-       - which completed bookings are unpaid
-       - which completed bookings have no report card filed yet
-       - today's revenue snapshot
-       - care-log roll-up (total feedings/medications/bathroom across all visits)
-    Designed to drive a single 'did I close everything out?' review screen so
-    the solo operator doesn't leave anything dangling overnight."""
-    today = _validated_register_date(day)
-    bookings = await db.bookings.find(
-        {"date": today, "status": {"$in": ["approved", "completed"]}},
-        {"_id": 0},
-    ).to_list(2000)
-    # Dogs staying overnight for boarding should NOT block end-of-day. They are
-    # expected to remain on premises until their pickup/checkout date. Only
-    # non-boarding dogs and boarding dogs due to leave today/past-due block closeout.
-    still_on = []
-    boarding_stayovers = []
-    for b in bookings:
-        if not (b.get("checked_in_at") and not b.get("checked_out_at")):
-            continue
-        service_type = (b.get("service_type") or "").lower()
-        end_date = b.get("end_date") or b.get("date") or today
-        row = {
-            "booking_id": b["id"],
-            "dog_name": b.get("dog_name", ""),
-            "client_name": b.get("client_name", ""),
-            "service_type": b.get("service_type", ""),
-            "kennel": b.get("kennel", ""),
-            "checked_in_at": b.get("checked_in_at", ""),
-            "end_date": end_date,
-        }
-        if service_type == "boarding" and end_date > today:
-            boarding_stayovers.append(row)
-        else:
-            still_on.append(row)
-    completed_today = [b for b in bookings if b.get("status") == "completed"]
-    unpaid = [
-        {
-            "booking_id": b["id"],
-            "dog_name": b.get("dog_name", ""),
-            "client_name": b.get("client_name", ""),
-            "amount": _booking_balance_due(b),
-            "service_type": b.get("service_type", ""),
-        }
-        for b in completed_today
-        if _booking_balance_due(b) > 0
-        and not b.get("is_prepaid_program_session")
-    ]
-    optional_missing_cards = [
-        {
-            "booking_id": b["id"],
-            "dog_name": b.get("dog_name", ""),
-            "client_name": b.get("client_name", ""),
-            "service_type": b.get("service_type", ""),
-        }
-        for b in completed_today
-        if not _booking_has_report_card(b)
-        and (b.get("service_type") or "") in ("daycare", "boarding", "training")
-    ]
-    revenue_cash = round(sum(_cash_revenue(b)
-                             for b in completed_today
-                             if not b.get("is_prepaid_program_session")), 2)
-    feedings_total = sum(len(b.get("feeding_log") or []) for b in bookings)
-    meds_total = sum(len(b.get("medication_log") or []) for b in bookings)
-    bathroom_pee = sum((b.get("bathroom_log") or {}).get("pee", 0) for b in bookings)
-    bathroom_poop = sum((b.get("bathroom_log") or {}).get("poop", 0) for b in bookings)
-    register = await _register_day_summary(today)
-    staff_readiness = await _staff_readiness_summary(today)
-    return {
-        "date": today,
-        "register": register,
-        "staff_readiness": staff_readiness,
-        "still_on_premises": still_on,
-        "boarding_stayovers": boarding_stayovers,
-        "unpaid_bookings": unpaid,
-        # Kept for backward compatibility with the existing UI/tests.
-        # Report cards are optional and do not block all-clear closeout.
-        "missing_report_cards": optional_missing_cards,
-        "optional_report_cards": optional_missing_cards,
-        "revenue_cash": revenue_cash,
-        "completed_count": len(completed_today),
-        "care_log_totals": {
-            "feedings": feedings_total,
-            "medications": meds_total,
-            "pee": bathroom_pee,
-            "poop": bathroom_poop,
-        },
-        "hard_clear": (not still_on and not unpaid),
-        "all_clear": (not still_on and not unpaid),
-    }
+    """Sprint 110cr — Wrap-up snapshot for the operator at end of day: who's
+    still on-site, unpaid checkouts, optional report cards, the day's visit
+    money and care-log roll-up. Covers every visit on site that day, not only
+    the ones that started on it (audit #9: domains/operations/end_of_day.py)."""
+    return await end_of_day_domain.snapshot(day)
 
 
 @api.get("/admin/end-of-day")
@@ -47293,14 +47245,9 @@ async def employee_bathroom_tick(
     booking_id: str, body: BathroomTickIn, user: dict = Depends(require_employee_or_admin),
 ):
     """Bump the pee/poop counter on a booking. Crucial for boarding clients
-    who want a transparent record of their dog's bathroom habits."""
-    b = await db.bookings.find_one({"id": booking_id}, {"_id": 0, "id": 1, "bathroom_log": 1})
-    if not b:
-        raise HTTPException(status_code=404, detail="Booking not found")
-    log = b.get("bathroom_log") or {"pee": 0, "poop": 0}
-    log[body.kind] = max(0, int(log.get(body.kind, 0)) + body.delta)
-    await db.bookings.update_one({"id": booking_id}, {"$set": {"bathroom_log": log}})
-    return {"ok": True, "bathroom_log": log}
+    who want a transparent record of their dog's bathroom habits. Also counts
+    per business day, for End of Day (care_domain.bathroom_tick)."""
+    return await care_domain.bathroom_tick(booking_id, body.kind, body.delta)
 
 
 class EmployeeIncidentIn(BaseModel):
@@ -52322,6 +52269,11 @@ async def convert_waitlist_to_booking(entry_id: str, user: dict = Depends(requir
         raise HTTPException(status_code=409, detail=f"Entry is {existing.get('status')} — it may already be converting or booked")
     original_status = "offered" if claimed.get("offered_at") else "waiting"
     try:
+        # A day visit is one date: a range on one would book only its first day.
+        end = claimed.get("requested_end_date") or ""
+        if end > claimed["requested_date"] and await booking_spans.span_kind(db, {**claimed, "date": claimed["requested_date"], "end_date": end}) == "day":
+            raise BookingBlocked(409, f"This {claimed['service_type']} request covers {pretty_date(claimed['requested_date'])} to {pretty_date(end)}. "
+                                 "Book each day from Bookings, then remove this waitlist entry.", code="day_visit_range", action="pick_date")
         body = BookingIn(
             dog_id=claimed["dog_id"],
             date=claimed["requested_date"],

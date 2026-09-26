@@ -41,6 +41,7 @@ from fastapi import Depends, HTTPException, Query, Request
 from pydantic import BaseModel, EmailStr, Field
 
 from domains.bookings.blocks import BookingBlocked
+from domains.bookings import guards as booking_guards
 
 from domains.photo_orders.engine import (
     PhotoOrderIn, PhotoPackageIn, clean_order_prefix, normalize_packages, public_packages,
@@ -816,8 +817,13 @@ def register_photo_special_routes(
         b = await db.bookings.find_one({"id": booking_id, "photo_special_id": special_id}, {"_id": 0})
         if not b:
             raise HTTPException(status_code=404, detail="Reservation not found")
+        # A dog that was checked in came: it leaves by checkout, not as a
+        # no-show (which hid a dog still on site from every screen).
+        booking_guards.refuse_no_show_after_check_in(b)
         update = {"no_show": True, "status": "cancelled", "cancelled_at": now_iso()}
-        await db.bookings.update_one({"id": booking_id}, {"$set": update})
+        res = await db.bookings.update_one({"id": booking_id, "checked_in_at": {"$in": [None, ""]}}, {"$set": update})
+        if not res.matched_count:
+            raise await booking_guards.changed_refusal(db, booking_id, what="marked a no-show")
         return _reservation_row({**b, **update})
 
     # ------------------------------------------------------------ photo orders

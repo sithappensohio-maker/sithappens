@@ -64,7 +64,7 @@ def register_operations_routes(
     *, api, db, require_admin, require_admin_and_permission, now_iso, business_today,
     get_current_user, visit_filter, client_visit_count, dog_visit_counts,
     job_scheduler, scheduler_marker_ids, scheduler_jobs, scheduler_task_ref,
-    recheck_all_trophies, eligible_trophies, logger,
+    recheck_all_trophies, eligible_trophies, logger, business_day_utc_bounds=None,
 ) -> dict:
     # The moved admin-operations routes kept the private helper names they already
     # used; bind them to the injected dependencies so the bodies did not change.
@@ -114,8 +114,10 @@ def register_operations_routes(
                 "checked_out_at": {"$in": [None, ""]},
                 "$or": [
                     {"end_date": {"$lt": today_iso}},
-                    {"end_date": {"$exists": False}, "date": {"$lt": today_iso}},
-                    {"end_date": "", "date": {"$lt": today_iso}},
+                    # Day visits store end_date null ($exists:False never matched it);
+                    # a back-dated one checked in today isn't stuck.
+                    {"end_date": {"$in": [None, ""]}, "date": {"$lt": today_iso},
+                     **({"checked_in_at": {"$lt": business_day_utc_bounds(today_iso)[0]}} if business_day_utc_bounds else {})},
                 ],
             },
             {"_id": 0, "id": 1, "dog_name": 1, "client_name": 1, "service_type": 1,

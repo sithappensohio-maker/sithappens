@@ -13,6 +13,20 @@ import BookingDetailModal from "../components/BookingDetailModal";
 // day depending on the device's clock/timezone. Use local date parts
 // instead, matching the todayISO() pattern used elsewhere in the app.
 function isoOnly(d) { return `${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,"0")}-${String(d.getDate()).padStart(2,"0")}`; }
+
+// The last calendar day an event covers. All-day ends are exclusive dates;
+// a timed event (a lesson, groom or photo session) is on its start day only —
+// "end minus a day" put those the day BEFORE they start.
+function lastDayOf(e) {
+  const start = String(e?.start || "").slice(0, 10);
+  const end = String(e?.end || "");
+  if (!end || e?.allDay === false || String(e?.start || "").includes("T")) return start;
+  const d = new Date(`${end.slice(0, 10)}T00:00:00Z`);
+  if (Number.isNaN(d.getTime())) return start;
+  d.setUTCDate(d.getUTCDate() - 1);
+  const last = d.toISOString().slice(0, 10);
+  return last < start ? start : last;
+}
 function isMobile() {
   // Sprint 110di-43 — widened to (max-width: 1023px) so iPad portrait,
   // landscape phones, and small tablets all get the mobile-friendly list
@@ -92,8 +106,11 @@ export default function Schedule() {
       const head = names.slice(0, 3).join(" + ");
       const tail = names.length > 3 ? ` +${names.length - 3} more` : "";
       const title = `${head}${tail} (${svcLabel})`;
+      // Dogs whose pickups differ can't be stretched as one card.
+      const sameEnd = arr.every((e) => (e.end || "") === (arr[0].end || ""));
       return {
         ...arr[0],
+        ...(sameEnd ? {} : { durationEditable: false }),
         title,
         extendedProps: {
           ...arr[0].extendedProps,
@@ -186,21 +203,36 @@ export default function Schedule() {
   // useLiveRefresh hook (30s polling + focus refresh + edit-lock aware).
   useLiveRefresh(load, { intervalMs: 30_000 });
 
-  const onDrop = async (info) => {
+  // Moving a card changes its date only: the server keeps a stay's length
+  // and gives a day visit no end date. Only stretching a boarding stay sends
+  // a pickup date. A family card moves every dog on it, not just the first.
+  const reschedule = async (info, withEnd) => {
+    const ext = info.event.extendedProps || {};
     const newStart = isoOnly(info.event.start);
-    const endEx = info.event.end ? new Date(info.event.end.getTime() - 86400000) : null;
-    const endIncl = endEx ? isoOnly(endEx) : null;
-    try {
-      await api.put(`/bookings/${info.event.id}/reschedule`, { date: newStart, end_date: endIncl });
-      setMsg(`Rescheduled to ${newStart}`);
-      setTimeout(()=>setMsg(""), 2500);
-      load();
-    } catch (e) {
-      info.revert();
-      setMsg(formatErr(e.response?.data?.detail) || "Reschedule failed");
-      setTimeout(()=>setMsg(""), 3000);
+    const payload = { date: newStart };
+    if (withEnd && ext.spans_days && info.event.end) {
+      const last = new Date(info.event.end);
+      last.setDate(last.getDate() - 1); // a calendar day: 24h is off by one on the spring-forward Sunday
+      payload.end_date = isoOnly(last);
     }
+    const members = (ext.group_members || []).map((m) => m.id).filter(Boolean);
+    const ids = members.length ? members : [info.event.id];
+    const failed = [];
+    for (const id of ids) {
+      try { await api.put(`/bookings/${id}/reschedule`, payload); }
+      catch (e) { failed.push(formatErr(e.response?.data?.detail) || "Reschedule failed"); }
+    }
+    if (failed.length === ids.length) {
+      info.revert();
+      setMsg(failed[0]);
+    } else {
+      setMsg(failed.length ? `Moved ${ids.length - failed.length} of ${ids.length} dogs. ${failed[0]}` : `Rescheduled to ${newStart}`);
+      load();
+    }
+    setTimeout(()=>setMsg(""), failed.length ? 4000 : 2500);
   };
+  const onDrop = (info) => reschedule(info, false);
+  const onResize = (info) => reschedule(info, true);
 
   // Day-cell click handler. FullCalendar gives us a Date — we want ISO.
   const onDateClick = (info) => {
@@ -213,16 +245,7 @@ export default function Schedule() {
     if (!dayOpen) return [];
     const rows = events.filter((e) => {
       const start = (e.start || "").slice(0, 10);
-      // FullCalendar end is exclusive — convert back.
-      let endIncl = start;
-      if (e.end) {
-        try {
-          const end = new Date(e.end);
-          end.setDate(end.getDate() - 1);
-          endIncl = end.toISOString().slice(0, 10);
-        } catch {}
-      }
-      return dayOpen >= start && dayOpen <= endIncl;
+      return dayOpen >= start && dayOpen <= lastDayOf(e);
     });
     // Order: timed first (training/grooming), then all-day.
     return rows.sort((a, b) => {
@@ -374,7 +397,7 @@ export default function Schedule() {
               eventStartEditable={!mobile}
               eventDurationEditable={!mobile}
               eventDrop={onDrop}
-              eventResize={onDrop}
+              eventResize={onResize}
               dateClick={onDateClick}
               eventClick={(info) => { info.jsEvent?.preventDefault(); setDetailId(info.event.id); }}
               displayEventTime={!(mobile && mobileView === "month")}
