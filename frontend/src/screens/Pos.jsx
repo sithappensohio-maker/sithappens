@@ -96,6 +96,8 @@ export default function Pos({ onOpenShopManager } = {}) {
       if (panel) {
         setActivePanel(panel);
         try { sessionStorage.removeItem(PENDING_ACTION_TARGET_KEY); } catch { /* ignore */ }
+        // Same nudge as the panel buttons, so the opened panel is on screen.
+        setTimeout(() => document.querySelector("[data-register-panel]")?.scrollIntoView({ behavior: "smooth", block: "nearest" }), 80);
       }
     };
     openTarget();

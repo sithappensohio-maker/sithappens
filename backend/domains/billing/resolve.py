@@ -73,7 +73,7 @@ async def annotate_bills(invoices: List[dict]) -> List[dict]:
         if (inv.get("status") or "").upper() == "VOID":
             continue
         held = await _held_attempt(inv)
-        if held and held.get("status") == "reconciliation_required":
+        if held and held.get("status") in ("reconciliation_required", "refunding"):
             inv["online_payment_stuck"] = True
             inv["needs_attention"] = True
         if _money(inv.get("balance")) > 0.005 and not tab_sync.has_refund_activity(inv):
@@ -98,6 +98,10 @@ async def _stripe_state(attempt: dict) -> dict:
     if not pi_id and attempt.get("stripe_checkout_session_id"):
         session = stripe.checkout.Session.retrieve(attempt["stripe_checkout_session_id"]).to_dict()
         pi_id = session.get("payment_intent")
+        if pi_id:  # remember it, so the stuck list can match a dispute to it
+            await _g("db").stripe_payment_attempts.update_one(
+                {"id": attempt["id"], "stripe_payment_intent_id": None}, {"$set": {"stripe_payment_intent_id": pi_id}})
+            attempt["stripe_payment_intent_id"] = pi_id
     if not pi_id:
         return {"payment_intent": None, "succeeded": False, "refunded_cents": 0, "disputed": False}
     pi = stripe.PaymentIntent.retrieve(pi_id, expand=["latest_charge"]).to_dict()
@@ -110,6 +114,18 @@ async def _stripe_state(attempt: dict) -> dict:
     }
 
 
+async def _dispute_state(attempt: dict) -> Optional[str]:
+    """"open" / "won" / "lost" for a dispute on this payment, else None."""
+    pi = attempt.get("stripe_payment_intent_id")
+    if not pi:
+        return None
+    d = await _g("db").stripe_disputes.find_one({"stripe_payment_intent_id": pi}, {"_id": 0, "status": 1})
+    if not d:
+        return None
+    status = d.get("status")
+    return status if status in ("won", "lost") else "open"
+
+
 async def stuck_payments(limit: int = 100) -> List[dict]:
     db = _g("db")
     rows = await db.stripe_payment_attempts.find(
@@ -120,16 +136,19 @@ async def stuck_payments(limit: int = 100) -> List[dict]:
         client = await db.clients.find_one({"id": a.get("client_id")}, {"_id": 0, "name": 1}) or {}
         amount = round(int(a.get("amount_cents") or 0) / 100.0, 2)
         code, reason = "ready", "Ready to record — press Retry."
-        disputed = a.get("stripe_payment_intent_id") and await db.stripe_disputes.find_one(
-            {"stripe_payment_intent_id": a.get("stripe_payment_intent_id")}, {"_id": 0, "id": 1})
-        if a.get("status") == "refunding":
+        dispute = await _dispute_state(a)
+        if inv and inv.get("stripe_last_applied_attempt_id") == a.get("id"):
+            code, reason = "partly_recorded", "Part of this payment was recorded. Press Retry to finish it."
+        elif dispute == "open":
+            code, reason = "dispute_open", "The customer disputed this charge with their bank. Wait for the bank's decision (Disputes); the bill stays on hold until then."
+        elif dispute == "lost":
+            code, reason = "dispute_lost", "The bank sided with the customer, so this money went back to them. Press Close to free the bill."
+        elif dispute == "won":
+            code, reason = "dispute_won", "The dispute was won, so the money stays with you. Press Retry to record it."
+        elif a.get("status") == "refunding":
             code, reason = "refunding", "A refund was started but not confirmed. Press Refund to finish it."
-        elif disputed:
-            code, reason = "disputed", "The customer disputed this charge with their bank. Press Close; the dispute is tracked under Disputes."
         elif not inv:
             code, reason = "missing", "The bill for this payment is missing. Refund it."
-        elif inv.get("stripe_last_applied_attempt_id") == a.get("id"):
-            code, reason = "partly_recorded", "Part of this payment was recorded. Press Retry to finish it."
         elif tab_sync.has_refund_activity(inv):
             code, reason = "refund", "The bill has a refund on it, so this payment can't be added. Refund it."
         elif _money(inv.get("balance")) < amount - 0.005:
@@ -142,8 +161,9 @@ async def stuck_payments(limit: int = 100) -> List[dict]:
             **_public_attempt(a), "amount": amount, "client_name": client.get("name") or inv.get("client_name"),
             "invoice_number": (a.get("invoice_id") or "")[:8].upper(), "invoice_balance": _money(inv.get("balance")),
             "reason_code": code, "reason": reason,
-            "can_retry": code in ("ready", "partly_recorded"),
-            "can_refund": code not in ("partly_recorded", "disputed"), "can_close": code == "disputed",
+            "can_retry": code in ("ready", "partly_recorded", "dispute_won"),
+            "can_refund": code in ("ready", "refunding", "missing", "refund", "too_big", "needs_review"),
+            "can_close": code == "dispute_lost",
         })
     return out
 
@@ -155,11 +175,14 @@ async def retry_payment(attempt_id: str) -> dict:
         raise HTTPException(status_code=404, detail="Payment not found")
     if a.get("status") != "reconciliation_required":
         raise HTTPException(status_code=409, detail=MSG_NOT_WAITING)
+    inv = await db.invoices.find_one({"id": a.get("invoice_id")}, {"_id": 0, "stripe_last_applied_attempt_id": 1}) or {}
+    finishing = inv.get("stripe_last_applied_attempt_id") == attempt_id  # half-recorded: always finish it
     state = await _stripe_state(a)
-    if not state["succeeded"]:
+    if not state["succeeded"] and not finishing:
         raise HTTPException(status_code=409, detail="Stripe doesn't show this payment as completed.")
-    if state["refunded_cents"] > 0 or state["disputed"]:
-        raise HTTPException(status_code=409, detail="Stripe shows this payment was refunded or disputed. Use Refund to close it.")
+    dispute = await _dispute_state(a)
+    if not finishing and (state["refunded_cents"] > 0 or (state["disputed"] and dispute != "won")):
+        raise HTTPException(status_code=409, detail="Stripe shows this payment was refunded or is disputed, so it can't be recorded.")
     if state["payment_intent"] and not a.get("stripe_payment_intent_id"):
         await db.stripe_payment_attempts.update_one({"id": attempt_id}, {"$set": {"stripe_payment_intent_id": state["payment_intent"]}})
         a["stripe_payment_intent_id"] = state["payment_intent"]
@@ -209,8 +232,8 @@ async def refund_payment(attempt_id: str, user: dict) -> dict:
     if a.get("status") not in ("reconciliation_required", "refunding"):
         raise HTTPException(status_code=409, detail=MSG_NOT_WAITING)
     state = await _stripe_state(a)
-    if state["disputed"]:
-        raise HTTPException(status_code=409, detail="This charge is disputed, so it can't be refunded here. Use Close.")
+    if state["disputed"] or await _dispute_state(a):
+        raise HTTPException(status_code=409, detail="This charge is disputed, so it can't be refunded. The bank's decision settles it (Disputes).")
     await _claim_for_closing(a)
     refund_id = None
     if state["refunded_cents"] < int(a.get("amount_cents") or 0):
@@ -224,24 +247,57 @@ async def refund_payment(attempt_id: str, user: dict) -> dict:
             _g("logger").warning("Stuck-payment refund failed for %s: %s", attempt_id, exc)
             raise HTTPException(status_code=502, detail="Stripe couldn't refund this right now. Press Refund again in a minute.")
         refund_id = refund["id"]
+        if (refund.get("status") if hasattr(refund, "get") else None) in ("failed", "canceled"):
+            await _reopen_after_failed_refund(a)
+            raise HTTPException(status_code=502, detail="Stripe couldn't refund this payment. It's back in the list — try again or contact Stripe.")
     await _finish_closing(a, "refunded", user, refund_id)
     return {"ok": True, "refunded": True, "stripe_refund_id": refund_id}
 
 
 async def close_disputed_payment(attempt_id: str, user: dict) -> dict:
-    """A disputed charge can't be refunded or safely recorded; the dispute
-    (tracked under Disputes) decides where the money ends up. Free the bill."""
+    """The bank decided a dispute for the customer: the money went back to
+    them, so free the bill (it's still owed). While a dispute is open the
+    bill stays on hold — if it's won, the money is recorded with Retry."""
     db = _g("db")
     a = await db.stripe_payment_attempts.find_one({"id": attempt_id}, {"_id": 0})
     if not a or a.get("status") not in ("reconciliation_required", "refunding"):
         raise HTTPException(status_code=409, detail=MSG_NOT_WAITING)
-    disputed = a.get("stripe_payment_intent_id") and await db.stripe_disputes.find_one(
-        {"stripe_payment_intent_id": a.get("stripe_payment_intent_id")}, {"_id": 0, "id": 1})
-    if not disputed and not (await _stripe_state(a))["disputed"]:
-        raise HTTPException(status_code=409, detail="This payment isn't disputed. Use Retry or Refund.")
+    if await _dispute_state(a) != "lost":
+        raise HTTPException(status_code=409, detail="Close is only for a dispute the bank decided for the customer.")
     await _claim_for_closing(a)
     await _finish_closing(a, "disputed", user)
     return {"ok": True, "closed": True}
+
+
+async def _reopen_after_failed_refund(a: dict) -> None:
+    """The refund didn't happen: the money is still here. Put the payment back
+    in the stuck list and hold the bill for it again (if nothing else has)."""
+    db = _g("db")
+    await db.stripe_payment_attempts.update_one(
+        {"id": a["id"], "status": {"$in": ["refunding", "refunded"]}},
+        {"$set": {"status": "reconciliation_required", "updated_at": _g("now_iso")()}, "$unset": {"stripe_refund_id": ""}})
+    await db.invoices.update_one({"id": a.get("invoice_id"), "stripe_refunding_attempt_id": a["id"]},
+                                 {"$unset": {"stripe_refunding_attempt_id": ""}})
+    await db.invoices.update_one(
+        {"id": a.get("invoice_id"), "stripe_active_attempt_id": None},
+        {"$set": {"stripe_active_attempt_id": a["id"], "stripe_reserved_amount_cents": int(a.get("amount_cents") or 0)}})
+
+
+async def on_stripe_refund(refund_obj: dict) -> bool:
+    """Refund webhooks for stuck-payment refunds (they carry our metadata).
+    Returns True when handled here — there is no recorded payment for the
+    general refund path to reverse. A refund that later fails reopens it."""
+    attempt_id = (refund_obj.get("metadata") or {}).get("sithappens_stuck_attempt_id")
+    if not attempt_id:
+        return False
+    a = await _g("db").stripe_payment_attempts.find_one({"id": attempt_id}, {"_id": 0})
+    if not a:
+        return True
+    if refund_obj.get("status") in ("failed", "canceled"):
+        await _reopen_after_failed_refund(a)
+        _g("logger").warning("Stuck-payment refund %s for attempt %s %s — back in the list",
+                             refund_obj.get("id"), attempt_id, refund_obj.get("status"))
+    return True
 
 
 async def pending_action_items() -> List[dict]:
@@ -409,12 +465,20 @@ async def fix_bill(invoice_id: str, body: BillFixIn, user: dict) -> dict:
             if res.matched_count != 1:
                 raise HTTPException(status_code=409, detail=tab_sync.MSG_CHANGED)
             write_row = _g("_write_ledger_row")
-            await write_row(client_id=inv["client_id"], type_="payment", amount=-use, method="credit_on_file",
-                            notes=f"Credit on file applied · bill {invoice_id[:8].upper()}", created_by=who, ts=ts,
-                            invoice_id=invoice_id, extra={"source": "credit_on_file", "credit_op_id": op_id})
-            await write_row(client_id=inv["client_id"], type_="adjustment", amount=use,
-                            notes=f"Credit on file used on bill {invoice_id[:8].upper()}", created_by=who, ts=ts,
-                            extra={"scope": "account", "source": "credit_on_file", "credit_op_id": op_id})
+            try:
+                await write_row(client_id=inv["client_id"], type_="payment", amount=-use, method="credit_on_file",
+                                notes=f"Credit on file applied · bill {invoice_id[:8].upper()}", created_by=who, ts=ts,
+                                invoice_id=invoice_id, extra={"source": "credit_on_file", "credit_op_id": op_id})
+                await write_row(client_id=inv["client_id"], type_="adjustment", amount=use,
+                                notes=f"Credit on file used on bill {invoice_id[:8].upper()}", created_by=who, ts=ts,
+                                extra={"scope": "account", "source": "credit_on_file", "credit_op_id": op_id})
+            except Exception:
+                await db.payment_ledger.delete_many({"credit_op_id": op_id})
+                await db.invoices.update_one(
+                    {"id": invoice_id},
+                    {"$inc": {"balance": use, "amount_paid": -use},
+                     "$pull": {"line_items": {"source.op_id": op_id}, "reconciliations": {"op_id": op_id}}})
+                raise
 
         else:  # review
             if not ar["unexplained"]:

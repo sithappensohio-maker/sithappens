@@ -2,6 +2,7 @@ import { useCallback, useEffect, useState } from "react";
 import { api, formatErr } from "../lib/api";
 import { useAuth } from "../lib/auth";
 import StuckOnlinePayments from "./StuckOnlinePayments";
+import { announcePendingActionsChanged } from "./PendingActionsPanel";
 
 // Line a bill back up with the client's account (audit #7). A bill whose visit
 // went on the tab can only be collected while the two agree; this shows where
@@ -26,7 +27,7 @@ export default function BillFixModal({ invoiceId, onClose, onChanged }) {
     setBusy(true); setErr("");
     try {
       const { data } = await api.post(`/invoices/${invoiceId}/reconcile`, body);
-      setPv(data); onChanged?.();
+      setPv(data); onChanged?.(); announcePendingActionsChanged();
     } catch (e) {
       setErr(formatErr(e?.response?.data?.detail) || "That didn't work");
       load();
@@ -50,13 +51,13 @@ export default function BillFixModal({ invoiceId, onClose, onChanged }) {
         {!pv && !err && <p className="text-shTextMuted text-sm">Loading…</p>}
         {err && <div className="bg-red-500/10 border border-red-500/40 text-red-300 rounded-lg p-3 text-sm font-bold" data-testid="bill-fix-error">{err}</div>}
 
-        {pv?.online_payment && pv.online_payment.status === "reconciliation_required" && (
+        {pv?.online_payment && ["reconciliation_required", "refunding"].includes(pv.online_payment.status) && (
           <StuckOnlinePayments invoiceId={invoiceId} highlightId={pv.online_payment.id} onChanged={() => { load(); onChanged?.(); }} />
         )}
         {pv?.refund_activity && <p className="text-sm text-shTextMuted">This bill has a refund on it, so it can't be changed here.</p>}
         {pv?.visits_reopened && <p className="text-sm text-shTextMuted">A visit on this bill was reopened. Check it out again first.</p>}
 
-        {pv && pv.in_step && !pv.online_payment && (
+        {pv && pv.in_step && !pv.online_payment && !pv.can_apply_credit && (
           <p className="text-sm text-shPrimary font-bold" data-testid="bill-fix-in-step"><i className="fas fa-check mr-1" />This bill is in step with the account. Nothing to fix.</p>
         )}
 
@@ -107,7 +108,7 @@ export default function BillFixModal({ invoiceId, onClose, onChanged }) {
           </div>
         )}
 
-        {!canFix && pv && !pv.in_step && <p className="text-[12px] text-shTextMuted">Only staff who can make financial corrections can fix this.</p>}
+        {!canFix && pv && (!pv.in_step || pv.can_apply_credit) && <p className="text-[12px] text-shTextMuted">Only staff who can make financial corrections can fix this.</p>}
       </div>
     </div>
   );

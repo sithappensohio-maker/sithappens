@@ -2,6 +2,7 @@ import { useCallback, useEffect, useState } from "react";
 import { api, formatErr } from "../lib/api";
 import { useAuth } from "../lib/auth";
 import { useConfirm } from "../lib/useConfirm";
+import { announcePendingActionsChanged } from "./PendingActionsPanel";
 
 // Online payments the customer made but the app couldn't record against the
 // bill (the bill had changed). The money is already taken, so each one needs
@@ -27,8 +28,8 @@ export default function StuckOnlinePayments({ onChanged, highlightId = null, inv
 
   const act = async (p, action) => {
     if (action === "close" && !(await confirm({
-      title: "Close this disputed payment?",
-      body: "The bill is freed. Where the money ends up is decided by the dispute, tracked under Disputes.",
+      title: "Close this payment?",
+      body: "The bank gave this money back to the customer. The bill is freed and still owed.",
       confirmText: "Close", tone: "danger",
     }))) return;
     if (action === "refund" && !(await confirm({
@@ -40,7 +41,7 @@ export default function StuckOnlinePayments({ onChanged, highlightId = null, inv
     try {
       await api.post(`/admin/online-payments/stuck/${p.id}/${action}`);
       setMsg((m) => ({ ...m, [p.id]: action === "retry" ? "Recorded ✓" : action === "close" ? "Closed ✓" : "Refunded ✓" }));
-      load(); onChanged?.();
+      load(); onChanged?.(); announcePendingActionsChanged();
     } catch (e) {
       setMsg((m) => ({ ...m, [p.id]: formatErr(e?.response?.data?.detail) || "That didn't work" }));
     } finally { setBusyId(null); }

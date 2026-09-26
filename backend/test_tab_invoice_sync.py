@@ -492,17 +492,113 @@ def test_a_payment_being_refunded_can_never_also_be_recorded(monkeypatch):
     assert not _inv(inv["id"]).get("stripe_active_attempt_id")
 
 
-def test_a_disputed_stuck_payment_can_be_closed_and_frees_the_bill(monkeypatch):
+def test_a_disputed_stuck_payment_follows_the_banks_decision(monkeypatch):
     monkeypatch.setattr(server, "stripe", _FakeStripe())
     cid = _client()
     _bid, inv = _visit(cid, total=100.0, paid=40.0, tab=True)
     aid = _stuck(cid, inv, 60.0)
-    run(server.db.stripe_disputes.insert_one({"id": f"dp_{aid}", "stripe_payment_intent_id": "pi_audit7", "status": "needs_response"}))
+    did = f"dp_{aid}"
+    run(server.db.stripe_disputes.insert_one({"id": did, "stripe_payment_intent_id": "pi_audit7", "status": "needs_response"}))
     try:
         p = next(x for x in run(resolve.stuck_payments()) if x["id"] == aid)
-        assert p["reason_code"] == "disputed" and p["can_close"] and not p["can_refund"] and not p["can_retry"]
+        assert p["reason_code"] == "dispute_open" and not (p["can_close"] or p["can_refund"] or p["can_retry"])
+        assert _refused(lambda: run(resolve.close_disputed_payment(aid, OWNER))).status_code == 409
+        # Lost: the money went back to the customer; Close frees the bill.
+        run(server.db.stripe_disputes.update_one({"id": did}, {"$set": {"status": "lost"}}))
+        p = next(x for x in run(resolve.stuck_payments()) if x["id"] == aid)
+        assert p["can_close"] and not p["can_refund"]
         run(resolve.close_disputed_payment(aid, OWNER))
         assert run(server.db.stripe_payment_attempts.find_one({"id": aid}))["status"] == "disputed"
         assert not _inv(inv["id"]).get("stripe_active_attempt_id")
     finally:
-        run(server.db.stripe_disputes.delete_one({"id": f"dp_{aid}"}))
+        run(server.db.stripe_disputes.delete_one({"id": did}))
+
+
+def test_a_won_dispute_lets_staff_record_the_payment(monkeypatch):
+    class _Won(_FakeStripe):
+        def __init__(self):
+            super().__init__()
+
+            class PaymentIntent:
+                @staticmethod
+                def retrieve(pi_id, expand=None):
+                    return _Obj({"id": pi_id, "status": "succeeded", "latest_charge": {"amount_refunded": 0, "disputed": True}})
+            self.PaymentIntent = PaymentIntent
+    monkeypatch.setattr(server, "stripe", _Won())
+    cid = _client()
+    _bid, inv = _visit(cid, total=100.0, paid=40.0, tab=True)
+    aid = _stuck(cid, inv, 60.0)
+    did = f"dp_{aid}"
+    run(server.db.stripe_disputes.insert_one({"id": did, "stripe_payment_intent_id": "pi_audit7", "status": "won"}))
+    try:
+        assert next(x for x in run(resolve.stuck_payments()) if x["id"] == aid)["can_retry"]
+        run(resolve.retry_payment(aid))
+        assert run(server.db.stripe_payment_attempts.find_one({"id": aid}))["status"] == "applied"
+    finally:
+        run(server.db.stripe_disputes.delete_one({"id": did}))
+
+
+def test_credit_is_never_offered_while_another_bill_is_out_of_step():
+    cid = _client()
+    _a, _ia = _visit(cid, total=50.0, paid=100.0, tab=True)   # $50 real credit
+    bid_b, inv_b = _visit(cid, total=80.0, paid=0.0, tab=True)
+    _c, inv_a = _visit(cid, total=100.0, paid=0.0, tab=True)
+    # Old drift on bill B: the tab moved, the bill didn't.
+    run(server._write_ledger_row(client_id=cid, type_="adjustment", amount=-50.0, booking_id=bid_b, notes="Post-checkout writeoff · old"))
+    run(server._adjust_client_balance(cid, -50.0))
+    assert run(tab_sync.credit_on_file(cid)) == 0.0
+    assert not run(resolve.bill_preview(inv_a["id"]))["can_apply_credit"]
+    assert _refused(lambda: run(resolve.fix_bill(inv_a["id"], resolve.BillFixIn(action="apply_credit"), OWNER))).status_code == 409
+    general = server.TabAdjustmentIn(amount=-10.0, notes="goodwill")
+    assert "needs fixing" in _refused(lambda: run(server.apply_tab_adjustment(cid, general, user=OWNER))).detail
+    # A visit discount on the drifted bill waits for the fix, too.
+    assert "needs fixing" in _refused(_correct, bid_b, "discount", 10.0).detail
+
+
+def test_a_refund_stripe_reports_failed_puts_the_payment_back(monkeypatch):
+    class _Fails(_FakeStripe):
+        def __init__(self):
+            super().__init__()
+
+            class Refund:
+                @staticmethod
+                def create(**kw):
+                    return {"id": "re_fail", "status": "failed"}
+            self.Refund = Refund
+    monkeypatch.setattr(server, "stripe", _Fails())
+    cid = _client()
+    _bid, inv = _visit(cid, total=100.0, paid=40.0, tab=True)
+    aid = _stuck(cid, inv, 60.0)
+    assert _refused(lambda: run(resolve.refund_payment(aid, OWNER))).status_code == 502
+    assert run(server.db.stripe_payment_attempts.find_one({"id": aid}))["status"] == "reconciliation_required"
+    assert _inv(inv["id"])["stripe_active_attempt_id"] == aid
+    # And a refund Stripe accepted, then failed later (webhook).
+    monkeypatch.setattr(server, "stripe", _FakeStripe())
+    run(resolve.refund_payment(aid, OWNER))
+    assert run(server.db.stripe_payment_attempts.find_one({"id": aid}))["status"] == "refunded"
+    run(server._handle_refund_event({"id": "re_audit7", "status": "failed", "payment_intent": "pi_audit7",
+                                     "metadata": {"sithappens_stuck_attempt_id": aid}}))
+    assert run(server.db.stripe_payment_attempts.find_one({"id": aid}))["status"] == "reconciliation_required"
+    assert _inv(inv["id"])["stripe_active_attempt_id"] == aid
+    assert not run(server.db.stripe_unlinked_refunds.find_one({"refund_id": "re_audit7"}))
+
+
+def test_applying_credit_leaves_nothing_behind_if_it_fails(monkeypatch):
+    cid = _client()
+    _a, _ia = _visit(cid, total=50.0, paid=100.0, tab=True)
+    _b, inv = _visit(cid, total=100.0, paid=0.0, tab=True)
+    real = server._write_ledger_row
+    calls = {"n": 0}
+
+    async def flaky(**kw):
+        calls["n"] += 1
+        if calls["n"] == 2:
+            raise RuntimeError("disk full")
+        return await real(**kw)
+    monkeypatch.setattr(server, "_write_ledger_row", flaky)
+    with pytest.raises(RuntimeError):
+        run(resolve.fix_bill(inv["id"], resolve.BillFixIn(action="apply_credit"), OWNER))
+    bill = _inv(inv["id"])
+    assert bill["balance"] == 100.0 and bill["amount_paid"] == 0.0 and not bill.get("reconciliations")
+    assert run(server.db.payment_ledger.count_documents({"client_id": cid, "source": "credit_on_file"})) == 0
+    assert _status(inv["id"])["reconciled"]

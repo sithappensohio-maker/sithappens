@@ -59,6 +59,8 @@ MSG_PAID = "Nothing is owed on this bill. Use Refund when money has already been
 MSG_GROUP = ("This visit was billed together with other dogs and that bill is still open, "
              "so it can't be changed here. Take payment on the bill first.")
 MSG_NEEDS_FIX = "This bill needs fixing first. Open the client's Bills and press Needs fixing."
+MSG_ACCOUNT_NEEDS_FIX = ("One of this client's bills needs fixing first (client → Bills → Needs fixing); "
+                         "until then the account can't say how much is really general balance or credit.")
 
 
 def configure(*, server_globals: dict) -> None:
@@ -201,11 +203,27 @@ async def payable_now(invoice: dict, amount: Optional[float] = None, *, ignore_r
     return True, "ok", ""
 
 
+async def client_bills_in_step(client_id: str) -> Tuple[bool, List[dict]]:
+    """(all in step, open tab bills). The tab minus the open bills only means
+    "general balance" or "credit" when every one of those bills agrees with
+    the tab and is still checked out — otherwise the difference is just
+    another bill's drift, and spending it would count money twice."""
+    bills = await open_tab_bills(client_id)
+    for b in bills:
+        if not (await invoice_ar_status(b))["reconciled"] or not await _all_visits_locked(b):
+            return False, bills
+    return True, bills
+
+
 async def credit_on_file(client_id: str) -> float:
     """Prepaid credit on the tab that no bill accounts for (an overpaid
-    checkout or sale): the tab is lower than the open bills on it."""
+    checkout or sale): the tab is lower than the open bills on it. Zero
+    while any of the client's bills is out of step (see client_bills_in_step)."""
+    ok, bills = await client_bills_in_step(client_id)
+    if not ok:
+        return 0.0
     client = await _g("db").clients.find_one({"id": client_id}, {"_id": 0, "account_balance": 1}) or {}
-    on_bills = sum(_money(b.get("balance")) for b in await open_tab_bills(client_id))
+    on_bills = sum(_money(b.get("balance")) for b in bills)
     return round(max(0.0, on_bills - _money(client.get("account_balance"))), 2)
 
 
@@ -315,6 +333,10 @@ async def correct_visit(booking_id: str, body, user: dict) -> dict:
             mode = "tab_bill" if on_tab else "bill"
             if inv.get("stripe_active_attempt_id"):
                 raise HTTPException(status_code=409, detail=MSG_ONLINE)
+            if mode == "tab_bill" and kind != "charge" and not (await invoice_ar_status(inv))["reconciled"]:
+                # Capped by a bill that disagrees with the tab, a reduction
+                # could forgive more (or less) than the tab holds.
+                raise HTTPException(status_code=409, detail=MSG_NEEDS_FIX)
             base_due = bill_balance
         elif inv and not single and bill_balance > 0.005:
             raise HTTPException(status_code=409, detail=MSG_GROUP)
@@ -527,7 +549,9 @@ async def _adjust_tab_locked(client_id: str, amount: float, invoice_id: Optional
     applied = -amount
     if not invoice_id:
         client = await db.clients.find_one({"id": client_id}, {"_id": 0, "account_balance": 1}) or {}
-        bills = await open_tab_bills(client_id)
+        in_step, bills = await client_bills_in_step(client_id)
+        if not in_step:
+            raise HTTPException(status_code=409, detail=MSG_ACCOUNT_NEEDS_FIX)
         on_bills = round(sum(_money(b.get("balance")) for b in bills), 2)
         general = round(_money(client.get("account_balance")) - on_bills, 2)
         if applied > general + 0.005:

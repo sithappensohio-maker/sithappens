@@ -68,7 +68,7 @@ export default function PortalInvoices() {
             toast.success("Payment successful!");
             load();
             clearInterval(pollRef.current);
-          } else if (["failed", "expired", "canceled", "refunded", "reconciliation_required"].includes(data.status)) {
+          } else if (["failed", "expired", "canceled", "refunded", "refunding", "disputed", "reconciliation_required"].includes(data.status)) {
             // reconciliation_required: the money arrived and our team finishes
             // it by hand — polling on would just spin (audit #7).
             clearInterval(pollRef.current);
@@ -186,6 +186,10 @@ export default function PortalInvoices() {
             <span className="text-gray-300"><i className="fas fa-circle-notch fa-spin mr-2" />Processing your payment…</span>
           ) : returning.status === "applied" ? (
             <span className="text-shGreen font-black"><i className="fas fa-circle-check mr-2" />Payment successful</span>
+          ) : ["refunded", "refunding"].includes(returning.status) ? (
+            <span className="text-gray-300"><i className="fas fa-rotate-left mr-2" />This payment was refunded to your card.</span>
+          ) : returning.status === "disputed" ? (
+            <span className="text-gray-300"><i className="fas fa-circle-info mr-2" />This payment is being handled through your bank.</span>
           ) : returning.status === "reconciliation_required" ? (
             <span className="text-gray-300"><i className="fas fa-circle-check mr-2 text-shGreen" />We received your payment. Our team is finishing it up — you won&apos;t be charged again.</span>
           ) : (

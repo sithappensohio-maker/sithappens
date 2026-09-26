@@ -39090,6 +39090,8 @@ async def _handle_refund_event(refund_obj: dict) -> None:
     status = refund_obj.get("status")
     if refund_obj.get("balance_transaction"):
         await _record_stripe_balance_transaction(refund_obj, object_type="refund")
+    if await billing_resolve.on_stripe_refund(refund_obj):  # a stuck online payment's refund
+        return
     attempt = await db.stripe_refund_attempts.find_one({"stripe_refund_id": refund_id}, {"_id": 0})
     if not attempt:
         # App-initiated refunds stamp their attempt id into the Stripe
