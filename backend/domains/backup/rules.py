@@ -1,0 +1,48 @@
+"""Per-collection rules for the in-app backup.
+
+Most collections round-trip by `id` (or by a string `_id`, see
+STRING_ID_COLLECTIONS in server.py). The few below need more, and each rule
+is pinned by backend/test_backup_coverage_guard.py.
+"""
+from typing import Dict, Tuple
+
+# Fields left out of the backup file. Shop photo derivatives (thumb / card /
+# pdp / zoom) are raw bytes that JSON cannot carry: the download crashed on
+# them and the auto-backup wrote them as "b'\\xff..'" text, which a restore
+# then served as broken pictures. The original upload (`data`) is kept, and
+# shop/media.ensure_derivatives rebuilds the sizes the first time a photo is
+# viewed.
+OMIT_FIELDS: Dict[str, Tuple[str, ...]] = {
+    "shop_media": ("derivatives", "derivatives_built_at"),
+}
+
+# Rows stored without an `id`. A merge matches them on their natural key; the
+# old fallback inserted a second copy, which their unique index refuses.
+MERGE_KEYS: Dict[str, Tuple[str, ...]] = {
+    "shop_favorites": ("client_id", "kind", "ref_id"),
+}
+
+# Sequences a merge may only raise. Records made after the backup stay in the
+# database during a merge, so putting the counter back would hand their
+# confirmation / contestant / photo-order numbers out a second time.
+MERGE_MAX_FIELDS: Dict[str, str] = {
+    "event_counters": "seq",
+}
+
+# A backed-up row whose natural key a different live row already holds. On a
+# fresh server, startup seeds Trunk or Treat under a new id, so the backup's
+# real event collided on its slug. The backup's row takes the live one over,
+# but only while nothing points at the live one yet (its registrations or
+# photo orders would be orphaned); otherwise the live row is kept and
+# reported.
+MERGE_TAKEOVER: Dict[str, Tuple[str, Tuple[Tuple[str, str], ...]]] = {
+    "events": ("slug", (("event_registrations", "event_id"), ("event_photo_orders", "event_id"))),
+}
+
+
+def strip_omitted(collection: str, doc: dict) -> dict:
+    """The document without the fields this collection never carries."""
+    omit = OMIT_FIELDS.get(collection)
+    if not omit:
+        return doc
+    return {k: v for k, v in doc.items() if k not in omit}

@@ -29881,19 +29881,64 @@ BACKUP_COLLECTIONS = [
     # backup payloads, which predate Tax Center and must stay restorable
     # without a false "missing critical collection" flag.
     "tax_profiles", "estimated_tax_payments", "sales_tax_filings",
+    # Backup v10 (audit 2026-09-25) — business records the list had missed.
+    # Without these a restore brought back revenue rows but not the cards,
+    # sales, invoices or orders behind them. None is "critical": older
+    # backups predate them and must stay restorable (absent = left alone).
+    #   Register + inventory
+    "pos_products", "pos_sales", "pos_sale_returns", "inventory_movements",
+    "pos_drawer_audit", "register_no_sales", "receipt_settings", "receipt_email_log",
+    #   Gift cards (balances are money owed to customers)
+    "gift_cards", "gift_card_transactions", "gift_card_topup_attempts",
+    #   Invoices, payments and Stripe records
+    "invoices", "payments", "booking_financial_events",
+    "stripe_payment_attempts", "stripe_refund_attempts", "stripe_disputes", "stripe_payouts",
+    "stripe_balance_transactions", "stripe_webhook_events", "stripe_unlinked_refunds",
+    #   Online Shop
+    "shop_orders", "shop_payment_attempts", "shop_categories", "shop_subcategories",
+    "shop_media", "shop_favorites", "shop_merch_clicks",
+    #   Events, Photo Specials, photography
+    "events", "event_registrations", "event_media", "event_photo_orders", "event_counters",
+    "photo_specials", "photo_special_media", "photo_special_orders", "photography_gallery",
+    #   Agreements, inquiries, School feedback, trainer drafts
+    "agreement_templates", "agreement_signatures", "inquiries",
+    "school_experience_feedback", "school_experience_feedback_history", "training_session_drafts",
+    #   One-per-thing guards that keep restored money records from being
+    #   repeated (a replayed sale key, a second void of the same sale)
+    "pos_sale_claims", "pos_sale_void_claims", "pos_sale_return_claims",
+    "payment_topup_claims", "payment_void_claims", "refund_idempotency_claims",
+    "shop_checkout_claims", "auto_receipt_email_claims",
 ]
+# Every collection the app writes that is deliberately NOT backed up, and why.
+# A test (test_backup_coverage_guard.py) fails when code writes a collection
+# that is in neither list — so a new feature can't silently fall out of backups.
+BACKUP_EXCLUDED = {
+    "users": "logins move through the separate hash-aware account migration",
+    "system_runs": "cron-job audit, not needed for recovery",
+    "trivia_daily": "one-row daily cache, regenerated on the next portal visit",
+    "auth_rate_limits": "short-lived sign-in throttle counters",
+    "capacity_locks": "short-lived booking locks",
+    "pos_action_tokens": "short-lived print / cash-drawer tokens",
+    "homework_assignment_claims": "short-lived lock while one homework row is created",
+    "email_outbox": "delivery queue — restoring it would resend stale emails",
+    "auto_backup_runs": "the backup system's own run history",
+    "shop_events": "Shop analytics funnel that deletes itself after 180 days; Shop revenue lives on shop_orders",
+}
 # Collections whose primary key is a string `_id` (no separate `id` field).
 # These get special handling during export (we preserve `_id`) and restore
 # (we upsert by `_id` instead of `id`).
 #   • `app_settings`           — stores rows like {_id: "quarterly_tax", ...}
 #   • `email_settings`         — singleton {_id: "singleton", brand_*, ...}
 #   • `payment_plan_settings`  — singleton {_id: "singleton", agreement_html, ...}
-STRING_ID_COLLECTIONS = {"app_settings", "email_settings", "payment_plan_settings"}
+STRING_ID_COLLECTIONS = {"app_settings", "email_settings", "payment_plan_settings",
+                         "event_counters", "receipt_settings", "auto_receipt_email_claims",
+                         "school_experience_feedback"}
 # Backup v9 adds Online School operational collections and a verified filesystem
 # media sidecar archive so videos/resources survive disaster recovery. Older
 # backups remain accepted; collections absent from an older payload are left
-# untouched rather than wiped.
-BACKUP_VERSION = 9
+# untouched rather than wiped. v10 adds the register, gift card, invoice,
+# payment, Stripe, Shop, event and Photo Special records (see the list).
+BACKUP_VERSION = 10
 
 # Persistent in-container backup root. docker-compose bind-mounts ./backups here,
 # so files survive backend container rebuilds. Operators may use subfolders,
@@ -29903,9 +29948,15 @@ _BACKUP_PROCESS_ID = f"{socket.gethostname()}:{os.getpid()}:{uuid.uuid4()}"
 _BACKUP_LEASE_ID = "auto_backup_lease"
 
 
+from domains.backup import rules as _backup_rules  # noqa: E402
+
+
 async def _export_collection_docs(collection_name: str) -> List[Dict[str, Any]]:
     """Export every document without Motor's old 50,000-document cap."""
     projection = None if collection_name in STRING_ID_COLLECTIONS else {"_id": 0}
+    omit = _backup_rules.OMIT_FIELDS.get(collection_name)
+    if omit:  # fields JSON can't carry (see domains/backup/rules.py)
+        projection = {**(projection or {}), **{f: 0 for f in omit}}
     cursor = db[collection_name].find({}, projection)
     docs: List[Dict[str, Any]] = []
     async for raw in cursor:
@@ -39197,7 +39248,7 @@ async def _handle_refund_event(refund_obj: dict) -> None:
             # Kept aside: a card bought online whose paid webhook hasn't landed
             # yet picks it up the moment it is recorded (gift_cards/online.py).
             await db.stripe_unlinked_refunds.update_one(
-                {"refund_id": refund_id}, {"$setOnInsert": {"refund_id": refund_id, "payment_intent": intent_id,
+                {"refund_id": refund_id}, {"$setOnInsert": {"id": refund_id, "refund_id": refund_id, "payment_intent": intent_id,
                                                           "refund": refund_obj, "created_at": now_iso()}}, upsert=True)
             # No reliable structured linkage — never fabricate a reversal.
             # Stripe receives 200 (the dispatcher returns ok), so this is a

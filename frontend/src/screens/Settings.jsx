@@ -3580,12 +3580,15 @@ function BackupPanel() {
           const payload = JSON.parse(r.result);
           payload.mode = restoreMode;
           const { data } = await api.post("/backup/restore", payload);
-          const summary = Object.entries(data.summary).map(([k,v])=>`${k}: ${v.inserted ?? v.upserted}`).join(" · ");
+          const summary = Object.entries(data.summary).map(([k,v])=>`${k}: ${v.inserted ?? v.upserted}${v.kept_live ? ` (${v.kept_live} kept as-is)` : ""}`).join(" · ");
+          // Merge keeps a live record when a newer one already holds the same
+          // key (the same booking's invoice, the same sale key) — say so.
+          const keptNote = data.kept_live ? ` ${data.kept_live} backed-up record(s) were kept as they are now, because a newer record already uses the same key.` : "";
           const snap = data.pre_restore_snapshot;
           const snapNote = snap?.ok
             ? ` Pre-restore snapshot: ${snap.filename}.`
             : (snap?.error ? ` (Snapshot warning: ${snap.error})` : "");
-          setMsg(`Restored ✓ ${summary}.${snapNote}`);
+          setMsg(`Restored ✓ ${summary}.${keptNote}${snapNote}`);
           setRestoreFile(null); setRestorePreview(null);
         } catch (e) { setMsg(`Restore failed: ${e.response?.data?.detail || e.message}`); }
         setBusy(false);

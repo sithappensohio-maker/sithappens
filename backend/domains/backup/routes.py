@@ -14,6 +14,8 @@ from fastapi import Depends, HTTPException
 from fastapi.responses import FileResponse
 from pydantic import BaseModel, Field
 
+from domains.backup import rules as backup_rules
+
 
 logger = logging.getLogger("sithappens")
 
@@ -1011,10 +1013,11 @@ def make_backup_domain(*, BACKUP_COLLECTIONS, backup_root_ref, BACKUP_VERSION, C
         # Collections not in the payload are left alone (never wiped), so restoring
         # a v1 snapshot won't blow away homework_templates, trophies, etc.
         summary = {}
+        kept_live_total = 0
         for c, docs in (body.collections or {}).items():
             if c not in BACKUP_COLLECTIONS:
                 continue
-            docs = [d for d in (docs or []) if isinstance(d, dict)]
+            docs = [backup_rules.strip_omitted(c, d) for d in (docs or []) if isinstance(d, dict)]
             is_string_id = c in STRING_ID_COLLECTIONS
             if body.mode == "replace":
                 await db[c].delete_many({})
@@ -1023,27 +1026,76 @@ def make_backup_domain(*, BACKUP_COLLECTIONS, backup_root_ref, BACKUP_VERSION, C
                 summary[c] = {"mode": "replace", "inserted": len(docs)}
             else:  # merge
                 upserts = 0
+                kept_live: List[str] = []
                 for doc in docs:
-                    # Pick the right natural key per collection
-                    if is_string_id and isinstance(doc.get("_id"), str):
-                        key_filter = {"_id": doc["_id"]}
-                        await db[c].update_one(key_filter, {"$set": doc}, upsert=True)
+                    try:
+                        await _merge_one(c, doc, is_string_id)
                         upserts += 1
-                        continue
-                    key = doc.get("id")
-                    if not key:
-                        await db[c].insert_one(doc)
-                        upserts += 1
-                        continue
-                    await db[c].update_one({"id": key}, {"$set": doc}, upsert=True)
-                    upserts += 1
+                    except DuplicateKeyError:
+                        # A different live row already holds this row's unique
+                        # key (the same claim key, the same booking's invoice).
+                        # Merge keeps the live row, reports it and carries on:
+                        # stopping here left every later collection unrestored.
+                        if await _take_over(c, doc):
+                            upserts += 1
+                        else:
+                            kept_live.append(str(doc.get("id") or doc.get("_id") or "")[:60])
                 summary[c] = {"mode": "merge", "upserted": upserts}
+                if kept_live:
+                    summary[c]["kept_live"] = len(kept_live)
+                    summary[c]["kept_live_ids"] = kept_live[:10]
+                    kept_live_total += len(kept_live)
         return {
             "ok": True,
             "summary": summary,
+            "kept_live": kept_live_total,
             "restored_at": now_iso(),
             "pre_restore_snapshot": pre_snapshot,
         }
+
+    async def _merge_one(c: str, doc: dict, is_string_id: bool) -> None:
+        """Upsert one backed-up document on the key that identifies it."""
+        if is_string_id and isinstance(doc.get("_id"), str):
+            max_field = backup_rules.MERGE_MAX_FIELDS.get(c)
+            if max_field and isinstance(doc.get(max_field), (int, float)):
+                rest = {k: v for k, v in doc.items() if k not in ("_id", max_field)}
+                update: Dict[str, Any] = {"$max": {max_field: doc[max_field]}}
+                if rest:
+                    update["$set"] = rest
+                await db[c].update_one({"_id": doc["_id"]}, update, upsert=True)
+                return
+            await db[c].update_one({"_id": doc["_id"]}, {"$set": doc}, upsert=True)
+            return
+        key = doc.get("id")
+        if key:
+            await db[c].update_one({"id": key}, {"$set": doc}, upsert=True)
+            return
+        natural = backup_rules.MERGE_KEYS.get(c)
+        if natural and all(doc.get(f) is not None for f in natural):
+            await db[c].update_one({f: doc[f] for f in natural}, {"$set": doc}, upsert=True)
+            return
+        await db[c].insert_one(doc)
+
+    async def _take_over(c: str, doc: dict) -> bool:
+        """Let the backed-up row replace a live row holding its natural key,
+        when nothing points at the live row yet (see MERGE_TAKEOVER)."""
+        rule = backup_rules.MERGE_TAKEOVER.get(c)
+        if not rule or not doc.get("id"):
+            return False
+        field, refs = rule
+        if doc.get(field) is None:
+            return False
+        live = await db[c].find_one({field: doc[field]}, {"_id": 0, "id": 1})
+        if not live or not live.get("id") or live["id"] == doc["id"]:
+            return False
+        for ref_coll, ref_field in refs:
+            if await db[ref_coll].find_one({ref_field: live["id"]}, {"_id": 1}):
+                return False
+        try:
+            res = await db[c].update_one({"id": live["id"], field: doc[field]}, {"$set": doc})
+        except DuplicateKeyError:
+            return False
+        return res.matched_count == 1
 
 
     # ───────────────────────── Trophies ─────────────────────────────
