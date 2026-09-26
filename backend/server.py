@@ -44135,11 +44135,17 @@ async def void_pos_sale(sale_id: str, body: PosSaleVoidIn, user: dict = Depends(
     balance_clawback_applied = False
     gc_offsets: List[str] = []
     try:
+        # No line may have items reserved by a return — checked in this same
+        # atomic write, so a return landing between the earlier check and
+        # here can't be refunded a second time by the void (audit #8).
         flipped = await db.pos_sales.find_one_and_update(
-            {"id": sale_id, "status": "completed"},
+            {"id": sale_id, "status": "completed", "line_items.returned_qty": {"$not": {"$gt": 0}}},
             {"$set": {"status": "voided", "voided_at": ts, "void_reason": body.reason.strip()}},
         )
         if flipped is None:
+            now_sale = await db.pos_sales.find_one({"id": sale_id}, {"_id": 0, "status": 1})
+            if (now_sale or {}).get("status") == "completed":
+                raise HTTPException(status_code=409, detail="Part of this sale has already been returned, so it can't be voided. Return the rest instead.")
             raise HTTPException(status_code=409, detail="This sale has already been voided or is no longer eligible.")
         status_transitioned = True
 

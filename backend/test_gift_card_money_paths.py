@@ -440,6 +440,22 @@ def test_a_sale_partly_returned_cannot_then_be_voided():
     assert _balance(card["id"]) == refilled, "the returned part is not refilled a second time"
 
 
+def test_a_void_racing_a_return_cannot_refund_the_returned_item_again():
+    """Audit #8: a return reserves its items first and writes its record a
+    moment later. A void in that gap must still see the reservation."""
+    _s, card = _sell_card(100.00)
+    pid = _product(10.00)
+    sale_id = _sale_id(run(pos.create_sale(_body([{"kind": "retail", "product_id": pid, "qty": 2}],
+                                                 [{"method": "gift_card", "amount": 21.35, "gift_card_code": card["code"]}]), ADMIN)))
+    run(server.db.pos_sales.update_one({"id": sale_id}, {"$inc": {"line_items.0.returned_qty": 1}}))  # the return's reservation
+    before = _balance(card["id"])
+    with pytest.raises(HTTPException) as e:
+        _void(sale_id)
+    assert e.value.status_code == 409 and "already been returned" in e.value.detail
+    assert run(server.db.pos_sales.find_one({"id": sale_id}))["status"] == "completed"
+    assert _balance(card["id"]) == before, "nothing was refunded by the void"
+
+
 def test_a_retried_void_of_a_card_sale_replays_instead_of_a_false_409():
     sale_id, card = _sell_card(50.00)
     key = f"void-{uuid.uuid4()}"
