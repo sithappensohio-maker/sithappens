@@ -295,6 +295,9 @@ function ClockTab() {
 
 // ─────────────────────── Roster tab ───────────────────────
 function RosterTab() {
+  // Cancelling a booking needs booking_edit (server rule, DELETE /bookings/{id}).
+  const auth = useAuth();
+  const canCancel = !!auth?.can?.("booking_edit");
   const [data, setData] = useState(null);
   const [err, setErr] = useState("");
   const [busyId, setBusyId] = useState(null);
@@ -482,7 +485,7 @@ function RosterTab() {
       {err && <p className="text-red-400 text-[14px] font-black uppercase tracking-widest" data-testid="roster-err">{err}</p>}
       {reportFor && <ReportCardModal booking={reportFor} onClose={()=>{ setReportFor(null); load(); }} />}
       {checkoutFor && <CheckoutModal booking={checkoutFor} services={services}
-                                     onRequestCancel={(b)=>{ setCheckoutFor(null); setCancelFor(b); }}
+                                     onRequestCancel={canCancel ? (b)=>{ setCheckoutFor(null); setCancelFor(b); } : undefined}
                                      onClose={()=>{ setCheckoutFor(null); load(); }} />}
       {cancelFor && <CancelBookingModal booking={cancelFor} onClose={()=>{ setCancelFor(null); load(); }} />}
     </div>

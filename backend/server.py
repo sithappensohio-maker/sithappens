@@ -5632,6 +5632,14 @@ async def reject_booking(booking_id: str, user: dict = Depends(require_admin)):
     return booking
 
 async def cancel_booking(booking_id: str, forfeit: bool = False, user: dict = Depends(get_current_user)):
+    # Who may cancel is settled before the money lock below, so an account
+    # without the right can't hold up this client's checkouts (guards.py).
+    booking_guards.require_cancel_rights(user, forfeit, _perms_for)
+    if user.get("role") == "client":
+        # The same record the lock below would take (archived included).
+        own, _coll, _archived = await _load_booking_for_financial_correction(booking_id)
+        if own and own.get("client_id") != user.get("client_id"):
+            raise HTTPException(status_code=403, detail="Not allowed")
     # Serialize every cancellation with checkout/refund/adjustment activity.
     # Otherwise a cancellation and checkout could both pass their first read
     # and then update money/credits in conflicting directions.
@@ -11620,6 +11628,12 @@ async def stay_policies():
 @api.put("/settings")
 async def save_settings(body: SettingsIn, _: dict = Depends(require_admin_and_permission("settings"))):
     update = {k: v for k, v in body.model_dump(exclude_unset=True).items() if v is not None}
+    # Who may do what is owner-only (PUT /staff/roles/{role}/permissions); a
+    # Settings save must not rewrite it, whoever holds the settings key. A key
+    # with a "." or "$" would reach $set as a path or operator
+    # ("staff_role_permissions.manager"), so no such key is taken either.
+    update = {k: v for k, v in update.items()
+              if k != "staff_role_permissions" and "." not in k and not k.startswith("$")}
     if not update:
         return await get_settings()
 
@@ -53322,6 +53336,11 @@ def _perms_for(user: Dict[str, Any]) -> Dict[str, bool]:
     actually do something.
     """
     role = (user.get("role") or "").lower()
+    # Only staff accounts hold staff permissions. Clients used to fall through
+    # to read_only below, so ticking a key for Read-only gave it to every
+    # client (staff messages, School grading, training progress).
+    if role not in ("admin", "employee"):
+        return _empty_perms()
     raw_sr = user.get("staff_role")
     sr = (raw_sr or "").lower()
     # Legacy admin with no staff_role → implicit owner (full perms).
@@ -53353,7 +53372,7 @@ def require_permission(key: str):
     untouched — these are layered checks for high-leverage actions only."""
     if key not in PERMISSION_KEYS:
         raise RuntimeError(f"Unknown permission key '{key}'")
-    async def _dep(user: dict = Depends(get_current_user)) -> dict:
+    async def _dep(user: dict = Depends(require_employee_or_admin)) -> dict:
         perms = _perms_for(user)
         if not perms.get(key):
             raise HTTPException(status_code=403, detail=f"Missing permission: {key}")
@@ -53454,6 +53473,8 @@ async def set_staff_role(user_id: str, body: StaffRoleIn, _: dict = Depends(requ
         raise HTTPException(status_code=404, detail="User not found")
     if (u.get("role") or "").lower() == "admin":
         raise HTTPException(status_code=400, detail="Owner accounts always get full permissions — assign a different role to non-admin staff only")
+    if (u.get("role") or "").lower() != "employee":
+        raise HTTPException(status_code=400, detail="Only staff accounts take a staff role.")
     await db.users.update_one({"id": user_id}, {"$set": {"staff_role": sr, "updated_at": now_iso()}})
     return {"id": user_id, "staff_role": sr, "permissions": ROLE_PERMISSIONS[sr]}
 
@@ -56043,7 +56064,8 @@ globals().update(make_backup_domain(
     _BACKUP_PROCESS_ID=_BACKUP_PROCESS_ID, _CRITICAL_BACKUP_COLLECTIONS=_CRITICAL_BACKUP_COLLECTIONS,
     _DISK_PROBE_PATHS=_DISK_PROBE_PATHS, _build_config_payload=_build_config_payload,
     _business_day_utc_bounds=_business_day_utc_bounds, _disk_row=_disk_row,
-    _export_collection_docs=_export_collection_docs, _perms_for=_perms_for,
+    _export_collection_docs=_export_collection_docs, _perms_for=_perms_for, _is_owner=_is_owner,
+    _load_role_overrides_from_settings=lambda: _load_role_overrides_from_settings(),
     _read_mounts=_read_mounts, _safe_parse_iso=_safe_parse_iso,
     _school_media_archive_path=_school_media_archive_path,
     _validated_school_media_members=_validated_school_media_members,

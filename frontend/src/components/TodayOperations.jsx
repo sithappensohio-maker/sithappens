@@ -219,7 +219,7 @@ export default function TodayOperations({ stats, onReload = () => {}, onNavigate
                   {!b.checked_in_at && <button onClick={() => checkIn(b.id)} data-testid={`today-checkin-${b.id}`} className="px-3 py-2 rounded-lg bg-shPrimary text-bgHeader text-[11px] font-black uppercase tracking-wider">Check In</button>}
                   {onPremises && <button onClick={() => setCheckoutFor(b)} data-testid={`today-checkout-${b.id}`} className="px-3 py-2 rounded-lg bg-shSecondary text-shText text-[11px] font-black uppercase tracking-wider">Check Out</button>}
                   {onPremises && b.service_type === "training" && <button onClick={() => setTrainingTrackerFor({ booking_id: b.id, dog_id: b.dog_id, dog_name: b.dog_name })} data-testid={`today-training-tracker-${b.id}`} className="px-3 py-2 rounded-lg border border-shPrimary/40 bg-shPrimary/10 text-shPrimary text-[11px] font-black uppercase tracking-wider">Training</button>}
-                  {!done && <button onClick={() => setCancelFor(b)} data-testid={`today-cancel-${b.id}`} className="px-3 py-2 rounded-lg border border-shBorder text-shTextMuted text-[11px] font-black uppercase tracking-wider hover:text-red-300">Cancel</button>}
+                  {!done && can("booking_edit") && <button onClick={() => setCancelFor(b)} data-testid={`today-cancel-${b.id}`} className="px-3 py-2 rounded-lg border border-shBorder text-shTextMuted text-[11px] font-black uppercase tracking-wider hover:text-red-300">Cancel</button>}
                   {done && <button onClick={() => setReportFor(b)} data-testid={`today-report-${b.id}`} className="px-3 py-2 rounded-lg border border-shAccent/40 bg-shAccent/10 text-shAccent text-[11px] font-black uppercase tracking-wider">{b.report_card ? "View Card" : "+ Report Card"}</button>}
                 </div>
               </div>
@@ -334,7 +334,7 @@ export default function TodayOperations({ stats, onReload = () => {}, onNavigate
       {reportFor && <ReportCardModal booking={reportFor} moodTags={moodTags} onClose={() => { setReportFor(null); reloadAll(); }}/>} 
       {detailFor && <BookingDetailModal booking={detailFor} onClose={() => setDetailFor(null)} onJumpToDog={onJumpToDog}/>} 
       {trainingTrackerFor && <TrainingSessionWorkspace bookingId={trainingTrackerFor.booking_id} dogId={trainingTrackerFor.dog_id} enrollmentId={trainingTrackerFor.enrollment_id} onClose={() => setTrainingTrackerFor(null)} onSaved={() => { setTrainingTrackerFor(null); reloadAll(); }}/>} 
-      {checkoutFor && <CheckoutModal booking={checkoutFor} services={services} onRequestCancel={(b) => { setCheckoutFor(null); setCancelFor(b); }} onClose={() => { setCheckoutFor(null); reloadAll(); }}/>} 
+      {checkoutFor && <CheckoutModal booking={checkoutFor} services={services} onRequestCancel={can("booking_edit") ? (b) => { setCheckoutFor(null); setCancelFor(b); } : undefined} onClose={() => { setCheckoutFor(null); reloadAll(); }}/>} 
       {cancelFor && <CancelBookingModal booking={cancelFor} onClose={() => { setCancelFor(null); reloadAll(); }}/>} 
       {showQuick && <AdminBookingModal defaultCheckIn={true} onClose={() => setShowQuick(false)} onCreated={() => { setShowQuick(false); reloadAll(); }}/>} 
       {vaxPhoto && <div className="fixed inset-0 z-50 bg-black/80 backdrop-blur grid place-items-center p-6" onClick={() => setVaxPhoto(null)} data-testid="today-vax-photo-lightbox">

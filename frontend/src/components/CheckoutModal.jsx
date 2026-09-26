@@ -4,6 +4,7 @@ import { api, formatErr } from "../lib/api";
 import { todayISO } from "../lib/date";
 import { emitRegisterChanged } from "../lib/registerBus";
 import { useEditLock } from "../lib/useLiveRefresh";
+import { useAuth } from "../lib/auth";
 import { printReceipt as posPrintReceipt, openDrawer as posOpenDrawer } from "../lib/posAgent";
 import ReceiptLogo from "./ReceiptLogo";
 
@@ -1610,6 +1611,10 @@ export function CheckoutModal(props) {
 
 export function CancelBookingModal({ booking, onClose }) {
   useEditLock(true);
+  // The server's rule (DELETE /bookings/{id}): cancelling needs booking_edit,
+  // and adding the cancellation charge also needs take_payments.
+  const auth = useAuth();
+  const canCharge = !!(auth?.can?.("booking_edit") && auth?.can?.("take_payments"));
   const credits = Number(booking.credits_deducted || 0);
   const pool = booking.credit_service_type || booking.service_type;
   const cashPrice = Number(booking.actual_price || 0);
@@ -1673,6 +1678,7 @@ export function CancelBookingModal({ booking, onClose }) {
             <span><i className="fas fa-rotate-left mr-2"/>Cancel · refund {credits > 0 ? `${credits} credit${credits === 1 ? "" : "s"}` : "in full"}</span>
             <i className="fas fa-chevron-right text-[14px] opacity-70"/>
           </button>
+          {canCharge && (
           <button onClick={()=>submit(true)} disabled={busy} data-testid="cancel-charge"
                   className="bg-red-500 text-white px-4 py-3 rounded font-black uppercase text-[14px] tracking-widest shadow hover:bg-red-600 disabled:opacity-50 flex items-center justify-between">
             <span>
@@ -1680,6 +1686,7 @@ export function CancelBookingModal({ booking, onClose }) {
             </span>
             <i className="fas fa-chevron-right text-[14px] opacity-70"/>
           </button>
+          )}
           <button onClick={onClose} disabled={busy} data-testid="cancel-keep"
                   className="text-gray-400 hover:text-white font-black uppercase text-[14px] tracking-widest mt-1 py-2 disabled:opacity-50">
             Keep it

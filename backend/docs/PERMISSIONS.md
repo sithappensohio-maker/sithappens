@@ -9,10 +9,16 @@ admin endpoint is added or a permission mapping changes.
 ## Core model
 
 - `role` (top level): `admin` (reaches the AdminShell/staff sidebar),
-  `employee` (Staff Portal only, no `can()` gating there), `client`
-  (client portal).
-- `staff_role` (sub-classification of `role: admin`): `owner`, `manager`,
+  `employee` (Staff Portal), `client` (client portal).
+- `staff_role` (the permission row for a staff account): `owner`, `manager`,
   `trainer`, `daycare_staff`, `boarding_staff`, `front_desk`, `read_only`.
+  `PUT /staff/{id}/role` sets it on `role: employee` accounts only. An
+  employee with no `staff_role` resolves to `read_only`.
+- **Only staff hold staff permissions.** `_perms_for` returns all-false for
+  any account whose `role` is not `admin` or `employee` — clients included,
+  whatever the Read-only row says (audit #6, 2026-09-26: clients used to fall
+  back to `read_only` *with its overrides*, so ticking Messages for Read-only
+  opened every client thread to every client).
 - A **true owner** is `role == "admin"` with either no `staff_role` at all
   (legacy implicit owner) or `staff_role == "owner"` — the only account
   type that bypasses the permission matrix entirely. This bypass is
@@ -33,9 +39,11 @@ Two dependency helpers exist (defined near `require_admin`, ~line 480,
 `require_admin_and_permission` for why the key-validity check lives inside
 the inner `_dep`, not the outer factory):
 
-- `require_admin_and_permission(key)` — composes `require_admin` (broad
-  account-type gate, keeps `role: employee` out) with a specific
-  permission check. Use this for the vast majority of admin endpoints.
+- `require_admin_and_permission(key)` — composes `require_employee_or_admin`
+  (broad account-type gate, keeps clients out) with a specific permission
+  check. Use this for the vast majority of admin endpoints.
+- `require_permission(key)` — the same shape (it also composes
+  `require_employee_or_admin`); used by the staff messaging routes.
 - `require_owner(user)` — for the handful of actions that must never be
   delegatable via any override: editing the permission matrix itself
   (`GET/PUT /staff/roles*`), reassigning a `staff_role` (`PUT /staff/{id}/role`),
@@ -46,12 +54,9 @@ had the exact same "any `role == admin` bypasses the check" bug the whole
 checkpoint was about — fixed in place, same call sites, same permission
 keys as before.
 
-**Known gap:** `require_admin_and_permission`/`require_owner` alone won't
-protect a client or `role: employee` account from a permission key that
-happens to resolve `True` for them via `_perms_for`'s `read_only` fallback
-(e.g. `clients_view`) — that's why it's *composed with* `require_admin`,
-never used bare, on any endpoint that isn't already behind a broad
-account-type gate.
+Clients resolve to no permissions at all, so an in-body `_perms_for`
+check can no longer be satisfied by a client. Still compose an account-type
+gate on new endpoints rather than relying on that alone.
 
 ## Permission keys and what they gate
 
@@ -66,13 +71,13 @@ account-type gate.
 | `dogs_edit` | ✓ | ✓ | ✓ | ✗ | ✗ | ✓ | ✗ | `POST /dogs`, `PUT /dogs/{id}` (Phase 4 gap closure — was bare `require_admin` before) |
 | `incidents` | ✓ | ✓ | ✓ | ✓ | ✓ | ✗ | ✗ | `POST /incidents`, `PUT /incidents/{id}` (Phase 4 gap closure — was bare `require_admin` before) |
 | `care_complete` | ✓ | ✓ | ✓ | ✓ | ✓ | ✗ | ✗ | Care Board completion |
-| `booking_edit` | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✗ | `POST /bookings`, `POST /bookings/group` for staff (Phase 4 gap closure — the key already existed with correct role defaults but was never actually enforced on the create endpoints; a client booking their own dog is untouched — the gate only fires for `role == "admin"`) |
+| `booking_edit` | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✗ | `POST /bookings`, `POST /bookings/group` for staff (Phase 4 gap closure — a client booking their own dog is untouched; that gate only fires for `role == "admin"`). **Staff cancel** — `DELETE /bookings/{id}` for `role` admin *and* employee, checked before the booking's money lock (`guards.require_cancel_rights`); clients keep the own-booking/cutoff rules; any other role is refused |
 | `sell_credits` | ✓ | ✓ | ✗ | ✗ | ✗ | ✓ | ✗ | `POST /clients/{id}/sell-pack`, `/sell-packs`, `/sell-program` (Phase 4 gap closure — previously gated by `finance_reports`, which also unlocks P&L/finance dashboards; front_desk needed to sell without that broader access) |
 | `payroll` | ✓ | ✓ | ✗ | ✗ | ✗ | ✗ | ✗ | Employee records (`/admin/employees*`, `/admin/owner`) |
 | `data_export` | ✓ | ✓ | ✗ | ✗ | ✗ | ✗ | ✗ | Backup export/restore-config, disk usage, auto-backup run/history, backup-safety, generic CSV export |
 | `delete_records` | ✓ | ✓ | ✗ | ✗ | ✗ | ✗ | ✗ | Deletes/reversals: transaction/expense/retail-sale delete, POS/payment void, Stripe refund, financial-adjustment/refund, installment reversal, till-adjustment delete |
 | `messages` | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✗ | One-to-one client message threads (already enforced via `require_permission` before this checkpoint) |
-| `take_payments` | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✗ | Checkout, POS sale completion, invoice top-up |
+| `take_payments` | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✗ | Checkout, POS sale completion, invoice top-up, **cancel with a cancellation charge** (`DELETE /bookings/{id}?forfeit=true`, together with `booking_edit` — the fee lands on the client's tab) |
 | `view_shop_categories` / `manage_shop_categories` / `reorder_shop_categories` / `delete_shop_categories` | ✓/✓/✓/✓ | ✓/✓/✓/✓ | ✗ | ✗ | ✗ | ✗ | ✗ | Shop category/subcategory taxonomy |
 | `manage_receipt_settings` | ✓ | ✓ | ✗ | ✗ | ✗ | ✗ | ✗ | Receipt config, preview, test-print |
 | `audit_log` | ✓ | ✓ | ✗ | ✗ | ✗ | ✗ | ✗ | `GET /audit-log` |
@@ -84,7 +89,11 @@ account-type gate.
 
 ## Owner-only, un-delegatable (`require_owner`, not a matrix key)
 
-- `GET /staff/roles`, `PUT /staff/roles/{role}/permissions` — the matrix itself
+- `GET /staff/roles`, `PUT /staff/roles/{role}/permissions` — the matrix itself.
+  It has no other writer: `PUT /settings` drops `staff_role_permissions`, and
+  `POST /backup/restore-config` keeps the live matrix unless the owner runs it
+  (a manager holds `data_export` by default and could otherwise restore a file
+  granting their own row every key).
 - `PUT /staff/{user_id}/role` — staff_role assignment
 - `GET /admin/users/export-with-hashes`, `POST /admin/users/import-with-hashes` — raw password hashes
 - `POST /backup/restore` — full destructive backup restore

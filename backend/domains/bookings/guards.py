@@ -8,6 +8,8 @@ from __future__ import annotations
 from datetime import date
 from typing import Any, Callable, List, Optional
 
+from fastapi import HTTPException
+
 from domains.bookings.blocks import BookingBlocked, block_of, pretty_date
 
 
@@ -83,6 +85,28 @@ def booking_vaccine_block(settings: dict, dog: dict, required: List[str], **kw) 
         document_required=bool(compliance.get("vaccine_doc_upload_required", False)),
         **kw,
     )
+
+
+def require_cancel_rights(user: dict, forfeit: bool, perms_for: Callable[[dict], dict]) -> None:
+    """Who may cancel a booking. Runs before the booking's money lock is taken.
+
+    Clients go on to the own-booking rules inside the cancel (their booking,
+    the notice cutoff, never a charge). Staff need booking_edit to cancel, and
+    take_payments as well to add a cancellation charge — it lands on the
+    client's tab like a checkout charge. Any other account is refused. Before
+    this, every non-client account could cancel any booking and add a fee,
+    Read-only staff included.
+    """
+    role = (user or {}).get("role")
+    if role == "client":
+        return
+    if role not in ("admin", "employee"):
+        raise HTTPException(status_code=403, detail="Not allowed")
+    perms = perms_for(user)
+    if not perms.get("booking_edit"):
+        raise HTTPException(status_code=403, detail="Missing permission: booking_edit")
+    if forfeit and not perms.get("take_payments"):
+        raise HTTPException(status_code=403, detail="Adding a cancellation charge needs the Take payments permission.")
 
 
 async def load_booking_dog(db, dog_id: str, user: dict) -> dict:

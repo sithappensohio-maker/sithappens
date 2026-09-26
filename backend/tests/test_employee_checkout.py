@@ -107,8 +107,10 @@ def test_employee_checkout_with_credits_and_price(admin_headers, emp_headers, a_
         pass
 
 
-def test_employee_cancel_booking_refunds_credits(admin_headers, emp_headers, a_dog):
-    """Sprint 101 — employee can DELETE a booking (cancel-with-refund)."""
+def test_employee_cancel_booking_needs_booking_edit(admin_headers, emp_headers, a_dog):
+    """Audit #6 (2026-09-26) — cancelling needs the booking_edit permission.
+    This employee has no staff role (so Read-only) and is refused; the owner
+    can still cancel."""
     from datetime import date, timedelta
     dog, client = a_dog
     # Future-dated booking so cancellation cutoff is irrelevant
@@ -122,15 +124,11 @@ def test_employee_cancel_booking_refunds_credits(admin_headers, emp_headers, a_d
     assert r.status_code == 200, r.text
     bid = r.json()["id"]
 
-    bal_before = requests.get(f"{BASE}/api/clients/{client['id']}", headers=admin_headers, timeout=15).json()["credits"]
-
-    # Employee cancels
     rc = requests.delete(f"{BASE}/api/bookings/{bid}", headers=emp_headers, timeout=15)
-    assert rc.status_code == 200, rc.text
+    assert rc.status_code == 403, rc.text
 
-    # Credits should be restored
-    bal_after = requests.get(f"{BASE}/api/clients/{client['id']}", headers=admin_headers, timeout=15).json()["credits"]
-    assert bal_after >= bal_before, f"credits not refunded: {bal_before} → {bal_after}"
+    ra = requests.delete(f"{BASE}/api/bookings/{bid}", headers=admin_headers, timeout=15)
+    assert ra.status_code == 200, ra.text
 
 
 def test_employee_can_get_services(emp_headers):

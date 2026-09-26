@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import { api, formatErr } from "../lib/api";
 import { useConfirm } from "../lib/useConfirm";
+import { useAuth } from "../lib/auth";
 import AdminBookingModal from "../components/AdminBookingModal";
 import BookingDetailModal from "../components/BookingDetailModal";
 import CollapsibleDateGroups from "../components/CollapsibleDateGroups";
@@ -41,6 +42,9 @@ export default function Bookings() {
   const [summary, setSummary] = useState(null);   // authoritative counts from /bookings/summary
 
   const confirm = useConfirm();
+  // Cancelling needs booking_edit (server rule, DELETE /bookings/{id}).
+  const auth = useAuth();
+  const canCancel = !!auth?.can?.("booking_edit");
   // Sprint 110ao — toast a new booking the moment it lands in this list.
   const seenIdsRef = useRef(null);
   const seededRef = useRef(false);
@@ -319,7 +323,7 @@ export default function Bookings() {
                       <button onClick={(e)=>{ e.stopPropagation(); approve(b.id); }} data-testid={`approve-${b.id}-g`} className="text-[13px] font-black uppercase text-shPrimary hover:underline">Approve</button>
                       <button onClick={(e)=>{ e.stopPropagation(); reject(b.id); }} className="text-[13px] font-black uppercase text-red-400 hover:underline">Reject</button>
                     </>}
-                    {(b.status === "approved" || b.status === "pending") && <button onClick={(e)=>{ e.stopPropagation(); cancel(b.id); }} className="text-[13px] font-black uppercase text-shTextMuted hover:underline">Cancel</button>}
+                    {canCancel && (b.status === "approved" || b.status === "pending") && <button onClick={(e)=>{ e.stopPropagation(); cancel(b.id); }} className="text-[13px] font-black uppercase text-shTextMuted hover:underline">Cancel</button>}
                   </div>
                 </div>
               )}
@@ -362,7 +366,7 @@ export default function Bookings() {
                     <button onClick={(e)=>{ e.stopPropagation(); approve(b.id); }} data-testid={`approve-${b.id}`} className="text-[14px] font-black uppercase text-shPrimary hover:underline">Approve</button>
                     <button onClick={(e)=>{ e.stopPropagation(); reject(b.id); }} className="text-[14px] font-black uppercase text-red-400 hover:underline">Reject</button>
                   </>}
-                  {(b.status === "approved" || b.status === "pending") && <button onClick={(e)=>{ e.stopPropagation(); cancel(b.id); }} className="text-[14px] font-black uppercase text-shTextMuted hover:underline">Cancel</button>}
+                  {canCancel && (b.status === "approved" || b.status === "pending") && <button onClick={(e)=>{ e.stopPropagation(); cancel(b.id); }} className="text-[14px] font-black uppercase text-shTextMuted hover:underline">Cancel</button>}
                 </td>
               </tr>
               );
@@ -403,7 +407,7 @@ export default function Bookings() {
                   <button onClick={(e)=>{ e.stopPropagation(); approve(b.id); }} data-testid={`approve-${b.id}-m`} className="text-[14px] font-black uppercase tracking-widest text-shPrimary hover:underline">Approve</button>
                   <button onClick={(e)=>{ e.stopPropagation(); reject(b.id); }} className="text-[14px] font-black uppercase tracking-widest text-red-400 hover:underline">Reject</button>
                 </>}
-                {(b.status === "approved" || b.status === "pending") && <button onClick={(e)=>{ e.stopPropagation(); cancel(b.id); }} className="text-[14px] font-black uppercase tracking-widest text-shTextMuted hover:underline">Cancel</button>}
+                {canCancel && (b.status === "approved" || b.status === "pending") && <button onClick={(e)=>{ e.stopPropagation(); cancel(b.id); }} className="text-[14px] font-black uppercase tracking-widest text-shTextMuted hover:underline">Cancel</button>}
               </div>
             </div>
             );

@@ -20,7 +20,7 @@ from domains.backup import rules as backup_rules
 logger = logging.getLogger("sithappens")
 
 
-def make_backup_domain(*, BACKUP_COLLECTIONS, backup_root_ref, BACKUP_VERSION, CONFIG_BACKUP_VERSION, CONFIG_COLLECTIONS, ConfigRestoreIn, DuplicateKeyError, ReturnDocument, school_media_root_ref, STRING_ID_COLLECTIONS, SchoolMediaRestoreIn, _BACKUP_LEASE_ID, _BACKUP_PROCESS_ID, _CRITICAL_BACKUP_COLLECTIONS, _DISK_PROBE_PATHS, _build_config_payload, _business_day_utc_bounds, _disk_row, _export_collection_docs, _perms_for, _read_mounts, _safe_parse_iso, _school_media_archive_path, _validated_school_media_members, _write_school_media_archive, api, business_today, db, logger, now_iso, now_local, require_admin, require_admin_and_permission, require_owner):
+def make_backup_domain(*, BACKUP_COLLECTIONS, backup_root_ref, BACKUP_VERSION, CONFIG_BACKUP_VERSION, CONFIG_COLLECTIONS, ConfigRestoreIn, DuplicateKeyError, ReturnDocument, school_media_root_ref, STRING_ID_COLLECTIONS, SchoolMediaRestoreIn, _BACKUP_LEASE_ID, _BACKUP_PROCESS_ID, _CRITICAL_BACKUP_COLLECTIONS, _DISK_PROBE_PATHS, _build_config_payload, _business_day_utc_bounds, _disk_row, _export_collection_docs, _perms_for, _is_owner, _load_role_overrides_from_settings, _read_mounts, _safe_parse_iso, _school_media_archive_path, _validated_school_media_members, _write_school_media_archive, api, business_today, db, logger, now_iso, now_local, require_admin, require_admin_and_permission, require_owner):
     def _safe_backup_dir(path: Optional[str] = None) -> str:
         requested = os.path.realpath(path or backup_root_ref())
         try:
@@ -168,7 +168,7 @@ def make_backup_domain(*, BACKUP_COLLECTIONS, backup_root_ref, BACKUP_VERSION, C
         return await _build_config_payload()
 
     @api.post("/backup/restore-config")
-    async def backup_restore_config(body: ConfigRestoreIn, _: dict = Depends(require_admin_and_permission("data_export"))):
+    async def backup_restore_config(body: ConfigRestoreIn, user: dict = Depends(require_admin_and_permission("data_export"))):
         """Restore configuration from a config-only backup file. Always replaces
         the listed config collections with the snapshot contents. Collections
         NOT in the payload are left untouched. Anything outside the configured
@@ -197,18 +197,49 @@ def make_backup_domain(*, BACKUP_COLLECTIONS, backup_root_ref, BACKUP_VERSION, C
                 status_code=507,
                 detail=f"Restore stopped because the safety snapshot could not be verified: {pre_snapshot.get('error')}",
             )
+        # Who may do what (settings.staff_role_permissions) is owner-only. A
+        # delegate holding data_export restores everything else, but the file
+        # can't rewrite the permission matrix — their own row included. The
+        # file is cleaned BEFORE anything is written, so a restore that fails
+        # partway can't leave a planted matrix behind.
+        owner = _is_owner(user)
+        live_matrix = None
+        if not owner:
+            live = await db.settings.find_one({"id": "global"}, {"_id": 0, "staff_role_permissions": 1})
+            live_matrix = (live or {}).get("staff_role_permissions")
+
+        def _clean_settings_doc(doc: dict) -> dict:
+            # A top-level key with "." or "$" would later be replayed as a
+            # path by a whole-doc $set (get_settings' backfill); never store one.
+            out = {k: v for k, v in doc.items()
+                   if "." not in k and not k.startswith("$") and (owner or k != "staff_role_permissions")}
+            if not owner and doc.get("id") == "global" and live_matrix is not None:
+                out["staff_role_permissions"] = live_matrix
+            return out
+
         summary = {}
-        for c, docs in (body.collections or {}).items():
-            if c not in CONFIG_COLLECTIONS:
-                continue
-            docs = [d for d in (docs or []) if isinstance(d, dict)]
-            # Full-replace semantics: drop the collection, then bulk-insert.
-            # Config docs are tiny (handful of rows max) so wiping is cheap and
-            # predictable — matches user expectation for "restore this config".
-            await db[c].delete_many({})
-            if docs:
-                await db[c].insert_many(docs)
-            summary[c] = {"mode": "replace", "inserted": len(docs)}
+        try:
+            for c, docs in (body.collections or {}).items():
+                if c not in CONFIG_COLLECTIONS:
+                    continue
+                docs = [d for d in (docs or []) if isinstance(d, dict)]
+                if c == "settings":
+                    docs = [_clean_settings_doc(d) for d in docs]
+                # Full-replace semantics: drop the collection, then bulk-insert.
+                # Config docs are tiny (handful of rows max) so wiping is cheap and
+                # predictable — matches user expectation for "restore this config".
+                await db[c].delete_many({})
+                if docs:
+                    await db[c].insert_many(docs)
+                summary[c] = {"mode": "replace", "inserted": len(docs)}
+                if c == "settings" and not owner:
+                    summary[c]["staff_permissions"] = "kept (owner only)"
+        finally:
+            if not owner and live_matrix is not None:
+                # Covers a file with no global settings doc, and any failure
+                # after the settings collection was emptied.
+                await db.settings.update_one({"id": "global"}, {"$set": {"staff_role_permissions": live_matrix}}, upsert=True)
+            await _load_role_overrides_from_settings()
         return {
             "ok": True,
             "summary": summary,
