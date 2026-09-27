@@ -105,6 +105,7 @@ from domains.gift_cards import services as gift_card_services
 from domains.gift_cards import shop as gift_card_shop
 from domains.shop import abandon as shop_abandon
 from domains.clients import reset_mfa
+from domains.operations import audit_redact
 from school_events import EventType as SchoolEvent
 
 from trophy_service import (
@@ -30138,6 +30139,8 @@ def _scheduler_jobs() -> List[job_scheduler.Job]:
         ("auto_backup", _maybe_auto_backup_tick),
         # Stock held by Shop checkouts nobody will pay for (audit #57).
         ("shop_abandoned_checkouts", lambda: shop_abandon.sweep()),
+        # Blank PINs/codes in Audit Log entries saved before audit #7 (once; marker-gated).
+        ("audit_log_secret_scrub", lambda: audit_redact.scrub_existing(db)),
     ]
 
 
@@ -52817,23 +52820,11 @@ def _audit_action_for(method: str, path: str) -> str:
 
 
 # Fields whose values should NEVER be persisted to the audit log
-_AUDIT_REDACT_KEYS = {
-    "password", "current_password", "new_password", "token", "access_token",
-    "secret", "api_key", "credit_card", "card_number", "cvv", "ssn",
-}
-
-
-def _redact_payload(payload: Any, depth: int = 0) -> Any:
-    if depth > 4:
-        return "[…]"
-    if isinstance(payload, dict):
-        return {k: ("[REDACTED]" if k.lower() in _AUDIT_REDACT_KEYS else _redact_payload(v, depth+1))
-                for k, v in payload.items()}
-    if isinstance(payload, list):
-        return [_redact_payload(x, depth+1) for x in payload[:50]]
-    if isinstance(payload, str) and len(payload) > 500:
-        return payload[:500] + "…"
-    return payload
+def _redact_payload(payload: Any, path: str = "") -> Any:
+    """What the Audit Log keeps of a body — the one rule lives in
+    domains.operations.audit_redact (register/photo-gallery PINs, sign-in
+    and recovery codes, anything *_password/_token/_secret; audit #7)."""
+    return audit_redact.redact(payload, path)
 
 
 def _audit_record_id_from_path(path: str) -> Optional[str]:
@@ -52930,6 +52921,8 @@ async def audit_log_middleware(request, call_next):
             return response
         # Capture body only for non-GET (already known) — re-reading requires stash
         body = getattr(request.state, "_audit_body", None)
+        # A claim/reset link's secret rides in the path — never stored (audit #7).
+        path = audit_redact.redact_path(path)
         _spawn_background_db_write(db.audit_log.insert_one({
             "id": str(uuid.uuid4()),
             "ts": now_iso(),
@@ -52943,7 +52936,7 @@ async def audit_log_middleware(request, call_next):
             "action": _audit_action_for(method, path),
             "record_id": _audit_record_id_from_path(path),
             "status": response.status_code,
-            "payload": _redact_payload(body) if body else None,
+            "payload": _redact_payload(body, path) if body else None,
         }))
     except Exception:
         # Audit MUST NOT break user requests.

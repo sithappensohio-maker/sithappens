@@ -1146,7 +1146,7 @@ def make_backup_domain(*, BACKUP_COLLECTIONS, backup_root_ref, BACKUP_VERSION, C
         for index, (c, docs) in enumerate(todo, start=1):
             if progress:
                 await progress(c, index, len(todo), 0, False)
-            docs = [backup_rules.strip_omitted(c, d) for d in (docs or []) if isinstance(d, dict)]
+            docs = [backup_rules.restore_row(c, d) for d in (docs or []) if isinstance(d, dict)]
             is_string_id = c in STRING_ID_COLLECTIONS
             if mode == "replace":
                 await db[c].delete_many({})

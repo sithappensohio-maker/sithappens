@@ -6,6 +6,8 @@ is pinned by backend/test_backup_coverage_guard.py.
 """
 from typing import Dict, Tuple
 
+from domains.operations import audit_redact
+
 # Fields left out of the backup file. Shop photo derivatives (thumb / card /
 # pdp / zoom) are raw bytes that JSON cannot carry: the download crashed on
 # them and the auto-backup wrote them as "b'\\xff..'" text, which a restore
@@ -69,3 +71,13 @@ def strip_omitted(collection: str, doc: dict) -> dict:
     if not omit:
         return doc
     return {k: v for k, v in doc.items() if k not in omit}
+
+
+def restore_row(collection: str, doc: dict) -> dict:
+    """What a restore writes: strip_omitted, and an Audit Log entry never
+    comes back holding a PIN, a sign-in code or a reset link (audit #7) —
+    an older backup predates the scrub."""
+    doc = strip_omitted(collection, doc)
+    if collection == "audit_log":
+        doc = audit_redact.clean_row(doc)
+    return doc
