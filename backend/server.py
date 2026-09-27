@@ -34144,6 +34144,13 @@ async def list_services(
         if for_service_type:
             q["addon_for"] = for_service_type
     items = await db.services.find(q, {"_id": 0}).sort("name", 1).to_list(500)
+    # A Photo Special's Portrait Session is never offered on its own: clients
+    # don't see it, staff pickers are told (bookings.guards.photo_special_only).
+    for it in items:
+        if booking_guards.photo_special_only(it):
+            it["photo_special_only"] = True
+    if user.get("role") == "client":
+        items = [it for it in items if not it.get("photo_special_only")]
     # Sprint 110bv — when a client browses, rewrite catalog prices to their
     # locked-in legacy rates so the portal never shows the wrong price.
     if user.get("role") == "client" and user.get("client_id"):
@@ -34182,7 +34189,8 @@ async def list_eligible_addons(
 @api.get("/public/services")
 async def public_list_services():
     items = await db.services.find(
-        {"active": True, "$or": [{"is_addon": {"$ne": True}}, {"is_addon": {"$exists": False}}]},
+        {"active": True, "$or": [{"is_addon": {"$ne": True}}, {"is_addon": {"$exists": False}}],
+         **booking_guards.NOT_PHOTO_SPECIAL_ONLY},
         {"_id": 0, "id": 1, "name": 1, "description": 1, "base_price": 1,
          "service_type": 1, "color": 1, "icon": 1, "duration_minutes": 1},
     ).sort("name", 1).to_list(500)

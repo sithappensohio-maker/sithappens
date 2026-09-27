@@ -270,3 +270,28 @@ def cancel_cutoff_block(cutoff_hours: int, start: datetime) -> BookingBlocked:
              "can't be cancelled here. Please message us and we'll take care of it.",
         code="cancel_cutoff", action="contact_us",
     )
+
+
+# ─────────────────────────── services that exist only for Photo Specials
+#
+# Photo Specials point their 15-minute slots at one "Portrait Session"
+# service (domains.photo_specials). It is $0 on purpose — the Register prices
+# the package — so on its own it was a free portrait anyone could book, and
+# the public Photography page advertised it at $0. It is never offered or
+# booked on its own; Photo Specials insert their reservations directly.
+
+PHOTO_SPECIAL_ONLY_SLUG = "portrait-session"
+NOT_PHOTO_SPECIAL_ONLY = {"photo_special_only": {"$ne": True}, "slug": {"$ne": PHOTO_SPECIAL_ONLY_SLUG}}
+
+
+def photo_special_only(service: Optional[dict]) -> bool:
+    return bool(service) and (bool(service.get("photo_special_only")) or service.get("slug") == PHOTO_SPECIAL_ONLY_SLUG)
+
+
+def refuse_photo_special_only(service: Optional[dict]) -> None:
+    if photo_special_only(service):
+        raise BookingBlocked(
+            400, f"{service.get('name') or 'Portrait Session'} is only booked through a Photo Special. "
+                 "Please pick another service.",
+            code="photo_special_only", action="pick_service",
+        )

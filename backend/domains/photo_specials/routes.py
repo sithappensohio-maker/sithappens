@@ -48,7 +48,7 @@ from domains.photo_orders.engine import (
     register_photo_order_routes,
 )
 
-PORTRAIT_SERVICE_SLUG = "portrait-session"
+PORTRAIT_SERVICE_SLUG = booking_guards.PHOTO_SPECIAL_ONLY_SLUG
 PORTRAIT_SERVICE_NAME = "Portrait Session"
 # The appointment's length is the point of this service; its price is not.
 # Zero means a reservation can never manufacture an amount owed — the Register
@@ -199,6 +199,9 @@ def register_photo_special_routes(
         """
         svc = await db.services.find_one({"slug": PORTRAIT_SERVICE_SLUG}, {"_id": 0})
         if svc:
+            if not svc.get("photo_special_only"):
+                await db.services.update_one({"id": svc["id"]}, {"$set": {"photo_special_only": True}})
+                svc["photo_special_only"] = True
             return svc
         svc = {
             "id": str(uuid.uuid4()),
@@ -210,6 +213,8 @@ def register_photo_special_routes(
             "base_price": PORTRAIT_SERVICE_BASE_PRICE,
             "duration_minutes": PORTRAIT_SERVICE_DURATION_MIN,
             "capacity_per_slot": 1,
+            # Only ever booked through a Photo Special (bookings.guards).
+            "photo_special_only": True,
             "active": True,
             "is_default": False,
             "created_at": now_iso(),

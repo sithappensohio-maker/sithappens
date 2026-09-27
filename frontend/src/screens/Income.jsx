@@ -916,7 +916,7 @@ function LogServiceModal({ onClose, onSaved, dogs, services }) {
             <label className="text-[14px] font-black text-shTextMuted uppercase tracking-widest">Service</label>
             <select value={form.service_id} onChange={(e)=>onServiceChange(e.target.value)} data-testid="log-service-select"
                     className="w-full mt-1 bg-[var(--sh-card-base)] border border-shBorder rounded p-2 text-shText text-sm">
-              {services.map(s => <option key={s.id} value={s.id}>{s.name} · ${s.base_price?.toFixed(2)}</option>)}
+              {services.filter(s => !s.photo_special_only).map(s => <option key={s.id} value={s.id}>{s.name} · ${s.base_price?.toFixed(2)}</option>)}
             </select>
           </div>
           <div className="grid grid-cols-2 gap-3">

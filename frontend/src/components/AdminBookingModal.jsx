@@ -309,7 +309,8 @@ export default function AdminBookingModal({ defaultCheckIn = false, defaultDate 
         }
         setClients(clientRows);
         setDogs(dogRows);
-        const activeBaseServices = (Array.isArray(svcRes.data) ? svcRes.data : []).filter(s => s.active !== false && !s.is_addon);
+        // A Photo Special's Portrait Session is only booked from Photo Specials.
+        const activeBaseServices = (Array.isArray(svcRes.data) ? svcRes.data : []).filter(s => s.active !== false && !s.is_addon && !s.photo_special_only);
         setCatalogServices(activeBaseServices);
         setCatalogPrograms(Array.isArray(progRes.data) ? progRes.data : []);
         if (existing?.service_id) {

@@ -5,6 +5,7 @@ from typing import Any, Optional
 from fastapi import HTTPException
 
 from domains.bookings.blocks import BookingBlocked
+from domains.bookings import guards as booking_guards
 
 _db = None
 _apply_booking_service_rules_fn = None
@@ -48,6 +49,7 @@ async def resolve_base_service_for_booking(body: BookingIn, user: dict) -> Optio
                 400, "Add-ons can't be booked on their own. Please pick a main service (like daycare or grooming) and add extras to it.",
                 code="addon_as_service", action="pick_service",
             )
+        booking_guards.refuse_photo_special_only(selected)
         if selected.get("service_type") != body.service_type:
             raise BookingBlocked(
                 400, "That service doesn't match the type of booking you picked. Please go back and choose the service again.",
@@ -60,6 +62,7 @@ async def resolve_base_service_for_booking(body: BookingIn, user: dict) -> Optio
             "active": True,
             "service_type": body.service_type,
             "$or": [{"is_addon": {"$ne": True}}, {"is_addon": {"$exists": False}}],
+            **booking_guards.NOT_PHOTO_SPECIAL_ONLY,
         },
         {"_id": 0},
     ).sort([("is_default", -1), ("name", 1)]).to_list(50)
