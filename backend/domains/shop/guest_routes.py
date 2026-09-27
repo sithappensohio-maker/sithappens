@@ -29,6 +29,7 @@ from fastapi import HTTPException, Request
 from pydantic import BaseModel, EmailStr, Field
 
 from domains.gift_cards import shop as gift_card_shop
+from domains.shop import abandon as shop_abandon
 from domains.shop import checkout as shop_checkout
 from domains.shop import orders as shop_orders_view
 from domains.shop import guest as shop_guest
@@ -187,6 +188,19 @@ def register_guest_shop_routes(*, api, server_globals: dict) -> None:
             items=body.items,
             idempotency_key=body.idempotency_key,
         )
+
+    @api.post("/public/shop/orders/{order_id}/cancel-checkout")
+    async def cancel_public_shop_checkout(order_id: str, request: Request):
+        """The guest came back through Stripe's cancel link: close that
+        Stripe page and give back the stock it was holding now, not in 30
+        minutes (audit #57). Same token rule as reading the order."""
+        await _limit(request, "public_shop_cancel_checkout", limit=30, window=60)
+        token = (request.headers.get("x-guest-token") or "").strip()
+        db = _s("db")
+        order = await db.shop_orders.find_one({"id": order_id}, {"_id": 0})
+        if not order or not order.get("is_guest_order") or not shop_checkout.guest_token_matches(order, token):
+            raise HTTPException(status_code=404, detail="Order not found.")
+        return await shop_abandon.cancel_checkout(order)
 
     @api.get("/public/shop/orders/{order_id}")
     async def public_shop_order_status(order_id: str, request: Request, token: str = ""):

@@ -420,3 +420,32 @@ describe("a guest's gift card on the order page", () => {
     expect(text()).not.toMatch(/\bEmailed\b/);
   });
 });
+
+describe("a guest backing out of Stripe (audit #57)", () => {
+  const renderOrder = (orderId, search) => {
+    mount(
+      <MemoryRouter initialEntries={[`/shop/order/${orderId}${search}`]}>
+        <Routes><Route path="/shop/order/:orderId" element={<GuestOrderStatus />} /></Routes>
+      </MemoryRouter>,
+    );
+  };
+
+  test("tells the server to let go, with the order's token, and still says nothing was charged", async () => {
+    api.post.mockResolvedValue({ data: { status: "canceled" } });
+    api.get.mockResolvedValue({ data: { order_id: "ord-6", status: "canceled", total: 10, lines: [] } });
+    renderOrder("ord-6", "?stripe=cancel&token=tok-6");
+    await flush(); await flush();
+    expect(api.post).toHaveBeenCalledWith("/public/shop/orders/ord-6/cancel-checkout", {},
+                                          { headers: { "X-Guest-Token": "tok-6" } });
+    expect(text()).toContain("Checkout was canceled.");
+    expect(text()).toContain("Nothing was charged");
+    expect(text()).not.toContain("There was a problem");
+  });
+
+  test("a normal return from Stripe never cancels anything", async () => {
+    api.get.mockResolvedValue({ data: { order_id: "ord-7", status: "pending_payment", total: 10, lines: [] } });
+    renderOrder("ord-7", "?stripe=success&token=tok-7");
+    await flush();
+    expect(api.post).not.toHaveBeenCalled();
+  });
+});

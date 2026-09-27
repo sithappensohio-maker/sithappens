@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { useLocation, useParams } from "react-router-dom";
 import { api } from "../lib/api";
 import PublicBrandShell from "../components/PublicBrandShell";
@@ -56,6 +56,19 @@ export default function GuestOrderStatus() {
 
   useEffect(() => { load(); }, [load]);
 
+  // Backing out of Stripe closes that page and gives back the stock it was
+  // holding right away, rather than in 30 minutes (audit #57). Once only.
+  const cancelSent = useRef(false);
+  useEffect(() => {
+    if (!canceled || !token || cancelSent.current) return;
+    cancelSent.current = true;
+    Promise.resolve()
+      .then(() => api.post(`/public/shop/orders/${encodeURIComponent(orderId)}/cancel-checkout`, {},
+                           { headers: { "X-Guest-Token": token } }))
+      .catch(() => {})
+      .finally(load);
+  }, [canceled, token, orderId, load]);
+
   // Keep asking while the answer is still "we're waiting on Stripe", and
   // stop after a couple of minutes rather than polling this page forever.
   useEffect(() => {
@@ -109,12 +122,15 @@ export default function GuestOrderStatus() {
 
   const paid = order.status === "paid";
   const waiting = order.status === "pending_payment";
+  // Backed out of Stripe: the order is still waiting, or already closed.
+  const backedOut = canceled && (waiting || order.status === "canceled");
   const title = paid ? "Thank you — you're all set."
-    : waiting ? (canceled ? "Checkout was canceled." : "Waiting for your payment…")
-      : "There was a problem with this order.";
+    : backedOut ? "Checkout was canceled."
+      : waiting ? "Waiting for your payment…"
+        : "There was a problem with this order.";
   const subtitle = paid
     ? `A receipt is on its way to ${order.email || "your email"}.`
-    : waiting && canceled
+    : backedOut
       ? "Nothing was charged. Your basket is still where you left it."
       : waiting
         ? "This page updates itself — no need to refresh."
@@ -124,7 +140,7 @@ export default function GuestOrderStatus() {
     <SectionCard accent={paid ? "lime" : "cyan"} className="w-full max-w-md space-y-4 py-7"
                  data-testid="guest-order-card">
       <div className="text-center">
-        <i className={`fas ${paid ? "fa-circle-check text-shPrimary" : waiting ? "fa-clock text-shSecondary" : "fa-circle-exclamation text-shOrange"} text-4xl`} />
+        <i className={`fas ${paid ? "fa-circle-check text-shPrimary" : backedOut ? "fa-circle-xmark text-shSecondary" : waiting ? "fa-clock text-shSecondary" : "fa-circle-exclamation text-shOrange"} text-4xl`} />
         <p className="text-[11px] font-black uppercase tracking-[0.22em] text-shTextMuted mt-3">
           Order #{String(orderId).slice(0, 8).toUpperCase()}
         </p>

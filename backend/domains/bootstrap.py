@@ -13,6 +13,7 @@ from domains.gift_cards import online as gift_card_online
 from domains.shop import media as shop_media_services
 from domains.shop.routes import register_shop_routes
 from domains.shop.guest_routes import register_guest_shop_routes
+from domains.shop import abandon as shop_abandon
 from domains.shop.discovery_routes import register_shop_discovery_routes
 from domains.shop.analytics_routes import register_shop_analytics_routes
 from domains.shop.seo_routes import register_shop_seo_routes
@@ -252,6 +253,8 @@ def register_domains(
 
     register_shop_routes(api=api, server_globals=server_globals)
     register_guest_shop_routes(api=api, server_globals=server_globals)
+    shop_abandon.configure(server_globals=server_globals)
+    shop_abandon.register_abandon_routes(api=api, server_globals=server_globals)
     register_shop_discovery_routes(api=api, server_globals=server_globals)
     register_shop_analytics_routes(api=api, server_globals=server_globals)
     register_shop_seo_routes(api=api, server_globals=server_globals)

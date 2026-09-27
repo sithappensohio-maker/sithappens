@@ -103,6 +103,7 @@ from domains.shop import guest as shop_guest
 from domains.shop import checkout as shop_checkout
 from domains.gift_cards import services as gift_card_services
 from domains.gift_cards import shop as gift_card_shop
+from domains.shop import abandon as shop_abandon
 from school_events import EventType as SchoolEvent
 
 from trophy_service import (
@@ -30125,6 +30126,8 @@ def _scheduler_jobs() -> List[job_scheduler.Job]:
         ("trophy_recheck", _maybe_recheck_trophies_today),
         ("recurring_auto_extend", _maybe_auto_extend_recurring_today),
         ("auto_backup", _maybe_auto_backup_tick),
+        # Stock held by Shop checkouts nobody will pay for (audit #57).
+        ("shop_abandoned_checkouts", lambda: shop_abandon.sweep()),
     ]
 
 

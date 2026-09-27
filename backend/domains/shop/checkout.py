@@ -45,6 +45,7 @@ from typing import Optional
 from fastapi import HTTPException
 from pymongo.errors import DuplicateKeyError
 
+from domains.shop import abandon as shop_abandon
 from domains.shop import guest as shop_guest
 
 _g = None  # server module globals, resolved live (see configure)
@@ -262,8 +263,14 @@ async def create_checkout(*, buyer: Buyer, items, idempotency_key: str) -> dict:
                 and (order.get("client_email") or "").strip().lower() != buyer.email.strip().lower())):
         raise HTTPException(status_code=409, detail="This idempotency key was already used for a different request.")
 
-    for line in order["lines"]:
-        await _s("_reserve_shop_inventory_line")(order, line)
+    try:
+        for line in order["lines"]:
+            await _s("_reserve_shop_inventory_line")(order, line)
+    except HTTPException:
+        # Nothing was charged and no payment started — give back whatever
+        # this checkout already held, or it stays held for good (audit #57).
+        await shop_abandon.rollback_unstarted(order_id, idempotency_key)
+        raise
 
     amount_cents = _s("_stripe_amount_cents")(order["total"])
     attempt_id = str(uuid.uuid4())
@@ -353,13 +360,22 @@ async def create_checkout(*, buyer: Buyer, items, idempotency_key: str) -> dict:
         logger.warning("Stripe Checkout Session creation failed for shop attempt %s: %s", attempt_id, exc)
         raise HTTPException(status_code=502, detail="Could not start the online payment — please try again.")
 
-    await db.shop_payment_attempts.update_one(
-        {"id": attempt_id},
+    written = await db.shop_payment_attempts.update_one(
+        {"id": attempt_id, "status": "pending"},
         {"$set": {
             "stripe_checkout_session_id": session["id"], "stripe_checkout_session_url": session["url"],
             "stripe_customer_id": stripe_customer_id, "expires_at": expires_at.isoformat(), "updated_at": now_iso(),
         }},
     )
+    if written.matched_count == 0:
+        # Settled while its Stripe page was being made (the abandoned-checkout
+        # sweep let its stock go, audit #57): close the page and never hand
+        # out a URL that nothing would apply.
+        try:
+            stripe.checkout.Session.expire(session["id"])
+        except Exception as exc:
+            logger.warning("Could not close orphaned shop session %s for attempt %s: %s", session["id"], attempt_id, exc)
+        raise HTTPException(status_code=409, detail="This checkout was closed. Please start a new checkout.")
     return _result(session["url"], order_id, guest_token)
 
 

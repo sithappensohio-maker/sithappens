@@ -915,6 +915,11 @@ export default function PortalShop({
     const { orderId, stripeState } = readReturnParams();
     if (!orderId) return;
     if (stripeState === "cancel") {
+      // Backing out closes that Stripe page and gives back the stock it was
+      // holding right away, rather than in 30 minutes (audit #57).
+      Promise.resolve()
+        .then(() => api.post(`/shop/orders/${encodeURIComponent(orderId)}/cancel-checkout`))
+        .catch(() => {});
       toast("Checkout canceled — nothing was charged.");
       return;
     }

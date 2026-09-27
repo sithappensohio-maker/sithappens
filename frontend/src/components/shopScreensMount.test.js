@@ -324,3 +324,14 @@ describe("the cart renders in every state", () => {
     expect(document.querySelector('[data-testid="shop-cart-empty"]')).toBeTruthy();
   });
 });
+
+describe("backing out of Stripe (audit #57)", () => {
+  test("a signed-in buyer who backs out tells the server to let go of the stock", async () => {
+    window.history.replaceState({}, "", "/portal?shop_order=ord-77&stripe=cancel");
+    api.post.mockResolvedValue({ data: { status: "canceled" } });
+    await mount(<PortalShop mode="authenticated" cart={[]} onCartChange={() => {}} />);
+    noReferenceErrors();
+    expect(api.post).toHaveBeenCalledWith("/shop/orders/ord-77/cancel-checkout");
+    window.history.replaceState({}, "", "/");
+  });
+});
