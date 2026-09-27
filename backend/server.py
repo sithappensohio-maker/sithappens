@@ -32773,7 +32773,7 @@ async def admin_client_portal_snapshot(client_id: str, _: dict = Depends(require
     if not client:
         raise HTTPException(status_code=404, detail="Client not found")
 
-    dogs = await db.dogs.find({"owner_id": client_id}, {"_id": 0}).to_list(200)
+    dogs = await db.dogs.find({"owner_id": client_id, "deleted_at": {"$in": [None, ""]}}, {"_id": 0}).to_list(200)
     bookings = await _booking_rows_anywhere({"client_id": client_id}, {"_id": 0}, limit=500, sort_field="date", sort_desc=True)
 
     # Active enrollments per dog. This used to read `db.program_enrollments`,
@@ -54966,7 +54966,9 @@ async def _compute_setup_status_for_client(client: Dict[str, Any]) -> Dict[str, 
         client_step_status = SETUP_STATUS_COMPLETE
 
     # ---- Step 2: dog info ----------------------------------------------------
-    dogs = await db.dogs.find({"owner_id": client.get("id")}, {"_id": 0}).to_list(50)
+    # A removed or merged-away dog is hidden from the client, so it can't hold
+    # their setup open (they could never fix it) — same rule as the staff list.
+    dogs = await db.dogs.find({"owner_id": client.get("id"), "deleted_at": {"$in": [None, ""]}}, {"_id": 0}).to_list(50)
     dogs_missing_basics: List[str] = []
     if not dogs:
         dog_step_status = SETUP_STATUS_NOT_STARTED
