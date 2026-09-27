@@ -2774,7 +2774,8 @@ def _event_when(event: dict) -> tuple:
         return str(event.get("start_at") or ""), ""
 
 
-async def send_event_registration_confirmed(to_email: str, event: dict, registration: dict) -> bool:
+async def send_event_registration_confirmed(to_email: str, event: dict, registration: dict,
+                                            *, outbox_key: str | None = None) -> bool:
     """Short 'you're registered' note for a public event preregistration.
     No portal link and no ticket — the confirmation number is all the door
     needs. Returns whether an email actually went out (False when email is
@@ -2815,7 +2816,9 @@ async def send_event_registration_confirmed(to_email: str, event: dict, registra
             "Dogs must stay leashed (no retractable leashes)."
         ),
         fallback_cta_text="Event details",
-        outbox_key=f"event_registration_confirmed:{registration.get('id')}",
+        # A re-send needs its own key: the provider swallows a repeat of the
+        # same key for 24h (events_domain re-sends to an already-registered email).
+        outbox_key=outbox_key or f"event_registration_confirmed:{registration.get('id')}",
         queue_on_failure=True,
     )
 

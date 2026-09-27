@@ -598,11 +598,30 @@ def register_events_routes(*, api, db, get_current_user, require_admin_and_permi
                 {"event_id": ev["id"], "idempotency_key": body.idempotency_key}, {"_id": 0})
             if existing:
                 return {"ok": True, "registration": _receipt(existing, duplicate=True)}
-        # Same household registering twice online → tell them they're already in.
+        # Same household registering twice online → tell them they're already
+        # in, but NEVER show the registration: anyone can type a neighbour's
+        # email (audit #8). The confirmation goes to that address again instead
+        # — capped, so the form can't be used to flood somebody's inbox.
         existing = await db.event_registrations.find_one(
             {"event_id": ev["id"], "email": email, "status": "registered", "source": "online"}, {"_id": 0})
         if existing:
-            return {"ok": True, "registration": _receipt(existing, duplicate=True)}
+            # The account the registration is linked to may see it again —
+            # client_id is only ever stored from a verified session, never
+            # from anything typed.
+            viewer = await _optional_user(request)
+            viewer_cid = viewer.get("client_id") if viewer and viewer.get("role") == "client" else None
+            if viewer_cid and existing.get("client_id") == viewer_cid:
+                return {"ok": True, "registration": _receipt(existing, duplicate=True)}
+            resent = False
+            if await enforce_rate_limit(request, "event_confirm_resend", f"{ev['id']}|{email}",
+                                        limit=3, window_seconds=86400, silent=True):
+                try:
+                    resent = bool(await email_service.send_event_registration_confirmed(
+                        to_email=email, event=ev, registration=existing,
+                        outbox_key=f"event_registration_confirmed:{existing['id']}:resend:{uuid.uuid4().hex[:10]}"))
+                except Exception as exc:
+                    logger.warning("events: confirmation re-send failed for %s: %s", existing.get("confirmation_number"), exc)
+            return {"ok": True, "registration": None, "already_registered": True, "email_resent": resent}
 
         if ev.get("capacity"):
             count = await db.event_registrations.count_documents({"event_id": ev["id"], "status": "registered"})

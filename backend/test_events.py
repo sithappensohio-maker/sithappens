@@ -155,10 +155,32 @@ def test_duplicate_submissions_return_the_same_registration():
     first = run(_http.post(f"/api/public/events/{SLUG}/register", json=body)).json()["registration"]
     again = run(_http.post(f"/api/public/events/{SLUG}/register", json=body)).json()["registration"]
     assert again["confirmation_number"] == first["confirmation_number"] and again["duplicate"] is True
-    # same email, different browser (new key) → still the same household
-    other = _register(email, idempotency_key=f"k-{uuid.uuid4().hex}").json()["registration"]
-    assert other["confirmation_number"] == first["confirmation_number"] and other["duplicate"] is True
+    # same email, different browser (new key) → still the same household, but
+    # the registration is NEVER shown: anyone can type a neighbour's email
+    # (audit #8). The confirmation is re-sent to that address instead.
+    res = _register(email, idempotency_key=f"k-{uuid.uuid4().hex}").json()
+    assert res["registration"] is None and res["already_registered"] is True
+    assert first["confirmation_number"] not in str(res)
     assert run(server.db.event_registrations.count_documents({"email": email})) == 1
+
+
+def test_an_already_registered_email_gets_its_confirmation_again_capped():
+    _clear_rate_limits()
+    email = _email()
+    first = _register(email).json()["registration"]
+    resend_rx = {"key": {"$regex": f"^event_registration_confirmed:{first['id']}:resend:"}}
+    try:
+        for _ in range(3):
+            res = _register(email, idempotency_key=f"k-{uuid.uuid4().hex}").json()
+            assert res["already_registered"] is True and res["registration"] is None
+        # each re-send has its own key (a repeat of one key is swallowed for 24h)
+        assert run(server.db.email_outbox.count_documents(resend_rx)) == 3
+        res = _register(email, idempotency_key=f"k-{uuid.uuid4().hex}").json()
+        assert res["already_registered"] is True and res["email_resent"] is False
+        assert run(server.db.email_outbox.count_documents(resend_rx)) == 3, "capped at three a day"
+    finally:
+        run(server.db.email_outbox.delete_many(resend_rx))
+        run(server.db.auth_rate_limits.delete_many({"scope": "event_confirm_resend"}))
 
 
 def test_honeypot_and_validation():
@@ -639,3 +661,25 @@ def test_photo_packages_are_editable_and_keep_their_register_product():
     # restore
     body["photo_packages"] = cur["photo_packages"]
     run(_http.put(f"/api/admin/events/{ev['id']}", json=body, headers=_auth(owner)))
+
+
+
+def test_the_signed_in_owner_still_sees_their_own_registration_and_nobody_else_does():
+    _clear_rate_limits()
+    cid = str(uuid.uuid4())
+    email = _email()
+    run(server.db.clients.insert_one({"id": cid, "name": f"{TAG} Owner", "email": email, "phone": "3305550101", "credits": 0}))
+    owner = _staff(role="client", client_id=cid, email=email)
+    first = run(_http.post(f"/api/public/events/{SLUG}/register", headers=_auth(owner), json=_payload(email))).json()["registration"]
+    # the owner again, from another device (a new key): their own receipt
+    again = run(_http.post(f"/api/public/events/{SLUG}/register", headers=_auth(owner),
+                           json=_payload(email, idempotency_key=f"k-{uuid.uuid4().hex}"))).json()
+    assert again["registration"]["confirmation_number"] == first["confirmation_number"]
+    # a different signed-in client, or a guest, typing that email: nothing
+    stranger = _staff(role="client", client_id=str(uuid.uuid4()), email=_email())
+    for headers in (_auth(stranger), {}):
+        res = run(_http.post(f"/api/public/events/{SLUG}/register", headers=headers,
+                             json=_payload(email, idempotency_key=f"k-{uuid.uuid4().hex}"))).json()
+        assert res["registration"] is None and res["already_registered"] is True
+        assert first["confirmation_number"] not in str(res)
+    run(server.db.auth_rate_limits.delete_many({"scope": "event_confirm_resend"}))

@@ -78,6 +78,7 @@ export default function PublicEvent() {
   const [busy, setBusy] = useState(false);
   const [err, setErr] = useState("");
   const [done, setDone] = useState(null);
+  const [already, setAlready] = useState(null);
 
   // "Not found" only when the server actually said so. A dead network or a
   // server hiccup (a QR scan on a weak signal) gets a retry, not "isn't here".
@@ -110,9 +111,9 @@ export default function PublicEvent() {
   // "You're registered" card to the top of the screen (the public shell scrolls
   // its own container, so window.scrollTo would do nothing).
   useEffect(() => {
-    if (!done) return;
+    if (!done && !already) return;
     try { document.getElementById("preregister")?.scrollIntoView({ block: "start" }); } catch { /* ignore */ }
-  }, [done]);
+  }, [done, already]);
 
   const set = (k) => (v) => setF((prev) => ({ ...prev, [k]: v }));
   const setDogCount = (n) => setF((prev) => {
@@ -152,7 +153,10 @@ export default function PublicEvent() {
         heard_from: f.heard_from, heard_from_other: f.heard_from_other,
         rules_acknowledged: true, marketing_consent: !!f.marketing_consent, website: f.website,
       });
-      setDone(data.registration);
+      // Already on the list: the server never shows that registration (anyone
+      // could type a neighbour's email) — it re-sends the confirmation instead.
+      if (data.already_registered) setAlready({ email: f.email.trim(), resent: !!data.email_resent });
+      else setDone(data.registration);
     } catch (ex) {
       setErr(formatErr(ex.response?.data?.detail) || "Couldn't register. Please try again.");
     }
@@ -257,7 +261,26 @@ export default function PublicEvent() {
       {/* ===== Registration ===== */}
       <section id="preregister" className="border-t border-bgHover/60 bg-bgPanel/30 scroll-mt-20" data-testid="event-register">
         <div className="max-w-3xl mx-auto px-4 sm:px-6 py-10 sm:py-14">
-          {done ? (
+          {already ? (
+            <div className="sh-site-card sh-site-card--glow p-6 sm:p-8" style={{ "--card-accent": "#8cc63f" }} data-testid="event-already-registered">
+              <Eyebrow icon="fa-circle-check">Already registered</Eyebrow>
+              <Title as="h2">That email is already on the list.</Title>
+              <p className="text-[16px] text-gray-200 mt-3">{ev.name}<br /><span className="text-gray-400">{when.day} · {when.time}</span></p>
+              <p className="text-[15px] text-gray-300 mt-4" data-testid="event-already-registered-note">
+                {already.resent
+                  ? `We've emailed the confirmation to ${already.email} again.`
+                  : "We couldn't send another copy just now."}{" "}
+                No ticket needed. Just give your name or confirmation number at the check-in table.
+              </p>
+              <div className="mt-5 flex flex-col sm:flex-row gap-3">
+                {/* A typo that lands on somebody else's address: back to the
+                    form with everything still filled in. */}
+                <Cta color="ghost" onClick={() => setAlready(null)} icon="fa-pen" testid="event-already-change-email">Not your email? Change it</Cta>
+                <Cta color="ghost" to="/" icon="fa-house" testid="event-already-home">Back to Sit Happens</Cta>
+                {tel && <Cta color="ghost" href={`tel:${tel}`} icon="fa-phone">Call {site.phone}</Cta>}
+              </div>
+            </div>
+          ) : done ? (
             <div className="sh-site-card sh-site-card--glow p-6 sm:p-8" style={{ "--card-accent": "#8cc63f" }} data-testid="event-confirmation">
               <Eyebrow icon="fa-circle-check">{done.duplicate ? "Already registered" : "You're registered!"}</Eyebrow>
               <Title as="h2">{done.duplicate ? "You were already on the list." : "You're registered!"}</Title>
