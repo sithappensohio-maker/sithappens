@@ -79,6 +79,7 @@ from domains.bookings import services as bookings_domain_services
 from domains.bookings.blocks import BookingBlocked, block_of, pretty_date, pretty_time
 from domains.bookings import guards as booking_guards
 from domains.bookings import spans as booking_spans
+from domains.bookings import group_rank
 from domains.bookings import late_day as late_day_checkout
 from domains.bookings import care as care_domain
 from domains.operations import end_of_day as end_of_day_domain
@@ -7035,6 +7036,7 @@ async def discount_preview(booking_id: str, _: dict = Depends(require_employee_o
     booking = await db.bookings.find_one({"id": booking_id}, {"_id": 0})
     if not booking:
         raise HTTPException(status_code=404, detail="Booking not found")
+    booking, _rank_fields = await group_rank.settle(db, booking, now=now_iso())
     settings = await get_settings()
     # Resolve a tentative price the same way check_out() would.
     tentative_price = float(booking.get("actual_price") or 0)
@@ -7073,7 +7075,7 @@ async def discount_preview(booking_id: str, _: dict = Depends(require_employee_o
             else:
                 tentative_price = unit
     preview_booking = {**booking, "actual_price": round(tentative_price, 2)}
-    pre_applied = bool((booking.get("multi_dog_discount") or {}).get("pre_applied"))
+    pre_applied = bool((booking.get("multi_dog_discount") or {}).get("pre_applied")) or group_rank.group_priced(booking)
     disc = None if pre_applied else await _compute_multi_dog_discount(preview_booking, exclude_id=booking_id)
     return {
         "eligible": bool(disc and disc["amount"] > 0),
@@ -7098,6 +7100,7 @@ async def early_checkout_quote(booking_id: str, _: dict = Depends(require_employ
     booking = await db.bookings.find_one({"id": booking_id}, {"_id": 0})
     if not booking:
         raise HTTPException(status_code=404, detail="Booking not found")
+    booking, _rank_fields = await group_rank.settle(db, booking, now=now_iso())
     today = business_today().isoformat()
     if (
         booking.get("service_type") != "boarding"
@@ -7154,6 +7157,7 @@ async def money_modifier_preview(
     booking = await db.bookings.find_one({"id": booking_id}, {"_id": 0})
     if not booking:
         raise HTTPException(status_code=404, detail="Booking not found")
+    booking, _rank_fields = await group_rank.settle(db, booking, now=now_iso())
     settings = await get_settings()
     base_amount = max(
         0.0,
@@ -9120,6 +9124,7 @@ async def checkout_group_preview(
         "checked_out_at": {"$exists": True, "$ne": None},
     })
     for idx, row in enumerate(rows):
+        row, _rank_fields = await group_rank.settle(db, row, now=now_iso())
         row = await _refresh_booking_price_for_current_override(row)
         addons = _booking_addon_total_from(row)
         total = float(row.get("estimated_price") or row.get("actual_price") or 0)
@@ -9135,7 +9140,7 @@ async def checkout_group_preview(
             )
             total = round(float(quote.get("unit_price") or 0) * float(quote.get("units") or 1) + addons, 2)
         base = max(0.0, round(total - addons, 2))
-        pre_applied = bool((row.get("multi_dog_discount") or {}).get("pre_applied"))
+        pre_applied = bool((row.get("multi_dog_discount") or {}).get("pre_applied")) or group_rank.group_priced(row)
         predicted_discount = 0.0
         if (prior_completed + idx) > 0 and not pre_applied:
             predicted_discount = _discount_amount_for_extra_dogs(base, cfg, additional_dogs=1)
@@ -9637,6 +9642,8 @@ async def _check_out_locked(
         db=db, booking=booking, business_day=business_today().isoformat(),
         resolutions=(body.board_train_resolution if body else None), actor=user)
     booking = await late_day_checkout.ensure_checkout_answer(booking, body.late_day_resolution if body else None, user)
+    # Multi-dog booking: the first dog that actually came pays the first-dog price.
+    booking, group_rank_fields = await group_rank.settle(db, booking, now=now_iso())
     # Merchandise bought at pickup rings FIRST, through the Register's own
     # sale. First because it is the part that can legitimately refuse — out of
     # stock, drawer closed — and refusing before the stay is touched leaves
@@ -9662,6 +9669,7 @@ async def _check_out_locked(
     ts = now_iso()
     settings = await get_settings()  # Sprint 110dk — stay-pricing rules
     update: Dict[str, Any] = {
+        **group_rank_fields,
         **price_refresh_fields,
         "checked_out_at": ts,
         "status": "completed",
@@ -10187,7 +10195,7 @@ async def _check_out_locked(
     # AFTER add-ons + extra nights but BEFORE finalizing payment, so the
     # discount is visible as its own line on the receipt.
     multi_dog_discount_amount = 0.0
-    pre_applied_group_discount = isinstance((booking.get("multi_dog_discount") or {}), dict) and bool((booking.get("multi_dog_discount") or {}).get("pre_applied"))
+    pre_applied_group_discount = (isinstance((booking.get("multi_dog_discount") or {}), dict) and bool((booking.get("multi_dog_discount") or {}).get("pre_applied"))) or group_rank.group_priced(booking)
     if (update.get("actual_price") or 0) > 0 and not pre_applied_group_discount:
         try:
             # Pass the merged view (booking + update) so the discount calc
