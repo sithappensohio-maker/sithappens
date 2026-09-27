@@ -104,6 +104,7 @@ from domains.shop import checkout as shop_checkout
 from domains.gift_cards import services as gift_card_services
 from domains.gift_cards import shop as gift_card_shop
 from domains.shop import abandon as shop_abandon
+from domains.clients import reset_mfa
 from school_events import EventType as SchoolEvent
 
 from trophy_service import (
@@ -1690,6 +1691,9 @@ async def verify_mfa_login(body: MfaLoginVerifyIn, request: Request):
     user = await db.users.find_one({"id": payload.get("sub")})
     if not user or user.get("active") is False or not user.get("mfa_enabled") or int(payload.get("ver") or 0) != _token_version(user):
         raise HTTPException(status_code=401, detail="MFA challenge is no longer valid")
+    # Per account, before the check (audit #6 review): a limit only after a
+    # wrong code never stops the lucky guess from many IPs.
+    await _enforce_rate_limit(request, "mfa_login_user", user["id"], limit=10, window_seconds=900)
     if not await _verify_mfa_user_code(user, body.code):
         await _enforce_rate_limit(request, "mfa_login", f"{_client_ip(request)}|{user['id']}", limit=10, window_seconds=900)
         raise HTTPException(status_code=401, detail="Invalid authenticator or recovery code")
@@ -2104,10 +2108,14 @@ class ClaimVerifyOut(BaseModel):
     # which must go through the password path — the frontend uses this to
     # decide whether to offer the passwordless "Continue to setup" option.
     is_client: bool = False
+    # The account has two-step sign-in: the reset page asks for its code
+    # (domains.clients.reset_mfa, audit #6).
+    mfa_required: bool = False
 
 
 class ClaimSetIn(BaseModel):
     password: str = Field(min_length=8)
+    mfa_code: Optional[str] = Field(default=None, max_length=32)
 
 
 # -------- Client files (Sprint 84) --------
@@ -2607,6 +2615,7 @@ async def verify_claim_token(token: str, request: Request):
         is_reset=bool(rec.get("is_reset", False)),
         expires_at=rec.get("expires_at"),
         is_client=bool(rec.get("client_id")),
+        mfa_required=await reset_mfa.needs_code(rec),
     )
 
 
@@ -2635,6 +2644,7 @@ async def consume_claim_token(token: str, body: ClaimSetIn, request: Request):
     client_id = rec.get("client_id")
     user_id_on_token = rec.get("user_id")
     email = (rec.get("email") or "").lower()
+    await reset_mfa.require_code(rec, body.mfa_code, request)   # nothing changes without it
     new_hash = hash_password(body.password)
 
     # Case 3: admin/staff reset — token tied directly to a user_id, no client.
@@ -2740,7 +2750,7 @@ async def claim_token_login(token: str, request: Request):
 
     # Case 3 (staff/admin reset) tokens never carry a client_id — reject and
     # keep them on the password path (consume_claim_token / POST /claim/{token}).
-    if not client_id:
+    if not client_id or await reset_mfa.needs_code(rec):
         raise HTTPException(status_code=400, detail="This link requires setting a password.")
 
     client = await db.clients.find_one({"id": client_id}, {"_id": 0})

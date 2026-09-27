@@ -5,12 +5,22 @@ import { FormError, FormInput, FormLabel, PremiumButton, SectionCard, StatusBadg
 
 const API = (process.env.REACT_APP_BACKEND_URL || "") + "/api";
 
+// Always a sentence: a validation error arrives as a list of objects, and
+// rendering one of those crashes the page.
+const errText = (e) => {
+  const d = e?.response?.data?.detail;
+  if (typeof d === "string") return d;
+  if (Array.isArray(d)) return d.map((x) => x?.msg).filter(Boolean).join(" ") || "Something went wrong. Try again.";
+  return "Something went wrong. Try again.";
+};
+
 export default function Claim({ token }) {
   const [status, setStatus] = useState("loading"); // loading | invalid | ready | submitting | done
   const [info, setInfo] = useState(null);
   const [showPasswordForm, setShowPasswordForm] = useState(false);
   const [password, setPassword] = useState("");
   const [confirmPw, setConfirmPw] = useState("");
+  const [mfaCode, setMfaCode] = useState("");
   const [err, setErr] = useState("");
 
   useEffect(() => {
@@ -21,8 +31,9 @@ export default function Claim({ token }) {
           setInfo(r.data);
           setStatus("ready");
           // Staff/admin reset links (is_client=false) never had a passwordless
-          // option — go straight to the password form for them.
-          setShowPasswordForm(!r.data.is_client);
+          // option — go straight to the password form for them. Nor does an
+          // account with two-step sign-in: the form asks for its code.
+          setShowPasswordForm(!r.data.is_client || !!r.data.mfa_required);
         }
         else { setStatus("invalid"); }
       })
@@ -44,7 +55,7 @@ export default function Claim({ token }) {
       const r = await axios.post(`${API}/claim/${encodeURIComponent(token)}/login`);
       finishLogin(r.data);
     } catch (e2) {
-      setErr(e2?.response?.data?.detail || "Something went wrong. Try again.");
+      setErr(errText(e2));
       setStatus("ready");
     }
   };
@@ -54,12 +65,16 @@ export default function Claim({ token }) {
     setErr("");
     if (password.length < 8) { setErr("Password must be at least 8 characters."); return; }
     if (password !== confirmPw) { setErr("Passwords don't match."); return; }
+    if (info?.mfa_required && !mfaCode.trim()) { setErr("Enter the code from your authenticator app."); return; }
     setStatus("submitting");
     try {
-      const r = await axios.post(`${API}/claim/${encodeURIComponent(token)}`, { password });
+      const r = await axios.post(`${API}/claim/${encodeURIComponent(token)}`,
+                                 info?.mfa_required ? { password, mfa_code: mfaCode.trim() } : { password });
       finishLogin(r.data);
     } catch (e2) {
-      setErr(e2?.response?.data?.detail || "Something went wrong. Try again.");
+      setErr(errText(e2));
+      // Two-step sign-in turned on after this page opened: show the code box.
+      if (e2?.response?.status === 401 && !info?.mfa_required) setInfo((i) => ({ ...i, mfa_required: true }));
       setStatus("ready");
     }
   };
@@ -159,11 +174,31 @@ export default function Claim({ token }) {
                     placeholder="Type it again"
                   />
                 </div>
+                {info.mfa_required && (
+                  /* Two-step sign-in: nothing changes without the code, so a
+                     reset link alone can never take over the account. */
+                  <div data-testid="claim-mfa">
+                    <FormLabel>Authenticator code</FormLabel>
+                    <FormInput
+                      value={mfaCode}
+                      onChange={(e)=>setMfaCode(e.target.value)}
+                      required
+                      inputMode="text"
+                      autoComplete="one-time-code"
+                      maxLength={32}
+                      data-testid="claim-mfa-input"
+                      placeholder="6-digit code, or a recovery code"
+                    />
+                    <p className="text-[12px] text-shTextMuted mt-1">
+                      This account uses two-step sign-in. Enter the code from your authenticator app — or one of your recovery codes.
+                    </p>
+                  </div>
+                )}
                 {err && <div data-testid="claim-error"><FormError>{err}</FormError></div>}
                 <PremiumButton type="submit" disabled={status === "submitting"} data-testid="claim-submit" className="w-full justify-center">
                   {status === "submitting" ? <><i className="fas fa-circle-notch fa-spin"/>Working…</> : (info.is_reset ? "Reset password" : "Activate account")}
                 </PremiumButton>
-                {info.is_client && (
+                {info.is_client && !info.mfa_required && (
                   <PremiumButton
                     type="button"
                     variant="ghost"
