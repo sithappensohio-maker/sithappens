@@ -11,7 +11,7 @@ const {
   makeHandoff, clientNextStep, lessonCompleteHandoff, quizHandoff, checkpointSubmittedHandoff,
   trainerSaveHandoff, practiceReviewHandoff, checkpointGradeHandoff, HANDOFF_LABELS, HANDOFF_STATES,
 } = require("./handoff");
-const { practiceCompletionHandoff } = require("./practiceState");
+const { practiceCompletionHandoff, practiceEmptyState } = require("./practiceState");
 const HandoffPanel = require("../components/HandoffPanel.jsx").default;
 
 const read = (...p) => fs.readFileSync(path.join(__dirname, ...p), "utf8");
@@ -228,4 +228,16 @@ test("button vocabulary is the normalised set", () => {
   for (const bad of ["Proceed", "Continue On", "Advance", "Go"]) expect(Object.values(HANDOFF_LABELS)).not.toContain(bad);
   const buttons = [trainerSaveHandoff({}), practiceReviewHandoff("looks_good", {}), checkpointGradeHandoff({ outcome: "advance" }, {})].flatMap((h) => [h.action?.label, h.secondary?.label]).filter(Boolean);
   for (const b of buttons) expect(["Proceed", "Next", "Continue On", "Go", "Advance"]).not.toContain(b);
+});
+
+test("hybrid, every lesson done: waiting on the trainer to graduate, no button to move on", () => {
+  const h = { delivery_mode: "hybrid", current_action: { type: "awaiting_graduation", label: "You finished every lesson" } };
+  const n = clientNextStep(h);
+  expect(n.state).toBe("waiting");
+  expect(n.action).toBeNull();
+  expect(n.next.label).toMatch(/trainer confirms your graduation/i);
+  const done = lessonCompleteHandoff({ lessonName: "Loose Leash", home: h });
+  expect(done.state).toBe("waiting");
+  expect(done.title).toBe("Lesson complete");
+  expect(practiceEmptyState(h).body).toMatch(/trainer will confirm your graduation/i);
 });

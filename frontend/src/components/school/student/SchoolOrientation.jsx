@@ -40,6 +40,8 @@ export function actionCoachCopy(action, dogName) {
       return "Answer the short review before moving on. It checks that the important pieces make sense; it is not a trick test.";
     case "advance":
       return "You finished the work for this lesson. Use the Continue button and School will move you to the correct next lesson automatically.";
+    case "awaiting_graduation":
+      return "You finished every lesson. Your trainer will confirm the graduation, so there is nothing else to do. Every lesson stays open if you want to review.";
     case "awaiting_review":
       return "You are done for now. Your trainer has something to review, so there is nothing else you need to complete until that comes back.";
     case "trainer_assist":
@@ -74,6 +76,7 @@ export function doThisNowCopy(action, dogName, lessonName) {
     case "module_quiz": return "Answer a few quick questions before moving on.";
     case "advance": return "You finished this lesson. Continue to the next one.";
     case "awaiting_review": return "Your trainer is reviewing your work.";
+    case "awaiting_graduation": return "Your trainer will confirm your graduation.";
     case "course_complete": return "You finished the course.";
     case "onboarding": return "Answer a few setup questions first.";
     default: return sub;
@@ -82,7 +85,7 @@ export function doThisNowCopy(action, dogName, lessonName) {
 
 export function CurrentActionGuide({ home }) {
   const action = home?.current_action || {};
-  const noAction = ["awaiting_review", "access_expired", "setup_required", "course_paused"].includes(action.type);
+  const noAction = ["awaiting_review", "awaiting_graduation", "access_expired", "setup_required", "course_paused"].includes(action.type);
   const title = home?.current_lesson?.name || action.label || "Your next step";
   return (
     <section className="rounded-2xl border border-shPrimary/30 bg-shPrimary/[0.06] p-4 sm:p-5" data-testid="school-current-action-guide">

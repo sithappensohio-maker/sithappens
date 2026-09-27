@@ -87,6 +87,9 @@ export function clientNextStep(home, { today = true } = {}) {
   const secondary = today ? { label: HANDOFF_LABELS.back_to_today, run: "today" } : null;
   const lesson = lessonName(home);
 
+  if (t === "awaiting_graduation") {
+    return { state: "waiting", next: { label: "Your trainer confirms your graduation", description: "You finished every lesson. Nothing else to do right now — every lesson stays open for review." }, action: null, secondary };
+  }
   if (t === "course_complete") {
     return { state: "program_complete", next: { label: "What's next", description: "Every lesson stays open to review, and your Progress page has the full story." }, action: { label: HANDOFF_LABELS.view_progress, run: "progress" }, secondary: { label: HANDOFF_LABELS.review_course, run: "course" } };
   }

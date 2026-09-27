@@ -21,6 +21,7 @@ export function nextStepReason(action, deliveryMode, currentLessonName) {
     case "lesson": return `Finish ${lesson} first.`;
     case "practice": return "Complete today's Practice first.";
     case "awaiting_review": return "Waiting for your trainer to review.";
+    case "awaiting_graduation": return "Your trainer will confirm your graduation.";
     case "submit_checkpoint": return "Pass the checkpoint to continue.";
     case "remediation": return "Finish the extra Practice your trainer asked for, then retry the checkpoint.";
     case "trainer_assist": return "Your trainer is arranging a hands-on session first.";
@@ -42,6 +43,7 @@ function currentLessonAction(action, deliveryMode) {
     if (["lesson", "practice", "module_quiz", "submit_checkpoint", "remediation", "advance", "start"].includes(t)) {
       return { kind: "lesson", label: "Continue lesson", modeLine: "Do this in the app. Your trainer also works on it with you in person." };
     }
+    if (t === "awaiting_graduation") return { kind: "none", label: null, modeLine: "You finished every lesson. Your trainer will confirm your graduation." };
     if (t === "awaiting_review" || t === "trainer_assist") return { kind: "none", label: null, modeLine: "Your trainer is on this one — nothing to do in the app right now." };
     return { kind: "lesson", label: "Continue lesson", modeLine: "Do this in the app. Your trainer also works on it with you in person." };
   }

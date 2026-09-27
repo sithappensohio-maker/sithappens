@@ -771,3 +771,112 @@ def test_in_person_mid_course_quiz_never_moves_the_dog_ahead_of_the_trainer():
                 assert _position(enr["id"]) == before
             finally:
                 _cleanup_school(se["id"], enr["id"])
+
+
+# ---------------------------------------------------------------------------
+# Hybrid: the client moves through the lessons, but only the owner or the
+# trainer graduates the dog (owner, 2026-09-26). Finishing the last lesson —
+# by Continue, the final quiz or a graded final checkpoint — flags the dog
+# ready to graduate; the program stays open until someone confirms it.
+# ---------------------------------------------------------------------------
+
+def _make_hybrid(se, enr):
+    run(server.db.school_enrollments.update_one({"id": se["id"]}, {"$set": {"delivery_mode": "hybrid"}}))
+    run(server.db.dog_programs.update_one({"id": enr["id"]}, {"$set": {"delivery_channel": "hybrid_school"}}))
+
+
+def _assert_ready_not_graduated(se, enr):
+    row = run(server.db.dog_programs.find_one({"id": enr["id"]}, {"_id": 0}))
+    assert row["status"] == "active" and row["graduation_ready"] is True
+    assert row["graduation_ready_reason"] == "finished_lessons" and row["lessons_finished_at"]
+    assert run(server.db.school_enrollments.find_one({"id": se["id"]}, {"_id": 0, "status": 1}))["status"] != "completed"
+    assert not run(server.db.school_events.find_one({"school_enrollment_id": se["id"], "dedupe_key": f"course_completed:{enr['id']}"}))
+
+
+def test_hybrid_last_lesson_marks_ready_to_graduate_never_completes():
+    with _quiz_program(n_modules=1, quiz_module_idx=99) as (prog, admin):
+        with _client_and_dog() as (c, dog):
+            se, enr = _enroll(prog, dog, admin)
+            try:
+                cu = _client_user(c["id"])
+                _make_hybrid(se, enr)
+                _practice_current_lesson(se, enr, cu)
+                run(server.portal_school_advance(se["id"], cu))
+                _practice_current_lesson(se, enr, cu)
+                adv = run(server.portal_school_advance(se["id"], cu))
+                assert adv["finished"] is False and adv["graduation_ready"] is True
+                _assert_ready_not_graduated(se, enr)
+                home = run(server.portal_school_home(se["id"], cu))
+                assert home["current_action"]["type"] == "awaiting_graduation"
+                assert home["journey"]["now"]["cta"] is None
+                assert home["journey"]["next"]["title"] == "Graduation"
+                roadmap = run(server._school_roadmap(run(server.db.dog_programs.find_one({"id": enr["id"]}, {"_id": 0})), dog["id"]))
+                assert all(l["status"] == "completed" for m in roadmap["modules"] for l in m["lessons"])
+            finally:
+                _cleanup_school(se["id"], enr["id"])
+
+
+def test_hybrid_final_quiz_marks_ready_to_graduate_never_completes():
+    with _quiz_program(n_modules=1, quiz_module_idx=0) as (prog, admin):
+        with _client_and_dog() as (c, dog):
+            se, enr = _enroll(prog, dog, admin)
+            try:
+                cu = _client_user(c["id"])
+                _make_hybrid(se, enr)
+                _practice_current_lesson(se, enr, cu)
+                run(server.portal_school_advance(se["id"], cu))
+                _practice_current_lesson(se, enr, cu)
+                res = _submit(se["id"], prog["modules"][0]["id"], _correct_answers(_snapshot_quiz(enr["id"])), cu)
+                assert res["passed"] is True and res["course_completed"] is False and res["graduation_ready"] is True
+                _assert_ready_not_graduated(se, enr)
+            finally:
+                _cleanup_school(se["id"], enr["id"])
+
+
+def test_hybrid_graded_final_checkpoint_marks_ready_to_graduate_never_completes():
+    with _quiz_program(n_modules=1, quiz_module_idx=99, checkpoint_lesson_idx=1) as (prog, admin):
+        with _client_and_dog() as (c, dog):
+            se, enr = _enroll(prog, dog, admin)
+            try:
+                cu = _client_user(c["id"])
+                _make_hybrid(se, enr)
+                _practice_current_lesson(se, enr, cu)
+                run(server.portal_school_advance(se["id"], cu))
+                _submit_and_grade_checkpoint(se, enr, cu, admin)
+                _assert_ready_not_graduated(se, enr)
+            finally:
+                _cleanup_school(se["id"], enr["id"])
+
+
+def test_hybrid_owner_graduates_after_the_last_lesson():
+    with _quiz_program(n_modules=1, quiz_module_idx=99) as (prog, admin):
+        with _client_and_dog() as (c, dog):
+            se, enr = _enroll(prog, dog, admin)
+            try:
+                cu = _client_user(c["id"])
+                _make_hybrid(se, enr)
+                for _ in range(2):
+                    _practice_current_lesson(se, enr, cu)
+                    run(server.portal_school_advance(se["id"], cu))
+                run(server.update_enrollment(dog["id"], enr["id"], server.EnrollmentUpdate(status="completed"), admin))
+                assert _position(enr["id"])["status"] == "completed"
+                home = run(server.portal_school_home(se["id"], cu))
+                assert home["current_action"]["type"] == "course_complete"
+            finally:
+                _cleanup_school(se["id"], enr["id"])
+
+
+def test_a_skill_rating_never_takes_away_readiness_earned_by_finishing():
+    with _quiz_program(n_modules=1, quiz_module_idx=99) as (prog, admin):
+        with _client_and_dog() as (c, dog):
+            se, enr = _enroll(prog, dog, admin)
+            try:
+                for reason in ("finished_lessons", "final_quiz_passed"):
+                    run(server.db.dog_programs.update_one({"id": enr["id"]}, {"$set": {
+                        "graduation_ready": True, "graduation_ready_reason": reason,
+                        "completion_rule": {"type": "all_mastered"}}}))
+                    row = run(server.db.dog_programs.find_one({"id": enr["id"]}, {"_id": 0}))
+                    run(server._auto_complete_if_satisfied(row))
+                    assert run(server.db.dog_programs.find_one({"id": enr["id"]}, {"_id": 0}))["graduation_ready"] is True
+            finally:
+                _cleanup_school(se["id"], enr["id"])

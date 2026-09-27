@@ -165,8 +165,8 @@ export default function OnlineSchoolDashboard({ clientFirstName, onClose, onCont
     setBusy(true); setErr("");
     try {
       const { data } = await api.post(`/portal/school/${activeId}/advance`);
-      if (data.finished) {
-        setFinishedMsg("Program complete! Great work.");
+      if (data.finished || data.graduation_ready) {
+        setFinishedMsg(data.finished ? "Program complete! Great work." : "Every lesson done! Your trainer will confirm your graduation.");
         loadList();
         loadDetail(activeId);
       } else {

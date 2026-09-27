@@ -105,6 +105,7 @@ export function practiceEmptyState(home) {
   const t = home?.current_action?.type;
   const mode = home?.delivery_mode;
   if (t === "course_complete") return { kind: "complete", icon: "fa-graduation-cap", eyebrow: "Program complete", title: "Practice complete", body: "You've finished this program. Every lesson stays open for review.", intro: "You've finished this program.", cta: null };
+  if (t === "awaiting_graduation") return { kind: "review", icon: "fa-graduation-cap", eyebrow: "Every lesson done", title: "No Practice right now", body: "You finished every lesson. Your trainer will confirm your graduation, and every lesson stays open for review.", intro: "You finished every lesson.", cta: null };
   if (t === "awaiting_review") return { kind: "review", icon: "fa-hourglass-half", eyebrow: "Checkpoint", title: "No Practice right now", body: "Your checkpoint is waiting for trainer review. You don't need to do anything else.", intro: "Your checkpoint is with your trainer.", cta: null };
   if (t === "trainer_assist") return { kind: "assist", icon: "fa-hand-holding-heart", eyebrow: "Trainer Assist", title: "No Practice right now", body: "Your trainer will work through this with you in person.", intro: "Your trainer is stepping in.", cta: null };
   if (mode === "in_person" || mode === "trainer_led") return { kind: "trainer_led", icon: "fa-person-chalkboard", eyebrow: "Trainer-led", title: "Nothing to practice right now", body: "Your trainer will assign Practice after your lesson.", intro: "Your trainer assigns Practice after each lesson.", cta: null };

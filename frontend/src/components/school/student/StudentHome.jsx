@@ -114,7 +114,7 @@ export function TodayCommandCard({ home, onPrimaryAction, onViewCourse, onOpenPr
   const recapCta = recapPracticeDue ? { label: "Start Practice", run: "practice_row", practiceId: recapPractice.id } : null;
   const cta = recapCta || now?.cta || null;
   const primaryCta = cta && !cta.secondary ? cta : null;
-  const noButton = ["awaiting_review", "access_expired", "course_paused", "setup_required"].includes(action.type) || (!!now && !primaryCta);
+  const noButton = ["awaiting_review", "awaiting_graduation", "access_expired", "course_paused", "setup_required"].includes(action.type) || (!!now && !primaryCta);
   const title = recapPracticeDue ? `Practice ${recapPractice.title}`
     : recapNoPractice ? "No home Practice from this lesson"
     : recapPracticeDone ? "Practice completed"

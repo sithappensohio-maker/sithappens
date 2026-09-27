@@ -56,3 +56,8 @@ test("in person, a mid-course quiz says the trainer moves the dog on", async () 
 test("online, passing still unlocks the next module", async () => {
   expect(await passWith({ advanced: true, course_completed: false })).toMatch(/next module is unlocked/i);
 });
+
+test("hybrid, the final quiz says the trainer will confirm graduation", async () => {
+  expect(await passWith({ advanced: true, graduation_ready: true, course_completed: false }))
+    .toMatch(/trainer will confirm/i);
+});

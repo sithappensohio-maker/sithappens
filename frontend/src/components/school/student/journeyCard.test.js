@@ -255,3 +255,25 @@ test("date helpers speak plainly", () => {
   expect(appointmentLabel({ date: "2099-06-01", time: null, status: "approved" })).toMatch(/Jun 1$/);
   expect(appointmentLabel(null)).toBe("");
 });
+
+test("hybrid, every lesson done: Today says the trainer confirms graduation and offers no button", () => {
+  const html = render(base({
+    delivery_mode: "hybrid", current_lesson: null,
+    current_action: { type: "awaiting_graduation", label: "You finished every lesson",
+                      sublabel: "Your trainer will confirm your graduation. Nothing else to do right now — every lesson stays open for review.",
+                      target: { screen: "progress" } },
+    progress: { course_pct: 100, lessons_completed: 10, lessons_total: 10 },
+    journey: {
+      last: null,
+      now: { kind: "awaiting_graduation", title: "You finished every lesson",
+             body: "Your trainer will confirm your graduation. Nothing else to do right now — every lesson stays open for review.",
+             practice: null, cta: null },
+      next: { kind: "program_finish", title: "Graduation", body: "Your trainer confirms it when the skills are solid.", appointment: null },
+    },
+  }));
+  expect(html).not.toMatch(/data-testid="today-primary-action"/);
+  const t = text(html);
+  expect(t).toMatch(/You finished every lesson/);
+  expect(t).toMatch(/trainer will confirm your graduation/);
+  expect(t).toMatch(/Graduation/);
+});

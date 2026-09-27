@@ -17898,6 +17898,11 @@ async def _auto_complete_if_satisfied(enrollment: dict, *, sessions_logged: int 
     if enrollment.get("status") != "active":
         return enrollment
     satisfied = await _check_completion_rule(enrollment, sessions_logged=sessions_logged)
+    # Readiness earned by finishing the course (the final quiz in person, the
+    # last lesson in hybrid) is not the mastery badge: a later skill rating
+    # must not take it away.
+    if enrollment.get("graduation_ready_reason") in ("final_quiz_passed", "finished_lessons"):
+        satisfied = True
     if bool(enrollment.get("graduation_ready")) == bool(satisfied):
         return enrollment
     update = {"graduation_ready": bool(satisfied)}
@@ -18900,7 +18905,7 @@ async def _school_roadmap(enrollment: dict, dog_id: str) -> dict:
     # to 0 and present the final module's first lesson as "current" and the rest
     # as locked. A graduated course is fully completed and stays reviewable:
     # every module/lesson reads "completed", nothing is current or locked.
-    is_completed_enrollment = _canonical_school_status(enrollment) == "completed"
+    is_completed_enrollment = _canonical_school_status(enrollment) == "completed" or _school_lessons_finished(enrollment)
     open_access = _school_open_lesson_access(enrollment) and not is_completed_enrollment
 
     modules_out = []
@@ -19406,6 +19411,14 @@ def _effective_school_access_state(enrollment: dict) -> str:
 # any reconciliation write happens.
 def _canonical_school_status(enrollment: dict) -> str:
     return enrollment.get("status") or "active"
+
+
+def _school_lessons_finished(enrollment: dict) -> bool:
+    """Hybrid: every lesson is done and the dog waits for the owner or the
+    trainer to graduate it (the program stays active; see
+    _finish_school_advancement)."""
+    return (_canonical_school_status(enrollment) == "active" and bool(enrollment.get("lessons_finished_at"))
+            and not enrollment.get("current_lesson_id"))
 
 
 async def _reconcile_school_enrollment_mirror(enrollment: dict, se: dict) -> dict:
@@ -21183,7 +21196,8 @@ async def portal_school_detail(school_enrollment_id: str, user: dict = Depends(g
     }
 
 
-def _school_current_action(status: str, access_state: str, roadmap: Optional[dict], delivery_mode: str = "online") -> dict:
+def _school_current_action(status: str, access_state: str, roadmap: Optional[dict], delivery_mode: str = "online",
+                           lessons_finished: bool = False) -> dict:
     """THE single derivation of 'what should this student do next?', for the
     Student Home view-model. Pure function of the already-computed roadmap +
     enrollment lifecycle — never a second progression engine (the backend
@@ -21201,6 +21215,10 @@ def _school_current_action(status: str, access_state: str, roadmap: Optional[dic
     if status == "completed":
         return {"type": "course_complete", "label": "Review your journey",
                 "sublabel": "You completed the program — see everything your dog learned.",
+                "target": {"screen": "progress"}}
+    if lessons_finished:
+        return {"type": "awaiting_graduation", "label": "You finished every lesson",
+                "sublabel": "Your trainer will confirm your graduation. Nothing else to do right now — every lesson stays open for review.",
                 "target": {"screen": "progress"}}
     current_lesson = (roadmap or {}).get("current_lesson")
     if not roadmap or not current_lesson:
@@ -21859,6 +21877,8 @@ def _school_journey_next(action: dict, now: dict, roadmap: Optional[dict], upcom
         return _out("first_lesson", "Your first lesson", "Opens right after setup.")
     if t == "start":
         return _out("first_lesson", "Your first lesson", "School opens it as soon as you begin.")
+    if t == "awaiting_graduation":
+        return _out("program_finish", "Graduation", "Your trainer confirms it when the skills are solid.")
     if t == "awaiting_review":
         then = f" Then: {upcoming['name']}." if upcoming and upcoming.get("name") else ""
         return _out("checkpoint_review", "Checkpoint review", "Your trainer will review your submission before you continue." + then)
@@ -21954,7 +21974,8 @@ async def portal_school_home(school_enrollment_id: str, user: dict = Depends(get
                     upcoming = {"kind": "module", "name": nxt_mod.get("name"), "locked": True}
 
     delivery_mode = _school_delivery_mode(se, enrollment)
-    action = _school_current_action(status, effective_access_state, roadmap, delivery_mode)
+    action = _school_current_action(status, effective_access_state, roadmap, delivery_mode,
+                                    lessons_finished=_school_lessons_finished(enrollment))
     onboarding_config = snap.get("school_onboarding") or {}
     onboarding_baseline = se.get("baseline") or enrollment.get("school_baseline")
     _needs_baseline = bool(onboarding_config.get("require_baseline", False) and not onboarding_baseline)
@@ -22978,6 +22999,21 @@ async def _finish_school_advancement(
     exact same logical advancement (Online School Phase 2's grading resume
     step relies on this). Shared by the client's own portal_school_advance
     and the trainer grading state machine."""
+    if is_final and _school_delivery_mode(se, enrollment) == "hybrid":
+        # Owner rule (2026-09-26): a hybrid client moves through the lessons
+        # themselves, but only the owner or the trainer graduates the dog.
+        # Finishing the last lesson flags it ready to graduate; the program
+        # stays active until they confirm it.
+        ts = now_iso()
+        res = await db.dog_programs.update_one(
+            {"id": enrollment["id"], "status": "active", "lessons_finished_at": None},
+            {"$set": {"lessons_finished_at": ts, "graduation_ready": True,
+                      "graduation_ready_at": enrollment.get("graduation_ready_at") or ts,
+                      "graduation_ready_reason": "finished_lessons"}},
+        )
+        if res.modified_count:
+            asyncio.create_task(_announce_graduation_ready({**enrollment, "graduation_ready": True}))
+        return
     if is_final:
         await db.school_enrollments.update_one(
             {"id": school_enrollment_id, "status": {"$ne": "completed"}},
@@ -23061,7 +23097,7 @@ async def _emit_school_advance_events(
                 summary=f"Finished “{module.get('name') or 'a module'}”.",
                 dedupe_key=f"module_completed:{enrollment['id']}:{source_module_id}", **common,
             )
-        if is_final:
+        if is_final and _school_delivery_mode(se, enrollment) != "hybrid":
             await school_events.emit_event(
                 SchoolEvent.COURSE_COMPLETED,
                 title=f"{subject} completed the course",
@@ -23097,6 +23133,8 @@ async def _advance_school_enrollment(se: dict, enrollment: dict, roadmap: dict) 
             return {"finished": (fresh_se or {}).get("status") == "completed", "school_enrollment_id": se["id"]}
         await _finish_school_advancement(se["id"], enrollment, se, pos["next_module_id"], None, True)
         await _emit_school_advance_events(se, enrollment, source_module_id, source_lesson_id, pos["next_module_id"], True)
+        if _school_delivery_mode(se, enrollment) == "hybrid":
+            return {"finished": False, "graduation_ready": True, "school_enrollment_id": se["id"]}
         return {"finished": True, "school_enrollment_id": se["id"]}
 
     cas = await db.dog_programs.find_one_and_update(
@@ -23501,6 +23539,8 @@ async def portal_school_module_quiz_submit(
             adv = await _advance_school_enrollment(se, fresh_enrollment, roadmap)
             result["advanced"] = True
             result["course_completed"] = bool(adv.get("finished"))
+            if adv.get("graduation_ready"):
+                result["graduation_ready"] = True
 
     # ── Activity events (never a staff alert — learning behavior, not
     # human-attention work). Idempotent on the attempt id.
@@ -26645,7 +26685,8 @@ async def _compute_completion_plan(enrollment: dict, draft: dict, draft_id: str,
     cur_module = next((m for m in modules_sorted if m.get("id") == cur_module_id), None)
     lessons = sorted(_effective_lessons(cur_module or {}), key=lambda l: l.get("order", 0)) if cur_module else []
     lesson_ids = [l.get("id") for l in lessons]
-    cur_lesson_id = enrollment.get("current_lesson_id") or (lesson_ids[0] if lesson_ids else None)
+    cur_lesson_id = enrollment.get("current_lesson_id") or (
+        (lesson_ids[-1] if enrollment.get("lessons_finished_at") else lesson_ids[0]) if lesson_ids else None)
     cur_lesson = next((l for l in lessons if l.get("id") == cur_lesson_id), None)
 
     advance_record = None

@@ -223,11 +223,9 @@ export default function ModuleQuizPanel({ enrollmentId, moduleId, checkpointPass
                   <p className="text-[18px] font-black text-shText mt-1">You got {result.correct_count} of {result.question_count} correct.</p>
                   <p className="text-[16px] text-shTextMuted mt-1" data-testid="module-quiz-after-pass">
                     {result.course_completed ? "Course complete — amazing work!"
-                      : result.trainer_led
-                        ? (result.graduation_ready
-                          ? "Great work — your trainer will confirm your graduation."
-                          : "Nice work — your trainer moves you to the next lesson at your next session.")
-                        : "The next module is unlocked."}
+                      : result.graduation_ready ? "Great work — your trainer will confirm your graduation."
+                        : result.trainer_led ? "Nice work — your trainer moves you to the next lesson at your next session."
+                          : "The next module is unlocked."}
                   </p>
                 </div>
               ) : (

@@ -26,7 +26,7 @@ test("Today turns the server-derived current_action into the one main CTA", () =
 });
 
 test("states with no legitimate client action do not render the primary button", () => {
-  expect(homeSrc).toMatch(/const noButton = \["awaiting_review", "access_expired", "course_paused", "setup_required"\]\.includes\(action\.type\)/);
+  expect(homeSrc).toMatch(/const noButton = \["awaiting_review", "awaiting_graduation", "access_expired", "course_paused", "setup_required"\]\.includes\(action\.type\)/);
   expect(homeSrc).toMatch(/\{!noButton && \(/);
 });
 

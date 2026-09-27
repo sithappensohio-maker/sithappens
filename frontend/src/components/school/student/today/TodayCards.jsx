@@ -80,7 +80,7 @@ export function CurrentLessonCard({ home, onPrimary }) {
   const minutes = lesson?.estimated_minutes;
   const p = home?.progress || {};
   const position = (p.lessons_total ? `Lesson ${Math.min((p.lessons_completed || 0) + 1, p.lessons_total)} of ${p.lessons_total}` : null);
-  const noAction = ["awaiting_review", "access_expired", "setup_required", "course_paused"].includes(action.type);
+  const noAction = ["awaiting_review", "awaiting_graduation", "access_expired", "setup_required", "course_paused"].includes(action.type);
 
   return (
     <section className="rounded-2xl border border-shSecondary/30 bg-shSecondary/[0.04] p-4 sm:p-5" data-testid="today-current-lesson">

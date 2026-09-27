@@ -22,6 +22,7 @@ export const ACTION_META = {
   trainer_assist:   { icon: "fa-hand-holding-heart",  accent: "purple" },
   trainer_guided:   { icon: "fa-person-chalkboard",   accent: "cyan" },
   awaiting_review:  { icon: "fa-hourglass-half",      accent: "cyan" },
+  awaiting_graduation: { icon: "fa-graduation-cap",  accent: "lime" },
   advance:          { icon: "fa-arrow-right",         accent: "lime" },
   course_complete:  { icon: "fa-graduation-cap",      accent: "lime" },
   access_expired:   { icon: "fa-lock",                accent: "neutral" },
@@ -96,7 +97,7 @@ export function actionMeta(type) {
 /* Is the current action one the student acts on now vs. a "caught up / their
  * trainer's turn" state? Used to soften the hero when nothing is required. */
 export function isCaughtUp(type) {
-  return type === "awaiting_review" || type === "course_complete" || type === "access_expired" || type === "course_paused";
+  return type === "awaiting_review" || type === "awaiting_graduation" || type === "course_complete" || type === "access_expired" || type === "course_paused";
 }
 
 /* Student School routes (Shop-style history.pushState, no react-router).
