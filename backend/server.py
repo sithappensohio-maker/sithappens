@@ -23482,7 +23482,18 @@ async def portal_school_module_quiz_submit(
     # self-advance and checkpoint grading use), so quiz-pass advancement can
     # never drift from every other advancement path. Idempotent: a CAS miss
     # (already moved) simply reports the real current position.
-    if passed:
+    if passed and _school_delivery_mode(se, enrollment) == "in_person":
+        # In person, the trainer moves the lessons and only the owner or the
+        # trainer graduates the dog: a passed quiz is recorded, never moves
+        # the dog, and the course's final quiz only flags it ready to graduate.
+        modules = sorted((enrollment.get("program_snapshot") or {}).get("modules") or [], key=lambda m: m.get("order") or 0)
+        if modules and modules[-1].get("id") == module_id and enrollment.get("status") == "active"                 and not enrollment.get("graduation_ready"):
+            ready = {"graduation_ready": True, "graduation_ready_at": now_iso(), "graduation_ready_reason": "final_quiz_passed"}
+            await db.dog_programs.update_one({"id": enrollment["id"], "graduation_ready": {"$ne": True}}, {"$set": ready})
+            asyncio.create_task(_announce_graduation_ready({**enrollment, **ready}))
+        result["graduation_ready"] = bool(modules and modules[-1].get("id") == module_id)
+        result["trainer_led"] = True
+    elif passed:
         fresh_enrollment = await db.dog_programs.find_one({"id": enrollment["id"]}, {"_id": 0}) or enrollment
         roadmap = state["roadmap"]
         if (fresh_enrollment.get("current_module_id") == module_id

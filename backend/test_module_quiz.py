@@ -718,3 +718,56 @@ def test_portal_school_list_reports_module_position_and_progress():
                 assert mine["course_pct"] == 50
             finally:
                 _cleanup_school(se["id"], enr["id"])
+
+
+# ---------------------------------------------------------------------------
+# In person, only the trainer moves the dog and only the owner or trainer
+# graduates it (audit 2026-09-25): a passed quiz is recorded, never moves the
+# dog, and the final quiz only flags it ready to graduate.
+# ---------------------------------------------------------------------------
+
+def _make_in_person(se):
+    run(server.db.school_enrollments.update_one({"id": se["id"]}, {"$set": {"delivery_mode": "trainer_led"}}))
+
+
+def test_in_person_final_quiz_marks_ready_to_graduate_but_never_completes():
+    with _quiz_program(n_modules=1) as (prog, admin):
+        with _client_and_dog() as (c, dog):
+            se, enr = _enroll(prog, dog, admin)
+            try:
+                cu = _client_user(c["id"])
+                module_id = prog["modules"][0]["id"]
+                _practice_current_lesson(se, enr, cu)
+                run(server.portal_school_advance(se["id"], cu))
+                _practice_current_lesson(se, enr, cu)
+                _make_in_person(se)
+                before = _position(enr["id"])
+                res = _submit(se["id"], module_id, _correct_answers(_snapshot_quiz(enr["id"])), cu)
+                assert res["passed"] is True and res["advanced"] is False and res["course_completed"] is False
+                assert res["graduation_ready"] is True
+                after = run(server.db.dog_programs.find_one({"id": enr["id"]}, {"_id": 0}))
+                assert after["status"] == "active" and after["graduation_ready"] is True
+                assert after["current_lesson_id"] == before["current_lesson_id"]
+                assert run(server.db.school_enrollments.find_one({"id": se["id"]}, {"_id": 0, "status": 1}))["status"] != "completed"
+            finally:
+                _cleanup_school(se["id"], enr["id"])
+
+
+def test_in_person_mid_course_quiz_never_moves_the_dog_ahead_of_the_trainer():
+    with _quiz_program(n_modules=2, quiz_module_idx=0) as (prog, admin):
+        with _client_and_dog() as (c, dog):
+            se, enr = _enroll(prog, dog, admin)
+            try:
+                cu = _client_user(c["id"])
+                module_id = prog["modules"][0]["id"]
+                _practice_current_lesson(se, enr, cu)
+                run(server.portal_school_advance(se["id"], cu))
+                _practice_current_lesson(se, enr, cu)
+                _make_in_person(se)
+                before = _position(enr["id"])
+                res = _submit(se["id"], module_id, _correct_answers(_snapshot_quiz(enr["id"])), cu)
+                assert res["passed"] is True and res["advanced"] is False
+                assert res["graduation_ready"] is False
+                assert _position(enr["id"]) == before
+            finally:
+                _cleanup_school(se["id"], enr["id"])

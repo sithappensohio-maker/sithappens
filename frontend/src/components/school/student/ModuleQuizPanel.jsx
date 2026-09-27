@@ -221,7 +221,14 @@ export default function ModuleQuizPanel({ enrollmentId, moduleId, checkpointPass
                 <div className="rounded-2xl border border-shPrimary/35 bg-shPrimary/[0.07] p-4" data-testid="module-quiz-passed">
                   <p className="text-[13px] font-black uppercase tracking-[0.2em] text-shPrimary">Passed — {Math.round(result.score_percent)}%</p>
                   <p className="text-[18px] font-black text-shText mt-1">You got {result.correct_count} of {result.question_count} correct.</p>
-                  <p className="text-[16px] text-shTextMuted mt-1">{result.course_completed ? "Course complete — amazing work!" : "The next module is unlocked."}</p>
+                  <p className="text-[16px] text-shTextMuted mt-1" data-testid="module-quiz-after-pass">
+                    {result.course_completed ? "Course complete — amazing work!"
+                      : result.trainer_led
+                        ? (result.graduation_ready
+                          ? "Great work — your trainer will confirm your graduation."
+                          : "Nice work — your trainer moves you to the next lesson at your next session.")
+                        : "The next module is unlocked."}
+                  </p>
                 </div>
               ) : (
                 <div className="rounded-2xl border border-shAccent/35 bg-shAccent/[0.06] p-4" data-testid="module-quiz-retry">
