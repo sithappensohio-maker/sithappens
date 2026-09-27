@@ -3471,8 +3471,11 @@ async def list_bookings(
         today_iso = business_today().isoformat()
         window_start = (business_today() - timedelta(days=90)).isoformat()
         window_end = (business_today() + timedelta(days=90)).isoformat()
+        # A client's own list has every upcoming booking, however far ahead:
+        # holiday boarding booked months out must be there to see or cancel.
+        future = {"$gte": today_iso} if user.get("role") == "client" else {"$gte": today_iso, "$lte": window_end}
         upcoming = await _booking_rows_anywhere(
-            {**q, "date": {"$gte": today_iso, "$lte": window_end}}, {"_id": 0},
+            {**q, "date": future}, {"_id": 0},
             include_archive=False, limit=_BOOKINGS_UPCOMING_MAX, sort_field="date")
         # Past reads newest-first so a truncated history keeps the MOST
         # RECENT days rather than the oldest ones.
