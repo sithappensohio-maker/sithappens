@@ -20,7 +20,7 @@ server looks it up rather than believing it, exactly like every other line.
 """
 from __future__ import annotations
 
-from typing import List, Optional
+from typing import Dict, List, Optional
 
 from fastapi import HTTPException
 
@@ -160,6 +160,41 @@ async def fulfill_line(order: dict, line: dict, *, mint, email) -> dict:
             await email(card)
         made.append(card)
     return {"count": len(made), "codes": [c["code"] for c in made]}
+
+
+async def buyer_cards(order: dict) -> Dict[str, list]:
+    """The cards a PAID Shop order bought, for the buyer's own receipt: the
+    code, what is on it, and whether the email reached them.
+
+    Owner decision 2026-09-27 (audit #56): the buyer sees the code once they
+    have paid — the portal's Gift Cards page already shows it the same way —
+    so an email that never arrives can never leave somebody who paid with
+    nothing. A voided (refunded) card is left out: it is worth nothing.
+    """
+    if (order.get("status") or "") != "paid":
+        return {}
+    out: Dict[str, list] = {}
+    for line in order.get("lines") or []:
+        if line.get("kind") != "gift_card":
+            continue
+        ids = _unit_ids(order, line)
+        found = {c["id"]: c for c in await _db.gift_cards.find(
+            {"id": {"$in": ids}}, {"_id": 0}).to_list(len(ids))}
+        waiting = await services.queued_ids(ids)
+        rows = []
+        for card_id in ids:
+            c = found.get(card_id)
+            if not c or c.get("status") == "voided":
+                continue
+            rows.append({
+                "code_display": services._display(c.get("code") or ""),
+                "amount": services._money(c.get("initial_amount")),
+                "balance": services._money(c.get("balance")),
+                "email_state": services.email_state(c, card_id in waiting),
+                "emailed_to": c.get("recipient_email") or "",
+            })
+        out[str(line.get("item_id"))] = rows
+    return out
 
 
 # ─────────────────────────────────────────────────── refunding a Shop card

@@ -425,7 +425,7 @@ describe("the order detail", () => {
     expect(opened).toEqual(["en-1"]);
   });
 
-  test("a gift card line shows who it went to and never a code", () => {
+  test("a gift card line shows who it went to, and no code before any card exists", () => {
     mount(<OrderDetail onBack={() => {}} order={{
       ...DETAIL,
       lines: [{
@@ -438,9 +438,68 @@ describe("the order detail", () => {
     expect(byTestId("order-line-gift-li-3").textContent).toContain("Nan");
     expect(text()).toContain("nan@example.com");
     expect(text()).toContain("Happy birthday");
-    // The code lives on the card and travels by email. It is not on the
-    // order, and this screen must never start showing one.
+    // The code lives on the card, never on the order. Only a paid order's
+    // cards (gift_cards, read from the cards by the server) show one.
     expect(text()).not.toMatch(/[A-Z0-9]{4}-[A-Z0-9]{4}/);
+  });
+
+  // Owner decision 2026-09-27 (audit #56): once paid, the buyer sees the
+  // code and whether the email really arrived — never "emailed" unless it was.
+  test("a paid gift card line shows the code and that the email has not arrived yet", () => {
+    mount(<OrderDetail onBack={() => {}} order={{
+      ...DETAIL,
+      lines: [{
+        item_id: "li-3", kind: "gift_card", ref_id: "gc-2500", name: "Gift card · $25.00",
+        quantity: 1, unit_price: 25, line_total: 25, fulfillment_status: "fulfilled",
+        recipient_name: "Nan", recipient_email: "nan@example.com", actions: [],
+        gift_cards: [{ code_display: "ABCD-EFGH-JKMN", amount: 25, balance: 25,
+                       email_state: "queued", emailed_to: "nan@example.com" }],
+      }],
+    }} />);
+    expect(byTestId("order-gift-card-ABCD-EFGH-JKMN").textContent).toContain("ABCD-EFGH-JKMN");
+    expect(byTestId("order-gift-email-ABCD-EFGH-JKMN").textContent).toMatch(/Not delivered yet to nan@example\.com/);
+    expect(text()).not.toMatch(/were emailed/i);
+  });
+
+  test("a refunded gift card line never says it will be emailed", () => {
+    mount(<OrderDetail onBack={() => {}} order={{
+      ...DETAIL, status: "paid",
+      lines: [{
+        item_id: "li-5", kind: "gift_card", ref_id: "gc-2500", name: "Gift card · $25.00",
+        quantity: 1, unit_price: 25, line_total: 25, fulfillment_status: "refunded",
+        quantity_refunded: 1, amount_refunded: 25, actions: [], gift_cards: [],
+      }],
+    }} />);
+    expect(text()).not.toMatch(/will be emailed/i);
+  });
+
+  test("a card nothing is sending says so honestly, never 'being emailed'", () => {
+    mount(<OrderDetail onBack={() => {}} order={{
+      ...DETAIL,
+      lines: [{
+        item_id: "li-6", kind: "gift_card", ref_id: "gc-2500", name: "Gift card · $25.00",
+        quantity: 1, unit_price: 25, line_total: 25, fulfillment_status: "fulfilled", actions: [],
+        gift_cards: [{ code_display: "HJKM-2345-6789", amount: 25, balance: 25,
+                       email_state: "not_sent", emailed_to: "nan@example.com" }],
+      }],
+    }} />);
+    expect(byTestId("order-gift-email-HJKM-2345-6789").textContent)
+      .toMatch(/Not emailed yet to nan@example\.com — you can give them the code yourself/);
+    expect(text()).not.toMatch(/being emailed/i);
+  });
+
+  test("a gift card bought for yourself shows its code too", () => {
+    mount(<OrderDetail onBack={() => {}} order={{
+      ...DETAIL,
+      lines: [{
+        item_id: "li-4", kind: "gift_card", ref_id: "gc-5000", name: "Gift card · $50.00",
+        quantity: 1, unit_price: 50, line_total: 50, fulfillment_status: "fulfilled", actions: [],
+        gift_cards: [{ code_display: "WXYZ-2345-6789", amount: 50, balance: 50,
+                       email_state: "sent", emailed_to: "me@example.com" }],
+      }],
+    }} />);
+    expect(byTestId("order-gift-card-WXYZ-2345-6789")).toBeTruthy();
+    expect(byTestId("order-gift-email-WXYZ-2345-6789").textContent).toBe("Emailed to me@example.com.");
   });
 });
 

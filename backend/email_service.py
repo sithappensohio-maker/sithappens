@@ -476,6 +476,19 @@ async def _apply_outbox_success(action: dict | None) -> None:
                     "at": now,
                 }}},
             )
+    elif kind == "gift_card_emailed":
+        # A gift card's code really reached somebody — only now is the card
+        # marked emailed (audit 2026-09-25 #56).
+        card_id = action.get("card_id")
+        if card_id:
+            await _db.gift_cards.update_one({"id": card_id, "code_emailed_at": None},
+                                            {"$set": {"code_emailed_at": now}})
+            await _db.gift_cards.update_one(
+                {"id": card_id},
+                {"$set": {"email_delivered_at": now, "email_delivered_to": action.get("to") or ""},
+                 "$unset": {"email_sending_at": ""}},
+            )
+            await _clear_gift_card_queue_flag(card_id)
     elif kind == "system_run":
         run_id = action.get("id")
         if run_id:
@@ -484,6 +497,34 @@ async def _apply_outbox_success(action: dict | None) -> None:
                 {"$set": {"id": run_id, "sent": 1, "sent_at": now, **(action.get("meta") or {})}},
                 upsert=True,
             )
+
+
+async def _clear_gift_card_queue_flag(card_id: str | None) -> None:
+    """A card says "queued" only while an email for it is really waiting."""
+    if not card_id:
+        return
+    rx = "^" + re.escape(f"gift_card_delivered:{card_id}") + "(:|$)"
+    if await _db.email_outbox.find_one({"key": {"$regex": rx}, "status": "pending"}, {"_id": 1}):
+        return
+    await _db.gift_cards.update_one({"id": card_id}, {"$unset": {"email_queued_at": ""}})
+
+
+async def _outbox_row_still_wanted(action: dict | None) -> bool:
+    """Checked right before a queued email is retried. A gift card's code is
+    money: never send it for a card voided in the meantime, to an address
+    staff have since corrected, or a second time once it has arrived."""
+    if not action or action.get("type") != "gift_card_emailed":
+        return True
+    card = await _db.gift_cards.find_one(
+        {"id": action.get("card_id")},
+        {"_id": 0, "status": 1, "recipient_email": 1, "email_delivered_at": 1})
+    if not card or (card.get("status") or "") in ("voided", "stock"):
+        return False
+    if (card.get("recipient_email") or "").strip().lower() != (action.get("to") or "").strip().lower():
+        return False
+    if action.get("first") and card.get("email_delivered_at"):
+        return False
+    return True
 
 
 async def process_email_outbox(db_handle=None, limit: int = 50) -> dict:
@@ -521,6 +562,12 @@ async def process_email_outbox(db_handle=None, limit: int = 50) -> dict:
     sent = 0
     failed = 0
     for row in rows:
+        if not await _outbox_row_still_wanted(row.get("on_success")):
+            await _db.email_outbox.delete_one({"key": row.get("key"), "status": "pending"})
+            action = row.get("on_success") or {}
+            if action.get("type") == "gift_card_emailed":
+                await _clear_gift_card_queue_flag(action.get("card_id"))
+            continue
         ok = await _send(
             row.get("to_email") or "",
             row.get("subject") or "",

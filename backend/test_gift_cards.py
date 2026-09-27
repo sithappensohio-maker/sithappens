@@ -308,6 +308,9 @@ def test_the_endpoints_exist_and_are_gated_sensibly():
         "/api/gift-cards", "/api/gift-cards/lookup/{code}", "/api/gift-cards/issue",
         "/api/gift-cards/stock", "/api/gift-cards/{code}/details",
         "/api/gift-cards/{code}/adjust", "/api/gift-cards/{code}/void",
+        # Staff: email the code again, to a corrected address if need be
+        # (audit #56). Same permission as editing who the card is for.
+        "/api/gift-cards/{code}/send-email",
         # Customer-facing. Every one of these is gated to a signed-in client
         # and none of them can move money on its own — only a verified
         # Stripe webhook does that.
@@ -1290,9 +1293,11 @@ def test_a_card_sold_with_an_email_is_a_digital_card():
         assert sent == [card["code"]], "the code has to actually be sent somewhere"
         assert card["balance"] == 40.00
     finally:
+        # Put back the sender bootstrap wires, not None — a later module in
+        # the same run relies on the real one (audit #56 review).
         gift.configure(db=server.db, now_iso=server.now_iso,
                        business_today=server.business_today, logger=server.logger,
-                       email_sender=None)
+                       email_sender=gconline.email_card)
 
 
 def test_a_card_sold_without_an_email_is_still_a_printed_card():

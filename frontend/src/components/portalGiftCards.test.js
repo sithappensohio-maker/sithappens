@@ -226,3 +226,24 @@ test("a top-up that comes back with no payment URL says so too", async () => {
   expect(goTo).not.toHaveBeenCalled();
   expect(toast.error).toHaveBeenCalled();
 });
+
+test("a card bought for somebody shows its code and whether the email arrived (audit #56)", async () => {
+  window.history.replaceState({}, "", "/portal?gift_card_purchase=att-2&stripe=success");
+  api.get.mockResolvedValue({ data: { status: "applied", kind: "purchase", amount: 40,
+                                      card: { code_display: "ABCD-EFGH-JKMN", balance: 40,
+                                              email_state: "queued", emailed_to: "dana@example.com" } } });
+  await mount();
+  expect(q("gift-outcome-code").textContent).toBe("ABCD-EFGH-JKMN");
+  expect(q("gift-outcome-email").textContent).toMatch(/Not delivered yet to dana@example\.com/);
+  expect(q("gift-outcome-done")).toBeFalsy();
+});
+
+test("a refunded purchase never shows its dead code as ready (audit #56)", async () => {
+  window.history.replaceState({}, "", "/portal?gift_card_purchase=att-3&stripe=success");
+  api.get.mockResolvedValue({ data: { status: "applied", kind: "purchase", amount: 40,
+                                      card: { code_display: "ABCD-EFGH-JKMN", balance: 0, status: "voided" } } });
+  await mount();
+  expect(q("gift-outcome-cancelled")).toBeTruthy();
+  expect(q("gift-outcome-code")).toBeFalsy();
+  expect(container.textContent).not.toContain("ABCD-EFGH-JKMN");
+});

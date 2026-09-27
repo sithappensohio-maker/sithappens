@@ -16,7 +16,7 @@ import GiftCards from "./GiftCards";
 
 jest.mock("../lib/api", () => ({
   api: { get: jest.fn(), post: jest.fn() },
-  formatErr: (e) => String(e?.response?.data?.detail || e || ""),
+  formatErr: (d) => (d == null ? "Something went wrong." : typeof d === "string" ? d : String(d)),
 }));
 jest.mock("sonner", () => ({ toast: { success: jest.fn(), error: jest.fn() } }));
 jest.mock("../components/PageHero", () => ({ __esModule: true, default: () => null }));
@@ -520,4 +520,168 @@ test("a ticked card that filters out of view does not print an empty sheet", asy
   await click("gift-print-picked");
   expect(printGiftCardSheet).not.toHaveBeenCalled();
   expect(toast.error).toHaveBeenCalledWith(expect.stringMatching(/tick the cards/i));
+});
+
+
+// ───────────────────────────── did the code reach anybody? (audit #56)
+
+const undelivered = () => {
+  const card = { ...DETAIL, recipient_email: "dana@exmaple.com", email_state: "queued" };
+  api.get.mockImplementation((url) =>
+    String(url).includes("/lookup/")
+      ? Promise.resolve({ data: card })
+      : Promise.resolve({ data: { ...CARDS, cards: [{ ...CARDS.cards[0], email_state: "queued" }, CARDS.cards[1]] } }));
+  return card;
+};
+
+test("a card whose email has not arrived says so, on the list and on the card", async () => {
+  undelivered();
+  await mount();
+  expect(q("gift-row-undelivered-gc-1")).toBeTruthy();
+  await type("gift-lookup-code", "ABCD-EFGH-JKMN");
+  await click("gift-lookup-go");
+  expect(q("gift-email-state").textContent).toMatch(/Not delivered yet to dana@exmaple\.com/);
+  expect(q("gift-send").textContent).toMatch(/Send by email/);
+});
+
+test("staff can correct a mistyped address and send the card to it", async () => {
+  undelivered();
+  api.post.mockResolvedValue({ data: { ok: true, sent: true, queued: false,
+                                       card: { recipient_email: "dana@example.com", email_state: "sent" } } });
+  await mount();
+  await type("gift-lookup-code", "ABCD-EFGH-JKMN");
+  await click("gift-lookup-go");
+  await click("gift-send");
+  expect(q("gift-send-to").value).toBe("dana@exmaple.com");
+  await type("gift-send-to", "dana@example.com");
+  await click("gift-send-go");
+  expect(api.post).toHaveBeenCalledWith("/gift-cards/ABCD-EFGH-JKMN/send-email", { recipient_email: "dana@example.com" });
+  expect(toast.success).toHaveBeenCalledWith("Emailed to dana@example.com.");
+});
+
+test("a card that already arrived says where it went and offers Send again", async () => {
+  api.get.mockImplementation((url) =>
+    String(url).includes("/lookup/")
+      ? Promise.resolve({ data: { ...DETAIL, recipient_email: "dana@example.com", email_delivered_to: "dana@example.com", email_state: "sent" } })
+      : Promise.resolve({ data: CARDS }));
+  await mount();
+  await type("gift-lookup-code", "ABCD-EFGH-JKMN");
+  await click("gift-lookup-go");
+  expect(q("gift-email-state").textContent).toMatch(/Emailed to dana@example\.com/);
+  expect(q("gift-send").textContent).toMatch(/Send again/);
+});
+
+
+// ───────────────────────────── review follow-ups (audit #56)
+
+test("looking up a different card closes a send form opened for the first one", async () => {
+  // Otherwise card B's code could go to card A's recipient.
+  const B = { ...CARDS.cards[1], id: "gc-2", status: "active", recipient_email: "", history: [] };
+  api.get.mockImplementation((url) => {
+    const u = String(url);
+    if (u.includes("/lookup/PQRS")) return Promise.resolve({ data: B });
+    if (u.includes("/lookup/")) return Promise.resolve({ data: { ...DETAIL, recipient_email: "dana@example.com", email_state: "queued" } });
+    return Promise.resolve({ data: CARDS });
+  });
+  await mount();
+  await type("gift-lookup-code", "ABCD-EFGH-JKMN");
+  await click("gift-lookup-go");
+  await click("gift-send");
+  expect(q("gift-send-form")).toBeTruthy();
+  await type("gift-lookup-code", "PQRS-TUVW-XYZ2");
+  await click("gift-lookup-go");
+  expect(q("gift-found").textContent).toContain("PQRS-TUVW-XYZ2");
+  expect(q("gift-send-form")).toBeFalsy();
+  expect(api.post).not.toHaveBeenCalled();
+});
+
+test("a refused send shows the server's reason, not an axios message", async () => {
+  undelivered();
+  api.post.mockRejectedValue({ message: "Request failed with status code 400",
+                               response: { status: 400, data: { detail: "Enter a real email address to send it to." } } });
+  await mount();
+  await type("gift-lookup-code", "ABCD-EFGH-JKMN");
+  await click("gift-lookup-go");
+  await click("gift-send");
+  await type("gift-send-to", "dana@example");
+  await click("gift-send-go");
+  expect(toast.error).toHaveBeenCalledWith("Enter a real email address to send it to.");
+});
+
+test("a code that already reached one address cannot be sent to another from here", async () => {
+  api.get.mockImplementation((url) =>
+    String(url).includes("/lookup/")
+      ? Promise.resolve({ data: { ...DETAIL, recipient_email: "dana@exmaple.com", email_delivered_to: "dana@exmaple.com",
+                                   already_emailed_to: "dana@exmaple.com", email_state: "sent" } })
+      : Promise.resolve({ data: CARDS }));
+  await mount();
+  await type("gift-lookup-code", "ABCD-EFGH-JKMN");
+  await click("gift-lookup-go");
+  await click("gift-send");
+  expect(q("gift-send-warning")).toBeFalsy();          // same address: a plain re-send is fine
+  await type("gift-send-to", "dana@example.com");
+  expect(q("gift-send-warning").textContent).toMatch(/already went to dana@exmaple\.com/);
+  expect(q("gift-send-go").disabled).toBe(true);
+});
+
+test("an active card whose code was never emailed is flagged on the list; a spent one is not", async () => {
+  api.get.mockImplementation(() => Promise.resolve({ data: { ...CARDS, cards: [
+    { ...CARDS.cards[0], email_state: "not_sent" },
+    { ...CARDS.cards[1], email_state: "not_sent" },
+  ] } }));
+  await mount();
+  expect(q("gift-row-undelivered-gc-1").textContent).toMatch(/code never emailed/);
+  expect(q("gift-row-undelivered-gc-2")).toBeFalsy();
+});
+
+
+// ───────────────────────────── second review (audit #56)
+
+test("clicking a flagged row opens THAT card, not the code typed before", async () => {
+  const B = { ...CARDS.cards[1], id: "gc-2", status: "active", email_state: "not_sent", history: [] };
+  api.get.mockImplementation((url) => {
+    const u = String(url);
+    if (u.includes("/lookup/PQRS")) return Promise.resolve({ data: B });
+    if (u.includes("/lookup/")) return Promise.resolve({ data: DETAIL });
+    return Promise.resolve({ data: CARDS });
+  });
+  await mount();
+  await type("gift-lookup-code", "ABCD-EFGH-JKMN");
+  await click("gift-lookup-go");
+  expect(q("gift-found").textContent).toContain("ABCD-EFGH-JKMN");
+  await click("gift-row-open-gc-2");
+  expect(api.get).toHaveBeenLastCalledWith("/gift-cards/lookup/PQRS-TUVW-XYZ2");
+  expect(q("gift-found").textContent).toContain("PQRS-TUVW-XYZ2");
+});
+
+test("a card voided while the send form is open offers no send", async () => {
+  let status = "active";
+  api.get.mockImplementation((url) =>
+    String(url).includes("/lookup/")
+      ? Promise.resolve({ data: { ...DETAIL, status, recipient_email: "dana@example.com", email_state: status === "active" ? "not_sent" : "none" } })
+      : Promise.resolve({ data: CARDS }));
+  await mount();
+  await type("gift-lookup-code", "ABCD-EFGH-JKMN");
+  await click("gift-lookup-go");
+  await click("gift-send");
+  expect(q("gift-send-form")).toBeTruthy();
+  status = "voided";
+  await click("gift-lookup-go");      // the same card, looked up again after the void
+  expect(q("gift-send-form")).toBeFalsy();
+  expect(q("gift-send")).toBeFalsy();
+});
+
+test("the warning follows where the code already went, even while a re-send waits", async () => {
+  api.get.mockImplementation((url) =>
+    String(url).includes("/lookup/")
+      ? Promise.resolve({ data: { ...DETAIL, recipient_email: "x@a.com", email_delivered_to: "x@a.com",
+                                  already_emailed_to: "x@a.com", email_state: "queued" } })
+      : Promise.resolve({ data: CARDS }));
+  await mount();
+  await type("gift-lookup-code", "ABCD-EFGH-JKMN");
+  await click("gift-lookup-go");
+  await click("gift-send");
+  await type("gift-send-to", "y@b.com");
+  expect(q("gift-send-warning").textContent).toMatch(/already went to x@a\.com/);
+  expect(q("gift-send-go").disabled).toBe(true);
 });

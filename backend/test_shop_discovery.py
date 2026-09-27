@@ -762,8 +762,10 @@ def test_a_gift_card_line_shows_who_it_was_for_and_not_its_code():
         assert line["recipient_name"] == "Nan"
         assert line["recipient_email"] == "nan@example.com"
         assert line["gift_message"] == "Happy birthday"
-        # A card's redemption code lives on the card and is never fetched
-        # onto an order. Nothing here should look like one.
+        # A card's redemption code lives on the card, never on the order line.
+        # Once the order is paid the buyer's receipt lists the cards under
+        # gift_cards, read from the cards (owner decision 2026-09-27, audit
+        # #56 — see test_gift_card_delivery.py).
         assert "code" not in line
 
 

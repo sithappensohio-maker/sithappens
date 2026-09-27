@@ -43061,7 +43061,8 @@ async def portal_shop_order_status(order_id: str, user: dict = Depends(get_curre
             viewer_client_id=user.get("client_id"), enrollment_by_key=enrollments,
         )
     return shop_orders_view.detail(
-        order, items_by_ref=items_by_ref, actions_by_item_id=actions_by_item_id)
+        order, items_by_ref=items_by_ref, actions_by_item_id=actions_by_item_id,
+        gift_cards_by_item_id=await gift_card_shop.buyer_cards(order))
 
 
 # ── Front Desk — Online Orders surface ──────────────────────────────────────

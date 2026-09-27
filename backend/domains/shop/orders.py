@@ -15,8 +15,11 @@ order does not add it to this response. What is deliberately never returned:
     `shop_last_applied_attempt_id` — internal bookkeeping
   * the per-line pricing_source / override id — how a price was arrived at
     is between us and the client's account, not part of a receipt
-  * gift card CODES, which are not on the order at all (they live on the
-    card) and must not be fetched onto it
+  * gift card CODES are not on the order document (they live on the card).
+    Owner decision 2026-09-27 (audit #56): once the order is PAID the
+    buyer's receipt shows them, read from the cards by the caller
+    (domains.gift_cards.shop.buyer_cards), so an email that never arrives
+    cannot leave somebody who paid with nothing
 
 What IS returned is a receipt: what they bought, for which dog, for whom,
 what it cost, what happened next, and what they can usefully do now.
@@ -57,7 +60,8 @@ def _line_summary(line: dict, item: Optional[dict] = None) -> Dict[str, Any]:
     }
 
 
-def _line_detail(line: dict, *, item: Optional[dict], actions: List[dict]) -> Dict[str, Any]:
+def _line_detail(line: dict, *, item: Optional[dict], actions: List[dict],
+                 gift_cards: Optional[List[dict]] = None) -> Dict[str, Any]:
     quantity = int(line.get("quantity") or 0)
     refunded = int(line.get("quantity_refunded") or 0)
     out: Dict[str, Any] = {
@@ -85,12 +89,13 @@ def _line_detail(line: dict, *, item: Optional[dict], actions: List[dict]) -> Di
         # recognises, and the id is an internal handle they have no use for.
         out["dog_name"] = line.get("dog_name")
     if line.get("kind") == "gift_card":
-        # Their own words back to them. The card's redemption code is not
-        # here and is never fetched onto an order — it belongs to whoever
-        # received the card, through the email it was sent in.
+        # Their own words back to them.
         out["recipient_name"] = line.get("recipient_name") or None
         out["recipient_email"] = line.get("recipient_email") or None
         out["gift_message"] = line.get("gift_message") or None
+        # The cards themselves once paid — code, amount, whether the email
+        # arrived (see the module docstring). Empty until then.
+        out["gift_cards"] = list(gift_cards or [])
     if line.get("fulfillment_kind"):
         out["fulfillment_kind"] = line.get("fulfillment_kind")
     return out
@@ -121,7 +126,8 @@ def summary(order: dict, items_by_ref: Optional[Dict[tuple, dict]] = None) -> Di
 
 
 def detail(order: dict, *, items_by_ref: Dict[tuple, dict],
-           actions_by_item_id: Dict[str, List[dict]]) -> Dict[str, Any]:
+           actions_by_item_id: Dict[str, List[dict]],
+           gift_cards_by_item_id: Optional[Dict[str, List[dict]]] = None) -> Dict[str, Any]:
     """The full receipt.
 
     `items_by_ref` and `actions_by_item_id` are computed by the caller in
@@ -146,6 +152,7 @@ def detail(order: dict, *, items_by_ref: Dict[tuple, dict],
                 l,
                 item=items_by_ref.get((l.get("kind"), l.get("ref_id"))),
                 actions=actions_by_item_id.get(str(l.get("item_id")), []),
+                gift_cards=(gift_cards_by_item_id or {}).get(str(l.get("item_id"))),
             )
             for l in lines
         ],

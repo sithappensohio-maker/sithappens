@@ -28,6 +28,7 @@ from typing import List
 from fastapi import HTTPException, Request
 from pydantic import BaseModel, EmailStr, Field
 
+from domains.gift_cards import shop as gift_card_shop
 from domains.shop import checkout as shop_checkout
 from domains.shop import orders as shop_orders_view
 from domains.shop import guest as shop_guest
@@ -249,6 +250,7 @@ def register_guest_shop_routes(*, api, server_globals: dict) -> None:
         except HTTPException:
             public_items = []
         items_by_ref = {(i["kind"], i["id"]): i for i in public_items}
-        view = shop_orders_view.detail(order, items_by_ref=items_by_ref, actions_by_item_id={})
+        view = shop_orders_view.detail(order, items_by_ref=items_by_ref, actions_by_item_id={},
+                                       gift_cards_by_item_id=await gift_card_shop.buyer_cards(order))
         view["email"] = order.get("client_email")
         return view

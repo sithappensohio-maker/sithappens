@@ -121,6 +121,15 @@ def register_gift_card_routes(*, api, server_globals: dict) -> None:
         """Who the card is for, and the note on it. No money moves here."""
         return {"ok": True, "card": await services.edit_details(code=code, body=body, actor=user)}
 
+    @api.post("/gift-cards/{code}/send-email")
+    async def send_gift_card_email(code: str, body: services.GiftCardSendEmailIn, request: Request,
+                                   user: dict = Depends(require_admin_and_permission("pricing"))):
+        """Send the card's code by email again — to the address on file, or
+        to a corrected one. Same permission as editing who the card is for."""
+        await enforce_rate_limit(
+            request, "gift_card_send_email", client_ip(request), limit=30, window_seconds=300)
+        return {"ok": True, **await services.resend_card_email(code=code, body=body, actor=user)}
+
     @api.post("/gift-cards/{code}/void")
     async def void_gift_card(code: str, body: services.GiftCardVoidIn,
                              user: dict = Depends(require_admin_and_permission("delete_records"))):

@@ -30,12 +30,14 @@ Two rules follow from that and must not be softened:
 """
 from __future__ import annotations
 
+import re
 import secrets
 import uuid
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from typing import Any, Dict, List, Optional
 
 from fastapi import HTTPException
+from pymongo import ReturnDocument
 from pymongo.errors import DuplicateKeyError
 from pydantic import BaseModel, Field
 
@@ -101,6 +103,15 @@ class GiftCardAdjustIn(BaseModel):
 
 class GiftCardVoidIn(BaseModel):
     reason: str = Field(min_length=3, max_length=300)
+
+
+class GiftCardSendEmailIn(BaseModel):
+    """Send a card's code by email again, optionally to a corrected address.
+
+    A mistyped address is the usual reason a digital card never arrives;
+    before this the only fix was to void the card and start again.
+    """
+    recipient_email: Optional[str] = Field(default=None, max_length=200)
 
 
 class GiftCardDetailsIn(BaseModel):
@@ -198,7 +209,60 @@ async def _insert_with_fresh_code(doc: dict) -> dict:
                         detail="Could not generate a gift card code. Try again.")
 
 
-def public_view(card: dict) -> dict:
+def email_state(card: dict, queued: Optional[bool] = None) -> str:
+    """Whether a card's code reached anybody: sent | queued | not_sent | none.
+
+    Never "sent" unless it really went (audit 2026-09-25 #56 — the Shop used
+    to say "emailed" whatever happened):
+
+      * "sent" — the provider accepted it (email_delivered_at), or a card
+        emailed before delivery was recorded (code_emailed_at with no send
+        in flight);
+      * "queued" — waiting in the email queue to be retried. `queued` is the
+        truth read from the queue by callers that can (queued_ids); without
+        it the card's own flag is used;
+      * "not_sent" — nothing went and nothing is waiting: before the first
+        try, a send interrupted mid-flight (email_sending_at still set), or
+        a failure that could not be queued. Staff can send it.
+
+    A send waiting in the queue wins over an older delivery: that is the one
+    staff are waiting on.
+    """
+    if (card.get("status") or "") in ("voided", "stock") or not (card.get("recipient_email") or "").strip():
+        return "none"
+    if card.get("email_queued_at") if queued is None else queued:
+        return "queued"
+    if card.get("email_delivered_at") or (card.get("code_emailed_at") and not card.get("email_sending_at")):
+        return "sent"
+    return "not_sent"
+
+
+def _key_card_id(key: str) -> str:
+    rest = str(key or "")[len("gift_card_delivered:"):]
+    return rest.split(":resend:")[0]
+
+
+async def queued_ids(card_ids: Optional[List[str]] = None) -> set:
+    """Ids of cards with an email really waiting in the queue — the truth
+    behind "queued". A backup restore leaves out the queue, so a card's own
+    flag can outlive its row; screens read this instead."""
+    rows = await _db.email_outbox.find(
+        {"key": {"$regex": "^gift_card_delivered:"}, "status": "pending"},
+        {"_id": 0, "key": 1}).to_list(5000)
+    ids = {_key_card_id(r.get("key")) for r in rows}
+    return ids if card_ids is None else ids & set(card_ids)
+
+
+def delivered_to(card: dict) -> str:
+    """The address this card's code already reached, if any."""
+    if card.get("email_delivered_to"):
+        return str(card["email_delivered_to"]).strip().lower()
+    if card.get("code_emailed_at") and not card.get("email_sending_at"):
+        return (card.get("recipient_email") or "").strip().lower()
+    return ""
+
+
+def public_view(card: dict, *, queued: Optional[bool] = None) -> dict:
     """What a screen may see. Never the raw code of somebody else's card —
     the last four are enough to recognise it on a list."""
     code = card.get("code") or ""
@@ -220,6 +284,13 @@ def public_view(card: dict) -> dict:
         "recipient_email": card.get("recipient_email") or "",
         "delivery": card.get("delivery") or "print",
         "code_emailed_at": card.get("code_emailed_at"),
+        "email_state": email_state(card, queued),
+        "email_delivered_to": card.get("email_delivered_to") or "",
+        "email_delivered_at": card.get("email_delivered_at"),
+        # Where the code already went — the address it can no longer be
+        # moved away from without replacing the card (resend_card_email).
+        "already_emailed_to": delivered_to(card),
+        "email_queued_at": card.get("email_queued_at"),
         "note": card.get("note") or "",
         "client_id": card.get("client_id"),
         "issued_at": card.get("issued_at"),
@@ -290,7 +361,7 @@ async def edit_details(*, code: str, body, actor: dict) -> dict:
     if body.note is not None:
         changes["note"] = body.note.strip()
     if not changes:
-        return public_view(card)
+        return public_view(card, queued=card["id"] in await queued_ids([card["id"]]))
     changes["details_edited_at"] = _now_iso_fn()
     changes["details_edited_by_name"] = actor.get("name") or actor.get("email") or ""
     await _db.gift_cards.update_one({"id": card["id"]}, {"$set": changes})
@@ -298,7 +369,7 @@ async def edit_details(*, code: str, body, actor: dict) -> dict:
     # any money moved — the balance is carried through unchanged.
     await _log(card["id"], "edit", 0.0, _money(card.get("balance")), actor,
                note=(changes.get("recipient_name") or changes.get("note") or "details updated"))
-    return public_view({**card, **changes})
+    return public_view({**card, **changes}, queued=card["id"] in await queued_ids([card["id"]]))
 
 
 def assert_toppable(card: dict, amount: float) -> None:
@@ -381,16 +452,47 @@ def assert_face_value(card: dict, amount: float) -> None:
             detail=f"That card has ${_money(face):.2f} printed on it, so it sells for ${_money(face):.2f}.")
 
 
+def first_email_key(card_id: str) -> str:
+    """The email-queue key of a card's automatic first send. A staff re-send
+    uses its own key under this prefix (see resend_card_email)."""
+    return f"gift_card_delivered:{card_id}"
+
+
+def _key_prefix(card_id: str) -> dict:
+    return {"$regex": "^" + re.escape(first_email_key(card_id)) + "(:|$)"}
+
+
+_EMAIL_RE = re.compile(r"^[^@\s]+@[^@\s]+\.[^@\s]+$")
+
+# A send still marked in flight after this long was interrupted (a restart
+# mid-send); a later delivery attempt may take it over.
+_STALE_SEND_MINUTES = 15
+
+
 async def send_card_email(card: dict, *, sender=None) -> bool:
-    """Send a digital card to whoever it is for.
+    """Send a digital card to whoever it is for — the automatic first send.
 
     Claimed before sending so two deliveries cannot both email the same
     card, and UNCLAIMED again if the send fails — a duplicate email is a
     nuisance, a gift card that never arrives is a lost gift. That trade is
     deliberate and is why this is not a plain "mark and forget".
 
+    The claim checks the card as it is NOW (never voided or unsold) and the
+    email is built from what the claim returned, so a card refunded a moment
+    ago is never sent. `email_sending_at` marks the send in flight: a restart
+    mid-send leaves the card honestly "not sent", never "emailed".
+
+    A send that cannot go out right now (Quiet Hours, the mail service down)
+    waits in the email queue, which keeps retrying it
+    (email_service.process_email_outbox); the card says so and is stamped
+    when it really arrives. While anything for the card is waiting in the
+    queue — this first send or a staff re-send — nothing else starts a second
+    one. Before (audit 2026-09-25 #56) a failed send was dropped and nothing
+    ever tried again.
+
     Never raises. A sale must not fail because a mail provider is down; the
-    card exists either way and can be sent again from the card's own screen.
+    card exists either way and staff can send it again from the card's own
+    screen (resend_card_email).
     """
     to = (card.get("recipient_email") or "").strip()
     if (card.get("status") or "") == "voided":
@@ -400,21 +502,112 @@ async def send_card_email(card: dict, *, sender=None) -> bool:
     send = sender or _email_sender
     if send is None:
         return False
+    if await _db.email_outbox.find_one({"key": _key_prefix(card["id"]), "status": "pending"}, {"_id": 1}):
+        return False   # the email queue already owns this card's delivery
+    now = _now_iso_fn()
+    stale = (datetime.now(timezone.utc) - timedelta(minutes=_STALE_SEND_MINUTES)).isoformat()
     claimed = await _db.gift_cards.find_one_and_update(
-        {"id": card["id"], "code_emailed_at": None},
-        {"$set": {"code_emailed_at": _now_iso_fn()}},
+        {"id": card["id"], "status": {"$nin": ["voided", "stock"]},
+         "recipient_email": {"$nin": [None, ""]}, "email_delivered_at": None,
+         "$or": [{"code_emailed_at": None}, {"email_sending_at": {"$lt": stale}}]},
+        {"$set": {"code_emailed_at": now, "email_sending_at": now}},
+        return_document=ReturnDocument.AFTER, projection={"_id": 0},
     )
     if claimed is None:
-        return False  # already sent, or being sent right now
+        return False  # already sent, being sent right now, or voided/unsold since the caller read it
     try:
-        ok = await send(card)
+        ok = await send(claimed)
     except Exception as exc:  # a mail provider is not a reason to lose a sale
         ok = False
         _logger.warning("Gift card email failed for %s: %s", card.get("id"), exc)
-    if not ok:
+    if ok:
+        await _db.gift_cards.update_one({"id": card["id"]}, {"$unset": {"email_sending_at": ""}})
+    else:
         await _db.gift_cards.update_one({"id": card["id"]},
-                                        {"$set": {"code_emailed_at": None}})
+                                        {"$set": {"code_emailed_at": None}, "$unset": {"email_sending_at": ""}})
+        if await _db.email_outbox.find_one(
+                {"key": first_email_key(card["id"]), "status": "pending"}, {"_id": 1}) is not None:
+            await _db.gift_cards.update_one({"id": card["id"], "email_delivered_at": None},
+                                            {"$set": {"email_queued_at": _now_iso_fn()}})
     return bool(ok)
+
+
+async def resend_card_email(*, code: str, body, actor: dict) -> dict:
+    """Staff: send a card's code by email again, optionally to a corrected
+    address.
+
+    Refused when the code already reached a DIFFERENT address: whoever reads
+    that inbox can spend it, so sending the same code somewhere else would
+    leave it live in two places. The safe fix is to void the card and issue
+    a new one. Correcting an address the code never reached is fine.
+
+    Anything still queued for this card is dropped first, so an email held
+    for a mistyped address can never reach a stranger afterwards. Sent now
+    when possible; otherwise it waits in the email queue and is retried,
+    exactly like the first send.
+    """
+    card = await find_by_code(code)
+    status = card.get("status") or ""
+    if status == "voided":
+        raise HTTPException(status_code=409, detail="That gift card was voided.")
+    if status == "stock":
+        raise HTTPException(status_code=409, detail="That card has not been sold yet — there is nothing on it to send.")
+    if status == "spent":
+        raise HTTPException(status_code=409, detail="That card has been used up — there is nothing left on it to send.")
+    raw = body.recipient_email if body.recipient_email is not None else card.get("recipient_email")
+    to = (raw or "").strip().lower()
+    if not to:
+        raise HTTPException(status_code=400, detail="Enter the email address to send it to.")
+    if not _EMAIL_RE.match(to):
+        raise HTTPException(status_code=400, detail="Enter a real email address to send it to.")
+    if _email_sender is None:
+        raise HTTPException(status_code=503, detail="Email is not set up, so the card cannot be sent.")
+    already = delivered_to(card)
+    if not already or already == to:
+        # A delivery the provider accepted whose stamp has not landed yet
+        # (email_service leaves it "delivered_pending_stamp") still reached
+        # that inbox.
+        for row in await _db.email_outbox.find(
+                {"key": _key_prefix(card["id"]), "status": "delivered_pending_stamp"},
+                {"_id": 0, "on_success": 1}).to_list(50):
+            got = ((row.get("on_success") or {}).get("to") or "").strip().lower()
+            if got and got != to:
+                already = got
+                break
+    if already and already != to:
+        raise HTTPException(status_code=409, detail=(
+            f"This card's code was already emailed to {already}, so whoever reads that inbox can spend it. "
+            f"Void this card and issue a new one for what is left on it, then email the new card to {to}."))
+    balance = _money(card.get("balance"))
+    changed = to != (card.get("recipient_email") or "").strip().lower()
+    fresh = await _db.gift_cards.find_one_and_update(
+        {"id": card["id"], "status": "active"}, {"$set": {"recipient_email": to}},
+        return_document=ReturnDocument.AFTER, projection={"_id": 0})
+    if fresh is None:
+        raise HTTPException(status_code=409, detail="That card changed while you were sending it — look it up again.")
+    if changed:
+        await _log(card["id"], "edit", 0.0, balance, actor, note=f"Email address changed to {to}")
+    await _db.email_outbox.delete_many({"key": _key_prefix(card["id"]), "status": "pending"})
+    key = f"{first_email_key(card['id'])}:resend:{uuid.uuid4().hex[:12]}"
+    try:
+        ok = bool(await _email_sender(fresh, outbox_key=key, first=False))
+    except Exception as exc:
+        ok = False
+        _logger.warning("Gift card re-send failed for %s: %s", card.get("id"), exc)
+    queued = False
+    if ok:
+        await _db.gift_cards.update_one({"id": card["id"], "code_emailed_at": None},
+                                        {"$set": {"code_emailed_at": _now_iso_fn()}})
+    else:
+        queued = await _db.email_outbox.find_one({"key": key, "status": "pending"}, {"_id": 1}) is not None
+        await _db.gift_cards.update_one(
+            {"id": card["id"]},
+            {"$set": {"email_queued_at": _now_iso_fn()}} if queued else {"$unset": {"email_queued_at": ""}})
+    await _log(card["id"], "email", 0.0, balance, actor,
+               note=("Emailed to " if ok else "Waiting to email " if queued else "Could not email ") + to)
+    fresh = await _db.gift_cards.find_one({"id": card["id"]}, {"_id": 0}) or fresh
+    return {"sent": ok, "queued": queued,
+            "card": public_view(fresh, queued=fresh["id"] in await queued_ids([fresh["id"]]))}
 
 
 async def find_duplicate_codes() -> list:
@@ -589,7 +782,8 @@ async def card_detail(raw_code: str) -> dict:
     history = await _db.gift_card_transactions.find(
         {"gift_card_id": card["id"]}, {"_id": 0},
     ).sort("created_at", 1).to_list(500)
-    return {**public_view(card), "history": history}
+    queued = card["id"] in await queued_ids([card["id"]])
+    return {**public_view(card, queued=queued), "history": history}
 
 
 def spendable(card: dict) -> float:
@@ -818,8 +1012,9 @@ async def list_cards(*, status: Optional[str] = None, limit: int = 100) -> dict:
     # anybody until they are sold, so they must never inflate this.
     outstanding = await _db.gift_cards.find({"status": "active"}, {"_id": 0, "balance": 1}).to_list(2000)
     on_the_rack = await _db.gift_cards.count_documents({"status": "stock"})
+    waiting = await queued_ids([c["id"] for c in rows])
     return {
-        "cards": [public_view(c) for c in rows],
+        "cards": [public_view(c, queued=c["id"] in waiting) for c in rows],
         # What you owe the people holding cards. Worth seeing in one number.
         "outstanding_balance": round(sum(_money(c.get("balance")) for c in outstanding), 2),
         "outstanding_count": len(outstanding),

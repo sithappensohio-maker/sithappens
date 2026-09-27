@@ -2,6 +2,7 @@ import { useCallback, useEffect, useState } from "react";
 import { toast } from "sonner";
 import { api, formatErr } from "../lib/api";
 import { goTo } from "../lib/goTo";
+import { giftCardEmailLine } from "../lib/giftCardEmail";
 
 /**
  * Gift cards, from the customer's side.
@@ -116,7 +117,28 @@ export default function PortalGiftCards() {
 
       {outcome && (
         <div className="rounded-xl border border-shBorder p-3 mt-3" data-testid="gift-outcome">
-          {outcome.status === "applied" ? (
+          {outcome.status === "applied" && outcome.kind === "purchase" && outcome.card?.status === "voided" ? (
+            /* Refunded before or after it went out: the code is dead, so it
+               is not shown and nothing calls it "ready". */
+            <p className="text-shTextMuted text-sm" data-testid="gift-outcome-cancelled">
+              This {money(outcome.amount)} gift card was refunded and cancelled — its code no longer works.
+            </p>
+          ) : outcome.status === "applied" && outcome.kind === "purchase" && outcome.card ? (
+            /* A card bought for somebody: the code they paid for, and
+               whether the email reached them (audit #56). */
+            <div data-testid="gift-outcome-bought">
+              <p className="text-shPrimary text-sm font-black">
+                Thank you — your {money(outcome.amount)} gift card is ready.
+              </p>
+              <p className="text-shText text-xl font-black tracking-[0.12em] mt-1" data-testid="gift-outcome-code">
+                {outcome.card.code_display}
+              </p>
+              <p className={`text-[12px] mt-0.5 ${outcome.card.email_state === "queued" || outcome.card.email_state === "not_sent" ? "text-shOrange font-bold" : "text-shTextMuted"}`}
+                 data-testid="gift-outcome-email">
+                {giftCardEmailLine(outcome.card)}
+              </p>
+            </div>
+          ) : outcome.status === "applied" ? (
             <p className="text-shPrimary text-sm font-black" data-testid="gift-outcome-done">
               Thank you — {money(outcome.amount)} is on the card.
               {outcome.card ? ` It now holds ${money(outcome.card.balance)}.` : ""}

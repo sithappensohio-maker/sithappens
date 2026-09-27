@@ -3,6 +3,7 @@ import { toast } from "sonner";
 import { api, formatErr } from "../lib/api";
 import PageHero from "../components/PageHero";
 import { printGiftCard, printGiftCardSheet, PER_SHEET } from "../lib/printGiftCard";
+import { giftCardEmailLine } from "../lib/giftCardEmail";
 
 /**
  * Gift cards — the ones you have sold, and the ones you hand out.
@@ -17,6 +18,14 @@ import { printGiftCard, printGiftCardSheet, PER_SHEET } from "../lib/printGiftCa
  * because no money came in.
  */
 const money = (n) => `$${Number(n || 0).toFixed(2)}`;
+
+// formatErr takes the server's `detail`, not the axios error — handed the
+// error itself it prints "AxiosError: Request failed with status code 400"
+// and the real reason ("Enter a real email address…") never shows.
+const errText = (e, fallback) => {
+  const d = e?.response?.data?.detail;
+  return d ? formatErr(d) : fallback;
+};
 
 const STATUS = {
   active: { label: "Active", cls: "bg-shPrimary/15 text-shPrimary border-shPrimary/40" },
@@ -38,7 +47,7 @@ export default function GiftCards() {
       const { data: d } = await api.get("/gift-cards", { params: filter ? { status: filter } : {} });
       setData(d);
     } catch (e) {
-      toast.error(formatErr(e) || "Could not load gift cards");
+      toast.error(errText(e, "Could not load gift cards"));
     }
   }, [filter]);
   useEffect(() => { load(); }, [load]);
@@ -64,7 +73,7 @@ export default function GiftCards() {
       setIssueOpen(false); setAmount(""); setRecipient(""); setReason("");
       load();
     } catch (e) {
-      toast.error(formatErr(e) || "Could not issue the card");
+      toast.error(errText(e, "Could not issue the card"));
     }
     setBusy(false);
   };
@@ -94,7 +103,7 @@ export default function GiftCards() {
       load();
       toast.success(`${d.count} card${d.count === 1 ? "" : "s"} ready to print.`);
     } catch (e) {
-      toast.error(formatErr(e) || "Could not make the cards");
+      toast.error(errText(e, "Could not make the cards"));
     }
     setBusy(false);
   };
@@ -128,6 +137,39 @@ export default function GiftCards() {
     setEditNote(found?.note || "");
     setEditOpen(true);
   };
+  // ── emailing the code again (audit #56) ─────────────────────────────
+  // To the address on file, or a corrected one — a mistyped address is the
+  // usual reason a digital card never arrives.
+  const [sendOpen, setSendOpen] = useState(false);
+  const [sendTo, setSendTo] = useState("");
+  const [sendFor, setSendFor] = useState(null);
+  const openSend = () => {
+    setSendTo(found?.recipient_email || "");
+    setSendFor(found?.id || null);
+    setSendOpen(true);
+  };
+  const sendEmail = async () => {
+    // The form belongs to the card it was opened for — never another one.
+    if (!found || sendFor !== found.id) { setSendOpen(false); return; }
+    if (!sendTo.trim()) { toast.error("Enter the email address to send it to."); return; }
+    setBusy(true);
+    try {
+      const { data: d } = await api.post(
+        `/gift-cards/${encodeURIComponent(found.code_display)}/send-email`,
+        { recipient_email: sendTo.trim() });
+      if (d.sent) toast.success(`Emailed to ${d.card?.recipient_email || sendTo.trim()}.`);
+      else if (d.queued) toast.success("Saved — it can't go out right now, so it will send as soon as it can.");
+      else toast.error("The email could not be sent.");
+      setSendOpen(false);
+      const { data: fresh } = await api.get(`/gift-cards/lookup/${encodeURIComponent(found.code_display)}`);
+      setFound(fresh);
+      load();
+    } catch (e) {
+      toast.error(errText(e, "Could not send the card"));
+    }
+    setBusy(false);
+  };
+
   const saveEdit = async () => {
     setBusy(true);
     try {
@@ -139,7 +181,7 @@ export default function GiftCards() {
       load();
       toast.success("Card updated.");
     } catch (e) {
-      toast.error(formatErr(e) || "Could not update the card");
+      toast.error(errText(e, "Could not update the card"));
     }
     setBusy(false);
   };
@@ -147,14 +189,27 @@ export default function GiftCards() {
   // ── looking one up ───────────────────────────────────────────────────
   const [code, setCode] = useState("");
   const [found, setFound] = useState(null);
-  const lookup = async () => {
-    if (!code.trim()) return;
+  // A form opened for one card must never act on another: looking up a
+  // different card closes them (otherwise card B's code could be sent to
+  // card A's recipient).
+  useEffect(() => { setSendOpen(false); setSendTo(""); setSendFor(null); setEditOpen(false); }, [found?.id]);
+  // Where this card's code already went, if anywhere. Sending the same code
+  // to a DIFFERENT address would leave it spendable in two inboxes.
+  const alreadyTo = found ? String(found.already_emailed_to || "").toLowerCase() : "";
+  const sendElsewhere = !!alreadyTo && !!sendTo.trim() && sendTo.trim().toLowerCase() !== alreadyTo;
+  // `raw` is the code to look up; the box's own value when called from the
+  // Look up button (which passes a click event, not a string). A list row
+  // passes its own code — reading `code` there would find the PREVIOUS card,
+  // because the state update has not landed yet.
+  const lookup = async (raw) => {
+    const want = String(typeof raw === "string" ? raw : code).trim();
+    if (!want) return;
     try {
-      const { data: d } = await api.get(`/gift-cards/lookup/${encodeURIComponent(code.trim())}`);
+      const { data: d } = await api.get(`/gift-cards/lookup/${encodeURIComponent(want)}`);
       setFound(d);
     } catch (e) {
       setFound(null);
-      toast.error(formatErr(e) || "No gift card with that code");
+      toast.error(errText(e, "No gift card with that code"));
     }
   };
 
@@ -169,7 +224,7 @@ export default function GiftCards() {
       }
       load();
     } catch (e) {
-      toast.error(formatErr(e) || "That did not work");
+      toast.error(errText(e, "That did not work"));
     }
     setBusy(false);
   };
@@ -249,6 +304,13 @@ export default function GiftCards() {
                   : `${money(found.initial_amount)} issued · ${money(found.spent)} spent`}
                 {found.recipient_name ? ` · for ${found.recipient_name}` : ""}
               </p>
+              {found.email_state && found.email_state !== "none" && (
+                <p className={`text-[12.5px] mt-0.5 font-bold ${found.email_state === "sent" ? "text-shPrimary" : "text-shOrange"}`}
+                   data-testid="gift-email-state">
+                  <i className="fas fa-envelope mr-1.5" aria-hidden="true"/>
+                  {giftCardEmailLine(found, { staff: true })}
+                </p>
+              )}
             </div>
             <div className="text-right">
               {/* A card nobody has bought is worth nothing, and "$0.00" in
@@ -295,6 +357,36 @@ export default function GiftCards() {
             </div>
           )}
 
+          {sendOpen && found.status === "active" && (
+            <div className="border border-shBorder rounded-xl p-3 mt-3 space-y-2" data-testid="gift-send-form">
+              <p className="text-[12px] text-shTextMuted">
+                Emails the code to this address. If it was typed wrong and the code never
+                arrived, fix it here — anything still waiting for the old address is cancelled.
+              </p>
+              {sendElsewhere && (
+                <p className="text-[12px] font-bold text-shOrange" data-testid="gift-send-warning">
+                  This code already went to {alreadyTo}, so whoever reads that inbox can spend it.
+                  Void this card and issue a new one for what is left on it, then email the new card.
+                </p>
+              )}
+              <div>
+                <label className={label} htmlFor="gift-send-to">Email it to</label>
+                <input id="gift-send-to" type="email" value={sendTo} onChange={(e) => setSendTo(e.target.value)}
+                       data-testid="gift-send-to" className={input}/>
+              </div>
+              <div className="flex flex-wrap gap-2">
+                <button onClick={sendEmail} disabled={busy || sendElsewhere} data-testid="gift-send-go"
+                        className="min-h-[44px] px-5 rounded bg-shPrimary text-bgHeader text-[12px] font-black uppercase tracking-widest disabled:opacity-50">
+                  {busy ? "Sending…" : "Send"}
+                </button>
+                <button onClick={() => setSendOpen(false)} data-testid="gift-send-cancel"
+                        className="min-h-[44px] px-5 rounded border border-shBorder text-shText text-[12px] font-black uppercase tracking-widest">
+                  Cancel
+                </button>
+              </div>
+            </div>
+          )}
+
           <div className="flex flex-wrap gap-2 mt-3">
             {/* Loading a blank by hand is refused by the backend on purpose —
                 money on a card has to arrive through a sale. Offering the
@@ -308,6 +400,12 @@ export default function GiftCards() {
                     }} disabled={busy} data-testid="gift-add"
                     className="min-h-[40px] px-3 rounded border border-shBorder text-[11px] font-black uppercase tracking-widest text-shTextMuted">
               Add to balance
+            </button>
+            )}
+            {found.status === "active" && (
+            <button onClick={openSend} disabled={busy} data-testid="gift-send"
+                    className="min-h-[40px] px-3 rounded border border-shBorder text-[11px] font-black uppercase tracking-widest text-shTextMuted">
+              <i className="fas fa-envelope mr-1.5"/>{found.email_state === "sent" ? "Send again" : "Send by email"}
             </button>
             )}
             <button onClick={openEdit} data-testid="gift-edit"
@@ -486,7 +584,8 @@ export default function GiftCards() {
                          data-testid={`gift-pick-${c.id}`}
                          className="w-4 h-4 accent-shPrimary shrink-0"/>
                   <div className="min-w-0">
-                  <button onClick={() => { setCode(c.code_display); setFound(null); lookup(); }}
+                  <button onClick={() => { setCode(c.code_display); setFound(null); lookup(c.code_display); }}
+                          data-testid={`gift-row-open-${c.id}`}
                           className="text-shText font-black tracking-widest text-[14px] hover:text-shPrimary">
                     {c.code_display}
                   </button>
@@ -494,6 +593,11 @@ export default function GiftCards() {
                     {String(c.issued_at || "").slice(0, 10)}
                     {c.recipient_name ? ` · ${c.recipient_name}` : ""}
                     {c.issued_by_name ? ` · by ${c.issued_by_name}` : ""}
+                    {(c.email_state === "queued" || (c.email_state === "not_sent" && c.status === "active")) && (
+                      <span className="text-shOrange font-bold" data-testid={`gift-row-undelivered-${c.id}`}>
+                        {c.email_state === "queued" ? " · email not delivered yet" : " · code never emailed"}
+                      </span>
+                    )}
                   </p>
                   </div>
                 </div>

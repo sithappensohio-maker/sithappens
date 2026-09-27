@@ -5,6 +5,7 @@ import PublicBrandShell from "../components/PublicBrandShell";
 import { EmptyState, PremiumButton, SectionCard } from "../components/premium";
 import { goTo } from "../lib/goTo";
 import { guestOrderToken, rememberGuestOrderToken } from "../lib/shopGuestCart";
+import { giftCardEmailLine } from "../lib/giftCardEmail";
 
 const money = (n) => `$${Number(n || 0).toFixed(2)}`;
 
@@ -131,14 +132,29 @@ export default function GuestOrderStatus() {
 
       <div className="space-y-1.5">
         {(order.lines || []).map((l, i) => (
-          <div key={`${l.kind}-${i}`} className="flex justify-between gap-3 text-[13px]">
-            <span className="text-shText truncate">{l.quantity}× {l.name}</span>
-            {l.kind === "gift_card" && (
-              <span className="text-[11px] text-shSecondary font-bold shrink-0">Emailed</span>
-            )}
-            {l.kind === "product" && (
-              <span className="text-[11px] text-shTextMuted shrink-0">Pickup</span>
-            )}
+          <div key={`${l.kind}-${i}`} className="text-[13px]">
+            <div className="flex justify-between gap-3">
+              <span className="text-shText truncate">{l.quantity}× {l.name}</span>
+              {l.kind === "product" && (
+                <span className="text-[11px] text-shTextMuted shrink-0">Pickup</span>
+              )}
+            </div>
+            {/* Paid: the code itself, and whether the email really arrived —
+                a guest has no account, so this page is the only other place
+                they can find it (audit #56). */}
+            {l.kind === "gift_card" && (l.gift_cards || []).map((g) => (
+              <div key={g.code_display} className="mt-1.5 rounded-lg border border-shBorder/70 px-2.5 py-1.5"
+                   data-testid={`guest-gift-card-${g.code_display}`}>
+                <p className="text-[10px] font-black uppercase tracking-widest text-shTextMuted">
+                  Gift card code · {money(g.amount)}
+                </p>
+                <p className="text-[15px] font-black tracking-[0.12em] text-shText">{g.code_display}</p>
+                <p className={`text-[11px] mt-0.5 ${g.email_state === "queued" || g.email_state === "not_sent" ? "text-shOrange font-bold" : "text-shTextMuted"}`}
+                   data-testid={`guest-gift-email-${g.code_display}`}>
+                  {giftCardEmailLine(g)}
+                </p>
+              </div>
+            ))}
           </div>
         ))}
         <div className="flex justify-between pt-2 border-t border-shBorder font-black text-shText">

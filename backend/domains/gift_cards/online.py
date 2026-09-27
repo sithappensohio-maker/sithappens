@@ -83,9 +83,15 @@ class GiftCardPurchaseIn(BaseModel):
     idempotency_key: str = Field(min_length=8, max_length=128)
 
 
-async def email_card(card: dict) -> bool:
+async def email_card(card: dict, *, outbox_key: Optional[str] = None, first: bool = True) -> bool:
     """The digital card itself. For the recipient this email IS the card, so
-    the code is the loudest thing in it and the balance is right beside it."""
+    the code is the loudest thing in it and the balance is right beside it.
+
+    A send that cannot go out now waits in the email queue and is retried
+    (audit 2026-09-25 #56). The queue checks the card again right before
+    each retry (email_service._outbox_row_still_wanted): a card voided in
+    the meantime, or re-addressed by staff, is never sent to the old address.
+    """
     if _email_service is None:
         return False
     code = services._display(card.get("code") or "")
@@ -115,7 +121,10 @@ async def email_card(card: dict) -> bool:
         fallback_title="A gift card for you",
         fallback_intro="",
         body_html=body,
-        outbox_key=f"gift_card_delivered:{card.get('id')}",
+        outbox_key=outbox_key or services.first_email_key(card.get("id")),
+        queue_on_failure=True,
+        on_success={"type": "gift_card_emailed", "card_id": card.get("id"),
+                    "to": (card.get("recipient_email") or "").strip().lower(), "first": bool(first)},
     )
 
 
@@ -484,11 +493,19 @@ async def attempt_status(attempt_id: str, user: dict) -> Dict[str, Any]:
         raise HTTPException(status_code=404, detail="Top-up not found")
     card = await _db.gift_cards.find_one(
         {"id": a.get("gift_card_id") or a.get("card_id")}, {"_id": 0})
-    return {
+    out = {
         "status": a.get("status"),
+        "kind": a.get("kind") or "topup",
         "amount": services._money(a["amount_cents"] / 100.0),
         "card": portal_view(card) if card else None,
     }
+    if out["card"] and a.get("kind") == "purchase" and (card.get("status") or "") != "voided":
+        # The buyer sees the code they paid for and whether the email reached
+        # the recipient (audit 2026-09-25 #56) — a failed email never leaves
+        # them with nothing.
+        out["card"]["email_state"] = services.email_state(card, card["id"] in await services.queued_ids([card["id"]]))
+        out["card"]["emailed_to"] = card.get("recipient_email") or ""
+    return out
 
 
 # ───────────────────────────────────────────── refunds of online card money

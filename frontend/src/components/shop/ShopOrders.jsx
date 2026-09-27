@@ -1,5 +1,6 @@
 import { useEffect, useState } from "react";
 import { api } from "../../lib/api";
+import { giftCardEmailLine } from "../../lib/giftCardEmail";
 import { shopImageProps } from "../../lib/shopImage";
 
 /**
@@ -297,20 +298,42 @@ export function OrderDetail({ order, onBack, onBuyAgain, onOpenItem, onOpenCours
                     For {l.dog_name}
                   </p>
                 )}
-                {l.kind === "gift_card" && l.recipient_email && (
+                {l.kind === "gift_card" && (
                   <div className="mt-1" data-testid={`order-line-gift-${l.item_id}`}>
-                    <p className="text-[12px] text-shSecondary font-bold">
-                      Gift for {l.recipient_name || l.recipient_email}
-                    </p>
-                    <p className="text-[11px] text-shTextMuted break-words">{l.recipient_email}</p>
+                    {l.recipient_email && (
+                      <>
+                        <p className="text-[12px] text-shSecondary font-bold">
+                          Gift for {l.recipient_name || l.recipient_email}
+                        </p>
+                        <p className="text-[11px] text-shTextMuted break-words">{l.recipient_email}</p>
+                      </>
+                    )}
                     {l.gift_message && (
                       <p className="text-[11px] text-shTextMuted italic mt-0.5 break-words">“{l.gift_message}”</p>
                     )}
-                    <p className="text-[11px] text-shTextMuted mt-1">
-                      {l.fulfillment_status === "fulfilled"
-                        ? "The card and its code were emailed to them."
-                        : "The card will be emailed once payment clears."}
-                    </p>
+                    {(l.gift_cards || []).length > 0 ? (
+                      /* Paid: the code itself, and whether the email really
+                         arrived — never "emailed" unless it was (audit #56). */
+                      <div className="mt-1.5 space-y-1.5">
+                        {l.gift_cards.map((g) => (
+                          <div key={g.code_display} className="rounded-lg border border-shBorder/70 px-2.5 py-1.5"
+                               data-testid={`order-gift-card-${g.code_display}`}>
+                            <p className="text-[10px] font-black uppercase tracking-widest text-shTextMuted">
+                              Gift card code · {money(g.amount)}
+                            </p>
+                            <p className="text-[15px] font-black tracking-[0.12em] text-shText">{g.code_display}</p>
+                            <p className={`text-[11px] mt-0.5 ${g.email_state === "queued" || g.email_state === "not_sent" ? "text-shOrange font-bold" : "text-shTextMuted"}`}
+                               data-testid={`order-gift-email-${g.code_display}`}>
+                              {giftCardEmailLine(g)}
+                            </p>
+                          </div>
+                        ))}
+                      </div>
+                    ) : order.status === "pending_payment" ? (
+                      <p className="text-[11px] text-shTextMuted mt-1">
+                        The card will be emailed once payment clears.
+                      </p>
+                    ) : null}
                   </div>
                 )}
                 {l.quantity_refunded > 0 && (

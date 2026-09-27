@@ -395,3 +395,28 @@ describe("paying twice by accident", () => {
     expect(first.length).toBeGreaterThan(8);
   });
 });
+
+// ──────────────────────────────── a guest's gift card code (audit #56)
+
+describe("a guest's gift card on the order page", () => {
+  const renderOrder = (orderId, search) => {
+    mount(
+      <MemoryRouter initialEntries={[`/shop/order/${orderId}${search}`]}>
+        <Routes><Route path="/shop/order/:orderId" element={<GuestOrderStatus />} /></Routes>
+      </MemoryRouter>,
+    );
+  };
+
+  test("a paid order shows the code, and never says emailed before it was", async () => {
+    api.get.mockResolvedValue({ data: {
+      order_id: "ord-g", status: "paid", fulfillment_status: "fulfilled", total: 25, email: "buyer@example.com",
+      lines: [{ kind: "gift_card", name: "Gift card · $25.00", quantity: 1, fulfillment_status: "fulfilled",
+                gift_cards: [{ code_display: "ABCD-EFGH-JKMN", amount: 25, email_state: "queued", emailed_to: "nan@example.com" }] }],
+    } });
+    renderOrder("ord-g", "?token=tok-g");
+    await flush();
+    expect(byTestId("guest-gift-card-ABCD-EFGH-JKMN").textContent).toContain("ABCD-EFGH-JKMN");
+    expect(byTestId("guest-gift-email-ABCD-EFGH-JKMN").textContent).toMatch(/Not delivered yet to nan@example\.com/);
+    expect(text()).not.toMatch(/\bEmailed\b/);
+  });
+});
