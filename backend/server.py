@@ -80,6 +80,7 @@ from domains.bookings.blocks import BookingBlocked, block_of, pretty_date, prett
 from domains.bookings import guards as booking_guards
 from domains.bookings import spans as booking_spans
 from domains.bookings import group_rank
+from domains.school import ownership as school_ownership
 from domains.bookings import late_day as late_day_checkout
 from domains.bookings import care as care_domain
 from domains.operations import end_of_day as end_of_day_domain
@@ -41894,22 +41895,14 @@ async def _validate_shop_item_eligibility(client: dict, kind: str, item_doc: Opt
         # already own or already completed — this is the no-retake policy
         # from the Phase 5 spec (§10), enforced at the money boundary, not
         # only implied by the CTA the client happens to be looking at.
-        existing_enrollment = await db.dog_programs.find_one(
-            {"dog_id": dog_id, "program_id": item_doc["id"], "delivery_channel": "online_school",
-             # Phase 6 retake policy — withdrawn is blocked here too, not
-             # just active/completed: a withdrawn enrollment must not be
-             # silently superseded by a repurchase either (see the Phase 6
-             # spec's retake policy — a real retake needs a future,
-             # explicit staff workflow, never an automatic second charge).
-             "status": {"$in": ["active", "completed", "withdrawn"]}},
-            {"_id": 0, "status": 1},
-        )
+        # A course bought is the dog's for life (domains.school.ownership):
+        # owned — in progress, finished or withdrawn, access not revoked —
+        # means nothing to buy. A refunded one can be bought back.
+        existing_enrollment = await school_ownership.owned(db, dog_id, item_doc["id"])
         if existing_enrollment:
             if existing_enrollment["status"] == "completed":
-                raise HTTPException(status_code=409, detail=f"{name} has already been completed for this dog — repurchase isn't available yet.")
-            if existing_enrollment["status"] == "withdrawn":
-                raise HTTPException(status_code=409, detail=f"This dog's enrollment in {name} was withdrawn — contact us before repurchasing.")
-            raise HTTPException(status_code=409, detail=f"This dog is already enrolled in {name} — go to Online School to continue instead of buying it again.")
+                raise HTTPException(status_code=409, detail=f"{name} is already yours for life and this dog has finished it — open it any time in Online School.")
+            raise HTTPException(status_code=409, detail=f"This dog already owns {name} (lifetime access) — open it in Online School instead of buying it again.")
         # This function receives the client DOCUMENT (`client`), not a
         # client_id — referencing client_id raised NameError on EVERY Online
         # School program checkout, so no program could be bought at all.
@@ -42452,7 +42445,7 @@ async def _fulfill_shop_online_school_program_line(order: dict, line: dict) -> N
         raise HTTPException(status_code=500, detail="Training program missing during shop fulfillment")
     source_ref = f"shop_order:{order['id']}:line:{line['item_id']}"
     try:
-        result = await _grant_online_school_enrollment(
+        result = await school_ownership.grant_purchase(
             dog, program, enrolled_by=None, enrollment_source="purchase", source_ref=source_ref,
         )
         enrollment_id = result["enrollment"]["id"]
@@ -49002,15 +48995,19 @@ async def sell_training_program(
     # legitimate retake and goes on to create a fresh enrollment below.
     existing_active = await db.dog_programs.find_one(
         {"dog_id": dog["id"], "program_id": program["id"], "status": "active"}, {"_id": 0},
-    ) if dog else None
-    if existing_active and online_course:
-        raise HTTPException(status_code=409, detail={
-            "code": "dog_already_enrolled_online",
-            "msg": f"{dog.get('name') or 'This dog'} already has {program['name']}. Nothing was charged.",
-            "enrollment_id": existing_active["id"],
-            "program_id": program["id"],
-            "dog_id": dog["id"],
-        })
+    ) if dog and not online_course else None
+    if online_course:
+        # Lifetime access: a dog that owns the course is never sold it again;
+        # one whose purchase was refunded (or access removed) buys it back.
+        owned_row = await school_ownership.owned(db, dog["id"], program["id"])
+        if owned_row:
+            raise HTTPException(status_code=409, detail={
+                "code": "dog_already_owns_course",
+                "msg": school_ownership.owned_message(dog, program, owned_row),
+                "enrollment_id": owned_row["id"],
+                "program_id": program["id"],
+                "dog_id": dog["id"],
+            })
     if existing_active and not body.allow_additional_sessions:
         raise HTTPException(status_code=409, detail={
             "code": "dog_already_enrolled",
@@ -49128,7 +49125,7 @@ async def sell_training_program(
         # Commerce still determines how entitlement is acquired. Once granted,
         # Online School uses the same canonical curriculum/progress architecture.
         try:
-            result = await _grant_online_school_enrollment(
+            result = await school_ownership.grant_purchase(
                 dog, program, enrolled_by=user.get("id"),
                 enrollment_source="purchase", source_ref=f"sell_program:{lot['id']}",
             )

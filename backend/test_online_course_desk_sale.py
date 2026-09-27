@@ -64,10 +64,11 @@ def _client_and_dog():
 
 
 @contextlib.contextmanager
-def _school_program(purchase_fulfillment=None):
+def _school_program(purchase_fulfillment=None, available_online=False):
     admin = _admin_user()
     kw = dict(name=f"{TAG} Program {uuid.uuid4().hex[:6]}", type="private_lessons",
               format={"count": 1, "unit": "modules"}, price=100, delivery_mode="self_guided",
+              available_online=available_online,
               modules=[server.ModuleIn(name="Module 1", order=0, goals=[server.GoalIn(name="Skill 1")])])
     if purchase_fulfillment is not None:
         kw["purchase_fulfillment"] = purchase_fulfillment
@@ -130,7 +131,7 @@ def test_selling_the_same_course_again_to_an_enrolled_dog_charges_nothing():
             lots = run(server.db.credit_lots.count_documents({"client_id": c["id"]}))
             with pytest.raises(server.HTTPException) as err:
                 _sell(c, prog, admin, dog_id=dog["id"], allow_additional_sessions=True)
-            assert err.value.status_code == 409 and err.value.detail["code"] == "dog_already_enrolled_online"
+            assert err.value.status_code == 409 and err.value.detail["code"] == "dog_already_owns_course"
             assert run(server.db.credit_lots.count_documents({"client_id": c["id"]})) == lots
         finally:
             _cleanup_dog_programs_and_lots(dog["id"], c["id"])
@@ -143,5 +144,73 @@ def test_a_credits_only_program_still_gives_its_credits():
             _sell(c, prog, admin, dog_id=dog["id"])
             after = run(server.db.clients.find_one({"id": c["id"]}, {"_id": 0, "training_credits": 1})).get("training_credits") or 0
             assert after == before + (prog.get("format") or {}).get("count", 1)
+        finally:
+            _cleanup_dog_programs_and_lots(dog["id"], c["id"])
+
+
+# ── Lifetime access (owner, 2026-09-26): owned is never sold again; a refunded
+#    course can be bought back.
+
+def _enrollment(dog_id, prog_id):
+    return run(server.db.dog_programs.find_one(
+        {"dog_id": dog_id, "program_id": prog_id, "delivery_channel": "online_school"}, {"_id": 0}, sort=[("created_at", -1)]))
+
+
+def test_a_dog_that_finished_the_course_still_owns_it_so_nothing_is_sold():
+    with _client_and_dog() as (c, dog), _school_program(purchase_fulfillment="online_school") as (prog, admin), _OpenRegisterDay(TAG):
+        try:
+            _sell(c, prog, admin, dog_id=dog["id"])
+            first = _enrollment(dog["id"], prog["id"])
+            run(server.db.dog_programs.update_one({"id": first["id"]}, {"$set": {"status": "completed"}}))
+            lots = run(server.db.credit_lots.count_documents({"client_id": c["id"]}))
+            with pytest.raises(server.HTTPException) as err:
+                _sell(c, prog, admin, dog_id=dog["id"])
+            assert err.value.status_code == 409 and err.value.detail["code"] == "dog_already_owns_course"
+            assert "Retake" in err.value.detail["msg"]
+            assert run(server.db.credit_lots.count_documents({"client_id": c["id"]})) == lots
+        finally:
+            _cleanup_dog_programs_and_lots(dog["id"], c["id"])
+
+
+def test_a_refunded_course_can_be_bought_back_and_starts_fresh():
+    with _client_and_dog() as (c, dog), _school_program(purchase_fulfillment="online_school") as (prog, admin), _OpenRegisterDay(TAG):
+        try:
+            _sell(c, prog, admin, dog_id=dog["id"])
+            old = _enrollment(dog["id"], prog["id"])
+            # What a refund does: withdrawn, access revoked.
+            run(server.db.dog_programs.update_one({"id": old["id"]}, {"$set": {"status": "withdrawn", "access_state": "revoked"}}))
+            out = _sell(c, prog, admin, dog_id=dog["id"])
+            new = run(server.db.dog_programs.find_one({"id": out["enrollment"]["id"]}, {"_id": 0}))
+            assert new["id"] != old["id"] and new["status"] == "active"
+            assert new.get("access_state") != "revoked"
+            assert new["retake_of_enrollment_id"] == old["id"]
+        finally:
+            _cleanup_dog_programs_and_lots(dog["id"], c["id"])
+
+
+def test_access_removed_mid_course_is_handed_back_on_the_same_attempt():
+    with _client_and_dog() as (c, dog), _school_program(purchase_fulfillment="online_school") as (prog, admin), _OpenRegisterDay(TAG):
+        try:
+            _sell(c, prog, admin, dog_id=dog["id"])
+            row = _enrollment(dog["id"], prog["id"])
+            run(server.db.dog_programs.update_one({"id": row["id"]}, {"$set": {"access_state": "revoked"}}))
+            out = _sell(c, prog, admin, dog_id=dog["id"])
+            assert out["enrollment"]["id"] == row["id"]
+            assert run(server.db.dog_programs.find_one({"id": row["id"]}, {"_id": 0}))["access_state"] == "active"
+        finally:
+            _cleanup_dog_programs_and_lots(dog["id"], c["id"])
+
+
+def test_the_shop_lets_a_refunded_client_buy_back_but_not_an_owner():
+    with _client_and_dog() as (c, dog), _school_program(purchase_fulfillment="online_school", available_online=True) as (prog, admin), _OpenRegisterDay(TAG):
+        try:
+            _sell(c, prog, admin, dog_id=dog["id"])
+            row = _enrollment(dog["id"], prog["id"])
+            run(server.db.dog_programs.update_one({"id": row["id"]}, {"$set": {"status": "completed"}}))
+            with pytest.raises(server.HTTPException) as err:
+                run(server._validate_shop_item_eligibility(c, "training_program", prog, 1, dog_id=dog["id"]))
+            assert err.value.status_code == 409 and "for life" in str(err.value.detail)
+            run(server.db.dog_programs.update_one({"id": row["id"]}, {"$set": {"access_state": "revoked"}}))
+            run(server._validate_shop_item_eligibility(c, "training_program", prog, 1, dog_id=dog["id"]))
         finally:
             _cleanup_dog_programs_and_lots(dog["id"], c["id"])

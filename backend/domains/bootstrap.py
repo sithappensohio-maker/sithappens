@@ -24,6 +24,7 @@ from domains.bookings import services as booking_services
 from domains.bookings import late_day as late_day_checkout
 from domains.bookings import care as care_domain
 from domains.operations import end_of_day as end_of_day_domain
+from domains.school import ownership as school_ownership
 from domains.clients import signup_claim
 from domains.billing import tab_sync as billing_tab_sync, resolve as billing_resolve
 from domains.register import services as register_services
@@ -137,6 +138,7 @@ def register_domains(
     late_day_checkout.configure(server_globals=server_globals)
     care_domain.configure(server_globals=server_globals)
     end_of_day_domain.configure(server_globals=server_globals)
+    school_ownership.configure(server_globals=server_globals)
     signup_claim.configure(server_globals=server_globals)
     billing_tab_sync.configure(server_globals=server_globals)
     gift_card_shop.configure(

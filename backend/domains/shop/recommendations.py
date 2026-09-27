@@ -30,6 +30,7 @@ from __future__ import annotations
 from typing import Any, Dict, List, Optional, Sequence
 
 from domains.shop import relationships as rel_mod
+from domains.school.ownership import owned_query
 
 # A row of three or four. Enough to be useful, few enough to still read as a
 # recommendation rather than a second catalogue.
@@ -78,13 +79,11 @@ async def _dog_eligibility(
         return False
 
     for dog in dogs:
+        # The same rule the checkout refuses a repurchase by (a course the
+        # dog owns for life). Reading it from a different list here is how the
+        # shop ends up advertising something the till will not sell.
         existing = await db.dog_programs.find_one(
-            {"dog_id": dog["id"], "program_id": item["id"], "delivery_channel": "online_school",
-             # The same three statuses the checkout refuses a repurchase for.
-             # Reading them from a different list here is how the shop ends
-             # up advertising something the till will not sell.
-             "status": {"$in": ["active", "completed", "withdrawn"]}},
-            {"_id": 0, "status": 1},
+            owned_query(dog["id"], item["id"]), {"_id": 0, "status": 1},
         )
         if existing:
             continue
