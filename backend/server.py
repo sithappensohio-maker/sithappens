@@ -48980,6 +48980,12 @@ async def sell_training_program(
     # revenue rows, or any other financial mutation below. Minimum age applies
     # to every dog-targeted program sale; Online School also enforces pathway
     # prerequisites here (and again at the canonical grant boundary).
+    # A self-guided online course is access for one dog — never in-person
+    # training credits or weekly sessions (it used to hand out both).
+    online_course = (program.get("purchase_fulfillment") == "online_school"
+                     and program.get("delivery_mode") == "self_guided")
+    if online_course and not dog:
+        raise HTTPException(status_code=400, detail="Pick the dog who's taking this online course — the sale gives that dog access.")
     if dog:
         _require_program_min_age(dog, program)
     if dog and program.get("purchase_fulfillment") == "online_school":
@@ -48997,6 +49003,14 @@ async def sell_training_program(
     existing_active = await db.dog_programs.find_one(
         {"dog_id": dog["id"], "program_id": program["id"], "status": "active"}, {"_id": 0},
     ) if dog else None
+    if existing_active and online_course:
+        raise HTTPException(status_code=409, detail={
+            "code": "dog_already_enrolled_online",
+            "msg": f"{dog.get('name') or 'This dog'} already has {program['name']}. Nothing was charged.",
+            "enrollment_id": existing_active["id"],
+            "program_id": program["id"],
+            "dog_id": dog["id"],
+        })
     if existing_active and not body.allow_additional_sessions:
         raise HTTPException(status_code=409, detail={
             "code": "dog_already_enrolled",
@@ -49025,9 +49039,10 @@ async def sell_training_program(
         "program_id": program["id"],
         "program_name": program["name"],
         "service_type": "training",
-        "qty_total": qty,
-        "qty_remaining": qty,
+        "qty_total": 0 if online_course else qty,
+        "qty_remaining": 0 if online_course else qty,
         "unit": unit,
+        **({"online_course": True, "course_lessons": qty} if online_course else {}),
         "price_paid": round(effective_price, 2),
         "list_price": round(list_price, 2),
         "value_each": value_each,
@@ -49037,7 +49052,8 @@ async def sell_training_program(
         "purchased_at": now_iso(),
     }
     await db.credit_lots.insert_one(lot)
-    await db.clients.update_one({"id": client_id}, {"$inc": {"training_credits": qty}})
+    if not online_course:
+        await db.clients.update_one({"id": client_id}, {"$inc": {"training_credits": qty}})
 
     # Sprint 110ca — record the sale as income immediately. Unlike credit packs
     # (which use deferred revenue recognition because each credit can be used
@@ -49170,6 +49186,7 @@ async def sell_training_program(
         and body.schedule_day_of_week is not None
         and body.schedule_time
         and (program.get("type") or "custom") != "board_train"
+        and not online_course
     )
     if can_schedule:
         # Pull closed dates so we can skip them (or warn the admin)
@@ -49279,7 +49296,7 @@ async def sell_training_program(
         "enrollment_warning": enrollment_warning,
         # present only when this sale added sessions to an enrollment that already existed
         "already_enrolled": already_enrolled,
-        "client_balance": int((client.get("training_credits") or 0)) + qty,
+        "client_balance": int((client.get("training_credits") or 0)) + (0 if online_course else qty),
         "scheduled_bookings": scheduled_bookings,
         "schedule_warnings": schedule_warnings,
     }

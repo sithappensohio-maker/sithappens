@@ -1237,7 +1237,7 @@ function SellPackModal({ client, packs, onClose, onSold }) {
 }
 
 // ─── Sprint 110bw — Sell Training Program modal ─────────────────────────
-function SellProgramModal({ client, onClose, onSold }) {
+export function SellProgramModal({ client, onClose, onSold }) {
   const [programs, setPrograms] = useState([]);
   const [dogs, setDogs] = useState([]);
   const [breakdown, setBreakdown] = useState(null);
@@ -1278,6 +1278,10 @@ function SellProgramModal({ client, onClose, onSold }) {
   }, [client.id]);
 
   const selectedProgram = programs.find(p => p.id === programId);
+  // A self-guided online course is access for one dog: no in-person credits,
+  // no weekly sessions, and it needs the dog picked.
+  const onlineCourse = selectedProgram?.purchase_fulfillment === "online_school"
+    && selectedProgram?.delivery_mode === "self_guided";
   const qty = selectedProgram?.format?.count || 0;
   const unit = selectedProgram?.format?.unit || "sessions";
   const listPrice = Number(selectedProgram?.price || 0);
@@ -1291,6 +1295,7 @@ function SellProgramModal({ client, onClose, onSold }) {
 
   const sell = async (allowAdditional = false) => {
     if (!programId) { setError("Pick a program"); return; }
+    if (onlineCourse && !dogId) { setError("Pick the dog who's taking this online course"); return; }
     setBusy(true); setError("");
     try {
       const body = { program_id: programId, payment_method: method, note };
@@ -1300,7 +1305,7 @@ function SellProgramModal({ client, onClose, onSold }) {
       if (payMode === "partial" && amountPaid !== "") body.amount_paid = Number(amountPaid);
       // Sprint 110ce — scheduling fields. Board & Train doesn't get bookings.
       const programType = selectedProgram?.type;
-      if (dogId && scheduleEnabled && programType !== "board_train" && scheduleTime) {
+      if (dogId && scheduleEnabled && programType !== "board_train" && !onlineCourse && scheduleTime) {
         body.schedule_day_of_week = Number(dow);
         body.schedule_time = scheduleTime;
         if (scheduleStart) body.schedule_start_date = scheduleStart;
@@ -1311,7 +1316,7 @@ function SellProgramModal({ client, onClose, onSold }) {
       setAlreadyEnrolled(null);
       const sb = r.data.scheduled_bookings || [];
       const warns = r.data.schedule_warnings || [];
-      const parts = [`Sold ${r.data.lot.pack_name} · +${qty} ${unit}`];
+      const parts = [onlineCourse ? `Sold ${r.data.lot.pack_name} · online course access` : `Sold ${r.data.lot.pack_name} · +${qty} ${unit}`];
       if (sb.length) parts.push(`${sb.length} weekly session${sb.length === 1 ? "" : "s"} booked`);
       if (warns.length) parts.push(`(${warns.length} closure${warns.length === 1 ? "" : "s"} skipped)`);
       toast.success(parts.join(" · "));
@@ -1390,7 +1395,7 @@ function SellProgramModal({ client, onClose, onSold }) {
           <select value={dogId} onChange={(e)=>setDogId(e.target.value)}
                   data-testid="sell-program-dog"
                   className="mt-1 w-full bg-[var(--sh-card-base)] border border-shBorder rounded p-2 text-shText text-sm">
-            <option value="">{`— don't assign now (credits only) —`}</option>
+            <option value="">{onlineCourse ? "— pick the dog taking the course —" : `— don't assign now (credits only) —`}</option>
             {dogs.map(d => <option key={d.id} value={d.id}>{d.name} · {d.breed || "—"}</option>)}
           </select>
           {dogId && (
@@ -1403,7 +1408,7 @@ function SellProgramModal({ client, onClose, onSold }) {
         {/* Sprint 110ce — recurring session scheduler. Hidden when no dog is
             picked (need someone to book FOR) and when the program is Board &
             Train (the dog will already be on-site). */}
-        {dogId && selectedProgram && selectedProgram.type !== "board_train" && (
+        {dogId && selectedProgram && selectedProgram.type !== "board_train" && !onlineCourse && (
           <div className="bg-shSecondary/5 border border-shSecondary/30 rounded p-3 space-y-2"
                data-testid="sell-program-schedule">
             <label className="flex items-center gap-2 cursor-pointer">
@@ -1525,10 +1530,12 @@ function SellProgramModal({ client, onClose, onSold }) {
               <i className="fas fa-receipt mr-1"/>Summary
             </p>
             <p className="text-shTextMuted">
-              {selectedProgram.name} · {qty} {unit}
+              {selectedProgram.name} · {onlineCourse ? "online course" : `${qty} ${unit}`}
             </p>
             <p className="text-shTextMuted text-[12px] mt-1">
-              ${effectivePrice.toFixed(2)} total · ${perEach.toFixed(2)} per {unit.replace(/s$/, "")}
+              {onlineCourse
+                ? `$${effectivePrice.toFixed(2)} total · gives the dog access to the course (no in-person sessions)`
+                : `$${effectivePrice.toFixed(2)} total · $${perEach.toFixed(2)} per ${unit.replace(/s$/, "")}`}
             </p>
           </div>
         )}
