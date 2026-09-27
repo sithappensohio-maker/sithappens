@@ -48,6 +48,7 @@ from datetime import date, datetime, timedelta, timezone
 from typing import Any, Dict, List, Optional, Set, Tuple
 
 from board_train_scheduling import board_train_stay_info
+from domains.billing import tab_sync
 from domains.bookings import care as care_domain
 from domains.bookings.blocks import pretty_date
 
@@ -64,8 +65,11 @@ _ON_SITE_FIELDS = {
 _CHECKOUT_FIELDS = {
     "_id": 0, "id": 1, "dog_name": 1, "client_name": 1, "service_type": 1, "date": 1, "status": 1,
     "client_id": 1, "checked_out_at": 1, "checked_out_by": 1, "actual_price": 1, "amount_paid": 1, "balance_due": 1,
-    "payment_status": 1, "is_prepaid_program_session": 1, "report_card": 1, "admin_checkout_resolution": 1,
+    "payment_status": 1, "payment_method": 1, "is_prepaid_program_session": 1, "report_card": 1,
+    "admin_checkout_resolution": 1,
 }
+# Counting what is owed never needs the report card (its photos are inline).
+_OWING_FIELDS = {k: v for k, v in _CHECKOUT_FIELDS.items() if k != "report_card"}
 _CARE_FIELDS = {
     "_id": 0, "id": 1, "date": 1, "end_date": 1, "checked_in_at": 1, "care_items": 1, "care_per_day_since": 1,
     "bathroom_log": 1, "bathroom_days": 1,
@@ -284,6 +288,10 @@ def _visit_due(b: Dict[str, Any]) -> float:
     return due
 
 
+def _stored_due(b: Dict[str, Any]) -> float:
+    return max(0.0, _money(b.get("balance_due"))) if b.get("balance_due") is not None else 0.0
+
+
 def _parse(stamp: Any) -> Optional[datetime]:
     try:
         dt = datetime.fromisoformat(str(stamp).replace("Z", "+00:00"))
@@ -292,54 +300,209 @@ def _parse(stamp: Any) -> Optional[datetime]:
     return dt if dt.tzinfo else dt.replace(tzinfo=timezone.utc)
 
 
-async def _bills_and_tab_charges(visits: List[Dict[str, Any]]) -> Tuple[Dict[str, Dict[str, Any]], Dict[str, float]]:
+def _net_of_discounts(charges: List[Tuple[datetime, float]], off: float) -> List[Tuple[datetime, float]]:
+    """A visit's tab charges less its own tab discounts / write-offs, taken
+    off its newest charges first."""
+    out = []
+    for when, amt in sorted(charges, reverse=True):
+        took = min(amt, off)
+        off = _money(off - took)
+        if amt - took > 0.005:
+            out.append((when, _money(amt - took)))
+    return out
+
+
+def _on_bill(inv: Optional[Dict[str, Any]], row: Dict[str, Any]) -> bool:
+    """This correction is part of the bill's own balance: it moved the bill,
+    or a Fix bill "match" since folded the tab history into it."""
+    inv = inv or {}
+    if row.get("correction_op_id") and row["correction_op_id"] in (inv.get("correction_ops") or []):
+        return True
+    made = _parse(row.get("created_at"))
+    matched = [_parse(x.get("at")) for x in inv.get("reconciliations") or [] if x.get("action") == "match"]
+    return bool(made) and any(m and made <= m for m in matched)
+
+
+_BILL_FIELDS = {"_id": 0, "id": 1, "booking_ids": 1, "balance": 1, "created_at": 1, "rebuilt_at": 1,
+                "correction_ops": 1, "reconciliations": 1}
+
+
+async def _bills_and_tab_charges(
+        visits: List[Dict[str, Any]]
+) -> Tuple[Dict[str, Dict[str, Any]], Dict[str, float], Dict[str, float], Dict[str, float]]:
     """Each visit's bill, and what each visit's post-checkout corrections put
     on the tab rather than onto its bill — only corrections to its current
     checkout (a reopened visit's earlier ones were undone by the reopen) and
-    never more than the client's tab still holds (a tab payment clears them
-    without touching the visit)."""
+    only what the family's tab still holds of them. Also each visit's raw
+    correction total, before that.
+
+    What the tab still holds is worked out the way a tab payment settles it:
+    oldest debt first. So the family's GENERAL balance (the tab less its open
+    tab bills, which are counted through the bills) belongs to its newest
+    general debts — every charge put on the tab after a checkout (net of that
+    visit's own tab discounts), a sale left on account, a manual tab charge —
+    handed out newest first (audit #18)."""
     db = _g("db")
     ids = [b["id"] for b in visits]
     checked_out = {b["id"]: _parse(b.get("checked_out_at")) for b in visits}
     bills: Dict[str, Dict[str, Any]] = {}
     for inv in await db.invoices.find(
-        {"booking_ids": {"$in": ids}, "status": {"$ne": "VOID"}},
-        {"_id": 0, "id": 1, "booking_ids": 1, "balance": 1, "created_at": 1, "rebuilt_at": 1, "correction_ops": 1},
+        {"booking_ids": {"$in": ids}, "status": {"$ne": "VOID"}}, _BILL_FIELDS,
     ).sort("created_at", 1).to_list(None):
         for bid in inv.get("booking_ids") or []:
             bills[bid] = inv
+    corr = {"$or": [{"source": CORRECTION_SOURCE}, {"notes": {"$regex": f"^{CORRECTION_NOTE_PREFIX}"}}]}
+    far_past = datetime.min.replace(tzinfo=timezone.utc)
     tab: Dict[str, float] = {}
-    rows = await db.payment_ledger.find(
-        {"booking_id": {"$in": ids},
-         "$or": [{"source": CORRECTION_SOURCE}, {"notes": {"$regex": f"^{CORRECTION_NOTE_PREFIX}"}}]},
+    charged: Dict[str, List[Tuple[datetime, float]]] = {}  # each charge the visit put on the tab, and when
+    taken_off: Dict[str, float] = {}  # its discounts / write-offs that came off the tab
+    folded: Dict[str, float] = {}  # its corrections that are inside its bill
+    for r in await db.payment_ledger.find(
+        {"booking_id": {"$in": ids}, **corr},
         {"_id": 0, "booking_id": 1, "amount": 1, "correction_op_id": 1, "created_at": 1},
-    ).to_list(None)
-    for r in rows:
+    ).to_list(None):
         bid = r.get("booking_id")
-        on_bill = (bills.get(bid) or {}).get("correction_ops") or []
-        if r.get("correction_op_id") and r["correction_op_id"] in on_bill:
-            continue  # moved the bill too — already in its balance
         made, out = _parse(r.get("created_at")), checked_out.get(bid)
         if made and out and made < out:
             continue  # belongs to an earlier checkout, before a reopen
-        tab[bid] = _money(tab.get(bid, 0) + _money(r.get("amount")))
+        if _on_bill(bills.get(bid), r):
+            folded[bid] = _money(folded.get(bid, 0.0) + _money(r.get("amount")))
+            continue  # already in its bill's balance
+        amt = _money(r.get("amount"))
+        tab[bid] = _money(tab.get(bid, 0) + amt)
+        if amt > 0.005:
+            charged.setdefault(bid, []).append((made or far_past, amt))
+        else:
+            taken_off[bid] = _money(taken_off.get(bid, 0.0) - amt)
+    raw = dict(tab)
     owing_tab = {bid for bid, amt in tab.items() if amt > 0.005}
-    if owing_tab:
-        client_of = {b["id"]: b.get("client_id") for b in visits}
-        cids = sorted({client_of[bid] for bid in owing_tab if isinstance(client_of.get(bid), str)})
-        held = {c["id"]: max(0.0, _money(c.get("account_balance")))
-                for c in await db.clients.find({"id": {"$in": cids}}, {"_id": 0, "id": 1, "account_balance": 1}).to_list(None)}
-        for bid in owing_tab:
-            tab[bid] = min(tab[bid], held.get(client_of.get(bid), 0.0))
-    return bills, tab
+    if not owing_tab:
+        return bills, tab, raw, folded
+    client_of = {b["id"]: b.get("client_id") for b in visits}
+    cids = sorted({client_of[bid] for bid in owing_tab if isinstance(client_of.get(bid), str)})
+    held = {c["id"]: max(0.0, _money(c.get("account_balance")))
+            for c in await db.clients.find({"id": {"$in": cids}}, {"_id": 0, "id": 1, "account_balance": 1}).to_list(None)}
+    drift: Dict[str, List[Dict[str, Any]]] = {}
+    for c in list(held):
+        in_step, open_bills = await tab_sync.client_bills_in_step(c)
+        if in_step:
+            held[c] = max(0.0, _money(held[c] - sum(_money(i.get("balance")) for i in open_bills)))
+        else:
+            drift[c] = open_bills
+    live: Dict[str, float] = dict(raw)  # each visit's live post-checkout tab rows, net
+    debts: Dict[str, List[Tuple[datetime, float, Optional[str]]]] = {c: [] for c in held}  # (when, amount, visit or None)
+    for bid in owing_tab:
+        c = client_of.get(bid)
+        if c in debts:
+            debts[c].extend((when, amt, bid) for when, amt in _net_of_discounts(charged.get(bid, []), taken_off.get(bid, 0.0)))
+    sales: Dict[Tuple[str, Any], Tuple[datetime, float]] = {}
+    other: List[Dict[str, Any]] = []
+    for r in await db.payment_ledger.find(
+        {"client_id": {"$in": list(held)}, "invoice_id": None,
+         "$or": [{"sale_kind": {"$exists": True, "$ne": None}},
+                 {"booking_id": None, "type": "adjustment", "amount": {"$gt": 0}, "source": {"$ne": "credit_on_file"}},
+                 {"booking_id": {"$nin": ids + [None]}, **corr}]},
+        {"_id": 0, "client_id": 1, "booking_id": 1, "sale_kind": 1, "sale_id": 1, "type": 1,
+         "amount": 1, "created_at": 1, "correction_op_id": 1},
+    ).to_list(None):
+        made = _parse(r.get("created_at")) or far_past
+        if r.get("sale_kind"):
+            key = (r["client_id"], r.get("sale_id") or id(r))
+            when, amt = sales.get(key, (made, 0.0))
+            sales[key] = (min(when, made), _money(amt + _money(r.get("amount"))))
+        elif r.get("booking_id"):
+            other.append(r)
+        else:
+            debts[r["client_id"]].append((made, _money(r.get("amount")), None))
+    for (c, _s), (when, amt) in sales.items():
+        if amt > 0.005:
+            debts[c].append((when, amt, None))
+    if other:
+        # The family's other visits: only their live post-checkout charges —
+        # not ones on their bill, and not ones a reopen undid (a reopened or
+        # redone visit's cut-off is the later of its reopen and checkout).
+        oids = sorted({r["booking_id"] for r in other})
+        cut: Dict[str, Optional[datetime]] = {}
+        for b in await _g("_booking_rows_anywhere")(
+                {"id": {"$in": oids}}, {"_id": 0, "id": 1, "checked_out_at": 1, "financial_reopened_at": 1},
+                limit=BIG, sort_field="id"):
+            stamps = [t for t in (_parse(b.get("checked_out_at")), _parse(b.get("financial_reopened_at"))) if t]
+            cut[b["id"]] = max(stamps) if stamps else None
+        obill: Dict[str, Dict[str, Any]] = {}
+        for inv in await db.invoices.find({"booking_ids": {"$in": oids}, "status": {"$ne": "VOID"}}, _BILL_FIELDS).to_list(None):
+            for bid in inv.get("booking_ids") or []:
+                obill[bid] = inv
+        ocharged: Dict[Tuple[str, str], List[Tuple[datetime, float]]] = {}
+        ooff: Dict[Tuple[str, str], float] = {}
+        for r in other:
+            made, since = _parse(r.get("created_at")), cut.get(r["booking_id"])
+            if _on_bill(obill.get(r["booking_id"]), r) or (made and since and made <= since):
+                continue
+            key = (r["client_id"], r["booking_id"])
+            amt = _money(r.get("amount"))
+            live[r["booking_id"]] = _money(live.get(r["booking_id"], 0.0) + amt)
+            if amt > 0.005:
+                ocharged.setdefault(key, []).append((made or far_past, amt))
+            else:
+                ooff[key] = _money(ooff.get(key, 0.0) - amt)
+        for (c, obid), items in ocharged.items():
+            debts[c].extend((when, amt, None) for when, amt in _net_of_discounts(items, ooff.get((c, obid), 0.0)))
+    for c, open_bills in drift.items():
+        # A bill out of step with the tab: its balance can't be trusted, but
+        # the tab rows tagged to it can. What the tab holds for the bill
+        # itself (its checkout charges, payments, reversals — not its visits'
+        # later charges, listed as general debts above) isn't general balance.
+        own = 0.0
+        for inv in open_bills:
+            net = _money((await tab_sync.invoice_ar_status(inv)).get("booking_net"))
+            own += max(0.0, _money(net - sum(live.get(v, 0.0) for v in inv.get("booking_ids") or [])))
+        held[c] = max(0.0, _money(held[c] - own))
+    # A write-off on the general balance names no charge: it may have
+    # reversed a NEWER charge (a paid visit's mistaken charge can only be
+    # undone there, as can a sale left on account), so newest-first would
+    # hand the rest to that charge and hide an older real one. A visit
+    # charged before such a write-off keeps the plain cap: its charges,
+    # never more than the general balance.
+    wo_at: Dict[str, datetime] = {}
+    for r in await db.payment_ledger.find(
+        {"client_id": {"$in": list(held)}, "invoice_id": None, "booking_id": None, "type": "adjustment",
+         "amount": {"$lt": 0}, "sale_kind": None},
+        {"_id": 0, "client_id": 1, "created_at": 1},
+    ).to_list(None):
+        made = _parse(r.get("created_at")) or far_past
+        wo_at[r["client_id"]] = max(made, wo_at.get(r["client_id"], far_past))
+    got: Dict[str, float] = {}
+    for c, items in debts.items():
+        left = held[c]
+        for when, amt, bid in sorted(items, key=lambda x: (x[0], x[2] or ""), reverse=True):
+            took = min(amt, left)
+            left = _money(left - took)
+            if bid is not None:
+                got[bid] = _money(got.get(bid, 0.0) + took)
+    for bid in owing_tab:
+        c = client_of.get(bid)
+        if c not in held:
+            tab[bid] = 0.0
+        elif c in wo_at and any(when < wo_at[c] for when, _a in charged.get(bid, [])):
+            tab[bid] = min(raw[bid], held[c])
+        else:
+            # never more than the visit's own charges net of its tab discounts
+            tab[bid] = min(got.get(bid, 0.0), raw[bid])
+    return bills, tab, raw, folded
 
 
 async def unpaid(checkouts: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
-    cands = [b for b in checkouts if not b.get("is_prepaid_program_session")
-             and max(_visit_due(b), _computed_due(b)) > 0.005]
+    # A prepaid program session is settled at checkout (price 0) — unless it
+    # picked up a real charge (an add-on on the tab, a charge added after
+    # checkout), which is owed like on any visit (audit #18).
+    cands = [b for b in checkouts if max(_visit_due(b), _computed_due(b), _stored_due(b)) > 0.005]
     if not cands:
         return []
-    bills, tab = await _bills_and_tab_charges(cands)
+    # The price arithmetic says settled, yet the visit stores a due: only a
+    # post-checkout charge explains it (a credits visit or a prepaid session
+    # keeps its price). It counts while its bill or the tab still holds it.
+    tab_only = {b["id"] for b in cands if max(_visit_due(b), _computed_due(b)) <= 0.005}
+    bills, tab, raw, folded = await _bills_and_tab_charges(cands)
     # A bill describes the visit unless it predates the visit's latest
     # checkout (billed at an earlier checkout, then reopened).
     usable: Dict[str, bool] = {}
@@ -351,7 +514,13 @@ async def unpaid(checkouts: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
     # Against a live bill the visit's due is its full price arithmetic (a
     # due stored at a correction goes stale when a bill payment is voided);
     # the bill caps it. Without one, the stored due is the best we have.
-    due_of = {b["id"]: (max(_visit_due(b), _computed_due(b)) if usable[b["id"]] else _visit_due(b)) for b in cands}
+    # Credits paid a credits visit's price: its only claim on the bill is what
+    # was charged on it after checkout (a charge leaves it "paid_partial" with
+    # nothing paid, so its price arithmetic would claim the whole price).
+    due_of = {b["id"]: (_stored_due(b) if b["id"] in tab_only
+                        else _money(max(0.0, folded.get(b["id"], 0.0)) + max(0.0, raw.get(b["id"], 0.0)))
+                        if usable[b["id"]] and b.get("payment_method") == "credits"
+                        else max(_visit_due(b), _computed_due(b)) if usable[b["id"]] else _visit_due(b)) for b in cands}
     # A bill covering several dogs is shared out, in its own order, so the
     # same balance isn't listed once per dog.
     share: Dict[str, float] = {}
@@ -359,14 +528,37 @@ async def unpaid(checkouts: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
         if inv.get("balance") is None:
             continue
         left = max(0.0, _money(inv.get("balance")))
-        for bid in inv.get("booking_ids") or []:
+        # A tab_only visit's due was charged to the tab, not this bill: it
+        # takes a share only after the other dogs.
+        for bid in sorted(inv.get("booking_ids") or [], key=lambda x: x in tab_only):
             if usable.get(bid):
-                share[bid] = min(due_of[bid], left)
+                # Its own charges that went on the tab are not this bill's.
+                share[bid] = min(max(0.0, due_of[bid] - max(0.0, raw.get(bid, 0.0))), left)
                 left = _money(left - share[bid])
     rows = []
     for b in cands:
-        due = due_of[b["id"]]
-        amount = min(due, share.get(b["id"], 0.0) + max(0.0, tab.get(b["id"], 0.0))) if usable[b["id"]] else due
+        bid = b["id"]
+        due = due_of[bid]
+        if usable[bid]:
+            # Its part of the bill plus what the tab still holds of its own
+            # later charges (a paid bill's visit keeps only the latest charge
+            # in its stored due, so the tab part is never capped by it).
+            amount = share.get(bid, 0.0) + max(0.0, tab.get(bid, 0.0))
+        elif bid in tab:
+            # No bill, but charges added after checkout went on the tab: only
+            # the part of them the tab no longer holds comes off. The rest of
+            # the stored due (the checkout's own debt, a charge kept on the
+            # visit) stays owed.
+            put_on_tab = max(0.0, raw.get(bid, 0.0))
+            amount = max(0.0, due - put_on_tab) + max(0.0, tab.get(bid, 0.0))
+            if bills.get(bid) is None:
+                # With no bill the visit's own due holds every charge and any
+                # discount made on it since — never more than that.
+                amount = min(due, amount)
+        elif bid in tab_only:
+            amount = 0.0  # nothing on a bill or the tab explains the stored due
+        else:
+            amount = due
         amount = _money(amount)
         if amount <= 0.005:
             continue  # paid on the bill after checkout
@@ -379,6 +571,21 @@ async def unpaid(checkouts: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
             "checked_out_at": b.get("checked_out_at") or "",
         })
     return rows
+
+
+async def owed(visits: List[Dict[str, Any]]) -> float:
+    """What these visits still really owe, by the same rule as the unpaid
+    list: a bill paid after checkout leaves the visit's own stored due
+    behind, so the bill's live balance decides (audit #18)."""
+    rows = await unpaid([b for b in visits if b.get("status") == "completed"])
+    return _money(sum(r["amount"] for r in rows))
+
+
+async def owing_visit_count() -> int:
+    """How many visits still really owe money (Action Required)."""
+    rows = await _g("db").bookings.find(
+        {"status": {"$nin": ["cancelled", "rejected"]}, "balance_due": {"$gt": 0}}, _OWING_FIELDS).to_list(None)
+    return len(await unpaid(rows))
 
 
 def pickups(checkouts: List[Dict[str, Any]]) -> List[Dict[str, Any]]:

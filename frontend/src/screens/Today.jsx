@@ -100,10 +100,9 @@ export default function Today({ onNavigate = () => {}, onJumpToDog = () => {}, o
   const dogsHere = useMemo(() => roster.filter((b) => b.checked_in_at && !b.checked_out_at).length, [roster]);
   const arrivingToday = useMemo(() => roster.filter((b) => !b.checked_in_at && b.date === today).length, [roster, today]);
   const leavingToday = useMemo(() => roster.filter((b) => !b.checked_out_at && (b.end_date || b.date) === today).length, [roster, today]);
-  const amountDueToday = useMemo(
-    () => roster.reduce((sum, b) => sum + (Number(b.balance_due) > 0 ? Number(b.balance_due) : 0), 0),
-    [roster],
-  );
+  // What today's visits still owe on their bills (the server's number): a
+  // bill paid after checkout leaves the visit's own balance_due behind.
+  const amountDueToday = Number(stats?.amount_due_today) || 0;
 
   const pendingApprovals = useMemo(() => {
     const item = (brain?.items || []).find((i) => i.kind === "booking_pending");

@@ -29053,6 +29053,9 @@ async def dashboard_stats(_: dict = Depends(require_admin)):
         "health_flags": health_flags,
         "total_dogs": len(dogs),
         "today_roster": roster,
+        # What today's visits still owe on their bills — not the visit's own
+        # stored due, which a later bill payment leaves behind (audit #18).
+        "amount_due_today": await end_of_day_domain.owed(roster),
         "upcoming_birthdays": _upcoming_birthdays(dogs, days_ahead=14),
         "first_time_bookings_today": await _first_time_bookings_today(today, dog_map),
         # Action Required / Pending Actions — additive summary counts (Phase L
@@ -29473,10 +29476,9 @@ async def admin_today_brain(_: dict = Depends(require_admin)):
 
     # 5e. Money follow-up: unpaid balances / account tabs (warn)
     try:
-        unpaid_bookings = await db.bookings.count_documents({
-            "status": {"$nin": ["cancelled", "rejected"]},
-            "balance_due": {"$gt": 0},
-        })
+        # Visits still owing on their bills — one paid after checkout is not
+        # (its own stored due is left behind; audit #18).
+        unpaid_bookings = await end_of_day_domain.owing_visit_count()
         client_tabs = await db.clients.count_documents({"account_balance": {"$gt": 0}})
         if unpaid_bookings or client_tabs:
             bits = []
@@ -44750,10 +44752,9 @@ async def admin_quarterly_tax(
     service_income = 0.0
     service_cash_gross = 0.0
     service_sales_tax_collected = 0.0
-    service_unpaid_balance = 0.0
-    for r in booking_rows:
-        if r.get("status") == "completed":
-            service_unpaid_balance += _booking_balance_due(r)
+    # Still owed on completed visits' bills (audit #18: a bill paid after
+    # checkout leaves the visit's own due behind).
+    service_unpaid_balance = await end_of_day_domain.owed(booking_rows)
     # Step 4B-8 — Schedule-C service income is cash-basis by COLLECTION date
     # (matching the register and Finance), via the shared events helper.
     # Events are grouped per booking so the proportional sales-tax slice
