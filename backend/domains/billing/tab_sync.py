@@ -46,6 +46,7 @@ from pymongo.errors import DuplicateKeyError
 _server_globals: Optional[dict] = None
 
 REFUND_STATUSES = ("REFUNDED", "PARTIALLY_REFUNDED")
+ENDED_STATUSES = ("cancelled", "rejected", "no_show")
 CORRECTION_SOURCE = "correction"
 CORRECTION_NOTE_PREFIX = "Post-checkout"
 SALE_PAYMENT_PREFIX = "Paid at sale · "
@@ -59,6 +60,10 @@ MSG_PAID = "Nothing is owed on this bill. Use Refund when money has already been
 MSG_GROUP = ("This visit was billed together with other dogs and that bill is still open, "
              "so it can't be changed here. Take payment on the bill first.")
 MSG_NEEDS_FIX = "This bill needs fixing first. Open the client's Bills and press Needs fixing."
+MSG_RECEIPT_WAITING = ("A visit on this bill was reopened, so the bill still shows the old checkout. "
+                       "Its receipt is ready once every visit on it is checked out again.")
+MSG_REBUILDING = ("This bill still shows a checkout that was reopened and done again. It is brought up "
+                  "to date automatically within a minute or two — try again then.")
 MSG_ACCOUNT_NEEDS_FIX = ("One of this client's bills needs fixing first (client → Bills → Needs fixing); "
                          "until then the account can't say how much is really general balance or credit.")
 
@@ -93,10 +98,52 @@ def is_checkout_charge(row: dict) -> bool:
             and not str(row.get("notes") or "").startswith(CORRECTION_NOTE_PREFIX))
 
 
+async def _reopened_at(booking_id: str) -> str:
+    db = _g("db")
+    b = (await db.bookings.find_one({"id": booking_id}, {"_id": 0, "financial_reopened_at": 1})
+         or await db.bookings_archive.find_one({"id": booking_id}, {"_id": 0, "financial_reopened_at": 1}) or {})
+    return b.get("financial_reopened_at") or ""
+
+
 async def booking_on_tab(booking_id: str) -> bool:
+    """Its CURRENT checkout put it on the tab — a charge from before its
+    latest reopen was undone by that reopen (audit #14)."""
     rows = await _g("db").payment_ledger.find(
-        {"booking_id": booking_id, "type": "charge"}, {"_id": 0, "type": 1, "source": 1, "notes": 1}).to_list(50)
-    return any(is_checkout_charge(r) for r in rows)
+        {"booking_id": booking_id, "type": "charge"},
+        {"_id": 0, "type": 1, "source": 1, "notes": 1, "created_at": 1}).to_list(50)
+    cut = await _reopened_at(booking_id)
+    return any(is_checkout_charge(r) and (r.get("created_at") or "") > cut for r in rows)
+
+
+async def bill_level_writeoffs(invoice: dict) -> List[dict]:
+    """Write-offs made against the bill itself (Accounts Receivable, or an
+    earlier write-off Fix bill linked to it), for a bill rebuilt after a
+    reopen (audit #14). Read from the tab, where they live — not from the
+    bill's old lines — so one left off a rebuild comes back on the next.
+    Lines the bill already had keep their wording."""
+    rows = await _g("db").payment_ledger.find(
+        {"invoice_id": invoice.get("id"), "booking_id": None, "type": {"$ne": "payment"}},
+        {"_id": 0}).sort("created_at", 1).to_list(200)
+    known: Dict[str, dict] = {}
+    for li in invoice.get("line_items") or []:
+        src = li.get("source") or {}
+        if not li.get("booking_id") and src.get("kind") in ("tab_writeoff", "attribute"):
+            known[src.get("ledger_row_id") or src.get("op_id") or ""] = li
+    out: List[dict] = []
+    for r in rows:
+        amt = round(_money(r.get("amount")), 2)
+        if amt >= -0.005:
+            continue
+        line = known.get(r.get("id")) or known.get(r.get("writeoff_op_id") or "-")
+        if line is None:
+            linked = bool(r.get("attributed_at"))
+            line = {"kind": "adjustment", "booking_id": None, "service_id": None, "qty": 1,
+                    "description": (f"Earlier write-off on the account ({str(r.get('created_at') or '')[:10]}) applied to this bill"
+                                    if linked else f"Write-off · {r.get('notes') or ''}"),
+                    "source": {"kind": "attribute" if linked else "tab_writeoff",
+                               "op_id": r.get("writeoff_op_id"), "ledger_row_id": r.get("id")}}
+        out.append({**line, "unit_price": amt, "amount": amt})
+    return out
 
 
 async def _is_sale_payment(row: dict) -> bool:
@@ -145,12 +192,22 @@ async def invoice_ar_status(invoice: dict) -> dict:
     seen: set = set()
     booking_net = 0.0
     anchor = None
+    # A checkout charge from before a visit's latest reopen was undone by it:
+    # it still counts in the sum (its reversal does too), but it no longer
+    # makes the bill "on the tab" (audit #14) — once the bill was rebuilt
+    # after that reopen. A bill still showing the undone checkout stays
+    # anchored on it, so it reads as out of step and can't be paid.
+    built = invoice.get("rebuilt_at") or invoice.get("created_at") or ""
+    reopened: Dict[str, str] = {}
+    for bid in invoice.get("booking_ids") or []:
+        cut = await _reopened_at(bid)
+        reopened[bid] = cut if cut and cut <= built else ""
     for r in rows:
         if r.get("id") in seen:
             continue
         seen.add(r.get("id"))
         booking_net += float(r.get("amount") or 0)
-        if anchor is None and is_checkout_charge(r):
+        if anchor is None and is_checkout_charge(r) and (r.get("created_at") or "") > reopened.get(r.get("booking_id"), ""):
             anchor = r.get("created_at")
     booking_net = round(booking_net, 2)
     ar_backed = anchor is not None
@@ -170,14 +227,133 @@ async def invoice_ar_status(invoice: dict) -> dict:
     }
 
 
-async def _all_visits_locked(invoice: dict) -> bool:
+def ended_off_bill(booking: dict) -> bool:
+    """A reopened visit that then ended another way (cancelled before that
+    was refused) — never checked out again, so it comes off its bill at the
+    rebuild (audit #14)."""
+    return booking.get("status") in ENDED_STATUSES and not _g("_booking_is_financially_locked")(booking)
+
+
+async def _all_visits_locked(invoice: dict, *, ended_ok: bool = False) -> bool:
+    """Every visit on the bill is checked out. `ended_ok` (the rebuild only):
+    a reopened visit that ended another way counts too — the rebuild takes
+    it off the bill. Everywhere else such a bill stays refused until then."""
     db = _g("db")
     locked = _g("_booking_is_financially_locked")
     for bid in invoice.get("booking_ids") or []:
         b = await db.bookings.find_one({"id": bid}, {"_id": 0}) or await db.bookings_archive.find_one({"id": bid}, {"_id": 0})
-        if not b or not locked(b):
+        if not b or not (locked(b) or (ended_ok and b.get("status") in ENDED_STATUSES)):
             return False
     return True
+
+
+async def has_ended_visit(invoice: dict) -> bool:
+    """The bill still bills a reopened visit that ended another way (older
+    data): it takes no payment until the rebuild takes that visit off."""
+    db = _g("db")
+    for bid in invoice.get("booking_ids") or []:
+        b = await db.bookings.find_one({"id": bid}, {"_id": 0}) or await db.bookings_archive.find_one({"id": bid}, {"_id": 0})
+        if b and ended_off_bill(b):
+            return True
+    return False
+
+
+async def receipt_refusal(invoice: dict) -> Optional[str]:
+    """Why this bill's receipt can't be had yet: it still shows a checkout
+    that was reopened (audit #14). None when it can."""
+    if await any_visit_reopened(invoice):
+        return MSG_RECEIPT_WAITING
+    if await bill_needs_rebuild(invoice):
+        return MSG_REBUILDING
+    return None
+
+
+async def any_visit_reopened(invoice: dict) -> bool:
+    """A visit on this bill is reopened right now (its next checkout rebuilds
+    the bill). A visit that no longer exists doesn't count."""
+    db = _g("db")
+    locked = _g("_booking_is_financially_locked")
+    for bid in invoice.get("booking_ids") or []:
+        b = await db.bookings.find_one({"id": bid}, {"_id": 0}) or await db.bookings_archive.find_one({"id": bid}, {"_id": 0})
+        # A visit that ended another way (cancelled before that was refused)
+        # is never checked out again — nothing to wait for.
+        if b and not locked(b) and b.get("status") not in ENDED_STATUSES:
+            return True
+    return False
+
+
+async def bill_needs_rebuild(invoice: dict) -> bool:
+    """A visit on this bill was reopened and checked out again since the bill
+    was built (audit #14): rebuild it from the visits as they are now.
+
+    Only a bill that never took money (reopening is refused once it has) and
+    only once every visit on it is checked out again — a group bill waits
+    for its last dog, so no line is ever dropped."""
+    if (invoice.get("status") or "").upper() == "VOID":
+        return False
+    if _money(invoice.get("amount_paid")) > 0.005 or invoice.get("stripe_active_attempt_id") or has_refund_activity(invoice):
+        return False
+    built = invoice.get("rebuilt_at") or invoice.get("created_at") or ""
+    reopened = False
+    for bid in invoice.get("booking_ids") or []:
+        if (await _reopened_at(bid)) > built:  # an archived visit counts too
+            reopened = True
+    return reopened and await _all_visits_locked(invoice, ended_ok=True)
+
+
+REBUILD_USER = {"id": "system", "name": "Automatic bill update"}
+
+
+async def rebuild_stale_bills(*, limit: int = 50) -> int:
+    """Scheduler job: bring up to date any bill still showing a checkout that
+    was reopened and done again — one left behind by a checkout whose bill
+    step failed, or by a reopen from before audit #14. Cheap: only visits
+    ever reopened are looked at. Returns how many bills were rebuilt."""
+    db = _g("db")
+    visits = []
+    for coll in (db.bookings, db.bookings_archive):  # an older cancelled visit may be archived by now
+        visits += await coll.find({"financial_reopened_at": {"$gt": ""}},
+                                  {"_id": 0, "id": 1, "financial_reopened_at": 1}).to_list(5000)
+    if not visits:
+        return 0
+    when = {v["id"]: v["financial_reopened_at"] for v in visits}
+    bills = await db.invoices.find(
+        {"booking_ids": {"$in": list(when)}, "status": {"$ne": "VOID"}, "amount_paid": {"$not": {"$gt": 0.005}},
+         "stripe_active_attempt_id": None}, {"_id": 0}).to_list(5000)
+    done = 0
+    for inv in bills:
+        built = inv.get("rebuilt_at") or inv.get("created_at") or ""
+        if done >= limit or not inv.get("client_id") or not any(
+                when.get(bid, "") > built for bid in inv.get("booking_ids") or []):
+            continue
+        try:
+            # The client's money lock: never in the middle of a checkout (its
+            # own step rebuilds the bill), a Fix bill or a write-off.
+            guard = await acquire_client_guard(inv["client_id"])
+        except HTTPException:
+            continue  # busy — next tick
+        try:
+            fresh = await db.invoices.find_one({"id": inv["id"]}, {"_id": 0})
+            if fresh and await bill_needs_rebuild(fresh):
+                await _g("_create_invoice_for_bookings")(list(fresh.get("booking_ids") or []), user=REBUILD_USER, ts=_now())
+                done += 1
+        except Exception as exc:  # one bad bill never stops the rest
+            _g("logger").warning("reopened-bill rebuild failed for %s: %s", inv.get("id"), exc)
+        finally:
+            await release_client_guard(guard)
+    if done:
+        _g("logger").info("Brought %d bill(s) up to date after reopened checkouts", done)
+    return done
+
+
+async def rebuilt_alongside(invoice: Optional[dict], booking_ids: List[str], ts: str) -> List[dict]:
+    """Other bills the same checkout rebuilt (dogs from two reopened bills
+    checked out together) — each gets its own receipt."""
+    if not invoice:
+        return []
+    return await _g("db").invoices.find(
+        {"booking_ids": {"$in": booking_ids}, "id": {"$ne": invoice.get("id")}, "rebuilt_at": ts},
+        {"_id": 0}).to_list(20)
 
 
 async def payable_now(invoice: dict, amount: Optional[float] = None, *, ignore_reservation: bool = False) -> Tuple[bool, str, str]:
@@ -197,6 +373,8 @@ async def payable_now(invoice: dict, amount: Optional[float] = None, *, ignore_r
         return False, "online_in_progress", "An online payment for this bill is already under way."
     if not await _all_visits_locked(invoice):
         return False, "reopened", "Please contact us to pay this bill."
+    if await bill_needs_rebuild(invoice):
+        return False, "needs_review", "We're updating this bill. Please contact us to pay it."
     ar = await invoice_ar_status(invoice)
     if ar["ar_backed"] and not ar["reconciled"]:
         return False, "needs_review", "We're updating this bill. Please contact us to pay it."
@@ -327,6 +505,8 @@ async def correct_visit(booking_id: str, body, user: dict) -> dict:
     try:
         if inv and has_refund_activity(inv):
             raise HTTPException(status_code=409, detail=MSG_REFUND)
+        if inv and await bill_needs_rebuild(inv):
+            raise HTTPException(status_code=409, detail=MSG_REBUILDING)
         single = inv is not None and len(inv.get("booking_ids") or []) == 1
         bill_balance = _money((inv or {}).get("balance"))
         if inv and single and bill_balance > 0.005:
@@ -572,6 +752,8 @@ async def _adjust_tab_locked(client_id: str, amount: float, invoice_id: Optional
     ar = await invoice_ar_status(inv)
     if not ar["ar_backed"]:
         raise HTTPException(status_code=409, detail="This bill isn't on the account tab. Use Correct on the visit instead.")
+    if await bill_needs_rebuild(inv):
+        raise HTTPException(status_code=409, detail=MSG_REBUILDING)
     if not ar["reconciled"] or not await _all_visits_locked(inv):
         raise HTTPException(status_code=409, detail=MSG_NEEDS_FIX)
     if applied > _money(inv.get("balance")) + 0.005:

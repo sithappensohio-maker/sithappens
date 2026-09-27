@@ -304,7 +304,7 @@ async def _bills_and_tab_charges(visits: List[Dict[str, Any]]) -> Tuple[Dict[str
     bills: Dict[str, Dict[str, Any]] = {}
     for inv in await db.invoices.find(
         {"booking_ids": {"$in": ids}, "status": {"$ne": "VOID"}},
-        {"_id": 0, "id": 1, "booking_ids": 1, "balance": 1, "created_at": 1, "correction_ops": 1},
+        {"_id": 0, "id": 1, "booking_ids": 1, "balance": 1, "created_at": 1, "rebuilt_at": 1, "correction_ops": 1},
     ).sort("created_at", 1).to_list(None):
         for bid in inv.get("booking_ids") or []:
             bills[bid] = inv
@@ -345,7 +345,8 @@ async def unpaid(checkouts: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
     usable: Dict[str, bool] = {}
     for b in cands:
         bill = bills.get(b["id"])
-        made, out = _parse((bill or {}).get("created_at")), _parse(b.get("checked_out_at"))
+        # a bill rebuilt at the latest checkout describes it (audit #14)
+        made, out = _parse((bill or {}).get("rebuilt_at") or (bill or {}).get("created_at")), _parse(b.get("checked_out_at"))
         usable[b["id"]] = bool(bill is not None and bill.get("balance") is not None and not (made and out and made < out))
     # Against a live bill the visit's due is its full price arithmetic (a
     # due stored at a correction goes stale when a bill payment is voided);

@@ -191,7 +191,8 @@ def refuse_while_on_site(booking: dict, what: str) -> None:
     if on_site(booking):
         dog = _dog(booking)
         if booking.get("financial_reopened_at"):
-            raise BookingBlocked(409, f"This checkout was reopened, so this visit can't be {what}. Check {dog} out again instead.",
+            raise BookingBlocked(409, f"This checkout was reopened, so this visit can't be {what}. Check {dog} out again "
+                                      "instead (at $0 if nothing is owed).",
                                  code="checked_in", action="check_out")
         raise BookingBlocked(409, f"{dog} is checked in right now, so this visit can't be {what}. Check {dog} out instead.",
                              code="checked_in", action="check_out")

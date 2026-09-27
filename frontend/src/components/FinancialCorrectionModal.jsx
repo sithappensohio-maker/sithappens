@@ -7,6 +7,11 @@ function money(value) {
   return `$${(Number(value) || 0).toFixed(2)}`;
 }
 
+function clock(iso) {
+  const d = iso ? new Date(iso) : null;
+  return d && !Number.isNaN(d.getTime()) ? d.toLocaleString([], { month: "short", day: "numeric", hour: "numeric", minute: "2-digit" }) : "";
+}
+
 export default function FinancialCorrectionModal({ booking, onClose, onSaved }) {
   const [action, setAction] = useState("charge");
   const [amount, setAmount] = useState("");
@@ -14,6 +19,10 @@ export default function FinancialCorrectionModal({ booking, onClose, onSaved }) 
   const [method, setMethod] = useState(booking?.payment_method || "card");
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState("");
+  // Reopen: the next checkout prices late pickup / daycare hours from when
+  // the dog really left — the recorded checkout time, unless staff say it
+  // was a mistake and the dog hasn't gone yet (audit #14).
+  const [notLeftYet, setNotLeftYet] = useState(false);
   // Payment rebuild Phase 1 — one stable key per modal-open, so a double-
   // click or network retry of the same refund resolves to the original
   // result instead of creating a second real refund. Not regenerated on
@@ -57,7 +66,7 @@ export default function FinancialCorrectionModal({ booking, onClose, onSaved }) 
           refund_idempotency_key: refundIdempotencyKey,
         });
       } else if (action === "reopen") {
-        response = await api.post(`/bookings/${booking.id}/reopen-checkout`, { reason: reason.trim() });
+        response = await api.post(`/bookings/${booking.id}/reopen-checkout`, { reason: reason.trim(), departure_stands: !notLeftYet });
       } else {
         response = await api.post(`/bookings/${booking.id}/financial-adjustment`, {
           kind: action, amount: Number(amount), reason: reason.trim(), idempotency_key: adjustmentKey,
@@ -110,6 +119,20 @@ export default function FinancialCorrectionModal({ booking, onClose, onSaved }) 
               {action === "refund" && <p className="text-xs text-shTextMuted mt-1">Maximum cash refund: {money(maxRefund)}</p>}
               {(action === "discount" || action === "writeoff") && <p className="text-xs text-shTextMuted mt-1" data-testid="correction-owed-note">These can only reduce what's still owed{bill ? ` on the bill (${money(balanceDue)})` : ""}. Refund money already collected instead.</p>}
             </div>
+          )}
+
+          {action === "reopen" && (
+            <label className="flex items-start gap-2 text-sm text-shText" data-testid="reopen-not-left-label">
+              <input type="checkbox" className="mt-1" checked={notLeftYet} onChange={(e)=>setNotLeftYet(e.target.checked)} data-testid="reopen-not-left"/>
+              <span>
+                The dog hasn't actually left yet — it was checked out by mistake.
+                <span className="block text-xs text-shTextMuted mt-0.5">
+                  {notLeftYet
+                    ? "The next checkout works out late pickup and daycare hours from when you check the dog out again."
+                    : `Late pickup and daycare hours stay based on when the dog left${clock(booking.reopen_departure_at || booking.checked_out_at) ? ` (${clock(booking.reopen_departure_at || booking.checked_out_at)})` : ""}.`}
+                </span>
+              </span>
+            </label>
           )}
 
           {action === "refund" && (

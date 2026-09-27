@@ -262,23 +262,43 @@ function CheckoutModalBody({ booking, services, onClose, onRequestCancel, lateDa
   const [hwResult, setHwResult] = useState(null); // null until checkout succeeds and a pos token exists
   const [hwBusy, setHwBusy] = useState(false);
   const [hwInvoiceId, setHwInvoiceId] = useState(null);
+  // Reopened checkouts (audit #14): a bill still waiting for another
+  // reopened dog has no receipt yet; dogs from two reopened bills checked
+  // out together get a receipt for each bill.
+  const [hwWaiting, setHwWaiting] = useState(false);
+  const [hwExtraIds, setHwExtraIds] = useState([]);
   const [emailBusy, setEmailBusy] = useState(false);
   const [receiptViewOpen, setReceiptViewOpen] = useState(null);
 
-  const runHardware = async (printToken, drawerToken) => {
+  const runHardware = async (printToken, drawerToken, extraPrintTokens = []) => {
     setHwBusy(true);
-    const next = { printToken, drawerToken, print: null, drawer: null };
+    const next = { printToken, drawerToken, print: null, drawer: null, extraFailed: 0 };
     if (drawerToken) next.drawer = await posOpenDrawer(drawerToken);
     if (printToken) next.print = await posPrintReceipt(printToken);
+    for (const token of extraPrintTokens) {
+      const r = await posPrintReceipt(token);
+      if (!r?.ok) next.extraFailed += 1;
+    }
     setHwResult(next);
     setHwBusy(false);
   };
 
-  const emailReceipt = async () => {
-    if (!hwInvoiceId) return;
+  const printExtra = async (id) => {
+    try {
+      const { data } = await api.post(`/invoices/${id}/pos-tokens`, { actions: ["print_receipt"] });
+      const r = await posPrintReceipt(data.print_receipt_token);
+      if (r?.ok) toast.success("Receipt printed");
+      else toast.error(r?.error || "Receipt printing failed");
+    } catch (e) {
+      toast.error(e?.response?.data?.detail || "Could not print the receipt");
+    }
+  };
+
+  const emailReceipt = async (id = hwInvoiceId) => {
+    if (!id) return;
     setEmailBusy(true);
     try {
-      const { data } = await api.post(`/receipts/invoice/${hwInvoiceId}/email`, {});
+      const { data } = await api.post(`/receipts/invoice/${id}/email`, {});
       if (data.ok) toast.success("Receipt emailed");
       else toast.error(data.detail || "Could not email the receipt");
     } catch (e) {
@@ -287,10 +307,10 @@ function CheckoutModalBody({ booking, services, onClose, onRequestCancel, lateDa
     setEmailBusy(false);
   };
 
-  const viewReceipt = async () => {
-    if (!hwInvoiceId) return;
+  const viewReceipt = async (id = hwInvoiceId) => {
+    if (!id) return;
     try {
-      const { data } = await api.get(`/receipts/invoice/${hwInvoiceId}`);
+      const { data } = await api.get(`/receipts/invoice/${id}`);
       setReceiptViewOpen(data);
     } catch (e) {
       toast.error(e?.response?.data?.detail || "Could not load the receipt");
@@ -646,13 +666,15 @@ function CheckoutModalBody({ booking, services, onClose, onRequestCancel, lateDa
       const printToken = data?.pos_print_receipt_token;
       const drawerToken = data?.pos_open_drawer_token;
       setHwInvoiceId(data?.pos_invoice_id || null);
+      setHwWaiting(!!data?.pos_receipt_waiting);
+      setHwExtraIds(data?.pos_extra_invoice_ids || []);
       setBusy(false);
       // Always show the post-checkout status screen (even with no tokens at
       // all) so staff has a manual View/Print/Email path when auto-print is
       // off and no cash was tendered — turning auto-print off must never
       // leave staff with zero way to produce a receipt on request.
       if (data?.pos_invoice_id) {
-        await runHardware(printToken, drawerToken);
+        await runHardware(printToken, drawerToken, data?.pos_extra_print_receipt_tokens || []);
       } else {
         onClose();
       }
@@ -707,6 +729,16 @@ function CheckoutModalBody({ booking, services, onClose, onRequestCancel, lateDa
                   {hwResult.print?.ok ? "Receipt printed." : `Receipt printing failed: ${hwResult.print?.error || "unknown error"}`}
                 </div>
               )}
+              {hwResult.extraFailed > 0 && (
+                <div className="rounded p-2.5 text-[13px] font-black bg-red-500/10 text-red-400 border border-red-500/30" data-testid="hw-extra-print-status">
+                  <i className="fas fa-triangle-exclamation mr-1.5"/>{hwResult.extraFailed} other receipt{hwResult.extraFailed === 1 ? "" : "s"} failed to print — use Print below.
+                </div>
+              )}
+              {hwWaiting && (
+                <div className="rounded p-2.5 text-[13px] font-black bg-shBlue/10 text-shBlue border border-shBlue/30" data-testid="checkout-receipt-waiting">
+                  <i className="fas fa-clock mr-1.5"/>Another dog on this bill was reopened. The receipt is ready once that dog is checked out again.
+                </div>
+              )}
             </div>
           )}
           <div className="flex flex-wrap gap-2 mt-4">
@@ -716,25 +748,42 @@ function CheckoutModalBody({ booking, services, onClose, onRequestCancel, lateDa
                 <i className="fas fa-rotate mr-1"/>Retry Open Drawer
               </button>
             )}
-            {!hwBusy && hwInvoiceId && (
+            {!hwBusy && hwInvoiceId && !hwWaiting && (
               <button onClick={() => retryHardware("print_receipt")} data-testid="hw-reprint"
                       className="text-shBlue font-black uppercase text-[12px] tracking-widest border border-shBlue/40 rounded px-3 py-2">
                 <i className="fas fa-print mr-1"/>
                 {hwResult?.printToken ? (hwResult.print?.ok ? "Reprint Receipt" : "Retry Print") : "Print Receipt"}
               </button>
             )}
-            {!hwBusy && hwInvoiceId && (
-              <button onClick={viewReceipt} data-testid="checkout-view-receipt"
+            {!hwBusy && hwInvoiceId && !hwWaiting && (
+              <button onClick={() => viewReceipt()} data-testid="checkout-view-receipt"
                       className="text-shBlue font-black uppercase text-[12px] tracking-widest border border-shBlue/40 rounded px-3 py-2">
                 <i className="fas fa-receipt mr-1"/>View Receipt
               </button>
             )}
-            {!hwBusy && hwInvoiceId && (
-              <button onClick={emailReceipt} disabled={emailBusy} data-testid="checkout-email-receipt"
+            {!hwBusy && hwInvoiceId && !hwWaiting && (
+              <button onClick={() => emailReceipt()} disabled={emailBusy} data-testid="checkout-email-receipt"
                       className="text-shBlue font-black uppercase text-[12px] tracking-widest border border-shBlue/40 rounded px-3 py-2 disabled:opacity-50">
                 <i className="fas fa-envelope mr-1"/>{emailBusy ? "Sending…" : "Email Receipt"}
               </button>
             )}
+            {!hwBusy && hwExtraIds.map((id, i) => (
+              <div key={id} className="w-full flex flex-wrap items-center gap-2" data-testid={`checkout-extra-bill-${i}`}>
+                <span className="text-[12px] text-gray-400 font-black uppercase tracking-widest">Other bill #{id.slice(0, 8).toUpperCase()}</span>
+                <button onClick={() => printExtra(id)} data-testid={`checkout-extra-print-${i}`}
+                        className="text-shBlue font-black uppercase text-[12px] tracking-widest border border-shBlue/40 rounded px-3 py-2">
+                  <i className="fas fa-print mr-1"/>Print
+                </button>
+                <button onClick={() => viewReceipt(id)} data-testid={`checkout-extra-view-${i}`}
+                        className="text-shBlue font-black uppercase text-[12px] tracking-widest border border-shBlue/40 rounded px-3 py-2">
+                  <i className="fas fa-receipt mr-1"/>View
+                </button>
+                <button onClick={() => emailReceipt(id)} disabled={emailBusy} data-testid={`checkout-extra-email-${i}`}
+                        className="text-shBlue font-black uppercase text-[12px] tracking-widest border border-shBlue/40 rounded px-3 py-2 disabled:opacity-50">
+                  <i className="fas fa-envelope mr-1"/>Email
+                </button>
+              </div>
+            ))}
             <button onClick={onClose} disabled={hwBusy} data-testid="hw-done"
                     className="ml-auto bg-shGreen text-bgHeader px-6 py-2 rounded font-black uppercase text-[13px] tracking-widest disabled:opacity-50">
               Done
@@ -933,8 +982,15 @@ function CheckoutModalBody({ booking, services, onClose, onRequestCancel, lateDa
           <div className="mb-5 border border-bgHover rounded-lg p-4 bg-bgBase" data-testid="checkout-extra-nights-panel">
             <div className="flex items-center justify-between mb-3">
               <p className="text-[13px] uppercase tracking-widest text-gray-500 font-black"><i className="fas fa-moon text-shBlue mr-1.5"/>Stayed Extra Nights?</p>
-              {booking.end_date && <span className="text-[12px] text-gray-500">Original end: {booking.end_date}</span>}
+              {booking.end_date && <span className="text-[12px] text-gray-500">{booking.extra_nights?.in_stay ? "Stay ends" : "Original end"}: {booking.end_date}</span>}
             </div>
+            {/* A reopened checkout keeps the nights it added in the stay's
+                dates, so they are billed above already (audit #14). */}
+            {Number(booking.extra_nights?.in_stay && booking.extra_nights?.count) > 0 && (
+              <p className="text-[13px] text-shAccent mb-3" data-testid="checkout-extra-nights-in-stay">
+                The {booking.extra_nights.count} extra night{Number(booking.extra_nights.count) === 1 ? "" : "s"} added at the earlier checkout {Number(booking.extra_nights.count) === 1 ? "is" : "are"} already in this stay{booking.end_date ? ` (it now ends ${booking.end_date})` : ""}. Only add nights beyond that.
+              </p>
+            )}
             <div className="flex items-center gap-2 mb-3">
               <button type="button" onClick={()=>setExtraNights(Math.max(0, Number(extraNights)-1))} data-testid="extra-nights-minus"
                       className="bg-bgPanel w-9 h-9 rounded text-white font-black hover:bg-red-500/30">−</button>

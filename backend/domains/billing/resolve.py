@@ -335,7 +335,8 @@ async def bill_preview(invoice_id: str) -> dict:
     held = await _held_attempt(inv)
     reopened = not await tab_sync._all_visits_locked(inv)
     refund = tab_sync.has_refund_activity(inv)
-    blocked = refund or reopened or (held is not None and held.get("status") == "pending")
+    stale = await tab_sync.bill_needs_rebuild(inv)  # rebuilt automatically shortly (audit #14)
+    blocked = refund or reopened or stale or (held is not None and held.get("status") == "pending")
     balance = _money(inv.get("balance"))
     credit = await tab_sync.credit_on_file(inv["client_id"]) if ar["ar_backed"] else 0.0
     return {
@@ -391,6 +392,8 @@ async def fix_bill(invoice_id: str, body: BillFixIn, user: dict) -> dict:
             raise HTTPException(status_code=409, detail=tab_sync.MSG_REFUND)
         if not await tab_sync._all_visits_locked(inv):
             raise HTTPException(status_code=409, detail="A visit on this bill was reopened. Check it out again first.")
+        if await tab_sync.bill_needs_rebuild(inv):
+            raise HTTPException(status_code=409, detail=tab_sync.MSG_REBUILDING)
         ar = await tab_sync.invoice_ar_status(inv)
         if not ar["ar_backed"]:
             raise HTTPException(status_code=400, detail="This bill isn't on the account tab, so there's nothing to line up.")

@@ -40,6 +40,7 @@ from typing import Any, Dict, List, Optional
 from fastapi import Depends, HTTPException
 from pydantic import BaseModel
 
+from domains.bookings import reopen as booking_reopen
 from domains.bookings.blocks import BookingBlocked, pretty_date
 
 RESOLUTIONS = ("forgotten", "stayed_overnight")
@@ -82,8 +83,10 @@ def applies(booking: Optional[dict], today: Optional[str] = None) -> bool:
         return False
     if booking.get("status") in ("completed", "cancelled", "rejected"):
         return False
-    # A reopened checkout was really checked out once — its day is known.
-    if booking.get("financial_reopened_at"):
+    # A reopened checkout whose departure stands was really checked out
+    # once — its day is known. One reopened as "hasn't left yet" is asked
+    # like any dog still here (audit #14).
+    if booking_reopen.departure_known(booking):
         return False
     today = today or _today()
     visit_day = str(booking.get("end_date") or booking.get("date") or "")[:10]
@@ -100,7 +103,7 @@ def needs_answer(booking: Optional[dict], today: Optional[str] = None) -> bool:
 def _open_stay(booking: Optional[dict]) -> bool:
     """A stayed-overnight answer on a dog that hasn't been checked out yet."""
     return (bool(booking) and booking.get("late_day_resolution") == "stayed_overnight"
-            and not booking.get("checked_out_at") and not booking.get("financial_reopened_at"))
+            and not booking.get("checked_out_at") and not booking_reopen.departure_known(booking))
 
 
 def daycare_credits_per_night(booking: Optional[dict]) -> Optional[float]:

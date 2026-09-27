@@ -106,6 +106,7 @@ from domains.gift_cards import shop as gift_card_shop
 from domains.shop import abandon as shop_abandon
 from domains.clients import reset_mfa
 from domains.operations import audit_redact
+from domains.bookings import reopen as booking_reopen
 from school_events import EventType as SchoolEvent
 
 from trophy_service import (
@@ -1146,6 +1147,8 @@ class BookingOut(BaseModel):
     pos_print_receipt_token: Optional[str] = None
     pos_open_drawer_token: Optional[str] = None
     pos_invoice_id: Optional[str] = None
+    pos_receipt_waiting: Optional[bool] = None  # its bill waits for another reopened dog (audit #14)
+    reopen_departure_at: Optional[str] = None  # when the dog really left, kept by a reopen (audit #14)
     program_sale_session_index: Optional[int] = None
     program_sale_session_total: Optional[int] = None
     credit_lot_id: Optional[str] = None
@@ -1294,6 +1297,9 @@ class BookingRefundIn(BaseModel):
 
 class BookingReopenCheckoutIn(BaseModel):
     reason: str = Field(min_length=5, max_length=500)
+    # False when the recorded checkout time wasn't when the dog really left
+    # (checked out by mistake): the next checkout prices from its own time.
+    departure_stands: bool = True
 
 
 # ── Payment rebuild Phase 1 — Invoice / Payment ledger foundation ──────────
@@ -5710,6 +5716,11 @@ async def _cancel_booking_impl(booking_id: str, forfeit: bool, user: dict, undo_
     taking_back = booking_guards.on_site(booking)
     if taking_back and (client_cancel or not undo_check_in):
         raise booking_guards.on_site_cancel_block(booking, client=client_cancel)
+    if taking_back and booking.get("financial_reopened_at") and await db.invoices.find_one(
+            {"booking_ids": booking_id, "status": {"$ne": "VOID"}}, {"_id": 1}):
+        # Its bill waits for this visit's next checkout (audit #14); cancelled,
+        # the bill could never be brought up to date.
+        booking_guards.refuse_while_on_site(booking, "cancelled")
     # Notice is counted to when the visit really starts (drop-off or
     # appointment time, business time zone) — not 8 PM the night before.
     settings = await get_settings()
@@ -7012,6 +7023,9 @@ async def _compute_multi_dog_discount(booking: dict, *, exclude_id: Optional[str
         "date": booking_date,
         "status": "completed",
         "checked_out_at": {"$exists": True, "$ne": None},
+        # A sibling discounted at its own checkout doesn't count: a reopened
+        # full-price dog must not end up discounted too (audit #14).
+        "$or": [{"multi_dog_discount": None}, {"multi_dog_discount.pre_applied": True}],
     }
     if exclude_id:
         sibling_q["id"] = {"$ne": exclude_id}
@@ -7115,6 +7129,11 @@ async def early_checkout_quote(booking_id: str, _: dict = Depends(require_employ
         raise HTTPException(status_code=404, detail="Booking not found")
     booking, _rank_fields = await group_rank.settle(db, booking, now=now_iso())
     today = business_today().isoformat()
+    now_clock = datetime.now(BUSINESS_TZ).strftime("%H:%M")
+    left = booking_reopen.pricing_ts(booking, "")
+    if left:  # a reopened checkout: the stay ended when the dog really left (audit #14)
+        left_at = datetime.fromisoformat(left.replace("Z", "+00:00")).astimezone(BUSINESS_TZ)
+        today, now_clock = left_at.date().isoformat(), left_at.strftime("%H:%M")
     if (
         booking.get("service_type") != "boarding"
         or not booking.get("end_date")
@@ -7125,7 +7144,6 @@ async def early_checkout_quote(booking_id: str, _: dict = Depends(require_employ
     ps = booking.get("pricing_snapshot") or {}
     settings = await get_settings()
     cutoff_time = ps.get("pickup_cutoff_time") or _boarding_full_day_cutoff_from_rules(settings.get("booking_rules") or {})
-    now_clock = datetime.now(BUSINESS_TZ).strftime("%H:%M")
     quote = await _quote_base_service_price(
         client_id=booking.get("client_id"),
         service_type="boarding",
@@ -7182,7 +7200,7 @@ async def money_modifier_preview(
     if base_amount <= 0:
         base_preview = await discount_preview(booking_id, {})
         base_amount = float(base_preview.get("preview_base_price") or 0)
-    result = _money_modifier_breakdown(booking, base_amount, settings, now_iso())
+    result = _money_modifier_breakdown(booking, base_amount, settings, booking_reopen.pricing_ts(booking, now_iso()))
     tax_cfg = (settings.get("sales_tax") or {})
     applies = _service_type_sales_taxable(booking.get("service_type"), tax_cfg)
     result["sales_tax"] = {
@@ -7586,22 +7604,69 @@ async def _create_invoice_for_bookings(
     already pre-validated by `_check_out_locked` before this runs. Group
     checkout's cash tender/change capture is explicitly deferred (see the
     Phase 2 plan) — these params are simply unused when len(bookings) > 1."""
-    existing = await db.invoices.find_one({"booking_ids": {"$in": booking_ids}}, {"_id": 0})
-    if existing:
-        return existing
+    requested = list(booking_ids)
+    single_id = requested[0] if len(requested) == 1 else None
+    bills = await db.invoices.find({"booking_ids": {"$in": booking_ids}}, {"_id": 0}).to_list(50)
+    existing = None
+    if bills:
+        # A reopened visit checked out again: its bill (same number) is
+        # rebuilt from every visit on it as they are now (audit #14) — never
+        # a bill that took money (billing_tab_sync.bill_needs_rebuild). A
+        # visit being checked out now that is on no bill yet is never dropped.
+        covered = {bid for inv in bills for bid in (inv.get("booking_ids") or [])}
+        leftover = [bid for bid in booking_ids if bid not in covered]
+        stale = [inv for inv in bills if await billing_tab_sync.bill_needs_rebuild(inv)]
+        for other in stale[1:]:
+            await _create_invoice_for_bookings(list(other.get("booking_ids") or []), user=user, ts=ts,
+                                               checkout_group_id=checkout_group_id, payment_notes=payment_notes)
+        if not stale:
+            for inv in bills:
+                mine = [bid for bid in requested if bid in (inv.get("booking_ids") or [])]
+                if mine and await billing_tab_sync.any_visit_reopened(inv):
+                    # Still waiting for another reopened dog on this bill: this
+                    # visit's money is recorded now, dated today; the bill's own
+                    # numbers move when its last dog is checked out again.
+                    now_rows = [b for b in [await db.bookings.find_one({"id": bid}, {"_id": 0}) for bid in mine] if b]
+                    await _write_checkout_payment_rows(
+                        inv["id"], now_rows, user=user, ts=ts, single_id=single_id, day=business_today().isoformat(),
+                        tendered_amount=tendered_amount, payment_notes=payment_notes)
+            if leftover:
+                return (await _create_invoice_for_bookings(
+                    leftover, user=user, ts=ts, checkout_group_id=checkout_group_id,
+                    tendered_amount=tendered_amount, payment_notes=payment_notes)) or bills[0]
+            return bills[0]
+        existing = stale[0]
+        booking_ids = list(existing.get("booking_ids") or []) + leftover
 
     bookings = []
     for bid in booking_ids:
         b = await db.bookings.find_one({"id": bid}, {"_id": 0})
+        if not b and existing:
+            b = await db.bookings_archive.find_one({"id": bid}, {"_id": 0})  # a rebuilt group bill keeps an archived dog
         if b:
             bookings.append(b)
+    if existing and len(bookings) != len(booking_ids):
+        return existing  # never rebuild a bill with a visit missing
+    if existing:
+        # A reopened visit that then ended another way (cancelled before that
+        # was refused) comes off the bill; a bill left with no visit is void.
+        bookings = [b for b in bookings if not billing_tab_sync.ended_off_bill(b)]
+        if not bookings:
+            await db.invoices.update_one(
+                {"id": existing["id"], "amount_paid": existing.get("amount_paid"),
+                 "stripe_active_attempt_id": existing.get("stripe_active_attempt_id")},
+                {"$set": {"status": "VOID", "total": 0.0, "subtotal": 0.0, "tax_amount": 0.0, "balance": 0.0,
+                          "line_items": [], "void_reason": "Its visit was cancelled after the checkout was reopened.",
+                          "voided_at": ts, "rebuilt_at": ts, "updated_at": ts}})
+            return await db.invoices.find_one({"id": existing["id"]}, {"_id": 0})
+        booking_ids = [b["id"] for b in bookings]
     if not bookings:
         return None
 
     total = round(sum(float(b.get("actual_price") or 0) for b in bookings), 2)
     credit_applied = round(sum(float(b.get("credit_value") or 0) for b in bookings), 2)
-    if total <= 0.005 and credit_applied <= 0.005:
-        return None  # nothing to invoice (e.g. a $0 training visit)
+    if not existing and total <= 0.005 and credit_applied <= 0.005:
+        return None  # nothing to invoice (e.g. a $0 training visit); a rebuilt bill goes to $0 instead
 
     amount_paid = round(sum(float(b.get("amount_paid") or 0) for b in bookings), 2)
     balance = round(sum(float(b.get("balance_due") or 0) for b in bookings), 2)
@@ -7609,6 +7674,21 @@ async def _create_invoice_for_bookings(
     line_items: List[Dict[str, Any]] = []
     for b in bookings:
         line_items.extend(_build_invoice_line_items_from_booking(b))
+    if existing:
+        # Write-offs made against the bill itself: their tab rows name the
+        # bill, not a visit, so a reopen never undid them. They stay on the
+        # bill only while it is back on the tab and still owes that much —
+        # otherwise the write-off already sits on the account as credit, and
+        # keeping it here too would forgive it twice.
+        carried = await billing_tab_sync.bill_level_writeoffs(existing)
+        carry = round(sum(float(li.get("amount") or 0) for li in carried), 2)
+        on_tab = False
+        for b in bookings:
+            on_tab = on_tab or await billing_tab_sync.booking_on_tab(b["id"])
+        if carried and on_tab and -carry <= balance + 0.005:
+            line_items.extend(carried)
+            total = round(total + carry, 2)
+            balance = round(max(0.0, balance + carry), 2)
     tax_amount = round(sum(li["amount"] for li in line_items if li["kind"] == "tax"), 2)
     subtotal = round(total - tax_amount, 2)
 
@@ -7625,7 +7705,7 @@ async def _create_invoice_for_bookings(
     first = bookings[0]
 
     invoice = {
-        "id": str(uuid.uuid4()),
+        "id": existing["id"] if existing else str(uuid.uuid4()),
         "client_id": first.get("client_id"),
         "client_name": first.get("client_name") or "",
         "dog_ids": dog_ids,
@@ -7649,20 +7729,47 @@ async def _create_invoice_for_bookings(
         "created_by": user.get("id") if user else None,
         "updated_at": ts,
     }
-    try:
-        await db.invoices.insert_one(invoice.copy())
-    except DuplicateKeyError:
-        return await db.invoices.find_one({"booking_ids": {"$in": booking_ids}}, {"_id": 0})
+    if existing:
+        keep = ("id", "created_at", "created_by", "checkout_group_id", "operation_id")
+        rebuilt = {k: v for k, v in invoice.items() if k not in keep}
+        rebuilt["rebuilt_at"] = ts
+        done = await db.invoices.update_one(
+            {"id": existing["id"], "amount_paid": existing.get("amount_paid"),
+             "stripe_active_attempt_id": existing.get("stripe_active_attempt_id")},
+            {"$set": rebuilt})
+        if done.matched_count != 1:
+            return await db.invoices.find_one({"id": existing["id"]}, {"_id": 0})
+        invoice = {**existing, **rebuilt}
+    else:
+        try:
+            await db.invoices.insert_one(invoice.copy())
+        except DuplicateKeyError:
+            return await db.invoices.find_one({"booking_ids": {"$in": booking_ids}}, {"_id": 0})
 
-    invoice_id = invoice["id"]
+    await _write_checkout_payment_rows(
+        invoice["id"], bookings, user=user, ts=ts, single_id=single_id,
+        day=None if existing else invoice["date"], tendered_amount=tendered_amount, payment_notes=payment_notes)
+    return invoice
+
+
+async def _write_checkout_payment_rows(
+    invoice_id: str, bookings: List[Dict[str, Any]], *, user: dict, ts: str, single_id: Optional[str],
+    day: Optional[str] = None, tendered_amount: Optional[float] = None, payment_notes: Optional[str] = None,
+) -> None:
+    """Each visit's credit / cash rows on its bill, keyed so a retry — or a
+    later rebuild of the bill after a reopen (audit #14) — reuses them.
+    `day` None: each row is dated the day its visit was checked out, since a
+    rebuilt bill can be written days later. `single_id` is the one visit
+    checked out on its own, the only row that can carry tendered/change."""
     for b in bookings:
         bid = b.get("id")
+        row_day = day or _business_date_from_timestamp(b.get("checked_out_at"), business_today().isoformat())
         credit_value = float(b.get("credit_value") or 0)
         if credit_value > 0.005:
             await _insert_payment_row({
                 "id": str(uuid.uuid4()), "invoice_id": invoice_id, "client_id": b.get("client_id"),
                 "amount": round(credit_value, 2), "method": "credits", "is_credit": True,
-                "date": invoice["date"], "employee_id": user.get("id") if user else None,
+                "date": row_day, "employee_id": user.get("id") if user else None,
                 "employee_name": (user.get("name") or user.get("email")) if user else None,
                 "processor": None, "processor_payment_id": None, "status": "completed",
                 "notes": "", "refunded_amount": 0.0,
@@ -7684,7 +7791,7 @@ async def _create_invoice_for_bookings(
             # never split per-dog by the customer, so stamping a group-wide
             # tendered_amount onto any one row would not reconcile with
             # that row's own amount — group tender capture is deferred.
-            is_single_booking = len(bookings) == 1
+            is_single_booking = bid == single_id
             change_given = None
             if is_single_booking and tendered_amount is not None and tendered_amount >= cash_amount - 0.005:
                 change_given = round(float(tendered_amount) - cash_amount, 2)
@@ -7695,7 +7802,7 @@ async def _create_invoice_for_bookings(
             await _insert_payment_row({
                 "id": str(uuid.uuid4()), "invoice_id": invoice_id, "client_id": b.get("client_id"),
                 "amount": round(cash_amount, 2), "method": mapped_method,
-                "is_credit": False, "date": invoice["date"], "employee_id": user.get("id") if user else None,
+                "is_credit": False, "date": row_day, "employee_id": user.get("id") if user else None,
                 "employee_name": (user.get("name") or user.get("email")) if user else None,
                 "processor": None, "processor_payment_id": None, "status": "completed",
                 "notes": row_notes, "refunded_amount": 0.0, "source": None,
@@ -7704,9 +7811,8 @@ async def _create_invoice_for_bookings(
                 "created_at": ts, "updated_at": ts,
                 "tendered_amount": round(float(tendered_amount), 2) if (is_single_booking and tendered_amount is not None and change_given is not None) else None,
                 "change_given": change_given,
-                "business_date": invoice["date"] if is_single_booking else None,
+                "business_date": row_day if is_single_booking else None,
             })
-    return invoice
 
 
 async def _apply_refund_to_invoice(
@@ -8103,7 +8209,7 @@ async def _build_receipt_payload(invoice_id: str, payment_ids: Optional[List[str
         change_given = None
 
     receipt_number = (target_payments[-1]["id"] if target_payments else invoice_id)[:8].upper()
-    when = (target_payments[-1].get("created_at") if target_payments else invoice.get("created_at"))
+    when = (target_payments[-1].get("created_at") if target_payments else (invoice.get("rebuilt_at") or invoice.get("created_at")))
 
     # Best-effort extras sourced from the underlying booking(s) — never
     # recomputed, only read. An invoice with no resolvable bookings (or a
@@ -9135,6 +9241,7 @@ async def checkout_group_preview(
         "date": anchor.get("date"),
         "status": "completed",
         "checked_out_at": {"$exists": True, "$ne": None},
+        "$or": [{"multi_dog_discount": None}, {"multi_dog_discount.pre_applied": True}],
     })
     for idx, row in enumerate(rows):
         row, _rank_fields = await group_rank.settle(db, row, now=now_iso())
@@ -9378,21 +9485,34 @@ async def check_out_group(
         pos_print_receipt_token = None
         pos_open_drawer_token = None
         group_invoice = None
+        group_waiting = False
+        extra_bills: List[Dict[str, Any]] = []
+        extra_print_tokens: List[str] = []
         try:
+            invoice_ts = now_iso()
             group_invoice = await _create_invoice_for_bookings(
                 [row.get("id") for row in completed],
-                user=user, ts=now_iso(), checkout_group_id=checkout_group_id,
+                user=user, ts=invoice_ts, checkout_group_id=checkout_group_id,
                 payment_notes=body.payment_notes,
             )
+            # Dogs from two reopened bills checked out together: each bill was
+            # rebuilt and each gets its own receipt (audit #14).
+            extra_bills = await billing_tab_sync.rebuilt_alongside(group_invoice, [row.get("id") for row in completed], invoice_ts)
             # Front-desk POS hardware integration — best-effort, additive,
             # issued only AFTER the group invoice already committed above.
             if group_invoice:
+                # A bill still waiting for another reopened dog shows the old
+                # checkout, so no receipt for it yet (audit #14).
+                group_waiting = await billing_tab_sync.any_visit_reopened(group_invoice)
                 try:
                     rs_for_print = await get_receipt_settings()
-                    if rs_for_print.get("auto_print_receipts"):
+                    if rs_for_print.get("auto_print_receipts") and not group_waiting:
                         pos_print_receipt_token = await _issue_pos_token(
                             action="print_receipt", workstation_id=body.workstation_id, invoice_id=group_invoice["id"],
                         )
+                        for extra in extra_bills:
+                            extra_print_tokens.append(await _issue_pos_token(
+                                action="print_receipt", workstation_id=body.workstation_id, invoice_id=extra["id"]))
                     if resolved_group_tender == "cash" and combined_cash > 0:
                         pos_open_drawer_token = await _issue_pos_token(
                             action="open_drawer", workstation_id=body.workstation_id, invoice_id=group_invoice["id"],
@@ -9401,7 +9521,11 @@ async def check_out_group(
                     logger.warning("POS token issuance failed for checkout_group %s: %s", checkout_group_id, exc)
                 try:
                     group_client_id = completed[0].get("client_id") if completed else None
-                    asyncio.create_task(_maybe_auto_email_receipt("invoice", group_invoice["id"], group_client_id))
+                    for bill in ([] if group_waiting else [group_invoice]) + extra_bills:
+                        # a rebuilt bill is its own receipt, not the first one again
+                        asyncio.create_task(_maybe_auto_email_receipt(
+                            "invoice", bill["id"], group_client_id,
+                            claim_key=f"{bill['id']}:{bill['rebuilt_at']}" if bill.get("rebuilt_at") else None))
                 except Exception as exc:
                     logger.warning("auto-email receipt spawn failed for checkout_group %s: %s", checkout_group_id, exc)
         except Exception as exc:
@@ -9419,6 +9543,9 @@ async def check_out_group(
             "pos_invoice_id": group_invoice["id"] if group_invoice else None,
             "pos_print_receipt_token": pos_print_receipt_token,
             "pos_open_drawer_token": pos_open_drawer_token,
+            "pos_receipt_waiting": group_waiting,
+            "pos_extra_invoice_ids": [b["id"] for b in extra_bills],
+            "pos_extra_print_receipt_tokens": extra_print_tokens,
         }
     except Exception:
         if originals:
@@ -9680,6 +9807,9 @@ async def _check_out_locked(
     )
     body = body or CheckoutIn()
     ts = now_iso()
+    # A reopened visit is priced from when the dog really left, not from when
+    # staff redo the checkout (audit #14); ts still stamps the checkout.
+    pricing_ts = booking_reopen.pricing_ts(booking, ts)
     settings = await get_settings()  # Sprint 110dk — stay-pricing rules
     update: Dict[str, Any] = {
         **group_rank_fields,
@@ -9767,7 +9897,7 @@ async def _check_out_locked(
                     )
                     return round(unit_price * units + float(fee.get("amount") or 0), 2)
                 ci = booking.get("checked_in_at")
-                co_ts = ts  # this checkout timestamp
+                co_ts = pricing_ts  # when the dog left
                 if stay_enabled and ci and co_ts:
                     try:
                         ci_dt = datetime.fromisoformat(ci.replace("Z", "+00:00"))
@@ -9785,7 +9915,7 @@ async def _check_out_locked(
         return default_for_zero
 
     def _apply_money_modifiers(amt: float) -> float:
-        return float(_money_modifier_breakdown(booking, amt, settings, ts)["total_after"])
+        return float(_money_modifier_breakdown(booking, amt, settings, pricing_ts)["total_after"])
 
     # ── Case A: client chose to KEEP using the credits that were already deducted.
     if had_credit and use_credits:
@@ -9976,7 +10106,7 @@ async def _check_out_locked(
                 if bool(daycare_rules.get("stay_pricing_enabled", True)):
                     try:
                         ci_dt = datetime.fromisoformat(booking["checked_in_at"].replace("Z", "+00:00"))
-                        co_dt = datetime.fromisoformat(ts.replace("Z", "+00:00"))
+                        co_dt = datetime.fromisoformat(pricing_ts.replace("Z", "+00:00"))
                         daycare_hours = max(0.0, (co_dt - ci_dt).total_seconds() / 3600.0)
                     except Exception:
                         daycare_hours = None
@@ -10048,7 +10178,7 @@ async def _check_out_locked(
             modifier_base = boarding_auto
         if modifier_base <= 0:
             modifier_base = float(update.get("actual_price") or 0)
-        modifier_breakdown = _money_modifier_breakdown(booking, modifier_base, settings, ts)
+        modifier_breakdown = _money_modifier_breakdown(booking, modifier_base, settings, pricing_ts)
         modifier_total = float(modifier_breakdown.get("modifier_total") or 0)
         update["actual_price"] = round(float(update.get("actual_price") or 0) + modifier_total, 2)
         update["money_modifiers_applied_at"] = ts
@@ -10145,6 +10275,7 @@ async def _check_out_locked(
             update["actual_price"] = round(prev_price + extra_charge_total, 2)
         # Audit trail on the booking so income reporting can reflect the extension.
         update["extra_nights"] = {
+            "original_end_date": booking.get("end_date") or booking.get("date"),
             "count": extra_nights,
             "credits_used": extra_credits_used,
             "billed_nights": extra_nights_billed,
@@ -10397,10 +10528,12 @@ async def _check_out_locked(
             # A failure here never affects the checkout that already
             # succeeded; it only means no hardware token is available.
             if invoice:
+                waiting = await billing_tab_sync.any_visit_reopened(invoice)  # see the group checkout
                 try:
                     booking["pos_invoice_id"] = invoice["id"]
+                    booking["pos_receipt_waiting"] = waiting
                     rs_for_print = await get_receipt_settings()
-                    if rs_for_print.get("auto_print_receipts"):
+                    if rs_for_print.get("auto_print_receipts") and not waiting:
                         booking["pos_print_receipt_token"] = await _issue_pos_token(
                             action="print_receipt", workstation_id=body.workstation_id, invoice_id=invoice["id"],
                         )
@@ -10411,7 +10544,10 @@ async def _check_out_locked(
                 except Exception as exc:
                     logger.warning("POS token issuance failed for booking %s: %s", booking_id, exc)
                 try:
-                    asyncio.create_task(_maybe_auto_email_receipt("invoice", invoice["id"], booking.get("client_id")))
+                    if not waiting:
+                        asyncio.create_task(_maybe_auto_email_receipt(
+                            "invoice", invoice["id"], booking.get("client_id"),
+                            claim_key=f"{invoice['id']}:{invoice['rebuilt_at']}" if invoice.get("rebuilt_at") else None))
                 except Exception as exc:
                     logger.warning("auto-email receipt spawn failed for booking %s: %s", booking_id, exc)
         except Exception as exc:
@@ -12272,6 +12408,13 @@ async def _booking_refund_locked(booking_id: str, body: BookingRefundIn, user: d
         raise HTTPException(status_code=404, detail="Booking not found")
     if not _booking_is_financially_locked(booking):
         raise HTTPException(status_code=409, detail="This booking has not been checked out.")
+    bill = await db.invoices.find_one({"booking_ids": booking_id, "status": {"$ne": "VOID"}}, {"_id": 0})
+    if bill and await billing_tab_sync.any_visit_reopened(bill):
+        # The bill is rebuilt when that dog is checked out again; a refund on
+        # it now would stop the rebuild for good (audit #14).
+        raise HTTPException(status_code=409, detail="Another visit on this bill was reopened. Check it out again before refunding.")
+    if bill and await billing_tab_sync.bill_needs_rebuild(bill):
+        raise HTTPException(status_code=409, detail=billing_tab_sync.MSG_REBUILDING)
 
     # Payment rebuild Phase 1 — claim the idempotency key BEFORE any
     # mutation (and before the refundable-amount check below, so a genuine
@@ -12431,8 +12574,9 @@ async def _reopen_booking_checkout_locked(booking_id: str, body: BookingReopenCh
     paid = float(booking.get("amount_paid") or booking.get("cash_revenue") or 0)
     credits = float(booking.get("credits_deducted") or 0)
     refunds = float(booking.get("financial_refund_total") or 0)
-    bill = await db.invoices.find_one({"booking_ids": booking_id, "status": {"$ne": "VOID"}}, {"_id": 0, "amount_paid": 1, "stripe_active_attempt_id": 1})
-    if bill and (float(bill.get("amount_paid") or 0) > 0.005 or bill.get("stripe_active_attempt_id")):
+    bill = await db.invoices.find_one({"booking_ids": booking_id, "status": {"$ne": "VOID"}}, {"_id": 0})
+    if bill and (float(bill.get("amount_paid") or 0) > 0.005 or bill.get("stripe_active_attempt_id")
+                 or billing_tab_sync.has_refund_activity(bill)):
         paid = max(paid, 0.01)  # paid on the bill itself, or an online payment is under way
     if paid > 0.005 or credits > 0.005 or refunds > 0.005:
         raise HTTPException(
@@ -12446,7 +12590,8 @@ async def _reopen_booking_checkout_locked(booking_id: str, body: BookingReopenCh
     ledger_row_id = None
     ts = now_iso()
     history = list(booking.get("financial_reopen_history") or [])
-    history.append({"at": ts, "by": user.get("id"), "by_name": user.get("name") or user.get("email"), "reason": body.reason.strip(), "prior_total": booking.get("actual_price"), "prior_status": booking.get("payment_status")})
+    undo_set, undo_unset, undo_note = booking_reopen.undo_checkout(booking, departure_stands=body.departure_stands)
+    history.append({"at": ts, "by": user.get("id"), "by_name": user.get("name") or user.get("email"), "reason": body.reason.strip(), "prior_total": booking.get("actual_price"), "prior_status": booking.get("payment_status"), **undo_note})
     set_update = {
         "status": "approved", "financial_locked": False, "financial_reopened_at": ts,
         "financial_reopened_reason": body.reason.strip(), "financial_reopen_history": history,
@@ -12457,7 +12602,13 @@ async def _reopen_booking_checkout_locked(booking_id: str, body: BookingReopenCh
         "checked_out_accuracy_m", "actual_price", "payment_status", "payment_method", "paid_at",
         "amount_paid", "balance_due", "cash_revenue", "tax_amount", "tax_rate_pct",
         "taxable_cash_amount", "additional_cash_charge", "money_modifier_breakdown",
+        # Surcharges are worked out again at the next checkout (audit #14):
+        # left set, checkout skips them and the holiday / late-pickup fee is lost.
+        "money_modifiers_applied_at",
     ]}
+    # What the first checkout applied is undone too (domains/bookings/reopen.py).
+    set_update.update(undo_set)
+    unset_update.update(undo_unset)
     event_id = None
     try:
         if abs(ledger_net) > 0.005 and booking.get("client_id"):
@@ -30141,6 +30292,8 @@ def _scheduler_jobs() -> List[job_scheduler.Job]:
         ("shop_abandoned_checkouts", lambda: shop_abandon.sweep()),
         # Blank PINs/codes in Audit Log entries saved before audit #7 (once; marker-gated).
         ("audit_log_secret_scrub", lambda: audit_redact.scrub_existing(db)),
+        # Bills still showing a checkout that was reopened and done again (audit #14).
+        ("reopened_bill_rebuild", lambda: billing_tab_sync.rebuild_stale_bills()),
     ]
 
 
@@ -33729,6 +33882,8 @@ async def startup():
         (db.bookings, [("status", 1), ("created_at", -1)], {"name": "bookings_status_created_at"}),
         (db.bookings, "dog_id", {}),
         (db.bookings, "client_id", {}),
+        (db.bookings, "financial_reopened_at", {"sparse": True, "name": "bookings_financial_reopened_at"}),
+        (db.bookings_archive, "financial_reopened_at", {"sparse": True, "name": "bookings_archive_financial_reopened_at"}),
         (db.bookings, "status", {}),
         # Phase 6 global search: one batch lookup finds each matched dog's
         # nearest upcoming booking by dog/date/status.
@@ -37687,6 +37842,13 @@ async def create_invoice_payment(invoice_id: str, body: InvoicePaymentIn, user: 
             status_code=400,
             detail="This invoice has refund activity and cannot accept additional payments through the standard payment flow. Reconcile the invoice before taking another payment.",
         )
+    if await billing_tab_sync.any_visit_reopened(invoice):
+        # The next checkout rebuilds this bill; money taken now would stop that (audit #14).
+        raise HTTPException(status_code=409, detail="A visit on this bill was reopened. Check it out again before taking a payment on this bill.")
+    if await billing_tab_sync.bill_needs_rebuild(invoice):
+        raise HTTPException(status_code=409, detail=billing_tab_sync.MSG_REBUILDING)
+    if await billing_tab_sync.has_ended_visit(invoice):
+        raise HTTPException(status_code=409, detail="A visit on this bill was cancelled after its checkout was reopened, so this bill can't take a payment.")
 
     method = body.method
     amount = round(float(body.amount), 2)
@@ -39814,9 +39976,11 @@ RECEIPT_EMAIL_RATE_LIMIT_SECONDS = 60
 
 async def _load_receipt_payload_and_client(kind: str, ref_id: str) -> tuple:
     if kind == "invoice":
-        invoice = await db.invoices.find_one({"id": ref_id}, {"_id": 0, "client_id": 1})
+        invoice = await db.invoices.find_one({"id": ref_id}, {"_id": 0})
         if not invoice:
             raise HTTPException(status_code=404, detail="Invoice not found")
+        if refusal := await billing_tab_sync.receipt_refusal(invoice):
+            raise HTTPException(status_code=409, detail=refusal)
         payload = await _build_receipt_payload(ref_id)
         client = await db.clients.find_one({"id": invoice.get("client_id")}, {"_id": 0, "email": 1})
     elif kind == "pos_sale":
@@ -39955,7 +40119,7 @@ async def issue_pos_tokens_for_invoice(invoice_id: str, body: Optional[Dict[str,
     retry needs a FRESH token, never the stale one). Issuing a token creates
     NO financial mutation, no matter how many times it's called — it only
     ever authorizes reading canonical data / kicking the drawer once."""
-    invoice = await db.invoices.find_one({"id": invoice_id}, {"_id": 0, "id": 1})
+    invoice = await db.invoices.find_one({"id": invoice_id}, {"_id": 0})
     if not invoice:
         raise HTTPException(status_code=404, detail="Invoice not found")
     body = body or {}
@@ -39963,6 +40127,8 @@ async def issue_pos_tokens_for_invoice(invoice_id: str, body: Optional[Dict[str,
     payment_ids = body.get("payment_ids")
     actions = body.get("actions") or ["print_receipt"]
     out = {}
+    if "print_receipt" in actions and (refusal := await billing_tab_sync.receipt_refusal(invoice)):
+        raise HTTPException(status_code=409, detail=refusal)
     if "print_receipt" in actions:
         out["print_receipt_token"] = await _issue_pos_token(
             action="print_receipt", workstation_id=workstation_id, invoice_id=invoice_id, payment_ids=payment_ids,
