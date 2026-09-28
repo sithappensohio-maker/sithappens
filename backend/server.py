@@ -38459,7 +38459,7 @@ async def _verify_and_reconcile_stripe_session(attempt: dict) -> dict:
                 {"id": attempt["id"], "status": {"$nin": list(STRIPE_ATTEMPT_TERMINAL_STATUSES)}},
                 {"$set": {"status": "reconciliation_required", "updated_at": now_iso()}},
             )
-    else:
+    elif session.get("status") != "complete":  # "complete" but unpaid = a payment still clearing (audit #62)
         # Stripe itself confirms no successful payment occurred — safe to expire.
         result = await db.stripe_payment_attempts.find_one_and_update(
             {"id": attempt["id"], "status": "pending"},
@@ -38587,6 +38587,7 @@ async def create_stripe_checkout_session(invoice_id: str, body: StripeCheckoutSe
             success_url=f"{_app_public_url()}/portal?stripe_attempt={attempt_id}&stripe=success",
             cancel_url=f"{_app_public_url()}/portal?stripe_attempt={attempt_id}&stripe=cancel",
             expires_at=int(expires_at.timestamp()),
+            payment_method_types=["card"],  # cards only, like the Shop (Apple/Google Pay are cards) — audit #62
             metadata={
                 "sithappens_attempt_id": attempt_id, "sithappens_invoice_id": invoice_id,
                 "sithappens_client_id": cid,
@@ -38709,6 +38710,7 @@ async def _handle_checkout_session_paid_event(session_obj: dict) -> None:
         await db.stripe_payment_attempts.update_one({"id": attempt["id"]}, {"$set": {"stripe_payment_intent_id": payment_intent_id}})
         attempt["stripe_payment_intent_id"] = payment_intent_id
     if attempt.get("status") in STRIPE_ATTEMPT_TERMINAL_STATUSES:
+        await billing_resolve.paid_after_close(attempt, session_obj)  # paid after it was given up on (audit #62)
         return  # already resolved — monotonic, never regress
     try:
         await _apply_stripe_payment(attempt)

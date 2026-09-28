@@ -152,6 +152,10 @@ async def stuck_payments(limit: int = 100) -> List[dict]:
             code, reason = "missing", "The bill for this payment is missing. Refund it."
         elif tab_sync.has_refund_activity(inv):
             code, reason = "refund", "The bill has a refund on it, so this payment can't be added. Refund it."
+        elif inv.get("stripe_active_attempt_id") != a.get("id") and (
+                not await tab_sync._all_visits_locked(inv) or await tab_sync.bill_needs_rebuild(inv)):
+            code, reason = ("reopened", "A visit on this bill was reopened (or the bill is being updated). Check it out "
+                            "again, then Retry — or Refund.")
         elif _money(inv.get("balance")) < amount - 0.005:
             code, reason = "too_big", f"The bill is now ${_money(inv.get('balance')):.2f}, less than the ${amount:.2f} paid. Refund it, then the customer can pay the new amount."
         else:
@@ -163,11 +167,56 @@ async def stuck_payments(limit: int = 100) -> List[dict]:
             "invoice_number": (a.get("invoice_id") or "")[:8].upper(), "invoice_balance": _money(inv.get("balance")),
             "reason_code": code, "reason": reason,
             "can_retry": code in ("ready", "partly_recorded", "dispute_won"),
-            "can_refund": code in ("ready", "refunding", "missing", "refund", "too_big", "needs_review"),
+            "can_refund": code in ("ready", "refunding", "missing", "refund", "too_big", "needs_review", "reopened"),
             "can_close": code == "dispute_lost",
         })
     # Shop payments the app couldn't record wait here too (audit #62).
     return out + await shop_abandon.stuck_rows(limit)
+
+
+async def paid_after_close(attempt: dict, session_obj: dict) -> None:
+    """Stripe says a bill payment went through after the app had given up on
+    it (a bank payment clearing days later, before bills took cards only —
+    owner decision 2026-09-28, audit #62 follow-up). Never ignore the money:
+    hold the bill for it again and record it. If it can't be recorded (the
+    bill was paid another way meanwhile, or changed), it waits in the stuck
+    list for Retry or Refund."""
+    if attempt.get("status") not in ("expired", "failed", "canceled"):
+        return
+    db = _g("db")
+    pi = session_obj.get("payment_intent")
+    pi = pi.get("id") if isinstance(pi, dict) else pi
+    done = await db.stripe_payment_attempts.update_one(
+        {"id": attempt["id"], "status": attempt.get("status")},
+        {"$set": {"status": "reconciliation_required", "paid_after_close": attempt.get("status"),
+                  "stripe_payment_intent_id": pi or attempt.get("stripe_payment_intent_id"), "updated_at": _g("now_iso")()}})
+    if not done.modified_count:
+        return
+    _g("logger").warning("Bill payment attempt %s was paid after being closed as %s", attempt["id"], attempt.get("status"))
+    if not await _hold_bill_for(attempt):
+        return  # the bill can't take it now: it waits in the stuck list
+    fresh = await db.stripe_payment_attempts.find_one({"id": attempt["id"]}, {"_id": 0})
+    try:
+        await _g("_apply_stripe_payment")(fresh)
+    except HTTPException:
+        pass  # stays in the stuck list: Retry once the bill is fixed, or Refund
+
+
+async def _hold_bill_for(a: dict) -> bool:
+    """A late payment holds its bill again — only if nothing else holds it
+    and the app would take a payment on the bill right now (not reopened,
+    not waiting for its rebuild, no refund on it, in step with the tab).
+    The hold is taken first, so a reopen can't slip in after the check."""
+    db = _g("db")
+    invoice_id, amount_cents = a.get("invoice_id"), int(a.get("amount_cents") or 0)
+    if not await _g("_acquire_stripe_reservation")(invoice_id, a["id"], amount_cents):
+        inv = await db.invoices.find_one({"id": invoice_id}, {"_id": 0, "stripe_active_attempt_id": 1}) or {}
+        return inv.get("stripe_active_attempt_id") == a["id"]   # already ours
+    inv = await db.invoices.find_one({"id": invoice_id}, {"_id": 0}) or {}
+    ok, _code, _why = await tab_sync.payable_now({**inv, "stripe_active_attempt_id": None}, amount_cents / 100.0)
+    if not ok:
+        await _g("_release_stripe_reservation_if_owned")(invoice_id, a["id"])
+    return ok
 
 
 async def retry_payment(attempt_id: str) -> dict:
@@ -191,6 +240,15 @@ async def retry_payment(attempt_id: str) -> dict:
     if state["payment_intent"] and not a.get("stripe_payment_intent_id"):
         await db.stripe_payment_attempts.update_one({"id": attempt_id}, {"$set": {"stripe_payment_intent_id": state["payment_intent"]}})
         a["stripe_payment_intent_id"] = state["payment_intent"]
+    if a.get("paid_after_close") and not finishing:
+        # its hold lapsed when the app gave up on it
+        if not await _hold_bill_for(a):
+            raise HTTPException(status_code=409, detail="This bill can't take the payment right now (a visit on it was reopened, "
+                                                        "or it changed). Check the visit out again, then Retry — or Refund.")
+        again = await db.stripe_payment_attempts.find_one({"id": attempt_id}, {"_id": 0, "status": 1}) or {}
+        if again.get("status") != "reconciliation_required":   # a Refund got there first
+            await _g("_release_stripe_reservation_if_owned")(a.get("invoice_id"), attempt_id)
+            raise HTTPException(status_code=409, detail=MSG_NOT_WAITING)
     try:
         await _g("_apply_stripe_payment")(a)
     except HTTPException as exc:
