@@ -81,6 +81,7 @@ from domains.bookings import guards as booking_guards
 from domains.bookings import spans as booking_spans
 from domains.bookings import group_rank
 from domains.bookings import group_pricing as booking_group_pricing
+from domains.bookings import friends_family
 from domains.school import ownership as school_ownership
 from domains.bookings import late_day as late_day_checkout
 from domains.bookings import care as care_domain
@@ -978,6 +979,7 @@ class BookingGroupIn(BaseModel):
     override_capacity: bool = False
     check_in_now: bool = False
     service_id: Optional[str] = None
+    payer_client_id: Optional[str] = None  # friends & family group: the family paying (domains/bookings/friends_family.py)
 
 class RecurringBookingIn(BaseModel):
     dog_id: str
@@ -4292,7 +4294,7 @@ async def _create_booking_impl(body: BookingIn, user: dict = Depends(get_current
     # book regular services; admin can override by passing the booking through
     # manually with `override_capacity=True` (treated as a force-flag).
     cstat = client.get("client_status") or "active"
-    if cstat in ("prospect", "evaluation_scheduled", "rejected"):
+    if cstat in ("prospect", "evaluation_scheduled", "rejected") and not friends_family.trusted(body.dog_id, cstat):
         # Admin override path: respect explicit override_capacity intent so
         # admin can still schedule the evaluation booking itself.
         if user.get("role") != "admin" or not body.override_capacity:
@@ -4874,9 +4876,9 @@ async def create_booking_group(body: BookingGroupIn, user: dict = Depends(get_cu
         if d.dog_id in seen_ids:
             raise HTTPException(status_code=400, detail="Duplicate dog in group — each dog can only appear once")
         seen_ids.add(d.dog_id)
-    owners = {x.get("owner_id") for x in await db.dogs.find({"id": {"$in": list(seen_ids)}}, {"_id": 0, "owner_id": 1}).to_list(20)}
-    if len(owners - {None, ""}) > 1:  # each family would be billed apart, all at the first family's rates
-        raise HTTPException(status_code=400, detail="These dogs belong to different families. Book each family's dogs on their own booking.")
+    owner_of = {x["id"]: x.get("owner_id") for x in await db.dogs.find({"id": {"$in": list(seen_ids)}}, {"_id": 0, "id": 1, "owner_id": 1}).to_list(20)}
+    # Different families only as a friends & family group, with one family paying (else refused).
+    ff_group = await friends_family.plan(body, user, owner_of) if len(set(owner_of.values()) - {None, ""}) > 1 else None
 
     group_id = str(uuid.uuid4())
     created: List[dict] = []
@@ -4901,7 +4903,7 @@ async def create_booking_group(body: BookingGroupIn, user: dict = Depends(get_cu
 
     # Suppress per-booking admin email; we send ONE summary at the end.
     token = _suppress_admin_booking_email.set(True)
-    group_token = _booking_group_ctx.set(group_id)
+    group_token, ff_token = _booking_group_ctx.set(group_id), friends_family.CTX.set(ff_group)
     try:
         for d in body.dogs:
             # Construct a BookingIn for this dog using shared base + per-dog
@@ -4969,11 +4971,14 @@ async def create_booking_group(body: BookingGroupIn, user: dict = Depends(get_cu
     finally:
         _suppress_admin_booking_email.reset(token)
         _booking_group_ctx.reset(group_token)
+        friends_family.CTX.reset(ff_token)
         if capacity_token is not None:
             _capacity_lock_ctx.reset(capacity_token)
         if group_capacity_owner:
             await _release_capacity_locks(group_capacity_owner, group_capacity_keys)
 
+    if ff_group:
+        await friends_family.stamp(created, ff_group, body.service_type)
     await booking_group_pricing.apply_group_pricing(created, body, group_id)
 
     # ONE summary email for portal-originated group bookings.
@@ -53148,6 +53153,7 @@ PERMISSION_KEYS = (
     "incidents", "care_complete", "booking_edit",
     "payroll", "data_export", "delete_records",
     "messages",
+    "friends_family_bookings",  # book dogs from different families together, one paying (owner only by default)
     "take_payments",  # Payment rebuild Phase 2 — governs BOTH checkout's
                        # (single & group) money-collecting action and the
                        # new invoice top-up endpoint. Defaults True for
@@ -53256,6 +53262,7 @@ ROLE_PERMISSIONS: Dict[str, Dict[str, bool]] = {
     "manager": {
         **_full_perms(),
         "settings": False,           # only the owner touches settings
+        "friends_family_bookings": False,  # the owner's call; grantable
         "payroll": True,
         "delete_records": True,
     },

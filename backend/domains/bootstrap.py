@@ -24,6 +24,7 @@ from domains.pos import services as pos_services
 from domains.bookings import services as booking_services
 from domains.bookings import late_day as late_day_checkout
 from domains.bookings import group_pricing as booking_group_pricing
+from domains.bookings import friends_family
 from domains.bookings import care as care_domain
 from domains.operations import end_of_day as end_of_day_domain
 from domains.school import ownership as school_ownership
@@ -140,6 +141,7 @@ def register_domains(
     shop_checkout_services.configure(server_globals=server_globals)
     late_day_checkout.configure(server_globals=server_globals)
     booking_group_pricing.configure(server_globals=server_globals)
+    friends_family.configure(server_globals=server_globals)
     care_domain.configure(server_globals=server_globals)
     end_of_day_domain.configure(server_globals=server_globals)
     school_ownership.configure(server_globals=server_globals)

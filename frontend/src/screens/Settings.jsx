@@ -1809,6 +1809,7 @@ const PERM_META = [
   { key: "delete_records",   label: "Delete Records",      desc: "Hard-delete clients, dogs, bookings (rarely used)." },
   { key: "messages",         label: "Send Messages",       desc: "Reply in client message threads, broadcast announcements." },
   { key: "take_payments",    label: "Take Payments",       desc: "Collect payment at checkout and record top-up payments against an open invoice." },
+  { key: "friends_family_bookings", label: "Friends & Family Bookings", desc: "Book dogs from different families together on one booking, with one family paying — so they get the multi-dog discount." },
   { key: "view_shop_categories",   label: "View Shop Organization",   desc: "See how Shop products, prepaid-visit packs, and training programs are grouped into categories." },
   { key: "manage_shop_categories", label: "Manage Shop Organization", desc: "Add, rename, and assign items to Shop categories and subcategories." },
   { key: "reorder_shop_categories",label: "Reorder Shop Categories",  desc: "Change the display order of Shop categories, subcategories, and items." },

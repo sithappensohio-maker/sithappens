@@ -32,6 +32,7 @@ const PERM_LABELS = {
   delete_records: "Delete records",
   messages: "Client messages",
   take_payments: "Take payments",
+  friends_family_bookings: "Friends & family bookings (dogs from different families, one paying)",
   view_shop_categories: "Shop org · view",
   manage_shop_categories: "Shop org · manage",
   reorder_shop_categories: "Shop org · reorder",

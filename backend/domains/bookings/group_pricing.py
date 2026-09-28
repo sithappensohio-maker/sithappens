@@ -111,6 +111,7 @@ async def apply_group_pricing(created: List[dict], body: Any, group_id: str) -> 
                     "pickup_cutoff_time": group_cutoff_time if body.service_type == "boarding" else None,
                     "group_dog_index": idx,
                     "group_dog_count": len(created),
+                    "pricing_client_id": client_id_for_quote,  # whose rates priced the group (the payer's, for friends & family)
                     "credit_units_required": row_credits,
                     "created_at": now_iso(),
                 },
