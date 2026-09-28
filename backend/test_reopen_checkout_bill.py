@@ -256,14 +256,16 @@ def test_end_of_day_trusts_the_rebuilt_bill_once_it_is_paid():
 
 def test_the_late_fee_follows_when_the_dog_really_left_not_the_redo():
     now_local = datetime.now(server.BUSINESS_TZ)
-    if now_local.hour == 0 and now_local.minute < 40:
-        pytest.skip("needs 40 minutes of today behind us")
+    if now_local.hour < 3 or (now_local.hour == 3 and now_local.minute < 5):
+        pytest.skip("needs three hours of today behind us")
     pickup = (now_local - timedelta(minutes=30)).strftime("%H:%M")
     with _settings(**{"day_to_day.seasonal.holiday_surcharges": [],
                       "day_to_day.money.late_pickup_fee_per_15min": 5, "day_to_day.money.late_pickup_grace_min": 0,
                       "booking_rules.stay_pricing_enabled": False}), _daycare_service(40.0), _visit() as v:
         bid = v["booking_id"]
-        run(server.db.bookings.update_one({"id": bid}, {"$set": {"pickup_time": pickup}}))
+        # checked in three hours ago, whatever the time of day the test runs
+        came = (now_local - timedelta(hours=3)).astimezone(timezone.utc).isoformat()
+        run(server.db.bookings.update_one({"id": bid}, {"$set": {"pickup_time": pickup, "checked_in_at": came}}))
         _checkout(bid, payment_method="cash", payment_status="unpaid")
         # The dog actually left 10 minutes after pickup; staff redo the checkout now.
         left = (now_local - timedelta(minutes=20)).astimezone(timezone.utc).isoformat()
@@ -522,14 +524,15 @@ def test_a_departure_staff_said_was_a_mistake_is_never_priced_from():
 
 def test_a_checkout_done_by_mistake_is_priced_from_when_the_dog_really_leaves():
     now_local = datetime.now(server.BUSINESS_TZ)
-    if now_local.hour == 0 and now_local.minute < 50:
-        pytest.skip("needs 50 minutes of today behind us")
+    if now_local.hour < 3 or (now_local.hour == 3 and now_local.minute < 5):
+        pytest.skip("needs three hours of today behind us")
     pickup = (now_local - timedelta(minutes=30)).strftime("%H:%M")
     with _settings(**{"day_to_day.seasonal.holiday_surcharges": [],
                       "day_to_day.money.late_pickup_fee_per_15min": 5, "day_to_day.money.late_pickup_grace_min": 0,
                       "booking_rules.stay_pricing_enabled": False}), _daycare_service(40.0), _visit() as v:
         bid = v["booking_id"]
-        run(server.db.bookings.update_one({"id": bid}, {"$set": {"pickup_time": pickup}}))
+        came = (now_local - timedelta(hours=3)).astimezone(timezone.utc).isoformat()
+        run(server.db.bookings.update_one({"id": bid}, {"$set": {"pickup_time": pickup, "checked_in_at": came}}))
         _checkout(bid, payment_method="cash", payment_status="unpaid")
         # checked out by mistake before pickup time; the dog is still here
         mistake = (now_local - timedelta(minutes=40)).astimezone(timezone.utc).isoformat()
