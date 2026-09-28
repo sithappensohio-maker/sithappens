@@ -119,7 +119,8 @@ def test_an_order_for_a_reservation_rings_through_the_register_and_is_delivered(
     assert r.status_code == 200, r.text
     o = r.json()["order"]
     assert o["order_number"] == "HOW-P0001" and o["status"] == "ordered" and o["list_total"] == 60.0
-    assert o["booking_id"] == res["booking_id"] and o["client_id"] == res["client_id"]
+    booked = run(server.db.bookings.find_one({"id": res["booking_id"]}, {"_id": 0}))
+    assert o["booking_id"] == res["booking_id"] and o["client_id"] == booked["client_id"]
     assert o["reservation_date"] == sp["dates"][0] and o["print_status"] == "pending"
 
     # the roster shows who has ordered what

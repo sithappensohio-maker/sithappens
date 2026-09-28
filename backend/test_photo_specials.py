@@ -401,11 +401,16 @@ def test_the_honeypot_silently_drops_a_bot():
 
 def test_a_new_person_becomes_a_walk_in_owner_with_a_real_dog():
     sp = _special()
-    res = _reserve(sp, email="brand.new@example.com", dog="Tank")["reservation"]
+    res = _booking(_reserve(sp, email="brand.new@example.com", dog="Tank")["reservation"])
     client = run(server.db.clients.find_one({"id": res["client_id"]}, {"_id": 0}))
     dog = run(server.db.dogs.find_one({"id": res["dog_id"]}, {"_id": 0}))
     assert client["client_status"] == "walk_in", "reuses the existing walk-in mechanism"
     assert dog["owner_id"] == client["id"] and dog["name"] == "Tank"
+
+
+def _booking(res):
+    """The booking behind a public reply (which carries only the slot)."""
+    return run(server.db.bookings.find_one({"id": res["booking_id"]}, {"_id": 0}))
 
 
 def test_an_existing_client_is_reused_rather_than_duplicated():
@@ -416,14 +421,16 @@ def test_an_existing_client_is_reused_rather_than_duplicated():
         "id": cid, "name": "Regular Customer", "email": email, "phone": "614-555-0123",
         "client_status": "active", "created_at": server.now_iso(),
     }))
-    res = _reserve(sp, email=email)["reservation"]
+    res = _booking(_reserve(sp, email=email)["reservation"])
     assert res["client_id"] == cid, "matched by email — no duplicate client"
     after = run(server.db.clients.find_one({"id": cid}, {"_id": 0}))
     assert after["client_status"] == "active", "an existing client is not demoted to walk_in"
     assert after["name"] == "Regular Customer", "existing details are never overwritten"
 
 
-def test_an_existing_client_is_also_found_by_phone():
+def test_a_phone_number_alone_never_puts_a_booking_on_that_family():
+    # Audit #5: a mistyped or shared number would put a stranger's booking
+    # and dog on this family's account. Only the email picks a family.
     sp = _special()
     cid = str(uuid.uuid4())
     phone = "614-555-0777"
@@ -431,8 +438,26 @@ def test_an_existing_client_is_also_found_by_phone():
         "id": cid, "name": "Phone Only", "email": "", "phone": phone,
         "client_status": "active", "created_at": server.now_iso(),
     }))
-    res = _reserve(sp, email=f"new{uuid.uuid4().hex[:6]}@example.com", phone=phone)["reservation"]
-    assert res["client_id"] == cid
+    typed = f"new{uuid.uuid4().hex[:6]}@example.com"
+    res = _booking(_reserve(sp, email=typed, phone=phone, dog="Stranger Dog")["reservation"])
+    assert res["client_id"] != cid, "a new walk-in, not the family with that number"
+    walk_in = run(server.db.clients.find_one({"id": res["client_id"]}, {"_id": 0}))
+    assert walk_in["email"] == typed and walk_in["client_status"] == "walk_in"
+    assert run(server.db.dogs.count_documents({"owner_id": cid})) == 0, "no stranger's dog on the family"
+
+
+def test_the_reply_never_names_the_family_or_its_records():
+    sp = _special()
+    email = f"known{uuid.uuid4().hex[:6]}@example.com"
+    run(server.db.clients.insert_one({
+        "id": str(uuid.uuid4()), "name": "The Rivera Family", "email": email, "client_status": "active",
+        "created_at": server.now_iso(),
+    }))
+    key = uuid.uuid4().hex
+    for res in (_reserve(sp, email=email, idempotency_key=key)["reservation"],
+                _reserve(sp, email=email, idempotency_key=key)["reservation"]):   # and a retried form
+        assert set(res) == {"booking_id", "date", "time", "dog_name", "status"}
+        assert "Rivera" not in str(res)
 
 
 def test_the_public_response_cannot_be_used_to_discover_who_is_a_customer():
@@ -449,11 +474,26 @@ def test_the_public_response_cannot_be_used_to_discover_who_is_a_customer():
         assert field not in known, f"{field} would reveal whether the address is on file"
 
 
+def test_the_reply_repeats_the_dog_name_as_typed_whether_or_not_the_address_is_on_file():
+    sp = _special()
+    email = f"rivera{uuid.uuid4().hex[:6]}@example.com"
+    cid = str(uuid.uuid4())
+    run(server.db.clients.insert_one({"id": cid, "name": "The Rivera Family", "email": email,
+                                      "client_status": "active", "created_at": server.now_iso()}))
+    run(server.db.dogs.insert_one({"id": str(uuid.uuid4()), "owner_id": cid, "name": "Bella", "vaccines": {}}))
+    key = uuid.uuid4().hex
+    known = _reserve(sp, time="09:00", email=email, dog="bELLA", idempotency_key=key)["reservation"]
+    retried = _reserve(sp, time="09:00", email=email, dog="bELLA", idempotency_key=key)["reservation"]
+    stranger = _reserve(sp, time="09:15", email=f"nobody{uuid.uuid4().hex[:6]}@example.com", dog="bELLA")["reservation"]
+    assert known["dog_name"] == retried["dog_name"] == stranger["dog_name"] == "bELLA"
+    assert _booking(known)["dog_name"] == "Bella", "the booking itself still names the family's dog"
+
+
 def test_a_second_dog_for_the_same_person_takes_its_own_slot():
     sp = _special()
     email = f"two.dogs{uuid.uuid4().hex[:6]}@example.com"
-    a = _reserve(sp, time="09:00", email=email, dog="Bella")["reservation"]
-    b = _reserve(sp, time="09:15", email=email, dog="Max")["reservation"]
+    a = _booking(_reserve(sp, time="09:00", email=email, dog="Bella")["reservation"])
+    b = _booking(_reserve(sp, time="09:15", email=email, dog="Max")["reservation"])
     assert a["client_id"] == b["client_id"], "one owner"
     assert a["dog_id"] != b["dog_id"], "two dogs, two records"
     assert a["time"] != b["time"], "one dog per appointment"
@@ -472,14 +512,14 @@ def test_the_exception_is_explicit_and_no_vaccine_record_is_fabricated():
     res = _reserve(sp)["reservation"]
     b = run(server.db.bookings.find_one({"id": res["booking_id"]}, {"_id": 0}))
     assert b["vaccine_booking_exception"] == "photo_special", "the exception must be visible in the data"
-    dog = run(server.db.dogs.find_one({"id": res["dog_id"]}, {"_id": 0}))
+    dog = run(server.db.dogs.find_one({"id": b["dog_id"]}, {"_id": 0}))
     assert dog["vaccines"] == {}, "the dog's real vaccine state is left exactly as it is"
 
 
 def test_front_desk_can_still_see_the_dogs_real_vaccine_state():
     sp = _special()
     res = _reserve(sp)["reservation"]
-    assert res["vaccines_on_file"] is False, "informational, and honest"
+    assert "vaccines_on_file" not in res, "the public reply is only the slot"
     roster = run(server.admin_photo_special_reservations(sp["id"], DAY_1, ADMIN))
     row = next(r for r in roster["reservations"] if r["booking_id"] == res["booking_id"])
     assert row["vaccines_on_file"] is False

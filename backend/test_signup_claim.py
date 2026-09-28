@@ -14,7 +14,7 @@ take over that family's account. These pin the fix:
     has a login all behave exactly as before;
   * the claim email — and a forgot-password reset — go out even during
     quiet hours (both have someone waiting on them);
-  * a Photo Special reservation never plants a typed email on a phone match.
+  * a Photo Special reservation never lands on a family matched by phone alone.
 """
 import contextlib
 import uuid
@@ -292,7 +292,7 @@ def test_other_claim_emails_still_respect_quiet_hours():
 
 # ------------------------------------------------------------ Photo Specials
 
-def test_a_photo_special_phone_match_never_plants_the_typed_email():
+def test_a_photo_special_phone_match_never_touches_that_family():
     import test_photo_specials as ps
 
     sp = ps._special()
@@ -309,13 +309,15 @@ def test_a_photo_special_phone_match_never_plants_the_typed_email():
     email_service._dispatch = capture
     try:
         res = ps._reserve(sp, email=typed, phone=phone)["reservation"]
+        booked = run(server.db.bookings.find_one({"id": res["booking_id"]}, {"_id": 0}))
     finally:
         email_service._dispatch = orig
         run(server.db.bookings.delete_many({"photo_special_id": sp["id"]}))
         run(server.db.dogs.delete_many({"owner_id": client["id"]}))
         run(server.db.photo_specials.delete_one({"id": sp["id"]}))
-    assert res["client_id"] == client["id"], "still reuses the phone-matched client"
-    assert run(server.db.clients.find_one({"id": client["id"]}))["email"] == "", "typed email not saved"
-    assert [to for _, to in sent] == [typed], "the confirmation still reaches the person who booked"
-    # …so signing up with that address can't reach this family's record.
-    assert run(server.db.clients.find_one({"email": typed})) is None
+    assert booked and booked["client_id"] != client["id"], "a phone number alone never picks the family (audit #5)"
+    assert run(server.db.clients.find_one({"id": client["id"]}))["email"] == "", "typed email not saved on it"
+    assert [to for _, to in sent] == [typed], "the confirmation reaches the person who booked"
+    # …so signing up with that address can only reach the booker's own new record.
+    owner = run(server.db.clients.find_one({"email": typed}, {"_id": 0}))
+    assert owner and owner["id"] != client["id"] and owner["client_status"] == "walk_in"

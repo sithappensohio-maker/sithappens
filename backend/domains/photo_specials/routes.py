@@ -411,27 +411,22 @@ def register_photo_special_routes(
         """Reuse the person if we can safely recognise them; otherwise create a
         walk-in owner and dog.
 
-        Matching is by email first, then by digits-only phone — the same rule
-        the Meet & Greet request already uses. Existing records are never
+        Matching is by email only — the same rule the Meet & Greet request
+        uses. A phone number alone never picks a family (audit #5): a
+        mistyped or shared number would put a stranger's booking and dog on
+        that family's account and send the confirmation to them. Someone
+        whose email isn't on file is a new walk-in; staff can spot a repeat
+        customer by the phone number. Existing records are never
         overwritten: a blank phone may be filled in, nothing else is touched.
-        A typed email is NEVER written onto someone else's record: the portal
-        sends its sign-up link to the email on file, so planting an address on
-        a phone-matched client would hand that stranger the account.
-        Crucially the caller's response is identical either way, so this
-        endpoint can never be used to discover whether an address is on file.
+        The caller's response is identical either way, so this endpoint can
+        never be used to discover whether an address is on file.
         """
         email = str(body.email).strip().lower()
         full_name = " ".join(p for p in [body.first_name.strip(), body.last_name.strip()] if p).strip()
-        phone_digits = _digits(body.phone)
 
         client = await db.clients.find_one(
             {"email": {"$regex": f"^{re.escape(email)}$", "$options": "i"}}, {"_id": 0}
         )
-        if not client and phone_digits:
-            for cand in await db.clients.find({}, {"_id": 0, "id": 1, "name": 1, "phone": 1, "email": 1}).to_list(5000):
-                if _digits(cand.get("phone")) and _digits(cand.get("phone")) == phone_digits:
-                    client = cand
-                    break
 
         if client:
             fill: Dict[str, Any] = {}
@@ -499,6 +494,14 @@ def register_photo_special_routes(
             "vaccines_on_file": bool(vax),
             "vaccine_exception": b.get("vaccine_booking_exception"),
         }
+
+    def _public_reservation(b: dict, typed_dog_name: str) -> dict:
+        """What the person who booked sees: their slot — never the family,
+        record ids or paperwork the booking was matched to (audit #5). The dog
+        is named as they typed it: the matched record's spelling would tell a
+        stranger the address is on file, and what that family's dog is called."""
+        return {"booking_id": b.get("id"), "date": b.get("date"), "time": b.get("time"),
+                "dog_name": typed_dog_name, "status": b.get("status")}
 
     def _special_fields(body: PhotoSpecialIn, existing: Optional[dict]) -> dict:
         """The saved shape of a special. Packages are normalised so each keeps
@@ -569,8 +572,7 @@ def register_photo_special_routes(
                 {"photo_special_id": sp["id"], "reservation_idempotency_key": body.idempotency_key}, {"_id": 0}
             )
             if prior:
-                dog = await db.dogs.find_one({"id": prior.get("dog_id")}, {"_id": 0}) if prior.get("dog_id") else None
-                return {"ok": True, "reservation": _reservation_row(prior, dog)}
+                return {"ok": True, "reservation": _public_reservation(prior, body.dog_name.strip())}
 
         if not sp.get("booking_open"):
             raise BookingBlocked(
@@ -621,13 +623,13 @@ def register_photo_special_routes(
         booking.pop("_id", None)
 
         try:
-            # No email on file: confirm to the address typed on this form, without saving it.
-            to_client = client if (client.get("email") or "").strip() else {**client, "email": str(body.email).strip().lower()}
-            await notify_client_booking_approved(booking, to_client)
+            # The confirmation always goes to the address typed on this form —
+            # the person who booked (it is the one on file when it matched).
+            await notify_client_booking_approved(booking, {**client, "email": str(body.email).strip().lower()})
         except Exception as e:
             logger.warning("photo_specials: confirmation email failed for %s: %s", booking["id"], e)
 
-        return {"ok": True, "reservation": _reservation_row(booking, dog)}
+        return {"ok": True, "reservation": _public_reservation(booking, body.dog_name.strip())}
 
     # ------------------------------------------------------------------ admin
 
