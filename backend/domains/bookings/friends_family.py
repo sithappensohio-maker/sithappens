@@ -147,7 +147,8 @@ def trusted(dog_id: Optional[str], client_status: Optional[str]) -> bool:
     return bool(group and dog_id in group["friends"] and client_status != "rejected")
 
 
-async def stamp(created: List[dict], group: Dict[str, Any], service_type: str) -> None:
+async def stamp(created: List[dict], group: Dict[str, Any], service_type: str,
+                note: str = "Nothing was booked for any dog yet.") -> None:
     """Record the payer on every dog's row, and price a friend's add-ons at
     the payer's rates (the booking itself is priced at the payer's rates by
     the group pricing, which quotes the first — the payer's — dog).
@@ -169,7 +170,7 @@ async def stamp(created: List[dict], group: Dict[str, Any], service_type: str) -
     except Exception as exc:
         await group_pricing.undo_rows(created)
         if isinstance(exc, HTTPException) and isinstance(exc.detail, str):
-            exc.detail = f"{exc.detail} Nothing was booked for any dog yet."
+            exc.detail = f"{exc.detail} {note}"
             raise
         raise HTTPException(status_code=500, detail="These dogs couldn't be booked together, so nothing was booked. Please try again.")
 
@@ -225,6 +226,36 @@ def _still_to_come(row: dict, today: str, stale: str, leaving: Optional[str]) ->
     if row.get("status") in _ENDED or row.get("checked_out_at"):
         return False
     return bool(row.get("checked_in_at")) or (row.get("date") or "") >= today
+
+
+_HOLD = ("checkout_in_progress", "checkout_operation_id", "checkout_started_at")
+
+
+async def hold(rows: List[dict]) -> tuple:
+    """Hold these dogs' bookings the way a checkout does, so no checkout of
+    one can start (or roll back over them) while the booking is changed.
+    Returns (operation id, the rows as they are now) — or (None, []) with
+    nothing held, if one is being checked out or has changed since read."""
+    db, stale, op = _g("db"), _stale_before(), str(uuid.uuid4())
+    held: List[dict] = []
+    for r in rows:
+        got = await db.bookings.find_one_and_update(
+            {"$and": [{"id": r["id"], "status": r.get("status")}, {"checked_out_at": {"$in": [None, ""]}},
+                      {"$or": [{"checkout_in_progress": {"$exists": False}}, {"checkout_in_progress": False},
+                               {"checkout_started_at": {"$lt": stale}}]}]},
+            {"$set": {"checkout_in_progress": True, "checkout_operation_id": op, "checkout_started_at": _g("now_iso")()}},
+            projection={"_id": 0}, return_document=True)
+        if not got:
+            await let_go(op, [h["id"] for h in held])
+            return None, []
+        held.append(got)
+    return op, held
+
+
+async def let_go(op: Optional[str], ids: List[str]) -> None:
+    if op and ids:
+        await _g("db").bookings.update_many({"id": {"$in": ids}, "checkout_operation_id": op},
+                                            {"$unset": {k: "" for k in _HOLD}})
 
 
 async def waiting_for_group_bill(client_id: Optional[str]) -> bool:
@@ -289,6 +320,39 @@ async def _with_payer_lock(group_id: str, user: dict, *, force: bool = False) ->
         return await close_group_bill(group_id, user, force=force)
     finally:
         await tab_sync.release_client_guard(guard)
+
+
+async def after_cancel(booking: dict, user: dict) -> Optional[dict]:
+    """A dog of a friends & family group was cancelled (taken out of the
+    booking); the cancel holds the payer's money lock. Once only the paying
+    family's own dogs are left, and none of the group has gone home yet, it
+    is the family's own booking again: they pay for their dogs the usual way
+    (at the desk, with credits). Then the group's bill stops waiting for the
+    cancelled dog."""
+    group_id = booking.get("group_id")
+    if not group_id:
+        return None
+    db = _g("db")
+    rows = await db.bookings.find({"group_id": group_id}, {"_id": 0}).to_list(100)
+    active = [r for r in rows if r.get("status") not in ("cancelled", "canceled", "rejected")]
+    payer, stale = payer_id(booking), _stale_before()
+    underway = any(r.get("checked_out_at") or r.get("status") == "completed" or r.get("group_bill_pending")
+                   or r.get("group_bill_claim") or (r.get("checkout_in_progress") and (r.get("checkout_started_at") or "") > stale)
+                   for r in rows)
+    if active and not underway and all(r.get("client_id") == payer for r in active):
+        # All or nothing: held first, so a checkout starting now can't roll back over one of them.
+        op, held = await hold(active)
+        try:
+            for r in held:
+                ps = r.get("pricing_snapshot")
+                count = ({"pricing_snapshot.group_dog_count": len(held)} if isinstance(ps, dict)
+                         else {"pricing_snapshot": {"group_dog_count": len(held), "group_dog_index": 0}})
+                await db.bookings.update_one(
+                    {"id": r["id"], "checkout_operation_id": op, "status": r.get("status")},
+                    {"$set": count, "$unset": {"bill_to_client_id": "", "bill_to_client_name": "", "group_kind": ""}})
+        finally:
+            await let_go(op, [r["id"] for r in held])
+    return await close_after_cancel(group_id, user)
 
 
 async def close_after_cancel(group_id: Optional[str], user: dict) -> Optional[dict]:

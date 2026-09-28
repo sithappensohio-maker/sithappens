@@ -5787,7 +5787,7 @@ async def _cancel_booking_impl(booking_id: str, forfeit: bool, user: dict, undo_
                 await db.clients.update_one({"id": booking["client_id"]}, {"$inc": {balance_field: refund}})
                 await _restore_credit_lots(booking.get("credit_lot_redemptions") or booking.get("credit_lot_ids") or [], refund)
     if booking.get("bill_to_client_id"):  # the last dog to come may have been this one
-        await friends_family.close_after_cancel(booking.get("group_id"), user)
+        await friends_family.after_cancel(booking, user)
     return {"ok": True, "forfeit": forfeit, "cancellation_fee": update_payload.get("cancellation_fee", 0)}
 
 async def availability(date_str: str, dog_id: str, user: dict = Depends(get_current_user)):
@@ -9276,6 +9276,7 @@ async def check_out_group(
                             {"checkout_in_progress": False},
                             {"checkout_started_at": {"$lt": stale_lock_before}},
                         ]},
+                        {"bill_to_client_id": {"$in": [None, ""]}},  # (a friends & family dog leaves its own way)
                     ]
                 },
                 {"$set": {
@@ -9567,6 +9568,7 @@ async def _check_out_endpoint_impl(
                     {"checkout_in_progress": False},
                     {"checkout_started_at": {"$lt": stale_lock_before}},
                 ]},
+                {"bill_to_client_id": {"$nin": [None, ""]} if ff_row else {"$in": [None, ""]}},  # (still what decided the path)
             ]
         },
         {"$set": {
@@ -9585,6 +9587,8 @@ async def _check_out_endpoint_impl(
             raise HTTPException(status_code=409, detail="This booking has already been checked out.")
         if not current.get("checked_in_at"):
             raise HTTPException(status_code=409, detail="Check the dog in before completing checkout.")
+        if bool(current.get("bill_to_client_id")) != ff_row:
+            raise HTTPException(status_code=409, detail="This booking was just changed. Refresh and try again.")
         raise HTTPException(status_code=409, detail="Checkout is already in progress. Wait a moment and refresh.")
 
     # Operational lock fields are never part of the business record snapshot.
