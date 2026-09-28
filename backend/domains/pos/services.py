@@ -14,6 +14,7 @@ from fastapi import HTTPException
 from pydantic import BaseModel, Field
 
 import sales_tax_policy
+from domains.bookings import friends_family
 from domains.gift_cards import services as gift_cards_services
 
 _db = None
@@ -302,14 +303,14 @@ async def ring_pickup_merchandise(booking: dict, body, user: dict) -> Optional[d
         method = "other"   # a bank transfer is a real tender the till calls "other"
 
     priced, _ = await price_pos_cart(
-        lines, None, can_price=bool(_perms_for_fn(user).get("pricing")), client_id=booking.get("client_id"))
+        lines, None, can_price=bool(_perms_for_fn(user).get("pricing")), client_id=friends_family.payer_id(booking))
     total = round(float(priced["total"]), 2)
     if total <= 0:
         return None
 
     sale = await create_sale(
         _sale_model(
-            lines=lines, client_id=booking.get("client_id"),
+            lines=lines, client_id=friends_family.payer_id(booking),  # the payer, on a friends & family visit
             # Cash is tendered at exactly the merchandise total: this record
             # owes no change of its own, because the desk settles the whole
             # pickup — stay and goods — in one go at the counter.

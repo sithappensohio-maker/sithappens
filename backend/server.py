@@ -3395,7 +3395,7 @@ async def _boarding_auto_base(booking: dict, settings: dict) -> float:
         booking.get("date"), booking.get("end_date"), pickup_clock,
         legacy_minimum=1, cutoff_time=cutoff_time,
     )
-    fee = await _boarding_late_pickup_daycare_fee(booking.get("client_id"), pickup_clock, cutoff_time)
+    fee = await _boarding_late_pickup_daycare_fee(friends_family.payer_id(booking), pickup_clock, cutoff_time)
     return round((unit_rate * units + float(fee.get("amount") or 0)) * _group_row_price_factor(booking), 2)
 
 
@@ -6326,6 +6326,9 @@ async def _completed_booking_count_for_client(client_id: str, *, exclude_id: str
         "client_id": client_id,
         "status": "completed",
         "checked_out_at": {"$ne": None, "$exists": True},
+        # Visits the family paid for itself — one another family paid for
+        # (friends & family) earns no referral, and must not use up the first.
+        "bill_to_client_id": {"$in": [None, "", client_id]},
     }
     if exclude_id:
         filt["id"] = {"$ne": exclude_id}
@@ -7349,7 +7352,7 @@ async def _apply_booking_partial_payment(
     """Wire a partial / over / exact payment into the ledger + client balance.
     Always writes TWO rows (the charge and the payment) so the ledger reads
     naturally; the client's balance moves by the NET delta."""
-    client_id = booking.get("client_id") or ""
+    client_id = friends_family.payer_id(booking) or ""  # the payer's tab on a friends & family visit
     if not client_id:
         return
     delta = round(total_owed - paid_now, 2)  # what STAYS on the tab
@@ -7649,8 +7652,8 @@ async def _create_invoice_for_bookings(
 
     invoice = {
         "id": existing["id"] if existing else str(uuid.uuid4()),
-        "client_id": first.get("client_id"),
-        "client_name": first.get("client_name") or "",
+        "client_id": friends_family.payer_id(first),  # the payer's bill on a friends & family visit
+        "client_name": first.get("bill_to_client_name") or first.get("client_name") or "",
         "dog_ids": dog_ids,
         "dog_names": dog_names,
         "booking_ids": booking_ids,
@@ -7710,7 +7713,7 @@ async def _write_checkout_payment_rows(
         credit_value = float(b.get("credit_value") or 0)
         if credit_value > 0.005:
             await _insert_payment_row({
-                "id": str(uuid.uuid4()), "invoice_id": invoice_id, "client_id": b.get("client_id"),
+                "id": str(uuid.uuid4()), "invoice_id": invoice_id, "client_id": friends_family.payer_id(b),
                 "amount": round(credit_value, 2), "method": "credits", "is_credit": True,
                 "date": row_day, "employee_id": user.get("id") if user else None,
                 "employee_name": (user.get("name") or user.get("email")) if user else None,
@@ -7743,7 +7746,7 @@ async def _write_checkout_payment_rows(
             # only tendered_amount/change_given are single-booking-only.
             row_notes = payment_notes.strip() if (mapped_method == "other" and payment_notes) else ""
             await _insert_payment_row({
-                "id": str(uuid.uuid4()), "invoice_id": invoice_id, "client_id": b.get("client_id"),
+                "id": str(uuid.uuid4()), "invoice_id": invoice_id, "client_id": friends_family.payer_id(b),
                 "amount": round(cash_amount, 2), "method": mapped_method,
                 "is_credit": False, "date": row_day, "employee_id": user.get("id") if user else None,
                 "employee_name": (user.get("name") or user.get("email")) if user else None,
@@ -8974,7 +8977,7 @@ async def _checkout_financial_snapshot(client_id: Optional[str]) -> Dict[str, An
         {"client_id": client_id},
         {"_id": 0, "id": 1, "qty_remaining": 1, "last_redeemed_at": 1},
     ).to_list(length=10000)
-    return {"client": client, "lots": lots}
+    return {"client": client, "lots": lots, "client_id": client_id}  # the rollback restores exactly this family
 
 
 async def _rollback_checkout_finances(
@@ -9008,7 +9011,9 @@ async def _rollback_checkout_finances(
     except Exception as exc:
         logger.critical("checkout rollback could not restore booking %s: %s", booking_id, exc)
 
-    client_id = original_booking.get("client_id")
+    # The family that was saved — the payer on a friends & family visit, never
+    # the dog's own family by assumption (that wrote the payer's money onto it).
+    client_id = snapshot.get("client_id") or original_booking.get("client_id")
     client_before = snapshot.get("client")
     if client_id and client_before is not None:
         set_fields = {field: client_before[field] for field in CHECKOUT_CLIENT_MONEY_FIELDS if field in client_before}
@@ -9076,7 +9081,7 @@ async def _refresh_booking_price_for_current_override(booking: Dict[str, Any]) -
     itself — call sites decide whether/how to persist the refreshed values."""
     if booking.get("actual_price"):
         return booking  # already charged — never touch a completed checkout's numbers
-    client_id = booking.get("client_id")
+    client_id = friends_family.payer_id(booking)  # the payer's rates on a friends & family visit
     ps = booking.get("pricing_snapshot") or {}
     service_id = ps.get("service_id") or booking.get("service_id")
     if not client_id or not service_id:
@@ -9563,8 +9568,8 @@ async def _check_out_endpoint_impl(
 
     # Serialize money changes per client. Without this, a failed checkout could
     # restore a client snapshot over a second successful checkout for another
-    # dog in the same household.
-    client_id = original_booking.get("client_id")
+    # dog in the same household. On a friends & family visit that's the payer.
+    client_id = friends_family.payer_id(original_booking)
     client_lock_acquired = False
     if client_id:
         locked_client = await db.clients.find_one_and_update(
@@ -9602,7 +9607,7 @@ async def _check_out_endpoint_impl(
     snapshot: Dict[str, Any] = {"client": None, "lots": []}
     token = _checkout_operation_id_ctx.set(operation_id)
     try:
-        snapshot = await _checkout_financial_snapshot(original_booking.get("client_id"))
+        snapshot = await _checkout_financial_snapshot(client_id)
         # Catch the most common failure before any credit mutation.  Credits-only
         # checkouts remain allowed without opening the cash drawer.
         might_collect_money = (
@@ -9733,6 +9738,9 @@ async def _check_out_locked(
 
     had_credit = bool(booking.get("credit_value")) and not booking.get("actual_price")
     use_credits = bool(body.use_credits)
+    payer = friends_family.payer_id(booking)  # who pays — a friends & family group's payer; every price and charge below
+    if payer != booking.get("client_id"):
+        use_credits = False  # no prepaid credits on a friends & family visit (owner, first release)
 
     # Manual price override audit stamp — who changed the price, from what,
     # to what, and why. The override itself has always won (see below); this
@@ -9771,7 +9779,7 @@ async def _check_out_locked(
         if default_svc:
             list_price = float(default_svc.get("base_price") or 0)
             pricing = await resolve_client_price(
-                booking.get("client_id"),
+                payer,
                 "service",
                 default_svc.get("id") or "",
                 list_price,
@@ -9797,7 +9805,7 @@ async def _check_out_locked(
                         cutoff_time=cutoff_time,
                     )
                     fee = await _boarding_late_pickup_daycare_fee(
-                        booking.get("client_id"), pickup_clock, cutoff_time,
+                        payer, pickup_clock, cutoff_time,
                     )
                     return round(unit_price * units + float(fee.get("amount") or 0), 2)
                 ci = booking.get("checked_in_at")
@@ -9910,7 +9918,7 @@ async def _check_out_locked(
                 fee_cutoff = ps_row.get("pickup_cutoff_time") or _boarding_full_day_cutoff_from_rules(settings.get("booking_rules") or {})
                 fee_pickup = booking.get("pickup_time") or fee_cutoff
                 late_fee = await _boarding_late_pickup_daycare_fee(
-                    booking.get("client_id"), fee_pickup, fee_cutoff,
+                    payer, fee_pickup, fee_cutoff,
                 )
                 late_fee_cash = round(float(late_fee.get("amount") or 0) * _group_row_price_factor(booking), 2)
             if credit_shortfall <= 0.0001 and late_fee_cash <= 0.0001:
@@ -9935,7 +9943,7 @@ async def _check_out_locked(
                 unit_rate = float((booking.get("pricing_snapshot") or {}).get("unit_price") or booking.get("unit_price") or 0)
                 if unit_rate <= 0:
                     q = await _quote_base_service_price(
-                        client_id=booking.get("client_id"),
+                        client_id=payer,
                         service_type=svc_type,
                         start_date=booking.get("date"),
                         end_date=booking.get("end_date"),
@@ -10111,7 +10119,8 @@ async def _check_out_locked(
         pre_discount = booking.get("multi_dog_discount") or {}
         extra_credit_units_per_night = 0.5 if (ps.get("group_dog_index") not in (None, 0) or pre_discount.get("pre_applied")) else 1.0
         extra_credit_need = round(float(extra_nights) * extra_credit_units_per_night, 2)
-        client_doc = await db.clients.find_one({"id": booking["client_id"]}, {"_id": 0})
+        # No prepaid credits on a friends & family visit.
+        client_doc = await db.clients.find_one({"id": booking["client_id"]}, {"_id": 0}) if payer == booking.get("client_id") else None
         if body.extra_nights_use_credits and client_doc:
             available = float(client_doc.get("boarding_credits") or 0)
             extra_credits_used = round(min(extra_credit_need, available), 2)
@@ -10158,7 +10167,7 @@ async def _check_out_locked(
                 rate_source = "booking_snapshot"
                 if per_night <= 0:
                     quote = await _quote_base_service_price(
-                        client_id=booking.get("client_id"),
+                        client_id=payer,
                         service_type="boarding",
                         start_date=booking.get("date"),
                         end_date=booking.get("end_date"),
@@ -10450,7 +10459,7 @@ async def _check_out_locked(
                 try:
                     if not waiting:
                         asyncio.create_task(_maybe_auto_email_receipt(
-                            "invoice", invoice["id"], booking.get("client_id"),
+                            "invoice", invoice["id"], invoice.get("client_id"),  # the bill's family: the payer
                             claim_key=f"{invoice['id']}:{invoice['rebuilt_at']}" if invoice.get("rebuilt_at") else None))
                 except Exception as exc:
                     logger.warning("auto-email receipt spawn failed for booking %s: %s", booking_id, exc)
@@ -10462,7 +10471,7 @@ async def _check_out_locked(
     # Guarded by referrals collection so it only ever fires once per referred client.
     try:
         client_id = booking.get("client_id")
-        if client_id:
+        if client_id and payer == client_id:  # a visit someone else paid for earns no referral reward (owner)
             client = await db.clients.find_one({"id": client_id}, {"_id": 0})
             ref_code = (client or {}).get("referred_by_code") or ""
             ref_code = ref_code.upper().strip()

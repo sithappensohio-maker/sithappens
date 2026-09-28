@@ -40,6 +40,7 @@ from typing import Any, Dict, List, Optional
 from fastapi import Depends, HTTPException
 from pydantic import BaseModel
 
+from domains.bookings import friends_family
 from domains.bookings import reopen as booking_reopen
 from domains.bookings.blocks import BookingBlocked, pretty_date
 
@@ -234,7 +235,7 @@ async def boarding_fields(booking: dict, *, today: str, ts: str, original: Optio
     now_clock = _now_clock()
     visit_day = str(booking.get("date"))[:10]
     q = await _g("_quote_base_service_price")(
-        client_id=booking.get("client_id"), service_type="boarding",
+        client_id=friends_family.payer_id(booking), service_type="boarding",  # the payer's rates
         start_date=visit_day, end_date=today, pickup_time=now_clock,
         pickup_cutoff_time=cutoff, service_id=svc.get("id"), legacy_boarding_minimum=1,
     )

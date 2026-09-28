@@ -78,9 +78,14 @@ async def plan(body: Any, user: dict, owner_of: Dict[str, Optional[str]]) -> Dic
     return {"payer": payer, "friends": {d.dog_id for d in body.dogs if owner_of.get(d.dog_id) != payer_id}}
 
 
-def pricing_client_id(booking: dict) -> Optional[str]:
-    """Whose rates price this row: the payer's on a friends & family group."""
+def payer_id(booking: dict) -> Optional[str]:
+    """The family whose money this row moves — its rates, its tab, its bill,
+    its receipts: the payer on a friends & family group, else the dog's own
+    family. Every money path reads it through here."""
     return booking.get("bill_to_client_id") or booking.get("client_id")
+
+
+pricing_client_id = payer_id   # whose rates price the row — the same family
 
 
 # What the friend's family never sees of its dog's visit: anything about the
