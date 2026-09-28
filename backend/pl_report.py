@@ -189,28 +189,10 @@ async def _compute_payroll_for_range(db, start_date: str, end_date: str) -> Dict
 
 
 def _cash_received_on_row(row: dict) -> float:
-    """What a retail row actually put in the till.
-
-    A gift card pays with money the business already took when the CARD was
-    sold, so the redeemed slice is not new cash — counting it again makes
-    this block disagree with the drawer it exists to explain.
-
-    The row stores `gift_card_funded`, the PRE-TAX slice the card paid for.
-    The card also paid that slice's sales tax, so scale back up to the real
-    tender before subtracting it.
-    """
-    amount = float(row.get("amount") or 0)
-    funded = float(row.get("gift_card_funded") or 0)
-    if abs(funded) < 0.005:
-        return round(amount, 2)          # refunds keep their sign
-    if abs(amount) < 0.005:
-        return 0.0                       # a $0 row put nothing in (or took nothing out of) the till
-    # A void or return of a card-paid sale carries a NEGATIVE funded slice:
-    # that money went back on the card, not out of the till.
-    pre_tax = amount - float(row.get("tax_amount") or 0)
-    tender = (funded * amount / pre_tax) if abs(pre_tax) > 0.005 else funded
-    left = amount - tender
-    return round(max(0.0, left) if amount >= 0 else min(0.0, left), 2)
+    """What a retail row actually put in the till — the one rule lives with
+    the gift cards, so every "cash collected" figure agrees (audit #72)."""
+    from domains.gift_cards.services import cash_received_on_row
+    return cash_received_on_row(row)
 
 
 async def build_pl_data(db, start_date: str, end_date: str) -> Dict[str, Any]:
@@ -462,7 +444,7 @@ async def build_pl_data(db, start_date: str, end_date: str) -> Dict[str, Any]:
         prog_name = desc.replace("Training Program · ", "").strip() or "Training Program"
         b = training_by_program_map.setdefault(prog_name, {"name": prog_name, "count": 0, "total": 0.0})
         b["count"] += 1
-        b["total"] = round(b["total"] + float(r.get("amount") or 0), 2)
+        b["total"] = round(b["total"] + _business_revenue_net_of_sales_tax(r), 2)  # adds up to the total (audit #72)
     training_by_program = sorted(training_by_program_map.values(), key=lambda x: -x["total"])
 
     # ── Year-to-date totals (Jan 1 of end_date's year through end_date)
@@ -519,8 +501,8 @@ async def build_pl_data(db, start_date: str, end_date: str) -> Dict[str, Any]:
     #                         The original sale paid this; redemption is
     #                         purely a service-delivery event.)
     PREPAID_SOURCE_KINDS = ("credit_pack_sale", "training_program_sale", "payment_plan_installment")
-    prepaid_credit_pack = round(sum(float(r.get("amount") or 0) for r in retail_sales if r.get("source_kind") == "credit_pack_sale"), 2)
-    prepaid_training = round(sum(float(r.get("amount") or 0) for r in retail_sales if r.get("source_kind") == "training_program_sale"), 2)
+    prepaid_credit_pack = round(sum(_cash_received_on_row(r) for r in retail_sales if r.get("source_kind") == "credit_pack_sale"), 2)
+    prepaid_training = round(sum(_cash_received_on_row(r) for r in retail_sales if r.get("source_kind") == "training_program_sale"), 2)
     prepaid_payment_plan = round(sum(float(r.get("amount") or 0) for r in retail_sales if r.get("source_kind") == "payment_plan_installment"), 2)
     retail_items_cash = round(sum(_cash_received_on_row(r) for r in retail_sales if r.get("source_kind") not in PREPAID_SOURCE_KINDS), 2)
     prepaid_total = round(prepaid_credit_pack + prepaid_training + prepaid_payment_plan, 2)

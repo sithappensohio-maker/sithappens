@@ -30296,6 +30296,7 @@ def _scheduler_jobs() -> List[job_scheduler.Job]:
         ("audit_log_secret_scrub", lambda: audit_redact.scrub_existing(db)),
         # Bills still showing a checkout that was reopened and done again (audit #14).
         ("reopened_bill_rebuild", lambda: billing_tab_sync.rebuild_stale_bills()),
+        ("gift_card_funding_spread", lambda: _run_once_per_business_day(gift_card_services.FUNDING_REPAIR_JOB, gift_card_services.backfill_spread_funding)),  # daily + after a restore (audit #72)
     ]
 
 
@@ -34066,6 +34067,7 @@ async def startup():
         (db.shop_payment_attempts, "client_id", {}),
         (db.payments, "shop_order_id", {}),
         (db.retail_sales, "shop_order_id", {}),
+        (db.retail_sales, "pos_sale_id", {}),  # a register sale's rows: voids, returns, gift-card shares
         (db.photography_gallery, "sort_order", {}),
         (db.photography_gallery, "active", {}),
         # Training Session Workspace (Phase 3) — booking_id/dog_id are plain
@@ -36301,11 +36303,11 @@ async def admin_money_health(
     credit_units_redeemed = round(sum(float(b.get("credit_units_used") or b.get("credit_units_required") or 0) for b in credit_redemptions), 2)
 
     retail = await db.retail_sales.find({"date": {"$gte": sd, "$lte": ed}}, {"_id": 0}).to_list(50000)
-    retail_cash = round(sum(float(r.get("amount") or 0) for r in retail), 2)
+    retail_cash = round(sum(gift_card_services.cash_received_on_row(r) for r in retail), 2)  # not what gift cards paid (audit #72)
     retail_tax = round(sum(float(r.get("tax_amount") or 0) for r in retail), 2)
     retail_schedule_c = round(sum(_schedule_c_retail_income(r) for r in retail), 2)
-    credit_pack_sales = round(sum(float(r.get("amount") or 0) for r in retail if r.get("source_kind") == "credit_pack_sale" or "Credit Pack" in (r.get("description") or "")), 2)
-    training_program_sales = round(sum(float(r.get("amount") or 0) for r in retail if r.get("source_kind") == "training_program_sale" or "Training Program" in (r.get("description") or "")), 2)
+    credit_pack_sales = round(sum(gift_card_services.cash_received_on_row(r) for r in retail if r.get("source_kind") == "credit_pack_sale" or "Credit Pack" in (r.get("description") or "")), 2)
+    training_program_sales = round(sum(gift_card_services.cash_received_on_row(r) for r in retail if r.get("source_kind") == "training_program_sale" or "Training Program" in (r.get("description") or "")), 2)
 
     clients = await db.clients.find({}, {"_id": 0, "id": 1, "name": 1, "account_balance": 1, "credits": 1, "boarding_credits": 1, "training_credits": 1}).to_list(50000)
     client_balance_owed = round(sum(max(0.0, float(c.get("account_balance") or 0)) for c in clients), 2)
@@ -36867,18 +36869,19 @@ async def _register_day_summary(day: Optional[str] = None) -> Dict[str, Any]:
         else:
             _add_method_total(incoming_by_method, r.get("payment_method"), amt)
         kind = r.get("source_kind") or "manual_sale"
+        cash = gift_card_services.cash_received_on_row(r)  # a gift card's part came in when the card was sold (audit #72)
         if kind in ("refund", "pos_sale_return") or amt < 0:
-            incoming_sources["refunds"] = round(incoming_sources["refunds"] + abs(amt), 2)
+            incoming_sources["refunds"] = round(incoming_sources["refunds"] + abs(cash), 2)
         elif kind == "credit_pack_sale":
-            incoming_sources["credit_pack_sales"] = round(incoming_sources["credit_pack_sales"] + amt, 2)
+            incoming_sources["credit_pack_sales"] = round(incoming_sources["credit_pack_sales"] + cash, 2)
         elif kind == "training_program_sale":
-            incoming_sources["training_program_sales"] = round(incoming_sources["training_program_sales"] + amt, 2)
+            incoming_sources["training_program_sales"] = round(incoming_sources["training_program_sales"] + cash, 2)
         elif kind == "tab_payment":
-            incoming_sources["tab_payments"] = round(incoming_sources["tab_payments"] + amt, 2)
+            incoming_sources["tab_payments"] = round(incoming_sources["tab_payments"] + cash, 2)
         elif kind in ("manual_sale", "retail", "retail_sale", None, ""):
-            incoming_sources["manual_sales"] = round(incoming_sources["manual_sales"] + amt, 2)
+            incoming_sources["manual_sales"] = round(incoming_sources["manual_sales"] + cash, 2)
         else:
-            incoming_sources["other_sales"] = round(incoming_sources["other_sales"] + amt, 2)
+            incoming_sources["other_sales"] = round(incoming_sources["other_sales"] + cash, 2)
         # Display-only tender label (Step 3). When the authoritative
         # pos_sales.tenders composition is loaded (Step 1 prefetch above),
         # show the REAL split — "Cash $40.00 + Venmo $60.00" — instead of the
@@ -44512,6 +44515,7 @@ async def void_pos_sale(sale_id: str, body: PosSaleVoidIn, user: dict = Depends(
                 "description": f"Void of POS Sale #{original.get('receipt_number')} · {body.reason.strip()}",
                 "created_at": ts, "created_by": user.get("id"),
                 "logged_by": user.get("name") or user.get("email") or "admin",
+                **gift_card_services.funded_offset(row),  # card-paid part nets to zero revenue (audit #72)
             }
             await db.retail_sales.insert_one(offset_row.copy())
             reversed_entitlement_ids.append(row["id"])
@@ -44803,7 +44807,7 @@ async def admin_quarterly_tax(
     retail_rows = await db.retail_sales.find(
         {"date": {"$gte": start, "$lte": end}}, {"_id": 0}
     ).to_list(20000)
-    retail_cash_gross = sum(float(r.get("amount") or 0) for r in retail_rows)
+    retail_cash_gross = sum(gift_card_services.cash_received_on_row(r) for r in retail_rows)  # not what gift cards paid (audit #72)
     retail_sales_tax_collected = sum(float(r.get("tax_amount") or 0) for r in retail_rows)
     # Step 4B-1 — historical POS void rows carry no tax_amount field; their
     # reversal is reconstructed read-time from the original sale (new void

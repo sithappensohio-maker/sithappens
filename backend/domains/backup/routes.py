@@ -1132,6 +1132,20 @@ def make_backup_domain(*, BACKUP_COLLECTIONS, backup_root_ref, BACKUP_VERSION, C
         }
 
     async def _restore_collections(collections: dict, mode: str, progress=None):
+        """Restores (see _restore_collections_inner). Older backups can bring
+        back register sales with the pre-audit-#72 gift-card split, so the
+        repair is sent round again — before (a restore that dies partway
+        still gets it) and after (it may have run mid-restore)."""
+        sales = any(c in ("pos_sales", "retail_sales") for c in (collections or {}))
+        if sales:
+            await db.system_runs.delete_one({"_id": "gift_card_funding_spread"})
+        try:
+            return await _restore_collections_inner(collections, mode, progress)
+        finally:
+            if sales:
+                await db.system_runs.delete_one({"_id": "gift_card_funding_spread"})
+
+    async def _restore_collections_inner(collections: dict, mode: str, progress=None):
         """Restore each backed-up collection. Returns (summary, kept_live).
 
         Older versions are accepted — they simply contain fewer collections.

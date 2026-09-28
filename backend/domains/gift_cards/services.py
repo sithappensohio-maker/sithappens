@@ -1127,23 +1127,154 @@ async def _record_funding(*, sale_id: str, sale: dict, redeemed: List[dict]) -> 
     The tax slice is deliberately NOT discounted — it was really collected and
     is really owed to Ohio.
     """
+    funded = _funded_by_cards(sale, sum(_money(r.get("redeemed")) for r in redeemed))
+    if funded > 0:
+        await _spread_funding(sale_id, sale.get("retail_sales_id"), funded,
+                              [r.get("gift_card_id") for r in redeemed])
+
+
+# The revenue rows a register sale writes: its one merchandise/custom row (no
+# source_kind) and one row per credit-pack or training-program lot.
+FUNDABLE_KINDS = [None, "credit_pack_sale", "training_program_sale"]
+
+
+def _funded_by_cards(sale: dict, card_paid: float) -> float:
+    """The pre-tax slice of a sale that `card_paid` (tax included) covered."""
     total = _money(sale.get("total"))
-    if total <= 0:
-        return
-    tax = _money(sale.get("tax_amount"))
-    pre_tax_share = (total - tax) / total
-    funded = _money(sum(_money(r.get("redeemed")) for r in redeemed) * pre_tax_share)
+    if total <= 0 or card_paid <= 0:
+        return 0.0
+    return _money(card_paid * (total - _money(sale.get("tax_amount"))) / total)
+
+
+async def _fundable_rows(sale_id: str) -> List[dict]:
+    return await _db.retail_sales.find(
+        {"pos_sale_id": sale_id, "source_kind": {"$in": FUNDABLE_KINDS}},
+        {"_id": 0, "id": 1, "amount": 1, "tax_amount": 1, "source_kind": 1, "gift_card_funded": 1}).to_list(500)
+
+
+def _shares(rows: List[dict], merch_row_id: Optional[str], funded: float) -> List[tuple]:
+    """(row id, share) for each revenue row — the cards' pre-tax slice in
+    proportion to each row's pre-tax amount, the merchandise row first."""
+    rows = sorted(rows, key=lambda r: (r["id"] != merch_row_id, r["id"]))
+    bases = [max(0.0, _money(_money(r.get("amount")) - _money(r.get("tax_amount")))) for r in rows]
+    whole = _money(sum(bases))
+    if whole <= 0:
+        return []
+    left, out = min(funded, whole), []
+    for i, (row, base) in enumerate(zip(rows, bases)):
+        share = left if i == len(rows) - 1 else min(base, _money(funded * base / whole))
+        left = _money(left - share)
+        out.append((row["id"], share))
+    return out
+
+
+async def _spread_funding(sale_id: str, merch_row_id: Optional[str], funded: float,
+                          card_ids: List[Optional[str]], rows: Optional[List[dict]] = None) -> None:
+    """Share what the cards paid across EVERY revenue row of the sale. It
+    used to land on the merchandise row alone, so a credit pack or training
+    program bought with a card counted as income a second time (audit #72,
+    owner option A)."""
+    rows = rows if rows is not None else await _fundable_rows(sale_id)
+    # Sales rung before 2026-09-26 record the paying card only in these ids,
+    # never on the tender — so an unknown (None) id must never overwrite them,
+    # or the sale could no longer be voided or returned.
+    link = {"gift_card_ids": card_ids} if card_ids and all(card_ids) else {}
+    for row_id, share in _shares(rows, merch_row_id, funded):
+        await _db.retail_sales.update_one({"id": row_id}, {"$set": {"gift_card_funded": share, **link}})
+
+
+FUNDING_SETTLE_MINUTES = 10   # never touch a sale still being rung up
+FUNDING_REPAIR_JOB = "gift_card_funding_spread"   # scheduler job + its once-a-day marker; a restore clears it
+
+
+PACK_KINDS = ("credit_pack_sale", "training_program_sale")
+
+
+def _old_split(rows: List[dict], funded: float) -> bool:
+    """The two shapes the pre-#72 split leaves, and only those — a sale an
+    owner has since edited or trimmed on purpose is never "corrected":
+      * a pack/program row with no card share at all (as rung, or brought
+        back by any restore of an older backup), or
+      * more card money taken off than the cards paid (a merge restore puts
+        the old all-on-the-merchandise share back beside the new ones)."""
     if funded <= 0:
-        return
-    row_id = sale.get("retail_sales_id")
-    if not row_id:
-        # Nothing merchandise-shaped on this sale to attach it to; the
-        # entitlement rows carry their own revenue and are not gift-funded.
-        return
-    await _db.retail_sales.update_one(
-        {"id": row_id},
-        {"$set": {"gift_card_funded": funded,
-                  "gift_card_ids": [r.get("gift_card_id") for r in redeemed]}})
+        return False
+    missing = any(r.get("source_kind") in PACK_KINDS and "gift_card_funded" not in r for r in rows)
+    return missing or _money(sum(_money(r.get("gift_card_funded")) for r in rows)) > funded + 0.005
+
+
+async def _mirror_void_rows(sale_id: str, rows: List[dict]) -> bool:
+    """A voided sale nets to zero only while each void row takes back exactly
+    the card share its original row carries. A void that lands while the
+    repair is re-sharing that very sale can leave them apart; put the void
+    rows back in step (never the originals)."""
+    by_id = {r["id"]: r for r in rows}
+    fixed = False
+    async for v in _db.retail_sales.find(
+            {"pos_sale_id": sale_id, "source_kind": "pos_sale_void", "reversed_retail_sales_id": {"$in": list(by_id)}},
+            {"_id": 0, "id": 1, "reversed_retail_sales_id": 1, "gift_card_funded": 1}):
+        want = funded_offset(by_id[v["reversed_retail_sales_id"]]).get("gift_card_funded", 0.0)
+        if abs(_money(v.get("gift_card_funded")) - want) >= 0.005:
+            await _db.retail_sales.update_one(
+                {"id": v["id"]}, {"$set": {"gift_card_funded": want}} if want else {"$unset": {"gift_card_funded": ""}})
+            fixed = True
+    return fixed
+
+
+async def backfill_spread_funding() -> int:
+    """Put the card money on register sales where it belongs: shared over
+    every revenue row (see _spread_funding). Sales rung before audit #72 that
+    bought a credit pack or training program with a gift card carry it all on
+    the merchandise row. Decided from the rows themselves — never a "done"
+    flag — so rows brought back by ANY backup restore (merge or replace, any
+    backup version) are put right too. Runs once a day and around every
+    restore; only sales with a pack or program line can be affected.
+    Merchandise-only sales were always right. A voided sale keeps the split it
+    was voided with — only its void rows are kept in step with it. Returns
+    how many sales changed."""
+    changed = 0
+    settled = (datetime.now(timezone.utc) - timedelta(minutes=FUNDING_SETTLE_MINUTES)).isoformat()
+    async for sale in _db.pos_sales.find(   # every one — never a capped read
+            {"tenders.method": "gift_card", "line_items.kind": {"$in": ["credit_pack", "training_program"]},
+             "created_at": {"$lt": settled}},
+            {"_id": 0, "id": 1, "status": 1, "total": 1, "tax_amount": 1, "tenders": 1, "retail_sales_id": 1}):
+        rows = await _fundable_rows(sale["id"])
+        if sale.get("status") == "voided":
+            changed += int(await _mirror_void_rows(sale["id"], rows))
+            continue
+        paid = sum(_money(t.get("amount")) for t in sale.get("tenders") or [] if t.get("method") == "gift_card")
+        funded = _funded_by_cards(sale, paid)
+        if _old_split(rows, funded):
+            await _spread_funding(sale["id"], sale.get("retail_sales_id"), funded, await paying_cards(sale), rows=rows)
+            changed += 1
+    if changed:
+        _logger.info("Gift cards: put card money right on %d register sales", changed)
+    return changed
+
+
+def cash_received_on_row(row: dict) -> float:
+    """What a retail row actually put in the till.
+
+    A gift card pays with money the business already took when the CARD was
+    sold, so the redeemed slice is not new cash — counting it again makes a
+    "cash collected" figure disagree with the drawer it exists to explain.
+
+    The row stores `gift_card_funded`, the PRE-TAX slice the card paid for.
+    The card also paid that slice's sales tax, so scale back up to the real
+    tender before subtracting it.
+    """
+    amount = float(row.get("amount") or 0)
+    funded = float(row.get("gift_card_funded") or 0)
+    if abs(funded) < 0.005:
+        return round(amount, 2)          # refunds keep their sign
+    if abs(amount) < 0.005:
+        return 0.0                       # a $0 row put nothing in (or took nothing out of) the till
+    # A void or return of a card-paid sale carries a NEGATIVE funded slice:
+    # that money went back on the card, not out of the till.
+    pre_tax = amount - float(row.get("tax_amount") or 0)
+    tender = (funded * amount / pre_tax) if abs(pre_tax) > 0.005 else funded
+    left = amount - tender
+    return round(max(0.0, left) if amount >= 0 else min(0.0, left), 2)
 
 
 # ─────────────────────────────────────────── undoing a sale: void and return
