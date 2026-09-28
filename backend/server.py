@@ -80,6 +80,7 @@ from domains.bookings.blocks import BookingBlocked, block_of, pretty_date, prett
 from domains.bookings import guards as booking_guards
 from domains.bookings import spans as booking_spans
 from domains.bookings import group_rank
+from domains.bookings import group_pricing as booking_group_pricing
 from domains.school import ownership as school_ownership
 from domains.bookings import late_day as late_day_checkout
 from domains.bookings import care as care_domain
@@ -4966,85 +4967,7 @@ async def create_booking_group(body: BookingGroupIn, user: dict = Depends(get_cu
         if group_capacity_owner:
             await _release_capacity_locks(group_capacity_owner, group_capacity_keys)
 
-    # Apply the final per-row pricing/credit snapshot for daycare/boarding group
-    # bookings. Each dog gets its own booking row, but the household price rule is
-    # first dog full-rate and each additional dog 50% off. Storing the reduced
-    # price on the extra-dog rows prevents checkout from discounting the same dog
-    # twice later. Existing rows/data are not rewritten.
-    if created and body.service_type in ("daycare", "boarding") and len(created) > 1:
-        try:
-            client_id_for_quote = created[0].get("client_id")
-            group_cutoff_time = ((created[0].get("pricing_snapshot") or {}).get("pickup_cutoff_time") or DEFAULT_BOARDING_FULL_DAY_PICKUP_CUTOFF)
-            group_pickup_time = (body.pickup_time or group_cutoff_time) if body.service_type == "boarding" else body.pickup_time
-            q = await _quote_base_service_price(
-                client_id=client_id_for_quote,
-                service_type=body.service_type,
-                start_date=body.date,
-                end_date=body.end_date,
-                pickup_time=group_pickup_time,
-                pickup_cutoff_time=group_cutoff_time,
-                service_id=body.service_id,
-            )
-            units = float(q.get("units") or 1)
-            unit_price = float(q.get("unit_price") or 0)
-            # estimated_price = nights × rate + any late-pickup daycare fee, so
-            # the sibling row price discounts the fee too.
-            full_base = round(float(q.get("estimated_price") or 0) or (unit_price * units), 2)
-            # Configurable sibling discount (multi_dog_discount_core; default
-            # 50%). Credits keep the fixed 0.5-per-extra-dog rule regardless —
-            # credit weights and dollar discounts are deliberately separate.
-            group_md_cfg = _multi_dog_discount_config_for(await get_settings(), body.service_type)
-            per_dog_discount = round(_discount_amount_for_extra_dogs(full_base, group_md_cfg, 1), 2) if group_md_cfg else 0.0
-            extra_base = round(max(0.0, full_base - per_dog_discount), 2)
-            for idx, bk in enumerate(created):
-                addon_total = 0.0
-                for ao in (bk.get("add_ons") or []):
-                    addon_total += float(ao.get("price") or 0) * int(ao.get("qty") or 1)
-                is_extra = idx > 0
-                row_base = extra_base if is_extra else full_base
-                row_credits = round(units * (0.5 if is_extra else 1.0), 2)
-                patch = {
-                    "estimated_price": round(row_base + addon_total, 2),
-                    "credit_units_required": row_credits,
-                    "unit_price": q.get("unit_price"),
-                    "list_unit_price": q.get("list_unit_price"),
-                    "preferred_rate_applied": q.get("preferred_rate_applied", False),
-                    "price_override_id": q.get("price_override_id"),
-                    "price_source": q.get("price_source"),
-                    "price_label": q.get("price_label"),
-                    "pricing_snapshot": {
-                        "service_id": q.get("service_id"),
-                        "service_name": q.get("service_name"),
-                        "unit_price": q.get("unit_price"),
-                        "list_unit_price": q.get("list_unit_price"),
-                        "preferred_rate_applied": q.get("preferred_rate_applied", False),
-                        "price_override_id": q.get("price_override_id"),
-                        "price_source": q.get("price_source"),
-                        "price_label": q.get("price_label"),
-                        "billable_units": q.get("units"),
-                        "unit_label": q.get("unit_label"),
-                        "pickup_cutoff_time": group_cutoff_time if body.service_type == "boarding" else None,
-                        "group_dog_index": idx,
-                        "group_dog_count": len(created),
-                        "credit_units_required": row_credits,
-                        "created_at": now_iso(),
-                    },
-                }
-                if is_extra:
-                    patch["multi_dog_discount"] = {
-                        "pre_applied": True,
-                        "amount": per_dog_discount,
-                        "mode": (group_md_cfg or {}).get("mode") or "percent",
-                        "value": float((group_md_cfg or {}).get("value") or 0),
-                        "label": (group_md_cfg or {}).get("label") or "Additional dog discount",
-                        "service_type": body.service_type,
-                        "based_on_price": full_base,
-                        "applied_at": now_iso(),
-                    }
-                await db.bookings.update_one({"id": bk["id"]}, {"$set": patch})
-                bk.update(patch)
-        except Exception as exc:
-            logger.warning("group price snapshot failed for %s: %s", group_id, exc)
+    await booking_group_pricing.apply_group_pricing(created, body, group_id)
 
     # ONE summary email for portal-originated group bookings.
     if user.get("role") != "admin" and created and client_doc_for_summary:
@@ -9103,46 +9026,7 @@ async def _rollback_checkout_finances(
         logger.critical("checkout rollback could not return gift card money for %s: %s", operation_id, exc)
 
 
-async def _active_household_checkout_rows(anchor: Dict[str, Any]) -> List[Dict[str, Any]]:
-    """Find the dogs that should close on one household ticket.
-
-    New reservations use group_id. Legacy/separately-entered daycare and
-    boarding rows are also grouped when owner, service, and stay dates match.
-    """
-    service_type = anchor.get("service_type")
-    if service_type not in ("daycare", "boarding") and not anchor.get("group_id"):
-        return [anchor]
-    q: Dict[str, Any] = {
-        "client_id": anchor.get("client_id"),
-        "service_type": service_type,
-        "date": anchor.get("date"),
-        "status": {"$nin": ["completed", "cancelled", "rejected"]},
-        "$or": [{"checked_out_at": {"$exists": False}}, {"checked_out_at": None}],
-        # Front Desk household-checkout fix — a booked-but-never-arrived
-        # dog in the same household (e.g. Bolt never showed up while Lexi
-        # did) must never be swept into Lexi's checkout: completed, charged,
-        # credit-deducted, or financially locked purely for being in the
-        # same reservation group. Only dogs that actually checked in belong
-        # on one combined household ticket.
-        "checked_in_at": {"$exists": True, "$nin": [None, ""]},
-    }
-    if service_type == "boarding":
-        q["end_date"] = anchor.get("end_date")
-    elif anchor.get("group_id") and service_type not in ("daycare", "boarding"):
-        q["group_id"] = anchor.get("group_id")
-    rows = await db.bookings.find(q, {"_id": 0}).to_list(50)
-    # One ticket should never include duplicate rows for the same dog.
-    unique: Dict[str, Dict[str, Any]] = {}
-    for row in rows:
-        key = row.get("dog_id") or row.get("id")
-        unique.setdefault(key, row)
-    items = list(unique.values())
-    items.sort(key=lambda row: (
-        int((row.get("pricing_snapshot") or {}).get("group_dog_index") or 0),
-        row.get("created_at") or "",
-        row.get("id") or "",
-    ))
-    return items
+_active_household_checkout_rows = booking_group_pricing.household_checkout_rows  # moved to domains/bookings
 
 
 async def _refresh_booking_price_for_current_override(booking: Dict[str, Any]) -> Dict[str, Any]:
