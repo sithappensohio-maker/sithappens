@@ -1,5 +1,7 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import { api, formatErr } from "../lib/api";
+import { useAuth } from "../lib/auth";
+import { friendsFamilyOn } from "../lib/friendsFamily";
 import WalkInModal from "./WalkInModal";
 import MultiDatePicker from "./MultiDatePicker";
 import { useEditLock } from "../lib/useLiveRefresh";
@@ -241,10 +243,31 @@ export default function AdminBookingModal({ defaultCheckIn = false, defaultDate 
     () => (dogs || []).filter(d => d.owner_id === clientId),
     [dogs, clientId]
   );
+  // Friends & family (owner request 2026-09-28): dogs of OTHER families on this
+  // booking for the multi-dog discount, one family paying ONE bill. Only with
+  // the server's switch on and the permission (lib/friendsFamily); daycare and
+  // boarding only.
+  const auth = useAuth();
+  const ffAllowed = friendsFamilyOn(auth) && ["daycare", "boarding"].includes(serviceType);
+  const canAddFamily = !!auth?.can?.("clients_edit");
+  const [ffMode, setFfMode] = useState(false);
+  const ff = ffMode && ffAllowed;
+  const ffRef = useRef(false);
+  ffRef.current = ff;
+  const [payerId, setPayerId] = useState("");
+  const [friendAddOpen, setFriendAddOpen] = useState(false);
   // Reset extras whenever client changes — selecting a new owner means the
   // dog list changes and any previously-picked extras may not belong to
-  // them anymore.
-  useEffect(() => { setExtraDogs([]); }, [clientId]);
+  // them anymore. (A friends & family booking keeps its friends' dogs.)
+  useEffect(() => { if (!ffRef.current) setExtraDogs([]); }, [clientId]);
+  useEffect(() => {
+    if (ff) return;
+    setExtraDogs(prev => {
+      const own = prev.filter(e => dogs.find(d => d.id === e.dog_id)?.owner_id === clientId);
+      return own.length === prev.length ? prev : own;
+    });
+    setPayerId("");
+  }, [ff, clientId, dogs]);
 
   // Keep group booking selections impossible to double-count. When the primary
   // dog changes, or an older browser state contains the same dog twice, remove
@@ -389,6 +412,21 @@ export default function AdminBookingModal({ defaultCheckIn = false, defaultDate 
   }, [dogs, clients]);
 
   const selectedClient = useMemo(() => clients.find(c => c.id === clientId) || null, [clients, clientId]);
+  // Friends & family: the families with a dog on this booking, and who pays
+  // (one of them — the server refuses a payer with no dog on the booking).
+  const familyName = (cid) => clients.find(c => c.id === cid)?.name || "—";
+  const ffFamilies = ff
+    ? [...new Set([dogId, ...extraDogs.map(e => e.dog_id)].map(id => dogs.find(d => d.id === id)?.owner_id).filter(Boolean))]
+    : [];
+  const ffMixed = ffFamilies.length > 1;
+  const ffPayer = ffFamilies.includes(payerId) ? payerId
+    : ffFamilies.includes(clientId) ? clientId : (ffFamilies[0] || clientId);
+  const ffBooking = ffMixed && !isMultiDate;   // what submit books as friends & family
+  // Whose prices apply: the paying family's, on a friends & family booking.
+  const pricingClientId = ffBooking ? ffPayer : clientId;
+  const ffUsed = new Set([dogId, ...extraDogs.map(e => e.dog_id)]);
+  const addFriendDog = (id) => setExtraDogs(prev => (prev.some(e => e.dog_id === id) || id === dogId
+    ? prev : [...prev, { dog_id: id, addon_service_ids: [], notes: "" }]));
   const selectedCatalogService = useMemo(
     () => catalogServices.find(s => s.id === serviceId) || null,
     [catalogServices, serviceId]
@@ -427,11 +465,13 @@ export default function AdminBookingModal({ defaultCheckIn = false, defaultDate 
   // What does THIS client actually pay for each service? Needed wherever the
   // Admin is knowingly booking for a specific existing client — the scheduled
   // flow showed the same misleading catalogue price the check-in flow did.
+  // (On a friends & family booking: the family paying for it.)
   useEffect(() => {
-    if (!clientId) { setClientServicePrices(null); setClientPriceError(""); return; }
+    if (!pricingClientId) { setClientServicePrices(null); setClientPriceError(""); return; }
     let cancelled = false;
+    setClientServicePrices(null);
     setClientPriceError("");
-    api.get(`/clients/${clientId}/service-prices`)
+    api.get(`/clients/${pricingClientId}/service-prices`)
       .then(({ data }) => {
         if (cancelled) return;
         setClientServicePrices(data?.prices || {});
@@ -446,7 +486,7 @@ export default function AdminBookingModal({ defaultCheckIn = false, defaultDate 
           formatErr(e?.response?.data?.detail) || "Could not load this client's pricing.");
       });
     return () => { cancelled = true; };
-  }, [clientId]);
+  }, [pricingClientId]);
 
   // ...and once we know, select the service that carries their price.
   useEffect(() => {
@@ -576,7 +616,7 @@ export default function AdminBookingModal({ defaultCheckIn = false, defaultDate 
             service_id: serviceId || undefined,
             date: d,
             end_date: isDateSpanService ? endDate : null,
-            dog_id: row.dog_id,
+            ...(ffBooking ? { client_id: ffPayer } : { dog_id: row.dog_id }),
             dropoff_time: isDateSpanService ? (dropoffTime || undefined) : undefined,
             pickup_time: isDateSpanService ? (pickupTime || undefined) : undefined,
             addon_service_ids: row.addon_service_ids || [],
@@ -619,6 +659,8 @@ export default function AdminBookingModal({ defaultCheckIn = false, defaultDate 
     dogs,
     isDateSpanService,
     isBoardTrainStay,
+    ffBooking,
+    ffPayer,
   ]);
 
   const quoteSummary = useMemo(() => {
@@ -629,7 +671,8 @@ export default function AdminBookingModal({ defaultCheckIn = false, defaultDate 
     const units = quoteLines.reduce((sum, l) => sum + Number(l.quote?.billable_units || 0), 0);
     const unitLabel = quoteLines[0]?.quote?.unit_label || (serviceType === "boarding" ? "nights" : "visits");
     const serviceName = quoteLines[0]?.quote?.service_name || serviceType;
-    const pool = creditPoolForService(serviceType);
+    // No prepaid credits on a friends & family visit (first release).
+    const pool = ffBooking ? null : creditPoolForService(serviceType);
     const creditsAvailable = pool && selectedClient ? Number(selectedClient[pool.key] || 0) : 0;
     const preferredRateApplied = quoteLines.some(l => !!l.quote?.preferred_rate_applied);
     const unitPrice = Number(quoteLines[0]?.quote?.unit_price || 0);
@@ -693,7 +736,7 @@ export default function AdminBookingModal({ defaultCheckIn = false, defaultDate 
       multiDogDiscountLabel: mdCfg?.label || "Additional dog discount",
       latePickupFeePerDog, dogCount, displayUnits,
     };
-  }, [quoteLines, serviceType, selectedClient, multiDogDiscountSettings]);
+  }, [quoteLines, serviceType, selectedClient, multiDogDiscountSettings, ffBooking]);
 
   const submit = async () => {
     setErr("");
@@ -792,6 +835,7 @@ export default function AdminBookingModal({ defaultCheckIn = false, defaultDate 
             override_vaccines: overrideVaccines,
             override_capacity: overrideCapacity,
             check_in_now: checkInNow,
+            ...(ffMixed ? { payer_client_id: ffPayer } : {}),
           };
           await api.post("/bookings/group", groupBody);
           onCreated?.();
@@ -1108,14 +1152,21 @@ export default function AdminBookingModal({ defaultCheckIn = false, defaultDate 
               when not editing, not in multi-date mode, and the selected
               client has >1 dog on file. Primary dog is `dogId`; extras are
               tracked in `extraDogs` and share the booking's date/service. */}
-          {!isEdit && !isMultiDate && clientDogsForGroup.length > 1 && (
+          {!isEdit && !isMultiDate && (clientDogsForGroup.length > 1 || ffAllowed) && (
             <div className="bg-[var(--sh-card-base)]/40 border border-shPrimary/30 rounded-lg p-3 space-y-3" data-testid="ab-multidog">
               <div className="flex items-center justify-between gap-2">
                 <div>
                   <p className="text-shPrimary font-black uppercase tracking-widest text-[13px]"><i className="fas fa-paw mr-1.5"/>More dogs on this booking?</p>
                   <p className="text-shTextMuted text-[14px] mt-0.5">Same date and service. Per-dog add-ons.</p>
+                  {ffAllowed && (
+                    <label className="mt-1.5 inline-flex items-center gap-2 text-[13px] font-black text-shSecondary cursor-pointer">
+                      <input type="checkbox" checked={ffMode} onChange={(e) => setFfMode(e.target.checked)} data-testid="ab-ff-toggle"
+                             className="accent-shSecondary w-4 h-4"/>
+                      Friends &amp; family — add other families&apos; dogs
+                    </label>
+                  )}
                 </div>
-                {extraDogs.length + 1 < clientDogsForGroup.length && (
+                {clientDogsForGroup.some(d => !ffUsed.has(d.id)) && (
                   <button type="button" onClick={addExtraDog} data-testid="ab-add-dog"
                           className="bg-shPrimary/20 border border-shPrimary/40 text-shPrimary px-3 py-1.5 rounded text-[13px] font-black uppercase tracking-widest hover:bg-shPrimary/30 transition whitespace-nowrap">
                     <i className="fas fa-plus mr-1"/>Add dog
@@ -1124,7 +1175,7 @@ export default function AdminBookingModal({ defaultCheckIn = false, defaultDate 
               </div>
               {extraDogs.map((extra, idx) => {
                 const usedIds = new Set([dogId, ...extraDogs.map((e, i) => i !== idx ? e.dog_id : null).filter(Boolean)]);
-                const available = clientDogsForGroup.filter(d => !usedIds.has(d.id));
+                const available = (ff ? allDogsSorted : clientDogsForGroup).filter(d => !usedIds.has(d.id));
                 return (
                   <div key={idx} className="border-t border-shBorder pt-3 space-y-2" data-testid={`ab-extra-dog-${idx}`}>
                     <div className="flex gap-2 items-center">
@@ -1133,7 +1184,7 @@ export default function AdminBookingModal({ defaultCheckIn = false, defaultDate 
                               data-testid={`ab-extra-dog-select-${idx}`}
                               className="flex-1 bg-[var(--sh-card-base)] border border-shBorder rounded p-2 text-shText text-[13px]">
                         {available.map(d => (
-                          <option key={d.id} value={d.id}>{d.name} ({d.breed || "—"})</option>
+                          <option key={d.id} value={d.id}>{d.name} ({d.breed || "—"}){ff ? ` · ${d.ownerLabel}` : ""}</option>
                         ))}
                       </select>
                       <button type="button" onClick={()=>removeExtraDog(idx)} data-testid={`ab-remove-dog-${idx}`}
@@ -1182,6 +1233,45 @@ export default function AdminBookingModal({ defaultCheckIn = false, defaultDate 
                   </div>
                 );
               })}
+              {ff && (
+                <div className="border-t border-shBorder pt-3 space-y-2" data-testid="ab-ff-panel">
+                  <div className="flex gap-2">
+                    <select value="" onChange={(e) => e.target.value && addFriendDog(e.target.value)} data-testid="ab-ff-add-dog"
+                            className="flex-1 min-w-0 bg-[var(--sh-card-base)] border border-shBorder rounded p-2 text-shText text-[13px]">
+                      <option value="">Add a friend&apos;s dog…</option>
+                      {allDogsSorted.filter(d => !ffUsed.has(d.id)).map(d => {
+                        const rejected = clients.find(c => c.id === d.owner_id)?.client_status === "rejected";
+                        return <option key={d.id} value={d.id} disabled={rejected}>{d.name} · {d.ownerLabel}{rejected ? " (rejected)" : ""}</option>;
+                      })}
+                    </select>
+                    {canAddFamily && (
+                      <button type="button" onClick={() => setFriendAddOpen(true)} data-testid="ab-ff-new-friend"
+                              className="bg-shSecondary/15 border border-shSecondary/40 text-shSecondary px-3 py-1.5 rounded text-[12px] font-black uppercase tracking-widest whitespace-nowrap">
+                        <i className="fas fa-plus mr-1"/>New friend + dog
+                      </button>
+                    )}
+                  </div>
+                  {ffMixed && (
+                    <div data-testid="ab-ff-payer">
+                      <p className="text-[12px] font-black uppercase tracking-widest text-shTextMuted mb-1">Who pays?</p>
+                      <div className="flex flex-wrap gap-2">
+                        {ffFamilies.map(cid => (
+                          <label key={cid} className={`inline-flex items-center gap-2 rounded border px-3 py-1.5 text-[13px] font-black cursor-pointer ${
+                            ffPayer === cid ? "border-shPrimary bg-shPrimary/10 text-shText" : "border-shBorder text-shTextMuted"}`}>
+                            <input type="radio" name="ab-ff-payer" checked={ffPayer === cid} onChange={() => setPayerId(cid)}
+                                   data-testid={`ab-ff-payer-${cid}`} className="accent-shPrimary"/>
+                            {familyName(cid)}
+                          </label>
+                        ))}
+                      </div>
+                      <p className="text-[12.5px] text-shTextMuted mt-1.5" data-testid="ab-ff-one-bill">
+                        One bill to {familyName(ffPayer)} when the last dog leaves, at {familyName(ffPayer)}&apos;s rates. The other
+                        families see their dog&apos;s visit as covered — nothing to pay.
+                      </p>
+                    </div>
+                  )}
+                </div>
+              )}
               {extraDogs.length > 0 && (
                 <p className="text-shPrimary text-[13px] font-black uppercase tracking-widest pt-1 border-t border-shBorder" data-testid="ab-group-count">
                   <i className="fas fa-link mr-1"/>Group booking · {extraDogs.length + 1} dogs share this booking
@@ -1407,6 +1497,21 @@ export default function AdminBookingModal({ defaultCheckIn = false, defaultDate 
             setClientId(client.id);
             setDogId(dog.id);
             setWalkInOpen(false);
+          }}
+        />
+      )}
+      {friendAddOpen && (
+        <WalkInModal
+          friend
+          vaccinesAllowed={!!auth?.can?.("dogs_edit")}
+          title="Add a friend's dog"
+          onClose={() => setFriendAddOpen(false)}
+          onCreated={({ client, dog }) => {
+            // Added as one more dog on this booking; the family booking it stays the same.
+            setClients(prev => (prev.some(c => c.id === client.id) ? prev : [client, ...prev]));
+            setDogs(prev => (prev.some(d => d.id === dog.id) ? prev : [dog, ...prev]));
+            addFriendDog(dog.id);
+            setFriendAddOpen(false);
           }}
         />
       )}

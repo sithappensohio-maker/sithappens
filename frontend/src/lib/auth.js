@@ -9,12 +9,15 @@ export const useAuth = () => useContext(AuthCtx);
 export function AuthProvider({ children }) {
   const [user, setUser] = useState(null); // null = loading, false = guest, obj = logged-in
   const [permissions, setPermissions] = useState(null); // dict of permission key → bool
+  // Switches only the server can turn on (e.g. friends & family bookings). Kept
+  // apart from `permissions`: the owner passes every permission check.
+  const [features, setFeatures] = useState(null);
   const [error, setError] = useState("");
   const [mfaChallenge, setMfaChallenge] = useState(null);
 
   const loadMe = useCallback(async () => {
     const token = localStorage.getItem("sh_token");
-    if (!token) { setUser(false); setPermissions(null); return; }
+    if (!token) { setUser(false); setPermissions(null); setFeatures(null); return; }
     try {
       // These endpoints are independent. Starting them together removes one
       // full network round trip from every app launch and lets the backend's
@@ -25,11 +28,13 @@ export function AuthProvider({ children }) {
       ]);
       setUser(meRes.data);
       setPermissions(permRes?.data?.permissions || null);
+      setFeatures(permRes?.data?.features || null);
     } catch {
       localStorage.removeItem("sh_token");
       clearSharedApiCache({ notify: false });
       setUser(false);
       setPermissions(null);
+      setFeatures(null);
     }
   }, []);
 
@@ -62,7 +67,8 @@ export function AuthProvider({ children }) {
       try {
         const { data: p } = await api.get("/me/permissions");
         setPermissions(p.permissions || null);
-      } catch { setPermissions(null); }
+        setFeatures(p.features || null);
+      } catch { setPermissions(null); setFeatures(null); }
       return true;
     } catch (e) {
       setError(formatErr(e.response?.data?.detail) || "Login failed");
@@ -82,7 +88,8 @@ export function AuthProvider({ children }) {
       try {
         const { data: p } = await api.get("/me/permissions");
         setPermissions(p.permissions || null);
-      } catch { setPermissions(null); }
+        setFeatures(p.features || null);
+      } catch { setPermissions(null); setFeatures(null); }
       return true;
     } catch (e) {
       setError(formatErr(e.response?.data?.detail) || "MFA verification failed");
@@ -125,6 +132,7 @@ export function AuthProvider({ children }) {
     clearSharedApiCache({ notify: false });
     setUser(false);
     setPermissions(null);
+    setFeatures(null);
     setMfaChallenge(null);
   };
 
@@ -152,7 +160,7 @@ export function AuthProvider({ children }) {
   };
 
   return (
-    <AuthCtx.Provider value={{ user, permissions, can, isOwner: () => isOwner(user), login, verifyMfa, cancelMfa, mfaChallenge, register, logout, error, setError, reloadUser: loadMe }}>
+    <AuthCtx.Provider value={{ user, permissions, features, can, isOwner: () => isOwner(user), login, verifyMfa, cancelMfa, mfaChallenge, register, logout, error, setError, reloadUser: loadMe }}>
       {children}
     </AuthCtx.Provider>
   );

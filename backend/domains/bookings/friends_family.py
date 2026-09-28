@@ -198,6 +198,18 @@ _ENDED = ("completed", "cancelled", "canceled", "rejected")
 _STALE_MINUTES = 15   # a checkout (or a bill being made) this old has died part-way
 
 
+MSG_CHANGED = "This booking was just changed. Refresh and try again."
+
+
+def expected(body: Any, ff_row: bool) -> None:
+    """A checkout screen says whether it saw a friends & family booking; if the
+    booking changed since (a dog taken out, one added), the checkout it built
+    is for the other kind — refused, never run the wrong way."""
+    want = getattr(body, "expect_friends_family", None)
+    if want is not None and bool(want) != ff_row:
+        raise HTTPException(status_code=409, detail=MSG_CHANGED)
+
+
 def on_the_payers_tab(body: Any) -> Any:
     """The checkout of a friends & family dog: nothing is paid here — the
     whole visit goes on the payer's account (and never on prepaid credits).
@@ -371,6 +383,8 @@ async def check_out_together(anchor: dict, body: Any, user: dict) -> dict:
     rows = await group_pricing.household_checkout_rows(anchor)
     if len(rows) < 2:
         raise HTTPException(status_code=409, detail="There are no other active dogs left in this checkout group.")
+    if body.base_price is not None and not _g("_perms_for")(user).get("pricing"):   # (before any dog leaves)
+        raise HTTPException(status_code=403, detail="You don't have permission to override the checkout price.")
     # Extras, a manual price and an extra charge belong to the dog whose button
     # was clicked — as in every combined checkout — never to each dog.
     others = body.model_copy(update={"add_ons": [], "base_price": None, "base_price_reason": None,
@@ -409,3 +423,34 @@ def register_routes(*, api, server_globals: dict) -> None:
         return bill
 
     api.add_api_route("/bookings/group/{group_id}/close-bill", close_bill_now, methods=["POST"])
+
+    async def paying_for(client_id: str, user: dict = Depends(perm("clients_view"))):
+        """A family's friends & family bookings (the client page): every dog it
+        pays for — its own and its friends' — by booking, and whether any have
+        gone home and are waiting for their one bill (the same rule that holds
+        payments on the family's account)."""
+        db = _g("db")
+        live = {"bill_to_client_id": client_id, "status": {"$nin": ["cancelled", "canceled", "rejected"]}}
+        # The latest bookings, each whole — and always any still waiting for its bill.
+        recent = await db.bookings.find(live, {"_id": 0, "group_id": 1}).sort("date", -1).to_list(200)
+        waiting = await db.bookings.distinct("group_id", {"bill_to_client_id": client_id, "status": "completed",
+                                                          "$or": [{"group_bill_pending": True}, {"group_bill_claim": {"$nin": [None, ""]}}]})
+        gids = list({r["group_id"] for r in recent if r.get("group_id")} | {g for g in waiting if g})
+        rows = await db.bookings.find(
+            {**live, "group_id": {"$in": gids}},
+            {"_id": 0, "id": 1, "group_id": 1, "dog_id": 1, "dog_name": 1, "client_id": 1, "client_name": 1, "date": 1,
+             "end_date": 1, "service_type": 1, "status": 1, "checked_in_at": 1, "checked_out_at": 1,
+             "group_bill_pending": 1, "group_bill_claim": 1},
+        ).sort("date", -1).to_list(2000)
+        groups: Dict[str, List[dict]] = {}
+        for r in rows:
+            groups.setdefault(r.get("group_id") or r["id"], []).append(r)
+        return {
+            "waiting_for_bill": await waiting_for_group_bill(client_id),
+            "groups": [{"group_id": gid, "dogs": dogs,
+                        "waiting": any(d.get("status") == "completed" and (d.get("group_bill_pending") or d.get("group_bill_claim"))
+                                       for d in dogs)}
+                       for gid, dogs in groups.items()],
+        }
+
+    api.add_api_route("/clients/{client_id}/friends-family", paying_for, methods=["GET"])

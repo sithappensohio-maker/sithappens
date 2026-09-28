@@ -11,13 +11,20 @@ import { toast } from "sonner";
 // The record it creates is an ordinary client marked `walk_in`, so the visit,
 // the dog and the money all have somewhere to live, and the same person can be
 // booked ahead or converted to a real client later without re-entry.
-export default function WalkInModal({ onClose, onCreated, title = "New walk-in" }) {
+//
+// `friend` — a friend's dog joining a friends & family booking (owner request
+// 2026-09-28): the same light record, plus the vaccine dates if the friend has
+// them to hand (vaccines are still checked at booking; staff can override).
+const VACCINES = [["rabies", "Rabies"], ["dhpp", "DHPP"], ["bordetella", "Bordetella"]];
+
+export default function WalkInModal({ onClose, onCreated, title = "New walk-in", friend = false, vaccinesAllowed = false }) {
   const [ownerName, setOwnerName] = useState("");
   const [dogName, setDogName] = useState("");
   const [phone, setPhone] = useState("");
   const [email, setEmail] = useState("");
   const [breed, setBreed] = useState("");
   const [notes, setNotes] = useState("");
+  const [vaccines, setVaccines] = useState({});
   const [busy, setBusy] = useState(false);
 
   const ready = ownerName.trim() && dogName.trim();
@@ -29,11 +36,12 @@ export default function WalkInModal({ onClose, onCreated, title = "New walk-in" 
       const { data } = await api.post("/clients/walk-in", {
         owner_name: ownerName.trim(), dog_name: dogName.trim(),
         phone: phone.trim(), email: email.trim(), breed: breed.trim(), notes: notes.trim(),
+        ...(friend && vaccinesAllowed ? { vaccines: Object.fromEntries(Object.entries(vaccines).filter(([, v]) => v)) } : {}),
       });
-      toast.success(`${data.dog.name} added as a walk-in`);
+      toast.success(friend ? `${data.dog.name} added` : `${data.dog.name} added as a walk-in`);
       onCreated?.(data);
     } catch (e) {
-      toast.error(formatErr(e) || "Could not add the walk-in");
+      toast.error(formatErr(e.response?.data?.detail) || (friend ? "Could not add the dog" : "Could not add the walk-in"));
     } finally {
       setBusy(false);
     }
@@ -49,8 +57,10 @@ export default function WalkInModal({ onClose, onCreated, title = "New walk-in" 
            onClick={(e) => e.stopPropagation()}>
         <h4 className="text-lg font-black text-shText uppercase italic">{title}</h4>
         <p className="text-[12.5px] text-shTextMuted mt-1 mb-4 leading-relaxed">
-          For someone who isn&apos;t a client yet — a nail trim or a bath today. Just the two names
-          are required; you can fill in the rest later or turn them into a full client.
+          {friend
+            ? "A friend's dog joining this booking. Just the two names are required; the family is saved as a light record you can fill in later."
+            : <>For someone who isn&apos;t a client yet — a nail trim or a bath today. Just the two names
+          are required; you can fill in the rest later or turn them into a full client.</>}
         </p>
 
         <div className="space-y-3">
@@ -88,11 +98,29 @@ export default function WalkInModal({ onClose, onCreated, title = "New walk-in" 
           </div>
         </div>
 
+        {friend && vaccinesAllowed ? (
+          <div className="mt-3" data-testid="walk-in-vaccines">
+            <label className={label}>Vaccines good through (optional)</label>
+            <div className="grid grid-cols-3 gap-2">
+              {VACCINES.map(([key, name]) => (
+                <div key={key}>
+                  <span className="block text-[11px] text-shTextMuted mb-0.5">{name}</span>
+                  <input type="date" value={vaccines[key] || ""} data-testid={`walk-in-vaccine-${key}`}
+                         onChange={(e) => setVaccines((v) => ({ ...v, [key]: e.target.value }))} className={field}/>
+                </div>
+              ))}
+            </div>
+            <p className="text-[11.5px] text-shTextMuted mt-2 leading-relaxed">
+              Vaccines are still checked when the dog is booked; without the dates you&apos;ll be asked to override.
+            </p>
+          </div>
+        ) : (
         <p className="text-[11.5px] text-shTextMuted mt-3 leading-relaxed">
           <i className="fas fa-circle-info mr-1.5 text-shSecondary" aria-hidden="true"/>
           No vaccine records are on file for a walk-in, so the dog will show as unvaccinated until
           paperwork is handed in.
         </p>
+        )}
 
         <div className="flex gap-2 mt-5">
           <button onClick={onClose} disabled={busy} data-testid="walk-in-cancel"
@@ -101,7 +129,7 @@ export default function WalkInModal({ onClose, onCreated, title = "New walk-in" 
           </button>
           <button onClick={submit} disabled={!ready || busy} data-testid="walk-in-save"
                   className="flex-[2] min-h-[44px] rounded-lg bg-shPrimary text-bgHeader font-black text-[12px] uppercase tracking-widest disabled:opacity-40">
-            {busy ? <><i className="fas fa-spinner fa-spin mr-1.5"/>Adding…</> : "Add walk-in"}
+            {busy ? <><i className="fas fa-spinner fa-spin mr-1.5"/>Adding…</> : (friend ? "Add dog" : "Add walk-in")}
           </button>
         </div>
       </div>

@@ -1009,6 +1009,8 @@ class BookingOut(BaseModel):
     bill_to_client_name: Optional[str] = None
     group_kind: Optional[str] = None
     covered_by_other: bool = False  # the friend's family's view: someone else pays, nothing to pay
+    group_bill: Optional[Dict[str, Any]] = None  # a friends & family checkout that made the group's one bill
+    group_bill_pending: Optional[bool] = None     # gone home, waiting for the group's one bill
     id: str
     dog_id: str
     dog_name: str
@@ -1199,6 +1201,7 @@ class CheckoutIn(BaseModel):
     callers (legacy clients) still work — defaults to the previous behaviour:
     use any pre-deducted credits, no add-ons, no payment-method override."""
     use_credits: Optional[bool] = True  # False → refund pre-deducted credits, charge instead
+    expect_friends_family: Optional[bool] = None  # the screen's view; refused if the booking changed since
     payment_method: Optional[Literal["cash", "card", "transfer", "venmo", "paypal", "credits", "check", "other", "gift_card"]] = None
     gift_card_code: Optional[str] = Field(default=None, max_length=40)  # payment_method == "gift_card"
     # "paid_partial" is an explicit CALLER-asserted tab/partial intent (e.g.
@@ -7064,6 +7067,12 @@ async def discount_preview(booking_id: str, _: dict = Depends(require_employee_o
     }
 
 
+async def _is_early_checkout_price(booking_id: str, body: "CheckoutIn", user: dict) -> bool:
+    """The price a boarding dog leaving early is sent with is the server's own quote (not an override)."""
+    q = await early_checkout_quote(booking_id, user) if not body.base_price_reason else {}
+    return bool(q.get("applicable")) and abs(float(body.base_price) - float(q.get("base_price") or 0)) < 0.005
+
+
 async def early_checkout_quote(booking_id: str, _: dict = Depends(require_employee_or_admin)):
     """Boarding early-checkout pricing: what the stay is worth through TODAY.
 
@@ -9227,6 +9236,7 @@ async def check_out_group(
     anchor = await db.bookings.find_one({"id": booking_id}, {"_id": 0})
     if not anchor:
         raise HTTPException(status_code=404, detail="Booking not found")
+    friends_family.expected(body, bool(anchor.get("bill_to_client_id")))
     if anchor.get("bill_to_client_id"):  # friends & family: every dog on the payer's account, then one bill
         return await friends_family.check_out_together(anchor, body, user)
     group_id = anchor.get("group_id")
@@ -9538,7 +9548,7 @@ async def _check_out_endpoint_impl(
     # which made the "pricing" permission toggle decorative for checkout.
     # Admins (and staff explicitly granted "pricing") can still override;
     # everyone else checks out at the normal computed price.
-    if body.base_price is not None and not _perms_for(user).get("pricing"):
+    if body.base_price is not None and not _perms_for(user).get("pricing") and not await _is_early_checkout_price(booking_id, body, user):
         raise HTTPException(status_code=403, detail="You don't have permission to override the checkout price.")
     # Payment rebuild Phase 2 — additive, layered on top of the existing
     # require_employee_or_admin gate (not a replacement for it), matching
@@ -9548,6 +9558,7 @@ async def _check_out_endpoint_impl(
         raise HTTPException(status_code=403, detail="You don't have permission to take payments.")
     # A friends & family dog pays nothing here: its visit goes on the payer's account (friends_family).
     ff_row = bool((await db.bookings.find_one({"id": booking_id}, {"_id": 0, "bill_to_client_id": 1}) or {}).get("bill_to_client_id"))
+    friends_family.expected(body, ff_row)
     if ff_row:
         body = friends_family.on_the_payers_tab(body)
     operation_id = str(uuid.uuid4())
@@ -29886,6 +29897,7 @@ async def calendar_events(_: dict = Depends(require_admin), start: Optional[str]
                 "group_id": b.get("group_id"),
                 "dog_id": b.get("dog_id"),
                 "dog_name": b.get("dog_name"),
+                **{k: b.get(k) for k in ("bill_to_client_id", "bill_to_client_name", "group_kind")},  # friends & family
                 "spans_days": b["service_type"] == "boarding" or bool(
                     b["service_type"] == "training" and str(b.get("end_date") or "")[:10] > str(b["date"])[:10]),
             },
@@ -47425,6 +47437,7 @@ async def employee_roster_today(user: dict = Depends(require_employee_or_admin))
             "vet_name": d.get("vet_name"),
             "vet_phone": d.get("vet_phone"),
             "client_name": b.get("client_name") or c.get("name"),
+            **{k: b.get(k) for k in ("bill_to_client_id", "bill_to_client_name", "group_kind", "group_id", "group_bill_pending")},
             "client_phone": c.get("phone"),
             "client_emergency": c.get("emerg"),
             # Sprint 110cn — vaccine expiry data + completion log so the
@@ -53472,6 +53485,7 @@ async def my_permissions(user: dict = Depends(get_current_user)):
         "role": user.get("role"),
         "staff_role": user.get("staff_role") or ("owner" if user.get("role") == "admin" else None),
         "permissions": _perms_for(user),
+        "features": {"friends_family": bool(friends_family.ENABLED)},  # (read per request: tests flip it)
     }
 
 
@@ -56222,7 +56236,7 @@ from domains.clients.routes import WalkInIn, register_clients_routes  # noqa: E4
 
 _walk_in_callables = register_clients_routes(
     api=api, db=db, now_iso=now_iso,
-    require_admin_and_permission=require_admin_and_permission,
+    require_admin_and_permission=require_admin_and_permission, perms_for=lambda u: _perms_for(u),
 )
 create_walk_in = _walk_in_callables["create_walk_in"]
 

@@ -332,7 +332,7 @@ export default function TodayOperations({ stats, onReload = () => {}, onNavigate
       )}
 
       {reportFor && <ReportCardModal booking={reportFor} moodTags={moodTags} onClose={() => { setReportFor(null); reloadAll(); }}/>} 
-      {detailFor && <BookingDetailModal booking={detailFor} onClose={() => setDetailFor(null)} onJumpToDog={onJumpToDog}/>} 
+      {detailFor && <BookingDetailModal booking={detailFor} onClose={() => setDetailFor(null)} onJumpToDog={onJumpToDog} onChanged={reloadAll}/>} 
       {trainingTrackerFor && <TrainingSessionWorkspace bookingId={trainingTrackerFor.booking_id} dogId={trainingTrackerFor.dog_id} enrollmentId={trainingTrackerFor.enrollment_id} onClose={() => setTrainingTrackerFor(null)} onSaved={() => { setTrainingTrackerFor(null); reloadAll(); }}/>} 
       {checkoutFor && <CheckoutModal booking={checkoutFor} services={services} onRequestCancel={can("booking_edit") ? (b) => { setCheckoutFor(null); setCancelFor(b); } : undefined} onClose={() => { setCheckoutFor(null); reloadAll(); }}/>} 
       {cancelFor && <CancelBookingModal booking={cancelFor} onClose={() => { setCancelFor(null); reloadAll(); }}/>} 

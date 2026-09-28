@@ -429,7 +429,7 @@ export default function Bookings() {
       </div>
       {showModal && <AdminBookingModal onClose={()=>setShowModal(false)} onCreated={load} />}
       {editing && <AdminBookingModal existing={editing} onClose={()=>setEditing(null)} onCreated={load} />}
-      {detailFor && <BookingDetailModal booking={detailFor} onClose={()=>setDetailFor(null)} />}
+      {detailFor && <BookingDetailModal booking={detailFor} onClose={()=>setDetailFor(null)} onChanged={load} />}
     </div>
   );
 }

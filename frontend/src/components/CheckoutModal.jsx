@@ -1,4 +1,5 @@
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
+import { isFriendsFamily, isFriendsDog } from "../lib/friendsFamily";
 import { toast } from "sonner";
 import { api, formatErr } from "../lib/api";
 import { todayISO } from "../lib/date";
@@ -38,6 +39,8 @@ function CheckoutModalBody({ booking, services, onClose, onRequestCancel, lateDa
   // that group still need checked out, this modal becomes one household checkout.
   const [groupBookings, setGroupBookings] = useState([booking]);
   const [groupLoading, setGroupLoading] = useState(true);
+  const [groupReload, setGroupReload] = useState(0);
+  const [anchorGone, setAnchorGone] = useState(false);   // re-read after a failure: this dog has already left
   useEffect(() => {
     let alive = true;
     setGroupLoading(true);
@@ -45,10 +48,18 @@ function CheckoutModalBody({ booking, services, onClose, onRequestCancel, lateDa
       try {
         const { data } = await api.get(`/bookings/${booking.id}/checkout-group-preview`);
         if (!alive) return;
-        const active = (data.bookings || []).filter(b =>
-          b.client_id === booking.client_id &&
+        const rows = data.bookings || [];
+        // A friends & family booking leaves as its group, whichever family each
+        // dog belongs to; a family's own dogs as the household (with a dog that
+        // joined a stay under way — same group, a later start).
+        const fresh = rows.find(b => b.id === booking.id) || booking;
+        setAnchorGone(groupReload > 0 && !rows.some(b => b.id === booking.id));
+        const ffGroup = isFriendsFamily(fresh) && fresh.group_id;
+        const active = rows.filter(b =>
+          (ffGroup ? b.group_id === fresh.group_id
+                   : b.client_id === booking.client_id &&
+                     (b.date === booking.date || (!!booking.group_id && b.group_id === booking.group_id))) &&
           b.service_type === booking.service_type &&
-          b.date === booking.date &&
           b.status !== "completed" && !b.checked_out_at &&
           // A booked-but-never-arrived household dog (e.g. Bolt never
           // showed up while Lexi did) must never ride along on Lexi's
@@ -64,8 +75,19 @@ function CheckoutModalBody({ booking, services, onClose, onRequestCancel, lateDa
       }
     })();
     return () => { alive = false; };
-  }, [booking]);
-  const checkoutBookings = groupBookings.length ? groupBookings : [booking];
+  }, [booking, groupReload]);
+  // Friends & family (lib/friendsFamily): nothing is paid at this pickup — the
+  // visit goes on the paying family's account, and ONE bill is made when the
+  // last dog leaves. Dogs may leave at different times, so staff can check out
+  // just this one.
+  const anchorRow = groupBookings.find(b => b.id === booking.id) || booking;
+  const isFF = isFriendsFamily(anchorRow);
+  const payerName = anchorRow.bill_to_client_name || "the paying family";
+  const [leaveAlone, setLeaveAlone] = useState(false);
+  const checkoutBookings = isFF && leaveAlone ? [anchorRow] : (groupBookings.length ? groupBookings : [booking]);
+  // No prepaid credits on a friends & family visit (first release) — the
+  // paying family's own dogs go on the one bill too.
+  const ffNoCredits = isFF;
   const isGroupCheckout = checkoutBookings.length > 1;
   const groupDogNames = checkoutBookings.map(b => b.dog_name).filter(Boolean);
 
@@ -147,7 +169,7 @@ function CheckoutModalBody({ booking, services, onClose, onRequestCancel, lateDa
                   : "credits";
   const available = clientBal ? (clientBal[balField] || 0) : 0;
   const creditsToUseNow = Math.min(Number(available || 0), Number(creditUnitsNeeded || 0));
-  const canPayWithCredits = !hadCredit && !booking.actual_price && creditsToUseNow > 0;
+  const canPayWithCredits = !ffNoCredits && !hadCredit && !booking.actual_price && creditsToUseNow > 0;
 
   // Sprint 110db — Preview the lot that's about to be consumed FIFO so the
   // operator sees its Legacy / Paid-at-sale badge BEFORE clicking
@@ -179,11 +201,17 @@ function CheckoutModalBody({ booking, services, onClose, onRequestCancel, lateDa
   const [useCredits, setUseCredits] = useState(hadCredit);
   const [defaultedFromBal, setDefaultedFromBal] = useState(false);
   useEffect(() => {
-    if (clientBal && !defaultedFromBal && !hadCredit && creditsToUseNow > 0 && !booking.actual_price) {
+    if (clientBal && !defaultedFromBal && !hadCredit && creditsToUseNow > 0 && !booking.actual_price && !ffNoCredits) {
       setUseCredits(true);
       setDefaultedFromBal(true);
     }
-  }, [clientBal, creditsToUseNow, hadCredit, defaultedFromBal, booking.actual_price]);
+  }, [clientBal, creditsToUseNow, hadCredit, defaultedFromBal, booking.actual_price, ffNoCredits]);
+  useEffect(() => { if (ffNoCredits && useCredits) setUseCredits(false); }, [ffNoCredits, useCredits]);
+  const [ffResult, setFfResult] = useState(null);   // after a friends & family checkout: { bill, dogs }
+  const [ffBusy, setFfBusy] = useState(false);
+  const ffBusyRef = useRef(false);   // (a second tap lands before the screen redraws)
+  const [ffErr, setFfErr] = useState("");
+  const [ffConfirmClose, setFfConfirmClose] = useState(false);
   const [payMethod, setPayMethod] = useState("cash");
   // Paying a pickup with a gift card. The balance is checked while the
   // customer is still standing there, not when the checkout is submitted.
@@ -208,6 +236,8 @@ function CheckoutModalBody({ booking, services, onClose, onRequestCancel, lateDa
   const [priceReason, setPriceReason] = useState("");
   const [extraNights, setExtraNights] = useState(0);
   const [extraUseCredits, setExtraUseCredits] = useState(true);
+  // (Never on a friends & family visit: every extra night goes on the paying family's account.)
+  const extraNightsUseCredits = extraUseCredits && !ffNoCredits;
   const [extraRate, setExtraRate] = useState("");
   const exactService = (services || []).find(s => s.id === booking.service_id && s.active);
   const defaultService = (services || []).find(s => s.service_type === booking.service_type && s.is_default && s.active);
@@ -457,7 +487,7 @@ function CheckoutModalBody({ booking, services, onClose, onRequestCancel, lateDa
   const extraCreditUnitsNeeded = isBoarding ? Number(extraNights || 0) * extraCreditUnitsPerNight : 0;
   const creditsReservedForBase = useCredits && !hadCredit ? Number(creditsToUseNow || 0) : 0;
   const creditsAvailableForExtra = Math.max(0, Number(available || 0) - creditsReservedForBase);
-  const extraCreditsPreview = extraUseCredits
+  const extraCreditsPreview = extraNightsUseCredits
     ? Math.min(extraCreditUnitsNeeded, creditsAvailableForExtra)
     : 0;
   const extraBilledUnits = Math.max(0, extraCreditUnitsNeeded - extraCreditsPreview);
@@ -565,6 +595,19 @@ function CheckoutModalBody({ booking, services, onClose, onRequestCancel, lateDa
     }
     setBusy(true);
     try {
+      // The early-checkout price depends on the clock (the pickup-time rule):
+      // ask again, so what is charged is what the screen shows.
+      if (earlyStayActive && basePrice === "" && !useCredits) {
+        const { data: fresh } = await api.get(`/bookings/${booking.id}/early-checkout-quote`);
+        if (!fresh?.applicable || Math.abs(Number(fresh.base_price) - Number(earlyQuote.base_price)) > 0.005) {
+          setEarlyQuote(fresh?.applicable ? fresh : null);
+          setErr(fresh?.applicable
+            ? `The early-checkout price is now $${Number(fresh.base_price).toFixed(2)} (pickup is now past the checkout time). Check it and press Complete again.`
+            : "This stay is no longer an early checkout. Check the price and press Complete again.");
+          setBusy(false);
+          return;
+        }
+      }
       const body = {
         use_credits: useCredits,
         ...(payFromDaycare && useCredits ? { late_day_credit_pool: "daycare" } : {}),
@@ -594,7 +637,7 @@ function CheckoutModalBody({ booking, services, onClose, onRequestCancel, lateDa
       }
       if (isBoarding && extraNights > 0) {
         body.extra_nights = Number(extraNights);
-        body.extra_nights_use_credits = extraUseCredits;
+        body.extra_nights_use_credits = extraNightsUseCredits;
         if (extraRate !== "") body.extra_nights_rate = Number(extraRate);
       }
       // Credit checkout keeps the service value and any explicit overage
@@ -641,6 +684,21 @@ function CheckoutModalBody({ booking, services, onClose, onRequestCancel, lateDa
         body.payment_status = "paid";
         body.amount_paid = Number(chargedToday.toFixed(2));
       }
+      // The server refuses the checkout if the booking stopped (or started)
+      // being friends & family since this screen read it.
+      body.expect_friends_family = isFF;
+      if (isFF) {
+        // Nothing is paid at a friends & family pickup (the server refuses money
+        // offered here): the visit goes on the paying family's account.
+        for (const k of ["payment_method", "gift_card_code", "retail_lines", "retail_idempotency_key", "tendered_amount", "additional_cash_charge"]) delete body[k];
+        body.payment_status = "paid_partial";
+        body.amount_paid = 0;
+        if (ffNoCredits) {
+          body.use_credits = false;
+          delete body.late_day_credit_pool;
+          if (body.extra_nights) body.extra_nights_use_credits = false;
+        }
+      }
       // Silent geolocation capture (audit trail)
       try {
         if (navigator.geolocation) {
@@ -663,6 +721,12 @@ function CheckoutModalBody({ booking, services, onClose, onRequestCancel, lateDa
       // below this line can affect that. Hardware actions are strictly
       // best-effort and post-hoc; failures here never mean the payment failed.
       emitRegisterChanged();
+      if (isFF) {
+        setBusy(false);
+        const done = data?.friends_family ? (data.bookings || []) : [data];
+        setFfResult({ bill: data?.invoice || data?.group_bill || null, dogs: done.map(b => b?.dog_name).filter(Boolean) });
+        return;
+      }
       const printToken = data?.pos_print_receipt_token;
       const drawerToken = data?.pos_open_drawer_token;
       setHwInvoiceId(data?.pos_invoice_id || null);
@@ -692,10 +756,106 @@ function CheckoutModalBody({ booking, services, onClose, onRequestCancel, lateDa
         return;
       } else {
         setErr(e.response?.data?.detail || "Check-out failed");
+        if (isFF || e.response?.status === 409) { setGroupReload((n) => n + 1); emitRegisterChanged(); }
       }
       setBusy(false);
     }
   };
+
+  const receiptModal = receiptViewOpen && (
+    <div className="fixed inset-0 bg-black/70 z-[60] grid place-items-center p-4" onClick={() => setReceiptViewOpen(null)}>
+      <div className="bg-white text-black rounded-lg p-5 max-w-sm w-full text-[13px]" onClick={(e) => e.stopPropagation()} data-testid="checkout-receipt-view-modal">
+        {receiptViewOpen.test_receipt && (
+          <div className="bg-amber-200 text-amber-900 text-center font-black text-[10px] uppercase tracking-widest py-1 mb-2 rounded">{receiptViewOpen.test_label}</div>
+        )}
+        <ReceiptLogo imageId={receiptViewOpen.business_logo_image_id} />
+        <p className="font-black text-base">{receiptViewOpen.business_name}</p>
+        <p className="text-gray-500 mt-1">Receipt #{receiptViewOpen.receipt_number}</p>
+        {receiptViewOpen.client_name && <p className="text-gray-500">Client: {receiptViewOpen.client_name}</p>}
+        <div className="border-t border-gray-200 my-2" />
+        {(receiptViewOpen.line_items || []).map((li, i) => (
+          <div key={i} className="flex justify-between gap-2"><span>{li.description}{li.qty > 1 ? ` × ${li.qty}` : ""}</span><span className="font-bold">{li.amount != null ? `$${Number(li.amount).toFixed(2)}` : ""}</span></div>
+        ))}
+        <div className="border-t border-gray-200 my-2" />
+        <div className="flex justify-between font-black text-base"><span>Total</span><span>${Number(receiptViewOpen.total ?? receiptViewOpen.invoice_total ?? receiptViewOpen.payment_amount ?? 0).toFixed(2)}</span></div>
+        <button onClick={() => setReceiptViewOpen(null)} className="mt-4 w-full bg-gray-100 text-gray-700 rounded py-2 font-black uppercase text-[12px] tracking-widest">Close</button>
+      </div>
+    </div>
+  );
+
+  // Staff close the group's one bill now (a dog is staying on, or won't come back).
+  const closeBillNow = async () => {
+    if (ffBusyRef.current) return;
+    ffBusyRef.current = true;
+    setFfBusy(true); setFfErr("");
+    try {
+      const { data } = await api.post(`/bookings/group/${anchorRow.group_id}/close-bill`);
+      setFfResult((r) => ({ ...r, bill: data }));
+      setFfConfirmClose(false);
+      emitRegisterChanged();
+    } catch (e) {
+      setFfErr(e.response?.data?.detail || "Could not make the bill");
+    }
+    ffBusyRef.current = false;
+    setFfBusy(false);
+  };
+
+  // A friends & family checkout took no money: say where the visit went.
+  if (ffResult) {
+    const bill = ffResult.bill;
+    const dogs = ffResult.dogs.length ? ffResult.dogs.join(" + ") : booking.dog_name;
+    return (
+      <div className="fixed inset-0 bg-black/80 flex items-center justify-center p-4 z-50" data-testid="checkout-ff-result">
+        <div className="bg-bgPanel border border-bgHover rounded-2xl w-full max-w-md p-6 shadow-2xl animate-slide-in">
+          <div className="flex items-center gap-3 mb-4">
+            <div className="bg-shBlue/20 text-shBlue w-11 h-11 rounded-full flex items-center justify-center text-xl">
+              <i className="fas fa-check"/>
+            </div>
+            <h4 className="text-lg font-black text-white uppercase italic tracking-tight">{dogs} checked out</h4>
+          </div>
+          {bill ? (
+            <p className="text-[14px] text-gray-300" data-testid="checkout-ff-bill">
+              One bill for <strong className="text-white">{bill.client_name || payerName}</strong>:{" "}
+              <strong className="text-shGreen">${Number(bill.total || 0).toFixed(2)}</strong>
+              {(bill.dog_names || []).length > 0 && <> · {bill.dog_names.join(" + ")}</>}.
+              {" "}Take the payment on this bill (Pay Invoice at the Front Desk), or the family can pay it online.
+            </p>
+          ) : (
+            <p className="text-[14px] text-gray-300" data-testid="checkout-ff-on-account">
+              Nothing was paid now — the visit is on <strong className="text-white">{payerName}</strong>'s account.
+              One bill for every dog is made when the last dog leaves.
+            </p>
+          )}
+          {ffConfirmClose && !bill && (
+            <p className="mt-3 rounded p-2.5 text-[13px] bg-shOrange/10 text-shOrange border border-shOrange/30" data-testid="checkout-ff-close-warning">
+              Dogs still here or still to come won't be on this bill — each gets its own when it leaves. Make the bill now?
+            </p>
+          )}
+          {ffErr && <p className="text-red-400 text-[14px] mt-3" data-testid="checkout-ff-error">{ffErr}</p>}
+          <div className="flex flex-wrap gap-2 mt-4">
+            {bill && (
+              <button onClick={() => viewReceipt(bill.id)} data-testid="checkout-ff-view-bill"
+                      className="text-shBlue font-black uppercase text-[12px] tracking-widest border border-shBlue/40 rounded px-3 py-2">
+                <i className="fas fa-receipt mr-1"/>View bill
+              </button>
+            )}
+            {!bill && anchorRow.group_id && (
+              <button onClick={() => (ffConfirmClose ? closeBillNow() : setFfConfirmClose(true))} disabled={ffBusy}
+                      data-testid="checkout-ff-close-bill"
+                      className="text-shOrange font-black uppercase text-[12px] tracking-widest border border-shOrange/40 rounded px-3 py-2 disabled:opacity-50">
+                <i className="fas fa-file-invoice-dollar mr-1"/>{ffConfirmClose ? "Yes, make the bill now" : "Close the bill now"}
+              </button>
+            )}
+            <button onClick={onClose} data-testid="checkout-ff-done"
+                    className="ml-auto bg-shGreen text-bgHeader px-6 py-2 rounded font-black uppercase text-[13px] tracking-widest">
+              Done
+            </button>
+          </div>
+        </div>
+        {receiptModal}
+      </div>
+    );
+  }
 
   // Payment already committed by the time this renders — this is a purely
   // physical status screen. Hardware failure here never implies the
@@ -790,26 +950,7 @@ function CheckoutModalBody({ booking, services, onClose, onRequestCancel, lateDa
             </button>
           </div>
         </div>
-        {receiptViewOpen && (
-          <div className="fixed inset-0 bg-black/70 z-[60] grid place-items-center p-4" onClick={() => setReceiptViewOpen(null)}>
-            <div className="bg-white text-black rounded-lg p-5 max-w-sm w-full text-[13px]" onClick={(e) => e.stopPropagation()} data-testid="checkout-receipt-view-modal">
-              {receiptViewOpen.test_receipt && (
-                <div className="bg-amber-200 text-amber-900 text-center font-black text-[10px] uppercase tracking-widest py-1 mb-2 rounded">{receiptViewOpen.test_label}</div>
-              )}
-              <ReceiptLogo imageId={receiptViewOpen.business_logo_image_id} />
-              <p className="font-black text-base">{receiptViewOpen.business_name}</p>
-              <p className="text-gray-500 mt-1">Receipt #{receiptViewOpen.receipt_number}</p>
-              {receiptViewOpen.client_name && <p className="text-gray-500">Client: {receiptViewOpen.client_name}</p>}
-              <div className="border-t border-gray-200 my-2" />
-              {(receiptViewOpen.line_items || []).map((li, i) => (
-                <div key={i} className="flex justify-between gap-2"><span>{li.description}{li.qty > 1 ? ` × ${li.qty}` : ""}</span><span className="font-bold">{li.amount != null ? `$${Number(li.amount).toFixed(2)}` : ""}</span></div>
-              ))}
-              <div className="border-t border-gray-200 my-2" />
-              <div className="flex justify-between font-black text-base"><span>Total</span><span>${Number(receiptViewOpen.total ?? receiptViewOpen.invoice_total ?? receiptViewOpen.payment_amount ?? 0).toFixed(2)}</span></div>
-              <button onClick={() => setReceiptViewOpen(null)} className="mt-4 w-full bg-gray-100 text-gray-700 rounded py-2 font-black uppercase text-[12px] tracking-widest">Close</button>
-            </div>
-          </div>
-        )}
+        {receiptModal}
       </div>
     );
   }
@@ -823,7 +964,15 @@ function CheckoutModalBody({ booking, services, onClose, onRequestCancel, lateDa
           </h4>
           <button onClick={onClose} className="text-gray-500 hover:text-white"><i className="fas fa-times" /></button>
         </div>
-        <p className="text-[14px] text-gray-400 mb-4">{booking.client_name} · {booking.service_type}</p>
+        <p className="text-[14px] text-gray-400 mb-4">
+          {booking.client_name} · {booking.service_type}
+          {isFF && (
+            <span className="ml-2 inline-block rounded-full border border-shBlue/40 bg-shBlue/10 px-2 py-0.5 text-[12px] font-black text-shBlue"
+                  data-testid="checkout-ff-billed-to">
+              {isFriendsDog(anchorRow) ? `Billed to ${payerName}` : "Pays for the group"}
+            </span>
+          )}
+        </p>
         {lateDay?.resolved && (
           <div className="mb-4 rounded-lg border border-shOrange/40 bg-shOrange/10 p-3 text-[13px] text-shText" data-testid="checkout-late-day-banner">
             <i className="fas fa-moon text-shOrange mr-1.5"/>
@@ -837,7 +986,23 @@ function CheckoutModalBody({ booking, services, onClose, onRequestCancel, lateDa
             )}
           </div>
         )}
-        {isGroupCheckout && (
+        {isFF && groupBookings.length > 1 && (
+          <div className="mb-4 rounded-lg border border-shBlue/40 bg-shBlue/10 p-3" data-testid="checkout-ff-summary">
+            <p className="text-[12px] uppercase tracking-widest text-shBlue font-black mb-1"><i className="fas fa-user-group mr-1"/>Friends &amp; family · one bill to {payerName}</p>
+            <p className="text-sm text-white font-black">{groupBookings.map(b => `${b.dog_name}${b.client_name ? ` (${b.client_name})` : ""}`).join(" + ")}</p>
+            <div className="mt-2 grid grid-cols-2 gap-2">
+              <button type="button" onClick={() => setLeaveAlone(false)} data-testid="checkout-ff-all"
+                      className={`rounded border p-2 text-[13px] font-black ${!leaveAlone ? "border-shGreen bg-shGreen/10 text-white" : "border-bgHover text-gray-400"}`}>
+                All {groupBookings.length} leaving now
+              </button>
+              <button type="button" onClick={() => setLeaveAlone(true)} data-testid="checkout-ff-only-this"
+                      className={`rounded border p-2 text-[13px] font-black ${leaveAlone ? "border-shGreen bg-shGreen/10 text-white" : "border-bgHover text-gray-400"}`}>
+                Only {booking.dog_name} is leaving
+              </button>
+            </div>
+          </div>
+        )}
+        {isGroupCheckout && !isFF && (
           <div className="mb-4 rounded-lg border border-shBlue/40 bg-shBlue/10 p-3" data-testid="group-checkout-summary">
             <p className="text-[12px] uppercase tracking-widest text-shBlue font-black mb-1"><i className="fas fa-dog mr-1"/>One checkout for the household</p>
             <p className="text-sm text-white font-black">{groupDogNames.join(" + ")}</p>
@@ -845,8 +1010,17 @@ function CheckoutModalBody({ booking, services, onClose, onRequestCancel, lateDa
           </div>
         )}
 
+        {isFF && (
+          <div className="mb-5 rounded-lg border border-shBlue/40 bg-bgBase p-4" data-testid="checkout-ff-billing">
+            <p className="text-[13px] uppercase tracking-widest text-shBlue font-black mb-1">Nothing is paid at this pickup</p>
+            <p className="text-[14px] text-gray-300">
+              The visit goes on <strong className="text-white">{payerName}</strong>'s account.
+              One bill for every dog is made when the last dog leaves.
+            </p>
+          </div>
+        )}
         {/* Section 1 — How to pay the base service */}
-        <div className="mb-5 border border-bgHover rounded-lg p-4 bg-bgBase">
+        {!ffNoCredits && (<div className="mb-5 border border-bgHover rounded-lg p-4 bg-bgBase">
           <p className="text-[13px] uppercase tracking-widest text-gray-500 font-black mb-3">Base service</p>
           {daycarePerNight > 0 && !hadCredit && (
             <div className="mb-3" data-testid="checkout-credit-pool">
@@ -946,7 +1120,7 @@ function CheckoutModalBody({ booking, services, onClose, onRequestCancel, lateDa
               )}
             </p>
           )}
-        </div>
+        </div>)}
 
         {/* Section 1a½ — Boarding EARLY checkout (leaving before booked end).
             Cash path only: credit deductions stay booked-span (server-side). */}
@@ -1002,11 +1176,13 @@ function CheckoutModalBody({ booking, services, onClose, onRequestCancel, lateDa
             </div>
             {extraNights > 0 && (
               <div className="space-y-3 animate-slide-in">
-                <label className="flex items-center gap-2 text-[15px] text-gray-300">
-                  <input type="checkbox" checked={extraUseCredits} onChange={(e)=>setExtraUseCredits(e.target.checked)} data-testid="extra-nights-use-credits"/>
-                  Use remaining boarding credits first (any leftover gets billed)
-                </label>
-                {!extraUseCredits && (
+                {!ffNoCredits && (
+                  <label className="flex items-center gap-2 text-[15px] text-gray-300">
+                    <input type="checkbox" checked={extraUseCredits} onChange={(e)=>setExtraUseCredits(e.target.checked)} data-testid="extra-nights-use-credits"/>
+                    Use remaining boarding credits first (any leftover gets billed)
+                  </label>
+                )}
+                {!extraNightsUseCredits && (
                   <div>
                     <label className="text-[13px] uppercase tracking-widest text-gray-500 font-black">Per-night rate <span className="text-gray-600">(blank = settings default)</span></label>
                     <input type="number" step="0.01" value={extraRate} onChange={(e)=>setExtraRate(e.target.value)} data-testid="extra-nights-rate"
@@ -1016,7 +1192,7 @@ function CheckoutModalBody({ booking, services, onClose, onRequestCancel, lateDa
                 )}
                 <div className="text-[14px] bg-bgPanel rounded p-2 text-gray-300">
                   <i className="fas fa-circle-info text-shBlue mr-1"/>
-                  {extraUseCredits
+                  {extraNightsUseCredits
                     ? `Needs ${fmtCredits(extraCreditUnitsNeeded)} boarding credit unit${extraCreditUnitsNeeded===1?"":"s"}. ${fmtCredits(extraCreditsPreview)} will be used and ${fmtCredits(extraBilledUnits)} uncovered unit${extraBilledUnits===1?"":"s"} will be billed at $${extraRateEffective.toFixed(2)} = $${extraNightsCharge.toFixed(2)}.`
                     : `Charging ${fmtCredits(extraBilledUnits)} unit${extraBilledUnits===1?"":"s"} × $${extraRateEffective.toFixed(2)} = $${extraNightsCharge.toFixed(2)} for the extension${isAdditionalDogRow ? " (second-dog rate included)" : ""}.`}
                 </div>
@@ -1077,7 +1253,12 @@ function CheckoutModalBody({ booking, services, onClose, onRequestCancel, lateDa
         {/* Section 2b — Merchandise. Folded away by default: most pickups
             sell nothing, and an open shelf of products would push the actual
             checkout down the screen every single time. */}
-        {shopItems.length > 0 && (
+        {isFF && shopItems.length > 0 && (
+          <p className="mb-5 text-[13px] text-gray-400" data-testid="checkout-ff-shop-note">
+            <i className="fas fa-shopping-basket mr-1.5"/>Selling something? Ring it up at the Register for {payerName}.
+          </p>
+        )}
+        {shopItems.length > 0 && !isFF && (
           <div className="mb-5 border border-bgHover rounded-lg p-4 bg-bgBase" data-testid="checkout-shop">
             <button type="button" onClick={() => setShopOpen((v) => !v)} data-testid="checkout-shop-toggle"
                     className="w-full flex items-center justify-between gap-2 text-left">
@@ -1150,14 +1331,14 @@ function CheckoutModalBody({ booking, services, onClose, onRequestCancel, lateDa
 
         {/* Section 3 — Payment method + Service value */}
         <div className="mb-5 border border-bgHover rounded-lg p-4 bg-bgBase">
-          <p className="text-[13px] uppercase tracking-widest text-gray-500 font-black mb-3">Payment</p>
-          {(!useCredits || chargedToday > 0) && (
+          <p className="text-[13px] uppercase tracking-widest text-gray-500 font-black mb-3">{isFF ? "Price" : "Payment"}</p>
+          {(!useCredits || chargedToday > 0) && !isFF && (
             <select value={payMethod} onChange={(e)=>setPayMethod(e.target.value)} data-testid="checkout-pay-method"
                     className="w-full bg-bgPanel border border-bgHover rounded p-2 text-white text-sm mb-3">
               <option value="cash">Cash</option><option value="card">Card</option><option value="venmo">Venmo</option><option value="paypal">PayPal</option><option value="check">Check</option><option value="other">Other</option><option value="gift_card">Gift Card</option>
             </select>
           )}
-          {payMethod === "gift_card" && (
+          {payMethod === "gift_card" && !isFF && (
             <div className="mb-3" data-testid="checkout-gift-tender">
               <div className="flex gap-2">
                 <input value={giftCode} onChange={(e) => setGiftCode(e.target.value)}
@@ -1219,7 +1400,7 @@ function CheckoutModalBody({ booking, services, onClose, onRequestCancel, lateDa
               an Amount Paid input prefilled with the full total. The
               client's existing tab is surfaced here too so the operator
               knows the running balance going into this checkout. */}
-          {!useCredits && !isGroupCheckout && (
+          {!useCredits && !isGroupCheckout && !isFF && (
             <div className="mt-4 pt-3 border-t border-bgHover" data-testid="checkout-pay-mode-section">
               {clientBal && Math.abs(clientBal.account_balance) > 0.005 && (
                 <div className={`mb-3 rounded p-2.5 text-[13px] font-black ${clientBal.account_balance > 0 ? "bg-shOrange/15 text-shOrange border border-shOrange/30" : "bg-shGreen/10 text-shGreen border border-shGreen/30"}`}
@@ -1323,7 +1504,7 @@ function CheckoutModalBody({ booking, services, onClose, onRequestCancel, lateDa
               )}
             </div>
           )}
-          {!useCredits && isGroupCheckout && (
+          {!useCredits && isGroupCheckout && !isFF && (
             <p className="mt-3 text-[13px] text-gray-400 border-t border-bgHover pt-3" data-testid="group-checkout-full-payment-note">
               <i className="fas fa-receipt text-shGreen mr-1"/>Combined household checkouts are paid in full as one ticket. Use separate checkouts only when putting part of the balance on the client's tab.
             </p>
@@ -1331,7 +1512,7 @@ function CheckoutModalBody({ booking, services, onClose, onRequestCancel, lateDa
         </div>
 
         {/* One-time checkout discount — applies to dollars due only. */}
-        <div className="mb-5 border border-bgHover rounded-lg p-4 bg-bgBase" data-testid="checkout-discount-panel">
+        {!isFF && (<div className="mb-5 border border-bgHover rounded-lg p-4 bg-bgBase" data-testid="checkout-discount-panel">
           <div className="flex items-start justify-between gap-3 mb-3">
             <div>
               <p className="text-[13px] uppercase tracking-widest text-gray-500 font-black">
@@ -1371,7 +1552,7 @@ function CheckoutModalBody({ booking, services, onClose, onRequestCancel, lateDa
               <i className="fas fa-arrow-down mr-1"/>Total reduced by ${checkoutDiscountApplied.toFixed(2)} before tax.
             </p>
           )}
-        </div>
+        </div>)}
 
         {/* Total summary */}
         <div className="mb-4 border-t-2 border-shGreen pt-3 flex items-end justify-between">
@@ -1432,7 +1613,7 @@ function CheckoutModalBody({ booking, services, onClose, onRequestCancel, lateDa
             {useCredits && hadCredit && <p className="text-[12px] uppercase tracking-widest text-shGreen font-black">−${creditAmt.toFixed(2)} via credits</p>}
           </div>
           <div className="text-right">
-            <p className="text-[12px] uppercase tracking-widest text-gray-500 font-black">{useCredits && hadCredit && addOnTotal === 0 && existingAddonTotal === 0 ? "Total" : "Charged today"}</p>
+            <p className="text-[12px] uppercase tracking-widest text-gray-500 font-black">{isFF ? `On ${payerName}'s account` : (useCredits && hadCredit && addOnTotal === 0 && existingAddonTotal === 0 ? "Total" : "Charged today")}</p>
             {/* One number at the counter. The stay and the merchandise are
                 two records underneath, but nobody hands over money twice. */}
             <p className="text-shGreen text-3xl font-black" data-testid="checkout-total">${dueToday.toFixed(2)}</p>
@@ -1445,6 +1626,12 @@ function CheckoutModalBody({ booking, services, onClose, onRequestCancel, lateDa
         </div>
 
         {err && <p className="text-red-400 text-[15px] mb-3" data-testid="checkout-error">{err}</p>}
+        {anchorGone && (
+          <p className="text-shOrange text-[14px] mb-3" data-testid="checkout-anchor-gone">
+            {booking.dog_name} has already been checked out. Close this and check out
+            {groupBookings.length ? ` ${groupBookings.map(b => b.dog_name).join(" + ")}` : " the other dogs"} from their own row.
+          </p>
+        )}
 
         {btBlock && (
           /* The stay cannot just be waved through, but it must not be a dead
@@ -1528,9 +1715,9 @@ function CheckoutModalBody({ booking, services, onClose, onRequestCancel, lateDa
           ) : <span/>}
           <div className="flex gap-3">
             <button onClick={onClose} className="text-gray-500 font-black uppercase text-[14px] tracking-widest">Close</button>
-            <button onClick={submit} disabled={busy || groupLoading || checkoutDiscountTooHigh || checkoutDiscountReasonMissing || btUnanswered > 0} data-testid="confirm-checkout"
+            <button onClick={submit} disabled={anchorGone || busy || groupLoading || checkoutDiscountTooHigh || checkoutDiscountReasonMissing || btUnanswered > 0} data-testid="confirm-checkout"
                     className="bg-shBlue text-white px-8 py-3 rounded font-black text-[14px] uppercase tracking-widest shadow-lg disabled:opacity-50">
-              {busy ? "Checking out…" : (groupLoading ? "Loading household…" : (isGroupCheckout ? `Check Out All ${groupDogNames.length} Dogs` : (shopTotal > 0 ? `Complete Check-out · $${dueToday.toFixed(2)}` : "Complete Check-out")))}
+              {busy ? "Checking out…" : (groupLoading ? "Loading household…" : (isFF ? (isGroupCheckout ? `Check Out All ${groupDogNames.length} · one bill` : `Check Out · on ${payerName}'s account`) : (isGroupCheckout ? `Check Out All ${groupDogNames.length} Dogs` : (shopTotal > 0 ? `Complete Check-out · $${dueToday.toFixed(2)}` : "Complete Check-out"))))}
             </button>
           </div>
         </div>

@@ -103,9 +103,12 @@ test("missing or empty price data degrades to the old behaviour", () => {
 
 test("the modal asks the server what this client pays", () => {
   // Now fetched wherever a client is known — the scheduled flow showed the
-  // same misleading catalogue price the check-in flow did.
-  expect(src).toMatch(/api\.get\(`\/clients\/\$\{clientId\}\/service-prices`\)/);
-  expect(src).toMatch(/if \(!clientId\) \{ setClientServicePrices\(null\)/);
+  // same misleading catalogue price the check-in flow did. On a friends &
+  // family booking the prices are the paying family's (pricingClientId);
+  // otherwise that is the booking's client.
+  expect(src).toMatch(/api\.get\(`\/clients\/\$\{pricingClientId\}\/service-prices`\)/);
+  expect(src).toMatch(/if \(!pricingClientId\) \{ setClientServicePrices\(null\)/);
+  expect(src).toMatch(/const pricingClientId = ffBooking \? ffPayer : clientId;/);
 });
 
 test("the modal applies the rule instead of the old type-only default", () => {
@@ -225,7 +228,7 @@ test("the dropdown renders through the helper, not base_price", () => {
 // ---------------------------------------------------------------------------
 
 test("a service-prices failure is surfaced, not swallowed", () => {
-  const fn = src.slice(src.indexOf("api.get(`/clients/${clientId}/service-prices`)"),
+  const fn = src.slice(src.indexOf("api.get(`/clients/${pricingClientId}/service-prices`)"),
                        src.indexOf("// ...and once we know"));
   // the old silent fallback set an EMPTY map, indistinguishable from
   // "this client has no overrides"
@@ -271,9 +274,10 @@ test("the resolved owner joins the SAME clients state, not a second one", () => 
 });
 
 test("the readout and the pricing request use the same client id", () => {
-  // readout reads `clients.find(c => c.id === clientId)`; pricing uses clientId
+  // readout reads `clients.find(c => c.id === clientId)`; pricing uses the
+  // same clientId unless another family pays (friends & family)
   expect(src).toMatch(/clients\.find\(c => c\.id === clientId\)\?\.name/);
-  expect(src).toMatch(/api\.get\(`\/clients\/\$\{clientId\}\/service-prices`\)/);
+  expect(src).toMatch(/api\.get\(`\/clients\/\$\{pricingClientId\}\/service-prices`\)/);
 });
 
 // ---------------------------------------------------------------------------
@@ -283,8 +287,8 @@ test("the readout and the pricing request use the same client id", () => {
 test("client prices are fetched whenever a client is known, not only at check-in", () => {
   const fx = src.slice(src.indexOf("// What does THIS client actually pay"),
                        src.indexOf("// ...and once we know"));
-  expect(fx).toMatch(/if \(!clientId\)/);
-  expect(fx).not.toMatch(/!isQuickCheckin \|\| !clientId/);
+  expect(fx).toMatch(/if \(!pricingClientId\)/);
+  expect(fx).not.toMatch(/!isQuickCheckin \|\| !(pricingC|c)lientId/);
 });
 
 test("auto-selecting a service stays Quick Check-In only", () => {
@@ -299,7 +303,7 @@ test("switching client cannot leave the previous client's prices on screen", () 
   const fx = src.slice(src.indexOf("// What does THIS client actually pay"),
                        src.indexOf("// ...and once we know"));
   expect(fx).toMatch(/setClientServicePrices\(null\); setClientPriceError\(""\); return;/);
-  expect(fx).toMatch(/\}, \[clientId\]\);/);
+  expect(fx).toMatch(/\}, \[pricingClientId\]\);/);
 });
 
 test("an unverified price blocks the booking, not just warns", () => {

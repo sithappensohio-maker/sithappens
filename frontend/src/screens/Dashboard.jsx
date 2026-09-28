@@ -855,7 +855,7 @@ export default function Dashboard({ onNavigate = () => {}, onJumpToDog = () => {
       )}
 
       {reportFor && <ReportCardModal booking={reportFor} moodTags={moodTags} onClose={()=>{ setReportFor(null); load(); }} />}
-      {detailFor && <BookingDetailModal booking={detailFor} onClose={()=>setDetailFor(null)} onJumpToDog={onJumpToDog} />}
+      {detailFor && <BookingDetailModal booking={detailFor} onClose={()=>setDetailFor(null)} onJumpToDog={onJumpToDog} onChanged={load} />}
       {trainingTrackerFor && (
         <TrainingSessionWorkspace
           bookingId={trainingTrackerFor.booking_id}

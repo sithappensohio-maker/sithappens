@@ -9,7 +9,8 @@ visit on the PAYER's account; nothing is paid at that checkout (money offered
 there is refused; merchandise is rung at the register). The group's one bill
 is made on the payer when the last dog leaves (test_friends_family_group_bill).
 The friend's family's account never moves. Prepaid credits are not used on
-the friend's dog (first release). A visit someone else paid for earns no
+any dog of a friends & family booking (first release) — the paying family's
+own dogs go on the one bill too. A visit someone else paid for earns no
 referral reward.
 
 Self-contained fixtures (never import another test module).
@@ -129,11 +130,25 @@ def test_money_offered_at_a_friends_dogs_checkout_is_refused_and_nothing_changes
 
 
 def test_neither_familys_prepaid_credits_pay_for_the_friends_dog():
-    """(The payer's own dog may use the payer's credits like any visit.)"""
     with _group() as (payer, friend):
         _checkout(friend["booking"], use_credits=True)
         assert _client(friend["client"])["credits"] == 5 and _client(payer["client"])["credits"] == 5
         assert run(server.db.bookings.find_one({"id": friend["booking"]})).get("payment_method") != "credits"
+
+
+def test_the_payers_own_dog_goes_on_the_one_bill_too_without_credits():
+    """First release: no prepaid credits on any friends & family visit (letting
+    the payer's own dog use them needs its own design: a visit only partly
+    covered, or with extras, must still land on the one bill)."""
+    with _group() as (payer, friend):
+        run(server.db.credit_lots.insert_one({
+            "id": str(uuid.uuid4()), "client_id": payer["client"], "service_type": "daycare", "pack_name": f"{TAG} pack",
+            "qty_total": 5, "qty_remaining": 5, "value_each": 30.0, "recognize_at_sale": True, "purchased_at": server.now_iso()}))
+        _checkout(friend["booking"])
+        _checkout(payer["booking"], use_credits=True)
+        assert _client(payer["client"])["credits"] == 5
+        [bill] = run(server.db.invoices.find({"client_id": payer["client"], "status": {"$ne": "VOID"}}, {"_id": 0}).to_list(5))
+        assert bill["total"] == 45.0 and bill["balance"] == 45.0
 
 
 def test_merchandise_at_a_friends_dogs_pickup_is_rung_at_the_register_instead():

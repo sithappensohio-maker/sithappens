@@ -518,10 +518,13 @@ export default function Pos({ onOpenShopManager } = {}) {
   // independently-fetched definition of "this client's bookings today") —
   // this is also how ongoing boarding stays that began before today stay
   // visible here, since the roster query itself now covers that range.
+  // A family's dogs today — and, on a friends & family booking, the friends'
+  // dogs it pays for (checked in and out from here like its own).
   const clientBookings = useMemo(
-    () => (selectedClient ? roster.filter((r) => r.client_id === selectedClient.id) : []),
+    () => (selectedClient ? roster.filter((r) => r.client_id === selectedClient.id || r.bill_to_client_id === selectedClient.id) : []),
     [roster, selectedClient],
   );
+  const dogLabel = (b) => (selectedClient && b.client_id !== selectedClient.id ? `${b.dog_name} · ${b.client_name}'s dog` : b.dog_name);
   const [clientInvoice, setClientInvoice] = useState(null);
   const [clientInvoiceError, setClientInvoiceError] = useState(false);
   const refreshClientInvoice = (clientId) => {
@@ -1645,6 +1648,9 @@ export default function Pos({ onOpenShopManager } = {}) {
                     <p className="text-shText font-black text-[14px] leading-tight truncate">{row.dog_name}</p>
                     <p className="text-shTextMuted text-[11.5px] truncate">
                       {[row.breed, row.client_name].filter(Boolean).join(" · ")}
+                      {row.bill_to_client_id && row.bill_to_client_id !== row.client_id && (
+                        <span className="text-shSecondary font-bold" data-testid={`pos-visit-paid-by-${row.booking_id}`}> · Paid by {row.bill_to_client_name}</span>
+                      )}
                     </p>
                     <p className="text-shTextMuted text-[11px] truncate">
                       <span className="text-shSecondary font-bold capitalize">{String(row.service_type || "").replace(/_/g, " ")}</span>
@@ -1760,7 +1766,7 @@ export default function Pos({ onOpenShopManager } = {}) {
                       return (
                         <div key={b.booking_id}
                              className="w-full bg-[var(--sh-card-base)] border border-shBorder rounded-xl py-3 font-black uppercase tracking-widest text-sm text-shTextMuted text-center">
-                          Checked Out · {b.dog_name} ({b.service_type}) · {new Date(b.checked_out_at).toLocaleTimeString([], { hour: "numeric", minute: "2-digit" })}
+                          Checked Out · {dogLabel(b)} ({b.service_type}) · {new Date(b.checked_out_at).toLocaleTimeString([], { hour: "numeric", minute: "2-digit" })}
                         </div>
                       );
                     }
@@ -1769,7 +1775,7 @@ export default function Pos({ onOpenShopManager } = {}) {
                         <button key={b.booking_id} onClick={() => openCheckoutFor(b.booking_id)} disabled={checkoutLoadingId === b.booking_id}
                                 data-testid={`pos-client-checkout-${b.booking_id}`}
                                 className="w-full bg-[var(--sh-card-base)] border border-shBorder hover:border-shPrimary/50 rounded-xl py-3 font-black uppercase tracking-widest text-sm text-shText disabled:opacity-50">
-                          {checkoutLoadingId === b.booking_id ? "Loading…" : `Check Out ${b.dog_name} (${b.service_type})`}
+                          {checkoutLoadingId === b.booking_id ? "Loading…" : `Check Out ${dogLabel(b)} (${b.service_type})`}
                           {isMissedCheckout(b) && <span className="ml-2 text-shAccent">· Missed Checkout</span>}
                         </button>
                       );
@@ -1778,7 +1784,7 @@ export default function Pos({ onOpenShopManager } = {}) {
                       <button key={b.booking_id} onClick={() => doCheckIn(b)} disabled={checkInBusyId === b.booking_id}
                               data-testid={`pos-client-checkin-${b.booking_id}`}
                               className="w-full bg-shPrimary/10 border border-shPrimary/40 hover:border-shPrimary rounded-xl py-3 font-black uppercase tracking-widest text-sm text-shPrimary disabled:opacity-50">
-                        {checkInBusyId === b.booking_id ? "Checking In…" : `Check In ${b.dog_name} (${b.service_type})`}
+                        {checkInBusyId === b.booking_id ? "Checking In…" : `Check In ${dogLabel(b)} (${b.service_type})`}
                       </button>
                     );
                   })}

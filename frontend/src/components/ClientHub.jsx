@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { api } from "../lib/api";
 import IntakeFormsSection from "./IntakeFormsSection";
 import CommunicationLog from "./CommunicationLog";
@@ -7,6 +7,7 @@ import AdminClientPaymentPlans from "./AdminClientPaymentPlans";
 import { BOOKING_STATUS, INVOICE_STATUS } from "../lib/statusDefs";
 import Avatar from "./Avatar";
 import BillFixModal from "./BillFixModal";
+import { friendsPaidFor } from "../lib/friendsFamily";
 
 const money = (n) => `$${Number(n || 0).toFixed(2)}`;
 const fmtCredits = (n) => {
@@ -49,6 +50,13 @@ export default function ClientHub({
   const [trophies, setTrophies] = useState(null);
   const [visits, setVisits] = useState(null); // lifetime visits + award tier, from the award engine's own count
   const [fixBill, setFixBill] = useState(null); // bill id open in the Fix dialog (audit #7)
+  // Friends & family (owner request 2026-09-28): the friends' dogs this family
+  // pays for, and any booking waiting for its one bill.
+  const [ff, setFF] = useState(null);
+  const [billAsk, setBillAsk] = useState(null);   // group id whose "close the bill now" is being confirmed
+  const [billMsg, setBillMsg] = useState("");
+  const [billBusy, setBillBusy] = useState(false);
+  const billBusyRef = useRef(false);   // (a second tap lands before the screen redraws)
 
   useEffect(() => {
     if ((tab === "bookings" || tab === "overview") && bookings === null) {
@@ -65,6 +73,9 @@ export default function ClientHub({
     if (tab === "documents" && receipts === null) {
       api.get(`/clients/${client.id}/receipts`).then(({ data }) => setReceipts(data || [])).catch(() => setReceipts([]));
     }
+    if ((tab === "bookings" || tab === "overview") && ff === null) {
+      api.get(`/clients/${client.id}/friends-family`).then(({ data }) => setFF(data || false)).catch(() => setFF(false));
+    }
     if (tab === "overview" && visits === null) {
       api.get(`/clients/${client.id}/visits`).then(({ data }) => setVisits(data || false)).catch(() => setVisits(false));
     }
@@ -80,6 +91,25 @@ export default function ClientHub({
     return list.filter(b => b.date >= today && ["approved", "pending"].includes(b.status))
       .sort((a, b) => a.date.localeCompare(b.date))[0] || null;
   }, [bookings]);
+
+  const payingFor = useMemo(() => friendsPaidFor(ff, client.id), [ff, client.id]);
+  const closeBill = async (groupId) => {
+    if (billBusyRef.current) return;
+    billBusyRef.current = true;
+    setBillBusy(true);
+    setBillMsg("");
+    try {
+      const { data } = await api.post(`/bookings/group/${groupId}/close-bill`);
+      setBillMsg(`Bill made: ${money(data.total)} — take the payment on it from the Money tab or Front Desk.`);
+      setInvoices(null);
+    } catch (e) {
+      setBillMsg(e?.response?.data?.detail || "Could not make the bill");
+    }
+    setBillAsk(null);
+    billBusyRef.current = false;
+    setBillBusy(false);
+    api.get(`/clients/${client.id}/friends-family`).then(({ data }) => setFF(data || false)).catch(() => {});
+  };
 
   const missingRequirements = useMemo(() => {
     const gaps = [];
@@ -126,6 +156,45 @@ export default function ClientHub({
                 <button onClick={() => setTab("messages")} data-testid="hub-action-message" className="min-h-[44px] px-3 py-2 rounded bg-bgBase border border-bgHover text-gray-200 text-[12px] font-black uppercase tracking-widest">Send Message</button>
                 <button onClick={onEditClient} data-testid="hub-action-edit" className="min-h-[44px] px-3 py-2 rounded bg-bgBase border border-bgHover text-gray-200 text-[12px] font-black uppercase tracking-widest">Edit Client</button>
               </div>
+
+              {ff?.waiting_for_bill && (
+                <div className="bg-shAccent/10 border border-shAccent/40 rounded-lg p-3" data-testid="hub-ff-waiting">
+                  <p className="text-[11px] uppercase font-black text-shAccent tracking-widest mb-1">Waiting for one bill</p>
+                  <p className="text-sm text-shText">
+                    Dogs {client.name} pays for have gone home; their one bill is made when the last dog leaves.
+                    Payments on the account wait until then — take the payment on the bill.
+                  </p>
+                </div>
+              )}
+              {payingFor.length > 0 && (
+                <div className="bg-bgBase/40 border border-bgHover rounded-lg p-3 space-y-2" data-testid="hub-ff-paying-for">
+                  <p className="text-[11px] uppercase font-black text-gray-500 tracking-widest">Paying for (friends &amp; family)</p>
+                  {payingFor.map((g) => (
+                    <div key={g.group_id} className="flex flex-wrap items-center justify-between gap-2" data-testid={`hub-ff-group-${g.group_id}`}>
+                      <p className="text-sm text-white">
+                        {g.friends.length > 0
+                          ? g.friends.map((d) => `${d.dog_name} (${d.client_name})`).join(", ")
+                          : "Their own dogs"}
+                        <span className="text-[12px] text-gray-500"> · {(g.dogs[0] || {}).date}</span>
+                        {g.waiting && <span className="ml-2 text-[11px] font-black uppercase tracking-widest text-shAccent">waiting for the bill</span>}
+                      </p>
+                      {g.waiting && can("take_payments") && (
+                        <button onClick={() => (billAsk === g.group_id ? closeBill(g.group_id) : setBillAsk(g.group_id))}
+                                disabled={billBusy} data-testid={`hub-ff-close-bill-${g.group_id}`}
+                                className="min-h-[36px] px-3 rounded border border-shAccent/40 text-shAccent text-[11px] font-black uppercase tracking-widest">
+                          {billAsk === g.group_id ? "Yes, make the bill now" : "Close the bill now"}
+                        </button>
+                      )}
+                    </div>
+                  ))}
+                  {billAsk && (
+                    <p className="text-[12px] text-shAccent" data-testid="hub-ff-close-warning">
+                      Dogs still here or still to come won&apos;t be on this bill — each gets its own when it leaves.
+                    </p>
+                  )}
+                  {billMsg && <p className="text-[13px] text-white" data-testid="hub-ff-bill-msg">{billMsg}</p>}
+                </div>
+              )}
 
               <VisitsCard visits={visits} />
 
@@ -204,6 +273,11 @@ export default function ClientHub({
                     <div>
                       <p className="text-white font-bold">{b.dog_name} — {b.service_type}</p>
                       <p className="text-[12px] text-gray-500">{b.date}{b.end_date && b.end_date !== b.date ? ` – ${b.end_date}` : ""}</p>
+                      {b.bill_to_client_id && (
+                        <p className="text-[11px] font-black uppercase tracking-widest text-shSecondary" data-testid={`hub-booking-paid-by-${b.id}`}>
+                          {b.bill_to_client_id === client.id ? "Friends & family · paying" : `Paid by ${b.bill_to_client_name}`}
+                        </p>
+                      )}
                     </div>
                     <span className={`px-2 py-0.5 rounded text-[10px] font-black uppercase tracking-widest ${meta.cls}`}>{meta.label}</span>
                   </div>

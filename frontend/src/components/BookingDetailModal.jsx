@@ -1,7 +1,14 @@
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
+import { createPortal } from "react-dom";
 import { api } from "../lib/api";
 import { useEditLock } from "../lib/useLiveRefresh";
+import { useAuth } from "../lib/auth";
+import {
+  friendsFamilyOn, isFriendsDog, activeRows, byRank, bookedServicePrice, waitingForBill,
+} from "../lib/friendsFamily";
 import CareLogStrip from "./CareLogStrip";
+import GroupDogAdd from "./GroupDogAdd";
+import { CancelBookingModal } from "./CheckoutModal";
 
 // Sprint 110aq — One-stop overview of a single booking, opened by clicking
 // any row on the Today's Check-in Board (and reusable from other screens).
@@ -16,7 +23,10 @@ import CareLogStrip from "./CareLogStrip";
 //
 // Designed to be **read-only** — every actionable thing (check in, check
 // out, cancel, edit, report card) is launched from the dashboard buttons
-// outside this modal. Less ways to break a booking from this surface.
+// outside this modal. Less ways to break a booking from this surface. The one
+// exception is the booking's dogs (friends & family, owner request
+// 2026-09-28): add a dog, take one out, close the group's one bill — each a
+// single server call, after which the modal reloads and tells `onChanged`.
 
 function fmtTime(iso) {
   if (!iso) return "—";
@@ -54,8 +64,16 @@ function Pill({ icon, label, value, tone = "default", ...rest }) {
   );
 }
 
-export default function BookingDetailModal({ booking: initial, onClose, onJumpToDog }) {
+export default function BookingDetailModal({ booking: initial, onClose, onJumpToDog, onChanged }) {
   useEditLock(true);
+  const auth = useAuth();
+  const [reloadKey, setReloadKey] = useState(0);
+  const [addOpen, setAddOpen] = useState(false);
+  const [removing, setRemoving] = useState(null);
+  const [billBusy, setBillBusy] = useState(false);
+  const billBusyRef = useRef(false);   // (a second tap lands before the screen redraws)
+  const [billConfirm, setBillConfirm] = useState(false);
+  const [billMsg, setBillMsg] = useState("");
   const [booking, setBooking] = useState(initial);
   const [dog, setDog] = useState(null);
   const [client, setClient] = useState(null);
@@ -79,10 +97,13 @@ export default function BookingDetailModal({ booking: initial, onClose, onJumpTo
     (async () => {
       setLoading(true);
       try {
-        const [b, d, c, s, settRes] = await Promise.all([
-          api.get(`/bookings/${initial.id}`).catch(() => ({ data: initial })),
-          initial.dog_id ? api.get(`/dogs/${initial.dog_id}`).catch(() => ({ data: null })) : Promise.resolve({ data: null }),
-          initial.client_id ? api.get(`/clients/${initial.client_id}`).catch(() => ({ data: null })) : Promise.resolve({ data: null }),
+        // The booking first: the calendar opens this modal with only an id,
+        // so the dog and family come from the booking itself.
+        const b = await api.get(`/bookings/${initial.id}`).catch(() => ({ data: initial }));
+        const bk = b.data || initial;
+        const [d, c, s, settRes] = await Promise.all([
+          bk.dog_id ? api.get(`/dogs/${bk.dog_id}`).catch(() => ({ data: null })) : Promise.resolve({ data: null }),
+          bk.client_id ? api.get(`/clients/${bk.client_id}`).catch(() => ({ data: null })) : Promise.resolve({ data: null }),
           api.get(`/services`).catch(() => ({ data: [] })),
           api.get(`/settings/public`).catch(() => ({ data: {} })),
         ]);
@@ -99,11 +120,9 @@ export default function BookingDetailModal({ booking: initial, onClose, onJumpTo
           by_service: settRes.data?.multi_dog_discount_by_service || {},
         });
         // If grouped, fan out to fetch siblings for the combined estimate.
-        const gid = (b.data || initial).group_id;
-        if (gid) {
-          const gRes = await api.get(`/bookings/group/${gid}`).catch(() => ({ data: { bookings: [] } }));
-          if (!cancelled) setGroupMembers(gRes.data?.bookings || []);
-        }
+        const gid = bk.group_id;
+        const gRes = gid ? await api.get(`/bookings/group/${gid}`).catch(() => ({ data: { bookings: [] } })) : { data: { bookings: [] } };
+        if (!cancelled) setGroupMembers(gRes.data?.bookings || []);
       } catch (e) {
         if (!cancelled) setErr(e?.response?.data?.detail || "Could not load booking details");
       } finally {
@@ -111,7 +130,9 @@ export default function BookingDetailModal({ booking: initial, onClose, onJumpTo
       }
     })();
     return () => { cancelled = true; };
-  }, [initial.id]);  // eslint-disable-line react-hooks/exhaustive-deps
+  }, [initial.id, reloadKey]);  // eslint-disable-line react-hooks/exhaustive-deps
+
+  const refresh = () => { setReloadKey((k) => k + 1); onChanged?.(); };
 
   const onPremises = booking.checked_in_at && !booking.checked_out_at;
   const done = !!booking.checked_out_at;
@@ -157,35 +178,68 @@ export default function BookingDetailModal({ booking: initial, onClose, onJumpTo
   // configured multi-dog discount to the extra dogs (mirrors the portal
   // estimate so the operator sees the same combined number the customer
   // saw at booking time).
-  const isGrouped = (groupMembers || []).length > 1;
+  // The dogs still on the booking, in the order the server ranks them (the
+  // first pays the first-dog price). Each dog's price is the one the server
+  // stored when it was booked — the multi-dog discount as configured, at the
+  // paying family's rates. Only very old rows without one fall back to the
+  // catalog estimate.
+  const members = byRank(activeRows(groupMembers));
+  const isGrouped = members.length > 1;
   const estimateBase = baseForBooking(booking);
   const estimatedSingleTotal = estimateBase + addOnTotal;
+  const storedPrices = isGrouped && members.every((m) => bookedServicePrice(m) !== null);
+  const perDog = members.map((m, i) => {
+    const gone = (m.checked_out_at || m.status === "completed") && Number.isFinite(Number(m.actual_price));
+    if (storedPrices && gone) return { m, discount: 0, addons: 0, base: Number(m.actual_price) };
+    const stored = storedPrices && m.multi_dog_discount?.pre_applied ? Number(m.multi_dog_discount.amount || 0) : 0;
+    return {
+      // No dog ahead of the first one still booked: it pays the first-dog price.
+      m, discount: i === 0 ? 0 : stored, addons: addOnTotalFor(m),
+      base: storedPrices ? bookedServicePrice(m) + stored : baseForBooking(m),
+    };
+  });
 
   let groupSubtotal = 0;
   let groupMdDiscount = 0;
   let groupTotal = 0;
   if (isGrouped) {
-    // Sort by created_at so the "primary" dog (full price) is deterministic.
-    const sorted = [...groupMembers].sort(
-      (a, b) => (a.created_at || "").localeCompare(b.created_at || "")
-    );
-    const perDog = sorted.map((b) => ({
-      base: baseForBooking(b),
-      addons: addOnTotalFor(b),
-      dog_name: b.dog_name,
-    }));
     groupSubtotal = perDog.reduce((s, p) => s + p.base + p.addons, 0);
-    // Apply discount on additional dogs' BASE only (not on their addons).
-    const t = booking.service_type;
-    const mdEligibleSvc = (t === "daycare" || t === "boarding");
-    if (mdEligibleSvc && perDog.length > 1) {
-      // Fixed Sit Happens rule: daycare/boarding additional dogs are 50% off
-      // their base service price. Ignore older saved flat/legacy settings here.
-      const extraDogsBase = perDog.slice(1).reduce((s, p) => s + p.base, 0);
-      groupMdDiscount = extraDogsBase * 0.5;
+    if (storedPrices) {
+      groupMdDiscount = perDog.reduce((s, p) => s + p.discount, 0);
+    } else if (booking.service_type === "daycare" || booking.service_type === "boarding") {
+      // Legacy rows with no stored price: the old catalog estimate.
+      groupMdDiscount = perDog.slice(1).reduce((s, p) => s + p.base, 0) * 0.5;
     }
     groupTotal = Math.max(0, groupSubtotal - groupMdDiscount);
   }
+  const mdLabel = perDog.find((p) => p.discount > 0)?.m.multi_dog_discount?.label || "Additional dog discount";
+
+  // Friends & family: who pays, and what staff may do with the booking's dogs.
+  const payerName = booking.bill_to_client_name || "";
+  const dogsHere = members.length ? members : [booking];
+  const anyGone = dogsHere.some((m) => m.checked_out_at || m.status === "completed");
+  const canAddDog = friendsFamilyOn(auth) && !!auth?.can?.("booking_edit") && !!auth?.can?.("clients_view")
+    && ["daycare", "boarding"].includes(booking.service_type) && booking.status === "approved" && !anyGone;
+  const canRemove = (m) => !!auth?.can?.("booking_edit") && dogsHere.length > 1 && !m.checked_out_at && m.status !== "completed";
+  const billWaiting = waitingForBill(groupMembers) && !!auth?.can?.("take_payments");
+  const dogState = (m) => (m.checked_out_at || m.status === "completed"
+    ? (m.group_bill_pending || m.group_bill_claim ? "Gone home · waiting for the one bill" : "Gone home")
+    : m.checked_in_at ? "Here" : "Booked");
+  const closeBill = async () => {
+    if (billBusyRef.current) return;
+    billBusyRef.current = true;
+    setBillBusy(true); setBillMsg("");
+    try {
+      const { data } = await api.post(`/bookings/group/${booking.group_id}/close-bill`);
+      setBillMsg(`Bill made for ${data.client_name || payerName}: ${fmtMoney(data.total)}`);
+    } catch (e) {
+      setBillMsg(e?.response?.data?.detail || "Could not make the bill");
+    }
+    setBillConfirm(false);
+    billBusyRef.current = false;
+    setBillBusy(false);
+    refresh();
+  };
 
   // Use actual_price when checkout has locked it in; otherwise show our
   // estimate so the operator never sees a misleading $0.
@@ -237,6 +291,13 @@ export default function BookingDetailModal({ booking: initial, onClose, onJumpTo
               <p className="text-[13px] text-shTextMuted mt-1 uppercase tracking-widest font-black">
                 {booking.client_name || client?.name || "Client"}
               </p>
+              {booking.bill_to_client_id && (
+                <p className="mt-1.5" data-testid="booking-detail-paid-by">
+                  <span className="inline-block rounded-full border border-shSecondary/40 bg-shSecondary/10 px-2.5 py-0.5 text-[12px] font-black text-shSecondary">
+                    {isFriendsDog(booking) ? `Paid by ${payerName}` : "Friends & family · paying for the group"}
+                  </span>
+                </p>
+              )}
             </div>
             <button onClick={onClose} data-testid="booking-detail-close"
                     className="text-shTextMuted hover:text-shText text-xl">
@@ -285,6 +346,67 @@ export default function BookingDetailModal({ booking: initial, onClose, onJumpTo
               {booking.pickup_time && <Pill icon="fa-right-from-bracket" label="Pickup" value={fmtTime(`${booking.date}T${booking.pickup_time}`)}/>}
             </div>
           </section>
+
+          {/* The booking's dogs — each family, who pays, add / take out / close the bill */}
+          {(isGrouped || canAddDog || booking.bill_to_client_id) && (
+            <section data-testid="booking-detail-dogs">
+              <h3 className="text-[11px] uppercase tracking-[0.3em] font-black text-shTextMuted mb-2">Dogs on this booking</h3>
+              <div className="space-y-1.5">
+                {dogsHere.map((m) => (
+                  <div key={m.id} data-testid={`booking-detail-dog-${m.id}`}
+                       className="flex items-center justify-between gap-2 rounded-lg border border-shBorder px-3 py-2 text-[13px]">
+                    <span className="min-w-0">
+                      <i className="fas fa-dog text-shPrimary mr-1.5 opacity-70"/>
+                      <strong className="text-shText">{m.dog_name}</strong>
+                      <span className="text-shTextMuted"> · {m.client_name}</span>
+                      {isFriendsDog(m) && <span className="ml-2 text-[11px] font-black uppercase tracking-widest text-shSecondary">Friend&apos;s dog</span>}
+                      <span className="ml-2 text-shTextMuted">{dogState(m)}</span>
+                    </span>
+                    {canRemove(m) && (
+                      <button type="button" onClick={() => setRemoving(m)} data-testid={`booking-detail-remove-${m.id}`}
+                              className="shrink-0 text-[11px] font-black uppercase tracking-widest text-red-300 border border-red-500/40 rounded px-2 py-1">
+                        Remove
+                      </button>
+                    )}
+                  </div>
+                ))}
+              </div>
+              {payerName && (
+                <p className="text-[12.5px] text-shTextMuted mt-2" data-testid="booking-detail-one-bill">
+                  Paid by <strong className="text-shText">{payerName}</strong> · one bill for every dog when the last dog leaves.
+                </p>
+              )}
+              {billWaiting && (
+                <div className="mt-2">
+                  {billConfirm && (
+                    <p className="text-[12.5px] text-shAccent mb-1.5" data-testid="booking-detail-close-bill-warning">
+                      Dogs still here or still to come won&apos;t be on this bill — each gets its own when it leaves.
+                    </p>
+                  )}
+                  <button type="button" disabled={billBusy} data-testid="booking-detail-close-bill"
+                          onClick={() => (billConfirm ? closeBill() : setBillConfirm(true))}
+                          className="text-[12px] font-black uppercase tracking-widest text-shAccent border border-shAccent/40 rounded px-3 py-1.5 disabled:opacity-50">
+                    <i className="fas fa-file-invoice-dollar mr-1"/>{billConfirm ? "Yes, make the bill now" : "Close the bill now"}
+                  </button>
+                </div>
+              )}
+              {billMsg && <p className="text-[13px] text-shText mt-2" data-testid="booking-detail-bill-msg">{billMsg}</p>}
+              {canAddDog && !addOpen && (
+                <button type="button" onClick={() => setAddOpen(true)} data-testid="booking-detail-add-dog"
+                        className="mt-2 text-[12px] font-black uppercase tracking-widest text-shSecondary border border-shSecondary/40 rounded px-3 py-1.5">
+                  <i className="fas fa-plus mr-1"/>Add a dog
+                </button>
+              )}
+              {addOpen && (
+                <GroupDogAdd booking={booking} onDogs={dogsHere.map((m) => m.dog_id)} payerName={payerName || booking.client_name}
+                             isAdmin={auth?.user?.role === "admin"} canNewFriend={!!auth?.can?.("clients_edit")}
+                             canVaccines={!!auth?.can?.("dogs_edit")}
+                             onAdded={() => { setAddOpen(false); refresh(); }} onCancel={() => setAddOpen(false)}/>
+              )}
+            </section>
+          )}
+          {removing && createPortal(
+            <CancelBookingModal booking={removing} onClose={() => { setRemoving(null); refresh(); }}/>, document.body)}
 
           {/* Status timeline */}
           <section>
@@ -390,7 +512,7 @@ export default function BookingDetailModal({ booking: initial, onClose, onJumpTo
             <h3 className="text-[11px] uppercase tracking-[0.3em] font-black text-shTextMuted mb-2">
               Pricing{isGrouped && (
                 <span className="ml-2 text-shPrimary normal-case tracking-normal">
-                  · Group of {groupMembers.length} dogs
+                  · Group of {members.length} dogs
                 </span>
               )}
             </h3>
@@ -412,7 +534,8 @@ export default function BookingDetailModal({ booking: initial, onClose, onJumpTo
                     tone="green"
                     data-testid="booking-detail-service-total"/>
               {booking.payment_method && <Pill icon="fa-credit-card" label="Payment" value={<span className="capitalize">{booking.payment_method}</span>}/>}
-              {booking.payment_status && <Pill icon="fa-circle-check" label="Status" value={<span className="capitalize">{booking.payment_status}</span>}
+              {booking.payment_status && <Pill icon="fa-circle-check" label="Status" value={booking.bill_to_client_id && booking.payment_status === "paid_partial"
+                                                ? `On ${payerName}'s bill` : <span className="capitalize">{booking.payment_status}</span>}
                                               tone={booking.payment_status === "paid" || booking.payment_status === "comped" ? "green" : "orange"}/>}
               {Number(booking.checkout_discount?.amount || 0) > 0 && (
                 <Pill icon="fa-tag" label="One-time discount"
@@ -429,17 +552,15 @@ export default function BookingDetailModal({ booking: initial, onClose, onJumpTo
             {isGrouped && !hasActualPrice && (
               <div className="mt-3 bg-[var(--sh-card-base)]/40 border border-shBorder rounded-lg p-3 space-y-1.5 text-[13px]"
                    data-testid="booking-detail-group-breakdown">
-                {[...groupMembers]
-                  .sort((a, b) => (a.created_at || "").localeCompare(b.created_at || ""))
-                  .map((m, idx) => {
-                    const b = baseForBooking(m);
-                    const ao = addOnTotalFor(m);
+                {perDog
+                  .map(({ m, base: b, addons: ao }, idx) => {
                     return (
                       <div key={m.id} className="flex justify-between items-center"
                            data-testid={`booking-detail-group-member-${m.id}`}>
                         <span className="text-shTextMuted">
                           <i className="fas fa-dog text-shPrimary mr-1.5 opacity-70"/>
                           {m.dog_name || `Dog ${idx + 1}`}
+                          {m.bill_to_client_id && <span className="text-shTextMuted"> ({m.client_name})</span>}
                           {idx === 0 && <span className="text-[10px] text-shTextMuted uppercase tracking-widest ml-2">(primary)</span>}
                           {ao > 0 && <span className="text-shTextMuted ml-1">· {fmtMoney(b)} base + {fmtMoney(ao)} add-ons</span>}
                         </span>
@@ -456,7 +577,7 @@ export default function BookingDetailModal({ booking: initial, onClose, onJumpTo
                   <div className="flex justify-between"
                        data-testid="booking-detail-group-md-discount">
                     <span className="text-shPrimary">
-                      <i className="fas fa-tag mr-1.5"/>{"Additional dog discount"}
+                      <i className="fas fa-tag mr-1.5"/>{mdLabel}
                     </span>
                     <span className="text-shPrimary font-black">−{fmtMoney(groupMdDiscount)}</span>
                   </div>

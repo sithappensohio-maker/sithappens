@@ -14,6 +14,7 @@ anywhere, and converting the person to a real client later is a status change
 that keeps everything they already have.
 """
 import uuid
+from datetime import date
 from typing import Any, Dict, Optional
 
 from fastapi import Depends, HTTPException
@@ -29,9 +30,26 @@ class WalkInIn(BaseModel):
     email: Optional[str] = ""
     breed: Optional[str] = ""
     notes: Optional[str] = ""
+    # A friend's dog joining a friends & family booking may come with its
+    # vaccine dates (rabies / dhpp / bordetella, ISO dates); a walk-in has none.
+    vaccines: Optional[Dict[str, str]] = None
 
 
-def register_clients_routes(*, api, db, now_iso, require_admin_and_permission) -> Dict[str, Any]:
+def _vaccine_dates(given: Optional[Dict[str, str]]) -> Dict[str, str]:
+    out: Dict[str, str] = {}
+    for key in ("rabies", "dhpp", "bordetella"):
+        value = str((given or {}).get(key) or "").strip()[:10]
+        if not value:
+            continue
+        try:
+            date.fromisoformat(value)
+        except ValueError:
+            raise HTTPException(status_code=422, detail=f"The {key} date isn't a date.")
+        out[key] = value
+    return out
+
+
+def register_clients_routes(*, api, db, now_iso, require_admin_and_permission, perms_for=None) -> Dict[str, Any]:
     """Register walk-in intake. Returns the callables the in-process suite calls."""
 
     @api.post("/clients/walk-in")
@@ -49,6 +67,10 @@ def register_clients_routes(*, api, db, now_iso, require_admin_and_permission) -
         if not owner_name or not dog_name:
             raise HTTPException(status_code=422, detail="Both the owner's name and the dog's name are required.")
 
+        vaccines = _vaccine_dates(body.vaccines)
+        # A dog's vaccine record is written only by staff who may edit dogs.
+        if vaccines and not (perms_for(user) if perms_for else {}).get("dogs_edit"):
+            raise HTTPException(status_code=403, detail="You don't have permission to record vaccine dates.")
         client_id = str(uuid.uuid4())
         client_doc = {
             "id": client_id,
@@ -83,11 +105,12 @@ def register_clients_routes(*, api, db, now_iso, require_admin_and_permission) -
             "age_m": 0,
             "sex": "Male",
             "fixed": "No",
-            # No vaccine records: a walk-in has not handed any in. Staff-created
-            # bookings already carry the admin vaccine override, so this does
-            # not block a nail trim, and the dog still shows as unvaccinated
-            # everywhere that matters.
-            "vaccines": {},
+            # A walk-in has handed in no vaccine records (a friend's dog added to
+            # a friends & family booking may come with its dates, from staff who
+            # may edit dogs). Staff-created bookings already carry the admin
+            # vaccine override, so none does not block a nail trim, and the dog
+            # still shows as unvaccinated everywhere that matters.
+            "vaccines": vaccines,
             "notes": (body.notes or "").strip(),
             "training_logs": [],
             "created_at": now_iso(),

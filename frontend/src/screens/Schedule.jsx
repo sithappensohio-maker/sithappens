@@ -436,6 +436,7 @@ export default function Schedule() {
       {detailId && (
         <BookingDetailModal booking={{ id: detailId }}
                             onClose={()=>setDetailId(null)}
+                            onChanged={() => load()}
                             onJumpToDog={(dogId)=>{ window.location.hash = `#/dogs?dogId=${dogId}`; setDetailId(null); }} />
       )}
 
@@ -477,7 +478,9 @@ export default function Schedule() {
                                         : svc === "daycare" ? "credits"
                                         : null;
                         const cid = e.extendedProps?.client_id;
-                        const credits = balField && cid ? (clientBalById[cid]?.[balField] ?? null) : null;
+                        // A friends & family visit goes on the paying family's one bill — never on credits.
+                        const paidBy = e.extendedProps?.bill_to_client_id;
+                        const credits = balField && cid && !paidBy ? (clientBalById[cid]?.[balField] ?? null) : null;
                         const creditChipColor = credits == null ? ""
                           : credits > 0 ? "bg-shPrimary/15 text-shPrimary border-shPrimary/40"
                           : "bg-gray-700/50 text-shTextMuted border-gray-600";
@@ -488,6 +491,11 @@ export default function Schedule() {
                             <div className="flex-1 min-w-0">
                               <p className="text-shText font-black text-[14px] truncate">{e.title.replace(/^\d+:\d+\s·\s/, "")}</p>
                               <p className="text-[13px] text-shTextMuted normal-case truncate">{e.extendedProps?.client_name || "—"}</p>
+                              {paidBy && paidBy !== cid && (
+                                <p className="text-[12px] font-black text-shSecondary truncate" data-testid={`day-roster-paid-by-${e.id}`}>
+                                  Paid by {e.extendedProps?.bill_to_client_name}
+                                </p>
+                              )}
                             </div>
                             {credits != null && (
                               <span className={`shrink-0 text-[12px] font-black uppercase tracking-widest px-1.5 py-1 rounded border ${creditChipColor}`}

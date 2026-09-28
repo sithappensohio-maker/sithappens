@@ -193,7 +193,7 @@ export default function RunSheet() {
 
       {detailId && (
         <BookingDetailModal booking={{ id: detailId }}
-                            onClose={()=>setDetailId(null)} />
+                            onClose={()=>setDetailId(null)} onChanged={() => load(date)} />
       )}
     </div>
   );
