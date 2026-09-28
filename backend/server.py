@@ -542,6 +542,8 @@ def _business_day_utc_bounds(day_iso: str) -> Tuple[str, str]:
 _suppress_admin_booking_email: contextvars.ContextVar[bool] = contextvars.ContextVar(
     "suppress_admin_booking_email", default=False
 )
+# The group being booked right now (create_booking_group) — the only way a row gets a group_id.
+_booking_group_ctx: contextvars.ContextVar[Optional[str]] = contextvars.ContextVar("booking_group", default=None)
 
 
 # Short-lived authenticated-user cache. The admin dashboard opens many API
@@ -4510,8 +4512,9 @@ async def _create_booking_impl(body: BookingIn, user: dict = Depends(get_current
         "balance_due": 0.0,
         # Sprint 110di-38 — Multi-dog group booking. Persist the group_id
         # so list/detail endpoints and the run sheet can render the "🔗
-        # Group · N dogs" badge. None for legacy single-dog flows.
-        "group_id": body.group_id,
+        # Group · N dogs" badge. None for legacy single-dog flows — and for a
+        # group_id sent by hand, which could join another family's group.
+        "group_id": body.group_id if body.group_id and body.group_id == _booking_group_ctx.get() else None,
     }
     if is_admin and body.check_in_now:
         doc["checked_in_at"] = now_iso()
@@ -4871,6 +4874,9 @@ async def create_booking_group(body: BookingGroupIn, user: dict = Depends(get_cu
         if d.dog_id in seen_ids:
             raise HTTPException(status_code=400, detail="Duplicate dog in group — each dog can only appear once")
         seen_ids.add(d.dog_id)
+    owners = {x.get("owner_id") for x in await db.dogs.find({"id": {"$in": list(seen_ids)}}, {"_id": 0, "owner_id": 1}).to_list(20)}
+    if len(owners - {None, ""}) > 1:  # each family would be billed apart, all at the first family's rates
+        raise HTTPException(status_code=400, detail="These dogs belong to different families. Book each family's dogs on their own booking.")
 
     group_id = str(uuid.uuid4())
     created: List[dict] = []
@@ -4895,6 +4901,7 @@ async def create_booking_group(body: BookingGroupIn, user: dict = Depends(get_cu
 
     # Suppress per-booking admin email; we send ONE summary at the end.
     token = _suppress_admin_booking_email.set(True)
+    group_token = _booking_group_ctx.set(group_id)
     try:
         for d in body.dogs:
             # Construct a BookingIn for this dog using shared base + per-dog
@@ -4928,8 +4935,7 @@ async def create_booking_group(body: BookingGroupIn, user: dict = Depends(get_cu
             except HTTPException as e:
                 # Atomic rollback: undo everything we've inserted so far so
                 # the operator gets a clean "nothing was saved" experience.
-                if created:
-                    await db.bookings.delete_many({"group_id": group_id})
+                await booking_group_pricing.undo_rows(created)  # the rows made here — never everything carrying the group id
                 # Name the dog that failed (the client sees this) and carry its
                 # id in the block so the UI can highlight the row to fix.
                 dog_doc = await db.dogs.find_one({"id": d.dog_id}, {"_id": 0, "name": 1}) or {}
@@ -4962,6 +4968,7 @@ async def create_booking_group(body: BookingGroupIn, user: dict = Depends(get_cu
                 )
     finally:
         _suppress_admin_booking_email.reset(token)
+        _booking_group_ctx.reset(group_token)
         if capacity_token is not None:
             _capacity_lock_ctx.reset(capacity_token)
         if group_capacity_owner:

@@ -15,6 +15,8 @@ from __future__ import annotations
 
 from typing import Any, Dict, List, Optional
 
+from fastapi import HTTPException
+
 _server_globals: Optional[dict] = None
 
 
@@ -27,12 +29,30 @@ def _g(name: str):
     return _server_globals[name]
 
 
+async def undo_rows(created: List[dict]) -> None:
+    """Take back what a group booking made — and nothing else: its booking
+    rows, and a Board & Train School enrollment made for one of them (which
+    would otherwise stay active, pointing at a booking that no longer exists)."""
+    ids = [b["id"] for b in created if b.get("id")]
+    if not ids:
+        return
+    db = _g("db")
+    made_here = {"source_booking_id": {"$in": ids}, "enrollment_source": "board_train_package"}
+    await db.dog_programs.delete_many(made_here)
+    await db.school_enrollments.delete_many(made_here)
+    await db.bookings.delete_many({"id": {"$in": ids}})
+
+
 async def apply_group_pricing(created: List[dict], body: Any, group_id: str) -> None:
     """Apply the final per-row pricing/credit snapshot for daycare/boarding
     group bookings. Each dog gets its own booking row, but the household price
     rule is first dog full-rate and each additional dog 50% off. Storing the
     reduced price on the extra-dog rows prevents checkout from discounting the
-    same dog twice later. Existing rows/data are not rewritten."""
+    same dog twice later. Existing rows/data are not rewritten.
+
+    If pricing fails, nothing is booked: the rows made are removed and the
+    booking is refused. (It used to be logged only, so the dogs were booked
+    at separate full prices and the multi-dog discount was silently lost.)"""
     if not (created and body.service_type in ("daycare", "boarding") and len(created) > 1):
         return
     db, now_iso = _g("db"), _g("now_iso")
@@ -109,7 +129,9 @@ async def apply_group_pricing(created: List[dict], body: Any, group_id: str) -> 
             await db.bookings.update_one({"id": bk["id"]}, {"$set": patch})
             bk.update(patch)
     except Exception as exc:
-        _g("logger").warning("group price snapshot failed for %s: %s", group_id, exc)
+        _g("logger").error("group price snapshot failed for %s: %s", group_id, exc)
+        await undo_rows(created)
+        raise HTTPException(status_code=500, detail="These dogs couldn't be priced together, so nothing was booked. Please try again.")
 
 
 async def household_checkout_rows(anchor: Dict[str, Any]) -> List[Dict[str, Any]]:

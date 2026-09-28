@@ -31,13 +31,30 @@ def admin_headers():
 
 @pytest.fixture(scope="module")
 def two_dog_ids(admin_headers):
-    """Pick two real dog ids from the seed catalog so we exercise the full
-    validation path (owner lookup, vaccine check via override_vaccines, etc.)."""
+    """Two real dogs of ONE family from the seed catalog, so we exercise the
+    full validation path (owner lookup, vaccine check via override_vaccines,
+    etc.). A group of dogs from different families is refused, so when no
+    seeded family has two dogs, a second dog is added to one and removed
+    afterwards."""
     r = requests.get(f"{BASE}/api/dogs", headers=admin_headers, timeout=15)
     r.raise_for_status()
     dogs = r.json()
-    assert len(dogs) >= 2, "need at least 2 dogs seeded for this test"
-    return [dogs[0]["id"], dogs[1]["id"]]
+    assert dogs, "need at least 1 dog seeded for this test"
+    by_owner = {}
+    for d in dogs:
+        by_owner.setdefault(d.get("owner_id"), []).append(d["id"])
+    pair = next((ids[:2] for owner, ids in by_owner.items() if owner and len(ids) >= 2), None)
+    added = None
+    if not pair:
+        made = requests.post(f"{BASE}/api/dogs", headers=admin_headers, timeout=15, json={
+            "name": "GroupTest Buddy", "owner_id": dogs[0]["owner_id"], "breed": "Mix", "age_y": 3,
+            "vaccines": {"rabies": "2030-01-01", "dhpp": "2030-01-01", "bordetella": "2030-01-01"}})
+        assert made.status_code == 200, made.text
+        added = made.json()["id"]
+        pair = [dogs[0]["id"], added]
+    yield pair
+    if added:
+        requests.delete(f"{BASE}/api/dogs/{added}", headers=admin_headers, timeout=15)
 
 
 @pytest.fixture(autouse=True)
