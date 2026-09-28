@@ -100,3 +100,16 @@ describe("booking rows answer the question only while it is still open", () => {
     expect(upcomingPaymentNote({}, services)).toBeNull();
   });
 });
+
+describe("friends & family: a visit another family is paying for", () => {
+  const services = [{ id: "svc-day", service_type: "daycare", payment: { short: "Pay at drop-off" } }];
+  it("says it is covered instead of asking the dog's family to pay", () => {
+    expect(upcomingPaymentNote({ status: "approved", service_id: "svc-day", covered_by_other: true }, services))
+      .toBe("Covered — nothing to pay");
+    expect(upcomingPaymentNote({ status: "pending", service_id: "svc-day", covered_by_other: true }, services))
+      .toBe("Covered — nothing to pay");
+  });
+  it("says nothing once the visit is over, like any other booking", () => {
+    expect(upcomingPaymentNote({ status: "completed", service_id: "svc-day", covered_by_other: true }, services)).toBeNull();
+  });
+});

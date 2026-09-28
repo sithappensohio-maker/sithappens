@@ -78,6 +78,61 @@ async def plan(body: Any, user: dict, owner_of: Dict[str, Optional[str]]) -> Dic
     return {"payer": payer, "friends": {d.dog_id for d in body.dogs if owner_of.get(d.dog_id) != payer_id}}
 
 
+def pricing_client_id(booking: dict) -> Optional[str]:
+    """Whose rates price this row: the payer's on a friends & family group."""
+    return booking.get("bill_to_client_id") or booking.get("client_id")
+
+
+# What the friend's family never sees of its dog's visit: anything about the
+# money (the payer pays), the group, or who is paying. Matched against the
+# WORDS of a field's name ("unit_price" -> unit, price), so a money field added
+# later is hidden by default — but a care field that merely contains one
+# ("feeding_log" is not a fee, "crate" is not a rate) is not.
+_HIDDEN_WORDS = frozenset((
+    "price", "pricing", "rate", "override", "paid", "prepaid", "pay", "payment", "balance", "credit", "credits",
+    "discount", "revenue", "tax", "taxable", "invoice", "fee", "charge", "charged", "refund", "cost", "amount",
+    "total", "financial", "sale", "money", "modifier", "group", "receipt", "cash", "tendered", "lot", "redemptions"))
+_HIDDEN_PREFIXES = ("bill_to", "pos_", "gift_card", "extra_nights", "late_day", "multi_dog", "checkout_group")
+# Care and visit details the dog's own family always sees.
+_ALWAYS_SHOWN = frozenset(("feeding_log", "medication_log", "bathroom_log", "report_card", "photos", "mood_tags",
+                           "crate", "room", "kennel", "yard_group", "training_group", "notes", "note", "status"))
+_ADDON_SHOWN = ("service_id", "name", "icon", "qty", "added_at", "added_stage")
+COVERED = "covered_by_other"
+
+
+def _hidden(key: str) -> bool:
+    if key in _ALWAYS_SHOWN:
+        return False
+    return key.startswith(_HIDDEN_PREFIXES) or not _HIDDEN_WORDS.isdisjoint(key.split("_"))
+
+
+def for_client(booking: dict, user: Optional[dict]) -> dict:
+    """What a signed-in CLIENT may see of a booking row. Staff see it all.
+
+    On a friends & family row the payer sees its own dog as usual (minus the
+    payer fields — it knows); the friend's family sees its dog's visit — dates,
+    times, status, care — but never a price, a discount, the group or who is
+    paying: the row says it is covered, nothing to pay."""
+    if (user or {}).get("role") != "client" or not booking.get("bill_to_client_id"):
+        return booking
+    if booking["bill_to_client_id"] == (user or {}).get("client_id"):
+        return {k: v for k, v in booking.items() if not k.startswith("bill_to_")}
+    out = {k: v for k, v in booking.items() if not _hidden(k)}
+    if booking.get("add_ons"):
+        out["add_ons"] = [{k: a.get(k) for k in _ADDON_SHOWN if k in a} for a in booking["add_ons"]]
+    out[COVERED] = True
+    return out
+
+
+def refuse_client_change(booking: dict, user: Optional[dict]) -> None:
+    """The friend's family can't add or remove extras online on a visit
+    someone else is paying for."""
+    if (user or {}).get("role") == "client" and booking.get("bill_to_client_id") \
+            and booking["bill_to_client_id"] != (user or {}).get("client_id"):
+        raise HTTPException(status_code=403, detail="Someone else is paying for this visit, so extras can't be changed online. "
+                                                    "Please ask us and we'll sort it out.")
+
+
 def trusted(dog_id: Optional[str], client_status: Optional[str]) -> bool:
     """A friend's dog on a friends & family group skips the new-client gate
     (Meet & Greet) — the owner vouches for it. A family marked rejected is

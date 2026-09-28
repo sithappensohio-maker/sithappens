@@ -83,6 +83,8 @@ const _WD = ["Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun"];
  */
 export function upcomingPaymentNote(b, services) {
   if (!["pending", "approved"].includes(b?.status)) return null;
+  // Friends & family: another family is paying for this visit.
+  if (b?.covered_by_other) return "Covered — nothing to pay";
   const list = services || [];
   const svc = list.find((x) => x.id === b.service_id)
            || list.find((x) => x.service_type === b.service_type);

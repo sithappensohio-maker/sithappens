@@ -1005,6 +1005,10 @@ class ReportCard(BaseModel):
     created_by_name: Optional[str] = None
 
 class BookingOut(BaseModel):
+    bill_to_client_id: Optional[str] = None  # friends & family: who pays (staff-only; friends_family.for_client)
+    bill_to_client_name: Optional[str] = None
+    group_kind: Optional[str] = None
+    covered_by_other: bool = False  # the friend's family's view: someone else pays, nothing to pay
     id: str
     dog_id: str
     dog_name: str
@@ -3537,6 +3541,7 @@ async def list_bookings(
             it["client_name"] = ""
         if not it.get("created_at"):
             it["created_at"] = ""
+        it = friends_family.for_client(it, user)  # a friend's family never sees the payer or the money
         # Per-row salvage: a single malformed row must degrade to a logged
         # skip, never a 500 for the whole list (the page renders nothing at
         # all when this endpoint fails).
@@ -4917,7 +4922,7 @@ async def create_booking_group(body: BookingGroupIn, user: dict = Depends(get_cu
                 end_date=body.end_date,
                 grooming_type=body.grooming_type,
                 # Per-dog notes win, otherwise fall back to the group note.
-                notes=(d.notes or body.notes or ""),
+                notes=(d.notes or ("" if ff_group and d.dog_id in ff_group["friends"] else body.notes) or ""),
                 kennel=(d.kennel or ""),
                 dropoff_time=body.dropoff_time or "",
                 pickup_time=body.pickup_time or "",
@@ -5008,6 +5013,7 @@ async def get_booking_group(group_id: str, user: dict = Depends(get_current_user
     items = await _booking_rows_anywhere(q, {"_id": 0}, limit=500, sort_field="created_at")
     if not items:
         raise HTTPException(status_code=404, detail="Group not found")
+    items = [friends_family.for_client(i, user) for i in items]
     return {"group_id": group_id, "bookings": items, "count": len(items)}
 
 
@@ -6097,7 +6103,7 @@ async def get_booking(booking_id: str, user: dict = Depends(get_current_user)):
         raise HTTPException(status_code=403, detail="Not your booking")
     b["financial_locked"] = _booking_is_financially_locked(b)
     b["archived"] = bool(archived)
-    return b
+    return friends_family.for_client(b, user)
 
 
 # Every client-facing endpoint that returns a client document must project
@@ -6815,20 +6821,21 @@ async def attach_booking_addons(
     # Clients can only modify their own bookings
     if user.get("role") != "admin" and booking.get("client_id") != user.get("client_id"):
         raise HTTPException(status_code=403, detail="Not your booking")
+    friends_family.refuse_client_change(booking, user)
     if booking.get("checked_out_at") or booking.get("status") in {"completed", "cancelled", "rejected"}:
         raise HTTPException(
             status_code=400,
             detail="This booking is closed. Add-ons can no longer be changed.",
         )
     new_addons = await resolve_addon_snapshots(
-        booking.get("client_id"),
+        friends_family.pricing_client_id(booking),
         body.addon_service_ids,
         booking.get("service_type") or "",
     )
     merged = list(booking.get("add_ons") or []) + new_addons
     await db.bookings.update_one({"id": booking_id}, {"$set": {"add_ons": merged}})
     booking["add_ons"] = merged
-    return booking
+    return friends_family.for_client(booking, user)
 
 
 async def remove_booking_addon(
@@ -6844,6 +6851,7 @@ async def remove_booking_addon(
         raise HTTPException(status_code=404, detail="Booking not found")
     if user.get("role") != "admin" and booking.get("client_id") != user.get("client_id"):
         raise HTTPException(status_code=403, detail="Not your booking")
+    friends_family.refuse_client_change(booking, user)
     if _booking_is_financially_locked(booking):
         raise HTTPException(status_code=409, detail="Booking already financially closed — add-ons are locked in.")
     addons = list(booking.get("add_ons") or [])
@@ -6852,7 +6860,7 @@ async def remove_booking_addon(
     addons.pop(addon_index)
     await db.bookings.update_one({"id": booking_id}, {"$set": {"add_ons": addons}})
     booking["add_ons"] = addons
-    return booking
+    return friends_family.for_client(booking, user)
 
 async def _maybe_send_low_credit_email(client_id: str, service_type: str, new_balance: int) -> None:
     """Sprint 110g — Fire the low-credit "heads up" email when a credit pool
@@ -15106,6 +15114,7 @@ async def dog_timeline(dog_id: str, limit: int = 80, user: dict = Depends(get_cu
 
     # ── Bookings (one event per visit; report-card if present folds in)
     for b in await _booking_rows_anywhere({"dog_id": dog_id}, {"_id": 0}, limit=limit, sort_field="date", sort_desc=True):
+        b = friends_family.for_client(b, user)  # a visit another family paid for shows no price to this one
         evt = {
             "id": f"booking-{b['id']}",
             "ts": b.get("check_in_at") or (b.get("date", "") + "T00:00:00"),
