@@ -231,40 +231,11 @@ async def build_pl_data(db, start_date: str, end_date: str) -> Dict[str, Any]:
     ).to_list(20000)
 
     # Sprint 110eg — Universal cash-basis: money only counts at point of
-    # sale, never at credit redemption. Mirror of `_cash_revenue` in
-    # server.py. ANY credit-paid booking contributes only the cash slice
-    # ABOVE its credit_value (admin's override + add-ons stack into
-    # actual_price, so delta = cash actually received). Pure credit burns
-    # return $0 — the original pack sale already wrote a retail_sales row.
-    def _cash_revenue(b: dict) -> float:
-        if b.get("is_prepaid_program_session"):
-            return 0.0
-        actual = float(b.get("actual_price") or 0)
-        paid_amt = float(b.get("amount_paid") or 0)
-        status = b.get("payment_status")
-        if b.get("payment_method") == "credits":
-            cv = float(b.get("credit_value") or 0)
-            return round(paid_amt, 2) if paid_amt > 0 else max(0.0, round(actual - cv, 2))
-        if status == "paid_partial":
-            return round(max(0.0, paid_amt), 2)
-        if status == "paid":
-            return round(paid_amt if paid_amt > 0 else actual, 2)
-        if status == "refunded":
-            # Step 4B-6 — mirror of server._cash_revenue: a row-based refund
-            # (financial_refund_total > 0, written with the signed reversal
-            # row) keeps the collected amount so the row subtracts it exactly
-            # once; a legacy status-only refund still zeroes.
-            if float(b.get("financial_refund_total") or 0) > 0:
-                return round(paid_amt if paid_amt > 0 else actual, 2)
-            return 0.0
-        if status in ("unpaid", "comped"):
-            return 0.0
-        if b.get("status") == "completed" and actual > 0:
-            return round(actual, 2)
-        if not actual and float(b.get("credit_value") or 0) > 0:
-            return 0.0
-        return 0.0
-
+    # sale, never at credit redemption. server.py's `_cash_revenue` (imported
+    # below — this module used to keep a copy) gives a credit-paid booking
+    # only the cash slice ABOVE its credit_value, and nothing a gift card
+    # paid. Pure credit burns return $0 — the original pack sale already
+    # wrote a retail_sales row.
     def _balance_due(b: dict) -> float:
         actual = float(b.get("actual_price") or 0)
         status = b.get("payment_status")
@@ -315,6 +286,7 @@ async def build_pl_data(db, start_date: str, end_date: str) -> Dict[str, Any]:
     # RH1 — the same canonical booking-revenue helpers Finance and Schedule C
     # use: collected cash minus its proportional slice of collected sales tax.
     from server import (  # lazy — avoids import cycle
+        _cash_revenue,  # the one rule (it knows what a gift card paid — audit #19)
         _booking_collection_events,
         _business_revenue_from_booking_event,
         _booking_event_tax_slice,

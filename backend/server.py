@@ -34800,10 +34800,12 @@ def _cash_revenue(booking: dict) -> float:
     if method == "credits":
         credit_value = float(booking.get("credit_value") or 0)
         # Pure prepaid credit redemption is not new cash. Only a cash amount
-        # explicitly collected on top of credits should count.
+        # explicitly collected on top of credits should count — never what a
+        # gift card paid of it, which arrived when the card was sold (audit #19).
+        card = float(booking.get("gift_card_applied") or 0)
         if paid > 0:
-            return round(paid, 2)
-        return max(0.0, round(actual - credit_value, 2))
+            return round(max(0.0, paid - card), 2)
+        return max(0.0, round(actual - credit_value - card, 2))
 
     if status == "paid_partial":
         return round(max(0.0, paid), 2)
@@ -36584,8 +36586,8 @@ async def _booking_collection_events(start_date: str, end_date: str) -> List[Dic
         ledger_booking_map = {b.get("id"): b for b in rows if b.get("id")}
     for pay in ledger_payments:
         amt = round(abs(float(pay.get("amount") or 0)), 2)  # stored negative (client credit)
-        if amt <= 0:
-            continue
+        if amt <= 0 or _normalize_payment_method(pay.get("method")) == "gift_card":  # arrived when the card was sold (audit #19)
+            continue  # (the booking stays in ledger_ids_in_window, so it is never counted another way)
         events.append({
             "booking": ledger_booking_map.get(pay.get("booking_id")) or {},
             "date": _business_date_from_timestamp(pay.get("created_at")),
@@ -36739,7 +36741,8 @@ async def _register_day_summary(day: Optional[str] = None) -> Dict[str, Any]:
         method = pay.get("method") or "other"
         booking = ledger_booking_map.get(pay.get("booking_id")) or {}
         _add_method_total(incoming_by_method, method, amt)
-        incoming_sources["booking_payments"] = round(incoming_sources["booking_payments"] + amt, 2)
+        if _normalize_payment_method(method) != "gift_card":  # arrived when the card was sold (audit #19)
+            incoming_sources["booking_payments"] = round(incoming_sources["booking_payments"] + amt, 2)
         activity.append({
             "id": pay.get("id"), "kind": "booking_payment", "label": "Booking payment",
             "description": pay.get("notes") or f"{booking.get('service_type','service').title()} · {booking.get('dog_name','')}",
@@ -47093,7 +47096,7 @@ async def today_pnl(_: dict = Depends(require_admin_and_permission("finance_repo
                 {"status": "cancelled", "cancellation_charged": True},
             ],
         },
-        {"_id": 0, "actual_price": 1, "credit_value": 1, "service_id": 1, "service_type": 1, "service_name": 1, "status": 1, "payment_status": 1, "dog_id": 1, "client_id": 1, "dog_name": 1, "end_date": 1, "date": 1, "grooming_type": 1, "cancellation_charged": 1, "cancellation_fee": 1, "payment_method": 1, "credit_lot_ids": 1, "is_prepaid_program_session": 1},
+        {"_id": 0, "actual_price": 1, "credit_value": 1, "service_id": 1, "service_type": 1, "service_name": 1, "status": 1, "payment_status": 1, "dog_id": 1, "client_id": 1, "dog_name": 1, "end_date": 1, "date": 1, "grooming_type": 1, "cancellation_charged": 1, "cancellation_fee": 1, "payment_method": 1, "credit_lot_ids": 1, "is_prepaid_program_session": 1, "amount_paid": 1, "gift_card_applied": 1, "financial_refund_total": 1},
     ).to_list(2000)
     # Sprint 110cj — drop training-program credit redemptions (already counted
     # as Training Revenue at sell-time) so the gauge doesn't double-count.
