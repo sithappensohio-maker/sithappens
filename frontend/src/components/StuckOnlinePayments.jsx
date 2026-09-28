@@ -34,7 +34,9 @@ export default function StuckOnlinePayments({ onChanged, highlightId = null, inv
     }))) return;
     if (action === "refund" && !(await confirm({
       title: "Refund this online payment?",
-      body: `${money(p.amount)} goes back to ${p.client_name || "the customer"}'s card. The bill stays open so they can pay the right amount.`,
+      body: p.kind === "shop"
+        ? `${money(p.amount)} goes back to ${p.client_name || "the customer"}'s card.`
+        : `${money(p.amount)} goes back to ${p.client_name || "the customer"}'s card. The bill stays open so they can pay the right amount.`,
       confirmText: "Refund", tone: "danger",
     }))) return;
     setBusyId(p.id); setMsg((m) => ({ ...m, [p.id]: "" }));
@@ -59,7 +61,7 @@ export default function StuckOnlinePayments({ onChanged, highlightId = null, inv
                className={`rounded-lg border p-3 ${highlightId === p.id ? "border-shAccent" : "border-shBorder"} bg-[var(--sh-card-base)]`}>
             <div className="flex flex-wrap items-start justify-between gap-2">
               <div className="min-w-0">
-                <p className="text-shText font-black">{money(p.amount)} · {p.client_name || "Client"} · Bill #{p.invoice_number}</p>
+                <p className="text-shText font-black">{money(p.amount)} · {p.client_name || "Client"} · {p.kind === "shop" ? `Shop order #${p.order_number}` : `Bill #${p.invoice_number}`}</p>
                 <p className="text-[12px] text-shTextMuted mt-0.5">{p.reason}</p>
                 {msg[p.id] && <p className="text-[12px] font-bold mt-1 text-shSecondary" data-testid={`stuck-payment-msg-${p.id}`}>{msg[p.id]}</p>}
               </div>

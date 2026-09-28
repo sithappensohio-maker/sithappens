@@ -38758,12 +38758,16 @@ async def _handle_shop_checkout_session_paid_event(session_obj: dict) -> None:
         await db.shop_payment_attempts.update_one({"id": attempt["id"]}, {"$set": {"stripe_payment_intent_id": payment_intent_id}})
         attempt["stripe_payment_intent_id"] = payment_intent_id
     if attempt.get("status") in SHOP_PAYMENT_ATTEMPT_TERMINAL_STATUSES:
+        if attempt.get("status") != "applied":  # paid after it was written off: flag it, never ignore it (audit #62)
+            await shop_abandon.mark_paid_after_close(attempt, session_obj)
         return  # already resolved — monotonic, never regress
+    if attempt.get("paid_after_close") or attempt.get("status") in ("refunding", "refunded", "disputed"):
+        return  # staff are sorting it out, or did (Front Desk → Online payments)
     try:
         await _apply_shop_payment(attempt, session_obj)
     except HTTPException:
         await db.shop_payment_attempts.find_one_and_update(
-            {"id": attempt["id"], "status": {"$nin": list(SHOP_PAYMENT_ATTEMPT_TERMINAL_STATUSES)}},
+            {"id": attempt["id"], "status": {"$nin": [*SHOP_PAYMENT_ATTEMPT_TERMINAL_STATUSES, "refunding", "refunded", "disputed"]}},
             {"$set": {"status": "reconciliation_required", "updated_at": now_iso()}},
         )
         raise  # non-2xx so Stripe retries delivery — safe, apply is idempotent
@@ -43003,7 +43007,9 @@ async def _verify_and_reconcile_shop_session(attempt: dict) -> dict:
                 {"id": attempt["id"], "status": {"$nin": list(SHOP_PAYMENT_ATTEMPT_TERMINAL_STATUSES)}},
                 {"$set": {"status": "reconciliation_required", "updated_at": now_iso()}},
             )
-    elif not await _shop_order_already_paid(attempt["shop_order_id"]):
+    # A completed-but-unpaid session is a payment still clearing — never
+    # written off here (the abandoned-checkout sweep asks Stripe; audit #62).
+    elif session.get("status") != "complete" and not await _shop_order_already_paid(attempt["shop_order_id"]):
         result = await db.shop_payment_attempts.find_one_and_update(
             {"id": attempt["id"], "status": "pending"},
             {"$set": {"status": "expired", "updated_at": now_iso()}},

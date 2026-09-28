@@ -28,6 +28,7 @@ from pydantic import BaseModel, Field
 
 from domains.billing import tab_sync
 from domains.billing.tab_sync import _g, _money
+from domains.shop import abandon as shop_abandon
 
 MSG_NOT_WAITING = "This payment is no longer waiting — refresh the list."
 
@@ -165,13 +166,17 @@ async def stuck_payments(limit: int = 100) -> List[dict]:
             "can_refund": code in ("ready", "refunding", "missing", "refund", "too_big", "needs_review"),
             "can_close": code == "dispute_lost",
         })
-    return out
+    # Shop payments the app couldn't record wait here too (audit #62).
+    return out + await shop_abandon.stuck_rows(limit)
 
 
 async def retry_payment(attempt_id: str) -> dict:
     db = _g("db")
     a = await db.stripe_payment_attempts.find_one({"id": attempt_id}, {"_id": 0})
     if not a:
+        shop = await shop_abandon.find_stuck(attempt_id)
+        if shop:
+            return await shop_abandon.retry_stuck(shop)
         raise HTTPException(status_code=404, detail="Payment not found")
     if a.get("status") != "reconciliation_required":
         raise HTTPException(status_code=409, detail=MSG_NOT_WAITING)
@@ -228,6 +233,9 @@ async def refund_payment(attempt_id: str, user: dict) -> dict:
     db = _g("db")
     a = await db.stripe_payment_attempts.find_one({"id": attempt_id}, {"_id": 0})
     if not a:
+        shop = await shop_abandon.find_stuck(attempt_id)
+        if shop:
+            return await shop_abandon.refund_stuck(shop, user)
         raise HTTPException(status_code=404, detail="Payment not found")
     if a.get("status") not in ("reconciliation_required", "refunding"):
         raise HTTPException(status_code=409, detail=MSG_NOT_WAITING)
@@ -260,6 +268,8 @@ async def close_disputed_payment(attempt_id: str, user: dict) -> dict:
     bill stays on hold — if it's won, the money is recorded with Retry."""
     db = _g("db")
     a = await db.stripe_payment_attempts.find_one({"id": attempt_id}, {"_id": 0})
+    if not a and (shop := await shop_abandon.find_stuck(attempt_id)):
+        return await shop_abandon.close_stuck(shop, user)
     if not a or a.get("status") not in ("reconciliation_required", "refunding"):
         raise HTTPException(status_code=409, detail=MSG_NOT_WAITING)
     if await _dispute_state(a) != "lost":
@@ -287,6 +297,8 @@ async def on_stripe_refund(refund_obj: dict) -> bool:
     """Refund webhooks for stuck-payment refunds (they carry our metadata).
     Returns True when handled here — there is no recorded payment for the
     general refund path to reverse. A refund that later fails reopens it."""
+    if await shop_abandon.on_stripe_refund(refund_obj):
+        return True
     attempt_id = (refund_obj.get("metadata") or {}).get("sithappens_stuck_attempt_id")
     if not attempt_id:
         return False
@@ -311,7 +323,8 @@ async def pending_action_items() -> List[dict]:
             "type_label": "Online Payment Needs Attention", "priority": "action_required",
             "status": p["reason_code"], "created_at": p.get("created_at"), "client_id": p.get("client_id"),
             "client_name": p.get("client_name"), "dog_id": None, "dog_name": None,
-            "service_name": f"${p['amount']:.2f} online · Bill #{p['invoice_number']}",
+            "service_name": f"${p['amount']:.2f} online · "
+                            + (f"Shop order #{p['order_number']}" if p.get("kind") == "shop" else f"Bill #{p['invoice_number']}"),
             "requested_start": None, "requested_date": None, "requested_end_date": None, "requested_time": None,
             "notes": p["reason"][:300],
             "deep_link": {"screen": "pos", "panel": "online_payments", "stuck_attempt_id": p["id"]},
@@ -321,7 +334,8 @@ async def pending_action_items() -> List[dict]:
 
 
 async def pending_action_count() -> int:
-    return await _g("db").stripe_payment_attempts.count_documents({"status": {"$in": ["reconciliation_required", "refunding"]}})
+    return (await _g("db").stripe_payment_attempts.count_documents({"status": {"$in": ["reconciliation_required", "refunding"]}})
+            + await shop_abandon.stuck_count())
 
 
 # ───────────────────────── repairing a bill ─────────────────────────

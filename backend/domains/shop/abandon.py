@@ -222,6 +222,243 @@ async def cancel_checkout(order: dict) -> dict:
     return {"status": fresh.get("status")}
 
 
+# ── Money that could not be recorded (audit #62) ──────────────────────────
+#
+# Owner decision 2026-09-28 (option B): the Shop takes card payments only (no
+# bank transfers that clear days later), and any online Shop payment the app
+# could not record — money that arrived after its order was cancelled, or a
+# payment whose recording failed — is flagged for staff in Front Desk → Online
+# payments ("Paid online, not recorded yet") and Action Required, with Retry
+# and Refund, instead of being ignored. Rows carry kind "shop"; the list,
+# the buttons and the count live in domains/billing/resolve.py.
+
+STUCK_STATUSES = ("reconciliation_required", "refunding")
+
+
+async def mark_paid_after_close(attempt: dict, session_obj: dict) -> None:
+    """Stripe says paid, but this checkout was already written off (its order
+    cancelled, its items back on sale). Never ignore the money: flag it."""
+    db = _g("db")
+    ts = _g("now_iso")()
+    pi = session_obj.get("payment_intent")
+    pi = pi.get("id") if isinstance(pi, dict) else pi
+    done = await db.shop_payment_attempts.update_one(
+        {"id": attempt["id"], "status": {"$in": list(DEAD_ATTEMPT_STATUSES)}},
+        {"$set": {"status": "reconciliation_required", "paid_after_close": attempt.get("status"),
+                  "stripe_payment_intent_id": pi or attempt.get("stripe_payment_intent_id"), "updated_at": ts}})
+    if done.modified_count:
+        await db.shop_orders.update_one(
+            {"id": attempt["shop_order_id"]},
+            {"$set": {"paid_after_cancel": {"at": ts, "attempt_id": attempt["id"],
+                                            "amount_cents": int(session_obj.get("amount_total") or attempt.get("amount_cents") or 0)},
+                      "updated_at": ts}})
+        _g("logger").warning("Shop attempt %s was paid after being closed as %s — flagged for staff",
+                             attempt["id"], attempt.get("status"))
+
+
+async def _stripe_money_state(attempt: dict) -> dict:
+    """What Stripe says happened to this payment: refunded already (from the
+    Dashboard), disputed, or still there to refund."""
+    stripe = _g("stripe")
+    pi = attempt.get("stripe_payment_intent_id")
+    if not pi and attempt.get("stripe_checkout_session_id"):
+        session = await _stripe_call(stripe.checkout.Session.retrieve, attempt["stripe_checkout_session_id"])
+        pi = session.get("payment_intent")
+        pi = pi.get("id") if isinstance(pi, dict) else pi
+        if pi:
+            await _g("db").shop_payment_attempts.update_one({"id": attempt["id"]}, {"$set": {"stripe_payment_intent_id": pi}})
+            attempt["stripe_payment_intent_id"] = pi
+    if not pi:
+        return {"payment_intent": None, "refunded_cents": 0, "disputed": False}
+    intent = _as_dict(await asyncio.to_thread(lambda: stripe.PaymentIntent.retrieve(pi, expand=["latest_charge"])))
+    charge = intent.get("latest_charge") if isinstance(intent.get("latest_charge"), dict) else {}
+    return {"payment_intent": pi, "refunded_cents": int((charge or {}).get("amount_refunded") or 0),
+            "disputed": bool((charge or {}).get("disputed"))}
+
+
+async def _dispute(attempt: dict) -> Optional[str]:
+    """"open" / "won" / "lost" for a dispute on this payment, else None."""
+    pi = attempt.get("stripe_payment_intent_id")
+    if not pi:
+        return None
+    d = await _g("db").stripe_disputes.find_one({"stripe_payment_intent_id": pi}, {"_id": 0, "status": 1})
+    if not d:
+        return None
+    if d.get("status") == "warning_closed":   # an inquiry closed with no chargeback: the money stayed
+        return "won"
+    return d.get("status") if d.get("status") in ("won", "lost") else "open"
+
+
+async def stuck_rows(limit: int = 100) -> list:
+    """Shop payments waiting on staff, shaped like the bill rows."""
+    db = _g("db")
+    out = []
+    for a in await db.shop_payment_attempts.find(
+            {"status": {"$in": list(STUCK_STATUSES)}}, {"_id": 0}).sort("created_at", 1).to_list(limit):
+        order = await db.shop_orders.find_one({"id": a.get("shop_order_id")}, {"_id": 0}) or {}
+        amount = round(int(a.get("amount_cents") or 0) / 100.0, 2)
+        retry = refund = close = False
+        dispute = await _dispute(a)
+        if dispute == "open":
+            code, reason = ("dispute_open", "The customer disputed this charge with their bank. Wait for the bank's "
+                            "decision (Disputes); nothing can be done here until then.")
+        elif dispute == "lost":
+            code, reason, close = ("dispute_lost", "The bank sided with the customer, so this money went back to them. "
+                                   "Press Close.", True)
+        elif a.get("status") == "refunding":
+            code, reason, refund = "refunding", "A refund was started but not confirmed. Press Refund to finish it.", True
+        elif order and order.get("shop_last_applied_attempt_id") == a.get("id"):
+            code, reason, retry = ("partly_recorded", "Part of this payment was recorded on its order. Press Retry to "
+                                   "finish it (refund it from the order afterwards if needed).", True)
+        elif a.get("paid_after_close") or order.get("status") == "canceled" or not order:
+            code, reason, refund = ("paid_after_cancel", "This payment arrived after the order was cancelled, and its "
+                                    "items went back on sale. Refund it — if they still want the items, they can order again.", True)
+        else:
+            code, reason, retry, refund = ("ready", "This Shop payment wasn't recorded on its order. Press Retry — or "
+                                           "Refund it.", True, True)
+        number = (a.get("shop_order_id") or "")[:8].upper()
+        out.append({
+            "id": a["id"], "kind": "shop", "status": a.get("status"), "created_at": a.get("created_at"),
+            "client_id": order.get("client_id"), "invoice_id": None, "shop_order_id": a.get("shop_order_id"),
+            "client_name": order.get("client_name") or order.get("guest_name") or order.get("client_email") or "Shop customer",
+            "amount": amount, "invoice_number": number, "order_number": number,
+            "reason_code": code, "reason": reason, "can_retry": retry, "can_refund": refund, "can_close": close,
+        })
+    return out
+
+
+async def stuck_count() -> int:
+    return await _g("db").shop_payment_attempts.count_documents({"status": {"$in": list(STUCK_STATUSES)}})
+
+
+async def find_stuck(attempt_id: str) -> Optional[dict]:
+    return await _g("db").shop_payment_attempts.find_one({"id": attempt_id}, {"_id": 0})
+
+
+async def retry_stuck(attempt: dict) -> dict:
+    from fastapi import HTTPException
+    if attempt.get("status") != "reconciliation_required":
+        raise HTTPException(status_code=409, detail="This payment isn't waiting any more. Refresh the list.")
+    if attempt.get("paid_after_close"):
+        raise HTTPException(status_code=409, detail="This order was cancelled and its items went back on sale. Refund the payment.")
+    session = await _stripe_call(_g("stripe").checkout.Session.retrieve, attempt["stripe_checkout_session_id"])
+    if session.get("payment_status") != "paid":
+        raise HTTPException(status_code=409, detail="Stripe doesn't show this payment as completed.")
+    state = await _stripe_money_state(attempt)
+    if state["refunded_cents"] > 0 or (state["disputed"] and await _dispute(attempt) != "won"):
+        raise HTTPException(status_code=409, detail="Stripe shows this payment was refunded or is disputed, so it can't be recorded.")
+    try:
+        await _g("_apply_shop_payment")(attempt, session)
+    except HTTPException as exc:
+        raise HTTPException(status_code=409, detail=f"Still can't record it: {exc.detail}")
+    return {"ok": True}
+
+
+async def refund_stuck(attempt: dict, user: dict) -> dict:
+    """Give the money back. Only for a payment none of which was recorded on
+    its order (a recorded one is refunded from the order itself)."""
+    from fastapi import HTTPException
+    db = _g("db")
+    stripe = _g("stripe")
+    attempt_id = attempt["id"]
+    if attempt.get("status") not in STUCK_STATUSES:
+        raise HTTPException(status_code=409, detail="This payment isn't waiting any more. Refresh the list.")
+    order = await db.shop_orders.find_one({"id": attempt.get("shop_order_id")}, {"_id": 0, "shop_last_applied_attempt_id": 1}) or {}
+    if order.get("shop_last_applied_attempt_id") == attempt_id:
+        raise HTTPException(status_code=409, detail="Part of this payment was already recorded. Use Retry to finish it.")
+    state = await _stripe_money_state(attempt)
+    pi = state["payment_intent"]
+    if not pi:
+        raise HTTPException(status_code=409, detail="Stripe has no completed payment to refund for this.")
+    dispute = await _dispute(attempt)
+    # Stripe keeps a charge marked "disputed" after the dispute ends; one that
+    # ended our way (or was withdrawn) no longer stands in the way.
+    if dispute in ("open", "lost") or (state["disputed"] and dispute != "won"):
+        raise HTTPException(status_code=409, detail="This charge is disputed, so it can't be refunded. The bank's decision settles it (Disputes).")
+    await db.shop_payment_attempts.update_one(
+        {"id": attempt_id, "status": "reconciliation_required"}, {"$set": {"status": "refunding", "updated_at": _g("now_iso")()}})
+    refund_id = None
+    if state["refunded_cents"] < int(attempt.get("amount_cents") or 0):   # not already given back (the Dashboard)
+        # One request per try: after a refund Stripe reported as failed, the
+        # next press is a new refund, never a replay of the failed one.
+        tries = int(attempt.get("refund_tries") or 0)
+        try:
+            refund = _as_dict(await asyncio.to_thread(lambda: stripe.Refund.create(
+                payment_intent=pi, idempotency_key=f"shop_stuck_refund:{attempt_id}:{tries}",
+                metadata={"sithappens_shop_stuck_attempt_id": attempt_id})))
+        except Exception as exc:
+            _g("logger").warning("Stuck Shop payment refund failed for %s: %s", attempt_id, exc)
+            raise HTTPException(status_code=502, detail="Stripe couldn't refund this right now. Press Refund again in a minute.")
+        if refund.get("status") in ("failed", "canceled"):
+            await _reopen_stuck(attempt_id)
+            raise HTTPException(status_code=502, detail="Stripe couldn't refund this payment. It's back in the list — try again or contact Stripe.")
+        refund_id = refund.get("id")
+    ts = _g("now_iso")()
+    await db.shop_payment_attempts.update_one(
+        {"id": attempt_id, "status": {"$in": list(STUCK_STATUSES)}},
+        {"$set": {"status": "refunded", "stripe_refund_id": refund_id, "resolved_at": ts,
+                  "resolved_by": user.get("name") or user.get("email") or user.get("id"), "updated_at": ts}})
+    await db.shop_orders.update_one({"id": attempt.get("shop_order_id"), "paid_after_cancel.attempt_id": attempt_id},
+                                    {"$set": {"paid_after_cancel.refunded_at": ts}})
+    await _close_order_behind(attempt, ts)
+    return {"ok": True, "refunded": True, "stripe_refund_id": refund_id}
+
+
+async def _close_order_behind(attempt: dict, ts: str) -> None:
+    """The money went back, so the order it was for is over: cancel it (if
+    it never became paid) and put its items back on sale."""
+    db = _g("db")
+    oid = attempt.get("shop_order_id")
+    closed = await db.shop_orders.update_one(
+        {"id": oid, "status": {"$nin": ["paid", "canceled"]}, "shop_last_applied_attempt_id": None,
+         "stripe_active_attempt_id": {"$in": [None, attempt["id"]]}},
+        {"$set": {"status": "canceled", "updated_at": ts}})
+    await _g("_release_shop_order_reservation_if_owned")(oid, attempt["id"])
+    if closed.modified_count:
+        await _g("_release_shop_order_inventory")(oid)
+
+
+async def close_stuck(attempt: dict, user: dict) -> dict:
+    """The bank decided a dispute for the customer: the money went back to
+    them, so the payment is over."""
+    from fastapi import HTTPException
+    if attempt.get("status") not in STUCK_STATUSES:
+        raise HTTPException(status_code=409, detail="This payment isn't waiting any more. Refresh the list.")
+    if await _dispute(attempt) != "lost":
+        raise HTTPException(status_code=409, detail="Close is only for a dispute the bank decided for the customer.")
+    ts = _g("now_iso")()
+    await _g("db").shop_payment_attempts.update_one(
+        {"id": attempt["id"], "status": {"$in": list(STUCK_STATUSES)}},
+        {"$set": {"status": "disputed", "resolved_at": ts, "updated_at": ts,
+                  "resolved_by": user.get("name") or user.get("email") or user.get("id")}})
+    await _close_order_behind(attempt, ts)
+    return {"ok": True, "closed": True}
+
+
+async def _reopen_stuck(attempt_id: str, refund_id: Optional[str] = None) -> None:
+    """A refund that failed: back in the list, and the next press is a new try.
+    A stale failure for an older try never reopens a later refund."""
+    q: Dict[str, Any] = {"id": attempt_id, "status": {"$in": ["refunding", "refunded"]}}
+    if refund_id:
+        q["stripe_refund_id"] = {"$in": [None, refund_id]}
+    await _g("db").shop_payment_attempts.update_one(
+        q, {"$set": {"status": "reconciliation_required", "updated_at": _g("now_iso")()},
+            "$unset": {"stripe_refund_id": ""}, "$inc": {"refund_tries": 1}})
+
+
+async def on_stripe_refund(refund_obj: dict) -> bool:
+    """Refund webhooks for these refunds (they carry our metadata). A refund
+    that later fails puts the payment back in the list."""
+    attempt_id = (refund_obj.get("metadata") or {}).get("sithappens_shop_stuck_attempt_id")
+    if not attempt_id:
+        return False
+    if refund_obj.get("status") in ("failed", "canceled"):
+        await _reopen_stuck(attempt_id, refund_obj.get("id"))
+        _g("logger").warning("Stuck Shop payment refund %s for %s %s — back in the list",
+                             refund_obj.get("id"), attempt_id, refund_obj.get("status"))
+    return True
+
+
 def register_abandon_routes(*, api, server_globals: dict) -> None:
     """POST /shop/orders/{id}/cancel-checkout — the signed-in buyer came back
     through Stripe's cancel link. (The guest twin lives in guest_routes,

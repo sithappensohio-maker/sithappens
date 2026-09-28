@@ -330,6 +330,10 @@ async def create_checkout(*, buyer: Buyer, items, idempotency_key: str) -> dict:
 
         session_kwargs = dict(
             mode="payment",
+            # Cards only — Apple Pay and Google Pay are cards too. A bank
+            # transfer clears days later, after the order's hold would have
+            # lapsed (owner decision, audit #62).
+            payment_method_types=["card"],
             line_items=line_items,
             success_url=_success_url(order_id, buyer, guest_token, order),
             cancel_url=_cancel_url(order_id, buyer, guest_token, order),
