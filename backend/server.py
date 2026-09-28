@@ -1496,7 +1496,7 @@ async def _acquire_booking_financial_correction_guard(booking_id: str) -> tuple:
     with the checkout lock used by the money-integrity pass."""
     keys = [f"financial-booking:{booking_id}"]
     pre, _collection, _archived = await _load_booking_for_financial_correction(booking_id)
-    client_id = (pre or {}).get("client_id")
+    client_id = friends_family.payer_id(pre or {})  # the payer, on a friends & family visit
     if client_id:
         keys.append(f"financial-client:{client_id}")
     try:
@@ -5729,11 +5729,12 @@ async def _cancel_booking_impl(booking_id: str, forfeit: bool, user: dict, undo_
         balance_applied = False
         booking_written = False
         try:
-            if booking.get("client_id"):
-                await _adjust_client_balance(booking["client_id"], fee)
+            fee_client = friends_family.payer_id(booking)  # the payer, on a friends & family visit
+            if fee_client:
+                await _adjust_client_balance(fee_client, fee)
                 balance_applied = True
                 ledger = await _write_ledger_row(
-                    client_id=booking["client_id"], type_="charge", amount=fee,
+                    client_id=fee_client, type_="charge", amount=fee,
                     notes=f"Cancellation charge · {update_payload.get('cancellation_fee_pct', 0):g}% policy",
                     booking_id=booking_id, created_by=user.get("id") or "admin",
                 )
@@ -5761,8 +5762,8 @@ async def _cancel_booking_impl(booking_id: str, forfeit: bool, user: dict, undo_
         except Exception as exc:
             if booking_written:
                 await db.bookings.replace_one({"id": booking_id}, booking, upsert=False)
-            if balance_applied and booking.get("client_id"):
-                await db.clients.update_one({"id": booking["client_id"]}, {"$inc": {"account_balance": -fee}})
+            if balance_applied and fee_client:
+                await db.clients.update_one({"id": fee_client}, {"$inc": {"account_balance": -fee}})
             if ledger_id:
                 await db.payment_ledger.delete_one({"id": ledger_id})
             if event_id:
@@ -6776,7 +6777,7 @@ async def check_in(
     # legacy-pricing + appends to the existing add_ons list (no overwrite).
     if body.addon_service_ids:
         new_addons = await resolve_addon_snapshots(
-            booking.get("client_id"),
+            friends_family.pricing_client_id(booking),  # the payer's rates on a friends & family visit
             body.addon_service_ids,
             booking.get("service_type") or "",
         )
@@ -6969,6 +6970,8 @@ async def _compute_multi_dog_discount(booking: dict, *, exclude_id: Optional[str
         "date": booking_date,
         "status": "completed",
         "checked_out_at": {"$exists": True, "$ne": None},
+        # Only this family's own dogs — never one another family paid for (a friend's dog on a friends & family group).
+        "bill_to_client_id": {"$in": [None, "", client_id]},
         # A sibling discounted at its own checkout doesn't count: a reopened
         # full-price dog must not end up discounted too (audit #14).
         "$or": [{"multi_dog_discount": None}, {"multi_dog_discount.pre_applied": True}],
@@ -7026,7 +7029,7 @@ async def discount_preview(booking_id: str, _: dict = Depends(require_employee_o
             # Sprint 110am — honour the client's legacy-pricing override in the
             # check-out preview so admins see the locked rate before confirming.
             pricing = await resolve_client_price(
-                booking.get("client_id"),
+                friends_family.payer_id(booking),
                 "service",
                 default_svc.get("id") or "",
                 unit,
@@ -7042,7 +7045,7 @@ async def discount_preview(booking_id: str, _: dict = Depends(require_employee_o
                     cutoff_time=cutoff_time,
                 )
                 late_fee = await _boarding_late_pickup_daycare_fee(
-                    booking.get("client_id"), pickup_clock, cutoff_time,
+                    friends_family.payer_id(booking), pickup_clock, cutoff_time,
                 )
                 tentative_price = (unit * units + float(late_fee.get("amount") or 0)) * _group_row_price_factor(booking)
             else:
@@ -7091,7 +7094,7 @@ async def early_checkout_quote(booking_id: str, _: dict = Depends(require_employ
     settings = await get_settings()
     cutoff_time = ps.get("pickup_cutoff_time") or _boarding_full_day_cutoff_from_rules(settings.get("booking_rules") or {})
     quote = await _quote_base_service_price(
-        client_id=booking.get("client_id"),
+        client_id=friends_family.payer_id(booking),  # the payer's rates on a friends & family visit
         service_type="boarding",
         start_date=booking.get("date"),
         end_date=today,
@@ -9150,6 +9153,8 @@ async def checkout_group_preview(
         "date": anchor.get("date"),
         "status": "completed",
         "checked_out_at": {"$exists": True, "$ne": None},
+        # Only this family's own dogs — never one another family paid for (a friend's dog on a friends & family group).
+        "bill_to_client_id": {"$in": [None, "", anchor.get("client_id")]},
         "$or": [{"multi_dog_discount": None}, {"multi_dog_discount.pre_applied": True}],
     })
     for idx, row in enumerate(rows):
@@ -12419,7 +12424,7 @@ async def _booking_refund_locked(booking_id: str, body: BookingRefundIn, user: d
             "description": f"Booking refund · {booking.get('dog_name') or ''} · {body.reason.strip()}",
             "amount": -amount, "tax_amount": -tax_refund, "category": "Refund", "notes": body.reason.strip(),
             "payment_method": _normalize_payment_method(body.payment_method, store=True),
-            "client_id": booking.get("client_id"), "client_name": booking.get("client_name"),
+            "client_id": friends_family.payer_id(booking), "client_name": booking.get("bill_to_client_name") or booking.get("client_name"),
             "booking_id": booking_id, "source_kind": "refund", "created_at": now_iso(),
             "created_by": user.get("id"), "logged_by": user.get("name") or user.get("email") or "admin",
         }
@@ -12430,8 +12435,9 @@ async def _booking_refund_locked(booking_id: str, body: BookingRefundIn, user: d
             if booking.get("client_id"):
                 # The invoice reduction and cash return are separate append-only ledger
                 # entries with a net-zero client-tab effect.
-                row1 = await _write_ledger_row(client_id=booking["client_id"], type_="adjustment", amount=-amount, notes=f"Refund invoice adjustment · {body.reason.strip()}", booking_id=booking_id, created_by=user.get("id") or "admin")
-                row2 = await _write_ledger_row(client_id=booking["client_id"], type_="refund", amount=amount, method=body.payment_method, notes=f"Cash returned · {body.reason.strip()}", booking_id=booking_id, created_by=user.get("id") or "admin")
+                payer = friends_family.payer_id(booking)
+                row1 = await _write_ledger_row(client_id=payer, type_="adjustment", amount=-amount, notes=f"Refund invoice adjustment · {body.reason.strip()}", booking_id=booking_id, created_by=user.get("id") or "admin")
+                row2 = await _write_ledger_row(client_id=payer, type_="refund", amount=amount, method=body.payment_method, notes=f"Cash returned · {body.reason.strip()}", booking_id=booking_id, created_by=user.get("id") or "admin")
                 ledger_ids.extend([row1["id"], row2["id"]])
             result = await booking_collection.update_one({"id": booking_id}, {"$set": update})
             if result.matched_count != 1:
@@ -12524,10 +12530,11 @@ async def _reopen_booking_checkout_locked(booking_id: str, body: BookingReopenCh
     unset_update.update(undo_unset)
     event_id = None
     try:
-        if abs(ledger_net) > 0.005 and booking.get("client_id"):
-            await _adjust_client_balance(booking["client_id"], -ledger_net)
+        money_client = friends_family.payer_id(booking)  # the payer, on a friends & family visit
+        if abs(ledger_net) > 0.005 and money_client:
+            await _adjust_client_balance(money_client, -ledger_net)
             balance_applied = True
-            reversal = await _write_ledger_row(client_id=booking["client_id"], type_="adjustment", amount=-ledger_net, notes=f"Reopened checkout · {body.reason.strip()}", booking_id=booking_id, created_by=user.get("id") or "admin")
+            reversal = await _write_ledger_row(client_id=money_client, type_="adjustment", amount=-ledger_net, notes=f"Reopened checkout · {body.reason.strip()}", booking_id=booking_id, created_by=user.get("id") or "admin")
             ledger_row_id = reversal["id"]
         result = await booking_collection.update_one({"id": booking_id}, {"$set": set_update, "$unset": unset_update})
         if result.matched_count != 1:
@@ -12538,8 +12545,8 @@ async def _reopen_booking_checkout_locked(booking_id: str, body: BookingReopenCh
         event_id = event.get("id")
     except Exception as exc:
         await booking_collection.replace_one({"id": booking_id}, booking, upsert=False)
-        if booking.get("client_id") and balance_applied:
-            await db.clients.update_one({"id": booking["client_id"]}, {"$inc": {"account_balance": float(ledger_net)}})
+        if money_client and balance_applied:
+            await db.clients.update_one({"id": money_client}, {"$inc": {"account_balance": float(ledger_net)}})
         if ledger_row_id:
             await db.payment_ledger.delete_one({"id": ledger_row_id})
         if event_id:

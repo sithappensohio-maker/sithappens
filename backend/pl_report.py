@@ -317,8 +317,8 @@ async def build_pl_data(db, start_date: str, end_date: str) -> Dict[str, Any]:
     by_client_map: Dict[str, Dict[str, Any]] = {}
     for ev in collection_events:
         b = ev.get("booking") or {}
-        cid = b.get("client_id")
-        name = b.get("client_name") or "Unknown"
+        cid = b.get("bill_to_client_id") or b.get("client_id")  # the family that paid (friends & family: the payer)
+        name = b.get("bill_to_client_name") or b.get("client_name") or "Unknown"
         if not cid:
             continue
         c = by_client_map.setdefault(cid, {"client_id": cid, "name": name, "visits": 0, "total": 0.0})

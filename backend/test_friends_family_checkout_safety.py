@@ -41,7 +41,7 @@ def _day(off=0):
 
 
 @contextlib.contextmanager
-def _group(service_type="daycare", end_date=None, pickup_time=""):
+def _group(service_type="daycare", end_date=None, pickup_time="", friend_rates=None, start=None, checked_in=True):
     """Default daycare ($40) and boarding ($50) services. The payer has special
     rates ($30 daycare, $45 boarding) and money on file; the friend's family
     has different money on file. One dog each, checked in 8 hours ago."""
@@ -64,20 +64,23 @@ def _group(service_type="daycare", end_date=None, pickup_time=""):
     payer, friend = fams["payer"], fams["friend"]
     run(server.db.clients.update_one({"id": friend["client"]}, {"$set": {
         "referred_by_code": run(server.db.clients.find_one({"id": payer["client"]}))["referral_code"]}}))
-    for sid, price in ((day["id"], 30.0), (board["id"], 45.0)):
-        run(server.db.price_overrides.insert_one({"id": str(uuid.uuid4()), "client_id": payer["client"], "target_kind": "service",
+    rates = [(payer["client"], day["id"], 30.0), (payer["client"], board["id"], 45.0)]
+    rates += [(friend["client"], {"day": day, "board": board}[k]["id"], v) for k, v in (friend_rates or {}).items()]
+    for cid, sid, price in rates:
+        run(server.db.price_overrides.insert_one({"id": str(uuid.uuid4()), "client_id": cid, "target_kind": "service",
                                                   "target_code": sid, "override_price": price, "created_at": server.now_iso()}))
     svc = day if service_type == "daycare" else board
     body = server.BookingGroupIn(dogs=[server.BookingGroupDog(dog_id=payer["dog"]), server.BookingGroupDog(dog_id=friend["dog"])],
-                                 date=_day(-1) if end_date else _day(), end_date=end_date, service_type=service_type,
+                                 date=start or (_day(-1) if end_date else _day()), end_date=end_date, service_type=service_type,
                                  service_id=svc["id"], pickup_time=pickup_time, override_capacity=True, override_vaccines=True,
                                  payer_client_id=payer["client"])
     rows = {r["dog_id"]: r for r in run(server.create_booking_group(body, OWNER))["bookings"]}
     earlier = (datetime.now(timezone.utc) - timedelta(hours=8)).isoformat()
     for f in fams.values():
         f["booking"] = rows[f["dog"]]["id"]
-        run(server.check_in(f["booking"], server.CheckInIn(vaccine_ack=True), OWNER))
-        run(server.db.bookings.update_one({"id": f["booking"]}, {"$set": {"checked_in_at": earlier}}))
+        if checked_in:
+            run(server.check_in(f["booking"], server.CheckInIn(vaccine_ack=True), OWNER))
+            run(server.db.bookings.update_one({"id": f["booking"]}, {"$set": {"checked_in_at": earlier}}))
     try:
         yield payer, friend, day
     finally:
@@ -148,3 +151,49 @@ def test_the_friends_familys_first_self_paid_visit_still_earns_the_referral():
                                           {"$set": {"checked_in_at": (datetime.now(timezone.utc) - timedelta(hours=8)).isoformat()}}))
         _checkout(own["id"])
         assert run(server.db.referrals.count_documents({"referred_id": friend["client"]})) == 1
+
+
+def test_the_payers_other_dog_that_day_keeps_its_household_discount():
+    """The payer's own dog on the group is the payer's household — only a dog
+    ANOTHER family paid for is left out of the same-day multi-dog discount."""
+    with _group() as (payer, friend, day_svc):
+        second = str(uuid.uuid4())
+        run(server.db.dogs.insert_one({"id": second, "name": f"{TAG} payer second", "owner_id": payer["client"], "breed": "Mix",
+                                       "age_y": 2, "vaccines": dict(VAX)}))
+        try:
+            own = run(server.create_booking(server.BookingIn(dog_id=second, date=_day(), service_type="daycare",
+                                                             service_id=day_svc["id"], override_capacity=True,
+                                                             override_vaccines=True), OWNER))
+            run(server.check_in(own["id"], server.CheckInIn(vaccine_ack=True), OWNER))
+            run(server.db.bookings.update_one({"id": own["id"]}, {"$set": {
+                "checked_in_at": (datetime.now(timezone.utc) - timedelta(hours=8)).isoformat()}}))
+            _checkout(payer["booking"])            # the payer's dog on the group, full price
+            _checkout(own["id"])
+            mine = run(server.db.bookings.find_one({"id": own["id"]}))
+            assert mine["actual_price"] == 15.0 and mine["multi_dog_discount"]["amount"] == 15.0
+        finally:
+            run(server.db.bookings.delete_many({"dog_id": second}))
+            run(server.db.dogs.delete_one({"id": second}))
+
+
+def test_the_early_checkout_quote_for_a_friends_dog_uses_the_payers_rates():
+    with _group(service_type="boarding", start=_day(-2), end_date=_day(2), friend_rates={"board": 60.0}) as (_p, friend, _d):
+        quote = run(server.early_checkout_quote(friend["booking"], OWNER))
+        assert quote["applicable"] and quote["unit_price"] == 45.0
+
+
+def test_extras_at_check_in_and_the_checkout_preview_use_the_payers_rates():
+    with _group(friend_rates={"day": 36.0}, checked_in=False) as (_payer, friend, day_svc):
+        trim = {"id": str(uuid.uuid4()), "name": f"{TAG} Nail trim", "service_type": "grooming", "base_price": 10.0,
+                "active": True, "is_addon": True, "addon_for": ["daycare"]}
+        run(server.db.services.insert_one(dict(trim)))
+        run(server.db.price_overrides.insert_one({"id": str(uuid.uuid4()), "client_id": _payer["client"], "target_kind": "service",
+                                                  "target_code": trim["id"], "override_price": 5.0, "created_at": server.now_iso()}))
+        try:
+            run(server.check_in(friend["booking"], server.CheckInIn(vaccine_ack=True, addon_service_ids=[trim["id"]]), OWNER))
+            row = run(server.db.bookings.find_one({"id": friend["booking"]}))
+            assert [a["price"] for a in row["add_ons"]] == [5.0]
+            run(server.db.bookings.update_one({"id": friend["booking"]}, {"$unset": {"estimated_price": ""}}))
+            assert run(server.discount_preview(friend["booking"], OWNER))["preview_base_price"] == 30.0
+        finally:
+            run(server.db.services.delete_one({"id": trim["id"]}))

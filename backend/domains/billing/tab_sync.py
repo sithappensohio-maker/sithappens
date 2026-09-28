@@ -43,6 +43,8 @@ from fastapi import HTTPException
 from pymongo import ReturnDocument
 from pymongo.errors import DuplicateKeyError
 
+from domains.bookings import friends_family
+
 _server_globals: Optional[dict] = None
 
 REFUND_STATUSES = ("REFUNDED", "PARTIALLY_REFUNDED")
@@ -548,7 +550,8 @@ async def correct_visit(booking_id: str, body, user: dict) -> dict:
         raise
 
     delta = round(delta, 2)
-    moves_tab = mode in ("tab_bill", "tab") and bool(booking.get("client_id"))
+    money_client = friends_family.payer_id(booking)  # the payer, on a friends & family visit
+    moves_tab = mode in ("tab_bill", "tab") and bool(money_client)
     due_after = round(max(0.0, base_due + delta), 2)
     new_total = round(current_total + delta, 2) if mode in ("tab_bill", "bill") else round(max(current_paid, current_total + delta), 2)
     if booking.get("payment_method") == "credits" and mode in ("tab", "visit"):
@@ -599,11 +602,11 @@ async def correct_visit(booking_id: str, body, user: dict) -> dict:
             note = (f"{CORRECTION_NOTE_PREFIX} charge adjustment · {reason}" if kind == "charge"
                     else f"{CORRECTION_NOTE_PREFIX} {kind} · {reason}")
             row = await _g("_write_ledger_row")(
-                client_id=booking["client_id"], type_="charge" if kind == "charge" else "adjustment",
+                client_id=money_client, type_="charge" if kind == "charge" else "adjustment",
                 amount=delta, notes=note, booking_id=booking_id, created_by=user.get("id") or "admin", ts=ts,
                 extra={"source": CORRECTION_SOURCE, "correction_op_id": op_id})
             ledger_id = row["id"]
-            await _g("_adjust_client_balance")(booking["client_id"], delta)
+            await _g("_adjust_client_balance")(money_client, delta)
             balance_moved = True
         # 3. The visit and its audit event.
         result = await collection.update_one({"id": booking_id}, {"$set": update})
@@ -618,7 +621,7 @@ async def correct_visit(booking_id: str, body, user: dict) -> dict:
     except Exception as exc:
         await collection.replace_one({"id": booking_id}, booking, upsert=False)
         if balance_moved:
-            await db.clients.update_one({"id": booking["client_id"]}, {"$inc": {"account_balance": -float(delta)}})
+            await db.clients.update_one({"id": money_client}, {"$inc": {"account_balance": -float(delta)}})
         if ledger_id:
             await db.payment_ledger.delete_one({"id": ledger_id})
         if event_id:

@@ -47,6 +47,8 @@ from __future__ import annotations
 from datetime import date, datetime, timedelta, timezone
 from typing import Any, Dict, List, Optional, Set, Tuple
 
+from domains.bookings import friends_family
+
 from board_train_scheduling import board_train_stay_info
 from domains.billing import tab_sync
 from domains.bookings import care as care_domain
@@ -67,6 +69,7 @@ _CHECKOUT_FIELDS = {
     "client_id": 1, "checked_out_at": 1, "checked_out_by": 1, "actual_price": 1, "amount_paid": 1, "balance_due": 1,
     "payment_status": 1, "payment_method": 1, "is_prepaid_program_session": 1, "report_card": 1,
     "admin_checkout_resolution": 1,
+    "bill_to_client_id": 1, "bill_to_client_name": 1,  # friends & family: whose tab holds it (friends_family.payer_id)
 }
 # Counting what is owed never needs the report card (its photos are inline).
 _OWING_FIELDS = {k: v for k, v in _CHECKOUT_FIELDS.items() if k != "report_card"}
@@ -378,7 +381,7 @@ async def _bills_and_tab_charges(
     owing_tab = {bid for bid, amt in tab.items() if amt > 0.005}
     if not owing_tab:
         return bills, tab, raw, folded
-    client_of = {b["id"]: b.get("client_id") for b in visits}
+    client_of = {b["id"]: friends_family.payer_id(b) for b in visits}  # whose tab holds it: the payer, on friends & family
     cids = sorted({client_of[bid] for bid in owing_tab if isinstance(client_of.get(bid), str)})
     held = {c["id"]: max(0.0, _money(c.get("account_balance")))
             for c in await db.clients.find({"id": {"$in": cids}}, {"_id": 0, "id": 1, "account_balance": 1}).to_list(None)}
@@ -566,6 +569,7 @@ async def unpaid(checkouts: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
             "booking_id": b["id"],
             "dog_name": b.get("dog_name", ""),
             "client_name": b.get("client_name", ""),
+            "billed_to": b.get("bill_to_client_name") or "",  # friends & family: who pays for this dog
             "amount": amount,
             "service_type": b.get("service_type", ""),
             "checked_out_at": b.get("checked_out_at") or "",
