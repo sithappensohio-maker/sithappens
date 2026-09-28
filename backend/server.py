@@ -38452,6 +38452,11 @@ async def _verify_and_reconcile_stripe_session(attempt: dict) -> dict:
     # .to_dict(): StripeObject doesn't support .get() (see stripe_webhook).
     session = stripe.checkout.Session.retrieve(attempt["stripe_checkout_session_id"]).to_dict()
     if session.get("payment_status") == "paid":
+        pi = session.get("payment_intent")
+        pi = pi.get("id") if isinstance(pi, dict) else pi
+        if pi and not attempt.get("stripe_payment_intent_id"):  # ahead of the webhook: the Payment needs it for refunds/disputes
+            await db.stripe_payment_attempts.update_one({"id": attempt["id"], "stripe_payment_intent_id": None}, {"$set": {"stripe_payment_intent_id": pi}})
+            attempt = {**attempt, "stripe_payment_intent_id": pi}
         try:
             await _apply_stripe_payment(attempt)
         except HTTPException:

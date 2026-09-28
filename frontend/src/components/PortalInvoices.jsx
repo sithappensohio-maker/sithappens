@@ -56,7 +56,16 @@ export default function PortalInvoices() {
     const { attemptId, stripeState } = readReturnParams();
     if (!attemptId) return;
     if (stripeState === "cancel") {
-      toast("Payment canceled — nothing was charged.");
+      // Tell the app, so the bill is free to pay again at once instead of
+      // staying "under way" until Stripe's page times out (audit #36).
+      api.post(`/portal/stripe-payment-attempts/${attemptId}/cancel`)
+        .then(({ data }) => {
+          if (data?.status === "applied") toast.success("Payment successful!");
+          else if (data?.paid || data?.status === "reconciliation_required") toast("We received your payment and are finishing it up.");
+          else toast("Payment canceled — nothing was charged.");
+        })
+        .catch(() => toast("Payment canceled — nothing was charged."))
+        .finally(load);
       return;
     }
     setReturning({ attemptId, status: "processing" });

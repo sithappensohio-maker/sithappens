@@ -20,6 +20,7 @@ the client's Bills list:
 """
 from __future__ import annotations
 
+import asyncio
 import uuid
 from typing import Any, Dict, List, Literal, Optional
 
@@ -396,6 +397,55 @@ async def pending_action_count() -> int:
             + await shop_abandon.stuck_count())
 
 
+# ─────────────── the customer backed out of the card page ───────────────
+#
+# Audit #36 (owner option A, 2026-09-28): coming back through Stripe's cancel
+# link left the bill held for the card page's whole 30 minutes, so the
+# customer couldn't try again. Now the portal says so and the page is closed
+# and the bill let go at once — the same as the Shop (domains/shop/abandon).
+
+def _as_dict(obj) -> Dict[str, Any]:
+    if obj is None:
+        return {}
+    return obj.to_dict() if hasattr(obj, "to_dict") else dict(obj)
+
+
+async def _stripe_call(fn, *args) -> Dict[str, Any]:
+    """Stripe's client blocks — keep it off the event loop."""
+    return _as_dict(await asyncio.to_thread(fn, *args))
+
+
+async def cancel_checkout(attempt: dict) -> dict:
+    """Close this bill payment's Stripe page and free the bill now.
+
+    Safe to call more than once and whatever state the payment is in: a
+    payment that already went through is recorded, never cancelled; a page
+    Stripe can't be reached about stays held and times out as before."""
+    db = _g("db")
+    sid = attempt.get("stripe_checkout_session_id")
+    if attempt.get("status") != "pending" or not sid:
+        return {"status": attempt.get("status"), "paid": False}
+    stripe = _g("stripe")
+    try:
+        session = await _stripe_call(stripe.checkout.Session.expire, sid)
+    except Exception:
+        session = {}   # not open any more (paid, expired, completed) — read it instead
+    paid = False
+    try:
+        if not session:
+            session = await _stripe_call(stripe.checkout.Session.retrieve, sid)
+        if session.get("payment_status") == "paid":
+            paid = True   # the portal must never say "nothing was charged", even if recording it fails
+            await _g("_verify_and_reconcile_stripe_session")(attempt)
+        elif session.get("status") == "expired":
+            await _g("_handle_checkout_session_expired_event")({"id": sid})
+        # else: still open, or a payment still clearing — it stays held
+    except Exception as exc:
+        _g("logger").warning("Could not close the card page for bill payment %s: %s", attempt["id"], exc)
+    fresh = await db.stripe_payment_attempts.find_one({"id": attempt["id"]}, {"_id": 0, "status": 1}) or {}
+    return {"status": fresh.get("status"), "paid": paid}
+
+
 # ───────────────────────── repairing a bill ─────────────────────────
 
 async def bill_preview(invoice_id: str) -> dict:
@@ -576,6 +626,16 @@ async def fix_bill(invoice_id: str, body: BillFixIn, user: dict) -> dict:
 
 def register_billing_routes(*, api, server_globals: dict) -> None:
     perm = server_globals["require_admin_and_permission"]
+    get_current_user = server_globals["get_current_user"]
+
+    async def post_portal_cancel(attempt_id: str, user: dict = Depends(get_current_user)):
+        """The customer came back through the card page's cancel link."""
+        if user.get("role") != "client" or not user.get("client_id"):
+            raise HTTPException(status_code=403, detail="Client account required")
+        a = await _g("db").stripe_payment_attempts.find_one({"id": attempt_id}, {"_id": 0})
+        if not a or a.get("client_id") != user.get("client_id"):
+            raise HTTPException(status_code=404, detail="Payment attempt not found")
+        return await cancel_checkout(a)
 
     async def get_bill_fix(invoice_id: str, _: dict = Depends(perm("finance_reports"))):
         return await bill_preview(invoice_id)
@@ -601,6 +661,7 @@ def register_billing_routes(*, api, server_globals: dict) -> None:
     api.add_api_route("/admin/online-payments/stuck/{attempt_id}/retry", post_retry, methods=["POST"])
     api.add_api_route("/admin/online-payments/stuck/{attempt_id}/refund", post_refund, methods=["POST"])
     api.add_api_route("/admin/online-payments/stuck/{attempt_id}/close", post_close, methods=["POST"])
+    api.add_api_route("/portal/stripe-payment-attempts/{attempt_id}/cancel", post_portal_cancel, methods=["POST"])
     server_globals.update({"billing_bill_preview": get_bill_fix, "billing_fix_bill": post_bill_fix,
                            "billing_stuck_payments": list_stuck, "billing_retry_payment": post_retry,
                            "billing_refund_payment": post_refund})
