@@ -31,6 +31,20 @@ _mutate_product_stock_fn = None
 _require_register_day_open_fn = None
 
 
+def stock_refusal(name: Optional[str], stock: float, held: float) -> str:
+    """Why the register can't sell that many: out of stock, or what's left
+    is held for online orders being paid (audit #59)."""
+    name = name or "This item"
+    available = max(0.0, stock - held)
+    if stock <= 0.0005:
+        return f"{name} is out of stock."
+    if held > 0.0005 and available <= 0.0005:
+        return f"{name} is held for an online order being paid."
+    if held > 0.0005:
+        return f"Only {available:g} available for {name} — {held:g} held for an online order being paid."
+    return f"Only {stock:g} in stock for {name}."
+
+
 def configure(*, db, resolve_client_price, get_settings, credit_pack_display_fields, free_claim_program_blockers, logger, create_sale_impl, sale_model=None, tender_model=None, normalize_payment_method=None, perms_for=None, mutate_product_stock=None, require_register_day_open=None) -> None:
     global _db, _resolve_client_price_fn, _get_settings_fn, _credit_pack_display_fields_fn
     global _free_claim_program_blockers_fn, _logger, _create_sale_impl_fn
@@ -741,7 +755,10 @@ async def build_register_catalog(client_id: Optional[str]) -> dict:
         if not _shop_org_visible(p.get("category_id"), p.get("subcategory_id")):
             continue
         track = bool(p.get("track_inventory"))
-        stock = float(p.get("stock_on_hand") or 0)
+        # What the register can sell: the shelf less what online buyers are
+        # paying for right now (audit #59).
+        held = max(0.0, float(p.get("stock_reserved") or 0)) if track else 0.0
+        stock = max(0.0, float(p.get("stock_on_hand") or 0) - held)
         list_price = round(float(p.get("price") or 0), 2)
         pricing = await _resolve_client_price_fn(client_id, "pos_product", p["id"], list_price)
         effective_price = round(float(pricing["effective_price"]), 2)
@@ -763,6 +780,7 @@ async def build_register_catalog(client_id: Optional[str]) -> dict:
             "track_inventory": track,
             "in_stock": (not track) or (stock > 0.0005),
             "stock_on_hand": round(stock, 2) if track else None,
+            "stock_held": round(held, 2) if track else None,
             "low_stock_threshold": p.get("low_stock_threshold") if track else None,
             "taxable": bool(p.get("taxable", True)),
             "tax_exempt_reason": p.get("tax_exempt_reason"),
@@ -1079,10 +1097,9 @@ async def price_pos_cart(lines: List[PosSaleLineIn], discount: Optional[PosSaleD
         if not product.get("track_inventory"):
             continue
         stock = float(product.get("stock_on_hand") or 0)
-        if total_qty > stock + 0.0005:
-            if stock <= 0.0005:
-                raise HTTPException(status_code=400, detail=f"{product['name']} is out of stock.")
-            raise HTTPException(status_code=400, detail=f"Only {stock:g} in stock for {product['name']}.")
+        held = max(0.0, float(product.get("stock_reserved") or 0))
+        if total_qty > stock - held + 0.0005:
+            raise HTTPException(status_code=400, detail=stock_refusal(product.get("name"), stock, held))
 
     subtotal = round(sum(li["amount"] for li in line_items), 2)
 

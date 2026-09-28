@@ -42445,7 +42445,10 @@ async def _reserve_shop_inventory_line(order: dict, line: dict) -> str:
             if reserved == 0 else {"stock_reserved": reserved}
         )
         result = await db.pos_products.find_one_and_update(
-            {"id": product_id, "shop_reservations.ref": {"$ne": ref}, **stock_reserved_match},
+            # the shelf as read too: a register sale landing in between
+            # makes it re-read (audit #59)
+            {"id": product_id, "shop_reservations.ref": {"$ne": ref}, "stock_on_hand": product.get("stock_on_hand"),
+             **stock_reserved_match},
             {
                 "$inc": {"stock_reserved": qty},
                 "$push": {"shop_reservations": {
@@ -43804,6 +43807,7 @@ async def pos_product_categories(user: dict = Depends(require_employee_or_admin)
 async def _mutate_product_stock(
     product_id: str, quantity_delta: float, movement_type: str, reason: str, *,
     user: Optional[dict] = None, pos_sale_id: Optional[str] = None, allow_negative: bool = False,
+    respect_holds: bool = False,
 ) -> dict:
     """Atomically applies quantity_delta to a product's stock_on_hand and
     writes exactly one inventory_movements row recording the change. Uses an
@@ -43820,14 +43824,20 @@ async def _mutate_product_stock(
             raise HTTPException(status_code=404, detail="Product not found")
         stock_before = float(product.get("stock_on_hand") or 0)
         stock_after = round(stock_before + quantity_delta, 3)
-        if stock_after < -0.0005 and not allow_negative:
-            if stock_before <= 0.0005:
-                raise HTTPException(status_code=400, detail=f"{product.get('name')} is out of stock.")
-            raise HTTPException(status_code=400, detail=f"Only {stock_before:g} in stock for {product.get('name')}.")
+        # A sale never takes what online buyers are paying for (audit #59);
+        # a count adjustment or a void may.
+        held = max(0.0, float(product.get("stock_reserved") or 0)) if respect_holds else 0.0
+        if stock_after < held - 0.0005 and not allow_negative:
+            raise HTTPException(status_code=400, detail=pos_domain_services.stock_refusal(product.get("name"), stock_before, held))
         stock_after = max(0.0, stock_after) if allow_negative else stock_after
         ts = now_iso()
+        # ...and an online hold landing in between makes it re-read.
+        raw_held = product.get("stock_reserved")
+        holds_as_read = ({} if not respect_holds else
+                         {"$or": [{"stock_reserved": 0}, {"stock_reserved": None}]} if raw_held in (None, 0)
+                         else {"stock_reserved": raw_held})
         result = await db.pos_products.find_one_and_update(
-            {"id": product_id, "stock_on_hand": stock_before},
+            {"id": product_id, "stock_on_hand": stock_before, **holds_as_read},
             {"$set": {"stock_on_hand": stock_after, "updated_at": ts}},
         )
         if result is None:
@@ -44197,7 +44207,7 @@ async def _create_pos_sale_impl(body: PosSaleIn, user: dict = Depends(require_em
             await _mutate_product_stock(
                 product_id, -qty, "SALE",
                 reason=f"POS Sale #{sale_doc['receipt_number']}",
-                user=user, pos_sale_id=sale_id,
+                user=user, pos_sale_id=sale_id, respect_holds=True,
             )
             applied_stock_movements.append((product_id, qty))
     except Exception:

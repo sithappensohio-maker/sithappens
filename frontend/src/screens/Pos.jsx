@@ -315,7 +315,12 @@ export default function Pos({ onOpenShopManager } = {}) {
     if (item.kind === "product" && item.track_inventory) {
       const inCart = cartLines.find((l) => l.kind === "retail" && l.product_id === item.id)?.qty || 0;
       if (inCart + 1 > Number(item.stock_on_hand || 0) + 0.0005) {
-        toast.error(`Only ${item.stock_on_hand} in stock for ${item.name}.`);
+        // stock_on_hand here is what the register can sell: the shelf less
+        // what online buyers are paying for (audit #59).
+        const held = Number(item.stock_held || 0);
+        toast.error(held > 0
+          ? `Only ${item.stock_on_hand} available for ${item.name} — ${held} held for an online order being paid.`
+          : `Only ${item.stock_on_hand} in stock for ${item.name}.`);
         return;
       }
     }
@@ -1830,7 +1835,8 @@ export default function Pos({ onOpenShopManager } = {}) {
                     )}
                     {item.kind === "product" && item.track_inventory && (
                       <p className={`text-[11px] font-black uppercase tracking-widest mt-0.5 ${outOfStock ? "text-shDanger" : lowStock ? "text-shAccent" : "text-shTextMuted"}`}>
-                        {outOfStock ? "Out of Stock" : lowStock ? `${item.stock_on_hand} left • Low Stock` : `${item.stock_on_hand} in stock`}
+                        {outOfStock ? (Number(item.stock_held || 0) > 0 ? "Held for online order" : "Out of Stock") : lowStock ? `${item.stock_on_hand} left • Low Stock` : `${item.stock_on_hand} in stock`}
+                        {!outOfStock && Number(item.stock_held || 0) > 0 && ` • ${item.stock_held} held online`}
                       </p>
                     )}
                     {item.kind === "credit_pack" && (
