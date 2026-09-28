@@ -488,6 +488,8 @@ async def correct_visit(booking_id: str, body, user: dict) -> dict:
         raise HTTPException(status_code=404, detail="Booking not found")
     if not _g("_booking_is_financially_locked")(booking):
         raise HTTPException(status_code=409, detail="This booking is not financially locked; edit it before checkout instead.")
+    if booking.get("group_bill_pending") or booking.get("group_bill_claim"):
+        raise HTTPException(status_code=409, detail=friends_family.MSG_CORRECT_LATER)
     claim_id, done = await _claim(
         db.financial_adjustment_claims, getattr(body, "idempotency_key", None),
         {"booking_id": booking_id, "fingerprint": [body.kind, _money(body.amount), body.reason.strip()]})
@@ -721,6 +723,8 @@ async def adjust_tab(client_id: str, body, user: dict) -> dict:
 
 
 async def _adjust_tab_locked(client_id: str, amount: float, invoice_id: Optional[str], notes: str, user: dict) -> dict:
+    if amount < 0 and not invoice_id and await friends_family.waiting_for_group_bill(client_id):
+        raise HTTPException(status_code=409, detail=friends_family.MSG_WAITING)
     db = _g("db")
     who = user.get("email", "admin")
     write_row = _g("_write_ledger_row")

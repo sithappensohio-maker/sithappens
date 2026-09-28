@@ -186,6 +186,7 @@ def register_domains(
     register_bookings_routes(api=api, server_globals=server_globals)
     late_day_checkout.register_late_day_routes(api=api, server_globals=server_globals)
     billing_resolve.register_billing_routes(api=api, server_globals=server_globals)
+    friends_family.register_routes(api=api, server_globals=server_globals)
     register_pricing_routes(api=api, server_globals=server_globals)
     _moved_operations = register_operations_routes(
         api=api, db=db,

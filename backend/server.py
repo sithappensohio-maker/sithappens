@@ -2280,7 +2280,9 @@ async def _archive_old_bookings_once() -> dict:
     often as you like."""
     cutoff = (datetime.now(timezone.utc) - timedelta(days=ARCHIVE_AFTER_DAYS)).strftime("%Y-%m-%d")
     cursor = db.bookings.find(
-        {"status": {"$in": ARCHIVE_TERMINAL_STATUSES}, "date": {"$lt": cutoff}},
+        {"status": {"$in": ARCHIVE_TERMINAL_STATUSES}, "date": {"$lt": cutoff},
+         # a friends & family visit still waiting for its group's one bill stays live until billed
+         "group_bill_pending": {"$ne": True}, "group_bill_claim": {"$in": [None, ""]}},
         {"_id": 0},
     )
     moved = 0
@@ -5784,6 +5786,8 @@ async def _cancel_booking_impl(booking_id: str, forfeit: bool, user: dict, undo_
                 balance_field = _credit_balance_field(credit_pool) or "credits"
                 await db.clients.update_one({"id": booking["client_id"]}, {"$inc": {balance_field: refund}})
                 await _restore_credit_lots(booking.get("credit_lot_redemptions") or booking.get("credit_lot_ids") or [], refund)
+    if booking.get("bill_to_client_id"):  # the last dog to come may have been this one
+        await friends_family.close_after_cancel(booking.get("group_id"), user)
     return {"ok": True, "forfeit": forfeit, "cancellation_fee": update_payload.get("cancellation_fee", 0)}
 
 async def availability(date_str: str, dog_id: str, user: dict = Depends(get_current_user)):
@@ -7611,6 +7615,8 @@ async def _create_invoice_for_bookings(
         booking_ids = [b["id"] for b in bookings]
     if not bookings:
         return None
+    if len({friends_family.payer_id(b) for b in bookings}) > 1:
+        raise HTTPException(status_code=409, detail="These visits are paid for by different families, so they can't share one bill.")
 
     total = round(sum(float(b.get("actual_price") or 0) for b in bookings), 2)
     credit_applied = round(sum(float(b.get("credit_value") or 0) for b in bookings), 2)
@@ -8578,56 +8584,64 @@ async def apply_tab_payment(
     # open invoice exists for this client — legacy/non-invoice AR is
     # unaffected since it can only be reached once zero such invoices
     # remain open.
-    open_invoices = await db.invoices.find(
-        {"client_id": client_id, "status": {"$ne": "VOID"}, "balance": {"$gt": 0.005}}, {"_id": 0}
-    ).to_list(50)
-    ar_backed_invoices = [inv for inv in open_invoices if (await _invoice_ar_status(inv))["ar_backed"]]
-    if ar_backed_invoices:
-        ids = ", ".join(i["id"] for i in ar_backed_invoices)
-        raise HTTPException(
-            status_code=409,
-            detail=f"This client has AR-backed open invoice balance(s) ({ids}) — pay the specific invoice via POST /invoices/{{id}}/payments instead.",
-        )
-    ts = now_iso()
-    row = await _write_ledger_row(
-        client_id=client_id,
-        type_="payment",
-        amount=-round(body.amount, 2),  # negative = balance goes down
-        method=body.method,
-        notes=body.notes or "Tab payment",
-        ts=ts,
-        created_by=user.get("email", "admin"),
-    )
-    new_balance = await _adjust_client_balance(client_id, -round(body.amount, 2))
-    change_given = None
-    if body.method == "cash":
-        change_given = round(float(body.tendered_amount) - body.amount, 2)
-        await db.payment_ledger.update_one(
-            {"id": row["id"]},
-            {"$set": {"tendered_amount": round(float(body.tendered_amount), 2), "change_given": change_given}},
-        )
-        row["tendered_amount"] = round(float(body.tendered_amount), 2)
-        row["change_given"] = change_given
-    # Sprint 110di-61 — Cash-basis revenue recognition for the tab payment.
-    # Insert a retail_sales row so the Income screen + P&L include it.
+    # Under the client's money lock, as checkouts and write-offs are: a checkout
+    # can't slip a visit onto the tab between these checks and the payment.
+    guard = await billing_tab_sync.acquire_client_guard(client_id)
     try:
-        await db.retail_sales.insert_one({
-            "id": str(uuid.uuid4()),
-            "date": business_today().isoformat(),
-            "description": (body.notes or "Tab payment"),
-            "amount": round(body.amount, 2),
-            "category": "Tab Payment",
-            "notes": body.notes or "",
-            "payment_method": body.method,
-            "client_id": client_id,
-            "client_name": client.get("name") or "",
-            "source_kind": "tab_payment",
-            "ledger_id": row.get("id"),
-            "created_at": ts,
-            "created_by": user.get("id"),
-        })
-    except Exception as exc:
-        logger.warning("tab-pay revenue row insert failed: %s", exc)
+        if await friends_family.waiting_for_group_bill(client_id):
+            raise HTTPException(status_code=409, detail=friends_family.MSG_WAITING)
+        open_invoices = await db.invoices.find(
+            {"client_id": client_id, "status": {"$ne": "VOID"}, "balance": {"$gt": 0.005}}, {"_id": 0}
+        ).to_list(50)
+        ar_backed_invoices = [inv for inv in open_invoices if (await _invoice_ar_status(inv))["ar_backed"]]
+        if ar_backed_invoices:
+            ids = ", ".join(i["id"] for i in ar_backed_invoices)
+            raise HTTPException(
+                status_code=409,
+                detail=f"This client has AR-backed open invoice balance(s) ({ids}) — pay the specific invoice via POST /invoices/{{id}}/payments instead.",
+            )
+        ts = now_iso()
+        row = await _write_ledger_row(
+            client_id=client_id,
+            type_="payment",
+            amount=-round(body.amount, 2),  # negative = balance goes down
+            method=body.method,
+            notes=body.notes or "Tab payment",
+            ts=ts,
+            created_by=user.get("email", "admin"),
+        )
+        new_balance = await _adjust_client_balance(client_id, -round(body.amount, 2))
+        change_given = None
+        if body.method == "cash":
+            change_given = round(float(body.tendered_amount) - body.amount, 2)
+            await db.payment_ledger.update_one(
+                {"id": row["id"]},
+                {"$set": {"tendered_amount": round(float(body.tendered_amount), 2), "change_given": change_given}},
+            )
+            row["tendered_amount"] = round(float(body.tendered_amount), 2)
+            row["change_given"] = change_given
+        # Sprint 110di-61 — Cash-basis revenue recognition for the tab payment.
+        # Insert a retail_sales row so the Income screen + P&L include it.
+        try:
+            await db.retail_sales.insert_one({
+                "id": str(uuid.uuid4()),
+                "date": business_today().isoformat(),
+                "description": (body.notes or "Tab payment"),
+                "amount": round(body.amount, 2),
+                "category": "Tab Payment",
+                "notes": body.notes or "",
+                "payment_method": body.method,
+                "client_id": client_id,
+                "client_name": client.get("name") or "",
+                "source_kind": "tab_payment",
+                "ledger_id": row.get("id"),
+                "created_at": ts,
+                "created_by": user.get("id"),
+            })
+        except Exception as exc:
+            logger.warning("tab-pay revenue row insert failed: %s", exc)
+    finally:
+        await billing_tab_sync.release_client_guard(guard)
     # Receipt email — fire-and-forget
     try:
         asyncio.create_task(_send_tab_payment_receipt(
@@ -9213,6 +9227,8 @@ async def check_out_group(
     anchor = await db.bookings.find_one({"id": booking_id}, {"_id": 0})
     if not anchor:
         raise HTTPException(status_code=404, detail="Booking not found")
+    if anchor.get("bill_to_client_id"):  # friends & family: every dog on the payer's account, then one bill
+        return await friends_family.check_out_together(anchor, body, user)
     group_id = anchor.get("group_id")
     if body.amount_paid is not None and not bool(body.use_credits):
         raise HTTPException(
@@ -9223,6 +9239,8 @@ async def check_out_group(
     targets = await _active_household_checkout_rows(anchor)
     if len(targets) < 2:
         raise HTTPException(status_code=409, detail="There are no other active dogs left in this checkout group.")
+    if any(t.get("bill_to_client_id") for t in targets):  # (never listed — a friends & family dog leaves its own way)
+        raise HTTPException(status_code=409, detail=friends_family.MSG_PAY_ON_BILL)
     if not body.late_day_resolution and (late_rows := [t for t in targets if late_day_checkout.needs_answer(t)]):
         raise HTTPException(status_code=409, detail=late_day_checkout.question_detail(late_rows, business_today().isoformat()))
 
@@ -9527,6 +9545,10 @@ async def _check_out_endpoint_impl(
     # so this is a no-op today until the owner explicitly disables it.
     if not _perms_for(user).get("take_payments"):
         raise HTTPException(status_code=403, detail="You don't have permission to take payments.")
+    # A friends & family dog pays nothing here: its visit goes on the payer's account (friends_family).
+    ff_row = bool((await db.bookings.find_one({"id": booking_id}, {"_id": 0, "bill_to_client_id": 1}) or {}).get("bill_to_client_id"))
+    if ff_row:
+        body = friends_family.on_the_payers_tab(body)
     operation_id = str(uuid.uuid4())
     lock_ts = now_iso()
     stale_lock_before = (datetime.now(timezone.utc) - timedelta(minutes=15)).isoformat()
@@ -9615,7 +9637,7 @@ async def _check_out_endpoint_impl(
         snapshot = await _checkout_financial_snapshot(client_id)
         # Catch the most common failure before any credit mutation.  Credits-only
         # checkouts remain allowed without opening the cash drawer.
-        might_collect_money = (
+        might_collect_money = not ff_row and (
             body.use_credits is False
             or body.amount_paid is not None
             or (body.payment_method not in (None, "credits"))
@@ -9625,7 +9647,12 @@ async def _check_out_endpoint_impl(
         if might_collect_money:
             await _require_register_day_open(business_today().isoformat())
 
-        result = await _check_out_locked(booking_id, body, user)
+        if ff_row:  # waiting for the group's one bill (a failed checkout's rollback takes this off)
+            await db.bookings.update_one({"id": booking_id}, {"$set": {"group_bill_pending": True}})
+        result = await _check_out_locked(booking_id, body, user, create_invoice=not ff_row)
+        if ff_row:  # the group's one bill is made when its last dog has left
+            result["group_bill"] = await friends_family.close_group_bill(original_booking.get("group_id"), user,
+                                                                         leaving=booking_id)
         result.pop("checkout_in_progress", None)
         result.pop("checkout_operation_id", None)
         result.pop("checkout_started_at", None)
@@ -12375,9 +12402,13 @@ async def _booking_refund_locked(booking_id: str, body: BookingRefundIn, user: d
         # (safe today because a Phase-2 top-up against a group invoice can
         # never occur — group invoices always have balance=0 at creation).
         invoice_for_refund_ceiling = await db.invoices.find_one(
-            {"booking_ids": booking_id}, {"_id": 0, "id": 1, "booking_ids": 1, "amount_paid": 1}
+            {"booking_ids": booking_id}, {"_id": 0, "id": 1, "booking_ids": 1, "amount_paid": 1, "total": 1, "line_items": 1}
         )
-        if invoice_for_refund_ceiling and len(invoice_for_refund_ceiling.get("booking_ids") or []) == 1:
+        # A friends & family group bill is the exception to "group bills are
+        # paid in full at checkout": it is paid after its dogs have left, so
+        # each visit's refundable cash is its share of what the bill took.
+        group_bill = bool(booking.get("bill_to_client_id")) and len((invoice_for_refund_ceiling or {}).get("booking_ids") or []) > 1
+        if invoice_for_refund_ceiling and (len(invoice_for_refund_ceiling.get("booking_ids") or []) == 1 or group_bill):
             invoice_amount_paid = round(float(invoice_for_refund_ceiling.get("amount_paid") or 0), 2)
             # Stripe Online (Phase 3A) — original Stripe-collected dollars can
             # NEVER be refunded through this local-only mechanism; they stay
@@ -12396,8 +12427,24 @@ async def _booking_refund_locked(booking_id: str, body: BookingRefundIn, user: d
             ):
                 stripe_gross += float(p.get("amount") or 0)
             originally_paid = round(invoice_amount_paid - round(stripe_gross, 2), 2)
+            if group_bill:
+                visits = await _booking_rows_anywhere(
+                    {"id": {"$in": list(invoice_for_refund_ceiling.get("booking_ids") or [])}},
+                    {"_id": 0, "id": 1, "actual_price": 1, "financial_refund_total": 1}, limit=100)
+                # Each dog's share is what the bill itself charged for it (a later
+                # charge that went on the account, not the bill, moves nothing).
+                lines = invoice_for_refund_ceiling.get("line_items") or []
+                billed = {bid: sum(float(li.get("amount") or 0) for li in lines if li.get("booking_id") == bid)
+                          for bid in invoice_for_refund_ceiling.get("booking_ids") or []}
+                worth = sum(billed.values())
+                share = round(originally_paid * billed.get(booking_id, 0.0) / worth, 2) if worth > 0.005 else 0.0
+                # ...and never more than the bill still holds across all its visits.
+                bill_left = round(originally_paid - sum(float(v.get("financial_refund_total") or 0) for v in visits), 2)
+                originally_paid = max(round(float(booking.get("amount_paid") or 0), 2), share)
         already_refunded = round(float(booking.get("financial_refund_total") or 0), 2)
         refundable = round(max(0.0, originally_paid - already_refunded), 2)
+        if group_bill:
+            refundable = round(max(0.0, min(refundable, bill_left)), 2)
         amount = round(float(body.amount), 2)
         if amount > refundable + 0.005:
             raise HTTPException(status_code=409, detail=f"Refund cannot exceed the remaining refundable cash (${refundable:.2f}).")
@@ -12524,6 +12571,8 @@ async def _reopen_booking_checkout_locked(booking_id: str, body: BookingReopenCh
         # Surcharges are worked out again at the next checkout (audit #14):
         # left set, checkout skips them and the holiday / late-pickup fee is lost.
         "money_modifiers_applied_at",
+        # Off the tab, a friends & family visit waits for no bill until it leaves again.
+        "group_bill_pending", "group_bill_claim", "group_bill_claimed_at",
     ]}
     # What the first checkout applied is undone too (domains/bookings/reopen.py).
     set_update.update(undo_set)
@@ -30218,6 +30267,7 @@ def _scheduler_jobs() -> List[job_scheduler.Job]:
         # Bills still showing a checkout that was reopened and done again (audit #14).
         ("reopened_bill_rebuild", lambda: billing_tab_sync.rebuild_stale_bills()),
         ("gift_card_funding_spread", lambda: _run_once_per_business_day(gift_card_services.FUNDING_REPAIR_JOB, gift_card_services.backfill_spread_funding)),  # daily + after a restore (audit #72)
+        ("friends_family_group_bills", lambda: friends_family.sweep_group_bills()),  # the bill once a group's last dog has gone
     ]
 
 

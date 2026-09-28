@@ -238,7 +238,7 @@ def test_scheduler_jobs_and_status_endpoint():
     names = [n for n, _ in server._scheduler_jobs()]
     assert names == ["daily_jobs", "archive_bookings", "trophy_recheck", "recurring_auto_extend", "auto_backup",
                      "shop_abandoned_checkouts", "audit_log_secret_scrub", "reopened_bill_rebuild",
-                     "gift_card_funding_spread"]
+                     "gift_card_funding_spread", "friends_family_group_bills"]
     st = run(server.admin_scheduler_status(_admin_user()))
     assert st["enabled"] is False, "_test_env disables the loop for tests"
     assert st["jobs"] == names and "lease" in st and "markers" in st

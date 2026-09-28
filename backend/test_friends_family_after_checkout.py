@@ -82,7 +82,11 @@ def _group(friend_dogs=1):
 
 
 def _checkout(booking_id, **body):
-    payload = {"use_credits": False, "payment_method": "check", "payment_status": "paid"}
+    """A friends & family dog pays nothing at its checkout (its visit goes on
+    the payer's account; the group's one bill is paid later) — any other
+    visit is paid by check."""
+    ff = run(server.db.bookings.find_one({"id": booking_id}, {"_id": 0, "bill_to_client_id": 1})).get("bill_to_client_id")
+    payload = {"use_credits": True} if ff else {"use_credits": True, "payment_method": "check", "payment_status": "paid"}
     payload.update(body)
     return run(server.check_out(booking_id, server.CheckoutIn(**payload), OWNER))
 
@@ -101,9 +105,20 @@ def _friend_untouched(friend):
     assert run(server.db.retail_sales.count_documents({"client_id": friend["client"]})) == 0
 
 
+def _pay_the_group_bill(payer):
+    bill = run(server.db.invoices.find_one({"client_id": payer["client"], "status": {"$ne": "VOID"}}, {"_id": 0}))
+    run(server.create_invoice_payment(bill["id"], server.InvoicePaymentIn(
+        amount=bill["balance"], method="check", idempotency_key=f"{TAG}-{uuid.uuid4()}"), user=OWNER))
+    return bill
+
+
 def test_refunding_the_friends_dogs_visit_gives_the_money_back_to_the_payer():
+    """The payer paid the group's one bill; the friend's dog's visit is then
+    refunded — its share of the bill, back to the payer."""
     with _group() as (payer, friend, _svc):
         _checkout(friend["booking"])
+        _checkout(payer["booking"])
+        _pay_the_group_bill(payer)
         run(server.booking_refund(friend["booking"], server.BookingRefundIn(
             amount=15.0, payment_method="check", reason="the dog was sick", idempotency_key=f"{TAG}-{uuid.uuid4()}"), OWNER))
         refund = run(server.db.retail_sales.find_one({"booking_id": friend["booking"], "source_kind": "refund"}, {"_id": 0}))
@@ -123,11 +138,15 @@ def test_reopening_the_friends_dogs_checkout_takes_the_charge_off_the_payers_tab
 
 
 def test_a_price_correction_on_the_friends_dog_moves_the_payers_tab():
+    """Once the group's bill is made and paid, a charge added to the friend's
+    dog's visit is new debt on the PAYER's account."""
     with _group() as (payer, friend, _svc):
-        _checkout(friend["booking"], payment_status="paid_partial", amount_paid=0.0)
+        _checkout(friend["booking"])
+        _checkout(payer["booking"])
+        _pay_the_group_bill(payer)
         run(server.booking_financial_adjustment(friend["booking"], server.BookingFinancialAdjustmentIn(
-            kind="discount", amount=5.0, reason="loyal friend", idempotency_key=f"{TAG}-{uuid.uuid4()}"), OWNER))
-        assert _balance(payer["client"]) == 10.0
+            kind="charge", amount=5.0, reason="extra walk", idempotency_key=f"{TAG}-{uuid.uuid4()}"), OWNER))
+        assert _balance(payer["client"]) == 5.0
         _friend_untouched(friend)
 
 
@@ -139,12 +158,14 @@ def test_end_of_day_finds_the_friends_dog_owed_on_the_payers_tab_and_says_who_pa
         assert owed["amount"] == 15.0 and owed["billed_to"].endswith("payer")
 
 
-def test_the_pls_top_clients_count_the_money_under_the_family_that_paid():
+def test_the_group_bills_payment_is_the_payers_money():
     with _group() as (payer, friend, _svc):
         _checkout(friend["booking"])
-        day = server.business_today().isoformat()
-        tops = {c["client_id"]: c["total"] for c in run(pl_report.build_pl_data(server.db, day, day))["top_clients"]}
-        assert tops.get(payer["client"]) == 15.0 and friend["client"] not in tops
+        _checkout(payer["booking"])
+        bill = _pay_the_group_bill(payer)
+        assert {p["client_id"] for p in run(server.db.payments.find({"invoice_id": bill["id"]}).to_list(10))} == {payer["client"]}
+        assert _balance(payer["client"]) == 0.0
+        _friend_untouched(friend)
 
 
 def test_a_friends_and_family_dog_is_no_sibling_for_the_same_day_discount():
@@ -160,3 +181,59 @@ def test_a_friends_and_family_dog_is_no_sibling_for_the_same_day_discount():
         _checkout(own["id"])
         mine = run(server.db.bookings.find_one({"id": own["id"]}))
         assert not (mine.get("multi_dog_discount") or {}).get("amount") and mine["actual_price"] == 40.0
+
+
+def test_a_refund_on_the_group_bill_is_capped_at_that_dogs_own_share():
+    """The group bill took $45 for both dogs; the friend's dog's visit was $15
+    of it — that is all that can be refunded against it."""
+    with _group() as (payer, friend, _svc):
+        _checkout(friend["booking"])
+        _checkout(payer["booking"])
+        _pay_the_group_bill(payer)
+        with pytest.raises(server.HTTPException) as e:
+            run(server.booking_refund(friend["booking"], server.BookingRefundIn(
+                amount=40.0, payment_method="check", reason="too much", idempotency_key=f"{TAG}-{uuid.uuid4()}"), OWNER))
+        assert e.value.status_code == 409 and "15.00" in e.value.detail
+
+
+def _refund(booking_id, amount):
+    return run(server.booking_refund(booking_id, server.BookingRefundIn(
+        amount=amount, payment_method="check", reason="refund", idempotency_key=f"{TAG}-{uuid.uuid4()}"), OWNER))
+
+
+def _charge(booking_id, amount):
+    run(server.booking_financial_adjustment(booking_id, server.BookingFinancialAdjustmentIn(
+        kind="charge", amount=amount, reason="extra time", idempotency_key=f"{TAG}-{uuid.uuid4()}"), OWNER))
+
+
+def test_a_dogs_share_of_the_group_bill_is_what_the_bill_charged_for_it():
+    """$45 taken for both dogs ($30 + $15). Then $15 more was charged on the
+    friend's dog — new debt on the account, not on the paid bill — so the
+    bill's money still splits $30 / $15."""
+    with _group() as (payer, friend, _svc):
+        _checkout(friend["booking"])
+        _checkout(payer["booking"])
+        _pay_the_group_bill(payer)
+        _charge(friend["booking"], 15.0)
+        with pytest.raises(server.HTTPException) as e:
+            _refund(friend["booking"], 16.0)
+        assert e.value.status_code == 409 and "15.00" in e.value.detail
+        _refund(payer["booking"], 30.0)
+
+
+def test_refunds_on_a_group_bill_never_add_up_to_more_than_it_took():
+    """Should the bill's own lines ever change after a refund, what is left
+    of the bill still caps the next one."""
+    with _group() as (payer, friend, _svc):
+        _checkout(friend["booking"])
+        _checkout(payer["booking"])
+        bill = _pay_the_group_bill(payer)          # $45 taken
+        _refund(friend["booking"], 15.0)            # the friend's dog's whole share
+        run(server.db.invoices.update_one({"id": bill["id"]}, {"$set": {"line_items": [
+            {"kind": "service", "booking_id": payer["booking"], "amount": 60.0},
+            {"kind": "service", "booking_id": friend["booking"], "amount": 15.0}]}}))
+        # The payer's dog is now $60 of $75: a share of $36 — but only $30 of the bill is left.
+        with pytest.raises(server.HTTPException) as e:
+            _refund(payer["booking"], 31.0)
+        assert e.value.status_code == 409 and "30.00" in e.value.detail
+        _refund(payer["booking"], 30.0)

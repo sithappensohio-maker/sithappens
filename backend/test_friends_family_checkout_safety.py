@@ -102,16 +102,25 @@ def _money(cid):
 
 
 def _checkout(booking_id, **body):
-    payload = {"use_credits": True, "payment_method": "check", "payment_status": "paid"}
+    """A friends & family dog pays nothing at its checkout (its visit goes on
+    the payer's account; the group's one bill is paid later) — any other
+    visit is paid by check."""
+    ff = run(server.db.bookings.find_one({"id": booking_id}, {"_id": 0, "bill_to_client_id": 1})).get("bill_to_client_id")
+    payload = {"use_credits": True} if ff else {"use_credits": True, "payment_method": "check", "payment_status": "paid"}
     payload.update(body)
     return run(server.check_out(booking_id, server.CheckoutIn(**payload), OWNER))
 
 
 def test_a_refused_checkout_of_the_friends_dog_leaves_both_families_exactly_as_they_were():
+    """Refused INSIDE the checkout, after the payer was locked and saved: a
+    daycare dog still here from yesterday must be answered for first."""
     with _group() as (payer, friend, _day_svc):
+        run(server.db.bookings.update_one({"id": friend["booking"]}, {"$set": {
+            "date": _day(-1), "checked_in_at": (datetime.now(timezone.utc) - timedelta(hours=30)).isoformat()}}))
         before = (_money(payer["client"]), _money(friend["client"]))
-        with pytest.raises(HTTPException):
-            _checkout(friend["booking"], payment_method="other")   # "Other" needs a note: refused
+        with pytest.raises(HTTPException) as e:
+            _checkout(friend["booking"])
+        assert e.value.status_code == 409
         assert (_money(payer["client"]), _money(friend["client"])) == before
 
 

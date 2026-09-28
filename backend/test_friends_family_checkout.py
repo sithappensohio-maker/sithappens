@@ -2,12 +2,15 @@
 payer (build step 5; owner request 2026-09-28). The switch is on in these
 tests only.
 
-The owner's rules: one family pays for every dog in the group. Checking the
-friend's dog out — on its own, whenever it is picked up — prices it at the
-payer's rates and puts the charge, the bill, its payment records, the tab and
-anything bought at pickup on the payer. The friend's family's account never
-moves. Prepaid credits are not used on a friends & family visit (first
-release). A visit someone else paid for earns no referral reward.
+The owner's rules: one family pays ONE bill for every dog in the group, and
+the dogs may be picked up at different times. Checking the friend's dog out —
+whenever it is picked up — prices it at the payer's rates and puts the whole
+visit on the PAYER's account; nothing is paid at that checkout (money offered
+there is refused; merchandise is rung at the register). The group's one bill
+is made on the payer when the last dog leaves (test_friends_family_group_bill).
+The friend's family's account never moves. Prepaid credits are not used on
+the friend's dog (first release). A visit someone else paid for earns no
+referral reward.
 
 Self-contained fixtures (never import another test module).
 """
@@ -16,6 +19,7 @@ import uuid
 from datetime import datetime, timedelta, timezone
 
 import pytest
+from fastapi import HTTPException
 
 import _test_env  # noqa: F401 — must run before `import server`
 import server
@@ -77,7 +81,7 @@ def _group():
 
 
 def _checkout(booking_id, **body):
-    payload = {"use_credits": True, "payment_method": "check", "payment_status": "paid"}
+    payload = {"use_credits": True}   # a friends & family dog pays nothing at its checkout
     payload.update(body)
     return run(server.check_out(booking_id, server.CheckoutIn(**payload), OWNER))
 
@@ -98,27 +102,30 @@ def _money_of(cid):
     }
 
 
-def test_the_friends_dog_is_billed_to_the_payer_at_the_payers_rate():
+def test_the_friends_dog_goes_on_the_payers_account_at_the_payers_rate():
     with _group() as (payer, friend):
         friend_before = _money_of(friend["client"])
         _checkout(friend["booking"])
         row = run(server.db.bookings.find_one({"id": friend["booking"]}))
         assert row["actual_price"] == 15.0, "the multi-dog discount off the payer's $30 rate"
-        assert row["payment_method"] == "check", "paid with money, not the friend's prepaid credits"
-        [bill] = run(server.db.invoices.find({"booking_ids": friend["booking"]}, {"_id": 0}).to_list(5))
-        assert bill["client_id"] == payer["client"] and bill["client_name"].endswith("payer")
-        assert {p["client_id"] for p in run(server.db.payments.find({"invoice_id": bill["id"]}).to_list(10))} == {payer["client"]}
+        assert row["payment_status"] == "paid_partial" and row["balance_due"] == 15.0
+        assert _money_of(payer["client"])["balance"] == 15.0, "on the payer's account"
+        assert {r["client_id"] for r in run(server.db.payment_ledger.find({"booking_id": friend["booking"]}).to_list(10))} \
+            == {payer["client"]}
+        assert run(server.db.invoices.count_documents({"booking_ids": friend["booking"]})) == 0, "no bill until the last dog leaves"
         assert _money_of(friend["client"]) == friend_before, "the friend's family's account never moves"
 
 
-def test_a_friends_dog_put_on_the_tab_goes_on_the_payers_tab():
+@pytest.mark.parametrize("offered", [{"payment_method": "check", "payment_status": "paid"}, {"amount_paid": 10.0},
+                                     {"payment_method": "cash", "tendered_amount": 20.0}])
+def test_money_offered_at_a_friends_dogs_checkout_is_refused_and_nothing_changes(offered):
     with _group() as (payer, friend):
-        friend_before = _money_of(friend["client"])
-        _checkout(friend["booking"], payment_status="paid_partial", amount_paid=0.0)
-        assert _money_of(payer["client"])["balance"] == 15.0
-        assert {r["client_id"] for r in run(server.db.payment_ledger.find({"booking_id": friend["booking"]}).to_list(10))} \
-            == {payer["client"]}
-        assert _money_of(friend["client"]) == friend_before
+        before = (_money_of(payer["client"]), _money_of(friend["client"]))
+        with pytest.raises(HTTPException) as e:
+            _checkout(friend["booking"], **offered)
+        assert e.value.status_code == 400 and "one bill" in e.value.detail
+        assert (_money_of(payer["client"]), _money_of(friend["client"])) == before
+        assert run(server.db.bookings.find_one({"id": friend["booking"]}))["status"] != "completed"
 
 
 def test_neither_familys_prepaid_credits_pay_for_the_friends_dog():
@@ -126,22 +133,22 @@ def test_neither_familys_prepaid_credits_pay_for_the_friends_dog():
     with _group() as (payer, friend):
         _checkout(friend["booking"], use_credits=True)
         assert _client(friend["client"])["credits"] == 5 and _client(payer["client"])["credits"] == 5
-        assert run(server.db.bookings.find_one({"id": friend["booking"]}))["payment_method"] == "check"
+        assert run(server.db.bookings.find_one({"id": friend["booking"]})).get("payment_method") != "credits"
 
 
-def test_food_bought_at_the_friends_dogs_pickup_is_sold_to_the_payer():
-    with _group() as (payer, friend):
+def test_merchandise_at_a_friends_dogs_pickup_is_rung_at_the_register_instead():
+    with _group() as (_payer, friend):
         pid = str(uuid.uuid4())
         run(server.db.pos_products.insert_one({
             "id": pid, "name": f"{TAG} treats", "price": 10.0, "active": True, "archived": False, "show_at_register": True,
             "track_inventory": False, "stock_on_hand": 0, "taxable": False, "category": "", "description": "", "sku": "",
             "category_id": None, "subcategory_id": None}))
         try:
-            _checkout(friend["booking"], retail_lines=[{"kind": "retail", "product_id": pid, "qty": 1}],
-                      retail_idempotency_key=f"{TAG}-{uuid.uuid4()}")
-            sale = run(server.db.pos_sales.find_one({"line_items.product_id": pid}, {"_id": 0}))
-            assert sale["client_id"] == payer["client"]
-            assert run(server.db.retail_sales.count_documents({"client_id": friend["client"]})) == 0
+            with pytest.raises(HTTPException) as e:
+                _checkout(friend["booking"], retail_lines=[{"kind": "retail", "product_id": pid, "qty": 1}],
+                          retail_idempotency_key=f"{TAG}-{uuid.uuid4()}")
+            assert e.value.status_code == 400
+            assert run(server.db.pos_sales.count_documents({"line_items.product_id": pid})) == 0
         finally:
             run(server.db.pos_products.delete_one({"id": pid}))
 

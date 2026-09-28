@@ -162,6 +162,14 @@ async def household_checkout_rows(anchor: Dict[str, Any]) -> List[Dict[str, Any]
         q["end_date"] = anchor.get("end_date")
     elif anchor.get("group_id") and service_type not in ("daycare", "boarding"):
         q["group_id"] = anchor.get("group_id")
+    if anchor.get("bill_to_client_id") and anchor.get("group_id"):
+        # A friends & family group: its own dogs, whichever family each belongs to
+        # (a boarding dog whose stay was changed still leaves on its own day).
+        q.pop("client_id", None)
+        q["group_id"] = anchor.get("group_id")
+    else:
+        # A family's own checkout never sweeps in a dog another family pays for.
+        q["bill_to_client_id"] = {"$in": [None, ""]}
     rows = await _g("db").bookings.find(q, {"_id": 0}).to_list(50)
     # One ticket should never include duplicate rows for the same dog.
     unique: Dict[str, Dict[str, Any]] = {}

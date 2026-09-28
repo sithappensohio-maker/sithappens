@@ -27,6 +27,7 @@ The whole thing stays off (ENABLED) until every money path pays the payer.
 from __future__ import annotations
 
 import contextvars
+import uuid
 from typing import Any, Dict, List, Optional
 
 from fastapi import HTTPException
@@ -171,3 +172,176 @@ async def stamp(created: List[dict], group: Dict[str, Any], service_type: str) -
             exc.detail = f"{exc.detail} Nothing was booked for any dog yet."
             raise
         raise HTTPException(status_code=500, detail="These dogs couldn't be booked together, so nothing was booked. Please try again.")
+
+
+# ───────────────────────── one bill, whenever each dog is picked up ─────────────────────────
+#
+# The owner's rules: the payer pays ONE bill for every dog, and the dogs may be
+# picked up at different times. So a friends & family dog's checkout never
+# takes money itself: its charge goes on the payer's account (the tab), and
+# when the last dog of the group has left, ONE bill is made on the payer
+# covering every dog. The payer pays that bill at the desk or online. If all
+# the dogs leave together, the combined checkout does the same in one go. A
+# dog that never comes stops holding the bill up once its day has passed (the
+# sweep), and staff can close the bill at any time.
+
+MSG_PAY_ON_BILL = ("This dog is on a friends & family booking: its visit goes on the paying family's account, and one "
+                   "bill for every dog is made when the last dog leaves. Take the payment on that bill.")
+MSG_REGISTER = ("Products can't be sold at a friends & family dog's checkout. Ring them up at the Register for the "
+                "family paying.")
+MSG_WAITING = ("This family has dogs on a friends & family booking waiting for their one bill. Close that bill (or "
+               "wait for the last dog to leave), then take the payment on it.")
+MSG_CORRECT_LATER = ("This dog's visit is waiting for its friends & family group's one bill. To change its price now, "
+                     "reopen its checkout; or correct it once the bill is made.")
+_ENDED = ("completed", "cancelled", "canceled", "rejected")
+_STALE_MINUTES = 15   # a checkout (or a bill being made) this old has died part-way
+
+
+def on_the_payers_tab(body: Any) -> Any:
+    """The checkout of a friends & family dog: nothing is paid here — the
+    whole visit goes on the payer's account (and never on prepaid credits).
+    Money offered at this checkout is refused rather than silently ignored."""
+    if body.retail_lines:
+        raise HTTPException(status_code=400, detail=MSG_REGISTER)
+    offered = ((body.amount_paid or 0) > 0.005 or bool(body.gift_card_code) or bool(body.tendered_amount)
+               or (body.payment_status == "paid" and body.payment_method not in (None, "credits")))
+    if offered:
+        raise HTTPException(status_code=400, detail=MSG_PAY_ON_BILL)
+    return body.model_copy(update={"payment_status": "paid_partial", "amount_paid": 0.0,
+                                   "use_credits": False, "extra_nights_use_credits": False})
+
+
+def _stale_before() -> str:
+    from datetime import datetime, timedelta, timezone
+    return (datetime.now(timezone.utc) - timedelta(minutes=_STALE_MINUTES)).isoformat()
+
+
+def _still_to_come(row: dict, today: str, stale: str, leaving: Optional[str]) -> bool:
+    """On site, still expected, or being checked out right now by another
+    checkout: holds the group's bill until it leaves."""
+    if (row.get("checkout_in_progress") and row.get("id") != leaving
+            and (row.get("checkout_started_at") or "") > stale):
+        return True
+    if row.get("status") in _ENDED or row.get("checked_out_at"):
+        return False
+    return bool(row.get("checked_in_at")) or (row.get("date") or "") >= today
+
+
+async def waiting_for_group_bill(client_id: Optional[str]) -> bool:
+    """Does this family pay for dogs whose visits are waiting for their group's bill?"""
+    if not client_id:
+        return False
+    return bool(await _g("db").bookings.find_one(
+        {"bill_to_client_id": client_id, "status": "completed",   # (a reopened or cancelled visit waits for nothing)
+         "$or": [{"group_bill_pending": True}, {"group_bill_claim": {"$nin": [None, ""]}}]},
+        {"_id": 1}))
+
+
+async def close_group_bill(group_id: Optional[str], user: dict, *, force: bool = False,
+                           leaving: Optional[str] = None) -> Optional[dict]:
+    """Once no dog of the group is still to come (or when staff close it now),
+    make ONE bill on the payer for every dog checked out onto its account.
+    Each visit is claimed first, so it can never land on two bills.
+    `leaving` is the dog whose own checkout is calling this."""
+    if not group_id:
+        return None
+    db = _g("db")
+    rows = await db.bookings.find({"group_id": group_id}, {"_id": 0}).to_list(100)
+    today, stale = _g("business_today")().isoformat(), _stale_before()
+    if not force and any(_still_to_come(r, today, stale, leaving) for r in rows):
+        return None
+    waiting = [r for r in rows if r.get("status") == "completed" and (
+        r.get("group_bill_pending") or (r.get("group_bill_claim") and (r.get("group_bill_claimed_at") or "") < stale))]
+    # (A claim that died after its bill was made is safe to take again: the
+    # bill builder never bills a visit twice — it hands back that bill.)
+    ready = [r["id"] for r in waiting]
+    if not ready:
+        return None
+    claim = str(uuid.uuid4())
+    await db.bookings.update_many(
+        {"id": {"$in": ready}, "$or": [{"group_bill_pending": True}, {"group_bill_claimed_at": {"$lt": stale}}]},
+        {"$set": {"group_bill_pending": False, "group_bill_claim": claim, "group_bill_claimed_at": _g("now_iso")()}})
+    mine = [r["id"] for r in await db.bookings.find({"id": {"$in": ready}, "group_bill_claim": claim},
+                                                    {"_id": 0, "id": 1}).to_list(100)]
+    if not mine:
+        return None
+    try:
+        bill = await _g("_create_invoice_for_bookings")(mine, user=user, ts=_g("now_iso")())
+    except Exception:
+        await db.bookings.update_many({"id": {"$in": mine}, "group_bill_claim": claim},
+                                      {"$set": {"group_bill_pending": True},
+                                       "$unset": {"group_bill_claim": "", "group_bill_claimed_at": ""}})
+        raise
+    await db.bookings.update_many({"id": {"$in": mine}}, {"$unset": {"group_bill_claim": "", "group_bill_claimed_at": ""}})
+    return bill
+
+
+async def _with_payer_lock(group_id: str, user: dict, *, force: bool = False) -> Optional[dict]:
+    """Close a group's bill holding the payer's money lock, as a checkout does,
+    so it can never race the last dog's checkout into two bills."""
+    from domains.billing import tab_sync   # (tab_sync imports this module)
+    db = _g("db")
+    row = await db.bookings.find_one({"group_id": group_id, "bill_to_client_id": {"$nin": [None, ""]}}, {"_id": 0})
+    if not row:
+        return None
+    guard = await tab_sync.acquire_client_guard(payer_id(row))
+    try:
+        return await close_group_bill(group_id, user, force=force)
+    finally:
+        await tab_sync.release_client_guard(guard)
+
+
+async def close_after_cancel(group_id: Optional[str], user: dict) -> Optional[dict]:
+    """After a cancel (which already holds the payer's money lock): make the
+    bill if nothing holds it up. A bill that can't be made just now is left
+    to the sweep — the cancel itself has happened."""
+    try:
+        return await close_group_bill(group_id, user)
+    except HTTPException:
+        return None
+
+
+async def check_out_together(anchor: dict, body: Any, user: dict) -> dict:
+    """The combined checkout of a friends & family group: every dog of the
+    group on site goes on the payer's account, and the one bill is made."""
+    rows = await group_pricing.household_checkout_rows(anchor)
+    if len(rows) < 2:
+        raise HTTPException(status_code=409, detail="There are no other active dogs left in this checkout group.")
+    # Extras, a manual price and an extra charge belong to the dog whose button
+    # was clicked — as in every combined checkout — never to each dog.
+    others = body.model_copy(update={"add_ons": [], "base_price": None, "base_price_reason": None,
+                                     "additional_cash_charge": 0, "retail_lines": []})
+    done = [await _g("check_out")(r["id"], body if r["id"] == anchor["id"] else others, user) for r in rows]
+    bill = next((d.get("group_bill") for d in reversed(done) if d.get("group_bill")), None)
+    return {"friends_family": True, "bookings": done, "invoice": bill}
+
+
+async def sweep_group_bills() -> int:
+    """Scheduler: close the bill of any group whose last dog has gone (a dog
+    that never came stops holding it once its day has passed)."""
+    db = _g("db")
+    closed = 0
+    for gid in await db.bookings.distinct("group_id", {"status": "completed", "$or": [
+            {"group_bill_pending": True}, {"group_bill_claimed_at": {"$lt": _stale_before()}}]}):
+        try:
+            if await _with_payer_lock(gid, {"id": "system", "name": "Friends & family bill"}):
+                closed += 1
+        except HTTPException:
+            continue   # a checkout or correction for the payer is under way: next tick
+    return closed
+
+
+def register_routes(*, api, server_globals: dict) -> None:
+    """POST /bookings/group/{group_id}/close-bill — staff close a friends &
+    family group's bill now (e.g. one dog is staying on)."""
+    from fastapi import Depends
+
+    perm = server_globals["require_admin_and_permission"]
+
+    async def close_bill_now(group_id: str, user: dict = Depends(perm("take_payments"))):
+        bill = await _with_payer_lock(group_id, user, force=True)
+        if not bill:
+            raise HTTPException(status_code=409, detail="No dog of this group is waiting to be billed.")
+        return bill
+
+    api.add_api_route("/bookings/group/{group_id}/close-bill", close_bill_now, methods=["POST"])
