@@ -49462,7 +49462,7 @@ async def sell_training_program(
         if body.schedule_start_date:
             anchor = _date.fromisoformat(body.schedule_start_date)
         else:
-            anchor = _date.today()
+            anchor = business_today()   # (Ohio's today, not the host computer's UTC date)
         # Roll forward to the desired weekday
         wd_target = body.schedule_day_of_week
         delta = (wd_target - anchor.weekday()) % 7
@@ -50913,7 +50913,7 @@ async def portal_homework_streak(current: dict = Depends(get_current_user)):
     from datetime import date as _date, timedelta as _td  # local import to avoid name clashes
     days = await practice_days(db, client_id)
 
-    today = _date.today()
+    today = business_today()
     # Current streak: count back from today (or yesterday if no completion today)
     current_streak = 0
     if days:
@@ -56265,7 +56265,7 @@ _photo_special_callables = register_photo_special_routes(
     api=api, db=db, logger=logger, now_iso=now_iso, get_settings=get_settings,
     enforce_rate_limit=_enforce_rate_limit, client_ip=_client_ip,
     require_admin_and_permission=require_admin_and_permission,
-    slot_overlaps=_slot_overlaps,
+    slot_overlaps=_slot_overlaps, business_today=business_today,
     notify_client_booking_approved=notify_client_booking_approved,
     # Photo-package sales ride the real register, same as the event photo booth.
     create_pos_sale=_create_pos_sale_impl, price_pos_cart=_price_pos_cart, require_take_payments=_require_take_payments,

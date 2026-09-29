@@ -9,6 +9,7 @@ import re
 import uuid
 from datetime import datetime, date, timedelta, timezone
 from typing import Any, Dict, List, Optional
+from zoneinfo import ZoneInfo
 
 from PIL import Image, ImageDraw, ImageFont
 
@@ -304,6 +305,21 @@ async def _count_homework_completed(db, client_id: str) -> int:
     return await db.homework.count_documents({"client_id": client_id, "status": "completed"})
 
 
+_BUSINESS_TZ = ZoneInfo("America/New_York")
+
+
+def _business_today() -> date:
+    """Today in Ohio. The host computer's date is UTC in production — already
+    tomorrow from 8 PM Eastern — which is when clients practise (audit #26)."""
+    return datetime.now(_BUSINESS_TZ).date()
+
+
+def _business_day(ts: Any) -> date:
+    """The Ohio day a stored timestamp (UTC ISO) fell on."""
+    dt = datetime.fromisoformat(str(ts).replace("Z", "+00:00"))
+    return (dt if dt.tzinfo else dt.replace(tzinfo=timezone.utc)).astimezone(_BUSINESS_TZ).date()
+
+
 def _log_day(log: Dict[str, Any]) -> Optional[date]:
     raw = str(log.get("date") or "")[:10]
     try:
@@ -311,7 +327,7 @@ def _log_day(log: Dict[str, Any]) -> Optional[date]:
     except Exception:
         pass
     try:
-        return datetime.fromisoformat(str(log.get("logged_at") or "")).date()
+        return _business_day(log.get("logged_at") or "")
     except Exception:
         return None
 
@@ -337,7 +353,7 @@ async def practice_days(db, client_id: str) -> set:
                 days.add(d)
         if hw.get("status") == "completed":
             try:
-                days.add(datetime.fromisoformat(hw.get("completed_at") or "").date())
+                days.add(_business_day(hw.get("completed_at") or ""))
             except Exception:
                 pass
     return days
@@ -349,7 +365,7 @@ async def _homework_streak_days(db, client_id: str) -> int:
     days = await practice_days(db, client_id)
     if not days:
         return 0
-    today = date.today()
+    today = _business_today()
     # Start anchor: today if hit, else yesterday (so we don't break the streak
     # just because they haven't logged today yet).
     anchor = today if today in days else today - timedelta(days=1)

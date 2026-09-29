@@ -174,6 +174,7 @@ def register_domains(
         perms_for=server_globals["_perms_for"],
         mutate_product_stock=server_globals["_mutate_product_stock"],
         require_register_day_open=server_globals["_require_register_day_open"],
+        business_today=business_today,
     )
 
     performance_services.configure(

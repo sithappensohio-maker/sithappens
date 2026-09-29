@@ -71,6 +71,12 @@ def _clean(v: Optional[str], limit: int) -> str:
     return (v or "").strip()[:limit]
 
 
+def _ohio_now() -> datetime:
+    """The time now where the portraits are taken (tests set it)."""
+    from zoneinfo import ZoneInfo
+    return datetime.now(ZoneInfo("America/New_York"))
+
+
 def _hhmm_to_min(v: str) -> Optional[int]:
     try:
         hh, mm = str(v).split(":")[:2]
@@ -180,12 +186,44 @@ def register_photo_special_routes(
     *, api, db, logger, now_iso, get_settings, enforce_rate_limit, client_ip,
     require_admin_and_permission, slot_overlaps, notify_client_booking_approved,
     create_pos_sale=None, price_pos_cart=None, require_take_payments=None,
-    pos_sale_model=None, pos_line_model=None, pos_tender_model=None,
+    pos_sale_model=None, pos_line_model=None, pos_tender_model=None, business_today=None,
 ) -> Dict[str, Any]:
     """Register the public + admin Photo Specials routes. Returns the callables
     the in-process suite drives directly."""
 
     manage = require_admin_and_permission("manage_events")
+
+    def _today() -> str:
+        """Today in Ohio (the host computer's date is UTC in production)."""
+        return business_today().isoformat() if business_today else _ohio_now().date().isoformat()
+
+    def _minutes_now() -> int:
+        now = _ohio_now()
+        return now.hour * 60 + now.minute
+
+    def _passed(day: str, hhmm: str) -> bool:
+        """A time on an earlier day, or earlier today (Ohio), is gone: the
+        public page never offers it and a reservation for it is refused
+        (audit #26 / #63). (A page left open overnight can still ask.)"""
+        start = _hhmm_to_min(hhmm or "")
+        today = _today()
+        return start is not None and (day < today or (day == today and start <= _minutes_now()))
+
+    def _public_dates(sp: dict) -> List[str]:
+        """The dates a customer can still book: today only while one of its
+        times is still ahead."""
+        dur = int(sp.get("slot_minutes") or 15)
+        out = []
+        for d in _upcoming(_special_dates(sp)):
+            if d == _today():
+                window = _day_window(sp, d)
+                if not window or dur <= 0:
+                    continue
+                starts = [t for t in range(window[0], window[1], dur) if t + dur <= window[1]]
+                if not starts or max(starts) <= _minutes_now():
+                    continue
+            out.append(d)
+        return out
 
     # ---------------------------------------------------------------- helpers
 
@@ -288,7 +326,7 @@ def register_photo_special_routes(
         reservation endpoint must not accept one. Admin keeps the whole list —
         the desk still needs to look back at last Tuesday.
         """
-        today = date.today().isoformat()
+        today = _today()
         return [d for d in dates if d >= today]
 
     async def _special_by(query: dict, *, published_only: bool = False) -> dict:
@@ -396,7 +434,7 @@ def register_photo_special_routes(
             "cancellation_notes": sp.get("cancellation_notes") or "",
             # The page never sees the rules — it sees the dates they produce,
             # already filtered for closed weekdays and excluded days.
-            "dates": _upcoming(_special_dates(sp)),
+            "dates": _public_dates(sp),
             "start_date": sp.get("start_date"),
             "end_date": sp.get("end_date"),
             "day_hours": sp.get("day_hours") or {},
@@ -541,10 +579,14 @@ def register_photo_special_routes(
         sp = await _special_by({"slug": slug}, published_only=True)
         if not sp.get("booking_open"):
             return {"date": date, "closed": True, "slots": [], "slot_minutes": sp.get("slot_minutes")}
-        day = (date or "").strip() or ((_upcoming(_special_dates(sp)) or [None])[0] or "")
+        day = (date or "").strip() or ((_public_dates(sp) or [None])[0] or "")
         if not day:
             return {"date": "", "closed": True, "slots": [], "slot_minutes": sp.get("slot_minutes")}
-        return await _availability(sp, day)
+        avail = await _availability(sp, day)
+        for s in avail.get("slots") or []:
+            if _passed(day, s["time"]):
+                s["available"] = False
+        return avail
 
     @api.post("/public/photo-specials/{slug}/reserve")
     async def public_photo_special_reserve(slug: str, body: ReserveIn, request: Request):
@@ -583,6 +625,8 @@ def register_photo_special_routes(
         day, when = body.date.strip(), body.time.strip()
         if day and day not in _upcoming(_special_dates(sp)):
             raise BookingBlocked(409, "That date is no longer available. Please choose another.", code="date_unavailable", action="pick_date")
+        if _passed(day, when):
+            raise BookingBlocked(409, "That time has already passed. Please choose a later time.", code="time_in_past", action="pick_time")
         avail = await _availability(sp, day)
         if avail.get("closed") or not any(s["time"] == when and s["available"] for s in avail.get("slots") or []):
             raise BookingBlocked(409, "That time has just been taken. Please choose another.", code="slot_taken", action="pick_time")
@@ -669,8 +713,7 @@ def register_photo_special_routes(
         take a walk-up — so free times are returned alongside the reservations
         rather than being left for the screen to work out.
         """
-        from datetime import date as _date
-        day = (date or "").strip() or _date.today().isoformat()
+        day = (date or "").strip() or _today()
         candidates = await db.photo_specials.find({}, {"_id": 0}).to_list(200)
         specials = [sp for sp in candidates if day in _special_dates(sp)]
         out = []

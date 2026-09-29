@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import uuid
 from datetime import date as _date, datetime, timedelta, timezone
+from zoneinfo import ZoneInfo
 from typing import Any, Dict, List, Optional
 
 from fastapi import HTTPException
@@ -46,11 +47,12 @@ def stock_refusal(name: Optional[str], stock: float, held: float) -> str:
     return f"Only {stock:g} in stock for {name}."
 
 
-def configure(*, db, resolve_client_price, get_settings, credit_pack_display_fields, free_claim_program_blockers, logger, create_sale_impl, sale_model=None, tender_model=None, normalize_payment_method=None, perms_for=None, mutate_product_stock=None, require_register_day_open=None) -> None:
+def configure(*, db, resolve_client_price, get_settings, credit_pack_display_fields, free_claim_program_blockers, logger, create_sale_impl, sale_model=None, tender_model=None, normalize_payment_method=None, perms_for=None, mutate_product_stock=None, require_register_day_open=None, business_today=None) -> None:
     global _db, _resolve_client_price_fn, _get_settings_fn, _credit_pack_display_fields_fn
     global _free_claim_program_blockers_fn, _logger, _create_sale_impl_fn
     global _sale_model, _tender_model, _normalize_payment_method_fn, _perms_for_fn
-    global _mutate_product_stock_fn, _require_register_day_open_fn
+    global _mutate_product_stock_fn, _require_register_day_open_fn, _business_today_fn
+    _business_today_fn = business_today
     _mutate_product_stock_fn = mutate_product_stock
     _require_register_day_open_fn = require_register_day_open
     _sale_model = sale_model
@@ -390,6 +392,16 @@ async def settle_booking_gift_card(booking: dict, body, user: dict, update: dict
 # second, worse version of it.
 
 RETURN_WINDOW_DAYS = 30
+
+_business_today_fn = None
+
+
+def _business_today() -> _date:
+    """Today in Ohio, where the till is. The host computer's date is UTC in
+    production, already tomorrow from 8 PM Eastern (7 PM in winter): an
+    evening return used to look for tomorrow's drawer (every cash return was
+    refused) and land on tomorrow's books (audit #26)."""
+    return _business_today_fn() if _business_today_fn else datetime.now(ZoneInfo("America/New_York")).date()
 RETURNABLE_KINDS = ("retail", "custom")
 
 
@@ -410,7 +422,7 @@ class PosSaleReturnIn(BaseModel):
     workstation_id: Optional[str] = Field(default=None, max_length=100)
 
 
-def return_preview(sale: dict) -> dict:
+def return_preview(sale: dict, today: Optional[_date] = None) -> dict:
     """What is still returnable on this sale, and why it might not be.
 
     The screen needs this before it can ask anything sensible: which lines
@@ -422,7 +434,7 @@ def return_preview(sale: dict) -> dict:
     days_old = None
     try:
         sold = _date.fromisoformat(str(sale.get("business_date"))[:10])
-        days_old = (_date.today() - sold).days
+        days_old = ((today or _business_today()) - sold).days
         if days_old > RETURN_WINDOW_DAYS:
             reason = (f"This sale is {days_old} days old. Returns are accepted for "
                       f"{RETURN_WINDOW_DAYS} days.")
@@ -528,12 +540,13 @@ async def return_pos_sale(*, sale_id: str, body, user: dict) -> dict:
         if done:
             return {"ok": True, "returned": done, "replayed": True}
 
-    preview = return_preview(sale)
+    business_day = _business_today()   # (one day for the window check and everything the return records)
+    preview = return_preview(sale, business_day)
     if preview["blocked_reason"]:
         raise HTTPException(status_code=409, detail=preview["blocked_reason"])
 
     # Refunds are money leaving the till today, so today has to be open.
-    today = _date.today().isoformat()
+    today = business_day.isoformat()
     await _require_register_day_open_fn(today)
 
     items = sale.get("line_items") or []

@@ -208,23 +208,25 @@ def test_an_inverted_or_missing_range_offers_nothing_rather_than_erroring():
         assert server.photo_special_dates(sp) == []
 
 
-def test_the_public_page_never_offers_a_date_that_has_already_passed():
+def test_the_public_page_never_offers_a_date_that_has_already_passed(monkeypatch):
     # Half of a six-week promotion is in the past by the middle of it.
-    yesterday = (dt.date.today() - dt.timedelta(days=1)).isoformat()
-    long_ago = (dt.date.today() - dt.timedelta(days=10)).isoformat()
-    ahead = (dt.date.today() + dt.timedelta(days=10)).isoformat()
+    from domains.photo_specials import routes as photo_routes
+    monkeypatch.setattr(photo_routes, "_ohio_now", lambda: dt.datetime.combine(server.business_today(), dt.time(8, 0)))
+    yesterday = (server.business_today() - dt.timedelta(days=1)).isoformat()
+    long_ago = (server.business_today() - dt.timedelta(days=10)).isoformat()
+    ahead = (server.business_today() + dt.timedelta(days=10)).isoformat()
     sp = _special(dates=[], start_date=long_ago, end_date=ahead, start_time="09:00", end_time="10:00", day_hours={})
     generated = server.photo_special_dates(sp)
     assert long_ago in generated and yesterday in generated, "the schedule itself still knows those days"
     offered = run(server.public_photo_special(sp["slug"]))["dates"]
     assert long_ago not in offered and yesterday not in offered
-    assert offered[0] == dt.date.today().isoformat(), "it opens on today, not on week one"
+    assert offered[0] == server.business_today().isoformat(), "it opens on today, not on week one"
     assert ahead in offered
 
 
 def test_a_reservation_cannot_be_made_on_a_date_that_has_passed():
-    yesterday = (dt.date.today() - dt.timedelta(days=1)).isoformat()
-    ahead = (dt.date.today() + dt.timedelta(days=10)).isoformat()
+    yesterday = (server.business_today() - dt.timedelta(days=1)).isoformat()
+    ahead = (server.business_today() + dt.timedelta(days=10)).isoformat()
     sp = _special(dates=[], start_date=yesterday, end_date=ahead, start_time="09:00", end_time="10:00", day_hours={})
     with pytest.raises(HTTPException) as e:
         _reserve(sp, day=yesterday, time="09:00")
