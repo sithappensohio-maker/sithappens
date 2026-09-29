@@ -1796,7 +1796,7 @@ const PERM_META = [
   // Friendly label, backend key (must already exist), tooltip description.
   { key: "settings",         label: "Manage Settings",     desc: "Access Settings, including this matrix. Required for admin-level recovery." },
   { key: "finance_reports",  label: "View Finance/Reports",desc: "P&L, revenue, payments, mileage, tax reports." },
-  { key: "pricing",          label: "Manage Pricing",      desc: "Edit service rates, credit pack prices, and discounts." },
+  { key: "pricing",          label: "Manage Pricing",      desc: "Edit service rates, credit pack prices and discounts, and change a price at checkout." },
   { key: "clients_view",     label: "View Clients",        desc: "Read-only access to client list + profiles." },
   { key: "clients_edit",     label: "Edit Clients",        desc: "Create, edit, archive clients and credit packs." },
   { key: "dogs_view",        label: "View Dogs",           desc: "Read-only access to dog list + profiles." },

@@ -82,6 +82,7 @@ from domains.bookings import spans as booking_spans
 from domains.bookings import group_rank
 from domains.bookings import group_pricing as booking_group_pricing
 from domains.bookings import friends_family
+from domains.bookings import checkout_prices
 from domains.school import ownership as school_ownership
 from domains.bookings import late_day as late_day_checkout
 from domains.bookings import care as care_domain
@@ -1210,7 +1211,7 @@ class CheckoutIn(BaseModel):
     # a full payment merely because amount_paid was left off the request;
     # see the amount_paid-normalization guard below.
     payment_status: Optional[Literal["unpaid", "paid", "paid_partial"]] = None  # defaults inferred below
-    base_price: Optional[float] = None  # override the auto-tally amount for the base service
+    base_price: Optional[float] = Field(default=None, ge=0)  # override the auto-tally amount for the base service
     # Short operator note for why the price was manually changed — stored on
     # the booking's manual_price_override audit stamp alongside who/when.
     base_price_reason: Optional[str] = Field(default=None, max_length=300)
@@ -9240,6 +9241,7 @@ async def check_out_group(
     anchor = await db.bookings.find_one({"id": booking_id}, {"_id": 0})
     if not anchor:
         raise HTTPException(status_code=404, detail="Booking not found")
+    await checkout_prices.refuse_price_changes(booking_id, body, user)   # audit #23: before any dog leaves
     friends_family.expected(body, bool(anchor.get("bill_to_client_id")))
     if anchor.get("bill_to_client_id"):  # friends & family: every dog on the payer's account, then one bill
         return await friends_family.check_out_together(anchor, body, user)
@@ -9552,8 +9554,7 @@ async def _check_out_endpoint_impl(
     # which made the "pricing" permission toggle decorative for checkout.
     # Admins (and staff explicitly granted "pricing") can still override;
     # everyone else checks out at the normal computed price.
-    if body.base_price is not None and not _perms_for(user).get("pricing") and not await _is_early_checkout_price(booking_id, body, user):
-        raise HTTPException(status_code=403, detail="You don't have permission to override the checkout price.")
+    await checkout_prices.refuse_price_changes(booking_id, body, user)   # audit #23: one rule for every price at checkout
     # Payment rebuild Phase 2 — additive, layered on top of the existing
     # require_employee_or_admin gate (not a replacement for it), matching
     # the "pricing" check just above. Defaults True for every staff role,

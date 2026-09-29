@@ -22,6 +22,8 @@ jest.mock("../lib/useLiveRefresh", () => ({ useEditLock: jest.fn() }));
 jest.mock("../lib/posAgent", () => ({ printReceipt: jest.fn(), openDrawer: jest.fn() }));
 jest.mock("./ReceiptLogo", () => () => null);
 jest.mock("sonner", () => ({ toast: { success: jest.fn(), error: jest.fn() } }));
+// Signed in as someone who may change prices (checkoutPricePermission.test.js covers staff who may not).
+jest.mock("../lib/auth", () => ({ useAuth: () => ({ can: () => true }) }));
 
 const { api } = require("../lib/api");
 

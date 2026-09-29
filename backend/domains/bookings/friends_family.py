@@ -404,8 +404,7 @@ async def check_out_together(anchor: dict, body: Any, user: dict) -> dict:
     rows = await group_pricing.household_checkout_rows(anchor)
     if len(rows) < 2:
         raise HTTPException(status_code=409, detail="There are no other active dogs left in this checkout group.")
-    if body.base_price is not None and not _g("_perms_for")(user).get("pricing"):   # (before any dog leaves)
-        raise HTTPException(status_code=403, detail="You don't have permission to override the checkout price.")
+    # (Prices: the household checkout ran checkout_prices.refuse_price_changes before calling this.)
     # Extras, a manual price and an extra charge belong to the dog whose button
     # was clicked — as in every combined checkout — never to each dog.
     others = body.model_copy(update={"add_ons": [], "base_price": None, "base_price_reason": None,

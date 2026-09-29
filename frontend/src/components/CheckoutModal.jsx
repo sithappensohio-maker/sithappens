@@ -35,6 +35,12 @@ function CheckoutModalBody({ booking, services, onClose, onRequestCancel, lateDa
   // Sprint 110ao — pauses background polling while this modal is open so
   // the booking row can't churn under the admin's input.
   useEditLock(true);
+  // Audit #23 (owner's choice A): only staff with the pricing permission
+  // change a price here — the visit price, the per-night rate, an extra
+  // amount or a discount. Everyone else checks out at the normal price (the
+  // server refuses anything else).
+  const auth = useAuth();
+  const canPrice = !!auth?.can?.("pricing");
   // Multi-dog reservations share a group_id. When two or more active rows in
   // that group still need checked out, this modal becomes one household checkout.
   const [groupBookings, setGroupBookings] = useState([booking]);
@@ -239,8 +245,20 @@ function CheckoutModalBody({ booking, services, onClose, onRequestCancel, lateDa
   // (Never on a friends & family visit: every extra night goes on the paying family's account.)
   const extraNightsUseCredits = extraUseCredits && !ffNoCredits;
   const [extraRate, setExtraRate] = useState("");
-  const exactService = (services || []).find(s => s.id === booking.service_id && s.active);
-  const defaultService = (services || []).find(s => s.service_type === booking.service_type && s.is_default && s.active);
+  // Today's price list: the screen that opened this checkout may have loaded
+  // its copy hours ago (the Register and the Employee Portal load it once),
+  // and add-ons are charged at the price this screen shows (audit #23).
+  const [liveServices, setLiveServices] = useState(null);
+  useEffect(() => {
+    let alive = true;
+    api.get("/services", { sharedCache: "refresh" })
+      .then(r => { if (alive && Array.isArray(r.data) && r.data.length) setLiveServices(r.data); })
+      .catch(() => {});
+    return () => { alive = false; };
+  }, []);
+  const catalog = liveServices || services || [];
+  const exactService = catalog.find(s => s.id === booking.service_id && s.active);
+  const defaultService = catalog.find(s => s.service_type === booking.service_type && s.is_default && s.active);
   const savedUnitRate = Number(booking.pricing_snapshot?.unit_price || booking.unit_price || 0);
   const serviceUnitRate = savedUnitRate > 0
     ? savedUnitRate
@@ -252,10 +270,10 @@ function CheckoutModalBody({ booking, services, onClose, onRequestCancel, lateDa
   // "any non-base service" rule for any service that hasn't been flagged
   // yet (so existing setups keep working). The flagged-only list wins
   // when there are any eligible add-ons configured.
-  const flaggedAddons = (services || []).filter(
+  const flaggedAddons = catalog.filter(
     s => s.active && s.is_addon && (s.addon_for || []).includes(booking.service_type)
   );
-  const legacyCandidates = (services || []).filter(
+  const legacyCandidates = catalog.filter(
     s => s.active && !s.is_addon && s.service_type !== booking.service_type
   );
   // Once the catalog uses the add-on flag AT ALL, the legacy "any other
@@ -263,7 +281,7 @@ function CheckoutModalBody({ booking, services, onClose, onRequestCancel, lateDa
   // Train, duplicate daycare rows, …) into the picker for service types with
   // no eligible flagged add-ons. Pure-legacy catalogs (zero flagged add-ons
   // anywhere) keep the old behavior.
-  const catalogUsesAddonFlag = (services || []).some(s => s.active && s.is_addon);
+  const catalogUsesAddonFlag = catalog.some(s => s.active && s.is_addon);
   const addOnCandidates = flaggedAddons.length > 0
     ? flaggedAddons
     : (catalogUsesAddonFlag ? [] : legacyCandidates);
@@ -467,7 +485,7 @@ function CheckoutModalBody({ booking, services, onClose, onRequestCancel, lateDa
     // only — credit deductions are computed server-side from the booked span.
     autoBasePreview = Number(earlyQuote.base_price || 0);
   } else {
-    const defaultSvc = (services || []).find(s => s.is_default && s.service_type === booking.service_type && s.active);
+    const defaultSvc = catalog.find(s => s.is_default && s.service_type === booking.service_type && s.active);
     // Prefer the booking's saved estimate/snapshot. This keeps checkout aligned
     // with grandfathered rates and with pre-applied 50% additional-dog group rows.
     const correctedBoardingPreview = booking.service_type === "boarding"
@@ -583,6 +601,25 @@ function CheckoutModalBody({ booking, services, onClose, onRequestCancel, lateDa
     return () => { alive = false; };
   }, [booking.client_id]);
 
+  // Asks the server for today's add-on prices (never the app's short-lived
+  // copy). When one in the cart changed or is no longer offered, updates the
+  // cart, says so and returns true: the operator checks the total again.
+  const recheckAddOnPrices = async () => {
+    if (cartItems.length === 0) return false;
+    const { data: now } = await api.get("/services", { sharedCache: "refresh" });
+    if (!Array.isArray(now) || !now.length) return false;
+    const current = (it) => now.find(sv => sv.id === it.service.id && sv.active);
+    const changed = cartItems.filter(it => !current(it) || Math.abs(Number(current(it).base_price || 0) - Number(it.service.base_price || 0)) > 0.005);
+    if (!changed.length) return false;
+    setLiveServices(now);
+    setCart(c => Object.fromEntries(Object.values(c).filter(it => current(it)).map(it => [it.service.id, { ...it, service: current(it) }])));
+    const svcNow = current(changed[0]);
+    setErr(svcNow
+      ? `The price of ${svcNow.name} is now $${Number(svcNow.base_price || 0).toFixed(2)}. Check the total and press Complete again.`
+      : `${changed[0].service.name} isn't offered anymore, so it was taken off. Check the total and press Complete again.`);
+    return true;
+  };
+
   const submit = async () => {
     setErr("");
     if (checkoutDiscountReasonMissing) {
@@ -607,6 +644,11 @@ function CheckoutModalBody({ booking, services, onClose, onRequestCancel, lateDa
           setBusy(false);
           return;
         }
+      }
+      // Add-on prices: ask again too, so the price charged is the one shown.
+      if (await recheckAddOnPrices()) {
+        setBusy(false);
+        return;
       }
       const body = {
         use_credits: useCredits,
@@ -757,6 +799,8 @@ function CheckoutModalBody({ booking, services, onClose, onRequestCancel, lateDa
       } else {
         setErr(e.response?.data?.detail || "Check-out failed");
         if (isFF || e.response?.status === 409) { setGroupReload((n) => n + 1); emitRegisterChanged(); }
+        // A price changed between the check and Complete: show it now, so the next press goes through.
+        if (e.response?.status === 409) await recheckAddOnPrices().catch(() => false);
       }
       setBusy(false);
     }
@@ -1182,7 +1226,7 @@ function CheckoutModalBody({ booking, services, onClose, onRequestCancel, lateDa
                     Use remaining boarding credits first (any leftover gets billed)
                   </label>
                 )}
-                {!extraNightsUseCredits && (
+                {!extraNightsUseCredits && canPrice && (
                   <div>
                     <label className="text-[13px] uppercase tracking-widest text-gray-500 font-black">Per-night rate <span className="text-gray-600">(blank = settings default)</span></label>
                     <input type="number" step="0.01" value={extraRate} onChange={(e)=>setExtraRate(e.target.value)} data-testid="extra-nights-rate"
@@ -1363,7 +1407,11 @@ function CheckoutModalBody({ booking, services, onClose, onRequestCancel, lateDa
               )}
             </div>
           )}
-          <div>
+          {!canPrice ? (
+            <p className="text-[13px] text-gray-500 normal-case" data-testid="checkout-price-locked">
+              <i className="fas fa-lock mr-1.5"/>Prices are set automatically. Only staff with the pricing permission can change a price at checkout.
+            </p>
+          ) : (<div>
             <label className="text-[13px] uppercase tracking-widest text-gray-500 font-black">
               {useCredits ? "Additional cash adjustment (optional)" : "Base price"}
               <span className="text-gray-600"> {useCredits ? "(blank = use calculated credit shortfall)" : "(blank = use service default)"}</span>
@@ -1393,7 +1441,7 @@ function CheckoutModalBody({ booking, services, onClose, onRequestCancel, lateDa
                   : <>Credits cover the base visit. Only add an amount here for an intentional overage, tip, or other adjustment.</>}
               </p>
             )}
-          </div>
+          </div>)}
           {/* Sprint 110di-51 — Partial-payment / tab toggle. Prominent
               two-pill segmented control so the feature is DISCOVERABLE.
               "Full" is the default. Selecting "Partial / on tab" reveals
@@ -1512,7 +1560,7 @@ function CheckoutModalBody({ booking, services, onClose, onRequestCancel, lateDa
         </div>
 
         {/* One-time checkout discount — applies to dollars due only. */}
-        {!isFF && (<div className="mb-5 border border-bgHover rounded-lg p-4 bg-bgBase" data-testid="checkout-discount-panel">
+        {!isFF && canPrice && (<div className="mb-5 border border-bgHover rounded-lg p-4 bg-bgBase" data-testid="checkout-discount-panel">
           <div className="flex items-start justify-between gap-3 mb-3">
             <div>
               <p className="text-[13px] uppercase tracking-widest text-gray-500 font-black">
@@ -1700,7 +1748,9 @@ function CheckoutModalBody({ booking, services, onClose, onRequestCancel, lateDa
             ) : (
               <p className="text-white/75 text-[13px] mt-3" data-testid="checkout-bt-summary">
                 {btCounts.map((c) => `${c.n} ${c.label.toLowerCase()}`).join(" · ")}.
-                {" Nothing is adjusted automatically — use the discount above if money should come off."}
+                {!isFF && canPrice
+                  ? " Nothing is adjusted automatically — use the discount above if money should come off."
+                  : " Nothing is adjusted automatically."}
               </p>
             )}
           </div>
