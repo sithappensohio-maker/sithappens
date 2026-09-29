@@ -274,3 +274,30 @@ test("the early-checkout price is asked again before checking out — a changed 
   await click("confirm-checkout");
   expect(checkoutPost()[1].base_price).toBe(140);
 });
+
+test("a discount typed before the booking turned out to be friends & family is never sent", async () => {
+  // The screen opened on the family's own visit; meanwhile the visit joined a
+  // friends & family group. The refused checkout reloads it, and the discount
+  // typed earlier (its box now hidden) must not ride along or block it.
+  const own = { ...LUNA, bill_to_client_id: undefined, bill_to_client_name: undefined, group_kind: undefined, group_id: undefined };
+  preview = [own];
+  await mount(own);
+  await click("opt-no-credit-at-checkout");               // paid today (the family's credits stay)
+  const setter = Object.getOwnPropertyDescriptor(window.HTMLInputElement.prototype, "value").set;
+  for (const [id, value] of [["checkout-discount-amount", "5"], ["checkout-discount-reason", "loyal family"]]) {
+    const el = q(id);
+    await act(async () => { setter.call(el, value); el.dispatchEvent(new Event("input", { bubbles: true })); });
+  }
+  await flush();
+  api.post.mockRejectedValueOnce({ response: { status: 409, data: { detail: "This booking just changed. Check it and try again." } } });
+  preview = [LUNA, REX];                                   // it is friends & family now
+  await click("confirm-checkout");
+  expect(q("checkout-discount-panel")).toBeFalsy();
+  await click("confirm-checkout");
+  const posts = api.post.mock.calls.filter(([path]) => String(path).includes("/check-out"));
+  const last = posts[posts.length - 1][1];
+  expect(last.checkout_discount_amount).toBeUndefined();
+  expect(last.checkout_discount_reason).toBeUndefined();
+  expect(q("checkout-error")).toBeFalsy();
+});
+

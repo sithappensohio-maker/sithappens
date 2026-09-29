@@ -32,7 +32,7 @@ from typing import Any, Dict, List, Optional
 
 from fastapi import HTTPException
 
-from domains.bookings import group_pricing
+from domains.bookings import checkout_discount, group_pricing
 
 ENABLED = True   # switched on 2026-09-28 (build step 10): every money path honours the payer
 PERMISSION = "friends_family_bookings"
@@ -216,6 +216,7 @@ def on_the_payers_tab(body: Any) -> Any:
     Money offered at this checkout is refused rather than silently ignored."""
     if body.retail_lines:
         raise HTTPException(status_code=400, detail=MSG_REGISTER)
+    checkout_discount.refuse_on_friends_family(body)
     offered = ((body.amount_paid or 0) > 0.005 or bool(body.gift_card_code) or bool(body.tendered_amount)
                or (body.payment_status == "paid" and body.payment_method not in (None, "credits")))
     if offered:
@@ -401,6 +402,7 @@ async def close_after_cancel(group_id: Optional[str], user: dict) -> Optional[di
 async def check_out_together(anchor: dict, body: Any, user: dict) -> dict:
     """The combined checkout of a friends & family group: every dog of the
     group on site goes on the payer's account, and the one bill is made."""
+    checkout_discount.refuse_on_friends_family(body)   # (before any dog leaves)
     rows = await group_pricing.household_checkout_rows(anchor)
     if len(rows) < 2:
         raise HTTPException(status_code=409, detail="There are no other active dogs left in this checkout group.")

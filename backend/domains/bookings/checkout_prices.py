@@ -27,11 +27,12 @@ from typing import Any
 
 from fastapi import HTTPException
 
-from domains.bookings import friends_family
+from domains.bookings import checkout_discount, friends_family
 
 MSG_PRICE = "You don't have permission to override the checkout price."
 MSG_EXTRA = "You don't have permission to add an amount to the checkout price."
 MSG_NIGHT_RATE = "You don't have permission to change the extra-night rate."
+MSG_DISCOUNT = "You don't have permission to give a discount at checkout."
 MSG_ADDON_GONE = "One of the add-ons you picked isn't offered anymore. Please remove it and try again."
 MSG_ADDON_PRICE = "The price of {name} is now ${price:.2f}. Check the total and press Complete again."
 
@@ -53,7 +54,10 @@ async def refuse_price_changes(booking_id: str, body: Any, user: dict) -> None:
     """Refuse a changed price from someone without the pricing permission.
     Called by every checkout entrance before anything is locked."""
     if _g("_perms_for")(user).get("pricing"):
+        checkout_discount.requested(body)   # (a discount needs its reason: refused before anything is locked)
         return
+    if float(getattr(body, "checkout_discount_amount", 0) or 0) > 0:
+        raise HTTPException(status_code=403, detail=MSG_DISCOUNT)
     if body.base_price is not None and not await _g("_is_early_checkout_price")(booking_id, body, user):
         raise HTTPException(status_code=403, detail=MSG_PRICE)
     if float(body.additional_cash_charge or 0) > 0:

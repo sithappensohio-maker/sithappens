@@ -539,7 +539,9 @@ function CheckoutModalBody({ booking, services, onClose, onRequestCancel, lateDa
     0,
     (useCredits ? baseCashDueOnCredits : (basePreview + groupOtherBaseTotal)) + moneyModifierTotal + existingAddonTotal + addOnTotal + extraNightsCharge - multiDogDiscount,
   );
-  const checkoutDiscountRequested = Math.max(0, Number(checkoutDiscount || 0));
+  // (Never on a friends & family visit — a discount typed before the screen
+  // learned the booking became one must not stay behind, unseen, and block it.)
+  const checkoutDiscountRequested = isFF ? 0 : Math.max(0, Number(checkoutDiscount || 0));
   const checkoutDiscountApplied = Math.min(preTaxBeforeCheckoutDiscount, checkoutDiscountRequested);
   const preTaxChargedToday = Math.max(0, preTaxBeforeCheckoutDiscount - checkoutDiscountApplied);
   const checkoutDiscountTooHigh = checkoutDiscountRequested > preTaxBeforeCheckoutDiscount + 0.005;
@@ -739,7 +741,7 @@ function CheckoutModalBody({ booking, services, onClose, onRequestCancel, lateDa
       if (isFF) {
         // Nothing is paid at a friends & family pickup (the server refuses money
         // offered here): the visit goes on the paying family's account.
-        for (const k of ["payment_method", "retail_payment_method", "gift_card_code", "retail_lines", "retail_idempotency_key", "tendered_amount", "additional_cash_charge"]) delete body[k];
+        for (const k of ["payment_method", "retail_payment_method", "gift_card_code", "retail_lines", "retail_idempotency_key", "tendered_amount", "additional_cash_charge", "checkout_discount_amount", "checkout_discount_reason"]) delete body[k];
         body.payment_status = "paid_partial";
         body.amount_paid = 0;
         if (ffNoCredits) {

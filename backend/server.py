@@ -82,7 +82,7 @@ from domains.bookings import spans as booking_spans
 from domains.bookings import group_rank
 from domains.bookings import group_pricing as booking_group_pricing
 from domains.bookings import friends_family
-from domains.bookings import checkout_prices, credit_cover
+from domains.bookings import checkout_prices, credit_cover, checkout_discount
 from domains.school import ownership as school_ownership
 from domains.bookings import late_day as late_day_checkout
 from domains.bookings import care as care_domain
@@ -1098,6 +1098,7 @@ class BookingOut(BaseModel):
     extra_nights: Optional[Dict[str, Any]] = None
     # Sprint 110 — multi-dog household discount applied at check-out.
     multi_dog_discount: Optional[Dict[str, Any]] = None
+    checkout_discount: Optional[Dict[str, Any]] = None
     # Booking-time price lock (unit_price, pickup_cutoff_time, group_dog_index,
     # etc.) — CheckoutModal.jsx reads this directly for grandfathered pricing
     # and additional-dog-row detection, so it must survive the response_model.
@@ -1228,6 +1229,8 @@ class CheckoutIn(BaseModel):
     retail_lines: List["PosSaleLineIn"] = []
     retail_idempotency_key: Optional[str] = Field(default=None, min_length=8, max_length=128)
     additional_cash_charge: float = Field(default=0, ge=0, le=100000)
+    checkout_discount_amount: float = Field(default=0, ge=0, le=100000)  # one-time discount (domains/bookings/checkout_discount.py)
+    checkout_discount_reason: Optional[str] = Field(default=None, max_length=500)
     add_ons: List[CheckoutAddOn] = []
     # Sprint 110di-51 — Partial payment. When provided AND less than the
     # computed total, the booking is marked `paid_partial` and the
@@ -1447,7 +1450,7 @@ FINANCIAL_MONEY_FIELDS = {
     "payment_method", "amount_paid", "balance_due", "cash_revenue",
     "tax_amount", "tax_rate_pct", "taxable_cash_amount", "credit_value",
     "credits_deducted", "credit_lot_ids", "credit_lot_redemptions",
-    "multi_dog_discount", "extra_nights", "additional_cash_charge", "credit_covered_value",
+    "multi_dog_discount", "extra_nights", "additional_cash_charge", "credit_covered_value", "checkout_discount",
     "cancellation_charged", "cancellation_fee", "cancellation_fee_pct",
 }
 
@@ -7513,6 +7516,7 @@ def _build_invoice_line_items_from_booking(booking: Dict[str, Any]) -> List[Dict
             "booking_id": booking_id, "qty": 1, "unit_price": 0.0,
             "amount": -round(abs(float(discount.get("amount") or 0)), 2), "source": discount,
         })
+    lines.extend(checkout_discount.invoice_lines(booking))
     tax_amount = float(booking.get("tax_amount") or 0)
     if tax_amount > 0:
         lines.append({
@@ -9369,6 +9373,7 @@ async def check_out_group(
                 raise HTTPException(status_code=400, detail="Open the register before taking cash payments.")
 
         completed: List[Dict[str, Any]] = []
+        share = checkout_discount.HouseholdShare(body)
         for target in targets:
             payload = body.model_dump()
             # New add-ons and a manual base override belong to the dog whose
@@ -9386,12 +9391,12 @@ async def check_out_group(
             # uncovered cash. A combined amount_paid must not be copied to every dog.
             if bool(body.use_credits):
                 payload["amount_paid"] = None
-            row_body = CheckoutIn(**payload)
+            row_body = CheckoutIn(**share.payload_for(payload))
             # Payment rebuild Phase 1 — invoice creation is suppressed per-dog
             # here; exactly ONE canonical invoice covering every booking_id in
             # the group is created once below, after the whole group succeeds.
             row = await _check_out_locked(target["id"], row_body, user, create_invoice=False)
-            completed.append(row)
+            completed.append(share.took(row))
 
         combined_total = round(sum(float(row.get("actual_price") or 0) for row in completed), 2)
         combined_cash = round(sum(float(row.get("cash_revenue") or 0) for row in completed), 2)
@@ -10338,6 +10343,7 @@ async def _check_out_locked(
         prev_price = float(update.get("actual_price") or booking.get("actual_price") or 0)
         update["actual_price"] = round(prev_price + additional_cash_charge, 2)
         update["additional_cash_charge"] = additional_cash_charge
+    checkout_discount.apply(booking, update, body, user, ts)   # after every other price step
 
     # Resolve payment_status / payment_method when a charge is involved.
     is_paid_today = update.get("payment_method") == "credits"
