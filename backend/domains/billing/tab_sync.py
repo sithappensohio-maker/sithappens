@@ -557,7 +557,7 @@ async def correct_visit(booking_id: str, body, user: dict) -> dict:
     due_after = round(max(0.0, base_due + delta), 2)
     new_total = round(current_total + delta, 2) if mode in ("tab_bill", "bill") else round(max(current_paid, current_total + delta), 2)
     if booking.get("payment_method") == "credits" and mode in ("tab", "visit"):
-        # Reports read a credits visit's cash as price − credit value, so a
+        # Reports read a credits visit's cash as price − what the credits cover, so a
         # later charge on its price would show as cash collected at checkout.
         # It lives on the tab (or the visit's due) until it is paid.
         new_total = current_total

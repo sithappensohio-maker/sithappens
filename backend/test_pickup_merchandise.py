@@ -378,9 +378,9 @@ def test_goods_bought_when_credits_cover_the_stay_are_recorded_the_way_they_were
 
 
 def test_a_gift_card_that_pays_for_the_goods_is_never_charged_for_a_stay_credits_cover():
-    """Credits granted by hand (or as a reward) are worth $0 on the books, and
-    the server can find a "remainder" on a visit they pay for. The card the
-    customer handed over for the food must pay for the food only."""
+    """Credits granted by hand (or as a reward) are worth $0 on the books; they
+    still pay the whole visit (domains/bookings/credit_cover.py). The card the
+    customer handed over for the food pays for the food only."""
     cid, did = _client_dog()
     bid, prod = _booking(cid, did, price=40.0), _product(20.00)
     card = _gift_card(100.00)
@@ -395,6 +395,7 @@ def test_a_gift_card_that_pays_for_the_goods_is_never_charged_for_a_stay_credits
         visit = run(server.db.bookings.find_one({"id": bid}, {"_id": 0}))
         assert visit["payment_method"] == "credits" and not visit.get("gift_card_applied")
         assert visit.get("cash_payment_method") != "gift_card"
+        assert float(visit.get("amount_paid") or 0) == 0.0 and server._cash_revenue(visit) == 0.0
     finally:
         run(server.db.gift_cards.delete_many({"id": card["id"]}))
         run(server.db.credit_lots.delete_many({"client_id": cid}))

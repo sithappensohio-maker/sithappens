@@ -454,7 +454,7 @@ async def build_pl_data(db, start_date: str, end_date: str) -> Dict[str, Any]:
         ytd_bookings = await _booking_rows_anywhere(
             db,
             {"date": {"$gte": ytd_start, "$lte": end_date}, "status": "completed"},
-            {"_id": 0, "actual_price": 1, "amount_paid": 1, "payment_status": 1, "credit_value": 1, "date": 1, "payment_method": 1, "credit_lot_ids": 1, "is_prepaid_program_session": 1},
+            {"_id": 0, "actual_price": 1, "amount_paid": 1, "payment_status": 1, "credit_value": 1, "credit_covered_value": 1, "date": 1, "payment_method": 1, "credit_lot_ids": 1, "is_prepaid_program_session": 1},
             limit=50000,
         )
         # Sprint 110cj — drop training-program redemptions here too.

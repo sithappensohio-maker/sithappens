@@ -82,7 +82,7 @@ from domains.bookings import spans as booking_spans
 from domains.bookings import group_rank
 from domains.bookings import group_pricing as booking_group_pricing
 from domains.bookings import friends_family
-from domains.bookings import checkout_prices
+from domains.bookings import checkout_prices, credit_cover
 from domains.school import ownership as school_ownership
 from domains.bookings import late_day as late_day_checkout
 from domains.bookings import care as care_domain
@@ -1447,7 +1447,7 @@ FINANCIAL_MONEY_FIELDS = {
     "payment_method", "amount_paid", "balance_due", "cash_revenue",
     "tax_amount", "tax_rate_pct", "taxable_cash_amount", "credit_value",
     "credits_deducted", "credit_lot_ids", "credit_lot_redemptions",
-    "multi_dog_discount", "extra_nights", "additional_cash_charge",
+    "multi_dog_discount", "extra_nights", "additional_cash_charge", "credit_covered_value",
     "cancellation_charged", "cancellation_fee", "cancellation_fee_pct",
 }
 
@@ -7631,7 +7631,7 @@ async def _create_invoice_for_bookings(
         raise HTTPException(status_code=409, detail="These visits are paid for by different families, so they can't share one bill.")
 
     total = round(sum(float(b.get("actual_price") or 0) for b in bookings), 2)
-    credit_applied = round(sum(float(b.get("credit_value") or 0) for b in bookings), 2)
+    credit_applied = round(sum(credit_cover.covered_value(b) for b in bookings), 2)
     if not existing and total <= 0.005 and credit_applied <= 0.005:
         return None  # nothing to invoice (e.g. a $0 training visit); a rebuilt bill goes to $0 instead
 
@@ -7733,7 +7733,7 @@ async def _write_checkout_payment_rows(
     for b in bookings:
         bid = b.get("id")
         row_day = day or _business_date_from_timestamp(b.get("checked_out_at"), business_today().isoformat())
-        credit_value = float(b.get("credit_value") or 0)
+        credit_value = credit_cover.covered_value(b)
         if credit_value > 0.005:
             await _insert_payment_row({
                 "id": str(uuid.uuid4()), "invoice_id": invoice_id, "client_id": friends_family.payer_id(b),
@@ -9982,8 +9982,8 @@ async def _check_out_locked(
                 elif credit_value > 0:
                     svc_value = float(credit_value)
                 else:
-                    svc_value = float(booking.get("estimated_price") or 0) or await _resolve_service_value(float(credit_value))
-                update["actual_price"] = round(svc_value, 2)
+                    svc_value = credit_cover.zero_lot_base(booking, _booking_addon_total_from(booking)) or await _resolve_service_value(float(credit_value))
+                update.update(credit_cover.priced(svc_value, credit_value, body.base_price is not None, credit_cover.zero_lot_base(booking, _booking_addon_total_from(booking))))
                 update["payment_status"] = "paid"
                 update["payment_method"] = "credits"
                 update["paid_at"] = ts
@@ -10400,7 +10400,7 @@ async def _check_out_locked(
     mixed_preview = {**booking, **update}
     if mixed_preview.get("payment_method") == "credits":
         actual_now = float(mixed_preview.get("actual_price") or 0)
-        credit_now = float(mixed_preview.get("credit_value") or 0)
+        credit_now = credit_cover.covered_value(mixed_preview)   # what the credits settled, not their dollar value
         explicit_cash = float(body.amount_paid or 0) if body.amount_paid is not None else 0.0
         cash_component = round(explicit_cash if explicit_cash > 0 else max(0.0, actual_now - credit_now), 2)
         if cash_component > 0:
@@ -34793,7 +34793,7 @@ def _cash_revenue(booking: dict) -> float:
     if method == "gift_card":  # the money arrived when the CARD was sold
         return round(max(0.0, paid - float(booking.get("gift_card_applied") or 0)), 2)
     if method == "credits":
-        credit_value = float(booking.get("credit_value") or 0)
+        credit_value = credit_cover.covered_value(booking)   # what the credits settled (domains/bookings/credit_cover.py)
         # Pure prepaid credit redemption is not new cash. Only a cash amount
         # explicitly collected on top of credits should count — never what a
         # gift card paid of it, which arrived when the card was sold (audit #19).
@@ -47093,7 +47093,7 @@ async def today_pnl(_: dict = Depends(require_admin_and_permission("finance_repo
                 {"status": "cancelled", "cancellation_charged": True},
             ],
         },
-        {"_id": 0, "actual_price": 1, "credit_value": 1, "service_id": 1, "service_type": 1, "service_name": 1, "status": 1, "payment_status": 1, "dog_id": 1, "client_id": 1, "dog_name": 1, "end_date": 1, "date": 1, "grooming_type": 1, "cancellation_charged": 1, "cancellation_fee": 1, "payment_method": 1, "credit_lot_ids": 1, "is_prepaid_program_session": 1, "amount_paid": 1, "gift_card_applied": 1, "financial_refund_total": 1},
+        {"_id": 0, "actual_price": 1, "credit_value": 1, "credit_covered_value": 1, "service_id": 1, "service_type": 1, "service_name": 1, "status": 1, "payment_status": 1, "dog_id": 1, "client_id": 1, "dog_name": 1, "end_date": 1, "date": 1, "grooming_type": 1, "cancellation_charged": 1, "cancellation_fee": 1, "payment_method": 1, "credit_lot_ids": 1, "is_prepaid_program_session": 1, "amount_paid": 1, "gift_card_applied": 1, "financial_refund_total": 1},
     ).to_list(2000)
     # Sprint 110cj — drop training-program credit redemptions (already counted
     # as Training Revenue at sell-time) so the gauge doesn't double-count.
