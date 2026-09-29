@@ -107,6 +107,7 @@ from domains.shop import checkout as shop_checkout
 from domains.gift_cards import services as gift_card_services
 from domains.gift_cards import shop as gift_card_shop
 from domains.shop import abandon as shop_abandon
+from domains.shop import income as shop_income
 from domains.clients import reset_mfa
 from domains.operations import audit_redact
 from domains.bookings import reopen as booking_reopen
@@ -30296,6 +30297,7 @@ def _scheduler_jobs() -> List[job_scheduler.Job]:
         ("reopened_bill_rebuild", lambda: billing_tab_sync.rebuild_stale_bills()),
         ("gift_card_funding_spread", lambda: _run_once_per_business_day(gift_card_services.FUNDING_REPAIR_JOB, gift_card_services.backfill_spread_funding)),  # daily + after a restore (audit #72)
         ("friends_family_group_bills", lambda: friends_family.sweep_group_bills()),  # the bill once a group's last dog has gone
+        ("shop_income_split", lambda: _run_once_per_business_day(shop_income.REPAIR_JOB, lambda: shop_income.repair_split(db))),  # daily + after a restore (audit #29)
     ]
 
 
@@ -33971,6 +33973,7 @@ async def startup():
         # preflight and post-creation verification, not a swallowed warning.
         (db.retail_sales, "invoice_id", {}),
         (db.retail_sales, "stripe_dispute_key", {"unique": True, "partialFilterExpression": {"stripe_dispute_key": {"$type": "string"}}}),
+        (db.retail_sales, *shop_income.INCOME_REF_INDEX),  # one income row per Shop pack/program unit (audit #29)
         # Stripe Online (Phase 3A) — payment_ledger.stripe_attempt_id is a
         # brand-new field (no historical rows ever set it), so this partial
         # unique index carries zero preflight risk. Real duplicate protection
@@ -34911,8 +34914,8 @@ def _finance_income_category(row: Dict[str, Any]) -> str:
         collections ("Invoice / Account Payments") — the underlying
         service/product category is not reliably reconstructable from the
         payment row, so it is NOT guessed and NOT called Retail;
-      * an online SHOP order is merchandise → Retail: the Stripe channel is
-        a tender dimension, not a revenue category;
+      * an online SHOP order's products and gift cards are Retail (its packs
+        and programs are written as their own rows, audit #29);
       * rows with no source_kind are POS/manual retail — the honest
         historical fallback for ambiguous rows is Retail (items), the
         catch-all these rows have always lived in.
@@ -39346,7 +39349,7 @@ async def _finalize_stripe_refund(refund_attempt_id: str) -> None:
                 fresh_pay = await db.payments.find_one(
                     {"id": payment["id"]}, {"_id": 0, "refunded_amount": 1})
                 cumulative_refunded = round(float((fresh_pay or {}).get("refunded_amount") or 0), 2)
-                original_amount = round(float(original_retail.get("amount") or payment.get("amount") or 0), 2)
+                original_amount = round(float(payment.get("amount") or original_retail.get("amount") or 0), 2)  # the whole charge (#29 splits the row)
                 prior_rows = await db.retail_sales.find(
                     {"source_kind": "stripe_refund", "reversed_payment_id": payment["id"],
                      "tax_amount": {"$exists": True}},
@@ -42904,27 +42907,11 @@ async def _apply_shop_payment(attempt: dict, session_obj: Optional[dict] = None)
     })
     payment_id = payment_row["id"]
 
-    # ── Step B2 — ONE retail_sales revenue row for the whole order,
-    # independently resumable by the canonical Payment id — reuses the SAME
-    # existing unique partial index on retail_sales.payment_id, no new
-    # index needed. ──
-    existing_retail = await db.retail_sales.find_one({"payment_id": payment_id}, {"_id": 0})
-    if not existing_retail:
-        retail_row = {
-            "id": str(uuid.uuid4()), "date": business_date, "amount": amount,
-            "payment_method": "stripe_online",
-            "client_id": order.get("client_id"), "client_name": order.get("client_name"),
-            "payment_id": payment_id, "shop_order_id": order_id,
-            "source_kind": "shop_order", "description": f"Online Shop order #{order_id[:8].upper()}",
-            "tax_amount": round(float(order.get("tax_amount") or 0), 2),
-            "tax_rate_pct": float(order.get("tax_rate_pct") or 0),
-            "pre_tax_amount": round(float(order.get("subtotal") or 0), 2),
-            "created_at": ts, "created_by": "stripe_webhook", "logged_by": "Stripe",
-        }
-        try:
-            await db.retail_sales.insert_one(retail_row.copy())
-        except DuplicateKeyError:
-            pass  # already inserted by a concurrent/prior run
+    # ── Step B2 — the order's income rows, by kind the way the Register
+    # records them: packs and programs on their own rows, products and gift
+    # cards (and all the tax) on the shop_order row (audit #29). Resumable
+    # and replay-safe on their own unique keys: domains/shop/income.py. ──
+    await shop_income.record(db, order, payment_row)
 
     # ── Order is now confirmed PAID with its canonical Payment/retail_sales
     # rows in place — durably queue the admin new-order notification,
