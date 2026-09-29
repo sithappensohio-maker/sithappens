@@ -82,7 +82,7 @@ from domains.bookings import spans as booking_spans
 from domains.bookings import group_rank
 from domains.bookings import group_pricing as booking_group_pricing
 from domains.bookings import friends_family
-from domains.bookings import checkout_prices, credit_cover, checkout_discount
+from domains.bookings import checkout_prices, credit_cover, checkout_discount, waitlist_spots
 from domains.school import ownership as school_ownership
 from domains.bookings import late_day as late_day_checkout
 from domains.bookings import care as care_domain
@@ -4398,42 +4398,11 @@ async def _create_booking_impl(body: BookingIn, user: dict = Depends(get_current
     # weekend lead time, max-bookings-per-day, max-consecutive-boarding-nights).
     # Admins bypass these via override_capacity for emergency fixes.
     if user.get("role") != "admin" or not (body.override_capacity or False):
-        guard = ((settings.get("day_to_day") or {}).get("guardrails") or {})
         # Reuse the same Eastern-aware, actual-time calculation as the exact
         # service rules. No second midnight/UTC interpretation is allowed.
-        effective_start_local = booking_start_local or _booking_start_local(body, settings)
-        now_business = datetime.now(BUSINESS_TZ)
-        hours_until = (effective_start_local - now_business).total_seconds() / 3600.0
-
-        if not svc_rules.get("_exact_same_day"):
-            if not guard.get("same_day_booking_allowed", True) and effective_start_local.date() == now_business.date():
-                raise BookingBlocked(400, "Same-day bookings aren't available online. Please pick tomorrow or later, or call Sit Happens about today.", code="same_day_not_allowed", action="pick_date")
-        if not svc_rules.get("_exact_min_lead"):
-            min_adv_h = float(guard.get("min_advance_booking_hours", 0) or 0)
-            if min_adv_h > 0 and hours_until < min_adv_h:
-                raise BookingBlocked(400, f"Bookings need at least {int(min_adv_h)} hours' notice. Please pick a later date or time.", code="notice_too_short", action="pick_date")
-        wknd_lead = float(guard.get("weekend_lead_time_hours", 0) or 0)
-        if wknd_lead > 0 and effective_start_local.weekday() in (5, 6):
-            if hours_until < wknd_lead:
-                raise BookingBlocked(400, f"Weekend bookings need at least {int(wknd_lead)} hours' notice. Please pick a later date, or a weekday.", code="notice_too_short", action="pick_date")
-        max_pcd = int(guard.get("max_bookings_per_client_per_day", 0) or 0)
-        if max_pcd > 0:
-            same_day = await db.bookings.count_documents({
-                # Bookings store the linked client-record id, not the portal
-                # login user's id. Using the login id made this limit a no-op.
-                "client_id": client.get("id"),
-                "date": body.date,
-                "status": {"$nin": ["cancelled", "rejected"]},
-            })
-            if same_day >= max_pcd:
-                if is_admin:
-                    raise HTTPException(status_code=400, detail=f"This client already has {max_pcd} booking(s) for that date.")
-                raise BookingBlocked(400, f"You already have {max_pcd} booking{'s' if max_pcd != 1 else ''} on that date, which is the most we take online for one day. " "Please pick another date, or contact Sit Happens.", code="daily_limit_reached", action="pick_date")
-        max_nights = int(guard.get("max_consecutive_boarding_nights", 0) or 0)
-        if max_nights > 0 and body.service_type == "boarding" and body.end_date:
-            nights = (date.fromisoformat(str(body.end_date)[:10]) - date.fromisoformat(str(body.date)[:10])).days
-            if nights > max_nights:
-                raise BookingBlocked(400, f"Boarding stays can be at most {max_nights} nights online. Please pick an earlier pickup date, or contact Sit Happens about a longer stay.", code="stay_too_long", action="pick_date")
+        await booking_guards.enforce_day_to_day(
+            db, settings, svc_rules, body, client_id=client.get("id"), is_admin=is_admin,
+            start_local=booking_start_local or _booking_start_local(body, settings), now_business=datetime.now(BUSINESS_TZ))
 
     # Duration is snapshotted now; the race-safe capacity/time-slot recount is
     # performed immediately before insert while a shared Mongo lease is held.
@@ -28440,7 +28409,7 @@ async def admin_run_daily_jobs(_: dict = Depends(require_admin)):
 # Saturday slot only became noticeable when Saturday arrived. The requested
 # date now drives URGENCY only, never visibility.
 
-PENDING_ACTION_TYPES = ("meet_and_greet_request", "booking_approval", "reschedule_request", "stripe_dispute", "shop_refund_reconciliation", "overdue_medication", "contact_inquiry", "online_payment_stuck")
+PENDING_ACTION_TYPES = ("meet_and_greet_request", "booking_approval", "reschedule_request", "stripe_dispute", "shop_refund_reconciliation", "overdue_medication", "contact_inquiry", "online_payment_stuck", "waitlist_spot_open")
 
 # item `type` → key on /admin/pending-actions/count
 _PENDING_ACTION_COUNT_KEYS = {
@@ -28452,6 +28421,7 @@ _PENDING_ACTION_COUNT_KEYS = {
     "overdue_medication": "overdue_medications",
     "contact_inquiry": "contact_inquiries",
     "online_payment_stuck": "online_payments_stuck",
+    "waitlist_spot_open": "waitlist_spots_open",
 }
 
 _PENDING_ACTION_TYPE_LABELS = {
@@ -28463,6 +28433,7 @@ _PENDING_ACTION_TYPE_LABELS = {
     "overdue_medication": "Overdue Medication",
     "contact_inquiry": "New Inquiry",
     "online_payment_stuck": "Online Payment Needs Attention",
+    "waitlist_spot_open": "Waitlist — Spot Opened",
 }
 
 
@@ -28785,6 +28756,7 @@ async def _collect_pending_actions(user: dict, *, type_filter: Optional[str] = N
                 "required_permission": "booking_edit",
                 **urgency,
             })
+        items.extend(await waitlist_spots.pending_action_items())  # a spot opened for a waitlisted dog (audit #33)
 
     if perms.get("finance_reports"):
         d_rows = await db.stripe_disputes.find(
@@ -28889,7 +28861,7 @@ async def admin_pending_actions_count(user: dict = Depends(require_admin)):
     rather than 403 so nav badges can poll safely for every staff role; the
     detailed list endpoint stays permission-enforced."""
     if not _user_can_see_any_pending_actions(user):
-        return {"total": 0, "meet_and_greet_requests": 0, "booking_approvals": 0, "reschedule_requests": 0, "stripe_disputes": 0, "shop_refund_reconciliations": 0, "overdue_medications": 0, "contact_inquiries": 0, "online_payments_stuck": 0}
+        return {"total": 0, "meet_and_greet_requests": 0, "booking_approvals": 0, "reschedule_requests": 0, "stripe_disputes": 0, "shop_refund_reconciliations": 0, "overdue_medications": 0, "contact_inquiries": 0, "online_payments_stuck": 0, "waitlist_spots_open": 0}
     perms = _perms_for(user)
     # Phase 6 — these counters are independent. They previously ran one after
     # another on every nav poll, so Action Required latency was the sum of six
@@ -28913,11 +28885,12 @@ async def admin_pending_actions_count(user: dict = Depends(require_admin)):
     )
     overdue_meds = len(overdue_rows)
     stuck = await billing_resolve.pending_action_count() if perms.get("delete_records") else 0
+    spots = len(await waitlist_spots.pending_action_items()) if perms.get("booking_edit") else 0
     return {
-        "total": mg + pending_bookings + resched + disputes + shop_recon + overdue_meds + inquiries + stuck,
+        "total": mg + pending_bookings + resched + disputes + shop_recon + overdue_meds + inquiries + stuck + spots,
         "meet_and_greet_requests": mg, "booking_approvals": pending_bookings, "reschedule_requests": resched,
         "stripe_disputes": disputes, "shop_refund_reconciliations": shop_recon, "overdue_medications": overdue_meds,
-        "contact_inquiries": inquiries, "online_payments_stuck": stuck,
+        "contact_inquiries": inquiries, "online_payments_stuck": stuck, "waitlist_spots_open": spots,
     }
 
 
@@ -29400,6 +29373,7 @@ async def admin_today_brain(_: dict = Depends(require_admin)):
             })
     except Exception as e:
         logger.warning("today-brain website inquiries failed: %s", e)
+    items.extend(await waitlist_spots.today_brain_items(_))  # waitlisted dogs who could have a spot now (audit #33)
 
     # 5b. Open client help requests / feedback (warn)
     try:
@@ -29733,7 +29707,7 @@ def _today_brain_signature(item: dict) -> str:
         # ("Name · 2 daycare · 0 training · 1 boarding left").
         nums = "|".join([t for t in title.replace("·", " ").split() if t.isdigit()])
         return f"low:{nums or title}"
-    if kind in ("booking_pending", "contact_inquiry", "hw_review", "hw_question", "vaccine_upload_review", "help_request", "quote_request", "reward_referral", "reward_trivia", "unpaid_balance", "stuck_checkout", "missing_report_card"):
+    if kind in ("booking_pending", "contact_inquiry", "hw_review", "hw_question", "vaccine_upload_review", "help_request", "quote_request", "reward_referral", "reward_trivia", "unpaid_balance", "stuck_checkout", "missing_report_card", "waitlist_spot_open"):
         # Title/subtitle carries the count → encode it as the signature.
         nums = "|".join([t for t in (title + " " + subtitle).split() if t.isdigit()])
         return f"{kind}:{nums or title}"

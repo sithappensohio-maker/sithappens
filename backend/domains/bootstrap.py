@@ -25,6 +25,7 @@ from domains.bookings import services as booking_services
 from domains.bookings import late_day as late_day_checkout
 from domains.bookings import group_pricing as booking_group_pricing
 from domains.bookings import friends_family
+from domains.bookings import waitlist_spots
 from domains.bookings import checkout_prices
 from domains.bookings import group_add as booking_group_add
 from domains.bookings import care as care_domain
@@ -144,6 +145,7 @@ def register_domains(
     late_day_checkout.configure(server_globals=server_globals)
     booking_group_pricing.configure(server_globals=server_globals)
     friends_family.configure(server_globals=server_globals)
+    waitlist_spots.configure(server_globals=server_globals)
     checkout_prices.configure(server_globals=server_globals)
     booking_group_add.configure(server_globals=server_globals)
     care_domain.configure(server_globals=server_globals)

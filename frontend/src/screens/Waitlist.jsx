@@ -6,6 +6,7 @@ import { api, formatErr } from "../lib/api";
 import { useConfirm } from "../lib/useConfirm";
 import { toast } from "sonner";
 import PageHero from "../components/PageHero";
+import { PENDING_ACTION_TARGET_KEY, announcePendingActionsChanged } from "../components/PendingActionsPanel";
 
 const SERVICE_TYPES = ["daycare", "boarding", "training", "grooming"];
 
@@ -46,6 +47,7 @@ export default function Waitlist() {
   const [open, setOpen] = useState(false);
   const [form, setForm] = useState(emptyForm);
   const [availability, setAvailability] = useState(null);   // for the form
+  const [highlight, setHighlight] = useState("");           // the entry Action Required sent us to
 
   const load = useCallback(async () => {
     setLoading(true);
@@ -65,6 +67,24 @@ export default function Waitlist() {
 
   // eslint-disable-next-line react-hooks/exhaustive-deps
   useEffect(() => { load(); }, []);
+
+  // Action Required's "Open Waitlist" (a spot opened, audit #33) stored the
+  // entry before navigating here: show it — even when it's Offered and the
+  // default filter would hide it — and bring it into view. Consumed once.
+  useEffect(() => {
+    if (loading || err) return;   // a failed load keeps the link for the next one
+    let target = null;
+    try { target = JSON.parse(sessionStorage.getItem(PENDING_ACTION_TARGET_KEY) || "null"); } catch { /* ignore */ }
+    if (!target?.waitlist_entry_id) return;
+    try { sessionStorage.removeItem(PENDING_ACTION_TARGET_KEY); } catch { /* ignore */ }
+    const entry = entries.find(e => e.id === target.waitlist_entry_id);
+    if (!entry) { toast("That waitlist entry has already been handled."); return; }
+    setFilter(entry.status);
+    setHighlight(entry.id);
+    setTimeout(() => {
+      document.querySelector(`[data-testid="waitlist-row-${entry.id}"]`)?.scrollIntoView?.({ block: "center" });
+    }, 0);
+  }, [loading, err, entries]);
 
   // Check availability whenever date or service_type changes in the form.
   useEffect(() => {
@@ -119,6 +139,7 @@ export default function Waitlist() {
   const updateStatus = async (entry, newStatus) => {
     try {
       await api.put(`/waitlist/${entry.id}`, { status: newStatus });
+      announcePendingActionsChanged();
       load();
     } catch (e) { toast.error(formatErr(e.response?.data?.detail)); }
   };
@@ -141,6 +162,7 @@ export default function Waitlist() {
     try {
       await api.delete(`/waitlist/${entry.id}`);
       toast.success("Removed");
+      announcePendingActionsChanged();
       load();
     } catch (e) { toast.error(formatErr(e.response?.data?.detail)); }
   };
@@ -148,13 +170,14 @@ export default function Waitlist() {
   const convertToBooking = async (entry) => {
     const ok = await confirm({
       title: `Book ${entry.dog_name} for ${entry.requested_date}?`,
-      body: "This checks for a real open spot before booking — it will fail if the day is still full — and runs the rest of the booking pipeline (vaccines, waiver, conflicts).",
+      body: "This checks for a real open spot before booking — it will fail if the day is still full — and runs the rest of the booking checks (vaccines, Meet & Greet, conflicts).",
       confirmText: "Create booking",
     });
     if (!ok) return;
     try {
       await api.post(`/waitlist/${entry.id}/convert-to-booking`);
       toast.success("Booking created");
+      announcePendingActionsChanged();
       load();
     } catch (e) { toast.error(formatErr(e.response?.data?.detail) || "Couldn't convert"); }
   };
@@ -197,8 +220,8 @@ export default function Waitlist() {
             const meta = STATUS_META[e.status] || STATUS_META.waiting;
             const pmeta = PRIORITY_META[e.priority] || PRIORITY_META.normal;
             return (
-              <div key={e.id} className="bg-[var(--sh-card-base)] border border-shAccent/20 rounded-xl p-4 shadow-lg"
-                   data-testid={`waitlist-row-${e.id}`}>
+              <div key={e.id} className={`bg-[var(--sh-card-base)] border rounded-xl p-4 shadow-lg ${highlight === e.id ? "border-shPrimary ring-2 ring-shPrimary/50" : "border-shAccent/20"}`}
+                   data-testid={`waitlist-row-${e.id}`} data-highlight={highlight === e.id ? "true" : undefined}>
                 <div className="flex items-start justify-between gap-3 flex-wrap">
                   <div className="flex-1 min-w-0">
                     <div className="flex items-center gap-2 flex-wrap mb-1">

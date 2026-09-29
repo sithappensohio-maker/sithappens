@@ -117,7 +117,8 @@ const EMPTY_COUNTS = {
 // The Schedule badge only counts items the Schedule workspace can actually
 // show (its Bookings tab lists approvals, Meet & Greets and reschedules).
 // Inquiries, disputes, refunds and overdue meds live elsewhere, so counting
-// them there sent the operator to a calendar with nothing on it.
+// them there sent the operator to a calendar with nothing on it. A waitlisted
+// dog whose spot opened is in Action Required, whose card links to its row.
 const SCHEDULE_ACTION_KEYS = ["meet_and_greet_requests", "booking_approvals", "reschedule_requests"];
 export function scheduleActionCount(pending) {
   if (!pending || typeof pending !== "object") return 0;

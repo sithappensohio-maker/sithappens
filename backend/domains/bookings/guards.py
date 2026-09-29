@@ -124,6 +124,47 @@ async def load_booking_dog(db, dog_id: str, user: dict) -> dict:
     return dog
 
 
+async def enforce_day_to_day(db, settings: dict, svc_rules: dict, body, *, client_id: Optional[str], is_admin: bool,
+                             start_local: datetime, now_business: datetime) -> None:
+    """The Day-to-Day guardrails (Sprint 110dm): same-day toggle, minimum
+    notice, weekend lead time, bookings per client per day, longest boarding
+    stay. Raises the refusal a booking gets. Shared by create_booking (staff
+    bypass it only with override_capacity) and the waitlist's "spot opened"
+    check (audit #33), which must never offer what a booking would refuse."""
+    guard = ((settings.get("day_to_day") or {}).get("guardrails") or {})
+    hours_until = (start_local - now_business).total_seconds() / 3600.0
+
+    if not svc_rules.get("_exact_same_day"):
+        if not guard.get("same_day_booking_allowed", True) and start_local.date() == now_business.date():
+            raise BookingBlocked(400, "Same-day bookings aren't available online. Please pick tomorrow or later, or call Sit Happens about today.", code="same_day_not_allowed", action="pick_date")
+    if not svc_rules.get("_exact_min_lead"):
+        min_adv_h = float(guard.get("min_advance_booking_hours", 0) or 0)
+        if min_adv_h > 0 and hours_until < min_adv_h:
+            raise BookingBlocked(400, f"Bookings need at least {int(min_adv_h)} hours' notice. Please pick a later date or time.", code="notice_too_short", action="pick_date")
+    wknd_lead = float(guard.get("weekend_lead_time_hours", 0) or 0)
+    if wknd_lead > 0 and start_local.weekday() in (5, 6):
+        if hours_until < wknd_lead:
+            raise BookingBlocked(400, f"Weekend bookings need at least {int(wknd_lead)} hours' notice. Please pick a later date, or a weekday.", code="notice_too_short", action="pick_date")
+    max_pcd = int(guard.get("max_bookings_per_client_per_day", 0) or 0)
+    if max_pcd > 0:
+        same_day = await db.bookings.count_documents({
+            # Bookings store the linked client-record id, not the portal
+            # login user's id. Using the login id made this limit a no-op.
+            "client_id": client_id,
+            "date": body.date,
+            "status": {"$nin": ["cancelled", "rejected"]},
+        })
+        if same_day >= max_pcd:
+            if is_admin:
+                raise HTTPException(status_code=400, detail=f"This client already has {max_pcd} booking(s) for that date.")
+            raise BookingBlocked(400, f"You already have {max_pcd} booking{'s' if max_pcd != 1 else ''} on that date, which is the most we take online for one day. " "Please pick another date, or contact Sit Happens.", code="daily_limit_reached", action="pick_date")
+    max_nights = int(guard.get("max_consecutive_boarding_nights", 0) or 0)
+    if max_nights > 0 and body.service_type == "boarding" and body.end_date:
+        nights = (date.fromisoformat(str(body.end_date)[:10]) - date.fromisoformat(str(body.date)[:10])).days
+        if nights > max_nights:
+            raise BookingBlocked(400, f"Boarding stays can be at most {max_nights} nights online. Please pick an earlier pickup date, or contact Sit Happens about a longer stay.", code="stay_too_long", action="pick_date")
+
+
 def validate_booking_dates(body) -> None:
     """Reject malformed dates up front with a clear message instead of a 500
     from deeper date math (only the first 10 characters used to be checked)."""

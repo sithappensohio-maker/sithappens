@@ -44,6 +44,7 @@ const TYPE_ICON = {
   overdue_medication: "fa-pills",
   contact_inquiry: "fa-inbox",
   online_payment_stuck: "fa-credit-card",
+  waitlist_spot_open: "fa-hourglass-half",
 };
 
 const REVIEW_LABEL = {
@@ -55,6 +56,7 @@ const REVIEW_LABEL = {
   overdue_medication: "Open Care Board",
   contact_inquiry: "Review Inquiry",
   online_payment_stuck: "Resolve Payment",
+  waitlist_spot_open: "Open Waitlist",
 };
 
 function fmtDateTime(dateStr, timeStr) {
@@ -101,6 +103,16 @@ export function PendingActionCard({ action, onOpen, testid }) {
             <p className="text-[12px] text-shTextMuted mt-1 break-words">
               Received {fmtReceived(action.created_at)} · <span className="font-bold">{action.waiting_label}</span>
             </p>
+          ) : action.type === "waitlist_spot_open" ? (
+            <>
+              {/* A spot opened on a day this dog is waitlisted for (audit #33). */}
+              <p className="text-[12px] text-shText mt-1 break-words" data-testid={testid ? `${testid}-spot` : undefined}>
+                Spot opened <span className="font-black">{dateRange}</span>
+              </p>
+              <p className="text-[12px] text-shTextMuted mt-0.5 break-words">
+                Joined {fmtReceived(action.created_at)} · <span className="font-bold">{action.waiting_label}</span>
+              </p>
+            </>
           ) : action.type === "overdue_medication" ? (
             <>
               <p className="text-[12px] text-red-300 mt-1 break-words">

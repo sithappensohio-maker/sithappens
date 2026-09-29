@@ -49,7 +49,7 @@ export function successHeadline(outcome, { waitlisted } = {}) {
 
 /** Sub-line on the success screen. */
 export function successDetail(outcome, { waitlisted } = {}) {
-  if (waitlisted) return "We'll let you know when a spot opens up.";
+  if (waitlisted) return "If a spot opens up, Sit Happens will contact you.";
   if (outcome === CONFIRMED) return "Your spot is confirmed. You'll find it under My Bookings.";
   return "Sit Happens will review your request. You'll see it update under My Bookings.";
 }

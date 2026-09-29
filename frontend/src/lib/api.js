@@ -328,6 +328,7 @@ const _resourcesForMutation = (url) => {
     || path.startsWith("/admin/school")
     || path.startsWith("/admin/pending-actions")
     || path.startsWith("/bookings")
+    || path.startsWith("/waitlist")
   ) resources.add("navCounts");
   return [...resources];
 };
