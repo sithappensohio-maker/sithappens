@@ -288,13 +288,17 @@ async def ring_pickup_merchandise(booking: dict, body, user: dict) -> Optional[d
     lines = list(getattr(body, "retail_lines", None) or [])
     if not lines:
         return None
-    if not getattr(body, "payment_method", None):
+    # When credits cover the stay, the goods' tender travels on its own
+    # (retail_payment_method): payment_method would also become the tender of
+    # any remainder the server finds on the stay (audit #24).
+    tender = getattr(body, "retail_payment_method", None) or getattr(body, "payment_method", None)
+    if not tender:
         raise HTTPException(status_code=400, detail="Choose how the products are being paid for.")
     if not getattr(body, "retail_idempotency_key", None):
         raise HTTPException(status_code=400,
                             detail="This sale is missing its idempotency key. Reopen the checkout and try again.")
 
-    method = "gift_card" if body.payment_method == "gift_card" else         _normalize_payment_method_fn(body.payment_method, store=True)
+    method = "gift_card" if tender == "gift_card" else _normalize_payment_method_fn(tender, store=True)
     if method == "credits":
         # Credits are prepaid VISITS. They buy daycare, not dog food.
         raise HTTPException(status_code=400,

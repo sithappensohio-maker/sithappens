@@ -352,3 +352,65 @@ def test_merchandise_at_pickup_can_be_bought_with_the_same_card():
     finally:
         run(server.db.gift_cards.delete_many({"id": card["id"]}))
         _cleanup(cid, [did], [bid], [prod["id"]])
+
+
+# ------------------------- goods paid for when credits cover the stay (audit #24)
+
+def test_goods_bought_when_credits_cover_the_stay_are_recorded_the_way_they_were_paid():
+    """Credits pay the visit; the customer pays for the food by card. The
+    visit stays paid with credits, and the till sale is a card sale: nothing
+    lands in the cash drawer."""
+    cid, did = _client_dog()
+    bid, prod = _booking(cid, did), _product(20.00)
+    run(server.db.bookings.update_one({"id": bid}, {"$set": {
+        "credit_value": 40.0, "credits_deducted": 1, "credit_service_type": "daycare"}}))
+    try:
+        out = _checkout(bid, use_credits=True, base_price=None, payment_method=None, retail_payment_method="card",
+                        retail_lines=_lines(prod), retail_idempotency_key=f"pickup-{uuid.uuid4()}")
+        visit = run(server.db.bookings.find_one({"id": bid}, {"_id": 0}))
+        assert visit["payment_method"] == "credits" and visit["status"] == "completed"
+        assert float(visit.get("amount_paid") or 0) == 0.0 and not visit.get("cash_payment_method")
+        sale = run(server.db.pos_sales.find_one({"id": out["pickup_sale"]["pos_sale_id"]}, {"_id": 0}))
+        assert [t["method"] for t in sale["tenders"]] == ["card"]
+        assert round(float(sale["total"]), 2) == 21.35
+    finally:
+        _cleanup(cid, [did], [bid], [prod["id"]])
+
+
+def test_a_gift_card_that_pays_for_the_goods_is_never_charged_for_a_stay_credits_cover():
+    """Credits granted by hand (or as a reward) are worth $0 on the books, and
+    the server can find a "remainder" on a visit they pay for. The card the
+    customer handed over for the food must pay for the food only."""
+    cid, did = _client_dog()
+    bid, prod = _booking(cid, did, price=40.0), _product(20.00)
+    card = _gift_card(100.00)
+    run(server._mutate_client_credits(cid, "daycare", 1, source="manual", reason=f"{TAG} granted"))
+    try:
+        out = _checkout(bid, use_credits=True, base_price=None, payment_method=None, retail_payment_method="gift_card",
+                        gift_card_code=card["code"], retail_lines=_lines(prod),
+                        retail_idempotency_key=f"pickup-{uuid.uuid4()}")
+        assert out["status"] == "completed" and out["pickup_sale"]["total"] == 21.35
+        after = run(server.db.gift_cards.find_one({"id": card["id"]}, {"_id": 0}))
+        assert after["balance"] == 78.65                     # 100 - 21.35 goods, nothing for the stay
+        visit = run(server.db.bookings.find_one({"id": bid}, {"_id": 0}))
+        assert visit["payment_method"] == "credits" and not visit.get("gift_card_applied")
+        assert visit.get("cash_payment_method") != "gift_card"
+    finally:
+        run(server.db.gift_cards.delete_many({"id": card["id"]}))
+        run(server.db.credit_lots.delete_many({"client_id": cid}))
+        _cleanup(cid, [did], [bid], [prod["id"]])
+
+
+def test_the_goods_tender_alone_still_needs_a_method():
+    cid, did = _client_dog()
+    bid, prod = _booking(cid, did), _product(20.00)
+    run(server.db.bookings.update_one({"id": bid}, {"$set": {
+        "credit_value": 40.0, "credits_deducted": 1, "credit_service_type": "daycare"}}))
+    try:
+        with pytest.raises(HTTPException) as e:
+            _checkout(bid, use_credits=True, base_price=None, payment_method=None,
+                      retail_lines=_lines(prod), retail_idempotency_key=f"pickup-{uuid.uuid4()}")
+        assert e.value.status_code == 400 and "paid for" in e.value.detail
+        assert run(server.db.bookings.find_one({"id": bid}, {"_id": 0}))["status"] != "completed"
+    finally:
+        _cleanup(cid, [did], [bid], [prod["id"]])

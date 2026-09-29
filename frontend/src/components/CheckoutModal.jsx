@@ -587,6 +587,11 @@ function CheckoutModalBody({ booking, services, onClose, onRequestCancel, lateDa
   const chargedToday = Math.round((preTaxChargedToday + salesTaxAmount) * 100) / 100;
   // One number at the counter: the stay plus anything bought with it.
   const dueToday = Math.round((chargedToday + shopTotal) * 100) / 100;
+  // "Paid with" is asked whenever anything is paid today: the stay, or the
+  // shop items when credits cover the stay (audit #24). In that second case
+  // the tender is the goods' alone and travels as retail_payment_method.
+  const goodsOnlyPayment = useCredits && chargedToday <= 0 && shopTotal > 0 && !isFF;
+  const payPickerShown = (!useCredits || chargedToday > 0 || shopTotal > 0) && !isFF;
 
   useEffect(() => {
     let alive = true;
@@ -662,7 +667,7 @@ function CheckoutModalBody({ booking, services, onClose, onRequestCancel, lateDa
         body.checkout_discount_amount = Number(checkoutDiscountRequested.toFixed(2));
         body.checkout_discount_reason = checkoutDiscountReason.trim();
       }
-      if (payMethod === "gift_card") {
+      if (payMethod === "gift_card" && payPickerShown) {
         if (!giftCard) { setErr("Check the gift card's balance first."); setBusy(false); return; }
         body.gift_card_code = giftCode.trim();
       }
@@ -670,7 +675,8 @@ function CheckoutModalBody({ booking, services, onClose, onRequestCancel, lateDa
         body.retail_lines = shopLines.map((l) => ({ kind: "retail", product_id: l.item.id, qty: l.qty }));
         body.retail_idempotency_key = retailKey;
         // Merchandise always takes real money, whatever the stay is doing.
-        body.payment_method = payMethod;
+        if (goodsOnlyPayment) body.retail_payment_method = payMethod;
+        else body.payment_method = payMethod;
       }
       if (btSessions.length) {
         body.board_train_resolution = btSessions.map((s) => ({
@@ -714,7 +720,8 @@ function CheckoutModalBody({ booking, services, onClose, onRequestCancel, lateDa
         } else {
           body.payment_status = "paid";
         }
-      } else if (extraNightsCharge > 0 || baseCashDueOnCredits > 0 || existingAddonTotal > 0 || addOnTotal > 0) {
+      } else if (!goodsOnlyPayment && (extraNightsCharge > 0 || baseCashDueOnCredits > 0 || existingAddonTotal > 0 || addOnTotal > 0)) {
+        // (Not when the tender is the goods' alone: it would also become the stay's.)
         body.payment_method = payMethod;
         body.payment_status = "paid";
       }
@@ -732,7 +739,7 @@ function CheckoutModalBody({ booking, services, onClose, onRequestCancel, lateDa
       if (isFF) {
         // Nothing is paid at a friends & family pickup (the server refuses money
         // offered here): the visit goes on the paying family's account.
-        for (const k of ["payment_method", "gift_card_code", "retail_lines", "retail_idempotency_key", "tendered_amount", "additional_cash_charge"]) delete body[k];
+        for (const k of ["payment_method", "retail_payment_method", "gift_card_code", "retail_lines", "retail_idempotency_key", "tendered_amount", "additional_cash_charge"]) delete body[k];
         body.payment_status = "paid_partial";
         body.amount_paid = 0;
         if (ffNoCredits) {
@@ -1376,13 +1383,21 @@ function CheckoutModalBody({ booking, services, onClose, onRequestCancel, lateDa
         {/* Section 3 — Payment method + Service value */}
         <div className="mb-5 border border-bgHover rounded-lg p-4 bg-bgBase">
           <p className="text-[13px] uppercase tracking-widest text-gray-500 font-black mb-3">{isFF ? "Price" : "Payment"}</p>
-          {(!useCredits || chargedToday > 0) && !isFF && (
+          {/* Audit #24: asked whenever anything is paid today — the stay, or
+              merchandise when credits cover the stay (it used to stay hidden
+              then, and the goods were recorded as cash whatever was paid). */}
+          {goodsOnlyPayment && (
+            <p className="text-[13px] text-gray-400 mb-2 normal-case" data-testid="checkout-pay-for-shop-note">
+              <i className="fas fa-circle-info text-shGreen mr-1"/>Credits cover the visit. Choose how the shop items were paid for.
+            </p>
+          )}
+          {payPickerShown && (
             <select value={payMethod} onChange={(e)=>setPayMethod(e.target.value)} data-testid="checkout-pay-method"
                     className="w-full bg-bgPanel border border-bgHover rounded p-2 text-white text-sm mb-3">
               <option value="cash">Cash</option><option value="card">Card</option><option value="venmo">Venmo</option><option value="paypal">PayPal</option><option value="check">Check</option><option value="other">Other</option><option value="gift_card">Gift Card</option>
             </select>
           )}
-          {payMethod === "gift_card" && !isFF && (
+          {payMethod === "gift_card" && payPickerShown && (
             <div className="mb-3" data-testid="checkout-gift-tender">
               <div className="flex gap-2">
                 <input value={giftCode} onChange={(e) => setGiftCode(e.target.value)}

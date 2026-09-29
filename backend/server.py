@@ -1205,6 +1205,7 @@ class CheckoutIn(BaseModel):
     expect_friends_family: Optional[bool] = None  # the screen's view; refused if the booking changed since
     payment_method: Optional[Literal["cash", "card", "transfer", "venmo", "paypal", "credits", "check", "other", "gift_card"]] = None
     gift_card_code: Optional[str] = Field(default=None, max_length=40)  # payment_method == "gift_card"
+    retail_payment_method: Optional[Literal["cash", "card", "transfer", "venmo", "paypal", "check", "other", "gift_card"]] = None  # the goods alone, when the stay takes nothing (audit #24)
     # "paid_partial" is an explicit CALLER-asserted tab/partial intent (e.g.
     # the Dashboard checkout modal's "Partial / on tab" pill) — belt-and-
     # suspenders so a partial/tab checkout can never silently collapse into
@@ -9345,7 +9346,7 @@ async def check_out_group(
             or body.amount_paid is not None
             or (body.payment_method not in (None, "credits"))
             or bool(body.add_ons)
-            or int(body.extra_nights or 0) > 0
+            or int(body.extra_nights or 0) > 0 or bool(body.retail_lines)
         )
         if might_collect_money:
             await _require_register_day_open(business_today().isoformat())
@@ -9662,7 +9663,7 @@ async def _check_out_endpoint_impl(
             or body.amount_paid is not None
             or (body.payment_method not in (None, "credits"))
             or bool(body.add_ons)
-            or int(body.extra_nights or 0) > 0
+            or int(body.extra_nights or 0) > 0 or bool(body.retail_lines)
         )
         if might_collect_money:
             await _require_register_day_open(business_today().isoformat())

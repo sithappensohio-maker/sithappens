@@ -25,6 +25,8 @@ jest.mock("../lib/useLiveRefresh", () => ({ useEditLock: jest.fn() }));
 jest.mock("../lib/posAgent", () => ({ printReceipt: jest.fn(), openDrawer: jest.fn() }));
 jest.mock("./ReceiptLogo", () => () => null);
 jest.mock("sonner", () => ({ toast: { success: jest.fn(), error: jest.fn() } }));
+// Signed in as someone who may change prices (the one-time discount below needs it).
+jest.mock("../lib/auth", () => ({ useAuth: () => ({ can: () => true }) }));
 
 const { api } = require("../lib/api");
 
@@ -49,7 +51,7 @@ const PRODUCTS = {
   ],
 };
 
-let container, root;
+let container, root, previewRows;
 
 const GIFT_CARD = { id: "gc-1", code_display: "ABCD-EFGH-JKMN", balance: 80.00,
                     initial_amount: 100.00, status: "active" };
@@ -61,7 +63,7 @@ const respond = (url) => {
       : Promise.resolve({ data: GIFT_CARD });
   }
   if (url.includes("/pos/catalog")) return Promise.resolve({ data: PRODUCTS });
-  if (url.includes("checkout-group-preview")) return Promise.resolve({ data: { bookings: [BOOKING] } });
+  if (url.includes("checkout-group-preview")) return Promise.resolve({ data: { bookings: previewRows || [BOOKING] } });
   if (url.includes("money-modifier-preview")) {
     return Promise.resolve({ data: { sales_tax: { enabled: true, rate_pct: 6.75, label: "Sales Tax", applies: false } } });
   }
@@ -69,6 +71,7 @@ const respond = (url) => {
 };
 
 beforeEach(() => {
+  previewRows = null;
   container = document.createElement("div");
   document.body.appendChild(container);
   api.get.mockReset();
@@ -271,4 +274,91 @@ test("an unchecked card cannot be used to pay", async () => {
   await click("confirm-checkout");          // never pressed Check
   expect(checkoutBody()).toBeUndefined();
   expect(container.textContent).toMatch(/Check the gift card/);
+});
+
+// ------------------------- paying for goods when credits cover the visit (audit #24)
+
+const CREDITED = { ...BOOKING, credit_value: 40, credits_deducted: 1, credit_service_type: "daycare" };
+
+test("when credits cover the visit, the shop items are recorded the way they were paid", async () => {
+  previewRows = [CREDITED];
+  await mount({ booking: CREDITED });
+  expect(q("checkout-pay-method")).toBeFalsy();                 // nothing to pay yet: nothing to ask
+  await click("checkout-shop-toggle");
+  await click("checkout-product-add-p-1");
+  expect(q("checkout-pay-for-shop-note").textContent).toContain("Credits cover the visit");
+  await setSelect("checkout-pay-method", "card");
+  await click("confirm-checkout");
+  const body = checkoutBody();
+  expect(body.use_credits).toBe(true);
+  expect(body.retail_lines).toEqual([{ kind: "retail", product_id: "p-1", qty: 1 }]);
+  // the goods' tender travels on its own: never the tender of the stay
+  expect(body.retail_payment_method).toBe("card");
+  expect(body.payment_method).toBeUndefined();
+});
+
+test("a gift card can pay for the shop items when credits cover the visit", async () => {
+  previewRows = [CREDITED];
+  await mount({ booking: CREDITED });
+  await click("checkout-shop-toggle");
+  await click("checkout-product-add-p-1");
+  await setSelect("checkout-pay-method", "gift_card");
+  await typeIn("checkout-gift-code", "ABCD-EFGH-JKMN");
+  await click("checkout-gift-lookup");
+  await click("confirm-checkout");
+  const body = checkoutBody();
+  expect(body.retail_payment_method).toBe("gift_card");
+  expect(body.payment_method).toBeUndefined();         // (so the stay can never be charged to the card)
+  expect(body.gift_card_code).toBe("ABCD-EFGH-JKMN");
+});
+
+test("a stay that takes money still sends one tender for the stay and the goods", async () => {
+  await mount();                                             // (no credits: the stay is paid today)
+  await click("checkout-shop-toggle");
+  await click("checkout-product-add-p-1");
+  expect(q("checkout-pay-for-shop-note")).toBeFalsy();
+  await setSelect("checkout-pay-method", "card");
+  await click("confirm-checkout");
+  const body = checkoutBody();
+  expect(body.payment_method).toBe("card");
+  expect(body.retail_payment_method).toBeUndefined();
+});
+
+test("taking the goods back off after choosing a gift card leaves nothing to pay and nothing to check", async () => {
+  previewRows = [CREDITED];
+  await mount({ booking: CREDITED });
+  await click("checkout-shop-toggle");
+  await click("checkout-product-add-p-1");
+  await setSelect("checkout-pay-method", "gift_card");
+  expect(q("checkout-gift-tender")).toBeTruthy();
+  await click("checkout-product-minus-p-1");
+  expect(q("checkout-pay-method")).toBeFalsy();
+  expect(q("checkout-gift-tender")).toBeFalsy();
+  await click("confirm-checkout");
+  const body = checkoutBody();
+  expect(body).toBeTruthy();
+  expect(body.gift_card_code).toBeUndefined();
+  expect(body.payment_method).toBeUndefined();
+  expect(body.retail_payment_method).toBeUndefined();
+});
+
+test("a discount that leaves only the goods to pay never sends the goods' tender for the stay", async () => {
+  // Credits cover the visit; the bath already on it ($15) is taken off with a
+  // one-time discount, so only the food is paid today, by gift card.
+  const withBath = { ...CREDITED, add_ons: [{ service_id: "svc-2", name: "Nail Trim", price: 15, qty: 1 }] };
+  previewRows = [withBath];
+  await mount({ booking: withBath });
+  await typeIn("checkout-discount-amount", "15");
+  await typeIn("checkout-discount-reason", "comp trim");
+  await click("checkout-shop-toggle");
+  await click("checkout-product-add-p-1");
+  expect(q("checkout-pay-for-shop-note")).toBeTruthy();
+  await setSelect("checkout-pay-method", "gift_card");
+  await typeIn("checkout-gift-code", "ABCD-EFGH-JKMN");
+  await click("checkout-gift-lookup");
+  await click("confirm-checkout");
+  const body = checkoutBody();
+  expect(body.retail_payment_method).toBe("gift_card");
+  expect(body.payment_method).toBeUndefined();
+  expect(body.payment_status).toBeUndefined();
 });
