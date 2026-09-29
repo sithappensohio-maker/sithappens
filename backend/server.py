@@ -36890,7 +36890,7 @@ async def _register_day_summary(day: Optional[str] = None) -> Dict[str, Any]:
         method_display = REGISTER_METHOD_LABELS.get(
             _normalize_payment_method(r.get("payment_method")), "Other"
         )
-        if pos_id and pos_id in pos_tenders_by_sale:
+        if pos_id and pos_id in pos_tenders_by_sale and (is_void_row or not partial_reversal):  # a refund/return went back on its own method
             method_display = " + ".join(
                 f"{REGISTER_METHOD_LABELS.get(_normalize_payment_method(t.get('method')), 'Other')} ${round(float(t.get('amount') or 0), 2):.2f}"
                 for t in pos_tenders_by_sale[pos_id]
@@ -37630,7 +37630,7 @@ class RegisterRefundIn(BaseModel):
     # derives the tax. Otherwise tax_amount says the portion explicitly (0 for
     # a service). See domains.register.services.record_register_refund.
     sale_id: Optional[str] = None
-    tax_amount: float = Field(default=0, ge=0)
+    tax_amount: Optional[float] = Field(default=None, ge=0)  # None = left empty
 
 
 class RegisterCashPayoutIn(BaseModel):
@@ -43936,7 +43936,7 @@ async def get_pos_sale_return_preview(sale_id: str, user: dict = Depends(require
     sale = await db.pos_sales.find_one({"id": sale_id}, {"_id": 0})
     if not sale:
         raise HTTPException(status_code=404, detail="Sale not found")
-    return pos_domain_services.return_preview(sale)
+    return await pos_domain_services.return_preview_checked(sale)
 
 
 async def return_pos_sale(sale_id: str, body: pos_domain_services.PosSaleReturnIn,
@@ -44414,8 +44414,8 @@ async def void_pos_sale(sale_id: str, body: PosSaleVoidIn, user: dict = Depends(
             detail="This sale's business day has been closed out. Use the financial-correction workflow instead.",
         )
 
-    # Gift cards on the sale: checked before anything moves (a sold card
-    # already spent refuses the void). Logic: domains/gift_cards/services.py.
+    await pos_domain_services.refuse_after_hand_refund(original, "void")  # money refunded by hand can't go back twice (audit #27)
+    # Gift cards on the sale: checked before anything moves (a spent card refuses the void). See domains/gift_cards.
     gc_plan = await gift_card_services.plan_void(original)
     fingerprint = _request_fingerprint(sale_id, body.reason.strip())
     claim_id = str(uuid.uuid4())

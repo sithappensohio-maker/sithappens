@@ -17,6 +17,7 @@ from pydantic import BaseModel, Field
 import sales_tax_policy
 from domains.bookings import friends_family
 from domains.gift_cards import services as gift_cards_services
+from domains.pos import given_back
 
 _db = None
 _resolve_client_price_fn = None
@@ -519,6 +520,22 @@ def _returned_line_amounts(line: dict, qty: float) -> tuple:
     return net, tax
 
 
+async def return_preview_checked(sale: dict, today: Optional[_date] = None) -> dict:
+    """return_preview, plus the one refusal it can't see from the sale alone:
+    money already refunded by hand against this sale (audit #27)."""
+    preview = return_preview(sale, today)
+    block = None if preview["blocked_reason"] else await given_back.hand_refund_block(_db, sale, "return")
+    if block:
+        preview.update(blocked_reason=block, can_return=False)
+    return preview
+
+
+async def refuse_after_hand_refund(sale: dict, action: str) -> None:
+    block = await given_back.hand_refund_block(_db, sale, action)
+    if block:
+        raise HTTPException(status_code=409, detail=block)
+
+
 async def return_pos_sale(*, sale_id: str, body, user: dict) -> dict:
     """Take merchandise back and give that merchandise's money back.
 
@@ -541,7 +558,7 @@ async def return_pos_sale(*, sale_id: str, body, user: dict) -> dict:
             return {"ok": True, "returned": done, "replayed": True}
 
     business_day = _business_today()   # (one day for the window check and everything the return records)
-    preview = return_preview(sale, business_day)
+    preview = await return_preview_checked(sale, business_day)
     if preview["blocked_reason"]:
         raise HTTPException(status_code=409, detail=preview["blocked_reason"])
 

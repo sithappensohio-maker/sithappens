@@ -1864,6 +1864,7 @@ export function RegisterTab({ excludeTabs = [] } = {}) {
   const [packSale, setPackSale] = useState({ client_id: "", pack_id: "", quantity: "1", payment_method: "card", amount_paid: "", note: "" });
   const [payment, setPayment] = useState({ client_id: "", amount: "", method: "card", notes: "", tendered_amount: "" });
   const [refund, setRefund] = useState({ client_id: "", amount: "", payment_method: "card", reason: "", notes: "", sale_id: "", tax_amount: "" });
+  const refundSaleRef = refund.sale_id.trim().replace(/^#+\s*/, "");  // "#" alone is no receipt yet
   const [payout, setPayout] = useState({ amount: "", description: "", category: "Supplies", vendor: "", notes: "", tax_deductible: true });
   const [tillAdjustment, setTillAdjustment] = useState({ direction: "remove", amount: "", adjustment_type: "owner_draw", reason: "", notes: "" });
   const [closeout, setCloseout] = useState({ cash_counted: "", card_batch: "", venmo_total: "", paypal_total: "", check_total: "", notes: "" });
@@ -2052,8 +2053,9 @@ export function RegisterTab({ excludeTabs = [] } = {}) {
       // Naming the sale caps the refund at what is left on it and works the
       // tax out from it. Without one, the tax portion has to be stated —
       // zero for a service, which is the common case here.
-      sale_id: refund.sale_id.trim() || null,
-      tax_amount: refund.sale_id.trim() ? 0 : Number(refund.tax_amount || 0),
+      sale_id: refundSaleRef || null,
+      // Against a receipt, an empty tax box means "work it out from the sale".
+      tax_amount: refundSaleRef && String(refund.tax_amount).trim() === "" ? null : Number(refund.tax_amount || 0),
     });
     setRefund({ client_id: refund.client_id, amount: "", payment_method: refund.payment_method, reason: "", notes: "", sale_id: "", tax_amount: "" });
     showDone("Refund recorded and deducted from Register totals.");
@@ -2429,17 +2431,16 @@ export function RegisterTab({ excludeTabs = [] } = {}) {
           {clientSelect(refund.client_id, v=>setRefund({...refund, client_id:v}), true)}
           <RegisterFormInput label="Reason" value={refund.reason} onChange={v=>setRefund({...refund, reason:v})} placeholder="Cancellation refund, overcharge, etc."/>
           <RegisterFormInput label="Notes" value={refund.notes} onChange={v=>setRefund({...refund, notes:v})}/>
-          <RegisterFormInput label="Against sale # (optional)" value={refund.sale_id} testid="refund-sale-id"
-                             onChange={v=>setRefund({...refund, sale_id:v})} placeholder="Sale id — caps the refund and reverses its tax"/>
-          {!refund.sale_id.trim() && (
-            <RegisterFormInput label="Sales tax included (0 for a service)" type="number" step="0.01" testid="refund-tax-amount"
-                               value={refund.tax_amount} onChange={v=>setRefund({...refund, tax_amount:v})}/>
-          )}
+          <RegisterFormInput label="Against Register receipt # (optional)" value={refund.sale_id} testid="refund-sale-id"
+                             onChange={v=>setRefund({...refund, sale_id:v})} placeholder="Receipt # of a Register sale — caps the refund and reverses its tax"/>
+          <RegisterFormInput label={refundSaleRef ? "Sales tax included (worked out from the sale — fill in only if asked)" : "Sales tax included (0 for a service)"}
+                             type="number" step="0.01" testid="refund-tax-amount"
+                             value={refund.tax_amount} onChange={v=>setRefund({...refund, tax_amount:v})}/>
         </div>
-        {!refund.sale_id.trim() && Number(refund.tax_amount || 0) === 0 && (
+        {!refundSaleRef && Number(refund.tax_amount || 0) === 0 && (
           <p className="text-[12px] text-shTextMuted" data-testid="refund-no-tax-note">
             No sales tax will be reversed. Right for a service refund; if you are giving back a taxed
-            merchandise sale, name the sale above so the tax goes back to Ohio too.
+            merchandise sale, enter its Register receipt # above so the tax goes back to Ohio too.
           </p>
         )}
         <button disabled={busy || !Number(refund.amount) || !refund.reason} onClick={submitRefund} className="bg-red-500 disabled:opacity-50 text-shText px-4 py-2 rounded text-[12px] font-black uppercase tracking-widest"><i className={`fas ${busy ? "fa-spinner fa-spin" : "fa-check"} mr-1`}/>{busy ? "Saving…" : "Record refund"}</button>

@@ -5,6 +5,9 @@ import uuid
 from typing import Any, Dict, Optional
 from fastapi import HTTPException
 
+from domains.gift_cards import services as gift_card_services
+from domains.pos import given_back
+
 _active_register_closeout_fn = None
 _closeout_rollover_cash_fn = None
 _db = None
@@ -246,14 +249,18 @@ async def record_register_refund(body, user: dict) -> dict:
 
     amount = round(float(body.amount), 2)
     sale = None
-    tax_part = round(float(getattr(body, "tax_amount", 0) or 0), 2)
+    stated_tax = getattr(body, "tax_amount", None)   # None = left empty
+    tax_part = round(float(stated_tax or 0), 2)
 
-    sale_id = (getattr(body, "sale_id", None) or "").strip()
-    if sale_id:
-        sale = await _db.pos_sales.find_one({"id": sale_id}, {"_id": 0})
-        if not sale:
-            raise HTTPException(status_code=404, detail="That sale could not be found.")
-        already = await _already_given_back(sale_id)
+    typed = (getattr(body, "sale_id", None) or "").strip()
+    sale_ref = typed.lstrip("#").strip()
+    if typed and not sale_ref:
+        raise HTTPException(status_code=400, detail="Type the number after the # on the receipt, or leave the box empty.")
+    sale_id = ""
+    if sale_ref:
+        sale = await _find_sale(sale_ref)
+        sale_id = sale["id"]
+        already, tax_back = (await given_back.by_sale(_db, [sale_id])).get(sale_id, (0.0, 0.0))
         remaining = round(float(sale.get("total") or 0) - already, 2)
         if remaining <= 0:
             raise HTTPException(
@@ -264,11 +271,38 @@ async def record_register_refund(body, user: dict) -> dict:
                 status_code=400,
                 detail=f"Only {_fmt(remaining)} is left to refund on sale "
                        f"#{sale.get('receipt_number')} — it was {_fmt(sale.get('total'))}.")
-        # The tax comes from the sale, in the same proportion as the refund.
-        # Deriving it beats asking, because the operator cannot get it wrong.
-        sale_total = round(float(sale.get("total") or 0), 2)
-        sale_tax = round(float(sale.get("tax_amount") or 0), 2)
-        tax_part = round(sale_tax * (amount / sale_total), 2) if sale_total > 0 else 0.0
+        goods_left, untaxed, sold_entitlement = _what_is_on(sale)
+        # A pack, a program or a gift card is only taken back by a void, so
+        # while a void would cleanly undo the sale a money-only refund would
+        # leave the client holding what they were refunded for.
+        if sold_entitlement and await _void_would_undo(sale):
+            raise HTTPException(status_code=409, detail=(
+                f"Sale #{sale.get('receipt_number')} sold a credit pack, program or gift card that nothing has been "
+                "used from yet. A refund here gives money back but can't take those back, so void the sale instead "
+                "(Register → Recent Sales → Void). If only the price was wrong, ring it up again at the right price."))
+        # The tax the sale still owes Ohio: its tax less what a return or an
+        # earlier refund already gave back, and none once its goods are all
+        # back. Worked out from the sale, so the operator can't get it wrong —
+        # a typed amount is ignored, even a stray 0 left in the box.
+        tax_left = max(0.0, round(float(sale.get("tax_amount") or 0) - tax_back, 2)) if goods_left else 0.0
+        if tax_left > 0 and untaxed:
+            # Taxed goods and untaxed items together: a money-only refund
+            # can't say which part is going back, so ask rather than guess —
+            # and keep the refund on the sale so its ceiling still holds.
+            if stated_tax is None:
+                raise HTTPException(status_code=409, detail=(
+                    f"Sale #{sale.get('receipt_number')} has taxed goods and untaxed items together, so type the "
+                    "sales tax included in this refund in 'Sales tax included' (0 if it is for the untaxed part). "
+                    "Goods coming back over the counter: use Register → Recent Sales → Return for them first — once a "
+                    "refund is recorded here, Return is closed on this sale."))
+            tax_part = round(float(stated_tax), 2)
+            if tax_part > tax_left + 0.005:
+                raise HTTPException(status_code=400, detail=(
+                    f"Only {_fmt(tax_left)} of sales tax is left on sale #{sale.get('receipt_number')}."))
+            if tax_part > amount + 0.005:
+                raise HTTPException(status_code=400, detail="The tax portion cannot exceed the refund.")
+        else:
+            tax_part = min(tax_left, round(tax_left * (amount / remaining), 2))
     elif tax_part > amount + 0.005:
         raise HTTPException(status_code=400, detail="The tax portion cannot exceed the refund.")
 
@@ -306,20 +340,72 @@ async def record_register_refund(body, user: dict) -> dict:
     return doc
 
 
+async def _find_sale(ref: str) -> dict:
+    """The sale a refund is against, from what the desk has in hand: the
+    receipt number printed on the receipt (any case, with or without "#"),
+    or the sale's internal id. Only the id used to work, which nobody ever
+    sees, so the box was left empty and no sales tax was reversed (audit #27)."""
+    sale = await _db.pos_sales.find_one({"id": {"$in": [ref, ref.lower()]}}, {"_id": 0})
+    if sale:
+        return sale
+    matches = await _db.pos_sales.find({"receipt_number": ref.upper()}, {"_id": 0}).to_list(2)
+    if len(matches) > 1:
+        raise HTTPException(status_code=409, detail=(
+            f"More than one Register sale has receipt #{ref.upper()}. Find it under Recent Sales and refund it with Return there."))
+    if not matches:
+        raise HTTPException(status_code=404, detail=(
+            f"No Register sale has receipt #{ref.upper()}. A visit or pickup receipt is for the stay only; goods "
+            "bought at a pickup have their own receipt # under Register → Recent Sales. Leave this box empty "
+            "only for a service refund."))
+    return matches[0]
+
+
+ENTITLEMENT_KINDS = ("credit_pack", "training_program", "gift_card")
+
+
+def _what_is_on(sale: dict) -> tuple:
+    """(taxed goods still on the sale, untaxed items still on it, sold a
+    pack/program/gift card). A line is "still on" the sale until every unit
+    came back through Return — read from the items, never from cents of tax
+    arithmetic, which a return made one unit at a time can leave a cent off.
+    Untaxed items are a pack, a program, a gift card, a service or an
+    untaxed product. Sales from before lines carried `taxable` are treated
+    as all goods, as before."""
+    lines = [li for li in (sale.get("line_items") or [])
+             if float(li.get("net_amount", li.get("amount")) or 0) > 0.005]
+    sold_entitlement = any(li.get("kind") in ENTITLEMENT_KINDS for li in lines)
+    if not lines or any("taxable" not in li for li in lines):
+        return True, False, sold_entitlement
+    on = [li for li in lines if float(li.get("returned_qty") or 0) < float(li.get("qty") or 0)]
+    return any(li["taxable"] for li in on), any(not li["taxable"] for li in on), sold_entitlement
+
+
+async def _void_would_undo(sale: dict) -> bool:
+    """Whether a void would cleanly undo this sale — the only thing that
+    takes back a pack, a program or a gift card. Every one of the void's own
+    refusals counts (so the desk is never sent to a void that refuses and
+    sends them back here): completed, nothing returned, its day not closed
+    out, nothing already refunded by hand, and none of its sold gift cards
+    spent. And nothing used from a pack or program it sold: a void hands back
+    the full price but can only take back the credits still unused."""
+    if (sale.get("status") or "completed") != "completed":
+        return False
+    if any(float(li.get("returned_qty") or 0) > 0 for li in sale.get("line_items") or []):
+        return False
+    day = sale.get("business_date")
+    if day and await _active_register_closeout_fn(day):
+        return False
+    if await given_back.hand_refund_block(_db, sale, "void"):
+        return False
+    async for lot in _db.credit_lots.find({"pos_sale_id": sale.get("id")}, {"_id": 0, "qty_total": 1, "qty_remaining": 1}):
+        if float(lot.get("qty_remaining") or 0) < float(lot.get("qty_total") or 0):
+            return False
+    try:
+        await gift_card_services.plan_void(sale)   # read-only: the void's own gift card check
+    except HTTPException:
+        return False
+    return True
+
+
 def _fmt(value) -> str:
     return f"${round(float(value or 0), 2):.2f}"
-
-
-async def _already_given_back(sale_id: str) -> float:
-    """Every dollar already handed back on this sale, however it was done —
-    a void, a return, or an earlier manual refund. One sale cannot be
-    refunded three ways for three times the money."""
-    total = 0.0
-    rows = await _db.retail_sales.find(
-        {"pos_sale_id": sale_id, "amount": {"$lt": 0}}, {"_id": 0, "amount": 1},
-    ).to_list(500)
-    for r in rows:
-        total += abs(float(r.get("amount") or 0))
-    return round(total, 2)
-
-
