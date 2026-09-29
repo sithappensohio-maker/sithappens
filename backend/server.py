@@ -7771,7 +7771,7 @@ async def _write_checkout_payment_rows(
             # The OTHER-method note is persisted for BOTH single and group
             # checkout (a manual-payment-method rule, not a pricing rule) —
             # only tendered_amount/change_given are single-booking-only.
-            row_notes = payment_notes.strip() if (mapped_method == "other" and payment_notes) else ""
+            row_notes = payment_notes.strip() if (mapped_method == "other" and payment_notes and tender == "other") else ""
             await _insert_payment_row({
                 "id": str(uuid.uuid4()), "invoice_id": invoice_id, "client_id": friends_family.payer_id(b),
                 "amount": round(cash_amount, 2), "method": mapped_method,
@@ -9362,7 +9362,7 @@ async def check_out_group(
         # depend on the final price at all, so they run safely up front,
         # before any row/client lock has been used for anything but the
         # lock acquisition itself.
-        resolved_group_tender = _normalize_payment_method(body.payment_method, store=True) if body.payment_method else None
+        resolved_group_tender = _normalize_payment_method(group_tender, store=True) if (group_tender := body.payment_method or (body.retail_payment_method if body.retail_lines else None)) else None
         if resolved_group_tender == "other" and not (body.payment_notes or "").strip():
             raise HTTPException(status_code=400, detail="A note is required when the payment method is Other.")
         if resolved_group_tender == "cash":

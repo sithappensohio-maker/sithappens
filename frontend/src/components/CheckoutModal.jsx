@@ -219,6 +219,8 @@ function CheckoutModalBody({ booking, services, onClose, onRequestCancel, lateDa
   const [ffErr, setFfErr] = useState("");
   const [ffConfirmClose, setFfConfirmClose] = useState(false);
   const [payMethod, setPayMethod] = useState("cash");
+  // "Other" (Zelle, Cash App…) needs a note saying what it was, as at the Register.
+  const [otherNote, setOtherNote] = useState("");
   // Paying a pickup with a gift card. The balance is checked while the
   // customer is still standing there, not when the checkout is submitted.
   const [giftCode, setGiftCode] = useState("");
@@ -637,6 +639,10 @@ function CheckoutModalBody({ booking, services, onClose, onRequestCancel, lateDa
       setErr(`The discount cannot exceed the $${preTaxBeforeCheckoutDiscount.toFixed(2)} dollar amount due.`);
       return;
     }
+    if (payMethod === "other" && payPickerShown && !otherNote.trim()) {
+      setErr("A note is required when the payment method is Other.");
+      return;
+    }
     setBusy(true);
     try {
       // The early-checkout price depends on the clock (the pickup-time rule):
@@ -669,6 +675,7 @@ function CheckoutModalBody({ booking, services, onClose, onRequestCancel, lateDa
         body.checkout_discount_amount = Number(checkoutDiscountRequested.toFixed(2));
         body.checkout_discount_reason = checkoutDiscountReason.trim();
       }
+      if (payMethod === "other" && payPickerShown) body.payment_notes = otherNote.trim();   // (only for Other: never stamped on a card payment)
       if (payMethod === "gift_card" && payPickerShown) {
         if (!giftCard) { setErr("Check the gift card's balance first."); setBusy(false); return; }
         body.gift_card_code = giftCode.trim();
@@ -722,7 +729,7 @@ function CheckoutModalBody({ booking, services, onClose, onRequestCancel, lateDa
         } else {
           body.payment_status = "paid";
         }
-      } else if (!goodsOnlyPayment && (extraNightsCharge > 0 || baseCashDueOnCredits > 0 || existingAddonTotal > 0 || addOnTotal > 0)) {
+      } else if (!goodsOnlyPayment && payPickerShown && (extraNightsCharge > 0 || baseCashDueOnCredits > 0 || existingAddonTotal > 0 || addOnTotal > 0)) {
         // (Not when the tender is the goods' alone: it would also become the stay's.)
         body.payment_method = payMethod;
         body.payment_status = "paid";
@@ -741,7 +748,7 @@ function CheckoutModalBody({ booking, services, onClose, onRequestCancel, lateDa
       if (isFF) {
         // Nothing is paid at a friends & family pickup (the server refuses money
         // offered here): the visit goes on the paying family's account.
-        for (const k of ["payment_method", "retail_payment_method", "gift_card_code", "retail_lines", "retail_idempotency_key", "tendered_amount", "additional_cash_charge", "checkout_discount_amount", "checkout_discount_reason"]) delete body[k];
+        for (const k of ["payment_method", "retail_payment_method", "gift_card_code", "retail_lines", "retail_idempotency_key", "tendered_amount", "additional_cash_charge", "checkout_discount_amount", "checkout_discount_reason", "payment_notes"]) delete body[k];
         body.payment_status = "paid_partial";
         body.amount_paid = 0;
         if (ffNoCredits) {
@@ -1398,6 +1405,11 @@ function CheckoutModalBody({ booking, services, onClose, onRequestCancel, lateDa
                     className="w-full bg-bgPanel border border-bgHover rounded p-2 text-white text-sm mb-3">
               <option value="cash">Cash</option><option value="card">Card</option><option value="venmo">Venmo</option><option value="paypal">PayPal</option><option value="check">Check</option><option value="other">Other</option><option value="gift_card">Gift Card</option>
             </select>
+          )}
+          {payMethod === "other" && payPickerShown && (
+            <input value={otherNote} onChange={(e) => setOtherNote(e.target.value)} maxLength={500}
+                   placeholder="Note (required, e.g. Zelle)" data-testid="checkout-other-note"
+                   className="w-full min-h-[48px] mb-3 bg-bgPanel border border-bgHover rounded px-3 text-white text-sm"/>
           )}
           {payMethod === "gift_card" && payPickerShown && (
             <div className="mb-3" data-testid="checkout-gift-tender">

@@ -415,3 +415,106 @@ def test_the_goods_tender_alone_still_needs_a_method():
         assert run(server.db.bookings.find_one({"id": bid}, {"_id": 0}))["status"] != "completed"
     finally:
         _cleanup(cid, [did], [bid], [prod["id"]])
+
+
+# ------------------------- "Other" at pickup (Zelle, Cash App…): the note travels
+
+OTHER_NOTE_MSG = "A note is required when the payment method is Other."
+
+
+def _bill_payments(bid):
+    bill = run(server.db.invoices.find_one({"booking_ids": bid, "status": {"$ne": "VOID"}}, {"_id": 0}))
+    return run(server.db.payments.find({"invoice_id": bill["id"]}, {"_id": 0}).to_list(10)) if bill else []
+
+
+def _credited(bid):
+    run(server.db.bookings.update_one({"id": bid}, {"$set": {
+        "credit_value": 40.0, "credits_deducted": 1, "credit_service_type": "daycare"}}))
+
+
+def test_a_pickup_paid_by_other_with_goods_goes_through_with_its_note():
+    cid, did = _client_dog()
+    bid, prod = _booking(cid, did), _product(20.00)
+    try:
+        out = _checkout(bid, payment_method="other", payment_notes="  Zelle  ", payment_status="paid",
+                        retail_lines=_lines(prod), retail_idempotency_key=f"pickup-{uuid.uuid4()}")
+        assert out["status"] == "completed"
+        sale = run(server.db.pos_sales.find_one({"id": out["pickup_sale"]["pos_sale_id"]}, {"_id": 0}))
+        assert [(t["method"], t.get("notes")) for t in sale["tenders"]] == [("other", "Zelle")]
+        assert [(p["method"], p["notes"]) for p in _bill_payments(bid) if not p.get("is_credit")] == [("other", "Zelle")]
+    finally:
+        _cleanup(cid, [did], [bid], [prod["id"]])
+
+
+def test_goods_alone_paid_by_other_when_credits_cover_the_stay():
+    cid, did = _client_dog()
+    bid, prod = _booking(cid, did), _product(20.00)
+    _credited(bid)
+    try:
+        out = _checkout(bid, use_credits=True, base_price=None, payment_method=None, retail_payment_method="other",
+                        payment_notes="Cash App", retail_lines=_lines(prod), retail_idempotency_key=f"pickup-{uuid.uuid4()}")
+        visit = run(server.db.bookings.find_one({"id": bid}, {"_id": 0}))
+        assert visit["payment_method"] == "credits" and not visit.get("cash_payment_method")
+        sale = run(server.db.pos_sales.find_one({"id": out["pickup_sale"]["pos_sale_id"]}, {"_id": 0}))
+        assert [(t["method"], t.get("notes")) for t in sale["tenders"]] == [("other", "Cash App")]
+    finally:
+        _cleanup(cid, [did], [bid], [prod["id"]])
+
+
+def test_goods_paid_by_other_without_a_note_are_refused_before_anything_is_sold():
+    cid, did = _client_dog()
+    bid, prod = _booking(cid, did), _product(20.00, stock=5)
+    try:
+        with pytest.raises(HTTPException) as e:
+            _checkout(bid, payment_method="other", payment_status="paid", retail_lines=_lines(prod),
+                      retail_idempotency_key=f"pickup-{uuid.uuid4()}")
+        assert (e.value.status_code, e.value.detail) == (400, OTHER_NOTE_MSG)
+        assert not run(server.db.pos_sales.find_one({"client_id": cid}))
+        assert run(server.db.pos_products.find_one({"id": prod["id"]}))["stock_on_hand"] == 5
+        assert run(server.db.bookings.find_one({"id": bid}))["status"] != "completed"
+    finally:
+        _cleanup(cid, [did], [bid], [prod["id"]])
+
+
+def test_a_household_paying_only_for_goods_by_other_needs_the_note_before_any_dog_leaves(monkeypatch):
+    started = []
+    real = server._check_out_locked
+
+    async def counted(*a, **kw):
+        started.append(a[0])
+        return await real(*a, **kw)
+    monkeypatch.setattr(server, "_check_out_locked", counted)
+    cid, did = _client_dog()
+    did2 = str(uuid.uuid4())
+    run(server.db.dogs.insert_one({"id": did2, "owner_id": cid, "name": f"{TAG} Bo"}))
+    bids = [_booking(cid, did), _booking(cid, did2)]
+    prod = _product(20.00)
+    for bid in bids:
+        _credited(bid)
+    body = dict(use_credits=True, payment_method=None, retail_payment_method="other", retail_lines=_lines(prod))
+    try:
+        with pytest.raises(HTTPException) as e:
+            run(server.check_out_group(bids[0], server.CheckoutIn(retail_idempotency_key=f"pickup-{uuid.uuid4()}", **body), ADMIN))
+        assert (e.value.status_code, e.value.detail) == (400, OTHER_NOTE_MSG)
+        assert started == [], "refused before any dog began checking out"
+        assert all(run(server.db.bookings.find_one({"id": b}))["status"] != "completed" for b in bids)
+        run(server.check_out_group(bids[0], server.CheckoutIn(retail_idempotency_key=f"pickup-{uuid.uuid4()}",
+                                                              payment_notes="Zelle", **body), ADMIN))
+        assert all(run(server.db.bookings.find_one({"id": b}))["status"] == "completed" for b in bids)
+        sale = run(server.db.pos_sales.find_one({"client_id": cid}, {"_id": 0}))
+        assert [(t["method"], t.get("notes")) for t in sale["tenders"]] == [("other", "Zelle")]
+    finally:
+        run(server.db.checkout_groups.delete_many({"client_id": cid}))
+        _cleanup(cid, [did, did2], bids, [prod["id"]])
+
+
+def test_an_other_note_never_lands_on_a_payment_that_was_not_other():
+    cid, did = _client_dog()
+    bid = _booking(cid, did)
+    try:
+        _checkout(bid, payment_method="card", payment_notes="left over from Other", payment_status="paid")
+        rows = [p for p in _bill_payments(bid) if not p.get("is_credit")]
+        assert rows and all(not p["notes"] for p in rows)
+    finally:
+        _cleanup(cid, [did], [bid])
+

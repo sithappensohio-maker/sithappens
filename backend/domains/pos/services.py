@@ -311,6 +311,12 @@ async def ring_pickup_merchandise(booking: dict, body, user: dict) -> Optional[d
     total = round(float(priced["total"]), 2)
     if total <= 0:
         return None
+    # "Other" (Zelle, Cash App…) needs its note, as at the Register: the
+    # checkout's own note travels with the goods (it was dropped, so goods paid
+    # by Other were always refused).
+    note = (getattr(body, "payment_notes", None) or "").strip()
+    if method == "other" and not note:
+        raise HTTPException(status_code=400, detail="A note is required when the payment method is Other.")
 
     sale = await create_sale(
         _sale_model(
@@ -321,7 +327,8 @@ async def ring_pickup_merchandise(booking: dict, body, user: dict) -> Optional[d
             tenders=[_tender_model(
                 method=method, amount=total,
                 **({"tendered_amount": total} if method == "cash" else {}),
-                **({"gift_card_code": getattr(body, "gift_card_code", None)} if method == "gift_card" else {}))],
+                **({"gift_card_code": getattr(body, "gift_card_code", None)} if method == "gift_card" else {}),
+                **({"notes": note} if method == "other" else {}))],
             workstation_id=getattr(body, "workstation_id", None),
             idempotency_key=body.retail_idempotency_key,
         ),

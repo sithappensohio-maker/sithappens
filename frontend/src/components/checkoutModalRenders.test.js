@@ -362,3 +362,59 @@ test("a discount that leaves only the goods to pay never sends the goods' tender
   expect(body.payment_method).toBeUndefined();
   expect(body.payment_status).toBeUndefined();
 });
+
+// ---------------------------------------- "Other" (Zelle, Cash App…) needs its note
+
+test("paying by Other asks for a note, and a checkout without one is never sent", async () => {
+  await mount();
+  expect(q("checkout-other-note")).toBeFalsy();
+  await setSelect("checkout-pay-method", "other");
+  expect(q("checkout-other-note")).toBeTruthy();
+  await click("confirm-checkout");
+  expect(checkoutBody()).toBeUndefined();
+  expect(container.textContent).toContain("A note is required when the payment method is Other.");
+  await typeIn("checkout-other-note", "  Zelle  ");
+  await click("confirm-checkout");
+  expect(checkoutBody()).toMatchObject({ payment_method: "other", payment_notes: "Zelle" });
+});
+
+test("a note typed under Other is not sent once another way of paying is chosen", async () => {
+  await mount();
+  await setSelect("checkout-pay-method", "other");
+  await typeIn("checkout-other-note", "Zelle");
+  await setSelect("checkout-pay-method", "card");
+  expect(q("checkout-other-note")).toBeFalsy();
+  await click("confirm-checkout");
+  expect(checkoutBody().payment_method).toBe("card");
+  expect(checkoutBody().payment_notes).toBeUndefined();
+});
+
+test("shop items paid by Other when credits cover the visit carry the note", async () => {
+  previewRows = [CREDITED];
+  await mount({ booking: CREDITED });
+  await click("checkout-shop-toggle");
+  await click("checkout-product-add-p-1");
+  await setSelect("checkout-pay-method", "other");
+  await typeIn("checkout-other-note", "Cash App");
+  await click("confirm-checkout");
+  expect(checkoutBody()).toMatchObject({ retail_payment_method: "other", payment_notes: "Cash App" });
+  expect(checkoutBody().payment_method).toBeUndefined();
+});
+
+test("no way of paying is sent when nothing is paid today", async () => {
+  // Credits cover the visit and a discount takes off the add-on on it: the
+  // picker is hidden, so whatever it last said (maybe Other, with no note
+  // box) is never sent.
+  const withTrim = { ...CREDITED, add_ons: [{ service_id: "svc-2", name: "Nail Trim", price: 15, qty: 1 }] };
+  previewRows = [withTrim];
+  await mount({ booking: withTrim });
+  await setSelect("checkout-pay-method", "other");
+  await typeIn("checkout-discount-amount", "15");
+  await typeIn("checkout-discount-reason", "comp trim");
+  expect(q("checkout-pay-method")).toBeFalsy();
+  await click("confirm-checkout");
+  const body = checkoutBody();
+  expect(body.payment_method).toBeUndefined();
+  expect(body.payment_notes).toBeUndefined();
+});
+

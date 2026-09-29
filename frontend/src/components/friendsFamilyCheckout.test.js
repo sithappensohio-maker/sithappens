@@ -103,7 +103,7 @@ test("both dogs leaving together: one combined checkout that offers no money", a
   const [path, body] = checkoutPost();
   expect(path).toBe("/bookings/bk-rex/check-out-group");
   expect(body).toMatchObject({ use_credits: false, payment_status: "paid_partial", amount_paid: 0 });
-  for (const k of ["payment_method", "gift_card_code", "retail_lines", "tendered_amount"]) expect(body[k]).toBeUndefined();
+  for (const k of ["payment_method", "retail_payment_method", "payment_notes", "gift_card_code", "retail_lines", "tendered_amount"]) expect(body[k]).toBeUndefined();
 });
 
 test("a dog can leave on its own — the rest of the group stays", async () => {
