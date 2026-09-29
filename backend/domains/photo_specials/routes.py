@@ -42,6 +42,7 @@ from pydantic import BaseModel, EmailStr, Field
 
 from domains.bookings.blocks import BookingBlocked
 from domains.bookings import guards as booking_guards
+from domains.bookings import time_pool
 
 from domains.photo_orders.engine import (
     PhotoOrderIn, PhotoPackageIn, clean_order_prefix, normalize_packages, public_packages,
@@ -186,7 +187,7 @@ def register_photo_special_routes(
     *, api, db, logger, now_iso, get_settings, enforce_rate_limit, client_ip,
     require_admin_and_permission, slot_overlaps, notify_client_booking_approved,
     create_pos_sale=None, price_pos_cart=None, require_take_payments=None,
-    pos_sale_model=None, pos_line_model=None, pos_tender_model=None, business_today=None,
+    pos_sale_model=None, pos_line_model=None, pos_tender_model=None, business_today=None, default_duration=None,
 ) -> Dict[str, Any]:
     """Register the public + admin Photo Specials routes. Returns the callables
     the in-process suite drives directly."""
@@ -353,18 +354,12 @@ def register_photo_special_routes(
         return out
 
     async def _other_service_blocks(day: str) -> List[dict]:
-        """Live training/grooming/photography appointments that are NOT part of
-        this special. The shared overlap pool is why a portrait can never be
-        booked on top of a lesson."""
-        return await db.bookings.find(
-            {
-                "date": day,
-                "status": {"$in": ACTIVE_BOOKING_STATUSES},
-                "service_type": {"$in": ["training", "grooming", "photography"]},
-                "time": {"$nin": ["", None]},
-            },
-            {"_id": 0, "id": 1, "time": 1, "duration_minutes": 1, "service_type": 1, "photo_special_id": 1, "checked_out_at": 1},
-        ).to_list(2000)
+        """The day's live timed appointments — lessons, grooming, portraits and
+        Meet & Greets (audit #34). The shared overlap pool is why a portrait
+        can never be booked on top of one."""
+        async def _length(st: str) -> int:
+            return int(await default_duration(st) or 0) if default_duration else 0
+        return await time_pool.appointments(db, day, settings=await get_settings(), default_minutes=_length)
 
     async def _total_booked(special_id: str) -> int:
         return await db.bookings.count_documents(
@@ -404,13 +399,9 @@ def register_photo_special_routes(
             taken = mine.get(label, 0)
             blocked = False
             for b in others:
-                if b.get("checked_out_at") or b.get("photo_special_id") == sp["id"]:
-                    continue
-                bstart = _hhmm_to_min(b.get("time") or "")
-                if bstart is None:
-                    continue
-                bdur = int(b.get("duration_minutes") or 0) or dur
-                if slot_overlaps(total, dur, bstart, bdur):
+                if b.get("photo_special_id") == sp["id"]:
+                    continue      # this special's own seats are counted above
+                if slot_overlaps(total, dur, b["start"], b["minutes"] or dur):
                     blocked = True
                     break
             # The public page is told only whether it can have the time. Who

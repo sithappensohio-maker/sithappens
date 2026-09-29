@@ -82,7 +82,7 @@ from domains.bookings import spans as booking_spans
 from domains.bookings import group_rank
 from domains.bookings import group_pricing as booking_group_pricing
 from domains.bookings import friends_family
-from domains.bookings import checkout_prices, credit_cover, checkout_discount, waitlist_spots
+from domains.bookings import checkout_prices, credit_cover, checkout_discount, waitlist_spots, time_pool
 from domains.school import ownership as school_ownership
 from domains.bookings import late_day as late_day_checkout
 from domains.bookings import care as care_domain
@@ -2943,81 +2943,85 @@ async def request_meet_greet(body: MeetGreetRequestIn, request: Request):
     # right before booking — defends against the slot list going stale
     # between page-load and submit (someone else grabbed it, hours changed).
     settings = await get_settings()
-    day_slots = await _compute_meet_greet_slots(settings, the_date)
-    if day_slots["closed"] or not any(s["time"] == chosen_time and s["available"] for s in day_slots["slots"]):
-        raise HTTPException(status_code=400, detail="That time is no longer available. Please pick another time.")
-    slot_minutes = day_slots["slot_minutes"]
+    # Checked and saved under the day's time-pool lease, before anything is
+    # written, so a lesson booked this instant can't take the time too and a
+    # refusal leaves no client or note behind (audit #34).
+    async with time_pool.lease(chosen_date, _acquire_capacity_locks, _release_capacity_locks):
+        day_slots = await _compute_meet_greet_slots(settings, the_date)
+        if day_slots["closed"] or not any(s["time"] == chosen_time and s["available"] for s in day_slots["slots"]):
+            raise HTTPException(status_code=400, detail="That time is no longer available. Please pick another time.")
+        slot_minutes = day_slots["slot_minutes"]
 
-    request_note_parts = [f"Meet & Greet request ({now_iso()})."]
-    if dog_name:
-        request_note_parts.append(f"Dog: {dog_name}.")
-    request_note_parts.append(f"Scheduled: {chosen_date} at {chosen_time}.")
-    request_note = " ".join(request_note_parts)
+        request_note_parts = [f"Meet & Greet request ({now_iso()})."]
+        if dog_name:
+            request_note_parts.append(f"Dog: {dog_name}.")
+        request_note_parts.append(f"Scheduled: {chosen_date} at {chosen_time}.")
+        request_note = " ".join(request_note_parts)
 
-    # Auto-merge (same pattern as /auth/register): reuse an admin-created
-    # client record with this email instead of creating a duplicate. Unlike
-    # register, there's no "email already registered" error path here — a
-    # meet & greet request from someone who already has a portal account
-    # just re-uses their existing client record and (below) sends them a
-    # reset-capable claim link instead of a fresh one.
-    existing_client = await db.clients.find_one(
-        {"email": {"$regex": f"^{re.escape(email)}$", "$options": "i"}},
-        {"_id": 0},
-    )
+        # Auto-merge (same pattern as /auth/register): reuse an admin-created
+        # client record with this email instead of creating a duplicate. Unlike
+        # register, there's no "email already registered" error path here — a
+        # meet & greet request from someone who already has a portal account
+        # just re-uses their existing client record and (below) sends them a
+        # reset-capable claim link instead of a fresh one.
+        existing_client = await db.clients.find_one(
+            {"email": {"$regex": f"^{re.escape(email)}$", "$options": "i"}},
+            {"_id": 0},
+        )
 
-    if existing_client:
-        client_id = existing_client["id"]
-        merged = True
-        prior_notes = (existing_client.get("evaluation_notes") or "").strip()
-        update_fields = {
-            "evaluation_notes": f"{prior_notes}\n{request_note}".strip() if prior_notes else request_note,
-        }
-        # Only fill in phone if missing — don't overwrite admin's data.
-        if phone and not existing_client.get("phone"):
-            update_fields["phone"] = phone
-        await db.clients.update_one({"id": client_id}, {"$set": update_fields})
-        client_doc = {**existing_client, **update_fields}
-    else:
-        client_id = str(uuid.uuid4())
-        client_doc = {
-            "id": client_id,
-            "name": owner_name,
-            "address": "",
-            "phone": phone,
-            "email": email,
-            "emerg": "",
-            "credits": 0,
-            "waiver": False,
-            "referred_by_code": None,
-            "client_status": "prospect",
-            "evaluation_notes": request_note,
+        if existing_client:
+            client_id = existing_client["id"]
+            merged = True
+            prior_notes = (existing_client.get("evaluation_notes") or "").strip()
+            update_fields = {
+                "evaluation_notes": f"{prior_notes}\n{request_note}".strip() if prior_notes else request_note,
+            }
+            # Only fill in phone if missing — don't overwrite admin's data.
+            if phone and not existing_client.get("phone"):
+                update_fields["phone"] = phone
+            await db.clients.update_one({"id": client_id}, {"$set": update_fields})
+            client_doc = {**existing_client, **update_fields}
+        else:
+            client_id = str(uuid.uuid4())
+            client_doc = {
+                "id": client_id,
+                "name": owner_name,
+                "address": "",
+                "phone": phone,
+                "email": email,
+                "emerg": "",
+                "credits": 0,
+                "waiver": False,
+                "referred_by_code": None,
+                "client_status": "prospect",
+                "evaluation_notes": request_note,
+                "created_at": now_iso(),
+            }
+            await db.clients.insert_one(client_doc)
+            merged = False
+
+        # Put the slot on the calendar so it (a) shows up on the admin's schedule
+        # and (b) itself blocks any later Meet & Greet request for the same time.
+        # `service_type="other"` keeps this out of every existing service_type
+        # switch/enum in checkout, P&L, etc.; `is_meet_greet` is how GET /events
+        # and the admin recognize it as a Meet & Greet rather than a generic
+        # booking. `dog_id` is intentionally blank — there's no dog record yet.
+        mg_booking = {
+            "id": str(uuid.uuid4()),
+            "dog_id": "",
+            "dog_name": dog_name,
+            "client_id": client_id,
+            "client_name": client_doc.get("name") or owner_name,
+            "date": chosen_date,
+            "time": chosen_time,
+            "duration_minutes": slot_minutes,
+            "service_type": "other",
+            "status": "pending",
+            "notes": "Meet & Greet requested via the public landing page.",
             "created_at": now_iso(),
+            "is_meet_greet": True,
         }
-        await db.clients.insert_one(client_doc)
-        merged = False
-
-    # Put the slot on the calendar so it (a) shows up on the admin's schedule
-    # and (b) itself blocks any later Meet & Greet request for the same time.
-    # `service_type="other"` keeps this out of every existing service_type
-    # switch/enum in checkout, P&L, etc.; `is_meet_greet` is how GET /events
-    # and the admin recognize it as a Meet & Greet rather than a generic
-    # booking. `dog_id` is intentionally blank — there's no dog record yet.
-    mg_booking = {
-        "id": str(uuid.uuid4()),
-        "dog_id": "",
-        "dog_name": dog_name,
-        "client_id": client_id,
-        "client_name": client_doc.get("name") or owner_name,
-        "date": chosen_date,
-        "time": chosen_time,
-        "duration_minutes": slot_minutes,
-        "service_type": "other",
-        "status": "pending",
-        "notes": "Meet & Greet requested via the public landing page.",
-        "created_at": now_iso(),
-        "is_meet_greet": True,
-    }
-    await db.bookings.insert_one(dict(mg_booking))
+        await db.bookings.insert_one(dict(mg_booking))
 
     # Claim token (existing system) — lets them set a portal password, or
     # (if a portal account already exists on this client) reset it.
@@ -4075,8 +4079,10 @@ async def _assert_capacity_available(
     selected_service: Optional[dict],
     *,
     exclude_booking_id: Optional[str] = None,
+    meet_greet_minutes: int = 0,
 ) -> None:
-    """Recount capacity while the matching Mongo lease is held."""
+    """Recount capacity while the matching Mongo lease is held. A Meet &
+    Greet being moved passes its length as `meet_greet_minutes`."""
     if body.service_type == "daycare":
         cap = max(0, int(settings.get("daycare_capacity", DAYCARE_CAPACITY) or 0))
         count = await _booking_days_count_filtered(body.date, "daycare", exclude_booking_id=exclude_booking_id)
@@ -4108,34 +4114,19 @@ async def _assert_capacity_available(
                     raise _capacity_error(settings, body, f"{kennel} is already full on {pretty_date(stay_day)}. Please pick different dates.", resource="kennel", target_date=stay_day)
         return
 
-    if body.service_type not in ("training", "grooming", "photography") or not (body.time or "").strip():
+    if (body.service_type not in ("training", "grooming", "photography") and not meet_greet_minutes) or not (body.time or "").strip():
         return
 
-    duration = int((selected_service or {}).get("duration_minutes") or 0) or await _get_default_duration(body.service_type)
+    duration = meet_greet_minutes or int((selected_service or {}).get("duration_minutes") or 0) or await _get_default_duration(body.service_type)
     start = _hhmm_to_min(body.time or "")
     if start is None or duration <= 0:
         return
     exact_service_id = (selected_service or {}).get("id") or body.service_id
     slot_capacity = max(1, int((selected_service or {}).get("capacity_per_slot") or 1))
-    existing = await db.bookings.find(
-        {
-            "date": body.date,
-            "status": {"$in": ["pending", "approved", "completed"]},
-            "service_type": {"$in": ["training", "grooming", "photography"]},
-            "time": {"$ne": ""},
-            **({"id": {"$ne": exclude_booking_id}} if exclude_booking_id else {}),
-        },
-        {"_id": 0, "id": 1, "time": 1, "service_type": 1, "service_id": 1, "duration_minutes": 1, "dog_name": 1, "checked_out_at": 1},
-    ).to_list(2000)
     same_service_overlaps = 0
-    for b in existing:
-        if b.get("checked_out_at"):
-            continue
-        bstart = _hhmm_to_min(b.get("time") or "")
-        if bstart is None:
-            continue
-        bdur = int(b.get("duration_minutes") or 0) or await _get_default_duration(b.get("service_type"))
-        if not _slot_overlaps(start, duration, bstart, bdur):
+    # Lessons, grooming, portraits and Meet & Greets share one pool (audit #34).
+    for b in await time_pool.appointments(db, body.date, settings=settings, default_minutes=_get_default_duration, exclude_id=exclude_booking_id):
+        if not _slot_overlaps(start, duration, b["start"], b["minutes"]):
             continue
         if exact_service_id and b.get("service_id") == exact_service_id:
             same_service_overlaps += 1
@@ -4174,11 +4165,15 @@ async def _update_booking_with_capacity(booking: dict, update: Dict[str, Any]) -
     if body.service_id:
         selected = await db.services.find_one({"id": body.service_id}, {"_id": 0})
     settings = await get_settings()
-    keys = _capacity_resource_keys(body)
+    mg = time_pool.meet_greet_length(merged, settings) if booking.get("is_meet_greet") else 0   # moving one is checked too (audit #34)
+    moved = any(merged.get(k) != booking.get(k) for k in ("date", "end_date", "time", "service_type", "service_id", "kennel"))
+    keys = [time_pool.pool_key(body.date)] if mg else _capacity_resource_keys(body)
     owner = await _acquire_capacity_locks(keys) if keys else None
     try:
-        if booking.get("status") in ("pending", "approved", "completed") and not booking.get("checked_out_at"):
-            await _assert_capacity_available(body, settings, selected, exclude_booking_id=booking.get("id"))
+        # Only a booking that moves takes a new place: editing notes on one that
+        # already overlaps something (made before a check existed) is allowed.
+        if moved and booking.get("status") in ("pending", "approved", "completed") and not booking.get("checked_out_at"):
+            await _assert_capacity_available(body, settings, selected, exclude_booking_id=booking.get("id"), meet_greet_minutes=mg)
         await db.bookings.update_one({"id": booking["id"]}, {"$set": update})
     finally:
         if owner:
@@ -5832,7 +5827,7 @@ async def _compute_meet_greet_slots(settings: dict, the_date: date) -> dict:
     re-validation, so both always agree on what's actually open.
     """
     mg = settings.get("meet_greet") or {}
-    slot_minutes = int(mg.get("slot_minutes") or 30)
+    slot_minutes = time_pool.meet_greet_minutes(settings)
     if mg.get("enabled") is False:
         return {"enabled": False, "closed": True, "slot_minutes": slot_minutes, "slots": []}
 
@@ -5854,10 +5849,7 @@ async def _compute_meet_greet_slots(settings: dict, the_date: date) -> dict:
         return {"enabled": True, "closed": True, "slot_minutes": slot_minutes, "slots": []}
 
     date_str = the_date.isoformat()
-    existing = await db.bookings.find(
-        {"date": date_str, "status": {"$in": ["pending", "approved", "completed"]}, "time": {"$ne": ""}},
-        {"_id": 0, "time": 1, "duration_minutes": 1, "service_type": 1},
-    ).to_list(500)
+    existing = await time_pool.appointments(db, date_str, settings=settings, default_minutes=_get_default_duration)
 
     candidates: List[Dict[str, Any]] = []
     for total in range(open_min, close_min, slot_minutes):
@@ -5869,17 +5861,7 @@ async def _compute_meet_greet_slots(settings: dict, the_date: date) -> dict:
         if slot_start < earliest_at:
             candidates.append({"time": label, "available": False})
             continue
-        blocked = False
-        for b in existing:
-            bstart = _hhmm_to_min(b.get("time") or "")
-            if bstart is None:
-                continue
-            bdur = int(b.get("duration_minutes") or 0)
-            if bdur <= 0:
-                bdur = await _get_default_duration(b.get("service_type") or "") or 60
-            if _slot_overlaps(total, slot_minutes, bstart, bdur):
-                blocked = True
-                break
+        blocked = any(_slot_overlaps(total, slot_minutes, b["start"], b["minutes"]) for b in existing)
         candidates.append({"time": label, "available": not blocked})
     return {"enabled": True, "closed": False, "slot_minutes": slot_minutes, "slots": candidates}
 
@@ -5915,10 +5897,10 @@ async def list_time_slots(
     # in case the settings schema is missing for some reason).
     open_min, close_min = 8 * 60, 18 * 60
     day_closed = False
+    settings = await get_settings()
     try:
         the_date = date.fromisoformat(date_str)
         dow = DEFAULT_DAYS[the_date.weekday()]
-        settings = await get_settings()
         svc_hrs = (settings.get("service_hours") or {}).get(service_type)
         if isinstance(svc_hrs, dict) and isinstance(svc_hrs.get(dow), dict):
             day_cfg = svc_hrs[dow]
@@ -5943,29 +5925,9 @@ async def list_time_slots(
             "slots": [],
         }
 
-    # Pull every active time-slotted booking on this date — we'll see if each
-    # candidate slot overlaps any of them.
-    existing = await db.bookings.find(
-        {
-            "date": date_str,
-            "status": {"$in": ["pending", "approved", "completed"]},
-            "service_type": {"$in": list(TIME_SLOTTED_SERVICES)},
-            "time": {"$ne": ""},
-        },
-        {"_id": 0, "time": 1, "service_type": 1, "duration_minutes": 1, "service_id": 1, "dog_id": 1, "id": 1, "checked_out_at": 1},
-    ).to_list(500)
-    # Hydrate each existing booking with its service's duration if not stored on the booking.
-    svc_cache: Dict[str, int] = {}
-    async def _booking_dur(b: dict) -> int:
-        d = int(b.get("duration_minutes") or 0)
-        if d > 0:
-            return d
-        st = b.get("service_type")
-        if st in svc_cache:
-            return svc_cache[st]
-        d = await _get_default_duration(st)
-        svc_cache[st] = d
-        return d
+    # Every live timed appointment on this date — lessons, grooming, portraits
+    # and Meet & Greets (audit #34) — to see if each candidate slot overlaps one.
+    existing = await time_pool.appointments(db, date_str, settings=settings, default_minutes=_get_default_duration)
 
     # Generate candidate slots: open → close every 30 min.
     candidates: List[Dict[str, Any]] = []
@@ -5978,13 +5940,7 @@ async def list_time_slots(
         blocked_by = None
         same_service_used = 0
         for b in existing:
-            if b.get("checked_out_at"):
-                continue
-            bstart = _hhmm_to_min(b.get("time") or "")
-            if bstart is None:
-                continue
-            bdur = await _booking_dur(b)
-            if not _slot_overlaps(total, duration, bstart, bdur):
+            if not _slot_overlaps(total, duration, b["start"], b["minutes"]):
                 continue
             if service_id and b.get("service_id") == service_id:
                 same_service_used += 1
@@ -56226,7 +56182,7 @@ _photo_special_callables = register_photo_special_routes(
     api=api, db=db, logger=logger, now_iso=now_iso, get_settings=get_settings,
     enforce_rate_limit=_enforce_rate_limit, client_ip=_client_ip,
     require_admin_and_permission=require_admin_and_permission,
-    slot_overlaps=_slot_overlaps, business_today=business_today,
+    slot_overlaps=_slot_overlaps, business_today=business_today, default_duration=_get_default_duration,
     notify_client_booking_approved=notify_client_booking_approved,
     # Photo-package sales ride the real register, same as the event photo booth.
     create_pos_sale=_create_pos_sale_impl, price_pos_cart=_price_pos_cart, require_take_payments=_require_take_payments,

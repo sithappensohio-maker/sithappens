@@ -417,3 +417,16 @@ def test_a_malformed_entry_never_blanks_the_list():
             _wait(a, day, "2026-01-01T09:00:00+00:00", service="boarding", end="not-a-date")
             fine = _wait(b, day, "2026-01-02T09:00:00+00:00")
             assert len(_mine([fine])) == 1
+
+
+
+def test_a_meet_and_greet_at_that_time_means_no_spot():
+    # Audit #34: the Meet & Greet is in the shared time pool.
+    with _families(1) as (a,):
+        day = _day()
+        e = _wait(a, day, "2026-01-01T09:00:00+00:00", service="grooming", time="10:00")
+        assert len(_mine([e])) == 1
+        mg = {"id": str(uuid.uuid4()), "date": day, "time": "10:00", "duration_minutes": 30, "service_type": "other",
+              "is_meet_greet": True, "status": "pending", "dog_id": "", "client_id": a[0]["id"]}
+        run(server.db.bookings.insert_one(dict(mg)))
+        assert _mine([e]) == []

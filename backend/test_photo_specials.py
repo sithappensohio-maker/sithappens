@@ -290,6 +290,26 @@ def test_an_existing_lesson_blocks_the_overlapping_portrait_slot():
     assert times["09:00"] is True
 
 
+def test_a_meet_and_greet_blocks_the_overlapping_portrait_slots():
+    # Audit #34: a Meet & Greet takes the owner's time like a lesson does.
+    sp = _special()
+    mg_id = str(uuid.uuid4())
+    run(server.db.bookings.insert_one({
+        "id": mg_id, "date": DAY_1, "time": "09:15", "duration_minutes": 30, "service_type": "other",
+        "is_meet_greet": True, "status": "pending", "dog_id": "", "dog_name": "Waffles",
+    }))
+    try:
+        av = run(server.public_photo_special_availability(sp["slug"], DAY_1))
+        times = {s["time"]: s["available"] for s in av["slots"]}
+        assert times["09:15"] is False and times["09:30"] is False
+        assert times["09:00"] is True and times["09:45"] is True
+        with pytest.raises(HTTPException) as e:
+            _reserve(sp, time="09:30")
+        assert e.value.status_code == 409
+    finally:
+        run(server.db.bookings.delete_one({"id": mg_id}))
+
+
 def test_closed_booking_offers_no_slots_and_refuses_a_reservation():
     sp = _special(booking_open=False)
     av = run(server.public_photo_special_availability(sp["slug"], DAY_1))
