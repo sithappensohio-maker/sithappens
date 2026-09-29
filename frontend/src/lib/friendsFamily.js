@@ -72,3 +72,13 @@ export function friendsPaidFor(ff, clientId) {
     .map((g) => ({ ...g, friends: (g.dogs || []).filter((d) => d.client_id !== clientId) }))
     .filter((g) => g.friends.length > 0 || g.waiting);
 }
+
+// How many dogs a booking group has — the ones still booked (a dog taken out
+// of the booking, i.e. cancelled, no longer counts).
+export function dogsPerGroup(rows) {
+  const counts = {};
+  for (const b of activeRows(rows)) {
+    if (b?.group_id) counts[b.group_id] = (counts[b.group_id] || 0) + 1;
+  }
+  return counts;
+}

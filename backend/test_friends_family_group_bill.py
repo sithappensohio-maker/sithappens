@@ -12,6 +12,7 @@ bill at the desk or online; the friend's family never sees it.
 
 Self-contained fixtures (never import another test module).
 """
+import asyncio
 import contextlib
 import uuid
 from datetime import datetime, timedelta, timezone
@@ -390,3 +391,126 @@ def test_an_account_payment_waits_while_a_checkout_for_that_family_is_under_way(
         run(server.db.clients.update_one({"id": payer["client"]}, {"$set": {"financial_checkout_in_progress": False}}))
         run(server.apply_tab_payment(payer["client"], server.TabPaymentIn(amount=5.0, method="check"), user=OWNER))
         assert _balance(payer["client"]) == -5.0
+
+
+def test_the_payers_one_bill_names_every_dog():
+    """(Owner, 2026-09-28: the payer's bill lists the friend's dog by name and price.)"""
+    with _group() as (payer, friend, _gid):
+        _out(friend["booking"])
+        _out(payer["booking"])
+        [bill] = _bills(payer)
+        described = {li["booking_id"]: li["description"] for li in bill["line_items"] if li["kind"] == "service"}
+        assert described[friend["booking"]].startswith(f"{TAG} friend dog: ")
+        assert described[payer["booking"]].startswith(f"{TAG} payer dog: ")
+
+
+def test_a_friends_and_family_bill_with_one_dog_on_it_still_names_the_dog():
+    """The payer's own dog never came: the bill carries only the friend's dog,
+    and the payer still needs to see whose visit they are paying for."""
+    with _group(arrived=("friend",)) as (payer, friend, _gid):
+        _out(friend["booking"])
+        run(server.cancel_booking(payer["booking"], forfeit=False, user=OWNER))
+        [bill] = _bills(payer)
+        [line] = [li for li in bill["line_items"] if li["kind"] == "service"]
+        assert line["description"].startswith(f"{TAG} friend dog: ")
+
+
+def test_the_receipt_setting_show_dog_names_covers_the_named_bill_lines(monkeypatch):
+    with _group() as (payer, friend, _gid):
+        _out(friend["booking"])
+        _out(payer["booking"])
+        [bill] = _bills(payer)
+        shown = run(server._build_receipt_payload(bill["id"]))["line_items"]
+        assert any(li["description"].startswith(f"{TAG} friend dog: ") for li in shown)
+        assert any(li["description"].startswith(f"{TAG} payer dog: ") for li in shown)
+        assert all("dog_name" not in li for li in shown)
+        hidden_rs = {**server.DEFAULT_RECEIPT_SETTINGS, "show_dog_names": False}
+
+        async def _hidden():
+            return dict(hidden_rs)
+        monkeypatch.setattr(server, "get_receipt_settings", _hidden)
+        hidden = run(server._build_receipt_payload(bill["id"]))["line_items"]
+        assert [li["amount"] for li in hidden] == [li["amount"] for li in shown]
+        assert not any(" dog: " in (li["description"] or "") for li in hidden), hidden
+        assert all("dog_name" not in li for li in hidden)
+
+
+@pytest.fixture
+def _sent(monkeypatch):
+    """Every email the app tries to send, by template slug."""
+    sent = []
+
+    async def _dispatch(**kw):
+        sent.append(kw)
+        return True
+    monkeypatch.setattr(server.email_service, "_dispatch", _dispatch)
+    return sent
+
+
+def test_a_friends_and_family_pickup_sends_no_payment_received_email(_sent):
+    """Nothing is paid at a friends & family pickup: a "Payment received $0.00"
+    email to the payer about another family's dog would be wrong."""
+    with _group() as (payer, friend, _gid):
+        _out(friend["booking"])
+        run(asyncio.sleep(0.05))   # the email goes out on its own task
+        assert not [m for m in _sent if m.get("slug") == "client_partial_payment_receipt"]
+        row = run(server.db.bookings.find_one({"id": friend["booking"]}, {"_id": 0}))
+        run(server._send_partial_payment_receipt(client_id=payer["client"], booking=row, total_owed=15.0, paid_now=0.0,
+                                                 new_balance=15.0))
+        assert not [m for m in _sent if m.get("slug") == "client_partial_payment_receipt"]
+
+
+def test_the_payment_received_email_writes_names_as_text(_sent):
+    cid = str(uuid.uuid4())
+    run(server.db.clients.insert_one({"id": cid, "name": "<b>Kim</b> Hale", "email": f"{uuid.uuid4().hex[:8]}@example.com",
+                                      "client_status": "active", "account_balance": 0.0}))
+    try:
+        booking = {"id": str(uuid.uuid4()), "dog_name": "<img src=x onerror=alert(1)>", "service_type": "daycare"}
+        run(server._send_partial_payment_receipt(client_id=cid, booking=booking, total_owed=40.0, paid_now=10.0,
+                                                 new_balance=30.0))
+        [mail] = [m for m in _sent if m.get("slug") == "client_partial_payment_receipt"]
+        intro = mail["fallback_intro"]
+        assert "<img" not in intro and "&lt;img src=x onerror=alert(1)&gt;" in intro
+        assert "<b>" not in intro and "&lt;b&gt;Kim&lt;/b&gt;" in intro
+        assert "<strong>$10.00</strong>" in intro     # the email's own markup stays
+    finally:
+        run(server.db.clients.delete_one({"id": cid}))
+
+
+@contextlib.contextmanager
+def _pause_bookings_over(amount):
+    run(server.get_settings())
+    before = run(server.db.settings.find_one({"id": "global"}, {"_id": 0}))
+    run(server.db.settings.update_one({"id": "global"}, {"$set": {"day_to_day.money.auto_decline_if_balance_over": amount}}))
+    try:
+        yield
+    finally:
+        run(server.db.settings.replace_one({"id": "global"}, before))
+
+
+def _balance_refusal(payer, day):
+    """The payer books their dog online; the refusal code, or None if the
+    balance rule let it through (a later rule may still refuse it)."""
+    row = run(server.db.bookings.find_one({"id": payer["booking"]}, {"_id": 0, "service_id": 1}))
+    body = server.BookingIn(dog_id=payer["dog"], date=day, service_type="daycare", service_id=row["service_id"])
+    try:
+        run(server.create_booking(body, payer["user"]))
+    except HTTPException as e:
+        return (getattr(e, "block", None) or {}).get("code"), e
+    return None, None
+
+
+def test_a_family_waiting_for_its_friends_and_family_bill_can_still_book_online():
+    """"Pause online bookings over a balance" is about bills left unpaid. The
+    amount waiting for the group's one bill has no bill to pay yet."""
+    day = _day(7)
+    with _pause_bookings_over(10), _group() as (payer, friend, _gid):
+        _out(friend["booking"])
+        assert _balance(payer["client"]) == 15.0
+        code, _e = _balance_refusal(payer, day)
+        assert code != "balance_over_limit"
+        # A real unpaid balance still pauses bookings, counted without the waiting part.
+        run(server.db.clients.update_one({"id": payer["client"]}, {"$inc": {"account_balance": 20.0}}))
+        code, e = _balance_refusal(payer, day)
+        assert code == "balance_over_limit" and e.block["balance"] == 20.0 and "$20.00" in e.detail
+        run(server.db.bookings.delete_many({"dog_id": payer["dog"], "date": day}))

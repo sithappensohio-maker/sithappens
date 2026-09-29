@@ -96,6 +96,7 @@ test("the screen says who pays and offers no way to take money", async () => {
 test("both dogs leaving together: one combined checkout that offers no money", async () => {
   await mount();
   expect(q("checkout-ff-summary").textContent).toContain("Luna (Pat) + Rex (Sam)");
+  expect(container.textContent).toContain("Friends & Family Check Out · 2 Dogs");
   await click("confirm-checkout");
   const [path, body] = checkoutPost();
   expect(path).toBe("/bookings/bk-rex/check-out-group");

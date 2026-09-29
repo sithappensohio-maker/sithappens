@@ -1,5 +1,6 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import { api, formatErr } from "../lib/api";
+import { dogsPerGroup } from "../lib/friendsFamily";
 import { useConfirm } from "../lib/useConfirm";
 import { useAuth } from "../lib/auth";
 import AdminBookingModal from "../components/AdminBookingModal";
@@ -88,13 +89,7 @@ export default function Bookings() {
   // group_id across the active+archived window so the UI can render a small
   // "🔗 Group · N" chip next to grouped bookings. Single-dog bookings have
   // `group_id == null` and are excluded.
-  const groupCounts = useMemo(() => {
-    const counts = {};
-    [...bookings, ...archived].forEach(b => {
-      if (b?.group_id) counts[b.group_id] = (counts[b.group_id] || 0) + 1;
-    });
-    return counts;
-  }, [bookings, archived]);
+  const groupCounts = useMemo(() => dogsPerGroup([...bookings, ...archived]), [bookings, archived]);
 
   const loadArchive = async () => {
     setArchiveLoading(true);

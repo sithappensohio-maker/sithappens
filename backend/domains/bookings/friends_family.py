@@ -34,7 +34,7 @@ from fastapi import HTTPException
 
 from domains.bookings import group_pricing
 
-ENABLED = False   # switched on once every money path honours the payer (build step 10)
+ENABLED = True   # switched on 2026-09-28 (build step 10): every money path honours the payer
 PERMISSION = "friends_family_bookings"
 KIND = "friends_family"
 SERVICES = ("daycare", "boarding")
@@ -268,6 +268,27 @@ async def let_go(op: Optional[str], ids: List[str]) -> None:
     if op and ids:
         await _g("db").bookings.update_many({"id": {"$in": ids}, "checkout_operation_id": op},
                                             {"$unset": {k: "" for k in _HOLD}})
+
+
+async def waiting_amount(client_id: Optional[str]) -> float:
+    """What this family owes for dogs waiting for their group's one bill — on
+    the account, but with no bill to pay yet (the rule waiting_for_group_bill uses)."""
+    if not client_id:
+        return 0.0
+    rows = await _g("db").bookings.find(
+        {"bill_to_client_id": client_id, "status": "completed",
+         "$or": [{"group_bill_pending": True}, {"group_bill_claim": {"$nin": [None, ""]}}]},
+        {"_id": 0, "balance_due": 1}).to_list(500)
+    return round(sum(float(r.get("balance_due") or 0) for r in rows), 2)
+
+
+def receipt_lines(payload: dict, show_dog_names: bool) -> None:
+    """A friends & family bill names each dog on its lines ("Rex: Daycare");
+    with the receipt setting "show dog names" off, the receipt drops them too."""
+    for li in payload.get("line_items") or []:
+        name = li.pop("dog_name", None)
+        if name and not show_dog_names and str(li.get("description") or "").startswith(f"{name}: "):
+            li["description"] = li["description"][len(name) + 2:]
 
 
 async def waiting_for_group_bill(client_id: Optional[str]) -> bool:

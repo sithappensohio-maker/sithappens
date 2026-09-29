@@ -4329,7 +4329,7 @@ async def _create_booking_impl(body: BookingIn, user: dict = Depends(get_current
             decline_over = float(money_controls.get("auto_decline_if_balance_over") or 0)
         except (TypeError, ValueError):
             decline_over = 0.0
-        current_balance = round(float(client.get("account_balance") or 0), 2)
+        current_balance = round(float(client.get("account_balance") or 0) - await friends_family.waiting_amount(client["id"]), 2)
         if decline_over > 0 and current_balance > decline_over + 0.005:
             raise BookingBlocked(409, f"New bookings are paused while your account has an unpaid balance of ${current_balance:.2f}. " "Please pay your balance (or contact Sit Happens to review it), then book again.", code="balance_over_limit", action="pay_balance", balance=current_balance)
 
@@ -7422,31 +7422,32 @@ async def _send_partial_payment_receipt(
     balance. Honors Resend availability — silently no-ops when email is off."""
     try:
         client = await db.clients.find_one({"id": client_id}, {"_id": 0})
-        if not client or not client.get("email"):
+        if not client or not client.get("email") or booking.get("bill_to_client_id"):
             return
         delta = round(total_owed - paid_now, 2)
         first_name = (client.get("name") or "").split(" ")[0] or "there"
         svc = booking.get("service_type") or "service"
         dog_name = booking.get("dog_name") or "your dog"
+        h = email_service._h
         if delta > 0:
             subject = f"Payment received · balance ${delta:.2f}"
             intro = (
-                f"Hi {first_name} — we received your <strong>${paid_now:.2f}</strong> payment for "
-                f"{dog_name}'s {svc}. Remaining balance on your account: "
+                f"Hi {h(first_name)} — we received your <strong>${paid_now:.2f}</strong> payment for "
+                f"{h(dog_name)}'s {h(svc)}. Remaining balance on your account: "
                 f"<strong>${delta:.2f}</strong>."
             )
         elif delta < 0:
             subject = f"Thanks {first_name}! Credit on file: ${-delta:.2f}"
             intro = (
-                f"Hi {first_name} — we received your <strong>${paid_now:.2f}</strong> payment for "
-                f"{dog_name}'s {svc}. The extra <strong>${-delta:.2f}</strong> is now on your "
+                f"Hi {h(first_name)} — we received your <strong>${paid_now:.2f}</strong> payment for "
+                f"{h(dog_name)}'s {h(svc)}. The extra <strong>${-delta:.2f}</strong> is now on your "
                 f"account as pre-paid credit for next time."
             )
         else:
             subject = f"Payment received · ${paid_now:.2f}"
             intro = (
-                f"Hi {first_name} — we received your <strong>${paid_now:.2f}</strong> payment for "
-                f"{dog_name}'s {svc}. You're all settled up — thank you!"
+                f"Hi {h(first_name)} — we received your <strong>${paid_now:.2f}</strong> payment for "
+                f"{h(dog_name)}'s {h(svc)}. You're all settled up — thank you!"
             )
         rows = [
             ("Service", f"{svc.title()} · {dog_name}"),
@@ -7636,8 +7637,10 @@ async def _create_invoice_for_bookings(
     balance = round(sum(float(b.get("balance_due") or 0) for b in bookings), 2)
     refunded_total = round(sum(float(b.get("financial_refund_total") or 0) for b in bookings), 2)
     line_items: List[Dict[str, Any]] = []
+    named = any(b.get("bill_to_client_id") for b in bookings)  # the payer's friends & family bill names every dog
     for b in bookings:
-        line_items.extend(_build_invoice_line_items_from_booking(b))
+        line_items.extend({**li, "dog_name": b.get("dog_name") or "Dog", "description": f"{b.get('dog_name') or 'Dog'}: {li['description']}"}
+                          if named else li for li in _build_invoice_line_items_from_booking(b))
     if existing:
         # Write-offs made against the bill itself: their tab rows name the
         # bill, not a visit, so a reopen never undid them. They stay on the
@@ -8104,6 +8107,7 @@ def _apply_receipt_settings_visibility(payload: dict, rs: dict) -> dict:
         payload["client_name"] = None
     if not rs["show_dog_names"]:
         payload["dogs"] = None
+    friends_family.receipt_lines(payload, rs["show_dog_names"])
     if not rs["show_service_dates"]:
         payload["service_dates"] = None
     if not rs["show_staff_name"]:
@@ -8213,7 +8217,7 @@ async def _build_receipt_payload(invoice_id: str, payment_ids: Optional[List[str
         "staff_name": staff_name,
         "booking_reference": booking_reference,
         "line_items": [
-            {"description": li.get("description"), "qty": li.get("qty"), "amount": li.get("amount")}
+            {"description": li.get("description"), "qty": li.get("qty"), "amount": li.get("amount"), "dog_name": li.get("dog_name")}
             for li in (invoice.get("line_items") or [])
         ],
         "invoice_total": invoice.get("total"),

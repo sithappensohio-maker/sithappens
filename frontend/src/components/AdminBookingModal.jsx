@@ -816,7 +816,7 @@ export default function AdminBookingModal({ defaultCheckIn = false, defaultDate 
         if (extraDogs.length > 0) {
           const groupBody = {
             dogs: [
-              { dog_id: dogId, addon_service_ids: selectedAddonIds, notes },
+              { dog_id: dogId, addon_service_ids: selectedAddonIds, notes: "" },   // (the group note, below, goes to the family's dogs)
               ...extraDogs.map(e => ({
                 dog_id: e.dog_id,
                 addon_service_ids: e.addon_service_ids || [],

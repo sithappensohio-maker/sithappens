@@ -20,7 +20,8 @@ test("shared ReceiptLogo is used by every on-screen receipt", () => {
 test("portal print window embeds the logo data URL", () => {
   const src = read("PortalInvoices.jsx");
   expect(src).toMatch(/fetchReceiptLogoDataUrl\(payload\.business_logo_image_id\)/);
-  expect(src).toMatch(/logoSrc \? `<img src="\$\{logoSrc\}"/);
+  expect(src).toMatch(/w\.document\.write\(receiptPrintHtml\(payload, logoSrc\)\)/);
+  // (portalReceiptPrint.test.js mounts the print and reads the logo back out of the page)
 });
 
 test("trophy ladder and activity feed render uploaded artwork through TrophyBadge", () => {

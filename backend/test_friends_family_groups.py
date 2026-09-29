@@ -208,3 +208,18 @@ def test_if_recording_the_payer_fails_part_way_nothing_is_booked(monkeypatch):
             _book(svc, [payer_dog, friend_dog], payer=payer, addons={friend_dog: [addon]})
         assert "Nothing was booked" in e.value.detail
         assert _row(payer_dog) is None and _row(friend_dog) is None
+
+
+def test_the_booking_note_goes_to_the_paying_familys_dogs_only():
+    """The note typed on the booking is the paying family's; a friend's
+    family never gets it on its dog (their portal shows booking notes). A
+    note written for one dog stays with that dog."""
+    with _two_families() as (svc, _addon, fams):
+        (payer, payer_dog), (_friend, friend_dog) = fams["payer"], fams["friend"]
+        body = server.BookingGroupIn(
+            dogs=[server.BookingGroupDog(dog_id=friend_dog, notes=""), server.BookingGroupDog(dog_id=payer_dog, notes="")],
+            date=_day(), service_type="daycare", service_id=svc, override_capacity=True, override_vaccines=True,
+            payer_client_id=payer, notes="insulin at noon")
+        run(server.create_booking_group(body, OWNER))
+        assert _row(payer_dog)["notes"] == "insulin at noon"
+        assert (_row(friend_dog).get("notes") or "") == ""

@@ -10,9 +10,10 @@ Before:
   * if the group couldn't be priced together, the failure was only logged —
     the dogs were booked at separate full prices, the discount silently lost.
 
-Now dogs from different families are refused (friends & family groups come
-with a payer, later), only the group booking itself stamps a group id, and a
-group that can't be priced books nothing.
+Now dogs from different families are booked together only as a friends &
+family group, with a family chosen to pay (refused otherwise — and always
+while that switch is off); only the group booking itself stamps a group id;
+and a group that can't be priced books nothing.
 
 Self-contained fixtures (never import another test module).
 """
@@ -25,6 +26,7 @@ from fastapi import HTTPException
 import _test_env  # noqa: F401 — must run before `import server`
 import server
 from _test_loop import run
+from domains.bookings import friends_family
 
 TAG = "TEST_GROUP_GUARDS"
 ADMIN = {"id": "gg-admin", "role": "admin", "name": "Pat Owner", "display_name": "Pat Owner"}
@@ -79,11 +81,13 @@ def test_a_family_group_still_books_every_dog_on_one_group_and_prices_them_toget
         assert sum(1 for r in rows if (r.get("multi_dog_discount") or {}).get("pre_applied")) == 1
 
 
-def test_dogs_from_different_families_are_refused_and_nothing_is_booked():
+@pytest.mark.parametrize("switch, words", [(True, "Choose who pays"), (False, "different families")])
+def test_dogs_from_different_families_with_no_one_paying_are_refused_and_nothing_is_booked(monkeypatch, switch, words):
+    monkeypatch.setattr(friends_family, "ENABLED", switch)
     with _families(1, 1) as (svc, [(_a, [dog_a]), (_b, [dog_b])]):
         with pytest.raises(HTTPException) as e:
             _group(svc, [dog_a, dog_b])
-        assert e.value.status_code == 400 and "different families" in e.value.detail
+        assert e.value.status_code == 400 and words in e.value.detail
         assert _rows([dog_a, dog_b]) == []
 
 

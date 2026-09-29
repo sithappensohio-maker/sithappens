@@ -36,6 +36,30 @@ function readReturnParams() {
   return { attemptId, stripeState };
 }
 
+// The printed receipt. Every value is written as text, never as HTML: a
+// line can carry a name another family chose (a friends & family bill names
+// each dog), and this page runs in the app's own origin.
+const esc = (s) => String(s ?? "").replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
+
+export function receiptPrintHtml(payload, logoSrc) {
+  const lines = (payload.line_items || []).map((li) =>
+    `<div style="display:flex;justify-content:space-between;gap:8px;"><span>${esc(li.description)}${li.qty > 1 ? ` &times; ${esc(li.qty)}` : ""}</span><span>${esc(money(li.amount))}</span></div>`
+  ).join("");
+  return `<!doctype html><html><head><title>Receipt</title>
+      <style>body{font-family:ui-monospace,monospace;font-size:13px;padding:16px;color:#000;background:#fff;} .b{font-weight:900;} .hr{border-top:1px solid #999;margin:8px 0;}</style>
+      </head><body>
+      ${payload.test_receipt ? `<div style="background:#fde68a;text-align:center;font-weight:900;padding:4px;margin-bottom:8px;">${esc(payload.test_label)}</div>` : ""}
+      ${logoSrc ? `<img src="${esc(logoSrc)}" alt="" style="display:block;max-height:56px;margin:0 auto 6px auto;" />` : ""}
+      <p class="b">${esc(payload.business_name)}</p>
+      <p>Receipt #${esc(payload.receipt_number)}</p>
+      ${payload.client_name ? `<p>Client: ${esc(payload.client_name)}</p>` : ""}
+      <div class="hr"></div>
+      ${lines}
+      <div class="hr"></div>
+      <div class="b" style="display:flex;justify-content:space-between;"><span>Total</span><span>${esc(money(payload.total ?? payload.invoice_total ?? payload.payment_amount))}</span></div>
+      </body></html>`;
+}
+
 export default function PortalInvoices() {
   const [invoices, setInvoices] = useState([]);
   const [enabled, setEnabled] = useState(false);
@@ -141,22 +165,7 @@ export default function PortalInvoices() {
     const logoSrc = await fetchReceiptLogoDataUrl(payload.business_logo_image_id);
     const w = window.open("", "_blank", "width=380,height=600");
     if (!w) { toast.error("Please allow pop-ups to print your receipt"); return; }
-    const lines = (payload.line_items || []).map((li) =>
-      `<div style="display:flex;justify-content:space-between;gap:8px;"><span>${li.description || ""}${li.qty > 1 ? ` &times; ${li.qty}` : ""}</span><span>${money(li.amount)}</span></div>`
-    ).join("");
-    w.document.write(`<!doctype html><html><head><title>Receipt</title>
-      <style>body{font-family:ui-monospace,monospace;font-size:13px;padding:16px;color:#000;background:#fff;} .b{font-weight:900;} .hr{border-top:1px solid #999;margin:8px 0;}</style>
-      </head><body>
-      ${payload.test_receipt ? `<div style="background:#fde68a;text-align:center;font-weight:900;padding:4px;margin-bottom:8px;">${payload.test_label || ""}</div>` : ""}
-      ${logoSrc ? `<img src="${logoSrc}" alt="" style="display:block;max-height:56px;margin:0 auto 6px auto;" />` : ""}
-      <p class="b">${payload.business_name || ""}</p>
-      <p>Receipt #${payload.receipt_number || ""}</p>
-      ${payload.client_name ? `<p>Client: ${payload.client_name}</p>` : ""}
-      <div class="hr"></div>
-      ${lines}
-      <div class="hr"></div>
-      <div class="b" style="display:flex;justify-content:space-between;"><span>Total</span><span>${money(payload.total ?? payload.invoice_total ?? payload.payment_amount)}</span></div>
-      </body></html>`);
+    w.document.write(receiptPrintHtml(payload, logoSrc));
     w.document.close();
     w.focus();
     setTimeout(() => { w.print(); }, 250);

@@ -121,6 +121,23 @@ test("the other family can be the one paying", async () => {
   expect(groupBody().payer_client_id).toBe("c-sam");
 });
 
+test("the booking note is the group's: the first dog picked never carries it by itself", async () => {
+  // Luna (picked first) becomes the friend's dog once Sam pays; the server
+  // keeps the group note off friends' dogs, but only when their own note is empty.
+  await mount();
+  await click("ab-ff-toggle");
+  await choose("ab-ff-add-dog", "d-rex");
+  await click("ab-ff-payer-c-sam");
+  const note = container.querySelector('textarea[placeholder^="Special instructions"]');
+  const setter = Object.getOwnPropertyDescriptor(window.HTMLTextAreaElement.prototype, "value").set;
+  await act(async () => { setter.call(note, "Rex insulin at noon"); note.dispatchEvent(new Event("input", { bubbles: true })); });
+  await flush();
+  await click("ab-submit");
+  const body = groupBody();
+  expect(body.notes).toBe("Rex insulin at noon");
+  expect(body.dogs.map((d) => d.notes)).toEqual(["", ""]);
+});
+
 test("the estimate is at the paying family's rates, with no prepaid credits", async () => {
   await mount();
   await click("ab-ff-toggle");

@@ -1,6 +1,6 @@
 import {
   friendsFamilyOn, isFriendsFamily, isFriendsDog, activeRows, rankOf, byRank, bookedServicePrice, waitingForBill,
-  friendsPaidFor,
+  friendsPaidFor, dogsPerGroup,
 } from "./friendsFamily";
 
 const payerDog = { id: "a", client_id: "pat", bill_to_client_id: "pat", status: "approved",
@@ -53,4 +53,10 @@ test("a family's page lists the friends' dogs it pays for, and any booking waiti
   expect(got.map((g) => g.group_id)).toEqual(["g1", "g2"]);
   expect(got[0].friends.map((d) => d.dog_id)).toEqual(["b"]);
   expect(friendsPaidFor(null, "pat")).toEqual([]);
+});
+
+test("a booking group counts the dogs still booked", () => {
+  const rows = [{ group_id: "g", status: "approved" }, { group_id: "g", status: "cancelled" },
+                { group_id: "g", status: "completed" }, { status: "approved" }];
+  expect(dogsPerGroup(rows)).toEqual({ g: 2 });
 });

@@ -960,7 +960,7 @@ function CheckoutModalBody({ booking, services, onClose, onRequestCancel, lateDa
       <div className="bg-bgPanel border border-bgHover rounded-2xl w-full max-w-lg p-6 shadow-2xl animate-slide-in max-h-[calc(var(--app-height)_-_2rem)] overflow-y-auto">
         <div className="flex items-center justify-between mb-1">
           <h4 className="text-xl font-black text-white uppercase italic tracking-tight">
-            <i className="fas fa-sign-out-alt text-shBlue mr-2"/>{isGroupCheckout ? `Household Check Out · ${groupDogNames.length} Dogs` : `Check Out · ${booking.dog_name}`}
+            <i className="fas fa-sign-out-alt text-shBlue mr-2"/>{isGroupCheckout ? `${isFF ? "Friends & Family" : "Household"} Check Out · ${groupDogNames.length} Dogs` : `Check Out · ${booking.dog_name}`}
           </h4>
           <button onClick={onClose} className="text-gray-500 hover:text-white"><i className="fas fa-times" /></button>
         </div>
