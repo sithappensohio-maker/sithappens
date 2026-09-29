@@ -19,9 +19,10 @@ export const STATUS_META = {
   paid: { label: "Paid", tone: "blue" },
   ready: { label: "Ready", tone: "green" },
   sent: { label: "Sent", tone: "muted" },
+  refunded: { label: "Refunded", tone: "red" },  // its register sale was voided, returned or refunded in full
 };
 export const PRINT_STATUS = [["none", "No print"], ["pending", "Print pending"], ["ready", "Print ready"], ["picked_up", "Picked up"], ["mailed", "Mailed"]];
-const FILTERS = [["all", "All"], ["ordered", "Unpaid"], ["paid", "Paid"], ["ready", "Ready"], ["sent", "Sent"]];
+const FILTERS = [["all", "All"], ["ordered", "Unpaid"], ["paid", "Paid"], ["ready", "Ready"], ["sent", "Sent"], ["refunded", "Refunded"]];
 
 function newKey() {
   try { return crypto.randomUUID(); } catch { return `k-${Date.now()}-${Math.random().toString(36).slice(2)}`; }
@@ -364,12 +365,12 @@ export function PhotoOrdersPanel({ owner, base, can, search = null, searchLabel 
               <div className="flex flex-col sm:flex-row sm:items-start gap-3">
                 <div className="min-w-0 flex-1">
                   <p className="text-[16px] font-black text-white leading-tight">{o.primary_contact} <span className="font-mono text-shBlue text-[12px] ml-1">{o.order_number}</span></p>
-                  <p className="text-[13px] text-shText mt-0.5">{o.package_name}{o.qty > 1 ? ` × ${o.qty}` : ""} · <span className="tabular-nums">{money(o.total ?? o.list_total)}</span>{o.receipt_number ? <span className="text-shTextMuted"> · receipt {o.receipt_number}</span> : null}</p>
+                  <p className="text-[13px] text-shText mt-0.5">{o.package_name}{o.qty > 1 ? ` × ${o.qty}` : ""} · <span className="tabular-nums">{money(o.total ?? o.list_total)}</span>{o.receipt_number ? <span className="text-shTextMuted"> · receipt {o.receipt_number}</span> : null}{o.refunded_amount > 0 ? <span className="text-red-300" data-testid={`photo-order-given-back-${o.id}`}> · {money(o.refunded_amount)} given back</span> : null}</p>
                   <p className="text-[12px] text-shTextMuted mt-0.5 truncate">{o.email}{o.phone ? ` · ${o.phone}` : ""}{o.dogs?.length ? ` · ${o.dogs.join(", ")}` : ""}{o.shot_ref ? ` · shot ${o.shot_ref}` : ""}</p>
                   <div className="mt-1.5 flex flex-wrap gap-1.5">
                     <Pill tone={st.tone} testid={`photo-order-status-${o.id}`}>{st.label}</Pill>
                     {o.contestant_numbers?.length > 0 && <Pill tone="orange"><i className="fas fa-hat-wizard" />{o.contestant_numbers.map((n) => `#${String(n).padStart(3, "0")}`).join(" ")}</Pill>}
-                    {o.print_status && o.print_status !== "none" && <Pill>{PRINT_STATUS.find(([k]) => k === o.print_status)?.[1]}</Pill>}
+                    {o.print_status && o.print_status !== "none" && !(o.status === "refunded" && ["pending", "ready"].includes(o.print_status)) && <Pill>{PRINT_STATUS.find(([k]) => k === o.print_status)?.[1]}</Pill>}
                     {o.sent_at && <Pill tone="green"><i className="fas fa-check" />Sent {fmtWhen(o.sent_at)}</Pill>}
                   </div>
                 </div>
@@ -377,7 +378,7 @@ export function PhotoOrdersPanel({ owner, base, can, search = null, searchLabel 
                   {o.status === "ordered" && canPay && <button type="button" onClick={() => setPaying(o)} data-testid={`photo-order-pay-${o.id}`} className="min-h-[44px] px-3 rounded-xl bg-shGreen text-bgHeader font-black text-[12px] uppercase tracking-widest">Take payment</button>}
                   {o.status === "paid" && <button type="button" onClick={() => patch(o, { status: "ready" }, "Marked ready")} disabled={busy === o.id} data-testid={`photo-order-ready-${o.id}`} className="min-h-[44px] px-3 rounded-xl bg-shSurfaceRaised text-shText font-black text-[12px] uppercase tracking-widest border border-bgHover">Mark ready</button>}
                   {(o.status === "paid" || o.status === "ready") && <button type="button" onClick={() => setSending(o)} data-testid={`photo-order-send-${o.id}`} className="min-h-[44px] px-3 rounded-xl bg-shBlue text-white font-black text-[12px] uppercase tracking-widest">Send photos</button>}
-                  {o.print && (
+                  {o.print && o.status !== "refunded" && (
                     <select value={o.print_status || "pending"} onChange={(e) => patch(o, { print_status: e.target.value }, "Print status saved")} data-testid={`photo-order-print-${o.id}`} className="min-h-[40px] bg-bgBase border border-bgHover rounded-xl px-2 text-white text-[12px]">
                       {PRINT_STATUS.filter(([k]) => k !== "none").map(([k, l]) => <option key={k} value={k}>{l}</option>)}
                     </select>

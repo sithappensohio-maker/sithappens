@@ -4,7 +4,7 @@ Money goes back on a sale three ways — a void, a return, or a manual refund
 against its receipt — and each writes a negative `retail_sales` row carrying
 the sale's `pos_sale_id` and the sales tax it reversed. Summing those rows is
 the one answer to "how much of this sale was given back": the manual refund
-uses it as its ceiling.
+uses it as its ceiling, and a photo order uses it to know it was refunded.
 """
 from __future__ import annotations
 
@@ -24,6 +24,21 @@ async def by_sale(db, sale_ids: Iterable[str]) -> Dict[str, Tuple[float, float]]
         s[0] += abs(float(r.get("amount") or 0))
         s[1] += abs(float(r.get("tax_amount") or 0))
     return {k: (round(a, 2), round(t, 2)) for k, (a, t) in sums.items()}
+
+
+async def undone_by_items(db, sale_ids: Iterable[str]) -> set:
+    """The sales whose items all went back: voided, or every line returned.
+    Read from the items rather than the money, because returns made one
+    unit at a time can add up to a cent less than was charged."""
+    ids = sorted({i for i in sale_ids if i})
+    out = set()
+    if not ids:
+        return out
+    async for s in db.pos_sales.find({"id": {"$in": ids}}, {"_id": 0, "id": 1, "status": 1, "line_items.qty": 1, "line_items.returned_qty": 1}):
+        lines = s.get("line_items") or []
+        if s.get("status") == "voided" or (lines and all(float(li.get("returned_qty") or 0) >= float(li.get("qty") or 0) for li in lines)):
+            out.add(s["id"])
+    return out
 
 
 async def hand_refund_block(db, sale: dict, action: str) -> Optional[str]:

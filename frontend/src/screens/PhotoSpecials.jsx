@@ -27,7 +27,7 @@ const BLANK = {
   photos_title: "", order_prefix: "", photo_packages: [],
 };
 
-const ORDER_STATUS_LABEL = { ordered: "Unpaid", paid: "Paid", ready: "Ready", sent: "Sent" };
+const ORDER_STATUS_LABEL = { ordered: "Unpaid", paid: "Paid", ready: "Ready", sent: "Sent", refunded: "Refunded" };
 
 /** Write one weekday's hours without disturbing the others. */
 function setDay(editing, setEditing, day, row) {

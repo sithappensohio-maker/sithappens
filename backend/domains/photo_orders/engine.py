@@ -39,8 +39,13 @@ from pydantic import BaseModel, EmailStr, Field
 from pymongo import ReturnDocument
 
 import email_service
+from domains.pos import given_back
 
-PHOTO_ORDER_STATUSES = ("ordered", "paid", "ready", "sent")
+# "refunded": every dollar of the order's register sale went back (a void, a
+# return, or a refund against its receipt). The order stays as the record and
+# is never paid, sent or printed again (audit #28, owner's choice B).
+PHOTO_ORDER_STATUSES = ("ordered", "paid", "ready", "sent", "refunded")
+PAID_STATUSES = ("paid", "ready", "sent")
 PRINT_STATUSES = ("none", "pending", "ready", "picked_up", "mailed")
 PREFIX_RE = re.compile(r"^[A-Z0-9][A-Z0-9-]{1,11}$")
 
@@ -212,21 +217,58 @@ def register_photo_order_routes(
         o["list_total"] = round(float(o.get("package_price") or 0) * int(o.get("qty") or 1), 2)
         o["print"] = (o.get("package") or {}).get("print") or ""
         o["digitals"] = int((o.get("package") or {}).get("digitals") or 0)
+        o["refunded_amount"] = round(float(o.get("refunded_amount") or 0), 2)
         return o
 
+    async def _refresh(owner_id: str, oid: Optional[str] = None) -> None:
+        """Money given back at the register on a paid order's sale reaches the
+        order, whichever way it went back (a void, a return, a refund against
+        its receipt): all of it — or every item back — makes the order
+        Refunded; part of it comes off what the order counts as revenue. Read
+        from the register each time the orders are, so it also catches money
+        that went back before this existed, it heals a Refunded order that
+        something flipped back, and a Refunded order whose refund was deleted
+        as a mistake goes back to what it was."""
+        query: Dict[str, Any] = {owner_field: owner_id, "status": {"$in": [*PAID_STATUSES, "refunded"]}, "pos_sale_id": {"$nin": [None, ""]}}
+        if oid:
+            query["id"] = oid
+        rows = await orders.find(query, {"_id": 0, "id": 1, "pos_sale_id": 1, "total": 1, "status": 1, "refunded_amount": 1,
+                                         "status_before_refund": 1}).to_list(5000)
+        ids = [r["pos_sale_id"] for r in rows]
+        back = await given_back.by_sale(db, ids) if rows else {}
+        undone = await given_back.undone_by_items(db, ids) if rows else set()
+        for r in rows:
+            given = back.get(r["pos_sale_id"], (0.0, 0.0))[0]
+            full = r["pos_sale_id"] in undone or (given > 0 and given >= round(float(r.get("total") or 0), 2) - 0.005)
+            was = r.get("status")
+            if full == (was == "refunded") and abs(given - float(r.get("refunded_amount") or 0)) < 0.005:
+                continue
+            now = _now_iso()
+            update: Dict[str, Any] = {"$set": {"refunded_amount": given, "updated_at": now}}
+            if full and was != "refunded":
+                update["$set"].update({"status": "refunded", "refunded_at": now, "status_before_refund": was})
+            elif not full and was == "refunded":
+                before = r.get("status_before_refund")
+                update["$set"]["status"] = before if before in PAID_STATUSES else "paid"
+                update["$unset"] = {"refunded_at": "", "status_before_refund": ""}
+            await orders.update_one({owner_field: owner_id, "id": r["id"], "status": was}, update)
+
     async def _summary(owner_id: str) -> dict:
-        rows = await orders.find({owner_field: owner_id}, {"_id": 0, "status": 1, "total": 1, "package": 1, "print_status": 1}).to_list(5000)
-        paid = [r for r in rows if r.get("status") in ("paid", "ready", "sent")]
+        await _refresh(owner_id)
+        rows = await orders.find({owner_field: owner_id}, {"_id": 0, "status": 1, "total": 1, "refunded_amount": 1, "package": 1, "print_status": 1}).to_list(5000)
+        paid = [r for r in rows if r.get("status") in PAID_STATUSES]
         return {
             "orders": len(rows),
-            "revenue": round(sum(float(r.get("total") or 0) for r in paid), 2),
+            "revenue": round(sum(max(0.0, float(r.get("total") or 0) - float(r.get("refunded_amount") or 0)) for r in paid), 2),
             "unpaid": sum(1 for r in rows if r.get("status") == "ordered"),
             "to_send": sum(1 for r in rows if r.get("status") in ("paid", "ready") and int((r.get("package") or {}).get("digitals") or 0) > 0),
             "sent": sum(1 for r in rows if r.get("status") == "sent"),
-            "prints_pending": sum(1 for r in rows if (r.get("package") or {}).get("print") and r.get("status") != "ordered" and (r.get("print_status") or "pending") in ("pending", "ready")),
+            "refunded": sum(1 for r in rows if r.get("status") == "refunded"),
+            "prints_pending": sum(1 for r in rows if (r.get("package") or {}).get("print") and r.get("status") in PAID_STATUSES and (r.get("print_status") or "pending") in ("pending", "ready")),
         }
 
     async def _order(owner_id: str, oid: str) -> dict:
+        await _refresh(owner_id, oid)
         o = await orders.find_one({owner_field: owner_id, "id": oid}, {"_id": 0})
         if not o:
             raise HTTPException(status_code=404, detail="Photo order not found")
@@ -244,6 +286,7 @@ def register_photo_order_routes(
     async def photo_orders_list(owner_id: str, q: str = Query(default=""), status: str = Query(default="all"),
                                 user: dict = Depends(manage)):
         await load_owner(owner_id)
+        await _refresh(owner_id)
         query: Dict[str, Any] = {owner_field: owner_id}
         if status in PHOTO_ORDER_STATUSES:
             query["status"] = status
@@ -298,6 +341,8 @@ def register_photo_order_routes(
     @api.patch(f"{path}/{{oid}}")
     async def photo_orders_patch(owner_id: str, oid: str, body: PhotoOrderPatchIn, user: dict = Depends(manage)):
         o = await _order(owner_id, oid)
+        if o.get("status") == "refunded" and (body.status is not None or body.print_status is not None):
+            raise HTTPException(status_code=409, detail="This order was refunded at the register, so it can't be marked ready or printed.")
         patch: Dict[str, Any] = {}
         if body.primary_contact is not None:
             patch["primary_contact"] = _clean(body.primary_contact, 120)
@@ -328,6 +373,8 @@ def register_photo_order_routes(
     @api.delete(f"{path}/{{oid}}")
     async def photo_orders_delete(owner_id: str, oid: str, user: dict = Depends(manage)):
         o = await _order(owner_id, oid)
+        if o.get("status") == "refunded":
+            raise HTTPException(status_code=409, detail="A refunded order stays on the list as its record.")
         if o.get("status") != "ordered":
             raise HTTPException(status_code=409, detail="A paid order can't be deleted. Refund it through the register instead.")
         await orders.delete_one({owner_field: owner_id, "id": oid})
@@ -354,6 +401,8 @@ def register_photo_order_routes(
         if create_pos_sale is None or pos_sale_model is None:
             raise HTTPException(status_code=503, detail="The register is not available.")
         o = await _order(owner_id, oid)
+        if o.get("status") == "refunded":
+            raise HTTPException(status_code=409, detail="This order was refunded at the register, so it isn't paid again. Start a new order if they still want photos.")
         if o.get("status") != "ordered":
             return await _view(owner_id, oid)
         if require_take_payments is not None:
@@ -382,6 +431,8 @@ def register_photo_order_routes(
         o = await _order(owner_id, oid)
         if o.get("status") == "ordered":
             raise HTTPException(status_code=409, detail="Take payment before sending the photos.")
+        if o.get("status") == "refunded":
+            raise HTTPException(status_code=409, detail="This order was refunded at the register, so its photos aren't sent.")
         link = body.delivery_link.strip()
         if not re.match(r"^https?://", link, re.I):
             raise HTTPException(status_code=422, detail="The download link must start with http:// or https://.")
@@ -401,14 +452,15 @@ def register_photo_order_routes(
     @api.get(f"{path}.csv")
     async def photo_orders_csv(owner_id: str, user: dict = Depends(manage)):
         owner = await load_owner(owner_id)
+        await _refresh(owner_id)
         rows = await orders.find({owner_field: owner_id}, {"_id": 0}).sort("created_at", 1).to_list(5000)
         header = ["Order #", "Name", "Email", "Phone", "Dogs", "Contestant #s", "Shot reference", "Package", "Qty", "Digitals", "Print",
-                  "Subtotal", "Tax", "Total", "Status", "Receipt #", "Paid at", "Print status", "Download link", "Sent at", "Notes",
+                  "Subtotal", "Tax", "Total", "Given back", "Status", "Receipt #", "Paid at", "Print status", "Download link", "Sent at", "Notes",
                   *[h for h, _ in csv_link_columns], "Created at"]
         data = [[r.get("order_number"), r.get("primary_contact"), r.get("email"), r.get("phone"), "; ".join(r.get("dogs") or []),
                  "; ".join(f"#{int(n):03d}" for n in (r.get("contestant_numbers") or [])), r.get("shot_ref"), r.get("package_name"), r.get("qty"),
                  (r.get("package") or {}).get("digitals"), (r.get("package") or {}).get("print"), r.get("subtotal"), r.get("tax_amount"), r.get("total"),
-                 r.get("status"), r.get("receipt_number"), r.get("paid_at"), r.get("print_status"), r.get("delivery_link"), r.get("sent_at"),
+                 r.get("refunded_amount"), r.get("status"), r.get("receipt_number"), r.get("paid_at"), r.get("print_status"), r.get("delivery_link"), r.get("sent_at"),
                  r.get("notes"), *[r.get(f) for _, f in csv_link_columns], r.get("created_at")] for r in rows]
         out = io.StringIO()
         w = csv.writer(out)
@@ -418,4 +470,4 @@ def register_photo_order_routes(
         return Response(content=out.getvalue(), media_type="text/csv",
                         headers={"Content-Disposition": f'attachment; filename="{owner.get("slug") or "photo"}-photo-orders.csv"'})
 
-    return {"photo_orders_summary": _summary, "photo_order_row": _order_row}
+    return {"photo_orders_summary": _summary, "photo_order_row": _order_row, "refresh_refunds": _refresh}

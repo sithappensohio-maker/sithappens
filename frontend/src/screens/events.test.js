@@ -265,7 +265,7 @@ describe("photo booth", () => {
     expect(panel).toMatch(/api\.post\(`\$\{base\}\/photo-orders\/\$\{order\.id\}\/send`/);
     expect(panel).toMatch(/const canPay = !!can\?\.\("take_payments"\);/);
     expect(TENDER_METHODS.map(([k]) => k)).toEqual(["cash", "card", "check", "venmo", "paypal", "other"]);
-    expect(Object.keys(STATUS_META)).toEqual(["ordered", "paid", "ready", "sent"]);
+    expect(Object.keys(STATUS_META)).toEqual(["ordered", "paid", "ready", "sent", "refunded"]);
   });
   test("package labels read the way the flyer does", () => {
     expect(packageLabel({ name: "3 Edited Digitals", digitals: 3, print: "" })).toBe("3 digitals");

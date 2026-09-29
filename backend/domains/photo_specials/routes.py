@@ -806,6 +806,7 @@ def register_photo_special_routes(
         # Who bought what: each reservation shows the photo orders taken
         # against it, so the desk sees at a glance who still has to order.
         by_booking: Dict[str, List[dict]] = {}
+        await photo_order_api["refresh_refunds"](special_id)  # a voided or refunded photo sale shows as Refunded here too
         for o in await db.photo_special_orders.find(
             {"photo_special_id": special_id, "booking_id": {"$in": [b.get("id") for b in rows]}},
             {"_id": 0, "id": 1, "booking_id": 1, "order_number": 1, "status": 1, "package_name": 1, "qty": 1},
@@ -892,7 +893,7 @@ def register_photo_special_routes(
     async def _load_special(special_id: str) -> dict:
         return await _special_by({"id": special_id})
 
-    register_photo_order_routes(
+    photo_order_api = register_photo_order_routes(
         api=api, db=db, logger=logger, manage=manage, base="/admin/photo-specials", load_owner=_load_special,
         owners_collection="photo_specials", orders_collection="photo_special_orders", owner_field="photo_special_id",
         product_tag="photo_special_package", order_prefix=lambda sp: sp.get("order_prefix") or "SH-PS",
