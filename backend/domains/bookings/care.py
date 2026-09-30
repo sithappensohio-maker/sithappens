@@ -519,23 +519,14 @@ async def care_board_today() -> Dict[str, Any]:
     today = _today()
     # On-site = approved or completed bookings spanning today, or still
     # checked in after their end date (missed checkout — Sprint 110di-85/86).
-    day = spans.on_day_query(today)   # today's visits + dogs still checked in, no cap (audit #43)
-    candidates = await db.bookings.find(
-        {"status": {"$in": ["approved", "completed"]}, "date": {"$lte": today}, "checked_out_at": {"$in": [None, ""]},
-         "$or": [*day["$or"], {"checked_in_at": {"$nin": [None, ""]}}]},
+    candidates = await db.bookings.find(   # today's visits + dogs still checked in, no cap (audit #43/#46)
+        {"status": {"$in": ["approved", "completed"]}, **spans.on_site_query(today)},
         {"_id": 0, "id": 1, "dog_id": 1, "dog_name": 1, "client_id": 1, "client_name": 1,
          "service_type": 1, "date": 1, "end_date": 1, "kennel": 1, "care_items": 1,
          "care_schedule_custom": 1, "care_per_day_since": 1,
          "checked_in_at": 1, "checked_out_at": 1, "dropoff_time": 1, "pickup_time": 1},
     ).to_list(None)
-    on_site = []
-    for b in candidates:
-        if b.get("checked_out_at"):
-            continue
-        d = b.get("date") or ""
-        e = b.get("end_date") or d
-        if (d <= today <= e) or (bool(b.get("checked_in_at")) and e < today):
-            on_site.append(b)
+    on_site = [b for b in candidates if spans.on_site(b, today)]
     dog_ids = list({b["dog_id"] for b in on_site if b.get("dog_id")})
     dogs = {d["id"]: d for d in await db.dogs.find({"id": {"$in": dog_ids}}, _DOG_FIELDS).to_list(len(dog_ids) or 1)} if dog_ids else {}
     feedings: List[Dict[str, Any]] = []

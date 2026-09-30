@@ -52611,27 +52611,17 @@ async def get_kennel_board(user: dict = Depends(require_employee_or_admin)):
     """Today's operational kennel board. One card per on-site booking with
     assignment fields + warning flags pre-computed."""
     today_local = business_today().isoformat()
-    candidates = await db.bookings.find(   # only today's visits, no cap (audit #43)
-        {"status": {"$in": ["approved", "completed"]}, **booking_spans.on_day_query(today_local)},
+    candidates = await db.bookings.find(   # the Care Board's rule: here today, or still here (audit #43/#46)
+        {"status": {"$in": ["approved", "completed"]}, **booking_spans.on_site_query(today_local)},
         {"_id": 0, "id": 1, "dog_id": 1, "dog_name": 1, "client_id": 1, "client_name": 1,
          "service_type": 1, "date": 1, "end_date": 1, "status": 1,
          "kennel": 1, "room": 1, "crate": 1, "yard_group": 1, "training_group": 1,
          "dropoff_time": 1, "pickup_time": 1, "checked_in_at": 1, "checked_out_at": 1,
          "notes": 1, "care_items": 1, "care_per_day_since": 1},
     ).to_list(None)
-    on_site = []
-    for b in candidates:
-        d = b.get("date") or ""
-        e = b.get("end_date") or d
-        # Skip already-checked-out for today (they've left)
-        if b.get("checked_out_at"):
-            try:
-                if b["checked_out_at"][:10] == today_local:
-                    continue
-            except Exception:
-                pass
-        if d <= today_local <= e:
-            on_site.append(b)
+    # Gone home = checked out, whatever the day or hour; still checked in
+    # after the stay ended = still here, flagged (audit #46).
+    on_site = [b for b in candidates if booking_spans.on_site(b, today_local)]
 
     # Bulk-load dogs (one shot for safety flags + vaccines + photo)
     dog_ids = list({b.get("dog_id") for b in on_site if b.get("dog_id")})
@@ -52694,6 +52684,7 @@ async def get_kennel_board(user: dict = Depends(require_employee_or_admin)):
             "dropoff_time": b.get("dropoff_time") or "",
             "pickup_time": b.get("pickup_time") or "",
             "checked_in_at": b.get("checked_in_at") or None,
+            "end_date": b.get("end_date") or b.get("date") or "",
             "notes": b.get("notes") or "",
             "photo": dog.get("photo") or "",
             "breed": dog.get("breed") or "",
@@ -52705,6 +52696,7 @@ async def get_kennel_board(user: dict = Depends(require_employee_or_admin)):
                 "med_overdue":         med_overdue,
                 "open_incidents":      open_incidents_by_dog.get(b.get("dog_id") or "", 0),
                 "do_not_group":        any(f.lower().replace(" ", "_") in ("do_not_group", "dont_group") for f in flags),
+                "missed_checkout":     booking_spans.on_site(b, today_local) == "missed_checkout",
             },
         }
         bucket = by_service.get(b.get("service_type") or "other", by_service["other"])

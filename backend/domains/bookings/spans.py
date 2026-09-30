@@ -116,3 +116,26 @@ def on_day_query(day: str) -> Dict[str, Any]:
     history can push today's dogs past a cap (audit #43). Callers keep their
     own exact on-site test on the rows."""
     return {"date": {"$lte": day}, "$or": [{"end_date": {"$gte": day}}, {"date": day}]}
+
+
+def on_site_query(day: str) -> Dict[str, Any]:
+    """Visits that may be on site `day`: not checked out, and covering the day
+    or still checked in after their stay ended. The Care Board and the Kennel
+    Board read this one rule (audit #46); `on_site` decides each row."""
+    return {"date": {"$lte": day}, "checked_out_at": {"$in": [None, ""]},
+            "$or": [*on_day_query(day)["$or"], {"checked_in_at": {"$nin": [None, ""]}}]}
+
+
+def on_site(b: Dict[str, Any], day: str) -> Optional[str]:
+    """"here" (booked for the day, not gone home), "missed_checkout" (still
+    checked in after the stay ended) or None. Checked out = gone, whatever
+    the day or hour it happened."""
+    if b.get("checked_out_at"):
+        return None
+    d = b.get("date") or ""
+    e = b.get("end_date") or d
+    if d <= day <= e:
+        return "here"
+    if b.get("checked_in_at") and e < day:
+        return "missed_checkout"
+    return None

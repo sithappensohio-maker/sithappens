@@ -142,6 +142,11 @@ function KennelCard({ card, accent, onEdit }) {
             {card.breed && <span className="text-[11px] text-shTextMuted truncate">{card.breed}</span>}
           </div>
           <p className="text-[12px] text-shTextMuted truncate">{card.client_name}</p>
+          {w.missed_checkout && (
+            <p className="text-[11px] font-black uppercase tracking-widest text-red-300 mt-1" data-testid={`warn-missed-checkout-${card.booking_id}`}>
+              <i className="fas fa-door-open mr-1"/>Missed checkout — stay ended {card.end_date}
+            </p>
+          )}
           {(card.dropoff_time || card.pickup_time) && (
             <p className="text-[11px] font-black uppercase tracking-widest text-shTextMuted mt-1">
               {card.dropoff_time && <span><i className="fas fa-arrow-down mr-1"/>{card.dropoff_time}</span>}
