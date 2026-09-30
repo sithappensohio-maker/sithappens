@@ -1,4 +1,5 @@
 import { useState, useMemo } from "react";
+import { todayISO } from "../lib/date";
 import { api } from "../lib/api";
 import { compressImage } from "../lib/imageCompress";
 import PremiumButton from "./premium/PremiumButton";
@@ -23,7 +24,6 @@ const REQ_VAX = [
   { key: "dhpp",       label: "DHPP" },
 ];
 
-const today = () => new Date().toISOString().slice(0, 10);
 const fmtDate = (iso) => {
   if (!iso) return "—";
   try {
@@ -172,7 +172,7 @@ export default function VaccineQuickUploadModal({ dogs = [], initialDogId = "", 
               <p className="text-[11px] font-black text-shTextMuted uppercase tracking-widest">Required vaccines</p>
               {REQ_VAX.map((v) => {
                 const current = dog.vaccines?.[v.key] || "";
-                const expired = current && current < today();
+                const expired = current && current < todayISO();
                 const missing = !current;
                 const row = rows[v.key] || { expires_on: "", photos: [] };
                 const status = missing ? "Missing" : expired ? "Expired" : "Current";

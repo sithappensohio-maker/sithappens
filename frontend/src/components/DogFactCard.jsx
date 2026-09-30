@@ -8,6 +8,7 @@
 // even if the API blips, and it doesn't refetch on every screen mount.
 
 import { useEffect, useState } from "react";
+import { todayISO } from "../lib/date";
 import { api } from "../lib/api";
 
 const TAG_COLORS = {
@@ -22,15 +23,13 @@ const TAG_COLORS = {
 
 function tagClass(t) { return TAG_COLORS[t] || TAG_COLORS.fun; }
 
-function todayKey() { return new Date().toISOString().slice(0, 10); }
-
 function useDailyFact() {
   const [fact, setFact] = useState(() => {
     try {
       const raw = localStorage.getItem("dog-fact-today");
       if (!raw) return null;
       const parsed = JSON.parse(raw);
-      if (parsed.date === todayKey()) return parsed.fact;
+      if (parsed.date === todayISO()) return parsed.fact;
     } catch {}
     return null;
   });

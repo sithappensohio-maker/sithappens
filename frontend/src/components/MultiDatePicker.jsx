@@ -1,4 +1,5 @@
 import { useMemo, useState } from "react";
+import { parseLocalISO, todayISO } from "../lib/date";
 
 /**
  * Two-month forward calendar grid for picking specific (non-consecutive) days.
@@ -13,7 +14,6 @@ import { useMemo, useState } from "react";
  */
 function pad(n) { return n < 10 ? "0" + n : "" + n; }
 function fmtDate(d) { return `${d.getFullYear()}-${pad(d.getMonth()+1)}-${pad(d.getDate())}`; }
-function todayISO() { return fmtDate(new Date()); }
 function fmtChip(d) {
   return new Date(d + "T12:00:00").toLocaleDateString(undefined, { month:"short", day:"numeric" });
 }
@@ -39,7 +39,7 @@ export default function MultiDatePicker({
   };
 
   const renderMonth = (yearOffset, monthOffset) => {
-    const base = new Date();
+    const base = parseLocalISO(today);
     const first = new Date(base.getFullYear(), base.getMonth() + monthOffset, 1);
     const monthLabel = first.toLocaleDateString(undefined, { month:"long", year:"numeric" });
     const startWeekday = first.getDay(); // 0=Sun

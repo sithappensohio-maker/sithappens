@@ -1,4 +1,5 @@
 import { useEffect, useRef, useState } from "react";
+import { todayISO } from "../lib/date";
 import { api, formatErr } from "../lib/api";
 import { useConfirm } from "../lib/useConfirm";
 import { compressImage } from "../lib/imageCompress";
@@ -27,10 +28,6 @@ const SEVERITIES = [
   { key: "critical", label: "Critical", color: "bg-red-500/30 text-red-200 ring-1 ring-red-400/40" },
 ];
 
-function todayISO() {
-  const d = new Date();
-  return `${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,"0")}-${String(d.getDate()).padStart(2,"0")}`;
-}
 function nowHHMM() { const d=new Date(); return `${String(d.getHours()).padStart(2,'0')}:${String(d.getMinutes()).padStart(2,'0')}`; }
 
 const emptyForm = {

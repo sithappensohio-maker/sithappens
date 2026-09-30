@@ -542,7 +542,7 @@ function TimecardTab() {
       const obj = URL.createObjectURL(blob);
       const a = document.createElement("a");
       a.href = obj;
-      a.download = `my-timecard-${new Date().toISOString().slice(0,10)}.csv`;
+      a.download = `my-timecard-${todayISO()}.csv`;
       a.click();
       setTimeout(() => URL.revokeObjectURL(obj), 5000);
     } catch { /* no-op: surfaced via the resulting blank download */ }
@@ -1042,9 +1042,9 @@ function TimeOffFormModal({ onClose, onSaved }) {
  *  expires within 14 days. Other vaccines just warn — only rabies blocks
  *  check-in (handled in RosterTab.checkIn). */
 function VaccineGuard({ vaccines, dogName: _dogName }) {
-  const today = new Date().toISOString().slice(0, 10);
+  const today = todayISO();
   const v = vaccines || {};
-  const days = (d) => Math.ceil((new Date(d).getTime() - Date.now()) / 86400000);
+  const days = (d) => Math.round((Date.parse(`${d}T12:00:00Z`) - Date.parse(`${today}T12:00:00Z`)) / 86400000);
   const expired = [];
   const expiring = [];
   for (const name of ["rabies", "dhpp", "bordetella"]) {

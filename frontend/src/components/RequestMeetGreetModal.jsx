@@ -1,9 +1,6 @@
 import { useEffect, useState } from "react";
+import { todayISO } from "../lib/date";
 import { api, formatErr } from "../lib/api";
-
-function todayIso() {
-  return new Date().toISOString().slice(0, 10);
-}
 
 function formatSlotTime(hhmm) {
   const [h, m] = hhmm.split(":").map(Number);
@@ -24,7 +21,7 @@ export default function RequestMeetGreetModal({ open, onClose }) {
   const [email, setEmail] = useState("");
   const [phone, setPhone] = useState("");
   const [dogName, setDogName] = useState("");
-  const [date, setDate] = useState(todayIso());
+  const [date, setDate] = useState(todayISO());
   const [time, setTime] = useState("");
   const [slotInfo, setSlotInfo] = useState(null); // { enabled, closed, slot_minutes, slots }
   const [slotsLoading, setSlotsLoading] = useState(false);
@@ -69,7 +66,7 @@ export default function RequestMeetGreetModal({ open, onClose }) {
   const close = () => {
     setDone(false); setErr("");
     setOwnerName(""); setEmail(""); setPhone(""); setDogName("");
-    setDate(todayIso()); setTime(""); setSlotInfo(null);
+    setDate(todayISO()); setTime(""); setSlotInfo(null);
     onClose();
   };
 
@@ -129,7 +126,7 @@ export default function RequestMeetGreetModal({ open, onClose }) {
             </div>
             <div>
               <label className="text-[12px] font-black text-gray-500 uppercase tracking-widest">Date</label>
-              <input type="date" required min={todayIso()} value={date} onChange={(e) => setDate(e.target.value)}
+              <input type="date" required min={todayISO()} value={date} onChange={(e) => setDate(e.target.value)}
                      data-testid="meet-greet-date-input"
                      className="w-full mt-1 bg-bgBase border border-bgHover rounded p-2.5 text-white text-sm focus:border-shGreen outline-none" style={{ colorScheme: "dark" }}/>
             </div>

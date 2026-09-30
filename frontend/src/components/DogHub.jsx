@@ -1,4 +1,5 @@
 import { useEffect, useMemo, useState } from "react";
+import { todayISO } from "../lib/date";
 import { api } from "../lib/api";
 import IntakeFormsSection from "./IntakeFormsSection";
 import DogTrainingTab from "./DogTrainingTab";
@@ -65,7 +66,7 @@ export default function DogHub({
 
   const nextBooking = useMemo(() => {
     const list = bookings || [];
-    const today = new Date().toISOString().slice(0, 10);
+    const today = todayISO();
     return list.filter(b => b.date >= today && ["approved", "pending"].includes(b.status))
       .sort((a, b) => a.date.localeCompare(b.date))[0] || null;
   }, [bookings]);

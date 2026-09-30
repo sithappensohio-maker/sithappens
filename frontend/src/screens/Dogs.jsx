@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useRef, useState } from "react";
+import { addDaysISO, localISOFromDate, parseLocalISO, todayISO } from "../lib/date";
 import { api, formatErr } from "../lib/api";
 import { compressImage } from "../lib/imageCompress";
 import { useConfirm } from "../lib/useConfirm";
@@ -45,16 +46,11 @@ const LEVELS = [
   { key: "proofed", label: "Proofed", color: "bg-shPrimary/20 text-shPrimary" },
 ];
 
-function todayISO() {
-  const d = new Date();
-  return `${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,"0")}-${String(d.getDate()).padStart(2,"0")}`;
-}
 function vaccineStatus(d) {
   if (!d) return { label: "Missing", color: "text-red-400", bg: "bg-red-500/15" };
   const t = todayISO();
   if (d < t) return { label: "Expired", color: "text-red-400", bg: "bg-red-500/15" };
-  const in30 = new Date(); in30.setDate(in30.getDate()+30);
-  const in30Iso = `${in30.getFullYear()}-${String(in30.getMonth()+1).padStart(2,"0")}-${String(in30.getDate()).padStart(2,"0")}`;
+  const in30Iso = addDaysISO(t, 30);
   if (d < in30Iso) return { label: "Expiring Soon", color: "text-shAccent", bg: "bg-shAccent/15" };
   return { label: "Valid", color: "text-shPrimary", bg: "bg-shPrimary/15" };
 }
@@ -632,9 +628,9 @@ export default function Dogs({ focusId = null, focusMode = "scroll", onConsumed 
                     <button type="button" data-testid="suggest-birthday-btn"
                             onClick={() => {
                               const months = (parseInt(form.age_y)||0) * 12 + (parseInt(form.age_m)||0);
-                              const now = new Date();
+                              const now = parseLocalISO(todayISO());
                               const guess = new Date(now.getFullYear(), now.getMonth() - months, now.getDate());
-                              const iso = guess.toISOString().slice(0,10);
+                              const iso = localISOFromDate(guess);
                               setForm({ ...form, birthday: iso });
                             }}
                             className="text-[14px] text-shSecondary hover:text-shPrimary underline decoration-dotted font-black uppercase tracking-widest">

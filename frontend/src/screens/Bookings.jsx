@@ -1,4 +1,5 @@
 import { useEffect, useMemo, useRef, useState } from "react";
+import { todayISO } from "../lib/date";
 import { api, formatErr } from "../lib/api";
 import { dogsPerGroup } from "../lib/friendsFamily";
 import { useConfirm } from "../lib/useConfirm";
@@ -152,7 +153,7 @@ export default function Bookings() {
   // Sprint 110au — Bookings list defaults to UPCOMING only (today + future).
   // Past-dated rows fall into "history" along with completed/cancelled —
   // they're still reachable via the "Show History" toggle.
-  const today = new Date().toISOString().slice(0, 10);
+  const today = todayISO();
   const isPastDate = (b) => {
     const last = (b.end_date && b.end_date >= b.date) ? b.end_date : b.date;
     return !!last && last < today;

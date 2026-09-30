@@ -2,6 +2,7 @@
    Admin screen for managing waitlist entries.
    Includes a capacity-aware "Add to waitlist" flow. */
 import { useEffect, useMemo, useState, useCallback } from "react";
+import { todayISO } from "../lib/date";
 import { api, formatErr } from "../lib/api";
 import { useConfirm } from "../lib/useConfirm";
 import { toast } from "sonner";
@@ -25,10 +26,6 @@ const PRIORITY_META = {
   low:    { label: "Low",    cls: "bg-shSurfaceRaised text-shTextMuted" },
 };
 
-function todayISO() {
-  const d = new Date();
-  return `${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,"0")}-${String(d.getDate()).padStart(2,"0")}`;
-}
 
 const emptyForm = {
   dog_id: "", service_type: "daycare",

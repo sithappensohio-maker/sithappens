@@ -1,4 +1,5 @@
 import { useState } from "react";
+import { localISOFromDate, parseLocalISO, todayISO } from "../lib/date";
 
 /**
  * Two-month forward calendar grid where the client taps days to toggle
@@ -7,9 +8,10 @@ import { useState } from "react";
  *
  * Past days are non-interactive. Today is highlighted blue.
  */
-function ymd(d) { return d.toISOString().split("T")[0]; }
+// Cells are calendar-day Dates; "today" is Ohio's date (lib/date).
+const ymd = localISOFromDate;
 
-function MonthGrid({ year, month, selected, onToggle, today }) {
+function MonthGrid({ year, month, selected, onToggle, todayStr }) {
   const first = new Date(year, month, 1);
   const start = new Date(first);
   start.setDate(start.getDate() - start.getDay()); // back up to Sunday
@@ -20,7 +22,6 @@ function MonthGrid({ year, month, selected, onToggle, today }) {
     cells.push(cell);
   }
   const monthName = first.toLocaleString("default", { month: "long", year: "numeric" });
-  const todayStr = ymd(today);
   return (
     <div>
       <p className="text-[14px] font-black uppercase tracking-widest text-shSecondary mb-2">{monthName}</p>
@@ -57,7 +58,8 @@ function MonthGrid({ year, month, selected, onToggle, today }) {
 }
 
 export default function MultiDateCalendar({ selected, onToggle }) {
-  const today = new Date();
+  const todayStr = todayISO();
+  const today = parseLocalISO(todayStr);
   const [anchor, setAnchor] = useState(new Date(today.getFullYear(), today.getMonth(), 1));
   const next = new Date(anchor.getFullYear(), anchor.getMonth() + 1, 1);
   const prev = () => setAnchor(new Date(anchor.getFullYear(), anchor.getMonth() - 1, 1));
@@ -72,8 +74,8 @@ export default function MultiDateCalendar({ selected, onToggle }) {
         <button onClick={fwd} className="text-shSecondary text-[14px] font-black px-2"><i className="fas fa-chevron-right"/></button>
       </div>
       <div className="grid grid-cols-1 md:grid-cols-2 gap-4 bg-[var(--sh-card-base)] border border-shBorder rounded p-3">
-        <MonthGrid year={anchor.getFullYear()} month={anchor.getMonth()} selected={selected} onToggle={onToggle} today={today} />
-        <MonthGrid year={next.getFullYear()} month={next.getMonth()} selected={selected} onToggle={onToggle} today={today} />
+        <MonthGrid year={anchor.getFullYear()} month={anchor.getMonth()} selected={selected} onToggle={onToggle} todayStr={todayStr} />
+        <MonthGrid year={next.getFullYear()} month={next.getMonth()} selected={selected} onToggle={onToggle} todayStr={todayStr} />
       </div>
       {selected.length > 0 && (
         <div className="mt-3 bg-shPrimary/10 border border-shPrimary/30 rounded p-3">

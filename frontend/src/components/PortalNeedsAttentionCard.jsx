@@ -19,6 +19,7 @@
  * single thing to show first.
  */
 import { bookingStatusLabel } from "../lib/clientLabels";
+import { addDaysISO, businessDateOf, todayISO } from "../lib/date";
 
 const money = (n) => `$${Number(n || 0).toFixed(2)}`;
 
@@ -46,15 +47,13 @@ function friendlyDate(value) {
   const normalized = /^\d{4}-\d{2}-\d{2}$/.test(text) ? `${text}T12:00:00` : text;
   const date = new Date(normalized);
   if (Number.isNaN(date.getTime())) return "";
-  const today = new Date();
-  const tomorrow = new Date(today);
-  tomorrow.setDate(today.getDate() + 1);
-  const isoDay = (d) => `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`;
-  if (isoDay(date) === isoDay(today)) return "Today";
-  if (isoDay(date) === isoDay(tomorrow)) return "Tomorrow";
+  const day = businessDateOf(text);
+  const today = todayISO();
+  if (day === today) return "Today";
+  if (day === addDaysISO(today, 1)) return "Tomorrow";
   return date.toLocaleDateString(undefined, {
     weekday: "long", month: "long", day: "numeric",
-    year: date.getFullYear() !== today.getFullYear() ? "numeric" : undefined,
+    year: day.slice(0, 4) !== today.slice(0, 4) ? "numeric" : undefined,
   });
 }
 
@@ -207,7 +206,7 @@ export function buildNeedsAttention({
   }
 
   // 10. Next appointment (fallback)
-  const today = new Date().toISOString().slice(0, 10);
+  const today = todayISO();
   const next = bookings
     .filter((b) => ["approved", "pending"].includes(b.status) && (b.end_date || b.date || "") >= today)
     .sort((a, b) => String(a.date || "").localeCompare(String(b.date || "")))[0];

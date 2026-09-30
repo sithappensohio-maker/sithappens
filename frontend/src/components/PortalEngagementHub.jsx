@@ -1,4 +1,5 @@
 import { useMemo } from "react";
+import { addDaysISO, businessDateOf, todayISO } from "../lib/date";
 import NeonEdge from "./premium/NeonEdge";
 import NeonIconStage from "./premium/NeonIconStage";
 import MiniActionCard from "./premium/MiniActionCard";
@@ -22,13 +23,6 @@ const toDate = (value) => {
   return Number.isNaN(date.getTime()) ? null : date;
 };
 
-const isoDay = (date = new Date()) => {
-  const y = date.getFullYear();
-  const m = String(date.getMonth() + 1).padStart(2, "0");
-  const d = String(date.getDate()).padStart(2, "0");
-  return `${y}-${m}-${d}`;
-};
-
 const titleCase = (value = "") => String(value)
   .replace(/_/g, " ")
   .replace(/\b\w/g, (c) => c.toUpperCase());
@@ -36,12 +30,11 @@ const titleCase = (value = "") => String(value)
 const friendlyDate = (value) => {
   const date = toDate(value);
   if (!date) return "Date not set";
-  const today = new Date();
-  const tomorrow = new Date();
-  tomorrow.setDate(today.getDate() + 1);
-  if (isoDay(date) === isoDay(today)) return "Today";
-  if (isoDay(date) === isoDay(tomorrow)) return "Tomorrow";
-  return date.toLocaleDateString(undefined, { month: "short", day: "numeric", year: date.getFullYear() !== today.getFullYear() ? "numeric" : undefined });
+  const day = businessDateOf(value);
+  const today = todayISO();
+  if (day === today) return "Today";
+  if (day === addDaysISO(today, 1)) return "Tomorrow";
+  return date.toLocaleDateString(undefined, { month: "short", day: "numeric", year: day.slice(0, 4) !== today.slice(0, 4) ? "numeric" : undefined });
 };
 
 
@@ -65,7 +58,7 @@ export function practicedOn(homework, day) {
   return practiceSessionLogs(homework).some((log) => String(log.date || log.logged_at || "").slice(0, 10) === day);
 }
 
-export function isActiveOnPremisesBooking(booking, today = isoDay()) {
+export function isActiveOnPremisesBooking(booking, today = todayISO()) {
   if (!booking?.checked_in_at || booking?.checked_out_at) return false;
 
   const status = String(booking.status || "").toLowerCase();
@@ -109,7 +102,7 @@ const relativeTime = (value) => {
 };
 
 export function getDogPortalSnapshot(dog, bookings = [], homework = []) {
-  const today = isoDay();
+  const today = todayISO();
   const dogBookings = bookings.filter((b) => String(b.dog_id || "") === String(dog.id || ""));
   const activeVisit = dogBookings.find((b) => isActiveOnPremisesBooking(b, today));
   const upcoming = dogBookings
@@ -150,7 +143,7 @@ export function buildPortalPriority({
   setupStatus = null, credits = 0, trainingCredits = 0, boardingCredits = 0,
   showMessages = true, showHomework = true, showCredits = true,
 }) {
-  const today = isoDay();
+  const today = todayISO();
   const firstDog = dogs[0];
   const portalBookings = scopeBookingsToDogs(bookings, dogs);
 

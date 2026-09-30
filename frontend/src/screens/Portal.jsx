@@ -66,7 +66,7 @@ import Tutorials from "./Tutorials";
 import { useConfirm } from "../lib/useConfirm";
 import { compressImage } from "../lib/imageCompress";
 import { useLiveRefresh } from "../lib/useLiveRefresh";
-import { todayISO } from "../lib/date";
+import { addDaysISO, todayISO } from "../lib/date";
 import HuskyDogImage from "../components/brand/HuskyDogImage";
 import { toast } from "sonner";
 
@@ -800,7 +800,7 @@ export default function Portal() {
   // Admin announcement banner — only show when enabled AND inside the
   // optional date window. Empty start/end means no lower/upper bound.
   const _ann = cpc.announcement || {};
-  const _todayISO = new Date().toISOString().slice(0, 10);
+  const _todayISO = todayISO();
   const announcementVisible = !!(_ann.enabled
     && (_ann.title?.trim() || _ann.message?.trim())
     && (!_ann.start_date || _ann.start_date <= _todayISO)
@@ -1278,7 +1278,7 @@ export default function Portal() {
       // Collect every (dog, required-vaccine) pair that's missing or
       // expired, then fire the multi-step wizard. If there's only one,
       // the wizard still works (1-of-1).
-      const todayIso = new Date().toISOString().slice(0, 10);
+      const todayIso = todayISO();
       const required = ["rabies", "bordetella", "dhpp"];
       const queue = [];
       dogs.forEach(d => {
@@ -1637,7 +1637,7 @@ export default function Portal() {
             else openBookingIfReady();
           }}
           onUpload={() => {
-            const todayIso = new Date().toISOString().slice(0, 10);
+            const todayIso = todayISO();
             const needs = (d, k) => !d?.vaccines?.[k] || String(d.vaccines[k]).slice(0, 10) < todayIso;
             const candidate = dogs.find(d => needs(d, "rabies"))
                            || dogs.find(d => needs(d, "bordetella"))
@@ -2217,8 +2217,7 @@ export default function Portal() {
               {dogs.map(d => {
                 const visits = visitCounts[d.id] || 0;
                 const today = todayISO();
-                const soon = new Date(); soon.setDate(soon.getDate() + 30);
-                const soonStr = soon.toISOString().slice(0, 10);
+                const soonStr = addDaysISO(today, 30);
                 // Sprint 110di-fix — split "must upload now" from "heads up
                 // expiring soon" so the alert badge no longer lies after a
                 // client uploads a fresh cert that happens to be < 30 days

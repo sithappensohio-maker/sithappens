@@ -1,3 +1,4 @@
+import { businessDateOf, todayISO } from "./date";
 /**
  * Print a gift card at real gift-card size, in the brand's colours.
  *
@@ -87,7 +88,7 @@ export function giftCardHtml(card, { businessName, note = "", colors, brand, log
     ? face
     : money(card.balance != null ? card.balance : card.amount);
   const to = esc(card.recipient_name || "");
-  const issued = esc(String(card.issued_at || new Date().toISOString()).slice(0, 10));
+  const issued = esc(businessDateOf(card.issued_at) || todayISO());
   const scriptLines = b.script.split("\n").map((l) => `<span>${esc(l)}</span>`).join("");
   const husky = logo === null ? "" : esc(logo || logoUrl());
 

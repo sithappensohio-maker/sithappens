@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useRef, useState } from "react";
+import { todayISO } from "../lib/date";
 import PaymentTimingSelect from "../components/PaymentTimingSelect";
 import { api, formatErr } from "../lib/api";
 import { toast } from "sonner";
@@ -3442,7 +3443,7 @@ function BackupPanel() {
       const blob = new Blob([JSON.stringify(data, null, 2)], { type: "application/json" });
       const url = URL.createObjectURL(blob);
       const a = document.createElement("a");
-      const date = new Date().toISOString().slice(0, 10);
+      const date = todayISO();
       a.href = url; a.download = `sit-happens-backup-${date}.json`;
       a.click();
       URL.revokeObjectURL(url);
@@ -3474,7 +3475,7 @@ function BackupPanel() {
       const blob = new Blob([JSON.stringify(data, null, 2)], { type: "application/json" });
       const url = URL.createObjectURL(blob);
       const a = document.createElement("a");
-      const date = new Date().toISOString().slice(0, 10);
+      const date = todayISO();
       a.href = url; a.download = `sit-happens-config-${date}.json`;
       a.click();
       URL.revokeObjectURL(url);
@@ -4430,7 +4431,7 @@ function UserMigrationSection() {
       const blob = new Blob([JSON.stringify(data, null, 2)], { type: "application/json" });
       const url = URL.createObjectURL(blob);
       const a = document.createElement("a");
-      const date = new Date().toISOString().slice(0, 10);
+      const date = todayISO();
       a.href = url; a.download = `sit-happens-users-${date}.json`;
       a.click();
       URL.revokeObjectURL(url);

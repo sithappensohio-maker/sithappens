@@ -1,6 +1,7 @@
 /* Sprint 110ew — Phase 6: Audit Log
    Filterable timeline of every admin/staff write. */
 import { useEffect, useMemo, useState, useCallback } from "react";
+import { localISOFromDate } from "../lib/date";
 import { api, formatErr } from "../lib/api";
 import PageHero from "../components/PageHero";
 
@@ -76,7 +77,7 @@ function fmtTs(ts) {
     const d = new Date(ts);
     const hh = String(d.getHours()).padStart(2,"0");
     const mm = String(d.getMinutes()).padStart(2,"0");
-    return `${d.toISOString().slice(0,10)} · ${hh}:${mm}`;
+    return `${localISOFromDate(d)} · ${hh}:${mm}`;
   } catch { return ts.slice(0,19); }
 }
 

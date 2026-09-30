@@ -1,4 +1,5 @@
 import { useState } from "react";
+import { todayISO } from "../lib/date";
 import { api, formatErr } from "../lib/api";
 import { compressImage } from "../lib/imageCompress";
 import { dogAgeLabel, dogAgeMonths } from "../lib/dogAge";
@@ -15,10 +16,6 @@ const empty = {
   vet_name: "", vet_phone: "",
 };
 
-function todayISO() {
-  const d = new Date();
-  return `${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,"0")}-${String(d.getDate()).padStart(2,"0")}`;
-}
 
 function vaxStatusLabel(dateStr) {
   if (!dateStr) return { text: "Not on file", cls: "bg-red-500/15 text-red-400" };

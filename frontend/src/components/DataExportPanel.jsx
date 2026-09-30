@@ -1,4 +1,5 @@
 import { useEffect, useState } from "react";
+import { todayISO } from "../lib/date";
 import { api } from "../lib/api";
 import { toast } from "sonner";
 
@@ -43,7 +44,7 @@ export default function DataExportPanel() {
       const url = URL.createObjectURL(blob);
       const a = document.createElement("a");
       a.href = url;
-      const date = new Date().toISOString().slice(0, 10);
+      const date = todayISO();
       a.download = `sithappens-${entity}-${date}.csv`;
       document.body.appendChild(a);
       a.click();

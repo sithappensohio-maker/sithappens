@@ -1,4 +1,5 @@
 import { useEffect, useState } from "react";
+import { todayISO } from "../lib/date";
 import { api, formatErr } from "../lib/api";
 import { sanitizeHtml } from "../lib/sanitizeHtml";
 import NeonEdge from "./premium/NeonEdge";
@@ -52,7 +53,7 @@ export default function PortalPaymentPlans() {
 
 function PlanCard({ plan, onSign }) {
   const sm = STATUS_META[plan.status] || STATUS_META.active;
-  const today = new Date().toISOString().slice(0, 10);
+  const today = todayISO();
   return (
     <NeonEdge accentRgb={accentRgb("purple")} intensity="standard" className="p-4"
          data-testid={`plan-card-${plan.id}`}>

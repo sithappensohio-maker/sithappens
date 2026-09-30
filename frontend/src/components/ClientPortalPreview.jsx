@@ -1,4 +1,5 @@
 import { useEffect, useState } from "react";
+import { todayISO } from "../lib/date";
 import { api } from "../lib/api";
 import ProgressRing from "./ProgressRing";
 
@@ -22,7 +23,7 @@ export default function ClientPortalPreview({ clientId, onClose }) {
   }, [clientId]);
 
   if (!clientId) return null;
-  const today = new Date().toISOString().slice(0, 10);
+  const today = todayISO();
   const upcoming = (data?.bookings || []).filter(b => b.date >= today && b.status !== "cancelled" && b.status !== "rejected").slice(0, 5);
   const recent = (data?.bookings || []).filter(b => b.date < today).slice(0, 5);
 

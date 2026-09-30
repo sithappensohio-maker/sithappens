@@ -5,6 +5,7 @@
 // dog/owner the organizing unit. Needs Attention stays the work queue —
 // nothing here duplicates it; exceptions are merely LOUDER in the history.
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { daysAgoISO, todayISO } from "../../lib/date";
 import { api } from "../../lib/api";
 import { useLiveRefresh } from "../../lib/useLiveRefresh";
 import EmptyState from "../premium/EmptyState";
@@ -30,11 +31,9 @@ const RANGE_OPTIONS = [
 ];
 
 function rangeToDates(range) {
-  const iso = (d) => d.toISOString().slice(0, 10);
-  const now = new Date();
-  if (range === "today") return { date_from: iso(now) };
-  if (range === "7d") return { date_from: iso(new Date(now - 6 * 864e5)) };
-  if (range === "30d") return { date_from: iso(new Date(now - 29 * 864e5)) };
+  if (range === "today") return { date_from: todayISO() };
+  if (range === "7d") return { date_from: daysAgoISO(6) };
+  if (range === "30d") return { date_from: daysAgoISO(29) };
   return {};
 }
 

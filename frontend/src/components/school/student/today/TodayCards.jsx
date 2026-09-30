@@ -14,6 +14,7 @@ import { accentRgb } from "../../../premium/tokens";
 import { deliveryIcon, deliveryLabel } from "../../../../lib/studentSchool";
 import HuskyDogImage from "../../../brand/HuskyDogImage";
 import { isRequiredPracticeSatisfied, practiceLoggedLabel, practiceTitle } from "../../../../lib/practiceState";
+import { todayISO } from "../../../../lib/date";
 
 /* Small caps section label — the electric-blue eyebrow used throughout the
    reference design. */
@@ -143,10 +144,10 @@ export function PracticeCard({ practice, onOpen }) {
     );
   }
   const next = open[0];
-  const today = new Date(); today.setHours(0, 0, 0, 0);
-  const due = next.due_date ? new Date(`${next.due_date}T00:00:00`) : null;
+  const today = todayISO();   // Ohio's date, like the Practice tab (audit #47)
+  const due = String(next.due_date || "").slice(0, 10);
   const overdue = due && due < today;
-  const dueToday = due && due.getTime() === today.getTime();
+  const dueToday = due && due === today;
 
   return (
     <button type="button" onClick={() => onOpen?.(next)} data-testid="today-practice-due"

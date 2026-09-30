@@ -6,6 +6,7 @@
  * shows the friends' dogs it pays for alongside its own, to check in and out.
  */
 import { act } from "react";
+import { todayISO } from "../lib/date";
 import { createRoot } from "react-dom/client";
 import Pos from "./Pos";
 
@@ -32,7 +33,7 @@ global.IS_REACT_ACT_ENVIRONMENT = true;
 
 beforeAll(() => { window.HTMLElement.prototype.scrollIntoView = jest.fn(); });
 
-const TODAY = new Date().toISOString().slice(0, 10);
+const TODAY = todayISO();
 const FF = { service_type: "daycare", date: TODAY, status: "approved", group_id: "g-1",
              bill_to_client_id: "c-pat", bill_to_client_name: "Pat", group_kind: "friends_family" };
 const ROSTER = [

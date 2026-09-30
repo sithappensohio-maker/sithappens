@@ -1720,7 +1720,7 @@ function Row({ label, value, neg = false, bold = false, color = "" }) {
 function MoneyAuditTab() {
   const [data, setData] = useState(null);
   const [err, setErr] = useState("");
-  const [start, setStart] = useState(`${new Date().getFullYear()}-01-01`);
+  const [start, setStart] = useState(`${todayISO().slice(0, 4)}-01-01`);
   const [end, setEnd] = useState(todayISO());
   // Picking a new start/end date does NOT auto-refetch — the explicit
   // "Refresh" button below does. Read the dates via ref so `load` stays a
@@ -1869,7 +1869,7 @@ export function RegisterTab({ excludeTabs = [] } = {}) {
   const [tillAdjustment, setTillAdjustment] = useState({ direction: "remove", amount: "", adjustment_type: "owner_draw", reason: "", notes: "" });
   const [closeout, setCloseout] = useState({ cash_counted: "", card_batch: "", venmo_total: "", paypal_total: "", check_total: "", notes: "" });
   const [closeoutReview, setCloseoutReview] = useState(false);
-  const [reportStart, setReportStart] = useState(`${new Date().getFullYear()}-01-01`);
+  const [reportStart, setReportStart] = useState(`${todayISO().slice(0, 4)}-01-01`);
   const [reportEnd, setReportEnd] = useState(todayISO());
   const [reportData, setReportData] = useState(null);
   const [expenseRows, setExpenseRows] = useState([]);

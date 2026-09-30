@@ -1,4 +1,5 @@
 import { useEffect, useMemo, useState } from "react";
+import { parseLocalISO, todayISO } from "../lib/date";
 import { onRegisterChanged } from "../lib/registerBus";
 import { api } from "../lib/api";
 import AdminStatCard from "../components/admin/AdminStatCard";
@@ -94,7 +95,7 @@ export default function Today({ onNavigate = () => {}, onJumpToDog = () => {}, o
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [refreshSignal]);
 
-  const today = new Date().toISOString().slice(0, 10);
+  const today = todayISO();
   const roster = useMemo(() => stats?.today_roster || [], [stats]);
 
   const dogsHere = useMemo(() => roster.filter((b) => b.checked_in_at && !b.checked_out_at).length, [roster]);
@@ -163,7 +164,7 @@ export default function Today({ onNavigate = () => {}, onJumpToDog = () => {}, o
         eyebrow={{ icon: "fa-sun", text: "Today at Sit Happens", color: "text-shPrimary" }}
         title="Today."
         highlight="Your day at a glance."
-        subtitle={new Date().toLocaleDateString("en-US", { weekday: "long", month: "long", day: "numeric" })}
+        subtitle={parseLocalISO(todayISO()).toLocaleDateString("en-US", { weekday: "long", month: "long", day: "numeric" })}
         right={(
           <div className="flex flex-wrap items-center gap-2" data-testid="today-top-actions">
             <ActionMenu groups={actionGroups} disabled={newMenuBlocked}

@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useState } from "react";
+import { todayISO } from "../lib/date";
 import { api, formatErr } from "../lib/api";
 import { toast } from "sonner";
 import PageHero from "../components/PageHero";
@@ -83,10 +84,6 @@ function HoursGroup({ label, sub, days, testid, editing, setEditing, field, labe
   );
 }
 
-const todayISO = () => {
-  const d = new Date();
-  return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`;
-};
 const fmtRosterDay = (iso) => {
   if (!iso) return "";
   return new Date(`${iso}T00:00:00`).toLocaleDateString(undefined, { weekday: "short", month: "short", day: "numeric" });

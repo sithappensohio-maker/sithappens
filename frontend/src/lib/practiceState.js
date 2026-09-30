@@ -10,6 +10,7 @@ import { makeHandoff, HANDOFF_LABELS } from "./handoff";
 /** What the row is called on School surfaces: the lesson it belongs to when the
  *  server names one, otherwise the homework's own title. */
 import { assignmentCardModel } from "./clientPracticePolish";
+import { businessDateOf } from "./date";
 
 export function practiceTitle(hw) {
   return (hw && (hw.school_lesson_name || hw.title)) || "Practice";
@@ -20,11 +21,8 @@ export function isRequiredPracticeSatisfied(hw) {
 }
 
 export function loggedToday(hw, now = new Date()) {
-  const at = hw?.last_session_at;
-  if (!at) return false;
-  const d = new Date(at);
-  if (Number.isNaN(d.getTime())) return false;
-  return d.getFullYear() === now.getFullYear() && d.getMonth() === now.getMonth() && d.getDate() === now.getDate();
+  const day = businessDateOf(hw?.last_session_at);   // the Ohio day it happened (audit #47)
+  return !!day && day === businessDateOf(now);
 }
 
 export function sessionsLabel(hw) {

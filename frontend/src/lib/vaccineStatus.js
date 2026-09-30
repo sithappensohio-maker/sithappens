@@ -1,3 +1,4 @@
+import { todayISO } from "./date";
 /* One vocabulary for "where is this vaccine record up to", shared by every
  * client-facing surface.
  *
@@ -50,7 +51,7 @@ export function approvedExpiry(dog, type) {
  * they haven't done the thing they just did.
  */
 export function vaccineState(dog, type, todayIso) {
-  const today = todayIso || new Date().toISOString().slice(0, 10);
+  const today = todayIso || todayISO();
   const expiry = approvedExpiry(dog, type);
   // Two shapes, because two endpoints answer differently. GET /dogs sends a
   // photo-free `vaccines_pending_review` map (see backend/domains/vaccines.py);

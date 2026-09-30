@@ -1,3 +1,4 @@
+import { addDaysISO, todayISO } from "./date";
 // Section 5 — shared status/wording definitions. Purely a presentation
 // layer: internal backend values are never renamed or migrated here, only
 // given a consistent display label/icon/treatment across every admin
@@ -85,10 +86,8 @@ export const SALES_TAX_FILING_STATUS = {
 // (Dogs, Dog Hub, Care Board, Front Desk) computes it identically.
 export function vaccineStatus(dateStr, warningDays = 30) {
   if (!dateStr) return VACCINE_STATUS.missing;
-  const today = new Date().toISOString().slice(0, 10);
-  const warnDate = new Date();
-  warnDate.setDate(warnDate.getDate() + warningDays);
-  const warnStr = warnDate.toISOString().slice(0, 10);
+  const today = todayISO();
+  const warnStr = addDaysISO(today, warningDays);
   if (dateStr < today) return VACCINE_STATUS.expired;
   if (dateStr < warnStr) return VACCINE_STATUS.expiring;
   return VACCINE_STATUS.valid;

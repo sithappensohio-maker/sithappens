@@ -1,4 +1,5 @@
 import { useEffect, useState } from "react";
+import { addDaysISO, todayISO } from "../lib/date";
 import { api, formatErr } from "../lib/api";
 import { toast } from "sonner";
 import { useConfirm } from "../lib/useConfirm";
@@ -218,16 +219,14 @@ function CreatePlanModal({ clientId, onClose, onCreated }) {
     const t = Number(total) || 0;
     const count = Math.max(1, Math.min(24, Number(n) || 1));
     const each = Math.floor((t / count) * 100) / 100;
-    const startDate = start ? new Date(start + "T00:00:00") : new Date();
+    const startISO = start || todayISO();
     const stepDays = cadence === "weekly" ? 7 : cadence === "biweekly" ? 14 : 30;
     const rows = [];
     let acc = 0;
     for (let i = 0; i < count; i++) {
-      const d = new Date(startDate);
-      d.setDate(startDate.getDate() + i * stepDays);
       const amt = i === count - 1 ? Math.round((t - acc) * 100) / 100 : each;
       acc += amt;
-      rows.push({ due_date: d.toISOString().slice(0, 10), amount: amt });
+      rows.push({ due_date: addDaysISO(startISO, i * stepDays), amount: amt });
     }
     return rows;
   })();

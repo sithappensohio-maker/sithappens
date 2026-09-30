@@ -4,6 +4,7 @@
 // `bookings` already loaded by Portal.jsx's loadAll() — no duplicate
 // fetch of homework, so an assignment can never be represented twice.
 import { useEffect, useState } from "react";
+import { todayISO } from "../../lib/date";
 import { api } from "../../lib/api";
 import { assignmentCardModel, sortAssignments, groupByDog, weeklyPracticeStats } from "../../lib/clientPracticePolish";
 import DogIdentityHeader from "./DogIdentityHeader";
@@ -12,7 +13,7 @@ import WeeklyPracticeSummary from "./WeeklyPracticeSummary";
 import EmptyState from "./EmptyState";
 
 function nextAppointmentLabel(bookings) {
-  const today = new Date().toISOString().slice(0, 10);
+  const today = todayISO();
   const next = bookings
     .filter(b => ["approved", "pending"].includes(b.status) && (b.date || "") >= today)
     .sort((a, b) => String(a.date || "").localeCompare(String(b.date || "")))[0];

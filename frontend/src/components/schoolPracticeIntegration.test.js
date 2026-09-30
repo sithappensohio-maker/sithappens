@@ -4,12 +4,13 @@
  * timeline kind for practice sessions.
  */
 import fs from "fs";
+import { todayISO } from "../lib/date";
 import path from "path";
 import { buildPortalActivity, buildPortalPriority, isPracticeSessionLog, practicedOn } from "./PortalEngagementHub";
 
 const read = (...p) => fs.readFileSync(path.join(__dirname, ...p), "utf8");
 
-const today = new Date().toISOString().slice(0, 10);
+const today = todayISO();
 const schoolRow = {
   id: "hw1", dog_id: "d1", dog_name: "Rex", title: "Sit practice", status: "assigned", created_at: "2026-01-01T00:00:00Z",
   section_logs: [

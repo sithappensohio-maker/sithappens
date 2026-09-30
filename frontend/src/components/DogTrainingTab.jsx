@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useState } from "react";
+import { todayISO } from "../lib/date";
 import { api, formatErr } from "../lib/api";
 import { useAuth } from "../lib/auth";
 import { useConfirm, usePromptDialog } from "../lib/useConfirm";
@@ -531,7 +532,7 @@ function EnrollmentCard({ enrollment, typeMeta, dogId, onStatus, onUnenroll, onT
   const snap = enrollment.program_snapshot;
   const [editTarget, setEditTarget] = useState(false);
   const [planOpen, setPlanOpen] = useState(false);
-  const overdue = enrollment.target_completion_date && enrollment.target_completion_date < new Date().toISOString().slice(0,10);
+  const overdue = enrollment.target_completion_date && enrollment.target_completion_date < todayISO();
   // Sprint 110di-64 — Use the existing modules array as weekly lessons.
   const totalWeeks = enrollment.total_weeks || (snap.modules || []).length;
   const currentWeek = enrollment.current_week || 1;

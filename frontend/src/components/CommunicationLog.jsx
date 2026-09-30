@@ -1,6 +1,7 @@
 /* Sprint 110ey — Phase 8: Client communication log
    Drop-in timeline section for client/dog detail cards. */
 import { useEffect, useMemo, useState, useCallback } from "react";
+import { todayISO } from "../lib/date";
 import { createPortal } from "react-dom";
 import { api, formatErr } from "../lib/api";
 import { useConfirm } from "../lib/useConfirm";
@@ -20,10 +21,6 @@ const TYPE_META = {
   general:         { label: "Note",      icon: "fa-note-sticky",   cls: "bg-shSurfaceRaised text-shTextMuted" },
 };
 
-function todayISO() {
-  const d = new Date();
-  return `${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,"0")}-${String(d.getDate()).padStart(2,"0")}`;
-}
 
 export default function CommunicationLog({ clientId, dogId = null }) {
   const confirm = useConfirm();

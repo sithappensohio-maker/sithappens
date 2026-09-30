@@ -6,6 +6,7 @@
 // with server-shaped `home` view-models, plus the pure helpers (primary
 // selection, completion handoff) and the shell wiring guards.
 import fs from "fs";
+import { todayISO } from "../../../lib/date";
 import path from "path";
 import React from "react";
 import { renderToStaticMarkup } from "react-dom/server";
@@ -22,7 +23,7 @@ const serverSrc = read("..", "..", "..", "..", "..", "backend", "server.py");
 // practice-history moved into the School domain module — same path, same contract
 const schoolDomainSrc = read("..", "..", "..", "..", "..", "backend", "domains", "school", "routes.py");
 
-const TODAY = new Date().toISOString().slice(0, 10);
+const TODAY = todayISO();
 const row = (id, over = {}) => ({
   id, status: "assigned", title: `Template ${id}`, school_lesson_name: null, dog_name: "Bella", minutes_per_session: 5,
   template_snapshot: { practice_coach: { goal: "Stay on Place while mild distractions are added.", schedule: { minutes_per_round: 5, rounds_per_day: 2 } } },

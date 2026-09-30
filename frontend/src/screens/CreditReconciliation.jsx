@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
+import { todayISO } from "../lib/date";
 import PageHero from "../components/PageHero";
 import { api } from "../lib/api";
 
@@ -173,7 +174,7 @@ export default function CreditReconciliation() {
     const csv = lines.map((line)=>line.map((v)=>`"${String(v ?? "").replaceAll('"','""')}"`).join(",")).join("\n");
     const blob = new Blob([csv], { type: "text/csv;charset=utf-8" });
     const url = URL.createObjectURL(blob);
-    const a = document.createElement("a"); a.href = url; a.download = `credit-reconciliation-${new Date().toISOString().slice(0,10)}.csv`; a.click();
+    const a = document.createElement("a"); a.href = url; a.download = `credit-reconciliation-${todayISO()}.csv`; a.click();
     setTimeout(()=>URL.revokeObjectURL(url), 500);
   };
 

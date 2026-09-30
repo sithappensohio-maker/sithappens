@@ -3,6 +3,7 @@
 // one tap into the Events dashboard. Renders nothing when there is nothing on
 // the calendar or the account cannot run events.
 import { useEffect, useState } from "react";
+import { businessDateOf } from "../lib/date";
 import { api } from "../lib/api";
 
 function fmt(iso) {
@@ -19,8 +20,8 @@ export function upcomingEvents(list, now = Date.now()) {
   }).sort((a, b) => String(a.start_at).localeCompare(String(b.start_at)));
 }
 export function isEventDay(e, now = new Date()) {
-  const s = new Date(e.start_at);
-  return !Number.isNaN(s.getTime()) && s.toDateString() === now.toDateString();
+  const day = businessDateOf(e.start_at);   // the Ohio day it starts (audit #47)
+  return !!day && day === businessDateOf(now);
 }
 
 export default function TodayEventsCard({ can = () => false, onNavigate = () => {}, refreshSignal = 0 }) {
