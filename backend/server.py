@@ -4646,10 +4646,11 @@ async def create_booking(body: BookingIn, user: dict = Depends(get_current_user)
 @api.get("/admin/vaccine-cert-uploads")
 async def admin_list_vaccine_uploads(include_reviewed: bool = False, _: dict = Depends(require_admin)):
     """List recent client-uploaded vaccine certificates. Unreviewed first."""
+    waiting = {"vaccine_certs": {"$exists": True, "$ne": {}}} if include_reviewed else vaccines_domain.waiting_upload_query()   # audit #43
     dogs = await db.dogs.find(
-        {"vaccine_certs": {"$exists": True, "$ne": {}}, "id": {"$nin": list((await client_archive.gone(db))[1])}},   # reviewed after a Restore (audit #36)
+        {**waiting, "id": {"$nin": list((await client_archive.gone(db))[1])}},   # reviewed after a Restore (audit #36)
         {"_id": 0, "id": 1, "name": 1, "owner_id": 1, "vaccine_certs": 1, "vaccines": 1},
-    ).to_list(500)
+    ).to_list(500 if include_reviewed else None)
     out = []
     for d in dogs:
         certs = d.get("vaccine_certs") or {}
@@ -4679,7 +4680,7 @@ async def admin_list_vaccine_uploads(include_reviewed: bool = False, _: dict = D
     # Owner names
     owner_ids = list({x["owner_id"] for x in out if x.get("owner_id")})
     if owner_ids:
-        owners = await db.clients.find({"id": {"$in": owner_ids}}, {"_id": 0, "id": 1, "name": 1}).to_list(500)
+        owners = await db.clients.find({"id": {"$in": owner_ids}}, {"_id": 0, "id": 1, "name": 1}).to_list(None)
         omap = {o["id"]: o["name"] for o in owners}
         for x in out:
             x["client_name"] = omap.get(x.get("owner_id"), "")
@@ -28301,9 +28302,9 @@ async def all_dog_tags(_: dict = Depends(require_admin)):
 @api.get("/run-sheet")
 async def run_sheet(_: dict = Depends(require_admin), date_str: Optional[str] = None):
     target = date_str or business_today().isoformat()
-    bookings = await db.bookings.find(
-        {"status": {"$in": ["approved", "pending", "completed"]}}, {"_id": 0}
-    ).to_list(2000)
+    bookings = await db.bookings.find(   # only the day's visits, no cap (audit #43)
+        {"status": {"$in": ["approved", "pending", "completed"]}, **booking_spans.on_day_query(target)}, {"_id": 0}
+    ).to_list(None)
     relevant = []
     for b in bookings:
         days = _dates_in_range(b["date"], b.get("end_date"))
@@ -28567,13 +28568,14 @@ async def _collect_overdue_medication_actions(*, limit: int = 500) -> List[dict]
     set of generated IDs and then completion would generate a different set.
     """
     today_local = business_today().isoformat()
-    candidates = await db.bookings.find(
-        {"status": {"$in": ["approved", "completed"]}, "date": {"$lte": today_local}},
+    candidates = await db.bookings.find(   # dogs checked in now — no cap (audit #43)
+        {"status": {"$in": ["approved", "completed"]}, "date": {"$lte": today_local},
+         "checked_in_at": {"$nin": [None, ""]}, "checked_out_at": {"$in": [None, ""]}},
         {"_id": 0, "id": 1, "dog_id": 1, "dog_name": 1, "client_id": 1, "client_name": 1,
          "service_type": 1, "date": 1, "end_date": 1, "care_items": 1,
          "care_schedule_custom": 1, "care_per_day_since": 1,
          "checked_in_at": 1, "checked_out_at": 1, "kennel": 1},
-    ).to_list(2000)
+    ).to_list(None)
     out: List[dict] = []
     for b in candidates:
         if b.get("checked_out_at"):
@@ -29146,7 +29148,7 @@ async def admin_today_brain(_: dict = Depends(require_admin)):
         pending_vax_count = 0
         pending_vax_names: List[str] = []
         async for d in db.dogs.find(
-            {"vaccine_certs": {"$exists": True, "$ne": {}}, "id": {"$nin": list(gone[1])}},
+            {**vaccines_domain.waiting_upload_query(), "id": {"$nin": list(gone[1])}},   # the review list's set (audit #43)
             {"_id": 0, "id": 1, "name": 1, "vaccine_certs": 1},
         ):
             for vacc, info in (d.get("vaccine_certs") or {}).items():
@@ -46974,9 +46976,9 @@ async def employee_my_tasks(user: dict = Depends(require_employee_or_admin)):
     ).to_list(200)
     # Vaccine reviews assigned to me
     dogs_with_vax = await db.dogs.find(
-        {"vaccine_certs": {"$exists": True}, "id": {"$nin": list((await client_archive.gone(db))[1])}},
+        {**vaccines_domain.waiting_upload_query(), "id": {"$nin": list((await client_archive.gone(db))[1])}},   # audit #43
         {"_id": 0, "id": 1, "name": 1, "vaccine_certs": 1},
-    ).to_list(500)
+    ).to_list(None)
     my_vax = []
     for d in dogs_with_vax:
         for vac, info in (d.get("vaccine_certs") or {}).items():
@@ -52609,14 +52611,14 @@ async def get_kennel_board(user: dict = Depends(require_employee_or_admin)):
     """Today's operational kennel board. One card per on-site booking with
     assignment fields + warning flags pre-computed."""
     today_local = business_today().isoformat()
-    candidates = await db.bookings.find(
-        {"status": {"$in": ["approved", "completed"]}, "date": {"$lte": today_local}},
+    candidates = await db.bookings.find(   # only today's visits, no cap (audit #43)
+        {"status": {"$in": ["approved", "completed"]}, **booking_spans.on_day_query(today_local)},
         {"_id": 0, "id": 1, "dog_id": 1, "dog_name": 1, "client_id": 1, "client_name": 1,
          "service_type": 1, "date": 1, "end_date": 1, "status": 1,
          "kennel": 1, "room": 1, "crate": 1, "yard_group": 1, "training_group": 1,
          "dropoff_time": 1, "pickup_time": 1, "checked_in_at": 1, "checked_out_at": 1,
          "notes": 1, "care_items": 1, "care_per_day_since": 1},
-    ).to_list(2000)
+    ).to_list(None)
     on_site = []
     for b in candidates:
         d = b.get("date") or ""

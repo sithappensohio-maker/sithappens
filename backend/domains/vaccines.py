@@ -131,3 +131,16 @@ async def store_client_upload(db, dog_id: str, vaccine: str, *, photos: List[str
         if res.matched_count:
             return entry
     raise HTTPException(status_code=409, detail="This dog's record changed while you were uploading. Please try again.")
+
+
+def waiting_upload_query() -> Dict[str, Any]:
+    """Dogs with at least one certificate nobody has reviewed yet — the review
+    list, Today's count and staff tasks all read this one set, with no cap
+    (audit #43: a capped read of every dog with any certificate dropped new
+    uploads once 500 dogs had one on file). Any vaccine key counts."""
+    return {"$expr": {"$anyElementTrue": [{"$map": {
+        "input": {"$cond": [{"$eq": [{"$type": "$vaccine_certs"}, "object"]}, {"$objectToArray": "$vaccine_certs"}, []]},
+        "as": "c",
+        "in": {"$and": [{"$eq": [{"$type": "$$c.v"}, "object"]},
+                        {"$in": [{"$ifNull": ["$$c.v.reviewed_at", None]}, [None, "", False]]}]},
+    }}]}}

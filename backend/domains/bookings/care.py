@@ -63,6 +63,8 @@ from typing import Any, Dict, List, Optional, Tuple
 
 from fastapi import HTTPException
 
+from domains.bookings import spans
+
 # What one day's record holds, and what reads add on top. `status` and the
 # completion fields also exist at the top level of OLD items (the whole-stay
 # record); they never leak onto another day.
@@ -517,13 +519,15 @@ async def care_board_today() -> Dict[str, Any]:
     today = _today()
     # On-site = approved or completed bookings spanning today, or still
     # checked in after their end date (missed checkout — Sprint 110di-85/86).
+    day = spans.on_day_query(today)   # today's visits + dogs still checked in, no cap (audit #43)
     candidates = await db.bookings.find(
-        {"status": {"$in": ["approved", "completed"]}, "date": {"$lte": today}},
+        {"status": {"$in": ["approved", "completed"]}, "date": {"$lte": today}, "checked_out_at": {"$in": [None, ""]},
+         "$or": [*day["$or"], {"checked_in_at": {"$nin": [None, ""]}}]},
         {"_id": 0, "id": 1, "dog_id": 1, "dog_name": 1, "client_id": 1, "client_name": 1,
          "service_type": 1, "date": 1, "end_date": 1, "kennel": 1, "care_items": 1,
          "care_schedule_custom": 1, "care_per_day_since": 1,
          "checked_in_at": 1, "checked_out_at": 1, "dropoff_time": 1, "pickup_time": 1},
-    ).to_list(2000)
+    ).to_list(None)
     on_site = []
     for b in candidates:
         if b.get("checked_out_at"):

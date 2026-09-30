@@ -108,3 +108,11 @@ async def dates_update(db, booking: Dict[str, Any], update: Dict[str, Any], *, t
                              code="boarding_zero_nights", action="pick_date")
     out["end_date"] = end.isoformat()
     return out
+
+
+def on_day_query(day: str) -> Dict[str, Any]:
+    """Visits whose span covers `day` (date <= day <= end_date, or a one-day
+    visit on it) — what a day's board asks the database for, so no amount of
+    history can push today's dogs past a cap (audit #43). Callers keep their
+    own exact on-site test on the rows."""
+    return {"date": {"$lte": day}, "$or": [{"end_date": {"$gte": day}}, {"date": day}]}
