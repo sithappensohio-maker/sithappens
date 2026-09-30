@@ -1137,13 +1137,15 @@ def make_backup_domain(*, BACKUP_COLLECTIONS, backup_root_ref, BACKUP_VERSION, C
         repair is sent round again — before (a restore that dies partway
         still gets it) and after (it may have run mid-restore)."""
         sales = any(c in ("pos_sales", "retail_sales", "shop_orders") for c in (collections or {}))
-        repairs = {"_id": {"$in": ["gift_card_funding_spread", "shop_income_split"]}}   # audit #72, audit #29
-        if sales:
+        people = any(c in ("clients", "dogs") for c in (collections or {}))   # archived families' logins + schedules (audit #36)
+        repairs = {"_id": {"$in": (["gift_card_funding_spread", "shop_income_split"] if sales else [])   # audit #72, audit #29
+                                  + (["archive_sync"] if people else [])}}
+        if sales or people:
             await db.system_runs.delete_many(repairs)
         try:
             return await _restore_collections_inner(collections, mode, progress)
         finally:
-            if sales:
+            if sales or people:
                 await db.system_runs.delete_many(repairs)
 
     async def _restore_collections_inner(collections: dict, mode: str, progress=None):

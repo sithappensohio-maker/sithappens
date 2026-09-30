@@ -42,6 +42,7 @@ _LABELS = {
     "service_unavailable": "service not offered", "addon_as_service": "service not offered",
     "photo_special_only": "service not offered", "service_mismatch": "service not offered",
     "client_not_found": "no family account", "dog_not_found": "dog removed",
+    "dog_removed": "dog removed", "family_archived": "family archived",   # audit #36
     "daily_limit_reached": "daily limit",
 }
 

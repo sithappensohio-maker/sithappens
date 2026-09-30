@@ -32,6 +32,7 @@ import LazyMount from "../components/LazyMount";
 import SendClientEmailModal from "../components/SendClientEmailModal";
 import { addRecent } from "../lib/recentlyOpened";
 import ClientHub from "../components/ClientHub";
+import { ArchivedClientsList, useArchiveAction } from "../components/ArchivedFamilies";
 
 const empty = { name:"", address:"", phone:"", email:"", emerg:"", credits:0, photo:"", photo_gallery_url:"", photo_gallery_pin:"", photo_gallery_has_new:false };
 const fmtCredits = (n) => {
@@ -48,6 +49,8 @@ export default function Clients({ focusId = null, focusMode = "scroll", onConsum
   const [clientPage, setClientPage] = useState(1);
   const [clientMeta, setClientMeta] = useState({ total: 0, total_clients: 0, page: 1, pages: 1, page_size: 48 });
   const [clientsLoading, setClientsLoading] = useState(true);
+  const [showArchived, setShowArchived] = useState(false);   // audit #36
+  const archiveAction = useArchiveAction();
   const [open, setOpen] = useState(false);
   const [editing, setEditing] = useState(null);
   const [emailClient, setEmailClient] = useState(null);  // Sprint 110dh-2 — single-client email modal
@@ -243,18 +246,19 @@ export default function Clients({ focusId = null, focusMode = "scroll", onConsum
         onConsumed();
         return;
       }
-      if (clients.some(x => x.id === focusId)) {
+      if (!showArchived && clients.some(x => x.id === focusId)) {
         scrollToCardAndFlash(`client-card-${focusId}`).then(onConsumed);
       } else {
-        // A paginated directory cannot scroll to a card that is not mounted;
-        // opening the routed record is the least surprising equivalent.
+        // A paginated directory cannot scroll to a card that is not mounted
+        // (nor to the live grid hidden behind Show archived); opening the
+        // routed record is the least surprising equivalent.
         routeOpenedFocusHubRef.current = true;
         openHub(c);
         onConsumed();
       }
     })();
     return () => { cancelled = true; };
-  }, [focusId, focusMode, clients, onConsumed, openEditClient]);
+  }, [focusId, focusMode, clients, onConsumed, openEditClient, showArchived]);
 
 
   // Browser Back from a record URL to /admin/clients should also return the
@@ -384,8 +388,13 @@ export default function Clients({ focusId = null, focusMode = "scroll", onConsum
   };
 
   const remove = async (id) => {
-    if (!(await confirm({ title: "Archive this client?", body: "This hides the client and their dogs from normal screens and disables portal access, but keeps credits, bookings, notes, and history safe for records/taxes.", confirmText: "Archive client", tone: "danger" }))) return;
-    await api.delete(`/clients/${id}`); load();
+    const name = clients.find((c) => c.id === id)?.name || "This family";
+    if (!(await confirm({ title: "Archive this client?", body: "This hides the client and their dogs from normal screens, turns off their portal login and pauses their weekly schedules. Credits, bookings, notes, and history stay safe for records/taxes, and you can restore the family any time from Show archived.\n\nA family with a dog checked in or visits still booked can't be archived until those are checked out or cancelled.", confirmText: "Archive client", tone: "danger" }))) return;
+    await archiveAction.attempt({
+      title: `${name} isn't archived yet`,
+      run: () => api.delete(`/clients/${id}`),
+      done: () => { toast.success(`${name} archived`); load(); },
+    });
   };
 
   const openPortal = (c) => {
@@ -458,12 +467,23 @@ export default function Clients({ focusId = null, focusMode = "scroll", onConsum
             </button>
           )}
         </label>
-        <div className="text-[12px] font-black uppercase tracking-widest text-shTextMuted whitespace-nowrap">
-          {clientsLoading ? "Loading…" : clientQuery ? `${clientMeta.total} match${clientMeta.total === 1 ? "" : "es"}` : `Page ${clientMeta.page} of ${clientMeta.pages}`}
+        <div className="flex items-center gap-3">
+          <button type="button" onClick={() => setShowArchived((v) => !v)} data-testid="client-show-archived" aria-pressed={showArchived}
+                  className={`min-h-[40px] px-3 rounded-lg border text-[12px] font-black uppercase tracking-widest whitespace-nowrap ${showArchived ? "border-shSecondary text-shSecondary bg-shSecondary/10" : "border-shBorder text-shTextMuted hover:text-shText"}`}>
+            <i className="fas fa-box-archive mr-2" />{showArchived ? "Showing archived" : "Show archived"}
+          </button>
+          {!showArchived && (
+            <div className="text-[12px] font-black uppercase tracking-widest text-shTextMuted whitespace-nowrap">
+              {clientsLoading ? "Loading…" : clientQuery ? `${clientMeta.total} match${clientMeta.total === 1 ? "" : "es"}` : `Page ${clientMeta.page} of ${clientMeta.pages}`}
+            </div>
+          )}
         </div>
       </div>
 
-      <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4 sm:gap-6" data-testid="client-grid">
+      {showArchived && <ArchivedClientsList query={clientQuery} onRestored={() => load()} />}
+      {archiveAction.view}
+
+      <div className={`grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4 sm:gap-6 ${showArchived ? "hidden" : ""}`} data-testid="client-grid">
         {!clientsLoading && clients.length === 0 && <div className="col-span-full text-center text-shTextMuted text-xs font-black uppercase py-16">{clientQuery ? "No clients match that search." : "No clients yet — add your first."}</div>}
         {clients.map(c => (
           <div key={c.id} className="sh-entity-card p-5 sm:p-6 group relative" data-testid={`client-card-${c.id}`}>
@@ -474,7 +494,7 @@ export default function Clients({ focusId = null, focusMode = "scroll", onConsum
                         data-testid={`email-client-${c.id}`}><i className="fas fa-paper-plane" /></button>
               )}
               <button onClick={()=>openEditClient(c)} className="text-shTextMuted hover:text-shText p-2 -m-1" data-testid={`edit-client-${c.id}`}><i className="fas fa-edit" /></button>
-              <button onClick={()=>remove(c.id)} className="text-shTextMuted hover:text-red-400 p-2 -m-1"><i className="fas fa-trash" /></button>
+              <button onClick={()=>remove(c.id)} className="text-shTextMuted hover:text-red-400 p-2 -m-1" title="Archive this client" data-testid={`archive-client-${c.id}`}><i className="fas fa-trash" /></button>
             </div>
             <div className="flex items-center gap-3 pr-16">
               <Avatar src={c.photo} icon="fa-user" size="md" ring="border-shSecondary/40" alt={c.name} testid={`client-avatar-${c.id}`}/>
@@ -675,7 +695,7 @@ export default function Clients({ focusId = null, focusMode = "scroll", onConsum
         ))}
       </div>
 
-      {clientMeta.pages > 1 && (
+      {clientMeta.pages > 1 && !showArchived && (
         <div className="flex items-center justify-between gap-3 sh-card p-3" data-testid="client-pagination">
           <button type="button" disabled={clientMeta.page <= 1 || clientsLoading}
                   onClick={()=>setClientPage((p)=>Math.max(1, p - 1))}

@@ -694,3 +694,32 @@ def test_photo_special_routes_live_in_a_domain_module():
     from domains.photo_specials import routes as ps_routes
     assert hasattr(ps_routes, "register_photo_special_routes")
     assert server.public_photo_special_reserve.__module__ == "domains.photo_specials.routes"
+
+
+# ------------------------------------------------ archived families (audit #36)
+
+def test_an_archived_family_is_not_on_file_so_its_portrait_can_be_checked_in_on_the_day():
+    # Attached to the archived family, the booking could never be checked in
+    # (nothing checks in for an archived family). A new walk-in can; the reply
+    # is the same either way.
+    sp = _special()
+    email = f"gone{uuid.uuid4().hex[:6]}@example.com"
+    cid, did, stamp = str(uuid.uuid4()), str(uuid.uuid4()), server.now_iso()
+    run(server.db.clients.insert_one({"id": cid, "name": "Archived Family", "email": email, "deleted_at": stamp,
+                                      "client_status": "active", "created_at": server.now_iso()}))
+    run(server.db.dogs.insert_one({"id": did, "name": "Bella", "owner_id": cid, "deleted_at": stamp}))
+    b = _booking(_reserve(sp, email=email, dog="Bella")["reservation"])
+    assert b["client_id"] != cid and b["dog_id"] != did
+    walk_in = run(server.db.clients.find_one({"id": b["client_id"]}, {"_id": 0}))
+    assert walk_in["client_status"] == "walk_in" and not walk_in.get("deleted_at")
+
+
+def test_a_live_familys_removed_dog_is_never_booked_again_by_name():
+    sp = _special()
+    email = f"live{uuid.uuid4().hex[:6]}@example.com"
+    cid, did = str(uuid.uuid4()), str(uuid.uuid4())
+    run(server.db.clients.insert_one({"id": cid, "name": "Live Family", "email": email,
+                                      "client_status": "active", "created_at": server.now_iso()}))
+    run(server.db.dogs.insert_one({"id": did, "name": "Bella", "owner_id": cid, "deleted_at": server.now_iso()}))
+    b = _booking(_reserve(sp, email=email, dog="Bella")["reservation"])
+    assert b["client_id"] == cid and b["dog_id"] != did, "a new Bella, never the removed record"

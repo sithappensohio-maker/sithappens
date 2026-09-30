@@ -111,8 +111,10 @@ def require_cancel_rights(user: dict, forfeit: bool, perms_for: Callable[[dict],
 
 
 async def load_booking_dog(db, dog_id: str, user: dict) -> dict:
-    """The dog being booked, refusing (with a way forward) a missing dog or
-    one that isn't on the signed-in client's account."""
+    """The dog being booked, refusing (with a way forward) a missing dog, one
+    that isn't on the signed-in client's account, or a removed dog / a dog
+    whose family is archived (audit #36) — checked after ownership, so a client
+    never learns anything about another family's dog."""
     dog = await db.dogs.find_one({"id": dog_id}, {"_id": 0})
     if not dog:
         raise BookingBlocked(404, "We couldn't find that dog. Refresh the page and pick your dog again.", code="dog_not_found", action="refresh")
@@ -121,7 +123,47 @@ async def load_booking_dog(db, dog_id: str, user: dict) -> dict:
             403, "That dog isn't on your account. Pick one of your own dogs, or contact Sit Happens if this looks wrong.",
             code="not_your_dog", action="contact_us",
         )
+    await refuse_archived_dog(db, dog, staff=user.get("role") == "admin")
     return dog
+
+
+# ─────────────────── archived families and removed dogs (audit #36)
+#
+# Archiving a family (or removing one dog) hides it and keeps every record.
+# From then on nothing books, enrolls, sells to, checks in or moves a visit
+# for it — not the weekly-schedule renewal, not the waitlist, not a staff
+# screen. `deleted_at` is the one archive signal ("archived: True" on a dog
+# means a merged-away duplicate, a different thing).
+
+LIVE = {"$in": [None, ""]}   # the deleted_at of a record that is neither archived nor removed
+
+
+def refuse_archived(*, dog: Optional[dict] = None, client: Optional[dict] = None, staff: bool = True) -> None:
+    """Staff are told to restore the family; a client is only told the dog or
+    account isn't available any more."""
+    if client and client.get("deleted_at"):
+        if not staff:
+            raise BookingBlocked(409, "This account is closed. Please contact Sit Happens.", code="family_archived", action="contact_us")
+        family = client.get("name") or "This family"
+        raise BookingBlocked(409, f"{family} is archived, so their dogs can't be booked, enrolled or checked in. "
+                                  "Restore the family first (Clients → Show archived).", code="family_archived")
+    if dog and dog.get("deleted_at"):
+        if not staff:
+            raise BookingBlocked(409, "That dog is no longer on your account. Please contact Sit Happens if this looks wrong.",
+                                 code="dog_removed", action="contact_us")
+        name = dog.get("name") or "This dog"
+        raise BookingBlocked(409, f"{name} has been removed, so {name} can't be booked, enrolled or checked in.", code="dog_removed")
+
+
+async def refuse_archived_dog(db, dog: Optional[dict] = None, *, dog_id: Optional[str] = None,
+                              client_id: Optional[str] = None, staff: bool = True) -> None:
+    """refuse_archived for a dog (given, or loaded by id) and its family — the
+    dog's owner, or `client_id` when the row has no dog (a Meet & Greet)."""
+    if dog is None and dog_id:
+        dog = await db.dogs.find_one({"id": dog_id}, {"_id": 0, "id": 1, "name": 1, "owner_id": 1, "deleted_at": 1})
+    owner_id = (dog or {}).get("owner_id") or client_id
+    client = await db.clients.find_one({"id": owner_id}, {"_id": 0, "name": 1, "deleted_at": 1}) if owner_id else None
+    refuse_archived(dog=dog, client=client, staff=staff)
 
 
 async def enforce_day_to_day(db, settings: dict, svc_rules: dict, body, *, client_id: Optional[str], is_admin: bool,

@@ -4,6 +4,7 @@ import { useConfirm } from "../lib/useConfirm";
 import PageHero from "../components/PageHero";
 import { PENDING_ACTION_TARGET_KEY, announcePendingActionsChanged } from "../components/PendingActionsPanel";
 import { skipReason, shortDate } from "../lib/bookingBlocks";
+import { fmtDate } from "../lib/format";
 
 /**
  * Admin tool: saved per-dog "recurring schedule" templates (e.g. Daisy · M/W/F
@@ -22,6 +23,15 @@ function skipWord(s) {
   if (code === "capacity_full" && ["time_slot", "class_or_slot"].includes(s.reason?.resource)) return "time taken";
   if (code.startsWith("vaccine_")) return "vaccines";
   return SKIP_WORDS[code] || skipReason(s);
+}
+// Why a schedule is paused, and whether it can be resumed (audit #36).
+function pausedLine(r) {
+  const on = r.paused_at ? ` ${fmtDate(r.paused_at)}` : "";
+  if (r.family_archived) return `Paused — the family is archived${on}. Restore the family first.`;
+  if (r.dog_removed) return `Paused — ${r.dog_name || "the dog"} was removed${on}.`;
+  if (r.paused_reason === "family_archived") return `Paused when the family was archived${on}. Resume when they're ready.`;
+  if (r.paused_reason === "dog_removed") return `Paused when the dog was removed${on}.`;
+  return "Paused.";
 }
 const emptyForm = { dog_id: "", service_type: "daycare", service_id: "", time: "", dropoff_time: "", weekdays: [0, 2, 4], notes: "", default_horizon_weeks: 12, active: true, label: "", start_date: "", auto_extend: true };
 
@@ -79,6 +89,21 @@ export default function RecurringTemplates() {
       load();
     } catch (e) {
       setToast({ ok: false, msg: formatErr(e.response?.data?.detail) || "Couldn't mark it followed up" });
+    }
+  };
+
+  const resume = async (r) => {
+    setBusy(r.id); setToast(null);
+    try {
+      await api.post(`/recurring-templates/${r.id}/resume`);
+      const renews = r.auto_extend !== false && !!r.last_booked_through;   // the scheduler only renews these
+      setToast({ ok: true, msg: renews ? `${r.label} is back on — press Extend to book it now, or it renews on its own.`
+                                       : `${r.label} is back on — press Extend to book its visits (it won't renew on its own).` });
+      load();
+    } catch (e) {
+      setToast({ ok: false, msg: formatErr(e.response?.data?.detail) || "Couldn't resume that schedule" });
+    } finally {
+      setBusy(null);
     }
   };
 
@@ -185,6 +210,13 @@ export default function RecurringTemplates() {
               <div className="col-span-12 md:col-span-4 min-w-0">
                 <p className="text-shText font-black text-[15px] truncate">{r.label}</p>
                 <p className="text-[13px] text-shTextMuted font-black uppercase tracking-widest mt-0.5">{r.client_name || "—"}</p>
+                {!r.active && <p className="text-[12px] text-shAccent mt-1" data-testid={`recurring-paused-${r.id}`}>{pausedLine(r)}</p>}
+                {!r.active && !r.family_archived && !r.dog_removed && (
+                  <button onClick={()=>resume(r)} disabled={busy===r.id} data-testid={`recurring-resume-${r.id}`}
+                          className="mt-1.5 bg-shSecondary text-bgHeader px-3 py-1.5 rounded text-[13px] font-black uppercase tracking-widest hover:brightness-110 disabled:opacity-40">
+                    <i className="fas fa-play mr-1"/>Resume
+                  </button>
+                )}
               </div>
               <div className="col-span-6 md:col-span-3">
                 <div className="flex flex-wrap gap-1">

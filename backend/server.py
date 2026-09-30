@@ -87,7 +87,7 @@ from domains.school import ownership as school_ownership
 from domains.bookings import late_day as late_day_checkout
 from domains.bookings import care as care_domain
 from domains.operations import end_of_day as end_of_day_domain
-from domains.clients import signup_claim
+from domains.clients import signup_claim, archive as client_archive
 from domains.billing import tab_sync as billing_tab_sync, resolve as billing_resolve
 from domains.shop import shopify_pricing
 from domains import booking_rules
@@ -847,6 +847,8 @@ class ClientOut(ClientIn):
     setup_badge: Optional[str] = None       # "Ready to Book" | "Pending Vaccine Review" | "Setup Incomplete"
     setup_overall: Optional[str] = None     # "complete" | "pending_review" | "in_progress" | "not_started"
     created_at: str
+    deleted_at: Optional[str] = None        # archived (audit #36) — never on ClientIn, so no form can write it
+    archived_by_name: Optional[str] = None
 
 class PortalAccountIn(BaseModel):
     email: EmailStr
@@ -1663,7 +1665,7 @@ async def login(body: LoginIn, request: Request):
         raise HTTPException(status_code=401, detail="Invalid email or password")
     # Safety: employee/client deactivation must actually stop login. Missing
     # `active` on legacy users is allowed for backwards compatibility.
-    if user.get("active") is False:
+    if user.get("active") is False or await client_archive.login_refused(user):
         raise HTTPException(status_code=403, detail="Account disabled")
     if user.get("mfa_enabled"):
         return {"mfa_required": True, "challenge_token": _create_mfa_challenge(user)}
@@ -2049,36 +2051,18 @@ async def get_client(client_id: str, _: dict = Depends(require_employee_or_admin
 
 @api.delete("/clients/{client_id}")
 async def delete_client(client_id: str, user: dict = Depends(require_admin)):
-    # No destructive deletes for business records. A deleted client may have
-    # credits, payments, bookings, vaccines, and tax history attached. Hide it
-    # from normal screens, deactivate portal access, and preserve everything.
-    perms = _perms_for(user)
-    if not perms.get("delete_records"):
+    # Archive, never delete: every record stays; refused while a dog is on site
+    # or visits are still booked; schedules pause; Restore undoes it (audit #36).
+    if not _perms_for(user).get("delete_records"):
         raise HTTPException(status_code=403, detail="Missing permission: delete_records")
-    existing = await db.clients.find_one({"id": client_id}, {"_id": 0, "id": 1})
-    if not existing:
-        raise HTTPException(status_code=404, detail="Client not found")
-    stamp = now_iso()
-    await db.clients.update_one(
-        {"id": client_id},
-        {"$set": {"deleted_at": stamp, "deleted_by": user.get("id"), "active": False}},
-    )
-    await db.dogs.update_many(
-        {"owner_id": client_id},
-        {"$set": {"deleted_at": stamp, "deleted_by": user.get("id"), "active": False}},
-    )
-    await db.users.update_many(
-        {"client_id": client_id},
-        {"$set": {"active": False, "deactivated_at": stamp, "deactivated_by": user.get("id")}, "$inc": {"token_version": 1}},
-    )
-    _invalidate_auth_user_cache()
-    return {"ok": True, "soft_deleted": True}
+    return await client_archive.archive_client(client_id, user)
 
 @api.post("/clients/{client_id}/portal-account", response_model=UserOut)
 async def create_portal_account(client_id: str, body: PortalAccountIn, _: dict = Depends(require_admin)):
     client = await db.clients.find_one({"id": client_id}, {"_id": 0})
     if not client:
         raise HTTPException(status_code=404, detail="Client not found")
+    client_archive.refuse_if_archived(client)
     email = body.email.lower()
     existing = await db.users.find_one({"email": email})
     if existing and existing.get("client_id") != client_id:
@@ -2494,7 +2478,7 @@ async def send_claim_emails_bulk(_: dict = Depends(require_admin)):
 
     Returns a per-client breakdown so the admin can see exactly who got an
     email, who was skipped (no email), and who errored."""
-    clients = await db.clients.find({}, {"_id": 0, "id": 1, "name": 1, "email": 1}).to_list(2000)
+    clients = await db.clients.find({"deleted_at": booking_guards.LIVE}, {"_id": 0, "id": 1, "name": 1, "email": 1}).to_list(2000)
     # Build the set of client_ids that already have a portal user — these get skipped
     # (re-sending a reset to them would still work, but the intent of this button is
     # to onboard people who can't log in at all).
@@ -2562,6 +2546,7 @@ async def send_claim_email(client_id: str, _: dict = Depends(require_admin)):
     client = await db.clients.find_one({"id": client_id}, {"_id": 0})
     if not client:
         raise HTTPException(status_code=404, detail="Client not found")
+    client_archive.refuse_if_archived(client)
     target_email = (client.get("email") or "").strip().lower()
     if not target_email:
         raise HTTPException(
@@ -2697,8 +2682,8 @@ async def consume_claim_token(token: str, body: ClaimSetIn, request: Request):
 
     # Cases 1 + 2: client claim or client reset — token tied to client_id.
     client = await db.clients.find_one({"id": client_id}, {"_id": 0})
-    if not client:
-        raise HTTPException(status_code=400, detail="The client account no longer exists.")
+    if not client or client.get("deleted_at"):   # an archived family's link never makes a working login (audit #36)
+        raise HTTPException(status_code=400, detail="This account is closed. Please contact Sit Happens." if client else "The client account no longer exists.")
 
     existing_user = await db.users.find_one({"client_id": client_id})
 
@@ -2778,8 +2763,8 @@ async def claim_token_login(token: str, request: Request):
         raise HTTPException(status_code=400, detail="This link requires setting a password.")
 
     client = await db.clients.find_one({"id": client_id}, {"_id": 0})
-    if not client:
-        raise HTTPException(status_code=400, detail="The client account no longer exists.")
+    if not client or client.get("deleted_at"):   # an archived family's link never makes a working login (audit #36)
+        raise HTTPException(status_code=400, detail="This account is closed. Please contact Sit Happens." if client else "The client account no longer exists.")
 
     existing_user = await db.users.find_one({"client_id": client_id})
 
@@ -2841,8 +2826,8 @@ async def forgot_password(body: ForgotPasswordIn, request: Request):
         return {"ok": True}
 
     user = await db.users.find_one({"email": email}, {"_id": 0})
-    if not user:
-        # Don't leak the existence/non-existence of accounts.
+    if not user or user.get("active") is False or await client_archive.login_refused(user):
+        # Don't leak the existence/non-existence of accounts; a turned-off login gets no link that can't work.
         return {"ok": True}
 
     # Mint a fresh token and invalidate any old unused ones for this user.
@@ -2963,7 +2948,7 @@ async def request_meet_greet(body: MeetGreetRequestIn, request: Request):
         # reset-capable claim link instead of a fresh one.
         existing_client = await db.clients.find_one(
             {"email": {"$regex": f"^{re.escape(email)}$", "$options": "i"}},
-            {"_id": 0},
+            {"_id": 0}, sort=[("deleted_at", 1)],   # a live family first (audit #36)
         )
 
         if existing_client:
@@ -3014,38 +2999,41 @@ async def request_meet_greet(body: MeetGreetRequestIn, request: Request):
             "duration_minutes": slot_minutes,
             "service_type": "other",
             "status": "pending",
-            "notes": "Meet & Greet requested via the public landing page.",
+            "notes": "Meet & Greet requested via the public landing page." + (
+                " This family is archived — restore them (Clients → Show archived) before approving." if existing_client and existing_client.get("deleted_at") else ""),
             "created_at": now_iso(),
             "is_meet_greet": True,
         }
         await db.bookings.insert_one(dict(mg_booking))
 
     # Claim token (existing system) — lets them set a portal password, or
-    # (if a portal account already exists on this client) reset it.
-    linked_user = await db.users.find_one({"client_id": client_id}, {"_id": 0, "id": 1})
-    await db.claim_tokens.delete_many({"client_id": client_id, "used": False})
-    token = secrets.token_urlsafe(32)
-    expires_at = datetime.now(timezone.utc) + timedelta(days=CLAIM_TOKEN_EXPIRY_DAYS)
-    await db.claim_tokens.insert_one({
-        "token": token,
-        "client_id": client_id,
-        "email": email,
-        "is_reset": bool(linked_user),
-        "used": False,
-        "created_at": now_iso(),
-        "expires_at": expires_at.isoformat(),
-    })
-    claim_url = _build_claim_url(token)
-    try:
-        await send_meet_greet_request_received(
-            to_email=email,
-            client_name=client_doc.get("name") or owner_name,
-            dog_name=dog_name,
-            claim_url=claim_url,
-            expires_days=CLAIM_TOKEN_EXPIRY_DAYS,
-        )
-    except Exception as e:
-        logger.warning("meet_greet_request: email dispatch failed for %s: %s", email, e)
+    # (if a portal account already exists on this client) reset it. Never for an
+    # archived family — that link could only fail; staff restore and call (audit #36).
+    if not (existing_client and existing_client.get("deleted_at")):
+        linked_user = await db.users.find_one({"client_id": client_id}, {"_id": 0, "id": 1})
+        await db.claim_tokens.delete_many({"client_id": client_id, "used": False})
+        token = secrets.token_urlsafe(32)
+        expires_at = datetime.now(timezone.utc) + timedelta(days=CLAIM_TOKEN_EXPIRY_DAYS)
+        await db.claim_tokens.insert_one({
+            "token": token,
+            "client_id": client_id,
+            "email": email,
+            "is_reset": bool(linked_user),
+            "used": False,
+            "created_at": now_iso(),
+            "expires_at": expires_at.isoformat(),
+        })
+        claim_url = _build_claim_url(token)
+        try:
+            await send_meet_greet_request_received(
+                to_email=email,
+                client_name=client_doc.get("name") or owner_name,
+                dog_name=dog_name,
+                claim_url=claim_url,
+                expires_days=CLAIM_TOKEN_EXPIRY_DAYS,
+            )
+        except Exception as e:
+            logger.warning("meet_greet_request: email dispatch failed for %s: %s", email, e)
 
     # Operator alert — the request is the AUTHORITATIVE record and already
     # exists as a pending booking (it's in Action Required from this moment);
@@ -3202,6 +3190,7 @@ async def create_dog(body: DogIn, _: dict = Depends(require_admin_and_permission
     client = await db.clients.find_one({"id": body.owner_id}, {"_id": 0})
     if not client:
         raise HTTPException(status_code=404, detail="Owner not found")
+    client_archive.refuse_if_archived(client)
     doc = body.model_dump()
     doc.update({"id": str(uuid.uuid4()), "training_logs": [], "created_at": now_iso()})
     await db.dogs.insert_one(doc)
@@ -3213,6 +3202,8 @@ async def update_dog(dog_id: str, body: DogIn, _: dict = Depends(require_admin_a
     existing = await db.dogs.find_one({"id": dog_id}, {"_id": 0})
     if not existing:
         raise HTTPException(status_code=404, detail="Dog not found")
+    if body.owner_id != existing.get("owner_id"):
+        client_archive.refuse_if_archived(await db.clients.find_one({"id": body.owner_id}, {"_id": 0, "name": 1, "deleted_at": 1}))
     update = body.model_dump()
     await db.dogs.update_one({"id": dog_id}, {"$set": update})
     existing.update(update)
@@ -3224,17 +3215,9 @@ async def update_dog(dog_id: str, body: DogIn, _: dict = Depends(require_admin_a
 
 @api.delete("/dogs/{dog_id}")
 async def delete_dog(dog_id: str, user: dict = Depends(require_admin)):
-    perms = _perms_for(user)
-    if not perms.get("delete_records"):
+    if not _perms_for(user).get("delete_records"):
         raise HTTPException(status_code=403, detail="Missing permission: delete_records")
-    existing = await db.dogs.find_one({"id": dog_id}, {"_id": 0, "id": 1})
-    if not existing:
-        raise HTTPException(status_code=404, detail="Dog not found")
-    await db.dogs.update_one(
-        {"id": dog_id},
-        {"$set": {"deleted_at": now_iso(), "deleted_by": user.get("id"), "active": False}},
-    )
-    return {"ok": True, "soft_deleted": True}
+    return await client_archive.remove_dog(dog_id, user)   # same rules as a family archive (audit #36)
 
 @api.post("/dogs/{dog_id}/training-logs", response_model=DogOut)
 async def add_training_log(dog_id: str, body: TrainingLogIn, _: dict = Depends(require_admin)):
@@ -4170,6 +4153,7 @@ async def _update_booking_with_capacity(booking: dict, update: Dict[str, Any]) -
         # Only a booking that moves takes a new place: editing notes on one that
         # already overlaps something (made before a check existed) is allowed.
         if moved and booking.get("status") in ("pending", "approved", "completed") and not booking.get("checked_out_at"):
+            await booking_guards.refuse_archived_dog(db, dog_id=booking.get("dog_id"), client_id=booking.get("client_id"))   # audit #36
             await _assert_capacity_available(body, settings, selected, exclude_booking_id=booking.get("id"), meet_greet_minutes=mg)
         await db.bookings.update_one({"id": booking["id"]}, {"$set": update})
     finally:
@@ -4534,6 +4518,11 @@ async def _create_booking_impl(body: BookingIn, user: dict = Depends(get_current
         if not (is_admin and body.override_capacity):
             await _assert_capacity_available(body, settings, selected_service)
         await db.bookings.insert_one(doc)
+        try:   # the family archived while this was being checked: never left booked (audit #36)
+            await booking_guards.refuse_archived_dog(db, dog_id=doc.get("dog_id"), client_id=doc.get("client_id"), staff=is_admin)
+        except HTTPException:
+            await db.bookings.delete_one({"id": doc["id"]})
+            raise
     finally:
         if owns_capacity_lock and capacity_owner:
             await _release_capacity_locks(capacity_owner, capacity_keys)
@@ -4658,7 +4647,7 @@ async def create_booking(body: BookingIn, user: dict = Depends(get_current_user)
 async def admin_list_vaccine_uploads(include_reviewed: bool = False, _: dict = Depends(require_admin)):
     """List recent client-uploaded vaccine certificates. Unreviewed first."""
     dogs = await db.dogs.find(
-        {"vaccine_certs": {"$exists": True, "$ne": {}}},
+        {"vaccine_certs": {"$exists": True, "$ne": {}}, "id": {"$nin": list((await client_archive.gone(db))[1])}},   # reviewed after a Restore (audit #36)
         {"_id": 0, "id": 1, "name": 1, "owner_id": 1, "vaccine_certs": 1, "vaccines": 1},
     ).to_list(500)
     out = []
@@ -5029,17 +5018,18 @@ async def list_recurring_templates(user: dict = Depends(get_current_user)):
     query: Dict[str, Any] = {}
     is_admin = user.get("role") == "admin"
     if not is_admin:
-        my_dogs = await db.dogs.find({"owner_id": user.get("client_id")}, {"_id": 0, "id": 1}).to_list(200)
+        my_dogs = await db.dogs.find({"owner_id": user.get("client_id"), "deleted_at": booking_guards.LIVE}, {"_id": 0, "id": 1}).to_list(200)
         query["dog_id"] = {"$in": [d["id"] for d in my_dogs]}
     rows = await db.recurring_templates.find(query, {"_id": 0} if is_admin else {"_id": 0, **renewal_misses.HIDE_FROM_CLIENTS}).sort("created_at", -1).to_list(500)
     dog_ids = list({r["dog_id"] for r in rows if r.get("dog_id")})
-    dogs = {d["id"]: d for d in await db.dogs.find({"id": {"$in": dog_ids}}, {"_id": 0, "id": 1, "name": 1, "owner_id": 1}).to_list(500)}
+    dogs = {d["id"]: d for d in await db.dogs.find({"id": {"$in": dog_ids}}, {"_id": 0, "id": 1, "name": 1, "owner_id": 1, "deleted_at": 1}).to_list(500)}
     client_ids = list({d.get("owner_id") for d in dogs.values() if d.get("owner_id")})
-    clients = {c["id"]: c for c in await db.clients.find({"id": {"$in": client_ids}}, {"_id": 0, "id": 1, "name": 1}).to_list(500)}
+    clients = {c["id"]: c for c in await db.clients.find({"id": {"$in": client_ids}}, {"_id": 0, "id": 1, "name": 1, "deleted_at": 1}).to_list(500)}
     for r in rows:
         dog = dogs.get(r.get("dog_id")) or {}
         r["dog_name"] = dog.get("name") or "(unknown dog)"
         r["client_name"] = clients.get(dog.get("owner_id"), {}).get("name") or ""
+        r["dog_removed"], r["family_archived"] = bool(dog.get("deleted_at")), bool(clients.get(dog.get("owner_id"), {}).get("deleted_at"))
     return rows
 
 
@@ -5056,6 +5046,8 @@ async def _assert_dog_owned_by_client(dog_id: str, user: dict) -> dict:
 @api.post("/recurring-templates")
 async def create_recurring_template(body: RecurringTemplateIn, user: dict = Depends(get_current_user)):
     dog = await _assert_dog_owned_by_client(body.dog_id, user)
+    if body.active:   # audit #36
+        await booking_guards.refuse_archived_dog(db, dog, staff=user.get("role") == "admin")
     # Clients can't self-book training — recurring training is locked to admin too,
     # matching the existing portal training-booking restriction.
     if user.get("role") != "admin" and body.service_type == "training":
@@ -5114,6 +5106,8 @@ async def update_recurring_template(template_id: str, body: RecurringTemplateIn,
     # Client can't move a template onto a dog they don't own
     if body.dog_id != existing["dog_id"]:
         await _assert_dog_owned_by_client(body.dog_id, user)
+    if body.active:   # never switched on for a removed dog or an archived family (audit #36)
+        await booking_guards.refuse_archived_dog(db, dog_id=body.dog_id, staff=user.get("role") == "admin")
     probe = BookingIn(
         dog_id=body.dog_id,
         date=(body.start_date or business_today().isoformat()),
@@ -5209,6 +5203,7 @@ async def approve_booking(booking_id: str, user: dict = Depends(require_admin)):
     _assert_booking_financial_edit_allowed(booking, {"status"})
     if booking["status"] != "pending":
         raise HTTPException(status_code=400, detail=f"Booking is {booking['status']}")
+    await booking_guards.refuse_archived_dog(db, dog_id=booking.get("dog_id"), client_id=booking.get("client_id"))   # audit #36
     # Credits are deducted at CHECKOUT, not approval. Approval just confirms
     # the spot is reserved.
     update = {"status": "approved"}
@@ -6366,7 +6361,7 @@ async def portal_update_vaccine(dog_id: str, body: VaccineUpdateIn, user: dict =
     if user.get("role") != "client":
         raise HTTPException(status_code=403, detail="Client account required")
     dog = await db.dogs.find_one({"id": dog_id}, {"_id": 0})
-    if not dog or dog.get("owner_id") != user.get("client_id"):
+    if not dog or dog.get("owner_id") != user.get("client_id") or dog.get("deleted_at"):
         raise HTTPException(status_code=404, detail="Dog not found")
     # Validate date
     try:
@@ -6647,7 +6642,7 @@ async def portal_update_dog(dog_id: str, body: PortalDogIn, user: dict = Depends
     existing = await db.dogs.find_one({"id": dog_id}, {"_id": 0})
     if not existing:
         raise HTTPException(status_code=404, detail="Dog not found")
-    if existing.get("owner_id") != cid:
+    if existing.get("owner_id") != cid or existing.get("deleted_at"):
         raise HTTPException(status_code=403, detail="Not your dog")
     update = body.model_dump()
     # Same rule as creation: this form has no certificate-upload step, so any
@@ -6679,6 +6674,7 @@ async def check_in(
         return booking
     if booking.get("status") != "approved":
         raise HTTPException(status_code=409, detail="Only an approved booking can be checked in.")
+    await booking_guards.refuse_archived_dog(db, dog_id=booking.get("dog_id"), client_id=booking.get("client_id"))   # audit #36
     if _booking_is_financially_locked(booking):
         raise HTTPException(status_code=409, detail="This booking is already financially closed and cannot be checked in again.")
     body = body or CheckInIn()
@@ -10476,10 +10472,11 @@ async def _check_out_locked(
                             fresh_referrer = await db.clients.find_one({"id": referrer["id"]}, {"_id": 0}) or referrer
                             new_balance = round(float(fresh_referrer.get("credits") or 0), 2)
                             dog_name = booking.get("dog_name") or ""
-                            if referral_row:
+                            if referral_row and not fresh_referrer.get("deleted_at"):   # never emails an archived family (audit #36)
                                 await email_service.notify_client_referral_payout(
                                     fresh_referrer, referee_fresh or client, new_balance,
                                 )
+                            if referral_row:
                                 await email_service.notify_client_referral_welcome(
                                     referee_fresh or client, fresh_referrer, dog_name,
                                 )
@@ -10696,7 +10693,7 @@ async def vaccine_alerts(_: dict = Depends(require_admin)):
 
     # Every dog (streamed, no ceiling — dog 2001 with an expired rabies cert
     # used to be invisible), and only the owners those dogs actually have.
-    dogs = [d async for d in db.dogs.find({}, {"_id": 0, "photo": 0, "photos": 0, "training_logs": 0})]
+    dogs = [d async for d in db.dogs.find({"id": {"$nin": list((await client_archive.gone(db))[1])}}, {"_id": 0, "photo": 0, "photos": 0, "training_logs": 0})]   # not a removed dog (audit #36)
     owner_ids = list({d.get("owner_id") for d in dogs if d.get("owner_id")})
     clients = {}
     if owner_ids:
@@ -11783,7 +11780,7 @@ async def create_announcement(body: AnnouncementIn, admin: dict = Depends(requir
     summary: Dict[str, Any] = {"sent": 0, "skipped": 0}
     if doc.get("published", True):
         # Cheap pre-count — only clients with a non-empty email get the blast.
-        recipient_count = await db.clients.count_documents({"email": {"$exists": True, "$nin": ["", None]}})
+        recipient_count = await db.clients.count_documents({"email": {"$exists": True, "$nin": ["", None]}, "marketing_email_opt_out": {"$ne": True}, "deleted_at": booking_guards.LIVE})   # the same audience as the send
         summary["queued"] = recipient_count
         asyncio.create_task(email_service.broadcast_announcement_email(doc))
     doc["email_broadcast"] = summary
@@ -12482,6 +12479,7 @@ async def _reopen_booking_checkout_locked(booking_id: str, body: BookingReopenCh
         raise HTTPException(status_code=409, detail="Archived bookings cannot be reopened. Use an adjustment or refund instead.")
     if not _booking_is_financially_locked(booking):
         raise HTTPException(status_code=409, detail="This checkout is already open.")
+    await booking_guards.refuse_archived_dog(db, dog_id=booking.get("dog_id"), client_id=booking.get("client_id"))   # would put the dog back on site (audit #36)
     paid = float(booking.get("amount_paid") or booking.get("cash_revenue") or 0)
     credits = float(booking.get("credits_deducted") or 0)
     refunds = float(booking.get("financial_refund_total") or 0)
@@ -15773,7 +15771,7 @@ async def homework_unreviewed_count(_: dict = Depends(require_admin_and_permissi
     unreviewed = 0
     attention = 0
     assignments = 0
-    cursor = db.homework.find({"section_logs.0": {"$exists": True}}, {"_id": 0}).limit(5000)
+    cursor = db.homework.find({"section_logs.0": {"$exists": True}, **client_archive.not_gone(await client_archive.gone(db))}, {"_id": 0}).limit(5000)
     async for hw in cursor:
         n = homework_unreviewed_log_count(hw)
         if n:
@@ -15803,7 +15801,7 @@ async def list_pending_reviews(_: dict = Depends(require_admin_and_permission("m
     /admin/homework/unreviewed-count above."""
     items: List[dict] = []
     cursor = db.homework.find(
-        {"daily_tracker": True, "section_logs.submission_status": "submitted"},
+        {"daily_tracker": True, "section_logs.submission_status": "submitted", **client_archive.not_gone(await client_archive.gone(db))},
         {"_id": 0},
     )
     async for hw in cursor:
@@ -15846,7 +15844,7 @@ async def list_stalled_homework(days: int = 14, _: dict = Depends(require_admin)
     # Gap-closing pass — this previously had no cap; a growing business could
     # eventually make this scan an unbounded number of documents. 5000 is far
     # beyond any realistic "currently active daily-tracker homework" count.
-    cursor = db.homework.find({"daily_tracker": True, "status": {"$ne": "completed"}}, {"_id": 0}).limit(5000)
+    cursor = db.homework.find({"daily_tracker": True, "status": {"$ne": "completed"}, **client_archive.not_gone(await client_archive.gone(db))}, {"_id": 0}).limit(5000)
     async for hw in cursor:
         logs = hw.get("section_logs") or []
         last_activity = max((l.get("logged_at") or "" for l in logs), default=hw.get("created_at") or "")
@@ -20235,6 +20233,7 @@ async def school_enroll(
     dog = await db.dogs.find_one({"id": body.dog_id}, {"_id": 0})
     if not dog:
         raise HTTPException(status_code=404, detail="Dog not found")
+    await booking_guards.refuse_archived_dog(db, dog)   # audit #36
     program = await db.programs.find_one({"id": body.program_id}, {"_id": 0})
     if not program:
         raise HTTPException(status_code=404, detail="Program not found")
@@ -20590,6 +20589,7 @@ async def school_retake_enrollment(
     dog = await db.dogs.find_one({"id": previous_se.get("dog_id")}, {"_id": 0})
     if not dog:
         raise HTTPException(status_code=404, detail="Dog not found")
+    await booking_guards.refuse_archived_dog(db, dog)   # audit #36
     program = await db.programs.find_one({"id": previous_se.get("program_id") or previous.get("program_id")}, {"_id": 0})
     if not program:
         raise HTTPException(status_code=409, detail="The original School program no longer exists and cannot be repeated automatically")
@@ -23771,7 +23771,7 @@ async def admin_school_checkpoints_pending(_: dict = Depends(require_admin_and_p
         {"$or": [
             {"status": {"$in": ["pending", "grading"]}},
             {"status": "graded", "trainer_assist_hold_active": True},
-        ]}, {"_id": 0},
+        ], **client_archive.not_gone(await client_archive.gone(db))}, {"_id": 0},
     ).sort("submitted_at", 1).to_list(200)
     if not rows:
         return []
@@ -24368,6 +24368,9 @@ async def admin_school_trainer_assist_queue(_: dict = Depends(require_admin_and_
     rows = await db.checkpoint_submissions.find(
         {"outcome": "trainer_assist_recommended", "status": "graded"}, {"_id": 0},
     ).to_list(300)
+    gone = client_archive.not_gone(await client_archive.gone(db))   # open cases only; history stays (audit #36)
+    rows = [r for r in rows if not r.get("trainer_assist_hold_active")
+            or (r.get("client_id") not in gone["client_id"]["$nin"] and r.get("dog_id") not in gone["dog_id"]["$nin"])]
     if not rows:
         return []
     dog_ids = list({r["dog_id"] for r in rows})
@@ -24654,7 +24657,7 @@ _PRACTICE_ROW_HW_PROJECTION = {
 
 async def _count_pending_practice_reviews() -> int:
     pipeline = [
-        {"$match": _SCHOOL_HW_MATCH},
+        {"$match": {**_SCHOOL_HW_MATCH, **client_archive.not_gone(await client_archive.gone(db))}},
         {"$unwind": "$section_logs"},
         {"$match": _practice_pending_log_match()},
         {"$count": "n"},
@@ -24674,7 +24677,7 @@ async def _practice_review_rows(*, pending_only: bool, limit: int) -> List[dict]
         {"$unwind": "$section_logs"},
     ]
     if pending_only:
-        pipeline.append({"$match": _practice_pending_log_match()})
+        pipeline.append({"$match": {**_practice_pending_log_match(), **client_archive.not_gone(await client_archive.gone(db))}})
     else:
         pipeline.append({"$match": {"section_logs.logged_by_role": {"$ne": "admin"},
                                     "section_logs.is_rest_day": {"$ne": True}}})
@@ -24885,17 +24888,18 @@ async def admin_school_hq_summary(_: dict = Depends(require_admin_and_permission
     exists (checkpoints, Trainer Assist, enrollments) and from
     school_notifications for the attention/questions aggregate — never a fake
     number. `inactive_students` uses the documented _SCHOOL_INACTIVE_DAYS rule."""
+    gone = client_archive.not_gone(await client_archive.gone(db))   # an archived family is no student to chase (audit #36)
     active_enr = await db.school_enrollments.find(
-        {"status": "active"}, {"_id": 0, "client_id": 1}
+        {"status": "active", **gone}, {"_id": 0, "client_id": 1}
     ).to_list(2000)
     active_client_ids = list({e.get("client_id") for e in active_enr if e.get("client_id")})
 
     checkpoints_pending = await db.checkpoint_submissions.count_documents(
-        {"status": {"$in": ["pending", "grading"]}}
+        {"status": {"$in": ["pending", "grading"]}, **gone}
     )
     practice_reviews_pending = await _count_pending_practice_reviews()
     trainer_assists = await db.checkpoint_submissions.count_documents(
-        {"outcome": "trainer_assist_recommended", "trainer_assist_hold_active": True}
+        {"outcome": "trainer_assist_recommended", "trainer_assist_hold_active": True, **gone}
     )
     needs_attention = await school_events.attention_count()
     new_questions = await db.school_notifications.count_documents(
@@ -28100,7 +28104,7 @@ async def active_summary(_: dict = Depends(require_admin_and_permission("manage_
     # summary; online_school enrollments are excluded so they don't
     # double-count a dog or misreport program-type totals for trainer ops.
     cursor = db.dog_programs.find(
-        {"status": "active", "delivery_channel": {"$in": list(STAFF_SCHOOL_DELIVERY_CHANNELS)}}, {"_id": 0}
+        {"status": "active", "delivery_channel": {"$in": list(STAFF_SCHOOL_DELIVERY_CHANNELS)}, "dog_id": {"$nin": list((await client_archive.gone(db))[1])}}, {"_id": 0}
     ).sort("started_at", -1)
     rows = await cursor.to_list(500)
     by_type: Dict[str, int] = {}
@@ -28133,6 +28137,11 @@ async def programs_pipeline(
     query: Dict = {"delivery_channel": {"$in": list(STAFF_SCHOOL_DELIVERY_CHANNELS)}}
     if status:
         query["status"] = status
+    gone_dogs = list((await client_archive.gone(db))[1])   # a removed dog is never "stalled"; its history stays (audit #36)
+    if status == "active":
+        query["dog_id"] = {"$nin": gone_dogs}
+    elif not status:
+        query["$or"] = [{"status": {"$ne": "active"}}, {"dog_id": {"$nin": gone_dogs}}]
     # Stage 12 — `trainer` as a user id is the trainer's own "My students" roster: ONLY the
     # programs assigned to them (server-side). A name fragment keeps the owner's text filter
     # below (assigned trainer OR the trainer who last worked the dog).
@@ -28873,6 +28882,7 @@ async def dashboard_stats(_: dict = Depends(require_admin)):
     # photo arrays + raw training_logs are the bandwidth hogs.
     dog_proj = {"_id": 0, "photo": 0, "photos": 0, "training_logs": 0}
     dogs = [d async for d in db.dogs.find({}, dog_proj)]   # no ceiling — see /vaccine-alerts
+    gone_dogs = (await client_archive.gone(db))[1]   # the roster keeps every dog; the tiles never count a removed one (audit #36)
     # Build the same "active dismissal" map used by /vaccine-alerts so the
     # Health Flags tile + the alert list stay in lock-step. (Bug fix: previously
     # the tile counter didn't decrease when alerts were hidden/cleared.)
@@ -28880,7 +28890,7 @@ async def dashboard_stats(_: dict = Depends(require_admin)):
     dismissed_dog_ids = set((await _active_vaccine_dismissals(now_dt)).keys())
     health_flags = 0
     for d in dogs:
-        if d["id"] in dismissed_dog_ids:
+        if d["id"] in dismissed_dog_ids or d["id"] in gone_dogs:
             continue
         vac = d.get("vaccines") or {}
         flagged = False
@@ -28975,12 +28985,12 @@ async def dashboard_stats(_: dict = Depends(require_admin)):
         "grooming_today": grooming_today,
         "photography_today": photography_today,
         "health_flags": health_flags,
-        "total_dogs": len(dogs),
+        "total_dogs": len(dogs) - len([d for d in dogs if d["id"] in gone_dogs]),
         "today_roster": roster,
         # What today's visits still owe on their bills — not the visit's own
         # stored due, which a later bill payment leaves behind (audit #18).
         "amount_due_today": await end_of_day_domain.owed(roster),
-        "upcoming_birthdays": _upcoming_birthdays(dogs, days_ahead=14),
+        "upcoming_birthdays": _upcoming_birthdays([d for d in dogs if d["id"] not in gone_dogs], days_ahead=14),
         "first_time_bookings_today": await _first_time_bookings_today(today, dog_map),
         # Action Required / Pending Actions — additive summary counts (Phase L
         # of the missed-Meet-&-Greet fix). Existing fields above are untouched.
@@ -29080,10 +29090,12 @@ async def admin_today_brain(_: dict = Depends(require_admin)):
     today_iso = business_today().isoformat()
     now_dt = datetime.now(timezone.utc)
     items: List[dict] = []
+    gone = await client_archive.gone(db)   # archived families / removed dogs make no to-dos; money items still do (audit #36)
+    skip = client_archive.not_gone(gone)
 
     # 1. Homework day-submissions waiting for review (urgent)
     pending_count = 0
-    async for hw in db.homework.find({"daily_tracker": True}, {"_id": 0, "id": 1, "dog_name": 1, "client_name": 1, "section_logs": 1, "title": 1}):
+    async for hw in db.homework.find({"daily_tracker": True, **skip}, {"_id": 0, "id": 1, "dog_name": 1, "client_name": 1, "section_logs": 1, "title": 1}):
         for lo in hw.get("section_logs") or []:
             if lo.get("submission_status") == "submitted":
                 pending_count += 1
@@ -29108,7 +29120,7 @@ async def admin_today_brain(_: dict = Depends(require_admin)):
     school_practice_count = 0
     school_practice_sample = None
     async for hw in db.homework.find(
-        {"source_lesson_id": {"$ne": None}, "section_logs.0": {"$exists": True}},
+        {"source_lesson_id": {"$ne": None}, "section_logs.0": {"$exists": True}, **skip},
         {"_id": 0, "dog_name": 1, "title": 1, "section_logs": 1},
     ):
         for lo in hw.get("section_logs") or []:
@@ -29136,7 +29148,7 @@ async def admin_today_brain(_: dict = Depends(require_admin)):
         pending_vax_count = 0
         pending_vax_names: List[str] = []
         async for d in db.dogs.find(
-            {"vaccine_certs": {"$exists": True, "$ne": {}}},
+            {"vaccine_certs": {"$exists": True, "$ne": {}}, "id": {"$nin": list(gone[1])}},
             {"_id": 0, "id": 1, "name": 1, "vaccine_certs": 1},
         ):
             for vacc, info in (d.get("vaccine_certs") or {}).items():
@@ -29176,7 +29188,7 @@ async def admin_today_brain(_: dict = Depends(require_admin)):
             except Exception:
                 continue
         clients_map = {c["id"]: c["name"] for c in await db.clients.find({}, {"_id": 0, "id": 1, "name": 1}).to_list(2000)}
-        async for d in db.dogs.find({}, {"_id": 0, "id": 1, "name": 1, "owner_id": 1, "vaccines": 1}):
+        async for d in db.dogs.find({"id": {"$nin": list(gone[1])}}, {"_id": 0, "id": 1, "name": 1, "owner_id": 1, "vaccines": 1}):
             if d["id"] in dismissed:
                 continue
             vaccines = d.get("vaccines") or {}
@@ -29249,7 +29261,7 @@ async def admin_today_brain(_: dict = Depends(require_admin)):
     try:
         low_clients = []
         async for c in db.clients.find(
-            {"$or": [{"credits": {"$lte": 2}}, {"training_credits": {"$lte": 2}}, {"boarding_credits": {"$lte": 2}}]},
+            {"$or": [{"credits": {"$lte": 2}}, {"training_credits": {"$lte": 2}}, {"boarding_credits": {"$lte": 2}}], "id": {"$nin": list(gone[0])}},
             {"_id": 0, "id": 1, "name": 1, "credits": 1, "training_credits": 1, "boarding_credits": 1},
         ):
             pools = []
@@ -29380,7 +29392,7 @@ async def admin_today_brain(_: dict = Depends(require_admin)):
             })
         trivia_pending = 0
         async for c in db.clients.find(
-            {"$or": [{"deleted": {"$ne": True}}, {"deleted": {"$exists": False}}]},
+            {"$or": [{"deleted": {"$ne": True}}, {"deleted": {"$exists": False}}], "id": {"$nin": list(gone[0])}},
             {"_id": 0, "trivia_milestones": 1},
         ):
             for m in (c.get("trivia_milestones") or []):
@@ -29479,7 +29491,7 @@ async def admin_today_brain(_: dict = Depends(require_admin)):
     # 6. Unanswered homework questions (warn)
     try:
         unanswered = 0
-        async for hw in db.homework.find({"daily_tracker": True}, {"_id": 0, "section_logs": 1}):
+        async for hw in db.homework.find({"daily_tracker": True, **skip}, {"_id": 0, "section_logs": 1}):
             for lo in hw.get("section_logs") or []:
                 for q in lo.get("questions") or []:
                     if not q.get("answer"):
@@ -29505,7 +29517,7 @@ async def admin_today_brain(_: dict = Depends(require_admin)):
         # trainer-led pipeline concept (overall_pct tracks goal mastery,
         # which self-guided enrollments don't accrue); exclude online_school.
         async for ep in db.dog_programs.find(
-            {"status": "active", "overall_pct": {"$gte": 95}, "delivery_channel": {"$in": list(STAFF_SCHOOL_DELIVERY_CHANNELS)}},
+            {"status": "active", "overall_pct": {"$gte": 95}, "delivery_channel": {"$in": list(STAFF_SCHOOL_DELIVERY_CHANNELS)}, "dog_id": {"$nin": list(gone[1])}},
             {"_id": 0, "id": 1, "dog_id": 1, "dog_name": 1, "program_name": 1, "overall_pct": 1},
         ):
             ready.append(ep)
@@ -29528,7 +29540,7 @@ async def admin_today_brain(_: dict = Depends(require_admin)):
         yesterday = (now_dt - timedelta(hours=24)).isoformat()
         signups = []
         async for c in db.clients.find(
-            {"created_at": {"$gte": yesterday}},
+            {"created_at": {"$gte": yesterday}, "deleted_at": booking_guards.LIVE},
             {"_id": 0, "id": 1, "name": 1, "created_at": 1, "email": 1},
         ).sort("created_at", -1).limit(8):
             signups.append(c)
@@ -29564,7 +29576,7 @@ async def admin_today_brain(_: dict = Depends(require_admin)):
         steps_incomplete = 0
         clients_lagging = set()
         async for hw in db.homework.find(
-            {"daily_tracker": True, "status": {"$ne": "completed"}},
+            {"daily_tracker": True, "status": {"$ne": "completed"}, **skip},
             {"_id": 0, "id": 1, "client_id": 1, "client_name": 1, "dog_name": 1, "template_snapshot": 1, "section_logs": 1},
         ):
             snap = hw.get("template_snapshot") or {}
@@ -30226,6 +30238,7 @@ def _scheduler_jobs() -> List[job_scheduler.Job]:
         ("gift_card_funding_spread", lambda: _run_once_per_business_day(gift_card_services.FUNDING_REPAIR_JOB, gift_card_services.backfill_spread_funding)),  # daily + after a restore (audit #72)
         ("friends_family_group_bills", lambda: friends_family.sweep_group_bills()),  # the bill once a group's last dog has gone
         ("shop_income_split", lambda: _run_once_per_business_day(shop_income.REPAIR_JOB, lambda: shop_income.repair_split(db))),  # daily + after a restore (audit #29)
+        ("archive_sync", lambda: _run_once_per_business_day(client_archive.SYNC_JOB, lambda: client_archive.sync(db))),  # archived families stay archived (audit #36)
     ]
 
 
@@ -31170,13 +31183,13 @@ async def _build_referral_rows(limit: int = 200) -> Tuple[List[dict], List[dict]
     paid_by_referred = {rid for rid in await db.referrals.distinct("referred_id") if rid}
     referred_clients = [
         c async for c in db.clients.find(
-            {"referred_by_code": {"$exists": True, "$ne": ""}, "$or": [{"deleted": {"$ne": True}}, {"deleted": {"$exists": False}}]},
+            {"referred_by_code": {"$exists": True, "$ne": ""}, "$or": [{"deleted": {"$ne": True}}, {"deleted": {"$exists": False}}], "deleted_at": booking_guards.LIVE},
             {"_id": 0, "id": 1, "name": 1, "email": 1, "referred_by_code": 1, "created_at": 1},
         )
     ]
     codes = sorted({(c.get("referred_by_code") or "").upper().strip() for c in referred_clients if c.get("referred_by_code")})
     referrers = (
-        await db.clients.find({"referral_code": {"$in": codes}}, {"_id": 0, "id": 1, "name": 1, "email": 1, "referral_code": 1}).to_list(len(codes) + 10)
+        await db.clients.find({"referral_code": {"$in": codes}}, {"_id": 0, "id": 1, "name": 1, "email": 1, "referral_code": 1, "deleted_at": 1}).to_list(len(codes) + 10)
         if codes else []
     )
     by_code = {(r.get("referral_code") or "").upper(): r for r in referrers}
@@ -31200,6 +31213,8 @@ async def _build_referral_rows(limit: int = 200) -> Tuple[List[dict], List[dict]
             continue
         if referrer.get("id") == c.get("id"):
             self_referral_count += 1
+            continue
+        if referrer.get("deleted_at"):   # an archived referrer: nothing to grant until they're restored (audit #36)
             continue
         completed = await _completed_booking_count_for_client(c.get("id"), exclude_id="")
         pending.append({
@@ -31227,7 +31242,7 @@ async def admin_rewards_center(_: dict = Depends(require_admin)):
     pending_referrals, paid_referrals, referral_meta = await _build_referral_rows()
     clients = await db.clients.find(
         {"$or": [{"deleted": {"$ne": True}}, {"deleted": {"$exists": False}}]},
-        {"_id": 0, "id": 1, "name": 1, "email": 1, "credits": 1, "boarding_credits": 1, "training_credits": 1, "trivia_milestones": 1}
+        {"_id": 0, "id": 1, "name": 1, "email": 1, "credits": 1, "boarding_credits": 1, "training_credits": 1, "trivia_milestones": 1, "deleted_at": 1}
     ).to_list(50000)
     pending_trivia = []
     credit_rows = []
@@ -31240,7 +31255,7 @@ async def admin_rewards_center(_: dict = Depends(require_admin)):
                 "client_id": c.get("id"), "client_name": c.get("name", ""), "email": c.get("email", ""),
                 "daycare": d, "boarding": b, "training": t, "total_units": round(d+b+t, 2),
             })
-        for m in (c.get("trivia_milestones") or []):
+        for m in ([] if c.get("deleted_at") else (c.get("trivia_milestones") or [])):   # credit rows above stay: money
             if not m.get("redeemed_at"):
                 pending_trivia.append({
                     "client_id": c.get("id"),
@@ -34443,6 +34458,8 @@ async def log_service(body: LogServiceIn, user: dict = Depends(require_admin_and
     if not svc:
         raise HTTPException(status_code=404, detail="Service not found")
     client = await db.clients.find_one({"id": dog["owner_id"]}, {"_id": 0})
+    if body.status != "completed":   # a visit still to come (a past one is only a money record)
+        booking_guards.refuse_archived(dog=dog, client=client)
     price = body.actual_price if body.actual_price is not None else float(svc.get("base_price") or 0)
 
     booking_id = str(uuid.uuid4())
@@ -34496,6 +34513,8 @@ async def update_transaction(transaction_id: str, body: TransactionUpdateIn, _: 
     update = {k: v for k, v in body.model_dump().items() if v is not None}
     _assert_booking_financial_edit_allowed(booking, update.keys())
     booking_guards.refuse_while_on_site(booking, "changed from Income (checkout records its payment)")
+    if body.status in ("pending", "approved") and body.status != booking.get("status"):   # audit #36
+        await booking_guards.refuse_archived_dog(db, dog_id=booking.get("dog_id"), client_id=booking.get("client_id"))
     # If a service_id is being set, also refresh service_name + default price (only if price not also being set)
     if body.service_id:
         svc = await db.services.find_one({"id": body.service_id}, {"_id": 0})
@@ -42067,8 +42086,8 @@ async def _validate_shop_item_eligibility(client: dict, kind: str, item_doc: Opt
             raise HTTPException(status_code=422, detail=f"{name} can only be purchased one dog at a time — add it again for a second dog.")
         if not dog_id:
             raise HTTPException(status_code=422, detail=f"{name} requires selecting a dog before checkout.")
-        dog = await db.dogs.find_one({"id": dog_id}, {"_id": 0, "id": 1, "owner_id": 1})
-        if not dog or dog.get("owner_id") != client.get("id"):
+        dog = await db.dogs.find_one({"id": dog_id}, {"_id": 0, "id": 1, "owner_id": 1, "deleted_at": 1})
+        if not dog or dog.get("owner_id") != client.get("id") or dog.get("deleted_at") or client.get("deleted_at"):
             raise HTTPException(status_code=422, detail="Selected dog was not found on this account.")
         # Commerce-integrity hardening — reject BEFORE any order/Stripe
         # session is created, not just at fulfillment time. Fulfillment's
@@ -46953,7 +46972,7 @@ async def employee_my_tasks(user: dict = Depends(require_employee_or_admin)):
     ).to_list(200)
     # Vaccine reviews assigned to me
     dogs_with_vax = await db.dogs.find(
-        {"vaccine_certs": {"$exists": True}},
+        {"vaccine_certs": {"$exists": True}, "id": {"$nin": list((await client_archive.gone(db))[1])}},
         {"_id": 0, "id": 1, "name": 1, "vaccine_certs": 1},
     ).to_list(500)
     my_vax = []
@@ -49124,6 +49143,7 @@ async def sell_training_program(
     client = await db.clients.find_one({"id": client_id}, {"_id": 0})
     if not client:
         raise HTTPException(status_code=404, detail="Client not found")
+    client_archive.refuse_if_archived(client)
     program = await db.programs.find_one({"id": body.program_id}, {"_id": 0})
     if not program:
         raise HTTPException(status_code=404, detail="Program not found")
@@ -49149,6 +49169,7 @@ async def sell_training_program(
             raise HTTPException(404, "Dog not found")
         if dog.get("owner_id") != client_id:
             raise HTTPException(400, "Dog does not belong to this client")
+        booking_guards.refuse_archived(dog=dog)
 
     # Dog eligibility MUST be checked before credit lots, client balances,
     # revenue rows, or any other financial mutation below. Minimum age applies
@@ -52341,6 +52362,7 @@ async def add_to_waitlist(body: WaitlistIn, user: dict = Depends(get_current_use
     client = await db.clients.find_one({"id": dog.get("owner_id")}, {"_id": 0})
     if not client:
         raise HTTPException(status_code=404, detail="Client not found")
+    booking_guards.refuse_archived(dog=dog, client=client, staff=user.get("role") == "admin")   # audit #36
     probe = BookingIn(
         dog_id=body.dog_id, date=body.requested_date, end_date=body.requested_end_date,
         service_type=body.service_type, service_id=body.service_id,
@@ -52904,6 +52926,7 @@ _AUDIT_ACTION_RULES: List[Tuple[str, str, str]] = [
 
 
 def _audit_action_for(method: str, path: str) -> str:
+    if method == "POST" and "/clients/" in path and path.endswith("/restore"): return "client_restored"
     for m, frag, action in _AUDIT_ACTION_RULES:
         if method == m and frag in path:
             # Refine /bookings/{id}/X subactions
@@ -53083,7 +53106,7 @@ AUDIT_ACTION_GROUPS = {
                  "care_completed", "care_skipped", "care_reset",
                  "booking_financial_adjustment", "booking_checkout_reopened"],
     "dogs": ["dog_created", "dog_edited", "dog_deleted", "safety_flags_changed"],
-    "clients": ["client_created", "client_edited", "client_deleted"],
+    "clients": ["client_created", "client_edited", "client_deleted", "client_restored"],
     "incidents": ["incident_created", "incident_edited", "incident_deleted"],
     "vaccines": ["vaccine_edited"],
     "intake": ["intake_template_created", "intake_template_edited", "intake_template_deleted",
@@ -54091,7 +54114,7 @@ async def _bulk_email_resolve_recipients(filters: List[str]) -> List[Dict[str, A
 
     Filters are AND-combined. An empty list = "all clients with an email"."""
     filt = {k for k in filters if k in BULK_EMAIL_FILTERS}
-    base_q: Dict[str, Any] = {"email": {"$nin": [None, ""]}, "marketing_email_opt_out": {"$ne": True}}
+    base_q: Dict[str, Any] = {"email": {"$nin": [None, ""]}, "marketing_email_opt_out": {"$ne": True}, "deleted_at": booking_guards.LIVE}   # never an archived family (audit #36)
     if "active" in filt:
         base_q["status"] = {"$ne": "inactive"}
     # Streamed — client 10,001 used to silently never receive a campaign.
@@ -54099,7 +54122,7 @@ async def _bulk_email_resolve_recipients(filters: List[str]) -> List[Dict[str, A
 
     # Pull all dogs once (indexed by owner_id) for missing_vaccine + dog_names.
     dogs_by_owner: Dict[str, List[Dict[str, Any]]] = {}
-    async for d in db.dogs.find({}, {"_id": 0}):
+    async for d in db.dogs.find({"deleted_at": booking_guards.LIVE}, {"_id": 0}):   # a removed dog's name never lands in an email
         dogs_by_owner.setdefault(d.get("owner_id") or "", []).append(d)
 
     needs_booking_filter = bool(filt & {"daycare", "boarding", "training", "upcoming_bookings"})
@@ -54224,7 +54247,7 @@ async def bulk_email_recipients(body: BulkEmailFiltersIn, _: dict = Depends(requ
         ids = [c for c in (body.client_ids or []) if c]
         if not ids:
             return {"count": 0, "recipients": []}
-        cur = db.clients.find({"id": {"$in": ids}, "email": {"$nin": [None, ""]}, "marketing_email_opt_out": {"$ne": True}}, {"_id": 0})
+        cur = db.clients.find({"id": {"$in": ids}, "email": {"$nin": [None, ""]}, "marketing_email_opt_out": {"$ne": True}, "deleted_at": booking_guards.LIVE}, {"_id": 0})
         rows = []
         async for c in cur:
             rows.append({
@@ -54263,11 +54286,11 @@ async def bulk_email_send(body: BulkEmailSendIn, user: dict = Depends(require_ad
         # up. An email meant to read "hope Bella is doing great" went out
         # saying "hope your pup is doing great" for every hand-picked send.
         dogs_by_owner: Dict[str, List[str]] = {}
-        async for d in db.dogs.find({"owner_id": {"$in": ids}}, {"_id": 0, "owner_id": 1, "name": 1}):
+        async for d in db.dogs.find({"owner_id": {"$in": ids}, "deleted_at": booking_guards.LIVE}, {"_id": 0, "owner_id": 1, "name": 1}):
             if d.get("name"):
                 dogs_by_owner.setdefault(d.get("owner_id") or "", []).append(d["name"])
         recipients: List[Dict[str, Any]] = []
-        async for c in db.clients.find({"id": {"$in": ids}, "email": {"$nin": [None, ""]}, "marketing_email_opt_out": {"$ne": True}}, {"_id": 0}):
+        async for c in db.clients.find({"id": {"$in": ids}, "email": {"$nin": [None, ""]}, "marketing_email_opt_out": {"$ne": True}, "deleted_at": booking_guards.LIVE}, {"_id": 0}):
             recipients.append({
                 "id": c.get("id"),
                 "name": c.get("name") or "",
@@ -55714,6 +55737,7 @@ _DOG_MERGE_REF_COLLECTIONS: List[Tuple[str, str]] = [
     ("step_events", "dog_id"),
     ("client_files", "dog_id"),
     ("review_requests", "dog_id"),
+    ("recurring_templates", "dog_id"), ("waitlist", "dog_id"),   # never left on a removed record (audit #36)
 ]
 
 
@@ -55789,6 +55813,9 @@ async def _dog_merge_preview(primary_dog_id: str, duplicate_dog_id: str) -> Dict
         warnings.append("These dogs are under different client accounts. Merge/clean up duplicate clients first, or move the dog manually after review.")
     if duplicate.get("deleted_at") or duplicate.get("archived"):
         warnings.append("The duplicate dog is already archived/deleted. Running merge again is usually unnecessary.")
+    if primary.get("deleted_at") or (owners_by_id.get(primary.get("owner_id")) or {}).get("deleted_at"):
+        allowed = False
+        warnings.append("The main dog has been removed, or its family is archived. Restore it first.")
     if d_future:
         warnings.append(f"Duplicate dog has {d_future} future booking(s). They will move to the main dog if merged.")
     if not moves:

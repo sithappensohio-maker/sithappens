@@ -13,6 +13,8 @@ from typing import Any, Dict
 
 from fastapi import Depends, HTTPException
 
+from domains.clients import archive as client_archive
+
 
 def _rx(value: str) -> Dict[str, Any]:
     return {"$regex": re.escape((value or "").strip()), "$options": "i"}
@@ -195,7 +197,7 @@ def register_performance_routes(
 ) -> None:
     @api.get("/clients/page")
     async def clients_page(
-        q: str = "", page: int = 1, page_size: int = 48, include_deleted: bool = False,
+        q: str = "", page: int = 1, page_size: int = 48, include_deleted: bool = False, archived: bool = False,
         _: dict = Depends(require_clients_view),
     ):
         page_num = max(1, int(page or 1))
@@ -206,6 +208,8 @@ def register_performance_routes(
             rx = _rx(needle)
             base = {"$or": [{"name": rx}, {"email": rx}, {"phone": rx}]}
         query = _with_deleted(base, include_deleted)
+        if archived:   # "Show archived": only archived families, newest archive first (audit #36)
+            query = {"$and": [{"deleted_at": {"$nin": [None, ""]}}, base]} if base else {"deleted_at": {"$nin": [None, ""]}}
         total = await db.clients.count_documents(query)
         # Walk-ins are real rows and stay searchable here — you need to find one
         # to rebook it or convert it — but they are not families on file, so the
@@ -214,10 +218,13 @@ def register_performance_routes(
         total_clients = await db.clients.count_documents({**query, "client_status": {"$ne": "walk_in"}})
         pages = max(1, math.ceil(total / size)) if total else 1
         page_num = min(page_num, pages)
-        rows = await db.clients.find(query, {"_id": 0}).sort("name", 1).skip((page_num - 1) * size).limit(size).to_list(size)
-        await _decorate_client_page(
-            db=db, items=rows, get_settings=server_globals["get_settings"], business_today=business_today,
-        )
+        rows = await db.clients.find(query, {"_id": 0}).sort(*(("deleted_at", -1) if archived else ("name", 1))).skip((page_num - 1) * size).limit(size).to_list(size)
+        if archived:
+            await client_archive.archived_view(rows)
+        else:
+            await _decorate_client_page(
+                db=db, items=rows, get_settings=server_globals["get_settings"], business_today=business_today,
+            )
         # Match legacy GET /clients' response-model safety: never expose raw
         # internal client fields (Stripe ids/idempotency markers, etc.) merely
         # because this optimized endpoint bypasses FastAPI's List[ClientOut].

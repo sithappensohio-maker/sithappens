@@ -195,6 +195,7 @@ def register_public_site_routes(
         note = " ".join([f"Contact inquiry ({received}).", f"Dog: {dog_name}.", *_inquiry_summary_lines(inquiry)])
         existing_client = await db.clients.find_one(
             {"email": {"$regex": f"^{re.escape(email)}$", "$options": "i"}}, {"_id": 0},
+            sort=[("deleted_at", 1)],   # a live family before an archived one with the same email (audit #36)
         )
         if existing_client:
             client_id = existing_client["id"]

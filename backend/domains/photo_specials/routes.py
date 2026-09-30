@@ -453,8 +453,11 @@ def register_photo_special_routes(
         email = str(body.email).strip().lower()
         full_name = " ".join(p for p in [body.first_name.strip(), body.last_name.strip()] if p).strip()
 
+        # Never an archived family (audit #36): its booking couldn't be checked in
+        # on the day. Treated as not on file — a new walk-in — so the reply is
+        # identical either way.
         client = await db.clients.find_one(
-            {"email": {"$regex": f"^{re.escape(email)}$", "$options": "i"}}, {"_id": 0}
+            {"email": {"$regex": f"^{re.escape(email)}$", "$options": "i"}, "deleted_at": booking_guards.LIVE}, {"_id": 0},
         )
 
         if client:
@@ -482,8 +485,9 @@ def register_photo_special_routes(
             await db.clients.insert_one(dict(client))
 
         dog_name = body.dog_name.strip()
-        dog = await db.dogs.find_one(
-            {"owner_id": client["id"], "name": {"$regex": f"^{re.escape(dog_name)}$", "$options": "i"}}, {"_id": 0}
+        dog = await db.dogs.find_one(   # never a dog that was removed (audit #36)
+            {"owner_id": client["id"], "name": {"$regex": f"^{re.escape(dog_name)}$", "$options": "i"}, "deleted_at": booking_guards.LIVE},
+            {"_id": 0},
         )
         if not dog:
             dog = {
@@ -830,6 +834,7 @@ def register_photo_special_routes(
         if not dog:
             raise HTTPException(status_code=404, detail="Dog not found")
         client = await db.clients.find_one({"id": dog.get("owner_id")}, {"_id": 0}) or {}
+        booking_guards.refuse_archived(dog=dog, client=client)   # audit #36
         service = await _portrait_service()
         booking = {
             "id": str(uuid.uuid4()),

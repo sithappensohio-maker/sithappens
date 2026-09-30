@@ -21,6 +21,7 @@ from zoneinfo import ZoneInfo
 
 import email_service
 import trophy_service
+from domains.clients.archive import gone as _gone, not_gone as _not_gone
 
 logger = logging.getLogger(__name__)
 
@@ -121,10 +122,11 @@ async def _mark_notified(db, key: str, meta: Dict[str, Any]) -> None:
 
 
 async def _client_for_dog(db, dog: dict) -> dict | None:
+    """The dog's family — never an archived one: no automatic email reaches it (audit #36)."""
     owner_id = dog.get("owner_id")
     if not owner_id:
         return None
-    return await db.clients.find_one({"id": owner_id}, {"_id": 0})
+    return await db.clients.find_one({"id": owner_id, "deleted_at": {"$in": [None, ""]}}, {"_id": 0})
 
 
 async def run_birthday_job(db) -> dict:
@@ -144,7 +146,7 @@ async def run_birthday_job(db) -> dict:
                for i in range(BIRTHDAY_CATCHUP_DAYS)}
     sent = 0
     skipped = 0
-    async for dog in db.dogs.find({}, {"_id": 0}):
+    async for dog in db.dogs.find({"deleted_at": {"$in": [None, ""]}}, {"_id": 0}):   # never a removed dog (audit #36)
         bd = (dog.get("birthday") or "").strip()
         if len(bd) < 10:
             continue
@@ -182,7 +184,7 @@ async def run_vaccine_expiry_job(db) -> dict:
     target = today + timedelta(days=VACCINE_NUDGE_DAYS)
     sent = 0
     skipped = 0
-    async for dog in db.dogs.find({}, {"_id": 0}):
+    async for dog in db.dogs.find({"deleted_at": {"$in": [None, ""]}}, {"_id": 0}):   # never a removed dog (audit #36)
         vaccines = dog.get("vaccines") or {}
         expiring = []
         for field, label in VACCINE_FIELDS:
@@ -291,9 +293,11 @@ async def run_homework_weekly_digest_job(db, as_of: date | None = None) -> dict:
     # past 14 days (so a fresh "you finished!" recap goes out at week-end).
     fortnight_ago = (today - timedelta(days=14)).isoformat()
     by_client: Dict[str, list] = {}
+    gone = await _gone(db)   # archived families and removed dogs get no recap (audit #36)
     async for hw in db.homework.find(
         {
             "$and": [
+                _not_gone(gone),
                 PRACTICE_ROW_MATCH,
                 {"$or": [
                     {"status": {"$ne": "completed"}},
@@ -445,7 +449,10 @@ async def run_homework_practice_reminder_job(db) -> dict:
         "homework_reminder_enabled": True,
         "homework_reminder_days": today_dow,
         "email": {"$exists": True, "$ne": ""},
+        "deleted_at": {"$in": [None, ""]},   # never an archived family (audit #36)
     }, {"_id": 0})
+    gone = await _gone(db)
+    gone_dogs = gone.dogs - gone.merged   # rows still keyed to a merged-away duplicate belong to the live dog
 
     sent = 0
     attempted = 0
@@ -457,7 +464,7 @@ async def run_homework_practice_reminder_job(db) -> dict:
             continue
         # Their open daily-trackers AND open School Practice rows.
         hws = [hw async for hw in db.homework.find(
-            {"client_id": client["id"], "status": {"$ne": "completed"}, **PRACTICE_ROW_MATCH},
+            {"client_id": client["id"], "status": {"$ne": "completed"}, "dog_id": {"$nin": list(gone_dogs)}, **PRACTICE_ROW_MATCH},
             {"_id": 0},
         )]
         plans = []
@@ -621,8 +628,10 @@ async def run_trainer_monday_digest_job(db) -> dict:
     week_bookings = 0
     week_revenue_forecast = 0.0
 
-    # ── Walk all daily-tracker homework AND School Practice rows
-    async for hw in db.homework.find(PRACTICE_ROW_MATCH, {"_id": 0}):
+    # ── Walk all daily-tracker homework AND School Practice rows — never an
+    # archived family's or a removed dog's (audit #36)
+    gone = await _gone(db)
+    async for hw in db.homework.find({"$and": [_not_gone(gone), PRACTICE_ROW_MATCH]}, {"_id": 0}):
         if _is_school_row(hw):
             days = _school_session_days(hw)
             streak = _streak_ending(days, today)
@@ -717,7 +726,7 @@ async def run_trainer_monday_digest_job(db) -> dict:
     today_iso = today.isoformat()
     dismissals = await db.vaccine_dismissals.find({}, {"_id": 0}).to_list(2000)
     dismissed = {d["dog_id"] for d in dismissals if d.get("until", "") > datetime.now(timezone.utc).isoformat()}
-    async for dog in db.dogs.find({}, {"_id": 0, "id": 1, "name": 1, "owner_id": 1, "vaccines": 1}):
+    async for dog in db.dogs.find({"id": {"$nin": list(gone[1])}}, {"_id": 0, "id": 1, "name": 1, "owner_id": 1, "vaccines": 1}):
         if dog["id"] in dismissed:
             continue
         vac = dog.get("vaccines") or {}

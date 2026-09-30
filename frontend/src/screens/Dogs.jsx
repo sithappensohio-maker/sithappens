@@ -25,6 +25,7 @@ import LazyMount from "../components/LazyMount";
 import { scrollToCardAndFlash } from "../lib/scrollToCard";
 import { addRecent } from "../lib/recentlyOpened";
 import DogHub from "../components/DogHub";
+import { useArchiveAction } from "../components/ArchivedFamilies";
 
 const empty = {
   owner_id: "", name: "", breed: "", age_y: 0, age_m: 0, birthday: "",
@@ -340,9 +341,15 @@ export default function Dogs({ focusId = null, focusMode = "scroll", onConsumed 
   };
 
   const confirm = useConfirm();
+  const archiveAction = useArchiveAction();   // refused while the dog is here or still booked (audit #36)
   const remove = async (id) => {
-    if (!(await confirm({ title: "Archive this dog?", body: "This hides the dog from normal screens but keeps training logs, photos, bookings, and history safe for records/taxes.", confirmText: "Archive dog", tone: "danger" }))) return;
-    await api.delete(`/dogs/${id}`); load();
+    const name = dogs.find((d) => d.id === id)?.name || "This dog";
+    if (!(await confirm({ title: "Archive this dog?", body: "This hides the dog from normal screens and pauses its weekly schedules, but keeps training logs, photos, bookings, and history safe for records/taxes.\n\nA dog that's checked in or still has visits booked can't be archived until those are checked out or cancelled.", confirmText: "Archive dog", tone: "danger" }))) return;
+    await archiveAction.attempt({
+      title: `${name} isn't archived yet`,
+      run: () => api.delete(`/dogs/${id}`),
+      done: () => { toast.success(`${name} archived`); load(); },
+    });
   };
 
   const openTrain = (d) => { setTrainOpen(d); setTrainForm({ date: todayISO(), note: "", tags: [] }); setErr(""); };
@@ -376,6 +383,7 @@ export default function Dogs({ focusId = null, focusMode = "scroll", onConsumed 
 
   return (
     <div className="space-y-6 animate-slide-in" data-testid="dogs-screen">
+      {archiveAction.view}
       <PageHero
         eyebrow={{ icon: "fa-paw", text: `${rosterTotal} pup${rosterTotal === 1 ? "" : "s"} on file`, color: "text-shPrimary" }}
         title="Dog Records."

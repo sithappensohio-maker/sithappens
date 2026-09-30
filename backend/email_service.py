@@ -509,10 +509,33 @@ async def _clear_gift_card_queue_flag(card_id: str | None) -> None:
     await _db.gift_cards.update_one({"id": card_id}, {"$unset": {"email_queued_at": ""}})
 
 
+# Automatic client emails that wait in the outbox (quiet hours, a failed
+# send). A family archived — or a dog removed — before the retry gets none of
+# them (audit #36); receipts and anything staff sent by hand still go.
+_AUTOMATIC_CLIENT_JOBS = {"birthday", "vaccine_expiry_30d", "hw_weekly_digest", "hw_reminder"}
+
+
+async def _about_someone_gone(client_id: str | None, dog_id: str | None) -> bool:
+    live = {"$in": [None, ""]}
+    if dog_id:
+        dog = await _db.dogs.find_one({"id": dog_id}, {"_id": 0, "deleted_at": 1, "owner_id": 1})
+        if not dog or dog.get("deleted_at"):
+            return True
+        client_id = client_id or dog.get("owner_id")
+    if client_id:
+        return not await _db.clients.find_one({"id": client_id, "deleted_at": live}, {"_id": 1})
+    return False
+
+
 async def _outbox_row_still_wanted(action: dict | None) -> bool:
     """Checked right before a queued email is retried. A gift card's code is
     money: never send it for a card voided in the meantime, to an address
     staff have since corrected, or a second time once it has arrived."""
+    if action and action.get("type") == "client_low_credit":
+        return not await _about_someone_gone(action.get("client_id"), None)
+    if action and action.get("type") == "notification_log" and (action.get("meta") or {}).get("job") in _AUTOMATIC_CLIENT_JOBS:
+        meta = action.get("meta") or {}
+        return not await _about_someone_gone(meta.get("client_id"), meta.get("dog_id"))
     if not action or action.get("type") != "gift_card_emailed":
         return True
     card = await _db.gift_cards.find_one(
@@ -3046,7 +3069,8 @@ async def broadcast_announcement_email(announcement: dict) -> dict:
     sent = skipped = 0
     if _db is None:
         return {"sent": 0, "skipped": 0, "reason": "db not bound"}
-    cursor = _db.clients.find({"email": {"$exists": True, "$ne": ""}, "marketing_email_opt_out": {"$ne": True}}, {"_id": 0, "name": 1, "email": 1})
+    cursor = _db.clients.find({"email": {"$exists": True, "$ne": ""}, "marketing_email_opt_out": {"$ne": True},
+                               "deleted_at": {"$in": [None, ""]}}, {"_id": 0, "name": 1, "email": 1})   # never an archived family (audit #36)
     async for c in cursor:
         addr = (c.get("email") or "").strip()
         if not addr:

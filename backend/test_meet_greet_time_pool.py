@@ -251,3 +251,30 @@ def test_editing_a_booking_that_already_overlaps_one_without_moving_it_is_allowe
     assert run(server.db.bookings.find_one({"id": lesson["id"]}, {"_id": 0}))["notes"] == f"{TAG} bring treats"
     with pytest.raises(HTTPException):
         run(server._update_booking_with_capacity(lesson, {"time": "09:45"}))
+
+
+# ------------------------- a returning archived family (audit #36)
+
+def test_an_archived_familys_request_is_kept_for_staff_but_sends_no_sign_up_link_that_cannot_work():
+    day = _day()
+    email = f"{TAG.lower()}-{uuid.uuid4().hex[:6]}@example.com"
+    cid = f"{TAG}-archived-{uuid.uuid4().hex[:6]}"
+    run(server.db.clients.insert_one({"id": cid, "name": f"{TAG} Archived", "email": email,
+                                      "deleted_at": server.now_iso(), "created_at": server.now_iso()}))
+    hours = {d: {"closed": False, "open": "09:00", "close": "17:00"} for d in server.DEFAULT_DAYS}
+    run(server.db.auth_rate_limits.delete_many({}))
+    body = {"owner_name": f"{TAG} Owner", "email": email, "phone": "555-0101", "dog_name": "Waffles", "date": day, "time": "10:00"}
+    try:
+        with _settings(meet_greet={"enabled": True, "slot_minutes": 30, "min_lead_hours": 0, "max_advance_days": 900, "hours": hours}):
+            r = run(_http.post("/api/public/meet-greet-request", json=body))
+        assert r.status_code == 200, r.text
+        mg = run(server.db.bookings.find_one({"date": day, "is_meet_greet": True}, {"_id": 0}))
+        assert mg["client_id"] == cid and "archived" in mg["notes"], "kept on the family, and staff are told why"
+        assert not run(server.db.claim_tokens.find_one({"client_id": cid})), "no link that could only fail"
+        with pytest.raises(HTTPException) as e:
+            run(server.approve_booking(mg["id"], ADMIN))
+        assert e.value.block["code"] == "family_archived"
+    finally:
+        run(server.db.bookings.delete_many({"date": day, "is_meet_greet": True}))
+        run(server.db.claim_tokens.delete_many({"client_id": cid}))
+        run(server.db.clients.delete_many({"email": email}))
