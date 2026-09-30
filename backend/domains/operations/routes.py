@@ -16,6 +16,8 @@ from typing import Any, Dict, List, Optional
 from fastapi import Depends, HTTPException
 from pydantic import BaseModel, Field
 
+from domains import vaccines as vaccines_domain
+
 VACCINE_TYPES = ("rabies", "bordetella", "dhpp")
 
 
@@ -29,35 +31,73 @@ class StuckCheckoutResolveIn(BaseModel):
     reason: str = Field(min_length=3, max_length=300)
 
 
-async def approve_vaccine_cert(db, dog_id: str, vaccine: str, reviewer_name: str, now_iso) -> Dict[str, Any]:
-    """The one canonical approval rule — used by the single-review endpoint
-    (server.py facade) and the bulk endpoint below. Applies the pending
-    expiry to the dog so booking unlocks; raises HTTPException on bad input."""
+async def _waiting_upload(db, dog_id: str, vaccine: str, uploaded_at: Optional[str]) -> tuple:
+    """The upload a reviewer is deciding on — refused if it was already decided
+    or replaced since they looked (they never act on a file they didn't see)."""
     if vaccine not in VACCINE_TYPES:
         raise HTTPException(status_code=400, detail="Invalid vaccine type")
-    dog = await db.dogs.find_one({"id": dog_id}, {"_id": 0, "vaccine_certs": 1})
+    dog = await db.dogs.find_one({"id": dog_id}, {"_id": 0, "vaccine_certs": 1, "vaccines": 1})
     if not dog:
         raise HTTPException(status_code=404, detail="Dog not found")
-    certs = dict(dog.get("vaccine_certs") or {})
-    if vaccine not in certs:
+    cert = (dog.get("vaccine_certs") or {}).get(vaccine)
+    if not isinstance(cert, dict):
         raise HTTPException(status_code=404, detail="No cert uploaded for this vaccine")
-    certs[vaccine] = dict(certs[vaccine])
-    approved_exp = certs[vaccine].get("pending_expires_on") or certs[vaccine].get("expires_on")
+    if vaccines_domain.was_reviewed(cert):
+        raise HTTPException(status_code=409, detail="This certificate was already reviewed. Refresh to see the latest.")
+    if uploaded_at and cert.get("uploaded_at") != uploaded_at:
+        raise HTTPException(status_code=409, detail="The client uploaded a newer certificate. Refresh and check that one.")
+    if dog.get("vaccines") is None:
+        await db.dogs.update_one({"id": dog_id, "vaccines": None}, {"$set": {"vaccines": {}}})
+    return dog, cert
+
+
+async def approve_vaccine_cert(db, dog_id: str, vaccine: str, reviewer_name: str, now_iso,
+                               uploaded_at: Optional[str] = None) -> Dict[str, Any]:
+    """The one canonical approval rule — used by the single-review endpoint
+    (server.py facade) and the bulk endpoint below. Applies the pending
+    expiry to the dog so booking unlocks; the certificate it renews (the
+    stash, audit #40) goes. Raises HTTPException on bad input."""
+    _dog, cert = await _waiting_upload(db, dog_id, vaccine, uploaded_at)
+    approved_exp = cert.get("pending_expires_on") or cert.get("expires_on")
     if not approved_exp:
         raise HTTPException(status_code=400, detail="Uploaded cert is missing an expiry date")
     try:
         date.fromisoformat(str(approved_exp)[:10])
     except Exception:
         raise HTTPException(status_code=400, detail="Uploaded cert has an invalid expiry date")
-    certs[vaccine]["reviewed_at"] = now_iso()
-    certs[vaccine]["reviewed_by"] = reviewer_name
-    certs[vaccine]["status"] = "approved"
-    certs[vaccine]["expires_on"] = str(approved_exp)[:10]
-    certs[vaccine].pop("pending_expires_on", None)
-    vaccines = dict((await db.dogs.find_one({"id": dog_id}, {"_id": 0, "vaccines": 1}) or {}).get("vaccines") or {})
-    vaccines[vaccine] = str(approved_exp)[:10]
-    await db.dogs.update_one({"id": dog_id}, {"$set": {"vaccine_certs": certs, "vaccines": vaccines}})
+    path = f"vaccine_certs.{vaccine}"
+    res = await db.dogs.update_one(
+        {"id": dog_id, **vaccines_domain.cert_filter(vaccine, cert)},
+        {"$set": {f"{path}.reviewed_at": now_iso(), f"{path}.reviewed_by": reviewer_name, f"{path}.status": "approved",
+                  f"{path}.expires_on": str(approved_exp)[:10], f"vaccines.{vaccine}": str(approved_exp)[:10]},
+         "$unset": {f"{path}.pending_expires_on": "", f"{path}.approved_before": ""}})
+    if not res.matched_count:
+        raise HTTPException(status_code=409, detail="This upload changed while you were approving it. Refresh and look again.")
     return {"ok": True, "dog_id": dog_id, "vaccine": vaccine, "expires_on": str(approved_exp)[:10]}
+
+
+async def reject_vaccine_cert(db, dog_id: str, vaccine: str, uploaded_at: Optional[str] = None) -> Dict[str, Any]:
+    """Throw away only the waiting upload (audit #40). The certificate it
+    would have replaced goes back exactly as it was, date and all. Only an
+    upload from before July 2026 — which wrote its own date onto the dog —
+    also takes that date back off."""
+    dog, cert = await _waiting_upload(db, dog_id, vaccine, uploaded_at)
+    path = f"vaccine_certs.{vaccine}"
+    filt = {"id": dog_id, **vaccines_domain.cert_filter(vaccine, cert)}
+    before = cert.get("approved_before")
+    if isinstance(before, dict) and before:
+        update: Dict[str, Any] = {"$set": {path: before}}
+    else:
+        update = {"$unset": {path: ""}}
+        vaccines = dog.get("vaccines") if isinstance(dog.get("vaccines"), dict) else {}
+        own_date = str(cert.get("expires_on") or "")[:10]
+        if vaccines_domain.is_legacy_unreviewed(cert) and own_date and str(vaccines.get(vaccine) or "")[:10] == own_date:
+            update["$set"] = {f"vaccines.{vaccine}": ""}
+            filt[f"vaccines.{vaccine}"] = vaccines.get(vaccine)
+    res = await db.dogs.update_one(filt, update)
+    if not res.matched_count:
+        raise HTTPException(status_code=409, detail="This upload changed while you were rejecting it. Refresh and look again.")
+    return {"ok": True, "dog_id": dog_id, "vaccine": vaccine, "rejected": True, "kept_approved": bool(isinstance(before, dict) and before)}
 
 
 def register_operations_routes(
@@ -93,7 +133,7 @@ def register_operations_routes(
             dog_id = str(item.get("dog_id") or "")
             vaccine = str(item.get("vaccine") or "")
             try:
-                result = await approve_vaccine_cert(db, dog_id, vaccine, reviewer, now_iso)
+                result = await approve_vaccine_cert(db, dog_id, vaccine, reviewer, now_iso, str(item.get("uploaded_at") or "") or None)
                 approved.append(result)
             except HTTPException as exc:
                 skipped.append({"dog_id": dog_id, "vaccine": vaccine, "reason": str(exc.detail)})

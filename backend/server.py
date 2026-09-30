@@ -3811,13 +3811,14 @@ def _dog_vaccine_checkin_warning(dog: dict, required: List[str]) -> Optional[str
     today = business_today().isoformat()
     vaccines = dog.get("vaccines") or {}
     for v in required:
+        d = vaccines.get(v, "")
+        if d and d >= today:
+            continue   # a renewal under review doesn't matter while the approved one is valid (audit #40)
         if _pending_vaccine_cert_for(dog, v):
             return f"{v.title()} vaccine is pending admin review."
-        d = vaccines.get(v, "")
         if not d:
             return f"{v.title()} vaccine is missing from this dog's record."
-        if d < today:
-            return f"{v.title()} vaccine expired {d}."
+        return f"{v.title()} vaccine expired {d}."
     return None
 
 
@@ -4669,6 +4670,7 @@ async def admin_list_vaccine_uploads(include_reviewed: bool = False, _: dict = D
                 "photos": info.get("photos") or ([info["photo"]] if info.get("photo") else []),
                 "uploaded_at": info.get("uploaded_at"),
                 "uploaded_by": info.get("uploaded_by", ""),
+                **vaccines_domain.review_context(info, vaccines.get(vacc)),   # audit #40
                 "reviewed_at": info.get("reviewed_at"),
                 "reviewed_by": info.get("reviewed_by", ""),
             })
@@ -4684,37 +4686,19 @@ async def admin_list_vaccine_uploads(include_reviewed: bool = False, _: dict = D
 
 
 @api.post("/admin/dogs/{dog_id}/vaccine-cert/{vaccine}/review")
-async def admin_review_vaccine_cert(dog_id: str, vaccine: str, user: dict = Depends(require_admin)):
+async def admin_review_vaccine_cert(dog_id: str, vaccine: str, uploaded_at: str = "", user: dict = Depends(require_admin)):
     """Facade; the one canonical approval rule lives in domains.operations
     (shared with POST /admin/vaccine-uploads/bulk-review)."""
     from domains.operations.routes import approve_vaccine_cert
-    return await approve_vaccine_cert(db, dog_id, vaccine, user.get("name", "Admin"), now_iso)
+    return await approve_vaccine_cert(db, dog_id, vaccine, user.get("name", "Admin"), now_iso, uploaded_at or None)
 
 
 @api.delete("/admin/dogs/{dog_id}/vaccine-cert/{vaccine}")
-async def admin_reject_vaccine_cert(dog_id: str, vaccine: str, _: dict = Depends(require_admin)):
-    """Reject a client-uploaded vaccine cert. Removes the pending cert, but does
-    not wipe an older approved expiry unless it exactly matches the rejected upload."""
-    if vaccine not in ("rabies", "bordetella", "dhpp"):
-        raise HTTPException(status_code=400, detail="Invalid vaccine type")
-    dog = await db.dogs.find_one({"id": dog_id}, {"_id": 0, "vaccine_certs": 1, "vaccines": 1})
-    if not dog:
-        raise HTTPException(status_code=404, detail="Dog not found")
-    certs = dict(dog.get("vaccine_certs") or {})
-    vaccines = dict(dog.get("vaccines") or {})
-    rejected_cert = certs.get(vaccine) or {}
-    pending_exp = rejected_cert.get("pending_expires_on") or rejected_cert.get("expires_on")
-    certs.pop(vaccine, None)
-    # Safe behavior: rejecting a NEW pending upload should not wipe an older
-    # approved vaccine date already on file. Only clear the vaccine if the value
-    # currently on the dog is exactly the rejected upload's expiry.
-    if pending_exp and vaccines.get(vaccine) == str(pending_exp)[:10]:
-        vaccines[vaccine] = ""
-    await db.dogs.update_one(
-        {"id": dog_id},
-        {"$set": {"vaccine_certs": certs, "vaccines": vaccines}},
-    )
-    return {"ok": True, "dog_id": dog_id, "vaccine": vaccine, "rejected": True}
+async def admin_reject_vaccine_cert(dog_id: str, vaccine: str, uploaded_at: str = "", _: dict = Depends(require_admin)):
+    """Facade: reject throws away only the waiting upload; the certificate it
+    would have replaced stays on file, date and all (domains.operations, audit #40)."""
+    from domains.operations.routes import reject_vaccine_cert
+    return await reject_vaccine_cert(db, dog_id, vaccine, uploaded_at or None)
 
 
 async def _booking_days_count_filtered(target_date: str, service_type: str, *, exclude_booking_id: Optional[str] = None) -> int:
@@ -6357,7 +6341,8 @@ class VaccineUpdateIn(BaseModel):
 @api.post("/portal/dogs/{dog_id}/vaccine-update")
 async def portal_update_vaccine(dog_id: str, body: VaccineUpdateIn, user: dict = Depends(get_current_user)):
     """Client uploads a new vaccine cert photo + expiry date. The upload stays
-    pending until admin review; booking remains locked for that vaccine until approval."""
+    pending until admin review. A missing or expired vaccine stays locked until
+    approval; a renewal keeps the approved certificate on file (audit #40)."""
     if user.get("role") != "client":
         raise HTTPException(status_code=403, detail="Client account required")
     dog = await db.dogs.find_one({"id": dog_id}, {"_id": 0})
@@ -6371,7 +6356,6 @@ async def portal_update_vaccine(dog_id: str, body: VaccineUpdateIn, user: dict =
     # Client uploads are PENDING REVIEW. Do not update `dog.vaccines` here;
     # that field is the admin-approved source used by booking gates. Existing
     # approved vaccine dates stay intact until an admin reviews this upload.
-    update_doc: Dict[str, Any] = {}
     # Resolve which photos we got — `photos` (multi) takes precedence over the
     # legacy single `photo` field. Keep `photo` populated with the first entry
     # so existing reads (admin review screen) still work.
@@ -6379,21 +6363,10 @@ async def portal_update_vaccine(dog_id: str, body: VaccineUpdateIn, user: dict =
     if not photo_list and body.photo:
         photo_list = [body.photo]
     _validate_base64_uploads(photo_list)
-    if photo_list:
-        certs = dict(dog.get("vaccine_certs") or {})
-        certs[body.vaccine] = {
-            "photo": photo_list[0],
-            "photos": photo_list,
-            "uploaded_at": now_iso(),
-            "uploaded_by": user.get("name", ""),
-            "expires_on": body.expires_on,          # shown in admin queue
-            "pending_expires_on": body.expires_on,  # only applied on review
-            "status": "pending_review",
-        }
-        update_doc["vaccine_certs"] = certs
-    else:
+    if not photo_list:
         raise HTTPException(status_code=400, detail="Please upload a vaccine certificate photo.")
-    await db.dogs.update_one({"id": dog_id}, {"$set": update_doc})
+    await vaccines_domain.store_client_upload(db, dog_id, body.vaccine, photos=photo_list, expires_on=body.expires_on,
+                                              uploader=user.get("name", ""), now_iso=now_iso)
 
     # Best-effort admin email: do not make the client wait on email delivery,
     # and never fail the upload if Resend/admin email is misconfigured.
@@ -6422,16 +6395,16 @@ async def admin_attach_vaccine_cert(dog_id: str, body: VaccineUpdateIn, user: di
         date.fromisoformat(body.expires_on)
     except Exception:
         raise HTTPException(status_code=400, detail="Invalid expiry date")
-    vaccines = dict(dog.get("vaccines") or {})
-    vaccines[body.vaccine] = body.expires_on
-    update_doc: Dict[str, Any] = {"vaccines": vaccines}
+    for field in ("vaccines", "vaccine_certs"):   # one vaccine at a time: never over a client's other uploads
+        if not isinstance(dog.get(field), dict):
+            await db.dogs.update_one({"id": dog_id, field: {"$not": {"$type": "object"}}}, {"$set": {field: {}}})
+    update_doc: Dict[str, Any] = {f"vaccines.{body.vaccine}": body.expires_on}
     photo_list = [p for p in (body.photos or []) if p]
     if not photo_list and body.photo:
         photo_list = [body.photo]
     _validate_base64_uploads(photo_list)
     if photo_list:
-        certs = dict(dog.get("vaccine_certs") or {})
-        certs[body.vaccine] = {
+        update_doc[f"vaccine_certs.{body.vaccine}"] = {
             "photo": photo_list[0],
             "photos": photo_list,
             "uploaded_at": now_iso(),
@@ -6443,7 +6416,6 @@ async def admin_attach_vaccine_cert(dog_id: str, body: VaccineUpdateIn, user: di
             "reviewed_at": now_iso(),
             "reviewed_by": user.get("name", "admin"),
         }
-        update_doc["vaccine_certs"] = certs
     await db.dogs.update_one({"id": dog_id}, {"$set": update_doc})
     return {"ok": True, "dog_id": dog_id, "vaccine": body.vaccine, "expires_on": body.expires_on}
 

@@ -313,16 +313,26 @@ class TestVaccineCertReview:
         )
         assert r.status_code == 404, r.text
 
-    def test_reject_clears_cert_and_expiry(self, admin_token, test_client_token):
+    def test_reject_keeps_the_approved_cert_and_expiry(self, admin_token, test_client_token):
+        """Audit #40: rejecting a renewal throws away only the new upload — the
+        approved certificate goes back, date and all (even when the rejected
+        upload carried the same date)."""
+        _seed_pending_vax_cert(test_client_token, "bordetella", "2027-06-01")
+        requests.post(f"{BASE_URL}/api/admin/dogs/{ROCKY_DOG_ID}/vaccine-cert/bordetella/review",
+                      headers=_hdr(admin_token), timeout=15)
         _seed_pending_vax_cert(test_client_token, "bordetella", "2027-06-01")
         r = requests.delete(
             f"{BASE_URL}/api/admin/dogs/{ROCKY_DOG_ID}/vaccine-cert/bordetella",
             headers=_hdr(admin_token), timeout=15,
         )
         assert r.status_code == 200, r.text
+        assert r.json().get("kept_approved") is True
         d = requests.get(f"{BASE_URL}/api/dogs/{ROCKY_DOG_ID}", headers=_hdr(admin_token), timeout=15).json()
-        assert d["vaccines"].get("bordetella", "") == ""
-        assert "bordetella" not in (d.get("vaccine_certs") or {})
+        assert d["vaccines"].get("bordetella", "") == "2027-06-01"
+        rows = requests.get(f"{BASE_URL}/api/admin/vaccine-cert-uploads?include_reviewed=true",
+                            headers=_hdr(admin_token), timeout=15).json()
+        row = next(x for x in rows if x["dog_id"] == ROCKY_DOG_ID and x["vaccine"] == "bordetella")
+        assert row.get("reviewed_at"), "the approved certificate is back on file"
 
     def test_admin_endpoints_require_admin_auth(self, test_client_token):
         # List
@@ -354,7 +364,11 @@ class TestVaccineCertReview:
             new_settings.pop("_id", None)
             requests.put(f"{BASE_URL}/api/settings", json=new_settings,
                          headers=_hdr(admin_token), timeout=15)
-            # Seed + reject
+            # Nothing valid on file for bordetella (audit #40: a rejected renewal
+            # keeps an approved date, so clear it first), then seed + reject
+            dog = requests.get(f"{BASE_URL}/api/dogs/{ROCKY_DOG_ID}", headers=_hdr(admin_token), timeout=15).json()
+            dog["vaccines"] = {**(dog.get("vaccines") or {}), "bordetella": ""}
+            requests.put(f"{BASE_URL}/api/dogs/{ROCKY_DOG_ID}", json=dog, headers=_hdr(admin_token), timeout=15)
             _seed_pending_vax_cert(test_client_token, "bordetella", "2027-06-01")
             requests.delete(
                 f"{BASE_URL}/api/admin/dogs/{ROCKY_DOG_ID}/vaccine-cert/bordetella",

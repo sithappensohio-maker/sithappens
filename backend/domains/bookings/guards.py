@@ -11,6 +11,7 @@ from typing import Any, Callable, Dict, List, Optional, Tuple
 
 from fastapi import HTTPException
 
+from domains import vaccines as vaccines_domain
 from domains.bookings.blocks import BookingBlocked, block_of, pretty_date
 
 
@@ -57,9 +58,8 @@ def dog_vaccine_block(
                 message = f"{name}'s {label} vaccine {when}. Upload a current {label} certificate, then book again."
                 code = "vaccine_expired"
             return BookingBlocked(400, message, code=code, action="upload_vaccines", dog_id=dog.get("id"), vaccine=v)
-        if document_required:
-            cert = certs.get(v) or {}
-            if not isinstance(cert, dict) or cert.get("status") != "approved":
+        if document_required:   # a renewal under review keeps the approved one on file (audit #40)
+            if vaccines_domain.approved_cert_on_file(certs.get(v)) is None:
                 if pending:
                     return pending_block
                 return BookingBlocked(

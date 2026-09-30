@@ -40,7 +40,7 @@ import PortalBookingBlockedModal from "../components/PortalBookingBlockedModal";
 import RequestMeetGreetModal from "../components/RequestMeetGreetModal";
 import { bookingFailure, groupSkips, shortDate } from "../lib/bookingBlocks";
 import SignedWaiverModal from "../components/SignedWaiverModal";
-import { dogVaccineRollup, humanDate, vaccineState, vaccineSummary, vaccineStateTone, VACCINE_STATES } from "../lib/vaccineStatus";
+import { dogVaccineRollup, expiringNotSent, humanDate, uploadedRenewalsOnly, vaccineState, vaccineSummary, vaccineStateTone, VACCINE_STATES, withUsForReview } from "../lib/vaccineStatus";
 import { portalGreeting, portalGreetingSubtitle } from "../lib/portalGreeting";
 import NeedsPasswordCard from "../components/NeedsPasswordCard";
 import PaymentOptionsCard from "../components/PaymentOptionsCard";
@@ -438,7 +438,9 @@ function VaccineUploadModal({ dog, vaccine, onClose, onSaved }) {
           <h4 className="text-xl font-bold text-shText tracking-tight">Update {label} for {dog.name}</h4>
           <button onClick={onClose} className="text-shTextMuted hover:text-shText p-1"><i className="fas fa-times text-lg"/></button>
         </div>
-        <p className="text-[15px] text-shTextMuted mb-4">Step 1: enter the expiry date. Step 2: attach a clear photo of the certificate. After you submit, Sit Happens reviews it before booking unlocks.</p>
+        <p className="text-[15px] text-shTextMuted mb-4">Step 1: enter the expiry date. Step 2: attach a clear photo of the certificate. {vaccineState(dog, vaccine, todayISO()).state === VACCINE_STATES.APPROVED
+          ? "After you submit, Sit Happens reviews it — the certificate we already approved keeps booking open meanwhile."
+          : "After you submit, Sit Happens reviews it before booking unlocks."}</p>
         <div className="space-y-3">
           <div>
             <label className="text-[14px] text-shTextMuted font-bold uppercase tracking-widest">New expiry date</label>
@@ -2229,12 +2231,8 @@ export default function Portal() {
                   const st = vaccineState(d, v, today).state;
                   return st === VACCINE_STATES.MISSING || st === VACCINE_STATES.EXPIRED;
                 });
-                const awaitingReview = ["rabies", "bordetella", "dhpp"].filter(
-                  v => vaccineState(d, v, today).state === VACCINE_STATES.PENDING);
-                const expiringSoon = ["rabies", "bordetella", "dhpp"].filter(v => {
-                  const exp = d.vaccines?.[v];
-                  return exp && exp >= today && exp < soonStr;
-                });
+                const awaitingReview = withUsForReview(d, ["rabies", "bordetella", "dhpp"], today);
+                const expiringSoon = expiringNotSent(d, ["rabies", "bordetella", "dhpp"], today, soonStr);   // renewed ones are with us
                 // Sprint 110dh-8 — dog card status badge derived from existing
                 // data only (no schema changes). Priority: expired > missing >
                 // missing-info > complete.
@@ -2328,7 +2326,7 @@ export default function Portal() {
                       </p>
                     </div>
                   )}
-                  {needsUpload.length === 0 && awaitingReview.length === 0 && expiringSoon.length > 0 && (
+                  {needsUpload.length === 0 && expiringSoon.length > 0 && (
                     <div className="border-t border-shOrange/30 bg-shOrange/10 px-4 py-2 flex items-center justify-between gap-2" data-testid={`vaccine-soon-${d.id}`}>
                       <p className="text-[12px] sm:text-[13px] text-shOrange font-black uppercase tracking-widest min-w-0 truncate">
                         <i className="fas fa-hourglass-half mr-1"/>{expiringSoon.length} expiring soon
@@ -2789,9 +2787,10 @@ export default function Portal() {
           onClose={()=>setVaccineModal(null)}
           onSaved={async()=>{
             const dogName = vaccineModal.dog?.name || "your dog";
+            const renewal = uploadedRenewalsOnly(vaccineModal.dog, [vaccineModal.vaccine], todayISO());
             setVaccineModal(null);
             await loadAll(); bumpSetupRefresh();
-            setReviewConfirm({ dogName, plural: false });
+            setReviewConfirm({ dogName, plural: false, renewal });
           }} />
       )}
 
@@ -2800,11 +2799,12 @@ export default function Portal() {
           dogs={dogs}
           initialDogId={vaccineQuick.initialDogId}
           onClose={()=>setVaccineQuick(null)}
-          onSaved={async()=>{
-            const dogName = dogs.find(d => d.id === vaccineQuick.initialDogId)?.name || "your dog";
+          onSaved={async(saved)=>{
+            const dog = dogs.find(d => d.id === (saved?.dogId || vaccineQuick.initialDogId));
+            const renewal = uploadedRenewalsOnly(dog, saved?.vaccines, todayISO());
             setVaccineQuick(null);
             await loadAll(); bumpSetupRefresh();
-            setReviewConfirm({ dogName, plural: true });
+            setReviewConfirm({ dogName: dog?.name || "your dog", plural: true, renewal });
           }}
         />
       )}
@@ -2840,7 +2840,9 @@ export default function Portal() {
               </div>
               <div className="flex items-start gap-3 bg-bgBase/60 border border-bgHover rounded-lg p-3">
                 <span className="shrink-0 w-6 h-6 rounded-full bg-shGreen/20 text-shGreen font-black text-[12px] flex items-center justify-center">4</span>
-                <p className="text-[13px] text-gray-200 leading-snug">Booking stays <span className="font-black">locked</span> until this is approved.</p>
+                <p className="text-[13px] text-gray-200 leading-snug" data-testid="review-confirm-booking">{reviewConfirm.renewal
+                  ? <>Booking stays <span className="font-black">open</span> on the certificate we already approved while we review this one.</>
+                  : <>Booking stays <span className="font-black">locked</span> until this is approved.</>}</p>
               </div>
               <div className="flex items-start gap-3 bg-bgBase/60 border border-bgHover rounded-lg p-3">
                 <span className="shrink-0 w-6 h-6 rounded-full bg-shGreen/20 text-shGreen font-black text-[12px] flex items-center justify-center">5</span>

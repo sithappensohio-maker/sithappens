@@ -92,7 +92,7 @@ export default function VaccineQuickUploadModal({ dogs = [], initialDogId = "", 
         });
         setDone(i + 1);
       }
-      onSaved?.();
+      onSaved?.({ dogId: dog.id, vaccines: filledRows.map(([vk]) => vk) });
     } catch (e) {
       const detail = e?.response?.data?.detail;
       setErr(typeof detail === "string" ? detail : "Upload failed. Try again.");
@@ -124,7 +124,7 @@ export default function VaccineQuickUploadModal({ dogs = [], initialDogId = "", 
               Do every needed vaccine before submitting
             </p>
             <p className="text-[12px] text-shTextMuted mt-1 leading-snug">
-              Missing/expired vaccines are red. Enter the expiry date and attach the certificate for each one. Uploads go to Sit Happens for approval, so booking stays locked until we approve them.
+              Missing/expired vaccines are red. Enter the expiry date and attach the certificate for each one. Uploads go to Sit Happens for approval: a missing or expired vaccine stays locked until we approve it. If we've already approved a current certificate, booking stays open while we review the new one.
             </p>
           </div>
 

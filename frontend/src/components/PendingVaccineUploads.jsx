@@ -2,6 +2,7 @@ import { useCallback, useEffect, useState } from "react";
 import { api, formatErr } from "../lib/api";
 import { useConfirm } from "../lib/useConfirm";
 import { toast } from "sonner";
+import { onFileLine, rejectUploadMessage, reviewQuery } from "../lib/vaccineStatus";
 
 /**
  * A dog's client-uploaded vaccine certificates that are waiting for approval,
@@ -36,7 +37,7 @@ export default function PendingVaccineUploads({ dogId, onApproved, onChanged }) 
   const approve = async (r) => {
     setBusy(r.vaccine);
     try {
-      const { data } = await api.post(`/admin/dogs/${r.dog_id}/vaccine-cert/${r.vaccine}/review`);
+      const { data } = await api.post(`/admin/dogs/${r.dog_id}/vaccine-cert/${r.vaccine}/review${reviewQuery(r)}`);
       setRows(prev => prev.filter(x => x.vaccine !== r.vaccine));
       onApproved?.(r.vaccine, data?.expires_on || r.expires_on);
       onChanged?.(r.vaccine);
@@ -49,14 +50,14 @@ export default function PendingVaccineUploads({ dogId, onApproved, onChanged }) 
   const reject = async (r) => {
     const ok = await confirm({
       title: `Reject ${String(r.vaccine).toUpperCase()} upload?`,
-      body: `This removes the pending upload. ${r.dog_name || "The dog"}'s previously approved date is kept unless it exactly matches this upload. The client will need to upload again.`,
+      body: rejectUploadMessage(r),
       confirmText: "Reject",
       destructive: true,
     });
     if (!ok) return;
     setBusy(r.vaccine);
     try {
-      await api.delete(`/admin/dogs/${r.dog_id}/vaccine-cert/${r.vaccine}`);
+      await api.delete(`/admin/dogs/${r.dog_id}/vaccine-cert/${r.vaccine}${reviewQuery(r)}`);
       setRows(prev => prev.filter(x => x.vaccine !== r.vaccine));
       onChanged?.(r.vaccine);
     } catch (e) {
@@ -94,6 +95,7 @@ export default function PendingVaccineUploads({ dogId, onApproved, onChanged }) 
               {r.expires_on ? `Client entered expiry ${r.expires_on}` : "No expiry date entered"}
               {r.photo ? " · tap the photo to check it" : ""}
             </p>
+            {onFileLine(r) && <p className="text-[12px] text-shPrimary" data-testid={`dog-pending-vax-onfile-${r.vaccine}`}>{onFileLine(r)}</p>}
           </div>
           <div className="flex gap-2">
             <button type="button" onClick={() => reject(r)} disabled={!!busy} data-testid={`dog-pending-vax-reject-${r.vaccine}`}

@@ -1,8 +1,9 @@
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { api, formatErr } from "../lib/api";
 import { useConfirm } from "../lib/useConfirm";
 import { useTheme } from "../lib/theme";
 import { toast } from "sonner";
+import { onFileLine, rejectUploadMessage, reviewQuery } from "../lib/vaccineStatus";
 import AdminBookingModal from "./AdminBookingModal";
 import BookingDetailModal from "./BookingDetailModal";
 import ReportCardModal from "./ReportCardModal";
@@ -43,6 +44,8 @@ export default function TodayOperations({ stats, onReload = () => {}, onNavigate
   const [services, setServices] = useState([]);
   const [moodTags, setMoodTags] = useState(DEFAULT_MOOD_TAGS);
   const [pendingVax, setPendingVax] = useState([]);
+  const [vaxBusy, setVaxBusy] = useState("");
+  const vaxInFlight = useRef(false);   // a ref: two clicks in one frame both see the old state
   // The review list failing used to look identical to "nothing to review".
   const [vaxFailed, setVaxFailed] = useState(false);
   const [quoteRequests, setQuoteRequests] = useState([]);
@@ -110,13 +113,16 @@ export default function TodayOperations({ stats, onReload = () => {}, onNavigate
   };
 
   const approveVax = async (v) => {
+    if (vaxInFlight.current) return;   // a double-click would ask to approve an approved upload
+    vaxInFlight.current = true;
+    setVaxBusy(`${v.dog_id}-${v.vaccine}`);
     try {
-      await api.post(`/admin/dogs/${v.dog_id}/vaccine-cert/${v.vaccine}/review`);
+      await api.post(`/admin/dogs/${v.dog_id}/vaccine-cert/${v.vaccine}/review${reviewQuery(v)}`);
       setPendingVax((prev) => prev.filter((x) => !(x.dog_id === v.dog_id && x.vaccine === v.vaccine)));
       await Promise.resolve(onReload());
     } catch (e) {
       toast.error(formatErr(e.response?.data?.detail) || "Couldn't approve this vaccine cert.");
-    }
+    } finally { vaxInFlight.current = false; setVaxBusy(""); }
   };
 
   const approveAllVax = async () => {
@@ -128,7 +134,7 @@ export default function TodayOperations({ stats, onReload = () => {}, onNavigate
     if (!ok) return;
     try {
       const { data } = await api.post("/admin/vaccine-uploads/bulk-review", {
-        items: pendingVax.map((v) => ({ dog_id: v.dog_id, vaccine: v.vaccine })),
+        items: pendingVax.map((v) => ({ dog_id: v.dog_id, vaccine: v.vaccine, ...(v.uploaded_at ? { uploaded_at: v.uploaded_at } : {}) })),
       });
       toast.success(`Approved ${data.approved_count} upload${data.approved_count === 1 ? "" : "s"}${data.skipped?.length ? ` · ${data.skipped.length} skipped` : ""}`);
       const approvedKeys = new Set((data.approved || []).map((a) => `${a.dog_id}-${a.vaccine}`));
@@ -142,18 +148,20 @@ export default function TodayOperations({ stats, onReload = () => {}, onNavigate
   const rejectVax = async (v) => {
     const ok = await confirm({
       title: `Reject ${String(v.vaccine || "vaccine").toUpperCase()} cert?`,
-      body: `This removes the pending upload. ${v.dog_name || "The dog"}'s previously approved date is kept unless it exactly matches this pending upload.`,
+      body: rejectUploadMessage(v),
       confirmText: "Reject",
       destructive: true,
     });
-    if (!ok) return;
+    if (!ok || vaxInFlight.current) return;
+    vaxInFlight.current = true;
+    setVaxBusy(`${v.dog_id}-${v.vaccine}`);
     try {
-      await api.delete(`/admin/dogs/${v.dog_id}/vaccine-cert/${v.vaccine}`);
+      await api.delete(`/admin/dogs/${v.dog_id}/vaccine-cert/${v.vaccine}${reviewQuery(v)}`);
       setPendingVax((prev) => prev.filter((x) => !(x.dog_id === v.dog_id && x.vaccine === v.vaccine)));
       await Promise.resolve(onReload());
     } catch (e) {
       toast.error(formatErr(e.response?.data?.detail) || "Couldn't reject this vaccine cert.");
-    }
+    } finally { vaxInFlight.current = false; setVaxBusy(""); }
   };
 
   const closeQuote = async (q) => {
@@ -261,10 +269,11 @@ export default function TodayOperations({ stats, onReload = () => {}, onNavigate
                     <div className="min-w-0 flex-1">
                       <p className="text-[13px] font-black text-shText truncate">{v.dog_name || "Dog"} · <span className="text-shSecondary uppercase">{v.vaccine}</span></p>
                       <p className="text-[11px] text-shTextMuted truncate">{v.client_name || "—"}{v.expires_on ? ` · expires ${v.expires_on}` : ""}</p>
+                      {onFileLine(v) && <p className="text-[11px] text-shPrimary" data-testid={`today-vax-onfile-${v.dog_id}-${v.vaccine}`}>{onFileLine(v)}</p>}
                     </div>
                     <div className="flex gap-2">
-                      <button onClick={() => rejectVax(v)} className="px-2.5 py-2 rounded-lg bg-shDanger/15 text-red-300 text-[10px] font-black uppercase tracking-wider">Reject</button>
-                      <button onClick={() => approveVax(v)} className="px-2.5 py-2 rounded-lg bg-shPrimary/15 text-shPrimary text-[10px] font-black uppercase tracking-wider">Approve</button>
+                      <button onClick={() => rejectVax(v)} data-testid={`today-vax-reject-${v.dog_id}-${v.vaccine}`} disabled={!!vaxBusy} className="disabled:opacity-50 px-2.5 py-2 rounded-lg bg-shDanger/15 text-red-300 text-[10px] font-black uppercase tracking-wider">Reject</button>
+                      <button onClick={() => approveVax(v)} data-testid={`today-vax-approve-${v.dog_id}-${v.vaccine}`} disabled={!!vaxBusy} className="disabled:opacity-50 px-2.5 py-2 rounded-lg bg-shPrimary/15 text-shPrimary text-[10px] font-black uppercase tracking-wider">Approve</button>
                     </div>
                   </div>
                 ))}
