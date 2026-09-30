@@ -18,6 +18,7 @@ import resend
 from pymongo.errors import DuplicateKeyError
 
 from email_templates_registry import get_template as _registry_get_template
+from domains.bookings.blocks import pretty_date, pretty_time
 
 logger = logging.getLogger(__name__)
 
@@ -323,6 +324,29 @@ def _wrap(title: str, intro: str, rows: list, cta_text: str | None = None, cta_u
 
 def _service_label(svc: str) -> str:
     return {"daycare": "Daycare", "boarding": "Boarding", "training": "Training", "grooming": "Grooming"}.get(svc, svc.title())
+
+
+# Visits booked for a set time (server.TIME_SLOTTED_SERVICES) and Meet & Greets.
+_TIMED_SERVICES = ("training", "grooming", "photography")
+
+
+def _booking_label(booking: dict) -> str:
+    """What the client booked, in their words — a Meet & Greet is stored as
+    service_type "other" (audit #41)."""
+    if booking.get("is_meet_greet"):
+        return "Meet & Greet"
+    label = _service_label(booking.get("service_type", ""))
+    if booking.get("service_type") == "grooming" and booking.get("grooming_type"):
+        label += " · " + ("Bath" if booking["grooming_type"] == "bath" else "Nail Trim")
+    return label
+
+
+def _appointment_time(booking: dict) -> str:
+    """'2:30 PM' for a visit booked at a set time; '' for a stay or no time."""
+    t = str(booking.get("time") or "").strip()
+    if not t or not (booking.get("is_meet_greet") or booking.get("service_type") in _TIMED_SERVICES):
+        return ""
+    return pretty_time(t)
 
 
 def _date_range(start: str, end: str | None) -> str:
@@ -2192,15 +2216,14 @@ async def notify_client_booking_approved(booking: dict, client: dict, policy_lin
     to_email = client.get("email", "")
     if not to_email:
         return
-    svc_label = _service_label(booking.get("service_type", ""))
-    if booking.get("service_type") == "grooming" and booking.get("grooming_type"):
-        gt = "Bath" if booking["grooming_type"] == "bath" else "Nail Trim"
-        svc_label = f"{svc_label} · {gt}"
+    svc_label = _booking_label(booking)
     rows = [
         ("Dog", booking.get("dog_name", "—")),
         ("Service", svc_label),
         ("Dates", _date_range(booking.get("date", ""), booking.get("end_date"))),
     ]
+    if _appointment_time(booking):   # a lesson, grooming, portrait or Meet & Greet is at a time (audit #41)
+        rows.append(("Time", _appointment_time(booking)))
     if booking.get("dropoff_time"):
         rows.append(("Drop-off", booking["dropoff_time"]))
     if booking.get("pickup_time"):
@@ -2232,13 +2255,15 @@ async def notify_client_booking_rejected(booking: dict, client: dict) -> None:
     to_email = client.get("email", "")
     if not to_email:
         return
-    svc_label = _service_label(booking.get("service_type", ""))
+    svc_label = _booking_label(booking)
     first_name = client.get('name', 'there').split(' ')[0]
     rows = [
         ("Dog", booking.get("dog_name", "—")),
         ("Service", svc_label),
         ("Requested dates", _date_range(booking.get("date", ""), booking.get("end_date"))),
     ]
+    if _appointment_time(booking):
+        rows.append(("Requested time", _appointment_time(booking)))
     await _dispatch(
         slug="client_booking_rejected",
         to_email=to_email,
@@ -2585,12 +2610,17 @@ async def send_meet_greet_request_received(
     dog_name: str,
     claim_url: str,
     expires_days: int = 7,
+    requested_date: str = "",
+    requested_time: str = "",
 ) -> None:
     """Sent to a prospect right after they submit the public 'Request a Meet
-    & Greet' form on the landing page. Confirms receipt and hands them a
+    & Greet' form on the landing page. Confirms receipt, repeats the day and
+    time they asked for (not yet confirmed — audit #41) and hands them a
     claim link so they can set up (or reset) their portal password."""
     first = (client_name or "there").split(" ")[0]
     rows = [("Dog", dog_name)] if dog_name else []
+    if requested_date:
+        rows.append(("You asked for", pretty_date(requested_date) + (f" at {pretty_time(requested_time)}" if requested_time else "")))
     await _dispatch(
         slug="meet_greet_request_received",
         to_email=to_email,

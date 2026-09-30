@@ -3027,6 +3027,8 @@ async def request_meet_greet(body: MeetGreetRequestIn, request: Request):
                 dog_name=dog_name,
                 claim_url=claim_url,
                 expires_days=CLAIM_TOKEN_EXPIRY_DAYS,
+                requested_date=chosen_date,
+                requested_time=chosen_time,
             )
         except Exception as e:
             logger.warning("meet_greet_request: email dispatch failed for %s: %s", email, e)
