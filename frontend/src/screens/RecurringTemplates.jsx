@@ -2,6 +2,8 @@ import { useEffect, useState } from "react";
 import { api, formatErr } from "../lib/api";
 import { useConfirm } from "../lib/useConfirm";
 import PageHero from "../components/PageHero";
+import { PENDING_ACTION_TARGET_KEY, announcePendingActionsChanged } from "../components/PendingActionsPanel";
+import { skipReason, shortDate } from "../lib/bookingBlocks";
 
 /**
  * Admin tool: saved per-dog "recurring schedule" templates (e.g. Daisy · M/W/F
@@ -11,6 +13,16 @@ import PageHero from "../components/PageHero";
  * extends start the day AFTER the previously booked window.
  */
 const WD = ["Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun"];
+
+// A skipped day in a word or two — the same words the Action Required card
+// uses (backend renewal_misses.label), so ten closed days read as one line.
+const SKIP_WORDS = { closed_date: "closed", closed_day: "closed", capacity_full: "full", capacity_busy: "busy", duplicate_booking: "already booked" };
+function skipWord(s) {
+  const code = s.block?.code || (typeof s.reason === "object" && s.reason ? s.reason.code : "") || "";
+  if (code === "capacity_full" && ["time_slot", "class_or_slot"].includes(s.reason?.resource)) return "time taken";
+  if (code.startsWith("vaccine_")) return "vaccines";
+  return SKIP_WORDS[code] || skipReason(s);
+}
 const emptyForm = { dog_id: "", service_type: "daycare", service_id: "", time: "", dropoff_time: "", weekdays: [0, 2, 4], notes: "", default_horizon_weeks: 12, active: true, label: "", start_date: "", auto_extend: true };
 
 export default function RecurringTemplates() {
@@ -24,18 +36,51 @@ export default function RecurringTemplates() {
   const [busy, setBusy] = useState(null);  // template_id currently extending
   const [err, setErr] = useState("");
   const [toast, setToast] = useState(null); // {ok, msg}
+  const [misses, setMisses] = useState({});    // template_id -> Action Required item (audit #35)
+  const [loaded, setLoaded] = useState(false);
+  const [highlight, setHighlight] = useState("");
 
   const load = async () => {
-    const [{ data: tpls }, { data: ds }, { data: svcs }] = await Promise.all([
+    const [{ data: tpls }, { data: ds }, { data: svcs }, missed] = await Promise.all([
       api.get("/recurring-templates"),
       api.get("/dogs"),
       api.get("/services"),
+      // Days a renewal couldn't book — worked out by the server, the same list Action Required shows.
+      api.get("/admin/pending-actions", { params: { type: "recurring_renewal_missed", limit: 300 } }).catch(() => ({ data: { items: [] } })),
     ]);
     setRows(tpls);
     setDogs(ds);
     setServices((svcs || []).filter(s => s.active !== false && !s.is_addon && ["daycare", "training"].includes(s.service_type)));
+    setMisses(Object.fromEntries((missed.data?.items || []).map(i => [i.template_id, i])));
+    setLoaded(true);
   };
   useEffect(() => { load(); }, []);
+
+  // Action Required's "Open Schedule" stored the schedule before navigating
+  // here: bring its row into view. Consumed once, after a load.
+  useEffect(() => {
+    if (!loaded) return;
+    let target = null;
+    try { target = JSON.parse(sessionStorage.getItem(PENDING_ACTION_TARGET_KEY) || "null"); } catch { /* ignore */ }
+    if (!target?.recurring_template_id) return;
+    try { sessionStorage.removeItem(PENDING_ACTION_TARGET_KEY); } catch { /* ignore */ }
+    setHighlight(target.recurring_template_id);
+    setTimeout(() => {
+      document.querySelector(`[data-testid="recurring-row-${target.recurring_template_id}"]`)?.scrollIntoView?.({ block: "center" });
+    }, 0);
+  }, [loaded]);
+
+  const followedUp = async (r) => {
+    const item = misses[r.id];
+    if (!item) return;
+    try {
+      await api.post(`/recurring-templates/${r.id}/followed-up`, { through: item.recorded_through });
+      announcePendingActionsChanged();
+      load();
+    } catch (e) {
+      setToast({ ok: false, msg: formatErr(e.response?.data?.detail) || "Couldn't mark it followed up" });
+    }
+  };
 
   const openNew = () => {
     const first = services.find(s => s.service_type === "daycare") || services[0];
@@ -80,8 +125,15 @@ export default function RecurringTemplates() {
     setBusy(r.id); setToast(null);
     try {
       const { data } = await api.post(`/recurring-templates/${r.id}/extend`, {});
-      const skipped = (data.skipped || []).length;
-      const msg = `${r.dog_name}: booked ${data.created} sessions through ${data.window?.to}.` + (skipped ? ` ${skipped} skipped (already booked / capacity).` : "");
+      // Say which days weren't booked and why, instead of guessing.
+      const groups = [];
+      for (const s of data.skipped || []) {
+        const word = skipWord(s);
+        const g = groups.find(x => x.word === word) || (groups.push({ word, dates: [] }), groups[groups.length - 1]);
+        g.dates.push(s.date);
+      }
+      const msg = `${r.dog_name}: booked ${data.created} sessions through ${data.window?.to}.` +
+        (groups.length ? ` Not booked: ${groups.map(g => `${g.dates.map(shortDate).join(", ")} (${g.word})`).join("; ")}.` : "");
       setToast({ ok: true, msg });
       load();
     } catch (e) {
@@ -128,8 +180,8 @@ export default function RecurringTemplates() {
       ) : (
         <div className="space-y-2">
           {rows.map(r => (
-            <div key={r.id} data-testid={`recurring-row-${r.id}`}
-                 className={`bg-[var(--sh-card-base)] border border-shBorder rounded-lg p-4 grid grid-cols-12 gap-3 items-center ${!r.active ? "opacity-50" : ""}`}>
+            <div key={r.id} data-testid={`recurring-row-${r.id}`} data-highlight={highlight === r.id ? "true" : undefined}
+                 className={`bg-[var(--sh-card-base)] border rounded-lg p-4 grid grid-cols-12 gap-3 items-center ${highlight === r.id ? "border-shPrimary ring-2 ring-shPrimary/50" : "border-shBorder"} ${!r.active ? "opacity-50" : ""}`}>
               <div className="col-span-12 md:col-span-4 min-w-0">
                 <p className="text-shText font-black text-[15px] truncate">{r.label}</p>
                 <p className="text-[13px] text-shTextMuted font-black uppercase tracking-widest mt-0.5">{r.client_name || "—"}</p>
@@ -166,6 +218,18 @@ export default function RecurringTemplates() {
                 <button onClick={()=>openEdit(r)} className="text-shSecondary text-[13px] font-black uppercase tracking-widest hover:underline px-1">Edit</button>
                 <button onClick={()=>remove(r)} className="text-red-400 text-[13px] font-black uppercase tracking-widest hover:underline px-1">Delete</button>
               </div>
+              {misses[r.id] && (
+                <div className="col-span-12 flex flex-col sm:flex-row sm:items-center gap-2 rounded-lg border border-shAccent/40 bg-shAccent/10 px-3 py-2"
+                     data-testid={`recurring-missed-${r.id}`}>
+                  <p className="flex-1 min-w-0 text-[13px] text-shText break-words">
+                    <i className="fas fa-triangle-exclamation text-shAccent mr-1.5"/>{misses[r.id].summary}
+                  </p>
+                  <button onClick={()=>followedUp(r)} data-testid={`recurring-followed-up-${r.id}`}
+                          className="shrink-0 min-h-[36px] px-3 rounded text-[12px] font-black uppercase tracking-widest bg-shSurfaceRaised text-shText border border-shBorder hover:bg-shSurfaceRaised/80">
+                    <i className="fas fa-check mr-1"/>Followed up
+                  </button>
+                </div>
+              )}
             </div>
           ))}
         </div>

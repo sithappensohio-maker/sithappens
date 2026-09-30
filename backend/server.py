@@ -82,7 +82,7 @@ from domains.bookings import spans as booking_spans
 from domains.bookings import group_rank
 from domains.bookings import group_pricing as booking_group_pricing
 from domains.bookings import friends_family
-from domains.bookings import checkout_prices, credit_cover, checkout_discount, waitlist_spots, time_pool
+from domains.bookings import checkout_prices, credit_cover, checkout_discount, waitlist_spots, time_pool, renewal_misses
 from domains.school import ownership as school_ownership
 from domains.bookings import late_day as late_day_checkout
 from domains.bookings import care as care_domain
@@ -2378,17 +2378,14 @@ async def _auto_extend_recurring_templates_once() -> Dict[str, Any]:
             summary["extended"] += 1
             summary["created"] += int(res.get("created") or 0)
             summary["skipped_slots"] += len(res.get("skipped") or [])
-            await db.recurring_templates.update_one(
-                {"id": t["id"]},
-                {"$set": {"last_auto_extended_at": now_iso(),
-                          "last_auto_extend_result": {"window": res.get("window"), "created": res.get("created"),
-                                                      "skipped": len(res.get("skipped") or [])}}},
-            )
+            await renewal_misses.record_renewal(t, res)   # every day it couldn't book goes to Action Required (audit #35)
         except HTTPException as exc:
             summary["errors"].append({"template_id": t["id"], "label": t.get("label"), "error": str(exc.detail)[:300]})
+            await renewal_misses.record_block(t, exc)
         except Exception as exc:  # one broken template must not stop the sweep
             logger.warning("auto-extend failed for template %s: %s", t.get("id"), exc)
             summary["errors"].append({"template_id": t["id"], "label": t.get("label"), "error": str(exc)[:300]})
+            await renewal_misses.record_block(t, exc)
     if summary["extended"]:
         logger.info("recurring auto-extend: %s", summary)
     return summary
@@ -4369,16 +4366,9 @@ async def _create_booking_impl(body: BookingIn, user: dict = Depends(get_current
             state = {"pending": "waiting for approval", "approved": "confirmed", "checked_in": "checked in"}.get(dup.get("status"), dup.get("status") or "booked")
             raise BookingBlocked(409, f"{dog.get('name') or 'This dog'} already has a {body.service_type} booking on {pretty_date(dup.get('date'))}{span} ({state}). " "Pick a different date, or see My Bookings to change the existing one.", code="duplicate_booking", action="pick_date", booking_id=dup.get("id"))
 
-    # Closed-day enforcement (clients only — admin can override by creating manually).
-    # Blocks any booking whose start date OR any day in its range falls on a closed date.
+    # Closed dates: clients only — staff can still book one day by hand (any day in a range counts).
     if not is_admin:
-        closed = set(settings.get("closed_dates") or [])
-        if closed:
-            booking_dates = _dates_in_range(body.date, body.end_date)
-            hit = [d for d in booking_dates if d in closed]
-            if hit:
-                pretty = ", ".join(pretty_date(d) for d in hit[:3]) + ("…" if len(hit) > 3 else "")
-                raise BookingBlocked(400, f"Sit Happens is closed on {pretty}. Please pick another date.", code="closed_date", action="pick_date")
+        booking_guards.refuse_closed_dates(settings, _dates_in_range(body.date, body.end_date))
 
     # Advance-booking limit (clients only) — exempt daycare so regulars can
     # set up long-running recurring schedules without bumping the global cap.
@@ -4795,6 +4785,7 @@ async def create_recurring(body: RecurringBookingIn, user: dict = Depends(get_cu
         while cur <= end:
             if cur.weekday() in weekdays:
                 try:
+                    booking_guards.refuse_closed_dates(settings, [cur.isoformat()])   # never a holiday, even for staff (audit #35)
                     bk = await create_booking(
                         BookingIn(
                             dog_id=body.dog_id,
@@ -5040,7 +5031,7 @@ async def list_recurring_templates(user: dict = Depends(get_current_user)):
     if not is_admin:
         my_dogs = await db.dogs.find({"owner_id": user.get("client_id")}, {"_id": 0, "id": 1}).to_list(200)
         query["dog_id"] = {"$in": [d["id"] for d in my_dogs]}
-    rows = await db.recurring_templates.find(query, {"_id": 0}).sort("created_at", -1).to_list(500)
+    rows = await db.recurring_templates.find(query, {"_id": 0} if is_admin else {"_id": 0, **renewal_misses.HIDE_FROM_CLIENTS}).sort("created_at", -1).to_list(500)
     dog_ids = list({r["dog_id"] for r in rows if r.get("dog_id")})
     dogs = {d["id"]: d for d in await db.dogs.find({"id": {"$in": dog_ids}}, {"_id": 0, "id": 1, "name": 1, "owner_id": 1}).to_list(500)}
     client_ids = list({d.get("owner_id") for d in dogs.values() if d.get("owner_id")})
@@ -5140,7 +5131,7 @@ async def update_recurring_template(template_id: str, body: RecurringTemplateIn,
     update["weekdays"] = sorted(set(int(w) for w in update["weekdays"] if 0 <= int(w) <= 6))
     await db.recurring_templates.update_one({"id": template_id}, {"$set": update})
     existing.update(update)
-    return existing
+    return existing if user.get("role") == "admin" else renewal_misses.client_safe(existing)
 
 
 @api.delete("/recurring-templates/{template_id}")
@@ -5194,9 +5185,10 @@ async def extend_recurring_template(
         ),
         user,
     )
+    await renewal_misses.record_misses(template_id, t.get("dog_id"), result.get("skipped") or [])   # audit #35
     await db.recurring_templates.update_one(
         {"id": template_id},
-        {"$set": {"last_booked_through": end.isoformat(), "last_extended_at": now_iso()}},
+        {"$set": {"last_booked_through": end.isoformat(), "last_extended_at": now_iso()}, "$unset": {"renewal_block": ""}},
     )
     return {
         "template_id": template_id,
@@ -28365,7 +28357,7 @@ async def admin_run_daily_jobs(_: dict = Depends(require_admin)):
 # Saturday slot only became noticeable when Saturday arrived. The requested
 # date now drives URGENCY only, never visibility.
 
-PENDING_ACTION_TYPES = ("meet_and_greet_request", "booking_approval", "reschedule_request", "stripe_dispute", "shop_refund_reconciliation", "overdue_medication", "contact_inquiry", "online_payment_stuck", "waitlist_spot_open")
+PENDING_ACTION_TYPES = ("meet_and_greet_request", "booking_approval", "reschedule_request", "stripe_dispute", "shop_refund_reconciliation", "overdue_medication", "contact_inquiry", "online_payment_stuck", "waitlist_spot_open", "recurring_renewal_missed")
 
 # item `type` → key on /admin/pending-actions/count
 _PENDING_ACTION_COUNT_KEYS = {
@@ -28378,6 +28370,7 @@ _PENDING_ACTION_COUNT_KEYS = {
     "contact_inquiry": "contact_inquiries",
     "online_payment_stuck": "online_payments_stuck",
     "waitlist_spot_open": "waitlist_spots_open",
+    "recurring_renewal_missed": "recurring_renewals_missed",
 }
 
 _PENDING_ACTION_TYPE_LABELS = {
@@ -28390,6 +28383,7 @@ _PENDING_ACTION_TYPE_LABELS = {
     "contact_inquiry": "New Inquiry",
     "online_payment_stuck": "Online Payment Needs Attention",
     "waitlist_spot_open": "Waitlist — Spot Opened",
+    "recurring_renewal_missed": "Weekly Schedule — Days Not Booked",
 }
 
 
@@ -28713,6 +28707,7 @@ async def _collect_pending_actions(user: dict, *, type_filter: Optional[str] = N
                 **urgency,
             })
         items.extend(await waitlist_spots.pending_action_items())  # a spot opened for a waitlisted dog (audit #33)
+        items.extend(await renewal_misses.pending_action_items())  # days a weekly schedule couldn't book (audit #35)
 
     if perms.get("finance_reports"):
         d_rows = await db.stripe_disputes.find(
@@ -28817,7 +28812,7 @@ async def admin_pending_actions_count(user: dict = Depends(require_admin)):
     rather than 403 so nav badges can poll safely for every staff role; the
     detailed list endpoint stays permission-enforced."""
     if not _user_can_see_any_pending_actions(user):
-        return {"total": 0, "meet_and_greet_requests": 0, "booking_approvals": 0, "reschedule_requests": 0, "stripe_disputes": 0, "shop_refund_reconciliations": 0, "overdue_medications": 0, "contact_inquiries": 0, "online_payments_stuck": 0, "waitlist_spots_open": 0}
+        return {"total": 0, "meet_and_greet_requests": 0, "booking_approvals": 0, "reschedule_requests": 0, "stripe_disputes": 0, "shop_refund_reconciliations": 0, "overdue_medications": 0, "contact_inquiries": 0, "online_payments_stuck": 0, "waitlist_spots_open": 0, "recurring_renewals_missed": 0}
     perms = _perms_for(user)
     # Phase 6 — these counters are independent. They previously ran one after
     # another on every nav poll, so Action Required latency was the sum of six
@@ -28842,11 +28837,13 @@ async def admin_pending_actions_count(user: dict = Depends(require_admin)):
     overdue_meds = len(overdue_rows)
     stuck = await billing_resolve.pending_action_count() if perms.get("delete_records") else 0
     spots = len(await waitlist_spots.pending_action_items()) if perms.get("booking_edit") else 0
+    renewals = len(await renewal_misses.pending_action_items()) if perms.get("booking_edit") else 0
     return {
-        "total": mg + pending_bookings + resched + disputes + shop_recon + overdue_meds + inquiries + stuck + spots,
+        "total": mg + pending_bookings + resched + disputes + shop_recon + overdue_meds + inquiries + stuck + spots + renewals,
         "meet_and_greet_requests": mg, "booking_approvals": pending_bookings, "reschedule_requests": resched,
         "stripe_disputes": disputes, "shop_refund_reconciliations": shop_recon, "overdue_medications": overdue_meds,
         "contact_inquiries": inquiries, "online_payments_stuck": stuck, "waitlist_spots_open": spots,
+        "recurring_renewals_missed": renewals,
     }
 
 
@@ -29330,6 +29327,7 @@ async def admin_today_brain(_: dict = Depends(require_admin)):
     except Exception as e:
         logger.warning("today-brain website inquiries failed: %s", e)
     items.extend(await waitlist_spots.today_brain_items(_))  # waitlisted dogs who could have a spot now (audit #33)
+    items.extend(await renewal_misses.today_brain_items(_))  # weekly schedules that couldn't book days (audit #35)
 
     # 5b. Open client help requests / feedback (warn)
     try:
@@ -29663,7 +29661,7 @@ def _today_brain_signature(item: dict) -> str:
         # ("Name · 2 daycare · 0 training · 1 boarding left").
         nums = "|".join([t for t in title.replace("·", " ").split() if t.isdigit()])
         return f"low:{nums or title}"
-    if kind in ("booking_pending", "contact_inquiry", "hw_review", "hw_question", "vaccine_upload_review", "help_request", "quote_request", "reward_referral", "reward_trivia", "unpaid_balance", "stuck_checkout", "missing_report_card", "waitlist_spot_open"):
+    if kind in ("booking_pending", "contact_inquiry", "hw_review", "hw_question", "vaccine_upload_review", "help_request", "quote_request", "reward_referral", "reward_trivia", "unpaid_balance", "stuck_checkout", "missing_report_card", "waitlist_spot_open", "recurring_renewal_missed"):
         # Title/subtitle carries the count → encode it as the signature.
         nums = "|".join([t for t in (title + " " + subtitle).split() if t.isdigit()])
         return f"{kind}:{nums or title}"

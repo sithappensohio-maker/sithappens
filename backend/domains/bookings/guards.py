@@ -178,6 +178,17 @@ def validate_booking_dates(body) -> None:
             raise BookingBlocked(400, f"That {label} isn't valid. Please pick it from the calendar.", code="invalid_date", action="pick_date")
 
 
+def refuse_closed_dates(settings: dict, days: List[str]) -> None:
+    """A holiday or other day the business is closed (Settings → closed
+    dates). Clients are always refused; a weekly schedule's renewal is too
+    (audit #35) — staff booking one day by hand may still book it."""
+    closed = set(settings.get("closed_dates") or [])
+    hit = [d for d in days if d in closed]
+    if hit:
+        pretty = ", ".join(pretty_date(d) for d in hit[:3]) + ("…" if len(hit) > 3 else "")
+        raise BookingBlocked(400, f"Sit Happens is closed on {pretty}. Please pick another date.", code="closed_date", action="pick_date")
+
+
 def skip_entry(day: str, exc) -> dict:
     """One skipped day of a multi-day request: the readable reason plus the
     fix-it block when the refusal carries one."""

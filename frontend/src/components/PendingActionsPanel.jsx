@@ -45,6 +45,7 @@ const TYPE_ICON = {
   contact_inquiry: "fa-inbox",
   online_payment_stuck: "fa-credit-card",
   waitlist_spot_open: "fa-hourglass-half",
+  recurring_renewal_missed: "fa-rotate",
 };
 
 const REVIEW_LABEL = {
@@ -57,6 +58,7 @@ const REVIEW_LABEL = {
   contact_inquiry: "Review Inquiry",
   online_payment_stuck: "Resolve Payment",
   waitlist_spot_open: "Open Waitlist",
+  recurring_renewal_missed: "Open Schedule",
 };
 
 function fmtDateTime(dateStr, timeStr) {
@@ -111,6 +113,16 @@ export function PendingActionCard({ action, onOpen, testid }) {
               </p>
               <p className="text-[12px] text-shTextMuted mt-0.5 break-words">
                 Joined {fmtReceived(action.created_at)} · <span className="font-bold">{action.waiting_label}</span>
+              </p>
+            </>
+          ) : action.type === "recurring_renewal_missed" ? (
+            <>
+              {/* Days a weekly schedule's renewal couldn't book (audit #35). */}
+              <p className="text-[12px] text-shText mt-1 break-words" data-testid={testid ? `${testid}-missed` : undefined}>
+                {action.summary}
+              </p>
+              <p className="text-[12px] text-shTextMuted mt-0.5 break-words">
+                Found {fmtReceived(action.created_at)} · <span className="font-bold">{action.waiting_label}</span>
               </p>
             </>
           ) : action.type === "overdue_medication" ? (
