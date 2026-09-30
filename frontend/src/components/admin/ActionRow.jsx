@@ -4,11 +4,13 @@
  * kind + title + subtitle + Open/Hide actions. No behavior change from the
  * original inline component.
  *
- * stuck_checkout rows additionally get a self-contained "Resolve…" action
- * that opens the bulk StuckCheckoutsResolver — kept inside this component so
- * both feeds (Today + Action Center) get it without parent wiring.
+ * On a stuck_checkout row, Open opens the bulk StuckCheckoutsResolver right
+ * here (audit #44) — kept inside this component so both feeds (Today +
+ * Action Center) get it without parent wiring. Staff without booking_edit
+ * (the resolver's permission) get the normal Open instead.
  */
 import { useState } from "react";
+import { useAuth } from "../../lib/auth";
 import StuckCheckoutsResolver from "./StuckCheckoutsResolver";
 
 export const ACTION_PRIORITY_META = {
@@ -20,6 +22,8 @@ export const ACTION_PRIORITY_META = {
 export default function ActionRow({ item, onOpen, onDismiss, busy }) {
   const meta = ACTION_PRIORITY_META[item.priority] || ACTION_PRIORITY_META.info;
   const [resolverOpen, setResolverOpen] = useState(false);
+  const canResolve = !!useAuth()?.can?.("booking_edit");
+  const open = item.kind === "stuck_checkout" && canResolve ? () => setResolverOpen(true) : onOpen;
   return (
     <div className={`relative rounded-2xl border ${meta.border} ${meta.bg} p-4 shadow-lg`} data-testid={`action-center-row-${item.id}`}>
       {/* Stack vertically on narrow screens so the action buttons render in
@@ -28,7 +32,7 @@ export default function ActionRow({ item, onOpen, onDismiss, busy }) {
           title has no minimum width to force it — it just compresses and
           visually collides with the buttons). Side-by-side from sm: up. */}
       <div className="flex flex-col sm:flex-row sm:items-start sm:justify-between gap-3">
-        <button onClick={onOpen} className="flex items-start gap-3 text-left min-w-0 sm:flex-1" data-testid={`action-center-open-${item.id}`}>
+        <button onClick={open} className="flex items-start gap-3 text-left min-w-0 sm:flex-1" data-testid={`action-center-open-${item.id}`}>
           <span className={`w-11 h-11 rounded-xl grid place-items-center bg-[var(--sh-card-base)] border border-shBorder shrink-0 ${meta.text}`}><i className={`fas ${item.icon || meta.icon}`}/></span>
           <span className="min-w-0">
             <span className="block text-[11px] font-black uppercase tracking-widest text-shTextMuted mb-1">{meta.label} · {item.kind || "task"}</span>
@@ -37,13 +41,7 @@ export default function ActionRow({ item, onOpen, onDismiss, busy }) {
           </span>
         </button>
         <div className="flex items-center gap-2 shrink-0">
-          {item.kind === "stuck_checkout" && (
-            <button onClick={() => setResolverOpen(true)} data-testid="stuck-checkout-resolve-btn"
-                    className="bg-shPrimary/15 border border-shPrimary/30 text-shPrimary hover:bg-shPrimary/25 rounded-lg px-3 py-2 text-[11px] font-black uppercase tracking-widest transition">
-              <i className="fas fa-broom mr-1"/>Resolve…
-            </button>
-          )}
-          <button onClick={onOpen} className="bg-shSecondary/15 border border-shSecondary/30 text-shSecondary hover:bg-shSecondary/25 rounded-lg px-3 py-2 text-[11px] font-black uppercase tracking-widest transition"><i className="fas fa-arrow-right mr-1"/>Open</button>
+          <button onClick={open} data-testid={`action-center-open-btn-${item.id}`} className="bg-shSecondary/15 border border-shSecondary/30 text-shSecondary hover:bg-shSecondary/25 rounded-lg px-3 py-2 text-[11px] font-black uppercase tracking-widest transition"><i className="fas fa-arrow-right mr-1"/>Open</button>
           {onDismiss && (
             <button onClick={onDismiss} disabled={busy} className="bg-[var(--sh-card-base)] border border-shBorder text-shTextMuted hover:text-red-300 hover:border-red-400/40 rounded-lg px-3 py-2 text-[11px] font-black uppercase tracking-widest transition disabled:opacity-50"><i className="fas fa-times mr-1"/>Hide</button>
           )}

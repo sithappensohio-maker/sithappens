@@ -4,6 +4,7 @@ import { useConfirm } from "../lib/useConfirm";
 import { useTheme } from "../lib/theme";
 import { toast } from "sonner";
 import { onFileLine, rejectUploadMessage, reviewQuery } from "../lib/vaccineStatus";
+import { TODAY_LISTS_REFRESH } from "../lib/todayBrain";
 import AdminBookingModal from "./AdminBookingModal";
 import BookingDetailModal from "./BookingDetailModal";
 import ReportCardModal from "./ReportCardModal";
@@ -73,6 +74,11 @@ export default function TodayOperations({ stats, onReload = () => {}, onNavigate
   }, []);
 
   useEffect(() => { loadOperations(); }, [loadOperations]);
+  useEffect(() => {   // Open on an Action Center item fetches the lists again (audit #44)
+    const again = () => { loadOperations(); };
+    window.addEventListener(TODAY_LISTS_REFRESH, again);
+    return () => window.removeEventListener(TODAY_LISTS_REFRESH, again);
+  }, [loadOperations]);
 
   const reloadAll = async () => {
     await Promise.all([loadOperations(), Promise.resolve(onReload())]);

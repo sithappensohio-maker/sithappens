@@ -7,6 +7,7 @@ ticket system; not a thread. Just a list with two action verbs.
 Empty state: hides itself entirely so the dashboard stays clean. */
 import { useEffect, useState } from "react";
 import { api } from "../lib/api";
+import { TODAY_LISTS_REFRESH } from "../lib/todayBrain";
 
 const TYPE_LABELS = {
   feedback: "Feedback", problem: "Problem", feature: "Suggestion",
@@ -31,6 +32,10 @@ export default function HelpRequestsTile() {
     finally { setLoading(false); }
   };
   useEffect(() => { load(); }, []);
+  useEffect(() => {   // Open on "help requests" fetches again (audit #44)
+    window.addEventListener(TODAY_LISTS_REFRESH, load);
+    return () => window.removeEventListener(TODAY_LISTS_REFRESH, load);
+  }, []);
 
   const setStatus = async (id, status) => {
     setBusyId(id);

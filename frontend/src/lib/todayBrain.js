@@ -11,12 +11,23 @@ import { toast } from "sonner";
 // says "the Today screen" (legacy id "dashboard"), and from Today itself that
 // navigated to the page already open — the Open button looked dead, and the
 // Approve buttons sat unseen further down the page.
+// Audit #44: the other items whose work sits on Today go to their box too.
 const TODAY_SECTION_BY_KIND = {
   vaccine_upload_review: "today-pending-vax-reviews",
+  no_checkin: "today-checkin-board-wrap",
+  help_request: "dashboard-help-requests",
+  quote_request: "today-quote-requests",
+  // ActionRow opens the stuck-bookings window itself; staff who can't resolve
+  // them land on the board, where those visits show as "Missed checkout".
+  stuck_checkout: "today-checkin-board-wrap",
 };
 
+/** Today's lists load once; Open asks them to fetch again, so a request that
+ * arrived after the page opened is on the page to scroll to. */
+export const TODAY_LISTS_REFRESH = "sh:today-lists-refresh";
+
 /** Scroll to a section once it has rendered (it loads after navigation). */
-export function scrollToTodaySection(testid, { tries = 25, interval = 120 } = {}) {
+export function scrollToTodaySection(testid, { tries = 60, interval = 120 } = {}) {
   let n = 0;
   const tick = () => {
     const el = document.querySelector(`[data-testid="${testid}"]`);
@@ -35,7 +46,12 @@ export function scrollToTodaySection(testid, { tries = 25, interval = 120 } = {}
 export function runTodayBrainCTA(item, { onJumpToDog, onJumpToClient, onNavigate }) {
   const cta = item?.cta || {};
   const section = TODAY_SECTION_BY_KIND[item?.kind];
-  if (section) { onNavigate?.("today"); scrollToTodaySection(section); return; }
+  if (section) {
+    onNavigate?.("today");
+    window.dispatchEvent(new Event(TODAY_LISTS_REFRESH));
+    scrollToTodaySection(section);
+    return;
+  }
   if (cta.type === "open_dog" && cta.id) onJumpToDog?.(cta.id);
   else if (cta.type === "open_client" && cta.id) onJumpToClient?.(cta.id);
   else if (cta.type === "open_screen" && cta.screen) onNavigate?.(cta.screen);
