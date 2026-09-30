@@ -127,6 +127,32 @@ async def load_booking_dog(db, dog_id: str, user: dict) -> dict:
     return dog
 
 
+# ─────────────── a checked-out or paid visit: what can't change (audit #37)
+
+_LOCKED_WORDS = {"date": "date", "end_date": "date", "service_id": "service", "service_name": "service",
+                 "service_type": "service", "status": "status", "dog_id": "dog", "client_id": "family", "add_ons": "add-ons"}
+_LOCKED_ORDER = ["date", "service", "status", "dog", "family", "add-ons", "price or payment"]
+
+
+def changed_only(booking: dict, update: dict) -> dict:
+    """The fields an edit really changes. Blank and missing are the same, and a
+    stay sent with its end date equal to its start date is unchanged when none
+    was stored."""
+    def same(k, v):
+        was = booking.get(k)
+        return (v or None) == (was or None) or (k == "end_date" and not was and v == booking.get("date"))
+    return {k: v for k, v in update.items() if not same(k, v)}
+
+
+def locked_edit_message(fields) -> str:
+    """Plain words for a refused change to a visit already checked out or paid
+    for — naming what can't change and what still can."""
+    words = sorted({_LOCKED_WORDS.get(f, "price or payment") for f in fields}, key=_LOCKED_ORDER.index)
+    what = words[0] if len(words) == 1 else ", ".join(words[:-1]) + " and " + words[-1]
+    money = " A money change goes through a refund or adjustment." if "price or payment" in words else ""
+    return f"This visit is already checked out or paid for, so its {what} can't be changed here. Notes and times can still be edited.{money}"
+
+
 # ─────────────────── archived families and removed dogs (audit #36)
 #
 # Archiving a family (or removing one dog) hides it and keeps every record.

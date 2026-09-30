@@ -163,7 +163,7 @@ def test_h_manual_editor_guard():
         with pytest.raises(server.HTTPException) as exc:
             run(server.update_transaction(bid, server.TransactionUpdateIn(payment_status="refunded"), ADMIN))
         assert exc.value.status_code == 409
-        assert "locked" in str(exc.value.detail).lower()
+        assert "can't be changed here" in str(exc.value.detail)   # plain words (audit #37)
         # Financial records unchanged by the rejected request.
         b = run(server.db.bookings.find_one({"id": bid}, {"_id": 0, "payment_status": 1}))
         assert b["payment_status"] == "paid"

@@ -1480,13 +1480,7 @@ def _booking_is_financially_locked(booking: Optional[dict]) -> bool:
 def _assert_booking_financial_edit_allowed(booking: dict, fields) -> None:
     touched = set(fields or []) & FINANCIAL_MONEY_FIELDS
     if touched and _booking_is_financially_locked(booking):
-        raise HTTPException(
-            status_code=409,
-            detail=(
-                "This booking's financial record is locked after checkout. "
-                "Use a documented adjustment, refund, or safe reopen action instead."
-            ),
-        )
+        raise HTTPException(status_code=409, detail=booking_guards.locked_edit_message(touched))   # plain words (audit #37)
 
 
 async def _load_booking_for_financial_correction(booking_id: str):
@@ -12571,6 +12565,10 @@ async def patch_booking(booking_id: str, body: BookingPatchIn, _: dict = Depends
     if not booking:
         raise HTTPException(status_code=404, detail="Booking not found")
     update = {k: v for k, v in body.model_dump(exclude_unset=True).items() if v is not None}
+    # A finished visit: only what actually changes counts — the edit window sends
+    # the date and times with every note, which used to lock the note (audit #37).
+    if _booking_is_financially_locked(booking):
+        update = booking_guards.changed_only(booking, update)
     _assert_booking_financial_edit_allowed(booking, update.keys())
     update = await booking_spans.dates_update(db, booking, update, today=business_today().isoformat())
     if update:

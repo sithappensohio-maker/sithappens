@@ -208,8 +208,10 @@ export default function AdminBookingModal({ defaultCheckIn = false, defaultDate 
   const [isMultiDate, setIsMultiDate] = useState(false);
   const [multiDates, setMultiDates] = useState([]);
   const [kennel, setKennel] = useState(existing?.kennel || "");
-  const [dropoffTime, setDropoffTime] = useState(existing?.dropoff_time || "09:00");
-  const [pickupTime, setPickupTime] = useState(existing?.pickup_time || "17:00");
+  // Editing shows what's stored — a blank time stays blank. The 9 to 5 defaults
+  // are for a new booking only; saving a note must never invent times (audit #37).
+  const [dropoffTime, setDropoffTime] = useState(existing ? (existing.dropoff_time || "") : "09:00");
+  const [pickupTime, setPickupTime] = useState(existing ? (existing.pickup_time || "") : "17:00");
   // Distinct appointment time for training/grooming/photography — these are
   // scheduled SLOTS, not drop-off windows. Persisted on the booking as `time`.
   const [appointmentTime, setAppointmentTime] = useState(existing?.time || "");
@@ -520,6 +522,12 @@ export default function AdminBookingModal({ defaultCheckIn = false, defaultDate 
   // Quick Check-In cannot accidentally submit a one-day training appointment.
   useEffect(() => {
     if (!isBoardTrainStay || !date || boardTrainDurationDays <= 0) return;
+    // Editing a stay that hasn't moved keeps its own pickup date (the program's
+    // length may have changed since it was booked) — audit #37.
+    if (isEdit && existing?.end_date && date === existing.date) {
+      if (endDate !== existing.end_date) setEndDate(existing.end_date);
+      return;
+    }
     const computed = addDaysISO(date, boardTrainDurationDays);
     if (computed && computed !== endDate) setEndDate(computed);
     if (appointmentTime) setAppointmentTime("");
@@ -785,7 +793,7 @@ export default function AdminBookingModal({ defaultCheckIn = false, defaultDate 
           notes,
           date,
           end_date: isDateSpanService ? (endDate || date) : null,
-          kennel: serviceType === "boarding" ? kennel : "",
+          kennel: serviceType === "boarding" ? kennel : (existing.kennel || ""),   // a Kennel Board spot stays put
           dropoff_time: dropoffTime || "",
           pickup_time: pickupTime || "",
           time: ["training", "grooming", "photography"].includes(serviceType) && !isBoardTrainStay ? (appointmentTime || "") : "",
