@@ -205,6 +205,10 @@ function CheckoutModalBody({ booking, services, onClose, onRequestCancel, lateDa
     : null;
 
   const [useCredits, setUseCredits] = useState(hadCredit);
+  // A prepaid program session (audit #38): paid at the program sale — checkout
+  // uses one of its credits and never charges (the server enforces it too).
+  const prepaidSession = !!booking.is_prepaid_program_session && !isGroupCheckout && !ffNoCredits;
+  useEffect(() => { if (prepaidSession && !useCredits) setUseCredits(true); }, [prepaidSession, useCredits]);
   const [defaultedFromBal, setDefaultedFromBal] = useState(false);
   useEffect(() => {
     if (clientBal && !defaultedFromBal && !hadCredit && creditsToUseNow > 0 && !booking.actual_price && !ffNoCredits) {
@@ -454,8 +458,8 @@ function CheckoutModalBody({ booking, services, onClose, onRequestCancel, lateDa
   // interpreted as the EXTRA cash to charge today on top of credits
   // (matches the relabelled "Additional cash charge" field). For non-credit
   // checkouts, it's the standard base-price override.
-  const extraCashOnCredits = useCredits && basePrice !== "" ? Number(basePrice) : 0;
-  const baseCreditShortfallUnits = useCredits && !hadCredit
+  const extraCashOnCredits = useCredits && basePrice !== "" && !prepaidSession ? Number(basePrice) : 0;
+  const baseCreditShortfallUnits = useCredits && !hadCredit && !prepaidSession   // a prepaid session is never charged (audit #38)
     ? Math.max(0, Number(creditUnitsNeeded || 0) - Number(creditsToUseNow || 0))
     : 0;
   const baseCreditShortfallCash = Math.round(baseCreditShortfallUnits * (serviceUnitRate / poolFactor) * 100) / 100;
@@ -499,7 +503,7 @@ function CheckoutModalBody({ booking, services, onClose, onRequestCancel, lateDa
           ? bookingBaseEstimate
           : (defaultSvc ? Number(defaultSvc.base_price || 0) : Number(booking.actual_price || 0)));
   }
-  const basePreview = (basePrice !== "" && !useCredits) ? (Number(basePrice) || 0) : autoBasePreview;
+  const basePreview = prepaidSession ? 0 : ((basePrice !== "" && !useCredits) ? (Number(basePrice) || 0) : autoBasePreview);
   const isAdditionalDogRow = booking.pricing_snapshot?.group_dog_index > 0 || !!booking.multi_dog_discount?.pre_applied;
   const extraCreditUnitsPerNight = isGroupCheckout
     ? checkoutBookings.reduce((sum, row) => sum + ((row.pricing_snapshot?.group_dog_index > 0 || row.multi_dog_discount?.pre_applied) ? 0.5 : 1), 0)
@@ -1079,8 +1083,18 @@ function CheckoutModalBody({ booking, services, onClose, onRequestCancel, lateDa
             </p>
           </div>
         )}
+        {prepaidSession && (
+          <div className="mb-5 border border-shGreen/40 rounded-lg p-4 bg-shGreen/10" data-testid="checkout-prepaid-session">
+            <p className="text-sm font-black text-white">Prepaid program session</p>
+            <p className="text-[14px] text-gray-300 mt-1" data-testid="checkout-prepaid-note">
+              {clientBal && Number(clientBal.training_credits || 0) < 1
+                ? "Paid for when the program was sold. No program credit is left, so this is recorded at $0 — nothing is charged."
+                : `Paid for when the program was sold — checking out uses one program credit${clientBal ? ` (${fmtCredits(clientBal.training_credits)} left)` : ""}. Nothing is charged.`}
+            </p>
+          </div>
+        )}
         {/* Section 1 — How to pay the base service */}
-        {!ffNoCredits && (<div className="mb-5 border border-bgHover rounded-lg p-4 bg-bgBase">
+        {!ffNoCredits && !prepaidSession && (<div className="mb-5 border border-bgHover rounded-lg p-4 bg-bgBase">
           <p className="text-[13px] uppercase tracking-widest text-gray-500 font-black mb-3">Base service</p>
           {daycarePerNight > 0 && !hadCredit && (
             <div className="mb-3" data-testid="checkout-credit-pool">
@@ -1436,7 +1450,7 @@ function CheckoutModalBody({ booking, services, onClose, onRequestCancel, lateDa
               )}
             </div>
           )}
-          {!canPrice ? (
+          {prepaidSession ? null : !canPrice ? (
             <p className="text-[13px] text-gray-500 normal-case" data-testid="checkout-price-locked">
               <i className="fas fa-lock mr-1.5"/>Prices are set automatically. Only staff with the pricing permission can change a price at checkout.
             </p>
@@ -2012,7 +2026,12 @@ export function CancelBookingModal({ booking, onClose }) {
             <span><strong className="text-shGreen">${cashPrice.toFixed(2)}</strong> has been charged on this booking.</span>
           </div>
         )}
-        {credits === 0 && cashPrice === 0 && (
+        {booking.is_prepaid_program_session && credits === 0 && (
+          <div className="bg-bgBase border border-bgHover rounded p-3 mb-2 text-[14px] text-gray-300" data-testid="cancel-prepaid-session">
+            <i className="fas fa-graduation-cap text-shGreen mr-1.5"/>Part of a prepaid program. Cancelling frees this session — the program credit stays with the family for a make-up lesson.
+          </div>
+        )}
+        {!booking.is_prepaid_program_session && credits === 0 && cashPrice === 0 && (
           <div className="bg-bgBase border border-bgHover rounded p-3 mb-2 text-[14px] text-gray-400">
             <i className="fas fa-info-circle mr-1.5"/>No money or credits attached yet{canCharge ? " — a charge will pull from the service's catalog price." : "."}
           </div>
@@ -2023,7 +2042,7 @@ export function CancelBookingModal({ booking, onClose }) {
         <div className="grid grid-cols-1 gap-2 mt-4">
           <button onClick={()=>submit(false)} disabled={busy || blocked} data-testid="cancel-refund"
                   className="bg-shGreen text-bgHeader px-4 py-3 rounded font-black uppercase text-[14px] tracking-widest shadow hover:bg-shGreen/90 disabled:opacity-50 flex items-center justify-between">
-            <span><i className="fas fa-rotate-left mr-2"/>Cancel · refund {credits > 0 ? `${credits} credit${credits === 1 ? "" : "s"}` : "in full"}</span>
+            <span><i className="fas fa-rotate-left mr-2"/>{booking.is_prepaid_program_session && credits === 0 ? "Cancel session" : `Cancel · refund ${credits > 0 ? `${credits} credit${credits === 1 ? "" : "s"}` : "in full"}`}</span>
             <i className="fas fa-chevron-right text-[14px] opacity-70"/>
           </button>
           {canCharge && (

@@ -85,6 +85,8 @@ export function upcomingPaymentNote(b, services) {
   if (!["pending", "approved"].includes(b?.status)) return null;
   // Friends & family: another family is paying for this visit.
   if (b?.covered_by_other) return "Covered — nothing to pay";
+  // A session of a program you bought: paid when the program was sold (audit #38).
+  if (b?.is_prepaid_program_session) return "Prepaid — part of your program";
   const list = services || [];
   const svc = list.find((x) => x.id === b.service_id)
            || list.find((x) => x.service_type === b.service_type);
@@ -2434,7 +2436,7 @@ export default function Portal() {
                 // Today is "upcoming". A booking is "past" iff its end_date (or date) is
                 // before today AND status is completed/cancelled/rejected, OR status is
                 // any terminal state regardless of date.
-                const todayIso = new Date().toISOString().slice(0,10);
+                const todayIso = todayISO();   // Ohio's date, not UTC's: a session tonight isn't "past" after 8 PM
                 const isPast = (b) => {
                   const dt = b.end_date || b.date || "";
                   const terminal = ["completed","cancelled","rejected"].includes(b.status);
@@ -2482,7 +2484,7 @@ export default function Portal() {
               </div>
             )}
             {(() => {
-              const todayIso = new Date().toISOString().slice(0,10);
+              const todayIso = todayISO();
               const isPast = (b) => {
                 const dt = b.end_date || b.date || "";
                 const terminal = ["completed","cancelled","rejected"].includes(b.status);

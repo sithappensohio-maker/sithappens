@@ -129,10 +129,12 @@ def test_archive_is_refused_while_a_dog_is_here_or_visits_are_still_booked():
 
 def test_a_paid_visit_is_listed_as_not_cancellable_here():
     with _family() as (cid, (did,)):
-        _booking(cid, did, _day(4), payment_status="paid", is_prepaid_program_session=True, service_type="training")
+        # Paid ahead (money on the visit): Cancel refuses it. A prepaid program
+        # session, by contrast, cancels like any lesson (audit #38).
+        _booking(cid, did, _day(4), payment_status="paid", amount_paid=40.0, service_type="grooming")
         e = _refused(archive.archive_client(cid, ADMIN))
         row = block_of(e)["upcoming"][0]
-        assert row["can_cancel"] is False and row["prepaid"] is True and block_of(e)["action"] == "cancel_bookings"
+        assert row["can_cancel"] is False and row["prepaid"] is False and block_of(e)["action"] == "cancel_bookings"
 
 
 # ──────────────────────────────── what an archive does, and never re-stamps
@@ -352,7 +354,7 @@ def test_restore_is_labelled_in_the_audit_log():
 
 def test_the_refusal_says_plainly_when_a_visit_is_already_paid_for():
     with _family() as (cid, (did,)):
-        _booking(cid, did, _day(4), payment_status="paid", is_prepaid_program_session=True, service_type="training")
+        _booking(cid, did, _day(4), payment_status="paid", amount_paid=40.0, service_type="grooming")
         _booking(cid, did, _day(5))
         detail = _refused(archive.archive_client(cid, ADMIN)).detail
         assert "1 of them is already paid for and can't be cancelled here yet" in detail

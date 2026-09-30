@@ -277,8 +277,9 @@ async def build_pl_data(db, start_date: str, end_date: str) -> Dict[str, Any]:
         _finance_income_category,
     )
     collection_events = await _booking_collection_events(start_date, end_date)
-    collection_events = [
-        ev for ev in collection_events if not _is_program_redemption(ev.get("booking") or {})
+    collection_events = [   # a program session's events are only cash taken on top of it (add-ons) — audit #38
+        ev for ev in collection_events
+        if not _is_program_redemption(ev.get("booking") or {}) or (ev.get("booking") or {}).get("is_prepaid_program_session")
     ]
 
     completed = [b for b in bookings if b.get("status") == "completed"]
@@ -466,7 +467,7 @@ async def build_pl_data(db, start_date: str, end_date: str) -> Dict[str, Any]:
         # period figures, so the P&L footer cannot contradict its own body.
         ytd_income = round(sum(
             _business_revenue_from_booking_event(ev) for ev in ytd_events
-            if not _is_program_redemption(ev.get("booking") or {})
+            if not _is_program_redemption(ev.get("booking") or {}) or (ev.get("booking") or {}).get("is_prepaid_program_session")
         ), 2)
         ytd_exp_rows = await db.expenses.find(
             {"date": {"$gte": ytd_start, "$lte": end_date}},

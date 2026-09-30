@@ -167,12 +167,12 @@ def test_closed_dates_are_skipped_with_warnings(admin_headers, fx):
     async def _add_closed():
         mc = AsyncIOMotorClient(os.environ["MONGO_URL"])
         db = mc[os.environ["DB_NAME"]]
-        cur = await db.settings.find_one({"_id": "main"}, {"_id": 0, "closed_dates": 1}) or {}
+        cur = await db.settings.find_one({"id": "global"}, {"_id": 0, "closed_dates": 1}) or {}
         closed = list(cur.get("closed_dates") or [])
         if closed_iso not in closed:
             closed.append(closed_iso)
         await db.settings.update_one(
-            {"_id": "main"},
+            {"id": "global"},
             {"$set": {"closed_dates": closed}},
             upsert=True,
         )
@@ -182,9 +182,9 @@ def test_closed_dates_are_skipped_with_warnings(admin_headers, fx):
     async def _remove_closed():
         mc = AsyncIOMotorClient(os.environ["MONGO_URL"])
         db = mc[os.environ["DB_NAME"]]
-        cur = await db.settings.find_one({"_id": "main"}, {"_id": 0, "closed_dates": 1}) or {}
+        cur = await db.settings.find_one({"id": "global"}, {"_id": 0, "closed_dates": 1}) or {}
         closed = [d for d in (cur.get("closed_dates") or []) if d != closed_iso]
-        await db.settings.update_one({"_id": "main"}, {"$set": {"closed_dates": closed}})
+        await db.settings.update_one({"id": "global"}, {"$set": {"closed_dates": closed}})
         mc.close()
 
     asyncio.run(_add_closed())
@@ -227,19 +227,19 @@ def test_override_closures_books_anyway(admin_headers, fx):
     async def _add():
         mc = AsyncIOMotorClient(os.environ["MONGO_URL"])
         db = mc[os.environ["DB_NAME"]]
-        cur = await db.settings.find_one({"_id": "main"}, {"_id": 0, "closed_dates": 1}) or {}
+        cur = await db.settings.find_one({"id": "global"}, {"_id": 0, "closed_dates": 1}) or {}
         closed = list(cur.get("closed_dates") or [])
         if closed_iso not in closed:
             closed.append(closed_iso)
-        await db.settings.update_one({"_id": "main"}, {"$set": {"closed_dates": closed}}, upsert=True)
+        await db.settings.update_one({"id": "global"}, {"$set": {"closed_dates": closed}}, upsert=True)
         mc.close()
 
     async def _remove():
         mc = AsyncIOMotorClient(os.environ["MONGO_URL"])
         db = mc[os.environ["DB_NAME"]]
-        cur = await db.settings.find_one({"_id": "main"}, {"_id": 0, "closed_dates": 1}) or {}
+        cur = await db.settings.find_one({"id": "global"}, {"_id": 0, "closed_dates": 1}) or {}
         closed = [d for d in (cur.get("closed_dates") or []) if d != closed_iso]
-        await db.settings.update_one({"_id": "main"}, {"$set": {"closed_dates": closed}})
+        await db.settings.update_one({"id": "global"}, {"$set": {"closed_dates": closed}})
         mc.close()
 
     asyncio.run(_add())

@@ -82,7 +82,7 @@ from domains.bookings import spans as booking_spans
 from domains.bookings import group_rank
 from domains.bookings import group_pricing as booking_group_pricing
 from domains.bookings import friends_family
-from domains.bookings import checkout_prices, credit_cover, checkout_discount, waitlist_spots, time_pool, renewal_misses
+from domains.bookings import checkout_prices, credit_cover, checkout_discount, waitlist_spots, time_pool, renewal_misses, prepaid_sessions
 from domains.school import ownership as school_ownership
 from domains.bookings import late_day as late_day_checkout
 from domains.bookings import care as care_domain
@@ -1459,7 +1459,7 @@ FINANCIAL_MONEY_FIELDS = {
 
 
 def _booking_is_financially_locked(booking: Optional[dict]) -> bool:
-    if not booking:
+    if not booking or prepaid_sessions.is_open(booking):   # a prepaid session until its checkout (audit #38)
         return False
     if booking.get("financial_locked") is True:
         return True
@@ -1479,6 +1479,8 @@ def _booking_is_financially_locked(booking: Optional[dict]) -> bool:
 
 def _assert_booking_financial_edit_allowed(booking: dict, fields) -> None:
     touched = set(fields or []) & FINANCIAL_MONEY_FIELDS
+    if touched and prepaid_sessions.refuse_money_edit(booking, touched):   # moves only; its price is the program's
+        return
     if touched and _booking_is_financially_locked(booking):
         raise HTTPException(status_code=409, detail=booking_guards.locked_edit_message(touched))   # plain words (audit #37)
 
@@ -4148,6 +4150,7 @@ async def _update_booking_with_capacity(booking: dict, update: Dict[str, Any]) -
         # already overlaps something (made before a check existed) is allowed.
         if moved and booking.get("status") in ("pending", "approved", "completed") and not booking.get("checked_out_at"):
             await booking_guards.refuse_archived_dog(db, dog_id=booking.get("dog_id"), client_id=booking.get("client_id"))   # audit #36
+            await prepaid_sessions.refuse_move(db, booking)   # audit #38
             await _assert_capacity_available(body, settings, selected, exclude_booking_id=booking.get("id"), meet_greet_minutes=mg)
         await db.bookings.update_one({"id": booking["id"]}, {"$set": update})
     finally:
@@ -5604,6 +5607,7 @@ async def _cancel_booking_impl(booking_id: str, forfeit: bool, user: dict, undo_
             status_code=409,
             detail="This booking has already been financially closed. Use a refund or adjustment instead of cancelling it.",
         )
+    await prepaid_sessions.refuse_cancel_if_taught(db, booking, client=user.get("role") == "client")   # audit #38
     # Clients cannot trigger a charge — only staff can do that.
     if forfeit and user.get("role") == "client":
         raise HTTPException(status_code=403, detail="Only staff can issue a cancellation charge")
@@ -5742,6 +5746,8 @@ async def _cancel_booking_impl(booking_id: str, forfeit: bool, user: dict, undo_
                 await _restore_credit_lots(booking.get("credit_lot_redemptions") or booking.get("credit_lot_ids") or [], refund)
     if booking.get("bill_to_client_id"):  # the last dog to come may have been this one
         await friends_family.after_cancel(booking, user)
+    if booking.get("is_prepaid_program_session"):
+        await prepaid_sessions.after_cancel(db, booking, now_iso())
     return {"ok": True, "forfeit": forfeit, "cancellation_fee": update_payload.get("cancellation_fee", 0)}
 
 async def availability(date_str: str, dog_id: str, user: dict = Depends(get_current_user)):
@@ -9704,6 +9710,10 @@ async def _check_out_locked(
 
     had_credit = bool(booking.get("credit_value")) and not booking.get("actual_price")
     use_credits = bool(body.use_credits)
+    prepaid = prepaid_sessions.is_open(booking)   # paid at the program sale: a credit, never money (audit #38)
+    use_credits = use_credits or prepaid
+    if prepaid:   # no price override or extra amount on the session itself (add-ons are still priced)
+        body = body.model_copy(update={"base_price": None, "additional_cash_charge": 0})
     payer = friends_family.payer_id(booking)  # who pays — a friends & family group's payer; every price and charge below
     if payer != booking.get("client_id"):
         use_credits = False  # no prepaid credits on a friends & family visit (owner, first release)
@@ -9839,10 +9849,12 @@ async def _check_out_locked(
         client_doc = await db.clients.find_one({"id": booking["client_id"]}, {"_id": 0})
         available = float((client_doc or {}).get(balance_field) or 0)
         credits_to_use = round(min(available, float(credit_need or 0)), 2)
+        if prepaid and credits_to_use < float(credit_need or 0):
+            credits_to_use = 0.0   # a session is one whole credit or none (then $0 below)
         if credits_to_use > 0 and credit_need > 0:
             # Sprint 110bx — prefer the dog's active training program's lot
-            prefer_pid = None
-            if svc_type == "training" and booking.get("dog_id"):
+            prefer_pid = booking.get("program_id") if prepaid else None   # a session: its own program first
+            if not prefer_pid and svc_type == "training" and booking.get("dog_id"):
                 dog_doc = await db.dogs.find_one({"id": booking["dog_id"]},
                                                  {"_id": 0, "active_program_id": 1})
                 if dog_doc and dog_doc.get("active_program_id"):
@@ -9902,6 +9914,15 @@ async def _check_out_locked(
                 update["paid_at"] = ts
                 had_credit = True
                 use_credits = True
+            elif prepaid:   # the credit went elsewhere in the meantime: still never a charge
+                if credits_to_use > 0:   # hand back the part of a credit that was taken
+                    await _restore_credit_lots(credit_redemptions, credits_to_use)
+                    await db.clients.update_one({"id": booking["client_id"]}, {"$inc": {balance_field: credits_to_use}})
+                for k in ("credit_value", "credit_lot_ids", "credit_lot_redemptions", "credit_service_type", "credits_deducted"):
+                    update.pop(k, None)
+                update.update(prepaid_sessions.checkout_without_credit())
+                use_credits = False
+                had_credit = False
             else:
                 # Partial credit coverage: use what they have and charge only the
                 # remaining fractional service unit at this client's rate, plus
@@ -9924,6 +9945,9 @@ async def _check_out_locked(
                 update["payment_method"] = _normalize_payment_method(body.payment_method, store=True)
                 use_credits = False
                 had_credit = False
+        elif prepaid:
+            update.update(prepaid_sessions.checkout_without_credit())   # no credit left: paid at the sale, $0
+            use_credits = False
         else:
             # No applicable credits — fall through to cash/card.
             use_credits = False
@@ -10044,7 +10068,7 @@ async def _check_out_locked(
     # Therefore the modifier is calculated from the promised service base and
     # then added to the current checkout value, rather than multiplying the
     # dollar value of whatever credit lot happened to be consumed.
-    if (update.get("actual_price") or 0) > 0 and not booking.get("money_modifiers_applied_at"):
+    if (update.get("actual_price") or 0) > 0 and not booking.get("money_modifiers_applied_at") and not prepaid:   # no surcharge on a paid session
         modifier_base = float(base_price or 0)
         if modifier_base <= 0:
             modifier_base = max(
@@ -10316,6 +10340,8 @@ async def _check_out_locked(
         actual_now = float(mixed_preview.get("actual_price") or 0)
         credit_now = credit_cover.covered_value(mixed_preview)   # what the credits settled, not their dollar value
         explicit_cash = float(body.amount_paid or 0) if body.amount_paid is not None else 0.0
+        if prepaid:   # never more than what was added on top of the session
+            explicit_cash = min(explicit_cash, max(0.0, actual_now - credit_now))
         cash_component = round(explicit_cash if explicit_cash > 0 else max(0.0, actual_now - credit_now), 2)
         if cash_component > 0:
             update["amount_paid"] = cash_component
@@ -34558,6 +34584,8 @@ async def delete_transaction(transaction_id: str, _: dict = Depends(require_admi
     booking, _tx_coll, _tx_archived = await _load_booking_for_financial_correction(transaction_id)
     if not booking:
         raise HTTPException(status_code=404, detail="Transaction not found")
+    if prepaid_sessions.is_open(booking):
+        raise HTTPException(status_code=409, detail="This session is part of a prepaid program — cancel it instead.")
     if _booking_is_financially_locked(booking):
         raise HTTPException(
             status_code=409,
@@ -34622,7 +34650,7 @@ async def list_transactions(
     rows = await _booking_rows_anywhere(q, {"_id": 0}, limit=5000, sort_field="date", sort_desc=True)
     enriched = []
     for r in rows:
-        r["financial_locked"] = _booking_is_financially_locked(r)
+        r["financial_locked"] = _booking_is_financially_locked(r) or prepaid_sessions.is_open(r)   # a session's money is the program's
         # Skip rejected and unchargeable cancellations — keep cancelled bookings
         # where the operator explicitly charged a no-show / late-cancel fee so
         # they show up as revenue events.
@@ -34737,8 +34765,8 @@ def _cash_revenue(booking: dict) -> float:
     This intentionally does NOT mean "what the visit was worth". It means
     money collected for this booking. Unpaid balances belong in AR, not profit.
     """
-    if booking.get("is_prepaid_program_session"):
-        return 0.0
+    if booking.get("is_prepaid_program_session"):   # the program was income at the sale: only cash taken on top counts (audit #38)
+        return round(max(0.0, float(booking.get("amount_paid") or 0) - float(booking.get("gift_card_applied") or 0)), 2)
     actual = float(booking.get("actual_price") or 0)
     paid = float(booking.get("amount_paid") or 0)
     status = booking.get("payment_status")
@@ -49387,7 +49415,7 @@ async def sell_training_program(
     )
     if can_schedule:
         # Pull closed dates so we can skip them (or warn the admin)
-        settings_doc = await db.settings.find_one({"_id": "main"}, {"_id": 0}) or {}
+        settings_doc = await get_settings()   # (the old {"_id": "main"} read found nothing: holidays were booked)
         closed_dates = set(settings_doc.get("closed_dates") or [])
 
         # Anchor date: schedule_start_date if provided, else next instance of
@@ -49510,7 +49538,7 @@ async def reschedule_prepaid_session(booking_id: str, _: dict = Depends(require_
     if not bk.get("is_prepaid_program_session"):
         raise HTTPException(400, "This endpoint is only for prepaid program sessions")
     from datetime import date as _date, timedelta as _td
-    settings_doc = await db.settings.find_one({"_id": "main"}, {"_id": 0}) or {}
+    settings_doc = await get_settings()   # (the old {"_id": "main"} read found nothing)
     closed_dates = set(settings_doc.get("closed_dates") or [])
     cur_date = _date.fromisoformat(bk["date"])
     # Try the next 12 weeks; skip closures + dog-double-booked dates
@@ -49683,6 +49711,8 @@ async def approve_reschedule_request(
     bk = await db.bookings.find_one({"id": req["booking_id"]}, {"_id": 0})
     if not bk:
         raise HTTPException(404, "Original booking is gone")
+    if bk.get("status") not in ("pending", "approved") or bk.get("checked_out_at"):   # audit #38
+        raise HTTPException(409, f"This session is already {bk.get('status')}, so it can't be moved. Decline the request instead.")
     original_date = bk.get("date")
     await _update_booking_with_capacity(bk, {
         "date": chosen["date"],
