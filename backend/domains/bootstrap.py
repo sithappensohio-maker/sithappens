@@ -35,6 +35,7 @@ from domains.school import ownership as school_ownership
 from domains.clients import signup_claim
 from domains.clients import reset_mfa
 from domains.clients import archive as client_archive
+from domains.bookings import prepaid_close
 from domains.billing import tab_sync as billing_tab_sync, resolve as billing_resolve
 from domains.register import services as register_services
 from domains.school.routes import register_school_routes
@@ -157,6 +158,7 @@ def register_domains(
     signup_claim.configure(server_globals=server_globals)
     reset_mfa.configure(server_globals=server_globals)
     client_archive.configure(server_globals=server_globals)
+    prepaid_close.configure(server_globals=server_globals)
     billing_tab_sync.configure(server_globals=server_globals)
     gift_card_shop.configure(
         db=db, logger=logger, get_settings=server_globals["get_settings"])
@@ -201,6 +203,7 @@ def register_domains(
     booking_group_add.register_routes(api=api, server_globals=server_globals)
     renewal_misses.register_routes(api=api, server_globals=server_globals)
     client_archive.register_routes(api=api, server_globals=server_globals)
+    prepaid_close.register_routes(api=api, server_globals=server_globals)
     register_pricing_routes(api=api, server_globals=server_globals)
     _moved_operations = register_operations_routes(
         api=api, db=db,

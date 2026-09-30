@@ -50,7 +50,8 @@ def refuse_money_edit(booking: dict, touched: Iterable[str]) -> bool:
 
 
 async def _taught(db, booking: dict) -> bool:
-    return bool(await db.training_session_log.find_one({"booking_id": booking["id"]}, {"_id": 1}))
+    return bool(await db.training_session_log.find_one(   # prepaid_session_id: a lesson logged from the dog's page, matched to it
+        {"$or": [{"booking_id": booking["id"]}, {"prepaid_session_id": booking["id"]}]}, {"_id": 1}))
 
 
 async def refuse_cancel_if_taught(db, booking: dict, *, client: bool = False) -> None:

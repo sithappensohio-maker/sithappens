@@ -19,6 +19,7 @@ from pymongo import UpdateOne
 from pymongo.errors import BulkWriteError
 
 from domains.backup import rules as backup_rules
+from domains.bookings import prepaid_close
 
 
 logger = logging.getLogger("sithappens")
@@ -1142,11 +1143,13 @@ def make_backup_domain(*, BACKUP_COLLECTIONS, backup_root_ref, BACKUP_VERSION, C
                                   + (["archive_sync"] if people else [])}}
         if sales or people:
             await db.system_runs.delete_many(repairs)
+        await prepaid_close.rearm_after_restore(db, collections, mode)   # audit #38: restored sessions are closed again
         try:
             return await _restore_collections_inner(collections, mode, progress)
         finally:
             if sales or people:
                 await db.system_runs.delete_many(repairs)
+            await prepaid_close.rearm_after_restore(db, collections, mode)
 
     async def _restore_collections_inner(collections: dict, mode: str, progress=None):
         """Restore each backed-up collection. Returns (summary, kept_live).

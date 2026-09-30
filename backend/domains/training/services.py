@@ -299,16 +299,20 @@ async def create_supplemental_draft(
         raise
 
 
-async def after_completion_worker(*, db: Any, draft_id: str, plan: Dict[str, Any]) -> None:
-    """Auto-close a Board & Train day after its second required session."""
+async def after_completion_worker(*, db: Any, draft_id: str, plan: Dict[str, Any], on_prepaid=None) -> Any:
+    """Auto-close a Board & Train day after its second required session; a
+    prepaid program session is handed to `on_prepaid` (it closes like a
+    checkout — audit #38). The lesson is already saved: nothing here fails it."""
     try:
         draft = await db.training_session_drafts.find_one({"draft_id": draft_id}, {"_id": 0})
         if not draft:
             draft = await db.training_session_drafts.find_one({"id": draft_id}, {"_id": 0})
         booking_id = (draft or {}).get("booking_id")
         if not booking_id:
-            return
+            return await on_prepaid(booking=None, draft=draft or {}, plan=plan) if on_prepaid else None
         booking = await db.bookings.find_one({"id": booking_id}, {"_id": 0})
+        if booking and booking.get("is_prepaid_program_session") and on_prepaid:
+            return await on_prepaid(booking=booking, draft=draft or {}, plan=plan)
         if not booking or not await is_board_train_booking(db, booking):
             return
         day = _text((draft or {}).get("occurrence_date"))

@@ -82,7 +82,7 @@ from domains.bookings import spans as booking_spans
 from domains.bookings import group_rank
 from domains.bookings import group_pricing as booking_group_pricing
 from domains.bookings import friends_family
-from domains.bookings import checkout_prices, credit_cover, checkout_discount, waitlist_spots, time_pool, renewal_misses, prepaid_sessions
+from domains.bookings import checkout_prices, credit_cover, checkout_discount, waitlist_spots, time_pool, renewal_misses, prepaid_sessions, prepaid_close
 from domains.school import ownership as school_ownership
 from domains.bookings import late_day as late_day_checkout
 from domains.bookings import care as care_domain
@@ -9864,10 +9864,10 @@ async def _check_out_locked(
                     )
                     if enrol:
                         prefer_pid = enrol.get("program_id")
-            credit_value, credit_redemptions, credits_consumed = await _consume_credit_lots(
+            credit_value, credit_redemptions, credits_consumed = await (prepaid_close.take_program_credit(booking) if prepaid else _consume_credit_lots(
                 booking["client_id"], credits_to_use, svc_type,
                 prefer_program_id=prefer_pid,
-            )
+            ))
             if credits_consumed <= 0:
                 use_credits = False
                 credits_to_use = 0.0
@@ -27190,7 +27190,7 @@ async def _run_completion_worker(draft_id: str, plan: Dict[str, Any], claim_toke
     same reason — a lost-then-late failure can never clobber a new owner."""
     try:
         result = await _apply_completion_plan(draft_id, plan, claim_token)
-        await training_domain_services.after_completion_worker(db=db, draft_id=draft_id, plan=plan)
+        result["prepaid_session"] = await training_domain_services.after_completion_worker(db=db, draft_id=draft_id, plan=plan, on_prepaid=prepaid_close.after_session_completed)
         return result
     except LostCompletionClaimError:
         raise
@@ -29364,6 +29364,7 @@ async def admin_today_brain(_: dict = Depends(require_admin)):
         logger.warning("today-brain website inquiries failed: %s", e)
     items.extend(await waitlist_spots.today_brain_items(_))  # waitlisted dogs who could have a spot now (audit #33)
     items.extend(await renewal_misses.today_brain_items(_))  # weekly schedules that couldn't book days (audit #35)
+    items.extend(await prepaid_close.today_brain_items(_))  # past program lessons closed on their credits (audit #38)
 
     # 5b. Open client help requests / feedback (warn)
     try:
@@ -29709,7 +29710,7 @@ def _today_brain_signature(item: dict) -> str:
     if kind in ("monday_digest", "no_checkin", "steps_incomplete", "missing_closeout"):
         # Date-scoped — these auto-roll over at midnight UTC anyway.
         return f"{kind}:{business_today().isoformat()}"
-    if kind == "new_signup":
+    if kind in ("new_signup", "prepaid_sessions_closed"):
         # One-time dismiss tied to the client id — no state to track.
         return "once"
     # Fallback: hash of title+subtitle so unknown item kinds still behave sanely.
@@ -30263,6 +30264,7 @@ def _scheduler_jobs() -> List[job_scheduler.Job]:
         ("friends_family_group_bills", lambda: friends_family.sweep_group_bills()),  # the bill once a group's last dog has gone
         ("shop_income_split", lambda: _run_once_per_business_day(shop_income.REPAIR_JOB, lambda: shop_income.repair_split(db))),  # daily + after a restore (audit #29)
         ("archive_sync", lambda: _run_once_per_business_day(client_archive.SYNC_JOB, lambda: client_archive.sync(db))),  # archived families stay archived (audit #36)
+        ("prepaid_session_close", lambda: prepaid_close.run_job()),  # finished program lessons use their credit (audit #38)
     ]
 
 
