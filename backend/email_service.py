@@ -3,12 +3,15 @@ All sends are non-blocking (asyncio.to_thread) and best-effort —
 failures log a warning but never break the booking flow."""
 import asyncio
 import base64
+import hashlib
 import io
+import json
 import logging
 import os
 import re
 import html as _html_mod
 import time
+import uuid
 from datetime import datetime, timedelta, timezone
 from typing import Optional
 from zoneinfo import ZoneInfo
@@ -34,6 +37,9 @@ if RESEND_API_KEY:
 # Sprint 110eg-4 — Last Resend send failure (string). Populated by `_send()`
 # so admin-facing test endpoints can surface the real error to the UI.
 last_send_error: str | None = None
+# The outbox row the last _send call left waiting for Quiet Hours to end (None
+# when it went out or failed). Read it straight after the await, before any other.
+last_send_held_key: str | None = None
 
 
 BRAND_GREEN = "#8cc63f"
@@ -400,6 +406,7 @@ async def _queue_email(
     attachments: list | None,
     error: str,
     document_id: str | None = None,
+    guard: dict | None = None,
 ) -> bool:
     """Persist an automated email for retry. The key is unique so repeated
     scheduler/check-out attempts update one pending row instead of duplicating it.
@@ -432,6 +439,7 @@ async def _queue_email(
                         "html": html,
                         "attachments": _serialize_attachments(attachments),
                         "on_success": on_success or {},
+                        "guard": guard or None,
                         "created_at": now,
                         "attempts": 0,
                     },
@@ -521,6 +529,26 @@ async def _apply_outbox_success(action: dict | None) -> None:
                 {"$set": {"id": run_id, "sent": 1, "sent_at": now, **(action.get("meta") or {})}},
                 upsert=True,
             )
+    elif kind == "bulk_email_sent":
+        # A bulk email really went: only now is it on the family's timeline, and a
+        # held one moves from "queued" to "sent" on its history row (a direct send
+        # finds no history row yet — it is written after the loop and counts it).
+        tl = dict(action.get("timeline") or {})
+        if tl.get("id") and tl.get("client_id"):
+            await _db.client_communications.update_one(
+                {"id": tl["id"]}, {"$setOnInsert": {**tl, "type": "email", "occurred_at": now}}, upsert=True)
+        if action.get("history_id"):
+            await _db.bulk_email_history.update_one({"id": action["history_id"], "queued_count": {"$gt": 0}},
+                                                    {"$inc": {"success_count": 1, "queued_count": -1}})
+    elif kind == "report_card_sent":
+        # A Day-in-Pictures email that waited for Quiet Hours: stamped only while
+        # it is still the visit's latest attempt (a Re-send replaces it).
+        if action.get("booking_id") and action.get("attempted_at"):
+            await _db.bookings.update_one(
+                {"id": action["booking_id"], "report_card_email_attempted_at": action["attempted_at"]},
+                {"$set": {"report_card_email_sent_at": now},
+                 "$unset": {"report_card_email_queued_at": "", "report_card_email_error": ""}},
+            )
 
 
 async def _clear_gift_card_queue_flag(card_id: str | None) -> None:
@@ -556,7 +584,29 @@ async def _outbox_row_still_wanted(action: dict | None) -> bool:
     money: never send it for a card voided in the meantime, to an address
     staff have since corrected, or a second time once it has arrived."""
     if action and action.get("type") == "client_low_credit":
-        return not await _about_someone_gone(action.get("client_id"), None)
+        if await _about_someone_gone(action.get("client_id"), None):
+            return False
+        # Only the balance the family was last warned about: a top-up, or a
+        # further drop, while this waited makes it stale.
+        svc = action.get("service_type")
+        if not svc:
+            return True
+        field = {"training": "training_credits", "boarding": "boarding_credits"}.get(svc, "credits")
+        c = await _db.clients.find_one({"id": action.get("client_id")}, {"_id": 0, "low_credit_emailed_at": 1, field: 1})
+        stamp = ((c or {}).get("low_credit_emailed_at") or {}).get(svc)
+        if not (isinstance(stamp, dict) and stamp.get("balance") == action.get("balance")):
+            return False
+        try:
+            return float((c or {}).get(field) or 0) <= 2   # topped up by any route (a pack, a refund) while it waited
+        except (TypeError, ValueError):
+            return True
+    # Already went out (sent directly while this copy waited): never a second one.
+    if action and action.get("type") == "notification_log" and action.get("key") and \
+            await _db.notification_log.find_one({"key": action["key"]}, {"_id": 1}):
+        return False
+    if action and action.get("type") == "system_run" and action.get("id") and \
+            await _db.system_runs.find_one({"id": action["id"], "sent": 1}, {"_id": 1}):
+        return False
     if action and (action.get("meta") or {}).get("kind") == "shop_order_ready":
         # Held overnight by Quiet Hours: only while it's still waiting to be collected.
         from domains.shop import pickup as shop_pickup
@@ -575,6 +625,62 @@ async def _outbox_row_still_wanted(action: dict | None) -> bool:
         return False
     if action.get("first") and card.get("email_delivered_at"):
         return False
+    return True
+
+
+def _day_log(hw: dict | None, day_number) -> dict:
+    for lo in (hw or {}).get("section_logs") or []:
+        try:
+            if int(lo.get("day_number") or 0) == int(day_number or 0):
+                return lo
+        except (TypeError, ValueError):
+            continue
+    return {}
+
+
+async def _hold_guard_ok(guard: dict | None) -> bool:
+    """An email held for Quiet Hours goes only while what it says is still
+    true: a booking approved at 10 pm and cancelled at 11 pm sends nothing in
+    the morning. An unknown kind, or a check that errors, sends. (A document
+    found without any projected field comes back as {}: test `is None`.)"""
+    if not guard or _db is None:
+        return True
+    kind = guard.get("kind")
+    try:
+        if kind in ("booking_approved", "booking_rejected"):
+            b = await _db.bookings.find_one({"id": guard.get("booking_id")}, {"_id": 0, "status": 1})
+            status = ((b or {}).get("status") or "").lower()
+            if kind == "booking_rejected":
+                return status == "rejected"
+            return b is not None and status not in ("cancelled", "canceled", "rejected", "no_show")
+        if kind == "report_card":
+            b = await _db.bookings.find_one({"id": guard.get("booking_id")}, {"_id": 0, "report_card_email_attempted_at": 1})
+            return b is not None and b.get("report_card_email_attempted_at") == guard.get("attempted_at")
+        if kind in ("homework", "homework_day", "certificate"):
+            hw = await _db.homework.find_one({"id": guard.get("homework_id")},
+                                             {"_id": 0, "section_logs": 1, "certificate_uploaded_at": 1})
+            if hw is None:
+                return False
+            if kind == "certificate":
+                return bool(hw.get("certificate_uploaded_at"))
+            if kind == "homework_day":
+                log = _day_log(hw, guard.get("day_number"))
+                return bool(log) and log.get("submission_status") == guard.get("status") \
+                    and log.get("reviewed_at") == guard.get("reviewed_at")
+            return True
+        if kind == "announcement":
+            a = await _db.announcements.find_one({"id": guard.get("announcement_id")}, {"_id": 0, "published": 1, "expires_on": 1})
+            if a is None or not a.get("published", True):
+                return False
+            expires = (a.get("expires_on") or "").strip()
+            if expires and expires < _ohio_now().date().isoformat():
+                return False
+        if kind in ("announcement", "marketing"):
+            c = await _db.clients.find_one({"id": guard.get("client_id"), "deleted_at": {"$in": [None, ""]}},
+                                           {"_id": 0, "marketing_email_opt_out": 1})
+            return c is not None and not c.get("marketing_email_opt_out")
+    except Exception as exc:
+        logger.warning("Held email check %s failed, sending anyway: %s", kind, exc)
     return True
 
 
@@ -613,11 +719,14 @@ async def process_email_outbox(db_handle=None, limit: int = 50) -> dict:
     sent = 0
     failed = 0
     for row in rows:
-        if not await _outbox_row_still_wanted(row.get("on_success")):
+        if not await _outbox_row_still_wanted(row.get("on_success")) or not await _hold_guard_ok(row.get("guard")):
             await _db.email_outbox.delete_one({"key": row.get("key"), "status": "pending"})
             action = row.get("on_success") or {}
             if action.get("type") == "gift_card_emailed":
                 await _clear_gift_card_queue_flag(action.get("card_id"))
+            if action.get("type") == "bulk_email_sent" and action.get("history_id"):
+                await _db.bulk_email_history.update_one({"id": action["history_id"], "queued_count": {"$gt": 0}},
+                                                        {"$inc": {"queued_count": -1}})
             continue
         ok = await _send(
             row.get("to_email") or "",
@@ -626,6 +735,7 @@ async def process_email_outbox(db_handle=None, limit: int = 50) -> dict:
             outbox_key=row.get("key"),
             attachments=_deserialize_attachments(row.get("attachments")),
             queue_on_failure=False,
+            from_outbox=True,
         )
         if ok:
             await _db.email_outbox.update_one(
@@ -643,6 +753,17 @@ async def process_email_outbox(db_handle=None, limit: int = 50) -> dict:
                     {"$set": {"last_error": f"delivery stamp failed: {exc}", "updated_at": _utc_now_iso()}},
                 )
         else:
+            if last_send_error == "Quiet hours active":
+                break   # Quiet Hours began mid-run: the rest wait, no attempt used
+            err = last_send_error or "email_send_failed"
+            action = row.get("on_success") or {}
+            if action.get("type") == "report_card_sent" and action.get("booking_id") and action.get("attempted_at"):
+                # A held Day-in-Pictures email that won't go says so on the visit
+                # (its Retry replaces this copy); a later success clears it.
+                await _db.bookings.update_one(
+                    {"id": action["booking_id"], "report_card_email_attempted_at": action["attempted_at"],
+                     "report_card_email_sent_at": {"$in": [None, ""]}},
+                    {"$set": {"report_card_email_error": str(err)[:300]}})
             failed += 1
             attempts = int(row.get("attempts") or 0) + 1
             delay_minutes = min(360, 5 * (2 ** min(attempts - 1, 6)))
@@ -650,7 +771,7 @@ async def process_email_outbox(db_handle=None, limit: int = 50) -> dict:
                 {"key": row.get("key")},
                 {"$set": {
                     "attempts": attempts,
-                    "last_error": last_send_error or "email_send_failed",
+                    "last_error": err,
                     "last_attempt_at": _utc_now_iso(),
                     "next_attempt_at": (datetime.now(timezone.utc) + timedelta(minutes=delay_minutes)).isoformat(),
                 }},
@@ -658,28 +779,73 @@ async def process_email_outbox(db_handle=None, limit: int = 50) -> dict:
     return {"sent": sent, "stamped": stamped, "failed": failed, "checked": len(rows) + len(delivered_rows)}
 
 
+def _hm_minutes(value) -> int | None:
+    """"21:00" or "9:00" -> minutes after midnight; anything else -> None."""
+    m = re.fullmatch(r"\s*(\d{1,2}):(\d{2})\s*", str(value or ""))
+    if not m or int(m.group(1)) > 23 or int(m.group(2)) > 59:
+        return None
+    return int(m.group(1)) * 60 + int(m.group(2))
+
+
+def _ohio_now() -> datetime:
+    return datetime.now(ZoneInfo("America/New_York"))
+
+
+async def _quiet_comms() -> dict:
+    """The owner's Quiet Hours settings, read straight from the settings
+    document: the email worker must never need server.py to know it is night."""
+    if _db is None:
+        return {}
+    s = await _db.settings.find_one({"id": "global"}, {"_id": 0, "day_to_day.comms": 1}) or {}
+    return (s.get("day_to_day") or {}).get("comms") or {}
+
+
 async def _is_in_quiet_hours() -> bool:
-    """Sprint 110dm — return True if the local time is inside the admin's
-    configured quiet-hours window. Non-fatal: any error returns False so
-    email sends never block on a settings glitch."""
+    """True inside the owner's Quiet Hours (Ohio time). Times are compared as
+    minutes, so "9:00" works; start == end means off (otherwise held emails
+    would never leave)."""
     try:
-        from server import get_settings  # local import to avoid circular at module load
-        s = await get_settings()
-        comms = ((s.get("day_to_day") or {}).get("comms") or {})
-        if not comms.get("quiet_hours_enabled"):
+        comms = await _quiet_comms()
+        start = _hm_minutes(comms.get("quiet_hours_start"))
+        end = _hm_minutes(comms.get("quiet_hours_end"))
+        if not comms.get("quiet_hours_enabled") or start is None or end is None or start == end:
             return False
-        start = (comms.get("quiet_hours_start") or "").strip()
-        end = (comms.get("quiet_hours_end") or "").strip()
-        if not start or not end:
-            return False
-        from datetime import datetime as _dt
-        now_hm = _dt.now(ZoneInfo("America/New_York")).strftime("%H:%M")
-        # Window spans midnight when end <= start (e.g. 21:00 → 08:00)
-        if end <= start:
-            return now_hm >= start or now_hm < end
-        return start <= now_hm < end
+        now = _ohio_now()
+        mins = now.hour * 60 + now.minute
+        if end < start:   # spans midnight, e.g. 21:00 -> 08:00
+            return mins >= start or mins < end
+        return start <= mins < end
     except Exception:
         return False
+
+
+async def _quiet_window_id() -> str:
+    """The Ohio date the latest Quiet Hours window started on: the same for an
+    email held at 23:30 and its twin at 07:00, different the next night."""
+    now = _ohio_now()
+    try:
+        start = _hm_minutes((await _quiet_comms()).get("quiet_hours_start"))
+    except Exception:
+        start = None
+    if start is None or now.hour * 60 + now.minute >= start:
+        return now.date().isoformat()
+    return (now.date() - timedelta(days=1)).isoformat()
+
+
+def _held_key(window: str, to_email: str, subject: str, html: str, attachments: list | None,
+              guard: dict | None, on_success: dict | None) -> str:
+    """One held row per distinct email per Quiet Hours window: the same email
+    twice in one night waits once; the same words another night are another email."""
+    h = hashlib.sha256()
+    for part in ((to_email or "").strip().lower(), subject or "", html or "",
+                 json.dumps(guard or {}, sort_keys=True, default=str),
+                 json.dumps(on_success or {}, sort_keys=True, default=str)):
+        h.update(part.encode("utf-8") + b"\x00")
+    for a in attachments or []:
+        content = a.get("content") or b""
+        data = bytes(content) if isinstance(content, (list, bytes, bytearray)) else str(content).encode("utf-8")
+        h.update(str(a.get("filename") or "").encode("utf-8") + b"\x00" + hashlib.sha256(data).digest())
+    return f"qh:{window}:{h.hexdigest()}"
 
 
 async def _send(
@@ -692,6 +858,8 @@ async def _send(
     attachments: list | None = None,
     queue_on_failure: bool = False,
     bypass_quiet_hours: bool = False,
+    hold_guard: dict | None = None,
+    from_outbox: bool = False,
 ) -> bool:
     """Fire-and-forget send. Logs failures but never raises. Returns True on success.
 
@@ -699,29 +867,55 @@ async def _send(
     global) so admin-facing endpoints can surface the real Resend reason
     without forcing the operator to read backend logs.
     """
-    global last_send_error
+    global last_send_error, last_send_held_key
     last_send_error = None
+    last_send_held_key = None
     if not RESEND_API_KEY:
-        last_send_error = "RESEND_API_KEY not set"
         logger.warning("RESEND_API_KEY not set — skipping email to %s", to_email)
         if queue_on_failure and outbox_key:
             await _queue_email(to_email=to_email, subject=subject, html=html, outbox_key=outbox_key,
-                               on_success=on_success, attachments=attachments, error=last_send_error)
+                               on_success=on_success, attachments=attachments, error="RESEND_API_KEY not set")
+        last_send_error, last_send_held_key = "RESEND_API_KEY not set", None
         return False
     if not to_email:
         last_send_error = "Missing recipient address"
         return False
-    # Sprint 110dm — quiet hours blackout. Skip non-critical sends during the
-    # configured window. A caller whose person is waiting on this email right
-    # now (a sign-up's claim link, a forgot-password reset) passes
-    # bypass_quiet_hours=True.
+    # Quiet Hours: nothing is thrown away. An email that comes due inside the
+    # window waits in the outbox and the email worker sends it once the window
+    # ends. Only a person waiting on it right now (a sign-up or reset link, the
+    # owner's own test sends) passes bypass_quiet_hours=True. `hold_guard` says
+    # what must still be true when it finally goes (see _hold_guard_ok).
     if not bypass_quiet_hours and await _is_in_quiet_hours():
+        logger.info("Email to %s held — quiet hours active. Subject: %s", to_email, subject)
+        if from_outbox:
+            last_send_error = "Quiet hours active"
+            return False
+        key = outbox_key or _held_key(await _quiet_window_id(), to_email, subject, html, attachments, hold_guard, on_success)
+        held = await _queue_email(to_email=to_email, subject=subject, html=html, outbox_key=key,
+                                  on_success=on_success, attachments=attachments, error="Quiet hours active",
+                                  document_id=None if outbox_key else key, guard=hold_guard)
+        # Set after the awaits: another request's _send may have run meanwhile.
         last_send_error = "Quiet hours active"
-        logger.info("Email to %s deferred — quiet hours active. Subject: %s", to_email, subject)
-        if queue_on_failure and outbox_key:
-            await _queue_email(to_email=to_email, subject=subject, html=html, outbox_key=outbox_key,
-                               on_success=on_success, attachments=attachments, error=last_send_error)
+        last_send_held_key = key if held else None
         return False
+    if not outbox_key and not from_outbox and _db is not None:
+        # The same email is still waiting from the night: hurry that copy
+        # along instead of sending a second one beside it.
+        key = _held_key(await _quiet_window_id(), to_email, subject, html, attachments, hold_guard, on_success)
+        try:
+            row = await _db.email_outbox.find_one({"_id": key}, {"_id": 0, "status": 1})
+            if row and row.get("status") == "pending":
+                await _db.email_outbox.update_one({"_id": key, "status": "pending"},
+                                                  {"$set": {"next_attempt_at": _utc_now_iso()}})
+        except Exception:
+            row = None
+        if row and row.get("status") == "delivered_pending_stamp":
+            last_send_error, last_send_held_key = None, None
+            return True
+        if row and row.get("status") == "pending":
+            last_send_error = "Waiting in the outbox"
+            last_send_held_key = key
+            return False
     try:
         params = {"from": SENDER_EMAIL, "to": [to_email], "subject": subject, "html": html}
         if attachments:
@@ -747,13 +941,15 @@ async def _send(
                         await _queue_delivery_stamp(outbox_key, on_success, str(stamp_exc))
                     except Exception as queue_exc:
                         logger.error("Could not preserve delivery stamp %s: %s", outbox_key, queue_exc)
+        # Set after the awaits: another request's _send may have run meanwhile.
+        last_send_error, last_send_held_key = None, None
         return True
     except Exception as e:
-        last_send_error = str(e)
         logger.warning("Email send to %s failed: %s", to_email, e)
         if queue_on_failure and outbox_key:
             await _queue_email(to_email=to_email, subject=subject, html=html, outbox_key=outbox_key,
-                               on_success=on_success, attachments=attachments, error=last_send_error)
+                               on_success=on_success, attachments=attachments, error=str(e))
+        last_send_error, last_send_held_key = str(e), None
         return False
 
 
@@ -839,6 +1035,8 @@ async def _dispatch(
     outbox_key: str | None = None,
     on_success: dict | None = None,
     queue_on_failure: bool = False,
+    bypass_quiet_hours: bool = False,
+    hold_guard: dict | None = None,
 ) -> bool:
     """Render then send via Resend — unchanged behavior for every existing
     caller (see `_render` for the rendering half)."""
@@ -855,6 +1053,8 @@ async def _dispatch(
         outbox_key=outbox_key,
         on_success=on_success,
         queue_on_failure=queue_on_failure,
+        bypass_quiet_hours=bypass_quiet_hours,
+        hold_guard=hold_guard,
     )
 
 
@@ -1814,6 +2014,7 @@ async def notify_client_certificate_issued(hw: dict, client: dict) -> bool:
         },
         rows=rows,
         cta_url=cta_url,
+        hold_guard={"kind": "certificate", "homework_id": hw.get("id")} if hw.get("id") else None,
     ))
 
 
@@ -1992,6 +2193,9 @@ async def notify_client_day_reviewed(hw: dict, day_number: int, action: str, rev
         fallback_intro=body_intro,
         fallback_subject=subject,
         fallback_cta_text="Open Portal" if cta_url else "",
+        # A redo followed by an approval overnight sends only the approval.
+        hold_guard={"kind": "homework_day", "homework_id": hw.get("id"), "day_number": day_number, "status": action,
+                    "reviewed_at": _day_log(hw, day_number).get("reviewed_at")} if hw.get("id") else None,
     )
 
 
@@ -2077,6 +2281,7 @@ async def notify_client_homework_assigned(hw: dict, client: dict) -> None:
         },
         rows=rows,
         cta_url=cta_url,
+        hold_guard={"kind": "homework", "homework_id": hw.get("id")} if hw.get("id") else None,
     )
 
 
@@ -2248,6 +2453,7 @@ async def notify_client_booking_approved(booking: dict, client: dict, policy_lin
             "kennel": booking.get("kennel", "") or "",
         },
         rows=rows,
+        hold_guard={"kind": "booking_approved", "booking_id": booking.get("id")} if booking.get("id") else None,
     )
 
 
@@ -2284,6 +2490,7 @@ async def notify_client_booking_rejected(booking: dict, client: dict) -> None:
             f"Hi {_h(first_name)} — we're not able to approve this booking request. "
             f"Reach out to us and we'll help find another time that works."
         ),
+        hold_guard={"kind": "booking_rejected", "booking_id": booking.get("id")} if booking.get("id") else None,
     )
 
 
@@ -2485,7 +2692,8 @@ async def _build_report_card_email_body(booking: dict, client: dict, dog: dict |
     return "".join(body_parts)
 
 
-async def notify_client_report_card(booking: dict, client: dict, dog: dict | None = None) -> bool:
+async def notify_client_report_card(booking: dict, client: dict, dog: dict | None = None,
+                                    *, attempt_at: str | None = None) -> bool:
     """Sprint 110cp — "Day in Pictures" email. Sent at check-out when a
     report card OR any care-log activity exists for the visit. The actual
     HTML body is built by `_build_report_card_email_body` so the admin
@@ -2531,6 +2739,10 @@ async def notify_client_report_card(booking: dict, client: dict, dog: dict | Non
         rows=rows,
         cta_url=cta_url,
         body_html=body_html,
+        # Held for Quiet Hours: goes only if no Re-send replaced this attempt,
+        # and stamps the visit when it really goes.
+        hold_guard={"kind": "report_card", "booking_id": booking.get("id"), "attempted_at": attempt_at} if attempt_at and booking.get("id") else None,
+        on_success={"type": "report_card_sent", "booking_id": booking.get("id"), "attempted_at": attempt_at} if attempt_at and booking.get("id") else None,
     )
     return sent
 
@@ -2554,11 +2766,12 @@ async def send_account_claim(
     claim_url: str,
     is_reset: bool = False,
     expires_days: int = 7,
-    critical: bool = False,
+    critical: bool = True,
 ) -> bool:
     """Send a 'Claim your account' (or 'Reset your password') email to a client.
     The claim URL embeds a single-use token that the public /claim page consumes.
-    `critical` sends even during quiet hours (someone is waiting on it).
+    `critical` (the default) sends even during Quiet Hours: someone is waiting
+    on a sign-up or reset link, and the owner's rule is that those never wait.
     Returns True when the provider accepted it."""
     first = (client_name or "there").split(" ")[0]
     if is_reset:
@@ -2645,6 +2858,7 @@ async def send_meet_greet_request_received(
             f"portal password so you can track everything in one place. This link expires in {expires_days} days."
         ),
         fallback_cta_text="Set Up My Portal",
+        bypass_quiet_hours=True,   # it carries their portal set-up link
     )
 
 
@@ -3037,7 +3251,8 @@ async def notify_client_vaccine_expiring(client: dict, dog: dict, vaccines_expir
 
 
 
-async def notify_admin_pl_report(pdf_bytes: bytes, start_date: str, end_date: str, summary: dict, *, delivery_key: str | None = None, delivery_meta: dict | None = None) -> bool:
+async def notify_admin_pl_report(pdf_bytes: bytes, start_date: str, end_date: str, summary: dict, *, delivery_key: str | None = None, delivery_meta: dict | None = None,
+                                 bypass_quiet_hours: bool = False) -> bool:
     """Email the admin a Profit & Loss PDF report as an attachment.
     `summary` is the dict returned by `pl_report.build_pl_data` — used to
     render KPI snapshots in the email body."""
@@ -3103,6 +3318,7 @@ async def notify_admin_pl_report(pdf_bytes: bytes, start_date: str, end_date: st
         outbox_key=delivery_key,
         on_success={"type": "notification_log", "key": delivery_key, "meta": delivery_meta or {}} if delivery_key else None,
         queue_on_failure=bool(delivery_key),
+        bypass_quiet_hours=bypass_quiet_hours,
     ))
 
 
@@ -3135,11 +3351,11 @@ async def broadcast_announcement_email(announcement: dict) -> dict:
         f"{image_html}{_h(body_html_safe)}</div>"
     )
 
-    sent = skipped = 0
+    sent = skipped = queued = 0
     if _db is None:
         return {"sent": 0, "skipped": 0, "reason": "db not bound"}
     cursor = _db.clients.find({"email": {"$exists": True, "$ne": ""}, "marketing_email_opt_out": {"$ne": True},
-                               "deleted_at": {"$in": [None, ""]}}, {"_id": 0, "name": 1, "email": 1})   # never an archived family (audit #36)
+                               "deleted_at": {"$in": [None, ""]}}, {"_id": 0, "id": 1, "name": 1, "email": 1})   # never an archived family (audit #36)
     async for c in cursor:
         addr = (c.get("email") or "").strip()
         if not addr:
@@ -3157,10 +3373,15 @@ async def broadcast_announcement_email(announcement: dict) -> dict:
             fallback_title=f"📣 {title}",
             fallback_intro=f"Hi {first} — quick update from the Sit Happens team:",
             fallback_cta_text="Open Portal" if portal_url else "",
+            # Held for Quiet Hours: not if it's unpublished, expired, or they unsubscribe first.
+            hold_guard={"kind": "announcement", "announcement_id": announcement.get("id"), "client_id": c.get("id")}
+            if announcement.get("id") and c.get("id") else None,
         )
         if ok:
             sent += 1
+        elif last_send_held_key:
+            queued += 1
         else:
             skipped += 1
-    logger.info("Announcement '%s' broadcast — sent=%s skipped=%s", title, sent, skipped)
-    return {"sent": sent, "skipped": skipped}
+    logger.info("Announcement '%s' broadcast — sent=%s queued=%s skipped=%s", title, sent, queued, skipped)
+    return {"sent": sent, "skipped": skipped, "queued": queued}

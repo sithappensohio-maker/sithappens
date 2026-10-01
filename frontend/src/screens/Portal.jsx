@@ -67,6 +67,7 @@ import { useConfirm } from "../lib/useConfirm";
 import { compressImage } from "../lib/imageCompress";
 import { useLiveRefresh } from "../lib/useLiveRefresh";
 import { addDaysISO, todayISO } from "../lib/date";
+import { statementMessage } from "../lib/quietHours";
 import HuskyDogImage from "../components/brand/HuskyDogImage";
 import { toast } from "sonner";
 
@@ -1034,7 +1035,7 @@ export default function Portal() {
     setSendingStatement(true); setStatementMsg("");
     try {
       const { data } = await api.post("/portal/send-statement");
-      setStatementMsg(`Statement on its way to ${data.sent_to}.`);
+      setStatementMsg(statementMessage(data, `Statement on its way to ${data.sent_to}.`));
     } catch (e) {
       setStatementMsg(e?.response?.data?.detail || "Couldn’t send the statement — please try again later.");
     } finally {

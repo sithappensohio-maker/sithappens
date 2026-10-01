@@ -80,6 +80,9 @@ export default function SendClientEmailModal({ client, onClose }) {
       if (data.success_count >= 1) {
         toast.success(`Email sent to ${client.name}`);
         onClose();
+      } else if (data.queued_count >= 1) {
+        toast.success(`Email to ${client.name} goes out when quiet hours end`);
+        onClose();
       } else {
         const reason = data.failed?.[0]?.error || "Resend rejected the send";
         toast.error(`Failed to send: ${reason}`);

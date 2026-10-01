@@ -14,6 +14,7 @@
 // pattern (no JSX changes outside this file).
 // ───────────────────────────────────────────────────────────────────────
 import { useState } from "react";
+import { QUIET_HOURS_HINT, asTimeValue } from "../lib/quietHours";
 
 const Field = ({ label, type = "text", value, onChange, hint, testId, options, placeholder, disabled = false, unsupported = false }) => {
   if (type === "select") {
@@ -316,11 +317,12 @@ export default function DayToDayControls({ d2d, setD2d, section }) {
         <div className="grid grid-cols-3 gap-3 items-end">
           <Field label="Quiet hours enabled" type="toggle" value={c.quiet_hours_enabled}
                  onChange={(v) => set("comms", "quiet_hours_enabled", v)} testId="d2d-quiet-en" />
-          <Field label="Quiet hours start" value={c.quiet_hours_start || ""}
+          <Field label="Quiet hours start" type="time" value={asTimeValue(c.quiet_hours_start)}
                  onChange={(v) => set("comms", "quiet_hours_start", v)} testId="d2d-quiet-start" placeholder="21:00" />
-          <Field label="Quiet hours end" value={c.quiet_hours_end || ""}
+          <Field label="Quiet hours end" type="time" value={asTimeValue(c.quiet_hours_end)}
                  onChange={(v) => set("comms", "quiet_hours_end", v)} testId="d2d-quiet-end" placeholder="08:00" />
         </div>
+        <p className="text-[11px] text-shTextMuted" data-testid="d2d-quiet-hint">{QUIET_HOURS_HINT}</p>
         <Field label="Reply-to address (blank = system from address)" type="email" value={c.reply_to_address || ""}
                onChange={(v) => set("comms", "reply_to_address", v)} testId="d2d-replyto" disabled unsupported />
         <div>

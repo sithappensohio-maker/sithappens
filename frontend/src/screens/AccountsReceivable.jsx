@@ -12,6 +12,7 @@ Operator actions per row:
 import { useEffect, useState } from "react";
 import { api } from "../lib/api";
 import TakePaymentModal from "../components/TakePaymentModal";
+import { statementMessage } from "../lib/quietHours";
 import { EmptyState, FormError, FormInput, FormLabel, PremiumButton, SectionCard, StatusBadge } from "../components/premium";
 
 const fmt = (n) => `$${(Number(n) || 0).toFixed(2)}`;
@@ -58,7 +59,7 @@ export default function AccountsReceivableTab() {
     setSendingStatement((s) => ({ ...s, [client.id]: true }));
     try {
       const { data } = await api.post(`/clients/${client.id}/send-statement`);
-      setStatementToast(`Statement sent to ${data.sent_to}.`);
+      setStatementToast(statementMessage(data, `Statement sent to ${data.sent_to}.`));
     } catch (e) {
       setStatementToast(e?.response?.data?.detail || "Could not send statement.");
     } finally {

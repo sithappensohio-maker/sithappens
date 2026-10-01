@@ -667,12 +667,13 @@ function _fmtAgo(iso) {
  *   - "⚠ Failed (reason)"     (attempted but Resend rejected — domain etc.)
  *   - "→ Send report card"    (no attempt yet)
  *  Plus a "Re-send" action that wipes the flags and re-fires. */
-function ReportCardEmailStatus({ booking, onResent: _onResent }) {
+export function ReportCardEmailStatus({ booking, onResent: _onResent }) {
   const [busy, setBusy] = useState(false);
   const [msg, setMsg] = useState("");
   const sentAt = booking.report_card_email_sent_at;
   const attemptedAt = booking.report_card_email_attempted_at;
   const error = booking.report_card_email_error;
+  const queuedAt = booking.report_card_email_queued_at;   // held for Quiet Hours
 
   const resend = async () => {
     setBusy(true); setMsg("");
@@ -680,6 +681,7 @@ function ReportCardEmailStatus({ booking, onResent: _onResent }) {
       const r = await api.post(`/bookings/${booking.id}/resend-report-card`);
       const body = r.data || {};
       if (body.sent) setMsg(`✓ Sent to ${body.sent_to}`);
+      else if (body.queued) setMsg("Queued — goes out when quiet hours end");
       else setMsg(`⚠ ${body.error || "Failed"}`);
       // Give the modal a beat to render the new state, then refresh by closing.
       setTimeout(() => { window.location.reload(); }, 1400);
@@ -693,6 +695,21 @@ function ReportCardEmailStatus({ booking, onResent: _onResent }) {
       <span className="inline-flex items-center gap-2" data-testid="report-card-email-status-sent">
         <span className="bg-shPrimary/15 border border-shPrimary/40 text-shPrimary px-2 py-0.5 rounded text-[10px] font-black uppercase tracking-widest">
           <i className="fas fa-paper-plane mr-1"/>Emailed {_fmtAgo(sentAt)}
+        </span>
+        <button onClick={resend} disabled={busy} data-testid="report-card-resend-btn"
+                className="text-shTextMuted hover:text-shSecondary text-[10px] font-black uppercase tracking-widest underline-offset-2 hover:underline disabled:opacity-50">
+          {busy ? "Sending…" : "Re-send"}
+        </button>
+        {msg && <span className="text-[10px] text-shTextMuted">{msg}</span>}
+      </span>
+    );
+  }
+  if (queuedAt && !error) {
+    return (
+      <span className="inline-flex items-center gap-2" data-testid="report-card-email-status-queued">
+        <span className="bg-shAccent/15 border border-shAccent/40 text-shAccent px-2 py-0.5 rounded text-[10px] font-black uppercase tracking-widest"
+              title="It goes out automatically when quiet hours end">
+          <i className="fas fa-moon mr-1"/>Waiting for quiet hours
         </span>
         <button onClick={resend} disabled={busy} data-testid="report-card-resend-btn"
                 className="text-shTextMuted hover:text-shSecondary text-[10px] font-black uppercase tracking-widest underline-offset-2 hover:underline disabled:opacity-50">

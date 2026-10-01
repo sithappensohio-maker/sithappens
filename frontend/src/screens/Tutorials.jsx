@@ -635,7 +635,7 @@ const ADMIN_SECTIONS = [
         steps: [
           "Pick a recipient slice with filter chips: Active clients, upcoming bookings, missing vaccines, has ever done daycare / boarding / training (lifetime — archived history counts), not yet on the portal. A live recipient counter updates as you adjust.",
           "Start from a template or write your own, use merge tags, and Send Test before sending to everyone.",
-          "Every send is logged on each recipient's Communication timeline and in the Bulk Email History tab. Sends respect quiet hours.",
+          "Every send is logged on each recipient's Communication timeline and in the Bulk Email History tab. Emails due during quiet hours wait and go out when they end.",
         ],
       },
       {

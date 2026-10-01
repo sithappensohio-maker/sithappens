@@ -283,11 +283,13 @@ def test_a_forgot_password_reset_goes_out_during_quiet_hours():
     run(server.db.claim_tokens.delete_many({"user_id": user_id}))
 
 
-def test_other_claim_emails_still_respect_quiet_hours():
+def test_every_claim_or_reset_link_goes_out_during_quiet_hours():
+    """Owner rule (Quiet Hours, 2026-10-01): a sign-up or reset link never waits —
+    staff-sent claim links included. Everything else waits (test_quiet_hours_hold)."""
     with _provider(quiet=True) as sent:
         ok = run(email_service.send_account_claim(
             to_email="someone@example.com", client_name="Sam", claim_url="https://x/claim/t"))
-    assert ok is False and sent == []
+    assert ok is True and len(sent) == 1
 
 
 # ------------------------------------------------------------ Photo Specials

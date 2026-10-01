@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useState } from "react";
 import { api } from "../lib/api";
 import { toast } from "sonner";
+import { bulkSendMessage } from "../lib/quietHours";
 import PageHero from "../components/PageHero";
 import AdminTabs from "../components/admin/AdminTabs";
 
@@ -142,11 +143,7 @@ export default function BulkEmail() {
         ? { subject, body, client_ids: manualIds, test_only: testOnly }
         : { subject, body, filters: selected, test_only: testOnly };
       const { data } = await api.post("/admin/bulk-email/send", payload);
-      toast.success(
-        testOnly
-          ? `Test email sent to ${data.success_count}/${data.recipient_count}.`
-          : `Sent ${data.success_count} / ${data.recipient_count} emails`
-      );
+      toast.success(bulkSendMessage(data, testOnly));
       await loadHistory();
       setConfirmOpen(false);
     } catch (e) {
@@ -343,6 +340,7 @@ export default function BulkEmail() {
                   </div>
                   <div className="text-right shrink-0">
                     <p className="text-sm font-black text-shPrimary">{h.success_count}/{h.recipient_count} ✓</p>
+                    {h.queued_count > 0 && <p className="text-[11px] text-shAccent" data-testid="bulk-history-queued">{h.queued_count} queued for quiet hours</p>}
                     {h.fail_count > 0 && <p className="text-[11px] text-red-400">{h.fail_count} failed</p>}
                   </div>
                 </div>

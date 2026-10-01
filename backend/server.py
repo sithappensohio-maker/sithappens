@@ -1187,6 +1187,7 @@ class BookingOut(BaseModel):
     report_card_email_sent_at: Optional[str] = None
     report_card_email_attempted_at: Optional[str] = None
     report_card_email_error: Optional[str] = None
+    report_card_email_queued_at: Optional[str] = None   # waiting for Quiet Hours to end
 
 class ReportCardIn(BaseModel):
     photos: List[str] = []
@@ -6804,7 +6805,7 @@ async def _maybe_send_low_credit_email(client_id: str, service_type: str, new_ba
     if isinstance(last, dict) and last.get("balance") == new_balance:
         return  # already emailed for this exact balance — skip
     try:
-        await notify_client_low_credits(client, service_type, new_balance)
+        # Stamp first: a waiting copy of this email goes only while the stamp says this balance.
         await db.clients.update_one(
             {"id": client_id},
             {"$set": {f"low_credit_emailed_at.{service_type}": {
@@ -6812,6 +6813,7 @@ async def _maybe_send_low_credit_email(client_id: str, service_type: str, new_ba
                 "at": now_iso(),
             }}},
         )
+        await notify_client_low_credits(client, service_type, new_balance)
     except Exception as exc:
         logger.warning("Low-credit email failed for client=%s pool=%s: %s", client_id, service_type, exc)
 
@@ -8843,9 +8845,9 @@ async def _send_account_statement(client_id: str) -> dict:
         fallback_intro=intro_html,
         body_html=body_html,
     )
-    if not ok:
+    if not ok and not email_service.last_send_held_key:   # held for Quiet Hours = queued, not failed
         raise HTTPException(status_code=500, detail="Email send failed (check Resend config)")
-    return {"ok": True, "sent_to": client.get("email"), "balance": balance, "row_count": len(rows_raw)}
+    return {"ok": True, "queued": not ok, "sent_to": client.get("email"), "balance": balance, "row_count": len(rows_raw)}
 
 
 @api.post("/clients/{client_id}/send-statement")
@@ -10571,22 +10573,28 @@ async def _maybe_send_report_card_email(booking: dict) -> dict:
     from email_service import notify_client_report_card
     ts = now_iso()
     update: Dict[str, Any] = {"report_card_email_attempted_at": ts}
+    await db.bookings.update_one({"id": booking["id"]}, {"$set": update})   # before the send: a held copy checks it
+    held = False
     try:
-        sent = await notify_client_report_card(booking, client, dog)
+        sent = await notify_client_report_card(booking, client, dog, attempt_at=ts)
+        held = bool(email_service.last_send_held_key)   # waits for Quiet Hours to end; stamped when it goes
     except Exception as exc:
         sent = False
         update["report_card_email_error"] = str(exc)[:300]
     if sent:
         update["report_card_email_sent_at"] = ts
         update.pop("report_card_email_error", None)
+    elif held:
+        update["report_card_email_queued_at"] = ts
     else:
         update.setdefault(
             "report_card_email_error",
             "Resend rejected the send — verify your domain on https://resend.com/domains",
         )
     await db.bookings.update_one({"id": booking["id"]}, {"$set": update})
-    return {"sent": bool(sent), "attempted": True,
-            "reason": "ok" if sent else update.get("report_card_email_error", "unknown")}
+    return {"sent": bool(sent), "attempted": True, "queued": held,
+            "reason": "ok" if sent else "Waiting for Quiet Hours to end — it goes out automatically" if held
+            else update.get("report_card_email_error", "unknown")}
 
 
 async def save_report_card(booking_id: str, body: ReportCardIn, user: dict = Depends(require_employee_or_admin)):
@@ -10650,11 +10658,11 @@ async def resend_report_card_email(booking_id: str, _: dict = Depends(require_ad
             "report_card_email_sent_at": "",
             "report_card_email_attempted_at": "",
             "report_card_email_error": "",
+            "report_card_email_queued_at": "",
         }},
     )
-    booking.pop("report_card_email_sent_at", None)
-    booking.pop("report_card_email_attempted_at", None)
-    booking.pop("report_card_email_error", None)
+    for k in ("report_card_email_sent_at", "report_card_email_attempted_at", "report_card_email_error", "report_card_email_queued_at"):
+        booking.pop(k, None)
     result = await _maybe_send_report_card_email(booking)
     if not result["attempted"]:
         raise HTTPException(
@@ -10667,6 +10675,7 @@ async def resend_report_card_email(booking_id: str, _: dict = Depends(require_ad
     return {
         "ok": True,
         "sent": result["sent"],
+        "queued": result.get("queued", False),
         "sent_to": sent_to,
         "error": None if result["sent"] else result["reason"],
     }
@@ -10987,7 +10996,7 @@ def _default_settings() -> dict:
                 "review_request_days_after_visit": 2,
                 "birthday_email_enabled": True,
                 "report_card_auto_send": "per_session",  # per_session | weekly_digest | off
-                "quiet_hours_start": "21:00",       # no automated emails sent during quiet hours
+                "quiet_hours_start": "21:00",       # emails due in quiet hours wait until they end
                 "quiet_hours_end": "08:00",
                 "quiet_hours_enabled": False,
                 "reply_to_address": "",             # blank = use system from-address
@@ -35446,7 +35455,7 @@ async def pl_report_email_now(
     data = await pl_report.build_pl_data(db, start_date, end_date)
     pdf_bytes = await asyncio.to_thread(pl_report.render_pl_pdf, data, brand_name)
     try:
-        await email_service.notify_admin_pl_report(pdf_bytes, start_date, end_date, data)
+        await email_service.notify_admin_pl_report(pdf_bytes, start_date, end_date, data, bypass_quiet_hours=True)
         return {"ok": True, "to": email_service.ADMIN_NOTIFICATION_EMAIL,
                 "start_date": start_date, "end_date": end_date,
                 "net": data["net"]}
@@ -35518,14 +35527,12 @@ async def email_health_test(body: EmailHealthTestReq, _: dict = Depends(require_
         f"Sent from the Email Health panel · this is a one-off diagnostic, no template was used."
         f"</p></div>"
     )
-    ok = await email_service._send(to, f"{brand_name} · Email Test", html)
+    ok = await email_service._send(to, f"{brand_name} · Email Test", html, bypass_quiet_hours=True)   # the owner is waiting for it
     if ok:
         return {"ok": True, "sent_to": to}
     detail = email_service.last_send_error or ""
     if not email_service.RESEND_API_KEY:
         reason = "Resend isn't configured (RESEND_API_KEY missing)."
-    elif await email_service._is_in_quiet_hours():
-        reason = "Quiet-hours window is active — non-critical emails are paused. Adjust in Settings → Email & Notifications → Email Timing."
     elif "not verified" in detail.lower():
         reason = (
             f"{detail.strip()}. Open https://resend.com/domains and confirm "
@@ -35612,7 +35619,7 @@ async def email_health(_: dict = Depends(require_admin)):
     elif last_err and "not verified" in last_err.lower():
         status = "down"
         message = f"DNS looks right but Resend still rejects sends: {last_err}"
-    elif last_err and not quiet:
+    elif last_err and not quiet and not email_service.last_send_held_key:   # held for Quiet Hours = waiting, not failed
         status = "warn"
         message = f"Last send failed: {last_err}"
     else:
@@ -50595,7 +50602,7 @@ async def preview_custom_email_draft(body: EmailTemplatePreviewRequest, current:
     )
     if not to:
         raise HTTPException(status_code=400, detail="No recipient email available")
-    ok = await email_service._send(to_email=to, subject=subject_rendered, html=html)
+    ok = await email_service._send(to_email=to, subject=subject_rendered, html=html, bypass_quiet_hours=True)
     if ok:
         return {"ok": True, "sent_to": to, "subject": subject_rendered}
     return {
@@ -50749,6 +50756,7 @@ async def test_email_template(slug: str, body: EmailTestRequest, current: dict =
         rows=sample_rows,
         cta_url=os.environ.get("APP_PUBLIC_URL", "") or None,
         show_install=False,
+        bypass_quiet_hours=True,   # a test the owner is waiting for
     )
     if ok:
         return {"ok": True, "sent_to": to, "slug": slug}
@@ -50757,8 +50765,6 @@ async def test_email_template(slug: str, body: EmailTestRequest, current: dict =
     detail = email_service.last_send_error or ""
     if not email_service.RESEND_API_KEY:
         reason = "Resend isn't configured (RESEND_API_KEY missing)."
-    elif await email_service._is_in_quiet_hours():
-        reason = "Quiet-hours window is active — non-critical emails are paused. Adjust in Settings → Day-to-day → Communications."
     elif "domain is not verified" in detail.lower() or "not verified" in detail.lower():
         reason = (
             f"{detail.strip()}. Open https://resend.com/domains, add your "
@@ -54271,7 +54277,7 @@ async def bulk_email_send(body: BulkEmailSendIn, user: dict = Depends(require_ad
     history_id = str(uuid.uuid4())
     started_at = now_iso()
 
-    success = 0
+    success = queued = 0
     failures: List[Dict[str, str]] = []
     for r in recipients:
         ctx = {
@@ -54302,31 +54308,22 @@ async def bulk_email_send(body: BulkEmailSendIn, user: dict = Depends(require_ad
         unsubscribe_html = f"<div style='margin-top:28px;padding-top:14px;border-top:1px solid #ddd;font-size:11px;color:#777'>Marketing email · <a href='{email_service._safe_url(unsubscribe_url)}' style='color:#777'>Unsubscribe</a></div>"
         html = html.replace("</body>", unsubscribe_html + "</body>") if "</body>" in html else html + unsubscribe_html
         try:
-            ok = await email_service._send(r["email"], rendered_subj, html)  # type: ignore
+            ok = await email_service._send(r["email"], rendered_subj, html,  # type: ignore
+                                           hold_guard={"kind": "marketing", "client_id": r.get("id")} if r.get("id") else None,
+                                           # on the family's timeline (and counted sent) only once it really goes
+                                           on_success={"type": "bulk_email_sent", "history_id": history_id, "timeline": {
+                                               "id": str(uuid.uuid4()), "client_id": r.get("id"), "client_name": r.get("name") or "",
+                                               "summary": f"[Bulk] {rendered_subj}", "details": rendered_body,
+                                               "follow_up_required": False, "follow_up_date": None, "created_by_id": user.get("id"),
+                                               "created_by_name": user.get("name") or user.get("email"), "bulk_email_id": history_id}})
+            held = not ok and bool(email_service.last_send_held_key)   # waits for Quiet Hours; not sent if they unsubscribe first
         except Exception as e:
             ok = False
             failures.append({"client_id": r.get("id") or "", "email": r["email"], "error": str(e)[:200]})
             continue
-        if ok:
-            success += 1
-            # Log into client_communications so it appears on the client's timeline.
-            try:
-                await db.client_communications.insert_one({
-                    "id": str(uuid.uuid4()),
-                    "client_id": r.get("id"),
-                    "client_name": r.get("name") or "",
-                    "type": "email",
-                    "summary": f"[Bulk] {rendered_subj}",
-                    "details": rendered_body,
-                    "occurred_at": now_iso(),
-                    "follow_up_required": False,
-                    "follow_up_date": None,
-                    "created_by_id": user.get("id"),
-                    "created_by_name": user.get("name") or user.get("email"),
-                    "bulk_email_id": history_id,
-                })
-            except Exception:
-                pass
+        if ok or held:
+            success += int(ok)
+            queued += int(held)
         else:
             failures.append({"client_id": r.get("id") or "", "email": r["email"], "error": email_service.last_send_error or "unknown"})
 
@@ -54338,6 +54335,7 @@ async def bulk_email_send(body: BulkEmailSendIn, user: dict = Depends(require_ad
         "manual_selection": body.client_ids is not None,
         "recipient_count": len(recipients),
         "success_count": success,
+        "queued_count": queued,
         "fail_count": len(failures),
         "failed": failures[:50],
         "test_only": bool(body.test_only),
