@@ -101,7 +101,7 @@ export function resolveValidationTarget(issue, modules) {
 // ---------------------------------------------------------------------------
 export const TEMPLATE_STRIP_FIELDS = [
   "id", "_id", "slug", "created_at", "is_default", "owner_dog_id",
-  "draft", "practice_coach_readiness", "_cascaded_enrollments",
+  "draft", "practice_coach_readiness", "_cascaded_enrollments", "_lesson_moves",
 ];
 // Homework (Practice Coach) recipes keep their `id` in the bundle purely so
 // import can remap each lesson's link after recreating them; only true

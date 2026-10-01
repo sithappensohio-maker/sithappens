@@ -470,6 +470,7 @@ def register_curriculum_import(*, api, db, manage_dep, persist_school_media,
             summary["program_action"] = "adopted" if pathway_match is not None else "updated"
             summary["active_enrollments_refreshed"] = int(
                 saved.get("_cascaded_enrollments") or 0)
+            summary["lesson_moves"] = saved.get("_lesson_moves") or []   # audit #52
         else:
             saved = await create_program(model, user)
             summary["program_action"] = "created"

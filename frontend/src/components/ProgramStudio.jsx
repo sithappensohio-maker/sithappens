@@ -2,6 +2,7 @@ import { useCallback, useEffect, useMemo, useState } from "react";
 import { publicPriceDisplay, publicPriceProblem, priceModePatch } from "../lib/programPricing";
 import { api, formatErr } from "../lib/api";
 import { useConfirm } from "../lib/useConfirm";
+import { previewLessonMoves, lessonMovePreviewNote } from "../lib/lessonMoves";
 import CsvImportButton from "./CsvImportButton";
 import { parseProgramCsv, PROGRAM_CSV_SAMPLE } from "../lib/csvImport";
 import ShopImageUpload from "./ShopImageUpload";
@@ -272,9 +273,11 @@ export default function ProgramStudio({ programId, initialProgram, meta, allProg
         try {
           const { data } = await api.get(`/programs/${programId}/active-enrollments-count`);
           if ((data?.count || 0) > 0) {
+            // Audit #52: say who a removed lesson would move, before asking.
+            const moves = await previewLessonMoves(api, programId, payload.modules);
             cascade = await confirm({
               title: `Apply changes to ${data.count} enrolled dog${data.count > 1 ? "s" : ""}?`,
-              body: "Yes: every active enrollment updates to the new curriculum immediately. Trainer scores and notes for skills that still exist are preserved; progress on removed skills is dropped.\n\nNo: only future enrollments use the new version.",
+              body: "Yes: every active enrollment updates to the new curriculum immediately. Trainer scores and notes for skills that still exist are preserved; progress on removed skills is dropped.\n\nNo: only future enrollments use the new version." + lessonMovePreviewNote(moves),
               confirmText: "Yes, update enrolled dogs", cancelText: "No, only future enrollments", tone: "warning",
             });
           }

@@ -10,6 +10,7 @@ import ShopImageUpload from "./ShopImageUpload";
 import ShopCategoryFields from "./ShopCategoryFields";
 import ProgramStudio from "./ProgramStudio";
 import { programToTemplate, parseProgramTemplate, remapProgramHomework } from "../lib/programStudioPolish";
+import { lessonMoveLines, lessonMovesHeadline } from "../lib/lessonMoves";
 
 /** Canonical single-program loader for every editor entry point.
  *  The list endpoints are bounded (500 rows), so an editor must never depend
@@ -47,6 +48,7 @@ export function ProgramsPanel() {
   const [err, setErr] = useState("");
   const [importing, setImporting] = useState(false);
   const [zipResult, setZipResult] = useState(null);   // last curriculum-package result
+  const [lessonMoves, setLessonMoves] = useState(null);   // audit #52: who the last save moved
   // The one question an import can ask: an archived course already owns this
   // pathway — is this package that course? Holds the server's offer.
   const [adoptPrompt, setAdoptPrompt] = useState(null);
@@ -100,7 +102,11 @@ export function ProgramsPanel() {
     setEdit({ ...full });
   };
   const closeEditor = () => setEdit(null);
-  const onStudioSaved = () => { setEdit(null); };
+  const onStudioSaved = (saved) => {
+    setEdit(null);
+    const moves = saved?._lesson_moves || [];
+    setLessonMoves(moves.length ? { program: saved.name || "", moves } : null);
+  };
 
   // Program templates — download a program (WITH the Practice Coach recipes its
   // lessons link to) as one reusable .json blueprint, and upload one to seed a
@@ -326,6 +332,22 @@ export function ProgramsPanel() {
         </div>
       )}
 
+      {lessonMoves && (
+        <div className="rounded-xl border border-shAccent/40 bg-shAccent/[0.06] p-4" data-testid="lesson-moves-summary">
+          <div className="flex items-start justify-between gap-3">
+            <div>
+              <p className="text-[13px] font-black text-shAccent uppercase tracking-widest">{lessonMovesHeadline(lessonMoves.moves)}</p>
+              {lessonMoves.program && <p className="text-[14px] font-black text-shText mt-1">{lessonMoves.program}</p>}
+            </div>
+            <button onClick={() => setLessonMoves(null)} data-testid="lesson-moves-dismiss" aria-label="Dismiss"
+                    className="text-shTextMuted hover:text-shText text-[13px] px-2"><i className="fas fa-xmark"/></button>
+          </div>
+          <ul className="mt-2 space-y-1 list-disc pl-5">
+            {lessonMoveLines(lessonMoves.moves, 50).map((line, i) => <li key={i} className="text-[13px] text-shText">{line}</li>)}
+          </ul>
+        </div>
+      )}
+
       {zipResult && (zipResult.errors?.length ? (
         <div className="rounded-xl border border-red-500/40 bg-red-500/[0.06] p-4" data-testid="zip-import-errors">
           <p className="text-[13px] font-black text-red-300 uppercase tracking-widest">Package not imported</p>
@@ -356,6 +378,14 @@ export function ProgramsPanel() {
             <p className="text-[12px] text-shTextMuted mt-2">
               Kept in School Resources so you can drop {zipResult.unplaced_media === 1 ? "it" : "them"} into a lesson yourself.
             </p>
+          )}
+          {zipResult.lesson_moves?.length > 0 && (
+            <div className="mt-3" data-testid="zip-import-lesson-moves">
+              <p className="text-[12px] font-black text-shAccent">{lessonMovesHeadline(zipResult.lesson_moves)}</p>
+              <ul className="mt-1 space-y-1 list-disc pl-5">
+                {lessonMoveLines(zipResult.lesson_moves, 50).map((line, i) => <li key={i} className="text-[13px] text-shText">{line}</li>)}
+              </ul>
+            </div>
           )}
         </div>
       ))}

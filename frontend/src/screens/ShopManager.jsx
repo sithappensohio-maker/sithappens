@@ -4,6 +4,7 @@ import { toast } from "sonner";
 import PageHero from "../components/PageHero";
 import AdminTabs from "../components/admin/AdminTabs";
 import { useConfirm } from "../lib/useConfirm";
+import { previewLessonMoves, lessonMovePreviewNote, lessonMoveLines, lessonMovesHeadline } from "../lib/lessonMoves";
 import { ProductEditor } from "../components/ManageProductsPanel";
 import ShopAnalyticsDashboard from "../components/shop/ShopAnalyticsDashboard";
 import { PackEditor } from "../components/CreditPacksSettings";
@@ -1725,9 +1726,11 @@ export default function ShopManager({ openCreateOnMount = false, onCreateConsume
         try {
           const { data } = await api.get(`/programs/${programForm.id}/active-enrollments-count`);
           if ((data?.count || 0) > 0) {
+            // Audit #52: say who a removed lesson would move, before asking.
+            const moves = await previewLessonMoves(api, programForm.id, payload.modules);
             cascade = await confirm({
               title: `Apply changes to ${data.count} enrolled dog${data.count > 1 ? "s" : ""}?`,
-              body: "Yes: every active enrollment updates to the new program. Trainer scores and notes for goals that still exist are preserved; progress on any removed goals is dropped.\n\nNo: only future enrollments use the new version. Currently-enrolled dogs keep their existing program snapshot.",
+              body: "Yes: every active enrollment updates to the new program. Trainer scores and notes for goals that still exist are preserved; progress on any removed goals is dropped.\n\nNo: only future enrollments use the new version. Currently-enrolled dogs keep their existing program snapshot." + lessonMovePreviewNote(moves),
               confirmText: "Yes, update enrolled dogs",
               cancelText: "No, only future enrollments",
               tone: "warning",
@@ -1735,7 +1738,14 @@ export default function ShopManager({ openCreateOnMount = false, onCreateConsume
           }
         } catch { /* count endpoint failure isn't fatal — just skip cascade */ }
         const url = `/programs/${programForm.id}${cascade ? "?cascade=true" : ""}`;
-        await api.put(url, payload);
+        const { data: saved } = await api.put(url, payload);
+        const moved = saved?._lesson_moves || [];
+        if (moved.length) {
+          toast(lessonMovesHeadline(moved), {
+            description: <ul data-testid="sm-lesson-moves">{lessonMoveLines(moved).map((line, i) => <li key={i}>{line}</li>)}</ul>,
+            duration: 20000,
+          });
+        }
       } else {
         await api.post("/programs", payload);
       }

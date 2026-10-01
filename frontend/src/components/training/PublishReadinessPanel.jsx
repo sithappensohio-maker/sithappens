@@ -2,6 +2,8 @@
 // summary + cascade-impact preview. Reuses the EXISTING GET
 // /programs/{id}/publish-impact + POST /programs/{id}/publish endpoints
 // exactly as before. Cascade is never bundled into an ambiguous action.
+import { lessonMoveLines, lessonMovePreviewIntro } from "../../lib/lessonMoves";
+
 export default function PublishReadinessPanel({ isNew, draftMeta, validation, impact, loadingImpact, onPublish, saving, testid }) {
   if (isNew) return (
     <div className="rounded-xl border border-shBorder/50 bg-black/10 p-3" data-testid={testid}>
@@ -54,6 +56,15 @@ export default function PublishReadinessPanel({ isNew, draftMeta, validation, im
                 </div>
               ) : (
                 <p className="text-[10px] text-shTextMuted">No active enrollments are affected.</p>
+              )}
+              {impact.lesson_moves?.length > 0 && (
+                <div className="rounded-lg border border-shAccent/30 bg-shAccent/[0.05] p-2.5" data-testid={testid ? `${testid}-lesson-moves` : undefined}>
+                  <p className="text-[10px] text-shText">{lessonMovePreviewIntro(impact, "Publish & Update")}</p>
+                  <ul className="mt-1 space-y-0.5 list-disc pl-4">
+                    {lessonMoveLines(impact.lesson_moves).map((line, i) => <li key={i} className="text-[10px] text-shTextMuted">{line}</li>)}
+                  </ul>
+                  <p className="text-[9px] text-shTextMuted mt-1">Publish for Future Enrollments moves nobody — enrolled dogs keep the version they have.</p>
+                </div>
               )}
             </div>
           )}

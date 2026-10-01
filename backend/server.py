@@ -83,7 +83,7 @@ from domains.bookings import group_rank
 from domains.bookings import group_pricing as booking_group_pricing
 from domains.bookings import friends_family
 from domains.bookings import checkout_prices, credit_cover, checkout_discount, waitlist_spots, time_pool, renewal_misses, prepaid_sessions, prepaid_close
-from domains.school import ownership as school_ownership
+from domains.school import ownership as school_ownership, curriculum_moves
 from domains.bookings import late_day as late_day_checkout
 from domains.bookings import care as care_domain
 from domains.operations import end_of_day as end_of_day_domain
@@ -17653,41 +17653,10 @@ async def update_program(
     await db.programs.update_one({"id": program_id}, {"$set": update})
     existing.update(update)
 
-    cascaded = 0
-    if cascade:
-        new_modules = update.get("modules") or []
-        # All goal IDs still present in the updated program
-        surviving_goal_ids = {g.get("id") for m in new_modules for g in (m.get("goals") or []) if g.get("id")}
-        new_snapshot_base = {
-            "name": update["name"],
-            "type": update["type"],
-            "slug": update.get("slug"),
-            "description": update.get("description", ""),
-            "focus": update.get("focus", ""),
-            "format": update.get("format"),
-            "modules": new_modules,
-            "completion_rule": update.get("completion_rule") or _default_completion_rule(),
-            "estimated_weeks": update.get("estimated_weeks"),
-            "school_support": update.get("school_support") or {},
-            "school_onboarding": update.get("school_onboarding") or {},
-            "recommended_next_program_slugs": list(update.get("recommended_next_program_slugs") or []),
-            "prereq_slugs": list(update.get("prereq_slugs") or []),
-        }
-        cursor = db.dog_programs.find({"program_id": program_id, "status": "active"}, {"_id": 0})
-        async for enr in cursor:
-            old_progress = enr.get("goal_progress") or {}
-            # Drop progress entries for goals that no longer exist; init new goals.
-            merged = _empty_progress(new_modules)
-            for gid, prog in old_progress.items():
-                if gid in surviving_goal_ids and gid in merged:
-                    merged[gid] = prog
-            await db.dog_programs.update_one(
-                {"id": enr["id"]},
-                {"$set": {"program_snapshot": new_snapshot_base, "goal_progress": merged}},
-            )
-            cascaded += 1
-
-    existing["_cascaded_enrollments"] = cascaded
+    # Push to active enrollments; anyone on a removed lesson is moved (audit #52).
+    pushed = await curriculum_moves.push(program_id, update, actor=_, source="update") if cascade else {"cascaded": 0, "moves": []}
+    existing["_cascaded_enrollments"] = pushed["cascaded"]
+    existing["_lesson_moves"] = pushed["moves"]
     return existing
 
 
@@ -17743,6 +17712,7 @@ async def program_publish_impact(program_id: str, _: dict = Depends(require_admi
         await _validate_program_structure(draft_modules),
         await _validate_program_pathways(draft, current_program_id=program_id),
     )
+    impact.update(await curriculum_moves.preview(program_id, draft_modules))   # who a cascade would move (audit #52)
     return impact
 
 
@@ -17750,9 +17720,8 @@ async def program_publish_impact(program_id: str, _: dict = Depends(require_admi
 async def publish_program(program_id: str, cascade: bool = False, _: dict = Depends(require_admin_and_permission("manage_training_content"))):
     """Program Studio (Phase 2) — apply a saved draft to the live program.
     Blocks (422) on any structural validation ERROR (never on warnings) so
-    a structurally broken draft can't publish silently. `cascade` behaves
-    identically to update_program's cascade — copied rather than shared so
-    that already-tested code path is never touched by this addition."""
+    a structurally broken draft can't publish silently. `cascade` is the
+    same push update_program uses (domains/school/curriculum_moves.py)."""
     existing = await db.programs.find_one({"id": program_id}, {"_id": 0})
     if not existing:
         raise HTTPException(status_code=404, detail="Program not found")
@@ -17772,35 +17741,9 @@ async def publish_program(program_id: str, cascade: bool = False, _: dict = Depe
     existing.update(update)
     existing.pop("draft", None)
 
-    cascaded = 0
-    if cascade:
-        new_modules = update.get("modules") or []
-        surviving_goal_ids = {g.get("id") for m in new_modules for g in (m.get("goals") or []) if g.get("id")}
-        new_snapshot_base = {
-            "name": update["name"], "type": update["type"], "slug": update.get("slug"),
-            "description": update.get("description", ""), "focus": update.get("focus", ""),
-            "format": update.get("format"), "modules": new_modules,
-            "completion_rule": update.get("completion_rule") or _default_completion_rule(),
-            "estimated_weeks": update.get("estimated_weeks"),
-            "school_support": update.get("school_support") or {},
-            "school_onboarding": update.get("school_onboarding") or {},
-            "recommended_next_program_slugs": list(update.get("recommended_next_program_slugs") or []),
-            "prereq_slugs": list(update.get("prereq_slugs") or []),
-        }
-        cursor = db.dog_programs.find({"program_id": program_id, "status": "active"}, {"_id": 0})
-        async for enr in cursor:
-            old_progress = enr.get("goal_progress") or {}
-            merged = _empty_progress(new_modules)
-            for gid, prog in old_progress.items():
-                if gid in surviving_goal_ids and gid in merged:
-                    merged[gid] = prog
-            await db.dog_programs.update_one(
-                {"id": enr["id"]},
-                {"$set": {"program_snapshot": new_snapshot_base, "goal_progress": merged}},
-            )
-            cascaded += 1
-
-    existing["_cascaded_enrollments"] = cascaded
+    pushed = await curriculum_moves.push(program_id, update, actor=_, source="publish") if cascade else {"cascaded": 0, "moves": []}
+    existing["_cascaded_enrollments"] = pushed["cascaded"]
+    existing["_lesson_moves"] = pushed["moves"]
     return existing
 
 

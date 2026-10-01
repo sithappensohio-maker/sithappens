@@ -201,3 +201,40 @@ describe("the analytics dashboard", () => {
     expect(document.querySelector('[role="alert"]').textContent).toContain("Nope");
   });
 });
+
+describe("saving a training program from the Shop Manager (audit #52)", () => {
+  const MOVE = { enrollment_id: "e1", dog_name: "Rex", rule: "next_in_module", from_lesson_name: "Hand target",
+                 to_lesson_name: "Check-ins", to_module_name: "Foundations" };
+  const PROGRAM = { id: "t1", name: "Rock Solid Recall", type: "private_lessons", format: { count: 1, unit: "modules" }, price: 119,
+                    modules: [{ id: "m1", name: "Foundations", order: 0, goals: [], lessons: [{ id: "l-c", name: "Check-ins", order: 0 }] }] };
+
+  test("the question lists who would move, and the result says who did", async () => {
+    const base = api.get.getMockImplementation();
+    api.get.mockImplementation((url) => {
+      if (url === "/programs/t1") return Promise.resolve({ data: PROGRAM });
+      if (url.includes("active-enrollments-count")) return Promise.resolve({ data: { count: 1 } });
+      if (url.includes("/homework-templates")) return Promise.resolve({ data: [] });
+      return base(url);
+    });
+    api.post.mockReset();
+    api.post.mockResolvedValue({ data: { students_on_removed_lessons: 1, lesson_moves: [MOVE] } });
+    api.put.mockReset();
+    api.put.mockResolvedValue({ data: { ...PROGRAM, _lesson_moves: [MOVE] } });
+    const { toast } = require("sonner");
+    toast.mockClear();
+    await mount(<ShopManager />);
+    const row = byTestId("sm-item-row-t1");
+    const edit = [...row.querySelectorAll("button")].find((b) => b.textContent === "Edit");
+    await act(async () => { edit.click(); });
+    await act(async () => { await Promise.resolve(); await Promise.resolve(); });
+    await act(async () => { byTestId("prog-save").click(); });
+    for (let i = 0; i < 4; i++) await act(async () => { await Promise.resolve(); });
+    expect(api.post).toHaveBeenCalledWith("/programs/t1/cascade-preview", expect.objectContaining({ modules: expect.any(Array) }));
+    expect(byTestId("confirm-dialog").textContent).toContain('• Rex: "Hand target" → "Check-ins" (Foundations)');
+    await act(async () => { byTestId("confirm-yes").click(); });
+    for (let i = 0; i < 4; i++) await act(async () => { await Promise.resolve(); });
+    expect(api.put).toHaveBeenCalledWith("/programs/t1?cascade=true", expect.any(Object));
+    expect(toast).toHaveBeenCalledWith("1 enrolled dog changed lesson because the course changed", expect.objectContaining({ duration: 20000 }));
+    noReferenceErrors();
+  });
+});
