@@ -281,16 +281,19 @@ export default function DailyReviewQueue({ onClose, onReviewed, initialItem = nu
   );
 }
 
-function ReviewVideo({ homeworkId, mediaId }) {
+export function ReviewVideo({ homeworkId, mediaId }) {
   const [src, setSrc] = useState("");
+  const [failed, setFailed] = useState(false);
   useEffect(() => {
     (async () => {
       try {
         const { data } = await api.get(`/homework/${homeworkId}/media/${mediaId}`);
         setSrc(data.data || "");
-      } catch { /* ignore */ }
+        if (!data.data) setFailed(true);
+      } catch { setFailed(true); }   // say so, never "Loading video…" forever (audit #50)
     })();
   }, [homeworkId, mediaId]);
+  if (failed) return <p className="text-[13px] text-shAccent mt-2 font-black uppercase tracking-widest" data-testid="review-video-failed"><i className="fas fa-triangle-exclamation mr-1"/>This video couldn't be loaded.</p>;
   if (!src) return <p className="text-[13px] text-shTextMuted mt-2 font-black uppercase tracking-widest"><i className="fas fa-spinner fa-spin mr-1"/>Loading video…</p>;
   return (
     <div className="mt-2" data-testid="review-video">

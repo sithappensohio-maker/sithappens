@@ -15026,7 +15026,10 @@ async def get_day_media(homework_id: str, media_id: str, user: dict = Depends(ge
     hw = await db.homework.find_one({"id": homework_id}, {"_id": 0, "client_id": 1})
     if not hw:
         raise HTTPException(status_code=404, detail="Homework not found")
-    if user.get("role") != "admin" and hw.get("client_id") != user.get("client_id"):
+    # The family, or staff who review training (the review queue's own
+    # permission) — a trainer can watch the practice they're judging (audit #50).
+    reviewer = user.get("role") in ("admin", "employee") and _perms_for(user).get("manage_training_sessions")
+    if not reviewer and (not user.get("client_id") or hw.get("client_id") != user.get("client_id")):
         raise HTTPException(status_code=403, detail="Not allowed")
     m = await db.homework_media.find_one({"id": media_id, "homework_id": homework_id}, {"_id": 0})
     if not m:

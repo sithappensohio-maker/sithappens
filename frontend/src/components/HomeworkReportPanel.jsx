@@ -280,8 +280,9 @@ export default function HomeworkReportPanel({ homeworkId, focus = null, onReview
 }
 
 
-function InlineHomeworkVideo({ homeworkId, mediaId }) {
+export function InlineHomeworkVideo({ homeworkId, mediaId }) {
   const [src, setSrc] = useState("");
+  const [failed, setFailed] = useState(false);
   useEffect(() => {
     let alive = true; let cleanup = () => {};
     loadSchoolMediaUrl(mediaId).then((media) => {
@@ -289,10 +290,14 @@ function InlineHomeworkVideo({ homeworkId, mediaId }) {
     }).catch(() => {
       // Generic Homework media is intentionally outside the School media
       // boundary; retain the legacy endpoint as a fallback for those rows.
-      api.get(`/homework/${homeworkId}/media/${mediaId}`).then(({ data }) => { if (alive) setSrc(data?.data || ""); }).catch(() => {});
+      api.get(`/homework/${homeworkId}/media/${mediaId}`).then(({ data }) => {
+        if (!alive) return;
+        setSrc(data?.data || ""); if (!data?.data) setFailed(true);
+      }).catch(() => { if (alive) setFailed(true); });   // audit #50
     });
     return () => { alive = false; cleanup(); };
   }, [homeworkId, mediaId]);
+  if (failed) return <p className="text-[11px] text-shAccent" data-testid={`hw-video-failed-${mediaId}`}><i className="fas fa-triangle-exclamation mr-1" />This video couldn't be loaded.</p>;
   if (!src) return <p className="text-[11px] text-shTextMuted"><i className="fas fa-spinner fa-spin mr-1" />Loading video…</p>;
   return <video src={src} controls playsInline className="w-full max-h-[420px] rounded-xl border border-shBorder bg-black" data-testid={`hw-video-${mediaId}`} />;
 }
