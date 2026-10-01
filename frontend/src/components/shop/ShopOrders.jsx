@@ -2,6 +2,7 @@ import { useEffect, useState } from "react";
 import { api } from "../../lib/api";
 import { giftCardEmailLine } from "../../lib/giftCardEmail";
 import { shopImageProps } from "../../lib/shopImage";
+import { pickupNote } from "../../lib/shopPolish";
 
 /**
  * What happened after the money moved.
@@ -70,14 +71,15 @@ export function orderState(order) {
   if (order.pickup_status === "picked_up") {
     return { label: "Picked up", tone: "text-shGreen", icon: "fa-circle-check" };
   }
-  if (order.pickup_status === "ready") {
+  if (order.pickup_status === "ready_for_pickup") {
     return { label: "Ready for pickup", tone: "text-shGreen", icon: "fa-box-open" };
+  }
+  // Items to collect that staff haven't marked ready yet — never "Completed".
+  if (order.pickup_status === "preparing") {
+    return { label: "Being prepared", tone: "text-shOrange", icon: "fa-clock" };
   }
   if (order.fulfillment_status === "fulfilled") {
     return { label: "Completed", tone: "text-shGreen", icon: "fa-circle-check" };
-  }
-  if (order.fulfillment_status === "failed") {
-    return { label: "Needs attention", tone: "text-shOrange", icon: "fa-triangle-exclamation" };
   }
   return { label: "Being prepared", tone: "text-shOrange", icon: "fa-clock" };
 }
@@ -359,13 +361,13 @@ export function OrderDetail({ order, onBack, onBuyAgain, onOpenItem, onOpenCours
         )}
       </div>
 
-      {order.pickup_status && order.pickup_status !== "picked_up" && (
+      {["preparing", "ready"].includes(pickupNote(order)) && (
         <p className="mt-4 text-[12px] text-shTextMuted border border-shBorder rounded-lg p-3"
            data-testid="shop-order-pickup-note">
           <i className="fas fa-store mr-1.5" aria-hidden="true" />
-          {order.pickup_status === "ready"
+          {pickupNote(order) === "ready"
             ? "Ready to collect at Sit Happens — bring this order number."
-            : "We'll let you know as soon as this is ready to collect."}
+            : "We'll email you as soon as it's ready to collect."}
         </p>
       )}
     </div>

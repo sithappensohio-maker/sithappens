@@ -100,6 +100,7 @@ from domains.gift_cards import online as gift_card_online
 from domains.shop import media as shop_media_services
 from domains.shop import relationships as shop_relationships
 from domains.shop import orders as shop_orders_view
+from domains.shop import pickup as shop_pickup
 from domains.shop import analytics as shop_analytics
 from domains.shop import analytics_reports as shop_analytics_reports
 from domains.shop import guest as shop_guest
@@ -43257,6 +43258,8 @@ async def update_shop_order_fulfillment(order_id: str, body: ShopOrderFulfillmen
             status_code=400,
             detail=f"This order's pickup status must be '{transition['from']}' before it can be marked '{transition['to']}'.",
         )
+    if body.action == "mark_ready":   # only the request that made it ready tells the customer (once)
+        result["ready_email"] = await shop_pickup.email_ready(db, result, settings=await get_settings(), default_settings=_default_settings)
     return result
 
 

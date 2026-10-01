@@ -285,3 +285,25 @@ describe("Shop Manager program save runs Publish's checks (audit #53)", () => {
     noReferenceErrors();
   });
 });
+
+describe("Mark Ready tells staff what happened to the customer's email", () => {
+  test("a sent email says who it went to", async () => {
+    const ORDER = { id: "so-1", status: "paid", fulfillment_status: "fulfilled", pickup_status: "preparing",
+                    client_name: "Dana", total: 40, created_at: "2026-10-01T12:00:00Z",
+                    lines: [{ kind: "product", name: "Rope Leash", quantity: 2 }] };
+    const base = api.get.getMockImplementation();
+    api.get.mockImplementation((url) => (url.includes("/admin/shop-orders") ? Promise.resolve({ data: { orders: [ORDER] } }) : base(url)));
+    api.post.mockReset();
+    api.post.mockResolvedValue({ data: { ...ORDER, pickup_status: "ready_for_pickup", ready_email: { state: "sent", to: "dana@example.com" } } });
+    const { toast } = require("sonner");
+    toast.success.mockClear();
+    await mount(<ShopManager />);
+    await act(async () => { byTestId("sm-tab-orders").click(); });
+    for (let i = 0; i < 4; i++) await act(async () => { await Promise.resolve(); });
+    await act(async () => { byTestId("sm-order-mark-ready-so-1").click(); });
+    for (let i = 0; i < 4; i++) await act(async () => { await Promise.resolve(); });
+    expect(api.post).toHaveBeenCalledWith("/admin/shop-orders/so-1/fulfillment", { action: "mark_ready" });
+    expect(toast.success).toHaveBeenCalledWith("Marked ready — we emailed dana@example.com");
+    noReferenceErrors();
+  });
+});

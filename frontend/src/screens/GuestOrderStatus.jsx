@@ -6,6 +6,7 @@ import { EmptyState, PremiumButton, SectionCard } from "../components/premium";
 import { goTo } from "../lib/goTo";
 import { guestOrderToken, rememberGuestOrderToken } from "../lib/shopGuestCart";
 import { giftCardEmailLine } from "../lib/giftCardEmail";
+import { pickupNote } from "../lib/shopPolish";
 
 const money = (n) => `$${Number(n || 0).toFixed(2)}`;
 
@@ -178,11 +179,24 @@ export default function GuestOrderStatus() {
         </div>
       </div>
 
-      {paid && order.pickup_status === "preparing" && (
+      {pickupNote(order) === "preparing" && (
         <p className="text-[12px] text-shTextMuted border border-shBorder rounded-lg p-2.5"
            data-testid="guest-order-pickup">
           <i className="fas fa-store mr-1.5" />We&apos;re getting your order ready for collection at
           Sit Happens. We&apos;ll email you when it&apos;s waiting.
+        </p>
+      )}
+      {pickupNote(order) === "ready" && (
+        <p className="text-[12px] text-shText border border-shGreen/40 rounded-lg p-2.5"
+           data-testid="guest-order-pickup">
+          <i className="fas fa-box-open mr-1.5" />Your order is ready to collect at Sit Happens — bring
+          order #{String(order.order_id || order.id || "").slice(0, 8).toUpperCase()}.
+        </p>
+      )}
+      {pickupNote(order) === "picked_up" && (
+        <p className="text-[12px] text-shTextMuted border border-shBorder rounded-lg p-2.5"
+           data-testid="guest-order-pickup">
+          <i className="fas fa-circle-check mr-1.5" />Collected — thank you!
         </p>
       )}
       {paid && order.fulfillment_status === "pending" && (

@@ -514,6 +514,18 @@ EMAIL_TEMPLATES = [
         "variables": ["first_name", "client_name", "event_name", "event_day", "event_time", "confirmation_number"],
     },
     {
+        "slug": "client_shop_order_ready",
+        "name": "Shop Order Ready for Pickup",
+        "description": "Sent to the customer when staff press Mark Ready on a Shop order with things to collect at the front desk.",
+        "category": "client",
+        "audience": "client",
+        "default_subject": "Your order is ready for pickup — Order #{{order_number}}",
+        "default_title": "🛍️ Your order is ready for pickup",
+        "default_intro_html": "Hi {{first_name}}, your order <strong>#{{order_number}}</strong> is bagged and waiting for you at Sit Happens. Just give your name or order number at the front desk.",
+        "default_cta_text": "Open Sit Happens",
+        "variables": ["first_name", "client_name", "order_number", "items", "pickup_address", "business_phone"],
+    },
+    {
         "slug": "event_photos_ready",
         "name": "Event Photos Ready",
         "description": "Sent to a customer when their edited event photos are ready, with the download link.",

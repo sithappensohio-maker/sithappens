@@ -324,6 +324,28 @@ describe("the guest order page", () => {
     expect(byTestId("guest-order-pickup")).toBeTruthy();
   });
 
+  test("a ready order tells the guest to come and collect it", async () => {
+    api.get.mockResolvedValue({ data: {
+      order_id: "abcdef12-ord", status: "paid", fulfillment_status: "fulfilled", pickup_status: "ready_for_pickup",
+      total: 26.88, lines: [{ kind: "product", name: "Leash", quantity: 2, fulfillment_status: "fulfilled" }],
+    } });
+    renderOrder("abcdef12-ord", "?token=tok-r");
+    await flush();
+    expect(byTestId("guest-order-pickup").textContent).toContain("ready to collect");
+    expect(byTestId("guest-order-pickup").textContent).toContain("#ABCDEF12");
+  });
+
+  test.each([
+    ["a gift card only", { pickup_status: "not_applicable", lines: [{ kind: "gift_card", name: "Gift card", quantity: 1 }] }],
+    ["a full refund", { pickup_status: "preparing", refund_status: "full",
+                        lines: [{ kind: "product", name: "Leash", quantity: 2 }] }],
+  ])("no pickup line for %s", async (_why, patch) => {
+    api.get.mockResolvedValue({ data: { order_id: "ord-n", status: "paid", fulfillment_status: "fulfilled", total: 25, ...patch } });
+    renderOrder("ord-n", "?token=tok-n");
+    await flush();
+    expect(byTestId("guest-order-pickup")).toBeNull();
+  });
+
   test("the url token is remembered, so a reload without it still works", async () => {
     api.get.mockResolvedValue({ data: { order_id: "ord-2", status: "paid", total: 5, lines: [] } });
     renderOrder("ord-2", "?token=tok-2");

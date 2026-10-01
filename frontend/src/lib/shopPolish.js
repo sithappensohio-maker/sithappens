@@ -452,6 +452,36 @@ export function orderStatusLabel(o) {
   return "Payment Processing";
 }
 
+// Pickup — which note the customer sees about collecting their order:
+// "preparing" | "ready" | "picked_up", or null when there is nothing to
+// collect (gift cards, packs, programs), it isn't paid, or it was refunded.
+export function pickupNote(order) {
+  const o = order || {};
+  if (o.status !== "paid" || o.refund_status === "full") return null;
+  const toCollect = (o.lines || []).some((l) => l && l.kind === "product" && (l.quantity_refunded || 0) < (l.quantity || 0));
+  if (!toCollect) return null;
+  if (o.pickup_status === "preparing") return "preparing";
+  if (o.pickup_status === "ready_for_pickup") return "ready";
+  if (o.pickup_status === "picked_up") return "picked_up";
+  return null;
+}
+
+// What staff are told after Mark Ready / Mark Picked Up / Retry: the
+// server says what happened to the customer's "ready for pickup" email.
+export function pickupActionToast(action, data) {
+  if (action === "retry_fulfillment") return { level: "success", message: "Fulfillment retried" };
+  const email = (data || {}).ready_email;
+  if (action !== "mark_ready" || !email) return { level: "success", message: "Order updated" };
+  if (email.state === "sent") return { level: "success", message: `Marked ready — we emailed ${email.to}` };
+  if (email.state === "queued") {
+    return email.reason === "quiet_hours"
+      ? { level: "success", message: "Marked ready — the email goes out when Quiet Hours end" }
+      : { level: "success", message: "Marked ready — the email is queued and will retry" };
+  }
+  if (email.state === "skipped") return { level: "success", message: "Marked ready — no email (nothing left to collect)" };
+  return { level: "notice", message: "Marked ready — no email could be sent, so please let them know" };
+}
+
 // ---------------------------------------------------------------------------
 // Leaving a product page
 // ---------------------------------------------------------------------------

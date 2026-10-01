@@ -5,6 +5,7 @@ import PageHero from "../components/PageHero";
 import AdminTabs from "../components/admin/AdminTabs";
 import { useConfirm } from "../lib/useConfirm";
 import { previewLessonMoves, lessonMovePreviewNote, lessonMoveLines, lessonMovesHeadline } from "../lib/lessonMoves";
+import { pickupActionToast } from "../lib/shopPolish";
 import { structureRefusal, saveProblemLine, liveProblemsHeadline, LIVE_PROBLEMS_NOTE } from "../lib/programStudioPolish";
 import { ProductEditor } from "../components/ManageProductsPanel";
 import ShopAnalyticsDashboard from "../components/shop/ShopAnalyticsDashboard";
@@ -1119,9 +1120,10 @@ function OnlineOrdersTab() {
   const runAction = async (orderId, action) => {
     setBusyId(orderId);
     try {
-      await api.post(`/admin/shop-orders/${orderId}/fulfillment`, { action });
+      const { data } = await api.post(`/admin/shop-orders/${orderId}/fulfillment`, { action });
       load();
-      toast.success(action === "retry_fulfillment" ? "Fulfillment retried" : "Order updated");
+      const note = pickupActionToast(action, data);   // what happened to the customer's "ready" email
+      if (note.level === "success") toast.success(note.message); else toast(note.message);
     } catch (e) {
       toast.error(e?.response?.data?.detail || "Could not update this order");
     }

@@ -557,6 +557,10 @@ async def _outbox_row_still_wanted(action: dict | None) -> bool:
     staff have since corrected, or a second time once it has arrived."""
     if action and action.get("type") == "client_low_credit":
         return not await _about_someone_gone(action.get("client_id"), None)
+    if action and (action.get("meta") or {}).get("kind") == "shop_order_ready":
+        # Held overnight by Quiet Hours: only while it's still waiting to be collected.
+        from domains.shop import pickup as shop_pickup
+        return await shop_pickup.still_wanted(_db, (action.get("meta") or {}).get("order_id"))
     if action and action.get("type") == "notification_log" and (action.get("meta") or {}).get("job") in _AUTOMATIC_CLIENT_JOBS:
         meta = action.get("meta") or {}
         return not await _about_someone_gone(meta.get("client_id"), meta.get("dog_id"))
@@ -2807,6 +2811,41 @@ async def send_event_photos_ready(to_email: str, event: dict, order: dict, link:
         outbox_key=f"event_photos_ready:{order.get('id')}",
         on_success={"type": "notification_log", "key": f"event_photos_ready:{order.get('id')}",
                     "meta": {"kind": "event_photos_ready", "order_id": order.get("id"), "event_id": event.get("id")}},
+        queue_on_failure=True,
+    )
+
+
+async def send_shop_order_ready(to_email: str, order: dict, *, client_name: str, lines: list,
+                                site: dict, is_guest: bool) -> bool:
+    """A Shop order with things to collect is ready at the front desk. Sent
+    once, by whoever moves it to ready_for_pickup; durable via the outbox so
+    Quiet Hours hold it until morning rather than lose it."""
+    oid = order.get("id") or ""
+    ref = oid[:8].upper()
+    items = ", ".join(f"{int(l.get('quantity') or 1)}× {l.get('name') or 'Item'}" for l in lines)
+    city_line = " ".join(x for x in (f"{site['city']}," if site.get("city") else "", site.get("state") or "", site.get("zip") or "") if x)
+    address = ", ".join(x for x in (site.get("address_line"), city_line) if x)
+    pickup_at = " — ".join(x for x in (site.get("business_name") or "Sit Happens", address) if x)
+    rows = [("Order #", ref), ("Items", items), ("Pick up at", pickup_at)]
+    if site.get("phone"):
+        rows.append(("Questions?", site["phone"]))
+    first = (client_name or "").split(" ")[0] or "there"
+    return await _dispatch(
+        slug="client_shop_order_ready",
+        to_email=to_email,
+        ctx={"first_name": first, "client_name": client_name or "", "order_number": ref, "items": items,
+             "pickup_address": pickup_at, "business_phone": site.get("phone") or ""},
+        rows=rows,
+        cta_url=(f"{APP_PUBLIC_URL}/" if APP_PUBLIC_URL and not is_guest else None),
+        show_install=False,
+        fallback_subject="Your order is ready for pickup — Order #{{order_number}}",
+        fallback_title="🛍️ Your order is ready for pickup",
+        fallback_intro=("Hi {{first_name}}, your order <strong>#{{order_number}}</strong> is bagged and waiting for you "
+                        "at Sit Happens. Just give your name or order number at the front desk."),
+        fallback_cta_text="Open Sit Happens",
+        outbox_key=f"shop_order_ready:{oid}",
+        on_success={"type": "notification_log", "key": f"shop_order_ready:{oid}",
+                    "meta": {"kind": "shop_order_ready", "order_id": oid}},
         queue_on_failure=True,
     )
 

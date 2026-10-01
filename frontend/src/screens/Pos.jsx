@@ -41,7 +41,7 @@ import {
 import { useLiveRefresh } from "../lib/useLiveRefresh";
 import { useConfirm } from "../lib/useConfirm";
 import { classifyVisit, visitStatusLabel, visitCounts, filterVisits, sortVisits, isMissedCheckout } from "../lib/frontDeskVisits";
-import { creditPackStaffLine } from "../lib/shopPolish";
+import { creditPackStaffLine, pickupActionToast } from "../lib/shopPolish";
 import {
   FrontDeskStatCard, FrontDeskQuickAction, FrontDeskToolButton, FrontDeskStatusChip,
   FrontDeskDogAvatar, FrontDeskSectionHeader, CatalogCategoryTile,
@@ -801,9 +801,10 @@ export default function Pos({ onOpenShopManager } = {}) {
   const runOrderAction = async (orderId, action) => {
     setOrderActionBusyId(orderId);
     try {
-      await api.post(`/admin/shop-orders/${orderId}/fulfillment`, { action });
+      const { data } = await api.post(`/admin/shop-orders/${orderId}/fulfillment`, { action });
       await loadOnlineOrders();
-      toast.success(action === "retry_fulfillment" ? "Fulfillment retried" : "Order updated");
+      const note = pickupActionToast(action, data);   // what happened to the customer's "ready" email
+      if (note.level === "success") toast.success(note.message); else toast(note.message);
     } catch (e) {
       toast.error(e?.response?.data?.detail || "Could not update this order");
     }

@@ -358,7 +358,13 @@ describe("the order list", () => {
     [{ status: "pending_payment" }, "Not completed"],
     [{ status: "paid", fulfillment_status: "pending" }, "Being prepared"],
     [{ status: "paid", fulfillment_status: "fulfilled" }, "Completed"],
-    [{ status: "paid", fulfillment_status: "fulfilled", pickup_status: "ready" }, "Ready for pickup"],
+    [{ status: "paid", fulfillment_status: "fulfilled", pickup_status: "ready_for_pickup" }, "Ready for pickup"],
+    // Items still being got ready are never "Completed" (audit: pickup customers).
+    [{ status: "paid", fulfillment_status: "fulfilled", pickup_status: "preparing" }, "Being prepared"],
+    [{ status: "paid", fulfillment_status: "fulfilled", pickup_status: "picked_up" }, "Picked up"],
+    [{ status: "paid", fulfillment_status: "fulfilled", pickup_status: "not_applicable" }, "Completed"],
+    [{ status: "paid", fulfillment_status: "fulfilled", pickup_status: "preparing", refund_status: "full" }, "Refunded"],
+    [{ status: "paid", fulfillment_status: "fulfilled", pickup_status: "ready_for_pickup", refund_status: "partial" }, "Partly refunded"],
     [{ status: "paid", refund_status: "full" }, "Refunded"],
     [{ status: "paid", fulfillment_status: "fulfilled", refund_status: "partial" }, "Partly refunded"],
   ])("%j reads as %s", (order, expected) => {
