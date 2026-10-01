@@ -5,6 +5,7 @@ import PageHero from "../components/PageHero";
 import AdminTabs from "../components/admin/AdminTabs";
 import { useConfirm } from "../lib/useConfirm";
 import { previewLessonMoves, lessonMovePreviewNote, lessonMoveLines, lessonMovesHeadline } from "../lib/lessonMoves";
+import { structureRefusal, saveProblemLine, liveProblemsHeadline, LIVE_PROBLEMS_NOTE } from "../lib/programStudioPolish";
 import { ProductEditor } from "../components/ManageProductsPanel";
 import ShopAnalyticsDashboard from "../components/shop/ShopAnalyticsDashboard";
 import { PackEditor } from "../components/CreditPacksSettings";
@@ -1507,6 +1508,7 @@ export default function ShopManager({ openCreateOnMount = false, onCreateConsume
 
   // Program editor state (shared shape with Programs.jsx)
   const [programForm, setProgramForm] = useState(null);
+  const [programErr, setProgramErr] = useState("");   // audit #53: why a save was refused
   const [programOriginalImageId, setProgramOriginalImageId] = useState(null);
   const [programMeta, setProgramMeta] = useState(null);
   const [allPrograms, setAllPrograms] = useState([]);
@@ -1578,6 +1580,7 @@ export default function ShopManager({ openCreateOnMount = false, onCreateConsume
       setPackForm({ ...BLANK_PACK_FORM });
     } else if (key === "training_program") {
       setProgramOriginalImageId(null);
+      setProgramErr("");
       setProgramForm(blankProgramForm());
     }
   };
@@ -1625,6 +1628,7 @@ export default function ShopManager({ openCreateOnMount = false, onCreateConsume
       const raw = await fetchProgramById(item.id);
       if (!raw) { toast.error("Could not load program"); return; }
       setProgramOriginalImageId(raw.image_id || null);
+      setProgramErr("");
       setProgramForm({ ...raw });
     }
   };
@@ -1716,6 +1720,7 @@ export default function ShopManager({ openCreateOnMount = false, onCreateConsume
   };
 
   const saveProgram = async () => {
+    setProgramErr("");
     try {
       const payload = { ...programForm };
       if (programForm.id) {
@@ -1746,6 +1751,14 @@ export default function ShopManager({ openCreateOnMount = false, onCreateConsume
             duration: 20000,
           });
         }
+        // Audit #53: problems the course already had don't stop the save — say they're still there.
+        const old = saved?._live_problems || [];
+        if (old.length) {
+          toast(liveProblemsHeadline(old), {
+            description: <div data-testid="sm-live-problems"><p>{LIVE_PROBLEMS_NOTE}</p><ul>{old.map((line, i) => <li key={i}>• {line}</li>)}</ul></div>,
+            duration: 20000,
+          });
+        }
       } else {
         await api.post("/programs", payload);
       }
@@ -1757,12 +1770,16 @@ export default function ShopManager({ openCreateOnMount = false, onCreateConsume
       bumpRefresh();
     } catch (e) {
       toast.error(formatErr(e.response?.data?.detail) || "Save failed");
+      // Audit #53: what the save would have put live, listed in the editor (it stays open).
+      const refusal = structureRefusal(e);
+      if (refusal) setProgramErr([refusal.message, ...refusal.errors.map(p => `• ${saveProblemLine(p)}`)].join("\n"));
     }
   };
   const closeProgramWithoutSaving = () => {
     if (programForm?.image_id && programForm.image_id !== programOriginalImageId) {
       api.delete(`/shop/media/${programForm.image_id}`).catch(() => {});
     }
+    setProgramErr("");
     setProgramForm(null);
   };
 
@@ -1827,7 +1844,8 @@ export default function ShopManager({ openCreateOnMount = false, onCreateConsume
       {programForm && programMeta && (
         <ProgramEditor relatableItems={relatableItems}
                        program={programForm} setProgram={setProgramForm} meta={programMeta} allPrograms={allPrograms}
-                       onSave={saveProgram} onClose={closeProgramWithoutSaving} originalImageId={programOriginalImageId} />
+                       onSave={saveProgram} onClose={closeProgramWithoutSaving} originalImageId={programOriginalImageId}
+                       extraError={programErr} />
       )}
     </div>
   );

@@ -17,7 +17,7 @@ import uuid
 from typing import Optional
 
 from fastapi import Depends, HTTPException
-from pydantic import BaseModel
+from pydantic import BaseModel, ValidationError
 
 import school_curriculum_import as pkg
 
@@ -144,6 +144,22 @@ def _rebuild_key_map(program_src, saved_modules, previous):
             if lk and f"lesson:{lk}" not in key_map and j < len(saved_lessons):
                 key_map[f"lesson:{lk}"] = saved_lessons[j].get("id")
     return key_map
+
+def _plain_problems(exc) -> list:
+    """A refused course write as the plain sentences the import panel lists
+    (it renders strings, never objects)."""
+    if isinstance(exc, ValidationError):
+        return [f"{'.'.join(str(p) for p in (err.get('loc') or ())) or 'course'}: {err.get('msg')}"
+                for err in exc.errors()]
+    detail = getattr(exc, "detail", None)
+    if isinstance(detail, dict):
+        errs = detail.get("errors")
+        if isinstance(errs, list) and errs:
+            return [((e.get("plain") or e.get("message") or str(e)) if isinstance(e, dict) else str(e))
+                    for e in errs]
+        return [detail.get("msg") or detail.get("message") or "The course could not be saved."]
+    return [str(detail or "The course could not be saved.")]
+
 
 def register_curriculum_import(*, api, db, manage_dep, persist_school_media,
                                program_model, create_program, update_program, now_iso,
@@ -370,6 +386,7 @@ def register_curriculum_import(*, api, db, manage_dep, persist_school_media,
         # lesson's link is rewritten to the fresh id. A link the package did
         # NOT bundle is left exactly as authored — it may already exist here.
         hw_map: dict = {}
+        made_recipes: list = []   # created by THIS request, undone if the course is refused
         bundled = manifest.get('homework_templates') or []
         if bundled and create_homework_template and homework_template_model:
             for tpl in bundled:
@@ -384,6 +401,7 @@ def register_curriculum_import(*, api, db, manage_dep, persist_school_media,
                     hw_map[key] = existing_tpl['id']
                     continue
                 made = await create_homework_template(homework_template_model(**payload), user)
+                made_recipes.append(made['id'])
                 if key:
                     await db.homework_templates.update_one(
                         {'id': made['id']}, {'$set': {'import_source_key': key}})
@@ -421,6 +439,14 @@ def register_curriculum_import(*, api, db, manage_dep, persist_school_media,
             m_out = {k: v for k, v in module.items() if k != "source_key"}
             m_out["__source_key"] = module.get("source_key") or ""
             m_out["lessons"] = lessons_out
+            # A bundled recipe a module or skill links to is relinked like a
+            # lesson's (the .json template path already does all three).
+            if m_out.get("homework_template_id"):
+                m_out["homework_template_id"] = hw_map.get(m_out["homework_template_id"], m_out["homework_template_id"])
+            if m_out.get("goals"):
+                m_out["goals"] = [{**g, "homework_template_ids": _remap(g.get("homework_template_ids"))}
+                                  if isinstance(g, dict) and g.get("homework_template_ids") else g
+                                  for g in m_out["goals"]]
             modules_out.append(m_out)
 
         key_map = dict((existing or {}).get("import_key_map") or {})
@@ -431,6 +457,11 @@ def register_curriculum_import(*, api, db, manage_dep, persist_school_media,
 
         payload = {k: v for k, v in program_src.items()
                    if k not in ("source_key", "modules", "id")}
+        # The PACKAGE's welcome recipe is relinked like any bundled link; a
+        # course's own (kept below) never is.
+        if payload.get("welcome_homework_template_id"):
+            payload["welcome_homework_template_id"] = hw_map.get(
+                payload["welcome_homework_template_id"], payload["welcome_homework_template_id"])
         if existing and body.mode == "merge":
             # A course an author has been polishing keeps its own name and
             # settings on an ordinary re-import; "replace" is how you push
@@ -458,11 +489,24 @@ def register_curriculum_import(*, api, db, manage_dep, persist_school_media,
         payload.setdefault("type", "private_lessons")
         payload.setdefault("price", 0)
 
-        model = program_model(**payload)
+        try:
+            model = program_model(**payload)
+            if existing:
+                saved = await update_program(existing["id"], model,
+                                             cascade=body.cascade_active_enrollments,
+                                             save_as_draft=False, _=user)
+            else:
+                saved = await create_program(model, user)
+        except (HTTPException, ValidationError) as e:
+            # The course was refused (a problem it would put live — audit #53 —
+            # or any other check): undo this request's media and recipes so
+            # "Nothing was created" is true, and list why in plain words.
+            await _rollback_media(created)
+            for rid in made_recipes:
+                await db.homework_templates.delete_one({"id": rid})
+            raise HTTPException(status_code=422, detail={
+                "error_code": "invalid_curriculum_package", "errors": _plain_problems(e)})
         if existing:
-            saved = await update_program(existing["id"], model,
-                                         cascade=body.cascade_active_enrollments,
-                                         save_as_draft=False, _=user)
             # Reusing the id preserves enrollments/history. When the caller opts
             # into cascade (the Program Studio ZIP updater does), update_program
             # refreshes ACTIVE snapshots while preserving progress on surviving
@@ -471,8 +515,8 @@ def register_curriculum_import(*, api, db, manage_dep, persist_school_media,
             summary["active_enrollments_refreshed"] = int(
                 saved.get("_cascaded_enrollments") or 0)
             summary["lesson_moves"] = saved.get("_lesson_moves") or []   # audit #52
+            summary["existing_problems"] = saved.get("_live_problems") or []   # audit #53
         else:
-            saved = await create_program(model, user)
             summary["program_action"] = "created"
             summary["active_enrollments_refreshed"] = 0
         if source_key:

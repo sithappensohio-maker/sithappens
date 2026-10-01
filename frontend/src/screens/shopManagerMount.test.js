@@ -238,3 +238,50 @@ describe("saving a training program from the Shop Manager (audit #52)", () => {
     noReferenceErrors();
   });
 });
+
+describe("Shop Manager program save runs Publish's checks (audit #53)", () => {
+  const PROGRAM = { id: "t1", name: "Rock Solid Recall", type: "private_lessons", format: { count: 1, unit: "modules" }, price: 119,
+                    modules: [{ id: "m1", name: "Foundations", order: 0, goals: [], lessons: [] }] };
+  const openEditor = async () => {
+    const base = api.get.getMockImplementation();
+    api.get.mockImplementation((url) => {
+      if (url === "/programs/t1") return Promise.resolve({ data: PROGRAM });
+      if (url.includes("active-enrollments-count")) return Promise.resolve({ data: { count: 0 } });
+      if (url.includes("/homework-templates")) return Promise.resolve({ data: [] });
+      return base(url);
+    });
+    await mount(<ShopManager />);
+    const edit = [...byTestId("sm-item-row-t1").querySelectorAll("button")].find((b) => b.textContent === "Edit");
+    await act(async () => { edit.click(); });
+    await act(async () => { await Promise.resolve(); await Promise.resolve(); });
+  };
+  const save = async () => {
+    await act(async () => { byTestId("prog-save").click(); });
+    for (let i = 0; i < 4; i++) await act(async () => { await Promise.resolve(); });
+  };
+
+  test("a refused save lists the problems in the editor, which stays open", async () => {
+    const M = "This save would put a problem live that would stop students — fix it first. Nothing was saved.";
+    api.put.mockReset();
+    api.put.mockRejectedValue({ response: { status: 422, data: { detail: M, detail_object: { message: M, errors: [
+      { code: "broken_prerequisite", plain: "Skill 'Down' has a prerequisite that no longer exists." }] } } } });
+    await openEditor();
+    await save();
+    const box = byTestId("program-editor-err");
+    expect(box.textContent).toContain(M);
+    expect(box.textContent).toContain("• Skill 'Down' has a prerequisite that no longer exists.");
+    expect(byTestId("prog-save")).not.toBeNull();
+    noReferenceErrors();
+  });
+
+  test("a save over old problems goes through and says they're still there", async () => {
+    api.put.mockReset();
+    api.put.mockResolvedValue({ data: { ...PROGRAM, _live_problems: ["Lesson 'L1' has a timer block with no duration."] } });
+    const { toast } = require("sonner");
+    toast.mockClear();
+    await openEditor();
+    await save();
+    expect(toast).toHaveBeenCalledWith("Saved. This course still has a problem from before this save", expect.objectContaining({ duration: 20000 }));
+    noReferenceErrors();
+  });
+});

@@ -14,7 +14,8 @@ import ContentCompleteness from "./training/ContentCompleteness";
 import ProgramPreviewPanel from "./training/ProgramPreviewPanel";
 import PublishReadinessPanel from "./training/PublishReadinessPanel";
 import { computeLessonCompleteness, computeSkillCompleteness, resolveValidationTarget,
-         computeProgramReadiness, filterCurriculum, lessonNeighbours, firstIncomplete } from "../lib/programStudioPolish";
+         computeProgramReadiness, filterCurriculum, lessonNeighbours, firstIncomplete,
+         structureRefusal, saveProblemLine, resolveSaveProblemTarget, dropDeadLinks, curriculumIds } from "../lib/programStudioPolish";
 import HomeworkTemplateEditor from "./HomeworkTemplateEditor";
 import HuskyDogImage from "./brand/HuskyDogImage";
 import ModuleIconTile from "./school/ModuleIconTile";
@@ -97,6 +98,9 @@ export default function ProgramStudio({ programId, initialProgram, meta, allProg
   const [draftMeta, setDraftMeta] = useState(initialProgram.draft ? { saved_at: initialProgram.draft.saved_at } : null);
   const [selected, setSelected] = useState(null); // { moduleKey, lessonKey?, skillKey? }
   const [err, setErr] = useState("");
+  // Audit #53: what a refused Save Live / Create would have put live, with
+  // the modules it was sent with (so a click opens the right lesson).
+  const [saveProblems, setSaveProblems] = useState(null);
   const [saving, setSaving] = useState(false);
   const [validation, setValidation] = useState(null);
   const [validating, setValidating] = useState(false);
@@ -153,7 +157,9 @@ export default function ProgramStudio({ programId, initialProgram, meta, allProg
     const clone = { ...src, id: undefined, _key: uid(), name: `${src.name} (Copy)`, order: modules.length,
       goals: (src.goals || []).map(g => ({ ...g, id: undefined, _key: uid() })),
       lessons: (src.lessons || []).map(l => ({ ...l, id: undefined, _key: uid() })) };
-    set({ modules: [...modules, clone] });
+    // The copy's quiz can't send students back to the original's lessons.
+    const [detached] = dropDeadLinks([clone], { lessonIds: curriculumIds([src]).lessonIds });
+    set({ modules: [...modules, detached] });
   };
   const removeModule = async (key) => {
     const m = moduleByKey(key);
@@ -165,7 +171,7 @@ export default function ProgramStudio({ programId, initialProgram, meta, allProg
         : "This module has no skills yet.",
       confirmText: "Remove module", tone: "warning",
     }))) return;
-    set({ modules: modules.filter(m => m._key !== key) });
+    set({ modules: dropDeadLinks(modules.filter(x => x._key !== key), curriculumIds([m])) });
     if (selected?.moduleKey === key) setSelected(null);
   };
   const moveModule = (key, dir) => {
@@ -189,10 +195,14 @@ export default function ProgramStudio({ programId, initialProgram, meta, allProg
   };
   const removeSkill = (moduleKey, skillKey) => {
     const m = moduleByKey(moduleKey);
-    updateModule(moduleKey, {
-      goals: (m.goals || []).filter(g => g._key !== skillKey),
-      lessons: (m.lessons || []).map(l => ({ ...l, skill_ids: (l.skill_ids || []).filter(sid => sid !== skillKey && sid !== (m.goals.find(g=>g._key===skillKey)||{}).id) })),
+    const goneId = ((m.goals || []).find(g => g._key === skillKey) || {}).id;
+    const next = modules.map(x => x._key !== moduleKey ? x : {
+      ...x,
+      goals: (x.goals || []).filter(g => g._key !== skillKey),
+      lessons: (x.lessons || []).map(l => ({ ...l, skill_ids: (l.skill_ids || []).filter(sid => sid !== skillKey && sid !== goneId) })),
     });
+    // Skills anywhere in the course that listed it as a prerequisite or next step.
+    set({ modules: dropDeadLinks(next, { skillIds: [goneId] }) });
     if (selected?.skillKey === skillKey) setSelected({ moduleKey });
   };
   const moveSkill = (moduleKey, skillKey, dir) => {
@@ -218,7 +228,10 @@ export default function ProgramStudio({ programId, initialProgram, meta, allProg
   };
   const removeLesson = (moduleKey, lessonKey) => {
     const m = moduleByKey(moduleKey);
-    updateModule(moduleKey, { lessons: (m.lessons || []).filter(l => l._key !== lessonKey) });
+    const goneId = ((m.lessons || []).find(l => l._key === lessonKey) || {}).id;
+    const next = modules.map(x => x._key !== moduleKey ? x : { ...x, lessons: (x.lessons || []).filter(l => l._key !== lessonKey) });
+    // A quiz question that sent students back to it for review.
+    set({ modules: dropDeadLinks(next, { lessonIds: [goneId] }) });
     if (selected?.lessonKey === lessonKey) setSelected({ moduleKey });
   };
   const moveLesson = (moduleKey, lessonKey, dir) => {
@@ -243,7 +256,8 @@ export default function ProgramStudio({ programId, initialProgram, meta, allProg
   const copyFromProgram = (sourceProgramId) => {
     const src = allPrograms.find(p => p.id === sourceProgramId);
     if (!src) return;
-    const withFreshIds = withKeys(src).modules.map(m => ({
+    // Links into the other course (its skills, its lessons) stay behind.
+    const withFreshIds = dropDeadLinks(withKeys(src).modules, curriculumIds(src.modules)).map(m => ({
       ...m, id: undefined, _key: uid(), order: modules.length,
       goals: (m.goals || []).map(g => ({ ...g, id: undefined, _key: uid() })),
       lessons: (m.lessons || []).map(l => ({ ...l, id: undefined, _key: uid(), skill_ids: [] })),
@@ -265,7 +279,8 @@ export default function ProgramStudio({ programId, initialProgram, meta, allProg
   const saveState = saving ? "saving" : dirty ? "unsaved" : "saved";
 
   const saveLive = async () => {
-    setErr(""); setSaving(true);
+    setErr(""); setSaveProblems(null); setSaving(true);
+    const sentModules = modules;
     try {
       const payload = buildPayload();
       if (!isNew) {
@@ -289,7 +304,11 @@ export default function ProgramStudio({ programId, initialProgram, meta, allProg
         const { data } = await api.post("/programs", payload);
         onSaved(data);
       }
-    } catch (e) { setErr(formatErr(e.response?.data?.detail) || "Save failed"); }
+    } catch (e) {
+      setErr(formatErr(e.response?.data?.detail) || "Save failed");
+      const refusal = structureRefusal(e);
+      if (refusal) setSaveProblems({ errors: refusal.errors, modules: sentModules });
+    }
     finally { setSaving(false); }
   };
 
@@ -297,6 +316,7 @@ export default function ProgramStudio({ programId, initialProgram, meta, allProg
     if (isNew) { setErr("Create the program first, then you can save drafts of further edits."); return; }
     setErr(""); setSaving(true);
     try {
+      setSaveProblems(null);
       const { data } = await api.put(`/programs/${programId}?save_as_draft=true`, buildPayload());
       setDraftMeta({ saved_at: data.draft?.saved_at });
       setValidation(null);
@@ -328,14 +348,15 @@ export default function ProgramStudio({ programId, initialProgram, meta, allProg
       setErr("This draft has structural errors that must be fixed before it can be published — see the Validation checklist.");
       return;
     }
-    setErr(""); setSaving(true);
+    setErr(""); setSaveProblems(null); setSaving(true);
     try {
       const { data } = await api.post(`/programs/${programId}/publish${cascade ? "?cascade=true" : ""}`);
       setDraftMeta(null);
       setImpact(null);
       onSaved(data);
     } catch (e) {
-      const detail = e.response?.data?.detail;
+      // lib/api.js flattens `detail` to its sentence; the list is on detail_object.
+      const detail = e.response?.data?.detail_object || e.response?.data?.detail;
       if (detail?.errors) setValidation({ valid: false, errors: detail.errors, warnings: [] });
       setErr(formatErr(detail?.message || detail) || "Publish failed");
     } finally { setSaving(false); }
@@ -452,7 +473,26 @@ export default function ProgramStudio({ programId, initialProgram, meta, allProg
 
         <div className="relative px-3 sm:px-6 py-2.5 sm:py-3 border-t border-shBorder/70 bg-black/30 flex flex-col-reverse sm:flex-row sm:flex-wrap justify-between items-stretch sm:items-center gap-2 sm:gap-3 shrink-0">
           {err
-            ? <p className="text-red-400 text-[12px] font-bold flex-1 min-w-[200px] rounded-xl border border-red-500/20 bg-red-500/[0.06] px-3 py-2" data-testid="studio-err">{err}</p>
+            ? (
+              <div className="flex-1 min-w-[200px] rounded-xl border border-red-500/20 bg-red-500/[0.06] px-3 py-2">
+                <p className="text-red-400 text-[12px] font-bold" data-testid="studio-err">{err}</p>
+                {saveProblems?.errors?.length > 0 && (
+                  <ul className="mt-1.5 space-y-1 max-h-40 overflow-y-auto" data-testid="studio-save-problems">
+                    {saveProblems.errors.map((p, i) => {
+                      const target = resolveSaveProblemTarget(p, saveProblems.modules);
+                      return (
+                        <li key={i} className="text-[12px] text-shText">
+                          {target
+                            ? <button type="button" onClick={() => handleValidationNavigate(target)} data-testid={`studio-save-problem-${i}`}
+                                      className="text-left underline decoration-dotted underline-offset-2 hover:text-white">{saveProblemLine(p)}</button>
+                            : <span data-testid={`studio-save-problem-${i}`}>{saveProblemLine(p)}</span>}
+                        </li>
+                      );
+                    })}
+                  </ul>
+                )}
+              </div>
+            )
             : (
               /* Honest save state. There is no autosave here, so "Saved" is
                  only ever shown when the current draft genuinely matches what

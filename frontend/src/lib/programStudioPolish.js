@@ -86,6 +86,91 @@ export function resolveValidationTarget(issue, modules) {
   return { moduleKey: mod._key };
 }
 
+// Audit #53 — every live save runs Publish's checks. A save that would put a
+// new problem live is refused with {error_code: "course_structure_problems",
+// message, errors:[{code, message, plain, module_id, lesson_id, ...,
+// module_index, lesson_index, skill_index}]}; lib/api.js flattens `detail`
+// to the sentence, so the list is read from `detail_object`. The course
+// pathway refusal has the same {message, errors} shape and lists too.
+export function structureRefusal(e) {
+  const d = e?.response?.data?.detail_object;
+  if (!d || !Array.isArray(d.errors) || d.errors.length === 0) return null;
+  return { message: d.message || d.msg || "", errors: d.errors };
+}
+
+// One plain sentence per refused problem.
+export function saveProblemLine(issue) {
+  if (typeof issue === "string") return issue;
+  return issue?.plain || issue?.message || "This course has a problem that stops it working for students.";
+}
+
+// Where a refused problem sits, for a click that opens it. By id first (like
+// the Validation checklist); a lesson/skill/module that only got its id in
+// the refused save is found by its position in the modules that were sent.
+export function resolveSaveProblemTarget(issue, modules) {
+  if (!issue || typeof issue !== "object") return null;
+  // Not about any module/lesson/skill (e.g. a pathway slug): nothing to open.
+  if (!issue.module_id && !issue.lesson_id && !issue.skill_id && !Number.isInteger(issue.module_index)) return null;
+  const byId = resolveValidationTarget(issue, modules);
+  if (byId && (byId.lessonKey || byId.skillKey || !(issue.lesson_id || issue.skill_id))) return byId;
+  const mod = Number.isInteger(issue.module_index) ? (modules || [])[issue.module_index] : null;
+  if (!mod) return byId;
+  if (Number.isInteger(issue.lesson_index) && (mod.lessons || [])[issue.lesson_index]) {
+    return { moduleKey: mod._key, lessonKey: mod.lessons[issue.lesson_index]._key };
+  }
+  if (Number.isInteger(issue.skill_index) && (mod.goals || [])[issue.skill_index]) {
+    return { moduleKey: mod._key, skillKey: mod.goals[issue.skill_index]._key };
+  }
+  return byId || { moduleKey: mod._key };
+}
+
+// After a save that went through: problems the live course already had
+// before it (they don't stop saving), so they aren't forgotten.
+export function liveProblemsHeadline(problems) {
+  const n = Array.isArray(problems) ? problems.length : 0;
+  if (!n) return "";
+  return `Saved. This course still has ${n === 1 ? "a problem" : `${n} problems`} from before this save`;
+}
+// A link to a skill or lesson that is gone (deleted, or — in a copy — left
+// behind in the course it was copied from) is a problem that would now stop
+// the save, so deleting and copying drop those links. Only fields that are
+// already there are touched.
+export function dropDeadLinks(modules, { skillIds = [], lessonIds = [] } = {}) {
+  const skills = new Set((skillIds || []).filter(Boolean));
+  const lessons = new Set((lessonIds || []).filter(Boolean));
+  if (!skills.size && !lessons.size) return modules;
+  return (modules || []).map(m => {
+    const out = { ...m };
+    if (Array.isArray(m.goals)) {
+      out.goals = m.goals.map(g => {
+        const ng = { ...g };
+        if (Array.isArray(g.prerequisite_skill_ids)) ng.prerequisite_skill_ids = g.prerequisite_skill_ids.filter(id => !skills.has(id));
+        if (g.suggested_next_skill_id && skills.has(g.suggested_next_skill_id)) ng.suggested_next_skill_id = null;
+        return ng;
+      });
+    }
+    if (Array.isArray(m.lessons)) {
+      out.lessons = m.lessons.map(l => (Array.isArray(l.skill_ids) ? { ...l, skill_ids: l.skill_ids.filter(id => !skills.has(id)) } : l));
+    }
+    if (m.module_quiz && Array.isArray(m.module_quiz.questions)) {
+      out.module_quiz = { ...m.module_quiz, questions: m.module_quiz.questions.map(q => (q && lessons.has(q.review_lesson_id) ? { ...q, review_lesson_id: null } : q)) };
+    }
+    return out;
+  });
+}
+
+// Every skill and lesson id in some modules (for dropDeadLinks).
+export function curriculumIds(modules) {
+  const skillIds = [], lessonIds = [];
+  for (const m of modules || []) {
+    for (const g of m.goals || []) if (g.id) skillIds.push(g.id);
+    for (const l of m.lessons || []) if (l.id) lessonIds.push(l.id);
+  }
+  return { skillIds, lessonIds };
+}
+
+export const LIVE_PROBLEMS_NOTE = "They didn't stop this save, but students can get stuck where they are, and Publish won't go through until they're fixed.";
+
 // ---------------------------------------------------------------------------
 // Program templates — export a program as a portable, editable blueprint and
 // re-import it to seed a brand-new program. A template bundles EVERYTHING the
@@ -101,7 +186,7 @@ export function resolveValidationTarget(issue, modules) {
 // ---------------------------------------------------------------------------
 export const TEMPLATE_STRIP_FIELDS = [
   "id", "_id", "slug", "created_at", "is_default", "owner_dog_id",
-  "draft", "practice_coach_readiness", "_cascaded_enrollments", "_lesson_moves",
+  "draft", "practice_coach_readiness", "_cascaded_enrollments", "_lesson_moves", "_live_problems",
 ];
 // Homework (Practice Coach) recipes keep their `id` in the bundle purely so
 // import can remap each lesson's link after recreating them; only true

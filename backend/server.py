@@ -83,7 +83,7 @@ from domains.bookings import group_rank
 from domains.bookings import group_pricing as booking_group_pricing
 from domains.bookings import friends_family
 from domains.bookings import checkout_prices, credit_cover, checkout_discount, waitlist_spots, time_pool, renewal_misses, prepaid_sessions, prepaid_close
-from domains.school import ownership as school_ownership, curriculum_moves
+from domains.school import ownership as school_ownership, curriculum_moves, structure_gate
 from domains.bookings import late_day as late_day_checkout
 from domains.bookings import care as care_domain
 from domains.operations import end_of_day as end_of_day_domain
@@ -16928,10 +16928,16 @@ async def _validate_program_structure(modules: List[dict]) -> Dict[str, Any]:
         async for t in db.homework_templates.find({"id": {"$in": list(referenced_template_ids)}}, {"_id": 0, "id": 1, "active": 1}):
             templates_by_id[t["id"]] = t
 
+    def _num(v) -> float:   # a stored "30s" is no duration, never a crash (audit #53)
+        try:
+            return float(v or 0)
+        except (TypeError, ValueError):
+            return 0.0
+
     def _check_homework_refs(ids: List[str], where: Dict[str, Any]):
         for tid in ids:
             if tid not in templates_by_id:
-                errors.append({"code": "broken_homework_ref", "message": "References a homework template that no longer exists.", **where})
+                errors.append({"code": "broken_homework_ref", "message": "References a homework template that no longer exists.", "homework_template_id": tid, **where})
             elif not templates_by_id[tid].get("active", True):
                 warnings.append({"code": "inactive_homework_ref", "message": "References a homework template that is currently inactive.", **where})
 
@@ -16993,9 +16999,9 @@ async def _validate_program_structure(modules: List[dict]) -> Dict[str, Any]:
                         errors.append({"code": "knowledge_check_invalid_answer", "message": f"Lesson '{l.get('name', '')}' has a knowledge check whose correct answer is no longer one of its answer options.", **where_b})
                     if items and len(items) < 2:
                         warnings.append({"code": "knowledge_check_few_options", "message": f"Lesson '{l.get('name', '')}' has a knowledge check with fewer than two answer options.", **where_b})
-                if btype == "timer" and int((block.get("config") or {}).get("seconds") or 0) <= 0:
+                if btype == "timer" and _num((block.get("config") or {}).get("seconds")) <= 0:
                     errors.append({"code": "timer_missing_duration", "message": f"Lesson '{l.get('name', '')}' has a timer block with no duration.", **where_b})
-                if btype == "rep_counter" and int((block.get("config") or {}).get("target") or 0) <= 0:
+                if btype == "rep_counter" and _num((block.get("config") or {}).get("target")) <= 0:
                     errors.append({"code": "rep_counter_missing_target", "message": f"Lesson '{l.get('name', '')}' has a rep counter with no target.", **where_b})
 
             # Online School Phase 2 — checkpoint rubric validation. A lesson
@@ -17587,6 +17593,7 @@ async def create_program(body: ProgramIn, _: dict = Depends(require_admin_and_pe
     pathway_validation = await _validate_program_pathways(doc)
     if not pathway_validation["valid"]:
         raise HTTPException(status_code=422, detail={"message": "Program has invalid course pathways.", "errors": pathway_validation["errors"]})
+    await structure_gate.gate(doc["modules"], None)   # Publish's checks, before it goes live (audit #53)
     doc["is_default"] = False
     doc["owner_dog_id"] = None
     doc["created_at"] = now_iso()
@@ -17649,9 +17656,12 @@ async def update_program(
     pathway_validation = await _validate_program_pathways(update, current_program_id=program_id)
     if not pathway_validation["valid"]:
         raise HTTPException(status_code=422, detail={"message": "Program has invalid course pathways.", "errors": pathway_validation["errors"]})
+    # Publish's checks: a problem this save adds is refused; one already live doesn't block (audit #53).
+    live_problems = await structure_gate.gate(update["modules"], existing.get("modules") or [])
 
     await db.programs.update_one({"id": program_id}, {"$set": update})
     existing.update(update)
+    existing["_live_problems"] = live_problems
 
     # Push to active enrollments; anyone on a removed lesson is moved (audit #52).
     pushed = await curriculum_moves.push(program_id, update, actor=_, source="update") if cascade else {"cascaded": 0, "moves": []}

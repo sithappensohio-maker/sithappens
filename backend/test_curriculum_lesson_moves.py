@@ -22,6 +22,13 @@ ADMIN = {"id": f"{TAG}-owner", "role": "admin", "name": "Owner", "email": "lesso
 BASE = [("M1", ["A", "B", "C"]), ("M2", ["D", "E"]), ("M3", ["F"])]
 
 
+def _quiz(mname):
+    """A Module Quiz good enough to save live (audit #53 runs Publish's checks on every save)."""
+    return server.ModuleQuizConfigIn(enabled=True, questions=[server.ModuleQuizQuestionIn(
+        id=f"q-{mname}", question="Where does the treat go?", correct_option_id="o1", explanation="Above the nose.",
+        options=[server.ModuleQuizOptionIn(id="o1", text="Above the nose"), server.ModuleQuizOptionIn(id="o2", text="On the floor")])])
+
+
 def _program_in(spec, ids=None, quiz=(), inactive=()):
     ids = ids or {}
     modules = []
@@ -32,7 +39,7 @@ def _program_in(spec, ids=None, quiz=(), inactive=()):
                                    skill_ids=[gid] if gid else [], success_criteria="ok") for i, ln in enumerate(lnames)]
         modules.append(server.ModuleIn(**({"id": ids[("m", mname)]} if ("m", mname) in ids else {}), name=mname, order=mi,
                                        goals=[goal], lessons=lessons,
-                                       module_quiz=server.ModuleQuizConfigIn(enabled=True) if mname in quiz else None))
+                                       module_quiz=_quiz(mname) if mname in quiz else None))
     return server.ProgramIn(name=f"{TAG} {uuid.uuid4().hex[:6]}", type="private_lessons", format={"count": 3, "unit": "modules"},
                             price=0, delivery_mode="both", modules=modules)
 

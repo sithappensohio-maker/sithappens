@@ -67,11 +67,17 @@ def _program(delivery_mode="both", n_lessons=2):
     prog = run(server.create_program(body, admin))
     m = prog["modules"][0]
     goal_ids = [g["id"] for g in m["goals"]]
+    # A checkpoint lesson needs a Practice recipe to go live (Publish's rule,
+    # which every live save now runs too — audit #53).
+    practice = run(server.create_homework_template(server.HomeworkTemplateIn(
+        name=f"{TAG} Practice {uuid.uuid4().hex[:6]}", sections=[{"id": "practice", "title": "Practice", "instructions": "", "fields": []}]),
+        admin))
     lessons = [
         server.LessonIn(
             name=f"Lesson {i + 1}", order=i, active=True, skill_ids=[goal_ids[i]],
             client_overview="overview", why_it_matters="matters.",
             success_criteria="5 in a row.", checkpoint=_checkpoint_config(),
+            suggested_homework_template_ids=[practice["id"]],
         ) for i in range(n_lessons)
     ]
     fixed = server.ProgramIn(

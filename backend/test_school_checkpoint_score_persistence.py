@@ -59,11 +59,17 @@ def _seed(delivery_mode="in_person", lessons=2):
         ADMIN))
     module = prog["modules"][0]
     goal_ids = [g["id"] for g in module["goals"]]
+    # A checkpoint lesson needs a Practice recipe to go live (Publish's rule,
+    # which every live save now runs too — audit #53).
+    practice = run(server.create_homework_template(server.HomeworkTemplateIn(
+        name=f"{TAG} Practice {suffix}", sections=[{"id": "practice", "title": "Practice", "instructions": "", "fields": []}]),
+        ADMIN))
     lesson_models = [
         server.LessonIn(name=f"Lesson {i + 1}", order=i, active=True,
                         skill_ids=[goal_ids[i % len(goal_ids)]],
                         client_overview="overview", why_it_matters="matters.",
-                        success_criteria="5 in a row.", checkpoint=_cp_config())
+                        success_criteria="5 in a row.", checkpoint=_cp_config(),
+                        suggested_homework_template_ids=[practice["id"]])
         for i in range(lessons)
     ]
     prog = run(server.update_program(

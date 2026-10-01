@@ -9,7 +9,8 @@ import { parseProgramCsv, PROGRAM_CSV_SAMPLE } from "../lib/csvImport";
 import ShopImageUpload from "./ShopImageUpload";
 import ShopCategoryFields from "./ShopCategoryFields";
 import ProgramStudio from "./ProgramStudio";
-import { programToTemplate, parseProgramTemplate, remapProgramHomework } from "../lib/programStudioPolish";
+import { programToTemplate, parseProgramTemplate, remapProgramHomework, dropDeadLinks, curriculumIds,
+         liveProblemsHeadline, LIVE_PROBLEMS_NOTE } from "../lib/programStudioPolish";
 import { lessonMoveLines, lessonMovesHeadline } from "../lib/lessonMoves";
 
 /** Canonical single-program loader for every editor entry point.
@@ -49,6 +50,7 @@ export function ProgramsPanel() {
   const [importing, setImporting] = useState(false);
   const [zipResult, setZipResult] = useState(null);   // last curriculum-package result
   const [lessonMoves, setLessonMoves] = useState(null);   // audit #52: who the last save moved
+  const [liveProblems, setLiveProblems] = useState(null);   // audit #53: problems the course already had
   // The one question an import can ask: an archived course already owns this
   // pathway — is this package that course? Holds the server's offer.
   const [adoptPrompt, setAdoptPrompt] = useState(null);
@@ -106,6 +108,8 @@ export function ProgramsPanel() {
     setEdit(null);
     const moves = saved?._lesson_moves || [];
     setLessonMoves(moves.length ? { program: saved.name || "", moves } : null);
+    const problems = saved?._live_problems || [];
+    setLiveProblems(problems.length ? { program: saved.name || "", problems } : null);
   };
 
   // Program templates — download a program (WITH the Practice Coach recipes its
@@ -332,6 +336,23 @@ export function ProgramsPanel() {
         </div>
       )}
 
+      {liveProblems && (
+        <div className="rounded-xl border border-red-500/40 bg-red-500/[0.06] p-4" data-testid="live-problems-summary">
+          <div className="flex items-start justify-between gap-3">
+            <div>
+              <p className="text-[13px] font-black text-red-300 uppercase tracking-widest">{liveProblemsHeadline(liveProblems.problems)}</p>
+              {liveProblems.program && <p className="text-[14px] font-black text-shText mt-1">{liveProblems.program}</p>}
+              <p className="text-[12px] text-shTextMuted mt-1">{LIVE_PROBLEMS_NOTE}</p>
+            </div>
+            <button onClick={() => setLiveProblems(null)} data-testid="live-problems-dismiss" aria-label="Dismiss"
+                    className="text-shTextMuted hover:text-shText text-[13px] px-2"><i className="fas fa-xmark"/></button>
+          </div>
+          <ul className="mt-2 space-y-1 list-disc pl-5">
+            {liveProblems.problems.map((line, i) => <li key={i} className="text-[13px] text-shText">{line}</li>)}
+          </ul>
+        </div>
+      )}
+
       {lessonMoves && (
         <div className="rounded-xl border border-shAccent/40 bg-shAccent/[0.06] p-4" data-testid="lesson-moves-summary">
           <div className="flex items-start justify-between gap-3">
@@ -378,6 +399,15 @@ export function ProgramsPanel() {
             <p className="text-[12px] text-shTextMuted mt-2">
               Kept in School Resources so you can drop {zipResult.unplaced_media === 1 ? "it" : "them"} into a lesson yourself.
             </p>
+          )}
+          {zipResult.existing_problems?.length > 0 && (
+            <div className="mt-3" data-testid="zip-import-existing-problems">
+              <p className="text-[12px] font-black text-red-300">{liveProblemsHeadline(zipResult.existing_problems)}</p>
+              <p className="text-[12px] text-shTextMuted">{LIVE_PROBLEMS_NOTE}</p>
+              <ul className="mt-1 space-y-1 list-disc pl-5">
+                {zipResult.existing_problems.map((line, i) => <li key={i} className="text-[13px] text-shText">{line}</li>)}
+              </ul>
+            </div>
           )}
           {zipResult.lesson_moves?.length > 0 && (
             <div className="mt-3" data-testid="zip-import-lesson-moves">
@@ -466,10 +496,13 @@ export function ProgramEditor({ program, setProgram, meta, allPrograms = [], onS
 
   const set = (patch) => setProgram(p => ({ ...p, ...patch }));
   const addModule = () => set({ modules: [...(program.modules||[]), { name: "New module", description: "", goals: [] }] });
-  const removeModule = (i) => set({ modules: program.modules.filter((_, j) => j !== i) });
+  // Deleting drops links to what's gone, which would otherwise stop the save (audit #53).
+  const removeModule = (i) => set({ modules: dropDeadLinks(program.modules.filter((_, j) => j !== i), curriculumIds([program.modules[i]])) });
   const updateModule = (i, patch) => set({ modules: program.modules.map((m, j) => j === i ? { ...m, ...patch } : m) });
   const addGoal = (mi) => updateModule(mi, { goals: [...(program.modules[mi].goals||[]), { name: "New goal", description: "" }] });
-  const removeGoal = (mi, gi) => updateModule(mi, { goals: program.modules[mi].goals.filter((_, j) => j !== gi) });
+  const removeGoal = (mi, gi) => set({ modules: dropDeadLinks(
+    program.modules.map((m, j) => j === mi ? { ...m, goals: m.goals.filter((_, k) => k !== gi) } : m),
+    { skillIds: [(program.modules[mi].goals[gi] || {}).id] }) });
   const updateGoal = (mi, gi, patch) => updateModule(mi, { goals: program.modules[mi].goals.map((g, j) => j === gi ? { ...g, ...patch } : g) });
 
   return (
@@ -778,7 +811,7 @@ export function ProgramEditor({ program, setProgram, meta, allPrograms = [], onS
         </div>
 
         <div className="px-6 py-3 border-t border-bgHover flex justify-between items-center gap-3 shrink-0">
-          {extraError ? <p className="text-red-400 text-[14px] font-bold truncate flex-1" data-testid="program-editor-err">{extraError}</p> : <span className="flex-1"/>}
+          {extraError ? <p className="text-red-400 text-[14px] font-bold flex-1 whitespace-pre-line max-h-40 overflow-y-auto" data-testid="program-editor-err">{extraError}</p> : <span className="flex-1"/>}
           <div className="flex gap-3 shrink-0">
             <button onClick={onClose} className="text-gray-500 font-black uppercase text-[15px] tracking-widest">Cancel</button>
             <button onClick={onSave} data-testid="prog-save"

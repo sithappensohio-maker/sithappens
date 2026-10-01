@@ -691,11 +691,112 @@ def test_a_practice_link_the_package_did_not_bundle_is_left_alone():
     # It may already be a real recipe on this install; dropping it would break
     # a working lesson.
     admin = _admin()
+    run(server.db.homework_templates.insert_one({"id": "already-here", "name": f"{TAG} Already Here", "active": True}))
     man = _manifest(source_key=f"{TAG}-keep", name=f"{TAG} Keep Links")
     man["program"]["modules"][0]["lessons"][0]["suggested_homework_template_ids"] = ["already-here"]
     assert _post(admin, _zip(man, _MEDIA)).status_code == 200
     lesson = _program(f"{TAG} Keep Links")["modules"][0]["lessons"][0]
     assert lesson["suggested_homework_template_ids"] == ["already-here"]
+
+
+# ---------------------------------------------------------------------------
+# Audit #53 — an import that would put a broken lesson live is refused, and
+# leaves nothing behind
+# ---------------------------------------------------------------------------
+
+def _nothing_left_behind():
+    assert _program() is None
+    assert run(server.db.school_resources.count_documents({"import_digest": {"$exists": True}})) == 0
+    assert run(server.db.homework_templates.count_documents({"import_source_key": {"$exists": True}})) == 0
+    assert run(server.db.homework_templates.count_documents({"name": {"$regex": f"^{TAG}"}})) == 0
+
+
+def test_a_link_to_a_practice_recipe_that_does_not_exist_is_refused_and_nothing_is_created():
+    admin = _admin()
+    man = _manifest(source_key=f"{TAG}-dead", name=f"{TAG} Dead Link")
+    man["program"]["modules"][0]["lessons"][0]["suggested_homework_template_ids"] = ["not-on-this-install"]
+    r = _post(admin, _zip(man, _MEDIA))
+    assert r.status_code == 422, r.text[:300]
+    d = r.json()["detail"]
+    assert d["error_code"] == "invalid_curriculum_package"
+    assert all(isinstance(e, str) for e in d["errors"]), "the import panel lists strings"
+    assert any("Practice recipe that no longer exists" in e and "Lesson 1" in e for e in d["errors"]), d["errors"]
+    _nothing_left_behind()
+
+
+def test_a_broken_lesson_is_refused_after_media_and_recipes_and_both_are_undone():
+    admin = _admin()
+    man = _with_practice(source_key=f"{TAG}-broken")
+    man["program"]["name"] = f"{TAG} Broken Timer"
+    man["program"]["modules"][0]["lessons"][0]["content_blocks"].append(
+        _block("timer", 6, source_key="b-timer", title="Hold it", config={"seconds": 0}))
+    r = _post(admin, _zip(man, _MEDIA))
+    assert r.status_code == 422, r.text[:300]
+    assert any("timer block with no duration" in e for e in r.json()["detail"]["errors"]), r.json()
+    _nothing_left_behind()
+
+
+def test_a_refused_course_write_of_any_kind_says_why_in_words():
+    # A package the course model itself rejects used to be a 500 after the
+    # media was already stored.
+    admin = _admin()
+    man = _manifest(source_key=f"{TAG}-badtype", name=f"{TAG} Bad Type")
+    man["program"]["type"] = "not-a-type"
+    r = _post(admin, _zip(man, _MEDIA))
+    assert r.status_code == 422, r.text[:300]
+    errs = r.json()["detail"]["errors"]
+    assert errs and all(isinstance(e, str) for e in errs) and any("type" in e for e in errs), errs
+    _nothing_left_behind()
+
+
+def test_a_re_import_over_a_course_that_already_had_a_problem_still_goes_through_and_says_so():
+    admin = _admin()
+    assert _post(admin, _zip(_manifest(source_key=f"{TAG}-old"), _MEDIA)).status_code == 200
+    prog = _program()
+    # Something broke it after it went live (a recipe deleted elsewhere).
+    run(server.db.programs.update_one({"id": prog["id"]}, {"$set": {
+        "modules.0.lessons.0.suggested_homework_template_ids": ["deleted-since"]}}))
+    r = _post(admin, _zip(_manifest(source_key=f"{TAG}-old"), _MEDIA))
+    assert r.status_code == 200, r.text[:300]
+    s = r.json()
+    assert s["errors"] == [], "a successful import never fills the panel's error list"
+    assert any("Practice recipe that no longer exists" in p for p in s["existing_problems"]), s
+
+
+def test_a_new_course_s_welcome_recipe_from_the_package_is_relinked():
+    admin = _admin()
+    man = _with_practice(source_key=f"{TAG}-welcome-new")
+    man["program"]["welcome_homework_template_id"] = "recipe-sit"
+    assert _post(admin, _zip(man, _MEDIA)).status_code == 200
+    prog = _program(f"{TAG} Practice Course")
+    assert prog["welcome_homework_template_id"] == prog["modules"][0]["lessons"][0]["suggested_homework_template_ids"][0] != "recipe-sit"
+
+
+def test_a_re_import_keeps_the_course_s_own_welcome_recipe():
+    # A Studio export bundles the course's Welcome recipe under its real id;
+    # re-importing it must not move the course onto a package copy.
+    admin = _admin()
+    local = f"{TAG}-local-welcome"
+    run(server.db.homework_templates.insert_one({"id": local, "name": f"{TAG} Local Welcome", "active": True}))
+    man = _manifest(source_key=f"{TAG}-welcome-keep", name=f"{TAG} Welcome Keep")
+    man["program"]["welcome_homework_template_id"] = local
+    assert _post(admin, _zip(man, _MEDIA)).status_code == 200
+    man["homework_templates"] = [{"id": local, "name": f"{TAG} Packaged Welcome", "tier": "foundation"}]
+    assert _post(admin, _zip(man, _MEDIA)).status_code == 200
+    assert _program(f"{TAG} Welcome Keep")["welcome_homework_template_id"] == local
+
+
+def test_a_bundled_recipe_a_module_or_skill_links_to_is_relinked_too():
+    admin = _admin()
+    man = _with_practice(source_key=f"{TAG}-modlink")
+    man["program"]["modules"][0]["homework_template_id"] = "recipe-sit"
+    man["program"]["modules"][0]["goals"][0]["homework_template_ids"] = ["recipe-sit"]
+    r = _post(admin, _zip(man, _MEDIA))
+    assert r.status_code == 200, r.text[:300]
+    m = _program(f"{TAG} Practice Course")["modules"][0]
+    real = m["lessons"][0]["suggested_homework_template_ids"][0]
+    assert real != "recipe-sit"
+    assert m["homework_template_id"] == real and m["goals"][0]["homework_template_ids"] == [real]
 
 
 # ---------------------------------------------------------------------------
