@@ -19,6 +19,22 @@ from pydantic import BaseModel, Field
 logger = logging.getLogger("sithappens")
 
 
+def shift_hours(clock_in_at: Any, clock_out_at: Any, break_minutes: Any = 0) -> Optional[float]:
+    """Hours worked on one shift: out minus in, minus the break, never below
+    zero. None while the shift is open or a time can't be read. The one rule
+    for a shift edited by staff and a punch correction approved (audit #48)."""
+    if not clock_in_at or not clock_out_at:
+        return None
+    try:
+        ci = datetime.fromisoformat(str(clock_in_at).replace("Z", "+00:00"))
+        co = datetime.fromisoformat(str(clock_out_at).replace("Z", "+00:00"))
+        ci = ci if ci.tzinfo else ci.replace(tzinfo=timezone.utc)
+        co = co if co.tzinfo else co.replace(tzinfo=timezone.utc)
+        return round(max((co - ci).total_seconds() / 3600.0 - (float(break_minutes or 0) / 60.0), 0.0), 3)
+    except Exception:
+        return None
+
+
 def make_staff_domain(*, ClockInIn, ClockOutIn, TIME_OFF_STATUSES, TIME_OFF_TYPES, TimeClockEditIn, VARIANCE_FLAG_MINUTES, api, business_today, db, now_iso, require_admin, require_admin_and_permission, require_employee_or_admin):
     @api.get("/time-clock/current")
     async def time_clock_current(user: dict = Depends(require_employee_or_admin)):
@@ -413,16 +429,10 @@ def make_staff_domain(*, ClockInIn, ClockOutIn, TIME_OFF_STATUSES, TIME_OFF_TYPE
         if body.note is not None:
             update["admin_note"] = body.note
         # Recompute hours
-        ci_raw = update.get("clock_in_at", entry.get("clock_in_at"))
-        co_raw = update.get("clock_out_at", entry.get("clock_out_at"))
-        brk = update.get("break_minutes", entry.get("break_minutes") or 0)
-        if ci_raw and co_raw:
-            try:
-                ci = datetime.fromisoformat(ci_raw.replace("Z", "+00:00"))
-                co = datetime.fromisoformat(co_raw.replace("Z", "+00:00"))
-                update["hours"] = round(max((co - ci).total_seconds() / 3600.0 - (float(brk) / 60.0), 0.0), 3)
-            except Exception:
-                pass
+        hours = shift_hours(update.get("clock_in_at", entry.get("clock_in_at")), update.get("clock_out_at", entry.get("clock_out_at")),
+                            update.get("break_minutes", entry.get("break_minutes") or 0))
+        if hours is not None:
+            update["hours"] = hours
         await db.time_clock_entries.update_one({"id": entry_id}, {"$set": update})
         entry.update(update)
         return entry
@@ -724,6 +734,11 @@ def make_staff_domain(*, ClockInIn, ClockOutIn, TIME_OFF_STATUSES, TIME_OFF_TYPE
             if req.get("requested_clock_out"):
                 patch["clock_out_at"] = req["requested_clock_out"]
             if target_id:
+                entry = await db.time_clock_entries.find_one({"id": target_id}, {"_id": 0}) or {}
+                hours = shift_hours(patch.get("clock_in_at", entry.get("clock_in_at")), patch.get("clock_out_at", entry.get("clock_out_at")),
+                                    entry.get("break_minutes") or 0)
+                if hours is not None:   # the corrected times count on pay (audit #48)
+                    patch["hours"] = hours
                 await db.time_clock_entries.update_one({"id": target_id}, {"$set": patch})
             elif patch:
                 # Create a fresh entry — staff forgot to clock in/out entirely.
@@ -733,6 +748,8 @@ def make_staff_domain(*, ClockInIn, ClockOutIn, TIME_OFF_STATUSES, TIME_OFF_TYPE
                     "user_name": req["user_name"],
                     "clock_in_at": patch.get("clock_in_at", ""),
                     "clock_out_at": patch.get("clock_out_at", ""),
+                    "break_minutes": 0,
+                    "hours": shift_hours(patch.get("clock_in_at"), patch.get("clock_out_at")),
                     "created_at": now_iso(),
                     "corrected_via_request_id": cid,
                 }
