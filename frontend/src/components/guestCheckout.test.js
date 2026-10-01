@@ -274,6 +274,52 @@ describe("the guest checkout panel", () => {
     expect(removed).toEqual([{ kind: "credit_pack", ref_id: "pk1" }]);
   });
 
+  // Audit: "'Please try again' after a payment hiccup can never work".
+  const failOnce = (detailObject) => {
+    let calls = 0;
+    api.post.mockImplementation((url) => {
+      if (url === "/public/shop/cart/price") return Promise.resolve(PRICED);
+      calls += 1;
+      if (calls === 1) {
+        const err = new Error("502");
+        err.response = { status: 502, data: detailObject
+          ? { detail: detailObject.msg, detail_object: detailObject }
+          : { detail: "Network hiccup" } };
+        return Promise.reject(err);
+      }
+      return Promise.resolve({ data: { url: "https://checkout.stripe.com/x", order_id: "ord-r", guest_token: "tok-r" } });
+    });
+  };
+  const payTwice = async () => {
+    mount(<GuestCheckoutPanel cart={CART} onClose={() => {}} onSignIn={() => {}} onRemoveLines={() => {}} />);
+    await flush();
+    await setField("guest-checkout-email", "buyer@example.com");
+    await setField("guest-checkout-name", "Sam Guest");
+    await act(async () => { byTestId("guest-checkout-pay").click(); });
+    await flush();
+    const shown = byTestId("guest-checkout-error")?.textContent;
+    await act(async () => { byTestId("guest-checkout-pay").click(); });
+    await flush();
+    const keys = api.post.mock.calls.filter(([u]) => u === "/public/shop/checkout").map(([, b]) => b.idempotency_key);
+    return { shown, keys };
+  };
+
+  test("when the payment couldn't start, trying again starts a fresh checkout that works", async () => {
+    failOnce({ error_code: "checkout_restart", msg: "Could not start the online payment — nothing was charged. Please try again." });
+    const { shown, keys } = await payTwice();
+    expect(shown).toBe("Could not start the online payment — nothing was charged. Please try again.");
+    expect(keys).toHaveLength(2);
+    expect(keys[0]).not.toBe(keys[1]);
+    expect(goTo).toHaveBeenCalledWith("https://checkout.stripe.com/x");
+  });
+
+  test("any other failure retries the SAME checkout, so nothing is started twice", async () => {
+    failOnce(null);
+    const { keys } = await payTwice();
+    expect(keys).toHaveLength(2);
+    expect(keys[0]).toBe(keys[1]);
+  });
+
   test("the token is kept BEFORE the browser leaves for Stripe", async () => {
     api.post.mockImplementation((url) => {
       if (url === "/public/shop/cart/price") return Promise.resolve(PRICED);

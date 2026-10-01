@@ -153,6 +153,18 @@ def guest_token_matches(order: dict, token: Optional[str]) -> bool:
 
 # ──────────────────────────────────────────────────────── the one sequence
 
+RESTART_CODE = "checkout_restart"
+
+
+def _restart(status_code: int, msg: str) -> HTTPException:
+    """A refusal that ends this checkout attempt for good — its order failed
+    or was closed, so the same idempotency key can never be paid. The code
+    tells the screen to start a fresh checkout on the next press, so "please
+    try again" really works (audit: "'Please try again' after a payment
+    hiccup can never work"). Nothing was charged on the attempt it ends."""
+    return HTTPException(status_code=status_code, detail={"error_code": RESTART_CODE, "msg": msg})
+
+
 async def create_checkout(*, buyer: Buyer, items, idempotency_key: str) -> dict:
     """Price, reserve, and start paying for a cart. Returns
     {url, order_id, guest_token?}.
@@ -250,7 +262,7 @@ async def create_checkout(*, buyer: Buyer, items, idempotency_key: str) -> dict:
         guest_token = None
 
     if order.get("status") in ("payment_failed", "canceled"):
-        raise HTTPException(status_code=409, detail="This order can no longer be paid — please start a new checkout.")
+        raise _restart(409, "That checkout didn't go through and nothing was charged — please try again.")
     # A resumed order must belong to the buyer in front of us. The claim
     # check above already proved that for the CLAIM; this proves it for the
     # ORDER, which is the thing that actually holds the money. They are not
@@ -291,7 +303,7 @@ async def create_checkout(*, buyer: Buyer, items, idempotency_key: str) -> dict:
         if existing.get("stripe_checkout_session_url"):
             return _result(existing["stripe_checkout_session_url"], order_id, guest_token)
         if existing.get("status") in _s("SHOP_PAYMENT_ATTEMPT_TERMINAL_STATUSES"):
-            raise HTTPException(status_code=409, detail="This payment attempt has already been resolved.")
+            raise _restart(409, "That checkout has already finished — please try again.")
         attempt_id = existing["id"]
 
     reserved_order = await _s("_acquire_shop_order_reservation")(order_id, attempt_id, amount_cents)
@@ -362,7 +374,7 @@ async def create_checkout(*, buyer: Buyer, items, idempotency_key: str) -> dict:
         )
         await _s("_release_shop_order_inventory")(order_id)
         logger.warning("Stripe Checkout Session creation failed for shop attempt %s: %s", attempt_id, exc)
-        raise HTTPException(status_code=502, detail="Could not start the online payment — please try again.")
+        raise _restart(502, "Could not start the online payment — nothing was charged. Please try again.")
 
     written = await db.shop_payment_attempts.update_one(
         {"id": attempt_id, "status": "pending"},
@@ -379,7 +391,7 @@ async def create_checkout(*, buyer: Buyer, items, idempotency_key: str) -> dict:
             stripe.checkout.Session.expire(session["id"])
         except Exception as exc:
             logger.warning("Could not close orphaned shop session %s for attempt %s: %s", session["id"], attempt_id, exc)
-        raise HTTPException(status_code=409, detail="This checkout was closed. Please start a new checkout.")
+        raise _restart(409, "This checkout was closed and nothing was charged — please try again.")
     return _result(session["url"], order_id, guest_token)
 
 

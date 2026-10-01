@@ -41,6 +41,7 @@ import {
   categoryGroupsForTab, matchesSearchQuery, OTHER_CATEGORY_ID,
   sectionMetaFor, visibleSectionsInOrder, categoryCoverImageId, shouldHideEmptyCategory,
   orderCategoryGroupsFeaturedFirst, filterFeaturedItems, guestItemCta, creditPackCardLine,
+  isCheckoutRestart,
 } from "../lib/shopPolish";
 
 /* Client Shop — Phase 1 gave read-only catalog browsing. Phase 2 adds a
@@ -904,7 +905,10 @@ export default function PortalShop({
       // reuse the same idempotency key so the server resumes the same
       // claim/order/reservation instead of creating a second one. Only cart
       // mutations (addToCart/changeQty/removeFromCart, above) or a
-      // completed purchase (below) mint a new key.
+      // completed purchase (below) mint a new key — and a checkout the
+      // server says can never be resumed (its payment failed to start or it
+      // was closed): then the next press starts a fresh one.
+      if (isCheckoutRestart(e)) idemKeyRef.current = null;
     }
   };
 

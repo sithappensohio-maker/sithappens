@@ -84,3 +84,13 @@ describe("the order page", () => {
     expect(note()).toBeNull();
   });
 });
+
+describe("a checkout the server says can't be resumed", () => {
+  const { isCheckoutRestart } = require("../../lib/shopPolish");
+  test("only the restart code counts", () => {
+    expect(isCheckoutRestart({ response: { data: { detail_object: { error_code: "checkout_restart" } } } })).toBe(true);
+    expect(isCheckoutRestart({ response: { data: { detail: "Could not start the online payment" } } })).toBe(false);
+    expect(isCheckoutRestart({ response: { data: { detail_object: { error_code: "other" } } } })).toBe(false);
+    expect(isCheckoutRestart(undefined)).toBe(false);
+  });
+});

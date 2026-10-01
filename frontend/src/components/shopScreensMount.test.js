@@ -335,3 +335,39 @@ describe("backing out of Stripe (audit #57)", () => {
     window.history.replaceState({}, "", "/");
   });
 });
+
+describe("'Please try again' after a payment hiccup (signed-in Shop)", () => {
+  const cartLine = { kind: "product", ref_id: "p1", quantity: 1 };
+  const checkoutTwice = async (firstError) => {
+    const { goTo } = require("../lib/goTo");
+    let calls = 0;
+    api.post.mockImplementation((url) => {
+      if (url !== "/shop/checkout") return Promise.resolve({ data: {} });
+      calls += 1;
+      if (calls === 1) return Promise.reject(firstError);
+      return Promise.resolve({ data: { url: "https://checkout.stripe.com/x", order_id: "ord-1" } });
+    });
+    await mount(<PortalShop mode="authenticated" cart={[cartLine]} onCartChange={() => {}} />);
+    await act(async () => { document.querySelector('[data-testid="shop-cart-open"]').click(); });
+    await act(async () => { document.querySelector('[data-testid="shop-checkout-button"]').click(); });
+    for (let i = 0; i < 4; i++) await act(async () => { await Promise.resolve(); });
+    await act(async () => { document.querySelector('[data-testid="shop-checkout-button"]').click(); });
+    for (let i = 0; i < 4; i++) await act(async () => { await Promise.resolve(); });
+    noReferenceErrors();
+    return api.post.mock.calls.filter(([u]) => u === "/shop/checkout").map(([, b]) => b.idempotency_key);
+  };
+  const failure = (status, data) => Object.assign(new Error(String(status)), { response: { status, data } });
+
+  test("a payment that couldn't start is followed by a fresh checkout", async () => {
+    const msg = "Could not start the online payment — nothing was charged. Please try again.";
+    const keys = await checkoutTwice(failure(502, { detail: msg, detail_object: { error_code: "checkout_restart", msg } }));
+    expect(keys).toHaveLength(2);
+    expect(keys[0]).not.toBe(keys[1]);
+  });
+
+  test("any other failure retries the same checkout", async () => {
+    const keys = await checkoutTwice(failure(500, { detail: "Server hiccup" }));
+    expect(keys).toHaveLength(2);
+    expect(keys[0]).toBe(keys[1]);
+  });
+});

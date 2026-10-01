@@ -452,6 +452,14 @@ export function orderStatusLabel(o) {
   return "Payment Processing";
 }
 
+// A Shop checkout the server says can never be resumed (its payment failed
+// to start, or it was closed): the screen drops its checkout key so the next
+// press of Checkout starts a fresh one. lib/api.js keeps the object detail
+// on detail_object.
+export function isCheckoutRestart(e) {
+  return (e?.response?.data?.detail_object || {}).error_code === "checkout_restart";
+}
+
 // Pickup — which note the customer sees about collecting their order:
 // "preparing" | "ready" | "picked_up", or null when there is nothing to
 // collect (gift cards, packs, programs), it isn't paid, or it was refunded.

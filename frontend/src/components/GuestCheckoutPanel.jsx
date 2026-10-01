@@ -4,6 +4,7 @@ import { api } from "../lib/api";
 import PremiumButton from "./premium/PremiumButton";
 import { goTo } from "../lib/goTo";
 import { rememberGuestOrderToken } from "../lib/shopGuestCart";
+import { isCheckoutRestart } from "../lib/shopPolish";
 
 const money = (n) => `$${Number(n || 0).toFixed(2)}`;
 
@@ -97,9 +98,13 @@ export default function GuestCheckoutPanel({ cart, onClose, onSignIn, onRemoveLi
       goTo(data.url);
     } catch (e) {
       setBusy(false);
+      // A checkout that can never be resumed: the next press starts a fresh one.
+      if (isCheckoutRestart(e)) idemKey.current = null;
       const detail = e?.response?.data?.detail_object || e?.response?.data?.detail;
       if (detail && typeof detail === "object" && Array.isArray(detail.blocked)) {
         setBlocked(detail.blocked);
+      } else if (detail && typeof detail === "object" && detail.msg) {
+        setErr(detail.msg);
       } else {
         setErr(typeof detail === "string" ? detail : "Checkout couldn't start. Nothing was charged.");
       }
