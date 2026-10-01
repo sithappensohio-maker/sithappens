@@ -1944,10 +1944,13 @@ class ClientStatusIn(BaseModel):
 
 
 @api.post("/clients/{client_id}/status", response_model=ClientOut)
-async def set_client_status(client_id: str, body: ClientStatusIn, user: dict = Depends(require_admin)):
+async def set_client_status(client_id: str, body: ClientStatusIn, user: dict = Depends(require_admin_and_permission("clients_edit"))):
     existing = await db.clients.find_one({"id": client_id}, {"_id": 0})
     if not existing:
         raise HTTPException(status_code=404, detail="Client not found")
+    if not _is_owner(user) and (body.status != "active" or existing.get("client_status") == "rejected"):   # audit #49
+        raise HTTPException(status_code=403, detail="A family marked Rejected can only be changed by the owner." if existing.get("client_status") == "rejected"
+                            else "Staff can move a family to Active. Other status changes are the owner's.")
     update = {
         "client_status": body.status,
         "client_status_set_at": now_iso(),
@@ -2183,7 +2186,7 @@ def _validated_client_file_payload(data: str, *, client_portal: bool = False, co
     return raw_b64, size
 
 @api.post("/clients/{client_id}/files")
-async def upload_client_file(client_id: str, body: ClientFileIn, user: dict = Depends(require_admin)):
+async def upload_client_file(client_id: str, body: ClientFileIn, user: dict = Depends(require_admin_and_permission("clients_edit"))):   # audit #49
     client = await db.clients.find_one({"id": client_id}, {"_id": 0, "id": 1, "name": 1})
     if not client:
         raise HTTPException(status_code=404, detail="Client not found")
@@ -2210,7 +2213,7 @@ async def upload_client_file(client_id: str, body: ClientFileIn, user: dict = De
     return {k: doc[k] for k in doc if k not in ("data", "_id")}
 
 @api.get("/clients/{client_id}/files")
-async def list_client_files(client_id: str, _: dict = Depends(require_admin)):
+async def list_client_files(client_id: str, _: dict = Depends(require_admin_and_permission("clients_edit"))):
     files = await db.client_files.find(
         {"client_id": client_id},
         {"_id": 0, "data": 0},  # exclude base64 payload — fetched per file on download
@@ -2235,9 +2238,9 @@ async def download_file(file_id: str, user: dict = Depends(get_current_user)):
     f = await db.client_files.find_one({"id": file_id}, {"_id": 0})
     if not f:
         raise HTTPException(status_code=404, detail="File not found")
-    is_admin = user.get("role") == "admin"
+    is_staff = user.get("role") in ("admin", "employee") and _perms_for(user).get("clients_edit")   # audit #49
     is_owner = user.get("client_id") and user["client_id"] == f["client_id"]
-    if not (is_admin or is_owner):
+    if not (is_staff or is_owner):
         raise HTTPException(status_code=403, detail="Not your file.")
     return {
         "id": f["id"],
@@ -2536,7 +2539,7 @@ async def send_claim_emails_bulk(_: dict = Depends(require_admin)):
 
 
 @api.post("/clients/{client_id}/send-claim-email")
-async def send_claim_email(client_id: str, _: dict = Depends(require_admin)):
+async def send_claim_email(client_id: str, _: dict = Depends(require_admin_and_permission("clients_edit"))):   # audit #49
     """Generate a one-time claim/reset token for this client and email it.
     Re-callable any time — issuing a new token invalidates older unused ones."""
     client = await db.clients.find_one({"id": client_id}, {"_id": 0})
@@ -6386,7 +6389,7 @@ async def portal_update_vaccine(dog_id: str, body: VaccineUpdateIn, user: dict =
 
 
 @api.post("/dogs/{dog_id}/vaccine-cert")
-async def admin_attach_vaccine_cert(dog_id: str, body: VaccineUpdateIn, user: dict = Depends(require_admin)):
+async def admin_attach_vaccine_cert(dog_id: str, body: VaccineUpdateIn, user: dict = Depends(require_admin_and_permission("clients_edit"))):
     """Admin counterpart to `portal_update_vaccine` — attach a cert photo +
     expiry the admin already has (e.g. emailed/texted by the client at sign-up).
     Marked as admin-uploaded so it's considered pre-verified and skips the
@@ -6398,14 +6401,17 @@ async def admin_attach_vaccine_cert(dog_id: str, body: VaccineUpdateIn, user: di
         date.fromisoformat(body.expires_on)
     except Exception:
         raise HTTPException(status_code=400, detail="Invalid expiry date")
-    for field in ("vaccines", "vaccine_certs"):   # one vaccine at a time: never over a client's other uploads
-        if not isinstance(dog.get(field), dict):
-            await db.dogs.update_one({"id": dog_id, field: {"$not": {"$type": "object"}}}, {"$set": {field: {}}})
-    update_doc: Dict[str, Any] = {f"vaccines.{body.vaccine}": body.expires_on}
     photo_list = [p for p in (body.photos or []) if p]
     if not photo_list and body.photo:
         photo_list = [body.photo]
     _validate_base64_uploads(photo_list)
+    if not _is_owner(user):   # audit #49: a staff photo waits in the owner's queue like a client upload
+        client_archive.refuse_if_archived(await db.clients.find_one({"id": dog.get("owner_id")}, {"_id": 0, "name": 1, "deleted_at": 1}))
+        return await vaccines_domain.store_staff_upload(db, dog, body.vaccine, photos=photo_list, expires_on=body.expires_on, staff=user, now_iso=now_iso)
+    for field in ("vaccines", "vaccine_certs"):   # one vaccine at a time: never over a client's other uploads
+        if not isinstance(dog.get(field), dict):
+            await db.dogs.update_one({"id": dog_id, field: {"$not": {"$type": "object"}}}, {"$set": {field: {}}})
+    update_doc: Dict[str, Any] = {f"vaccines.{body.vaccine}": body.expires_on}
     if photo_list:
         update_doc[f"vaccine_certs.{body.vaccine}"] = {
             "photo": photo_list[0],

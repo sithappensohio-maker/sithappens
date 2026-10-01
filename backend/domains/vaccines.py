@@ -105,13 +105,14 @@ def cert_filter(vaccine: str, cert: Any) -> Dict[str, Any]:
 def review_context(cert: Dict[str, Any], on_file: Any) -> Dict[str, Any]:
     """What the reviewer needs beside the upload (no photos)."""
     before = cert.get("approved_before") if isinstance(cert, dict) else None
-    return {"approved_on_file": isinstance(before, dict) and bool(before),
+    return {"uploaded_by_staff": bool(isinstance(cert, dict) and cert.get("uploaded_by_staff")),
+            "approved_on_file": isinstance(before, dict) and bool(before),
             "approved_before_expires_on": str((before or {}).get("expires_on") or "")[:10] if isinstance(before, dict) else "",
             "on_file_expires_on": str(on_file or "")[:10]}
 
 
 async def store_client_upload(db, dog_id: str, vaccine: str, *, photos: List[str], expires_on: str,
-                              uploader: str, now_iso) -> Dict[str, Any]:
+                              uploader: str, now_iso, staff: Optional[Dict[str, Any]] = None) -> Dict[str, Any]:
     """Write one vaccine's renewal without touching the others, and never over
     a change made since we read it (a review, another upload)."""
     for _ in range(3):
@@ -124,6 +125,8 @@ async def store_client_upload(db, dog_id: str, vaccine: str, *, photos: List[str
             certs = {}
         prior = certs.get(vaccine)
         entry = renewal_entry(prior, photos=photos, expires_on=expires_on, uploader=uploader, now=now_iso())
+        if staff:   # who added it; never uploaded_by_admin — that would skip the review (audit #49)
+            entry.update({"uploaded_by_staff": True, "uploaded_by_user_id": staff.get("id")})
         if len(bson.encode({**dog, "vaccine_certs": {**certs, vaccine: entry}})) > MAX_DOG_BYTES:
             raise HTTPException(status_code=400, detail="These files are too large to keep next to the certificate already on file. "
                                                         "Please upload smaller photos (or a photo instead of a large PDF).")
@@ -144,3 +147,18 @@ def waiting_upload_query() -> Dict[str, Any]:
         "in": {"$and": [{"$eq": [{"$type": "$$c.v"}, "object"]},
                         {"$in": [{"$ifNull": ["$$c.v.reviewed_at", None]}, [None, "", False]]}]},
     }}]}}
+
+
+async def store_staff_upload(db, dog: Dict[str, Any], vaccine: str, *, photos: List[str], expires_on: str,
+                             staff: Dict[str, Any], now_iso) -> Dict[str, Any]:
+    """A certificate photo staff attach (audit #49): it waits in the owner's
+    approval queue exactly like a client upload — the approved certificate
+    stays on file meanwhile and the dog's date doesn't change until approval."""
+    if dog.get("deleted_at"):
+        raise HTTPException(status_code=404, detail="Dog not found")
+    if not photos:
+        raise HTTPException(status_code=400, detail="Attach a photo of the certificate — the owner approves the date from it.")
+    await store_client_upload(db, dog["id"], vaccine, photos=photos, expires_on=expires_on,
+                              uploader=staff.get("name") or staff.get("email") or "Staff", now_iso=now_iso, staff=staff)
+    return {"ok": True, "dog_id": dog["id"], "vaccine": vaccine, "expires_on": expires_on, "status": "pending_review"}
+

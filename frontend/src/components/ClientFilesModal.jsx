@@ -10,7 +10,7 @@ import { useConfirm } from "../lib/useConfirm";
 
 const MAX_BYTES = 10 * 1024 * 1024;
 
-export default function ClientFilesModal({ client, onClose }) {
+export default function ClientFilesModal({ client, onClose, canDelete = false }) {
   const confirm = useConfirm();
   const [files, setFiles] = useState([]);
   const [dogs, setDogs] = useState([]);
@@ -161,8 +161,8 @@ export default function ClientFilesModal({ client, onClose }) {
                     <div className="flex items-center gap-2 shrink-0">
                       <button onClick={()=>download(f)} title="Download" data-testid={`file-download-${f.id}`}
                               className="text-shSecondary hover:text-shText p-2"><i className="fas fa-download"/></button>
-                      <button onClick={()=>remove(f)} title="Delete" data-testid={`file-delete-${f.id}`}
-                              className="text-shTextMuted hover:text-red-400 p-2"><i className="fas fa-trash"/></button>
+                      {canDelete && <button onClick={()=>remove(f)} title="Delete" data-testid={`file-delete-${f.id}`}
+                              className="text-shTextMuted hover:text-red-400 p-2"><i className="fas fa-trash"/></button>}
                     </div>
                   </div>
                 );

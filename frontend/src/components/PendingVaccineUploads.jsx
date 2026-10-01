@@ -92,7 +92,7 @@ export default function PendingVaccineUploads({ dogId, onApproved, onChanged }) 
           <div className="min-w-0 flex-1">
             <p className="text-[14px] font-black text-shText uppercase">{r.vaccine}</p>
             <p className="text-[12px] text-shTextMuted">
-              {r.expires_on ? `Client entered expiry ${r.expires_on}` : "No expiry date entered"}
+              {r.expires_on ? `${r.uploaded_by_staff ? `Added by ${r.uploaded_by || "staff"} (staff)` : "Client entered"} expiry ${r.expires_on}` : "No expiry date entered"}
               {r.photo ? " · tap the photo to check it" : ""}
             </p>
             {onFileLine(r) && <p className="text-[12px] text-shPrimary" data-testid={`dog-pending-vax-onfile-${r.vaccine}`}>{onFileLine(r)}</p>}

@@ -3,6 +3,7 @@ import { createPortal } from "react-dom";
 import { api, formatErr } from "../lib/api";
 import { emitRegisterChanged } from "../lib/registerBus";
 import { useConfirm } from "../lib/useConfirm";
+import { useAuth } from "../lib/auth";
 import { toast } from "sonner";
 import { compressImage } from "../lib/imageCompress";
 import { dogAgeMonths } from "../lib/dogAge";
@@ -43,6 +44,10 @@ const emptyDog = { name:"", breed:"", age_y:0, age_m:0, birthday:"", sex:"Male",
 
 export default function Clients({ focusId = null, focusMode = "scroll", onConsumed = () => {}, onJumpToDog = () => {}, openCreateOnMount = false, onCreateConsumed = () => {}, userId = null, hubTarget = null, can = () => false, onAddDog = () => {}, onBookForClient = () => {} }) {
   const confirm = useConfirm();
+  // Staff can finish a new client, but certificate photos they attach wait
+  // for the owner's approval and a typed portal password stays the owner's
+  // (audit #49). No auth provider (tests, previews) = not the owner.
+  const owner = !!useAuth()?.isOwner?.();
   const [clients, setClients] = useState([]);
   const [clientSearch, setClientSearch] = useState("");
   const [clientQuery, setClientQuery] = useState("");
@@ -307,6 +312,7 @@ export default function Clients({ focusId = null, focusMode = "scroll", onConsum
         // client still gets saved even if (say) a vaccine date is malformed —
         // the dog can always be added from the Dogs screen.
         let dogWarning = "";
+        let certNote = "";
         if (addDog && dog.name?.trim()) {
           try {
             // Birthday wins — derive age_y/age_m from it for consistency.
@@ -326,11 +332,11 @@ export default function Clients({ focusId = null, focusMode = "scroll", onConsum
               birthday: dog.birthday || "",
               sex: dog.sex || "Male",
               fixed: dog.fixed || "No",
-              vaccines: {
-                rabies: dog.rabies || "",
-                bordetella: dog.bordetella || "",
-                dhpp: dog.dhpp || "",
-              },
+              // A date that comes with a certificate photo counts once the
+              // photo is approved — staff photos wait for the owner (audit #49).
+              vaccines: Object.fromEntries(["rabies", "bordetella", "dhpp"].map((v) => [
+                v, !owner && dog[`${v}_photo`] && dog[v] ? "" : (dog[v] || ""),
+              ])),
               notes: dog.notes || "",
             });
             // Attach any cert photos the admin pasted/uploaded in the modal.
@@ -339,13 +345,15 @@ export default function Clients({ focusId = null, focusMode = "scroll", onConsum
             // admin, otherwise the dog saves as if the photo attached fine.
             const dogId = dogResp.data?.id;
             const failedCerts = [];
+            const pendingCerts = [];
             if (dogId) {
               for (const v of ["rabies", "bordetella", "dhpp"]) {
                 const photo = dog[`${v}_photo`];
                 const expires_on = dog[v];
                 if (photo && expires_on) {
                   try {
-                    await api.post(`/dogs/${dogId}/vaccine-cert`, { vaccine: v, expires_on, photo });
+                    const { data: certRes } = await api.post(`/dogs/${dogId}/vaccine-cert`, { vaccine: v, expires_on, photo });
+                    if (certRes?.status === "pending_review") pendingCerts.push(v);
                   } catch (e) {
                     failedCerts.push(`${v} (${formatErr(e.response?.data?.detail) || "upload failed"})`);
                   }
@@ -353,8 +361,10 @@ export default function Clients({ focusId = null, focusMode = "scroll", onConsum
               }
             }
             if (failedCerts.length) {
-              dogWarning = `${dog.name.trim()} added, but the cert photo didn't attach for: ${failedCerts.join(", ")}. Re-upload from the Dogs screen.`;
+              dogWarning = `${dog.name.trim()} added, but the cert photo didn't attach for: ${failedCerts.join(", ")}.`
+                + (owner ? " Attach it again from the client's card." : " That date wasn't saved either — the client can upload the certificate from their portal.");
             }
+            if (pendingCerts.length) certNote = ` · ${pendingCerts.join(", ")} certificate sent to the owner for approval`;
           } catch (e) {
             dogWarning = formatErr(e.response?.data?.detail) || "Dog couldn't be added — add it from the Dogs screen.";
           }
@@ -366,8 +376,8 @@ export default function Clients({ focusId = null, focusMode = "scroll", onConsum
           try {
             await api.post(`/clients/${data.id}/send-claim-email`);
             const msg = dogWarning
-              ? `Client + claim email sent. ${dogWarning}`
-              : `Claim email sent to ${form.email}` + (addDog && dog.name?.trim() ? ` · ${dog.name.trim()} added` : "");
+              ? `Client + claim email sent. ${dogWarning}${certNote}`
+              : `Claim email sent to ${form.email}` + (addDog && dog.name?.trim() ? ` · ${dog.name.trim()} added` : "") + certNote;
             setClaimToast({ clientId: data.id, msg, tone: dogWarning ? "warn" : "ok" });
             setTimeout(() => setClaimToast(t => t && t.clientId === data.id ? null : t), 5000);
           } catch (e) {
@@ -375,10 +385,10 @@ export default function Clients({ focusId = null, focusMode = "scroll", onConsum
             setClaimToast({ clientId: data.id, msg: "Client saved, but the claim email couldn't be sent. Use the button to retry.", tone: "warn" });
           }
         } else if (dogWarning) {
-          setClaimToast({ clientId: data.id, msg: dogWarning, tone: "warn" });
+          setClaimToast({ clientId: data.id, msg: dogWarning + certNote, tone: "warn" });
           setTimeout(() => setClaimToast(t => t && t.clientId === data.id ? null : t), 5000);
         } else if (addDog && dog.name?.trim()) {
-          setClaimToast({ clientId: data.id, msg: `${dog.name.trim()} added`, tone: "ok" });
+          setClaimToast({ clientId: data.id, msg: `${dog.name.trim()} added${certNote}`, tone: "ok" });
           setTimeout(() => setClaimToast(t => t && t.clientId === data.id ? null : t), 4000);
         }
         load();
@@ -505,7 +515,7 @@ export default function Clients({ focusId = null, focusMode = "scroll", onConsum
                 </button>
                 <div className="flex items-center gap-1.5 mt-1 flex-wrap">
                   {c.client_status && c.client_status !== "active" && (
-                    <ClientStatusPill status={c.client_status} clientId={c.id} onChange={load}/>
+                    <ClientStatusPill status={c.client_status} clientId={c.id} onChange={load} owner={owner}/>
                   )}
                   {c.setup_badge && c.setup_overall !== "complete" && (
                     <span
@@ -653,7 +663,7 @@ export default function Clients({ focusId = null, focusMode = "scroll", onConsum
               clientId={c.id}
               hasPortal={!!c.portal_email}
               onSendClaim={()=>sendClaimEmail(c)}
-              onSetPassword={()=>openPortal(c)}
+              onSetPassword={owner ? ()=>openPortal(c) : null}
               onSellPack={()=>setSellOpen(c)}
               onSellProgram={()=>setSellProgramOpen(c)}
               onTakePayment={()=>setTakePaymentOpen(c)}
@@ -908,7 +918,7 @@ export default function Clients({ focusId = null, focusMode = "scroll", onConsum
                            onClose={()=>setReceiptsOpen(null)}
                            onReprint={(r)=>{ setReceipt({ client: receiptsOpen, ...r }); setReceiptsOpen(null); }} />
       )}
-      {filesOpen && <ClientFilesModal client={filesOpen} onClose={()=>setFilesOpen(null)} />}
+      {filesOpen && <ClientFilesModal client={filesOpen} onClose={()=>setFilesOpen(null)} canDelete={owner} />}
       {legacyOpen && <LegacyPricingModal client={legacyOpen} onClose={()=>setLegacyOpen(null)} />}
       {lotsOpen && <PackLotsModal client={lotsOpen} onClose={()=>setLotsOpen(null)} />}
       {previewId && <ClientPortalPreview clientId={previewId} onClose={()=>setPreviewId(null)} />}
@@ -1945,7 +1955,7 @@ function lastLoginColor(iso) {
 // Sprint 110aw — Meet-n-Greet client status pill. Click to advance the
 // client through prospect → evaluation_scheduled → evaluated → active /
 // rejected. Hidden when the client is already `active`.
-function ClientStatusPill({ status, clientId, onChange }) {
+function ClientStatusPill({ status, clientId, onChange, owner = true }) {
   const [open, setOpen] = useState(false);
   const [note, setNote] = useState("");
   const [busy, setBusy] = useState(false);
@@ -1987,7 +1997,10 @@ function ClientStatusPill({ status, clientId, onChange }) {
                       data-testid="client-status-note"
                       className="block w-full bg-[var(--sh-card-base)] border border-shBorder rounded p-2 text-shText text-sm mb-3" rows={2}/>
             <div className="grid grid-cols-1 gap-2">
-              {["evaluation_scheduled", "evaluated", "active", "rejected", "walk_in"].filter(s => s !== status).map(s => (
+              {!owner && <p className="text-[12px] text-shTextMuted" data-testid="client-status-owner-note">{status === "rejected"
+                ? "A family marked Rejected can only be changed by the owner."
+                : "Staff can move a family to Active; other status changes are the owner's."}</p>}
+              {["evaluation_scheduled", "evaluated", "active", "rejected", "walk_in"].filter(s => s !== status && (owner || (s === "active" && status !== "rejected"))).map(s => (
                 <button key={s} onClick={()=>setStatus(s)} disabled={busy}
                         data-testid={`client-status-set-${s}`}
                         className={`px-3 py-2 rounded font-black text-[12px] uppercase tracking-widest border text-left ${labels[s].color} hover:opacity-80 disabled:opacity-50`}>
@@ -2077,9 +2090,9 @@ function ClientActionsMenu({
     { label: hasPortal ? "Send password reset email" : "Send claim account email",
       icon: "fa-envelope", color: "text-shPrimary", onClick: onSendClaim,
       testId: `menu-send-claim-${clientId}` },
-    { label: hasPortal ? "Manually set portal password" : "Manually create portal login",
+    ...(onSetPassword ? [{ label: hasPortal ? "Manually set portal password" : "Manually create portal login",
       icon: "fa-key", color: "text-shSecondary", onClick: onSetPassword,
-      testId: `menu-set-password-${clientId}` },
+      testId: `menu-set-password-${clientId}` }] : []),   // owner only (audit #49)
     { divider: true },
     { label: "Sell Credit Pack", icon: "fa-coins", color: "text-shPrimary",
       onClick: onSellPack, testId: `menu-sell-pack-${clientId}` },

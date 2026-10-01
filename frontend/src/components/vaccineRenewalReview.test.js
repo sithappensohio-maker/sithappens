@@ -210,3 +210,10 @@ test("the client's card counts a renewal as with us for review, so it stops aski
   expect(withUsForReview(dog, ["rabies", "bordetella", "dhpp"], TODAY)).toEqual(["rabies", "bordetella"]);
   expect(withUsForReview({ vaccines: { rabies: "2026-10-15" } }, ["rabies"], TODAY)).toEqual([]);
 });
+
+test("a certificate staff added says so on the dog's review box (audit #49)", async () => {
+  api.get.mockImplementation(() => Promise.resolve({ data: [{ ...FIRST, uploaded_by_staff: true, uploaded_by: "Jamie" }] }));
+  await act(async () => { root.render(<PendingVaccineUploads dogId="basil" />); });
+  await flush();
+  expect(container.querySelector('[data-testid="dog-pending-vax-dhpp"]').textContent).toMatch(/Added by Jamie \(staff\) expiry 2029-02-01/);
+});
