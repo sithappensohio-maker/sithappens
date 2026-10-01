@@ -20,6 +20,8 @@ from fastapi.responses import FileResponse
 from pydantic import BaseModel, Field
 from pymongo import DESCENDING, ReturnDocument
 
+from domains.training import services as training_services
+
 
 # School is now the shared training surface for online, in-person and hybrid
 # programs. Legacy Online School keeps its original channel; new staff-led
@@ -597,13 +599,22 @@ def register_school_suite(*, api, db, get_current_user, manage_school_dep, perms
     async def school_student_patch(sid: str, body: SchoolStudentPatch, user: dict = Depends(manage_school_dep)):
         se, dp = await _student_context(sid)
         changes: Dict[str, Any] = {}
+        heal_trainer = False
         if "assigned_trainer_id" in body.model_fields_set:
-            if body.assigned_trainer_id:
-                trainer = await db.users.find_one({"id": body.assigned_trainer_id, "active": {"$ne": False}}, {"_id": 0})
-                tp = perms_for(trainer) if trainer else {}
-                if not trainer or not (tp.get("manage_school") or tp.get("manage_training_sessions")):
-                    raise HTTPException(status_code=422, detail="Selected trainer is not an active training staff member")
-            changes["assigned_trainer_id"] = body.assigned_trainer_id
+            # The dog's real trainer is on its program (what every permission
+            # check reads), not School HQ's copy, which can lag (audit #55).
+            current = dp.get("assigned_trainer_id") or None
+            new = body.assigned_trainer_id or None
+            if new != current:
+                training_services.require_trainer_assignment_authority(user, new, current, perms_for)
+                if new:
+                    trainer = await db.users.find_one({"id": new, "active": {"$ne": False}}, {"_id": 0})
+                    tp = perms_for(trainer) if trainer else {}
+                    if not trainer or not (tp.get("manage_school") or tp.get("manage_training_sessions")):
+                        raise HTTPException(status_code=422, detail="Selected trainer is not an active training staff member")
+                changes["assigned_trainer_id"] = new
+            elif (se.get("assigned_trainer_id") or None) != current:
+                heal_trainer = True   # the copy had drifted; the real trainer stays
         if "access_expires_at" in body.model_fields_set: changes["school_access_expires_at"] = body.access_expires_at
         if "pause_until" in body.model_fields_set: changes["school_pause_until"] = body.pause_until
         if "support_checkpoint_allowance" in body.model_fields_set: changes["support_checkpoint_allowance"] = body.support_checkpoint_allowance
@@ -619,6 +630,8 @@ def register_school_suite(*, api, db, get_current_user, manage_school_dep, perms
             }
         changes.update({"school_updated_at": _now(), "school_updated_by": user.get("id")})
         mirror = {k: v for k, v in changes.items() if k in {"assigned_trainer_id", "support_checkpoint_allowance", "support_assist_allowance"}}
+        if heal_trainer:
+            mirror["assigned_trainer_id"] = dp.get("assigned_trainer_id") or None
         await db.dog_programs.update_one({"id": dp["id"]}, {"$set": changes})
         if mirror: await db.school_enrollments.update_one({"id": sid}, {"$set": mirror})
         return {"ok": True}

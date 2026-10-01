@@ -20430,6 +20430,9 @@ async def migrate_legacy_enrollment_to_school(
         fresh = await db.dog_programs.find_one({"id": existing["id"]}, {"_id": 0}) or existing
         return {"ok": True, "strategy": "merged_into_existing_school", "enrollment": _enrollment_summary(fresh), "school_enrollment_id": se["id"]}
 
+    if body.assigned_trainer_id:   # the legacy row's trainer is the dog's trainer (audit #55)
+        _require_trainer_assignment_authority(user, body.assigned_trainer_id, legacy.get("assigned_trainer_id"))
+
     # Exact in-place adoption: only safe when the FROZEN legacy snapshot
     # already has explicit lessons and remains the same program. No curriculum
     # definition or skill ids are rewritten, so all prior progress survives.
@@ -20556,6 +20559,8 @@ async def school_retake_enrollment(
     )
     if active:
         raise HTTPException(status_code=409, detail="This dog already has an active attempt for this program")
+    if body.assigned_trainer_id:   # a repeat carries its trainer over; naming another one is a change (audit #55)
+        _require_trainer_assignment_authority(user, body.assigned_trainer_id, previous_se.get("assigned_trainer_id") or previous.get("assigned_trainer_id"))
 
     delivery_mode = body.delivery_mode or _school_delivery_mode(previous_se, previous)
     common = dict(
@@ -27743,16 +27748,10 @@ def _can_assign_training_staff(user: dict) -> bool:
 
 
 def _require_trainer_assignment_authority(user: dict, trainer_id: Optional[str], current: Optional[str] = None) -> None:
-    """Stage 12 — changing who owns training work needs `assign_training_staff`.
-
-    Naming YOURSELF as the trainer (a trainer enrolling a dog they will teach)
-    stays allowed — that is the one pre-existing self-assignment path and it is
-    now explicit. Leaving an assignment unchanged never needs the permission."""
-    if not trainer_id or trainer_id == (current or None):
-        return
-    if _can_assign_training_staff(user) or trainer_id == user.get("id"):
-        return
-    raise HTTPException(status_code=403, detail="Assigning a trainer to training work requires the 'Assign training staff' permission.")
+    """Stage 12 / audit #55 — changing who owns training work needs
+    `assign_training_staff`; naming yourself only on a dog with no trainer.
+    The rule lives in domains/training/services.py (School HQ uses it too)."""
+    training_domain_services.require_trainer_assignment_authority(user, trainer_id, current, _perms_for)
 
 
 class TrainingDayTrainerAssignmentIn(BaseModel):

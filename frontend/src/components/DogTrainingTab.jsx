@@ -9,6 +9,7 @@ import RecentTrainingSessionsPanel from "./RecentTrainingSessionsPanel";
 import TrainingSessionWorkspace from "./TrainingSessionWorkspace";
 import NeonEdge from "./premium/NeonEdge";
 import HuskyDogImage from "./brand/HuskyDogImage";
+import TrainerAssignField from "./school/TrainerAssignField";
 
 /* ============================================================
  *  Replaces the old Training tab inside the dog edit modal.
@@ -805,6 +806,8 @@ function GoalRow({ goal, progress, onChange, canEdit }) {
 function SchoolProgramAssignModal({ programs, dogAgeMonths, typeMeta, onAssign, onClose,
                                    loadState = "ready", loadError, onRetry,
                                    assignError = "", assignBusy = false }) {
+  const { can, user: me } = useAuth() || {};   // audit #55: who may name which trainer
+  const canAssignTrainer = !!(can && can("assign_training_staff"));
   const [selectedId, setSelectedId] = useState("");
   const [deliveryMode, setDeliveryMode] = useState("in_person");
   const [trainerId, setTrainerId] = useState("");
@@ -942,7 +945,7 @@ function SchoolProgramAssignModal({ programs, dogAgeMonths, typeMeta, onAssign, 
               </div>
 
               <div className="grid sm:grid-cols-3 gap-3">
-                <label className="block"><span className="block text-[10px] uppercase tracking-widest font-black text-shTextMuted mb-1">Assigned trainer</span><select value={trainerId} onChange={e=>setTrainerId(e.target.value)} className="w-full bg-black/20 border border-shBorder rounded-xl px-3 py-2.5 text-sm text-shText"><option value="">Program default / unassigned</option>{trainers.map(t=><option key={t.id} value={t.id}>{t.name || t.email}</option>)}</select></label>
+                <label className="block"><span className="block text-[10px] uppercase tracking-widest font-black text-shTextMuted mb-1">Assigned trainer</span><TrainerAssignField trainers={trainers} value={trainerId} onChange={setTrainerId} canAssign={canAssignTrainer} meId={me?.id} currentId={null} unassignedLabel="Program default / unassigned" selectClassName="w-full bg-black/20 border border-shBorder rounded-xl px-3 py-2.5 text-sm text-shText" testid="school-assign-trainer"/></label>
                 <label className="block"><span className="block text-[10px] uppercase tracking-widest font-black text-shTextMuted mb-1">Start date</span><input type="date" value={startedAt} onChange={e=>setStartedAt(e.target.value)} className="w-full bg-black/20 border border-shBorder rounded-xl px-3 py-2.5 text-sm text-shText" style={{colorScheme:"dark"}}/></label>
                 <label className="block"><span className="block text-[10px] uppercase tracking-widest font-black text-shTextMuted mb-1">Target date</span><input type="date" value={targetDate} onChange={e=>setTargetDate(e.target.value)} className="w-full bg-black/20 border border-shBorder rounded-xl px-3 py-2.5 text-sm text-shText" style={{colorScheme:"dark"}}/></label>
               </div>
@@ -957,7 +960,9 @@ function SchoolProgramAssignModal({ programs, dogAgeMonths, typeMeta, onAssign, 
 }
 
 
-function LegacyMigrationModal({ legacy, programs, dogName, onClose, onMigrated }) {
+export function LegacyMigrationModal({ legacy, programs, dogName, onClose, onMigrated }) {
+  const { can, user: me } = useAuth() || {};   // audit #55: who may name which trainer
+  const canAssignTrainer = !!(can && can("assign_training_staff"));
   const matching = programs.find(p => p.id === legacy.program_id);
   const [programId, setProgramId] = useState(matching?.id || programs[0]?.id || "");
   const [lessonId, setLessonId] = useState(legacy.current_lesson_id || "");
@@ -991,7 +996,11 @@ function LegacyMigrationModal({ legacy, programs, dogName, onClose, onMigrated }
       await api.post(`/admin/training/legacy-enrollments/${legacy.id}/migrate-to-school`, {
         target_program_id: programId,
         target_lesson_id: lessonId,
-        assigned_trainer_id: trainerId || null,
+        // Without 'Assign training staff' the picker is locked or self-only, so
+        // only a trainer the user actually changed is sent (audit #55); left
+        // alone, the server keeps the legacy (or existing School) trainer.
+        assigned_trainer_id: canAssignTrainer ? (trainerId || null)
+          : ((trainerId && trainerId !== (legacy.assigned_trainer_id || "")) ? trainerId : null),
         delivery_mode: deliveryMode,
       });
       await onMigrated?.();
@@ -1015,7 +1024,7 @@ function LegacyMigrationModal({ legacy, programs, dogName, onClose, onMigrated }
         <label className="block"><span className="block text-[10px] font-black uppercase tracking-widest text-shTextMuted mb-1">Continue at</span><select value={lessonId} onChange={e=>setLessonId(e.target.value)} className="w-full bg-black/20 border border-shBorder rounded-xl px-3 py-3 text-sm text-shText">{lessons.map(l=><option key={l.id} value={l.id}>{l.label}</option>)}</select></label>
         <div className="grid sm:grid-cols-2 gap-3">
           <label className="block"><span className="block text-[10px] font-black uppercase tracking-widest text-shTextMuted mb-1">Delivery</span><select value={deliveryMode} onChange={e=>setDeliveryMode(e.target.value)} className="w-full bg-black/20 border border-shBorder rounded-xl px-3 py-3 text-sm text-shText"><option value="in_person">In Person</option>{onlineCapable&&<option value="hybrid">Hybrid</option>}</select></label>
-          <label className="block"><span className="block text-[10px] font-black uppercase tracking-widest text-shTextMuted mb-1">Assigned trainer</span><select value={trainerId} onChange={e=>setTrainerId(e.target.value)} className="w-full bg-black/20 border border-shBorder rounded-xl px-3 py-3 text-sm text-shText"><option value="">Unassigned / program default</option>{trainers.map(t=><option key={t.id} value={t.id}>{t.name || t.email}</option>)}</select></label>
+          <label className="block"><span className="block text-[10px] font-black uppercase tracking-widest text-shTextMuted mb-1">Assigned trainer</span><TrainerAssignField trainers={trainers} value={trainerId} onChange={setTrainerId} canAssign={canAssignTrainer} meId={me?.id} currentId={legacy?.assigned_trainer_id || null} unassignedLabel="Unassigned / program default" selectClassName="w-full bg-black/20 border border-shBorder rounded-xl px-3 py-3 text-sm text-shText" testid="legacy-migration-trainer"/></label>
         </div>
       </div>
       <div className="p-5 border-t border-shBorder flex justify-end gap-2"><button onClick={onClose} disabled={busy} className="px-4 py-2 rounded-xl border border-shBorder text-shTextMuted text-xs font-black">Cancel</button><button onClick={submit} disabled={busy || !programId || !lessonId} data-testid="legacy-migration-confirm" className="px-5 py-2 rounded-xl bg-shPrimary text-bgHeader text-xs font-black uppercase tracking-widest disabled:opacity-50"><i className={`fas ${busy?"fa-spinner fa-spin":"fa-arrow-right-arrow-left"} mr-1.5`}/>{busy?"Moving…":"Move into School"}</button></div>

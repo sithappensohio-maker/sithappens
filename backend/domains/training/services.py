@@ -65,6 +65,33 @@ def require_program_graduation_authority(user: dict, enrollment: dict, perms_for
     raise HTTPException(status_code=403, detail="Missing permission: manage_training_sessions")
 
 
+def require_trainer_assignment_authority(user: dict, new_id: Optional[str], current_id: Optional[str],
+                                         perms_for: Callable[[dict], dict]) -> None:
+    """Who may change a dog's trainer (audit #55) — the one rule for every
+    place a trainer is set (School HQ, Assign Program, Repeat, legacy move).
+
+    Changing or removing a dog's trainer is staff management and needs the
+    'Assign training staff' permission. Without it, the only change allowed
+    is naming YOURSELF on a dog that has no trainer yet (a trainer enrolling
+    a dog they will teach). Leaving the trainer as it is never needs it. A
+    deactivated trainer still counts as the dog's trainer: a manager moves
+    the dog on. Being the trainer lets you graduate the dog, which is why
+    taking over or clearing someone else's dog is not self-service.
+    """
+    new_id, current_id = new_id or None, current_id or None
+    if new_id == current_id:
+        return
+    if perms_for(user).get("assign_training_staff"):
+        return
+    if new_id and new_id == user.get("id") and current_id is None:
+        return
+    if current_id is not None:
+        raise HTTPException(status_code=403, detail=(
+            "This dog already has a trainer. Changing or removing a dog's trainer needs the "
+            "'Assign training staff' permission."))
+    raise HTTPException(status_code=403, detail="Assigning a trainer to training work requires the 'Assign training staff' permission.")
+
+
 def pointer_is_final_lesson(enrollment: dict, compute_next_position: Callable[..., dict]) -> bool:
     """True when the enrollment pointer sits on the program's final lesson."""
     mid, lid = enrollment.get("current_module_id"), enrollment.get("current_lesson_id")
