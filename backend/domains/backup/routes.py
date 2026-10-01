@@ -1139,15 +1139,17 @@ def make_backup_domain(*, BACKUP_COLLECTIONS, backup_root_ref, BACKUP_VERSION, C
         still gets it) and after (it may have run mid-restore)."""
         sales = any(c in ("pos_sales", "retail_sales", "shop_orders") for c in (collections or {}))
         people = any(c in ("clients", "dogs") for c in (collections or {}))   # archived families' logins + schedules (audit #36)
+        school = any(c in ("dog_programs", "school_enrollments") for c in (collections or {}))   # School HQ's copy (audit #54)
         repairs = {"_id": {"$in": (["gift_card_funding_spread", "shop_income_split"] if sales else [])   # audit #72, audit #29
-                                  + (["archive_sync"] if people else [])}}
-        if sales or people:
+                                  + (["archive_sync"] if people else [])
+                                  + (["school_enrollment_mirror_sync"] if school else [])}}
+        if sales or people or school:
             await db.system_runs.delete_many(repairs)
         await prepaid_close.rearm_after_restore(db, collections, mode)   # audit #38: restored sessions are closed again
         try:
             return await _restore_collections_inner(collections, mode, progress)
         finally:
-            if sales or people:
+            if sales or people or school:
                 await db.system_runs.delete_many(repairs)
             await prepaid_close.rearm_after_restore(db, collections, mode)
 

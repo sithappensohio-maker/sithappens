@@ -83,7 +83,7 @@ from domains.bookings import group_rank
 from domains.bookings import group_pricing as booking_group_pricing
 from domains.bookings import friends_family
 from domains.bookings import checkout_prices, credit_cover, checkout_discount, waitlist_spots, time_pool, renewal_misses, prepaid_sessions, prepaid_close
-from domains.school import ownership as school_ownership, curriculum_moves, structure_gate
+from domains.school import ownership as school_ownership, curriculum_moves, structure_gate, mirror_sync as school_mirror
 from domains.bookings import late_day as late_day_checkout
 from domains.bookings import care as care_domain
 from domains.operations import end_of_day as end_of_day_domain
@@ -18123,6 +18123,8 @@ async def update_enrollment(dog_id: str, enrollment_id: str, body: EnrollmentUpd
     if update:
         await db.dog_programs.update_one({"id": enrollment_id}, {"$set": update})
         enrollment.update(update)
+        if "status" in update:
+            await school_mirror.sync_one(db, enrollment_id)   # School HQ's copy follows (audit #54)
         if update.get("status") == "completed":
             # 🏆 Graduation is the "Sit Happens Graduate" trigger. This path
             # (Pipeline / DogTrainingTab) never re-evaluated, so the award
@@ -19466,13 +19468,7 @@ async def _reconcile_school_enrollment_mirror(enrollment: dict, se: dict) -> dic
     dog_programs (canonical) already says; calling this on an
     already-consistent pair is a harmless no-op. Returns the corrected `se`
     dict for immediate use without a re-fetch."""
-    canonical_status = _canonical_school_status(enrollment)
-    canonical_access = _school_access_state(enrollment)
-    updates = {}
-    if se.get("status") != canonical_status:
-        updates["status"] = canonical_status
-    if _school_access_state(se) != canonical_access:
-        updates["access_state"] = canonical_access
+    updates = school_mirror.diff(enrollment, se)   # the one rule for School HQ's copy (audit #54)
     if not updates:
         return se
     await db.school_enrollments.update_one({"id": se["id"]}, {"$set": updates})
@@ -23054,10 +23050,6 @@ async def _finish_school_advancement(
             asyncio.create_task(_announce_graduation_ready({**enrollment, "graduation_ready": True}))
         return
     if is_final:
-        await db.school_enrollments.update_one(
-            {"id": school_enrollment_id, "status": {"$ne": "completed"}},
-            {"$set": {"status": "completed", "completed_at": now_iso()}},
-        )
         # Online School Phase 3 fix — the underlying dog_programs row must
         # also flip to "completed" (idempotent, same $ne guard) so this
         # enrollment participates in the existing trophy engine exactly
@@ -23069,6 +23061,9 @@ async def _finish_school_advancement(
             {"id": enrollment["id"], "status": {"$ne": "completed"}},
             {"$set": {"status": "completed", "completed_at": now_iso()}},
         )
+        # The real row first, then School HQ's copy from it — a crash between
+        # them leaves the copy behind, never ahead (audit #54).
+        await school_mirror.sync_one(db, enrollment["id"])
         try:
             await check_dog_trophies(db, se["dog_id"])
         except Exception as exc:
@@ -23168,8 +23163,8 @@ async def _advance_school_enrollment(se: dict, enrollment: dict, roadmap: dict) 
             projection={"_id": 0, "id": 1}, return_document=ReturnDocument.AFTER,
         )
         if cas is None:
-            fresh_se = await db.school_enrollments.find_one({"id": se["id"]}, {"_id": 0, "status": 1})
-            return {"finished": (fresh_se or {}).get("status") == "completed", "school_enrollment_id": se["id"]}
+            fresh = await db.dog_programs.find_one({"id": enrollment["id"]}, {"_id": 0, "status": 1})   # the real row decides (audit #54)
+            return {"finished": (fresh or {}).get("status") == "completed", "school_enrollment_id": se["id"]}
         await _finish_school_advancement(se["id"], enrollment, se, pos["next_module_id"], None, True)
         await _emit_school_advance_events(se, enrollment, source_module_id, source_lesson_id, pos["next_module_id"], True)
         if _school_delivery_mode(se, enrollment) == "hybrid":
@@ -26929,6 +26924,8 @@ async def _apply_completion_plan(draft_id: str, plan: Dict[str, Any], claim_toke
     """
     await _assert_claim_owned(draft_id, claim_token)
     await db.dog_programs.update_one({"id": plan["enrollment_id"]}, {"$set": plan["set_doc"]})
+    if "status" in plan["set_doc"]:
+        await school_mirror.sync_one(db, plan["enrollment_id"])   # School HQ's copy follows (audit #54)
 
     homework_created: List[str] = []  # newly created BY THIS CALL — the response's "what just happened"
     homework_conflicts: List[Dict[str, Any]] = []
@@ -30203,6 +30200,7 @@ def _scheduler_jobs() -> List[job_scheduler.Job]:
         ("shop_income_split", lambda: _run_once_per_business_day(shop_income.REPAIR_JOB, lambda: shop_income.repair_split(db))),  # daily + after a restore (audit #29)
         ("archive_sync", lambda: _run_once_per_business_day(client_archive.SYNC_JOB, lambda: client_archive.sync(db))),  # archived families stay archived (audit #36)
         ("prepaid_session_close", lambda: prepaid_close.run_job()),  # finished program lessons use their credit (audit #38)
+        ("school_enrollment_mirror_sync", lambda: _run_once_per_business_day(school_mirror.SYNC_JOB, lambda: school_mirror.sync(db))),  # School HQ's copy (audit #54)
     ]
 
 

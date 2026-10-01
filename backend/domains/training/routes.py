@@ -14,6 +14,7 @@ from .services import board_train_daily_status_payload, require_program_graduati
 from .today import build_training_today
 from trainer_delivery_enforcement import is_board_train_booking
 from trophy_service import check_dog_trophies
+from domains.school import mirror_sync
 
 
 class ManualInPersonProgressIn(BaseModel):
@@ -111,15 +112,9 @@ def register_training_routes(
             },
              "$push": {"program_reopen_history": reopen_event}},
         )
-        # Best-effort: an Online School companion row that completed alongside
-        # the enrollment reopens with it so School surfaces agree.
-        try:
-            await db.school_enrollments.update_one(
-                {"enrollment_id": enrollment_id, "status": "completed"},
-                {"$set": {"status": "active", "completed_at": None}},
-            )
-        except Exception:
-            pass
+        # School HQ's copy follows the reopened program, whatever it said
+        # before (audit #54; never raises).
+        await mirror_sync.sync_one(db, enrollment_id)
         # Restore the run-sheet/front-desk "active program" pointer if the dog
         # lost it when this enrollment was (wrongly) completed.
         try:
