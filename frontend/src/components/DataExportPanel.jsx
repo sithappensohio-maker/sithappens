@@ -4,19 +4,26 @@ import { api } from "../lib/api";
 import { toast } from "sonner";
 
 const ENTITIES = [
-  { id: "clients",            label: "Clients",                icon: "fa-users",                desc: "All client contact info + notes." },
+  { id: "clients",            label: "Clients",                icon: "fa-users",                desc: "Name, email, phone, address + notes." },
   { id: "dogs",               label: "Dogs",                   icon: "fa-paw",                  desc: "Every dog with owner link + safety flags." },
-  { id: "bookings",           label: "Bookings",               icon: "fa-calendar-check",       desc: "Full booking history (status, pricing, assignments)." },
+  { id: "bookings",           label: "Bookings",               icon: "fa-calendar-check",       desc: "Every visit, archived ones included (status, estimated + charged price, assignments)." },
   { id: "waitlist",           label: "Waitlist",               icon: "fa-hourglass-half",       desc: "Pending and converted waitlist entries." },
   { id: "intake_templates",   label: "Intake Templates",       icon: "fa-clipboard-list",       desc: "Form definitions you've published." },
   { id: "intake_submissions", label: "Intake Submissions",     icon: "fa-clipboard",            desc: "Submitted client/dog intake responses." },
   { id: "incidents",          label: "Incidents",              icon: "fa-triangle-exclamation", desc: "Logged incident reports with severity." },
   { id: "safety_flags",       label: "Dog Safety Flags",       icon: "fa-shield-halved",        desc: "Per-dog safety/temperament flags." },
   { id: "vaccines",           label: "Vaccines",               icon: "fa-syringe",              desc: "Per-dog vaccine records + expirations." },
-  { id: "income",             label: "Income (Retail Sales)",  icon: "fa-dollar-sign",          desc: "Cash-basis revenue events." },
+  { id: "income",             label: "Income (Retail Sales)",  icon: "fa-dollar-sign",          desc: "Every income-ledger entry — sales, packs, programs, account payments, refunds as minus rows — with sales tax and business revenue. Visit checkouts are in Backup & Restore → Year-End Income Export." },
   { id: "communications",     label: "Client Communications",  icon: "fa-comments",             desc: "All logged calls/texts/emails." },
   { id: "timeclock",          label: "Staff Time Clock",       icon: "fa-clock",                desc: "Clock-in/out entries with hours." },
 ];
+
+// The server counts the rows it wrote; the message says so.
+export function downloadedMessage(label, rowCount) {
+  const n = Number(rowCount);
+  if (rowCount == null || rowCount === "" || !Number.isFinite(n)) return `${label} CSV downloaded`;
+  return `${label} CSV downloaded · ${n.toLocaleString("en-US")} row${n === 1 ? "" : "s"}`;
+}
 
 export default function DataExportPanel() {
   const [counts, setCounts] = useState({});
@@ -50,7 +57,7 @@ export default function DataExportPanel() {
       a.click();
       a.remove();
       URL.revokeObjectURL(url);
-      toast.success(`${label} CSV downloaded`);
+      toast.success(downloadedMessage(label, resp.headers?.["x-row-count"]));
     } catch (e) {
       toast.error("Export failed: " + (e?.response?.data?.detail || e.message));
     } finally {
@@ -64,7 +71,7 @@ export default function DataExportPanel() {
         <p className="text-[13px] text-shTextMuted">
           <span className="text-shSecondary font-black uppercase tracking-widest"><i className="fas fa-cloud-arrow-down mr-2"/>One-click CSV exports.</span>
           Pull a clean spreadsheet of any major dataset for accounting, audits, migrations, or just to email your bookkeeper.
-          Each file includes the row count in the response header so nothing is silently truncated.
+          Every file holds every row — nothing is cut off — and the download message says how many rows it has.
         </p>
       </div>
 

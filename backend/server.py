@@ -53792,60 +53792,9 @@ async def delete_review_request(entry_id: str, _: dict = Depends(require_admin_a
 
 
 # ────────────────────────────────────────────────────────────────────────────
-# Final ops polish — Data export + Operational readiness
+# Final ops polish — Operational readiness (Data Export: domains/operations/data_export.py)
 # ────────────────────────────────────────────────────────────────────────────
 
-EXPORT_ENTITIES = {
-    "clients":            ("clients",               ["id","name","email","phone","city","state","zip","notes","created_at"]),
-    "dogs":               ("dogs",                  ["id","name","breed","age_y","owner_id","spayed_neutered","safety_flags","notes","created_at"]),
-    "bookings":           ("bookings",              ["id","dog_id","dog_name","client_id","client_name","service_type","date","end_date","status","kennel","room","crate","yard_group","training_group","price","created_at"]),
-    "waitlist":           ("waitlist",              ["id","client_name","dog_name","service_type","requested_date","requested_end_date","priority","status","notes","created_at","booking_id"]),
-    "intake_templates":   ("intake_form_templates", ["id","name","form_type","active","is_starter","description","created_at"]),
-    "intake_submissions": ("intake_submissions",    ["id","template_name","form_type","client_id","dog_id","status","review_notes","sent_at","submitted_at","reviewed_at","reviewed_by"]),
-    "incidents":          ("incidents",             ["id","dog_id","dog_name","client_id","client_name","date","time","type","severity","description","action_taken","follow_up_required","manager_reviewed","client_notified","internal_notes","reported_by","created_at"]),
-    "safety_flags":       ("dogs",                  ["id","name","safety_flags"]),
-    "vaccines":           ("dogs",                  ["id","name","vaccines"]),
-    "income":             ("retail_sales",          ["id","ts","total","method","source_kind","client_id","client_name","dog_id","notes"]),
-    "communications":     ("client_communications", ["id","client_name","type","summary","occurred_at","follow_up_required","follow_up_date","created_by_name"]),
-    "timeclock":          ("time_clock_entries",    ["id","user_id","user_name","clock_in_at","clock_out_at","hours","break_minutes","clock_in_note","clock_out_note"]),
-}
-
-
-@api.get("/export/{entity}")
-async def export_csv(entity: str, _: dict = Depends(require_admin_and_permission("data_export"))):
-    import csv as _csv
-    import io as _io
-    import json as __json
-    if entity not in EXPORT_ENTITIES:
-        raise HTTPException(status_code=400, detail=f"Unknown entity '{entity}'. Allowed: {list(EXPORT_ENTITIES.keys())}")
-    coll, cols = EXPORT_ENTITIES[entity]
-    rows = await db[coll].find({}, {"_id": 0}).to_list(50000)
-    buf = _io.StringIO()
-    w = _csv.writer(buf)
-    w.writerow(cols)
-    for r in rows:
-        out = []
-        for c in cols:
-            v = r.get(c, "")
-            if isinstance(v, (list, dict)):
-                v = __json.dumps(v, default=str)
-            out.append(v)
-        w.writerow(out)
-    csv_data = buf.getvalue()
-    return Response(
-        content=csv_data, media_type="text/csv",
-        headers={"Content-Disposition": f'attachment; filename="sithappens-{entity}-{business_today().isoformat()}.csv"',
-                 "X-Row-Count": str(len(rows))},
-    )
-
-
-@api.get("/export-index")
-async def export_index(_: dict = Depends(require_admin_and_permission("data_export"))):
-    """Counts per entity so the UI can show empty-state badges."""
-    out = {}
-    for k, (coll, _cols) in EXPORT_ENTITIES.items():
-        out[k] = await db[coll].count_documents({})
-    return out
 
 
 @api.get("/admin/readiness")
@@ -56195,4 +56144,5 @@ if _cors:
         allow_origins=_cors,
         allow_methods=["GET", "POST", "PUT", "PATCH", "DELETE", "OPTIONS"],
         allow_headers=["Authorization", "Content-Type", "Accept", "X-Requested-With"],
+        expose_headers=["X-Row-Count"],   # Data Export's "N rows" when the API is on another origin
     )

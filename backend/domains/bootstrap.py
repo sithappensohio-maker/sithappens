@@ -31,6 +31,7 @@ from domains.bookings import checkout_prices
 from domains.bookings import group_add as booking_group_add
 from domains.bookings import care as care_domain
 from domains.operations import end_of_day as end_of_day_domain
+from domains.operations import data_export
 from domains.school import ownership as school_ownership
 from domains.school import curriculum_moves
 from domains.school import structure_gate
@@ -156,6 +157,7 @@ def register_domains(
     booking_group_add.configure(server_globals=server_globals)
     care_domain.configure(server_globals=server_globals)
     end_of_day_domain.configure(server_globals=server_globals)
+    data_export.configure(server_globals=server_globals)
     school_ownership.configure(server_globals=server_globals)
     signup_claim.configure(server_globals=server_globals)
     reset_mfa.configure(server_globals=server_globals)
@@ -206,6 +208,7 @@ def register_domains(
     friends_family.register_routes(api=api, server_globals=server_globals)
     booking_group_add.register_routes(api=api, server_globals=server_globals)
     renewal_misses.register_routes(api=api, server_globals=server_globals)
+    data_export.register_routes(api=api, server_globals=server_globals)
     client_archive.register_routes(api=api, server_globals=server_globals)
     prepaid_close.register_routes(api=api, server_globals=server_globals)
     curriculum_moves.register_routes(api=api, server_globals=server_globals)

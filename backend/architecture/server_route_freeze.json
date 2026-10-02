@@ -2115,16 +2115,6 @@
     "function": "update_expense"
   },
   {
-    "method": "GET",
-    "path": "/export-index",
-    "function": "export_index"
-  },
-  {
-    "method": "GET",
-    "path": "/export/{entity}",
-    "function": "export_csv"
-  },
-  {
     "method": "DELETE",
     "path": "/files/{file_id}",
     "function": "delete_file"
