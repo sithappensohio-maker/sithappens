@@ -32416,8 +32416,10 @@ async def payroll_year_end_csv(
     if not perms.get("payroll") or not perms.get("data_export"):
         raise HTTPException(status_code=403, detail="Missing permission: payroll + data_export")
     y = int(year or business_today().year)
-    start_iso = f"{y}-01-01T00:00:00"
-    end_iso = f"{y + 1}-01-01T00:00:00"
+    from domains.staff.routes import paid_hours
+    # The year runs Ohio midnight to Ohio midnight: a Dec 31 evening shift
+    # belongs to that year, never the next.
+    start_iso, end_iso = _business_range_utc_bounds(f"{y}-01-01", f"{y}-12-31")
     # All clocked-in entries with a clock-out in the year
     entries = await db.time_clock_entries.find(
         {
@@ -32448,12 +32450,7 @@ async def payroll_year_end_csv(
         if uid not in user_by_id:
             # Owner (filtered above) or deleted user — skip from 1099/W2 export.
             continue
-        try:
-            t_in = datetime.fromisoformat((e["clock_in_at"] or "").replace("Z", "+00:00"))
-            t_out = datetime.fromisoformat((e["clock_out_at"] or "").replace("Z", "+00:00"))
-            hrs = max(0.0, (t_out - t_in).total_seconds() / 3600.0)
-        except Exception:
-            hrs = 0.0
+        hrs = paid_hours(e)   # unpaid breaks are not wages
         row = per_user.setdefault(uid, {"hours": 0.0, "gross": 0.0, "entries": 0})
         u = user_by_id.get(uid, {})
         rate = float(u.get("hourly_rate") or 0)
@@ -32536,22 +32533,18 @@ async def payroll_year_end_csv(
     if detail and entries:
         w.writerow([])
         w.writerow(["DETAIL — every clocked entry"])
-        w.writerow(["Employee", "Clock-in", "Clock-out", "Hours", "Rate", "Gross"])
+        w.writerow(["Employee", "Clock-in", "Clock-out", "Break (min)", "Hours", "Rate", "Gross"])
         for e in sorted(entries, key=lambda r: (r.get("user_id"), r.get("clock_in_at") or "")):
             if e.get("user_id") not in user_by_id:
                 continue
             u = user_by_id.get(e.get("user_id"), {})
-            try:
-                t_in = datetime.fromisoformat((e["clock_in_at"] or "").replace("Z", "+00:00"))
-                t_out = datetime.fromisoformat((e["clock_out_at"] or "").replace("Z", "+00:00"))
-                hrs = max(0.0, (t_out - t_in).total_seconds() / 3600.0)
-            except Exception:
-                hrs = 0.0
+            hrs = paid_hours(e)
             rate = float(u.get("hourly_rate") or 0)
             w.writerow([
                 u.get("display_name") or u.get("name") or "(unknown)",
                 e.get("clock_in_at", ""),
                 e.get("clock_out_at", ""),
+                round(float(e.get("break_minutes") or 0)),
                 f"{hrs:.2f}",
                 f"{rate:.2f}",
                 f"{hrs * rate:.2f}",

@@ -35,6 +35,18 @@ def shift_hours(clock_in_at: Any, clock_out_at: Any, break_minutes: Any = 0) -> 
         return None
 
 
+def paid_hours(entry: dict) -> float:
+    """Paid hours of one finished shift, exactly as weekly payroll, timecards,
+    the labor screens, P&L and the Tax Center count them: the hours stored when
+    it was clocked out, edited or corrected (unpaid break already taken out). A
+    shift saved without hours counts 0 there until it is re-saved on the time
+    clock, so it counts 0 here too."""
+    try:
+        return max(float(entry.get("hours") or 0), 0.0)
+    except (TypeError, ValueError):
+        return 0.0
+
+
 def make_staff_domain(*, ClockInIn, ClockOutIn, TIME_OFF_STATUSES, TIME_OFF_TYPES, TimeClockEditIn, VARIANCE_FLAG_MINUTES, api, business_today, db, now_iso, require_admin, require_admin_and_permission, require_employee_or_admin):
     @api.get("/time-clock/current")
     async def time_clock_current(user: dict = Depends(require_employee_or_admin)):
