@@ -640,11 +640,24 @@ function Field({ label, value, onChange, type = "text", testid }) {
   );
 }
 
-function TimeClockEditModal({ entry, onClose, onSaved }) {
+// A stored time is UTC. The edit box shows the local wall clock, the same as the
+// employee's own punch correction, and saving converts it back (audit #5).
+export function toLocalDT(iso) {
+  if (!iso) return "";
+  const d = new Date(iso);
+  if (Number.isNaN(d.getTime())) return "";
+  const pad = (n) => String(n).padStart(2, "0");
+  return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}T${pad(d.getHours())}:${pad(d.getMinutes())}`;
+}
+
+export function TimeClockEditModal({ entry, onClose, onSaved }) {
   const confirm = useConfirm();
+  // What the box showed when it opened. Only a time the admin changes is sent back,
+  // so saving a break or a note can't move the clock times.
+  const [shown] = useState(() => ({ clock_in_at: toLocalDT(entry.clock_in_at), clock_out_at: toLocalDT(entry.clock_out_at) }));
   const [form, setForm] = useState({
-    clock_in_at: (entry.clock_in_at || "").slice(0, 16),
-    clock_out_at: (entry.clock_out_at || "").slice(0, 16),
+    clock_in_at: shown.clock_in_at,
+    clock_out_at: shown.clock_out_at,
     break_minutes: entry.break_minutes || 0,
     note: "",
   });
@@ -653,12 +666,9 @@ function TimeClockEditModal({ entry, onClose, onSaved }) {
   const save = async () => {
     setBusy(true); setErr("");
     try {
-      const payload = {
-        clock_in_at: form.clock_in_at ? new Date(form.clock_in_at).toISOString() : null,
-        clock_out_at: form.clock_out_at ? new Date(form.clock_out_at).toISOString() : null,
-        break_minutes: Number(form.break_minutes) || 0,
-        note: form.note,
-      };
+      const payload = { break_minutes: Number(form.break_minutes) || 0, note: form.note };
+      if (form.clock_in_at !== shown.clock_in_at) payload.clock_in_at = form.clock_in_at ? new Date(form.clock_in_at).toISOString() : null;
+      if (form.clock_out_at !== shown.clock_out_at) payload.clock_out_at = form.clock_out_at ? new Date(form.clock_out_at).toISOString() : null;
       await api.put(`/admin/time-clock/${entry.id}`, payload);
       onSaved();
     } catch (e) { setErr(formatErr(e.response?.data?.detail)); }
