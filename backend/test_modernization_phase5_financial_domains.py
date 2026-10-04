@@ -18,6 +18,18 @@ from types import SimpleNamespace
 from domains.pricing import services as pricing
 from domains.pos import services as pos
 
+
+import pytest
+
+
+@pytest.fixture(autouse=True)
+def _restore_pos_domain():
+    """pos.configure() below swaps the POS domain's database and helpers for fakes.
+    Put them back after each test, or every later POS test in the same run uses the fakes."""
+    saved = dict(vars(pos))
+    yield
+    vars(pos).update(saved)
+
 ROOT = Path(__file__).resolve().parent
 SERVER = ROOT / "server.py"
 ARCH = ROOT / "architecture"
