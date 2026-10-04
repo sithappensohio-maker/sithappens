@@ -723,3 +723,20 @@ def test_a_live_familys_removed_dog_is_never_booked_again_by_name():
     run(server.db.dogs.insert_one({"id": did, "name": "Bella", "owner_id": cid, "deleted_at": server.now_iso()}))
     b = _booking(_reserve(sp, email=email, dog="Bella")["reservation"])
     assert b["client_id"] == cid and b["dog_id"] != did, "a new Bella, never the removed record"
+
+
+def test_the_event_day_timeline_shows_a_time_a_lesson_holds_as_taken():
+    """A time a lesson (or a Meet & Greet) holds is not a free walk-up slot on
+    the desk's timeline, though it is still an unbooked Photo Special slot."""
+    sp = _special(start_time="09:00", end_time="10:00", slot_minutes=15)
+    lesson = {"id": f"TEST_PS_TIMELINE-lesson-{uuid.uuid4().hex[:6]}", "date": DAY_1, "time": "09:30", "duration_minutes": 30,
+              "service_type": "training", "status": "approved", "dog_name": "Other", "tag": "TEST_PS_TIMELINE"}
+    run(server.db.bookings.insert_one(dict(lesson)))
+    try:
+        out = run(server.admin_photo_specials_today(DAY_1, ADMIN))
+        mine = next(x for x in out["specials"] if x["special"]["id"] == sp["id"])
+        free = {t["time"]: t["available"] for t in mine["timeline"]}
+        assert free["09:15"] is True, "a genuinely free slot stays free"
+        assert free["09:30"] is False and free["09:45"] is False, "the lesson holds 09:30-10:00"
+    finally:
+        run(server.db.bookings.delete_one({"id": lesson["id"]}))

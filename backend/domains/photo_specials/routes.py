@@ -728,7 +728,7 @@ def register_photo_special_routes(
                 timeline.append(
                     {**_reservation_row(booked, dogs.get(booked.get("dog_id"))), "available": False}
                     if booked else
-                    {"time": slot["time"], "date": day, "available": True}
+                    {"time": slot["time"], "date": day, "available": bool(slot.get("available"))}
                 )
             out.append({"special": {"id": sp["id"], "name": sp["name"], "slug": sp.get("slug")},
                         "date": day, "timeline": timeline, "booked_count": len(rows)})
